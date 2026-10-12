@@ -22,6 +22,8 @@ async function query(mode: 'guide' | 'build' | 'meta' = 'guide') {
 describe('served Gaming structured evidence proof boundary', () => {
   beforeEach(() => fixture.mockReset().mockImplementation(actual.runGamingStructuredEvidencePreview));
 
+  // The complete served proof set includes large-source fixtures; allow for CI
+  // contention and coverage instrumentation while retaining a bounded timeout.
   it('runs actual structural component assertions before preserving the trusted response', async () => {
     const response = await query();
     expect(response.status).toBe(200);
@@ -31,7 +33,7 @@ describe('served Gaming structured evidence proof boundary', () => {
     expect(response.headers[contract.baseGameScopeProofHeader]).toBe('gaming-base-game-scope/v1');
     expect(response.body.result).toEqual({ ok: true, route: 'gaming', mode: 'guide',
       data: { response: 'Sealed preview guide response.', sources: [] } });
-  });
+  }, 30_000);
 
   it('withholds all Gaming proof headers and success data on an asynchronous fixture failure', async () => {
     fixture.mockRejectedValue(new Error('TEST-PRIVATE-STRUCTURE-DIAGNOSTIC'));

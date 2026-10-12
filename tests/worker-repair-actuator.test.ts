@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import type { RailwayProjectSummary } from '../src/services/railwayClient.js';
 
 const workerHelperTokenA = 'worker-repair-token-a-123456789012';
 const workerHelperTokenB = 'worker-repair-token-b-123456789012';
@@ -26,7 +27,7 @@ const deployServiceMock = jest.fn(async (_input?: unknown) => ({
   status: 'accepted',
 }));
 const isRailwayApiConfiguredMock = jest.fn(() => false);
-const listProjectsMock = jest.fn(async () => []);
+const listProjectsMock = jest.fn(async (): Promise<RailwayProjectSummary[]> => []);
 const healWorkerRuntimeMock = jest.fn(async () => ({
   timestamp: '2026-07-25T12:00:00.000Z',
   requestedForce: true,
@@ -86,6 +87,40 @@ function validRemoteApproval() {
     action: 'worker repair actuator remote_worker_helper',
     expiresAt: '2099-01-01T00:00:00.000Z',
   };
+}
+
+function validRailwayApproval() {
+  return {
+    ...validRemoteApproval(),
+    action: 'worker repair actuator railway_service_deploy',
+  };
+}
+
+function railwayPreviewProject(): RailwayProjectSummary {
+  return {
+    id: 'project-preview',
+    name: 'Isolated acceptance project',
+    environments: [
+      {
+        id: 'environment-production',
+        name: 'production',
+        services: [{ id: 'worker-production', name: 'ARCANOS Worker' }],
+      },
+      {
+        id: 'environment-preview',
+        name: 'pr-1539',
+        services: [{ id: 'worker-preview', name: 'ARCANOS Worker' }],
+      },
+    ],
+  };
+}
+
+function configureRailwayPreview(): void {
+  isRailwayApiConfiguredMock.mockReturnValue(true);
+  environment.set('RAILWAY_PROJECT_ID', 'project-preview');
+  environment.set('RAILWAY_ENVIRONMENT_ID', 'environment-preview');
+  environment.set('RAILWAY_ENVIRONMENT_NAME', 'pr-1539');
+  listProjectsMock.mockResolvedValue([railwayPreviewProject()]);
 }
 
 function fetchReturning(responseFactory: () => Response) {
@@ -154,6 +189,304 @@ beforeEach(() => {
       enabled: true,
     },
   });
+});
+
+describe('worker repair actuator Railway target containment', () => {
+  it('redeploys only the exact approved preview project and environment', async () => {
+    configureRailwayPreview();
+
+    const result = await executeWorkerRepairActuator({
+      source: 'isolated-acceptance-test',
+      approval: validRailwayApproval(),
+    });
+
+    expect(deployServiceMock).toHaveBeenCalledTimes(1);
+    expect(deployServiceMock).toHaveBeenCalledWith({
+      environmentId: 'environment-preview',
+      serviceId: 'worker-preview',
+    });
+    expect(result.payload).toEqual(expect.objectContaining({
+      projectId: 'project-preview',
+      environmentId: 'environment-preview',
+      serviceId: 'worker-preview',
+    }));
+    expect(healWorkerRuntimeMock).not.toHaveBeenCalled();
+  });
+
+  it('uses the exact runtime environment ID when no environment name is configured', async () => {
+    configureRailwayPreview();
+    environment.delete('RAILWAY_ENVIRONMENT_NAME');
+
+    await executeWorkerRepairActuator({
+      source: 'isolated-acceptance-test',
+      approval: validRailwayApproval(),
+    });
+
+    expect(deployServiceMock).toHaveBeenCalledWith({
+      environmentId: 'environment-preview',
+      serviceId: 'worker-preview',
+    });
+  });
+
+  it('preserves an exact explicit environment name when no runtime ID is available', async () => {
+    configureRailwayPreview();
+    environment.delete('RAILWAY_ENVIRONMENT_ID');
+    environment.delete('RAILWAY_ENVIRONMENT_NAME');
+    environment.set('SELF_HEAL_TARGET_ENVIRONMENT', 'PR-1539');
+
+    await executeWorkerRepairActuator({
+      source: 'isolated-acceptance-test',
+      approval: validRailwayApproval(),
+    });
+
+    expect(deployServiceMock).toHaveBeenCalledWith({
+      environmentId: 'environment-preview',
+      serviceId: 'worker-preview',
+    });
+  });
+
+  it.each([
+    ['missing project scope', 'RAILWAY_PROJECT_ID', null],
+    ['unmatched project scope', 'RAILWAY_PROJECT_ID', 'project-missing'],
+    ['unmatched runtime environment ID', 'RAILWAY_ENVIRONMENT_ID', 'environment-missing'],
+    ['environment name conflicting with runtime ID', 'RAILWAY_ENVIRONMENT_NAME', 'production'],
+    ['override conflicting with the preview runtime', 'SELF_HEAL_TARGET_ENVIRONMENT', 'production'],
+  ])('rejects %s without deploying either environment', async (_label, key, value) => {
+    configureRailwayPreview();
+    const onDispatch = jest.fn();
+    if (value === null) {
+      environment.delete(key);
+    } else {
+      environment.set(key, value);
+    }
+
+    await expect(executeWorkerRepairActuator({
+      source: 'isolated-acceptance-test',
+      approval: validRailwayApproval(),
+    }, { onDispatch })).rejects.toThrow();
+
+    expect(onDispatch).not.toHaveBeenCalled();
+    expect(deployServiceMock).not.toHaveBeenCalled();
+    expect(healWorkerRuntimeMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects missing environment scope before inspecting Railway projects', async () => {
+    configureRailwayPreview();
+    const onDispatch = jest.fn();
+    environment.delete('RAILWAY_ENVIRONMENT_ID');
+    environment.delete('RAILWAY_ENVIRONMENT_NAME');
+
+    await expect(executeWorkerRepairActuator({
+      source: 'isolated-acceptance-test',
+      approval: validRailwayApproval(),
+    }, { onDispatch })).rejects.toThrow();
+
+    expect(onDispatch).not.toHaveBeenCalled();
+    expect(listProjectsMock).not.toHaveBeenCalled();
+    expect(deployServiceMock).not.toHaveBeenCalled();
+  });
+
+  it('does not fall back to production when an explicit preview name is absent', async () => {
+    configureRailwayPreview();
+    const onDispatch = jest.fn();
+    environment.delete('RAILWAY_ENVIRONMENT_ID');
+    environment.set('RAILWAY_ENVIRONMENT_NAME', 'pr-1539-missing');
+
+    await expect(executeWorkerRepairActuator({
+      source: 'isolated-acceptance-test',
+      approval: validRailwayApproval(),
+    }, { onDispatch })).rejects.toThrow();
+
+    expect(onDispatch).not.toHaveBeenCalled();
+    expect(deployServiceMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a conflicting explicit override even without a runtime environment ID', async () => {
+    configureRailwayPreview();
+    const onDispatch = jest.fn();
+    environment.delete('RAILWAY_ENVIRONMENT_ID');
+    environment.set('SELF_HEAL_TARGET_ENVIRONMENT', 'production');
+
+    await expect(executeWorkerRepairActuator({
+      source: 'isolated-acceptance-test',
+      approval: validRailwayApproval(),
+    }, { onDispatch })).rejects.toThrow();
+
+    expect(onDispatch).not.toHaveBeenCalled();
+    expect(deployServiceMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['project', 'environment', 'service'] as const)(
+    'rejects an ambiguous %s match without deployment',
+    async (duplicateKind) => {
+      configureRailwayPreview();
+      const onDispatch = jest.fn();
+      const project = railwayPreviewProject();
+      if (duplicateKind === 'project') {
+        listProjectsMock.mockResolvedValue([project, { ...project }]);
+      } else if (duplicateKind === 'environment') {
+        project.environments.push({ ...project.environments[1] });
+        listProjectsMock.mockResolvedValue([project]);
+      } else {
+        project.environments[1].services.push({
+          id: 'worker-other',
+          name: 'ARCANOS Worker',
+        });
+        listProjectsMock.mockResolvedValue([project]);
+      }
+
+      await expect(executeWorkerRepairActuator({
+        source: 'isolated-acceptance-test',
+        approval: validRailwayApproval(),
+      }, { onDispatch })).rejects.toThrow();
+
+      expect(onDispatch).not.toHaveBeenCalled();
+      expect(deployServiceMock).not.toHaveBeenCalled();
+    }
+  );
+
+  it('selects one explicit service ID among same-name preview services', async () => {
+    configureRailwayPreview();
+    const project = railwayPreviewProject();
+    project.environments[1].services.push({
+      id: 'worker-other',
+      name: 'ARCANOS Worker',
+    });
+    listProjectsMock.mockResolvedValue([project]);
+    environment.set('SELF_HEAL_WORKER_SERVICE_ID', 'worker-preview');
+
+    await executeWorkerRepairActuator({
+      source: 'isolated-acceptance-test',
+      approval: validRailwayApproval(),
+    });
+
+    expect(deployServiceMock).toHaveBeenCalledWith({
+      environmentId: 'environment-preview',
+      serviceId: 'worker-preview',
+    });
+  });
+
+  it.each([
+    undefined,
+    { ...validRailwayApproval(), approved: false },
+    { ...validRailwayApproval(), action: 'worker repair actuator remote_worker_helper' },
+    { ...validRailwayApproval(), expiresAt: '2000-01-01T00:00:00.000Z' },
+  ])('requires current action-specific operator approval before target discovery', async (approval) => {
+    configureRailwayPreview();
+    const onDispatch = jest.fn();
+
+    await expect(executeWorkerRepairActuator({
+      source: 'isolated-acceptance-test',
+      approval,
+    }, { onDispatch })).rejects.toThrow(/requires explicit operator approval/u);
+
+    expect(onDispatch).not.toHaveBeenCalled();
+    expect(listProjectsMock).not.toHaveBeenCalled();
+    expect(deployServiceMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps web-role repair disabled even with exact scope and approval', async () => {
+    configureRailwayPreview();
+    const onDispatch = jest.fn();
+    isWorkerRuntimeSuppressedForServiceRoleMock.mockReturnValue(true);
+
+    await expect(executeWorkerRepairActuator({
+      source: 'isolated-acceptance-test',
+      approval: validRailwayApproval(),
+    }, { onDispatch })).rejects.toThrow(/disabled in the web service role/u);
+
+    expect(onDispatch).not.toHaveBeenCalled();
+    expect(listProjectsMock).not.toHaveBeenCalled();
+    expect(deployServiceMock).not.toHaveBeenCalled();
+  });
+
+  it('preserves local repair without Railway scope or privileged approval', async () => {
+    getConfigMock.mockReturnValue({ runWorkers: true, workerApiTimeoutMs: 5_000 });
+
+    await expect(executeWorkerRepairActuator({
+      source: 'isolated-acceptance-test',
+    })).resolves.toEqual(expect.objectContaining({ mode: 'local_in_process' }));
+
+    expect(healWorkerRuntimeMock).toHaveBeenCalledWith(true, 'isolated-acceptance-test');
+    expect(listProjectsMock).not.toHaveBeenCalled();
+    expect(deployServiceMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('worker repair actuator dispatch boundary', () => {
+  it.each(['local', 'railway', 'remote'] as const)(
+    'records one dispatch before an approved %s repair completes',
+    async (mode) => {
+      const onDispatch = jest.fn();
+      const fetchMock = fetchReturning(() => new Response(JSON.stringify({
+        requestedForce: true,
+        restart: {
+          started: true,
+          alreadyRunning: false,
+          runWorkers: true,
+          message: 'Synthetic worker restart.',
+        },
+      }), { headers: { 'content-type': 'application/json' } }));
+      if (mode === 'local') {
+        getConfigMock.mockReturnValue({ runWorkers: true, workerApiTimeoutMs: 5_000 });
+      } else if (mode === 'railway') {
+        configureRailwayPreview();
+      } else {
+        configureRemoteWorker();
+      }
+
+      await executeWorkerRepairActuator({
+        source: 'isolated-acceptance-test',
+        approval: mode === 'railway' ? validRailwayApproval() : validRemoteApproval(),
+      }, {
+        onDispatch,
+        resolveWorkerHelperToken: () => workerHelperTokenA,
+        fetchFn: fetchMock as unknown as typeof fetch,
+      });
+
+      const operation = mode === 'local'
+        ? healWorkerRuntimeMock
+        : mode === 'railway' ? deployServiceMock : fetchMock;
+      expect(onDispatch).toHaveBeenCalledTimes(1);
+      expect(operation).toHaveBeenCalledTimes(1);
+      expect(onDispatch.mock.invocationCallOrder[0]).toBeLessThan(operation.mock.invocationCallOrder[0]);
+    }
+  );
+
+  it.each(['local', 'railway', 'remote'] as const)(
+    'records one dispatch when an approved %s operation throws',
+    async (mode) => {
+      const onDispatch = jest.fn();
+      const fetchMock = jest.fn(async (): Promise<Response> => {
+        throw new Error('Synthetic worker transport failure.');
+      });
+      if (mode === 'local') {
+        getConfigMock.mockReturnValue({ runWorkers: true, workerApiTimeoutMs: 5_000 });
+        healWorkerRuntimeMock.mockRejectedValueOnce(new Error('Synthetic local repair failure.'));
+      } else if (mode === 'railway') {
+        configureRailwayPreview();
+        deployServiceMock.mockRejectedValueOnce(new Error('Synthetic Railway repair failure.'));
+      } else {
+        configureRemoteWorker();
+      }
+
+      await expect(executeWorkerRepairActuator({
+        source: 'isolated-acceptance-test',
+        approval: mode === 'railway' ? validRailwayApproval() : validRemoteApproval(),
+      }, {
+        onDispatch,
+        resolveWorkerHelperToken: () => workerHelperTokenA,
+        fetchFn: fetchMock as unknown as typeof fetch,
+      })).rejects.toThrow();
+
+      const operation = mode === 'local'
+        ? healWorkerRuntimeMock
+        : mode === 'railway' ? deployServiceMock : fetchMock;
+      expect(onDispatch).toHaveBeenCalledTimes(1);
+      expect(operation).toHaveBeenCalledTimes(1);
+      expect(onDispatch.mock.invocationCallOrder[0]).toBeLessThan(operation.mock.invocationCallOrder[0]);
+    }
+  );
 });
 
 describe('worker repair actuator remote credential boundary', () => {
@@ -324,6 +657,7 @@ describe('worker repair actuator remote credential boundary', () => {
 
   it('does not fetch when operator approval is absent', async () => {
     configureRemoteWorker();
+    const onDispatch = jest.fn();
     const resolveWorkerHelperToken = jest.fn(() => workerHelperTokenA);
     const fetchMock = fetchReturning(() => new Response('{}', {
       status: 200,
@@ -333,11 +667,13 @@ describe('worker repair actuator remote credential boundary', () => {
     const error = await captureError(executeWorkerRepairActuator({
       source: 'focused-test',
     }, {
+      onDispatch,
       resolveWorkerHelperToken,
       fetchFn: fetchMock as unknown as typeof fetch,
     }));
 
     expect(error.message).toMatch(/requires explicit operator approval/i);
+    expect(onDispatch).not.toHaveBeenCalled();
     expect(serializeError(error)).not.toContain(workerHelperTokenA);
     expect(resolveWorkerHelperToken).toHaveBeenCalledTimes(1);
     expect(fetchMock).not.toHaveBeenCalled();
@@ -345,6 +681,7 @@ describe('worker repair actuator remote credential boundary', () => {
 
   it('does not fetch when no credential is available during status resolution', async () => {
     configureRemoteWorker();
+    const onDispatch = jest.fn();
     const resolveWorkerHelperToken = jest.fn((): string | null => null);
     const fetchMock = fetchReturning(() => new Response('{}', {
       status: 200,
@@ -355,17 +692,20 @@ describe('worker repair actuator remote credential boundary', () => {
       source: 'focused-test',
       approval: validRemoteApproval(),
     }, {
+      onDispatch,
       resolveWorkerHelperToken,
       fetchFn: fetchMock as unknown as typeof fetch,
     }));
 
     expect(error.message).toMatch(/configuration is incomplete/i);
+    expect(onDispatch).not.toHaveBeenCalled();
     expect(resolveWorkerHelperToken).toHaveBeenCalledTimes(1);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('does not fetch when the credential disappears before execution', async () => {
     configureRemoteWorker();
+    const onDispatch = jest.fn();
     const resolveWorkerHelperToken = jest.fn((): string | null => workerHelperTokenA);
     resolveWorkerHelperToken
       .mockReturnValueOnce(workerHelperTokenA)
@@ -379,11 +719,13 @@ describe('worker repair actuator remote credential boundary', () => {
       source: 'focused-test',
       approval: validRemoteApproval(),
     }, {
+      onDispatch,
       resolveWorkerHelperToken,
       fetchFn: fetchMock as unknown as typeof fetch,
     }));
 
     expect(error.message).toMatch(/configuration is incomplete/i);
+    expect(onDispatch).not.toHaveBeenCalled();
     expect(serializeError(error)).not.toContain(workerHelperTokenA);
     expect(resolveWorkerHelperToken).toHaveBeenCalledTimes(2);
     expect(fetchMock).not.toHaveBeenCalled();

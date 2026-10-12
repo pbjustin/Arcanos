@@ -309,6 +309,22 @@ requests and all other runtimes stay on the socket cohort. NAT/proxy users can
 therefore share a bucket, and botnets or rotating source networks still require
 an authenticated gateway or WAF.
 
+The generic route limiter remains process-local. Its default actor is a
+server-established identity, or the client address resolved by Express's
+configured `trust proxy` policy, with a socket-peer fallback. It does not read
+forwarding headers independently, and caller-selected sessions or unverified
+Authorization values do not select the default budget. The ask, query-finetune,
+and generic verification route budgets use the same stable resolver. Explicit
+credential and authenticated-principal tiers retain their separate policies.
+Each middleware retains at most 10,000 active SHA-256 counter keys. The optional
+`maxEntries` middleware option may lower this bound; invalid values use 10,000
+and larger values are capped at 10,000. A full map rejects new identities with
+the existing `429` response until request-driven expiry cleanup recovers space;
+it preserves active counters. These local budgets may aggregate NAT/proxy users
+and do not replace the shared production provider-admission ceiling above.
+Capacity retry headers use the earliest retained counter expiry and the next
+eligible request-driven cleanup time.
+
 The Redis decision seam has a fixed non-queuing process guard: no more than the
 smaller of 16 and the configured deployment maximum may be in flight at once.
 Excess bursts receive no-store `429` with bucket
@@ -1413,6 +1429,42 @@ KiB of JSON and returns only the requested-force value plus the allowlisted
 `restart.started`, `restart.alreadyRunning`, and `restart.runWorkers` values. It
 validates but discards target-controlled message text and generates a local
 `restart.message` from those booleans.
+
+### Railway worker repair scope
+
+The `railway_service_deploy` actuator requires an explicit `RAILWAY_PROJECT_ID`
+and either `RAILWAY_ENVIRONMENT_ID` or an exact configured environment name.
+Railway normally injects the project and environment IDs. Name selectors
+`SELF_HEAL_TARGET_ENVIRONMENT`, `RAILWAY_ENVIRONMENT_NAME` and
+`RAILWAY_ENVIRONMENT` must agree when present and must match the environment ID
+when one is provided. A missing, unmatched, conflicting or ambiguous scope is
+rejected before deployment; repair never falls back to another project or
+environment. The configured worker service ID, or exact worker service name,
+must resolve to one service in that environment.
+
+Explicit operator approval and service-role admission still precede dispatch.
+Target resolution does not authorize a deployment or establish preview
+isolation. A denied preflight is not an executed repair; dispatched failures
+consume the coordinator's cooldown and per-diagnosis attempt budget.
+
+### Self-healing mitigation lifecycle
+
+Mitigation state remains process-local and is lost on restart. Trinity commands
+and prompt-route policies use generation identities so an older consumer or
+verification cycle cannot clear or verify a replacement. Prompt policies expire
+after ten minutes at the next state or policy read without requiring a controller
+tick or a new environment variable.
+
+Trinity and provider recovery require sufficient fresh traffic on the affected
+baseline consumer route (three samples by default). Unrelated health requests
+and missing attribution cannot verify recovery. Trinity also requires actual
+matching-command consumer successes; provider reloads require fresh non-cached
+provider success receipts in the existing bounded telemetry buffer. Diagnostic
+pings cannot replace those receipts. Evidence-starved verification
+expires at the configured incident-window boundary and records failure with an
+ineffective-action cooldown. Worker repair verification requires measurable
+worker or queue improvement. These rules do not establish state delivery between
+separate Railway services or persistence across restarts.
 
 ### PostgreSQL candidate limitation
 

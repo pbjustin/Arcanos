@@ -125,7 +125,8 @@ import {
   getTrinitySelfHealingMitigation,
   noteTrinityMitigationOutcome,
   recordTrinityStageFailure,
-  type TrinitySelfHealingAction
+  type TrinitySelfHealingAction,
+  type TrinitySelfHealingStage
 } from '@services/selfImprove/selfHealingV2.js';
 
 const MIN_ESCALATION_BUDGET_MS = 5000;
@@ -1016,6 +1017,26 @@ export async function runThroughBrain(
       tier,
       answerMode: outputControls.answerMode
     });
+    const withMitigationFailureTracking = async <T>(
+      operation: () => Promise<T>,
+      stage: TrinitySelfHealingStage | null,
+      action: TrinitySelfHealingAction | null,
+      mitigationId: number | null
+    ): Promise<T> => {
+      try {
+        return await operation();
+      } catch (error) {
+        // Caller cancellation is not evidence that a mitigation is ineffective.
+        throwIfRequestAborted();
+        if (stage && action) {
+          noteTrinityMitigationOutcome({
+            stage, action, mitigationId, outcome: 'failure', requestId,
+            sourceEndpoint: options.sourceEndpoint
+          });
+        }
+        throw error;
+      }
+    };
     const directAnswerReason =
       directAnswerPreferenceReason ??
       (internalMode
@@ -1654,7 +1675,12 @@ export async function runThroughBrain(
 
     //audit Assumption: explicit anti-simulation prompts on the main Trinity route should bypass persona-heavy multi-stage framing; failure risk: the normal intake/final pipeline or translator reintroduces theatrical language after the operator asked for a direct answer; expected invariant: direct-answer mode performs one guarded model call with strict output cleanup while preserving telemetry, audit, and budget controls; handling strategy: branch inside the guarded execution window when the prompt explicitly requests direct, non-simulated output.
     if (shouldPreferDirectAnswerMode) {
-      const directAnswerResult = await completeWithDirectAnswer(String(directAnswerReason));
+      const directAnswerResult = await withMitigationFailureTracking(
+        () => completeWithDirectAnswer(String(directAnswerReason)),
+        selfHealingMitigation.forceDirectAnswer ? selfHealingMitigation.stage : null,
+        selfHealingMitigation.activeAction,
+        selfHealingMitigation.mitigationId ?? null
+      );
       if (
         selfHealingMitigation.forceDirectAnswer &&
         selfHealingMitigation.activeAction &&
@@ -1665,7 +1691,8 @@ export async function runThroughBrain(
           outcome: 'success',
           requestId,
           sourceEndpoint: options.sourceEndpoint,
-          action: selfHealingMitigation.activeAction
+          action: selfHealingMitigation.activeAction,
+          mitigationId: selfHealingMitigation.mitigationId ?? null
         });
       }
       return directAnswerResult;
@@ -1719,18 +1746,23 @@ export async function runThroughBrain(
           stage: 'intake',
           error: resolveErrorMessage(error),
           requestId,
-          sourceEndpoint: options.sourceEndpoint
+          sourceEndpoint: options.sourceEndpoint,
+          mitigationId: selfHealingMitigation.stageMitigationIds?.intake ?? null
         });
-        const recoveredResult = await completeWithDirectAnswer('intake_timeout_fallback', {
-          recovery: true,
-          recoveryError: error
-        });
+        const intakeRecoveryMitigationId = intakeRecoveryAction ? getTrinitySelfHealingMitigation({
+          tier, answerMode: outputControls.answerMode
+        }).stageMitigationIds?.intake ?? null : null;
+        const recoveredResult = await withMitigationFailureTracking(
+          () => completeWithDirectAnswer('intake_timeout_fallback', { recovery: true, recoveryError: error }),
+          'intake', intakeRecoveryAction, intakeRecoveryMitigationId
+        );
         noteTrinityMitigationOutcome({
           stage: 'intake',
           outcome: 'success',
           requestId,
           sourceEndpoint: options.sourceEndpoint,
-          action: intakeRecoveryAction
+          action: intakeRecoveryAction,
+          mitigationId: intakeRecoveryMitigationId
         });
         return recoveredResult;
       }
@@ -1788,18 +1820,23 @@ export async function runThroughBrain(
           stage: 'reasoning',
           error: resolveErrorMessage(error),
           requestId,
-          sourceEndpoint: options.sourceEndpoint
+          sourceEndpoint: options.sourceEndpoint,
+          mitigationId: selfHealingMitigation.stageMitigationIds?.reasoning ?? null
         });
-        const recoveredResult = await completeWithDirectAnswer('reasoning_timeout_fallback', {
-          recovery: true,
-          recoveryError: error
-        });
+        const reasoningRecoveryMitigationId = reasoningRecoveryAction ? getTrinitySelfHealingMitigation({
+          tier, answerMode: outputControls.answerMode
+        }).stageMitigationIds?.reasoning ?? null : null;
+        const recoveredResult = await withMitigationFailureTracking(
+          () => completeWithDirectAnswer('reasoning_timeout_fallback', { recovery: true, recoveryError: error }),
+          'reasoning', reasoningRecoveryAction, reasoningRecoveryMitigationId
+        );
         noteTrinityMitigationOutcome({
           stage: 'reasoning',
           outcome: 'success',
           requestId,
           sourceEndpoint: options.sourceEndpoint,
-          action: reasoningRecoveryAction
+          action: reasoningRecoveryAction,
+          mitigationId: reasoningRecoveryMitigationId
         });
         return recoveredResult;
       }
@@ -1935,10 +1972,11 @@ export async function runThroughBrain(
     logArcanosRouting('FINAL_FILTERING', actualModel, 'Processing GPT-5 reasoning output through ARCANOS');
     routingStages.push('ARCANOS-FINAL');
     let finalRecoveryAction: TrinitySelfHealingAction | null = selfHealingMitigation.bypassFinalStage
-      ? selfHealingMitigation.activeAction
+      ? 'bypass_final_stage'
       : null;
+    let finalRecoveryMitigationId = selfHealingMitigation.stageMitigationIds?.final ?? null;
     const recoverFinalWithAuthority = async (): Promise<Awaited<ReturnType<typeof runFinalStage>>> => {
-      const recoveredOutput = await runLoggedStage({
+      const recoveredOutput = await withMitigationFailureTracking(() => runLoggedStage({
         requestId,
         stage: 'final-authority-recovery',
         runtimeBudget,
@@ -1968,7 +2006,7 @@ export async function runThroughBrain(
           options.directAnswerUntrustedContextPrompt,
           options.cooperativeModelStageTimeout
         )
-      });
+      }), 'final', finalRecoveryAction, finalRecoveryMitigationId);
       // Recovery remains fallback output and cannot admit a completed Gaming answer.
       return { ...recoveredOutput, fallbackUsed: true };
     };
@@ -1980,7 +2018,8 @@ export async function runThroughBrain(
         requestId,
         sourceEndpoint: options.sourceEndpoint,
         tier,
-        action: selfHealingMitigation.activeAction
+        action: finalRecoveryAction,
+        mitigationId: finalRecoveryMitigationId
       });
       finalOutput = await recoverFinalWithAuthority();
     } else {
@@ -2017,8 +2056,12 @@ export async function runThroughBrain(
             stage: 'final',
             error: resolveErrorMessage(error),
             requestId,
-            sourceEndpoint: options.sourceEndpoint
+            sourceEndpoint: options.sourceEndpoint,
+            mitigationId: selfHealingMitigation.stageMitigationIds?.final ?? null
           });
+          finalRecoveryMitigationId = finalRecoveryAction ? getTrinitySelfHealingMitigation({
+            tier, answerMode: outputControls.answerMode
+          }).stageMitigationIds?.final ?? null : null;
           auditFlags.push('SELF_HEAL_V2_FINAL_DEGRADED_MODE');
           logger.warn('self_heal.v2.final_degraded_response', {
             module: 'self_heal.v2',
@@ -2298,7 +2341,8 @@ export async function runThroughBrain(
         outcome: 'success',
         requestId,
         sourceEndpoint: options.sourceEndpoint,
-        action: finalRecoveryAction ?? selfHealingMitigation.activeAction
+        action: finalRecoveryAction ?? selfHealingMitigation.activeAction,
+        mitigationId: finalRecoveryMitigationId
       });
     }
     return result;

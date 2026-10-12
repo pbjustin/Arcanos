@@ -125,6 +125,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   resetPromptRouteMitigationStateForTests();
+  jest.useRealTimers();
   process.env.NODE_ENV = originalNodeEnv;
   if (originalAuthority === undefined) delete process.env.FINETUNED_MODEL_ID;
   else process.env.FINETUNED_MODEL_ID = originalAuthority;
@@ -361,6 +362,51 @@ describe('handlePrompt', () => {
       })
     );
   });
+
+  it.each(['reduced_latency', 'degraded_response'] as const)(
+    'returns the real HTTP consumer to normal execution after %s expires', async mode => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-10-12T09:00:00.000Z'));
+      validateAIRequest.mockReturnValue({ input: 'hello', client: {} });
+      runTrinityWritingPipeline.mockResolvedValue(buildTrinityPromptResult('ok', 'ft:default-model'));
+      if (mode === 'reduced_latency') activatePromptRouteReducedLatencyMode('temporary incident', 256);
+      else activatePromptRouteDegradedMode('temporary incident');
+      const request = () => ({
+        body: { prompt: 'hello' }, logger: { warn: jest.fn(), info: jest.fn() }
+      });
+      const response = () => ({ json: jest.fn(), setHeader: jest.fn() });
+
+      await handlePrompt(request() as any, response() as any);
+      if (mode === 'degraded_response') {
+        expect(generateDegradedResponse).toHaveBeenCalledTimes(1);
+        expect(runTrinityWritingPipeline).not.toHaveBeenCalled();
+      } else {
+        expect(runTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
+          input: expect.objectContaining({ tokenLimit: 96 })
+        }));
+      }
+
+      jest.advanceTimersByTime(10 * 60_000);
+      jest.clearAllMocks();
+      const freshRequest = request();
+      await handlePrompt(freshRequest as any, response() as any);
+      expect(generateDegradedResponse).not.toHaveBeenCalled();
+      expect(runTrinityWritingPipeline).toHaveBeenCalledTimes(1);
+      expect(runTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
+        input: expect.objectContaining({ body: expect.objectContaining({
+          model: 'ft:default-model', mitigation: expect.objectContaining({
+            mitigationMode: 'normal', bypassedSubsystems: []
+          })
+        }) }),
+        context: expect.objectContaining({ runOptions: expect.objectContaining({
+          watchdogModelTimeoutMs: DEFAULT_PROMPT_ROUTE_PROVIDER_TIMEOUT_MS
+        }) })
+      }));
+      expect(freshRequest.logger.warn).not.toHaveBeenCalled();
+      expect(getPromptRouteMitigationState()).toMatchObject({
+        active: false, mode: null, reason: 'mitigation_ttl_expired'
+      });
+    }
+  );
 
   it('fast-trips into reduced latency mode after repeated prompt timeout incidents', async () => {
     validateAIRequest.mockReturnValue({ input: 'hello', client: {} });

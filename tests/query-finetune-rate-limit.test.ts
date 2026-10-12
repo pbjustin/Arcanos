@@ -24,4 +24,25 @@ describe('queryFinetune rate limit scoping', () => {
       expect(response.body.ok).toBe(true);
     }
   });
+
+  it('rejects identity rotation after the query route client budget is exhausted', async () => {
+    const app = buildApp();
+    for (let index = 0; index < 30; index += 1) {
+      await request(app).post('/query-finetune')
+        .set('X-Session-Id', `synthetic-session-${index}`)
+        .set('Authorization', `Bearer test-invalid-${index}`)
+        .set('X-Forwarded-For', `198.51.100.${index + 1}`)
+        .send({})
+        .expect(400);
+    }
+
+    const exhausted = await request(app).post('/query-finetune')
+      .set('X-Session-Id', 'synthetic-session-overflow')
+      .set('Authorization', 'Bearer test-invalid-overflow')
+      .set('X-Forwarded-For', '198.51.100.99')
+      .send({});
+
+    expect(exhausted.status).toBe(429);
+    expect(exhausted.headers['x-ratelimit-bucket']).toBe('query-finetune');
+  });
 });

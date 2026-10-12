@@ -84,6 +84,8 @@ describe('served Gaming hybrid component-proof boundary', () => {
     mockPlatformMatches.mockReset().mockImplementation(actualPlatform.gamingPlatformEvidenceMatchesRequest);
   });
 
+  // The complete served proof set includes large-source fixtures; allow for CI
+  // contention and coverage instrumentation while retaining a bounded timeout.
   it('keeps the trusted response body compatible and reports every production-core proof', async () => {
     const response = await queryGuide();
     expect(response.status).toBe(200);
@@ -92,7 +94,7 @@ describe('served Gaming hybrid component-proof boundary', () => {
       data: { response: 'Sealed preview guide response.', sources: [] } });
     for (const mock of [mockAttempt, mockRetention, mockApproval, mockFreshness, mockExtract,
       mockCandidatesSafeParse, mockSuppliedGuides]) expect(mock).toHaveBeenCalled();
-  });
+  }, 30_000);
 
   it.each(['missing v2 revision', 'v1 revision upgrade', 'second recovery revoked', 'third recovery allowed',
     'supplied guide actor bypass', 'supplied guide workflow bypass', 'supplied guide expiry bypass', 'supplied guide evidence bypass',

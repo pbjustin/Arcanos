@@ -1134,7 +1134,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/platform/runtime/security.ts',
-    '080cbb45b1bbb0d5cb6a7a9319c70699c1e455b1d652f52e1449ec3fe2a28541',
+    '72ff52cfda961de53da4c8baab513b60ae964410817a6077465aa35bc5d59af1',
   ],
   [
     'src/services/controlPlane/httpAuth.ts',

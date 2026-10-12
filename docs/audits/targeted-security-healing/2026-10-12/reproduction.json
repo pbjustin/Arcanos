@@ -1,0 +1,103 @@
+{
+  "scope": "Exact-base local regression reproduction, synthetic data only; no live acceptance",
+  "base_sha": "3fd305b37ba410cf21684a8fed7619a1ba180b48",
+  "implementation_verification_sha": "74ab1c5826e3ac8f90f6869012788d2fb86019fc",
+  "node": "24.18.1",
+  "npm": "11.16.0",
+  "powershell": "7.4.13",
+  "canonical_proxy_addr": "2.0.8",
+  "base_source_sha256": {
+    "src/platform/runtime/security.ts": "1e0710fefc257a0362ccc4bafad38f570ac414aea63f5f46c17e133c53b9ff14",
+    "src/app.ts": "573a5ed2b7dfc89b7ef10cf6aaa22c3d1b40878bf4b692e8750b93248a3e83a1",
+    "src/services/selfImprove/controlLoop.ts": "0b248f77bdb5ccc7c2a196261552ac50f567bd64fd2072a0335e4c683bd17e01",
+    "src/services/selfImprove/selfHealingLoop.ts": "86efe76f6d70185e098a3f2a9b085600424b2f4d4f3933f3affeda152eaaa89a",
+    "src/services/selfImprove/selfHealingV2.ts": "b4a8424f9a4ffcbeb9d8218a8dedac1c03fb37a030975e38e2b79de6a11e02c1",
+    "arcanos-ai-runtime/src/runtime/executionController.ts": "13cd08ee8d7d198de27e6316bdf51c120bf629c138e6838a6a64f74f7093c65d"
+  },
+  "regression_fixture_sha256": {
+    "tests/security-rate-limit.test.ts": "4f71ddde83b2fe639208dd1acf305c9477321272459dfac8ee6f608882463d78",
+    "tests/query-finetune-rate-limit.test.ts": "bb877d730b4841996098641ccd60ac562cdf979425ed854cf66285f5b34791b5",
+    "tests/public-provider-rate-limit-store.test.ts": "3b1271a1a33702bd2c6dfbee4c0a832ac78469a3db6544d94cba1904f745e341",
+    "tests/app-runtime-worker-startup.test.ts": "300e16ac910971819c42bd46464e9d87c095240ed9d7a068133e9ca1f35ec8e0",
+    "tests/self-heal-control-loop-startup.test.ts": "57e81319c2b214dcb8af8e04ab3ee4656e70caa56f7edf0b320e09a0594fc806",
+    "tests/self-healing-v2.test.ts": "6e3730c626e7a5de69d8dc25c0f17dd0f3c39f2b3c3c78ddad7d4ddbb156b675",
+    "arcanos-ai-runtime/tests/runtime_integration.test.js": "743d33e259cffd448ce48738d50acfb3351b4ac082ba6e10baf2c09d9df33e34"
+  },
+  "security_base": {
+    "suites_failed": 2,
+    "suites_passed": 1,
+    "tests_failed": 7,
+    "tests_passed": 30,
+    "tests_total": 37,
+    "log_sha256": "af14794acbd615d5ce01966eea421915c4ffe27d26680692b352685867b5dbd8"
+  },
+  "security_fixed": {
+    "suites_passed": 3,
+    "tests_passed": 37,
+    "log_sha256": "5c3316e7d21dd944356b4754db0b7c6c2bb97f4ddcce96c9cd6905d055b5865b"
+  },
+  "healing_base": {
+    "suites_failed": 3,
+    "tests_failed": 3,
+    "tests_passed": 8,
+    "tests_total": 11,
+    "log_sha256": "9666e42c237de35dcefeaa35d6d981162a36d08250c7f9c956558bf2220345e5"
+  },
+  "log_location": "/workspace; full logs remain outside Git; observed failures are summarized in README.md",
+  "confidence_base": {
+    "tests_failed": 2,
+    "tests_passed": 8,
+    "tests_total": 10,
+    "tests_skipped": 0,
+    "log_sha256": "cc5069d8b918c031178e4fc30aee9df1e7c8461b6448a169370b361d9af8f3f5"
+  },
+  "canonical_runtime_fixed": {
+    "tests_passed": 79,
+    "tests_total": 79,
+    "tests_skipped": 0,
+    "suites_passed": 7,
+    "log_sha256": "eac4d1b5656829fd273791b186ef5ee5740ff51e93d1bf35f0ded79fa714372f"
+  },
+  "automatic_tick_base": {
+    "tests_failed": 1,
+    "tests_skipped": 4,
+    "tests_total": 5,
+    "selected_fixture": "suppresses automatic startup and interval entrypoints",
+    "log_sha256": "064423658166d4d4c825b353adb3870c30295642557f7bb106f692d170f64e68"
+  },
+  "canonical_root_fixed": {
+    "suites_passed": 896,
+    "suites_skipped": 13,
+    "suites_total": 909,
+    "tests_passed": 17485,
+    "tests_skipped": 167,
+    "tests_failed": 0,
+    "tests_total": 17652,
+    "elapsed_seconds": 506.357,
+    "log_sha256": "6366e01dcfd6b53eb7451d80c9a809aec4e5beb6638a71f6e39076e91ae7d2af"
+  },
+  "canonical_gates": {
+    "install": {
+      "outcome": "passed",
+      "log_sha256": "b4493c21ab46330eb6a332ee4508e8f42e38626d3e279ca4823cfcc6d6021591"
+    },
+    "type_check": {
+      "outcome": "passed",
+      "log_sha256": "82c45ad386f9769567052c6ed1b2b78434ef817bfe3d475c3cc908cb0dbfe9ec"
+    },
+    "lint": {
+      "outcome": "passed",
+      "log_sha256": "de49353b00c1f9a0bee857ef4905a05dd0cf3aa524081e5b0e9f519f2cf18b0f"
+    },
+    "build": {
+      "outcome": "passed",
+      "log_sha256": "92a6669518eca211fc04c8f1815a9bac16079c4ce5fbbf15b60920135c94e2c0"
+    },
+    "railway_static": {
+      "outcome": "passed",
+      "log_sha256": "2d768b97d1cbc16c2babe66e0677622d0d4ffd473b06f338aedfe38174f8450a"
+    }
+  },
+  "published_implementation_sha": "7d210aef829ccc61f43f7214bbe341c0508b97bc",
+  "verified_implementation_tree_sha": "cfe36333ce81dfbb2b2921da4f63ab04500d884d"
+}

@@ -10,7 +10,7 @@ import { validateAIRequest, handleAIError, logRequestFeedback } from "@transport
 import { confirmGate } from "@transport/http/middleware/confirmGate.js";
 import {
   createRateLimitMiddleware,
-  getRequestActorKey,
+  getRequestRateLimitActorKey,
   securityHeaders
 } from "@platform/runtime/security.js";
 import type {
@@ -112,7 +112,7 @@ const askRateLimit = createRateLimitMiddleware({
   bucketName: 'ask-route',
   maxRequests: 120,
   windowMs: 15 * 60 * 1000,
-  keyGenerator: (req) => `${getRequestActorKey(req)}:route:ask`
+  keyGenerator: (req) => `${getRequestRateLimitActorKey(req)}:route:ask`
 });
 
 const SYSTEM_REVIEW_PROMPT = `You are operating in SYSTEM_REVIEW mode.

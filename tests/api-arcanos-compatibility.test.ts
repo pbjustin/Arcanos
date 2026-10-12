@@ -18,7 +18,8 @@ jest.unstable_mockModule('@transport/http/middleware/confirmGate.js', () => ({
 jest.unstable_mockModule('@platform/runtime/security.js', () => ({
   createValidationMiddleware: () => (_req: unknown, _res: unknown, next: () => void) => next(),
   createRateLimitMiddleware: () => (_req: unknown, _res: unknown, next: () => void) => next(),
-  getRequestActorKey: () => 'compat-test-actor'
+  getRequestActorKey: () => 'compat-test-actor',
+  getRequestRateLimitActorKey: () => 'compat-test-actor'
 }));
 
 jest.unstable_mockModule('@transport/http/requestHandler.js', () => ({

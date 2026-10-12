@@ -52,8 +52,8 @@ describe('application runtime worker ownership', () => {
     expect(startAppRuntimeOnce(app)).toBe(false);
 
     expect(startConfiguredWorkerRuntime).toHaveBeenCalledTimes(1);
-    expect(startSelfHealingControlLoop).toHaveBeenCalledTimes(1);
-    expect(startSelfHealingControlLoop).toHaveBeenCalledWith(app);
+    // The server owns the canonical self-healing scheduler after readiness.
+    expect(startSelfHealingControlLoop).not.toHaveBeenCalled();
     expect(logStartupSummary).toHaveBeenCalledTimes(1);
     expect(logStartupSummary).toHaveBeenCalledWith(app);
   });

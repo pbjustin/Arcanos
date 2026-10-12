@@ -77,6 +77,15 @@ explicitly confirmed disposable loopback Redis database; the required CI job
 provides that service. Never point this suite at shared, developer, staging, or
 production Redis.
 
+The standalone execution controller defaults to a single provider pass. Its
+internal `secondPassPolicy` accepts `never` (the default) or
+`if_budget_available`, which requests at most one refinement pass when the
+existing runtime budget permits it. The draft retains its untrusted-input
+sanitization and bounds. This is an explicit caller decision, not a measure of
+model confidence. Source consumers of the removed internal `secondPassThreshold`
+option must choose a policy intentionally; neither option is part of the HTTP
+or queued-job contract.
+
 For a separately authorized standalone run, provide the documented
 [runtime configuration](CONFIGURATION.md#standalone-bullmqredis-ai-runtime)
 in each process environment; these entry points do not load the root `.env`.

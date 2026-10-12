@@ -1,0 +1,725 @@
+# Self-healing ownership and data flow
+
+## Current assessment — synthetic verification, owner-deferred live acceptance
+
+Executable source and regression fixtures: `400be1912b9e429c9ea0ffdd8f0d07950a82d80c`. The documentation-only head observed while preparing this update was `a7355c8cbe28ac5fdd285c45b031a4c07e416d22`; final PR/evidence head, base, required checks and review state are recorded by [CI and review receipts](synthetic-ci-evidence.md): documentation head `a7355c8cbe28ac5fdd285c45b031a4c07e416d22`, CI/CD [38310400872](https://github.com/pbjustin/Arcanos/actions/runs/38310400872), required `docs:check` and `All Checks Complete` PASS; PR open/non-draft, CLEAN/MERGEABLE, zero unresolved threads. Final documentation-head receipts are linked in the PR description after fresh checks.. Final full results: Full CI: 901 suites / 17,584 tests passed; 13 suites / 167 tests skipped. Complete local sweep: 899 suites / 17,540 tests passed; two suites / 44 assertions failed before PowerShell was available, all subsequently passed unchanged in two focused reruns (55 passed, two existing Windows-only skips). Repeated sweeps are not added as unique tests..
+
+**Live acceptance: NOT_RUN.** Code merge readiness under the revised owner policy is separate from unverified live operational readiness. This mission created no Railway resource, deployed no application and performed no production operation. See [synthetic verification](synthetic-verification-report.md) for exact commands and scenario evidence.
+
+| Ownership | Actual implementation and boundary |
+| --- | --- |
+| Detection/diagnosis | Canonical `selfHealingLoop.ts` reads actual diagnostic aggregation, provider/worker observations and V2 status. V2 separately observes stage failures in the executing Trinity process. External observation adapters are deterministic substitutes in synthetic tests. |
+| Mitigation decision | Canonical coordinator/predictive-reactive policy selects one bounded authorized path; uncertain predictive ownership suppresses competing effects. Optional proposal/reflection escalation is a recorded synthetic seam. |
+| HTTP authorization | Real control-plane bearer, operator role, exact scopes and capability gate precede execution. Caller session, forged forwarding metadata or automation capability alone cannot establish bearer identity. |
+| Application | V2 and prompt command APIs mutate actual process-local state; worker retry/repair uses its existing ownership and actuator boundaries. Provider reload application/acknowledgement remains an explicit injected seam. |
+| Consumption | Actual Trinity writing/engine consumer captures the immutable V2 command ID, changes executed stages and reports outcomes for that ID. Actual prompt handler reads expiring policy; actual worker slot forwards failures into real retry/repository policy. |
+| Recovery | Known affected route needs three fresh post-command samples. Trinity additionally needs three actual successes and verification on the captured command. Provider reload requires three fresh `openai.resilience.success` receipts; cache-hit success does not qualify. Worker recovery requires usable fresh worker/queue state. |
+| Clearing/rollback | V2 and prompt command identities fence older rollback/verification. Both prompt modes expire after ten minutes at the shared state/policy accessor; V2 keeps its existing TTL. Caller cancellation does not count as an ineffective actuator failure. |
+| Restart/bounds | State is process-local and transient; fresh Node process explicitly invalidates it, rather than pretending restoration. V2 retains only the configured activation-threshold samples per stage (three by default). Attempts, cooldown and starved verification ownership are bounded. |
+
+```mermaid
+flowchart LR
+  D[Actual diagnostic aggregation] --> C[Canonical controller]
+  C --> A[Authorization and ownership policy]
+  A --> M[Process-local mitigation command plus ID]
+  M --> T[Actual Trinity or prompt consumer]
+  T --> R[Captured-ID outcomes and fresh execution receipts]
+  R --> V[Consumer-scoped verification]
+  V --> X[ID-checked rollback or TTL expiry]
+```
+
+The graph describes a single process's actual application flow. It does not introduce shared mitigation state between independent web/worker replicas. The older `controlLoop.ts` scheduler stays deliberately disabled while its inspection/API compatibility remains; explicit web-role automatic loops remain suppressed. Authorized manual web commands still reach the actual web Trinity consumer. Startup and role tests prove local ownership; production service configuration must still be reviewed separately.
+
+Joined synthetic evidence proves three actual SDK Trinity executions emitted real consumer receipts and used the command. A second joined provider-reload case makes twelve authenticated loopback SDK POSTs across three Trinity runs and emits real `openai.resilience.success` receipts. Diagnostic route samples and reload acknowledgement are synthetic seams: this proves the receipt gate and consumer execution, not that a genuine provider reload caused live recovery.
+
+Process-local incidents are diagnosis-scoped, not durable distributed incident IDs. Cross-process restoration/deduplication, live deployment wiring and real provider/database/Redis behavior remain operational limitations. See [red-to-green evidence](synthetic-red-to-green-evidence.md) and [merge readiness](self-healing-merge-readiness.md). A separate production deployment review remains required.
+
+---
+
+## Historical live acceptance records — preserved
+
+Everything below this divider records earlier preview/staging attempts and their policy at the time. Earlier live-gate blockers and merge verdicts are historical; they have not been rewritten into successful tests. The current assessment above uses the owner's explicit decision to defer live verification.
+
+## Second authorized staging attempt — pre-provisioning status, 2026-10-12
+
+The owner authorized one additional isolated attempt, the same executable
+`4b4e31a54b819a3597ef3ee163a46e1a7b59fc67`, a fresh maximum two-hour window,
+and a $10 operational target. This attempt's window is **NOT_STARTED**:
+no staging project, service, volume, database or deployment was created.
+The first attempt's expired deadline is not reused.
+
+Current PR head inspected at20:03UTC is
+`1fd837c6fbc9871689f4662db309cc1b9de09c9f`, open/non-draft/unmerged,
+base `3fd305b37ba410cf21684a8fed7619a1ba180b48`.
+Only these five audit documents differ from approved source; its Git tree is
+`d8af527bedcff236fc707184cfe822c9004ef446`.
+CLI OAuth authentication succeeds; pinned Railway5.23.3 binary SHA256 is
+`0d6b51f7e708eeb28d5f0f649cef9d24bc00151d833329a84fc1cc47b1e8e040`.
+Fresh inventory shows only the two preexisting projects and none of the
+three removed assignment probes.
+
+**PREFLIGHT_VERIFIED: BLOCKED. INDEPENDENT_CLEANUP_VERIFIED: BLOCKED.**
+No operational independent cleanup controller is available through the
+inspected interfaces. The existing lifecycle runs every six hours and deletes
+only its fixed production-project preview environments. Closed-PR cleanup
+requires closing the PR and has a fixed topology. Stacked-draft cleanup is
+disabled, restricted to other PRs and excludes the existing workspace.
+The self-healing preflight is PR-only/read-only, not a registered default-branch
+workflow. The protected GitHub environment admits only `main`; repository and
+environment secret metadata both return HTTP403 `Resource not accessible by
+integration`. That does not prove secrets are absent. These are operational
+scope/permission limits, not a reproduced application defect.
+
+The user's required cleanup instruction is explicit: “A written cleanup plan,
+local timer, or promise to delete later is not sufficient.” No local watchdog
+was restarted and no existing production workflow/security boundary weakened.
+An independently hosted controller with securely configured Railway deletion
+authority, immutable-ID receipt registration, partial-provisioning handling,
+deadline execution, idempotency, read-back and durable audit evidence must
+be operational before provisioning. The owner confirmed no existing independent
+controller is available; no credential was requested in chat. A separate
+Railway-hosted controller is possible in principle, but its securely scoped
+credentials, deletion rights, precreation execution and durable audit are
+unverified; it was not provisioned.
+
+All fourteen genuine live scenarios remain **BLOCKED / execution NOT_RUN**.
+No app artifact, incident, mitigation or Trinity consumer was tested.
+LIVE_ACCEPTANCE_VERIFIED and MERGE_READY remain **BLOCKED**. Previously verified
+probe removal remains PASS; it is not independent automatic cleanup proof.
+
+## Final cleanup verification — 2026-10-12, 19:50:29 UTC
+
+**CLEANUP_VERIFIED: PASS. LIVE_ACCEPTANCE_VERIFIED: BLOCKED.
+MERGE_READY: BLOCKED.**
+
+Fresh authenticated CLI and connected-tool inventories independently show
+all three assignment-created project IDs absent:
+`21a05b97-59f7-435f-8a3a-234eb722cb6c`,
+`7bd0536d-95c1-4db9-a766-6a0f49547617`, and
+`db505b48-74f0-4571-9cd3-52bc865ff2cd`.
+Both preexisting project IDs remain visible in both inventories.
+Production's four service/deployment identities and SUCCESS statuses match the
+read-only baseline. No assignment-created project, service or volume remains
+in the control-plane inventory. Accrued charges and retained-backup billing
+are unverified; deletion is not an invoice showing zero charges.
+
+The first-resource deadline `2026-10-12T19:38:25.364Z` has expired.
+This run is closed; no new resource or application deployment was started.
+The corrected automated service/volume cleanup rehearsal did not complete,
+so precreation cleanup proof for a future run remains **BLOCKED**, although
+owner dashboard cleanup and final resource absence are now verified.
+
+Inspected PR head `14bddcd58054c54ef1a052c01d0e1c0a6a94dca6` remains
+open/non-draft/unmerged. Only these five documents differ from approved
+executable `4b4e31a54b819a3597ef3ee163a46e1a7b59fc67`.
+No Railway application artifact, live incident, runtime mitigation or consumer
+execution was tested. All fourteen live scenarios remain **BLOCKED / execution
+NOT_RUN**; the seventeen required gates retain one PASS for approved-source
+regression evidence and sixteen BLOCKED for deployment/live acceptance.
+No new executable defect or application fixture was inferred from cleanup.
+Earlier incomplete-cleanup statements below are historical snapshots.
+
+The latest documentation update passes `npm run docs:check` (980 checks;
+generated indexes current), `npm run docs:links -- --local-only` (716 local
+targets;109 external network checks skipped), and `git diff --check`.
+At inspected head `14bddcd58054c54ef1a052c01d0e1c0a6a94dca6`, Docs/API
+workflow metadata shows SUCCESS; CI/CD38299353539 and PR CI38299353393 were
+still IN_PROGRESS. No final status or test total for these runs is inferred.
+
+## Partial forced cleanup and expired staging window — 2026-10-12, 19:39:54 UTC
+
+Fresh CLI and connected inventories independently confirm absence of the
+service/volume probe `db505b48-74f0-4571-9cd3-52bc865ff2cd` and second empty
+probe `7bd0536d-95c1-4db9-a766-6a0f49547617`. Both preexisting projects remain
+visible. Production's four recorded deployment identities and SUCCESS states
+still match the read-only baseline.
+
+The first empty probe `21a05b97-59f7-435f-8a3a-234eb722cb6c` remains in both
+inventories, with no services and scheduled deletion
+`2026-10-14T17:38:48.891Z`. No volume, credential or deployment was created in
+that probe. Overall cleanup remains **BLOCKED** pending its forced removal
+and fresh absence verification. No known billable workload or volume remains
+in the assignment inventory; actual accrued charges and platform retention
+are unverified. Earlier residual-service/volume descriptions are historical.
+
+The original two-hour deadline `2026-10-12T19:38:25.364Z` has expired.
+No new resource or application deployment will begin within this closed run.
+Automated cleanup with services/volumes lacks a completed corrected live
+rehearsal. A future run needs a new time window and proven cleanup preflight;
+the same approved executable remains
+`4b4e31a54b819a3597ef3ee163a46e1a7b59fc67`.
+
+Inspected PR head `fe532c42ed9b5a0e06118068ad000eb006a9a34f` is open,
+non-draft and unmerged, and differs from approved executable only in these five
+documents. Its Docs/API workflows passed; CI/CD38298606542 and PR CI38298606790
+were still running when checked. No terminal result for them is inferred.
+No live scenario ran: all fourteen remain **BLOCKED / execution NOT_RUN**.
+LIVE_ACCEPTANCE_VERIFIED and MERGE_READY remain **BLOCKED**.
+
+## Owner dashboard deletion verification — 2026-10-12, 19:22–19:25 UTC
+
+After the owner reported cleanup complete, fresh CLI and connected-tool
+inventories still listed both remaining probes. The service/volume project's
+`deletedAt` changed to `2026-10-14T19:20:20.070Z`; the first empty project's
+date remains `2026-10-14T17:38:48.891Z`. These are scheduled deletion dates,
+not evidence of completed permanent removal.
+
+Both CLI project records now expose an empty service list. Describing the
+service/volume environment returns `Project not found.` Its normal project
+API is inaccessible; current live service/volume state and retained-storage
+billing cannot be inferred. Earlier statements that the empty services and
+volume remained live describe the pre-dashboard snapshot, not this one.
+
+Railway [documents force deletion during the 48-hour grace period](https://railway.com/changelog/2025-03-21-project-deletion-changes).
+The owner was asked to force-delete only projects
+`db505b48-74f0-4571-9cd3-52bc865ff2cd` and
+`21a05b97-59f7-435f-8a3a-234eb722cb6c`.
+That action and fresh absence verification remain pending. The independently
+removed empty probe `7bd0536d-95c1-4db9-a766-6a0f49547617` remains absent.
+
+Production's four service/deployment identities and SUCCESS states still match
+the read-only baseline. PR head inspected here is
+`fbda67cf64cbe924767ba26e8a07531d03238df8`, open/non-draft/unmerged,
+with only these five audit documents differing from approved executable
+`4b4e31a54b819a3597ef3ee163a46e1a7b59fc67`.
+No application deployed, live fault ran, or new executable defect was inferred.
+All fourteen live scenarios remain **BLOCKED / execution NOT_RUN**;
+LIVE_ACCEPTANCE_VERIFIED and MERGE_READY remain **BLOCKED**.
+The original **19:38:25.364Z** absolute expiry remains in force.
+
+At inspected documentation head `fbda67cf64cbe924767ba26e8a07531d03238df8`,
+[PR CI38295724570](https://github.com/pbjustin/Arcanos/actions/runs/38295724570)
+and [CI/CD38295724506](https://github.com/pbjustin/Arcanos/actions/runs/38295724506)
+both completed SUCCESS. Each records899 passing/13 skipped suites and17,640
+passing/167 skipped tests; duplicate runs are not added together. Railway PR
+and sealed E2E jobs were skipped. These counts do not establish live acceptance.
+This documentation update passes `npm run docs:check` (980 checks/current
+indexes), `node scripts/check-documentation-links.mjs --local-only` (716 local
+targets,109 external URLs skipped) and `git diff --check`.
+
+## Always-ask cleanup retry — 2026-10-12, 19:01 UTC
+
+The owner changed Railway's plugin-specific permission to **Always ask** and
+requested another cleanup attempt. A fresh settings read confirmed that mode;
+the global default remains Allow low-risk actions. The prior read at18:34 UTC
+had shown Railway's Allow all actions override. Missing/restrictive plugin
+permissions are therefore not the established cause of cancellation, and the
+earlier attribution to automatic approval review was unverified.
+
+Fresh ownership inventory matched the same two empty services and empty1000MB
+volume in the assignment-created service/volume probe. The exact environment-
+scoped service deletion again returned `Cancelled — the user did not approve
+this action. No changes were made.` A separately authorized volume deletion
+returned the same result. Neither executed. Fresh inventory at19:01 UTC still
+contained both remaining probe projects, both empty service definitions and
+the live1000MB volume. The removed second empty probe remained absent.
+
+Cleanup, LIVE_ACCEPTANCE_VERIFIED and MERGE_READY remain **BLOCKED**;
+all fourteen genuine self-healing scenarios remain **BLOCKED / NOT_RUN**.
+No new resource, application deployment, fault, fixture or executable correction
+occurred. No alternate deletion interface or daemon was used to bypass the
+cancellations. No plugin setting was changed by the agent. Owner dashboard
+cleanup remains required; the absolute **19:38:25.364Z** expiry was not reset.
+The concrete IDs and cost estimates below still apply. Both full CI workflows
+at documentation head `ccf3f311460a30c844a65186f542f752038d10f4` are now
+completed SUCCESS (CI/CD38290720098, PR CI38290720097); terminal metadata was
+verified, without newly parsing test totals. Earlier attempt descriptions below
+remain historical.
+
+## Authenticated staging preparation and cleanup stop — 2026-10-12
+
+Inspection head: `a8bb1c35eeea3d59be6fd86c0ce908e4e147767a`; approved
+application source: `4b4e31a54b819a3597ef3ee163a46e1a7b59fc67`.
+The difference consists only of these five audit Markdown documents. PR #1539
+is open, non-draft and unmerged; its branch/base are unchanged. No application
+artifact was deployed. The final documentation head is recorded in the PR
+delivery receipt separately from the approved executable.
+
+Railway CLI 5.23.3 sign-in now succeeds. The earlier expired sign-in below is
+historical. Disposable cleanup execution exposed an actual 48-hour CLI
+project-deletion grace period, a direct API client-header requirement, and a
+watchdog confirmation failure. These are operator findings, not new ARCANOS
+runtime defects. Project creation and immediate empty-project deletion were
+exercised; service/volume deletion was rejected by the connected app even
+after exact-resource owner authorization. Provisioning stopped at that
+approval control; the armed probe daemon was stopped before it could indirectly
+perform the rejected deletion. Independent dashboard cleanup remains pending.
+
+Separate operator fixtures were prepared outside the repository:
+a finite private synthetic provider, an authenticated bounded loopback relay,
+and an exact-receipt cleanup watchdog. Their hashes and tests are in the
+[regression report](self-healing-regression-report.md). They were never installed
+in a Railway app, and do not change the approved application SHA.
+The profile preserves the existing integrity launcher and
+`ARCANOS_PREVIEW_ISOLATION=true` / `FORCE_MOCK=true`. It uses fresh-purpose
+credentials and supported role/time-budget settings, without production
+credentials or paid provider calls. Local SDK transport checks are synthetic;
+no web, worker, PostgreSQL or Redis process was started on Railway.
+
+The planned live path is authenticated manual web coordinator to same-process
+Trinity, plus durable `ask` jobs to the actual worker child and that child's
+Trinity/V2 state. A separate imported test process or web snapshot cannot prove
+worker consumption. FORCE_MOCK suppresses normal Brain registration/startup
+provider probing; those paths cannot be certified by this profile. Worker
+1-second stage timeout also caps the whole pipeline watchdog; its 10-second
+runtime budget does not enlarge that cap. Planner baseline is unsupported
+under that profile. The ordinary Trinity route still needs deployed evidence.
+
+Process-local command delivery, incident persistence, prompt-policy lifetime,
+replacement ownership and recovery using actual consumer traffic remain
+explicit acceptance questions. A source-reviewed health/control-only recovery
+probe is planned, but no live failure was observed or inferred and no
+application correction was made. All fourteen live scenarios remain
+BLOCKED / execution NOT_RUN. See the [current evidence](self-healing-preview-evidence.md)
+for remaining resources, charges and owner cleanup action.
+
+Everything following this update is historical or the unchanged source
+ownership map; earlier assertions that no resources existed refer to their
+dated attempts.
+
+## Revised staging authorization and cleanup preflight — 2026-10-12
+
+The owner now authorizes the existing Railway workspace, a $10 operational
+spending target that is not independently enforced, and at most two hours
+from the first mission-created temporary resource, including cleanup probes.
+The earlier financial hard-ceiling stop no longer
+applies. Inspected head `450ab65d9955d7627f75fdb3a34fe1773faa23dc` differs from approved
+executable `4b4e31a54b819a3597ef3ee163a46e1a7b59fc67` only in these five audit
+documents; no executable, dependency, build or runtime change was found.
+
+Before staging acceptance resource creation, actual project/service/volume deletion and an
+independent fallback must be proved. A workable proposed procedure is a
+noninteractive disposable deletion rehearsal, an actually tested detached
+watchdog with exact creation receipts and an early deadline, and a separately
+executed owner dashboard deletion rehearsal. The watchdog shares this workspace
+host; the dashboard is independent of the chat, daemon and host. A second
+automated controller or a provider-enforced TTL is not presumed necessary.
+
+No rehearsal/watchdog was executed or armed: CLI sign-in expired without
+completion, and the owner's fallback choice remains pending. No staging
+controller or consumer was started. General bounded synthetic-provider
+supervision would still be needed afterward. Existing normal-preview isolation
+requires loopback provider access; an external synthetic provider alone would
+not satisfy that launcher guard. These are proposed operator fixtures, not
+implemented changes or live proof.
+
+Earlier assignment entries below remain historical evidence.
+
+
+## Dedicated staging assignment — 2026-10-12
+
+The owner authorized a new temporary project, `arcanos-pr1539-healing-acceptance`.
+Initial requested SHA `2fd4cf81833ba3be4592654bc7789dd3309374d7` differed from
+the verified open/non-draft head. After that difference was reported, the owner
+explicitly approved `4b4e31a54b819a3597ef3ee163a46e1a7b59fc67` for staging. Base is
+`3fd305b37ba410cf21684a8fed7619a1ba180b48`; branch is
+`codex/targeted-security-healing-20261012`.
+
+A dedicated project would allow fresh web/worker/PostgreSQL/Redis service IDs.
+The former trusted-main installation requirement belongs to the native-preview
+route; it is not presumed necessary for this separately authorized project.
+No project was created: the hard $10 budget gate stopped provisioning.
+Proposed topology and inspected source are not live isolation/runtime evidence.
+
+The normal runtime is unchanged between the initial requested and approved
+SHAs. Existing authenticated `POST /api/self-improve/run` requires
+`self-heal:decide`, `self-heal:execute` and `self_improve_admin`, then invokes
+the real manual coordinator in the web process. Subsequent normal HTTP Trinity
+can consume that same-process command. A new control endpoint is unnecessary.
+Automatic web suppression remains intentional; the dedicated job runner still
+does not start the canonical scheduler.
+
+A general normal-Trinity synthetic provider with timeout/503/recovery control
+and a bounded deployed supervisor is not supplied by the planning module.
+The Backstage-specific supervisor and sealed app/passive worker cover other
+contracts. Existing authenticated worker preview chaos has a narrow environment
+gate and one-shot pre-provider reasoning delay; it is not an HTTP-provider
+timeout. No fixture gate was broadened or supervisor substituted.
+
+Process-local commands, missing durable incident restoration and prompt policy
+without TTL remain limitations. No new runtime defect or architecture fix was
+inferred from this blocked attempt. No controller/consumer ran in staging.
+See [budget and prerequisites](self-healing-preview-evidence.md) and
+[current staging gates](self-healing-merge-readiness.md). The older map below
+remains historical inspected-head evidence.
+
+
+Architecture inspection date: 2026-10-12. Repository: `pbjustin/Arcanos`.
+PR: [#1539](https://github.com/pbjustin/Arcanos/pull/1539).
+Inspected head: `ec3ed16cb94c9166902bc810d0d73f89d322cf67`.
+Base: `3fd305b37ba410cf21684a8fed7619a1ba180b48`.
+Branch: `codex/targeted-security-healing-20261012`; draft: false.
+
+This map was produced by source inspection before acceptance test execution.
+The source references below describe the inspected head; later acceptance
+changes must be assessed separately. Railway identities and live results belong
+in `self-healing-preview-evidence.md`. Source inspection does not establish a
+deployment's identity, isolation, or successful recovery.
+
+## Ownership map
+
+Authorized profile preparation adds a credential-free planning and attestation
+boundary, described in the [provisioning proposal](self-healing-preview-provisioning-plan.md).
+It declares fresh preview-exclusive web/worker/storage identities and a separate
+normal-runtime namespace. It does not change any runtime owner, start a
+controller, deploy a service or deliver mitigation across processes. The
+runtime map below remains unchanged; live controller/consumer evidence is
+still unavailable.
+
+Recovery follow-up at `2fd4cf81833ba3be4592654bc7789dd3309374d7`:
+the original pre-test map remains historical evidence; no source/runtime
+architecture was changed during recovery investigation. The managed native
+preview is intentionally a different runtime from this map. Its ownership
+validator admits two fixed project-level service IDs, no volumes/shared vars,
+role-only per-service variables and the sealed launcher. Production identity
+inspection confirmed those fixed IDs also have production instances.
+Distinct environment instances do not satisfy this mission's stronger
+requirement for preview-exclusive service IDs. The workflow was not activated.
+
+The normal-runtime diagnostics lane documented in `docs/RAILWAY_DEPLOYMENT.md`
+uses `worker-diagnostics-pr-<PR>-e2e`, not the reserved native namespace.
+It is a documented manual lane with a trusted cleanup backstop, not an existing
+self-healing provisioning workflow. Its cleanup allowlist also pins the
+production-shared web/worker/PostgreSQL/Redis IDs. The separate Live PR
+Acceptance workflow supports only `gaming-guide`. Neither is a compliant
+replacement target for this mission without an owner-installed managed profile.
+
+Normal web suppresses the canonical scheduler intentionally. The dedicated
+normal worker starts `dist/workers/jobRunner.js` and does not start that
+scheduler. A same-process manual controller/Trinity path can be deliberately
+authorized without distributed state; a worker-controller selection cannot
+prove another web process consumed a command. A future genuine preview run
+must identify its permitted controller/consumer pair before baseline/faults.
+No production owner or role policy was changed to create apparent recovery.
+
+```mermaid
+flowchart TD
+    START[Normal server startup and dependency readiness] --> APP[startAppRuntimeOnce]
+    START --> ROLE{Automatic loop allowed by service role?}
+    ROLE -->|web role: no| OFF[No background self-healing loop]
+    ROLE -->|worker or permitted combined role| LOOP[selfHealingLoop coordinator]
+    APP --> WORKERS[Configured local worker runtime]
+    REQUEST[Normal HTTP request / worker Trinity execution] --> DIAG[Rolling request diagnostics and provider telemetry]
+    WORKERS --> HEALTH[Worker health / queue and runtime snapshot]
+    DIAG --> LOOP
+    HEALTH --> LOOP
+    LOOP --> DETECT[Deterministic diagnosis and threshold selection]
+    DETECT --> AI[Predictive diagnosis and execution disposition]
+    AI --> GATE[Predictive/reactive effect authorization]
+    GATE -->|authorized reactive plan| ACT[executeActionPlan]
+    AI -->|authorized predictive execution| PACT[Predictive actuator]
+    ACT --> TRSTATE[Same-process selfHealingV2 stage state]
+    PACT --> TRSTATE
+    ACT --> PSTATE[Same-process prompt route mitigation]
+    ACT --> PROVIDER[Same-process provider reinitialization]
+    ACT --> REPAIR[Worker repair actuator]
+    ACT --> SQL[PostgreSQL stale-job recovery]
+    REPAIR -->|local| WORKERS
+    REPAIR -->|scoped approval and credential| REMOTE[Dedicated worker helper / Railway repair]
+    REQUEST --> TRSTATE
+    TRSTATE --> TRINITY[runTrinity: direct-answer or final-bypass consumer]
+    TRINITY --> OUTCOME[Stage success/failure feedback]
+    OUTCOME --> TRSTATE
+    PSTATE --> PROMPT[openaiController execution policy]
+    PROMPT -->|local timeout fast trip| PSTATE
+    LOOP --> VERIFY[Delayed measurable rolling-window verification]
+    VERIFY -->|unchanged or worse| ROLLBACK[Matching command rollback and ineffective cooldown]
+    ROLLBACK --> TRSTATE
+    ROLLBACK --> PSTATE
+    TRSTATE -->|TTL checked on read/command| EXPIRE[Clear temporary action]
+    LOOP -->|no action and authorized controller input| CODE[runSelfImproveCycle: proposal / escalation / freeze]
+    LEGACY[controlLoop legacy status API] -->|enabled hard-coded false| OFF2[No legacy timer or competing actuator]
+```
+
+Every same-process edge is important: this implementation does not publish a
+Trinity mitigation command to Redis, PostgreSQL, or another service. A
+controller log on a worker cannot prove a separate web instance consumed that
+command. Worker jobs that execute Trinity in the controller's own process can
+consume its state. An explicitly authorized manual command running in the web
+process can also mutate the state that its subsequent web requests consume.
+
+| Responsibility | Owner and source references | Runtime boundary |
+| --- | --- | --- |
+| Normal startup | `src/server.ts:startServer` lines 309-338; `src/app.ts:startAppRuntimeOnce` lines 129-135 | Listener/preflight/dependency readiness precede one-time runtime activation. |
+| Scheduled detection | `selfHealingLoop.ts:observeSelfHealingRuntime` lines 1532-1552 and `diagnoseSelfHealingRuntime` lines 2300-2456 | Worker health, local runtime status, local request window, telemetry, local provider health and Trinity snapshot. |
+| Request-stage detection | `selfHealingV2.ts:recordTrinityStageFailure` lines 301-377; `trinity.ts` lines 1715-1737, 1784-1806, 2013-2033 | Simple-tier abort-class failures; automatic mutation suppressed in web role. The request's immediate timeout fallback is distinct from persistent mitigation. |
+| Mitigation selection | `selfHealingLoop.ts:buildDiagnosisSummary` line 1985 and `buildLatencyMitigationActionPlan` lines 1824-1873; `predictiveHealingService.ts:executeDecision` line 2611 | Worker recovery, provider reinitialization, Trinity degradation, prompt latency/degradation; predictive supported-action selection. |
+| Effect authorization | `src/shared/selfHealPredictiveApproval.ts` lines 43-119; `selfHealingLoop.ts:aiDiagnoseAndDecide` line 1168 and dispatch lines 4001-4065 | A recommendation, dry run, uncertain failed execution, or inconsistent predictive result cannot silently authorize reactive effects. |
+| Command application | `selfHealingV2.ts:activateTrinitySelfHealingMitigation` lines 209-263; `selfHealingLoop.ts:executeActionPlan` lines 3053-3754 | In-memory commands; enabled/autonomy/freeze, action support, budget, duplicate, failed-action and cooldown checks. |
+| Trinity consumer | `src/core/logic/trinity.ts` lines 1015-1026, 1655-1671, 1975-1985 and 2289-2302 | `getTrinitySelfHealingMitigation` selects same-process state; consumer changes the executed path and records outcomes. |
+| Prompt consumer | `src/transport/http/controllers/openaiController.ts` lines 122-159 and 381-399; `promptRouteMitigation.ts:getPromptRouteExecutionPolicy` lines 312-353 | Reads same-process policy; reduced retries/timeouts/tokens/fallback or explicit degraded response. Route-local timeout detection independently activates reduced latency. |
+| Worker repair | `workerRepairActuator.ts:buildWorkerRepairActuatorStatus` lines 505-591 and `executeWorkerRepairActuator` lines 594-641 | Local worker restart; remote helper or Railway actuator requires separate explicit approval and correct configured target. Web-role repair is disabled. |
+| Queue execution/recovery | `src/workers/jobRunner.ts`; `src/services/workerAutonomyService.ts`; `src/core/db/repositories/jobRepository.ts` | PostgreSQL transactional claims, leases/generation fencing, retry and terminal persistence. Separate from process-local mitigation. |
+| Evidence history | `selfHealTelemetry.ts:recordSelfHealEvent` lines 776-824; persistence target lines 181-215 | Events can persist to Redis, Railway volume or a file; active commands and coordinator pending verification are not restored from event history. |
+| Legacy API | `controlLoop.ts:getLoopConfig` lines 161-179; `startSelfHealingControlLoop` lines 1040-1073 | Permanently disabled legacy loop; retained inspection API is intentionally superseded. Trinity no longer consumes its separate mitigation store. |
+
+Paths abbreviated in this table are under `src/services/selfImprove/`, except
+`promptRouteMitigation.ts`, which is under `src/services/openai/`.
+
+## Authorization and service roles
+
+`unifiedConfig.ts:resolveWorkerRuntimeMode` lines 285-315 forces workers off for
+`ARCANOS_PROCESS_KIND=web`, on for `worker`, and uses `RUN_WORKERS` for the
+`unknown`/combined role. Its stable resolution is cached outside tests.
+`isWorkerRuntimeSuppressedForServiceRole` lines 332-335 identifies the web role.
+
+`startSelfHealingLoop` lines 4154-4170 and automatic ticks at lines 3832-3847
+respect that role boundary. `recordTrinityStageFailure` lines 307-312 applies the
+same suppression. This is explicit ownership policy, not evidence that a
+disabled loop healed traffic. Manual ticks are preserved; their HTTP entry
+points require authentication, operator identity and action scopes.
+
+`src/app.ts` lines 258-264 places the self-healing authentication boundary before
+body parsing. `selfHealingControlHttpBoundary.ts` lines 121-126 combines security
+headers, client rate limiting, authentication and operator admission.
+`src/routes/self-heal.ts` defines `arcanos:read`, `self-heal:decide`,
+`self-heal:execute` and `self-heal:probe`; executing decisions requires decide
+and execute scopes. `src/routes/self-improve.ts` separately gates manual loop
+execution and control mutations. A caller's body or confirmation flag does not
+establish those privileges.
+
+Trinity V2 is enabled only with `SELF_IMPROVE_ENABLED`, actuator mode `daemon`,
+autonomy level at least 3, and no configured freeze (`selfHealingV2.ts` lines
+80-95). Its public internal functions are not independent HTTP authentication
+boundaries. Remote repair uses a scoped action approval with approver, reason,
+matching action and future expiry (`operatorApproval.ts` lines 58-96). HTTPS
+remote-helper URLs, bounded JSON responses, rejection of redirects and a helper
+credential are additional transport controls, not preview-isolation proof.
+
+`governance/loop_contract.yaml` distinguishes soft configuration from hard code,
+permissions, security and deployment changes. `governance/README.md` requires
+staged validation and evidence. `controller.ts:runSelfImproveCycle` loads the
+machine contract, effective autonomy and kill switch; high-severity drift
+freezes and enters rollback posture. Patch/PR proposal is a separate effect path
+and can invoke models, storage and GitHub. It must be mocked or disabled for
+contained acceptance scenarios. Its deployment/production permissions are not
+implied by this mission.
+
+## Detection, cooldowns and temporary state
+
+The canonical loop samples a five-minute window and normally ticks every 30
+seconds. `selfHealingLoop.ts` lines 1346-1432 resolve bounded environment
+overrides. Defaults include 12 minimum requests, 18% error rate, 15% timeout
+rate, three timeout/provider failures, p95 4.5 seconds and three action attempts
+per diagnosis per ten-minute incident window. Detection also contains explicitly
+smaller prompt-route/pipeline burst rules; the general minimum request threshold
+does not override those rules (`diagnoseSelfHealingRuntime` lines 2323-2389).
+Healthy backlog and client validation noise have separate treatment. Selection
+prioritizes worker stalls, prompt-route stabilization, provider failures,
+pipeline timeouts, timeout storms, latency and server errors.
+
+Canonical coordinator state lives at
+`globalThis.__ARCANOS_SELF_HEAL_RUNTIME__` (`selfHealingLoop.ts` lines 1493-1513).
+It contains one in-flight lock, one pending verification, action/controller/
+ineffective cooldown maps and diagnosis-attempt maps. Duplicate calls skip an
+in-flight tick (lines 3849-3875). An existing pending verification prevents a
+second reactive action (lines 3059-3073). The default action cooldown is two
+minutes; controller cooldown five minutes; ineffective cooldown ten minutes.
+Successful rollback owns its tick before prediction (lines 3920-3953).
+Predictive execution dispositions prevent a second reactive action in the same
+cycle, but these are process-level guards, not distributed locks.
+
+Trinity state is one module-local `stageState` record with `intake`, `reasoning`
+and `final` entries (`selfHealingV2.ts` lines 24-76). Automatic stage activation
+requires three observations within five minutes. Each stage has a maximum of
+three applied attempts, a two-minute rollback cooldown, ten-minute action TTL,
+three successful verification observations and two failures for rollback.
+Intake/reasoning support `enable_degraded_mode`; final first supports
+`bypass_final_stage`, then degraded mode (lines 45-57).
+
+Expiration is lazy: reads and commands call `expireActionIfNeeded` (lines
+103-119, 448-451). TTL clears the command and verification counters; it does not
+reset stage attempt count, observation history, cooldown or failed-action
+history. Those remaining fields are process-lifetime state. Stage snapshots
+therefore need inspection after expiration, not an assumption that every budget
+returned to a fresh baseline.
+
+`getTrinitySelfHealingMitigation` lines 433-480 returns no command for non-simple
+tiers. It combines all stage flags with intake, then reasoning, then final
+priority for the selected action/stage. Concurrent active stages can exist;
+consumer feedback is attributed to the selected stage, so concurrency evidence
+must inspect all stage entries and the execution actually chosen.
+
+Prompt mitigation uses a different process-global state, with route timeout
+window, threshold and cooldown (`promptRouteMitigation.ts` lines 42-53,
+254-309). At the inspected head it has no TTL field or automatic expiration.
+Successful canonical verification retains it; explicit rollback or process
+restart clears it. The web-role restriction of the scheduled coordinator does
+not disable this separate local prompt timeout fast trip. That distinction must
+remain explicit in service-role tests.
+
+## Recovery, rollback and restart
+
+Canonical verification starts with a baseline snapshot and normally waits 90
+seconds (`beginVerification`, lines 2696-2720). It compares error/timeout rates,
+timeout count, p95/max latency, worker health and prompt-route samples
+(`evaluateVerificationOutcome`, lines 2758-2909). At least two improved signals
+and more improved than worsened signals yield `improved`; no material change is
+`unchanged`. Prompt verification defers until enough post-action route samples
+exist (lines 2931-2951). The general metric comparison can include an empty
+request window; a local test must establish whether absence of traffic is
+acceptable recovery evidence for its specific action.
+
+Improvement records success and `lastHealthyObservedAt`; it does not immediately
+remove a successful temporary Trinity command. Unchanged/worse results mark an
+ineffective cooldown and roll back a matching Trinity or prompt command where a
+rollback descriptor exists (`maybeVerifyPendingAction`, lines 2988-3045).
+Reinitialization, stale-job recovery and worker restart are effects with no
+automatic compensating operation in that descriptor. They require observation
+of subsequent runtime health and safe escalation.
+
+Trinity consumption emits `trinity.direct_answer.auto_selected` or
+`self_heal.v2.final_bypass` with request ID; completion feeds
+`noteTrinityMitigationOutcome` (`trinity.ts` lines 1040-1045, 1663-1669,
+1978-1984, 2295-2302). V2 marks a successful action verified and retains it until
+TTL. A failed action enters failed-action history and cooldown. An immediate
+request fallback can succeed before the incident activation threshold, so that
+HTTP success alone does not prove mitigation recovery.
+
+Process restart invalidates active Trinity commands, coordinator cooldowns,
+pending verification and prompt policy. Persisted telemetry can restore event
+history only (`selfHealTelemetry.ts` lines 477-495). Acceptance must show that a
+fresh process has no stale active command rather than claim durable incident
+continuation. The root durable job queue separately recovers leases and enforces
+claim-generation ownership across restarts.
+
+## Worker and Redis boundaries
+
+The root durable worker (`src/workers/jobRunner.ts`) is distinct from the
+separately compiled `workers/` OpenAI/memory listeners and the standalone
+`arcanos-ai-runtime/` BullMQ/Redis service. The canonical heal actuator's local
+path calls `workerControlService.ts:healWorkerRuntime` (line 1285), which calls
+`platform/runtime/workerConfig.ts:startWorkers`; it repairs the configured local
+listener runtime. A successful local repair receipt is not evidence that a
+separate PostgreSQL consumer or BullMQ service recovered.
+
+Root PostgreSQL jobs use transactional `FOR UPDATE SKIP LOCKED` claims
+(`jobRepository.ts` lines 2234, 2267), fenced lease heartbeat/terminal/retry
+operations, and stale recovery (lines 2480, 2607). The runner stops local work
+when a lease is lost, handles provider-dependency admission, and delegates
+bounded failure/retry to `WorkerAutonomyService` (lines 3325-3356, 3426-3437,
+3533-3551). Mocked repository tests cannot prove real SQL locking, duplicate
+suppression under competing database consumers, or external side-effect
+idempotency.
+
+Redis connectivity/reconnect and command admission are owned by
+`src/platform/runtime/redisLifecycle.ts`, independent of mitigation selection.
+It delegates lifecycle retry state/timers to the shared runtime client, emits
+`redis.lifecycle.ready`/`retry_scheduled`, and gates commands with deadlines and
+stable dependency failures (lines 264-293, 325-430, 629). Telemetry Redis writes
+are real mutations; a shared production Redis endpoint or queue cannot be used
+for these tests. Server lifecycle readiness reacts to dependency transitions
+while its full-runtime startup guard prevents duplicated activation.
+
+## Observability and acceptance limits
+
+Canonical detection/selection/dispatch emits `METRICS_COLLECTED`,
+`AI_DIAGNOSIS_RESULT`, `CONTROLLER_DECISION`, `ACTION_DISPATCH_ATTEMPT`,
+`ACTION_DISPATCH_RESULT`, `ACTION_EXECUTED`, worker receipt and heal result
+events. Dispatch and decision records carry `diagnosis.incidentKey`
+(`selfHealingLoop.ts` lines 788-835, 959-1048). At the inspected head,
+`incidentKey` is the diagnosis type, not a unique incident instance (line 2443).
+Telemetry IDs are `self_heal_event_<sequence>` with timestamp and optional
+correlation/request/trace IDs (`selfHealTelemetry.ts` lines 794-823). The active
+coordinator has no unique execution ID or durable open/close incident record;
+the legacy disabled controller has different incident/execution fields.
+
+Evidence should therefore correlate service/deployment/commit, timestamps,
+diagnosis/action and actual consumer request IDs. A selection event, an actuator
+HTTP receipt, restored event history, or a status `success` field alone does not
+prove the consumer changed behavior, measurable recovery, or incident closure.
+
+At the inspected head, a thrown reactive actuator reaches a catch that records
+failure but does not increment diagnosis attempts or action cooldown
+(`selfHealingLoop.ts` lines 3721-3754). This is a source-level risk to evaluate
+with a deterministic failing-actuator regression before making a bounded-retry
+claim. It is not reported here as a live reproduced failure.
+
+## Preview fixture versus genuine runtime
+
+The maintained Railway native preview has a contained synthetic app and passive
+worker. `scripts/start-railway-service.mjs:buildNativePrApplicationChildEnvironment`
+lines 750-786 allowlists a credential-empty child environment and starts
+`dist/start-native-pr-preview.js`, with web role and workers disabled. It does
+not start `src/server.ts`, ordinary self-heal routes, active workers or the
+canonical loop. The startup opt-in isolation guard at lines 632-684 requires a
+non-production environment, `FORCE_MOCK=true` and a loopback provider; that guard
+alone does not prove database, Redis, webhook or queue isolation.
+
+The sealed `/self-heal/approval-contract` fixture calls the reviewed pure
+predictive/reactive policy functions (`nativePrPreviewApplication.ts` lines
+9114-9135). Its response explicitly states effects/database/memory/provider/
+outbound network/worker boundaries were not reached (lines 9138-9155). This is
+useful served component evidence, but it does not detect runtime faults, mutate
+Trinity state, execute providers, repair workers or verify recovery.
+
+Existing `tests/self-healing-trinity.integration.test.ts` can exercise the real
+coordinator, SDK and actual Trinity consumer against a deterministic local
+loopback provider. That is local integration evidence. It is neither a real
+provider availability result nor genuine Railway runtime evidence.
+
+Genuine preview acceptance requires the exact PR-head deployment of a contained
+normal runtime, permitted role ownership, preview-only credentials/DB/Redis/
+queues, controlled authenticated faults, and logs from the controller and actual
+consumer. If those target/isolation conditions cannot be established, preserve
+the blocked live gate and continue only authorized local/mocked scenarios.
+
+## Local acceptance follow-up
+
+The source risks above describe the initial inspected SHA. Authorized local
+regressions subsequently demonstrated and corrected three coordinator defects in
+the same PR branch:
+
+1. Dispatched reactive actuator exceptions previously bypassed cooldown and
+   per-diagnosis attempt accounting. The coordinator now records a dispatched
+   attempt once on success or exception. Worker repair supplies an internal
+   `onDispatch` callback only at its actual local/network/deployment effect
+   boundary, after target and approval preflight. Rejected approval does not
+   consume a dispatched attempt. A deliberate degraded-recovery cooldown
+   override still obeys the diagnosis attempt ceiling and incident window.
+2. Trinity verification previously classified an empty request window, or
+   healthier old rolling samples with no new traffic, as improved. It now
+   defers request-mitigation verification while post-action samples are absent
+   and compares the post-action request window once samples exist. Worker and
+   dependency verification remain independent. Positive new sample evidence
+   verifies improvement even when old rolling samples remain degraded;
+   ineffective post-action samples still trigger the existing rollback.
+3. Deferred verification previously survived action expiry or an explicit
+   operator rollback, blocking a new incident's repair. It could also verify
+   a vanished command or roll back a replacement activation of the same action.
+   Pending Trinity verification now carries its original command expiry and is
+   invalidated before delay/sample gating when the current stage, action or
+   expiry identity no longer matches. Invalidation emits an explicit noop
+   event, preserves replacement ownership and reports no recovery or rollback.
+
+`tests/self-healing-loop.test.ts` contains twelve added local regressions: three
+throwing-actuator cases, the degraded cooldown override, unapproved remote repair,
+empty and stale request windows, measurable post-action improvement, TTL and
+operator-rollback invalidation, vanished-command verification and replacement
+activation ownership. Before
+the respective fixes, the four retry cases and two empty/stale verification
+cases failed. Four further pending-command ownership regressions failed before
+the follow-up correction. After the fixes, the complete suite passed 69 tests with zero
+skips using the pinned Node toolchain:
+
+```text
+PATH=/tmp/node-v24.18.1-linux-x64/bin:$PATH node scripts/run-jest.mjs --runInBand --runTestsByPath tests/self-healing-loop.test.ts --coverage=false
+```
+
+These are mocked local controller/actuator integration results. They neither
+establish live Railway acceptance nor add a durable incident-close lifecycle.
+Final aggregate regression results and exact submitted head belong in the
+regression report and merge-readiness artifact.
+
+## Source anchors
+
+- [Normal server startup](https://github.com/pbjustin/Arcanos/blob/ec3ed16cb94c9166902bc810d0d73f89d322cf67/src/server.ts#L296).
+- [Canonical coordinator](https://github.com/pbjustin/Arcanos/blob/ec3ed16cb94c9166902bc810d0d73f89d322cf67/src/services/selfImprove/selfHealingLoop.ts#L3824).
+- [Trinity command store and consumer gate](https://github.com/pbjustin/Arcanos/blob/ec3ed16cb94c9166902bc810d0d73f89d322cf67/src/services/selfImprove/selfHealingV2.ts#L433).
+- [Actual Trinity execution](https://github.com/pbjustin/Arcanos/blob/ec3ed16cb94c9166902bc810d0d73f89d322cf67/src/core/logic/trinity.ts#L1015).
+- [Disabled legacy owner](https://github.com/pbjustin/Arcanos/blob/ec3ed16cb94c9166902bc810d0d73f89d322cf67/src/services/selfImprove/controlLoop.ts#L161).
+- [Pure effect authorization](https://github.com/pbjustin/Arcanos/blob/ec3ed16cb94c9166902bc810d0d73f89d322cf67/src/shared/selfHealPredictiveApproval.ts#L43).
+- [Worker actuator](https://github.com/pbjustin/Arcanos/blob/ec3ed16cb94c9166902bc810d0d73f89d322cf67/src/services/selfImprove/workerRepairActuator.ts#L594).
+- [Durable job claims](https://github.com/pbjustin/Arcanos/blob/ec3ed16cb94c9166902bc810d0d73f89d322cf67/src/core/db/repositories/jobRepository.ts#L2267).
+- [Credential-empty preview child](https://github.com/pbjustin/Arcanos/blob/ec3ed16cb94c9166902bc810d0d73f89d322cf67/scripts/start-railway-service.mjs#L750).
+- [Sealed self-heal policy fixture](https://github.com/pbjustin/Arcanos/blob/ec3ed16cb94c9166902bc810d0d73f89d322cf67/src/nativePrPreviewApplication.ts#L9114).

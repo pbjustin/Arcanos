@@ -1,0 +1,406 @@
+# Self-healing acceptance matrix
+
+## Current assessment — complete synthetic matrix
+
+Executable source and regression fixtures: `400be1912b9e429c9ea0ffdd8f0d07950a82d80c`. The documentation-only head observed while preparing this update was `a7355c8cbe28ac5fdd285c45b031a4c07e416d22`; final PR/evidence head, base, required checks and review state are recorded by [CI and review receipts](synthetic-ci-evidence.md): documentation head `a7355c8cbe28ac5fdd285c45b031a4c07e416d22`, CI/CD [38310400872](https://github.com/pbjustin/Arcanos/actions/runs/38310400872), required `docs:check` and `All Checks Complete` PASS; PR open/non-draft, CLEAN/MERGEABLE, zero unresolved threads. Final documentation-head receipts are linked in the PR description after fresh checks.. Final full results: Full CI: 901 suites / 17,584 tests passed; 13 suites / 167 tests skipped. Complete local sweep: 899 suites / 17,540 tests passed; two suites / 44 assertions failed before PowerShell was available, all subsequently passed unchanged in two focused reruns (55 passed, two existing Windows-only skips). Repeated sweeps are not added as unique tests..
+
+The owner deferred live Railway verification. Every PASS below is a measured local synthetic result at the recorded executable source, not a Railway/live-provider PASS. Final joined-source focused execution passed **47 suites / 1,379 tests, zero skipped**. Full local/CI results are separately recorded above and are not added to this overlapping sweep. Exact commands, fixtures and limits appear in [synthetic verification](synthetic-verification-report.md); preserved failing conditions and corrections appear in [red-to-green evidence](synthetic-red-to-green-evidence.md).
+
+| ID | Scenario / observed application result | Execution class | Result |
+| --- | --- | --- | --- |
+| S01 | Healthy baseline: actual coordinator/V2 state inactive; normal Trinity executes four authorized loopback SDK POSTs. | Synthetic integration / real SDK consumer | PASS |
+| S02 | Transient transport timeout: bounded authority fallback, threshold unmet, next actual consumer healthy; caller cancellation distinguished. | Synthetic integration / real SDK transport | PASS |
+| S03 | Sustained synthetic 503 opens actual circuit; finite attempts/probes; actual coordinator bounds failed reload attempts and escalation. | Synthetic integration / real circuit and controller | PASS |
+| S04 | Actual reasoning mitigation reduces executed stages to one authority POST; final bypass uses three vs normal four and reports its own command. | Synthetic integration / real Trinity consumer | PASS |
+| S05 | Real Redis lifecycle degrades/reconnects with bounded attempts; safety/admission fail closed, telemetry preserves local events. | Synthetic integration / injected Redis client | PASS |
+| S06 | Actual worker slot/retry/repository policy uses 100 ms then 200 ms retries, one terminal dead-letter, stale/duplicate claim rejection. | Synthetic integration / injected CAS storage | PASS |
+| S07 | First two qualifying failures stay inactive, third activates; healthy/sub-threshold coordinator traffic does not mutate state. | Unit plus synthetic integration / actual V2 | PASS |
+| S08 | V2 and both prompt policies expire at ten minutes; next actual Trinity/prompt consumer restores normal policy without controller traffic. | Unit plus synthetic consumer integration | PASS |
+| S09 | Empty/stale/one/same-clock/control-only traffic cannot recover; require three known-route samples, three actual captured-command V2 successes or three fresh resilience receipts; missing worker/queue data cannot look improved. | Synthetic integration / actual diagnostics and verifier; joined real SDK positive cases | PASS |
+| S10 | Throwing actuator spends only three dispatches per incident window; explicit failed receipt never becomes verified recovery. | Synthetic integration / actual controller, injected actuator | PASS |
+| S11 | Concurrent ticks dispatch once; deterministic queue/Trinity ordering; independent intake/final IDs, actual consumption and isolated clearing. | Synthetic integration / actual controller and consumer | PASS |
+| S12 | Web automatic loops/workers suppressed, duplicate startup controlled; explicit manual authorized web mitigation still consumed. | Synthetic integration plus fresh Node source process | PASS |
+| S13 | Real bearer/scope/capability/actuator gates reject unauthorized operation; zero controller/consumer/safety effects, sanitized audit. | Synthetic HTTP integration / real authorization | PASS |
+| S14 | Different fresh Node process has zero old attempts/commands; one new failure stays sub-threshold; stale queue owner cannot complete replacement. | Local process E2E plus synthetic queue fencing | PASS |
+| S15 | Captured command ID prevents old completion, timeout fallback or verification from crediting/clearing newer same-clock replacement. | Unit plus synthetic real SDK/controller integration | PASS |
+| S16 | Actual map ceiling 10,000 hashed keys; overflow fails closed with accurate reset/Retry-After; Redis/cache/start/concurrency guards bounded. | Synthetic admission integration / controlled clock | PASS |
+| S17 | Forwarded/session/credential rotation cannot bypass actual GPT/query admission; explicit proxy chain honors first untrusted hop. | Synthetic HTTP integration / actual Express middleware | PASS |
+| S18 | Ordinary/ineffective cooldown uses correct dispatch key; evidence-starved verification expires and releases ownership without false success. | Synthetic integration / actual cooldown and verifier | PASS |
+
+A–E synthetic paths all pass: actual recovery/consumer cycle, bounded unrecoverable failure, concurrent incidents, fresh-process invalidation and unauthorized-action rejection. Consumer application is proved through real executed policy and SDK receipts, not only a selected mitigation log. The provider reload acknowledgement and HTTP-route measurements remain injected seams; reload causation and genuine provider availability are not claimed.
+
+**Railway deployment execution: NOT_RUN — owner deferred.** Disposable adapter tests do not prove real PostgreSQL transactions, Redis server failover or replica-wide state-sharing. A separate production deployment review is required; merge readiness depends on final mandatory non-live checks and unresolved-blocker review in [merge readiness](self-healing-merge-readiness.md).
+
+---
+
+## Historical live acceptance records — preserved
+
+Everything below this divider records earlier preview/staging attempts and their policy at the time. Earlier live-gate blockers and merge verdicts are historical; they have not been rewritten into successful tests. The current assessment above uses the owner's explicit decision to defer live verification.
+
+## Second authorized staging attempt — pre-provisioning status, 2026-10-12
+
+The owner authorized one additional isolated attempt, the same executable
+`4b4e31a54b819a3597ef3ee163a46e1a7b59fc67`, a fresh maximum two-hour window,
+and a $10 operational target. This attempt's window is **NOT_STARTED**:
+no staging project, service, volume, database or deployment was created.
+The first attempt's expired deadline is not reused.
+
+Current PR head inspected at20:03UTC is
+`1fd837c6fbc9871689f4662db309cc1b9de09c9f`, open/non-draft/unmerged,
+base `3fd305b37ba410cf21684a8fed7619a1ba180b48`.
+Only these five audit documents differ from approved source; its Git tree is
+`d8af527bedcff236fc707184cfe822c9004ef446`.
+CLI OAuth authentication succeeds; pinned Railway5.23.3 binary SHA256 is
+`0d6b51f7e708eeb28d5f0f649cef9d24bc00151d833329a84fc1cc47b1e8e040`.
+Fresh inventory shows only the two preexisting projects and none of the
+three removed assignment probes.
+
+**PREFLIGHT_VERIFIED: BLOCKED. INDEPENDENT_CLEANUP_VERIFIED: BLOCKED.**
+No operational independent cleanup controller is available through the
+inspected interfaces. The existing lifecycle runs every six hours and deletes
+only its fixed production-project preview environments. Closed-PR cleanup
+requires closing the PR and has a fixed topology. Stacked-draft cleanup is
+disabled, restricted to other PRs and excludes the existing workspace.
+The self-healing preflight is PR-only/read-only, not a registered default-branch
+workflow. The protected GitHub environment admits only `main`; repository and
+environment secret metadata both return HTTP403 `Resource not accessible by
+integration`. That does not prove secrets are absent. These are operational
+scope/permission limits, not a reproduced application defect.
+
+The user's required cleanup instruction is explicit: “A written cleanup plan,
+local timer, or promise to delete later is not sufficient.” No local watchdog
+was restarted and no existing production workflow/security boundary weakened.
+An independently hosted controller with securely configured Railway deletion
+authority, immutable-ID receipt registration, partial-provisioning handling,
+deadline execution, idempotency, read-back and durable audit evidence must
+be operational before provisioning. The owner confirmed no existing independent
+controller is available; no credential was requested in chat. A separate
+Railway-hosted controller is possible in principle, but its securely scoped
+credentials, deletion rights, precreation execution and durable audit are
+unverified; it was not provisioned.
+
+All fourteen genuine live scenarios remain **BLOCKED / execution NOT_RUN**.
+No app artifact, incident, mitigation or Trinity consumer was tested.
+LIVE_ACCEPTANCE_VERIFIED and MERGE_READY remain **BLOCKED**. Previously verified
+probe removal remains PASS; it is not independent automatic cleanup proof.
+
+### Second-attempt live scenario matrix
+
+| # | Scenario | Result | Execution / evidence |
+| --- | --- | --- | --- |
+| 1 | Healthy baseline | BLOCKED | NOT_RUN; no application runtime. |
+| 2 | Transient provider timeout | BLOCKED | NOT_RUN; no fault injection. |
+| 3 | Sustained provider failure | BLOCKED | NOT_RUN; no live provider fixture. |
+| 4 | Trinity mitigation consumption | BLOCKED | NOT_RUN; no controller/consumer correlation. |
+| 5 | Redis interruption | BLOCKED | NOT_RUN; no isolated Redis provisioned. |
+| 6 | Worker retry and idempotency | BLOCKED | NOT_RUN; no real worker/job. |
+| 7 | Failure threshold | BLOCKED | NOT_RUN; no live observations. |
+| 8 | Mitigation expiration | BLOCKED | NOT_RUN; no temporary live action. |
+| 9 | Fresh recovery evidence | BLOCKED | NOT_RUN; no recovery traffic. |
+| 10 | Actuator retry limits | BLOCKED | NOT_RUN; full throwing-actuator injection also unavailable through approved paths. |
+| 11 | Concurrent incidents | BLOCKED | NOT_RUN; no runtime arbitration evidence. |
+| 12 | Service-role boundaries | BLOCKED | NOT_RUN; no deployed role startup. |
+| 13 | Unauthorized action rejection | BLOCKED | NOT_RUN; no application actuator request. |
+| 14 | Restart during incident | BLOCKED | NOT_RUN; no incident process. |
+
+Existing local/disposable integration results below remain distinct from these
+genuine Railway runtime rows. No live PASS is inferred.
+
+## Final cleanup verification — 2026-10-12, 19:50:29 UTC
+
+**CLEANUP_VERIFIED: PASS. LIVE_ACCEPTANCE_VERIFIED: BLOCKED.
+MERGE_READY: BLOCKED.**
+
+Fresh authenticated CLI and connected-tool inventories independently show
+all three assignment-created project IDs absent:
+`21a05b97-59f7-435f-8a3a-234eb722cb6c`,
+`7bd0536d-95c1-4db9-a766-6a0f49547617`, and
+`db505b48-74f0-4571-9cd3-52bc865ff2cd`.
+Both preexisting project IDs remain visible in both inventories.
+Production's four service/deployment identities and SUCCESS statuses match the
+read-only baseline. No assignment-created project, service or volume remains
+in the control-plane inventory. Accrued charges and retained-backup billing
+are unverified; deletion is not an invoice showing zero charges.
+
+The first-resource deadline `2026-10-12T19:38:25.364Z` has expired.
+This run is closed; no new resource or application deployment was started.
+The corrected automated service/volume cleanup rehearsal did not complete,
+so precreation cleanup proof for a future run remains **BLOCKED**, although
+owner dashboard cleanup and final resource absence are now verified.
+
+Inspected PR head `14bddcd58054c54ef1a052c01d0e1c0a6a94dca6` remains
+open/non-draft/unmerged. Only these five documents differ from approved
+executable `4b4e31a54b819a3597ef3ee163a46e1a7b59fc67`.
+No Railway application artifact, live incident, runtime mitigation or consumer
+execution was tested. All fourteen live scenarios remain **BLOCKED / execution
+NOT_RUN**; the seventeen required gates retain one PASS for approved-source
+regression evidence and sixteen BLOCKED for deployment/live acceptance.
+No new executable defect or application fixture was inferred from cleanup.
+Earlier incomplete-cleanup statements below are historical snapshots.
+
+The latest documentation update passes `npm run docs:check` (980 checks;
+generated indexes current), `npm run docs:links -- --local-only` (716 local
+targets;109 external network checks skipped), and `git diff --check`.
+At inspected head `14bddcd58054c54ef1a052c01d0e1c0a6a94dca6`, Docs/API
+workflow metadata shows SUCCESS; CI/CD38299353539 and PR CI38299353393 were
+still IN_PROGRESS. No final status or test total for these runs is inferred.
+
+## Partial forced cleanup and expired staging window — 2026-10-12, 19:39:54 UTC
+
+Fresh CLI and connected inventories independently confirm absence of the
+service/volume probe `db505b48-74f0-4571-9cd3-52bc865ff2cd` and second empty
+probe `7bd0536d-95c1-4db9-a766-6a0f49547617`. Both preexisting projects remain
+visible. Production's four recorded deployment identities and SUCCESS states
+still match the read-only baseline.
+
+The first empty probe `21a05b97-59f7-435f-8a3a-234eb722cb6c` remains in both
+inventories, with no services and scheduled deletion
+`2026-10-14T17:38:48.891Z`. No volume, credential or deployment was created in
+that probe. Overall cleanup remains **BLOCKED** pending its forced removal
+and fresh absence verification. No known billable workload or volume remains
+in the assignment inventory; actual accrued charges and platform retention
+are unverified. Earlier residual-service/volume descriptions are historical.
+
+The original two-hour deadline `2026-10-12T19:38:25.364Z` has expired.
+No new resource or application deployment will begin within this closed run.
+Automated cleanup with services/volumes lacks a completed corrected live
+rehearsal. A future run needs a new time window and proven cleanup preflight;
+the same approved executable remains
+`4b4e31a54b819a3597ef3ee163a46e1a7b59fc67`.
+
+Inspected PR head `fe532c42ed9b5a0e06118068ad000eb006a9a34f` is open,
+non-draft and unmerged, and differs from approved executable only in these five
+documents. Its Docs/API workflows passed; CI/CD38298606542 and PR CI38298606790
+were still running when checked. No terminal result for them is inferred.
+No live scenario ran: all fourteen remain **BLOCKED / execution NOT_RUN**.
+LIVE_ACCEPTANCE_VERIFIED and MERGE_READY remain **BLOCKED**.
+
+## Owner dashboard deletion verification — 2026-10-12, 19:22–19:25 UTC
+
+After the owner reported cleanup complete, fresh CLI and connected-tool
+inventories still listed both remaining probes. The service/volume project's
+`deletedAt` changed to `2026-10-14T19:20:20.070Z`; the first empty project's
+date remains `2026-10-14T17:38:48.891Z`. These are scheduled deletion dates,
+not evidence of completed permanent removal.
+
+Both CLI project records now expose an empty service list. Describing the
+service/volume environment returns `Project not found.` Its normal project
+API is inaccessible; current live service/volume state and retained-storage
+billing cannot be inferred. Earlier statements that the empty services and
+volume remained live describe the pre-dashboard snapshot, not this one.
+
+Railway [documents force deletion during the 48-hour grace period](https://railway.com/changelog/2025-03-21-project-deletion-changes).
+The owner was asked to force-delete only projects
+`db505b48-74f0-4571-9cd3-52bc865ff2cd` and
+`21a05b97-59f7-435f-8a3a-234eb722cb6c`.
+That action and fresh absence verification remain pending. The independently
+removed empty probe `7bd0536d-95c1-4db9-a766-6a0f49547617` remains absent.
+
+Production's four service/deployment identities and SUCCESS states still match
+the read-only baseline. PR head inspected here is
+`fbda67cf64cbe924767ba26e8a07531d03238df8`, open/non-draft/unmerged,
+with only these five audit documents differing from approved executable
+`4b4e31a54b819a3597ef3ee163a46e1a7b59fc67`.
+No application deployed, live fault ran, or new executable defect was inferred.
+All fourteen live scenarios remain **BLOCKED / execution NOT_RUN**;
+LIVE_ACCEPTANCE_VERIFIED and MERGE_READY remain **BLOCKED**.
+The original **19:38:25.364Z** absolute expiry remains in force.
+
+At inspected documentation head `fbda67cf64cbe924767ba26e8a07531d03238df8`,
+[PR CI38295724570](https://github.com/pbjustin/Arcanos/actions/runs/38295724570)
+and [CI/CD38295724506](https://github.com/pbjustin/Arcanos/actions/runs/38295724506)
+both completed SUCCESS. Each records899 passing/13 skipped suites and17,640
+passing/167 skipped tests; duplicate runs are not added together. Railway PR
+and sealed E2E jobs were skipped. These counts do not establish live acceptance.
+This documentation update passes `npm run docs:check` (980 checks/current
+indexes), `node scripts/check-documentation-links.mjs --local-only` (716 local
+targets,109 external URLs skipped) and `git diff --check`.
+
+## Always-ask cleanup retry — 2026-10-12, 19:01 UTC
+
+The owner changed Railway's plugin-specific permission to **Always ask** and
+requested another cleanup attempt. A fresh settings read confirmed that mode;
+the global default remains Allow low-risk actions. The prior read at18:34 UTC
+had shown Railway's Allow all actions override. Missing/restrictive plugin
+permissions are therefore not the established cause of cancellation, and the
+earlier attribution to automatic approval review was unverified.
+
+Fresh ownership inventory matched the same two empty services and empty1000MB
+volume in the assignment-created service/volume probe. The exact environment-
+scoped service deletion again returned `Cancelled — the user did not approve
+this action. No changes were made.` A separately authorized volume deletion
+returned the same result. Neither executed. Fresh inventory at19:01 UTC still
+contained both remaining probe projects, both empty service definitions and
+the live1000MB volume. The removed second empty probe remained absent.
+
+Cleanup, LIVE_ACCEPTANCE_VERIFIED and MERGE_READY remain **BLOCKED**;
+all fourteen genuine self-healing scenarios remain **BLOCKED / NOT_RUN**.
+No new resource, application deployment, fault, fixture or executable correction
+occurred. No alternate deletion interface or daemon was used to bypass the
+cancellations. No plugin setting was changed by the agent. Owner dashboard
+cleanup remains required; the absolute **19:38:25.364Z** expiry was not reset.
+The concrete IDs and cost estimates below still apply. Both full CI workflows
+at documentation head `ccf3f311460a30c844a65186f542f752038d10f4` are now
+completed SUCCESS (CI/CD38290720098, PR CI38290720097); terminal metadata was
+verified, without newly parsing test totals. Earlier attempt descriptions below
+remain historical.
+
+## Authenticated staging attempt — cleanup gate BLOCKED
+
+Inspected documentation head: `a8bb1c35eeea3d59be6fd86c0ce908e4e147767a`.
+Approved executable: `4b4e31a54b819a3597ef3ee163a46e1a7b59fc67`.
+No application deployment or fault injection occurred. Successful CLI login
+and empty-project removal are infrastructure preflight evidence, not
+self-healing acceptance. The connected app rejected deletion of a fresh empty
+service twice, including after exact-resource owner authorization, so the
+service/volume cleanup gate and independent dashboard fallback remain blocked.
+
+| # | Scenario | Genuine Railway staging result | Execution/evidence |
+| --- | --- | --- | --- |
+| 1 | Healthy baseline | BLOCKED | NOT_RUN; no web/worker artifact. |
+| 2 | Transient provider timeout | BLOCKED | NOT_RUN; only local synthetic operator transport. |
+| 3 | Sustained provider failure | BLOCKED | NOT_RUN; no live authorized fallback/escalation. |
+| 4 | Trinity failure | BLOCKED | NOT_RUN; no actual deployed consumer. |
+| 5 | Redis interruption | BLOCKED | NOT_RUN; no Redis instance. |
+| 6 | Worker job failure | BLOCKED | NOT_RUN; no worker or PostgreSQL execution. |
+| 7 | Failure threshold | BLOCKED | NOT_RUN; local fixture/source evidence is separate. |
+| 8 | Mitigation expiration | BLOCKED | NOT_RUN; real ten-minute TTL not exercised. |
+| 9 | Recovery verification | BLOCKED | NOT_RUN; no fresh consumer-correlated recovery. |
+| 10 | Actuator failure | BLOCKED | NOT_RUN; no approved natural throwing-actuator injection path. |
+| 11 | Concurrent incidents | BLOCKED | NOT_RUN; no deployed controllers/actions. |
+| 12 | Service-role restrictions | BLOCKED | NOT_RUN; configured roles are not runtime proof. |
+| 13 | Unauthorized action | BLOCKED | NOT_RUN; management-tool approval denial is not application authorization proof. |
+| 14 | Restart during incident | BLOCKED | NOT_RUN; no live incident/process. |
+
+The operator SDK suite passed 163 local assertions plus 500 separately counted
+quota requests. It did not start ARCANOS or Bun and is not an application/live
+scenario result. Thirty cleanup fake tests passed; actual watchdog confirmation
+failed on the second probe, and the corrected third rehearsal was stopped
+before expiry after the deletion approval rejection. Do not promote its local
+fix to a live expiry PASS.
+
+The request plan preserves actual thresholds, ten-minute mitigation TTL,
+cooldowns and request limits. Worker evidence needs the jobRunner child's PID,
+provider receipts and exact-job SQL events from a fresh isolated database.
+Controller/health traffic alone must not establish Trinity recovery.
+Process-local state and FORCE_MOCK/worker-watchdog boundaries remain
+uncertified. No production testing substitutes were used.
+
+Current [resource and cleanup evidence](self-healing-preview-evidence.md) and
+[seventeen-gate verdict](self-healing-merge-readiness.md) supersede the earlier
+attempt summaries below. The historical fourteen local scenarios remain
+separately scoped; no new application defect or repair is claimed.
+
+## Revised time-limited staging attempt — 2026-10-12
+
+The owner withdrew the independently enforced $10 ceiling and authorized the
+existing workspace, a $10 operational target and a two-hour maximum lifetime.
+Approved executable remains `4b4e31a54b819a3597ef3ee163a46e1a7b59fc67`;
+inspected PR head `450ab65d9955d7627f75fdb3a34fe1773faa23dc` differs only in five
+audit documents. No source substitution or deployment occurred.
+
+Mandatory precreation cleanup proof is BLOCKED: connected inventory is
+authenticated, but no project-delete tool is exposed; CLI login expired before
+completion; a disposable deletion, tested watchdog and independent owner
+fallback were not executed. All fourteen genuine staging scenarios remain
+BLOCKED / execution NOT_RUN. The fourteen-row table below applies unchanged.
+No initial state, fault, incident, authorization/application transcript,
+consumer change, recovery or rollback was observed in staging.
+
+The historical hard-ceiling rationale below is superseded by this authorization.
+It is not the current stop reason. Current inventory, authentication outcome
+and remaining owner prerequisites are in [evidence](self-healing-preview-evidence.md).
+
+
+## Dedicated staging results — 2026-10-12
+
+Owner-approved source: `4b4e31a54b819a3597ef3ee163a46e1a7b59fc67`.
+Provisioning stopped before mutation because an independent hard $10 spend
+bound could not be established. No staging project, deployment, baseline,
+provider, fault or runtime consumer was exercised. All scenarios are BLOCKED,
+execution NOT_RUN; this is not fourteen observed runtime failures.
+
+| # | Genuine staging scenario | Acceptance | Execution |
+| --- | --- | --- | --- |
+| 1 | Healthy baseline | BLOCKED | NOT_RUN |
+| 2 | Transient timeout | BLOCKED | NOT_RUN |
+| 3 | Repeated provider failure | BLOCKED | NOT_RUN |
+| 4 | Trinity failure / actual consumption | BLOCKED | NOT_RUN |
+| 5 | Redis interruption | BLOCKED | NOT_RUN |
+| 6 | Worker job failure / no duplicate execution | BLOCKED | NOT_RUN |
+| 7 | Failure threshold | BLOCKED | NOT_RUN |
+| 8 | Mitigation expiration / safe clearing | BLOCKED | NOT_RUN |
+| 9 | Fresh sufficient recovery verification | BLOCKED | NOT_RUN |
+| 10 | Actuator failure / bounded retry | BLOCKED | NOT_RUN |
+| 11 | Concurrent incidents | BLOCKED | NOT_RUN |
+| 12 | Service-role restrictions | BLOCKED | NOT_RUN |
+| 13 | Unauthorized operation | BLOCKED | NOT_RUN |
+| 14 | Restart during incident | BLOCKED | NOT_RUN |
+
+No staging correlation IDs, detection/actuation logs, controller/consumer
+transcripts, recovery measurements or clearing observations exist. No paid
+model, production dependency or unrelated deployment was used.
+[Cost evidence](self-healing-preview-evidence.md) records the stop decision;
+[readiness](self-healing-merge-readiness.md) reports all seventeen new gates.
+
+Earlier local PASS results below were not rerun in this staging assignment.
+They remain distinct local/CI evidence and cannot pass a genuine staging gate.
+
+## Historical local and preview investigation
+
+
+PR: [#1539](https://github.com/pbjustin/Arcanos/pull/1539).
+Date: 2026-10-12. Initial inspected head:
+`ec3ed16cb94c9166902bc810d0d73f89d322cf67`.
+
+The architecture map was completed before execution. All fourteen safely
+executable scenarios were evaluated locally. No isolated Railway fixture or
+genuine Railway runtime was exercised: the PR-owned exact-head preview is
+absent, so live execution stopped before credentials, endpoints or faults were
+used. Local PASS below applies only to the stated boundary. Every overall
+scenario remains BLOCKED for the requested live acceptance.
+
+The subsequent owner authorization permits preparation of an isolated profile;
+it does not establish platform credentials or deploy a runtime. New local
+profile identity/isolation contract checks use synthetic observations. They
+are not re-executions of the fourteen runtime scenarios below. All fourteen
+live results remain BLOCKED / execution NOT_RUN.
+
+Recovery follow-up at `2fd4cf81833ba3be4592654bc7789dd3309374d7`:
+all fourteen genuine live scenarios remain **BLOCKED**, and their runtime
+execution is **NOT_RUN**. No new fault, incident, consumer execution or recovery
+was performed. Missing opt-in was identified, but the current managed workflow
+targets service IDs confirmed in production and admits only sealed/passive
+services without PostgreSQL/Redis. The new mission forbids those target IDs.
+Independent preview-only identities and a supported trusted normal-runtime
+profile are required first. Local results below are preserved prior evidence,
+not substituted live outcomes or newly executed scenarios.
+
+| Scenario | Local result and execution mode | Evidence and practical limit | Isolated preview fixture | Genuine live preview / overall acceptance |
+| --- | --- | --- | --- | --- |
+| Healthy baseline | PASS — local real-consumer integration | `self-healing-trinity.integration.test.ts`: healthy coordinator selects no unnecessary action; actual SDK/Trinity takes its normal path against synthetic loopback replies. | NOT_RUN | BLOCKED |
+| Transient provider timeout | PASS — local real-consumer integration | Held loopback intake response triggers the real SDK deadline; one direct-answer recovery succeeds; only one failure observation, no persistent threshold activation. Next request returns to the normal pipeline. Client cancellation is distinguished from timeout-fixture backstop cleanup. No real provider call. | NOT_RUN | BLOCKED |
+| Repeated provider failures | PASS — local real-consumer integration | Five controlled 503 POSTs remain on the authorized model: intake plus four bounded recovery attempts. OPEN circuit rejects further POSTs; two successful synthetic probes close it. This proves bounded failure/admission behavior, not provider availability. | NOT_RUN | BLOCKED |
+| Trinity failure | PASS — local real-consumer integration | Coordinator selects and applies same-process degraded mode; actual `runTrinity` consumer switches simple traffic to direct answer. Complex traffic remains outside this mitigation. The integration asserts provider request transcript and consumer decision, beyond selection logs. Cross-service delivery is absent. | NOT_RUN | BLOCKED |
+| Redis interruption | PASS — local mocked lifecycle/operation integration | `redis-startup-lifecycle`, `redis-operation-boundary`, `safety-v2-redis-lifecycle`, `self-heal-telemetry-redis`: bounded reconnect/deadlines, unavailable admission and persistence fallback. No Redis process was interrupted locally or on Railway. | NOT_RUN | BLOCKED |
+| Worker job failure | PASS — local mocked queue/runner integration | `worker-task-queue`, `worker-autonomy-service`, `worker-duplication-suppression`, `job-runner-runtime`, queue lifecycle/requeue suites: bounded retries, one local execution owner and fenced terminal/retry behavior. This does not prove real SQL contention or exactly-once external effects. | NOT_RUN | BLOCKED |
+| Incident threshold | PASS — local unit and real-consumer integration | V2 records failures one/two without action and activates at three; transient real transport failure remains below that threshold. Canonical diagnosis tests separately enforce request/burst thresholds and configured incident attempt budgets. No durable unique incident registry exists. | NOT_RUN | BLOCKED |
+| Mitigation TTL | PASS — local V2 and real-consumer integration, Trinity scope | Fake-clock boundary expires the ten-minute Trinity command and restores the normal consumer. Pending verification is invalidated for expired/replaced commands without attributing recovery. Prompt-route mitigation has no TTL and requires explicit clear/rollback/restart; this broader requirement remains a limitation. | NOT_RUN | BLOCKED |
+| Recovery verification | PASS — local controller integration | Empty/stale request windows defer verification; measured post-action improvement is required for a live Trinity command. Expired/rolled-back/replaced commands cannot claim later recovery. V2 retains successful actions until TTL. There is no durable incident-close API to validate. | NOT_RUN | BLOCKED |
+| Failed mitigation | PASS — local controller/actuator integration | Four pre-fix throwing-actuator regressions demonstrated unbounded retries. Dispatched exceptions now consume cooldown/budget once, including degraded cooldown override. Unchanged/worse Trinity samples trigger rollback and ineffective cooldown; denied actuation consumes no dispatched attempt. Escalation effects are mocked. | NOT_RUN | BLOCKED |
+| Concurrent incidents | PASS — local unit/controller and real-consumer integration | One in-flight tick, one pending verification, duplicate suppression, predictive execution ownership, rollback-before-advisor ownership, and stage/action replacement fencing prevent competing same-process actions. No distributed coordinator lock or cross-service command bus is implemented. | NOT_RUN | BLOCKED |
+| Service-role restriction | PASS — local startup/unit and real-consumer integration | Web role suppresses automatic scheduler, interval entry and V2 failure activation; explicitly authorized manual web command remains consumable. Worker repair stays disabled for web even with approval. Standalone durable job runner does not start canonical scheduler; prompt fast trip is a separate owner. | NOT_RUN | BLOCKED |
+| Unauthorized action | PASS — local HTTP/policy/actuator integration | Approval, scoped admission, pre-parser authentication, rate-limit and helper credential suites reject unauthorized mutation. New exact Railway target regressions reject absent/conflicting/ambiguous scope before any mocked deployment; actual deployment calls never occur. | NOT_RUN | BLOCKED |
+| Restart during incident | PASS — two genuine local Node processes | `self-healing-restart.test.js` first activates a command, then fresh PID has empty stage/command state and normal consumer. Literal synthetic env, empty temp cwd, reviewed module allowlist and denied fetch contain effects. This proves invalidation, not durable incident continuation or external-effect replay safety. | NOT_RUN | BLOCKED |
+
+The original failures, corrections and aggregate results are in the
+[regression report](self-healing-regression-report.md). Deployment identity,
+isolation stop conditions and absence of live incident/consumer evidence are in
+the [preview evidence](self-healing-preview-evidence.md). The
+[merge-readiness report](self-healing-merge-readiness.md) keeps live gates
+independent from local results.
+
+No production database writes, Redis mutations, shared job execution, webhooks
+or billable model calls were authorized or executed by these acceptance tests.
+Existing CI disposable PostgreSQL/Redis results are supplementary CI evidence;
+they are not substitutes for the missing isolated preview.

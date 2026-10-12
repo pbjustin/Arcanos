@@ -82,6 +82,8 @@ const DEFAULT_DEGRADED_COOLDOWN_OVERRIDE_MS = 10 * 60_000;
 const DEFAULT_PROMPT_ROUTE_VERIFICATION_MIN_REQUESTS = 3;
 const SELF_HEAL_RUNTIME_KEY = '__ARCANOS_SELF_HEAL_RUNTIME__';
 const PROMPT_ROUTE_PATH = '/api/openai/prompt';
+const TRINITY_REQUEST_ROUTE_PATTERN =
+  /^(?:\/gpt\/:gptId|\/api\/arcanos\/ask|\/arcanos(?:-pipeline)?|\/query-finetune|\/siri)$/;
 const PROMPT_ROUTE_SIGNIFICANT_SHARE = 0.15;
 const VERIFICATION_SUCCESS_SIGNAL_COUNT = 2;
 const VERIFICATION_FAILURE_SIGNAL_COUNT = 2;
@@ -171,6 +173,7 @@ type DiagnosisAttemptState = {
 };
 
 type SelfHealingVerificationSnapshot = {
+  requestCount: number;
   errorRate: number;
   timeoutRate: number;
   timeoutCount: number;
@@ -180,6 +183,8 @@ type SelfHealingVerificationSnapshot = {
   stalledRunning: number;
   oldestPendingJobAgeMs: number;
   workerHealth: string | null;
+  workerRuntimeActive: boolean;
+  workerObservationAvailable: boolean;
   activeMitigation: string | null;
   promptRoute: {
     route: string;
@@ -338,18 +343,24 @@ type PendingVerification = {
   diagnosisType: DiagnosisType;
   diagnosisSummary: string;
   action: string;
+  actionTrackingKey: string;
   startedAt: string;
   verifyAfterMs: number;
   baseline: SelfHealingVerificationSnapshot;
+  verificationRoute: string | null;
+  minVerificationRequests: number;
   rollback:
     | {
         kind: 'trinity';
         stage: TrinitySelfHealingStage;
         action: TrinitySelfHealingAction;
+        expiresAtMs: number | null;
+        mitigationId: number | null;
         reason: string;
       }
     | {
         kind: 'prompt_route';
+        mitigationId: number | null;
         reason: string;
       }
     | null;
@@ -1622,6 +1633,7 @@ function deriveTelemetrySignals(
 function captureVerificationSnapshot(observation: SelfHealingObservation): SelfHealingVerificationSnapshot {
   const promptRoute = buildPromptRouteVerificationSnapshot(observation.requestWindow);
   return {
+    requestCount: observation.requestWindow.requestCount,
     errorRate: observation.requestWindow.errorRate,
     timeoutRate: observation.requestWindow.timeoutRate,
     timeoutCount: observation.requestWindow.timeoutCount,
@@ -1631,6 +1643,10 @@ function captureVerificationSnapshot(observation: SelfHealingObservation): SelfH
     stalledRunning: observation.workerHealth?.queueSummary?.stalledRunning ?? 0,
     oldestPendingJobAgeMs: observation.workerHealth?.queueSummary?.oldestPendingJobAgeMs ?? 0,
     workerHealth: observation.workerHealth?.overallStatus ?? null,
+    workerRuntimeActive: observation.workerRuntime.started && observation.workerRuntime.activeListeners > 0,
+    workerObservationAvailable:
+      observation.workerHealthError === null && observation.workerHealth !== null &&
+      Number.isFinite(observation.workerHealth.queueSummary?.stalledRunning),
     activeMitigation: getActiveAutomatedMitigation(observation.trinityStatus),
     promptRoute
   };
@@ -1689,7 +1705,7 @@ function buildVerificationSnapshotForPendingAction(
   }
 
   const promptRouteWindow = runtimeDiagnosticsService.getRequestWindowSince(
-    pending.startedAt,
+    new Date(Date.parse(pending.startedAt) + 1).toISOString(),
     resolveSignalWindowMs(),
     PROMPT_ROUTE_PATH
   );
@@ -1915,7 +1931,7 @@ function assessPromptRouteMitigationStability(
   }
 
   const postMitigationWindow = runtimeDiagnosticsService.getRequestWindowSince(
-    mitigationStartedAt,
+    new Date(Date.parse(mitigationStartedAt) + 1).toISOString(),
     resolveSignalWindowMs(),
     PROMPT_ROUTE_PATH
   );
@@ -2697,26 +2713,35 @@ function beginVerification(
   diagnosis: SelfHealingDiagnosis,
   action: string,
   observation: SelfHealingObservation,
-  rollback:
-    | {
-        kind: 'trinity';
-        stage: TrinitySelfHealingStage;
-        action: TrinitySelfHealingAction;
-        reason: string;
-      }
-    | {
-        kind: 'prompt_route';
-        reason: string;
-      }
-    | null = null
+  rollback: PendingVerification['rollback'] = null
 ): PendingVerification {
+  const affectedTrinityRoute = observation.requestWindow.routes
+    .filter((route) => TRINITY_REQUEST_ROUTE_PATTERN.test(route.route))
+    .sort((left, right) =>
+      (right.timeoutCount + right.errorCount + right.slowRequestCount)
+      - (left.timeoutCount + left.errorCount + left.slowRequestCount)
+      || left.route.localeCompare(right.route)
+    )[0] ?? null;
+  const baseline = captureVerificationSnapshot(observation);
+  if (affectedTrinityRoute && rollback?.kind !== 'prompt_route') {
+    baseline.requestCount = affectedTrinityRoute.requestCount;
+    baseline.errorRate = Number((affectedTrinityRoute.errorCount / Math.max(1, affectedTrinityRoute.requestCount)).toFixed(3));
+    baseline.timeoutRate = Number((affectedTrinityRoute.timeoutCount / Math.max(1, affectedTrinityRoute.requestCount)).toFixed(3));
+    baseline.timeoutCount = affectedTrinityRoute.timeoutCount;
+    baseline.avgLatencyMs = affectedTrinityRoute.avgLatencyMs;
+    baseline.p95LatencyMs = affectedTrinityRoute.p95LatencyMs;
+    baseline.maxLatencyMs = affectedTrinityRoute.maxLatencyMs;
+  }
   return {
     diagnosisType: diagnosis.type,
     diagnosisSummary: diagnosis.summary,
     action,
+    actionTrackingKey: getSelfHealingActionRecommendation(diagnosis.actionPlan) ?? action,
     startedAt: new Date().toISOString(),
     verifyAfterMs: resolveVerificationDelayMs(),
-    baseline: captureVerificationSnapshot(observation),
+    baseline,
+    verificationRoute: rollback?.kind === 'prompt_route' ? null : affectedTrinityRoute?.route ?? null,
+    minVerificationRequests: observation.trinityStatus.config.verifySuccessThreshold,
     rollback
   };
 }
@@ -2762,64 +2787,83 @@ function evaluateVerificationOutcome(
   const reasons: string[] = [];
   let betterCount = 0;
   let worseCount = 0;
+  const isWorkerRepair = pending.action === 'recoverStaleJobs' || pending.action === 'healWorkerRuntime';
+  const workerRuntimeImproved = current.workerObservationAvailable &&
+    !pending.baseline.workerRuntimeActive && current.workerRuntimeActive;
+  const workerImproved =
+    current.workerObservationAvailable && (
+      (pending.baseline.workerObservationAvailable && current.stalledRunning < pending.baseline.stalledRunning)
+      || workerRuntimeImproved ||
+      (pending.baseline.workerObservationAvailable && pending.baseline.workerHealth !== 'healthy' && current.workerHealth === 'healthy')
+    );
 
-  const errorTrend = compareMetricTrend(pending.baseline.errorRate, current.errorRate, ERROR_RATE_TREND_THRESHOLDS);
-  if (errorTrend === 'better') {
-    betterCount += 1;
-    reasons.push('rolling error rate improved');
-  } else if (errorTrend === 'worse') {
-    worseCount += 1;
-    reasons.push('rolling error rate worsened');
-  }
+  // Missing or old HTTP samples cannot be evidence that a runtime recovered.
+  // Queue repairs can still be verified from fresh worker-health observations.
+  if (current.requestCount >= pending.minVerificationRequests && (!isWorkerRepair || workerImproved)) {
+    const errorTrend = compareMetricTrend(pending.baseline.errorRate, current.errorRate, ERROR_RATE_TREND_THRESHOLDS);
+    if (errorTrend === 'better') {
+      betterCount += 1;
+      reasons.push('rolling error rate improved');
+    } else if (errorTrend === 'worse') {
+      worseCount += 1;
+      reasons.push('rolling error rate worsened');
+    }
 
-  const timeoutTrend = compareMetricTrend(
-    pending.baseline.timeoutRate,
-    current.timeoutRate,
-    TIMEOUT_RATE_TREND_THRESHOLDS
-  );
-  if (timeoutTrend === 'better' || current.timeoutCount < pending.baseline.timeoutCount) {
-    betterCount += 1;
-    reasons.push('timeout frequency improved');
-  } else if (
-    timeoutTrend === 'worse' ||
-    current.timeoutCount > pending.baseline.timeoutCount + VERIFICATION_TIMEOUT_COUNT_WORSE_DELTA
-  ) {
-    worseCount += 1;
-    reasons.push('timeout frequency worsened');
-  }
-
-  const latencyTrend = compareMetricTrend(
-    pending.baseline.p95LatencyMs,
-    current.p95LatencyMs,
-    P95_LATENCY_TREND_THRESHOLDS
-  );
-  if (latencyTrend === 'better') {
-    betterCount += 1;
-    reasons.push('p95 latency improved');
-  } else if (latencyTrend === 'worse') {
-    worseCount += 1;
-    reasons.push('p95 latency worsened');
-  }
-
-  const maxLatencyTrend = compareMetricTrend(
-    pending.baseline.maxLatencyMs,
-    current.maxLatencyMs,
-    MAX_LATENCY_TREND_THRESHOLDS
-  );
-  if (maxLatencyTrend === 'better') {
-    betterCount += 1;
-    reasons.push('max latency improved');
-  } else if (maxLatencyTrend === 'worse') {
-    worseCount += 1;
-    reasons.push('max latency worsened');
-  }
-
-  if (pending.action === 'recoverStaleJobs' || pending.action === 'healWorkerRuntime') {
-    if (
-      current.stalledRunning < pending.baseline.stalledRunning ||
-      current.workerHealth === 'healthy' ||
-      (pending.baseline.workerHealth !== 'healthy' && current.workerHealth === 'degraded')
+    const timeoutTrend = compareMetricTrend(
+      pending.baseline.timeoutRate,
+      current.timeoutRate,
+      TIMEOUT_RATE_TREND_THRESHOLDS
+    );
+    if (timeoutTrend === 'better' || current.timeoutCount < pending.baseline.timeoutCount) {
+      betterCount += 1;
+      reasons.push('timeout frequency improved');
+    } else if (
+      timeoutTrend === 'worse' ||
+      current.timeoutCount > pending.baseline.timeoutCount + VERIFICATION_TIMEOUT_COUNT_WORSE_DELTA
     ) {
+      worseCount += 1;
+      reasons.push('timeout frequency worsened');
+    }
+
+    const latencyTrend = compareMetricTrend(
+      pending.baseline.p95LatencyMs,
+      current.p95LatencyMs,
+      P95_LATENCY_TREND_THRESHOLDS
+    );
+    if (latencyTrend === 'better') {
+      betterCount += 1;
+      reasons.push('p95 latency improved');
+    } else if (latencyTrend === 'worse') {
+      worseCount += 1;
+      reasons.push('p95 latency worsened');
+    }
+
+    const maxLatencyTrend = compareMetricTrend(
+      pending.baseline.maxLatencyMs,
+      current.maxLatencyMs,
+      MAX_LATENCY_TREND_THRESHOLDS
+    );
+    if (maxLatencyTrend === 'better') {
+      betterCount += 1;
+      reasons.push('max latency improved');
+    } else if (maxLatencyTrend === 'worse') {
+      worseCount += 1;
+      reasons.push('max latency worsened');
+    }
+  }
+
+  if (isWorkerRepair && current.workerObservationAvailable) {
+    if (workerRuntimeImproved) {
+      betterCount += 1;
+      reasons.push('worker runtime activity improved');
+    }
+    if (pending.baseline.workerObservationAvailable && current.stalledRunning < pending.baseline.stalledRunning) {
+      betterCount += 1;
+      reasons.push('stalled job count improved');
+    }
+    if (current.workerHealth === 'healthy' && (
+      (pending.baseline.workerObservationAvailable && pending.baseline.workerHealth !== 'healthy') || workerRuntimeImproved
+    )) {
       betterCount += 1;
       reasons.push('worker health improved');
     } else if (
@@ -2830,6 +2874,8 @@ function evaluateVerificationOutcome(
       worseCount += 1;
       reasons.push('worker health worsened');
     }
+  } else if (isWorkerRepair) {
+    reasons.push('worker inspection did not provide usable queue health evidence');
   }
 
   if (isPromptRouteMitigationAction(pending.action)) {
@@ -2909,6 +2955,35 @@ function evaluateVerificationOutcome(
   };
 }
 
+function deferPendingRecoveryVerification(
+  runtime: SelfHealingLoopRuntime,
+  pending: PendingVerification,
+  reason: string,
+  details: Record<string, unknown>
+): void {
+  if (runtime.pendingVerification !== pending) {
+    return;
+  }
+  const expired = Date.now() - Date.parse(pending.startedAt) >= resolveIncidentWindowMs();
+  if (expired) {
+    runtime.pendingVerification = null;
+    recordCooldown(
+      runtime.ineffectiveActionCooldowns,
+      `${pending.diagnosisType}:${pending.actionTrackingKey}`,
+      resolveIneffectiveCooldownMs()
+    );
+  }
+  recordSelfHealEvent({
+    kind: expired ? 'failure' : 'noop',
+    source: 'self_heal_loop',
+    trigger: 'verification',
+    reason: expired ? `Recovery verification expired: ${reason}` : reason,
+    actionTaken: pending.action,
+    healedComponent: inferSelfHealComponentFromAction(pending.action),
+    details
+  });
+}
+
 function maybeVerifyPendingAction(
   runtime: SelfHealingLoopRuntime,
   observation: SelfHealingObservation
@@ -2921,6 +2996,58 @@ function maybeVerifyPendingAction(
     };
   }
 
+  if (pending.rollback?.kind === 'trinity') {
+    const command = pending.rollback;
+    const activeStage = observation.trinityStatus.snapshot[command.stage];
+    if (
+      activeStage.activeAction !== command.action ||
+      activeStage.expiresAtMs !== command.expiresAtMs ||
+      (activeStage.mitigationId ?? null) !== command.mitigationId ||
+      (command.expiresAtMs !== null && command.expiresAtMs <= Date.now())
+    ) {
+      runtime.pendingVerification = null;
+      recordSelfHealEvent({
+        kind: 'noop',
+        source: 'self_heal_loop',
+        trigger: 'verification',
+        reason: 'Trinity mitigation verification invalidated because its command is no longer active',
+        actionTaken: pending.action,
+        healedComponent: inferSelfHealComponentFromAction(pending.action),
+        details: {
+          stage: command.stage,
+          expectedAction: command.action,
+          expectedExpiresAtMs: command.expiresAtMs,
+          activeAction: activeStage.activeAction,
+          activeExpiresAtMs: activeStage.expiresAtMs
+        }
+      });
+      return {
+        verificationResult: null,
+        followUpAction: null
+      };
+    }
+  }
+
+  if (pending.rollback?.kind === 'prompt_route') {
+    const activeCommand = getPromptRouteMitigationState();
+    if (!activeCommand.active || (activeCommand.mitigationId ?? null) !== pending.rollback.mitigationId) {
+      runtime.pendingVerification = null;
+      recordSelfHealEvent({
+        kind: 'noop',
+        source: 'self_heal_loop',
+        trigger: 'verification',
+        reason: 'Prompt-route mitigation verification invalidated because its command is no longer active',
+        actionTaken: pending.action,
+        healedComponent: inferSelfHealComponentFromAction(pending.action),
+        details: {
+          expectedMitigationId: pending.rollback.mitigationId,
+          activeMitigationId: activeCommand.mitigationId ?? null
+        }
+      });
+      return { verificationResult: null, followUpAction: null };
+    }
+  }
+
   if (Date.now() - Date.parse(pending.startedAt) < pending.verifyAfterMs) {
     return {
       verificationResult: null,
@@ -2928,7 +3055,38 @@ function maybeVerifyPendingAction(
     };
   }
 
-  const verificationSnapshot = buildVerificationSnapshotForPendingAction(pending, observation);
+  let verificationObservation = observation;
+  if (pending.rollback?.kind !== 'prompt_route') {
+    const postActionWindow = pending.verificationRoute === null ? null : runtimeDiagnosticsService.getRequestWindowSince(
+      new Date(Date.parse(pending.startedAt) + 1).toISOString(),
+      resolveSignalWindowMs(),
+      pending.verificationRoute
+    );
+    if (
+      (pending.rollback?.kind === 'trinity' || pending.action === 'reinitializeOpenAIProvider')
+      && (postActionWindow === null || postActionWindow.requestCount < pending.minVerificationRequests)
+    ) {
+      console.log(
+        `[SELF-HEAL] verify deferred action=${pending.action} reason=awaiting_consumer_request_samples`
+      );
+      deferPendingRecoveryVerification(runtime, pending,
+        'awaiting post-action consumer request samples before verification', {
+          requiredSamples: pending.minVerificationRequests,
+          observedSamples: postActionWindow?.requestCount ?? 0,
+          route: pending.verificationRoute
+        });
+      return {
+        verificationResult: null,
+        followUpAction: null
+      };
+    }
+    verificationObservation = {
+      ...observation,
+      requestWindow: postActionWindow ?? { ...observation.requestWindow, requestCount: 0 }
+    };
+  }
+
+  const verificationSnapshot = buildVerificationSnapshotForPendingAction(pending, verificationObservation);
   if (shouldDeferPromptRouteVerification(pending, verificationSnapshot)) {
     console.log(
       `[SELF-HEAL] verify deferred action=${pending.action} reason=awaiting_prompt_route_samples observed=${verificationSnapshot.promptRoute?.requestCount ?? 0} required=${resolvePromptRouteVerificationMinRequests()}`
@@ -2952,6 +3110,34 @@ function maybeVerifyPendingAction(
   }
 
   const verificationResult = evaluateVerificationOutcome(pending, verificationSnapshot);
+  if (verificationResult.outcome === 'improved' && pending.rollback?.kind === 'trinity') {
+    const command = observation.trinityStatus.snapshot[pending.rollback.stage];
+    if (
+      (command.verificationSuccesses ?? 0) < pending.minVerificationRequests ||
+      command.verifiedAtMs == null
+    ) {
+      deferPendingRecoveryVerification(runtime, pending,
+        'awaiting actual Trinity mitigation consumer success receipts before recovery verification', {
+          mitigationId: pending.rollback.mitigationId,
+          requiredSamples: pending.minVerificationRequests,
+          observedSamples: command.verificationSuccesses ?? 0
+        });
+      return { verificationResult: null, followUpAction: null };
+    }
+  }
+  if (verificationResult.outcome === 'improved' && pending.action === 'reinitializeOpenAIProvider') {
+    const providerSuccesses = observation.telemetry.traces.recentEvents.filter(event =>
+      event.name === 'openai.resilience.success' && Date.parse(event.timestamp) > Date.parse(pending.startedAt)
+    ).length;
+    if (providerSuccesses < pending.minVerificationRequests) {
+      deferPendingRecoveryVerification(runtime, pending,
+        'awaiting actual provider execution success receipts before recovery verification', {
+          requiredSamples: pending.minVerificationRequests,
+          observedSamples: providerSuccesses
+        });
+      return { verificationResult: null, followUpAction: null };
+    }
+  }
   runtime.pendingVerification = null;
   runtime.status.lastVerificationResult = verificationResult;
   console.log(
@@ -2985,7 +3171,7 @@ function maybeVerifyPendingAction(
     };
   }
 
-  const ineffectiveKey = `${pending.diagnosisType}:${pending.action}`;
+  const ineffectiveKey = `${pending.diagnosisType}:${pending.actionTrackingKey}`;
   recordCooldown(runtime.ineffectiveActionCooldowns, ineffectiveKey, resolveIneffectiveCooldownMs());
 
   if (!pending.rollback) {
@@ -3000,6 +3186,7 @@ function maybeVerifyPendingAction(
     const rollbackResult = rollbackTrinitySelfHealingMitigation({
       stage: pending.rollback.stage,
       action: pending.rollback.action,
+      mitigationId: pending.rollback.mitigationId,
       reason: pending.rollback.reason
     });
 
@@ -3012,7 +3199,7 @@ function maybeVerifyPendingAction(
 
     followUpAction = `rollbackTrinityMitigation:${pending.rollback.stage}:${pending.rollback.action}`;
   } else {
-    const rollbackResult = rollbackPromptRouteMitigation(pending.rollback.reason);
+    const rollbackResult = rollbackPromptRouteMitigation(pending.rollback.reason, pending.rollback.mitigationId);
     if (!rollbackResult.rolledBack) {
       return {
         verificationResult,
@@ -3170,6 +3357,17 @@ async function executeActionPlan(
     };
   }
 
+  let actionDispatched = false;
+  let actionAttemptRecorded = false;
+  const recordDispatchedAttempt = () => {
+    if (!actionDispatched || actionAttemptRecorded) {
+      return;
+    }
+    recordCooldown(runtime.actionCooldowns, actionPlan.cooldownKey, actionPlan.cooldownMs);
+    recordDiagnosisAttempt(runtime, diagnosis.type);
+    actionAttemptRecorded = true;
+  };
+
   try {
     recordSelfHealEvent({
       kind: 'attempt',
@@ -3190,6 +3388,7 @@ async function executeActionPlan(
         target: actionTarget
       });
       const settings = getWorkerAutonomySettings();
+      actionDispatched = true;
       const recoverResult = await recoverStaleJobs({
         staleAfterMs: settings.staleAfterMs,
         maxRetries: settings.defaultMaxRetries
@@ -3207,8 +3406,7 @@ async function executeActionPlan(
         outcome: 'success',
         message: recoveryMessage
       });
-      recordCooldown(runtime.actionCooldowns, actionPlan.cooldownKey, actionPlan.cooldownMs);
-      recordDiagnosisAttempt(runtime, diagnosis.type);
+      recordDispatchedAttempt();
       recordActionExecuted({
         trigger,
         diagnosis,
@@ -3274,6 +3472,8 @@ async function executeActionPlan(
       const healResult = await executeWorkerRepairActuator({
         force: true,
         source: 'self_heal_loop'
+      }, {
+        onDispatch: () => { actionDispatched = true; }
       });
       const action = `healWorkerRuntime:${healResult.mode}`;
       recordWorkerReceipt({
@@ -3297,8 +3497,7 @@ async function executeActionPlan(
         statusCode: healResult.statusCode,
         message: healResult.message
       });
-      recordCooldown(runtime.actionCooldowns, actionPlan.cooldownKey, actionPlan.cooldownMs);
-      recordDiagnosisAttempt(runtime, diagnosis.type);
+      recordDispatchedAttempt();
       recordActionExecuted({
         trigger,
         diagnosis,
@@ -3363,6 +3562,7 @@ async function executeActionPlan(
         action: actionTrackingKey,
         target: actionTarget
       });
+      actionDispatched = true;
       const providerResult = await reinitializeOpenAIProvider({
         forceReload: true,
         ignoreBackoff: cooldownOverrideActive,
@@ -3384,8 +3584,7 @@ async function executeActionPlan(
             : 'failure',
         message: providerResult.reason ?? 'OpenAI provider reinitialized.'
       });
-      recordCooldown(runtime.actionCooldowns, actionPlan.cooldownKey, actionPlan.cooldownMs);
-      recordDiagnosisAttempt(runtime, diagnosis.type);
+      recordDispatchedAttempt();
       recordActionExecuted({
         trigger,
         diagnosis,
@@ -3426,7 +3625,9 @@ async function executeActionPlan(
       return {
         executed: true,
         action,
-        pendingVerification: beginVerification(diagnosis, 'reinitializeOpenAIProvider', observation)
+        pendingVerification: providerResult.ok
+          ? beginVerification(diagnosis, 'reinitializeOpenAIProvider', observation)
+          : null
       };
     }
 
@@ -3438,6 +3639,7 @@ async function executeActionPlan(
         action: actionTrackingKey,
         target: actionTarget
       });
+      actionDispatched = true;
       const mitigationResult = activateTrinitySelfHealingMitigation({
         stage: actionPlan.stage,
         action: actionPlan.trinityAction,
@@ -3488,8 +3690,7 @@ async function executeActionPlan(
         outcome: 'success',
         message: mitigationResult.reason
       });
-      recordCooldown(runtime.actionCooldowns, actionPlan.cooldownKey, actionPlan.cooldownMs);
-      recordDiagnosisAttempt(runtime, diagnosis.type);
+      recordDispatchedAttempt();
       recordActionExecuted({
         trigger,
         diagnosis,
@@ -3527,6 +3728,8 @@ async function executeActionPlan(
           kind: 'trinity',
           stage: actionPlan.stage,
           action: actionPlan.trinityAction,
+          expiresAtMs: mitigationResult.expiresAtMs,
+          mitigationId: mitigationResult.mitigationId ?? null,
           reason: 'self_heal_verification_failed'
         })
       };
@@ -3541,6 +3744,7 @@ async function executeActionPlan(
         target: actionTarget
       });
       const defaultTokenLimit = Math.max(64, Math.min(256, observation.openaiHealth.defaults?.maxTokens ?? 256));
+      actionDispatched = true;
       const mitigationResult = activatePromptRouteReducedLatencyMode(diagnosis.summary, defaultTokenLimit);
       if (!mitigationResult.applied) {
         console.log(`[SELF-HEAL] action skipped diagnosis=${diagnosis.type} reason=${mitigationResult.reason}`);
@@ -3584,8 +3788,7 @@ async function executeActionPlan(
         outcome: 'success',
         message: mitigationResult.reason
       });
-      recordCooldown(runtime.actionCooldowns, actionPlan.cooldownKey, actionPlan.cooldownMs);
-      recordDiagnosisAttempt(runtime, diagnosis.type);
+      recordDispatchedAttempt();
       recordActionExecuted({
         trigger,
         diagnosis,
@@ -3621,6 +3824,7 @@ async function executeActionPlan(
         action,
         pendingVerification: beginVerification(diagnosis, action, observation, {
           kind: 'prompt_route',
+          mitigationId: mitigationResult.state.mitigationId ?? null,
           reason: 'self_heal_verification_failed'
         })
       };
@@ -3634,6 +3838,7 @@ async function executeActionPlan(
         action: actionTrackingKey,
         target: actionTarget
       });
+      actionDispatched = true;
       const mitigationResult = activatePromptRouteDegradedMode(diagnosis.summary);
       if (!mitigationResult.applied) {
         console.log(`[SELF-HEAL] action skipped diagnosis=${diagnosis.type} reason=${mitigationResult.reason}`);
@@ -3677,8 +3882,7 @@ async function executeActionPlan(
         outcome: 'success',
         message: mitigationResult.reason
       });
-      recordCooldown(runtime.actionCooldowns, actionPlan.cooldownKey, actionPlan.cooldownMs);
-      recordDiagnosisAttempt(runtime, diagnosis.type);
+      recordDispatchedAttempt();
       recordActionExecuted({
         trigger,
         diagnosis,
@@ -3714,11 +3918,13 @@ async function executeActionPlan(
         action,
         pendingVerification: beginVerification(diagnosis, action, observation, {
           kind: 'prompt_route',
+          mitigationId: mitigationResult.state.mitigationId ?? null,
           reason: 'self_heal_verification_failed'
         })
       };
     }
   } catch (error) {
+    recordDispatchedAttempt();
     runtime.status.lastError = resolveErrorMessage(error);
     recordActionDispatchResult({
       runtime,
@@ -3828,6 +4034,23 @@ export async function runSelfHealingLoop(options: {
   const runtime = getRuntime();
   const trigger = options.trigger ?? 'manual';
   const tickAt = new Date().toISOString();
+
+  // Enforce the automatic ownership boundary at the tick as well as startup;
+  // explicit manual requests retain their existing scope and approval gates.
+  if (trigger !== 'manual' && isWorkerRuntimeSuppressedForServiceRole(getStableWorkerRuntimeMode())) {
+    return {
+      trigger,
+      tickAt,
+      tickCount: runtime.status.tickCount,
+      loopRunning: false,
+      lastError: null,
+      diagnosis: 'disabled_for_service_role',
+      action: null,
+      controllerDecision: null,
+      evidence: null,
+      verificationResult: null
+    };
+  }
 
   if (runtime.inFlight) {
     console.log(`[SELF-HEAL] tick skipped ${tickAt} trigger=${trigger} reason=in-flight`);

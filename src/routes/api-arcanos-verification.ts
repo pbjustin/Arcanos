@@ -12,7 +12,7 @@ import {
 } from '../shared/http/index.js';
 import {
   createRateLimitMiddleware,
-  getRequestActorKey
+  getRequestRateLimitActorKey
 } from '@platform/runtime/security.js';
 import type {
   ApiEnvelope,
@@ -100,7 +100,7 @@ const verificationControlRateLimit = createRateLimitMiddleware({
   bucketName: 'api-arcanos-control',
   maxRequests: 240,
   windowMs: 15 * 60 * 1000,
-  keyGenerator: (req) => `${getRequestActorKey(req)}:scope:control`
+  keyGenerator: (req) => `${getRequestRateLimitActorKey(req)}:scope:control`
 });
 
 const dagRunWriteRateLimit = createRateLimitMiddleware({

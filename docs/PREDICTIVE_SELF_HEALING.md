@@ -4,6 +4,46 @@
 
 Predictive self-healing adds a rules-first layer on top of the existing reactive self-heal loop.
 
+`src/server.ts` owns the canonical `selfHealingLoop` scheduler after startup
+readiness. The legacy `controlLoop` scheduler is retired; its exported inspection
+APIs remain available but cannot start another mitigation authority. The shared
+service-role policy suppresses automatic startup, interval ticks, and Trinity
+stage-failure actuation when the process is a web role with workers disabled.
+Explicit manual commands retain their existing caller scopes and server feature
+gates, including mitigation consumption, verification, and rollback. Mitigation
+state is process-local: this boundary does not establish delivery between a
+dedicated Worker service and a web service or across replicas. The dedicated
+`jobRunner` entrypoint does not start this scheduler, so a separated web/Worker
+deployment requires separate operational acceptance of coordinator ownership and
+mitigation delivery.
+
+Dispatched reactive failures consume the same cooldown and bounded
+per-diagnosis attempt budget as successful dispatches. Rejected worker-repair
+preflight does not consume an actuator attempt. Trinity and provider recovery
+verification pins the affected consumer route from the failure baseline and
+requires the configured verification sample threshold (three by default) from
+strictly later request completions on that route. Health checks, unrelated
+traffic, unknown route attribution, and empty or stale windows cannot establish
+recovery. Insufficient evidence expires at the existing incident-window limit,
+records failure and ineffective-action cooldown, and releases verification
+ownership. Improved Trinity verification also requires the active command's
+matching-generation consumer success threshold; diagnostic pings on a consumer
+route do not supply those receipts. Provider reload recovery additionally
+requires sufficient fresh `openai.resilience.success` receipts from the existing
+bounded telemetry buffer, excluding cached replies and the reload receipt itself.
+Worker repairs additionally require an observed improvement in
+worker runtime activity, health, or stalled jobs; healthy HTTP traffic alone
+cannot close an unchanged worker incident. Missing worker inspection is not a
+zero-stall observation.
+
+Trinity and prompt-route mitigations carry process-local generation identities.
+Consumer outcomes, verification, and rollback reject an older generation after
+replacement. Both prompt policies expire after ten minutes, including when no
+controller runs; the next state or policy read restores normal execution.
+Actual failed Trinity mitigation consumers count toward the existing rollback
+budget, while caller cancellation does not. Per-stage failure observations retain
+only the samples needed for the configured activation threshold.
+
 - Background loop:
   - reuses the existing self-heal loop cadence instead of introducing a second scheduler
   - polls metrics on `PREDICTIVE_HEALING_INTERVAL_MS` when set, otherwise on the `SELF_HEAL_LOOP_INTERVAL_MS` cadence

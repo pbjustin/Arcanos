@@ -1,7 +1,11 @@
 import type { TrinityAnswerMode } from '@core/logic/trinityTypes.js';
 import type { Tier } from '@core/logic/trinityTier.js';
 import { logger } from '@platform/logging/structuredLogging.js';
-import { getConfig } from '@platform/runtime/unifiedConfig.js';
+import {
+  getConfig,
+  getStableWorkerRuntimeMode,
+  isWorkerRuntimeSuppressedForServiceRole
+} from '@platform/runtime/unifiedConfig.js';
 
 export type TrinitySelfHealingStage = 'intake' | 'reasoning' | 'final';
 export type TrinitySelfHealingAction = 'enable_degraded_mode' | 'bypass_final_stage';
@@ -15,6 +19,7 @@ export interface TrinitySelfHealingMitigationCommandResult {
   activeAction: TrinitySelfHealingAction | null;
   verified: boolean;
   expiresAtMs: number | null;
+  mitigationId: number | null;
 }
 
 type StageState = {
@@ -23,6 +28,7 @@ type StageState = {
   activeAction: TrinitySelfHealingAction | null;
   activeSinceMs: number | null;
   expiresAtMs: number | null;
+  mitigationId: number | null;
   verificationSuccesses: number;
   verificationFailures: number;
   verifiedAtMs: number | null;
@@ -36,6 +42,8 @@ type MitigationSnapshot = {
   bypassFinalStage: boolean;
   forceDirectAnswer: boolean;
   verified: boolean;
+  mitigationId: number | null;
+  stageMitigationIds: Record<TrinitySelfHealingStage, number | null>;
 };
 
 const DEFAULT_TRIGGER_THRESHOLD = 3;
@@ -45,6 +53,7 @@ const DEFAULT_COOLDOWN_MS = 2 * 60_000;
 const DEFAULT_ACTION_TTL_MS = 10 * 60_000;
 const DEFAULT_VERIFY_SUCCESS_THRESHOLD = 3;
 const DEFAULT_VERIFY_FAILURE_THRESHOLD = 2;
+let nextMitigationId = 0;
 
 const ACTION_ORDER: Record<TrinitySelfHealingStage, TrinitySelfHealingAction[]> = {
   intake: ['enable_degraded_mode'],
@@ -65,6 +74,7 @@ function createStageState(): StageState {
     activeAction: null,
     activeSinceMs: null,
     expiresAtMs: null,
+    mitigationId: null,
     verificationSuccesses: 0,
     verificationFailures: 0,
     verifiedAtMs: null,
@@ -109,6 +119,7 @@ function expireActionIfNeeded(stage: TrinitySelfHealingStage, nowMs: number): vo
     state.activeAction = null;
     state.activeSinceMs = null;
     state.expiresAtMs = null;
+    state.mitigationId = null;
     state.verificationSuccesses = 0;
     state.verificationFailures = 0;
     state.verifiedAtMs = null;
@@ -121,6 +132,7 @@ function applyAction(stage: TrinitySelfHealingStage, action: TrinitySelfHealingA
   state.activeAction = action;
   state.activeSinceMs = nowMs;
   state.expiresAtMs = nowMs + cfg.actionTtlMs;
+  state.mitigationId = ++nextMitigationId;
   state.verificationSuccesses = 0;
   state.verificationFailures = 0;
   state.verifiedAtMs = null;
@@ -131,6 +143,7 @@ function applyAction(stage: TrinitySelfHealingStage, action: TrinitySelfHealingA
     stage,
     action,
     attempts: state.attempts,
+    mitigationId: state.mitigationId,
     reason,
     expectedOutcome:
       action === 'bypass_final_stage'
@@ -164,6 +177,7 @@ function rollbackAction(stage: TrinitySelfHealingStage, nowMs: number, reason: s
   state.activeAction = null;
   state.activeSinceMs = null;
   state.expiresAtMs = null;
+  state.mitigationId = null;
   state.verificationSuccesses = 0;
   state.verificationFailures = 0;
   state.verifiedAtMs = null;
@@ -198,7 +212,8 @@ function buildMitigationCommandResult(
     reason,
     activeAction: state.activeAction,
     verified: state.verifiedAtMs !== null,
-    expiresAtMs: state.expiresAtMs
+    expiresAtMs: state.expiresAtMs,
+    mitigationId: state.mitigationId
   };
 }
 
@@ -262,6 +277,7 @@ export function rollbackTrinitySelfHealingMitigation(params: {
   stage: TrinitySelfHealingStage;
   reason: string;
   action?: TrinitySelfHealingAction | null;
+  mitigationId?: number | null;
 }): TrinitySelfHealingMitigationCommandResult {
   const cfg = getRuntimeConfig();
   if (!cfg.enabled) {
@@ -276,6 +292,12 @@ export function rollbackTrinitySelfHealingMitigation(params: {
 
   if (!state.activeAction) {
     return buildMitigationCommandResult(params.stage, 'no_active_action', {
+      action: params.action ?? null
+    });
+  }
+
+  if (params.mitigationId !== undefined && state.mitigationId !== params.mitigationId) {
+    return buildMitigationCommandResult(params.stage, 'mitigation_id_mismatch', {
       action: params.action ?? null
     });
   }
@@ -299,9 +321,12 @@ export function recordTrinityStageFailure(params: {
   error: string;
   requestId: string;
   sourceEndpoint?: string;
+  mitigationId?: number | null;
 }): TrinitySelfHealingAction | null {
   const cfg = getRuntimeConfig();
-  if (!cfg.enabled) {
+  // Automatic request-failure actuation follows the background service-role
+  // boundary. Explicit scoped commands and their consumer retain their gates.
+  if (!cfg.enabled || isWorkerRuntimeSuppressedForServiceRole(getStableWorkerRuntimeMode())) {
     return null;
   }
 
@@ -310,6 +335,11 @@ export function recordTrinityStageFailure(params: {
   expireActionIfNeeded(params.stage, nowMs);
   state.observations = pruneWindow(state.observations, nowMs, cfg.windowMs);
   state.observations.push(nowMs);
+  // The threshold needs only the most recent samples, including during an
+  // exhausted incident. Do not retain every failure in a busy five-minute window.
+  if (state.observations.length > cfg.triggerThreshold) {
+    state.observations = state.observations.slice(-cfg.triggerThreshold);
+  }
 
   logger.warn('self_heal.v2.observed', {
     module: 'self_heal.v2',
@@ -323,6 +353,10 @@ export function recordTrinityStageFailure(params: {
   });
 
   if (state.activeAction) {
+    // A request started before this command cannot verify or roll it back.
+    if (params.mitigationId !== undefined && params.mitigationId !== state.mitigationId) {
+      return null;
+    }
     state.verificationFailures += 1;
     logger.warn('self_heal.v2.verify', {
       module: 'self_heal.v2',
@@ -376,6 +410,7 @@ export function noteTrinityMitigationOutcome(params: {
   requestId: string;
   sourceEndpoint?: string;
   action?: TrinitySelfHealingAction | null;
+  mitigationId?: number | null;
 }): void {
   const cfg = getRuntimeConfig();
   if (!cfg.enabled) {
@@ -386,7 +421,10 @@ export function noteTrinityMitigationOutcome(params: {
   const state = stageState[params.stage];
   expireActionIfNeeded(params.stage, nowMs);
   const action = params.action ?? state.activeAction;
-  if (!action || state.activeAction !== action) {
+  if (
+    !action || state.activeAction !== action ||
+    (params.mitigationId !== undefined && state.mitigationId !== params.mitigationId)
+  ) {
     return;
   }
 
@@ -400,6 +438,7 @@ export function noteTrinityMitigationOutcome(params: {
     module: 'self_heal.v2',
     stage: params.stage,
     action,
+    mitigationId: state.mitigationId,
     outcome: params.outcome,
     requestId: params.requestId,
     sourceEndpoint: params.sourceEndpoint,
@@ -435,7 +474,9 @@ export function getTrinitySelfHealingMitigation(params: {
       stage: null,
       bypassFinalStage: false,
       forceDirectAnswer: false,
-      verified: false
+      verified: false,
+      mitigationId: null,
+      stageMitigationIds: { intake: null, reasoning: null, final: null }
     };
   }
 
@@ -465,6 +506,12 @@ export function getTrinitySelfHealingMitigation(params: {
   return {
     activeAction: intakeState.activeAction ?? reasoningState.activeAction ?? finalState.activeAction,
     stage: activeStage,
+    mitigationId: activeStage === null ? null : stageState[activeStage].mitigationId,
+    stageMitigationIds: {
+      intake: intakeState.mitigationId,
+      reasoning: reasoningState.mitigationId,
+      final: finalState.mitigationId
+    },
     bypassFinalStage,
     forceDirectAnswer,
     verified:
