@@ -432,6 +432,18 @@ export function createRateLimitMiddleware(
     : MAX_RATE_LIMIT_ENTRIES;
   const cleanupIntervalMs = Math.max(1000, Math.min(options.windowMs ?? windowMs, 60 * 1000));
   let lastCleanupAtMs = 0;
+  let earliestResetTimeMs: number | undefined;
+
+  /** Cache the earliest capacity release so repeated overflow does not scan the map. */
+  function getEarliestResetTime(): number {
+    if (earliestResetTimeMs === undefined) {
+      earliestResetTimeMs = Number.POSITIVE_INFINITY;
+      for (const entry of requestCounts.values()) {
+        earliestResetTimeMs = Math.min(earliestResetTimeMs, entry.resetTime);
+      }
+    }
+    return earliestResetTimeMs;
+  }
 
   /**
    * Purge expired rate-limit entries during throttled request cleanup.
@@ -445,6 +457,9 @@ export function createRateLimitMiddleware(
     for (const [key, value] of requestCounts.entries()) {
       //audit Assumption: entry is stale once reset window has elapsed; risk: stale map growth; invariant: only expired entries are deleted; handling: periodic purge.
       if (now >= value.resetTime) {
+        if (value.resetTime === earliestResetTimeMs) {
+          earliestResetTimeMs = undefined;
+        }
         requestCounts.delete(key);
       }
     }
@@ -485,7 +500,11 @@ export function createRateLimitMiddleware(
       .update(JSON.stringify([policy.bucketName, actorKey]))
       .digest('hex');
     if (!requestCounts.has(storageKey) && requestCounts.size >= maxEntries) {
-      const resetTime = Math.max(now + 1, lastCleanupAtMs + cleanupIntervalMs);
+      const resetTime = Math.max(
+        now + 1,
+        getEarliestResetTime(),
+        lastCleanupAtMs + cleanupIntervalMs
+      );
       const retryAfterSeconds = Math.max(1, Math.ceil((resetTime - now) / 1000));
       res.set({
         'Retry-After': retryAfterSeconds.toString(),
@@ -505,6 +524,9 @@ export function createRateLimitMiddleware(
     
     //audit Assumption: reset window when elapsed; Handling: reset counters
     if (now >= current.resetTime) {
+      if (current.resetTime === earliestResetTimeMs) {
+        earliestResetTimeMs = undefined;
+      }
       current.count = 1;
       current.resetTime = now + policy.windowMs;
     } else {
@@ -512,6 +534,11 @@ export function createRateLimitMiddleware(
     }
     
     requestCounts.set(storageKey, current);
+    if (requestCounts.size === 1) {
+      earliestResetTimeMs = current.resetTime;
+    } else if (earliestResetTimeMs !== undefined) {
+      earliestResetTimeMs = Math.min(earliestResetTimeMs, current.resetTime);
+    }
     
     //audit Assumption: enforce rate limit threshold; Handling: 429 response
     if (current.count > policy.maxRequests) {

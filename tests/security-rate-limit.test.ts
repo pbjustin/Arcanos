@@ -192,6 +192,120 @@ describe('createRateLimitMiddleware', () => {
     expect(next).toHaveBeenCalledTimes(3);
   });
 
+  it('reports retained counter expiry when a full map cannot recover at the next cleanup', () => {
+    const startedAt = Date.now();
+    const middleware = createRateLimitMiddleware({
+      maxRequests: 1,
+      windowMs: 15 * 60 * 1000,
+      maxEntries: 2,
+    });
+    const res = createMockResponse();
+    const next = jest.fn() as unknown as NextFunction;
+    const overflow = createMockRequest('203.0.113.3');
+
+    middleware(createMockRequest('203.0.113.1'), res, next);
+    middleware(createMockRequest('203.0.113.2'), res, next);
+    middleware(overflow, res, next);
+
+    expect(res.set).toHaveBeenLastCalledWith(expect.objectContaining({
+      'Retry-After': '900',
+      'X-RateLimit-Reset': new Date(startedAt + 900_000).toISOString(),
+    }));
+    expect(res.json).toHaveBeenLastCalledWith(expect.objectContaining({ retryAfter: 900 }));
+
+    jest.advanceTimersByTime(60_000);
+    middleware(overflow, res, next);
+    expect(res.set).toHaveBeenLastCalledWith(expect.objectContaining({ 'Retry-After': '840' }));
+    middleware(createMockRequest('203.0.113.1'), res, next);
+    expect(next).toHaveBeenCalledTimes(2);
+    expect(res.status).toHaveBeenCalledTimes(3);
+
+    jest.advanceTimersByTime(840_000);
+    middleware(overflow, res, next);
+    expect(next).toHaveBeenCalledTimes(3);
+  });
+
+  it('uses the earliest varied window and waits for eligible cleanup before reusing capacity', () => {
+    const startedAt = Date.now();
+    const middleware = createRateLimitMiddleware({
+      maxRequests: 1,
+      windowMs: 15 * 60 * 1000,
+      maxEntries: 2,
+      policyResolver: (req, policy) => ({
+        ...policy,
+        windowMs: req.body.windowMs ?? policy.windowMs,
+      }),
+    });
+    const res = createMockResponse();
+    const next = jest.fn() as unknown as NextFunction;
+    const overflow = createMockRequest('203.0.113.3');
+
+    middleware(createMockRequest('203.0.113.1'), res, next);
+    middleware(createMockRequest('203.0.113.2', { body: { windowMs: 90_000 } }), res, next);
+    middleware(overflow, res, next);
+    expect(res.set).toHaveBeenLastCalledWith(expect.objectContaining({
+      'Retry-After': '90',
+      'X-RateLimit-Reset': new Date(startedAt + 90_000).toISOString(),
+    }));
+
+    jest.advanceTimersByTime(60_000);
+    middleware(overflow, res, next);
+    jest.advanceTimersByTime(30_000);
+    middleware(overflow, res, next);
+    expect(res.set).toHaveBeenLastCalledWith(expect.objectContaining({
+      'Retry-After': '30',
+      'X-RateLimit-Reset': new Date(startedAt + 120_000).toISOString(),
+    }));
+    expect(next).toHaveBeenCalledTimes(2);
+
+    jest.advanceTimersByTime(30_000);
+    middleware(overflow, res, next);
+    expect(next).toHaveBeenCalledTimes(3);
+    middleware(createMockRequest('203.0.113.4'), res, next);
+    expect(res.set).toHaveBeenLastCalledWith(expect.objectContaining({
+      'Retry-After': '780',
+      'X-RateLimit-Reset': new Date(startedAt + 900_000).toISOString(),
+    }));
+    middleware(createMockRequest('203.0.113.1'), res, next);
+    expect(next).toHaveBeenCalledTimes(3);
+  });
+
+  it('recomputes an extended earliest expiry once and reuses it across repeated overflow', () => {
+    const startedAt = Date.now();
+    const middleware = createRateLimitMiddleware({
+      maxRequests: 1,
+      windowMs: 15 * 60 * 1000,
+      maxEntries: 2,
+      policyResolver: (req, policy) => ({
+        ...policy,
+        windowMs: req.body.windowMs ?? policy.windowMs,
+      }),
+    });
+    const res = createMockResponse();
+    const next = jest.fn() as unknown as NextFunction;
+    middleware(createMockRequest('203.0.113.1', { body: { windowMs: 1000 } }), res, next);
+    middleware(createMockRequest('203.0.113.2'), res, next);
+    middleware(createMockRequest('203.0.113.3'), res, next);
+    expect(res.set).toHaveBeenLastCalledWith(expect.objectContaining({ 'Retry-After': '60' }));
+
+    jest.advanceTimersByTime(1000);
+    middleware(createMockRequest('203.0.113.1'), res, next);
+    const mapValuesSpy = jest.spyOn(Map.prototype, 'values');
+    try {
+      for (let index = 0; index < 20; index += 1) {
+        middleware(createMockRequest(`198.51.100.${index + 1}`), res, next);
+        expect(res.set).toHaveBeenLastCalledWith(expect.objectContaining({
+          'Retry-After': '899',
+          'X-RateLimit-Reset': new Date(startedAt + 900_000).toISOString(),
+        }));
+      }
+      expect(mapValuesSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      mapValuesSpy.mockRestore();
+    }
+    expect(next).toHaveBeenCalledTimes(3);
+  });
+
   it('retains only bounded hashes for oversized custom actor keys', () => {
     const middleware = createRateLimitMiddleware({
       keyGenerator: () => 'x'.repeat(100_000),

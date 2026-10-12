@@ -322,6 +322,8 @@ and larger values are capped at 10,000. A full map rejects new identities with
 the existing `429` response until request-driven expiry cleanup recovers space;
 it preserves active counters. These local budgets may aggregate NAT/proxy users
 and do not replace the shared production provider-admission ceiling above.
+Capacity retry headers use the earliest retained counter expiry and the next
+eligible request-driven cleanup time.
 
 The Redis decision seam has a fixed non-queuing process guard: no more than the
 smaller of 16 and the configured deployment maximum may be in flight at once.
