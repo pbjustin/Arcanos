@@ -1,5 +1,56 @@
 # Self-healing ownership and data flow
 
+## Authenticated staging preparation and cleanup stop — 2026-10-12
+
+Inspection head: `a8bb1c35eeea3d59be6fd86c0ce908e4e147767a`; approved
+application source: `4b4e31a54b819a3597ef3ee163a46e1a7b59fc67`.
+The difference consists only of these five audit Markdown documents. PR #1539
+is open, non-draft and unmerged; its branch/base are unchanged. No application
+artifact was deployed. The final documentation head is recorded in the PR
+delivery receipt separately from the approved executable.
+
+Railway CLI 5.23.3 sign-in now succeeds. The earlier expired sign-in below is
+historical. Disposable cleanup execution exposed an actual 48-hour CLI
+project-deletion grace period, a direct API client-header requirement, and a
+watchdog confirmation failure. These are operator findings, not new ARCANOS
+runtime defects. Project creation and immediate empty-project deletion were
+exercised; service/volume deletion was rejected by the connected app even
+after exact-resource owner authorization. Provisioning stopped at that
+approval control; the armed probe daemon was stopped before it could indirectly
+perform the rejected deletion. Independent dashboard cleanup remains pending.
+
+Separate operator fixtures were prepared outside the repository:
+a finite private synthetic provider, an authenticated bounded loopback relay,
+and an exact-receipt cleanup watchdog. Their hashes and tests are in the
+[regression report](self-healing-regression-report.md). They were never installed
+in a Railway app, and do not change the approved application SHA.
+The profile preserves the existing integrity launcher and
+`ARCANOS_PREVIEW_ISOLATION=true` / `FORCE_MOCK=true`. It uses fresh-purpose
+credentials and supported role/time-budget settings, without production
+credentials or paid provider calls. Local SDK transport checks are synthetic;
+no web, worker, PostgreSQL or Redis process was started on Railway.
+
+The planned live path is authenticated manual web coordinator to same-process
+Trinity, plus durable `ask` jobs to the actual worker child and that child's
+Trinity/V2 state. A separate imported test process or web snapshot cannot prove
+worker consumption. FORCE_MOCK suppresses normal Brain registration/startup
+provider probing; those paths cannot be certified by this profile. Worker
+1-second stage timeout also caps the whole pipeline watchdog; its 10-second
+runtime budget does not enlarge that cap. Planner baseline is unsupported
+under that profile. The ordinary Trinity route still needs deployed evidence.
+
+Process-local command delivery, incident persistence, prompt-policy lifetime,
+replacement ownership and recovery using actual consumer traffic remain
+explicit acceptance questions. A source-reviewed health/control-only recovery
+probe is planned, but no live failure was observed or inferred and no
+application correction was made. All fourteen live scenarios remain
+BLOCKED / execution NOT_RUN. See the [current evidence](self-healing-preview-evidence.md)
+for remaining resources, charges and owner cleanup action.
+
+Everything following this update is historical or the unchanged source
+ownership map; earlier assertions that no resources existed refer to their
+dated attempts.
+
 ## Revised staging authorization and cleanup preflight — 2026-10-12
 
 The owner now authorizes the existing Railway workspace, a $10 operational

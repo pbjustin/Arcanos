@@ -1,5 +1,88 @@
 # Self-healing regression report
 
+## Authenticated cleanup and operator-fixture validation — 2026-10-12
+
+Approved application source remains
+`4b4e31a54b819a3597ef3ee163a46e1a7b59fc67`.
+Inspection head `a8bb1c35eeea3d59be6fd86c0ce908e4e147767a` changes only the
+five audit documents. No application code, dependency, build or permanent
+fault-injection change was made, and no application was deployed.
+
+Operator artifacts were prepared in `/tmp/pr1539-staging-operator`,
+separate from the PR's executable/source and outside Railway infrastructure.
+They contain finite synthetic faults, role-separated auth, bounded SDK relay
+requests, cancellation/backstop distinctions, fresh-target allowlists,
+unchanged preview/integrity guards, absolute expiry and fail-closed cleanup.
+No production secret/provider credential was copied. Independent reviews
+checked guards, schema, scope, deadlines and the supported role-only timeout
+configuration. Thirty fake cleanup tests and163 synthetic operator assertions
+pass; they do not execute ARCANOS or establish a live acceptance gate.
+
+| Operator artifact | SHA256 |
+| --- | --- |
+| `provider-fixture.ts` | `3fcf8dedb3f49825fe93243ac5a906d485717e9080cfc6b8fccebd28e4f64b1a` |
+| `loopback-bootstrap.mjs` | `f5064a414034ee5ba3c8f2493dc72a0a4012ce11f6a8c5f26113f71929fb3ef3` |
+| `operator-verification.test.mjs` | `c63430d612e506acc732d475ff4f35d91a69823904b510cb3d9a9758da352007` |
+| `immediate-project-delete.py` | `4feb2a25ff768c21247b04abf7e5c1551c750c5d6883db424d63b3797da33c59` |
+| `cleanup-watchdog.mjs` | `1c6a9bf479c2b23a6d800a2dfe4ce960e1de6cb46296b060ef765ad7dbdc112e` |
+| Pinned Railway5.23.3 executable | `0d6b51f7e708eeb28d5f0f649cef9d24bc00151d833329a84fc1cc47b1e8e040` |
+
+Executed commands/results:
+
+| Command | Result and boundary |
+| --- | --- |
+| `env -i PATH=/usr/local/bin:/usr/bin:/bin /tmp/arcanos-preview-recovery-toolchain/node-v24.18.1-linux-x64/bin/node /tmp/pr1539-staging-operator/operator-verification.test.mjs` | PASS at18:05:21.784Z:163 assertions, zero failures;500 quota-success requests counted separately. SDK6.25.0, only127.0.0.1 sockets, injected upstream, no ARCANOS/Bun start or external provider. |
+| Same command using `/tmp/pr1539-staging-operator/frozen/operator-verification.test.mjs` | PASS at18:05:41.117Z:148 historical assertions; overlaps current163 and is not added to a unique total. |
+| `python3 /tmp/pr1539-staging-operator/immediate-project-delete.test.py` | PASS:16 fake cases, zero failures/skips; no credentials/API. |
+| `node --test /tmp/pr1539-staging-operator/cleanup-watchdog.test.mjs` on pinned Node24.18.1 | PASS:14 fake cases, zero failures/skips; no live CLI/API. |
+| `node --check /tmp/pr1539-staging-operator/cleanup-watchdog.mjs` | PASS on pinned Node24.18.1. |
+| CLI `whoami --json`, `project list --json`; fixed-receipt API `inspect` | Executed successfully; principal private details withheld; caller role not verified. |
+| First actual short-deadline CLI cleanup watchdog | BLOCKED: scheduled48-hour deletion did not remove project. |
+| Second actual detached immediate-delete watchdog | BLOCKED on first confirmation read; API deletion separately succeeded and fresh CLI/MCP absence was verified. |
+| Corrected third detached watchdog | NOT_RUN to expiry: deliberately stopped after connected service deletion rejection. Local correction is not a live watchdog PASS. |
+| Connected exact-owned service deletion, explicit-owner-authorized retry and separately authorized volume deletion | BLOCKED: two service rejections and one volume rejection, each “the user did not approve this action”; no changes. |
+
+Two cleanup-diagnostics regressions failed before correction; failing-before
+log SHA256:
+`598766129a9498d02b33fdc26e6a74ff23049637e2d3ca7f9ffbe48b6db2e90d`.
+The operator correction adds sanitized failure phase/exit/signal and at most
+two retries after CLI exit/timeout failure, stopping on the third classified
+confirmation-read failure. Successful presence polling remains bounded by six
+minutes and the absolute deadline. The mutation is still dispatched once.
+Invalid JSON, target drift, binary mismatch or malformed
+adapter acceptance fails closed. The unknown original live confirmation cause
+is not retroactively assigned. Exact scripted invocations, frozen source,
+sanitized logs and project receipts remain in the operator directory.
+No ARCANOS regression/fix is inferred from infrastructure/tool approval errors.
+
+The provider/bootstrap preserves FORCE_MOCK and the protected launcher;
+ordinary core Trinity/ask paths remain the intended scope. Web reasoning6000ms
+and worker stage1000ms/runtime10000ms are supported test-profile settings, not
+new application code. Worker stage also caps its whole watchdog, planner
+baseline is unsupported, and SDK retries are disabled. Local503 recovery uses
+a new caller request; it does not establish SDK retry behavior, real provider
+availability, deployed consumer behavior, persistence or SQL idempotency.
+
+Approved-source full CI remains PASS: CI/CD38267906072 and PR CI38267906079
+each passed899suites/17,640tests,13suites/167tests skipped, zero failures.
+These totals overlap all prior local application checks and are not summed.
+Type-check, lint, build, security and disposable storage/queue checks passed
+in that source CI; no local application checks were manually rerun for this
+documentation diff. The original606local/897suites/17,532tests baseline is
+historical; approved-source CI adds108passing tests/two suites with unchanged
+skips. Coverage remains93.52% statements/lines,87.33% branches,95.79% functions.
+
+Authenticated refresh now shows inspection-head CI/CD38282087675,
+PR CI38282087682, Documentation Audit38282087689 and API Endpoint Tests38282087716
+all completed SUCCESS. Those terminal metadata results do not newly prove
+test totals or live deployment. Current documentation validation/final head
+will be recorded in the delivery receipt. No fullCI workflow was manually
+dispatched; no production test or paid external API ran.
+
+The fourteen genuine staging scenarios are BLOCKED / execution NOT_RUN.
+Cleanup and owner intervention are in the [current evidence](self-healing-preview-evidence.md);
+all earlier validation below is retained with its historical environment scope.
+
 ## Revised authorization / cleanup preflight validation — 2026-10-12
 
 Approved executable remains `4b4e31a54b819a3597ef3ee163a46e1a7b59fc67`.

@@ -1,5 +1,129 @@
 # Railway preview evidence
 
+## Successful login, executed cleanup probes and approval stop — 2026-10-12
+
+**PRECREATE_CLEANUP_VERIFIED: BLOCKED. LIVE_ACCEPTANCE_VERIFIED: BLOCKED.
+MERGE_READY: BLOCKED.**
+
+Fresh authenticated PR metadata: #1539, open/non-draft/unmerged,
+branch `codex/targeted-security-healing-20261012`, base
+`3fd305b37ba410cf21684a8fed7619a1ba180b48`, inspection head
+`a8bb1c35eeea3d59be6fd86c0ce908e4e147767a`.
+Git diff from approved application SHA
+`4b4e31a54b819a3597ef3ee163a46e1a7b59fc67` lists exactly the five audit
+Markdown files. No different executable was substituted or deployed.
+
+Supported Railway CLI 5.23.3 sign-in completed successfully; fresh
+`whoami --json` and complete project inventories succeeded. Identity/email,
+OAuth values and transient activation URLs/codes are omitted.
+Workspace: `1c9265a3-986f-4304-ad3e-5a874caab039`.
+The two preexisting projects were recorded before creation and excluded from
+all mutations: production `7faf44e5-519c-4e73-8d7a-da9f389e6187` and unrelated
+`8e4cb1eb-1441-4e83-b434-15c06c676a5f`.
+
+Three disposable projects were actually created. All are assignment-owned;
+none contains ARCANOS, PostgreSQL, Redis, a model credential or application data.
+
+| Probe | Project / environment ID | Result |
+| --- | --- | --- |
+| Original empty CLI probe | `21a05b97-59f7-435f-8a3a-234eb722cb6c` / `057756e5-0b34-4a12-beed-34a7e6dc6f65` | Still present; CLI scheduled deletion for 2026-10-14T17:38:48.891Z. Owner dashboard removal pending. |
+| Immediate-delete probe | `7bd0536d-95c1-4db9-a766-6a0f49547617` / `f85c4837-b9e6-46e5-9c40-ddc78e93a63a` | Removed by scoped API projectDelete; fresh CLI and connected inventories confirmed absence. |
+| Service/volume probe | `db505b48-74f0-4571-9cd3-52bc865ff2cd` / `5e85ff14-fda4-4325-924c-fee7d0660ab3` | Still present; connected service deletion rejected twice. Owner dashboard cleanup requested. |
+
+The first actual project was created at 17:38:27.240Z. The conservative mission
+clock began at **17:38:25.364Z**; the original absolute two-hour expiry is
+**19:38:25.364Z**. It was never reset by another probe or sign-in.
+
+### Captured failing and corrective infrastructure evidence
+
+The first watchdog, PID15111, armed at17:38:29.013Z, began cleanup at
+17:38:48.227Z and recorded CLI deletion acceptance at17:38:49.060Z.
+At17:44:49.061Z it ended:
+`BLOCKED / WATCHDOG_DELETE_NOT_CONFIRMED`.
+Fresh inventories still contained the project with a deletion time 48 hours
+later. Accepted scheduled deletion is not project absence.
+
+The operator API adapter initially returned HTTP403 at inspection. Matching
+the pinned CLI's documented normal `User-Agent` and `x-source` client headers
+made the same bounded authenticated inspection succeed. An invalid
+ProjectMember field was also corrected against the public schema.
+The normal CLI refreshes its own OAuth session; only its documented credential
+accessor is used privately in memory, never printed, passed in argv or copied
+to an application. Caller role remained null/unverified, so OWNER/admin
+membership is not claimed.
+
+Fresh detached watchdog PID16987 armed at18:02:53.194Z for the second probe.
+It began cleanup at18:03:04.506Z, recorded immediate API deletion acceptance at
+18:03:06.114Z, then ended at18:03:06.457Z:
+`BLOCKED / WATCHDOG_CLI_FAILED`.
+Independent fresh CLI and connected inventories confirmed the target absent,
+and an already-absent rerun at18:04:49Z passed without mutation.
+Its exact transient subprocess failure is unknown; the original BLOCKED
+record is preserved. The revised watchdog has bounded confirmation-read
+retries and safe phase/exit diagnostics, tested locally, not yet passed live.
+
+The third probe has two live **empty** service definitions, no source and no
+deployment:
+`1a37a7ae-c62a-4e0d-af28-a9cdfc71670b`,
+`59ff3127-d358-4681-8ded-a61418a8a629`.
+Volume `b177bc79-8db3-4530-b91b-9f04e0e6bfde` is live, size1000MB,
+region `us-east4-eqdc4a`, mounted at `/data` on the first service.
+Fresh inventory verified no buckets/shared variables/credentials.
+
+Deletion of the first service returned:
+
+```text
+Cancelled — the user did not approve this action. No changes were made.
+```
+
+The owner then explicitly authorized deleting this exact project, its two empty
+services and empty volume. A fresh ownership inventory preceded the retry,
+which returned the same rejection. A separately scoped deletion of the owned
+volume, also explicitly authorized, returned the same cancellation/no-change
+result. No alternate deletion path was used to bypass those controls.
+Third watchdog PID17490 had armed at18:09:11.122Z;
+root stopped it at18:10:15Z, before its18:10:25.632Z expiry, to prevent indirect
+execution of the rejected cleanup. Its event log contains only `armed`;
+the process is exited, not an active cleanup fallback. Provisioning/fault
+injection stopped and the owner was immediately given both remaining dashboard
+project links. No service/volume deletion or independent fallback PASS exists.
+
+### Remaining resources, cost and production boundary
+
+Owner removal required:
+[empty original probe](https://railway.com/project/21a05b97-59f7-435f-8a3a-234eb722cb6c)
+and [service/volume probe](https://railway.com/project/db505b48-74f0-4571-9cd3-52bc865ff2cd).
+Delete only those assignment-created projects; skip the grace period if offered.
+No extra deployment authorization is required. Cleanup is BLOCKED until a fresh
+inventory shows actual absence.
+
+There are no builds, running deployments, jobs, databases or Redis processes,
+so no application CPU/RAM/network/model spend occurred. The empty1000MB volume
+is the only potentially billed assignment resource. Using the documented
+$0.15/GB-month rate and730hours/month, a conservative full1GB estimate is
+**about$0.00021/hour**, plus **about$0.01** if billed for a further48hours.
+Current short-lived probe cost is estimated below$0.01; this is not an invoice
+or measured disk usage. Actual billing/retention is unverified. The two remaining
+projects and volume are residual resources; continuing storage charges must
+be reported until removal. No shared spending limit or subscription change
+was made. The owner's $10 target is operational, not technically enforced.
+
+Read-only production metadata at18:11:51Z matched the preflight deployment-ID snapshot:
+web `2a20acd4-3c92-4db6-8995-4a3a466202ef`,
+worker `d43d6fec-10f1-479a-8d76-9d3df4f2d295`,
+PostgreSQL `7bb12602-2ebb-4901-96a6-a232fba5c279`,
+Redis `aeae0e09-e4bb-406f-92ea-cf5ca81294ac`, all SUCCESS, same excluded
+service/environment identities. Our production mutation count is zero.
+No production variable values, data, secrets or runtime logs were read.
+
+Proposed acceptance project `arcanos-pr1539-healing-staging` was not created.
+There are no staging web/worker deployment IDs, artifact digests, incident IDs,
+controller/consumer logs or fourteen-scenario fault results.
+All genuine runtime scenarios are BLOCKED / execution NOT_RUN.
+Operator files/results are preserved outside temporary infrastructure and
+summarized with hashes in the [regression report](self-healing-regression-report.md).
+The earlier expired-auth/no-resource attempts below are historical.
+
 ## Revised authorization and mandatory cleanup preflight — 2026-10-12
 
 **PRECREATE_CLEANUP_VERIFIED: BLOCKED. LIVE_ACCEPTANCE_VERIFIED: BLOCKED.**

@@ -1,5 +1,69 @@
 # Self-healing merge-readiness assessment
 
+## Authenticated staging verdict — cleanup approval BLOCKED
+
+**PRECREATE_CLEANUP_VERIFIED: BLOCKED. LIVE_ACCEPTANCE_VERIFIED: BLOCKED.
+MERGE_READY: BLOCKED.**
+
+PR #1539 remains open, non-draft and unmerged. Inspected head
+`a8bb1c35eeea3d59be6fd86c0ce908e4e147767a` differs from approved application
+`4b4e31a54b819a3597ef3ee163a46e1a7b59fc67` only in the five audit documents.
+No web/worker application artifact was deployed and no executable SHA was tested
+on Railway. Source CI passed; functional live acceptance remains unproved.
+
+CLI authentication and immediate empty-project deletion now work.
+The actual detached watchdog's confirmation read failed; its correction passes
+local fakes but lacks a completed corrected live rehearsal.
+Connected deletion of the fresh service/volume probe was rejected twice,
+including after explicit exact-resource owner authorization. Root stopped
+its expiry daemon before it could indirectly execute the rejected cleanup.
+The independent dashboard fallback and service/volume cleanup remain unproved.
+No staging workloads were started.
+
+| Required gate | Result | Current evidence |
+| --- | --- | --- |
+| EXACT_SHA_VERIFIED | BLOCKED | Approved Git source identified; no deployed artifact. |
+| STAGING_ISOLATION_VERIFIED | BLOCKED | Acceptance services/dependencies never provisioned. |
+| WEB_READY | BLOCKED | Application runtime NOT_RUN. |
+| WORKER_READY | BLOCKED | Application runtime NOT_RUN. |
+| HEALTHY_BASELINE_VERIFIED | BLOCKED | No genuine baseline. |
+| FAILURE_DETECTION_VERIFIED | BLOCKED | No live incident. |
+| MITIGATION_AUTHORIZATION_VERIFIED | BLOCKED | Infrastructure approval denial is not application authorization. |
+| MITIGATION_APPLICATION_VERIFIED | BLOCKED | No controller-to-consumer evidence. |
+| TRINITY_CONSUMPTION_VERIFIED | BLOCKED | No deployed Trinity execution. |
+| RECOVERY_VERIFIED | BLOCKED | No fresh consumer-correlated recovery. |
+| MITIGATION_ROLLBACK_VERIFIED | BLOCKED | No live mitigation or clearing. |
+| SERVICE_ROLE_BOUNDARIES_VERIFIED | BLOCKED | Source/profile only, no deployed role proof. |
+| CONCURRENCY_AND_IDEMPOTENCY_VERIFIED | BLOCKED | Disposable CI/local evidence is not staging execution. |
+| RESTART_SAFETY_VERIFIED | BLOCKED | No genuine restart during incident. |
+| REGRESSION_TESTS_PASSED | PASS | Approved-source full CI; operator and docs results separate. |
+| LIVE_ACCEPTANCE_VERIFIED | BLOCKED | All fourteen rows BLOCKED / execution NOT_RUN. |
+| MERGE_READY | BLOCKED | Mandatory live gates and cleanup proof absent. |
+
+Remaining assignment resources are two disposable projects, two empty service
+definitions and one empty1000MB volume. No deployment, database process, Redis,
+job or paid provider call exists. Production service/deployment identities and
+SUCCESS states match the preflight read-only snapshot; our production mutation
+count is zero. See [exact IDs, cost estimates and cleanup instructions](self-healing-preview-evidence.md).
+Estimated continuing full-volume storage is about$0.00021/hour; actual billing
+and retention are unverified. Cleanup is BLOCKED until owner dashboard removal
+and fresh absence read-back. The original19:38:25.364Z absolute expiry was not
+reset; stopping provisioning does not make residual resource cleanup pass.
+
+Required owner action is actual dashboard cleanup of the two named probes,
+because the connected app's destructive-action approval path still refuses
+the exact authorized operation. More general spending/deployment authorization
+is unnecessary. Once cleanup authority, corrected expiry execution and
+independent fallback are actually established, resume supported isolated
+staging at the same approved executable SHA. A different executable still
+requires explicit authorization. Keep the PR open; no merge or production
+promotion is authorized by a future PASS.
+
+The earlier expired-login/hard-ceiling assessments below are historical and do
+not replace this current verdict. No new ARCANOS defect or source correction
+was inferred; process-local state, prompt lifetime, stale/control-only recovery
+and unsupported runtime boundaries remain live acceptance questions.
+
 ## Current revised staging verdict — 2026-10-12
 
 **PRECREATE_CLEANUP_VERIFIED: BLOCKED. LIVE_ACCEPTANCE_VERIFIED: BLOCKED.

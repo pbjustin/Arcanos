@@ -1,5 +1,51 @@
 # Self-healing acceptance matrix
 
+## Authenticated staging attempt — cleanup gate BLOCKED
+
+Inspected documentation head: `a8bb1c35eeea3d59be6fd86c0ce908e4e147767a`.
+Approved executable: `4b4e31a54b819a3597ef3ee163a46e1a7b59fc67`.
+No application deployment or fault injection occurred. Successful CLI login
+and empty-project removal are infrastructure preflight evidence, not
+self-healing acceptance. The connected app rejected deletion of a fresh empty
+service twice, including after exact-resource owner authorization, so the
+service/volume cleanup gate and independent dashboard fallback remain blocked.
+
+| # | Scenario | Genuine Railway staging result | Execution/evidence |
+| --- | --- | --- | --- |
+| 1 | Healthy baseline | BLOCKED | NOT_RUN; no web/worker artifact. |
+| 2 | Transient provider timeout | BLOCKED | NOT_RUN; only local synthetic operator transport. |
+| 3 | Sustained provider failure | BLOCKED | NOT_RUN; no live authorized fallback/escalation. |
+| 4 | Trinity failure | BLOCKED | NOT_RUN; no actual deployed consumer. |
+| 5 | Redis interruption | BLOCKED | NOT_RUN; no Redis instance. |
+| 6 | Worker job failure | BLOCKED | NOT_RUN; no worker or PostgreSQL execution. |
+| 7 | Failure threshold | BLOCKED | NOT_RUN; local fixture/source evidence is separate. |
+| 8 | Mitigation expiration | BLOCKED | NOT_RUN; real ten-minute TTL not exercised. |
+| 9 | Recovery verification | BLOCKED | NOT_RUN; no fresh consumer-correlated recovery. |
+| 10 | Actuator failure | BLOCKED | NOT_RUN; no approved natural throwing-actuator injection path. |
+| 11 | Concurrent incidents | BLOCKED | NOT_RUN; no deployed controllers/actions. |
+| 12 | Service-role restrictions | BLOCKED | NOT_RUN; configured roles are not runtime proof. |
+| 13 | Unauthorized action | BLOCKED | NOT_RUN; management-tool approval denial is not application authorization proof. |
+| 14 | Restart during incident | BLOCKED | NOT_RUN; no live incident/process. |
+
+The operator SDK suite passed 163 local assertions plus 500 separately counted
+quota requests. It did not start ARCANOS or Bun and is not an application/live
+scenario result. Thirty cleanup fake tests passed; actual watchdog confirmation
+failed on the second probe, and the corrected third rehearsal was stopped
+before expiry after the deletion approval rejection. Do not promote its local
+fix to a live expiry PASS.
+
+The request plan preserves actual thresholds, ten-minute mitigation TTL,
+cooldowns and request limits. Worker evidence needs the jobRunner child's PID,
+provider receipts and exact-job SQL events from a fresh isolated database.
+Controller/health traffic alone must not establish Trinity recovery.
+Process-local state and FORCE_MOCK/worker-watchdog boundaries remain
+uncertified. No production testing substitutes were used.
+
+Current [resource and cleanup evidence](self-healing-preview-evidence.md) and
+[seventeen-gate verdict](self-healing-merge-readiness.md) supersede the earlier
+attempt summaries below. The historical fourteen local scenarios remain
+separately scoped; no new application defect or repair is claimed.
+
 ## Revised time-limited staging attempt — 2026-10-12
 
 The owner withdrew the independently enforced $10 ceiling and authorized the
