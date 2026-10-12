@@ -15,7 +15,6 @@ import { runtimeDiagnosticsService } from '@services/runtimeDiagnosticsService.j
 import { logger } from '@platform/logging/structuredLogging.js';
 import { getEnvNumber } from '@platform/runtime/env.js';
 import {
-  getConfig,
   getStableWorkerRuntimeMode,
   isWorkerRuntimeSuppressedForServiceRole,
 } from '@platform/runtime/unifiedConfig.js';
@@ -160,18 +159,14 @@ const loopState: {
 };
 
 function getLoopConfig() {
-  const cfg = getConfig();
   const workerRuntimeMode = getStableWorkerRuntimeMode();
   const disabledForServiceRole = isWorkerRuntimeSuppressedForServiceRole(workerRuntimeMode);
   return {
     workerRuntimeMode,
     disabledForServiceRole,
-    enabled:
-      cfg.selfImproveEnabled &&
-      cfg.selfImproveActuatorMode === 'daemon' &&
-      cfg.selfImproveAutonomyLevel >= 3 &&
-      !cfg.selfImproveFrozen &&
-      !disabledForServiceRole,
+    // Retain the legacy inspection API, but the server-owned selfHealingLoop
+    // exclusively schedules mitigation through the state consumed by Trinity.
+    enabled: false,
     intervalMs: Math.max(5_000, getEnvNumber('SELF_HEAL_LOOP_INTERVAL_MS', DEFAULT_LOOP_INTERVAL_MS)),
     lookbackMs: Math.max(30_000, getEnvNumber('SELF_HEAL_LOOKBACK_MS', DEFAULT_LOOKBACK_MS)),
     errorRateTrigger: clampRate(getEnvNumber('SELF_HEAL_ERROR_RATE_TRIGGER_BPS', DEFAULT_ERROR_RATE_TRIGGER * 10_000) / 10_000),
@@ -1067,6 +1062,11 @@ export function startSelfHealingControlLoop(app: Application): void {
         processKind: config.workerRuntimeMode.processKind,
         serviceName: config.workerRuntimeMode.railwayServiceName,
         reason: config.workerRuntimeMode.reason,
+      });
+    } else {
+      logger.info('self_heal.loop.superseded', {
+        module: 'self_heal.loop',
+        owner: 'selfHealingLoop',
       });
     }
     loopState.loopRunning = false;

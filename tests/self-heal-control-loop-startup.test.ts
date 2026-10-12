@@ -4,6 +4,10 @@ const loggerInfoMock = jest.fn();
 const loggerWarnMock = jest.fn();
 const loggerErrorMock = jest.fn();
 const loggerDebugMock = jest.fn();
+const invokeToolMock = jest.fn(async () => { throw new Error('Offline fixture: no tooling.'); });
+const dispatchProtocolRequestMock = jest.fn(async () => { throw new Error('Offline fixture: no execution state.'); });
+const spawnMock = jest.fn(() => { throw new Error('Offline fixture: no subprocess.'); });
+const getDiagnosticsSnapshotMock = jest.fn(async () => ({ error_rate: 0 }));
 const actualUnifiedConfig = await import('../src/platform/runtime/unifiedConfig.js');
 const getConfigMock = jest.fn(() => actualUnifiedConfig.getConfig());
 const loggerMock = {
@@ -18,6 +22,13 @@ const loggerMock = {
     debug: loggerDebugMock
   }))
 };
+
+jest.unstable_mockModule('@arcanos/cli/client', () => ({ invokeTool: invokeToolMock }));
+jest.unstable_mockModule('@arcanos/cli/transport', () => ({ dispatchProtocolRequest: dispatchProtocolRequestMock }));
+jest.unstable_mockModule('node:child_process', () => ({ spawn: spawnMock }));
+jest.unstable_mockModule('@services/runtimeDiagnosticsService.js', () => ({
+  runtimeDiagnosticsService: { getDiagnosticsSnapshot: getDiagnosticsSnapshotMock }
+}));
 
 jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
   aiLogger: {
@@ -89,6 +100,10 @@ describe('self-heal control loop startup in tests', () => {
     await requestSelfHealingLoopEvaluation('test');
 
     expect(setIntervalSpy).not.toHaveBeenCalled();
+    expect(invokeToolMock).not.toHaveBeenCalled();
+    expect(dispatchProtocolRequestMock).not.toHaveBeenCalled();
+    expect(spawnMock).not.toHaveBeenCalled();
+    expect(getDiagnosticsSnapshotMock).not.toHaveBeenCalled();
     expect(loggerInfoMock).toHaveBeenCalledWith(
       'self_heal.loop.disabled_for_test',
       expect.objectContaining({
@@ -100,5 +115,21 @@ describe('self-heal control loop startup in tests', () => {
       active: false,
       loopRunning: false
     }));
+  });
+
+  it('cannot start a competing legacy scheduler even when explicitly requested', async () => {
+    process.env.ENABLE_SELF_HEAL_CONTROL_LOOP_IN_TESTS = 'true';
+    const setIntervalSpy = jest.spyOn(global, 'setInterval');
+
+    startSelfHealingControlLoop({} as never);
+    await requestSelfHealingLoopEvaluation('legacy_caller');
+
+    expect(setIntervalSpy).not.toHaveBeenCalled();
+    expect(getSelfHealingControlLoopStatus()).toMatchObject({
+      active: false,
+      loopRunning: false,
+      incidentActive: false,
+      mitigation: { activeAction: null }
+    });
   });
 });

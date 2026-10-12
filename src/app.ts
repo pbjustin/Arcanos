@@ -11,7 +11,6 @@ import { noStoreResponse, requestContext, sendNotFound } from '@shared/http/inde
 import { withJsonResponseBytes } from '@shared/http/clientResponseGuards.js';
 import { arcanosMcpService } from '@services/arcanosMcp.js';
 import { runtimeDiagnosticsService } from '@services/runtimeDiagnosticsService.js';
-import { startSelfHealingControlLoop } from '@services/selfImprove/controlLoop.js';
 import { writeMetricsResponse } from '@platform/observability/appMetrics.js';
 import { gamingIngressAudit } from '@transport/http/gamingIngressAudit.js';
 import {
@@ -134,7 +133,6 @@ export function startAppRuntimeOnce(app: Express): boolean {
 
   startedRuntimeApps.add(app);
   void startConfiguredWorkerRuntime();
-  startSelfHealingControlLoop(app);
   void runtimeDiagnosticsService.logStartupSummary(app);
   return true;
 }

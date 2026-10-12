@@ -1,7 +1,11 @@
 import type { TrinityAnswerMode } from '@core/logic/trinityTypes.js';
 import type { Tier } from '@core/logic/trinityTier.js';
 import { logger } from '@platform/logging/structuredLogging.js';
-import { getConfig } from '@platform/runtime/unifiedConfig.js';
+import {
+  getConfig,
+  getStableWorkerRuntimeMode,
+  isWorkerRuntimeSuppressedForServiceRole
+} from '@platform/runtime/unifiedConfig.js';
 
 export type TrinitySelfHealingStage = 'intake' | 'reasoning' | 'final';
 export type TrinitySelfHealingAction = 'enable_degraded_mode' | 'bypass_final_stage';
@@ -301,7 +305,9 @@ export function recordTrinityStageFailure(params: {
   sourceEndpoint?: string;
 }): TrinitySelfHealingAction | null {
   const cfg = getRuntimeConfig();
-  if (!cfg.enabled) {
+  // Automatic request-failure actuation follows the background service-role
+  // boundary. Explicit scoped commands and their consumer retain their gates.
+  if (!cfg.enabled || isWorkerRuntimeSuppressedForServiceRole(getStableWorkerRuntimeMode())) {
     return null;
   }
 

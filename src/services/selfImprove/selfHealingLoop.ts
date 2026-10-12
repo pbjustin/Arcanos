@@ -3829,6 +3829,23 @@ export async function runSelfHealingLoop(options: {
   const trigger = options.trigger ?? 'manual';
   const tickAt = new Date().toISOString();
 
+  // Enforce the automatic ownership boundary at the tick as well as startup;
+  // explicit manual requests retain their existing scope and approval gates.
+  if (trigger !== 'manual' && isWorkerRuntimeSuppressedForServiceRole(getStableWorkerRuntimeMode())) {
+    return {
+      trigger,
+      tickAt,
+      tickCount: runtime.status.tickCount,
+      loopRunning: false,
+      lastError: null,
+      diagnosis: 'disabled_for_service_role',
+      action: null,
+      controllerDecision: null,
+      evidence: null,
+      verificationResult: null
+    };
+  }
+
   if (runtime.inFlight) {
     console.log(`[SELF-HEAL] tick skipped ${tickAt} trigger=${trigger} reason=in-flight`);
     if (trigger === 'manual') {

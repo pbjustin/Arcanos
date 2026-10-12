@@ -4,6 +4,19 @@
 
 Predictive self-healing adds a rules-first layer on top of the existing reactive self-heal loop.
 
+`src/server.ts` owns the canonical `selfHealingLoop` scheduler after startup
+readiness. The legacy `controlLoop` scheduler is retired; its exported inspection
+APIs remain available but cannot start another mitigation authority. The shared
+service-role policy suppresses automatic startup, interval ticks, and Trinity
+stage-failure actuation when the process is a web role with workers disabled.
+Explicit manual commands retain their existing caller scopes and server feature
+gates, including mitigation consumption, verification, and rollback. Mitigation
+state is process-local: this boundary does not establish delivery between a
+dedicated Worker service and a web service or across replicas. The dedicated
+`jobRunner` entrypoint does not start this scheduler, so a separated web/Worker
+deployment requires separate operational acceptance of coordinator ownership and
+mitigation delivery.
+
 - Background loop:
   - reuses the existing self-heal loop cadence instead of introducing a second scheduler
   - polls metrics on `PREDICTIVE_HEALING_INTERVAL_MS` when set, otherwise on the `SELF_HEAL_LOOP_INTERVAL_MS` cadence
