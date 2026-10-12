@@ -1,5 +1,42 @@
 # Self-healing merge-readiness assessment
 
+## Current code merge-readiness policy — owner-deferred live verification
+
+Executable source and regression fixtures: `400be1912b9e429c9ea0ffdd8f0d07950a82d80c`. The documentation-only head observed while preparing this update was `a7355c8cbe28ac5fdd285c45b031a4c07e416d22`; final PR/evidence head, base, required checks and review state are recorded by [CI and review receipts](synthetic-ci-evidence.md): documentation head `a7355c8cbe28ac5fdd285c45b031a4c07e416d22`, CI/CD [38310400872](https://github.com/pbjustin/Arcanos/actions/runs/38310400872), required `docs:check` and `All Checks Complete` PASS; PR open/non-draft, CLEAN/MERGEABLE, zero unresolved threads. Final documentation-head receipts are linked in the PR description after fresh checks.. Final full results: Full CI: 901 suites / 17,584 tests passed; 13 suites / 167 tests skipped. Complete local sweep: 899 suites / 17,540 tests passed; two suites / 44 assertions failed before PowerShell was available, all subsequently passed unchanged in two focused reruns (55 passed, two existing Windows-only skips). Repeated sweeps are not added as unique tests..
+
+**MERGE_READY: PASS.** This verdict is about code merge readiness under the owner's revised policy; it is not live operational readiness or permission to merge/deploy. No merge, auto-merge, PR closure, production promotion or production operation is authorized or performed. A separate production deployment review remains required.
+
+The corrected source passed **47 focused suites / 1,379 tests, zero skipped**, including all S01–S18 and A–E synthetic paths. Actual Trinity/SDK consumer receipts prove mitigation use; authorization, cooldown, concurrency and fresh-process reset are exercised at real application boundaries. Provider reload acknowledgement, diagnostic route samples, database/Redis clients and queue storage remain explicit synthetic seams. [Synthetic verification](synthetic-verification-report.md) and [red-to-green evidence](synthetic-red-to-green-evidence.md) define the tests, corrections and limitations.
+
+| Gate | Current result | Evidence / final condition |
+| --- | --- | --- |
+| SYNTHETIC_E2E_VERIFIED | PASS | Final-source S01–S18 and A–E focused union. |
+| SELF_HEALING_RECOVERY_VERIFIED | PASS | Fresh three matched-route samples plus three actual command successes or provider execution receipts; missing worker data rejected. |
+| TRINITY_CONSUMPTION_VERIFIED | PASS | Real executed Trinity stages and authenticated loopback SDK transcript. |
+| FAILURE_ESCALATION_VERIFIED | PASS | Sustained actual circuit/consumer failure, bounded controller/actuator escalation. |
+| RETRY_AND_COOLDOWN_VERIFIED | PASS | Retry budgets, persisted worker counts, correctly keyed ineffective cooldown and TTL. |
+| CONCURRENCY_VERIFIED | PASS | Concurrent tick ownership and actual independent-command consumption/conditional rollback. |
+| RESTART_SAFETY_VERIFIED | PASS | Distinct fresh Node source processes invalidate transient state; stale worker ownership rejected. |
+| SECURITY_BOUNDARIES_VERIFIED | PASS | Actual HTTP/actuator denial, no side effects, saturation and proxy trust boundary. |
+| PRODUCTION_COMPATIBILITY_VERIFIED | PASS | Local startup/role, type-check/build/lint, static deployment and compiled contracts; live configuration remains unverified. |
+| REGRESSION_TESTS_PASSED | PASS | Measured full-suite/skip/coverage receipt Full CI: 901 suites / 17,584 tests passed; 13 suites / 167 tests skipped. Complete local sweep: 899 suites / 17,540 tests passed; two suites / 44 assertions failed before PowerShell was available, all subsequently passed unchanged in two focused reruns (55 passed, two existing Windows-only skips). Repeated sweeps are not added as unique tests.; complete CI and unchanged failed-contract replays establish this gate. |
+| REQUIRED_CI_PASSED | PASS | Recorded exact-head terminal required contexts/workflows [CI and review receipts](synthetic-ci-evidence.md): documentation head `a7355c8cbe28ac5fdd285c45b031a4c07e416d22`, CI/CD [38310400872](https://github.com/pbjustin/Arcanos/actions/runs/38310400872), required `docs:check` and `All Checks Complete` PASS; PR open/non-draft, CLEAN/MERGEABLE, zero unresolved threads. Final documentation-head receipts are linked in the PR description after fresh checks.. |
+| REVIEW_THREADS_RESOLVED | PASS | Fresh complete pagination at the recorded source-equivalent head found no unresolved thread; final documentation-head refresh is linked from the PR. |
+| LIVE_ACCEPTANCE | NOT_RUN | Owner explicitly deferred; historical live blockers remain preserved. |
+| MERGE_READY | PASS | PASS only after all mandatory non-live gates pass and no unresolved merge-blocking defect. |
+
+The table records measured source-equivalent results at the documented pre-publication head. The final audit-only commit changes no executable/test/build/dependency tree; fresh final-head checks and review state are verified and linked in the PR description before the final verdict is delivered. Required GitHub contexts were `docs:check` and `All Checks Complete` at the earlier inspection, with final-head refresh mandatory. CodeRabbit's earlier green status was paused automation, not fresh code review of these repairs.
+
+Residual operational risk: mitigation/incident state stays process-local and restart-transient; no distributed incident restoration or replica-wide deduplication is added. Actual deployed role ownership, ingress fairness, provider reload causality/availability, real Redis/PostgreSQL network/atomicity/durability and service wiring are not proven by synthetic success. Conservative unknown/control route attribution can expire without a recovery claim. These limits require separate production deployment review; they are not a waiver for a reproduced security/recovery defect.
+
+Leave PR #1539 open and unmerged for owner review. Earlier mandatory-live MERGE_READY blockers remain historical below; live tests are never relabeled as PASS.
+
+---
+
+## Historical live acceptance records — preserved
+
+Everything below this divider records earlier preview/staging attempts and their policy at the time. Earlier live-gate blockers and merge verdicts are historical; they have not been rewritten into successful tests. The current assessment above uses the owner's explicit decision to defer live verification.
+
 ## Second authorized staging attempt — pre-provisioning status, 2026-10-12
 
 The owner authorized one additional isolated attempt, the same executable

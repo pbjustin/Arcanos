@@ -1,5 +1,42 @@
 # Self-healing acceptance matrix
 
+## Current assessment — complete synthetic matrix
+
+Executable source and regression fixtures: `400be1912b9e429c9ea0ffdd8f0d07950a82d80c`. The documentation-only head observed while preparing this update was `a7355c8cbe28ac5fdd285c45b031a4c07e416d22`; final PR/evidence head, base, required checks and review state are recorded by [CI and review receipts](synthetic-ci-evidence.md): documentation head `a7355c8cbe28ac5fdd285c45b031a4c07e416d22`, CI/CD [38310400872](https://github.com/pbjustin/Arcanos/actions/runs/38310400872), required `docs:check` and `All Checks Complete` PASS; PR open/non-draft, CLEAN/MERGEABLE, zero unresolved threads. Final documentation-head receipts are linked in the PR description after fresh checks.. Final full results: Full CI: 901 suites / 17,584 tests passed; 13 suites / 167 tests skipped. Complete local sweep: 899 suites / 17,540 tests passed; two suites / 44 assertions failed before PowerShell was available, all subsequently passed unchanged in two focused reruns (55 passed, two existing Windows-only skips). Repeated sweeps are not added as unique tests..
+
+The owner deferred live Railway verification. Every PASS below is a measured local synthetic result at the recorded executable source, not a Railway/live-provider PASS. Final joined-source focused execution passed **47 suites / 1,379 tests, zero skipped**. Full local/CI results are separately recorded above and are not added to this overlapping sweep. Exact commands, fixtures and limits appear in [synthetic verification](synthetic-verification-report.md); preserved failing conditions and corrections appear in [red-to-green evidence](synthetic-red-to-green-evidence.md).
+
+| ID | Scenario / observed application result | Execution class | Result |
+| --- | --- | --- | --- |
+| S01 | Healthy baseline: actual coordinator/V2 state inactive; normal Trinity executes four authorized loopback SDK POSTs. | Synthetic integration / real SDK consumer | PASS |
+| S02 | Transient transport timeout: bounded authority fallback, threshold unmet, next actual consumer healthy; caller cancellation distinguished. | Synthetic integration / real SDK transport | PASS |
+| S03 | Sustained synthetic 503 opens actual circuit; finite attempts/probes; actual coordinator bounds failed reload attempts and escalation. | Synthetic integration / real circuit and controller | PASS |
+| S04 | Actual reasoning mitigation reduces executed stages to one authority POST; final bypass uses three vs normal four and reports its own command. | Synthetic integration / real Trinity consumer | PASS |
+| S05 | Real Redis lifecycle degrades/reconnects with bounded attempts; safety/admission fail closed, telemetry preserves local events. | Synthetic integration / injected Redis client | PASS |
+| S06 | Actual worker slot/retry/repository policy uses 100 ms then 200 ms retries, one terminal dead-letter, stale/duplicate claim rejection. | Synthetic integration / injected CAS storage | PASS |
+| S07 | First two qualifying failures stay inactive, third activates; healthy/sub-threshold coordinator traffic does not mutate state. | Unit plus synthetic integration / actual V2 | PASS |
+| S08 | V2 and both prompt policies expire at ten minutes; next actual Trinity/prompt consumer restores normal policy without controller traffic. | Unit plus synthetic consumer integration | PASS |
+| S09 | Empty/stale/one/same-clock/control-only traffic cannot recover; require three known-route samples, three actual captured-command V2 successes or three fresh resilience receipts; missing worker/queue data cannot look improved. | Synthetic integration / actual diagnostics and verifier; joined real SDK positive cases | PASS |
+| S10 | Throwing actuator spends only three dispatches per incident window; explicit failed receipt never becomes verified recovery. | Synthetic integration / actual controller, injected actuator | PASS |
+| S11 | Concurrent ticks dispatch once; deterministic queue/Trinity ordering; independent intake/final IDs, actual consumption and isolated clearing. | Synthetic integration / actual controller and consumer | PASS |
+| S12 | Web automatic loops/workers suppressed, duplicate startup controlled; explicit manual authorized web mitigation still consumed. | Synthetic integration plus fresh Node source process | PASS |
+| S13 | Real bearer/scope/capability/actuator gates reject unauthorized operation; zero controller/consumer/safety effects, sanitized audit. | Synthetic HTTP integration / real authorization | PASS |
+| S14 | Different fresh Node process has zero old attempts/commands; one new failure stays sub-threshold; stale queue owner cannot complete replacement. | Local process E2E plus synthetic queue fencing | PASS |
+| S15 | Captured command ID prevents old completion, timeout fallback or verification from crediting/clearing newer same-clock replacement. | Unit plus synthetic real SDK/controller integration | PASS |
+| S16 | Actual map ceiling 10,000 hashed keys; overflow fails closed with accurate reset/Retry-After; Redis/cache/start/concurrency guards bounded. | Synthetic admission integration / controlled clock | PASS |
+| S17 | Forwarded/session/credential rotation cannot bypass actual GPT/query admission; explicit proxy chain honors first untrusted hop. | Synthetic HTTP integration / actual Express middleware | PASS |
+| S18 | Ordinary/ineffective cooldown uses correct dispatch key; evidence-starved verification expires and releases ownership without false success. | Synthetic integration / actual cooldown and verifier | PASS |
+
+A–E synthetic paths all pass: actual recovery/consumer cycle, bounded unrecoverable failure, concurrent incidents, fresh-process invalidation and unauthorized-action rejection. Consumer application is proved through real executed policy and SDK receipts, not only a selected mitigation log. The provider reload acknowledgement and HTTP-route measurements remain injected seams; reload causation and genuine provider availability are not claimed.
+
+**Railway deployment execution: NOT_RUN — owner deferred.** Disposable adapter tests do not prove real PostgreSQL transactions, Redis server failover or replica-wide state-sharing. A separate production deployment review is required; merge readiness depends on final mandatory non-live checks and unresolved-blocker review in [merge readiness](self-healing-merge-readiness.md).
+
+---
+
+## Historical live acceptance records — preserved
+
+Everything below this divider records earlier preview/staging attempts and their policy at the time. Earlier live-gate blockers and merge verdicts are historical; they have not been rewritten into successful tests. The current assessment above uses the owner's explicit decision to defer live verification.
+
 ## Second authorized staging attempt — pre-provisioning status, 2026-10-12
 
 The owner authorized one additional isolated attempt, the same executable

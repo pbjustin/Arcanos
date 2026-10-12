@@ -1,5 +1,33 @@
 # Self-healing regression report
 
+## Current regression assessment — final synthetic executable
+
+Executable source and regression fixtures: `400be1912b9e429c9ea0ffdd8f0d07950a82d80c`. The documentation-only head observed while preparing this update was `a7355c8cbe28ac5fdd285c45b031a4c07e416d22`; final PR/evidence head, base, required checks and review state are recorded by [CI and review receipts](synthetic-ci-evidence.md): documentation head `a7355c8cbe28ac5fdd285c45b031a4c07e416d22`, CI/CD [38310400872](https://github.com/pbjustin/Arcanos/actions/runs/38310400872), required `docs:check` and `All Checks Complete` PASS; PR open/non-draft, CLEAN/MERGEABLE, zero unresolved threads. Final documentation-head receipts are linked in the PR description after fresh checks.. Final full results: Full CI: 901 suites / 17,584 tests passed; 13 suites / 167 tests skipped. Complete local sweep: 899 suites / 17,540 tests passed; two suites / 44 assertions failed before PowerShell was available, all subsequently passed unchanged in two focused reruns (55 passed, two existing Windows-only skips). Repeated sweeps are not added as unique tests..
+
+Local focused execution at the corrected source passed **47 suites / 1,379 tests, zero skipped**. Type-check and build passed. Lint passed with **77 existing baseline warnings**, not new errors. Static Railway/deployment compatibility, offline backend/CLI contracts, compiled model policy (4 cases) and heartbeat (6 cases) passed. Standalone runtime integration (79 tests) and smoke/security (70 tests) passed in separate overlapping runs; root Jest excludes that workspace. Final full local/CI totals and skip/coverage classification are Full CI: 901 suites / 17,584 tests passed; 13 suites / 167 tests skipped. Complete local sweep: 899 suites / 17,540 tests passed; two suites / 44 assertions failed before PowerShell was available, all subsequently passed unchanged in two focused reruns (55 passed, two existing Windows-only skips). Repeated sweeps are not added as unique tests. / [CI and review receipts](synthetic-ci-evidence.md): documentation head `a7355c8cbe28ac5fdd285c45b031a4c07e416d22`, CI/CD [38310400872](https://github.com/pbjustin/Arcanos/actions/runs/38310400872), required `docs:check` and `All Checks Complete` PASS; PR open/non-draft, CLEAN/MERGEABLE, zero unresolved threads. Final documentation-head receipts are linked in the PR description after fresh checks.. Do not add repeated or overlapping sweeps as unique tests.
+
+[Red-to-green evidence](synthetic-red-to-green-evidence.md) captures actual failing behavior before each bounded correction, with sanitized assertions and original log hashes. [Synthetic verification](synthetic-verification-report.md) defines commands and exact fixture mappings. Fixture import/export bring-up mistakes are excluded from product-defect counts; one strict-freshness starvation regression was caught during repair and is identified as such.
+
+| Repair topic | Actual correction / regression proof |
+| --- | --- |
+| Replacement identity | Process-local monotonic IDs propagate through actual Trinity outcome/failure/controller rollback; old same-action completion or timeout cannot credit or clear replacement. |
+| Failed/composite consumer accounting | Actual failed direct/final consumers report generation-owned failures and roll back after two; caller cancellation excluded. Composite final bypass reports its actual final command. |
+| Prompt lifecycle and memory | Both prompt modes lazily expire after ten minutes, restoring normal consumer policy; V2 retains only the configured threshold samples per stage (three by default) instead of unbounded failure timestamps. |
+| Recovery evidence | Known affected route requires three exclusive post-action samples. Trinity additionally requires three actual captured-command successes; provider reload requires three fresh resilience execution successes, not cache hits or diagnostic-only HTTP200. |
+| Actuator receipt/cooldown | Explicit failed reload cannot begin successful verification; ineffective cooldown uses the dispatch tracking key and bounds repeat attempts. |
+| Worker verification | Unchanged queue cannot recover from empty/unrelated traffic; missing inspection or null queue summary is unusable evidence. |
+| Ownership starvation | Evidence-starved pending verification expires at the existing incident window, records failure/cooldown and frees ownership for later incidents. |
+
+New durable synthetic fixtures exercise actual controller state, actual SDK Trinity consumers, actual worker/retry/repository policy, real HTTP authorization and genuine fresh-process restart. External provider, Redis and SQL storage boundaries remain deterministic substitutes, with guarded disposable database/Redis CI reported separately.
+
+Removed only deferred PR-added preview preflight/profile workflow, two scripts and their two tests, plus their maintained deployment-documentation bullet. The retired **73 profile + 35 preflight =108 framework tests** were planning/profile infrastructure checks, not runtime/live recovery coverage. Preserve that distinction when comparing baseline totals. Established application/native-preview lifecycle/security contracts remain; there is no replacement verification framework or production configuration mutation.
+
+---
+
+## Historical live acceptance records — preserved
+
+Everything below this divider records earlier preview/staging attempts and their policy at the time. Earlier live-gate blockers and merge verdicts are historical; they have not been rewritten into successful tests. The current assessment above uses the owner's explicit decision to defer live verification.
+
 ## Second authorized staging attempt — pre-provisioning status, 2026-10-12
 
 The owner authorized one additional isolated attempt, the same executable

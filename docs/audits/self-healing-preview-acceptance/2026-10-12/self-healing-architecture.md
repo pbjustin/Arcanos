@@ -1,5 +1,45 @@
 # Self-healing ownership and data flow
 
+## Current assessment — synthetic verification, owner-deferred live acceptance
+
+Executable source and regression fixtures: `400be1912b9e429c9ea0ffdd8f0d07950a82d80c`. The documentation-only head observed while preparing this update was `a7355c8cbe28ac5fdd285c45b031a4c07e416d22`; final PR/evidence head, base, required checks and review state are recorded by [CI and review receipts](synthetic-ci-evidence.md): documentation head `a7355c8cbe28ac5fdd285c45b031a4c07e416d22`, CI/CD [38310400872](https://github.com/pbjustin/Arcanos/actions/runs/38310400872), required `docs:check` and `All Checks Complete` PASS; PR open/non-draft, CLEAN/MERGEABLE, zero unresolved threads. Final documentation-head receipts are linked in the PR description after fresh checks.. Final full results: Full CI: 901 suites / 17,584 tests passed; 13 suites / 167 tests skipped. Complete local sweep: 899 suites / 17,540 tests passed; two suites / 44 assertions failed before PowerShell was available, all subsequently passed unchanged in two focused reruns (55 passed, two existing Windows-only skips). Repeated sweeps are not added as unique tests..
+
+**Live acceptance: NOT_RUN.** Code merge readiness under the revised owner policy is separate from unverified live operational readiness. This mission created no Railway resource, deployed no application and performed no production operation. See [synthetic verification](synthetic-verification-report.md) for exact commands and scenario evidence.
+
+| Ownership | Actual implementation and boundary |
+| --- | --- |
+| Detection/diagnosis | Canonical `selfHealingLoop.ts` reads actual diagnostic aggregation, provider/worker observations and V2 status. V2 separately observes stage failures in the executing Trinity process. External observation adapters are deterministic substitutes in synthetic tests. |
+| Mitigation decision | Canonical coordinator/predictive-reactive policy selects one bounded authorized path; uncertain predictive ownership suppresses competing effects. Optional proposal/reflection escalation is a recorded synthetic seam. |
+| HTTP authorization | Real control-plane bearer, operator role, exact scopes and capability gate precede execution. Caller session, forged forwarding metadata or automation capability alone cannot establish bearer identity. |
+| Application | V2 and prompt command APIs mutate actual process-local state; worker retry/repair uses its existing ownership and actuator boundaries. Provider reload application/acknowledgement remains an explicit injected seam. |
+| Consumption | Actual Trinity writing/engine consumer captures the immutable V2 command ID, changes executed stages and reports outcomes for that ID. Actual prompt handler reads expiring policy; actual worker slot forwards failures into real retry/repository policy. |
+| Recovery | Known affected route needs three fresh post-command samples. Trinity additionally needs three actual successes and verification on the captured command. Provider reload requires three fresh `openai.resilience.success` receipts; cache-hit success does not qualify. Worker recovery requires usable fresh worker/queue state. |
+| Clearing/rollback | V2 and prompt command identities fence older rollback/verification. Both prompt modes expire after ten minutes at the shared state/policy accessor; V2 keeps its existing TTL. Caller cancellation does not count as an ineffective actuator failure. |
+| Restart/bounds | State is process-local and transient; fresh Node process explicitly invalidates it, rather than pretending restoration. V2 retains only the configured activation-threshold samples per stage (three by default). Attempts, cooldown and starved verification ownership are bounded. |
+
+```mermaid
+flowchart LR
+  D[Actual diagnostic aggregation] --> C[Canonical controller]
+  C --> A[Authorization and ownership policy]
+  A --> M[Process-local mitigation command plus ID]
+  M --> T[Actual Trinity or prompt consumer]
+  T --> R[Captured-ID outcomes and fresh execution receipts]
+  R --> V[Consumer-scoped verification]
+  V --> X[ID-checked rollback or TTL expiry]
+```
+
+The graph describes a single process's actual application flow. It does not introduce shared mitigation state between independent web/worker replicas. The older `controlLoop.ts` scheduler stays deliberately disabled while its inspection/API compatibility remains; explicit web-role automatic loops remain suppressed. Authorized manual web commands still reach the actual web Trinity consumer. Startup and role tests prove local ownership; production service configuration must still be reviewed separately.
+
+Joined synthetic evidence proves three actual SDK Trinity executions emitted real consumer receipts and used the command. A second joined provider-reload case makes twelve authenticated loopback SDK POSTs across three Trinity runs and emits real `openai.resilience.success` receipts. Diagnostic route samples and reload acknowledgement are synthetic seams: this proves the receipt gate and consumer execution, not that a genuine provider reload caused live recovery.
+
+Process-local incidents are diagnosis-scoped, not durable distributed incident IDs. Cross-process restoration/deduplication, live deployment wiring and real provider/database/Redis behavior remain operational limitations. See [red-to-green evidence](synthetic-red-to-green-evidence.md) and [merge readiness](self-healing-merge-readiness.md). A separate production deployment review remains required.
+
+---
+
+## Historical live acceptance records — preserved
+
+Everything below this divider records earlier preview/staging attempts and their policy at the time. Earlier live-gate blockers and merge verdicts are historical; they have not been rewritten into successful tests. The current assessment above uses the owner's explicit decision to defer live verification.
+
 ## Second authorized staging attempt — pre-provisioning status, 2026-10-12
 
 The owner authorized one additional isolated attempt, the same executable

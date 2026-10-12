@@ -1,5 +1,29 @@
 # PR #1539 self-healing preview acceptance
 
+## Current assessment — synthetic code verification
+
+The owner explicitly deferred Railway live-service verification. The corrected executable and fixtures are `400be1912b9e429c9ea0ffdd8f0d07950a82d80c`; documentation-only head observed during preparation was `a7355c8cbe28ac5fdd285c45b031a4c07e416d22`. Final PR head/checks/reviews: [CI and review receipts](synthetic-ci-evidence.md): documentation head `a7355c8cbe28ac5fdd285c45b031a4c07e416d22`, CI/CD [38310400872](https://github.com/pbjustin/Arcanos/actions/runs/38310400872), required `docs:check` and `All Checks Complete` PASS; PR open/non-draft, CLEAN/MERGEABLE, zero unresolved threads. Final documentation-head receipts are linked in the PR description after fresh checks.. Full test and skip results: Full CI: 901 suites / 17,584 tests passed; 13 suites / 167 tests skipped. Complete local sweep: 899 suites / 17,540 tests passed; two suites / 44 assertions failed before PowerShell was available, all subsequently passed unchanged in two focused reruns (55 passed, two existing Windows-only skips). Repeated sweeps are not added as unique tests.. **Code MERGE_READY: PASS; LIVE_ACCEPTANCE: NOT_RUN — owner deferred.** A separate production deployment review is required; no verdict authorizes merge or deployment.
+
+The final synthetic focused union passed **47 suites / 1,379 tests, zero skipped**, covering S01–S18 and A–E through actual controller, authorization, actuator, Trinity/SDK consumer, worker retry and fresh-process logic. This mission created no Railway resource, deployed no application and performed no production operation or paid provider call. The removed 108 preview planning/profile framework cases are intentionally retired infrastructure evidence, not missing normal-runtime recovery coverage.
+
+Current evidence:
+
+- [Synthetic verification and exact commands](synthetic-verification-report.md)
+- [Preserved red-to-green regression evidence](synthetic-red-to-green-evidence.md)
+- [Ownership and data flow](self-healing-architecture.md)
+- [Eighteen-scenario matrix](self-healing-acceptance-matrix.md)
+- [Live evidence scope and historical attempts](self-healing-preview-evidence.md)
+- [Regression results](self-healing-regression-report.md)
+- [Code merge readiness and residual risk](self-healing-merge-readiness.md)
+
+Historical failed/blocked staging attempts are preserved below and in the existing evidence documents. They remain historical live failures/blockers and were not converted into successful acceptance. Process-local transient state and unverified production wiring/provider/database/Redis behavior remain operational risks.
+
+---
+
+## Historical live acceptance records — preserved
+
+Everything below this divider records earlier preview/staging attempts and their policy at the time. Earlier live-gate blockers and merge verdicts are historical; they have not been rewritten into successful tests. The current assessment above uses the owner's explicit decision to defer live verification.
+
 Date: 2026-10-12. Repository: `pbjustin/Arcanos`.
 Branch: `codex/targeted-security-healing-20261012`.
 Initial inspected PR head: `ec3ed16cb94c9166902bc810d0d73f89d322cf67`.
