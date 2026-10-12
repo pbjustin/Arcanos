@@ -1,5 +1,42 @@
 # Self-healing merge-readiness assessment
 
+## Current revised staging verdict — 2026-10-12
+
+**PRECREATE_CLEANUP_VERIFIED: BLOCKED. LIVE_ACCEPTANCE_VERIFIED: BLOCKED.
+MERGE_READY: BLOCKED.**
+
+The owner permits the existing workspace and accepts that $10 is an operational
+target rather than an enforced ceiling. Maximum lifetime remains two hours.
+The former hard-budget blocker is withdrawn.
+
+Inspected PR head `450ab65d9955d7627f75fdb3a34fe1773faa23dc` differs from approved
+executable `4b4e31a54b819a3597ef3ee163a46e1a7b59fc67` only in the five audit
+documents; base/branch/open/non-draft state match. No executable change
+requires renewed authorization, and no executable SHA was deployed.
+
+Current stop reason is the owner's mandatory precreation cleanup gate:
+CLI sign-in expired before completion; whole-project deletion is not callable
+through the connected tools; disposable cleanup, a tested live watchdog and
+the independent fallback have not been executed. The proposed CLI/watchdog/
+owner-dashboard procedure can meet the stated gate once actually proved.
+A second automated controller/provider TTL is not an extra requirement.
+
+The seventeen-gate table below remains one PASS (approved-source regression
+testing) and sixteen BLOCKED. All fourteen live scenarios are BLOCKED /
+execution NOT_RUN. Existing hard-ceiling text below describes the initial
+attempt, not this current verdict. Current full CI at inspected documentation
+head is SUCCESS; source-specific receipts remain distinct from live gates.
+
+No new fixture or code fix occurred, no resources were created, and no
+assignment infrastructure charge continues. Cleanup execution is NOT_RUN
+because there is nothing to delete. PR #1539 remains open and unmerged.
+
+Required owner action is usable management sign-in and an executed independent
+cleanup fallback rehearsal. Authorization itself is sufficient; the required
+credential/cleanup evidence is missing. Do not provision until that evidence
+exists, and do not use production or an unrelated deployment as a substitute.
+
+
 ## Dedicated staging verdict — 2026-10-12
 
 **MERGE_READY: BLOCKED. LIVE_ACCEPTANCE_VERIFIED: BLOCKED.**

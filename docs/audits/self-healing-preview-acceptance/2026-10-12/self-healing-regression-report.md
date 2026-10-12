@@ -1,5 +1,34 @@
 # Self-healing regression report
 
+## Revised authorization / cleanup preflight validation — 2026-10-12
+
+Approved executable remains `4b4e31a54b819a3597ef3ee163a46e1a7b59fc67`.
+Inspected head `450ab65d9955d7627f75fdb3a34fe1773faa23dc` differs only in five
+audit Markdown files. No source, dependency, build or runtime correction was
+made. The owner changed $10 from a hard ceiling to an operational target and
+authorized the existing workspace; the financial blocker is superseded.
+
+New read-only checks reconfirmed PR identity, documentation-only diff, workspace/
+project inventory, credential readiness and supported CLI deletion/authentication
+commands. CLI login was actually attempted, its activation link was relayed
+promptly, and it expired without completion (exit 1). No resource, fault,
+disposable deletion rehearsal, independent fallback or watchdog execution
+occurred. No new runtime failure or regression fixture is claimed.
+
+Both previously pending documentation-head full runs are now SUCCESS:
+[CI/CD 38276098065](https://github.com/pbjustin/Arcanos/actions/runs/38276098065)
+and [PR CI 38276098340](https://github.com/pbjustin/Arcanos/actions/runs/38276098340)
+at `450ab65d9955d7627f75fdb3a34fe1773faa23dc`. This update verifies their terminal
+metadata, without claiming newly parsed test totals. Approved-source full
+counts below remain tied to `4b4e31a54b819a3597ef3ee163a46e1a7b59fc67`.
+Neither result establishes genuine staging acceptance.
+
+Only documentation is updated for this blocked attempt. Pinned-toolchain
+documentation/link/whitespace/staged-guard outcomes and the final evidence
+commit are recorded in the PR delivery receipt. No application startup or
+behavioral test rerun is necessary for this documentation-only update.
+
+
 ## Dedicated staging validation — 2026-10-12
 
 Approved deployment source: `4b4e31a54b819a3597ef3ee163a46e1a7b59fc67`.

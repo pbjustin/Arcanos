@@ -1,5 +1,26 @@
 # Self-healing acceptance matrix
 
+## Revised time-limited staging attempt — 2026-10-12
+
+The owner withdrew the independently enforced $10 ceiling and authorized the
+existing workspace, a $10 operational target and a two-hour maximum lifetime.
+Approved executable remains `4b4e31a54b819a3597ef3ee163a46e1a7b59fc67`;
+inspected PR head `450ab65d9955d7627f75fdb3a34fe1773faa23dc` differs only in five
+audit documents. No source substitution or deployment occurred.
+
+Mandatory precreation cleanup proof is BLOCKED: connected inventory is
+authenticated, but no project-delete tool is exposed; CLI login expired before
+completion; a disposable deletion, tested watchdog and independent owner
+fallback were not executed. All fourteen genuine staging scenarios remain
+BLOCKED / execution NOT_RUN. The fourteen-row table below applies unchanged.
+No initial state, fault, incident, authorization/application transcript,
+consumer change, recovery or rollback was observed in staging.
+
+The historical hard-ceiling rationale below is superseded by this authorization.
+It is not the current stop reason. Current inventory, authentication outcome
+and remaining owner prerequisites are in [evidence](self-healing-preview-evidence.md).
+
+
 ## Dedicated staging results — 2026-10-12
 
 Owner-approved source: `4b4e31a54b819a3597ef3ee163a46e1a7b59fc67`.

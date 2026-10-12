@@ -1,5 +1,34 @@
 # Self-healing ownership and data flow
 
+## Revised staging authorization and cleanup preflight — 2026-10-12
+
+The owner now authorizes the existing Railway workspace, a $10 operational
+spending target that is not independently enforced, and at most two hours
+from the first mission-created temporary resource, including cleanup probes.
+The earlier financial hard-ceiling stop no longer
+applies. Inspected head `450ab65d9955d7627f75fdb3a34fe1773faa23dc` differs from approved
+executable `4b4e31a54b819a3597ef3ee163a46e1a7b59fc67` only in these five audit
+documents; no executable, dependency, build or runtime change was found.
+
+Before staging acceptance resource creation, actual project/service/volume deletion and an
+independent fallback must be proved. A workable proposed procedure is a
+noninteractive disposable deletion rehearsal, an actually tested detached
+watchdog with exact creation receipts and an early deadline, and a separately
+executed owner dashboard deletion rehearsal. The watchdog shares this workspace
+host; the dashboard is independent of the chat, daemon and host. A second
+automated controller or a provider-enforced TTL is not presumed necessary.
+
+No rehearsal/watchdog was executed or armed: CLI sign-in expired without
+completion, and the owner's fallback choice remains pending. No staging
+controller or consumer was started. General bounded synthetic-provider
+supervision would still be needed afterward. Existing normal-preview isolation
+requires loopback provider access; an external synthetic provider alone would
+not satisfy that launcher guard. These are proposed operator fixtures, not
+implemented changes or live proof.
+
+Earlier assignment entries below remain historical evidence.
+
+
 ## Dedicated staging assignment — 2026-10-12
 
 The owner authorized a new temporary project, `arcanos-pr1539-healing-acceptance`.

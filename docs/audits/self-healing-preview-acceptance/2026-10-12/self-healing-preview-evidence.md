@@ -1,5 +1,88 @@
 # Railway preview evidence
 
+## Revised authorization and mandatory cleanup preflight — 2026-10-12
+
+**PRECREATE_CLEANUP_VERIFIED: BLOCKED. LIVE_ACCEPTANCE_VERIFIED: BLOCKED.**
+
+The owner explicitly accepts the existing workspace and a tightly time-limited
+run without an independently enforced $10 ceiling. $10 is now an operational
+target; maximum runtime is two hours from the first mission-created temporary
+resource, including disposable cleanup probes.
+Spending must be monitored and cleanup must begin when any specified stop
+condition occurs. No shared workspace cap was set. The earlier hard-financial-
+ceiling blocker is withdrawn.
+
+Fresh authenticated PR metadata confirms open/non-draft/unmerged PR #1539,
+branch `codex/targeted-security-healing-20261012`, base
+`3fd305b37ba410cf21684a8fed7619a1ba180b48`, inspected head
+`450ab65d9955d7627f75fdb3a34fe1773faa23dc`. Git diff from approved executable
+`4b4e31a54b819a3597ef3ee163a46e1a7b59fc67` lists exactly the five audit
+Markdown files. Executable code, dependencies, build configuration and runtime
+behavior are unchanged; no renewed executable authorization was needed.
+
+Connected reads again listed the same workspace and two preexisting projects;
+proposed `arcanos-pr1539-healing-staging` is absent. Available management tools
+still expose no whole-project-delete operation. Current environment readiness
+has no configured secrets/runtime identities, and CLI `whoami --json` returned
+exit 1, Unauthorized. The supported CLI OAuth/device sign-in was started and
+its activation link was immediately shown to the owner. It ended with exit 1:
+
+```text
+Device code expired. Please run railway login again.
+```
+
+The transient activation URL/code is intentionally not retained in artifacts.
+No successful CLI identity, billing/admin role, create permission or deletion
+permission was established by this attempt.
+
+Official [CLI deletion](https://docs.railway.com/cli/project) schedules project
+removal; accepted deletion is not control-plane absence. A valid cleanup proof
+must include noninteractive disposable deletion plus service/volume/project
+absence read-back. A narrow environment-scoped project token is not assumed
+to permit whole-project deletion. Cron settings and future scheduled prompts
+are not evidence of actual cleanup execution.
+
+The proposed path is an executed disposable deletion rehearsal, a detached
+watchdog with reviewed exact IDs/creation receipts, successful short-deadline
+rehearsal and observed heartbeat, plus actual independent owner dashboard
+deletion. The watchdog shares this workspace host; the owner dashboard is the
+independent fallback. No second automated controller/provider TTL is imposed.
+The owner was asked to complete sign-in and choose dashboard rehearsal or an
+existing trusted cleanup controller; that answer remains pending. No disposable
+probe was created while management deletion/fallback was unverified.
+
+Resource creation count is zero. Staging project/environment/service/
+deployment/incident IDs, runtime artifact digests, baseline/consumer logs and
+observed resource usage remain absent. Assignment infrastructure charges remain
+$0 because no resources were created; no invoice measurement is claimed.
+Previous ~$0.32/two-hour and ~$0.42/retention estimates remain illustrative
+assumptions, not a financial stop condition or guaranteed bill. There are no
+assignment resources or continuing charges to clean up. No production operation
+or deletion of a preexisting resource occurred.
+
+Required next owner action: complete a fresh supported CLI sign-in when ready,
+and provide an executable independent fallback (dashboard rehearsal or a
+trusted controller with deletion evidence). Then prove both cleanup paths and
+arm expiry before provisioning. Additional authorization for the same approved
+executable SHA is not requested. Different executable deployment SHAs still
+require explicit authorization.
+
+Read-only production deployment identity snapshot (all excluded as targets):
+
+| Production role | Latest deployment ID | Observed status |
+| --- | --- | --- |
+| Web | `2a20acd4-3c92-4db6-8995-4a3a466202ef` | SUCCESS |
+| Worker | `d43d6fec-10f1-479a-8d76-9d3df4f2d295` | SUCCESS |
+| PostgreSQL | `7bb12602-2ebb-4901-96a6-a232fba5c279` | SUCCESS |
+| Redis | `aeae0e09-e4bb-406f-92ea-cf5ca81294ac` | SUCCESS |
+
+The final delivery receipt independently checks these identities/statuses
+again. This is control-plane metadata only, not production runtime testing or
+permission to affect any production deployment.
+
+The initial hard-ceiling investigation below remains historical evidence.
+
+
 ## Dedicated staging investigation — 2026-10-12
 
 **LIVE_ACCEPTANCE_VERIFIED: BLOCKED. MERGE_READY: BLOCKED.**
