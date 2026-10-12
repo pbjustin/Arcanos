@@ -10,7 +10,8 @@ import { runGPT5 } from "./openaiClient.js";
 import type { TimeoutStage } from "./timeoutEnvelope.js";
 
 interface ExecutionOptions {
-  secondPassThreshold?: number;
+  /** Explicit refinement policy; this does not measure model confidence. */
+  secondPassPolicy?: "never" | "if_budget_available";
   estimatedSecondPassCostMs?: number;
   runner?: (
     request: GPT5Request,
@@ -44,7 +45,7 @@ export async function executeWithBudget(
   options: ExecutionOptions = {}
 ): Promise<ExecutionResult> {
   const {
-    secondPassThreshold = 0.85,
+    secondPassPolicy = "never",
     estimatedSecondPassCostMs = 8000,
     runner = runGPT5,
   } = options;
@@ -54,9 +55,7 @@ export async function executeWithBudget(
   
   const firstPass = await runner(buildFirstPassRequest(input), budget);
 
-  const confidence = extractConfidence(firstPass);
-
-  if (confidence < secondPassThreshold) {
+  if (secondPassPolicy === "if_budget_available") {
     if (hasSufficientBudget(budget, estimatedSecondPassCostMs)) {
       currentStage = "second_pass";
       assertBudgetAvailable(budget);
@@ -79,11 +78,6 @@ function buildFirstPassRequest(input: ExecutionInput): GPT5Request {
   }
 
   return request;
-}
-
-function extractConfidence(_response: GPT5Response): number {
-  // TODO: Replace with real confidence extraction logic
-  return 0.9;
 }
 
 function buildSecondPassInput(
