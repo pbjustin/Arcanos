@@ -1,0 +1,1208 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-12",
+  "repository": "pbjustin/Arcanos",
+  "pr_number": 1539,
+  "branch": "codex/targeted-security-healing-20261012",
+  "draft": false,
+  "base_sha": "3fd305b37ba410cf21684a8fed7619a1ba180b48",
+  "initial_inspected_head_sha": "ec3ed16cb94c9166902bc810d0d73f89d322cf67",
+  "final_tested_source_head_sha": "4178766998a598553b3a5e4c6804ee9a8cacc0fc",
+  "published_head_receipt": "See PR description and final delivery; containing commit cannot embed its own hash.",
+  "live_preview_acceptance": "BLOCKED",
+  "merge_ready": "BLOCKED",
+  "expected_preview": {
+    "project_id": "7faf44e5-519c-4e73-8d7a-da9f389e6187",
+    "environment_name": "pr-676861-1539",
+    "environment_id": null,
+    "web_service_id": "c4ade025-3f13-4fca-9309-5d0dd81396fe",
+    "worker_service_id": "1765befb-b805-4051-9af9-28634e986886",
+    "matched_deployments": [],
+    "opt_in_label_present": false
+  },
+  "discovery": {
+    "mode": "Authenticated control-plane identity metadata only",
+    "inventories": [
+      {
+        "project": {
+          "id": "7faf44e5-519c-4e73-8d7a-da9f389e6187",
+          "name": "Arcanos"
+        },
+        "environments": [
+          {
+            "id": "8048969f-07d0-48bd-bc0a-3f07ccbb26d1",
+            "name": "live-validation"
+          },
+          {
+            "id": "c88804be-b13b-46b0-b860-63304bdd5984",
+            "name": "Arcanos-pr-1433"
+          },
+          {
+            "id": "60dd64ed-a14c-4620-96be-fa91c110bb14",
+            "name": "Arcanos-pr-1432"
+          },
+          {
+            "id": "8d5594c5-075e-4ad5-8fad-9e6e0866032d",
+            "name": "pr-preview-base-20260812"
+          },
+          {
+            "id": "fb583147-6c39-4343-9267-500f357d25ab",
+            "name": "production"
+          }
+        ],
+        "services": [
+          {
+            "id": "530c6dcf-bb15-4b46-babc-cf00e22b76cf",
+            "name": "ARCANOS V2 Validation"
+          },
+          {
+            "id": "1765befb-b805-4051-9af9-28634e986886",
+            "name": "ARCANOS Worker"
+          },
+          {
+            "id": "6647b5b1-d796-4783-b5f0-b8e356019ca6",
+            "name": "Postgres-BTrN"
+          },
+          {
+            "id": "81e4a1cf-7ae4-48bf-8321-23641bb23c0e",
+            "name": "Redis-lQbV"
+          },
+          {
+            "id": "c4ade025-3f13-4fca-9309-5d0dd81396fe",
+            "name": "ARCANOS V2"
+          }
+        ]
+      },
+      {
+        "project": {
+          "id": "8e4cb1eb-1441-4e83-b434-15c06c676a5f",
+          "name": "Arcanos Live PR 1527"
+        },
+        "environments": [
+          {
+            "id": "9ca4ff39-612f-4a89-9101-0d98c5f5e5e4",
+            "name": "live-pr-1527"
+          }
+        ],
+        "services": [
+          {
+            "id": "625cb884-088a-45da-ac27-4a5e9c00e017",
+            "name": "supervisor-live-pr-1527"
+          },
+          {
+            "id": "261ef14c-3c2a-4f26-ab4e-bd692e4fb201",
+            "name": "runtime-live-pr-1527"
+          }
+        ]
+      }
+    ],
+    "inspected_nonproduction_deployments": [
+      {
+        "projectId": "7faf44e5-519c-4e73-8d7a-da9f389e6187",
+        "deployments": [
+          {
+            "id": "6bb89f16-37b0-48d7-bf9a-ba4076957ca5",
+            "environmentId": "8048969f-07d0-48bd-bc0a-3f07ccbb26d1",
+            "serviceId": "530c6dcf-bb15-4b46-babc-cf00e22b76cf",
+            "status": "SUCCESS",
+            "createdAt": "2026-10-07T01:25:25.164Z",
+            "updatedAt": "2026-10-07T01:41:29.887Z",
+            "commitHash": "cfb735d034854d20b85671c74aef533e8e53f728",
+            "branch": "fix/gaming-clear-audit-runtime-budget"
+          },
+          {
+            "id": "72b26e86-89d7-4d57-a001-b2b21fa247ad",
+            "environmentId": "8048969f-07d0-48bd-bc0a-3f07ccbb26d1",
+            "serviceId": "530c6dcf-bb15-4b46-babc-cf00e22b76cf",
+            "status": "REMOVED",
+            "createdAt": "2026-10-07T01:21:50.504Z",
+            "updatedAt": "2026-10-07T01:41:33.075Z",
+            "commitHash": "2cd0d3d9abd0a0e9b6fdb99b4275ca11474058a5",
+            "branch": "codex/persistent-live-validation"
+          },
+          {
+            "id": "d36cc724-9c87-4b5a-b9ec-5e80aefa78f9",
+            "environmentId": "8048969f-07d0-48bd-bc0a-3f07ccbb26d1",
+            "serviceId": "530c6dcf-bb15-4b46-babc-cf00e22b76cf",
+            "status": "FAILED",
+            "createdAt": "2026-10-07T01:16:39.375Z",
+            "updatedAt": "2026-10-07T01:20:53.390Z",
+            "commitHash": "2cd0d3d9abd0a0e9b6fdb99b4275ca11474058a5",
+            "branch": "codex/persistent-live-validation"
+          },
+          {
+            "id": "a76785f2-ca78-4246-948d-28e8ae18ea1c",
+            "environmentId": "8048969f-07d0-48bd-bc0a-3f07ccbb26d1",
+            "serviceId": "530c6dcf-bb15-4b46-babc-cf00e22b76cf",
+            "status": "FAILED",
+            "createdAt": "2026-10-07T01:15:08.382Z",
+            "updatedAt": "2026-10-07T01:15:14.236Z",
+            "commitHash": "26bbfbed1e26cb263d4622b2a603ce3ea6922911",
+            "branch": "codex/persistent-live-validation"
+          }
+        ]
+      },
+      {
+        "projectId": "8e4cb1eb-1441-4e83-b434-15c06c676a5f",
+        "deployments": []
+      }
+    ]
+  },
+  "live_events": {
+    "baseline": "NOT_RUN",
+    "faults_injected": 0,
+    "controller_log_excerpts": [],
+    "consumer_log_excerpts": [],
+    "incident_ids": [],
+    "execution_ids": [],
+    "reason": "No PR-owned exact-head environment; isolation unproven. Stop condition honored."
+  },
+  "local_boundary": "Synthetic loopback SDK/Trinity consumer; mocked controllers/storage/actuators; two contained genuine local Node processes; offline preview contracts.",
+  "modifications": {
+    "source_commits": [
+      "f6cbd320eaaf032e6d8c500bc5cb4bfd4d9705aa",
+      "4178766998a598553b3a5e4c6804ee9a8cacc0fc"
+    ],
+    "new_test_cases": 45,
+    "production_configuration_modified": false,
+    "new_fault_injection_endpoint": false,
+    "railway_mutations": 0
+  },
+  "tests": {
+    "source_head_sha": "4178766998a598553b3a5e4c6804ee9a8cacc0fc",
+    "jest": {
+      "success": true,
+      "numTotalTestSuites": 32,
+      "numPassedTestSuites": 32,
+      "numFailedTestSuites": 0,
+      "numTotalTests": 546,
+      "numPassedTests": 546,
+      "numFailedTests": 0,
+      "numPendingTests": 0
+    },
+    "started_at_utc": "2026-10-12T05:26:13.536000+00:00",
+    "per_suite": [
+      {
+        "path": "tests/redis-operation-boundary.test.ts",
+        "status": "passed",
+        "tests": 5,
+        "passed": 5,
+        "skipped": 0
+      },
+      {
+        "path": "tests/generative-model-policy-transport.e2e.test.ts",
+        "status": "passed",
+        "tests": 23,
+        "passed": 23,
+        "skipped": 0
+      },
+      {
+        "path": "tests/self-healing-restart.test.js",
+        "status": "passed",
+        "tests": 1,
+        "passed": 1,
+        "skipped": 0,
+        "assertions": [
+          {
+            "name": "self-healing restart isolation invalidates an active mitigation in a genuinely fresh process instead of replaying it",
+            "status": "passed"
+          }
+        ]
+      },
+      {
+        "path": "tests/worker-duplication-suppression.test.ts",
+        "status": "passed",
+        "tests": 6,
+        "passed": 6,
+        "skipped": 0
+      },
+      {
+        "path": "tests/self-healing-trinity.integration.test.ts",
+        "status": "passed",
+        "tests": 9,
+        "passed": 9,
+        "skipped": 0,
+        "assertions": [
+          {
+            "name": "canonical self-healing owner through the real Trinity consumer keeps a healthy real consumer on its normal path without an unnecessary mitigation",
+            "status": "passed"
+          },
+          {
+            "name": "canonical self-healing owner through the real Trinity consumer detects one real transport timeout, bounds recovery and leaves the incident threshold unmet",
+            "status": "passed"
+          },
+          {
+            "name": "canonical self-healing owner through the real Trinity consumer labels a finite timeout backstop separately from client-driven transport cancellation",
+            "status": "passed"
+          },
+          {
+            "name": "canonical self-healing owner through the real Trinity consumer bounds sustained real provider failures at the authorized model and fails closed before recovery",
+            "status": "passed"
+          },
+          {
+            "name": "canonical self-healing owner through the real Trinity consumer changes only simple Trinity decisions, avoids competing actuation and expires at the TTL",
+            "status": "passed"
+          },
+          {
+            "name": "canonical self-healing owner through the real Trinity consumer rolls back ineffective mitigation before another advisor call and restores the normal decision",
+            "status": "passed"
+          },
+          {
+            "name": "canonical self-healing owner through the real Trinity consumer fails closed on an unavailable predictive advisor when prediction owns the tick",
+            "status": "passed"
+          },
+          {
+            "name": "canonical self-healing owner through the real Trinity consumer suppresses automatic startup and interval entrypoints for a web-only service role",
+            "status": "passed"
+          },
+          {
+            "name": "canonical self-healing owner through the real Trinity consumer preserves explicitly requested manual mitigation and its web Trinity consumer",
+            "status": "passed"
+          }
+        ]
+      },
+      {
+        "path": "tests/workers-route-security.test.ts",
+        "status": "passed",
+        "tests": 26,
+        "passed": 26,
+        "skipped": 0
+      },
+      {
+        "path": "tests/self-healing-loop.test.ts",
+        "status": "passed",
+        "tests": 69,
+        "passed": 69,
+        "skipped": 0,
+        "assertions": [
+          {
+            "name": "selfHealingLoop resolves authoritative refusal without crossing its approval boundary",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop resolves authoritative recommendation without crossing its approval boundary",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop resolves authoritative dry run without crossing its approval boundary",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop resolves deterministic fallback without crossing its approval boundary",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop resolves attempted failure without crossing its approval boundary",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop resolves declined automatic actuator without crossing its approval boundary",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop resolves completed predictive action without crossing its approval boundary",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop resolves disabled completed predictive action without crossing its approval boundary",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop resolves inconsistent completed attempt without crossing its approval boundary",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop resolves inconsistent completed mode without crossing its approval boundary",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop resolves inconsistent completed action without crossing its approval boundary",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop resolves inconsistent completed target without crossing its approval boundary",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop resolves inconsistent completed safety without crossing its approval boundary",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop resolves disabled passive predictor without crossing its approval boundary",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop resolves disabled no-op predictor without crossing its approval boundary",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop resolves disabled dry-run state without crossing its approval boundary",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop starts exactly one interval even when bootstrap runs twice",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop prefers the predictive interval alias when starting the loop",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop recovers stale jobs when the queue is stalled",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop bounds throwing stale jobs actuator attempts by cooldown and the incident window",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop bounds throwing provider actuator attempts by cooldown and the incident window",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop bounds throwing local worker actuator attempts by cooldown and the incident window",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop keeps a throwing actuator bounded when degraded recovery overrides its cooldown",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop rejects unapproved remote worker repair without consuming a dispatched attempt",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop keeps unsafe refusal inside the predictive/reactive approval boundary",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop keeps unsupported action inside the predictive/reactive approval boundary",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop keeps predictive cooldown inside the predictive/reactive approval boundary",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop keeps recommend-only skip inside the predictive/reactive approval boundary",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop keeps declined automatic actuator inside the predictive/reactive approval boundary",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop keeps dry run inside the predictive/reactive approval boundary",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop keeps deterministic fallback recommendation inside the predictive/reactive approval boundary",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop keeps failed predictive actuation inside the predictive/reactive approval boundary",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop keeps completed predictive actuation inside the predictive/reactive approval boundary",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop keeps inconsistent completed payload inside the predictive/reactive approval boundary",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop keeps disabled predictive layer inside the predictive/reactive approval boundary",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop keeps disabled completed predictive action inside the predictive/reactive approval boundary",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop fails closed when the predictive call rejects after an unknown execution phase",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop preserves the legacy reactive action when an explicitly disabled predictive call rejects",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop preserves the automatic controller when an explicitly disabled predictive call rejects",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop withholds the automatic controller when enabled prediction does not execute",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop preserves automatic legacy controller ownership when prediction is explicitly disabled",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop ignores the debug heal override in production",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop does not let the debug override retry a declined automatic actuator",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop treats idle workers with no receipts as inactive degraded and heals the runtime",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop activates degraded mode when a timeout storm is detected",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop activates trinity degraded mode when shared core pipeline timeouts cluster",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop detects latency spike bursts even when the rolling average stays below threshold",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop targets prompt-route timeout clusters even when prompt traffic is a minority of the window",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop allows prompt-route mitigation even when a trinity mitigation is already active",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop escalates prompt-route mitigation to degraded mode when reduced-latency mode is already active",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop does not immediately escalate reduced-latency prompt mitigation before the stabilization window elapses",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop rolls back an ineffective degraded-mode mitigation after verification",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop does not verify Trinity recovery from empty rolling window",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop does not verify Trinity recovery from rolling samples without new traffic",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop verifies Trinity improvement from post-action samples despite a stale degraded rolling window",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop lets a due rollback own its tick before a later predictive execution",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop releases deferred Trinity verification after TTL expiry so another incident can be repaired",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop releases deferred Trinity verification after explicit operator rollback so another incident can be repaired",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop does not verify a vanished Trinity command from later healthy requests",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop does not roll back a replacement activation of the same Trinity action",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop rolls back an ineffective prompt-route mitigation after verification",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop defers prompt-route verification when there is not enough post-action route traffic",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop keeps prompt-route mitigation active when route-local metrics improve during verification",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop reports prompt-route stability from post-mitigation traffic instead of stale global burst samples",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop treats a mostly-healthy post-mitigation prompt window as stabilized even with a single bounded timeout",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop runs the broader controller for manual self-heal requests when no direct action is needed",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop invokes AI diagnosis and records controller decisions on every loop cycle",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop records visible AI diagnosis and action execution events when the debug heal override is enabled",
+            "status": "passed"
+          },
+          {
+            "name": "selfHealingLoop surfaces live worker activity timestamps in the runtime snapshot when inactivity fields are empty",
+            "status": "passed"
+          }
+        ]
+      },
+      {
+        "path": "tests/worker-restart-threshold-recovery.test.ts",
+        "status": "passed",
+        "tests": 2,
+        "passed": 2,
+        "skipped": 0
+      },
+      {
+        "path": "tests/self-healing-control-rate-limit.test.ts",
+        "status": "passed",
+        "tests": 3,
+        "passed": 3,
+        "skipped": 0
+      },
+      {
+        "path": "tests/workers-heal-route-security.test.ts",
+        "status": "passed",
+        "tests": 6,
+        "passed": 6,
+        "skipped": 0
+      },
+      {
+        "path": "tests/trinity-model-policy.e2e.test.ts",
+        "status": "passed",
+        "tests": 15,
+        "passed": 15,
+        "skipped": 0
+      },
+      {
+        "path": "tests/job-runner-runtime.test.ts",
+        "status": "passed",
+        "tests": 47,
+        "passed": 47,
+        "skipped": 0
+      },
+      {
+        "path": "tests/redis-startup-lifecycle.test.ts",
+        "status": "passed",
+        "tests": 26,
+        "passed": 26,
+        "skipped": 0
+      },
+      {
+        "path": "tests/self-improve-auth-composition.test.ts",
+        "status": "passed",
+        "tests": 4,
+        "passed": 4,
+        "skipped": 0
+      },
+      {
+        "path": "tests/worker-task-queue.test.ts",
+        "status": "passed",
+        "tests": 1,
+        "passed": 1,
+        "skipped": 0
+      },
+      {
+        "path": "tests/self-heal-control-loop-startup.test.ts",
+        "status": "passed",
+        "tests": 2,
+        "passed": 2,
+        "skipped": 0
+      },
+      {
+        "path": "tests/worker-autonomy-service.test.ts",
+        "status": "passed",
+        "tests": 63,
+        "passed": 63,
+        "skipped": 0
+      },
+      {
+        "path": "tests/openai-fallback-sequence.test.ts",
+        "status": "passed",
+        "tests": 18,
+        "passed": 18,
+        "skipped": 0
+      },
+      {
+        "path": "tests/self-heal-http-boundary.test.ts",
+        "status": "passed",
+        "tests": 10,
+        "passed": 10,
+        "skipped": 0
+      },
+      {
+        "path": "tests/openai-structured-reasoning-preview-chaos.test.ts",
+        "status": "passed",
+        "tests": 10,
+        "passed": 10,
+        "skipped": 0
+      },
+      {
+        "path": "tests/self-heal-auth-composition.test.ts",
+        "status": "passed",
+        "tests": 3,
+        "passed": 3,
+        "skipped": 0
+      },
+      {
+        "path": "tests/predictive-healing-execution.test.ts",
+        "status": "passed",
+        "tests": 13,
+        "passed": 13,
+        "skipped": 0
+      },
+      {
+        "path": "tests/job-queue.test.ts",
+        "status": "passed",
+        "tests": 11,
+        "passed": 11,
+        "skipped": 0
+      },
+      {
+        "path": "tests/self-heal-telemetry-redis.test.ts",
+        "status": "passed",
+        "tests": 4,
+        "passed": 4,
+        "skipped": 0
+      },
+      {
+        "path": "tests/self-heal-operator-approval.test.ts",
+        "status": "passed",
+        "tests": 8,
+        "passed": 8,
+        "skipped": 0
+      },
+      {
+        "path": "tests/worker-repair-actuator.test.ts",
+        "status": "passed",
+        "tests": 58,
+        "passed": 58,
+        "skipped": 0,
+        "assertions": [
+          {
+            "name": "worker repair actuator Railway target containment redeploys only the exact approved preview project and environment",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator Railway target containment uses the exact runtime environment ID when no environment name is configured",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator Railway target containment preserves an exact explicit environment name when no runtime ID is available",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator Railway target containment rejects missing project scope without deploying either environment",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator Railway target containment rejects unmatched project scope without deploying either environment",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator Railway target containment rejects unmatched runtime environment ID without deploying either environment",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator Railway target containment rejects environment name conflicting with runtime ID without deploying either environment",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator Railway target containment rejects override conflicting with the preview runtime without deploying either environment",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator Railway target containment rejects missing environment scope before inspecting Railway projects",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator Railway target containment does not fall back to production when an explicit preview name is absent",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator Railway target containment rejects a conflicting explicit override even without a runtime environment ID",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator Railway target containment rejects an ambiguous project match without deployment",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator Railway target containment rejects an ambiguous environment match without deployment",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator Railway target containment rejects an ambiguous service match without deployment",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator Railway target containment selects one explicit service ID among same-name preview services",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator Railway target containment requires current action-specific operator approval before target discovery",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator Railway target containment requires current action-specific operator approval before target discovery",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator Railway target containment requires current action-specific operator approval before target discovery",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator Railway target containment requires current action-specific operator approval before target discovery",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator Railway target containment keeps web-role repair disabled even with exact scope and approval",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator Railway target containment preserves local repair without Railway scope or privileged approval",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator dispatch boundary records one dispatch before an approved local repair completes",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator dispatch boundary records one dispatch before an approved railway repair completes",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator dispatch boundary records one dispatch before an approved remote repair completes",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator dispatch boundary records one dispatch when an approved local operation throws",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator dispatch boundary records one dispatch when an approved railway operation throws",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator dispatch boundary records one dispatch when an approved remote operation throws",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator remote credential boundary does not advertise remote repair without an injected credential: null",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator remote credential boundary does not advertise remote repair without an injected credential: \"\"",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator remote credential boundary does not advertise remote repair for an invalid injected credential",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator remote credential boundary does not advertise remote repair for an invalid injected credential",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator remote credential boundary does not advertise remote repair for an invalid injected credential",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator remote credential boundary does not advertise remote repair for an invalid injected credential",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator remote credential boundary does not advertise remote repair for an invalid injected credential",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator remote credential boundary does not advertise remote repair when the credential collides with another purpose",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator remote credential boundary advertises a valid remote repair without exposing the credential in status",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator remote credential boundary requires an exact HTTPS origin",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator remote credential boundary requires an explicit IPv4 loopback HTTP origin",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator remote credential boundary requires an explicit localhost HTTP origin",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator remote credential boundary requires a remote plaintext HTTP origin",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator remote credential boundary requires a hostname with an implicit scheme",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator remote credential boundary requires an HTTPS URL with a path",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator remote credential boundary requires an HTTPS URL with credentials",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator remote credential boundary requires an HTTPS URL with a query string",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator remote credential boundary fails closed when worker-helper URL aliases conflict",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator remote credential boundary does not resolve a remote credential while local repair is selected",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator remote credential boundary does not fetch when operator approval is absent",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator remote credential boundary does not fetch when no credential is available during status resolution",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator remote credential boundary does not fetch when the credential disappears before execution",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator remote credential boundary re-resolves a rotated credential, uses only the custom carrier, and drops remote-controlled result text",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator remote credential boundary keeps the actuator timeout active while reading the remote body",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator remote credential boundary cancels redirect bodies without reading them",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator remote credential boundary cancels non-success bodies without reading them",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator remote credential boundary cancels a streamed remote response once it exceeds 64 KiB",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator remote credential boundary rejects a non-stream success response without invoking an unbounded text fallback",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator remote credential boundary returns a generic error for a non-success response",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator remote credential boundary returns a generic error for a non-JSON success response",
+            "status": "passed"
+          },
+          {
+            "name": "worker repair actuator remote credential boundary returns a generic error for an oversized success response",
+            "status": "passed"
+          }
+        ]
+      },
+      {
+        "path": "tests/job-repository.requeueFailedJob.test.ts",
+        "status": "passed",
+        "tests": 2,
+        "passed": 2,
+        "skipped": 0
+      },
+      {
+        "path": "tests/predictive-healing-service.test.ts",
+        "status": "passed",
+        "tests": 4,
+        "passed": 4,
+        "skipped": 0
+      },
+      {
+        "path": "tests/safety-v2-redis-lifecycle.test.ts",
+        "status": "passed",
+        "tests": 4,
+        "passed": 4,
+        "skipped": 0
+      },
+      {
+        "path": "tests/self-healing-v2.test.ts",
+        "status": "passed",
+        "tests": 8,
+        "passed": 8,
+        "skipped": 0
+      },
+      {
+        "path": "tests/queue-job-lifecycle.test.ts",
+        "status": "passed",
+        "tests": 17,
+        "passed": 17,
+        "skipped": 0
+      },
+      {
+        "path": "tests/worker-helper-auth.test.ts",
+        "status": "passed",
+        "tests": 68,
+        "passed": 68,
+        "skipped": 0
+      }
+    ],
+    "offline_preview_contracts": [
+      {
+        "command": "npm run test:native-pr-preview-e2e",
+        "passed": 42,
+        "failed": 0,
+        "skipped": 0
+      },
+      {
+        "command": "npm run test:preview-e2e",
+        "passed": 18,
+        "failed": 0,
+        "skipped": 0
+      }
+    ],
+    "distinct_local_total": 606,
+    "static_checks": [
+      "npm run type-check",
+      "npm run lint (0 errors,77 existing warnings)",
+      "npm run build",
+      "npm run reindex"
+    ],
+    "overlapping_component_runs_excluded_from_total": true,
+    "artifact_checks": {
+      "maintained_docs": "PASS",
+      "maintained_local_targets_passed": 714,
+      "external_network_checks_skipped": 109,
+      "new_package_relative_links_passed": 12
+    }
+  },
+  "gates": {
+    "PR_HEAD_IDENTIFIED": "PASS",
+    "PREVIEW_ENVIRONMENT_MATCHED": "BLOCKED",
+    "PREVIEW_ISOLATION_VERIFIED": "BLOCKED",
+    "HEALTHY_BASELINE_VERIFIED": "BLOCKED",
+    "FAILURE_DETECTION_VERIFIED": "BLOCKED",
+    "MITIGATION_AUTHORIZATION_VERIFIED": "BLOCKED",
+    "MITIGATION_APPLICATION_VERIFIED": "BLOCKED",
+    "TRINITY_CONSUMPTION_VERIFIED": "BLOCKED",
+    "RECOVERY_VERIFIED": "BLOCKED",
+    "MITIGATION_ROLLBACK_VERIFIED": "BLOCKED",
+    "SERVICE_ROLE_BOUNDARIES_VERIFIED": "BLOCKED",
+    "CONCURRENCY_AND_IDEMPOTENCY_VERIFIED": "BLOCKED",
+    "REGRESSION_TESTS_PASSED": "PASS",
+    "EXACT_HEAD_RETESTED": "BLOCKED",
+    "MERGE_READY": "BLOCKED"
+  },
+  "local_receipt_hashes": [
+    {
+      "ephemeral_local_log": "selfheal-acceptance-throwing-before.log",
+      "sha256": "2e3c561629f79784785a65f4ce93dc2624312fac42351430bea68a67768afc82",
+      "bytes": 25799,
+      "kind": "intentional failing-before local filtered regressions",
+      "failed": 4,
+      "name_excluded": 57,
+      "total": 61
+    },
+    {
+      "ephemeral_local_log": "selfheal-acceptance-empty-verification-before.log",
+      "sha256": "1abade8f47a10874283150673e374ee74efc30c89e98b5ca25d45739cf280659",
+      "bytes": 9198,
+      "kind": "intentional failing-before local filtered regressions",
+      "failed": 2,
+      "name_excluded": 61,
+      "total": 63
+    },
+    {
+      "ephemeral_local_log": "selfheal-acceptance-worker-actuator-before.log",
+      "sha256": "e168e9ca597f04759303cd8ee93b5d68d63441c9ff95eb5c1ec51202cd62c5a0",
+      "bytes": 16622,
+      "kind": "intentional failing-before local regressions",
+      "failed": 11,
+      "passed": 41,
+      "total": 52
+    },
+    {
+      "ephemeral_local_log": "selfheal-acceptance-pending-ownership-before.log",
+      "sha256": "38ff2c093f8d980db5bb3898a347502cb3cd533632b7925144a8d4a7387c848e",
+      "bytes": 11349,
+      "kind": "intentional failing-before follow-up filtered regressions",
+      "failed": 4,
+      "name_excluded": 65,
+      "total": 69
+    },
+    {
+      "ephemeral_local_log": "selfheal-acceptance-pending-ownership-after.log",
+      "sha256": "71f5820ffee893209d7773a775db5c6410dd6b768860d0b2955ee969717d43b6",
+      "bytes": 6685,
+      "kind": "local coordinator final follow-up",
+      "passed": 69,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "ephemeral_local_log": "selfheal-acceptance-transport-cancellation.log",
+      "sha256": "4a131665ee4c671a70fcba1e96807972745f614c7124a45bde9df3bb03303751",
+      "bytes": 7282,
+      "kind": "local actual SDK and synthetic transport",
+      "passed": 48,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "ephemeral_local_log": "selfheal-acceptance-final-source-head.log",
+      "sha256": "4b57bf9dad3aa6b00659e0d425be47e4471600f4174523539c284b97d467acaf",
+      "bytes": 127775,
+      "kind": "exact local source-head focused regression",
+      "passed": 546,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "ephemeral_local_log": "selfheal-acceptance-final-typecheck.log",
+      "sha256": "82c45ad386f9769567052c6ed1b2b78434ef817bfe3d475c3cc908cb0dbfe9ec",
+      "bytes": 1242,
+      "kind": "local static/compile gate",
+      "exit_code": 0
+    },
+    {
+      "ephemeral_local_log": "selfheal-acceptance-final-lint.log",
+      "sha256": "38a0685de41981fd332c337fefb50c34c4bfb3e09729c067e69c5cde4bc3ceba",
+      "bytes": 12875,
+      "kind": "local lint",
+      "exit_code": 0,
+      "warnings": 77
+    },
+    {
+      "ephemeral_local_log": "selfheal-acceptance-final-build.log",
+      "sha256": "92a6669518eca211fc04c8f1815a9bac16079c4ce5fbbf15b60920135c94e2c0",
+      "bytes": 3351,
+      "kind": "local build",
+      "exit_code": 0
+    },
+    {
+      "ephemeral_local_log": "selfheal-acceptance-native-preview-contract.log",
+      "sha256": "bac4024b432645e804335ed74a68cc66d81f35c7e1583130962e18f066420b35",
+      "bytes": 4219,
+      "kind": "local offline contract",
+      "passed": 42,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "ephemeral_local_log": "selfheal-acceptance-preview-contract.log",
+      "sha256": "297b123754fbbf7f377afaa1d41ea6ef234bc6a72aa48ef0a163545e85448019",
+      "bytes": 1784,
+      "kind": "local offline contract",
+      "passed": 18,
+      "failed": 0,
+      "skipped": 0
+    }
+  ],
+  "local_synthetic_event_excerpts": {
+    "boundary": "V2 unit fixture logger, fake clock/request IDs, not Railway logs or actual provider availability",
+    "excerpts": [
+      "[2026-03-24T09:00:00.000Z] WARN [module:self_heal.v2,stage:intake,requestId:req-1,sourceEndpoint:gpt.arcanos-core.query,error:Request was aborted.,observationsInWindow:1,activeAction:null,attempts:0]: self_heal.v2.observed",
+      "[2026-03-24T09:00:00.000Z] WARN [module:self_heal.v2,stage:intake,requestId:req-2,sourceEndpoint:gpt.arcanos-core.query,error:Request was aborted.,observationsInWindow:2,activeAction:null,attempts:0]: self_heal.v2.observed",
+      "[2026-03-24T09:00:00.000Z] WARN [module:self_heal.v2,stage:intake,requestId:req-3,sourceEndpoint:gpt.arcanos-core.query,error:Request was aborted.,observationsInWindow:3,activeAction:null,attempts:0]: self_heal.v2.observed",
+      "[2026-03-24T09:00:00.000Z] WARN [module:self_heal.v2,stage:intake,action:enable_degraded_mode,attempts:1,reason:Observed 3 intake stage aborts within the verification window.,expectedOutcome:Avoid repeated Trinity stage aborts by forcing the lightweight direct-answer mode for simple traffic.]: self_heal.v2.action_applied",
+      "[2026-03-24T09:00:00.000Z] WARN [module:self_heal.v2,stage:final,requestId:req-a,sourceEndpoint:gpt.arcanos-core.query,error:Request was aborted.,observationsInWindow:1,activeAction:null,attempts:0]: self_heal.v2.observed",
+      "[2026-03-24T09:00:00.000Z] WARN [module:self_heal.v2,stage:final,requestId:req-b,sourceEndpoint:gpt.arcanos-core.query,error:Request was aborted.,observationsInWindow:2,activeAction:null,attempts:0]: self_heal.v2.observed",
+      "[2026-03-24T09:00:00.000Z] WARN [module:self_heal.v2,stage:final,requestId:req-c,sourceEndpoint:gpt.arcanos-core.query,error:Request was aborted.,observationsInWindow:3,activeAction:null,attempts:0]: self_heal.v2.observed",
+      "[2026-03-24T09:00:00.000Z] WARN [module:self_heal.v2,stage:final,action:bypass_final_stage,attempts:1,reason:Observed 3 final stage aborts within the verification window.,expectedOutcome:Avoid final-stage aborts by returning the validated reasoning output in degraded mode.]: self_heal.v2.action_applied",
+      "[2026-03-24T09:00:00.000Z] INFO [module:self_heal.v2,stage:final,action:bypass_final_stage,outcome:success,requestId:verify-1,sourceEndpoint:gpt.arcanos-core.query,verificationFailures:0,verificationSuccesses:1]: self_heal.v2.verify",
+      "[2026-03-24T09:00:00.000Z] INFO [module:self_heal.v2,stage:final,action:bypass_final_stage,outcome:success,requestId:verify-2,sourceEndpoint:gpt.arcanos-core.query,verificationFailures:0,verificationSuccesses:2]: self_heal.v2.verify",
+      "[2026-03-24T09:00:00.000Z] INFO [module:self_heal.v2,stage:final,action:bypass_final_stage,outcome:success,requestId:verify-3,sourceEndpoint:gpt.arcanos-core.query,verificationFailures:0,verificationSuccesses:3]: self_heal.v2.verify",
+      "[2026-03-24T09:00:00.000Z] INFO [module:self_heal.v2,stage:final,action:bypass_final_stage,verifiedAtMs:1774342800000,verificationSuccesses:3]: self_heal.v2.action_retained",
+      "[2026-03-24T09:00:00.000Z] WARN [module:self_heal.v2,stage:reasoning,requestId:reasoning-1,sourceEndpoint:gpt.arcanos-core.query,error:openai_call_aborted_due_to_budget,observationsInWindow:1,activeAction:null,attempts:0]: self_heal.v2.observed",
+      "[2026-03-24T09:00:00.000Z] WARN [module:self_heal.v2,stage:reasoning,requestId:reasoning-2,sourceEndpoint:gpt.arcanos-core.query,error:openai_call_aborted_due_to_budget,observationsInWindow:2,activeAction:null,attempts:0]: self_heal.v2.observed",
+      "[2026-03-24T09:00:00.000Z] WARN [module:self_heal.v2,stage:reasoning,requestId:reasoning-3,sourceEndpoint:gpt.arcanos-core.query,error:openai_call_aborted_due_to_budget,observationsInWindow:3,activeAction:null,attempts:0]: self_heal.v2.observed",
+      "[2026-03-24T09:00:00.000Z] WARN [module:self_heal.v2,stage:reasoning,action:enable_degraded_mode,attempts:1,reason:Observed 3 reasoning stage aborts within the verification window.,expectedOutcome:Avoid repeated Trinity stage aborts by forcing the lightweight direct-answer mode for simple traffic.]: self_heal.v2.action_applied",
+      "[2026-03-24T09:00:00.000Z] WARN [module:self_heal.v2,stage:intake,requestId:req-1,sourceEndpoint:gpt.arcanos-core.query,error:Request was aborted.,observationsInWindow:1,activeAction:null,attempts:0]: self_heal.v2.observed",
+      "[2026-03-24T09:00:00.000Z] WARN [module:self_heal.v2,stage:intake,requestId:req-2,sourceEndpoint:gpt.arcanos-core.query,error:Request was aborted.,observationsInWindow:2,activeAction:null,attempts:0]: self_heal.v2.observed",
+      "[2026-03-24T09:00:00.000Z] WARN [module:self_heal.v2,stage:intake,requestId:req-3,sourceEndpoint:gpt.arcanos-core.query,error:Request was aborted.,observationsInWindow:3,activeAction:null,attempts:0]: self_heal.v2.observed",
+      "[2026-03-24T09:00:00.000Z] WARN [module:self_heal.v2,stage:intake,action:enable_degraded_mode,attempts:1,reason:Observed 3 intake stage aborts within the verification window.,expectedOutcome:Avoid repeated Trinity stage aborts by forcing the lightweight direct-answer mode for simple traffic.]: self_heal.v2.action_applied",
+      "[2026-03-24T09:00:00.000Z] WARN [module:self_heal.v2,stage:intake,requestId:req-4,sourceEndpoint:gpt.arcanos-core.query,error:Request was aborted.,observationsInWindow:4,activeAction:enable_degraded_mode,attempts:1]: self_heal.v2.observed",
+      "[2026-03-24T09:00:00.000Z] WARN [module:self_heal.v2,stage:intake,action:enable_degraded_mode,outcome:failure,verificationFailures:1,verificationSuccesses:0]: self_heal.v2.verify",
+      "[2026-03-24T09:00:00.000Z] WARN [module:self_heal.v2,stage:intake,requestId:req-5,sourceEndpoint:gpt.arcanos-core.query,error:Request was aborted.,observationsInWindow:5,activeAction:enable_degraded_mode,attempts:1]: self_heal.v2.observed",
+      "[2026-03-24T09:00:00.000Z] WARN [module:self_heal.v2,stage:intake,action:enable_degraded_mode,outcome:failure,verificationFailures:2,verificationSuccesses:0]: self_heal.v2.verify",
+      "[2026-03-24T09:00:00.000Z] WARN [module:self_heal.v2,stage:intake,action:enable_degraded_mode,reason:verification_failure_threshold_reached,verificationFailures:2]: self_heal.v2.rollback",
+      "[2026-03-24T09:02:00.001Z] WARN [module:self_heal.v2,stage:intake,requestId:req-6,sourceEndpoint:gpt.arcanos-core.query,error:Request was aborted.,observationsInWindow:6,activeAction:null,attempts:1]: self_heal.v2.observed",
+      "[2026-03-24T09:00:00.000Z] WARN [module:self_heal.v2,stage:reasoning,action:enable_degraded_mode,attempts:1,reason:authorized command fixture,expectedOutcome:Avoid repeated Trinity stage aborts by forcing the lightweight direct-answer mode for simple traffic.]: self_heal.v2.action_applied",
+      "[2026-03-24T09:00:00.000Z] WARN [module:self_heal.v2,stage:reasoning,action:enable_degraded_mode,reason:authorized command fixture,verificationFailures:0]: self_heal.v2.rollback",
+      "[2026-03-24T09:00:00.000Z] WARN [module:self_heal.v2,stage:final,action:bypass_final_stage,attempts:1,reason:bounded fixture,expectedOutcome:Avoid final-stage aborts by returning the validated reasoning output in degraded mode.]: self_heal.v2.action_applied",
+      "[2026-03-24T09:10:00.000Z] INFO [module:self_heal.v2,stage:final,action:bypass_final_stage,activeSinceMs:1774342800000,verifiedAtMs:null]: self_heal.v2.action_expired"
+    ]
+  },
+  "initial_head_preview_checks": [
+    {
+      "name": "Converge event preview lifecycle / Reconcile exact Railway preview",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/pbjustin/Arcanos/actions/runs/38203122825/job/114660652481"
+    },
+    {
+      "name": "Converge event preview lifecycle / Reconcile exact Railway preview",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/pbjustin/Arcanos/actions/runs/38203182405/job/114660834870"
+    },
+    {
+      "name": "Converge event preview lifecycle / Reconcile exact Railway preview",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/pbjustin/Arcanos/actions/runs/38203194388/job/114660941415"
+    },
+    {
+      "name": "Converge event preview lifecycle / Reconcile exact Railway preview",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/pbjustin/Arcanos/actions/runs/38204741359/job/114665614068"
+    },
+    {
+      "name": "Railway PR Preview Exact Head",
+      "status": "COMPLETED",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/pbjustin/Arcanos/actions/runs/38203123337/job/114660653773"
+    },
+    {
+      "name": "Converge event preview lifecycle / Run sealed Railway preview E2E",
+      "status": "COMPLETED",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/pbjustin/Arcanos/actions/runs/38203122825/job/114660703588"
+    },
+    {
+      "name": "Converge event preview lifecycle / Run sealed Railway preview E2E",
+      "status": "COMPLETED",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/pbjustin/Arcanos/actions/runs/38203182405/job/114660888720"
+    },
+    {
+      "name": "Converge event preview lifecycle / Run sealed Railway preview E2E",
+      "status": "COMPLETED",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/pbjustin/Arcanos/actions/runs/38203194388/job/114660998247"
+    },
+    {
+      "name": "Converge event preview lifecycle / Run sealed Railway preview E2E",
+      "status": "COMPLETED",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/pbjustin/Arcanos/actions/runs/38204741359/job/114665675622"
+    }
+  ]
+}
