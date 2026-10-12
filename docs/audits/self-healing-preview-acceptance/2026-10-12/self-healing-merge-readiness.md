@@ -14,6 +14,14 @@ sealed/passive and cannot run the normal runtime or PG/Redis. An owner-installed
 trusted normal-runtime profile with preview-exclusive identities is required.
 No new source defect was inferred from this intentional policy boundary.
 
+Subsequent PR CI at the evidence-only C32 head failed one unchanged heavy
+structured-evidence success test at its five-second default. Commit
+`6f58e16af9a0e202d7415942a2a7d8870db131dc` gives only that case a bounded
+30-second budget; assertions and runtime behavior are unchanged. Four covered
+focused suites passed 32 cases with zero skips. Final-head full-CI status is
+recorded separately on the PR; the failed C32 run is preserved in the regression
+report. This correction does not lift any live provisioning or acceptance gate.
+
 The exact-head PR preview is absent and its isolation cannot be proven. Local
 regressions and ordinary CI cannot pass mandatory genuine-runtime gates. This
 verdict is independent from GitHub's syntactic mergeability/check status and

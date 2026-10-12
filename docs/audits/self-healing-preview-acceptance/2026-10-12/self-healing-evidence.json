@@ -1360,5 +1360,45 @@
     "skipped_suites": 13,
     "skipped_tests": 167,
     "failed_tests": 0
+  },
+  "ci_test_budget_follow_up": {
+    "failing_head_sha": "c32c31ad7f7d04e0c850fdac27af9cee18a43188",
+    "ci_cd_run_id": 38251503704,
+    "ci_cd_result": "PASS",
+    "pr_ci_run_id": 38251503639,
+    "pr_ci_result": "FAIL",
+    "failed_test": "tests/gaming-structured-evidence-preview-failure.test.ts:25: runs actual structural component assertions before preserving the trusted response",
+    "failure": "Exceeded timeout of 5000 ms for a test",
+    "ci_cd_passed_tests": 17532,
+    "pr_ci_passed_tests": 17531,
+    "pr_ci_failed_tests": 1,
+    "skipped_tests": 167,
+    "local_before_passed_tests": 32,
+    "local_before_affected_duration_ms": 4697,
+    "local_deterministic_failure_claimed": false,
+    "correction_commit": "6f58e16af9a0e202d7415942a2a7d8870db131dc",
+    "correction": "Bound only existing success case at30000ms; no assertion, production runtime, security or global threshold change.",
+    "local_after_passed_tests": 32,
+    "local_after_failed_tests": 0,
+    "local_after_skipped_tests": 0,
+    "added_test_cases": 0,
+    "coverage": {
+      "statements": 93.52,
+      "lines": 93.52,
+      "functions": 95.79,
+      "branches": 87.33,
+      "covered_branches": 7194,
+      "total_branches": 8237,
+      "baseline_ci_cd_covered_branches": 7195,
+      "baseline_pr_ci_branches_percent": 87.33,
+      "thresholds": "PASS"
+    },
+    "raw_log_sha256": {
+      "pr1539-recovery-unit.log": "a5a56adb282ccab948281fe175b82892d042b5fc52abe6b12f3bfa687797a9f8",
+      "pr1539-recovery-prci.log": "5823c5710d9905820f22dbf3cc80f0d4b94383cb6b0fd6794b85f16be61a1783",
+      "selfheal-recovery-structured-budget-before.log": "3d6f27688cc303f4df165766d1f08374f4dafbc39bd0c232c46402e10f68ec34",
+      "selfheal-recovery-structured-budget-after.log": "9df8ac06590d4e101c97b52d49d6c079a47797f638becd3a00fdd929df702fc9"
+    },
+    "final_head_ci_receipt": "See final PR receipt; never carry C32 failed PRCI forward as an all-green result."
   }
 }

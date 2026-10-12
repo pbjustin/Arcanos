@@ -15,6 +15,12 @@ sealed/passive two-service contract cannot execute normal self-healing or
 isolated PostgreSQL/Redis. No label, dispatch or Railway mutation was made.
 See the updated preview evidence for the exact owner action and authority limits.
 
+Full CI of the recovery documentation exposed one existing structured-evidence
+success case exceeding its five-second test budget. The focused test-only
+correction uses the existing bounded 30-second pattern and preserves all
+assertions; four covered suites passed 32 tests. The regression report preserves
+the failed C32 run and distinguishes it from the final-head CI receipt.
+
 Read-only Railway discovery found no environment owned by PR #1539 and no
 deployment matching its head. The successful deployment in `live-validation`
 belongs to another branch and SHA. Isolation cannot be established for an

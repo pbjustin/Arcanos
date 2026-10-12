@@ -10,7 +10,9 @@ Final published artifact-containing head: see authenticated PR delivery receipt.
 ## Preview recovery follow-up
 
 Recovery source/head lock: `2fd4cf81833ba3be4592654bc7789dd3309374d7`.
-No source, workflow, configuration, dependency or fixture changes were made.
+No provisioning source, workflow, configuration or dependency change was made.
+The later CI follow-up below changes one existing test's bounded time budget;
+it adds no fixture or test case and changes no runtime behavior.
 The missing preview was a correct `not-opted-in` no-op. Current provisioning
 cannot meet the new mission because it requires production-shared service IDs
 and a sealed/passive two-service runtime. No source-level provisioning defect
@@ -44,8 +46,9 @@ the 72 contract checks overlap that full CI and are not added to a grand total.
 The CI source contained all four earlier repairs and 45 added test cases.
 
 New artifact-only changes receive documentation, relative-link, JSON,
-whitespace and staged-guard validation. No new behavioral failure or material
-coverage regression was observed; a fresh normal-runtime self-healing live
+whitespace and staged-guard validation. The contract run had no failures;
+a subsequent full CI test-budget failure is captured below. A fresh
+normal-runtime self-healing live
 suite remains BLOCKED. Type-check/lint/build/full behavioral reruns were not
 invented for this documentation-only recovery update. The final PR receipt
 records any automatically triggered final-head CI separately.
@@ -57,6 +60,62 @@ relative links (12 passed), JSON parse/18-gate consistency and `git diff --check
 The maintained link checker excludes audit directories, so its result was not
 substituted for the separate package check. The staged `npm run guard:commit`
 also passed before the recovery evidence commit.
+
+### CI follow-up: structured-evidence success budget
+
+The recovery evidence head `c32c31ad7f7d04e0c850fdac27af9cee18a43188`
+passed all 13 jobs in
+[CI/CD 38251503704](https://github.com/pbjustin/Arcanos/actions/runs/38251503704),
+but [PR CI 38251503639](https://github.com/pbjustin/Arcanos/actions/runs/38251503639)
+failed exactly one existing test:
+`tests/gaming-structured-evidence-preview-failure.test.ts:25`,
+`runs actual structural component assertions before preserving the trusted response`.
+The failure was `Exceeded timeout of 5000 ms for a test`, with 17,531 passed,
+one failed and 167 skipped cases. The identical suite passed in simultaneous
+CI/CD (6.067 seconds suite duration), which passed all 17,532 cases with 167
+skips. This was a test-budget failure under covered CI, not a Railway recovery
+or production behavior failure.
+
+Local covered reproduction before the correction passed all 32 selected cases;
+the affected success itself took **4.697 seconds**, close to its five-second
+budget. No deterministic local failure or artificial delayed fixture is claimed.
+The authentic CI failure is the failing-before evidence. The existing test is
+the regression fixture; no new implementation-mirroring timeout test was added.
+
+Commit `6f58e16af9a0e202d7415942a2a7d8870db131dc` applies the already-used
+bounded `30_000` ms budget to that success case only. Every status, invocation,
+proof-header and response-body assertion remains unchanged. Failure and
+build/meta cases retain their existing budgets. No global Jest timeout,
+workflow coverage threshold, security check or runtime timeout was changed.
+
+Before and after commands used the pinned toolchain:
+
+```bash
+node scripts/run-jest.mjs --runTestsByPath \
+  tests/gaming-structured-evidence-preview-failure.test.ts \
+  tests/gaming-hybrid-preview-failure.test.ts \
+  tests/gaming-guide-assistance-preview-failure.test.ts \
+  tests/gaming-source-acquisition-preview-failure.test.ts \
+  --coverage --coverageThreshold='{}' \
+  --coverageDirectory=/tmp/selfheal-recovery-structured-coverage-after \
+  --maxWorkers=2 --workerIdleMemoryLimit=768MB --json \
+  --outputFile=/tmp/selfheal-recovery-structured-budget-after.json
+```
+
+The before command used `-before` instead of `-after` in both output paths.
+Partial-run aggregate coverage thresholds are disabled only for this selected
+scope; instrumentation remains enabled and full-CI thresholds remain intact.
+Both local runs: **four suites, 32 passed, zero failed/skipped**. Scoped ESLint,
+whitespace and staged guard passed. Test count remains unchanged.
+
+C32 CI/CD coverage was statements/lines 93.52%, functions 95.79%, branches
+87.33% (7,194/8,237). Statements/lines/functions match the 2fd baseline;
+branches are one covered branch below its CI/CD 87.34% and match its PR CI
+87.33%. Full thresholds passed; this is not a material coverage regression.
+Failure excerpts, raw-log hashes and local receipts are retained in JSON.
+The final published head's CI receipts are recorded on the PR after the
+test-only correction and artifact refresh; C32's failed PR CI is never
+represented as an all-green result.
 
 ## Captured failures and smallest corrections
 
