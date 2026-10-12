@@ -1,5 +1,120 @@
 # Self-healing regression report
 
+## Second authorized staging attempt — pre-provisioning status, 2026-10-12
+
+The owner authorized one additional isolated attempt, the same executable
+`4b4e31a54b819a3597ef3ee163a46e1a7b59fc67`, a fresh maximum two-hour window,
+and a $10 operational target. This attempt's window is **NOT_STARTED**:
+no staging project, service, volume, database or deployment was created.
+The first attempt's expired deadline is not reused.
+
+Current PR head inspected at20:03UTC is
+`1fd837c6fbc9871689f4662db309cc1b9de09c9f`, open/non-draft/unmerged,
+base `3fd305b37ba410cf21684a8fed7619a1ba180b48`.
+Only these five audit documents differ from approved source; its Git tree is
+`d8af527bedcff236fc707184cfe822c9004ef446`.
+CLI OAuth authentication succeeds; pinned Railway5.23.3 binary SHA256 is
+`0d6b51f7e708eeb28d5f0f649cef9d24bc00151d833329a84fc1cc47b1e8e040`.
+Fresh inventory shows only the two preexisting projects and none of the
+three removed assignment probes.
+
+**PREFLIGHT_VERIFIED: BLOCKED. INDEPENDENT_CLEANUP_VERIFIED: BLOCKED.**
+No operational independent cleanup controller is available through the
+inspected interfaces. The existing lifecycle runs every six hours and deletes
+only its fixed production-project preview environments. Closed-PR cleanup
+requires closing the PR and has a fixed topology. Stacked-draft cleanup is
+disabled, restricted to other PRs and excludes the existing workspace.
+The self-healing preflight is PR-only/read-only, not a registered default-branch
+workflow. The protected GitHub environment admits only `main`; repository and
+environment secret metadata both return HTTP403 `Resource not accessible by
+integration`. That does not prove secrets are absent. These are operational
+scope/permission limits, not a reproduced application defect.
+
+The user's required cleanup instruction is explicit: “A written cleanup plan,
+local timer, or promise to delete later is not sufficient.” No local watchdog
+was restarted and no existing production workflow/security boundary weakened.
+An independently hosted controller with securely configured Railway deletion
+authority, immutable-ID receipt registration, partial-provisioning handling,
+deadline execution, idempotency, read-back and durable audit evidence must
+be operational before provisioning. The owner confirmed no existing independent
+controller is available; no credential was requested in chat. A separate
+Railway-hosted controller is possible in principle, but its securely scoped
+credentials, deletion rights, precreation execution and durable audit are
+unverified; it was not provisioned.
+
+All fourteen genuine live scenarios remain **BLOCKED / execution NOT_RUN**.
+No app artifact, incident, mitigation or Trinity consumer was tested.
+LIVE_ACCEPTANCE_VERIFIED and MERGE_READY remain **BLOCKED**. Previously verified
+probe removal remains PASS; it is not independent automatic cleanup proof.
+
+### Second-attempt verification results
+
+Pinned Node24.18.1/npm11.16.0 were verified before checks.
+`npm run docs:check` passes980 checks and current generated indexes;
+`npm run docs:links -- --local-only` passes716 local targets, with109 external
+network checks skipped; `git diff --check` passes.
+No application test suite, type-check, lint or build was rerun for these
+documentation-only changes. Previously verified approved-source CI remains
+899 passing suites/17,640 passing tests with13 suites/167 tests skipped per
+full run; duplicate workflow totals are not added.
+
+At inspected evidence head
+`1fd837c6fbc9871689f4662db309cc1b9de09c9f`,
+[Docs38300505056](https://github.com/pbjustin/Arcanos/actions/runs/38300505056)
+and [API38300504876](https://github.com/pbjustin/Arcanos/actions/runs/38300504876)
+are completed SUCCESS; full
+[CI/CD38300504849](https://github.com/pbjustin/Arcanos/actions/runs/38300504849)
+and [PR CI38300505028](https://github.com/pbjustin/Arcanos/actions/runs/38300505028)
+are IN_PROGRESS when read. Final status and new-head CI are not inferred.
+
+No new Railway project/environment/service/deployment/incident ID exists.
+Source SHA/tree verification is not running artifact verification.
+No paid provider call, application actuator mutation or production mutation
+occurred. Fresh production metadata still matches all four baseline deployment
+IDs and SUCCESS states. All previously removed probes remain absent.
+No new app defect was inferred and no application correction was committed.
+
+### Prepared operator-only build fixture
+
+A reproducible session artifact is prepared at
+`/tmp/pr1539-staging-operator/attempt2-build-context/`, outside repository
+application code. Static verifier passes90 structural/hash checks; three
+Node24 syntax checks pass. This is not90 live tests and duplicate static runs
+are not summed. No dependency install, Docker build, application startup or
+provider socket/cancellation test ran. The original provider handler/bootstrap
+retain their earlier hashes.
+
+| Operator artifact | SHA256 |
+| --- | --- |
+| Context manifest | `03fa166b35eccb37db139ec0af57940e7a4ab0e3eb58ab32bb82bdce132a7422` |
+| Dockerfile | `82367120a95b6368d2611920811391086bf614ac020424bbf4c37a88a4630210` |
+| Attested launcher | `2859dd78a29e8876d35455ea28fcb472bd48c4b914562fde631a3e5abfebb140` |
+| Build-artifact helper | `bc95ff81ef859e1b08383eef4d65f89f1747b3127948c1593ed75006781216c4` |
+| Node provider transport | `9f3330f0ac9ee7cec425cf2622d611a48b7a6888b3cebbd3118eff045d55f3b4` |
+| Static verifier | `fcc2ff25ce79c0635be6ceb4bb1c278335d195c285aa560b15a4676922e417cf` |
+
+A portable local archive is preserved as
+`/workspace/pr1539-attempt2-operator-context.tar.gz`,
+SHA256 `d392b7e22f65f216c1e55b377b4c2b1fa634832bb0216998e153f3dddbfd0e08`.
+It is a session fixture artifact, not an uploaded Railway build or CI artifact.
+
+Exact commands, from that context directory with pinned Node24.18.1:
+
+```sh
+node verify-context.mjs
+node --check attested-launch.mjs
+node --check build-artifact-manifest.mjs
+node --check provider/provider-server.mjs
+```
+
+The recipe independently fetches literal approved commit/tree, invokes its
+unchanged build-manifest helper, copies operator files separately and validates
+compiled/config/launcher content before the normal integrity wrapper.
+It explicitly leaves `runtimeConsumerVerified:false`; actual deployed
+PID, request path and controller/consumer transcripts are required.
+Read-only filesystem startup compatibility and remote artifact provenance
+remain NOT_RUN. No approved application source or dependency changed.
+
 ## Final cleanup verification — 2026-10-12, 19:50:29 UTC
 
 **CLEANUP_VERIFIED: PASS. LIVE_ACCEPTANCE_VERIFIED: BLOCKED.

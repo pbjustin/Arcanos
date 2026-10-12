@@ -1,5 +1,125 @@
 # Railway preview evidence
 
+## Second authorized staging attempt — pre-provisioning status, 2026-10-12
+
+The owner authorized one additional isolated attempt, the same executable
+`4b4e31a54b819a3597ef3ee163a46e1a7b59fc67`, a fresh maximum two-hour window,
+and a $10 operational target. This attempt's window is **NOT_STARTED**:
+no staging project, service, volume, database or deployment was created.
+The first attempt's expired deadline is not reused.
+
+Current PR head inspected at20:03UTC is
+`1fd837c6fbc9871689f4662db309cc1b9de09c9f`, open/non-draft/unmerged,
+base `3fd305b37ba410cf21684a8fed7619a1ba180b48`.
+Only these five audit documents differ from approved source; its Git tree is
+`d8af527bedcff236fc707184cfe822c9004ef446`.
+CLI OAuth authentication succeeds; pinned Railway5.23.3 binary SHA256 is
+`0d6b51f7e708eeb28d5f0f649cef9d24bc00151d833329a84fc1cc47b1e8e040`.
+Fresh inventory shows only the two preexisting projects and none of the
+three removed assignment probes.
+
+**PREFLIGHT_VERIFIED: BLOCKED. INDEPENDENT_CLEANUP_VERIFIED: BLOCKED.**
+No operational independent cleanup controller is available through the
+inspected interfaces. The existing lifecycle runs every six hours and deletes
+only its fixed production-project preview environments. Closed-PR cleanup
+requires closing the PR and has a fixed topology. Stacked-draft cleanup is
+disabled, restricted to other PRs and excludes the existing workspace.
+The self-healing preflight is PR-only/read-only, not a registered default-branch
+workflow. The protected GitHub environment admits only `main`; repository and
+environment secret metadata both return HTTP403 `Resource not accessible by
+integration`. That does not prove secrets are absent. These are operational
+scope/permission limits, not a reproduced application defect.
+
+The user's required cleanup instruction is explicit: “A written cleanup plan,
+local timer, or promise to delete later is not sufficient.” No local watchdog
+was restarted and no existing production workflow/security boundary weakened.
+An independently hosted controller with securely configured Railway deletion
+authority, immutable-ID receipt registration, partial-provisioning handling,
+deadline execution, idempotency, read-back and durable audit evidence must
+be operational before provisioning. The owner confirmed no existing independent
+controller is available; no credential was requested in chat. A separate
+Railway-hosted controller is possible in principle, but its securely scoped
+credentials, deletion rights, precreation execution and durable audit are
+unverified; it was not provisioned.
+
+All fourteen genuine live scenarios remain **BLOCKED / execution NOT_RUN**.
+No app artifact, incident, mitigation or Trinity consumer was tested.
+LIVE_ACCEPTANCE_VERIFIED and MERGE_READY remain **BLOCKED**. Previously verified
+probe removal remains PASS; it is not independent automatic cleanup proof.
+
+### Second-attempt financial and deployment preflight
+
+Official [resource rates](https://docs.railway.com/pricing/plans#resource-usage-pricing)
+give conditional two-hour estimates, including1GB public egress:
+
+| Conditional resource envelope | Two-hour estimate | Full48h storage reserve |
+| --- | --- | --- |
+| 2.75GB RAM /1vCPU /2GB used storage | $0.183 | $0.02 |
+| 5.5GB RAM /2vCPU /10GB used storage | $0.318 | $0.10 |
+| 8GB RAM /4vCPU /10GB used storage | $0.498 | $0.10 |
+
+These are prospective assumptions, not validated sufficient footprints, measured
+usage or enforced limits. They exclude existing subscription/tax and unknown
+retention metering. No workspace spending limit was changed. No paid AI call
+or billable staging resource was initiated in this attempt.
+
+Normal OAuth can read the workspace billing period (September17–October17).
+Pinned CLI5.23.3 rejects `railway usage`; official5.66.0's project option
+queries workspace usage before filtering, so it was not run.
+The [official schema](https://github.com/railwayapp/cli/blob/v5.66.0/src/gql/schema.json)
+supports a narrower `usage(projectId:...)` query. A read of the already removed
+owned probe returns `Project not found`, so future staging usage permission is
+not yet proved, and previous charges are not recoverable from that read.
+
+Proposed monitoring, once an independently registered staging ID exists:
+project-only aggregated CPU/RAM/egress/disk/backup every five minutes from
+creation to current time, corroborated by exact-service metrics.
+Start cleanup at$8 plus projected remaining-runtime/storage reserve, or on
+missing/malformed/materially stale observations.
+Aggregated minute values convert as RAM×10/43200 + CPU×20/43200 +
+egress×0.05 + (disk+backup)×0.15/43200; do not multiply by duration again.
+[Volume retention](https://docs.railway.com/volumes/reference#deletion-and-restoration)
+can last48h; billing cessation during retention remains unverified.
+
+The connected source tool accepts a literal `commitSha`, enabling approved
+source pinning. A fixture-enabled operator image still needs separate build
+and runtime proof. The approved tree's
+`infra/live-validation/runtime.railway.Dockerfile` and
+`scripts/live-validation-build.mjs` demonstrate independent exact Git fetch,
+tree/compiled-digest manifest and runtime digest checks. Their alternate
+validation server is not the actual web/worker and must not substitute for it.
+The existing root Dockerfile does not include the external operator bootstrap.
+Prepared local SDK/relay assertions are not deployed application proof.
+
+Approved-source runtime limitations remain untested: process-local mitigation,
+non-durable incident lifecycle, prompt lifetime, replacement clearing,
+stale/control-only recovery, worker's short whole-job watchdog and stronger
+cross-process concurrency. Full throwing-actuator injection is not available
+through the approved supported runtime paths. These are scope/coverage limits,
+not newly reproduced live failures.
+
+### Railway-hosted cleanup feasibility
+
+Railway Functions and cron can host remote code; the platform is not being
+reported incapable of hosting a controller. This route is not operational yet.
+The [project-token contract](https://docs.railway.com/integrations/api#project-token)
+is environment-scoped, but inspected docs/schema do not prove project/service/
+volume deletion rights. Normal OAuth access expires after one hour; extending
+a two-hour independent controller would require independently configured
+refresh or another credential. Workspace API tokens cover the existing
+workspace, including production; no project-limited workspace-token or expiry
+field is available in the inspected create-input schema. No token was created,
+copied, or deployed.
+
+A new Railway-hosted janitor would create billable assignment infrastructure
+before its independent cleanup is operational, so it cannot satisfy the
+owner's upfront gate merely by being designed. Function files are ephemeral;
+a durable receipt/audit sink is not configured. Cron has a five-minute minimum,
+may skip while a previous job is active, and is not an exact-deadline guarantee.
+No janitor resource, deletion rehearsal or cleanup proof was fabricated.
+An existing operational independently authenticated controller remains required
+under the current no-bootstrap-before-proof constraints.
+
 ## Final cleanup verification — 2026-10-12, 19:50:29 UTC
 
 **CLEANUP_VERIFIED: PASS. LIVE_ACCEPTANCE_VERIFIED: BLOCKED.

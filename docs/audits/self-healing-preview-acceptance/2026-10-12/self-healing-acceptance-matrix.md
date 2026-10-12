@@ -1,5 +1,74 @@
 # Self-healing acceptance matrix
 
+## Second authorized staging attempt — pre-provisioning status, 2026-10-12
+
+The owner authorized one additional isolated attempt, the same executable
+`4b4e31a54b819a3597ef3ee163a46e1a7b59fc67`, a fresh maximum two-hour window,
+and a $10 operational target. This attempt's window is **NOT_STARTED**:
+no staging project, service, volume, database or deployment was created.
+The first attempt's expired deadline is not reused.
+
+Current PR head inspected at20:03UTC is
+`1fd837c6fbc9871689f4662db309cc1b9de09c9f`, open/non-draft/unmerged,
+base `3fd305b37ba410cf21684a8fed7619a1ba180b48`.
+Only these five audit documents differ from approved source; its Git tree is
+`d8af527bedcff236fc707184cfe822c9004ef446`.
+CLI OAuth authentication succeeds; pinned Railway5.23.3 binary SHA256 is
+`0d6b51f7e708eeb28d5f0f649cef9d24bc00151d833329a84fc1cc47b1e8e040`.
+Fresh inventory shows only the two preexisting projects and none of the
+three removed assignment probes.
+
+**PREFLIGHT_VERIFIED: BLOCKED. INDEPENDENT_CLEANUP_VERIFIED: BLOCKED.**
+No operational independent cleanup controller is available through the
+inspected interfaces. The existing lifecycle runs every six hours and deletes
+only its fixed production-project preview environments. Closed-PR cleanup
+requires closing the PR and has a fixed topology. Stacked-draft cleanup is
+disabled, restricted to other PRs and excludes the existing workspace.
+The self-healing preflight is PR-only/read-only, not a registered default-branch
+workflow. The protected GitHub environment admits only `main`; repository and
+environment secret metadata both return HTTP403 `Resource not accessible by
+integration`. That does not prove secrets are absent. These are operational
+scope/permission limits, not a reproduced application defect.
+
+The user's required cleanup instruction is explicit: “A written cleanup plan,
+local timer, or promise to delete later is not sufficient.” No local watchdog
+was restarted and no existing production workflow/security boundary weakened.
+An independently hosted controller with securely configured Railway deletion
+authority, immutable-ID receipt registration, partial-provisioning handling,
+deadline execution, idempotency, read-back and durable audit evidence must
+be operational before provisioning. The owner confirmed no existing independent
+controller is available; no credential was requested in chat. A separate
+Railway-hosted controller is possible in principle, but its securely scoped
+credentials, deletion rights, precreation execution and durable audit are
+unverified; it was not provisioned.
+
+All fourteen genuine live scenarios remain **BLOCKED / execution NOT_RUN**.
+No app artifact, incident, mitigation or Trinity consumer was tested.
+LIVE_ACCEPTANCE_VERIFIED and MERGE_READY remain **BLOCKED**. Previously verified
+probe removal remains PASS; it is not independent automatic cleanup proof.
+
+### Second-attempt live scenario matrix
+
+| # | Scenario | Result | Execution / evidence |
+| --- | --- | --- | --- |
+| 1 | Healthy baseline | BLOCKED | NOT_RUN; no application runtime. |
+| 2 | Transient provider timeout | BLOCKED | NOT_RUN; no fault injection. |
+| 3 | Sustained provider failure | BLOCKED | NOT_RUN; no live provider fixture. |
+| 4 | Trinity mitigation consumption | BLOCKED | NOT_RUN; no controller/consumer correlation. |
+| 5 | Redis interruption | BLOCKED | NOT_RUN; no isolated Redis provisioned. |
+| 6 | Worker retry and idempotency | BLOCKED | NOT_RUN; no real worker/job. |
+| 7 | Failure threshold | BLOCKED | NOT_RUN; no live observations. |
+| 8 | Mitigation expiration | BLOCKED | NOT_RUN; no temporary live action. |
+| 9 | Fresh recovery evidence | BLOCKED | NOT_RUN; no recovery traffic. |
+| 10 | Actuator retry limits | BLOCKED | NOT_RUN; full throwing-actuator injection also unavailable through approved paths. |
+| 11 | Concurrent incidents | BLOCKED | NOT_RUN; no runtime arbitration evidence. |
+| 12 | Service-role boundaries | BLOCKED | NOT_RUN; no deployed role startup. |
+| 13 | Unauthorized action rejection | BLOCKED | NOT_RUN; no application actuator request. |
+| 14 | Restart during incident | BLOCKED | NOT_RUN; no incident process. |
+
+Existing local/disposable integration results below remain distinct from these
+genuine Railway runtime rows. No live PASS is inferred.
+
 ## Final cleanup verification — 2026-10-12, 19:50:29 UTC
 
 **CLEANUP_VERIFIED: PASS. LIVE_ACCEPTANCE_VERIFIED: BLOCKED.
