@@ -14,6 +14,14 @@ deployment's identity, isolation, or successful recovery.
 
 ## Ownership map
 
+Authorized profile preparation adds a credential-free planning and attestation
+boundary, described in the [provisioning proposal](self-healing-preview-provisioning-plan.md).
+It declares fresh preview-exclusive web/worker/storage identities and a separate
+normal-runtime namespace. It does not change any runtime owner, start a
+controller, deploy a service or deliver mitigation across processes. The
+runtime map below remains unchanged; live controller/consumer evidence is
+still unavailable.
+
 Recovery follow-up at `2fd4cf81833ba3be4592654bc7789dd3309374d7`:
 the original pre-test map remains historical evidence; no source/runtime
 architecture was changed during recovery investigation. The managed native

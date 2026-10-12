@@ -7,6 +7,94 @@ First local correction commit: `f6cbd320eaaf032e6d8c500bc5cb4bfd4d9705aa`.
 Final tested source commit: `4178766998a598553b3a5e4c6804ee9a8cacc0fc`.
 Final published artifact-containing head: see authenticated PR delivery receipt.
 
+## Authorized profile preparation
+
+Preparation started at `4b365ce4271a4c13b39b37da3cbad9485b979581` after
+owner authorization. No existing runtime, sealed launcher, provisioning
+workflow or security control changed. New
+`scripts/railway-self-healing-preview-profile.mjs` exports pure plan,
+ownership-receipt and explicit-observation validation functions. New
+`tests/railway-self-healing-preview-profile.test.js` provides 73 deterministic
+local contract cases. These are new prerequisites, not repairs to a faulty
+provisioning workflow or actual Railway operations.
+
+The contract rejects wrong/fork/draft/closed PRs, stale inventory, production
+or preexisting IDs, shared global service membership, cloned/shared resources,
+incorrect private storage, absent credential provenance, partial observations,
+role/source/deployment mismatches and serialized receipt drift. Its successful
+result explicitly states `supportedRuntime: mock-baseline-only`,
+`selfHealingRuntimeAcceptanceSupported: false`,
+`authenticatedRuntimeExecutionVerified: false`,
+`deploymentExecutionPerformed: false`, `storageAuthenticationVerified: false`,
+`storageDurabilityVerified: false`, and `liveRuntimeAcceptance: NOT_RUN`.
+
+Independent review caught two defects in the new, uncommitted contract. Two
+PostgreSQL regressions failed before correcting the official version-18 image
+mount from `/var/lib/postgresql/data` to `/var/lib/postgresql`. Two Redis
+regressions failed before requiring an explicit AUTH startup command rather
+than treating a `REDIS_PASSWORD` variable as server authentication. Both
+failing-before runs and passing receipts are retained. Their 69/71 filtered
+exclusions were deliberate case selection, not acceptance-suite skips. No
+database was provisioned and no actual persistence/AUTH probe is claimed.
+
+Focused command on pinned Node `24.18.1` / npm `11.16.0`:
+
+```bash
+node scripts/run-jest.mjs --runTestsByPath \
+  tests/railway-self-healing-preview-profile.test.js \
+  --coverage=false --runInBand --json \
+  --outputFile=/tmp/self-healing-preview-profile-tests.json
+```
+
+Result: **one suite, 73 passed, zero failed/skipped**. `node --check` for the
+new module, scoped test ESLint, documentation/index checks, 19 audit-package
+relative links and `git diff --check` passed. Raw local log/JSON hashes are
+retained in the sanitized evidence JSON. Fixture observations are synthetic;
+no provider, storage, controller or consumer ran in a preview.
+
+The mutation executor, platform observation collector, runtime supervisor and
+trusted installation are not implemented by this planning module. CLI
+authentication returned Unauthorized. The owner chose a protected trusted
+workflow instead of supplying a token here; its safe installation and execution
+remain external prerequisites.
+No deployment or live acceptance was attempted. A new commit invalidates prior
+head-specific receipts; final published-head CI is reported separately on the
+PR and must not reuse the prior head's results.
+
+The owner-run read-only preflight adds
+`.github/workflows/railway-self-healing-preview-preflight.yml`,
+`scripts/railway-self-healing-preview-preflight.mjs` and 35 local fixture cases
+in `tests/railway-self-healing-preview-preflight.test.js`. They cover owner/main
+provenance, clean controller identity, exact head/base/branch refresh, bounded
+complete metadata pagination, absence of mutation capabilities, secret-error
+redaction and exclusive 0600 artifact writes. Independent source review caught
+missing-base acceptance and unconditional artifact upload before publication;
+both now have regressions. No executed pre-fix failure is claimed for those
+two review findings.
+
+Combined new and existing compatibility command:
+
+```bash
+node scripts/run-jest.mjs --runTestsByPath \
+  tests/railway-self-healing-preview-profile.test.js \
+  tests/railway-self-healing-preview-preflight.test.js \
+  tests/railway-pr-preview-lifecycle.test.js \
+  tests/worker-diagnostics-preview-cleanup-workflow.test.js \
+  --coverage=false --runInBand --json \
+  --outputFile=/tmp/selfheal-owner-preflight-contract-tests.json
+```
+
+Result: **four suites, 180 passed, zero failed/skipped**. The 108 new cases are
+73 profile plus 35 preflight; the remaining 72 overlap earlier contract and
+full-CI evidence. Do not add overlapping runs into a new unique total. Full
+`npm run lint` passed with zero errors and the same 77 existing warnings;
+post-review scoped lint/syntax passed. `npm run docs:check` and
+`npm run docs:links -- --local-only` passed (716 local targets; 109 external
+network checks skipped). Separate audit-package checks passed 19 targets.
+Both modules/workflow received independent review with no remaining blocker
+within their declared read-only/mock-contract scope. No actual owner workflow
+run or credentialed Railway query occurred.
+
 ## Preview recovery follow-up
 
 Recovery source/head lock: `2fd4cf81833ba3be4592654bc7789dd3309374d7`.

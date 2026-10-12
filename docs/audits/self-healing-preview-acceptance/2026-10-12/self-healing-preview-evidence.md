@@ -10,6 +10,41 @@ state: open; preview opt-in label absent.
 **PREVIEW_ENVIRONMENT_MATCHED: BLOCKED. PREVIEW_ISOLATION_VERIFIED: BLOCKED.
 LIVE_PREVIEW_ACCEPTANCE: BLOCKED.**
 
+## Authorized profile preparation
+
+The owner authorized the recommended isolated profile after the recovery
+assessment. Current inspection started at
+`4b365ce4271a4c13b39b37da3cbad9485b979581`, with the same base and branch,
+open/non-draft. Railway inventory still has no PR #1539 preview. The
+[provisioning proposal](self-healing-preview-provisioning-plan.md) declares the
+separate normal-runtime name `self-healing-pr-1539-e2e`, preserving the sealed
+native namespace and checks.
+
+The managed executor's current observed secret bindings are empty. The official
+Railway CLI archive for `5.23.3` was verified against its release asset SHA256
+`79622bd63fdae79709bba016b892ae61f89c5645fa47e65d2e4f60c21d7e0949`.
+`railway whoami --json` returned exit 1:
+
+```text
+Unauthorized. Please login with `railway login`
+```
+
+The connected Railway tools expose no environment-create operation for the
+required existing project. No alternate project or resource was created to
+bypass this limitation. The owner selected the owner-run trusted workflow
+alternative to supplying a scoped API credential to this session. No token
+was requested in chat, read from secret files or printed. Read-only production
+source/build metadata confirms both app roles follow `main`, without an
+attested watch-path exclusion for installing the new controller/workflow.
+This creates an additional stop boundary: a main installation cannot proceed
+while it could automatically deploy production. No such installation occurred.
+
+Pure local planning/attestation guards can be prepared while this prerequisite
+is pending. They cannot authenticate an operator, prove platform ownership or
+substitute for provisioning, isolation or fault evidence. Deployment IDs,
+incident IDs, runtime controller/consumer logs and all live gates remain
+unavailable. The earlier recovery receipts below remain historical evidence.
+
 ## Recovery investigation and stop decision
 
 Recovery inspected PR head `2fd4cf81833ba3be4592654bc7789dd3309374d7`,

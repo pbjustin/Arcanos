@@ -1,0 +1,56 @@
+name: Railway Self-Healing Preview Preflight
+run-name: Read-only self-healing preview plan for PR ${{ inputs.pr_number }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Same-repository open PR number
+        required: true
+        type: string
+      expected_sha:
+        description: Exact reviewed 40-character PR head SHA
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  preflight:
+    if: >-
+      github.repository == 'pbjustin/Arcanos'
+      && github.ref == 'refs/heads/main'
+      && github.actor == 'pbjustin'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: railway-pr-preview-lifecycle
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check out trusted owner controller
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.18.1'
+      - name: Read current PR and Railway metadata without provisioning
+        id: preflight
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_PR_PREVIEW_LIFECYCLE_API_TOKEN }}
+          PREFLIGHT_OUTPUT_PATH: ${{ runner.temp }}/railway-self-healing-preview-preflight.json
+        run: node scripts/railway-self-healing-preview-preflight.mjs
+      - name: Retain sanitized blocked preflight receipt
+        if: always() && steps.preflight.outputs.artifact_ready == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: self-healing-preview-preflight-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/railway-self-healing-preview-preflight.json
+          if-no-files-found: warn
+          retention-days: 7

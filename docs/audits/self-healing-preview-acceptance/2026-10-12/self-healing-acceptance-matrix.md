@@ -11,6 +11,12 @@ absent, so live execution stopped before credentials, endpoints or faults were
 used. Local PASS below applies only to the stated boundary. Every overall
 scenario remains BLOCKED for the requested live acceptance.
 
+The subsequent owner authorization permits preparation of an isolated profile;
+it does not establish platform credentials or deploy a runtime. New local
+profile identity/isolation contract checks use synthetic observations. They
+are not re-executions of the fourteen runtime scenarios below. All fourteen
+live results remain BLOCKED / execution NOT_RUN.
+
 Recovery follow-up at `2fd4cf81833ba3be4592654bc7789dd3309374d7`:
 all fourteen genuine live scenarios remain **BLOCKED**, and their runtime
 execution is **NOT_RUN**. No new fault, incident, consumer execution or recovery

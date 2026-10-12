@@ -1400,5 +1400,123 @@
       "selfheal-recovery-structured-budget-after.log": "9df8ac06590d4e101c97b52d49d6c079a47797f638becd3a00fdd929df702fc9"
     },
     "final_head_ci_receipt": "See final PR receipt; never carry C32 failed PRCI forward as an all-green result."
+  },
+  "owner_workflow_preparation": {
+    "inspected_head_sha": "4b365ce4271a4c13b39b37da3cbad9485b979581",
+    "observed_at_utc": "2026-10-12 14:42:53 UTC",
+    "owner_authorization_received": true,
+    "selected_execution_route": "owner-run trusted workflow",
+    "railway_cli_probe": {
+      "version": "5.23.3",
+      "archive_sha256": "79622bd63fdae79709bba016b892ae61f89c5645fa47e65d2e4f60c21d7e0949",
+      "command": "railway whoami --json",
+      "exit_code": 1,
+      "response": "Unauthorized. Please login with `railway login`",
+      "evidence_kind": "actual CLI authentication response; no provisioning attempted"
+    },
+    "current_session_secret_bindings": [],
+    "token_requested_in_chat": false,
+    "production_installation_precondition": {
+      "metadata_scope": "Read-only source/build metadata; variable values omitted",
+      "web_source_branch": "main",
+      "worker_source_branch": "main",
+      "watch_path_exclusion_attested": false,
+      "main_installation": "BLOCKED until owner proves no production deployment can be triggered"
+    },
+    "proposed_environment_name": "self-healing-pr-1539-e2e",
+    "preview_environment_id": null,
+    "preview_deployment_ids": [],
+    "railway_resource_mutations": 0,
+    "faults_injected": 0,
+    "label_added": false,
+    "workflow_installed_on_main": false,
+    "workflow_dispatched": false,
+    "provisioning_executor_implemented": false,
+    "runtime_supervisor_implemented": false,
+    "profile_module": "scripts/railway-self-healing-preview-profile.mjs",
+    "profile_scope": "Pure planning, receipt validation and explicit DTO attestation only",
+    "supported_runtime": "mock-baseline-only",
+    "self_healing_runtime_acceptance_supported": false,
+    "storage_authentication_verified": false,
+    "storage_durability_verified": false,
+    "local_profile_tests": {
+      "suites_passed": 1,
+      "tests_passed": 73,
+      "tests_failed": 0,
+      "tests_skipped": 0,
+      "execution_kind": "local synthetic contract observations"
+    },
+    "new_contract_defects_corrected": [
+      {
+        "kind": "official PostgreSQL 18 persistence root",
+        "before_tests_failed": 2,
+        "before_tests_filtered": 69,
+        "correction": "Require /var/lib/postgresql mount; actual durability remains unverified"
+      },
+      {
+        "kind": "Redis AUTH configuration",
+        "before_tests_failed": 2,
+        "before_tests_filtered": 71,
+        "correction": "Require explicit AUTH startup command; no actual AUTH probe occurred"
+      }
+    ],
+    "local_log_sha256": {
+      "self-healing-preview-profile-tests.log": "8753e810ef02e924c90e05c60200afcf38060e47a1774f5bf8d52d7745c7c631",
+      "self-healing-preview-profile-tests.json": "a15da1ee535e9bf1a3145b6b2288c59c085fee2c0818036e70cefe1fc9a03ccb",
+      "self-healing-preview-profile-postgres-before.log": "83c2afd3eacba28a07cffda9dc97f2323a3a010f84f5346ec70788a779f0c4cd",
+      "self-healing-preview-profile-postgres-before.json": "295444377ae98b2ba6e29ad26a73bd962181bc465b3920818325b5e4770ac081",
+      "self-healing-preview-profile-redis-before.log": "d06ebb83d5f5232d99682af9b1cd70bde647eddfe3b4b25149676ca08a12d81e",
+      "self-healing-preview-profile-redis-before.json": "f421ed593ef4448efe14ae3c7195ceda300c0fde980ea46a674e1bba3bf5b30c",
+      "selfheal-owner-preflight-contract-tests.log": "17e6b3cd31bfad87456de981f0d7f36b5bb37da783dbe5f3ee79bbdb69f2f4a2",
+      "selfheal-owner-preflight-contract-tests.json": "86cc4969ab57889c76a556aa210b8bb7aef9c76ab79c2652ea53de9463a4db1f",
+      "self-healing-preview-preflight-tests.log": "3346938e763580950a53dd2a3a4dd6df8ae107b5a40e0acb8d4ef14a7c1300e8",
+      "selfheal-owner-preflight-lint.log": "38a0685de41981fd332c337fefb50c34c4bfb3e09729c067e69c5cde4bc3ceba",
+      "selfheal-owner-preflight-docs-check.log": "443b5dedfb3b2b64d72a10d1d9dbad73bea8c0c8f30b8a2a862b6eb0acab2b6d",
+      "selfheal-owner-preflight-docs-links.log": "e2209f4fa6738bf645fd733944d6a0cec34a7759760884d2daf7681693414f94",
+      "selfheal-owner-preflight-final-profile-tests.log": "db2f0fd03236a90fdc381250733092e01912fe3baaa666b7e1d6ef0c32129df3",
+      "selfheal-owner-preflight-commit-guard.log": "a10dff3db0f2ce256d003ada48d0ae0642f41e9088ec83bf5de6850f3fdef8a3"
+    },
+    "live_preview_acceptance": "BLOCKED",
+    "live_execution": "NOT_RUN",
+    "merge_ready": "BLOCKED",
+    "preflight_workflow_prepared": true,
+    "preflight_workflow_path": ".github/workflows/railway-self-healing-preview-preflight.yml",
+    "preflight_controller_path": "scripts/railway-self-healing-preview-preflight.mjs",
+    "preflight_execution": "NOT_RUN",
+    "live_query_compatibility_verified": false,
+    "local_preflight_tests": {
+      "suites_passed": 1,
+      "tests_passed": 35,
+      "tests_failed": 0,
+      "tests_skipped": 0,
+      "execution_kind": "local injected metadata and static workflow contracts"
+    },
+    "combined_compatibility_tests": {
+      "suites_passed": 4,
+      "tests_passed": 180,
+      "tests_failed": 0,
+      "tests_skipped": 0,
+      "new_unique_cases": 108,
+      "overlapping_existing_cases": 72
+    },
+    "prepublication_review_corrections": [
+      "Require valid and matching initial/current base SHA",
+      "Upload only after exclusive sanitized report write succeeds"
+    ],
+    "validation": {
+      "lint": "PASS: zero errors, 77 existing warnings",
+      "docs_check": "PASS",
+      "maintained_local_links_passed": 716,
+      "external_network_checks_skipped": 109,
+      "audit_relative_targets_passed": 19,
+      "source_syntax": "PASS",
+      "independent_scope_review": "PASS: no remaining read-only contract blocker",
+      "staged_commit_guard": "PASS after marking two synthetic rejection values as test-only; guard unchanged"
+    },
+    "source_file_sha256": {
+      "scripts/railway-self-healing-preview-profile.mjs": "ae57574cb259f63d7c75486119576f42a274e49bf6a0a4b80afa90f9f3bf0cf9",
+      "scripts/railway-self-healing-preview-preflight.mjs": "f1624be9566ae089a029e3e6cf158e33fb314762f97e2e3ea04ee74b2742275f",
+      ".github/workflows/railway-self-healing-preview-preflight.yml": "bb1a344e59dc59cd4a761be3ab9cefade77f7034336a0d34f347c7bb81ff6f50"
+    }
   }
 }

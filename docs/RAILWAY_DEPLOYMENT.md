@@ -832,6 +832,19 @@ Launcher behavior:
   not supply Railway's Git-trigger provenance variables. Keep both data
   services private, give only the web service a temporary HTTPS domain, and
   delete the environment immediately after the bounded proof.
+- The separate [self-healing owner preflight](../.github/workflows/railway-self-healing-preview-preflight.yml)
+  prepares a metadata-only plan; it does not provision a preview. It admits only
+  owner `pbjustin`, first-attempt manual dispatch on trusted `main`, and the
+  existing protected `railway-pr-preview-lifecycle` environment. Its controller
+  checks out no candidate code, uses the existing workspace-scoped lifecycle
+  credential only for authority/global identity reads, and rechecks exact PR
+  head, branch and base. The sanitized receipt remains BLOCKED and explicitly
+  reports no deployment, isolation or runtime acceptance. The profile module
+  validates synthetic DTOs for a mock baseline only; the normal-runtime
+  provisioner and self-healing fixture supervisor are not implemented.
+  Installation must first prove that a main change cannot trigger production;
+  this PR cannot install its own trusted workflow. See the
+  [current preparation scope](audits/self-healing-preview-acceptance/2026-10-12/self-healing-preview-provisioning-plan.md).
 - The trusted
   [worker-diagnostics cleanup workflow](../.github/workflows/railway-worker-diagnostics-preview-cleanup.yml)
   is a merge/close backstop for that exact custom name. It never checks out PR

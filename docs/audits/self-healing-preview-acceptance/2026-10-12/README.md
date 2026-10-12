@@ -6,6 +6,13 @@ Initial inspected PR head: `ec3ed16cb94c9166902bc810d0d73f89d322cf67`.
 
 **LIVE_PREVIEW_ACCEPTANCE: BLOCKED. MERGE_READY: BLOCKED.**
 
+The owner subsequently authorized preparation of the recommended isolated
+profile. The [managed provisioning proposal](self-healing-preview-provisioning-plan.md)
+records its exact resource scope and remaining execution boundary. Railway CLI
+authentication is unavailable and the connected tools cannot create the required
+environment. Local profile planning/attestation is separate from a provisioner,
+runtime supervisor and live acceptance; no new environment was created.
+
 Recovery follow-up: PR head `2fd4cf81833ba3be4592654bc7789dd3309374d7`
 was revalidated open/non-draft. Missing opt-in caused `action: noop`,
 `reason: not-opted-in`. Activating the current lifecycle is blocked under the
@@ -38,6 +45,7 @@ does not establish genuine Railway recovery or real provider availability.
 - [Regressions, fixtures, commands and test results](self-healing-regression-report.md).
 - [Independent final gates and remaining risks](self-healing-merge-readiness.md).
 - [Sanitized machine-readable evidence](self-healing-evidence.json).
+- [Authorized managed-profile preparation](self-healing-preview-provisioning-plan.md).
 
 Source SHA and final regression receipts are recorded in the regression report.
 The final published PR head and its CI receipts are recorded in the PR

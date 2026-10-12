@@ -6,6 +6,14 @@ Initial inspected head: `ec3ed16cb94c9166902bc810d0d73f89d322cf67`.
 
 **MERGE_READY: BLOCKED. LIVE_PREVIEW_ACCEPTANCE: BLOCKED.**
 
+The owner subsequently authorized preparing the recommended isolated profile.
+This resolves the authorization to do that work; it does not supply a platform
+credential. Railway CLI returned Unauthorized, the connected tools cannot
+create the required environment, and the existing trusted-main profile still
+cannot consume a PR-only change. The [concrete provisioning proposal](self-healing-preview-provisioning-plan.md)
+and local planning/attestation contract are prerequisites, not a deployed
+profile or live acceptance. No live gate changes as a result of authorization.
+
 Recovery head lock: `2fd4cf81833ba3be4592654bc7789dd3309374d7`.
 Root cause: missing opt-in, proven by the lifecycle `not-opted-in` receipt.
 Provisioning stopped before mutation: fixed service IDs are shared with
