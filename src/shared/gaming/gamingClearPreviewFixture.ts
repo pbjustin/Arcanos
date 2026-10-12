@@ -164,7 +164,7 @@ function requireDiscoveryRecoveryEvidence(): void {
     item.evidenceUnitIds.join('|') === complete.evidence![index].evidenceUnits![0].id));
   const accepted = assess(complete);
   requireProof(accepted.decision === 'accept' && accepted.gates.claimSupport === 'verified' && !accepted.blockingFindings.length);
-  requireProof(assessGamingClearEvidence(RECOVERY_INPUT, complete, { now: NOW }).gates.claimSupport === 'unknown');
+  requireProof(assessGamingClearEvidence(RECOVERY_INPUT, complete, { now: NOW }).gates.claimSupport === 'verified');
   const absent = { ...complete, evidence: complete.evidence!.slice(0, 1) };
   requireProof(!assessGamingRequestCoverage(RECOVERY_INPUT, absent).coverageSatisfied && assess(absent).decision !== 'accept');
   for (const field of ['Value', 'Unit', 'Scope']) {

@@ -163,6 +163,12 @@ export interface GamingRequestRequirement { requirement: string; terms: string[]
 function gamingRequestClauses(input: GamingRetrievalPolicyInput): { clauses: string[]; hasCoordinatedTarget: boolean } {
   const question = gamingTopicalRequest(resolveGamingUserDecisionGap(input).prompt.slice(0, 8_000))
     .replace(/https?:\/\/[^\s)]+/giu, '')
+    // In "How do X, Y and Z work?", the shared predicate and an introductory
+    // regional qualifier frame the topics. Original scope/freshness gates still
+    // inspect the complete question; named work objects and personal actions stay.
+    .replace(/\bhow\s+(?:do|does)\s+(?!(?:i|we|you)\b)([^.!?\n]{1,800}?)\s+work\s*(?=[.!?]|$)/giu,
+      (clause: string, topics: string) => /,|\s+(?:and|plus|as well as)\s+/iu.test(topics)
+        ? topics.replace(/^(?:regional|region[ -]specific)\s+/iu, '') : clause)
     // Required-guide identity is enforced separately by backend intake. A
     // source-selection preamble is not an independent gameplay requirement.
     .replace(/\b(?:use|using)\s+(?:only|exclusively)\s*([.!?]|$)/giu, '$1')
@@ -172,7 +178,7 @@ function gamingRequestClauses(input: GamingRetrievalPolicyInput): { clauses: str
     .replace(/^\s*(?:[-*]|\d+[.)])\s+/gmu, ';')
     // A leading location/build context belongs to the following question. A
     // comma here does not request both a location fact and a separate mechanic.
-    .replace(/(^|[.!?;]\s*)(\s*(?:at|in|as|for|with)\b[^.!?;\n]+?),\s*(?=(?:what|where|how|which|why|can|could|should|please|explain|describe|recommend)\b)/giu,
+    .replace(/(^|[.!?;]\s*)(\s*(?:at|in|on|as|for|with)\b[^.!?;\n]+?),\s*(?=(?:what|where|how|which|why|can|could|should|please|explain|describe|recommend)\b)/giu,
       (_match, boundary: string, context: string) => `${boundary}${context.replace(/\s+(?:and|plus|as well as)\s+|,/giu, ' ')} `);
   // A coordinated noun phrase such as "blade of wind and rain" requests one
   // relationship. Keep its terms together without assuming that any bare pair

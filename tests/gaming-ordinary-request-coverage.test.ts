@@ -1,6 +1,7 @@
 import { assessGamingClearEvidence, assessGamingRequestCoverage } from '../src/shared/gaming/gamingClearEvidence.js';
 import { buildGamingRequestRequirements, buildGamingRetrievalTerms, gamingTermCoverage, scopeGamingEvidenceParagraphs } from '../src/shared/gaming/gamingRetrievalPolicy.js';
 import type { GamingStoredKnowledgeContext } from '../src/shared/gaming/gamingStoredEvidenceCore.js';
+import type { GamingEvidenceUnit } from '../src/shared/gaming/gamingEvidenceUnits.js';
 
 const game = 'Elden Ring';
 const preparation = 'At Church of Elleh in early Elden Ring, what is one safe preparation step before continuing? Avoid spoilers.';
@@ -249,4 +250,117 @@ describe('ordinary gameplay request coverage', () => {
       + 'Jump attacks and shield blocking provide combat options.']);
     expect(assessGamingClearEvidence(input, partial).gates.claimSupport).toBe('unknown');
   });
+
+  function tupleKnowledge(records: Array<Record<string, string>>, partial = false): GamingStoredKnowledgeContext {
+    const url = 'https://guides.example.org/ordinary-0';
+    const units: GamingEvidenceUnit[] = records.map((record, index) => ({ id: `tuple-${index}`, kind: 'table_row',
+      text: `Testspace\n${Object.entries(record).map(([label, value]) => `${label}: ${value}`).join(' | ')}`,
+      fields: Object.entries(record).map(([label, value]) => ({ label, value })),
+      context: { scope: `table-1/row-${index}`, heading: 'Testspace' },
+      provenance: { sourceUrl: url, strategy: 'html_table', policyVersion: 'gaming-evidence-units/v1',
+        locator: `table[0]/tr[${index + 1}]`, representation: 'html_dom' },
+      integrity: partial ? { status: 'partial', reasons: ['incomplete_record'] } : { status: 'complete', reasons: [] }
+    }));
+    const data = knowledge([units.map(unit => unit.text).join('\n\n')], 'Testspace');
+    data.evidence![0].evidenceUnits = units;
+    return data;
+  }
+  const tupleQuestion = 'Which system, body and PML site reports Platinum?';
+  const completeTuple = { System: 'TEST-ORION-01', Body: 'B 2', Site: 'PML 7', Resource: 'Platinum' };
+
+  test('complete parser-owned tuples do not need to repeat request-formatting verbs', () => {
+    const input = { game: 'Testspace', mode: 'guide' as const, prompt: tupleQuestion };
+    const data = tupleKnowledge([completeTuple]);
+    expect(data.context).not.toContain('reports');
+    expect(assessGamingRequestCoverage(input, data)).toMatchObject({ coverageSatisfied: true, missingCoverage: [] });
+    expect(assessGamingClearEvidence(input, data).gates.claimSupport).toBe('verified');
+  });
+
+  test.each<{ name: string; records: Array<Record<string, string>>; partial?: boolean }>([
+    { name: 'partial extraction', records: [completeTuple], partial: true },
+    { name: 'missing site field', records: [{ System: 'TEST-ORION-01', Body: 'B 2', Resource: 'Platinum' }] },
+    { name: 'mixed rows', records: [{ System: 'TEST-ORION-01', Body: 'B 2', Resource: 'Platinum' },
+      { System: 'TEST-OTHER-02', Body: 'B 2', Site: 'PML 7', Resource: 'Iron' }] },
+    { name: 'contradictory same-location records', records: [completeTuple, { ...completeTuple, Resource: 'Iron' }] }
+  ])('request-formatting support cannot admit $name', ({ records, partial }) => {
+    const input = { game: 'Testspace', mode: 'guide' as const, prompt: tupleQuestion };
+    const data = tupleKnowledge(records, partial);
+    expect(assessGamingRequestCoverage(input, data).coverageSatisfied).toBe(false);
+    expect(assessGamingClearEvidence(input, data).gates.claimSupport).toBe('unknown');
+  });
+
+  test('request-formatting support cannot swap requested values between tuple fields', () => {
+    const input = { game: 'Testspace', mode: 'guide' as const,
+      prompt: 'Which system T-1, body B 2 and PML site reports Platinum?' };
+    const data = tupleKnowledge([{ System: 'B 2', Body: 'T-1', Site: 'PML 7', Resource: 'Platinum' }]);
+    expect(assessGamingRequestCoverage(input, data).coverageSatisfied).toBe(false);
+    expect(assessGamingClearEvidence(input, data).gates.claimSupport).toBe('unknown');
+  });
+
+  test.each(['Explain stamina recovery.', 'Which patch?'])('a complete tuple cannot support an independent side question: %s', question => {
+    const input = { game: 'Testspace', mode: 'guide' as const, prompt: `${tupleQuestion} ${question}` };
+    const data = tupleKnowledge([completeTuple]);
+    expect(assessGamingRequestCoverage(input, data).coverageSatisfied).toBe(false);
+    expect(assessGamingClearEvidence(input, data).gates.claimSupport).toBe('unknown');
+  });
+
+  test('a patch-context preamble does not create an independent gameplay requirement', () => {
+    const input = { game, mode: 'guide' as const, prompt: 'On the current patch, how do I open the return route?' };
+    expect(buildGamingRequestRequirements(input)).toEqual([]);
+    expect(buildGamingRetrievalTerms(input).focusTerms).toContain('patch');
+    expect(buildGamingRequestRequirements({ ...input, prompt: 'Explain current patch changes and stamina recovery.' }))
+      .toHaveLength(2);
+  });
+
+  test('complete structured lookup proof does not depend on repeating a formatting verb', () => {
+    const input = { game: 'Testspace', mode: 'guide' as const, prompt: 'Where is Platinum? Give system, body, site and resource.' };
+    expect(assessGamingRequestCoverage(input, tupleKnowledge([completeTuple])).coverageSatisfied).toBe(true);
+    expect(assessGamingClearEvidence(input, tupleKnowledge([completeTuple])).gates.claimSupport).toBe('verified');
+  });
+
+  test('a shared mechanical predicate does not become a mandatory list topic', () => {
+    const input = { game, mode: 'guide' as const, prompt: 'How do Intelligence, staves, and spell choices work?' };
+    const complete = knowledge(['Intelligence determines sorcery requirements.',
+      'Staves provide the equipment used to cast sorceries.', 'Spell choices depend on the equipped staff requirements.']);
+    expect(buildGamingRequestRequirements(input).map(requirement => requirement.terms))
+      .toEqual([['intelligence'], ['staves'], ['spell', 'choices']]);
+    expect(assessGamingRequestCoverage(input, complete)).toMatchObject({ coverageSatisfied: true, missingCoverage: [] });
+    expect(assessGamingRequestCoverage(input, knowledge(complete.evidence!.slice(0, 2).map(chunk => chunk.text))))
+      .toMatchObject({ coverageSatisfied: false, missingCoverage: ['requested topic 3'] });
+  });
+
+  test('scope qualifiers remain controlled by applicability rather than becoming literal gameplay facts', () => {
+    const input = { game, mode: 'guide' as const, prompt: 'How do regional Intelligence, staves, and spell choices work?' };
+    const data = knowledge(['Intelligence determines sorcery requirements. Staves provide the equipment used to cast sorceries. '
+      + 'Spell choices depend on the equipped staff requirements.']);
+    data.sources[0].freshnessMetadata = { id: data.sources[0].sourceId, game, url: data.sources[0].url,
+      regions: ['EU'], category: 'specialist_guide', authority: 'specialist', currentness: 'none',
+      fetchedAt: data.sources[0].fetchedAt, verifiedAt: data.sources[0].fetchedAt, metadataConfidence: 'content_extracted',
+      durableAllowed: true, autoStoreAllowed: false, policyVersion: 'gaming-source-policy/v1' };
+    expect(buildGamingRequestRequirements(input).map(requirement => requirement.terms))
+      .toEqual([['intelligence'], ['staves'], ['spell', 'choices']]);
+    expect(assessGamingClearEvidence({ ...input, region: 'EU' }, data).gates)
+      .toMatchObject({ claimSupport: 'verified', compatibility: 'verified' });
+    expect(assessGamingClearEvidence(input, data).gates.compatibility).toBe('unknown');
+    expect(assessGamingClearEvidence({ ...input, region: 'US' }, data).gates.compatibility).toBe('conflict');
+  });
+
+  test('named work objects and an explicit current-patch question retain their requirements', () => {
+    const named = { game: 'Stardew Valley', mode: 'guide' as const, prompt: 'Explain work orders and stamina recovery.' };
+    expect(buildGamingRequestRequirements(named).map(requirement => requirement.terms))
+      .toEqual([['work', 'orders'], ['stamina', 'recovery']]);
+    expect(assessGamingRequestCoverage(named, knowledge(['Orders appear on the notice board.',
+      'Stamina recovery occurs after sleeping.'], named.game)).coverageSatisfied).toBe(false);
+    const personal = { ...named, prompt: 'How do I find rope and work?' };
+    expect(buildGamingRequestRequirements(personal).at(-1)!.terms).toContain('work');
+    expect(buildGamingRequestRequirements({ ...named, prompt: 'How do work orders and stamina recovery work?' })[0].terms)
+      .toEqual(['work', 'orders']);
+    const current = { game, mode: 'guide' as const,
+      prompt: 'How do Intelligence, staves, and spell choices work? Explain the latest patch changes.' };
+    const partial = knowledge(['Intelligence determines sorcery requirements. Staves cast sorceries. Spell choices depend on staff requirements.']);
+    expect(buildGamingRequestRequirements(current).at(-1)!.terms).toEqual(['latest', 'patch', 'changes']);
+    expect(assessGamingRequestCoverage(current, partial).coverageSatisfied).toBe(false);
+    expect(assessGamingClearEvidence(current, partial).gates.freshness).toBe('unknown');
+  });
+
 });

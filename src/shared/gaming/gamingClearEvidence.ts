@@ -8,7 +8,7 @@ import { assessGamingProgressionRequest } from './gamingProgressionPolicy.js';
 import { buildGamingRetrievalTerms, buildGamingRequestRequirements, gamingRequestRequirementLimitExceeded, gamingTermCoverage, resolveGamingUserDecisionGap, type GamingRetrievalPolicyInput } from './gamingRetrievalPolicy.js';
 import { classifyGamingQuestionFreshness, evaluateGamingFreshness, type GamingFreshnessEvaluation, type GamingFreshnessEvidence } from './gamingFreshnessCore.js';
 import type { GamingStoredKnowledgeContext, GamingStoredKnowledgeSource } from './gamingStoredEvidenceCore.js';
-import { assessGamingStructuralUsability, gamingCrossSourceStructuralConflict } from './gamingStructuralEvidence.js';
+import { assessGamingStructuralUsability, gamingCrossSourceStructuralConflict, gamingStructuralCoverageTerms } from './gamingStructuralEvidence.js';
 import { gamingClearIntactProseText } from './gamingClearSource.js';
 import { resolveGamingFreshnessDisposition } from './gamingFreshnessDisposition.js';
 
@@ -263,7 +263,7 @@ export function assessGamingRequestCoverage(input: GamingRetrievalPolicyInput,
       if (!chunk.evidenceUnits?.length) return gamingTermCoverage(chunk.text, requirement.terms) === 1 ? [chunk] : [];
       const supportingUnits = chunk.evidenceUnits.filter(unit => {
         const assessment = assessGamingStructuralUsability({ units: [unit], ...input, prompt: requirement.terms.join(' ') });
-        return gamingTermCoverage(unit.text, requirement.terms) === 1
+        return gamingTermCoverage(unit.text, gamingStructuralCoverageTerms(input, unit, requirement.terms)) === 1
           && (assessment.claimShape === 'none' ? assessment.hasIntactUsableUnit : assessment.claimSupported);
       });
       return supportingUnits.length ? [{ ...chunk, evidenceUnits: supportingUnits }] : [];
