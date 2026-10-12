@@ -5,6 +5,7 @@ import { GAMING_PLAYER_DECISION_CHOICES } from './gamingPreferenceData.js';
 
 export const GAMING_RETRIEVAL_POLICY_VERSION = 'gaming-player-retrieval/v1';
 const STOP_WORDS = new Set('a an and are as at be by can do does for from how i in is it me my of on or should that the this to was what when where which who why with you about after before finishing completing completed finished defeated get go help please tell use using want would guide next now then need proceed continue current objective checkpoint step steps walkthrough explain detailed detail concise briefly spoiler spoilers spoilerfree beat defeat boss strategy game look up newly released beginner route supplied source opening simple summary summarize overview linked guides direct answer both am im m supposed stuck has have user major first'.split(' '));
+const GENERIC_RELATIONSHIP_HEADS = String.raw`effects?|mechanics?|benefits?|locations?|stats?|attributes?|strengths?|weakness(?:es)?|resistances?|requirements?|costs?|propert(?:y|ies)`;
 
 export interface GamingRetrievalPolicyInput extends GamingPlayerContext {
   game?: string;
@@ -89,7 +90,17 @@ export function buildGamingRetrievalTerms(input: GamingRetrievalPolicyInput): Ga
 }
 
 export function gamingTermCoverage(text: string, terms: readonly string[]): number {
-  const available = new Set(gamingLexicalTokens(text));
+  // An explicit source-scope disclaimer is not support for the topics it lists.
+  // Keep the acquired text intact elsewhere, and retain real negative gameplay
+  // advice as well as affirmative facts beside the disclaimer.
+  const supportingText = text.replace(/\b(?:does\s+not|doesn['’]t|do\s+not|don['’]t|cannot|can['’]t|will\s+not|won['’]t)\s+(?:explain|cover|describe|document|address|support|verify|establish|prove)\b[^.!?;\n]*/giu,
+    (clause: string, offset: number) => {
+      const prefix = text.slice(Math.max(0, offset - 240), offset).split(/[.!?;\n]/u).at(-1) ?? '';
+      if (!/\b(?:guide|source|article|page|evidence|document|section|passage)\b/iu.test(prefix)) return clause;
+      const continuation = /,\s*(?:but|however|yet)\b/iu.exec(clause);
+      return continuation ? clause.slice(continuation.index) : ' ';
+    });
+  const available = new Set(gamingLexicalTokens(supportingText));
   return terms.length ? terms.filter(term => available.has(term)).length / terms.length : 0;
 }
 
@@ -122,7 +133,7 @@ export function scopeGamingEvidenceParagraphs(text: string, input: GamingRetriev
       const previousTerms = [...new Set(gamingLexicalTokens(units[next - 1]))].filter(term => !STOP_WORDS.has(term));
       const connected = gamingTermCoverage(units[next], previousTerms) > 0;
       const dependentOrAction = /^(?:(?:then|otherwise)\s+)?(?:do not|don't|cross|step|back away|open|close|turn|pull|push|wait|dodge|block|attack|equip|bring|check|inspect|follow|climb|return|keep|avoid)\b/iu.test(units[next]);
-      const evidenceLimit = /^the (?:guide|source|evidence) (?:does not|doesn't|cannot|can't)\b/iu.test(units[next]);
+      const evidenceLimit = /^(?:this|the|our|that) (?:guide|source|article|page|evidence|document|section|passage) (?:does not|doesn't|cannot|can't|will not|won't)\b/iu.test(units[next]);
       if (!connected && !dependentOrAction && !evidenceLimit) break;
       included.add(next);
     }
@@ -173,8 +184,7 @@ function gamingRequestClauses(input: GamingRetrievalPolicyInput): { clauses: str
   const targetWord = String.raw`(?!(?:${requestBoundaries.join('|')})\b)\p{L}[\p{L}\p{N}'’\-]*`;
   // Generic relationship heads describe separate subjects, not a named object:
   // "effects of poison and bleeding" can be supported by two intact passages.
-  const relationshipHeads = String.raw`effects?|locations?|stats?|attributes?|strengths?|weakness(?:es)?|resistances?|requirements?|costs?|propert(?:y|ies)`;
-  const targetHeadWord = String.raw`(?!(?:${relationshipHeads})\b)${targetWord}`;
+  const targetHeadWord = String.raw`(?!(?:${GENERIC_RELATIONSHIP_HEADS})\b)${targetWord}`;
   const coordinatedTitle = new RegExp(`(?<![\\p{L}\\p{N}'’\\-])(?:${targetWord}\\s+){0,3}${targetHeadWord}\\s+of\\s+(?:${targetWord}\\s+){1,4}and\\s+${targetWord}(?:\\s+${targetWord}){0,3}`, 'giu');
   const topicalQuestion = question.replace(coordinatedTitle, target => {
     hasCoordinatedTarget = true;
@@ -197,7 +207,10 @@ export function buildGamingRequestRequirements(input: GamingRetrievalPolicyInput
   const { clauses, hasCoordinatedTarget } = gamingRequestClauses(input);
   if (clauses.length > 8) return [];
   const requirements = clauses.map((clause, index) => {
-    const terms = buildGamingRetrievalTerms({ game: input.game, prompt: clause }).requestTerms
+    // Relational question framing describes the requested facts; it is not a
+    // word that an independently acquired passage must repeat verbatim.
+    const topicalClause = clause.replace(new RegExp(`\\b(?:${GENERIC_RELATIONSHIP_HEADS})\\s+of\\s+`, 'giu'), '');
+    const terms = buildGamingRetrievalTerms({ game: input.game, prompt: topicalClause }).requestTerms
       .filter(term => !['recommend', 'recommended', 'recommendation', 'recommendations', 'provide', 'describe', 'including', 'include', 'cover', 'covering'].includes(term))
       .filter(term => !/[0-9]{6,}/u.test(term));
     // This finite diagnostic vocabulary supplies labels only when explicitly

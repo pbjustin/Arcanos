@@ -49,6 +49,10 @@ export function assessGamingClearEvidence(
   options: GamingClearEvidenceOptions = {}
 ): GamingClearAssessment {
   input = { ...input, edition: resolveGamingRequestEdition(input) };
+  // Explicit independent requests and atomic named targets need complete
+  // coverage on every generation route, including legacy and hybrid v1.
+  if (gamingRequestRequirementLimitExceeded(input) || buildGamingRequestRequirements(input).length)
+    options = { ...options, requireRequestCoverage: true };
   const chunks = knowledge.evidence ?? [];
   const bounded = chunks.length <= 8 && knowledge.sources.length <= 8
     && chunks.every(chunk => chunk.text.length <= 8_000) && knowledge.context.length <= 32_000;

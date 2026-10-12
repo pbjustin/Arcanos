@@ -1,5 +1,5 @@
 import { assessGamingClearEvidence, assessGamingRequestCoverage } from '../src/shared/gaming/gamingClearEvidence.js';
-import { buildGamingRequestRequirements, buildGamingRetrievalTerms } from '../src/shared/gaming/gamingRetrievalPolicy.js';
+import { buildGamingRequestRequirements, buildGamingRetrievalTerms, gamingTermCoverage, scopeGamingEvidenceParagraphs } from '../src/shared/gaming/gamingRetrievalPolicy.js';
 import type { GamingStoredKnowledgeContext } from '../src/shared/gaming/gamingStoredEvidenceCore.js';
 
 const game = 'Elden Ring';
@@ -140,6 +140,22 @@ describe('ordinary gameplay request coverage', () => {
       .toEqual(['activating', 'amber', 'gate']);
   });
 
+  test.each([
+    { game, prompt: 'Explain the mechanics of equipment load and weapon upgrades.',
+      passages: ['Equipment load determines whether an equipped character uses a heavy roll.',
+        'Weapon upgrades improve the damage of a weapon at a smithing table.'] },
+    { game: 'Stardew Valley', prompt: 'Explain the benefits of watering and fertilizing.',
+      passages: ['Watering allows crops to grow through each day.',
+        'Fertilizing improves the quality of crops.'] }
+  ])('keeps generic relationship requests separately groundable in $game', ({ game: requestedGame, prompt, passages }) => {
+    const input = { game: requestedGame, prompt, mode: 'guide' as const };
+    expect(assessGamingRequestCoverage(input, knowledge(passages, requestedGame)))
+      .toMatchObject({ coverageSatisfied: true, missingCoverage: [] });
+    expect(buildGamingRequestRequirements(input)).toHaveLength(2);
+    expect(assessGamingRequestCoverage(input, knowledge(passages.slice(0, 1), requestedGame)))
+      .toMatchObject({ coverageSatisfied: false, missingCoverage: ['requested topic 2'] });
+  });
+
   test('retains partial evidence and requires one coherent passage for each independent request', () => {
     const input = { game: 'Lantern Voyage', prompt: 'Explain amber gate activation and copper bridge repair. Avoid spoilers.', mode: 'guide' as const };
     const partial = knowledge(['Amber gate activation requires pulling the nearby lever.'], input.game);
@@ -156,5 +172,81 @@ describe('ordinary gameplay request coverage', () => {
   test('does not expose location or player text through requirement diagnostics', () => {
     const input = { game, prompt: 'Explain private Moonstone gate activation and secret Wren cavern repair.', currentArea: 'Personal party room' };
     expect(JSON.stringify(assessGamingRequestCoverage(input, knowledge([])))).not.toMatch(/Moonstone|Wren|Personal/u);
+  });
+
+  test('a source disclaimer cannot establish the gameplay coverage it expressly disclaims', () => {
+    const input = { game, prompt: 'How do I avoid heavy rolling in Elden Ring?', mode: 'guide' as const };
+    const text = 'In Elden Ring, poison and scarlet rot are status effects that cause damage over time. '
+      + 'This base-game article describes status ailments and does not explain equipment load, heavy rolling, '
+      + 'weapon upgrades or early Samurai stat allocation.';
+    expect(gamingTermCoverage(text, ['heavy', 'rolling'])).toBe(0);
+    expect(assessGamingRequestCoverage(input, knowledge([text])).coverageSatisfied).toBe(false);
+    expect(assessGamingClearEvidence(input, knowledge([text]), { requireRequestCoverage: true }).gates.claimSupport)
+      .toBe('unknown');
+  });
+
+  test('a disclaimer about an unsupported second topic cannot complete multi-topic coverage', () => {
+    const input = { game, prompt: 'Explain equipment load and weapon upgrades.', mode: 'guide' as const };
+    const data = knowledge(['Equipment load determines rolling behavior based on the weight of equipped items.',
+      'This guide does not explain weapon upgrades. It describes poison and scarlet rot status ailments.']);
+    expect(assessGamingRequestCoverage(input, data)).toMatchObject({ coverageSatisfied: false,
+      missingCoverage: ['requested topic 2'], requirementSupport: [{ evidenceIds: ['record-0'] }, { evidenceIds: [] }] });
+  });
+
+  test.each([
+    'Equipment load determines rolling behavior. This guide does not explain weapon upgrades. Reduce equipped weight to avoid heavy rolling.',
+    'This guide does not explain weapon upgrades; equipment load determines whether heavy rolling occurs.',
+    'Equipment load determines whether heavy rolling occurs; this guide does not explain weapon upgrades.',
+    'This guide does not explain weapon upgrades, but equipment load determines whether heavy rolling occurs.'
+  ])('retains actual gameplay facts beside a source coverage disclaimer: %s', text => {
+    const single = { game, prompt: 'How do I avoid heavy rolling in Elden Ring?', mode: 'guide' as const };
+    const multi = { game, prompt: 'Explain equipment load and weapon upgrades.', mode: 'guide' as const };
+    expect(assessGamingRequestCoverage(single, knowledge([text])).coverageSatisfied).toBe(true);
+    expect(assessGamingRequestCoverage(multi, knowledge([text]))).toMatchObject({ coverageSatisfied: false,
+      missingCoverage: ['requested topic 2'] });
+  });
+
+  test.each([
+    'Do not exceed the heavy equipment load threshold to avoid heavy rolling. Remove equipped armor until load is medium.',
+    'Heavy rolling does not give the same mobility as medium rolling. Reduce equipment load to improve mobility.'
+  ])('negative gameplay advice remains affirmative topic evidence: %s', text => {
+    const input = { game, prompt: 'How do I avoid heavy rolling in Elden Ring?', mode: 'guide' as const };
+    expect(gamingTermCoverage(text, ['heavy', 'rolling'])).toBe(1);
+    expect(assessGamingRequestCoverage(input, knowledge([text])).coverageSatisfied).toBe(true);
+  });
+
+  test('retains a source limitation beside the selected gameplay passage without granting it coverage', () => {
+    const input = { game, prompt: 'How do I avoid heavy rolling in Elden Ring?', mode: 'guide' as const };
+    const text = 'Equipment load determines whether heavy rolling occurs. This guide does not explain weapon upgrades.';
+    expect(scopeGamingEvidenceParagraphs(text, input)).toContain('This guide does not explain weapon upgrades.');
+    expect(gamingTermCoverage(text, ['weapon', 'upgrades'])).toBe(0);
+  });
+
+  test('common CLEAR checks require every explicit request even without the v2 coverage opt-in', () => {
+    const input = { game, prompt: 'Explain equipment load and weapon upgrades.', mode: 'guide' as const };
+    const partial = knowledge(['Equipment load determines rolling behavior based on the weight of equipped items.']);
+    const complete = knowledge(['Equipment load determines rolling behavior based on the weight of equipped items.',
+      'Weapon upgrades improve damage when applied at an early smithing table.']);
+    const partialAssessment = assessGamingClearEvidence(input, partial);
+    expect(partialAssessment.gates.claimSupport).toBe('unknown');
+    expect(partialAssessment.blockingFindings.map(finding => finding.code)).toContain('QUESTION_COVERAGE_INSUFFICIENT');
+    expect(assessGamingClearEvidence(input, complete).gates.claimSupport).toBe('verified');
+  });
+
+  test('common CLEAR checks preserve atomic named-object coverage without the v2 coverage opt-in', () => {
+    const input = { game, prompt: 'How do I get the Sword of Night and Flame?', mode: 'guide' as const };
+    expect(assessGamingClearEvidence(input, knowledge(['At night, buy a sword from the shop.'])).gates.claimSupport)
+      .toBe('unknown');
+    expect(assessGamingClearEvidence(input, knowledge(['The Sword of Night and Flame is found in a chest.'])).gates.claimSupport)
+      .toBe('verified');
+  });
+
+  test('common CLEAR checks cannot omit an unsupported topic when the explicit requirement limit overflows', () => {
+    const input = { game, mode: 'guide' as const, prompt: 'Explain equipment load, stamina recovery, weapon upgrades, '
+      + 'flask upgrades, poison resistance, armor weight, jump attacks, shield blocking, and rune recovery.' };
+    const partial = knowledge(['Equipment load depends on armor weight. Stamina recovery occurs when you rest from actions. '
+      + 'Weapon upgrades improve damage, and flask upgrades improve healing. Poison resistance reduces buildup. '
+      + 'Jump attacks and shield blocking provide combat options.']);
+    expect(assessGamingClearEvidence(input, partial).gates.claimSupport).toBe('unknown');
   });
 });
