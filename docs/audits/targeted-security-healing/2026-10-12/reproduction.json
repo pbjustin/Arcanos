@@ -97,5 +97,7 @@
       "outcome": "passed",
       "log_sha256": "2d768b97d1cbc16c2babe66e0677622d0d4ffd473b06f338aedfe38174f8450a"
     }
-  }
+  },
+  "published_implementation_sha": "7d210aef829ccc61f43f7214bbe341c0508b97bc",
+  "verified_implementation_tree_sha": "cfe36333ce81dfbb2b2921da4f63ab04500d884d"
 }

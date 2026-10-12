@@ -178,6 +178,12 @@ and independently built artifacts. Earlier cached-dependency diagnostic sweeps
 used a separate worktree. Local test persistence is confined to those disposable
 checkouts. Logs are held outside the checkouts under `/workspace`; the delivered
 verification report records final aggregate outcomes and exact final head.
+Publication initially hit GitHub's private-author-email protection. Only the
+unpublished task commits were rebuilt with an automated privacy-safe identity;
+each commit tree remained identical. The published implementation commit is
+`7d210aef829ccc61f43f7214bbe341c0508b97bc`, with the same tree as the locally
+tested `74ab1c5826e3ac8f90f6869012788d2fb86019fc`. No account or credential
+settings changed. Later receipt changes affect only these two audit artifacts.
 
 Final canonical root sweep: **896 suites passed, 13 suites skipped; 17,485 tests
 passed, 167 cases skipped, zero failures** (17,652 total, 506.357 seconds).
