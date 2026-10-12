@@ -6,6 +6,15 @@ Initial inspected PR head: `ec3ed16cb94c9166902bc810d0d73f89d322cf67`.
 
 **LIVE_PREVIEW_ACCEPTANCE: BLOCKED. MERGE_READY: BLOCKED.**
 
+Recovery follow-up: PR head `2fd4cf81833ba3be4592654bc7789dd3309374d7`
+was revalidated open/non-draft. Missing opt-in caused `action: noop`,
+`reason: not-opted-in`. Activating the current lifecycle is blocked under the
+new mission: its fixed service IDs are also present in production, contrary to
+the explicit prohibition on production service IDs as preview targets, and its
+sealed/passive two-service contract cannot execute normal self-healing or
+isolated PostgreSQL/Redis. No label, dispatch or Railway mutation was made.
+See the updated preview evidence for the exact owner action and authority limits.
+
 Read-only Railway discovery found no environment owned by PR #1539 and no
 deployment matching its head. The successful deployment in `live-validation`
 belongs to another branch and SHA. Isolation cannot be established for an

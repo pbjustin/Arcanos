@@ -7,6 +7,57 @@ First local correction commit: `f6cbd320eaaf032e6d8c500bc5cb4bfd4d9705aa`.
 Final tested source commit: `4178766998a598553b3a5e4c6804ee9a8cacc0fc`.
 Final published artifact-containing head: see authenticated PR delivery receipt.
 
+## Preview recovery follow-up
+
+Recovery source/head lock: `2fd4cf81833ba3be4592654bc7789dd3309374d7`.
+No source, workflow, configuration, dependency or fixture changes were made.
+The missing preview was a correct `not-opted-in` no-op. Current provisioning
+cannot meet the new mission because it requires production-shared service IDs
+and a sealed/passive two-service runtime. No source-level provisioning defect
+was reproduced; no security control was weakened or alternate environment made.
+
+The resumed executor's default Node/npm differed from the repository pins.
+Node `24.18.1` / npm `11.16.0` were restored from the checksum-verified official
+archive before testing; installed locked `proxy-addr` remains `2.0.8`. The exact
+new command was:
+
+```bash
+PATH=/tmp/arcanos-preview-recovery-toolchain/node-v24.18.1-linux-x64/bin:$PATH \
+  node scripts/run-jest.mjs --runTestsByPath \
+  tests/railway-pr-preview-lifecycle.test.js \
+  tests/worker-diagnostics-preview-cleanup-workflow.test.js \
+  --coverage=false --runInBand --json \
+  --outputFile=/tmp/selfheal-recovery-contract-tests.json
+```
+
+Result: **two suites, 72 passed, zero failed/skipped**. These reuse existing
+mocked adapters and synthetic cleanup fetches: admission, exact ownership,
+deployment attestation, trusted workflow and cleanup contracts only. They are
+not new fixtures and do not prove Railway provisioning or live recovery.
+
+The previous head's full CI is preserved as exact-source regression evidence:
+[CI/CD 38208119556](https://github.com/pbjustin/Arcanos/actions/runs/38208119556)
+and [PR CI 38208119535](https://github.com/pbjustin/Arcanos/actions/runs/38208119535)
+passed **897 suites / 17,532 tests**, with 13 suites / 167 cases skipped and zero
+failures. Local acceptance remains the previous **606 passed, zero skipped**;
+the 72 contract checks overlap that full CI and are not added to a grand total.
+The CI source contained all four earlier repairs and 45 added test cases.
+
+New artifact-only changes receive documentation, relative-link, JSON,
+whitespace and staged-guard validation. No new behavioral failure or material
+coverage regression was observed; a fresh normal-runtime self-healing live
+suite remains BLOCKED. Type-check/lint/build/full behavioral reruns were not
+invented for this documentation-only recovery update. The final PR receipt
+records any automatically triggered final-head CI separately.
+
+Recovery documentation validation on the pinned toolchain passed:
+`npm run docs:check`, `npm run docs:links -- --local-only` (714 maintained local
+targets passed, 109 external network checks skipped), separate new-package
+relative links (12 passed), JSON parse/18-gate consistency and `git diff --check`.
+The maintained link checker excludes audit directories, so its result was not
+substituted for the separate package check. The staged `npm run guard:commit`
+also passed before the recovery evidence commit.
+
 ## Captured failures and smallest corrections
 
 | Defect | Failing behavior captured before correction | Correction and regression |

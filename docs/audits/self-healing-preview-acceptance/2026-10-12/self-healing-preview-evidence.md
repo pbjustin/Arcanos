@@ -10,6 +10,95 @@ state: open; preview opt-in label absent.
 **PREVIEW_ENVIRONMENT_MATCHED: BLOCKED. PREVIEW_ISOLATION_VERIFIED: BLOCKED.
 LIVE_PREVIEW_ACCEPTANCE: BLOCKED.**
 
+## Recovery investigation and stop decision
+
+Recovery inspected PR head `2fd4cf81833ba3be4592654bc7789dd3309374d7`,
+base `3fd305b37ba410cf21684a8fed7619a1ba180b48`, open/non-draft, same
+branch/repository, with no `railway-preview` label. The current project's
+inventory still contains no `pr-676861-1539`. The canonical name is derived
+from `RAILWAY_PR_PREVIEW_CONTRACT.environmentPrefix`, not assumed from the user.
+
+The direct cause is intentional admission, not a failed Railway deployment.
+[Run 38208187161, job 114676258554](https://github.com/pbjustin/Arcanos/actions/runs/38208187161/job/114676258554)
+logged the following decoded, redacted excerpt:
+
+```text
+2026-10-12T05:30:14.1745458Z {"schemaVersion":1,"kind":"railway_pr_preview_lifecycle","summary":{"status":"PASS","action":"noop","reason":"not-opted-in"}}
+```
+
+`decideLifecycleAction` requires open, non-draft, same-repository `main` PR plus
+the label. A no-op returns before creation/deployment. There is no provisioning
+failure to bypass or admission defect to fix. Adding the label would trigger
+the standard lifecycle, but it would not satisfy this assignment's restrictions.
+
+### Independently verified service identity conflict
+
+Read-only `describe_environment` inspected the exact preview base and production
+environment identity/configuration metadata. No values, logs, runtime endpoints,
+database records or Redis contents were read. Railway service definitions are
+project-level: environments have separate service instances, while their
+`serviceId` can be shared. The mission explicitly forbids production service
+IDs as preview deployment targets, so environment scoping alone was not treated
+as permission to deploy these IDs.
+
+| Fixed lifecycle role | Service ID | Present in preview base | Present in production | Current mission target |
+| --- | --- | --- | --- | --- |
+| Web | `c4ade025-3f13-4fca-9309-5d0dd81396fe` | Yes | Yes | Rejected |
+| Worker | `1765befb-b805-4051-9af9-28634e986886` | Yes | Yes | Rejected |
+
+The base contains exactly these two services and no volumes/shared variables.
+The lifecycle requires their IDs, sealed start commands, credential-empty
+configuration and a passive worker. Adding PG/Redis, runtime variables, different
+service IDs or a normal launcher fails its ownership/configuration guards.
+Native PR environment names remain passive even without the sealed CLI flag.
+Weakening those checks was not attempted.
+
+### Workflow authority and supported alternatives
+
+The caller/reusable workflows check out `github.workflow_sha` with no persisted
+Git credentials. The protected `railway-pr-preview-lifecycle` GitHub environment
+allows only branch `main`. Credentialed jobs have contents/pull-request reads
+and status writes; they never execute PR-head code. A change solely on this PR
+cannot become the trusted provisioning controller through opt-in or recovery
+dispatch. No merge, default-branch edit or protection relaxation is authorized.
+
+GitHub secret-name listing returned HTTP 403; this does **not** prove the secret
+is missing. Prior masked logs show the named lifecycle secret was populated.
+[Scheduled discovery 38211330587](https://github.com/pbjustin/Arcanos/actions/runs/38211330587)
+passed workspace-token/project inventory validation. Creation/deployment
+permissions were not exercised. No token value was inspected or disclosed.
+
+The documented normal-runtime worker-diagnostics lane has a different custom
+namespace and a cleanup-only workflow. Its allowed service IDs also include
+the production-shared web/worker/PG/Redis definitions. The existing Live PR
+Acceptance workflow admits only `gaming-guide`; the `live-pr-acceptance` GitHub
+environment returned 404, and its target/secret availability is unverified.
+No unrelated profile, deployment or manually created parallel environment was
+adopted as a self-healing preview.
+
+### Owner action required before provisioning
+
+1. Install a reviewed managed **normal-runtime self-healing** provisioning,
+   attestation and cleanup profile in the trusted controller. Preserve the
+   existing sealed lane and its isolation checks; do not merge PR #1539 to obtain
+   this capability or run PR code with the lifecycle credential.
+2. Supply preview-exclusive web/worker service IDs and private disposable
+   PostgreSQL/Redis instances with fresh storage, purpose-bound preview-only
+   credentials and no production service/queue/webhook references. Register
+   these identities in that profile's ownership and cleanup contract.
+3. Confirm protected-environment credentials and create/deploy authority through
+   the trusted workflow, without sharing token values. Identify the intended
+   same-process controller/Trinity execution path while retaining role guards.
+4. Refresh the actual PR head, deploy and attest that exact SHA, then establish
+   baseline and authenticated, bounded preview-only faults. Every code/head
+   change invalidates earlier exact-head acceptance.
+
+Recovery stopped before labels, dispatch, environment/service creation,
+deployments or faults. Preview environment ID and deployment IDs remain **none**;
+isolation, web/worker deployment, baseline and all fourteen live scenarios remain
+BLOCKED/NOT_RUN. This is a supported-path and target-identity blocker, not a
+claim that Railway creation failed. Historical discovery below is preserved.
+
 ## Read-only discovery and exact-head lock
 
 GitHub PR metadata and Railway project/environment/service/deployment inventory

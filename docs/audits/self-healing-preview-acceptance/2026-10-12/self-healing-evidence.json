@@ -1,5 +1,126 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
+  "recovery_follow_up": {
+    "investigated_head_sha": "2fd4cf81833ba3be4592654bc7789dd3309374d7",
+    "observed_at_utc": "2026-10-12 12:46:50 UTC",
+    "root_cause": "not-opted-in: current PR has no railway-preview label",
+    "canonical_native_environment_name": "pr-676861-1539",
+    "expected_environment_exists": false,
+    "label_added": false,
+    "workflow_dispatched": false,
+    "railway_mutations": 0,
+    "faults_injected": 0,
+    "supported_profile": "sealed app, passive worker, exactly two services, zero storage",
+    "target_identity_blocker": "Fixed project-level service IDs also present in production; mission forbids production service IDs as preview deployment targets.",
+    "rejected_service_ids": [
+      "c4ade025-3f13-4fca-9309-5d0dd81396fe",
+      "1765befb-b805-4051-9af9-28634e986886"
+    ],
+    "read_only_production_scope": "Control-plane service/source/volume identity metadata only; no variable values, deployment logs, runtime requests or data reads.",
+    "protected_github_environment": {
+      "name": "railway-pr-preview-lifecycle",
+      "allowed_branches": [
+        "main"
+      ],
+      "secret_name_inventory": "BLOCKED: HTTP403; not evidence of a missing token"
+    },
+    "trusted_workflow_ref": "github.workflow_sha",
+    "noop_run_url": "https://github.com/pbjustin/Arcanos/actions/runs/38208187161/job/114676258554",
+    "noop_log_excerpts": [
+      "2026-10-12T05:30:14.1745458Z {\"schemaVersion\":1,\"kind\":\"railway_pr_preview_lifecycle\",\"summary\":{\"status\":\"PASS\",\"action\":\"noop\",\"reason\":\"not-opted-in\"}}"
+    ],
+    "authority_discovery_run_url": "https://github.com/pbjustin/Arcanos/actions/runs/38211330587",
+    "creation_deployment_permission_tested": false,
+    "preview_environment_id": null,
+    "preview_deployment_ids": [],
+    "new_source_defects_reproduced": 0,
+    "new_fixtures_added": 0,
+    "new_provisioning_changes": 0,
+    "owner_action": "Install a reviewed trusted normal-runtime self-healing provision/attest/cleanup profile with preview-exclusive app IDs, private disposable PG/Redis, scoped preview credentials and explicit same-process controller/consumer ownership.",
+    "scenarios": [
+      {
+        "number": 1,
+        "live_result": "BLOCKED",
+        "execution": "NOT_RUN"
+      },
+      {
+        "number": 2,
+        "live_result": "BLOCKED",
+        "execution": "NOT_RUN"
+      },
+      {
+        "number": 3,
+        "live_result": "BLOCKED",
+        "execution": "NOT_RUN"
+      },
+      {
+        "number": 4,
+        "live_result": "BLOCKED",
+        "execution": "NOT_RUN"
+      },
+      {
+        "number": 5,
+        "live_result": "BLOCKED",
+        "execution": "NOT_RUN"
+      },
+      {
+        "number": 6,
+        "live_result": "BLOCKED",
+        "execution": "NOT_RUN"
+      },
+      {
+        "number": 7,
+        "live_result": "BLOCKED",
+        "execution": "NOT_RUN"
+      },
+      {
+        "number": 8,
+        "live_result": "BLOCKED",
+        "execution": "NOT_RUN"
+      },
+      {
+        "number": 9,
+        "live_result": "BLOCKED",
+        "execution": "NOT_RUN"
+      },
+      {
+        "number": 10,
+        "live_result": "BLOCKED",
+        "execution": "NOT_RUN"
+      },
+      {
+        "number": 11,
+        "live_result": "BLOCKED",
+        "execution": "NOT_RUN"
+      },
+      {
+        "number": 12,
+        "live_result": "BLOCKED",
+        "execution": "NOT_RUN"
+      },
+      {
+        "number": 13,
+        "live_result": "BLOCKED",
+        "execution": "NOT_RUN"
+      },
+      {
+        "number": 14,
+        "live_result": "BLOCKED",
+        "execution": "NOT_RUN"
+      }
+    ],
+    "contract_test_run": {
+      "suites": 2,
+      "passed": 72,
+      "failed": 0,
+      "skipped": 0,
+      "mode": "local mocked adapter contracts",
+      "toolchain": {
+        "node": "24.18.1",
+        "npm": "11.16.0"
+      }
+    }
+  },
   "date": "2026-10-12",
   "repository": "pbjustin/Arcanos",
   "pr_number": 1539,
@@ -7,7 +128,7 @@
   "draft": false,
   "base_sha": "3fd305b37ba410cf21684a8fed7619a1ba180b48",
   "initial_inspected_head_sha": "ec3ed16cb94c9166902bc810d0d73f89d322cf67",
-  "final_tested_source_head_sha": "4178766998a598553b3a5e4c6804ee9a8cacc0fc",
+  "final_tested_source_head_sha": "2fd4cf81833ba3be4592654bc7789dd3309374d7",
   "published_head_receipt": "See PR description and final delivery; containing commit cannot embed its own hash.",
   "live_preview_acceptance": "BLOCKED",
   "merge_ready": "BLOCKED",
@@ -1007,7 +1128,10 @@
     "CONCURRENCY_AND_IDEMPOTENCY_VERIFIED": "BLOCKED",
     "REGRESSION_TESTS_PASSED": "PASS",
     "EXACT_HEAD_RETESTED": "BLOCKED",
-    "MERGE_READY": "BLOCKED"
+    "MERGE_READY": "BLOCKED",
+    "PREVIEW_PROVISIONING_ROOT_CAUSE_IDENTIFIED": "PASS",
+    "WEB_AND_WORKER_DEPLOYED": "BLOCKED",
+    "RESTART_SAFETY_VERIFIED": "BLOCKED"
   },
   "local_receipt_hashes": [
     {
@@ -1204,5 +1328,37 @@
       "conclusion": "SKIPPED",
       "detailsUrl": "https://github.com/pbjustin/Arcanos/actions/runs/38204741359/job/114665675622"
     }
-  ]
+  ],
+  "previous_tested_source_head_sha": "4178766998a598553b3a5e4c6804ee9a8cacc0fc",
+  "current_contract_tests": {
+    "source_sha": "2fd4cf81833ba3be4592654bc7789dd3309374d7",
+    "suites": 2,
+    "passed": 72,
+    "failed": 0,
+    "skipped": 0,
+    "per_suite": [
+      {
+        "path": "tests/railway-pr-preview-lifecycle.test.js",
+        "status": "passed",
+        "tests": 66
+      },
+      {
+        "path": "tests/worker-diagnostics-preview-cleanup-workflow.test.js",
+        "status": "passed",
+        "tests": 6
+      }
+    ],
+    "log_sha256": "1fc8cb7e3f03ae4dd510dce0b8df1e5b63087e2a345be77e77bd36f49dc007ae"
+  },
+  "previous_published_head_ci": {
+    "sha": "2fd4cf81833ba3be4592654bc7789dd3309374d7",
+    "ci_cd_run_id": 38208119556,
+    "pr_ci_run_id": 38208119535,
+    "result": "PASS",
+    "passed_suites": 897,
+    "passed_tests": 17532,
+    "skipped_suites": 13,
+    "skipped_tests": 167,
+    "failed_tests": 0
+  }
 }

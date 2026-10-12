@@ -14,6 +14,32 @@ deployment's identity, isolation, or successful recovery.
 
 ## Ownership map
 
+Recovery follow-up at `2fd4cf81833ba3be4592654bc7789dd3309374d7`:
+the original pre-test map remains historical evidence; no source/runtime
+architecture was changed during recovery investigation. The managed native
+preview is intentionally a different runtime from this map. Its ownership
+validator admits two fixed project-level service IDs, no volumes/shared vars,
+role-only per-service variables and the sealed launcher. Production identity
+inspection confirmed those fixed IDs also have production instances.
+Distinct environment instances do not satisfy this mission's stronger
+requirement for preview-exclusive service IDs. The workflow was not activated.
+
+The normal-runtime diagnostics lane documented in `docs/RAILWAY_DEPLOYMENT.md`
+uses `worker-diagnostics-pr-<PR>-e2e`, not the reserved native namespace.
+It is a documented manual lane with a trusted cleanup backstop, not an existing
+self-healing provisioning workflow. Its cleanup allowlist also pins the
+production-shared web/worker/PostgreSQL/Redis IDs. The separate Live PR
+Acceptance workflow supports only `gaming-guide`. Neither is a compliant
+replacement target for this mission without an owner-installed managed profile.
+
+Normal web suppresses the canonical scheduler intentionally. The dedicated
+normal worker starts `dist/workers/jobRunner.js` and does not start that
+scheduler. A same-process manual controller/Trinity path can be deliberately
+authorized without distributed state; a worker-controller selection cannot
+prove another web process consumed a command. A future genuine preview run
+must identify its permitted controller/consumer pair before baseline/faults.
+No production owner or role policy was changed to create apparent recovery.
+
 ```mermaid
 flowchart TD
     START[Normal server startup and dependency readiness] --> APP[startAppRuntimeOnce]

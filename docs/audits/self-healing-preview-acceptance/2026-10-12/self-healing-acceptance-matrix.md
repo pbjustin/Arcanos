@@ -11,6 +11,16 @@ absent, so live execution stopped before credentials, endpoints or faults were
 used. Local PASS below applies only to the stated boundary. Every overall
 scenario remains BLOCKED for the requested live acceptance.
 
+Recovery follow-up at `2fd4cf81833ba3be4592654bc7789dd3309374d7`:
+all fourteen genuine live scenarios remain **BLOCKED**, and their runtime
+execution is **NOT_RUN**. No new fault, incident, consumer execution or recovery
+was performed. Missing opt-in was identified, but the current managed workflow
+targets service IDs confirmed in production and admits only sealed/passive
+services without PostgreSQL/Redis. The new mission forbids those target IDs.
+Independent preview-only identities and a supported trusted normal-runtime
+profile are required first. Local results below are preserved prior evidence,
+not substituted live outcomes or newly executed scenarios.
+
 | Scenario | Local result and execution mode | Evidence and practical limit | Isolated preview fixture | Genuine live preview / overall acceptance |
 | --- | --- | --- | --- | --- |
 | Healthy baseline | PASS — local real-consumer integration | `self-healing-trinity.integration.test.ts`: healthy coordinator selects no unnecessary action; actual SDK/Trinity takes its normal path against synthetic loopback replies. | NOT_RUN | BLOCKED |
