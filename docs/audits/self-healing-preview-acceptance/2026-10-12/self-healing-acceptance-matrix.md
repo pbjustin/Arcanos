@@ -1,5 +1,42 @@
 # Self-healing acceptance matrix
 
+## Dedicated staging results — 2026-10-12
+
+Owner-approved source: `4b4e31a54b819a3597ef3ee163a46e1a7b59fc67`.
+Provisioning stopped before mutation because an independent hard $10 spend
+bound could not be established. No staging project, deployment, baseline,
+provider, fault or runtime consumer was exercised. All scenarios are BLOCKED,
+execution NOT_RUN; this is not fourteen observed runtime failures.
+
+| # | Genuine staging scenario | Acceptance | Execution |
+| --- | --- | --- | --- |
+| 1 | Healthy baseline | BLOCKED | NOT_RUN |
+| 2 | Transient timeout | BLOCKED | NOT_RUN |
+| 3 | Repeated provider failure | BLOCKED | NOT_RUN |
+| 4 | Trinity failure / actual consumption | BLOCKED | NOT_RUN |
+| 5 | Redis interruption | BLOCKED | NOT_RUN |
+| 6 | Worker job failure / no duplicate execution | BLOCKED | NOT_RUN |
+| 7 | Failure threshold | BLOCKED | NOT_RUN |
+| 8 | Mitigation expiration / safe clearing | BLOCKED | NOT_RUN |
+| 9 | Fresh sufficient recovery verification | BLOCKED | NOT_RUN |
+| 10 | Actuator failure / bounded retry | BLOCKED | NOT_RUN |
+| 11 | Concurrent incidents | BLOCKED | NOT_RUN |
+| 12 | Service-role restrictions | BLOCKED | NOT_RUN |
+| 13 | Unauthorized operation | BLOCKED | NOT_RUN |
+| 14 | Restart during incident | BLOCKED | NOT_RUN |
+
+No staging correlation IDs, detection/actuation logs, controller/consumer
+transcripts, recovery measurements or clearing observations exist. No paid
+model, production dependency or unrelated deployment was used.
+[Cost evidence](self-healing-preview-evidence.md) records the stop decision;
+[readiness](self-healing-merge-readiness.md) reports all seventeen new gates.
+
+Earlier local PASS results below were not rerun in this staging assignment.
+They remain distinct local/CI evidence and cannot pass a genuine staging gate.
+
+## Historical local and preview investigation
+
+
 PR: [#1539](https://github.com/pbjustin/Arcanos/pull/1539).
 Date: 2026-10-12. Initial inspected head:
 `ec3ed16cb94c9166902bc810d0d73f89d322cf67`.

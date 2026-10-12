@@ -1,5 +1,123 @@
 # Railway preview evidence
 
+## Dedicated staging investigation — 2026-10-12
+
+**LIVE_ACCEPTANCE_VERIFIED: BLOCKED. MERGE_READY: BLOCKED.**
+
+Authenticated GitHub metadata confirmed PR #1539 open, non-draft and unmerged,
+branch `codex/targeted-security-healing-20261012`, base
+`3fd305b37ba410cf21684a8fed7619a1ba180b48`. Initial requested
+`2fd4cf81833ba3be4592654bc7789dd3309374d7` differed from current
+`4b4e31a54b819a3597ef3ee163a46e1a7b59fc67`. The owner explicitly approved the latter
+after that difference was reported. The hard $10 ceiling remains unchanged.
+No different SHA was deployed.
+
+### Inventory and capabilities
+
+Connected-tool reads listed one workspace, `pbjustin's Projects`
+(`1c9265a3-986f-4304-ad3e-5a874caab039`), with two preexisting projects:
+
+| Project | ID | Scope |
+| --- | --- | --- |
+| Arcanos | `7faf44e5-519c-4e73-8d7a-da9f389e6187` | Production excluded; identity metadata only |
+| Arcanos Live PR 1527 | `8e4cb1eb-1441-4e83-b434-15c06c676a5f` | Unrelated; not adopted or changed |
+
+Proposed `arcanos-pr1539-healing-acceptance` was absent. Production environment/
+service identities matched the earlier inventory. No production variable
+values, secrets, runtime logs, SQL/Redis data or writable dependencies were read.
+
+Current managed-environment readiness exposed no configured secrets, runtime
+variables or outbound identities. Official `railway whoami --json` returned
+exit 1: `Unauthorized. Please login with railway login`. No interactive login
+or token extraction was attempted; the earlier owner-workflow preference was
+preserved.
+
+Callable tools expose empty-project/service creation, per-service CPU/RAM
+limits, source `commitSha` pinning and scoped service/volume deletion. These
+are available capabilities, not exercised create/deploy/delete authority.
+Inventory reads do not expose the user's billing/admin role. No billing/usage
+limit, project expiry, whole-project deletion, raw GraphQL or remote shell
+operation is currently callable. Project deletion exists in the CLI/dashboard,
+but CLI authentication is unavailable. No mutation was used to test permissions.
+
+### Costs and hard-ceiling stop
+
+Official [container pricing](https://docs.railway.com/pricing/plans#resource-usage-pricing)
+was fetched. This illustrative conservative two-hour footprint is not an
+applied configuration; the smallest footprint meeting readiness is unverified.
+
+| Assumption, one replica each | Rate | Two-hour estimate |
+| --- | --- | --- |
+| RAM: web 2 GB, worker 2 GB, PostgreSQL 1 GB, Redis 0.5 GB; total 5.5 GB | $0.000231 / GB / minute | $0.15246 |
+| CPU: 0.5 vCPU per service; total 2 vCPU | $0.000463 / vCPU / minute | $0.11112 |
+| Two volumes, at most 5 GB used each | $0.000003472222222 / GB / minute | $0.00417 |
+| Public egress, assumed at most 1 GB total | $0.05 / GB | $0.05000 |
+| **Resource estimate** | | **$0.31775, approximately $0.32** |
+
+A 48-hour full-10-GB storage reserve adds approximately $0.10: illustrative
+total approximately $0.42. Continuous assumed operation for 24 hours would be
+approximately $3.26 including 1 GB egress. No buckets, backups/PITR, public TCP
+proxies, additional replicas, Railway Agents or paid AI calls are proposed.
+Private storage networking and bounded egress are assumptions, not verified
+controls. Builds, build CPU/RAM, base-image downloads, image exports and image
+storage are documented as free. No service limits or lifetime were applied.
+
+[Billing](https://docs.railway.com/pricing/understanding-your-bill) depends on
+subscription commitments and tax. Existing plan, credits, invoice and tax
+were not inspected. No free-allowance assumption or plan/account change is made.
+The estimate excludes any new subscription commitment and tax; it cannot
+guarantee the final incremental bill.
+
+[Cost Control](https://docs.railway.com/pricing/cost-control#hard-limit) documents
+a workspace-wide hard limit, minimum $10, that takes all workloads offline.
+Using it on the accessible workspace could stop production and is excluded.
+[CLI usage](https://docs.railway.com/cli/usage) offers workspace/agent limits;
+[project usage](https://docs.railway.com/projects/project-usage) is reporting,
+not a documented project-only dollar cap. Email alerts leave resources running.
+The documentation does not establish zero metering/shutdown overshoot.
+
+An independent resource/time bound could also satisfy the budget. That proof
+is unavailable: CPU/RAM ceilings do not limit elapsed time, egress or retained
+storage. A local timer can fail on session disconnection. No authenticated
+independent expiry/cleanup mechanism is established.
+[Volume pricing/deletion](https://docs.railway.com/volumes/reference#pricing)
+includes filesystem metadata; deletion is queued for up to 48 hours and
+billing cessation during that queue is not documented. Service deletion keeps
+detached volumes requiring separate deletion. Whole-project deletion is
+documented in the [CLI](https://docs.railway.com/cli/project) but not executable
+with the current authenticated capabilities.
+
+**Stop decision:** the estimated short run is inexpensive, but total spending
+cannot be independently bounded below $10. The owner's instruction requires
+stopping before provisioning in this situation. No project, service, volume,
+credential, source connection, deployment or fault was created.
+
+### Deployment, live evidence and cleanup
+
+Approved source is `4b4e31a54b819a3597ef3ee163a46e1a7b59fc67`; running artifact
+`EXACT_SHA_VERIFIED` remains BLOCKED. Project/environment/service/deployment
+IDs and artifact digests are absent. Source pinning was not executed.
+All fourteen genuine staging scenarios are BLOCKED / execution NOT_RUN.
+No baseline, isolation attestation, incident/execution IDs, controller/consumer
+logs, measured recovery or rollback exists.
+
+Assignment-created infrastructure spend is **$0**, because no resources were
+created; this is not an invoice measurement. No staging tests/jobs,
+credentials or resources were started. Cleanup execution is NOT_RUN because
+there are no created resources to delete, no residual assignment charges and
+no preexisting resources were removed. Final inventory verification is
+recorded in the PR delivery receipt. Production-operation count is zero.
+
+Required owner action: establish authenticated independently enforced scoped
+expiry/cleanup, bounded egress and retained-storage accounting, or a separate
+billing setup proving the complete incremental bill fits $10. Verify creation/
+deletion authority and all plan charges before provisioning. A new project
+alone is not billing isolation. No shared production limit or ceiling increase
+is authorized.
+
+The native-preview investigation below remains historical evidence.
+
+
 Date: 2026-10-12. PR:
 [#1539](https://github.com/pbjustin/Arcanos/pull/1539).
 Initial remote head: `ec3ed16cb94c9166902bc810d0d73f89d322cf67`.

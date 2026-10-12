@@ -1,5 +1,50 @@
 # Self-healing regression report
 
+## Dedicated staging validation — 2026-10-12
+
+Approved deployment source: `4b4e31a54b819a3597ef3ee163a46e1a7b59fc67`.
+No staging runtime was deployed. The hard $10 cost bound was not established,
+so execution stopped before provisioning. No live failure, new runtime defect,
+regression fixture or source correction occurred.
+
+Only the five required audit files changed on the existing PR branch. Publishing
+evidence does not expand deployment authorization to its later documentation
+commit. The approved source remains the SHA above; a different deployed source
+needs explicit owner authorization.
+
+Existing [CI/CD 38267906072](https://github.com/pbjustin/Arcanos/actions/runs/38267906072)
+and [PR CI 38267906079](https://github.com/pbjustin/Arcanos/actions/runs/38267906079)
+both passed at that exact approved source: **899 suites / 17,640 passed tests**,
+**13 suites / 167 skipped tests**, zero failures; coverage 93.52% statements/
+lines, 87.33% branches and 95.79% functions.
+[Exact-source receipt](https://github.com/pbjustin/Arcanos/actions/runs/38267906072/artifacts/11756636250)
+is retained. These previously observed results are not newly executed staging
+scenarios or evidence for another source SHA.
+
+New read-only checks: authenticated PR/head/base metadata; Railway workspace/
+project/service identities; credential readiness; official pricing/cost-control/
+volume-deletion docs; CLI `whoami --json` (exit 1, Unauthorized). No provider,
+database, worker or controller was started as incidental verification.
+
+Documentation checks use Node `24.18.1` / npm `11.16.0`:
+
+```bash
+npm run docs:check
+npm run docs:links -- --local-only
+git diff --check
+npm run guard:commit
+```
+
+Actual outcomes and the documentation commit are recorded in the authenticated
+PR delivery receipt. The guard must inspect the staged five-file diff. Audit
+local links require explicit supplemental review because maintained-link
+checks exclude `docs/audits/`. Application type-check/lint/build and behavioral
+suites are not rerun locally for documentation-only work. Approved-source CI
+remains separately identified; later CI is not substituted for live acceptance.
+
+The earlier fixture/failure/correction reports below remain historical evidence.
+
+
 PR: [#1539](https://github.com/pbjustin/Arcanos/pull/1539).
 Date: 2026-10-12. Branch: `codex/targeted-security-healing-20261012`.
 Baseline inspected head: `ec3ed16cb94c9166902bc810d0d73f89d322cf67`.

@@ -1,5 +1,43 @@
 # Self-healing ownership and data flow
 
+## Dedicated staging assignment — 2026-10-12
+
+The owner authorized a new temporary project, `arcanos-pr1539-healing-acceptance`.
+Initial requested SHA `2fd4cf81833ba3be4592654bc7789dd3309374d7` differed from
+the verified open/non-draft head. After that difference was reported, the owner
+explicitly approved `4b4e31a54b819a3597ef3ee163a46e1a7b59fc67` for staging. Base is
+`3fd305b37ba410cf21684a8fed7619a1ba180b48`; branch is
+`codex/targeted-security-healing-20261012`.
+
+A dedicated project would allow fresh web/worker/PostgreSQL/Redis service IDs.
+The former trusted-main installation requirement belongs to the native-preview
+route; it is not presumed necessary for this separately authorized project.
+No project was created: the hard $10 budget gate stopped provisioning.
+Proposed topology and inspected source are not live isolation/runtime evidence.
+
+The normal runtime is unchanged between the initial requested and approved
+SHAs. Existing authenticated `POST /api/self-improve/run` requires
+`self-heal:decide`, `self-heal:execute` and `self_improve_admin`, then invokes
+the real manual coordinator in the web process. Subsequent normal HTTP Trinity
+can consume that same-process command. A new control endpoint is unnecessary.
+Automatic web suppression remains intentional; the dedicated job runner still
+does not start the canonical scheduler.
+
+A general normal-Trinity synthetic provider with timeout/503/recovery control
+and a bounded deployed supervisor is not supplied by the planning module.
+The Backstage-specific supervisor and sealed app/passive worker cover other
+contracts. Existing authenticated worker preview chaos has a narrow environment
+gate and one-shot pre-provider reasoning delay; it is not an HTTP-provider
+timeout. No fixture gate was broadened or supervisor substituted.
+
+Process-local commands, missing durable incident restoration and prompt policy
+without TTL remain limitations. No new runtime defect or architecture fix was
+inferred from this blocked attempt. No controller/consumer ran in staging.
+See [budget and prerequisites](self-healing-preview-evidence.md) and
+[current staging gates](self-healing-merge-readiness.md). The older map below
+remains historical inspected-head evidence.
+
+
 Architecture inspection date: 2026-10-12. Repository: `pbjustin/Arcanos`.
 PR: [#1539](https://github.com/pbjustin/Arcanos/pull/1539).
 Inspected head: `ec3ed16cb94c9166902bc810d0d73f89d322cf67`.

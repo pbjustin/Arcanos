@@ -1,5 +1,62 @@
 # Self-healing merge-readiness assessment
 
+## Dedicated staging verdict — 2026-10-12
+
+**MERGE_READY: BLOCKED. LIVE_ACCEPTANCE_VERIFIED: BLOCKED.**
+
+The owner approved `4b4e31a54b819a3597ef3ee163a46e1a7b59fc67` after its difference
+from the initial requested SHA was reported. PR #1539 was verified open,
+non-draft and unmerged, base `3fd305b37ba410cf21684a8fed7619a1ba180b48`.
+
+The new mission permits a dedicated temporary project with fresh identities.
+It does not waive exact-SHA, isolation or the hard $10 ceiling. Provisioning
+stopped before mutation: the illustrative two-hour resource estimate is $0.32,
+but elapsed time, egress, retained storage and cleanup are not independently
+bounded. The documented workspace-wide dollar limit could stop production.
+No such limit was changed.
+
+| Required staging gate | Result | Evidence / limitation |
+| --- | --- | --- |
+| EXACT_SHA_VERIFIED | BLOCKED | Approved source verified; no running artifact exists. |
+| STAGING_ISOLATION_VERIFIED | BLOCKED | No staging identities/configuration to attest. |
+| WEB_READY | BLOCKED | Web deployment/runtime NOT_RUN. |
+| WORKER_READY | BLOCKED | Worker deployment/runtime NOT_RUN. |
+| HEALTHY_BASELINE_VERIFIED | BLOCKED | Genuine staging baseline NOT_RUN. |
+| FAILURE_DETECTION_VERIFIED | BLOCKED | Genuine staging detection NOT_RUN. |
+| MITIGATION_AUTHORIZATION_VERIFIED | BLOCKED | Prior local evidence is distinct; live authorization NOT_RUN. |
+| MITIGATION_APPLICATION_VERIFIED | BLOCKED | No staging actuation or consumer transcript. |
+| TRINITY_CONSUMPTION_VERIFIED | BLOCKED | Genuine staging Trinity NOT_RUN. |
+| RECOVERY_VERIFIED | BLOCKED | No live incident or fresh measured recovery. |
+| MITIGATION_ROLLBACK_VERIFIED | BLOCKED | Live TTL/clearing/rollback NOT_RUN. |
+| SERVICE_ROLE_BOUNDARIES_VERIFIED | BLOCKED | Source roles inspected; deployed roles NOT_RUN. |
+| CONCURRENCY_AND_IDEMPOTENCY_VERIFIED | BLOCKED | Existing CI is not staging process-boundary proof. |
+| RESTART_SAFETY_VERIFIED | BLOCKED | Genuine staging restart NOT_RUN. |
+| REGRESSION_TESTS_PASSED | PASS | Both full CI runs passed at approved SHA; docs checks reported separately. |
+| LIVE_ACCEPTANCE_VERIFIED | BLOCKED | All fourteen live scenarios blocked before provisioning. |
+| MERGE_READY | BLOCKED | Mandatory live deployment/isolation/recovery evidence absent. |
+
+No staging project/service/deployment/incident IDs exist. Assignment resource
+spend is $0: no assignment-created infrastructure or continuing charges exist. Cleanup
+execution is NOT_RUN because no created resources needed deletion; final
+inventory/documentation-check outcomes are recorded in the delivery receipt.
+
+Process-local command delivery, service-role ownership, lack of durable incident
+restoration and prompt policy without TTL remain limitations. The authenticated
+same-process manual coordinator path can be reused after prerequisites pass.
+Missing general loopback supervision is acceptance tooling work, not a
+reproduced runtime defect. No broad redesign was made.
+
+Required owner action: independently enforce scoped expiry/cleanup, bound
+egress and retained storage, and authenticate whole-project deletion; or
+provide separate billing isolation that bounds all incremental charges below
+$10. Verify plan charges and permissions before resuming. No shared production
+limit change or budget increase is authorized. Any different source deployment
+requires approval. Keep PR #1539 open.
+
+The older eighteen-gate native-preview assessment below remains historical
+evidence and does not replace this seventeen-gate staging verdict.
+
+
 PR: [#1539](https://github.com/pbjustin/Arcanos/pull/1539).
 Date: 2026-10-12. Branch: `codex/targeted-security-healing-20261012`.
 Initial inspected head: `ec3ed16cb94c9166902bc810d0d73f89d322cf67`.
