@@ -3,8 +3,8 @@
 Historical plan: the owner subsequently deferred live verification in favor of
 synthetic acceptance. The PR-only preflight workflow and profile were retired;
 the instructions below document the earlier attempt and are not an active
-provisioning handoff. See [synthetic verification](synthetic-verification-report.md)
-for the current merge policy and evidence.
+provisioning handoff. See the [acceptance index](README.md) for the current merge
+policy and evidence.
 
 PR: [#1539](https://github.com/pbjustin/Arcanos/pull/1539).
 Branch: `codex/targeted-security-healing-20261012`.
