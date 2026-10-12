@@ -1,5 +1,34 @@
 # Self-healing merge-readiness assessment
 
+## Always-ask cleanup retry — 2026-10-12, 19:01 UTC
+
+The owner changed Railway's plugin-specific permission to **Always ask** and
+requested another cleanup attempt. A fresh settings read confirmed that mode;
+the global default remains Allow low-risk actions. The prior read at18:34 UTC
+had shown Railway's Allow all actions override. Missing/restrictive plugin
+permissions are therefore not the established cause of cancellation, and the
+earlier attribution to automatic approval review was unverified.
+
+Fresh ownership inventory matched the same two empty services and empty1000MB
+volume in the assignment-created service/volume probe. The exact environment-
+scoped service deletion again returned `Cancelled — the user did not approve
+this action. No changes were made.` A separately authorized volume deletion
+returned the same result. Neither executed. Fresh inventory at19:01 UTC still
+contained both remaining probe projects, both empty service definitions and
+the live1000MB volume. The removed second empty probe remained absent.
+
+Cleanup, LIVE_ACCEPTANCE_VERIFIED and MERGE_READY remain **BLOCKED**;
+all fourteen genuine self-healing scenarios remain **BLOCKED / NOT_RUN**.
+No new resource, application deployment, fault, fixture or executable correction
+occurred. No alternate deletion interface or daemon was used to bypass the
+cancellations. No plugin setting was changed by the agent. Owner dashboard
+cleanup remains required; the absolute **19:38:25.364Z** expiry was not reset.
+The concrete IDs and cost estimates below still apply. Both full CI workflows
+at documentation head `ccf3f311460a30c844a65186f542f752038d10f4` are now
+completed SUCCESS (CI/CD38290720098, PR CI38290720097); terminal metadata was
+verified, without newly parsing test totals. Earlier attempt descriptions below
+remain historical.
+
 ## Authenticated staging verdict — cleanup approval BLOCKED
 
 **PRECREATE_CLEANUP_VERIFIED: BLOCKED. LIVE_ACCEPTANCE_VERIFIED: BLOCKED.
