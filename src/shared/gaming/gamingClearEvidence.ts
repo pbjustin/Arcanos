@@ -21,7 +21,7 @@ export interface GamingClearEvidenceOptions {
   identityVerified?: boolean;
   /** Internal workflow grant; never supplied through a public request. */
   allowAdvisoryFreshness?: boolean;
-  /** Backend-only opt-in for v2 explicit multi-topic requirements. */
+  /** Backend-only opt-in; explicit request requirements apply on every route. */
   requireRequestCoverage?: boolean;
 }
 

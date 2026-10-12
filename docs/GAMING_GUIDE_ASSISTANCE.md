@@ -1189,3 +1189,26 @@ artifacts or force reassessment. An old binary may recognize historical v1
 assessments; restoring it is not evidence that those assessments satisfy the
 current identity rules. Existing workflow IDs, TTLs, idempotency, authentication,
 source authority and release gates remain in force.
+
+### Ordinary gameplay acceptance controls
+
+Explicit independent gameplay requests and atomic named targets require complete
+selected-evidence coverage before generation on legacy, hybrid v1 and hybrid v2.
+Exceeding the existing eight-requirement bound fails closed. V1 retains its
+single discovery round and terminal stop behavior; this does not grant v2 recovery
+operations to v1. Generic relational framing such as “mechanics of” or “benefits
+of” adds no topic and does not require source prose to repeat those words.
+
+An article's explicit coverage disclaimer cannot establish the topics it says it
+does not explain. The acquired text and adjacent caveats remain intact; negative
+gameplay advice is still usable evidence. Affirmative contradictory owners of the
+same acquired article topic remain binding even when its title names the requested
+game. URL identity and frontend labels cannot resolve that contradiction.
+
+The deterministic local acceptance fixtures in
+[`gamingAcceptance`](../tests/fixtures/gamingAcceptance/README.md) are synthetic,
+not captures of production wiki content. Authenticated served tests exercise
+legacy and v1/v2 request, acquisition, selection, grounding and citation boundaries
+with isolated publisher, Trinity and semantic-review seams. Their success does
+not establish actual provider behavior, installed private-plugin compatibility,
+or resolution of the uncaptured production Church of Elleh wiki rejection.
