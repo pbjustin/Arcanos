@@ -1,5 +1,46 @@
 # Self-healing ownership and data flow
 
+## Owner dashboard deletion verification — 2026-10-12, 19:22–19:25 UTC
+
+After the owner reported cleanup complete, fresh CLI and connected-tool
+inventories still listed both remaining probes. The service/volume project's
+`deletedAt` changed to `2026-10-14T19:20:20.070Z`; the first empty project's
+date remains `2026-10-14T17:38:48.891Z`. These are scheduled deletion dates,
+not evidence of completed permanent removal.
+
+Both CLI project records now expose an empty service list. Describing the
+service/volume environment returns `Project not found.` Its normal project
+API is inaccessible; current live service/volume state and retained-storage
+billing cannot be inferred. Earlier statements that the empty services and
+volume remained live describe the pre-dashboard snapshot, not this one.
+
+Railway [documents force deletion during the 48-hour grace period](https://railway.com/changelog/2025-03-21-project-deletion-changes).
+The owner was asked to force-delete only projects
+`db505b48-74f0-4571-9cd3-52bc865ff2cd` and
+`21a05b97-59f7-435f-8a3a-234eb722cb6c`.
+That action and fresh absence verification remain pending. The independently
+removed empty probe `7bd0536d-95c1-4db9-a766-6a0f49547617` remains absent.
+
+Production's four service/deployment identities and SUCCESS states still match
+the read-only baseline. PR head inspected here is
+`fbda67cf64cbe924767ba26e8a07531d03238df8`, open/non-draft/unmerged,
+with only these five audit documents differing from approved executable
+`4b4e31a54b819a3597ef3ee163a46e1a7b59fc67`.
+No application deployed, live fault ran, or new executable defect was inferred.
+All fourteen live scenarios remain **BLOCKED / execution NOT_RUN**;
+LIVE_ACCEPTANCE_VERIFIED and MERGE_READY remain **BLOCKED**.
+The original **19:38:25.364Z** absolute expiry remains in force.
+
+At inspected documentation head `fbda67cf64cbe924767ba26e8a07531d03238df8`,
+[PR CI38295724570](https://github.com/pbjustin/Arcanos/actions/runs/38295724570)
+and [CI/CD38295724506](https://github.com/pbjustin/Arcanos/actions/runs/38295724506)
+both completed SUCCESS. Each records899 passing/13 skipped suites and17,640
+passing/167 skipped tests; duplicate runs are not added together. Railway PR
+and sealed E2E jobs were skipped. These counts do not establish live acceptance.
+This documentation update passes `npm run docs:check` (980 checks/current
+indexes), `node scripts/check-documentation-links.mjs --local-only` (716 local
+targets,109 external URLs skipped) and `git diff --check`.
+
 ## Always-ask cleanup retry — 2026-10-12, 19:01 UTC
 
 The owner changed Railway's plugin-specific permission to **Always ask** and
