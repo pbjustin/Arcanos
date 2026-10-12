@@ -214,12 +214,14 @@ function addRotatedCallerMetadata(
 
 describe('public provider admission in the production application composition', () => {
   it.each([
-    ['::ffff:10.0.0.0/8', false],
-    ['::/1', false],
+    ['::ffff:10.0.0.0/104', false],
+    ['2001:db8::/32', false],
+    ['::ffff:10.0.0.0/8', true],
+    ['::/1', true],
     ['127.0.0.0/8', true],
     ['::ffff:127.0.0.0/104', true],
     ['loopback', true],
-  ] as const)('uses compiled proxy trust %s without trusting unrelated IPv4 peers', async (trust, trusted) => {
+  ] as const)('respects the compiled proxy trust CIDR semantics for %s', async (trust, trusted) => {
     const app = createApp();
     app.set('trust proxy', trust);
     writePublicHealthResponseMock.mockImplementationOnce(async (req: Request, res: Response) => {

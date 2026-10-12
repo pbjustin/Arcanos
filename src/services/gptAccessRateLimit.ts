@@ -1,8 +1,8 @@
-import type { Request, RequestHandler } from 'express';
+import type { RequestHandler } from 'express';
 
 import {
   createRateLimitMiddleware,
-  getRequestActorKey,
+  getRequestClientAddress,
 } from '@platform/runtime/security.js';
 
 export const GPT_ACCESS_RATE_LIMIT_MAX_REQUESTS = 120;
@@ -13,14 +13,6 @@ export interface GptAccessRateLimitOptions {
   windowMs?: number;
 }
 
-function getGptAccessRateLimitActorKey(req: Request): string {
-  const expressClientIp = typeof req.ip === 'string' && req.ip.trim().length > 0
-    ? req.ip.trim()
-    : null;
-
-  return expressClientIp ? `ip:${expressClientIp}` : getRequestActorKey(req);
-}
-
 export function createGptAccessRateLimit(
   options: GptAccessRateLimitOptions = {}
 ): RequestHandler {
@@ -29,7 +21,7 @@ export function createGptAccessRateLimit(
     maxRequests: options.maxRequests ?? GPT_ACCESS_RATE_LIMIT_MAX_REQUESTS,
     windowMs: options.windowMs ?? GPT_ACCESS_RATE_LIMIT_WINDOW_MS,
     keyGenerator: (req) => (
-      `${getGptAccessRateLimitActorKey(req)}:gpt-access`
+      `ip:${getRequestClientAddress(req)}:gpt-access`
     ),
   });
 }

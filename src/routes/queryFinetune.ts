@@ -5,7 +5,7 @@ import { getConfiguredFineTune } from '../config/openai.js';
 import { runTrinity } from '../trinity/trinity.js';
 import {
   createRateLimitMiddleware,
-  getRequestActorKey,
+  getRequestRateLimitActorKey,
   securityHeaders
 } from '@platform/runtime/security.js';
 import { sendInternalErrorPayload } from '@shared/http/index.js';
@@ -31,7 +31,7 @@ router.use('/query-finetune', createRateLimitMiddleware({
   bucketName: 'query-finetune',
   maxRequests: 30,
   windowMs: 15 * 60 * 1000,
-  keyGenerator: (req) => `${getRequestActorKey(req)}:route:query-finetune`
+  keyGenerator: (req) => `${getRequestRateLimitActorKey(req)}:route:query-finetune`
 }));
 
 /**

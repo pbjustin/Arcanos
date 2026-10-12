@@ -562,6 +562,26 @@ describe('public provider hierarchical rate-limit stores', () => {
     }
     expect(observedKeys[0]?.[1]).toBe(observedKeys[1]?.[1]);
     expect(observedKeys[0]?.[1]).not.toBe(observedKeys.at(-1)?.[1]);
+
+    const concurrentOptions = { namespace: 'synthetic:concurrent-replicas', execute };
+    const replicas = [
+      createRedisPublicProviderRateLimitStore(concurrentOptions),
+      createRedisPublicProviderRateLimitStore(concurrentOptions),
+    ];
+    const concurrentInput = { clientMaximum: 2, globalMaximum: 10, windowMs: 60_000 };
+    const decisions = await Promise.all(Array.from({ length: 24 }, (_, index) => (
+      replicas[index % replicas.length].consume({
+        ...concurrentInput,
+        clientIdentity: `synthetic-rotated-caller-${index}`,
+      })
+    )));
+    expect(decisions.filter((decision) => decision.allowed)).toHaveLength(10);
+    expect(decisions.filter((decision) => !decision.allowed)).toHaveLength(14);
+    const replacementReplica = createRedisPublicProviderRateLimitStore(concurrentOptions);
+    await expect(replacementReplica.consume({
+      ...concurrentInput,
+      clientIdentity: 'synthetic-rotated-caller-after-restart',
+    })).resolves.toMatchObject({ allowed: false, limitedTier: 'global' });
   });
 
   it('probes the limiter command family with an isolated expiring hashed key', async () => {

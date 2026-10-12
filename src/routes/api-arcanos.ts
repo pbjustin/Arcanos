@@ -3,7 +3,7 @@ import type { TrinityResult } from '@core/logic/trinity.js';
 import {
   createValidationMiddleware,
   createRateLimitMiddleware,
-  getRequestActorKey
+  getRequestRateLimitActorKey
 } from '@platform/runtime/security.js';
 import { asyncHandler } from '@shared/http/index.js';
 import { isDiagnosticRequest } from '@shared/http/diagnosticRequest.js';
@@ -51,7 +51,7 @@ const arcanosAskRateLimit = createRateLimitMiddleware({
   bucketName: 'api-arcanos-ask',
   maxRequests: 120,
   windowMs: 15 * 60 * 1000,
-  keyGenerator: (req) => `${getRequestActorKey(req)}:route:ask`
+  keyGenerator: (req) => `${getRequestRateLimitActorKey(req)}:route:ask`
 });
 
 router.use('/', apiArcanosVerificationRouter);

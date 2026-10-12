@@ -309,6 +309,24 @@ requests and all other runtimes stay on the socket cohort. NAT/proxy users can
 therefore share a bucket, and botnets or rotating source networks still require
 an authenticated gateway or WAF.
 
+The generic route limiter remains process-local. Its default actor is a
+server-established identity, or the client address resolved by Express's
+configured `trust proxy` policy, with a socket-peer fallback. It does not read
+forwarding headers independently, and caller-selected sessions or unverified
+Authorization values do not select the default budget. The ask, query-finetune,
+and generic verification route budgets use the same stable resolver. Explicit
+credential and authenticated-principal tiers retain their separate policies.
+Each middleware retains at most 10,000 active SHA-256 counter keys. The optional
+`maxEntries` middleware option may lower this bound; invalid values use 10,000
+and larger values are capped at 10,000. A full map rejects new identities with
+the existing `429` response until request-driven expiry cleanup recovers space;
+it preserves active counters. These local budgets may aggregate NAT/proxy users
+and do not replace the shared production provider-admission ceiling above.
+Explicit Express proxy trust must be scoped to the intended ingress peers:
+IPv6 prefixes such as `::/1` or `::ffff:10.0.0.0/8` also cover IPv4-mapped
+loopback peers; the mapped equivalent of IPv4 `10.0.0.0/8` is
+`::ffff:10.0.0.0/104`.
+
 The Redis decision seam has a fixed non-queuing process guard: no more than the
 smaller of 16 and the configured deployment maximum may be in flight at once.
 Excess bursts receive no-store `429` with bucket
