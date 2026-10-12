@@ -8,7 +8,7 @@ import { assessGamingProgressionRequest } from './gamingProgressionPolicy.js';
 import { buildGamingRetrievalTerms, buildGamingRequestRequirements, gamingRequestRequirementLimitExceeded, gamingTermCoverage, resolveGamingUserDecisionGap, type GamingRetrievalPolicyInput } from './gamingRetrievalPolicy.js';
 import { classifyGamingQuestionFreshness, evaluateGamingFreshness, type GamingFreshnessEvaluation, type GamingFreshnessEvidence } from './gamingFreshnessCore.js';
 import type { GamingStoredKnowledgeContext, GamingStoredKnowledgeSource } from './gamingStoredEvidenceCore.js';
-import { assessGamingStructuralUsability, gamingCrossSourceStructuralConflict } from './gamingStructuralEvidence.js';
+import { assessGamingStructuralUsability, gamingCrossSourceStructuralConflict, gamingStructuralCoverageTerms } from './gamingStructuralEvidence.js';
 import { gamingClearIntactProseText } from './gamingClearSource.js';
 import { resolveGamingFreshnessDisposition } from './gamingFreshnessDisposition.js';
 
@@ -21,7 +21,7 @@ export interface GamingClearEvidenceOptions {
   identityVerified?: boolean;
   /** Internal workflow grant; never supplied through a public request. */
   allowAdvisoryFreshness?: boolean;
-  /** Backend-only opt-in for v2 explicit multi-topic requirements. */
+  /** Backend-only opt-in; explicit request requirements apply on every route. */
   requireRequestCoverage?: boolean;
 }
 
@@ -49,6 +49,10 @@ export function assessGamingClearEvidence(
   options: GamingClearEvidenceOptions = {}
 ): GamingClearAssessment {
   input = { ...input, edition: resolveGamingRequestEdition(input) };
+  // Explicit independent requests and atomic named targets need complete
+  // coverage on every generation route, including legacy and hybrid v1.
+  if (gamingRequestRequirementLimitExceeded(input) || buildGamingRequestRequirements(input).length)
+    options = { ...options, requireRequestCoverage: true };
   const chunks = knowledge.evidence ?? [];
   const bounded = chunks.length <= 8 && knowledge.sources.length <= 8
     && chunks.every(chunk => chunk.text.length <= 8_000) && knowledge.context.length <= 32_000;
@@ -259,7 +263,7 @@ export function assessGamingRequestCoverage(input: GamingRetrievalPolicyInput,
       if (!chunk.evidenceUnits?.length) return gamingTermCoverage(chunk.text, requirement.terms) === 1 ? [chunk] : [];
       const supportingUnits = chunk.evidenceUnits.filter(unit => {
         const assessment = assessGamingStructuralUsability({ units: [unit], ...input, prompt: requirement.terms.join(' ') });
-        return gamingTermCoverage(unit.text, requirement.terms) === 1
+        return gamingTermCoverage(unit.text, gamingStructuralCoverageTerms(input, unit, requirement.terms)) === 1
           && (assessment.claimShape === 'none' ? assessment.hasIntactUsableUnit : assessment.claimSupported);
       });
       return supportingUnits.length ? [{ ...chunk, evidenceUnits: supportingUnits }] : [];

@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 import { resolveGamingFreshnessDisposition, isGamingAdvisoryCurrentnessOperation } from '../src/shared/gaming/gamingFreshnessDisposition.js';
-import { classifyGamingQuestionFreshness } from '../src/shared/gaming/gamingFreshnessCore.js';
+import { classifyGamingQuestionFreshness, evaluateGamingFreshness, GAMING_SOURCE_POLICY_VERSION } from '../src/shared/gaming/gamingFreshnessCore.js';
 
 describe('semantic Gaming freshness disposition', () => {
   it.each([
@@ -25,6 +25,12 @@ describe('semantic Gaming freshness disposition', () => {
     ['Recommend the latest build for a healer', 'build', 'REQUIRED'],
     ['What changed today?', 'guide', 'REQUIRED'],
     ['Suggest an early-game mage build', 'build', 'ADVISORY'],
+    ['Which stat should an early-game Samurai using an Uchigatana level first?', 'build', 'NOT_REQUIRED'],
+    ['Which attribute should a starting Sentinel raise first?', 'build', 'NOT_REQUIRED'],
+    ['How does equipment load affect rolling for this build?', 'build', 'NOT_REQUIRED'],
+    ['What does the Endurance attribute do?', 'build', 'NOT_REQUIRED'],
+    ['How do I avoid heavy rolling in Elden Ring?', 'build', 'NOT_REQUIRED'],
+    ['Which stat should an early-game Samurai level first in the latest patch?', 'build', 'REQUIRED'],
     ['How do I find the academy staff?', 'guide', 'NOT_REQUIRED'],
     ['What are basic stamina mechanics?', 'guide', 'NOT_REQUIRED'],
     ['Suggest a mage strategy', 'meta', 'ADVISORY'],
@@ -62,6 +68,65 @@ describe('semantic Gaming freshness disposition', () => {
   });
   it('requires compatibility evidence for an explicitly requested patch', () => {
     expect(resolveGamingFreshnessDisposition({ prompt: 'Recommend a mage build', mode: 'build', requestedVersion: '2.1' })).toBe('REQUIRED');
+  });
+  it.each([
+    'Keep it brief.', 'Keep it concise.', 'Keep it short.', 'Keep it detailed.',
+    'Make it brief.', 'Make it concise.', 'Make it short.', 'Make it detailed.',
+    'Please keep it spoiler-free.', 'Please make it spoiler free.', 'No-spoilers.'
+  ])('presentation instruction %s does not change basic build freshness', instruction => {
+    const input = { prompt: `How does equipment load work? ${instruction}`, mode: 'build' };
+    expect(classifyGamingQuestionFreshness(input)).toBe('stable');
+    expect(resolveGamingFreshnessDisposition(input)).toBe('NOT_REQUIRED');
+    expect(resolveGamingFreshnessDisposition({ ...input, prompt: `${input.prompt} Explain the latest patch changes.` })).toBe('REQUIRED');
+  });
+  it.each([
+    'How does equipment load work, create a caster build for me?',
+    'How does equipment load work: give me a bleed build.',
+    'Which attributes should I raise first, show me a caster loadout.',
+    'What does the Endurance attribute do: provide a rotation for me.',
+    'How does equipment load work for the caster build you should create for me?',
+    'Can you create a caster build with stats to level first?',
+    'How does equipment load work, I want a caster build?',
+    'I need a caster build, how does equipment load work?',
+    'How does equipment load work: we want a caster loadout.',
+    'We need a caster rotation, what does the Endurance attribute do?',
+    'Which attributes should I raise first, I would like a caster build.',
+    'We would like a caster loadout: how does equipment load work?'
+  ])('an independent build request retains advisory freshness: %s', prompt => {
+    const input = { prompt, mode: 'build' };
+    expect(classifyGamingQuestionFreshness(input)).toBe('patch_sensitive');
+    expect(resolveGamingFreshnessDisposition(input)).toBe('ADVISORY');
+  });
+  it.each([
+    'In Elden Ring, how does equipment load affect rolling for this build?',
+    'For my starting Samurai build, which stat should I level first?',
+    'For my caster build: what does the Endurance attribute do?',
+    'How does equipment load work, for a build with heavy armour?',
+    'What does the Endurance attribute do for a build I created?',
+    'For the caster build I want, how does equipment load work?',
+    'How does equipment load work for the caster build we need?',
+    'I would like an explanation for this build: how does equipment load work?',
+    'I want to know: how does equipment load work for this build?',
+    'How does equipment load work, give me an explanation for this build?',
+    'How does equipment load work, give me the details about my build?',
+    'How does equipment load work: provide details about my build.',
+    'How does equipment load work, show me how equipment load works for this build?',
+    'How does equipment load work: give me context for this build.'
+  ])('contextual build wording preserves basic freshness: %s', prompt => {
+    const input = { prompt, mode: 'build' };
+    expect(classifyGamingQuestionFreshness(input)).toBe('stable');
+    expect(resolveGamingFreshnessDisposition(input)).toBe('NOT_REQUIRED');
+  });
+  it('does not treat unversioned gameplay evidence as verified applicability for an independent build request', () => {
+    const now = new Date('2026-09-09T12:00:00Z');
+    const evaluated = evaluateGamingFreshness({ game: 'Prism Siege', mode: 'build',
+      question: 'How does equipment load work, create a caster build for me?', now,
+      evidence: [{ id: 'caster-guide', game: 'Prism Siege', url: 'https://synthetic.example/caster-guide',
+        policyVersion: GAMING_SOURCE_POLICY_VERSION, category: 'specialist_guide', authority: 'specialist',
+        currentness: 'none', durableAllowed: true, autoStoreAllowed: false, metadataConfidence: 'content_extracted',
+        fetchedAt: now.toISOString(), verifiedAt: now.toISOString() }] });
+    expect(evaluated).toMatchObject({ classification: 'patch_sensitive', usable: false, status: 'unverified',
+      reasons: ['CURRENT_OFFICIAL_INDEX_REQUIRED'] });
   });
   it('does not treat a request for today\'s changes as stable evidence', () => {
     expect(classifyGamingQuestionFreshness({ prompt: 'What changed today?', mode: 'guide' })).toBe('patch_sensitive');

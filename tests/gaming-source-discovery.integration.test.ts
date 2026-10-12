@@ -232,6 +232,31 @@ describe('Gaming RAG discovery integration', () => {
     expect(result.context).toContain(`[Source 1] ${discoveredUrl}`);
   });
 
+  it('rejects unrelated catalog gameplay and discovers an independent equipment-load source', async () => {
+    const independentUrl = 'https://independent-guides.example/elden-ring/equipment-load';
+    mockDiscoverGamingSources.mockResolvedValue(makeDiscoveryResult({ candidates: [makeDiscoveredCandidate(independentUrl)] }));
+    mockPageContent.mockImplementation(async (url: string) => url === independentUrl
+      ? '<html><head><title>Elden Ring equipment load guide</title></head><body><main><h1>Elden Ring equipment load</h1>'
+        + '<p>In Elden Ring, heavy rolling is caused by high equipment load. To avoid heavy rolling, unequip unused weapons '
+        + 'and replace heavy armor until the equipment screen displays medium load. Equipped weapons and armor contribute '
+        + 'to equipment load; items carried in inventory do not. Check the equipment screen again before entering combat.</p></main></body></html>'
+      : url.includes('Status+Effects')
+        ? guideEvidence('Elden Ring', 'poison status effects')
+        : guideEvidence('Elden Ring', 'southern peninsula progression'));
+
+    const result = await buildGamingRagContext(baseInput({ game: 'Elden Ring',
+      prompt: 'How do I avoid heavy rolling in Elden Ring?', spoilerMode: 'none' }));
+
+    // Built-in game/mode seeds are retrieval candidates, never acquired answer authority.
+    expect(mockPageContent).toHaveBeenCalledWith('https://eldenring.wiki.fextralife.com/Status+Effects');
+    expect(mockDiscoverGamingSources).toHaveBeenCalledWith(expect.objectContaining({ game: 'Elden Ring',
+      prompt: 'How do I avoid heavy rolling in Elden Ring?', mode: 'guide', patchSensitive: false }));
+    expect(result.discoveryTriggered).toBe(true);
+    expect(result.context).toContain(independentUrl);
+    expect(result.context).not.toMatch(/poison|southern peninsula/iu);
+    expect(result.sources.filter(isCitableGamingWebSource)).toEqual([expect.objectContaining({ url: independentUrl })]);
+  });
+
   it('treats a bare semantic version as freshness-sensitive discovery', async () => {
     const result = await buildGamingRagContext(baseInput({
       game: 'Palworld',

@@ -2993,7 +2993,9 @@ export async function buildGamingRagContext(
       });
     }
     const discoveryResult = await discoverGamingSources({
-      prompt: input.mode === 'guide' ? [input.prompt, ...buildGamingRetrievalTerms(input).focusTerms].join(' ') : input.prompt,
+      prompt: input.prompt,
+      currentArea: input.currentArea, class: input.class, constraints: input.constraints,
+      edition: input.edition, platform: input.platform, requestedVersion: input.requestedVersion,
       game,
       mode: input.mode,
       patchSensitive,

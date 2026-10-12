@@ -452,7 +452,9 @@ describe('v2 existing backend evidence selection and request coverage', () => {
     const v2 = assessGamingClearEvidence(request, selected.knowledge, { requireRequestCoverage: true });
     expect(v2.gates.claimSupport).toBe('verified');
     expect(v2.blockingFindings).toEqual([]);
-    expect(assessGamingClearEvidence(request, data).gates.claimSupport).toBe('unknown');
+    // Complete independent requests now require and admit the same proof on legacy/v1 too.
+    expect(assessGamingClearEvidence(request, data).gates.claimSupport).toBe('verified');
+    expect(assessGamingClearEvidence(request, { ...data, evidence: data.evidence!.slice(0, 1) }).gates.claimSupport).toBe('unknown');
     expect(assessGamingRequestCoverage(request, { ...data, evidence: data.evidence!.slice(0, 1) }))
       .toMatchObject({ coverageSatisfied: false, missingCoverage: ['requested topic 2'] });
     for (const missingField of ['Value', 'Unit', 'Scope']) {

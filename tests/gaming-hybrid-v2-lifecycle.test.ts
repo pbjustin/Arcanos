@@ -247,6 +247,40 @@ describe('v2 actor-bound recovery lifecycle', () => {
     expect(searches).not.toMatch(/QuietCobaltOwner|778899|Orchard|Terrace|private|account/iu);
   });
 
+  it('preserves explicit platform-only context in gameplay discovery hints', async () => {
+    const { workflow } = setup();
+    const result = await workflow.query({ ...query, game: 'Minecraft', edition: 'Bedrock Edition', platform: 'PC',
+      question: 'How do I equip a shield?' }, context);
+    expect(result.body.nextAction).toBe('search');
+    expect(result.body.discovery!.searchQueries.every(search => /Bedrock Edition PC/u.test(search))).toBe(true);
+  });
+
+  it.each([
+    ['Elden Ring', 'What should I do at the Church of Elleh before moving on?', ['church', 'elleh']],
+    ['Elden Ring', 'How do I avoid heavy rolling in Elden Ring?', ['heavy', 'rolling']],
+    ['Stardew Valley', 'How do I repair the beach bridge? Avoid spoilers.', ['repair', 'beach', 'bridge']]
+  ])('retains requested gameplay topics in v2 hints for %s: %s', async (game, question, topics) => {
+    const { workflow, generate } = setup();
+    const result = await workflow.query({ ...query, game, question, spoilerTolerance: 'none' }, context);
+    expect(result.body.nextAction).toBe('search');
+    const searches = result.body.discovery!.searchQueries;
+    for (const topic of topics) expect(searches[0]).toContain(topic);
+    expect(searches[0]).toContain(game);
+    expect(searches.every(search => search.length <= 180 && !/spoiler/iu.test(search))).toBe(true);
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it('retains class and weapon constraints as sanitized build discovery intent', async () => {
+    const { workflow, generate } = setup();
+    const result = await workflow.query({ ...query, game: 'Elden Ring', mode: 'build',
+      question: 'Which stat should I level first for early game?', class: 'Samurai',
+      constraints: ['using an Uchigatana', 'my account 778899'], spoilerTolerance: 'none' }, context);
+    const searches = result.body.discovery!.searchQueries.join(' ');
+    expect(searches).toMatch(/stat.*early.*samurai.*uchigatana/iu);
+    expect(searches).not.toMatch(/778899|account/iu);
+    expect(generate).not.toHaveBeenCalled();
+  });
+
   it('supplied-guide receipts require actor/workflow validity and selected intact redirected evidence', () => {
     const acquisitionActorHash = createHash('sha256').update(context.actorKey, 'utf8').digest('hex');
     const workflowActorHash = createHash('sha256').update(JSON.stringify(context.actorKey)).digest('hex');

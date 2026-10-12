@@ -1,0 +1,167 @@
+{
+  "version": "gaming-acceptance-fixtures/v1",
+  "provenance": "synthetic",
+  "capturedPublicResponses": false,
+  "note": "Purpose-built deterministic fixtures, not captures or claims of precise production wiki payload equivalence.",
+  "fixtures": [
+    {
+      "id": "church-elleh",
+      "file": "church-elleh.html",
+      "url": "https://guides.example.org/acceptance/church-elleh",
+      "title": "Church of Elleh",
+      "game": "Elden Ring",
+      "answer": "Rest at the Site of Grace inside Church of Elleh to replenish health and flask charges.",
+      "contentType": "text/html",
+      "status": 200,
+      "provenance": "synthetic"
+    },
+    {
+      "id": "equipment-load",
+      "file": "equipment-load.html",
+      "url": "https://guides.example.org/acceptance/equipment-load",
+      "title": "Elden Ring equipment load and rolling",
+      "game": "Elden Ring",
+      "answer": "Keep your equipped weight below 70 percent of your maximum equipment load to avoid heavy rolling.",
+      "contentType": "text/html",
+      "status": 200,
+      "provenance": "synthetic",
+      "trackingAliases": [
+        "https://guides.example.org/acceptance/equipment-load?utm_source=fixture&utm_campaign=acceptance",
+        "https://guides.example.org/acceptance/equipment-load?utm_medium=fixture&fbclid=fixture"
+      ]
+    },
+    {
+      "id": "early-stat",
+      "file": "early-stat.html",
+      "url": "https://guides.example.org/acceptance/early-stat",
+      "title": "Elden Ring early-game Samurai stat allocation",
+      "game": "Elden Ring",
+      "answer": "For early solo PvE survival with the Uchigatana, level Vigor first to increase health.",
+      "contentType": "text/html",
+      "status": 200,
+      "provenance": "synthetic"
+    },
+    {
+      "id": "weapon-upgrade",
+      "file": "weapon-upgrade.html",
+      "url": "https://guides.example.org/acceptance/weapon-upgrade",
+      "title": "Elden Ring early weapon upgrades at Church of Elleh",
+      "game": "Elden Ring",
+      "answer": "Improve an eligible weapon at the smithing table inside Church of Elleh using runes and ordinary Smithing Stones.",
+      "contentType": "text/html",
+      "status": 200,
+      "provenance": "synthetic"
+    },
+    {
+      "id": "non-elden-mechanic",
+      "file": "non-elden-mechanic.html",
+      "url": "https://guides.example.org/acceptance/non-elden-mechanic",
+      "title": "Stardew Valley first spring watering",
+      "game": "Stardew Valley",
+      "answer": "Water your parsnip seeds each morning unless rain has already watered the outdoor crops.",
+      "contentType": "text/html",
+      "status": 200,
+      "provenance": "synthetic"
+    },
+    {
+      "id": "ambiguous-location",
+      "file": "ambiguous-location.html",
+      "url": "https://guides.example.org/acceptance/ambiguous-location",
+      "title": "Church of Elleh",
+      "game": null,
+      "answer": "Rest at the Site of Grace inside Church of Elleh.",
+      "contentType": "text/html",
+      "status": 200,
+      "provenance": "synthetic"
+    },
+    {
+      "id": "wrong-game",
+      "file": "wrong-game.html",
+      "url": "https://guides.example.org/acceptance/wrong-game",
+      "title": "Diablo IV equipment-load guide",
+      "game": "Diablo IV",
+      "answer": "This answer must never be generated.",
+      "contentType": "text/html",
+      "status": 200,
+      "provenance": "synthetic"
+    },
+    {
+      "id": "dlc",
+      "file": "dlc.html",
+      "url": "https://guides.example.org/acceptance/dlc",
+      "title": "Elden Ring Shadow of the Erdtree preparation",
+      "game": "Elden Ring",
+      "answer": "This DLC-only answer must never satisfy a base-game request.",
+      "contentType": "text/html",
+      "status": 200,
+      "provenance": "synthetic"
+    },
+    {
+      "id": "unrelated-status",
+      "file": "unrelated-status.html",
+      "url": "https://guides.example.org/acceptance/unrelated-status",
+      "title": "Elden Ring poison and scarlet rot status effects",
+      "game": "Elden Ring",
+      "answer": "Treat poison buildup with an appropriate bolus.",
+      "contentType": "text/html",
+      "status": 200,
+      "provenance": "synthetic"
+    },
+    {
+      "id": "partial",
+      "file": "partial.html",
+      "url": "https://guides.example.org/acceptance/partial",
+      "title": "Elden Ring fragmented guide",
+      "game": "Elden Ring",
+      "answer": "This partial answer must not establish complete equipment-load coverage.",
+      "contentType": "text/html",
+      "status": 200,
+      "provenance": "synthetic"
+    },
+    {
+      "id": "instruction",
+      "file": "instruction.html",
+      "url": "https://guides.example.org/acceptance/instruction",
+      "title": "Elden Ring equipment load with untrusted instructions",
+      "game": "Elden Ring",
+      "answer": "Keep your equipped weight below 70 percent of your maximum equipment load to avoid heavy rolling.",
+      "contentType": "text/html",
+      "status": 200,
+      "provenance": "synthetic"
+    },
+    {
+      "id": "patch-sensitive",
+      "file": "patch-sensitive.html",
+      "url": "https://guides.example.org/acceptance/patch-sensitive",
+      "title": "Elden Ring old Uchigatana balance recommendation",
+      "game": "Elden Ring",
+      "answer": "This unverified latest-patch claim must not be generated.",
+      "contentType": "text/html",
+      "status": 200,
+      "provenance": "synthetic"
+    },
+    {
+      "id": "forbidden",
+      "file": "forbidden.html",
+      "url": "https://guides.example.org/acceptance/forbidden",
+      "title": "Access denied",
+      "game": null,
+      "answer": "",
+      "contentType": "text/html",
+      "status": 403,
+      "provenance": "synthetic"
+    },
+    {
+      "id": "timeout",
+      "file": "timeout.html",
+      "url": "https://guides.example.org/acceptance/timeout",
+      "title": "Timed-out acquisition",
+      "game": null,
+      "answer": "",
+      "contentType": "text/html",
+      "status": 200,
+      "provenance": "synthetic",
+      "timeout": true
+    }
+  ]
+}

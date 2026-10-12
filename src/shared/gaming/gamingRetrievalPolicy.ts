@@ -5,6 +5,7 @@ import { GAMING_PLAYER_DECISION_CHOICES } from './gamingPreferenceData.js';
 
 export const GAMING_RETRIEVAL_POLICY_VERSION = 'gaming-player-retrieval/v1';
 const STOP_WORDS = new Set('a an and are as at be by can do does for from how i in is it me my of on or should that the this to was what when where which who why with you about after before finishing completing completed finished defeated get go help please tell use using want would guide next now then need proceed continue current objective checkpoint step steps walkthrough explain detailed detail concise briefly spoiler spoilers spoilerfree beat defeat boss strategy game look up newly released beginner route supplied source opening simple summary summarize overview linked guides direct answer both am im m supposed stuck has have user major first'.split(' '));
+const GENERIC_RELATIONSHIP_HEADS = String.raw`effects?|mechanics?|benefits?|locations?|stats?|attributes?|strengths?|weakness(?:es)?|resistances?|requirements?|costs?|propert(?:y|ies)`;
 
 export interface GamingRetrievalPolicyInput extends GamingPlayerContext {
   game?: string;
@@ -44,6 +45,22 @@ export function gamingLexicalTokens(text: string): string[] {
   return text.normalize('NFKC').toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
 }
 
+/** Retrieval-only normalization; the original request retains every answer constraint. */
+function gamingTopicalRequest(prompt: string): string {
+  return prompt
+    // Quoted source titles identify supplied material, not requested gameplay
+    // facts or player edition. Required-source identity remains a separate gate.
+    .replace(/\b(?:the|this|a)\s+(?:(?:submitted|supplied|provided|linked|required)\s+)?(?:guide|source|article)\s+is\s+(?:titled|called|named)\s+["“][^"”\n]{1,240}["”]\s*\.?/giu, '')
+    .replace(/\b(?:while\s+)?(?:no|without|avoid(?:ing)?|light|full)\s+(?:story\s+)?spoilers?\b/giu, '')
+    .replace(/\bspoilers?\s+(?:are\s+)?(?:allowed|ok|okay|fine|permitted)\b/giu, '')
+    .replace(/\b(?:keep|make)\s+it\s+(?:short|brief|concise|detailed|spoiler[ -]?free)\b/giu, '')
+    .replace(/\bspoiler[ -]?free\b/giu, '')
+    .replace(/\b(?:before|after)\s+(?:moving\s+on|continuing|proceeding)\b/giu, '')
+    // A requested number/style of steps is not a second mechanic. Keep the
+    // topical preparation term and do not remove "safe" from named game objects.
+    .replace(/\b(?:one|a\s+single)\s+(?:safe\s+)?(?=(?:preparation\s+)?step\b)/giu, '');
+}
+
 /** State supports a specific request; it becomes the anchor only for an ambiguous request. */
 export function buildGamingRetrievalTerms(input: GamingRetrievalPolicyInput): GamingRetrievalTerms {
   const gameTerms = new Set(gamingLexicalTokens(input.game ?? ''));
@@ -53,11 +70,8 @@ export function buildGamingRetrievalTerms(input: GamingRetrievalPolicyInput): Ga
   // while non-affirmative location/completion claims remain generation context.
   // Required-guide identity is enforced separately; host/path tokens are not
   // gameplay topics. Remove URLs before sentence filtering splits their dots.
-  const question = filterGamingNonAffirmativeStateClauses(resolveGamingUserDecisionGap(input).prompt
-    .replace(/https?:\/\/[^\s)]+/giu, ''))
-    .replace(/\b(?:no|without|avoid|light|full)\s+spoilers?\b/giu, '')
-    .replace(/\bspoilers?\s+(?:are\s+)?(?:allowed|ok|okay|fine|permitted)\b/giu, '')
-    .replace(/\b(?:keep|make)\s+it\s+(?:short|brief|concise|detailed)\b/giu, '')
+  const question = filterGamingNonAffirmativeStateClauses(gamingTopicalRequest(resolveGamingUserDecisionGap(input).prompt
+    .replace(/https?:\/\/[^\s)]+/giu, '')))
     .replace(/\bon\s+(?:pc|playstation(?:\s*\d)?|ps[345]|xbox(?:\s+series\s+[xs])?|switch|console)\b/giu, '')
     .replace(/\b(?:on\s+)?(?:easy|normal|hard|nightmare)\s+(?:difficulty|mode)\b/giu, '');
   const progression = assessGamingProgressionRequest(input);
@@ -76,7 +90,17 @@ export function buildGamingRetrievalTerms(input: GamingRetrievalPolicyInput): Ga
 }
 
 export function gamingTermCoverage(text: string, terms: readonly string[]): number {
-  const available = new Set(gamingLexicalTokens(text));
+  // An explicit source-scope disclaimer is not support for the topics it lists.
+  // Keep the acquired text intact elsewhere, and retain real negative gameplay
+  // advice as well as affirmative facts beside the disclaimer.
+  const supportingText = text.replace(/\b(?:does\s+not|doesn['’]t|do\s+not|don['’]t|cannot|can['’]t|will\s+not|won['’]t)\s+(?:explain|cover|describe|document|address|support|verify|establish|prove)\b[^.!?;\n]*/giu,
+    (clause: string, offset: number) => {
+      const prefix = text.slice(Math.max(0, offset - 240), offset).split(/[.!?;\n]/u).at(-1) ?? '';
+      if (!/\b(?:guide|source|article|page|evidence|document|section|passage)\b/iu.test(prefix)) return clause;
+      const continuation = /,\s*(?:but|however|yet)\b/iu.exec(clause);
+      return continuation ? clause.slice(continuation.index) : ' ';
+    });
+  const available = new Set(gamingLexicalTokens(supportingText));
   return terms.length ? terms.filter(term => available.has(term)).length / terms.length : 0;
 }
 
@@ -109,7 +133,7 @@ export function scopeGamingEvidenceParagraphs(text: string, input: GamingRetriev
       const previousTerms = [...new Set(gamingLexicalTokens(units[next - 1]))].filter(term => !STOP_WORDS.has(term));
       const connected = gamingTermCoverage(units[next], previousTerms) > 0;
       const dependentOrAction = /^(?:(?:then|otherwise)\s+)?(?:do not|don't|cross|step|back away|open|close|turn|pull|push|wait|dodge|block|attack|equip|bring|check|inspect|follow|climb|return|keep|avoid)\b/iu.test(units[next]);
-      const evidenceLimit = /^the (?:guide|source|evidence) (?:does not|doesn't|cannot|can't)\b/iu.test(units[next]);
+      const evidenceLimit = /^(?:this|the|our|that) (?:guide|source|article|page|evidence|document|section|passage) (?:does not|doesn't|cannot|can't|will not|won't)\b/iu.test(units[next]);
       if (!connected && !dependentOrAction && !evidenceLimit) break;
       included.add(next);
     }
@@ -136,31 +160,63 @@ export interface GamingRequestRequirement { requirement: string; terms: string[]
  * broad topic is assessed by the established topic floor rather than an invented
  * universal build checklist. This bounded lexical adapter makes no semantic claim.
  */
-function gamingRequestClauses(input: GamingRetrievalPolicyInput): string[] {
-  const question = resolveGamingUserDecisionGap(input).prompt.slice(0, 8_000)
+function gamingRequestClauses(input: GamingRetrievalPolicyInput): { clauses: string[]; hasCoordinatedTarget: boolean } {
+  const question = gamingTopicalRequest(resolveGamingUserDecisionGap(input).prompt.slice(0, 8_000))
     .replace(/https?:\/\/[^\s)]+/giu, '')
+    // In "How do X, Y and Z work?", the shared predicate and an introductory
+    // regional qualifier frame the topics. Original scope/freshness gates still
+    // inspect the complete question; named work objects and personal actions stay.
+    .replace(/\bhow\s+(?:do|does)\s+(?!(?:i|we|you)\b)([^.!?\n]{1,800}?)\s+work\s*(?=[.!?]|$)/giu,
+      (clause: string, topics: string) => /,|\s+(?:and|plus|as well as)\s+/iu.test(topics)
+        ? topics.replace(/^(?:regional|region[ -]specific)\s+/iu, '') : clause)
     // Required-guide identity is enforced separately by backend intake. A
     // source-selection preamble is not an independent gameplay requirement.
     .replace(/\b(?:use|using)\s+(?:only|exclusively)\s*([.!?]|$)/giu, '$1')
     .replace(/\b(?:using|use|according to|based on|from)\s+(?:(?:this|the|a|these|my)\s+)?(?:(?:required|supplied|provided|linked)\s+)?(?:guides?|sources?|articles?)\s*(?:\([^)]*\))?\s*[:,]?\s*/giu, '')
     .replace(/\b(?:account|user|player|character)\s*(?:id|identifier|name)\s*[:=]\s*\S+/giu, '')
-    .replace(/\b(?:password|token|secret|api[ _-]?key|credential)\s*[:=]\s*\S+/giu, '');
-  const detailStart = /\b(?:including|covering|include|covers?)\s+|\bwith\s+(?=[^.!?]*(?:\band\b|;))/iu.exec(question);
-  const requested = detailStart ? question.slice(detailStart.index + detailStart[0].length) : question;
-  return requested.split(/\s+(?:and|plus|as well as)\s+|[;,]/iu)
+    .replace(/\b(?:password|token|secret|api[ _-]?key|credential)\s*[:=]\s*\S+/giu, '')
+    .replace(/^\s*(?:[-*]|\d+[.)])\s+/gmu, ';')
+    // A leading location/build context belongs to the following question. A
+    // comma here does not request both a location fact and a separate mechanic.
+    .replace(/(^|[.!?;]\s*)(\s*(?:at|in|on|as|for|with)\b[^.!?;\n]+?),\s*(?=(?:what|where|how|which|why|can|could|should|please|explain|describe|recommend)\b)/giu,
+      (_match, boundary: string, context: string) => `${boundary}${context.replace(/\s+(?:and|plus|as well as)\s+|,/giu, ' ')} `);
+  // A coordinated noun phrase such as "blade of wind and rain" requests one
+  // relationship. Keep its terms together without assuming that any bare pair
+  // ("Wind and Rain") names a single object. The marker also
+  // requires full same-passage support; the broad-topic floor cannot admit half.
+  let hasCoordinatedTarget = false;
+  const requestBoundaries = [...STOP_WORDS, 'also', 'find', 'locate', 'obtain', 'acquire', 'equip', 'craft', 'buy',
+    'upgrade', 'repair', 'activate', 'unlock', 'open', 'allocate', 'improve', 'describe', 'recommend', 'show', 'list'];
+  const targetWord = String.raw`(?!(?:${requestBoundaries.join('|')})\b)\p{L}[\p{L}\p{N}'’\-]*`;
+  // Generic relationship heads describe separate subjects, not a named object:
+  // "effects of poison and bleeding" can be supported by two intact passages.
+  const targetHeadWord = String.raw`(?!(?:${GENERIC_RELATIONSHIP_HEADS})\b)${targetWord}`;
+  const coordinatedTitle = new RegExp(`(?<![\\p{L}\\p{N}'’\\-])(?:${targetWord}\\s+){0,3}${targetHeadWord}\\s+of\\s+(?:${targetWord}\\s+){1,4}and\\s+${targetWord}(?:\\s+${targetWord}){0,3}`, 'giu');
+  const topicalQuestion = question.replace(coordinatedTitle, target => {
+    hasCoordinatedTarget = true;
+    return target.replace(/\s+and\s+/giu, ' ');
+  });
+  const detailStart = /\b(?:including|covering|include|covers?)\s+|\bwith\s+(?=[^.!?]*(?:\band\b|;))/iu.exec(topicalQuestion);
+  const requested = detailStart ? topicalQuestion.slice(detailStart.index + detailStart[0].length) : topicalQuestion;
+  const clauses = requested.split(/\s+(?:and|plus|as well as)\s+|[;,]|[.!?]\s+(?=(?:(?:also|then)\s+)?(?:what|where|how|which|why|can|could|should|please|explain|describe|recommend|show|list|tell)\b)/iu)
+    .map(clause => clause.replace(/^\s*(?:also|then)\s+(?=(?:what|where|how|which|why|can|could|should|please|explain|describe|recommend|show|list|tell)\b)/iu, ''))
     .filter(clause => buildGamingRetrievalTerms({ game: input.game, prompt: clause }).requestTerms.length > 0);
+  return { clauses, hasCoordinatedTarget };
 }
 
 /** Overflow asks for a narrower scope; it never silently omits requested facts. */
 export function gamingRequestRequirementLimitExceeded(input: GamingRetrievalPolicyInput): boolean {
-  return gamingRequestClauses(input).length > 8;
+  return gamingRequestClauses(input).clauses.length > 8;
 }
 
 export function buildGamingRequestRequirements(input: GamingRetrievalPolicyInput): GamingRequestRequirement[] {
-  const clauses = gamingRequestClauses(input);
+  const { clauses, hasCoordinatedTarget } = gamingRequestClauses(input);
   if (clauses.length > 8) return [];
   const requirements = clauses.map((clause, index) => {
-    const terms = buildGamingRetrievalTerms({ game: input.game, prompt: clause }).requestTerms
+    // Relational question framing describes the requested facts; it is not a
+    // word that an independently acquired passage must repeat verbatim.
+    const topicalClause = clause.replace(new RegExp(`\\b(?:${GENERIC_RELATIONSHIP_HEADS})\\s+of\\s+`, 'giu'), '');
+    const terms = buildGamingRetrievalTerms({ game: input.game, prompt: topicalClause }).requestTerms
       .filter(term => !['recommend', 'recommended', 'recommendation', 'recommendations', 'provide', 'describe', 'including', 'include', 'cover', 'covering'].includes(term))
       .filter(term => !/[0-9]{6,}/u.test(term));
     // This finite diagnostic vocabulary supplies labels only when explicitly
@@ -177,8 +233,8 @@ export function buildGamingRequestRequirements(input: GamingRetrievalPolicyInput
     ].find(facet => facet.words.every(word => clauseWords.has(word)));
     return { requirement: canonical?.label ?? `requested topic ${index + 1}`, terms };
   }).filter(requirement => requirement.terms.length > 0 && requirement.requirement.length > 0);
-  // Conjunctions used in a name or polite phrase must not manufacture precise gaps.
-  return requirements.length > 1 && requirements.every(requirement => requirement.terms.length >= 1)
+  // A coordinated target is one atomic request, not two independently supported facts.
+  return (requirements.length > 1 || hasCoordinatedTarget && requirements.length === 1) && requirements.every(requirement => requirement.terms.length >= 1)
     ? requirements.map((requirement, index) => ({ ...requirement,
       requirement: requirements.filter(entry => entry.requirement === requirement.requirement).length > 1
         ? `${requirement.requirement} (requested topic ${index + 1})` : requirement.requirement })) : [];

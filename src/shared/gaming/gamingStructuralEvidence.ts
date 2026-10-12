@@ -331,6 +331,14 @@ function requiredFields(claimShape: GamingStructuralClaimShape, fields: Map<stri
 // closed claim adapter; lexical retrieval retains its existing general policy.
 const REQUEST_FORMAT_TERMS = new Set('give show list find exact location locations located report reports reporting source sources record records table rows system star body planet moon site number identifier pml resource material mineral stat statistic statistics value values unit units item equipment weapon armor armour scope edition patch version mechanic change changed changes before after build skill state says according contains includes information detail details'.split(' '));
 
+/** Request verbs add no fact only after this intact unit proves the whole requested tuple. */
+export function gamingStructuralCoverageTerms(input: { prompt: string; mode?: 'guide' | 'build' | 'meta' }, unit: GamingEvidenceUnit,
+  terms: readonly string[]): readonly string[] {
+  const assessment = assessGamingStructuralUsability({ ...input, units: [unit] });
+  if (assessment.claimShape === 'none' || !assessment.claimSupported) return terms;
+  return terms.filter(term => !(REQUEST_FORMAT_TERMS.has(term) && /^(?:give|show|list|find|report|reports|reporting)$/u.test(term)));
+}
+
 /** Explicit request labels bind whole values to fields, including identifiers absent from the source. */
 function requestedFieldBindings(prompt: string, claimShape: GamingStructuralClaimShape): Map<string, Set<string>> {
   const labelPattern = 'star system|system|body|planet|moon|site number|site identifier|site|resource|material|mineral|item|equipment|weapon|statistic|stat|mechanic|patch|edition|build|skill';

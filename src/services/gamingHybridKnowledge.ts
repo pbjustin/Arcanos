@@ -29,6 +29,7 @@ import { buildStoredGamingKnowledgeContext, type GamingSourceGatewayContext } fr
 import { formatStoredGamingEvidence, type GamingStoredKnowledgeContext } from './gamingStoredKnowledge.js';
 import type { runGameplayPipeline, GamingPipelineInput } from './gamingPipeline.js';
 import { getGamingWebContextMaxChars } from './gamingConfig.js';
+import { buildGamingDiscoveryQuery, sanitizeGamingDiscoveryCandidateUrl } from './gamingSourceDiscovery.js';
 import { evaluateGamingHybridCandidates, createApprovedGamingHybridIngestion, selectGamingHybridEvidence,
   selectGamingHybridAcceptedEvidence, assertGamingHybridEvidenceMembership, type GamingHybridAcceptedCandidate } from './gamingHybridCandidates.js';
 
@@ -68,6 +69,12 @@ type Workflow = {
   evidenceExpiresAt?: number;
 };
 const hash = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+/** Account for the admitted acquisition URL, so tracking aliases cannot spend recovery on the same source. */
+function candidateSubmissionUrl(value: string): string {
+  const admission = sanitizeGamingDiscoveryCandidateUrl(value);
+  // Rejected input keeps its original identity and must still reach normal candidate rejection.
+  return normalizeGamingHybridCandidateUrl(!admission.rejected && admission.url ? admission.url : value);
+}
 const normalizedBudgetValue = (value: unknown): unknown => typeof value === 'string'
   ? value.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLowerCase()
   : Array.isArray(value) ? value.map(normalizedBudgetValue) : value;
@@ -227,7 +234,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     const clean = (value: string) => redactString(value).replace(/https?:\/\/\S+|\S+@\S+|\b\d{7,}\b|\[[^\]]*REDACT[^\]]*\]/giu, ' ')
       .replace(/[^\p{L}\p{N} .:'-]/gu, ' ').replace(/\s+/gu, ' ').trim();
     const input = workflow.input;
-    // Deliberately omit free-form constraints and unrelated conversation/player fields.
+    // Search only bounded gameplay intent; unrelated conversation/player fields stay local.
     const v2 = input.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION;
     const scope = [input.game, input.edition, input.platform, ...(v2 ? [] : [input.region]), input.requestedVersion].filter(Boolean).map(value => clean(value!)).join(' ');
     if (type === 'currentness_verification') {
@@ -238,12 +245,16 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
           ? [`${scope} official current season index`.slice(0, 350), `${scope} official season update patch build history`.slice(0, 350)]
           : [`${scope} official latest patch notes update index`.slice(0, 350), `${scope} official current patch build hotfix history`.slice(0, 350)];
     }
-    const safeTopics = ['weapon', 'configuration', 'stats', 'allocation', 'armor', 'equipment', 'skills', 'abilities',
-      'strategy', 'boss', 'quest', 'location', 'item', 'objective', 'resources', 'progression', 'build', 'rotation', 'upgrade', 'route'];
-    const assessedFocus = gapAssessmentStatus === 'assessed' && gaps.length ? gaps.join(' ') : input.question;
-    const focus = v2 ? safeTopics.filter(topic => new RegExp(`\\b${topic}s?\\b`, 'iu').test(assessedFocus)).join(' ')
-      : clean(input.question).slice(0, 180);
-    return [`${scope} ${focus}`.slice(0, 350), `${scope} gameplay guide ${focus}`.slice(0, 350)];
+    // Public gap labels are intentionally generic diagnostics. They cannot replace
+    // the requested location/mechanic as search intent, even on a recovery round.
+    const query = buildGamingDiscoveryQuery({ game: clean(input.game), prompt: redactString(input.question),
+      mode: workflow.pipeline.mode, edition: input.edition, platform: input.platform, requestedVersion: input.requestedVersion,
+      currentArea: workflow.pipeline.currentArea, class: workflow.pipeline.class, constraints: workflow.pipeline.constraints });
+    const focus = query.replace(/\s+(?:guide|build)$/u, '');
+    const gapFocus = gapAssessmentStatus === 'assessed' ? gaps.filter(gap => !/^requested topic\b/iu.test(gap)).join(' ') : '';
+    const secondary = buildGamingDiscoveryQuery({ game: clean(input.game), mode: 'guide',
+      prompt: `${gapFocus} ${focus}`, edition: input.edition, platform: input.platform, requestedVersion: input.requestedVersion });
+    return Array.from(new Set([query, secondary]));
   }
   function discovery(context: GamingHybridCallContext, workflow: Workflow, body: GamingHybridResponse,
     hasGameplayEvidence = false): GamingHybridResult {
@@ -931,7 +942,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       }
       const anticipatedDiscovery = input.discoveryType ?? workflow.pendingDiscovery;
       if (v2 && !existing && anticipatedDiscovery === 'gameplay_evidence') {
-        const urls = input.candidates.map(candidate => normalizeGamingHybridCandidateUrl(candidate.url));
+        const urls = input.candidates.map(candidate => candidateSubmissionUrl(candidate.url));
         if (urls.some(url => workflow.submittedUrls.has(url))) return failure(context, 'CANDIDATE_URL_ALREADY_SUBMITTED', 409, workflow);
         if (workflow.submittedUrls.size + new Set(urls).size > GAMING_HYBRID_V2_LIMITS.totalCandidateUrls
           || workflow.acquisitionWorkMs >= GAMING_HYBRID_V2_LIMITS.totalCandidateTimeoutMs)
@@ -964,7 +975,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
           return failure(context, 'EVIDENCE_REVALIDATION_REQUIRED', 409, workflow);
         if (v2 && attempt === 'begin') {
           if (!currentness) {
-            const urls = input.candidates.map(candidate => normalizeGamingHybridCandidateUrl(candidate.url));
+            const urls = input.candidates.map(candidate => candidateSubmissionUrl(candidate.url));
             if (urls.some(url => workflow.submittedUrls.has(url))) return failure(context, 'CANDIDATE_URL_ALREADY_SUBMITTED', 409, workflow);
             if (workflow.submittedUrls.size + new Set(urls).size > GAMING_HYBRID_V2_LIMITS.totalCandidateUrls
               || workflow.acquisitionWorkMs >= GAMING_HYBRID_V2_LIMITS.totalCandidateTimeoutMs)

@@ -12,13 +12,34 @@ export function classifyGamingQuestionFreshness(input: { prompt: string; mode?: 
     || /\b(?:has|have|did)\b.{0,60}\b(?:event|maintenance)\b.{0,30}\b(?:end(?:ed)?|finish(?:ed)?|begun|started|cancelled|canceled|postponed)\b/iu.test(prompt)
     || /\b(?:what|which)\b.{0,60}\bevent\b.{0,30}\b(?:current|active|running|live)\b/iu.test(prompt)) return 'live_status';
   if (/\b(?:season|seasonal|battle\s+pass|current\s+league)\b/iu.test(prompt)) return 'seasonal';
+  // A build label alone does not turn a basic mechanic or initial attribute
+  // decision into a claim about current balance. This only narrows the mode
+  // fallback; explicit optimization, version and live-state signals still win.
+  const basicClauses = prompt.replace(/\b(?:please\s+)?(?:keep|make)\s+it\s+(?:short|brief|concise|detailed|spoiler[ -]?free)\b/giu, '')
+    .replace(/\b(?:please\s+)?(?:no|without|avoid)[ -]+(?:story\s+)?spoilers?\b|\bspoiler[ -]?free\b/giu, '')
+    .split(/[?!.;\n]|\b(?:and|but|then|also)\b/iu).map(clause => clause.trim()).filter(Boolean);
+  const basicBuildQuestion = basicClauses.length > 0 && basicClauses.every(clause => {
+    // A comma or colon may join a mechanic question to a separate build request.
+    // Keep contextual build mentions basic, but do not waive a requested build.
+    const buildRequest = /(?:^|[,:—]|\bplease\b)\s*(?:(?:can|could|would)\s+you\s+)?(?:create|design|make|give|show|provide|assemble|plan)\b\s+(?!(?:(?:me|us)\s+)?(?:how|what|why|(?:(?:an?|the)\s+)?(?:explanation|description|details?|information|help|context))\b)(?:(?:me|us)\s+)?(?:[\p{L}\p{N}'’-]+\s+){0,6}(?:builds?|loadouts?|rotations?)\b/iu.test(clause)
+      || /\b(?:builds?|loadouts?|rotations?)\b.{0,80}\byou\s+(?:should|can|could|would)\s+(?:create|design|make|give|show|provide|assemble|plan)\b/iu.test(clause)
+      || /(?:^|[,:—])\s*(?:i|we)\s+(?:want|need|would\s+like)\s+(?!(?:to|(?:(?:an?|the)\s+)?(?:explanation|description|details?|information|help|context))\b)(?:[\p{L}\p{N}'’-]+\s+){0,6}(?:builds?|loadouts?|rotations?)\b/iu.test(clause);
+    const attribute = /\b(?:stats?|attributes?|(?:stat|attribute)\s+points?)\b/iu.test(clause);
+    const initialAllocation = attribute && /\b(?:level|raise|increase|allocate|spend|invest)\b/iu.test(clause)
+      && /\b(?:first|initial|early[ -]game|starting|beginner)\b/iu.test(clause);
+    const mechanic = attribute || /\b(?:equip(?:ment)?\s+load|encumbrance|carrying\s+capacity|stamina|roll(?:s|ing)?)\b/iu.test(clause);
+    const explanation = /\b(?:how|what)\s+(?:does|do)(?!\s+(?:i|we)\b)\b.{0,160}\b(?:work|affect|mean|do)\b/iu.test(clause);
+    const basicAction = /\bhow\s+(?:do|can|should)\s+i\s+(?:avoid|reduce|lower|manage)\b/iu.test(clause);
+    return !buildRequest && (initialAllocation || mechanic && (explanation || basicAction));
+  });
   // Strength questions occur in either order ("best build" / "which build is best").
   // Keep ordinary routes and puzzles stable unless their own question needs freshness.
-  const combatSubject = /\b(?:weapons?|builds?|class(?:es)?|loadouts?|talents?|equipment|skills?|abilit(?:y|ies)|gear|armou?r|rotations?)\b/iu.test(prompt);
+  const combatSubject = /\b(?:weapons?|builds?|class(?:es)?|loadouts?|talents?|equipment|skills?|abilit(?:y|ies)|gear|armou?r|rotations?|stats?|attributes?)\b/iu.test(prompt);
   const effectivenessOrTime = /\b(?:best|better|strong(?:est|er)?|weak(?:est|er)?|effective(?:ness)?|powerful|optimal|viab(?:le|ility)|top|good|today|currently|now)\b/iu.test(prompt);
   const recommendationIntent = /\b(?:recommend(?:ed|ation|ations)?|suggest(?:ed|ion|ions)?)\b|\bshould\b.{0,80}\b(?:choose|pick|select|use|equip|play)\b/iu.test(prompt);
-  if (input.requestedVersion || input.mode === 'meta' || input.mode === 'build' || (combatSubject && (effectivenessOrTime || recommendationIntent))
+  if (input.requestedVersion || input.mode === 'meta' || input.mode === 'build' && !basicBuildQuestion || (combatSubject && (effectivenessOrTime || recommendationIntent))
     || /\bwhat\s+(?:changed|changes)\b[^?!.\n]{0,60}\b(?:today|now|currently)\b/iu.test(prompt)
+    || /\b(?:as\s+of|historical)\b/iu.test(prompt)
     || /\b(?:patch|hotfix|balance|nerf|buff|meta|viable|latest|current(?!\s+(?:area|checkpoint|location|objective|progress|quest)\b)|right\s+now|dps|damage\s+(?:value|number)|weapon\s+effectiveness|(?:best|strongest)\s+(?:weapon|build|class|loadout|talent|equipment))\b/iu.test(prompt)) return 'patch_sensitive';
   return 'stable';
 }

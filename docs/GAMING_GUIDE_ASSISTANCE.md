@@ -31,6 +31,16 @@ identity independently. CLEAR, applicability, structure, coverage, freshness,
 Trinity and final answer validation operate on acquired evidence. Acceptance
 grants no durable storage consent. Source instructions remain rejected.
 
+Gameplay discovery queries retain bounded, sanitized question terms and material
+class, location, edition and version context. Hybrid recovery keeps the original
+gameplay intent instead of searching generic coverage labels. Legacy retrieval
+uses the same query builder while retaining its catalog-first acquisition path;
+an unrelated catalog page still cannot supply grounded evidence. In v2, harmless
+tracking aliases share the admitted acquisition URL for workflow deduplication,
+so an inaccessible page cannot consume recovery again under a different tracking
+parameter. Meaningful article selectors remain distinct; security-rejected URLs
+remain rejected.
+
 Previously, intent extraction recognized platform, version, class, role,
 difficulty, progress, constraints, and spoiler preferences, but
 `BackendQueryAgent.build()` did not forward them. Stored candidate acquisition
@@ -105,6 +115,12 @@ Explicit acquired game labels, other game titles, sequels and expansion conflict
 continue to bind before the source is admitted.
 The acquired-topic filter does not discard real game names from player requests;
 names such as Vigor and Blood retain ordinary game detection.
+An acquired definition such as `Church of Elleh is a location in Elden Ring`
+can also establish that a matching location-guide heading names a gameplay topic.
+This requires the exact topic and requested game in affirmative acquired prose;
+URL hints, loose game mentions and quoted references cannot establish it. Known
+game aliases and explicit contradictory game, sequel, expansion or edition
+declarations continue to bind.
 
 For other exact game titles, an independently acquired global `Edition: base game`
 label can qualify ordinary guide/build advice without filling the player's omitted
@@ -683,6 +699,12 @@ Explicit latest/current-patch and current-meta requests always retain strict
 verification. A player's current area or existing build is request context,
 not an explicit request for current-patch compatibility.
 
+Basic initial stat-allocation and equipment-load questions do not become
+patch-sensitive solely because the caller selected build mode. Explicit version,
+balance, optimization, seasonal and live-state requests retain their freshness
+checks, as do independent build recommendations within a multi-part request.
+This classification does not establish that any recommendation is optimal.
+
 For explicit v1 recommendations, after the one official-currentness operation is consumed, insufficient extraction,
 an unavailable official index, incomplete currentness metadata or unavailable
 revalidation can produce an advisory `answer_ready` only if independent gameplay
@@ -933,6 +955,15 @@ private reasoning is added to the approval payload.
 
 ### Evidence and final-answer placement
 
+Coverage decomposition keeps a leading location or class preamble attached to
+its question and excludes spoiler/style instructions from gameplay requirements.
+Independent requests joined by conjunctions, lists, or separate questions still
+require complete coverage. Retrieval normalization leaves the original player
+constraints intact for generation. Each requirement needs an intact attributable
+passage or complete structural record; mentioning the game alone or combining
+unrelated fragments does not establish support. Public requirement labels remain
+generic to avoid exposing player-sensitive question text.
+
 Released v2 source admission permits an intact, attributable guide contribution
 with a meaningful requested topic anchor, even when it covers less than the full
 question. Generic guide/build/facet labels alone are not topical evidence. A
@@ -1158,3 +1189,26 @@ artifacts or force reassessment. An old binary may recognize historical v1
 assessments; restoring it is not evidence that those assessments satisfy the
 current identity rules. Existing workflow IDs, TTLs, idempotency, authentication,
 source authority and release gates remain in force.
+
+### Ordinary gameplay acceptance controls
+
+Explicit independent gameplay requests and atomic named targets require complete
+selected-evidence coverage before generation on legacy, hybrid v1 and hybrid v2.
+Exceeding the existing eight-requirement bound fails closed. V1 retains its
+single discovery round and terminal stop behavior; this does not grant v2 recovery
+operations to v1. Generic relational framing such as “mechanics of” or “benefits
+of” adds no topic and does not require source prose to repeat those words.
+
+An article's explicit coverage disclaimer cannot establish the topics it says it
+does not explain. The acquired text and adjacent caveats remain intact; negative
+gameplay advice is still usable evidence. Affirmative contradictory owners of the
+same acquired article topic remain binding even when its title names the requested
+game. URL identity and frontend labels cannot resolve that contradiction.
+
+The deterministic local acceptance fixtures in
+[`gamingAcceptance`](../tests/fixtures/gamingAcceptance/README.md) are synthetic,
+not captures of production wiki content. Authenticated served tests exercise
+legacy and v1/v2 request, acquisition, selection, grounding and citation boundaries
+with isolated publisher, Trinity and semantic-review seams. Their success does
+not establish actual provider behavior, installed private-plugin compatibility,
+or resolution of the uncaptured production Church of Elleh wiki rejection.
