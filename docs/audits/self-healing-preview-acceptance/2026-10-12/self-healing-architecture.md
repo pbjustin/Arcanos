@@ -1,5 +1,44 @@
 # Self-healing ownership and data flow
 
+## Final cleanup verification — 2026-10-12, 19:50:29 UTC
+
+**CLEANUP_VERIFIED: PASS. LIVE_ACCEPTANCE_VERIFIED: BLOCKED.
+MERGE_READY: BLOCKED.**
+
+Fresh authenticated CLI and connected-tool inventories independently show
+all three assignment-created project IDs absent:
+`21a05b97-59f7-435f-8a3a-234eb722cb6c`,
+`7bd0536d-95c1-4db9-a766-6a0f49547617`, and
+`db505b48-74f0-4571-9cd3-52bc865ff2cd`.
+Both preexisting project IDs remain visible in both inventories.
+Production's four service/deployment identities and SUCCESS statuses match the
+read-only baseline. No assignment-created project, service or volume remains
+in the control-plane inventory. Accrued charges and retained-backup billing
+are unverified; deletion is not an invoice showing zero charges.
+
+The first-resource deadline `2026-10-12T19:38:25.364Z` has expired.
+This run is closed; no new resource or application deployment was started.
+The corrected automated service/volume cleanup rehearsal did not complete,
+so precreation cleanup proof for a future run remains **BLOCKED**, although
+owner dashboard cleanup and final resource absence are now verified.
+
+Inspected PR head `14bddcd58054c54ef1a052c01d0e1c0a6a94dca6` remains
+open/non-draft/unmerged. Only these five documents differ from approved
+executable `4b4e31a54b819a3597ef3ee163a46e1a7b59fc67`.
+No Railway application artifact, live incident, runtime mitigation or consumer
+execution was tested. All fourteen live scenarios remain **BLOCKED / execution
+NOT_RUN**; the seventeen required gates retain one PASS for approved-source
+regression evidence and sixteen BLOCKED for deployment/live acceptance.
+No new executable defect or application fixture was inferred from cleanup.
+Earlier incomplete-cleanup statements below are historical snapshots.
+
+The latest documentation update passes `npm run docs:check` (980 checks;
+generated indexes current), `npm run docs:links -- --local-only` (716 local
+targets;109 external network checks skipped), and `git diff --check`.
+At inspected head `14bddcd58054c54ef1a052c01d0e1c0a6a94dca6`, Docs/API
+workflow metadata shows SUCCESS; CI/CD38299353539 and PR CI38299353393 were
+still IN_PROGRESS. No final status or test total for these runs is inferred.
+
 ## Partial forced cleanup and expired staging window — 2026-10-12, 19:39:54 UTC
 
 Fresh CLI and connected inventories independently confirm absence of the
