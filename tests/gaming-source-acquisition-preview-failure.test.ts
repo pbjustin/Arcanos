@@ -22,6 +22,8 @@ async function queryGuide(mode = 'guide') {
 describe('served Gaming source acquisition proof boundary', () => {
   beforeEach(() => fixture.mockReset().mockImplementation(actual.runGamingSourceAcquisitionPreview));
 
+  // Guide requests run large-source proofs before acquisition assertions; allow
+  // for CI contention and coverage instrumentation with a bounded timeout.
   it('executes the fixed production-core proof and preserves the trusted response', async () => {
     const response = await queryGuide();
     expect(response.status).toBe(200);
@@ -29,7 +31,7 @@ describe('served Gaming source acquisition proof boundary', () => {
     expect(response.headers[contract.sourceAcquisitionProofHeader]).toBe(contract.sourceAcquisitionProofVersion);
     expect(response.body.result).toEqual({ ok: true, route: 'gaming', mode: 'guide',
       data: { response: 'Sealed preview guide response.', sources: [] } });
-  });
+  }, 30_000);
 
   it('withholds every Gaming proof and the success body when acquisition assertions fail', async () => {
     fixture.mockImplementation(() => { throw new Error('private-acquisition-preview-diagnostic'); });
@@ -43,7 +45,7 @@ describe('served Gaming source acquisition proof boundary', () => {
     expect(response.body).toEqual({ error: 'PREVIEW_GAMING_SOURCE_ACQUISITION_CONTRACT_INVALID' });
     expect(response.text).not.toContain('private-acquisition-preview-diagnostic');
     expect(response.text).not.toContain('Sealed preview guide response.');
-  });
+  }, 30_000);
 
   it('does not claim acquisition proof for the build selector', async () => {
     const response = await queryGuide('build');

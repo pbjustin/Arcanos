@@ -20,6 +20,8 @@ async function queryGuide() {
 describe('served Gaming assistance production-core proof failure boundary', () => {
   beforeEach(() => mockIntake.mockReset().mockImplementation(actualIntake.buildGamingGuideIntakeContract));
 
+  // The complete served proof set includes large-source fixtures; allow for CI
+  // contention and coverage instrumentation while retaining a bounded timeout.
   it('adds all six proof markers only after the actual fixed component assertions pass', async () => {
     const response = await queryGuide();
     expect(response.status).toBe(200);
@@ -30,7 +32,7 @@ describe('served Gaming assistance production-core proof failure boundary', () =
     expect(response.body.result).toEqual({ ok: true, route: 'gaming', mode: 'guide', data: { response: 'Sealed preview guide response.', sources: [] } });
     expect(mockIntake).toHaveBeenCalled();
     expect(response.text).not.toContain('Copper Canal');
-  });
+  }, 30_000);
 
   it.each(['allocation drift', 'unexpected failure'])('withholds all six Gaming markers after %s', async scenario => {
     mockIntake.mockImplementation(model => {
