@@ -7,8 +7,8 @@ import { extractFetchAndCleanDocument } from '../src/shared/webFetcher.js';
 
 // Synthetic publisher-shaped documents, not a captured copy of the reported wiki page.
 const neutralUrl = 'https://publisher.example/guidance';
-function acquiredDocument(title: string, prose: string, url = neutralUrl) {
-  const body = `<html><title>${title}</title><body><article><h1>${title}</h1><p>${prose}</p></article></body></html>`;
+function acquiredDocument(title: string, prose: string, url = neutralUrl, heading = title) {
+  const body = `<html><title>${title}</title><body><article><h1>${heading}</h1><p>${prose}</p></article></body></html>`;
   const extracted = extractGamingDocumentEvidence({ body, contentType: 'text/html', sourceUrl: url });
   let metadata: { title?: string; headings?: string } = {};
   const cleaned = extractFetchAndCleanDocument(url, extracted.proseBody, 'text/html', 100_000,
@@ -64,6 +64,61 @@ describe('independently acquired named location and mechanic headings', () => {
   it('does not let the requested-game URL establish ownership', () => {
     expect(assess('Church of Elleh guide', 'Rest at the church and check supplies before continuing.', request,
       'https://eldenring.wiki.gg/wiki/Church_of_Elleh').status).not.toBe('verified');
+  });
+
+  it('uses an independently acquired game-qualified primary heading with a location-only page title', () => {
+    const document = acquiredDocument('Church of Elleh', location, neutralUrl, 'Church of Elleh - Elden Ring Wiki');
+    expect(document.metadata).toEqual({ title: 'Church of Elleh', headings: 'Church of Elleh - Elden Ring Wiki' });
+    expect(assessGamingClearSourceIdentity(document, request, assessGamingSourcePolicy(neutralUrl, request.game)))
+      .toMatchObject({ status: 'verified', gameIdentityVerified: true });
+  });
+
+  it('keeps an acquired wrong-game primary heading binding despite a requested-game page title', () => {
+    const document = acquiredDocument('Church of Elleh - Elden Ring Wiki', location, neutralUrl, 'Diablo IV location guide');
+    expect(assessGamingClearSourceIdentity(document, request, assessGamingSourcePolicy(neutralUrl, request.game)))
+      .toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
+  });
+
+  it('rejects an explicit acquired wrong-game label at a requested-game wiki URL', () => {
+    expect(assess('Church of Elleh guide', `${location} Game: Diablo IV.`, request,
+      'https://eldenring.wiki.gg/wiki/Church_of_Elleh'))
+      .toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'],
+        diagnostic: { ruleId: 'gaming.identity.acquired_game_label_conflict', evidenceCategory: 'prose_metadata' } });
+  });
+
+  it('does not let game-qualified metadata hide contradictory acquired ownership of the same location', () => {
+    expect(assess('Church of Elleh - Elden Ring Wiki', `${location} Church of Elleh is a location in Copper Vale.`))
+      .toMatchObject({ status: 'conflict', gameIdentityVerified: false, reasonCodes: ['GAME_MISMATCH'],
+        diagnostic: { ruleId: 'gaming.identity.acquired_topic_ownership_conflict', evidenceCategory: 'body_scope' } });
+  });
+
+  it('keeps contradictory game-qualified location ownership binding outside Elden Ring', () => {
+    const input = { ...request, game: 'Stardew Valley', prompt: 'What should I do in Pelican Town?' };
+    expect(assess('Pelican Town - Stardew Valley Wiki',
+      'Pelican Town is a town in Stardew Valley. Check your supplies in Pelican Town before continuing. '
+      + 'Pelican Town is a town in Copper Vale.', input))
+      .toMatchObject({ status: 'conflict', gameIdentityVerified: false, reasonCodes: ['GAME_MISMATCH'],
+        diagnostic: { ruleId: 'gaming.identity.acquired_topic_ownership_conflict', evidenceCategory: 'body_scope' } });
+  });
+
+  it('still checks same-location ownership beyond the positive identity window with game-qualified metadata', () => {
+    expect(assess('Church of Elleh - Elden Ring Wiki',
+      `${location} ${'Review supplies before continuing. '.repeat(1_000)} Church of Elleh is a location in Copper Vale.`).status)
+      .not.toBe('verified');
+  });
+
+  it.each([
+    'The article quotes: "Church of Elleh is a location in Copper Vale."',
+    'Church of Elleh is not a location in Copper Vale.'
+  ])('does not turn non-affirmative topic references into contradictory ownership: %s', reference => {
+    expect(assess('Church of Elleh - Elden Ring Wiki', `${location} ${reference}`))
+      .toMatchObject({ status: 'verified', gameIdentityVerified: true });
+  });
+
+  it('keeps acquired DLC-only location applicability incompatible with an explicit base-game request', () => {
+    const input = { ...request, edition: 'base-game' };
+    expect(assess('Church of Elleh guide', `${location} This location guide requires Shadow of the Erdtree.`, input))
+      .toMatchObject({ status: 'conflict', reasonCodes: ['EDITION_CONFLICT'] });
   });
 
   it.each(['Church of Elleh', 'Church of Elleh guide'])('does not choose a game for contradictory ownership of %s', title => {

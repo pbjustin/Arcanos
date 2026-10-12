@@ -241,6 +241,13 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     acquiredTopicScopes.set(topic, [...(acquiredTopicScopes.get(topic) ?? []),
       { game: definition[2].trim(), index: topicOffset + definition.index }]);
   }
+  // A game-qualified title cannot overrule contradictory acquired ownership
+  // of its exact topic. Unrelated comparison topics do not assert this subject.
+  if ([...acquiredTopicScopes].some(([topic, scopes]) =>
+    subjects.some(subject => containsIdentity(subject.value, topic))
+    && scopes.some(scope => sourceGameMatches(scope.game))
+    && scopes.some(scope => !sourceGameMatches(scope.game))))
+    return result('conflict', 'GAME_MISMATCH', 'gaming.identity.acquired_topic_ownership_conflict', 'body_scope');
   const acquiredTopicSubject = (value: string): boolean => {
     const detected = detectGamingDocumentGame({ canonicalUrl: '', pageTitle: value });
     const subject = detected.game ?? value.replace(/\s+(?:guide|walkthrough|wiki|tips?)\s*$/iu, '');
