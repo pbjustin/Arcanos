@@ -322,10 +322,6 @@ and larger values are capped at 10,000. A full map rejects new identities with
 the existing `429` response until request-driven expiry cleanup recovers space;
 it preserves active counters. These local budgets may aggregate NAT/proxy users
 and do not replace the shared production provider-admission ceiling above.
-Explicit Express proxy trust must be scoped to the intended ingress peers:
-IPv6 prefixes such as `::/1` or `::ffff:10.0.0.0/8` also cover IPv4-mapped
-loopback peers; the mapped equivalent of IPv4 `10.0.0.0/8` is
-`::ffff:10.0.0.0/104`.
 
 The Redis decision seam has a fixed non-queuing process guard: no more than the
 smaller of 16 and the configured deployment maximum may be in flight at once.
