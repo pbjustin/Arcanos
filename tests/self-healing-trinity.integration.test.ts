@@ -143,8 +143,6 @@ let interceptRequest: (() => void) | null;
 
 beforeAll(async () => {
   process.env = isolatedEnvironment();
-  providerTraceEvents.length = 0;
-  captureProviderReceipts = false;
   const actualAuditSafe = await import('../src/services/auditSafe.js');
   jest.unstable_mockModule('@services/auditSafe.js', () => ({ ...actualAuditSafe, logAITaskLineage: jest.fn() }));
   pipeline = await import('../src/core/logic/trinityWritingPipeline.js');

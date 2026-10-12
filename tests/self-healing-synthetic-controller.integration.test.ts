@@ -385,23 +385,23 @@ describe('synthetic controller lifecycle with real diagnostics and mitigation st
 
   it.each(['inspection exception', 'missing queue summary'])(
     'S09 fails closed with %s during worker recovery verification', async (fault) => {
-    health.mockResolvedValue({
-      ...healthyWorker(), overallStatus: 'unhealthy',
-      queueSummary: { pending: 1, running: 1, stalledRunning: 1, oldestPendingJobAgeMs: 90_000 }
-    });
-    recordFailure();
-    await coordinator.runSelfHealingLoop({ trigger: 'interval' });
-    advance(31_000);
-    if (fault === 'inspection exception') {
-      health.mockRejectedValue(new Error('Synthetic worker inspection unavailable.'));
-    } else {
-      health.mockResolvedValue({ ...healthyWorker(), overallStatus: 'unhealthy', queueSummary: null });
-    }
-    recordHealthy(3);
-    const verification = await coordinator.runSelfHealingLoop({ trigger: 'interval' });
-    expect(verification.verificationResult?.outcome).not.toBe('improved');
-    expect(events.some(event => event.kind === 'success' && event.trigger === 'verification')).toBe(false);
-    expect(coordinator.getSelfHealingLoopStatus().lastHealthyObservedAt).toBeNull();
+      health.mockResolvedValue({
+        ...healthyWorker(), overallStatus: 'unhealthy',
+        queueSummary: { pending: 1, running: 1, stalledRunning: 1, oldestPendingJobAgeMs: 90_000 }
+      });
+      recordFailure();
+      await coordinator.runSelfHealingLoop({ trigger: 'interval' });
+      advance(31_000);
+      if (fault === 'inspection exception') {
+        health.mockRejectedValue(new Error('Synthetic worker inspection unavailable.'));
+      } else {
+        health.mockResolvedValue({ ...healthyWorker(), overallStatus: 'unhealthy', queueSummary: null });
+      }
+      recordHealthy(3);
+      const verification = await coordinator.runSelfHealingLoop({ trigger: 'interval' });
+      expect(verification.verificationResult?.outcome).not.toBe('improved');
+      expect(events.some(event => event.kind === 'success' && event.trigger === 'verification')).toBe(false);
+      expect(coordinator.getSelfHealingLoopStatus().lastHealthyObservedAt).toBeNull();
     }
   );
 
