@@ -1,5 +1,35 @@
 # Self-healing merge-readiness assessment
 
+## Partial forced cleanup and expired staging window — 2026-10-12, 19:39:54 UTC
+
+Fresh CLI and connected inventories independently confirm absence of the
+service/volume probe `db505b48-74f0-4571-9cd3-52bc865ff2cd` and second empty
+probe `7bd0536d-95c1-4db9-a766-6a0f49547617`. Both preexisting projects remain
+visible. Production's four recorded deployment identities and SUCCESS states
+still match the read-only baseline.
+
+The first empty probe `21a05b97-59f7-435f-8a3a-234eb722cb6c` remains in both
+inventories, with no services and scheduled deletion
+`2026-10-14T17:38:48.891Z`. No volume, credential or deployment was created in
+that probe. Overall cleanup remains **BLOCKED** pending its forced removal
+and fresh absence verification. No known billable workload or volume remains
+in the assignment inventory; actual accrued charges and platform retention
+are unverified. Earlier residual-service/volume descriptions are historical.
+
+The original two-hour deadline `2026-10-12T19:38:25.364Z` has expired.
+No new resource or application deployment will begin within this closed run.
+Automated cleanup with services/volumes lacks a completed corrected live
+rehearsal. A future run needs a new time window and proven cleanup preflight;
+the same approved executable remains
+`4b4e31a54b819a3597ef3ee163a46e1a7b59fc67`.
+
+Inspected PR head `fe532c42ed9b5a0e06118068ad000eb006a9a34f` is open,
+non-draft and unmerged, and differs from approved executable only in these five
+documents. Its Docs/API workflows passed; CI/CD38298606542 and PR CI38298606790
+were still running when checked. No terminal result for them is inferred.
+No live scenario ran: all fourteen remain **BLOCKED / execution NOT_RUN**.
+LIVE_ACCEPTANCE_VERIFIED and MERGE_READY remain **BLOCKED**.
+
 ## Owner dashboard deletion verification — 2026-10-12, 19:22–19:25 UTC
 
 After the owner reported cleanup complete, fresh CLI and connected-tool
