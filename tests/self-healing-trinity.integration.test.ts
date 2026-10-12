@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import type { TrinityRunOptions } from '../src/core/logic/trinityTypes.js';
 import { startGenerativeModelPolicyProvider } from './fixtures/generative-model-policy-provider.js';
 
 // Local ownership/delivery proof: real coordinator, mitigation state, Trinity
@@ -104,6 +105,8 @@ let credentials: typeof import('../src/services/openai/credentialProvider.js');
 let healing: typeof import('../src/services/selfImprove/selfHealingV2.js');
 let coordinator: typeof import('../src/services/selfImprove/selfHealingLoop.js');
 let legacy: typeof import('../src/services/selfImprove/controlLoop.js');
+let completions: typeof import('../src/services/openai/chatFallbacks.js');
+let resilience: typeof import('../src/services/openai/resilience.js');
 let fixture: Awaited<ReturnType<typeof startGenerativeModelPolicyProvider>>;
 
 beforeAll(async () => {
@@ -117,6 +120,8 @@ beforeAll(async () => {
   healing = await import('../src/services/selfImprove/selfHealingV2.js');
   coordinator = await import('../src/services/selfImprove/selfHealingLoop.js');
   legacy = await import('../src/services/selfImprove/controlLoop.js');
+  completions = await import('../src/services/openai/chatFallbacks.js');
+  resilience = await import('../src/services/openai/resilience.js');
 });
 
 beforeEach(async () => {
@@ -129,6 +134,7 @@ beforeEach(async () => {
   ] }).setSystemTime(clockMs);
   jest.spyOn(console, 'log').mockImplementation(() => undefined);
   jest.spyOn(console, 'error').mockImplementation(() => undefined);
+  jest.spyOn(console, 'warn').mockImplementation(() => undefined);
   fixture = await startGenerativeModelPolicyProvider({ authorityModel, maxRequests: 24 });
   process.env.OPENAI_API_KEY = fixture.apiKey;
   process.env.OPENAI_BASE_URL = fixture.baseURL;
@@ -174,7 +180,7 @@ function enqueueNormal(tier: 'simple' | 'complex' = 'simple') {
   );
 }
 
-async function runTrinity(complex = false) {
+async function runTrinity(complex = false, runOptions: TrinityRunOptions = {}) {
   const userPrompt = complex ? 'Explain the architecture of the supplied launch outline.' : prompt;
   return pipeline.runTrinityWritingPipeline({
     input: {
@@ -183,12 +189,94 @@ async function runTrinity(complex = false) {
     },
     context: {
       client: adapter.getOpenAIAdapter().getClient(), runtimeBudget: budget.createRuntimeBudgetWithLimit(20_000, 0),
-      runOptions: { disableMemoryAccess: true, disableOptionalSideEffects: true, strictUserVisibleOutput: true }
+      runOptions: { ...runOptions, disableMemoryAccess: true, disableOptionalSideEffects: true, strictUserVisibleOutput: true }
     }
   });
 }
 
 describe('canonical self-healing owner through the real Trinity consumer', () => {
+  it('keeps a healthy real consumer on its normal path without an unnecessary mitigation', async () => {
+    getRollingRequestWindow.mockImplementation(() => requestWindow(false));
+    getRequestWindowSince.mockImplementation(() => requestWindow(false));
+    const tick = await coordinator.runSelfHealingLoop({ trigger: 'interval' });
+    expect(tick).toMatchObject({ diagnosis: 'healthy', action: null, controllerDecision: null });
+
+    enqueueNormal();
+    const normal = await runTrinity();
+    expect(normal.routingStages).toEqual(['ARCANOS-INTAKE:gpt-6-luna', 'GPT5-REASONING', 'ARCANOS-FINAL']);
+    expect(fixture.requests.filter(request => request.method === 'POST')).toHaveLength(4);
+    for (const stage of Object.values(healing.getTrinitySelfHealingSnapshot())) {
+      expect(stage).toMatchObject({ activeAction: null, attempts: 0, verificationSuccesses: 0 });
+    }
+  });
+
+  it('detects one real transport timeout, bounds recovery and leaves the incident threshold unmet', async () => {
+    getRollingRequestWindow.mockImplementation(() => requestWindow(false));
+    getRequestWindowSince.mockImplementation(() => requestWindow(false));
+    const stages: Parameters<NonNullable<TrinityRunOptions['onStage']>>[0][] = [];
+    fixture.enqueue({ kind: 'timeout', holdForMs: 1_000 }, { kind: 'completion', text: answer });
+    const recovered = await runTrinity(false, {
+      resolveModelStageTimeoutMs: stage => stage === 'intake' ? 100 : 2_000,
+      onStage: stage => { stages.push(stage); }
+    });
+    expect(stages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ stage: 'intake', phase: 'failed', timedOut: true })
+    ]));
+    expect(recovered.routingStages).toContain('ARCANOS-DIRECT-ANSWER');
+    const attempts = fixture.requests.filter(request => request.method === 'POST');
+    expect(attempts.map(request => request.model)).toEqual(['gpt-6-luna', authorityModel]);
+    await fixture.waitForStreamClose(fixture.requests.indexOf(attempts[0]));
+    expect(attempts[0].streamClosed).toBe(true);
+    expect(healing.getTrinitySelfHealingSnapshot().intake).toMatchObject({
+      observations: [clockMs], attempts: 0, activeAction: null
+    });
+    expect((await coordinator.runSelfHealingLoop({ trigger: 'interval' })).action).toBeNull();
+
+    enqueueNormal();
+    expect((await runTrinity()).routingStages).toContain('GPT5-REASONING');
+    expect(fixture.requests.filter(request => request.method === 'POST')).toHaveLength(6);
+    expect(healing.getTrinitySelfHealingSnapshot().intake.attempts).toBe(0);
+    expect(resilience.getCircuitBreakerSnapshot()).toMatchObject({ state: 'CLOSED', failureCount: 0 });
+  });
+
+  it('bounds sustained real provider failures at the authorized model and fails closed before recovery', async () => {
+    getRollingRequestWindow.mockImplementation(() => requestWindow(false));
+    getRequestWindowSince.mockImplementation(() => requestWindow(false));
+    fixture.enqueue(...Array.from({ length: 5 }, () => ({ kind: 'error' as const, status: 503 as const })));
+    await expect(runTrinity()).rejects.toThrow('Synthetic bounded provider rejection.');
+    await expect(completions.createChatCompletionWithFallback(adapter.getOpenAIAdapter(), {
+      messages: [{ role: 'user', content: prompt }], max_tokens: 64, maxRetries: 0, timeoutMs: 2_000
+    })).rejects.toThrow('COMPLETE FAILURE');
+    const attempts = fixture.requests.filter(request => request.method === 'POST');
+    expect(attempts.map(request => request.model)).toEqual([
+      'gpt-6-luna', authorityModel, authorityModel, authorityModel, authorityModel
+    ]);
+    expect(attempts.every(request => request.authorizationAccepted)).toBe(true);
+    const opened = resilience.getCircuitBreakerSnapshot();
+    expect(opened).toMatchObject({ state: 'OPEN', failureCount: 5 });
+    await expect(completions.createSingleChatCompletion(adapter.getOpenAIAdapter(), {
+      messages: [{ role: 'user', content: prompt }], max_tokens: 64, maxRetries: 0
+    })).rejects.toThrow('Circuit breaker is OPEN');
+    expect(fixture.requests.filter(request => request.method === 'POST')).toHaveLength(5);
+    for (const stage of Object.values(healing.getTrinitySelfHealingSnapshot())) {
+      expect(stage).toMatchObject({ activeAction: null, attempts: 0 });
+    }
+
+    // Reset is measured with two successful local transport probes, never a live provider.
+    clockMs = opened.lastFailureTime + opened.constants.CIRCUIT_BREAKER_RESET_TIMEOUT_MS + 1;
+    jest.setSystemTime(clockMs);
+    fixture.enqueue({ kind: 'completion', text: answer }, { kind: 'completion', text: answer });
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await completions.createSingleChatCompletion(adapter.getOpenAIAdapter(), {
+        messages: [{ role: 'user', content: prompt }], max_tokens: 64, maxRetries: 0
+      });
+    }
+    expect(resilience.getCircuitBreakerSnapshot()).toMatchObject({ state: 'CLOSED', failureCount: 0 });
+    expect((await coordinator.runSelfHealingLoop({ trigger: 'interval' })).action).toBeNull();
+    enqueueNormal();
+    expect((await runTrinity()).routingStages).toContain('GPT5-REASONING');
+  });
+
   it('changes only simple Trinity decisions, avoids competing actuation and expires at the TTL', async () => {
     enqueueNormal();
     const normal = await runTrinity();
@@ -230,12 +318,16 @@ describe('canonical self-healing owner through the real Trinity consumer', () =>
   it('rolls back ineffective mitigation before another advisor call and restores the normal decision', async () => {
     expect((await coordinator.runSelfHealingLoop({ trigger: 'interval' })).action).toContain('activateTrinityMitigation:');
     const advisorCalls = runPredictiveHealingFromLoop.mock.calls.length;
+    const actionStartedAt = coordinator.getSelfHealingLoopStatus().lastActionAt;
     clockMs += 90_000;
     jest.setSystemTime(clockMs);
+    // This supplies new post-action traffic; a quiet runtime cannot prove failure or recovery.
+    getRequestWindowSince.mockReturnValue(requestWindow());
     const rollback = await coordinator.runSelfHealingLoop({ trigger: 'interval' });
     expect(rollback.action).toBe('rollbackTrinityMitigation:reasoning:enable_degraded_mode');
     expect(runPredictiveHealingFromLoop).toHaveBeenCalledTimes(advisorCalls);
     expect(healing.getTrinitySelfHealingSnapshot().reasoning.activeAction).toBeNull();
+    expect(getRequestWindowSince).toHaveBeenCalledWith(actionStartedAt, 300_000);
     enqueueNormal();
     expect((await runTrinity()).routingStages).toContain('GPT5-REASONING');
   });

@@ -55,6 +55,7 @@ export interface WorkerRepairActuatorResult {
 export interface WorkerRepairActuatorDependencies {
   fetchFn?: typeof fetch;
   resolveWorkerHelperToken?: () => string | null;
+  onDispatch?: () => void;
 }
 
 const REMOTE_WORKER_HELPER_MAX_RESPONSE_BYTES = 65_536;
@@ -323,18 +324,16 @@ function buildSafeRemoteRepairPayload(
 
 function matchEnvironmentCandidates(
   environments: RailwayProjectSummary['environments'],
+  environmentId: string | null,
   environmentName: string | null
 ): RailwayProjectSummary['environments'] {
-  if (!environmentName) {
-    return environments;
-  }
-
-  const normalizedEnvironment = environmentName.trim().toLowerCase();
-  const exactMatches = environments.filter(
-    (environment) => environment.name.trim().toLowerCase() === normalizedEnvironment
+  const normalizedEnvironment = environmentName?.trim().toLowerCase();
+  return environments.filter(
+    (environment) => (
+      (!environmentId || environment.id === environmentId)
+      && (!normalizedEnvironment || environment.name.trim().toLowerCase() === normalizedEnvironment)
+    )
   );
-
-  return exactMatches.length > 0 ? exactMatches : environments;
 }
 
 async function resolveRailwayRepairTarget(): Promise<{
@@ -348,54 +347,66 @@ async function resolveRailwayRepairTarget(): Promise<{
   const configuredServiceId = getWorkerRepairTargetServiceId();
   const targetServiceName = getWorkerRepairTargetServiceName();
   const currentProjectId = getCurrentProjectId();
+  const currentEnvironmentId = getEnv('RAILWAY_ENVIRONMENT_ID')?.trim() || null;
   const currentEnvironmentName = getCurrentEnvironmentName();
+  if (!currentProjectId || (!currentEnvironmentId && !currentEnvironmentName)) {
+    throw new Error('Railway worker repair requires explicit project and environment scope.');
+  }
+
+  const configuredEnvironmentNames = [
+    getEnv('SELF_HEAL_TARGET_ENVIRONMENT'),
+    getEnv('RAILWAY_ENVIRONMENT_NAME'),
+    getEnv('RAILWAY_ENVIRONMENT'),
+  ].map((name) => name?.trim().toLowerCase()).filter(Boolean);
+  if (new Set(configuredEnvironmentNames).size > 1) {
+    throw new Error('Railway worker repair environment scope is conflicting.');
+  }
+
   const projects = await listProjects();
-  const candidateProjects =
-    currentProjectId !== null
-      ? projects.filter((project) => project.id === currentProjectId)
-      : projects;
-
-  if (currentProjectId !== null && candidateProjects.length === 0) {
-    throw new Error(`Unable to resolve Railway project ${currentProjectId} for worker repair.`);
+  const candidateProjects = projects.filter((project) => project.id === currentProjectId);
+  if (candidateProjects.length !== 1) {
+    throw new Error('Unable to resolve one exact Railway project for worker repair.');
   }
 
+  const project = candidateProjects[0];
+  const environments = matchEnvironmentCandidates(
+    project.environments,
+    currentEnvironmentId,
+    currentEnvironmentName
+  );
+  if (environments.length !== 1) {
+    throw new Error('Unable to resolve one exact Railway environment for worker repair.');
+  }
+
+  const environment = environments[0];
   const normalizedTargetServiceName = targetServiceName.trim().toLowerCase();
-  const projectsToSearch = candidateProjects.length > 0 ? candidateProjects : projects;
-
-  for (const project of projectsToSearch) {
-    const environments = matchEnvironmentCandidates(project.environments, currentEnvironmentName);
-
-    for (const environment of environments) {
-      const service = configuredServiceId
-        ? environment.services.find((candidate) => candidate.id === configuredServiceId)
-        : environment.services.find(
-            (candidate) => candidate.name.trim().toLowerCase() === normalizedTargetServiceName
-          );
-
-      if (!service) {
-        continue;
-      }
-
-      return {
-        projectId: project.id,
-        projectName: project.name,
-        environmentId: environment.id,
-        environmentName: environment.name,
-        serviceId: service.id,
-        serviceName: service.name
-      };
-    }
+  const services = environment.services.filter((candidate) => (
+    configuredServiceId
+      ? candidate.id === configuredServiceId
+      : candidate.name.trim().toLowerCase() === normalizedTargetServiceName
+  ));
+  if (services.length !== 1) {
+    throw new Error('Unable to resolve one exact Railway worker repair target.');
   }
 
-  const targetDescriptor = configuredServiceId ?? targetServiceName;
-  throw new Error(`Unable to resolve Railway worker repair target "${targetDescriptor}".`);
+  const service = services[0];
+  return {
+    projectId: project.id,
+    projectName: project.name,
+    environmentId: environment.id,
+    environmentName: environment.name,
+    serviceId: service.id,
+    serviceName: service.name
+  };
 }
 
 async function executeRailwayServiceRepair(
   actuator: WorkerRepairActuatorStatus,
-  requestedForce: boolean
+  requestedForce: boolean,
+  dependencies: WorkerRepairActuatorDependencies
 ): Promise<WorkerRepairActuatorResult> {
   const target = await resolveRailwayRepairTarget();
+  dependencies.onDispatch?.();
   const deployment = await deployService({
     environmentId: target.environmentId,
     serviceId: target.serviceId
@@ -447,6 +458,7 @@ async function executeRemoteWorkerHelperRepair(
   try {
     let response: Response;
     try {
+      dependencies.onDispatch?.();
       response = await (dependencies.fetchFn ?? fetch)(
         requestUrl,
         {
@@ -616,6 +628,7 @@ export async function executeWorkerRepairActuator(params: {
 
   try {
     if (actuator.mode === 'local_in_process') {
+      dependencies.onDispatch?.();
       const localResult: HealWorkerRuntimeResponse = await healWorkerRuntime(requestedForce, params.source);
       return {
         mode: 'local_in_process',
@@ -633,7 +646,7 @@ export async function executeWorkerRepairActuator(params: {
     }
 
     if (actuator.mode === 'railway_service_deploy') {
-      return await executeRailwayServiceRepair(actuator, requestedForce);
+      return await executeRailwayServiceRepair(actuator, requestedForce, dependencies);
     }
 
     return await executeRemoteWorkerHelperRepair(actuator, requestedForce, dependencies);

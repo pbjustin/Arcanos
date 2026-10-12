@@ -17,6 +17,12 @@ dedicated Worker service and a web service or across replicas. The dedicated
 deployment requires separate operational acceptance of coordinator ownership and
 mitigation delivery.
 
+Dispatched reactive failures consume the same cooldown and bounded
+per-diagnosis attempt budget as successful dispatches. Rejected worker-repair
+preflight does not consume an actuator attempt. Trinity request-mitigation
+verification uses requests recorded after activation and defers when none are
+available; an empty or stale rolling window does not establish recovery.
+
 - Background loop:
   - reuses the existing self-heal loop cadence instead of introducing a second scheduler
   - polls metrics on `PREDICTIVE_HEALING_INTERVAL_MS` when set, otherwise on the `SELF_HEAL_LOOP_INTERVAL_MS` cadence

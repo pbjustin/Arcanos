@@ -2928,7 +2928,33 @@ function maybeVerifyPendingAction(
     };
   }
 
-  const verificationSnapshot = buildVerificationSnapshotForPendingAction(pending, observation);
+  let verificationObservation = observation;
+  if (pending.rollback?.kind === 'trinity') {
+    const postActionWindow = runtimeDiagnosticsService.getRequestWindowSince(
+      pending.startedAt,
+      resolveSignalWindowMs()
+    );
+    if (postActionWindow.requestCount === 0) {
+      console.log(
+        `[SELF-HEAL] verify deferred action=${pending.action} reason=awaiting_trinity_request_samples`
+      );
+      recordSelfHealEvent({
+        kind: 'noop',
+        source: 'self_heal_loop',
+        trigger: 'verification',
+        reason: 'awaiting post-action request samples before Trinity verification',
+        actionTaken: pending.action,
+        healedComponent: inferSelfHealComponentFromAction(pending.action)
+      });
+      return {
+        verificationResult: null,
+        followUpAction: null
+      };
+    }
+    verificationObservation = { ...observation, requestWindow: postActionWindow };
+  }
+
+  const verificationSnapshot = buildVerificationSnapshotForPendingAction(pending, verificationObservation);
   if (shouldDeferPromptRouteVerification(pending, verificationSnapshot)) {
     console.log(
       `[SELF-HEAL] verify deferred action=${pending.action} reason=awaiting_prompt_route_samples observed=${verificationSnapshot.promptRoute?.requestCount ?? 0} required=${resolvePromptRouteVerificationMinRequests()}`
@@ -3170,6 +3196,17 @@ async function executeActionPlan(
     };
   }
 
+  let actionDispatched = false;
+  let actionAttemptRecorded = false;
+  const recordDispatchedAttempt = () => {
+    if (!actionDispatched || actionAttemptRecorded) {
+      return;
+    }
+    recordCooldown(runtime.actionCooldowns, actionPlan.cooldownKey, actionPlan.cooldownMs);
+    recordDiagnosisAttempt(runtime, diagnosis.type);
+    actionAttemptRecorded = true;
+  };
+
   try {
     recordSelfHealEvent({
       kind: 'attempt',
@@ -3190,6 +3227,7 @@ async function executeActionPlan(
         target: actionTarget
       });
       const settings = getWorkerAutonomySettings();
+      actionDispatched = true;
       const recoverResult = await recoverStaleJobs({
         staleAfterMs: settings.staleAfterMs,
         maxRetries: settings.defaultMaxRetries
@@ -3207,8 +3245,7 @@ async function executeActionPlan(
         outcome: 'success',
         message: recoveryMessage
       });
-      recordCooldown(runtime.actionCooldowns, actionPlan.cooldownKey, actionPlan.cooldownMs);
-      recordDiagnosisAttempt(runtime, diagnosis.type);
+      recordDispatchedAttempt();
       recordActionExecuted({
         trigger,
         diagnosis,
@@ -3274,6 +3311,8 @@ async function executeActionPlan(
       const healResult = await executeWorkerRepairActuator({
         force: true,
         source: 'self_heal_loop'
+      }, {
+        onDispatch: () => { actionDispatched = true; }
       });
       const action = `healWorkerRuntime:${healResult.mode}`;
       recordWorkerReceipt({
@@ -3297,8 +3336,7 @@ async function executeActionPlan(
         statusCode: healResult.statusCode,
         message: healResult.message
       });
-      recordCooldown(runtime.actionCooldowns, actionPlan.cooldownKey, actionPlan.cooldownMs);
-      recordDiagnosisAttempt(runtime, diagnosis.type);
+      recordDispatchedAttempt();
       recordActionExecuted({
         trigger,
         diagnosis,
@@ -3363,6 +3401,7 @@ async function executeActionPlan(
         action: actionTrackingKey,
         target: actionTarget
       });
+      actionDispatched = true;
       const providerResult = await reinitializeOpenAIProvider({
         forceReload: true,
         ignoreBackoff: cooldownOverrideActive,
@@ -3384,8 +3423,7 @@ async function executeActionPlan(
             : 'failure',
         message: providerResult.reason ?? 'OpenAI provider reinitialized.'
       });
-      recordCooldown(runtime.actionCooldowns, actionPlan.cooldownKey, actionPlan.cooldownMs);
-      recordDiagnosisAttempt(runtime, diagnosis.type);
+      recordDispatchedAttempt();
       recordActionExecuted({
         trigger,
         diagnosis,
@@ -3438,6 +3476,7 @@ async function executeActionPlan(
         action: actionTrackingKey,
         target: actionTarget
       });
+      actionDispatched = true;
       const mitigationResult = activateTrinitySelfHealingMitigation({
         stage: actionPlan.stage,
         action: actionPlan.trinityAction,
@@ -3488,8 +3527,7 @@ async function executeActionPlan(
         outcome: 'success',
         message: mitigationResult.reason
       });
-      recordCooldown(runtime.actionCooldowns, actionPlan.cooldownKey, actionPlan.cooldownMs);
-      recordDiagnosisAttempt(runtime, diagnosis.type);
+      recordDispatchedAttempt();
       recordActionExecuted({
         trigger,
         diagnosis,
@@ -3541,6 +3579,7 @@ async function executeActionPlan(
         target: actionTarget
       });
       const defaultTokenLimit = Math.max(64, Math.min(256, observation.openaiHealth.defaults?.maxTokens ?? 256));
+      actionDispatched = true;
       const mitigationResult = activatePromptRouteReducedLatencyMode(diagnosis.summary, defaultTokenLimit);
       if (!mitigationResult.applied) {
         console.log(`[SELF-HEAL] action skipped diagnosis=${diagnosis.type} reason=${mitigationResult.reason}`);
@@ -3584,8 +3623,7 @@ async function executeActionPlan(
         outcome: 'success',
         message: mitigationResult.reason
       });
-      recordCooldown(runtime.actionCooldowns, actionPlan.cooldownKey, actionPlan.cooldownMs);
-      recordDiagnosisAttempt(runtime, diagnosis.type);
+      recordDispatchedAttempt();
       recordActionExecuted({
         trigger,
         diagnosis,
@@ -3634,6 +3672,7 @@ async function executeActionPlan(
         action: actionTrackingKey,
         target: actionTarget
       });
+      actionDispatched = true;
       const mitigationResult = activatePromptRouteDegradedMode(diagnosis.summary);
       if (!mitigationResult.applied) {
         console.log(`[SELF-HEAL] action skipped diagnosis=${diagnosis.type} reason=${mitigationResult.reason}`);
@@ -3677,8 +3716,7 @@ async function executeActionPlan(
         outcome: 'success',
         message: mitigationResult.reason
       });
-      recordCooldown(runtime.actionCooldowns, actionPlan.cooldownKey, actionPlan.cooldownMs);
-      recordDiagnosisAttempt(runtime, diagnosis.type);
+      recordDispatchedAttempt();
       recordActionExecuted({
         trigger,
         diagnosis,
@@ -3719,6 +3757,7 @@ async function executeActionPlan(
       };
     }
   } catch (error) {
+    recordDispatchedAttempt();
     runtime.status.lastError = resolveErrorMessage(error);
     recordActionDispatchResult({
       runtime,

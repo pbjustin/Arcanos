@@ -21,6 +21,8 @@ export type GenerativeModelPolicyProviderReply =
     usage?: { inputTokens: number; outputTokens: number };
   }
   | { kind: 'error'; status: 400 | 503; errorCode?: string }
+  /** Hold a local response until transport cancellation, with a finite backstop. */
+  | { kind: 'timeout'; holdForMs: number }
   | {
     kind: 'stream';
     text?: string;
@@ -112,6 +114,7 @@ export async function startGenerativeModelPolicyProvider({
   const replies: GenerativeModelPolicyProviderReply[] = [];
   const allowedModels = new Set([authorityModel, 'gpt-6-luna', 'gpt-6.1-sol']);
   const streamClosures = new Map<number, Promise<void>>();
+  const timeoutBackstops = new Set<ReturnType<typeof setTimeout>>();
   const nativeFetch = globalThis.fetch.bind(globalThis);
   const server = createServer((incoming, response) => {
     void (async () => {
@@ -149,6 +152,25 @@ export async function startGenerativeModelPolicyProvider({
       }
       if (reply.kind === 'completion') {
         sendJson(response, 200, responseBody(request, reply));
+        return;
+      }
+      if (reply.kind === 'timeout') {
+        if (!Number.isSafeInteger(reply.holdForMs) || reply.holdForMs < 1 || reply.holdForMs > 2_000) {
+          throw new Error('Synthetic timeout must be bounded between 1 and 2000 ms.');
+        }
+        let resolveClosed!: () => void;
+        streamClosures.set(requestIndex, new Promise<void>(resolve => { resolveClosed = resolve; }));
+        const backstop = setTimeout(() => {
+          timeoutBackstops.delete(backstop);
+          response.destroy();
+        }, reply.holdForMs);
+        timeoutBackstops.add(backstop);
+        response.once('close', () => {
+          clearTimeout(backstop);
+          timeoutBackstops.delete(backstop);
+          request.streamClosed = true;
+          resolveClosed();
+        });
         return;
       }
       if (body.stream !== true) throw new Error('Synthetic stream reply requires a streaming request.');
@@ -221,6 +243,8 @@ export async function startGenerativeModelPolicyProvider({
       }
     },
     close: async () => {
+      for (const timeout of timeoutBackstops) clearTimeout(timeout);
+      timeoutBackstops.clear();
       const closed = new Promise<void>((resolve, reject) => {
         server.close(error => error ? reject(error) : resolve());
       });

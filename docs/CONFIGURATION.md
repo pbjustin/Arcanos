@@ -1430,6 +1430,23 @@ KiB of JSON and returns only the requested-force value plus the allowlisted
 validates but discards target-controlled message text and generates a local
 `restart.message` from those booleans.
 
+### Railway worker repair scope
+
+The `railway_service_deploy` actuator requires an explicit `RAILWAY_PROJECT_ID`
+and either `RAILWAY_ENVIRONMENT_ID` or an exact configured environment name.
+Railway normally injects the project and environment IDs. Name selectors
+`SELF_HEAL_TARGET_ENVIRONMENT`, `RAILWAY_ENVIRONMENT_NAME` and
+`RAILWAY_ENVIRONMENT` must agree when present and must match the environment ID
+when one is provided. A missing, unmatched, conflicting or ambiguous scope is
+rejected before deployment; repair never falls back to another project or
+environment. The configured worker service ID, or exact worker service name,
+must resolve to one service in that environment.
+
+Explicit operator approval and service-role admission still precede dispatch.
+Target resolution does not authorize a deployment or establish preview
+isolation. A denied preflight is not an executed repair; dispatched failures
+consume the coordinator's cooldown and per-diagnosis attempt budget.
+
 ### PostgreSQL candidate limitation
 
 `src/core/db/client.ts:resolveDatabaseConnectionCandidates` currently returns
