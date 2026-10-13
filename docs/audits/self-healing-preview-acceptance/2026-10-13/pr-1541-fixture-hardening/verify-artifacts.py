@@ -18,7 +18,7 @@ for item in matrix['files']:
     observed = digest(repository / item['path'])
     committed = subprocess.check_output(['git', 'show', f"{head}:{item['path']}"], cwd=repository)
     assert observed == item['sha256'] == item['headSha256'] == hashlib.sha256(committed).hexdigest()
-for major, expected in [(17, 39), (18, 40)]:
+for major, expected in [(17, 40), (18, 41)]:
     result = next(item for item in matrix['results'] if item['postgresMajor'] == major)
     assert result['status'] == 'PASS' and result['caseCount'] == expected
     assert result['network'] == 'none' and result['publishedPorts'] == 0
@@ -35,6 +35,10 @@ for major, expected in [(17, 39), (18, 40)]:
     for case in proof['cases']:
         assert case['status'] == 'PASS' and case['databaseFingerprintUnchanged'] is True
         assert case['collectorSessionsRemaining'] == 0
+        if case['name'] == 'collector-interrupted-during-backend-pause':
+            assert 0 <= case['elapsedMs'] < 5000 and case['collectorSignal'] == 'SIGTERM'
+            assert case['injectedFault']['durationMs'] == 6500
+            assert 'receiptSha256' not in case
         if 'receiptSha256' in case:
             path = proof_path.parent / (case['name'] + '.json')
             assert digest(path) == case['receiptSha256']
@@ -46,4 +50,4 @@ for name in ['matrix.json', 'source-context.json']:
 assert len(artifacts) - 4 == 69
 print(json.dumps({'status': 'PASS', 'sourceSha': head, 'independentlyVerifiedSources': len(matrix['files']),
                   'independentlyVerifiedReceipts': len(artifacts) - 4,
-                  'collectorCases': 79, 'setupChecks': 2, 'artifacts': artifacts}, indent=2))
+                  'collectorCases': 81, 'setupChecks': 2, 'artifacts': artifacts}, indent=2))

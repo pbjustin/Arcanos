@@ -4,6 +4,7 @@ import { generateKeyPairSync, sign } from 'node:crypto';
 
 /** Generate a disposable expired or not-yet-valid certificate without changing the clock. */
 export function generateExpiredCertificate({ future = false } = {}) {
+  /** Encode one DER tag and length around the supplied byte buffers. */
   const der = (tag, ...values) => {
     const body = Buffer.concat(values);
     const octets = [];
@@ -11,7 +12,9 @@ export function generateExpiredCertificate({ future = false } = {}) {
     const length = body.length < 128 ? Buffer.from([body.length]) : Buffer.from([128 + octets.length, ...octets]);
     return Buffer.concat([Buffer.from([tag]), length, body]);
   };
+  /** Wrap encoded child values in an ASN.1 SEQUENCE. */
   const sequence = (...values) => der(0x30, ...values);
+  /** Encode an object identifier from its pre-encoded hexadecimal bytes. */
   const oid = hex => der(6, Buffer.from(hex, 'hex'));
   const pair = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const algorithm = sequence(oid('2a864886f70d01010b'), der(5));

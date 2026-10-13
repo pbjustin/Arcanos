@@ -16,6 +16,7 @@ import {
 function certificateFixture({ issuer, expired = false, notYetValid = false,
   certificateAuthority = !issuer, keyUsage = issuer && certificateAuthority ? 0xf0 : undefined,
   extendedKeyUsage, serialNumber = issuer ? 2 : 1 } = {}) {
+  /** Encode one DER tag and length around the supplied byte buffers. */
   const der = (tag, ...values) => {
     const body = Buffer.concat(values);
     const octets = [];
@@ -23,7 +24,9 @@ function certificateFixture({ issuer, expired = false, notYetValid = false,
     const length = body.length < 128 ? Buffer.from([body.length]) : Buffer.from([128 + octets.length, ...octets]);
     return Buffer.concat([Buffer.from([tag]), length, body]);
   };
+  /** Wrap encoded child values in an ASN.1 SEQUENCE. */
   const sequence = (...values) => der(0x30, ...values);
+  /** Encode an object identifier from its pre-encoded hexadecimal bytes. */
   const oid = hex => der(6, Buffer.from(hex, 'hex'));
   const pair = generateKeyPairSync('rsa', { modulusLength: 2048 });
   // DER named bit strings omit the trailing zero bits (the template's 0xf0 uses four unused bits).

@@ -1,0 +1,124 @@
+{
+  "schema": "arcanos-inspection-timing-regression/v1",
+  "observedAt": "2026-10-13T22:00:56.751613+00:00",
+  "sourceSha": "6a3b29701bda8711a754b7e2b31b26af446466a9",
+  "relevantWorktreeDirty": true,
+  "postgresVersion": "17.11 (Debian 17.11-1.pgdg12+2)",
+  "collectorSha256": "78e901fb57355eb6552080ab77d383880b0d00390e83684e5f4e4281bd531503",
+  "case": "collector-interrupted-during-backend-pause",
+  "boundMs": [
+    0,
+    5000
+  ],
+  "backendPauseMs": 6500,
+  "originalOrder": {
+    "status": "FAIL",
+    "failureCode": "collector-interrupted-during-backend-pause_FAULT_TIMEOUT_BOUND_INVALID",
+    "observedCases": 30,
+    "passedCases": 29,
+    "caseProof": {
+      "name": "collector-interrupted-during-backend-pause",
+      "status": "FAIL",
+      "cliSubprocessTerminated": true,
+      "exitCode": null,
+      "elapsedMs": 6713,
+      "metadataRequests": 2,
+      "boundedCliProcesses": 1,
+      "actualSqlStatementCount": 6,
+      "rollbackObserved": false,
+      "actualSqlStatementKinds": [
+        "BEGIN",
+        "SET",
+        "SELECT",
+        "SELECT",
+        "SELECT",
+        "SELECT"
+      ],
+      "databaseFingerprintUnchanged": true,
+      "collectorSessionsRemaining": 0,
+      "databaseTls": {
+        "authorizedServerSession": true,
+        "protocol": "TLSv1.3",
+        "cipher": "TLS_AES_256_GCM_SHA384"
+      },
+      "injectedFault": {
+        "kind": "collector-sigterm-during-backend-pause",
+        "state": "idle in transaction",
+        "queryKind": "SELECT",
+        "durationMs": 6500
+      },
+      "collectorSignal": "SIGTERM"
+    },
+    "teardown": {
+      "postgresStopped": true,
+      "fixtureDirectoryRemoved": true,
+      "pausedBackendsRemaining": 0
+    }
+  },
+  "correctedOrder": {
+    "status": "PASS",
+    "observedCases": 40,
+    "passedCases": 40,
+    "caseProof": {
+      "name": "collector-interrupted-during-backend-pause",
+      "status": "PASS",
+      "cliSubprocessTerminated": true,
+      "exitCode": null,
+      "elapsedMs": 200,
+      "metadataRequests": 2,
+      "boundedCliProcesses": 1,
+      "actualSqlStatementCount": 6,
+      "rollbackObserved": false,
+      "actualSqlStatementKinds": [
+        "BEGIN",
+        "SET",
+        "SELECT",
+        "SELECT",
+        "SELECT",
+        "SELECT"
+      ],
+      "databaseFingerprintUnchanged": true,
+      "collectorSessionsRemaining": 0,
+      "databaseTls": {
+        "authorizedServerSession": true,
+        "protocol": "TLSv1.3",
+        "cipher": "TLS_AES_256_GCM_SHA384"
+      },
+      "injectedFault": {
+        "kind": "collector-sigterm-during-backend-pause",
+        "state": "idle in transaction",
+        "queryKind": "SELECT",
+        "durationMs": 6500
+      },
+      "collectorSignal": "SIGTERM"
+    },
+    "teardown": {
+      "postgresStopped": true,
+      "fixtureDirectoryRemoved": true,
+      "pausedBackendsRemaining": 0
+    }
+  },
+  "fixtureContainersRemaining": [],
+  "checksums": [
+    {
+      "path": "timing-original-order-pg17/pg17/proof.json",
+      "sha256": "71cb6f96d9d439c86ef5658134d3bd67745269b5885e70bf76afaf5463416762"
+    },
+    {
+      "path": "timing-corrected-pg17/pg17/proof.json",
+      "sha256": "7993cbc456e1d9a4ed88e6b50deede6fd1130170b150a7145cc4a60183a906ac"
+    },
+    {
+      "path": "timing-original-order-pg17.log",
+      "sha256": "3a2dbb82bb60e5edf6ae5c835c7b3e89dfef5d2cea7dc44cf6dc6d672ae0935c"
+    },
+    {
+      "path": "timing-corrected-pg17.log",
+      "sha256": "6a3f43813bced9962d7447cf8522867664fc27e40fe484e220fa47299a6840a5"
+    },
+    {
+      "path": "timing-corrected-pg17/matrix.json",
+      "sha256": "8810866ed49d366a71f3e5516de759a00bd258c8c1d2eaeff64cf5c0a4e79bfd"
+    }
+  ]
+}

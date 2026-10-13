@@ -13,6 +13,7 @@ export function requiredFixtureCases(postgresMajor) {
     'database-tls-downgrade', 'database-connection-refused',
     'database-query-error-aborted-transaction', 'database-query-timeout',
     'database-connection-loss', 'database-cleanup-timeout', 'collector-interrupted',
+    'collector-interrupted-during-backend-pause',
     'metadata-output-limit', 'metadata-stream-timeout',
     'metadata-provider-error', 'cli-output-limit', 'cli-provider-error', 'cli-timeout',
     'trusted-main-gate', 'trusted-checkout-gate', 'exclusive-existing-receipt',
@@ -23,5 +24,6 @@ export function requiredFixtureCases(postgresMajor) {
 /** Identify cases which intentionally cannot create a new collector receipt. */
 export function fixtureCaseWritesReceipt(name) {
   return !['trusted-main-gate', 'trusted-checkout-gate', 'exclusive-existing-receipt',
-    'exclusive-symlink-receipt', 'collector-interrupted'].includes(name);
+    'exclusive-symlink-receipt', 'collector-interrupted',
+    'collector-interrupted-during-backend-pause'].includes(name);
 }

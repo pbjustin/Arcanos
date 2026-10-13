@@ -39,7 +39,9 @@ tests/railway-production-inspection-tls.test.js
 | Artifact | Purpose |
 | --- | --- |
 | [security-baseline.md](security-baseline.md) | Initial remote CI, production secret metadata limitation, and security/supply-chain review. |
+| [dependency-baseline.json](dependency-baseline.json) | Existing default-branch alert banner, unchanged dependencies, and the HTTP 403 limit on assessing alert impact. |
 | [original-reproduction.json](original-reproduction.json) | Original implementation identity, failed positive tests, and successful negative-expectation proof on both PostgreSQL versions. |
+| [timing-regression-summary.json](timing-regression-summary.json) | Real PostgreSQL control fails with the former timing order; corrected order passes independently of background cleanup. |
 | [working-matrix.json](working-matrix.json) | Source file hashes, dependency versions, image IDs, isolation, case totals and container removal. |
 | [working-pg17-proof.json](working-pg17-proof.json) | All 39 PostgreSQL 17 collector cases, separate setup rejection, real SQL/session evidence and teardown. |
 | [working-pg18-proof.json](working-pg18-proof.json) | All 40 PostgreSQL 18 collector cases, separate setup rejection, real SQL/session evidence and teardown. |
@@ -90,13 +92,13 @@ The corrected collector remains SHA-256 `78e901fb57355eb6552080ab77d383880b0d003
 | KeyUsage | digitalSignature-only ACCEPT; keyCertSign-only REJECT. |
 | Trust scope | Default Node CA set and TLS environment unchanged; an unpinned connection still rejects the previously pinned untrusted peer. |
 
-The 28 TLS test cases and 39/40 process inventories are listed by executable test names in the source and proof JSON. Related scenarios intentionally share fixtures where they exercise the same boundary. Certificate validity, exact fingerprint, fixed target and authentication checks remain enforced; no production deadline, assertion or coverage threshold was relaxed. Selected preview tests' Jest wall-clock limits were raised as explicitly described below.
+The 28 TLS test cases and final 40/41 process inventories are listed by executable test names in the source and proof JSON. The checked-in `working-*` predecessor evidence contains 39/40 cases; the additional timing regression is described below and must pass on the final committed head. Related scenarios intentionally share fixtures where they exercise the same boundary. Certificate validity, exact fingerprint, fixed target and authentication checks remain enforced; no production deadline, assertion or coverage threshold was relaxed. Selected preview tests' Jest wall-clock limits were raised as explicitly described below.
 
 ## Process lifecycle and failures
 
 Successful collection uses the real CLI, `pg` driver and PostgreSQL TLS/authentication. It issues exactly `BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY`, `SET LOCAL search_path = pg_catalog, public`, the four fixed catalog SELECTs, and `ROLLBACK`. The server's transaction-read-only state, real TLS session, inventory invariants, unchanged database fingerprint, bounded receipt, and session disappearance are independently observed.
 
-The additional 16 collector cases per version cover future/sibling certificates, malformed/bundle pins, missing/wrong credentials, target substitution, SSL refusal, connection refusal, query failure, query timeout, connection loss, cleanup timeout, and interruption. The existing metadata/CLI bounds, catalog-secret redaction, immutable receipt, source-authority and catalog-shape cases remain.
+The additional 17 collector cases per version cover future/sibling certificates, malformed/bundle pins, missing/wrong credentials, target substitution, SSL refusal, connection refusal, query failure, query timeout, connection loss, cleanup timeout, interruption, and independence of collector-exit timing from fault cleanup. The existing metadata/CLI bounds, catalog-secret redaction, immutable receipt, source-authority and catalog-shape cases remain.
 
 - The transaction-failure case revokes actual catalog SELECT permission, producing a PostgreSQL error inside the read-only transaction and an observed ROLLBACK. It does not claim that BEGIN itself was rejected.
 - Query timeout locks the actual catalog and pauses the observed collector backend for a bounded interval. It resumes the backend and proves rollback, closed sessions and unchanged data.
@@ -111,6 +113,12 @@ The disposable collector child trusts a separate generated HTTPS metadata certif
 ## Repairs and validation history
 
 No additional production collector defect was found. Missing regression coverage and artifact-integrity checks were added. JSDoc was added to touched named helpers to address the reported documentation warning without changing its gate.
+
+The first published hardening candidate, `6a3b29701bda8711a754b7e2b31b26af446466a9`, passed its 39/40 process matrices, but [refreshed review](https://github.com/pbjustin/Arcanos/pull/1541#discussion_r4264412306) found that elapsed time was measured after waiting for background fault cleanup. A 5.5/6.5-second injected pause could therefore make a prematurely exited collector appear to satisfy the timeout lower bound. Those runs remain historical evidence and are insufficient for the corrected timing claim. The repair records elapsed time immediately when the actual collector exits, then still awaits fault recovery and teardown.
+
+The new `collector-interrupted-during-backend-pause` case reaches an actual read-only transaction, pauses its disposable PostgreSQL backend for 6.5 seconds, and terminates the real collector with SIGTERM. It requires collector exit in less than five seconds, no new receipt or success marker, eventual session removal and unchanged data. A separate PostgreSQL 17 control with the former measurement order failed exactly this guard, recording 6,713 ms after 29 preceding passes. The corrected 40-case run passed and recorded actual collector exit at 200 ms despite the same 6,500 ms backend pause. Both runs retained complete teardown and unchanged data. Final inventories are 40 PostgreSQL 17 cases and 41 PostgreSQL 18 cases, plus two separate server key-mismatch setup checks, with 69 receipt files. The committed independent verifier checks the new timing evidence explicitly; the four focused suites also passed all 112 tests after this correction.
+
+The same review [identified stale audit wording](https://github.com/pbjustin/Arcanos/pull/1541#discussion_r4264412289) about the completed 79-test native rerun; the investigation now records its actual result and retained coverage limitation. Its updated docstring advisory measured 75.86% (22 of 29 supported functions). The seven remaining undocumented helpers were identified exactly: three nested DER helpers in each certificate generator and the harness proof factory. Concise JSDoc was added to those seven; the final remote review must confirm the resulting metric.
 
 The [original CodeRabbit advisory](https://github.com/pbjustin/Arcanos/pull/1541#issuecomment-6152067146) reported 50% docstring coverage against an 80% threshold, analyzing six functions across five files with two unsupported items skipped. Its status was successful despite the warning. Added documentation addresses the affected helpers; the final remote review determines the updated advisory result.
 
@@ -159,6 +167,8 @@ git diff --check
 
 For the historical reproduction, create a separate detached worktree at base SHA `f5e1d8f7266d906a1dd4adaaa10bb742be0d2e94`, install the same locked dependencies, and copy `tests/fixtures/railway-production-inspection/{cases,run-fixtures}.mjs` from initial head `2a235722a345d9ece6752f9f7eec6b19a4d2cc6a`. Run each PostgreSQL major separately: the positive signed-pin case must fail. To capture both historical rejection receipts, add only `errorCode: 'INSPECTION_READ_FAILED', stage: 'connecting', metadataCalls: 1, sql: 'none'` to the `database-issuer-signed-pin` and `database-template-signed-pin` calls in that reproduction checkout. Run both majors again and verify the original collector hash above remains unchanged. Never apply these negative expectations to the fixed PR branch.
 
+For the timing regression control, use a separate detached worktree at `6a3b29701bda8711a754b7e2b31b26af446466a9`, copy the final revision's `cases.mjs` and `run-fixtures.mjs`, and move only `const elapsedMs = Date.now() - startedAt;` below the `await currentCase.backgroundFault` statement in `executeCase`. Run `npm run test:railway-inspection:e2e -- --postgres-major 17 --output-directory /absolute/new-timing-control-directory`; it must fail the new interrupted-during-pause timing guard. The unmodified corrected runner must pass the same PostgreSQL 17 command with a different new output directory. The production collector stays byte-identical in both runs.
+
 ## Production evidence and remaining prerequisites
 
 Production certificate verification is BLOCKED. A metadata-only request for `RAILWAY_PRODUCTION_DATABASE_CERTIFICATE` returned HTTP 403; current existence, content, authenticity and freshness are unknown. No production certificate, private key or secret value was retrieved. No authenticated production handshake or inspection was performed in this task.
@@ -168,3 +178,5 @@ The earlier [production inspection](https://github.com/pbjustin/Arcanos/actions/
 Production release also requires the existing writer, migration, source-provenance and quiet-window evidence. Hold `20260830-job-events-worker-budget-v1` remains enforced. Live self-healing acceptance remains deferred. `COLLECTION_COMPLETE` supplies inventory only; compatibility, running-source and historical-continuity verdicts remain separate.
 
 Residual trust assumptions include reviewed main-branch code, locked dependencies, the authenticated origin of the operator-supplied certificate, and selected catalog text. Known-credential redaction does not prove that arbitrary unknown sensitive literals cannot exist in administrator-controlled schema definitions. These are documented boundaries, not newly demonstrated regressions. Synthetic verification may support merging this repair; it supplies no production release authorization.
+
+GitHub's push response reported 19 existing default-branch dependency alerts: two critical, 11 high and six moderate. A single read-only request for alert metadata returned HTTP 403, so their packages and applicability to this collector could not be established or cleared. The complete PR changes no dependency manifest or lockfile. This is an unresolved baseline visibility limit, not evidence that this PR introduced those vulnerabilities; it remains separate from the inspected workflow and fixture supply-chain safeguards.

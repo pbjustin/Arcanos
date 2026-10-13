@@ -12,6 +12,7 @@ import { fixtureCaseWritesReceipt, requiredFixtureCases } from './fixtures/railw
 const sourceSha = 'a'.repeat(40);
 const sourceContextSha256 = 'b'.repeat(64);
 const expected = { sourceSha, sourceContextSha256, postgresMajor: 17, relevantWorktreeDirty: false };
+/** Build complete synthetic evidence for validator tests without executing the collector. */
 const proof = (postgresMajor = 17) => ({
   schema: 'arcanos-production-inspection-e2e/v1', status: 'PASS',
   ...expected, postgresMajor, nodeVersion: 'v24.18.1', syntheticGithubAuthority: true,

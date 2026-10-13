@@ -421,8 +421,9 @@ async function executeCase(name, options = {}) {
     currentCase.backgroundFault.catch(() => currentCase.collectorProcess.kill('SIGKILL'));
   }
   const result = await execution;
-  if (currentCase.backgroundFault) await currentCase.backgroundFault;
+  // Measure the collector's exit before waiting for an injected fault to finish.
   const elapsedMs = Date.now() - startedAt;
+  if (currentCase.backgroundFault) await currentCase.backgroundFault;
   await options.afterCollector();
   check(!result.timedOut, `${name}_COLLECTOR_HARNESS_TIMEOUT`);
   check(!currentCase.serverFailure, `${name}_METADATA_FIXTURE_FAILED`);
@@ -845,6 +846,17 @@ log_disconnections=on
       check(currentCase.collectorProcess.kill('SIGTERM'), 'FIXTURE_COLLECTOR_INTERRUPT_FAILED');
       currentCase.injectedFault = { kind: 'collector-sigterm', state: 'idle in transaction' };
     }, noReceipt: true, exitCode: null, exitSignal: 'SIGTERM', sql: 'before-rollback' });
+  await runCase('collector-interrupted-during-backend-pause', { ...common,
+    afterInventory: async () => {
+      const backend = await collectorBackend(row => row.state === 'idle in transaction'
+        && normalizeSql(row.query) === normalizeSql(CATALOG_QUERIES.indexes));
+      currentCase.backgroundFault = suspendBackend(backend, 6500);
+      currentCase.interrupted = true;
+      check(currentCase.collectorProcess.kill('SIGTERM'), 'FIXTURE_COLLECTOR_INTERRUPT_FAILED');
+      currentCase.injectedFault.kind = 'collector-sigterm-during-backend-pause';
+    }, noReceipt: true, exitCode: null, exitSignal: 'SIGTERM', sql: 'before-rollback',
+    // The real child must exit promptly even though fixture teardown resumes its backend later.
+    elapsedBounds: [0, 5000] });
   await runCase('metadata-output-limit', { ...common, metadataMode: 'oversized',
     errorCode: 'METADATA_TOO_LARGE', stage: 'metadata_before', metadataCalls: 1, cliCalls: 0, sql: 'none' });
   await runCase('metadata-stream-timeout', { ...common, metadataMode: 'timeout',
