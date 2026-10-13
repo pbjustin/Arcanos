@@ -1,0 +1,21 @@
+{
+  "startedAt": "2026-10-13T19:38:22.087457+00:00",
+  "sourceHead": "2a235722a345d9ece6752f9f7eec6b19a4d2cc6a",
+  "command": "env -u GH_TOKEN -u GITHUB_TOKEN PATH=/workspace/pr1541-toolchain/node-v24.18.1-linux-x64/bin:$PATH timeout --signal=TERM --kill-after=30s 45m npm test -- --maxWorkers=1 --workerIdleMemoryLimit=768MB --json --outputFile=/workspace/pr1541-evidence/full-jest.json",
+  "node": "24.18.1",
+  "npm": "11.16.0",
+  "python": "3.12.14",
+  "jsonschema": "4.26.0",
+  "referencing": "0.37.0",
+  "coverage": true,
+  "maxWorkers": 1,
+  "workerIdleMemoryLimit": "768MB",
+  "productionCredentialEnvRemoved": [
+    "GH_TOKEN",
+    "GITHUB_TOKEN"
+  ],
+  "testSetup": "scripts/test-env.mjs clears DB/Railway/Redis env and defaults USE_MOCK_SERVICES=true, DISABLE_EXTERNAL_CALLS=true, RUN_WORKERS=false; .env.test absent",
+  "scope": "Local full root Jest validation; deliberately skipped external service suites are not production or database acceptance evidence.",
+  "priorAttempt": "full-jest-contention-attempt-summary.json",
+  "dockerConcurrency": false
+}

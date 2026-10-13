@@ -1,0 +1,398 @@
+{
+  "scope": "Actual local offline Jest skip inventory; dedicated integration lanes and Windows execution are separate evidence.",
+  "sourceReport": "skip-prerequisite-validation.json",
+  "sourceReportSha256": "ba2cfa32fe6b5e50316bccacdad882b62d36329bb837ca1123151950a5e20f90",
+  "commandExitCode": 0,
+  "passedSuites": 11,
+  "passedTests": 132,
+  "skippedSuites": 13,
+  "skippedTests": 167,
+  "baselineComparison": {
+    "expectedSkippedSuites": 13,
+    "expectedSkippedTests": 167,
+    "matches": true
+  },
+  "suites": [
+    {
+      "path": "tests/integration/action-plan-execution-migration.pg18.integration.test.ts",
+      "suiteEntirelySkipped": true,
+      "skippedTests": 1,
+      "category": "postgres",
+      "reason": "ACTION_PLAN_EXECUTION_PG18_INTEGRATION is not 1; explicit migration integration is disabled.",
+      "tests": [
+        "Phase 2E migration against explicitly configured PostgreSQL 18 applies, verifies, recovers a failed ledger, reruns, locks, drains, and compensates"
+      ]
+    },
+    {
+      "path": "tests/integration/gaming-durable-rag.pg18.integration.test.ts",
+      "suiteEntirelySkipped": true,
+      "skippedTests": 9,
+      "category": "postgres",
+      "reason": "JOB_CLAIM_FENCING_TEST_DATABASE_URL is absent; dedicated disposable PostgreSQL lane is disabled in this offline root Jest run.",
+      "tests": [
+        "durable Gaming chunk storage and retrieval on PostgreSQL 18 acquires a short structured source, passes real source CLEAR, ingests, and retrieves without its URL",
+        "durable Gaming chunk storage and retrieval on PostgreSQL 18 persists acquired official currentness through SQL JSONB and reuses only bound, unexpired proof",
+        "durable Gaming chunk storage and retrieval on PostgreSQL 18 retains JSON record provenance beyond 100K and revisions a late change through actual SQL",
+        "durable Gaming chunk storage and retrieval on PostgreSQL 18 matches stored title formatting across three games without collapsing editions or reindexing historical keys",
+        "durable Gaming chunk storage and retrieval on PostgreSQL 18 a separate edition field selects the complete trusted identity and rejects a base-only catalog",
+        "durable Gaming chunk storage and retrieval on PostgreSQL 18 retrieves late and near-end facts through real indexed SQL and bounded evidence projection",
+        "durable Gaming chunk storage and retrieval on PostgreSQL 18 keeps unchanged revisions and supersedes or reactivates complete chunk generations after a deep edit",
+        "durable Gaming chunk storage and retrieval on PostgreSQL 18 advances unchanged hybrid resource verification monotonically without changing revision or active chunks",
+        "durable Gaming chunk storage and retrieval on PostgreSQL 18 rolls back a failed new revision after supersession and retains the prior usable evidence"
+      ]
+    },
+    {
+      "path": "tests/integration/ios-device-gateway.e2e.integration.test.ts",
+      "suiteEntirelySkipped": true,
+      "skippedTests": 3,
+      "category": "ios",
+      "reason": "IOS_DEVICE_E2E is not 1; requires explicit Swift and disposable database E2E runner.",
+      "tests": [
+        "Swift client through real device Gateway and PostgreSQL executes the Swift device flow and independently verifies durable ownership and terminal states",
+        "Swift client through real device Gateway and PostgreSQL reopens shipping receipts in fresh Swift processes after real Gateway and PostgreSQL completion",
+        "Swift client through real device Gateway and PostgreSQL isolates an explicit Local Agent idempotency key between requester devices in PostgreSQL"
+      ]
+    },
+    {
+      "path": "tests/integration/backstage-notion-authority-http.pg18.integration.test.ts",
+      "suiteEntirelySkipped": true,
+      "skippedTests": 1,
+      "category": "postgres",
+      "reason": "BACKSTAGE_CANON_STORYLINE_PG18_TEST_DATABASE_URL is absent; dedicated disposable PostgreSQL lane is disabled in this offline root Jest run.",
+      "tests": [
+        "Backstage Notion authority through authenticated HTTP and PostgreSQL 18 serves nested database inventory snapshots, contains failed refreshes, and recovers through the canonical route"
+      ]
+    },
+    {
+      "path": "tests/gate-r2-projector-session.test.js",
+      "suiteEntirelySkipped": false,
+      "skippedTests": 1,
+      "category": "platform",
+      "reason": "Windows-only masked-prompt lifecycle fixture: process.platform is linux.",
+      "tests": [
+        "Gate R2 bounded masked projector session completes a no-network stop/ack session and removes its session directory"
+      ]
+    },
+    {
+      "path": "tests/gate-r1-projector-session.test.js",
+      "suiteEntirelySkipped": false,
+      "skippedTests": 1,
+      "category": "platform",
+      "reason": "Windows-only masked-prompt lifecycle fixture: process.platform is linux.",
+      "tests": [
+        "Gate R1 projector session completes a no-network stop/ack session and removes its session directory"
+      ]
+    },
+    {
+      "path": "tests/integration/public-provider-rate-limit-redis.integration.test.ts",
+      "suiteEntirelySkipped": false,
+      "skippedTests": 4,
+      "category": "redis",
+      "reason": "PUBLIC_PROVIDER_TEST_REDIS_URL and PUBLIC_PROVIDER_TEST_REDIS_CONFIRM_DISPOSABLE are absent; dedicated disposable Redis tests remain disabled.",
+      "tests": [
+        "public provider limiter against disposable Redis 7 shares restart state, isolates namespaces, and preserves global capacity on client denial",
+        "public provider limiter against disposable Redis 7 atomically admits only the configured global maximum under concurrency",
+        "public provider limiter against disposable Redis 7 uses Redis expiry so a restarted store opens the next window",
+        "public provider limiter against disposable Redis 7 rejects corrupt non-expiring counters without mutating the global counter"
+      ]
+    },
+    {
+      "path": "tests/integration/gpt-access-device-auth.pg18.integration.test.ts",
+      "suiteEntirelySkipped": true,
+      "skippedTests": 8,
+      "category": "postgres",
+      "reason": "GPT_ACCESS_DEVICE_TEST_DATABASE_URL is absent; dedicated disposable PostgreSQL lane is disabled in this offline root Jest run.",
+      "tests": [
+        "paired-device PostgreSQL transactions one concurrent pairing wins, another observes consumed challenge, one device persists",
+        "paired-device PostgreSQL transactions wrong-origin attempt rolls back without consuming challenge",
+        "paired-device PostgreSQL transactions pairing expiry while waiting on a row lock rolls back registration",
+        "paired-device PostgreSQL transactions concurrent rotation permits one replacement and invalidates the old digest",
+        "paired-device PostgreSQL transactions revocation that wins the row lock prevents credential rotation",
+        "paired-device PostgreSQL transactions credential expiry while waiting on a row lock prevents rotation",
+        "paired-device PostgreSQL transactions database constraints reject wildcard grant and wrong audience",
+        "paired-device PostgreSQL transactions rollback removes the new tables and forward migration can recreate them"
+      ]
+    },
+    {
+      "path": "tests/integration/action-plan-execution-migration.integration.test.ts",
+      "suiteEntirelySkipped": true,
+      "skippedTests": 1,
+      "category": "postgres",
+      "reason": "ACTION_PLAN_EXECUTION_MIGRATION_DATABASE_URL is absent; no confirmed disposable local migration target.",
+      "tests": [
+        "Phase 2E migration against an explicit local ephemeral PostgreSQL database applies, verifies, reruns equivalently, preserves legacy rows, and compensates"
+      ]
+    },
+    {
+      "path": "tests/integration/session-system.integration.test.ts",
+      "suiteEntirelySkipped": true,
+      "skippedTests": 1,
+      "category": "postgres",
+      "reason": "DATABASE_URL is cleared by scripts/test-env.mjs; no database-backed session target.",
+      "tests": [
+        "canonical session system integration saves, retrieves, lists, replays, and survives a restart with the exact stored token"
+      ]
+    },
+    {
+      "path": "tests/codebase-api.test.ts",
+      "suiteEntirelySkipped": true,
+      "skippedTests": 3,
+      "category": "external-server",
+      "reason": "TEST_SERVER_BASE_URL and ARCANOS_CONTROL_PLANE_ACCESS_TOKEN are absent; no external authenticated server was selected.",
+      "tests": [
+        "Codebase access API lists repository root contents",
+        "Codebase access API reads a repository file",
+        "Codebase access API prevents path traversal outside repository"
+      ]
+    },
+    {
+      "path": "tests/integration/non-gpt-terminal-retention.pg18.integration.test.ts",
+      "suiteEntirelySkipped": true,
+      "skippedTests": 10,
+      "category": "postgres",
+      "reason": "NON_GPT_TERMINAL_RETENTION_TEST_DATABASE_URL is absent; dedicated disposable PostgreSQL lane is disabled in this offline root Jest run.",
+      "tests": [
+        "non-GPT terminal retention on PostgreSQL 18 actual create, generic update, and claimed writers apply only non-GPT allowlisted fallbacks",
+        "non-GPT terminal retention on PostgreSQL 18 actual pending cancellation preserves persisted lifecycle before applying a fallback",
+        "non-GPT terminal retention on PostgreSQL 18 concurrent exact-key partition admission creates one durable job",
+        "non-GPT terminal retention on PostgreSQL 18 same target with different actor keys admits only one job",
+        "non-GPT terminal retention on PostgreSQL 18 capacity one never admits two disjoint targets concurrently",
+        "non-GPT terminal retention on PostgreSQL 18 same actor key with different fingerprints inserts once and conflicts once",
+        "non-GPT terminal retention on PostgreSQL 18 rolls back the job and first event when the second event write fails",
+        "non-GPT terminal retention on PostgreSQL 18 actual stale and stalled recovery writers retain allowlisted cancellations and exclude other types",
+        "non-GPT terminal retention on PostgreSQL 18 deletes only the oldest eligible allowlisted rows in bounded repeatable batches",
+        "non-GPT terminal retention on PostgreSQL 18 skips a row locked by another cleanup owner without exceeding the batch"
+      ]
+    },
+    {
+      "path": "tests/integration/local-agent-hardening.pg.integration.test.ts",
+      "suiteEntirelySkipped": true,
+      "skippedTests": 6,
+      "category": "postgres",
+      "reason": "LOCAL_AGENT_HARDENING_TEST_DATABASE_URL is absent; dedicated disposable PostgreSQL lane is disabled in this offline root Jest run.",
+      "tests": [
+        "local-agent hardening PostgreSQL concurrency the forward migration is repeatable",
+        "local-agent hardening PostgreSQL concurrency the verifier accepts the exact migrated binding schema",
+        "local-agent hardening PostgreSQL concurrency the verifier rejects malformed columns, constraints, and indexes",
+        "local-agent hardening PostgreSQL concurrency the verifier rejects binding-to-job drift and missing manual bindings",
+        "local-agent hardening PostgreSQL concurrency separate connections cannot commit duplicate logical bindings",
+        "local-agent hardening PostgreSQL concurrency the production timeline query isolates local-agent events by tenant"
+      ]
+    },
+    {
+      "path": "tests/integration/job-worker-budget-identity.pg18.integration.test.ts",
+      "suiteEntirelySkipped": false,
+      "skippedTests": 29,
+      "category": "postgres",
+      "reason": "JOB_WORKER_BUDGET_TEST_DATABASE_URL is absent; dedicated disposable PostgreSQL lane is disabled in this offline root Jest run.",
+      "tests": [
+        "job worker budget identity on PostgreSQL 18 preserves lease and stats identities while ignoring legacy terminal rows for hard budgets",
+        "job worker budget identity on PostgreSQL 18 does not reserve budget when no queued job is due",
+        "job worker budget identity on PostgreSQL 18 atomically caps two replicas in one stats group and recovers at the exact rolling boundary",
+        "job worker budget identity on PostgreSQL 18 atomically caps two slots from the same replica in one stats group",
+        "job worker budget identity on PostgreSQL 18 retains one claim reservation per failed attempt across requeue and reclaim",
+        "job worker budget identity on PostgreSQL 18 reports the first true recovery time when active usage exceeds a lowered limit",
+        "job worker budget identity on PostgreSQL 18 atomically caps provider attempts across replicas and replays one reservation idempotently",
+        "job worker budget identity on PostgreSQL 18 fails provider admission closed within the server lock bound without reservation or transport",
+        "job worker budget identity on PostgreSQL 18 rolls back a blocked claim within the server lock bound without consuming capacity",
+        "job worker budget identity on PostgreSQL 18 bounds the readiness budget-usage query while job_events is lock-blocked",
+        "job worker budget identity on PostgreSQL 18 rolls back a provider reservation when strict evidence insertion fails",
+        "job worker budget identity on PostgreSQL 18 rolls back a queue claim when strict budget evidence cannot be persisted",
+        "job worker budget identity on PostgreSQL 18 rejects a same-name budget CHECK with a foreign expression",
+        "job worker budget identity on PostgreSQL 18 refuses a same-name group-window index with a foreign predicate",
+        "job worker budget identity on PostgreSQL 18 refuses a same-name claim-generation index with a foreign predicate",
+        "job worker budget identity on PostgreSQL 18 refuses phase-2 rollback while only the group-window phase-1 index remains",
+        "job worker budget identity on PostgreSQL 18 refuses phase-2 rollback while only the claim-generation phase-1 index remains",
+        "job worker budget identity on PostgreSQL 18 refuses phase-2 rollback when a guarded index name is a foreign relation kind",
+        "job worker budget identity on PostgreSQL 18 refuses phase-2 rollback with an auxiliary expression index after phase 1",
+        "job worker budget identity on PostgreSQL 18 refuses phase-2 rollback with an auxiliary foreign CHECK after phase 1",
+        "job worker budget identity on PostgreSQL 18 refuses to drop budget indexes while strict evidence exists, then rolls back exactly",
+        "job worker budget identity on PostgreSQL 18 installs an exact valid partial time-window index idempotently",
+        "job worker budget identity on PostgreSQL 18 rejects a same-name index with a non-contract key collation",
+        "job worker budget identity on PostgreSQL 18 rejects a drifted database-default collation column",
+        "job worker budget identity on PostgreSQL 18 rejects a drifted generated value column",
+        "job worker budget identity on PostgreSQL 18 recovers only an exact invalid index left by an interrupted concurrent build",
+        "job worker budget identity on PostgreSQL 18 refuses invalid-index recovery for the healthy exact index",
+        "job worker budget identity on PostgreSQL 18 removes the exact empty stats identity column and keeps rollback idempotent",
+        "job worker budget identity on PostgreSQL 18 rolls back only the exact owned index and refuses populated accounting history"
+      ]
+    },
+    {
+      "path": "tests/integration/job-stale-recovery-batching.pg18.integration.test.ts",
+      "suiteEntirelySkipped": false,
+      "skippedTests": 3,
+      "category": "postgres",
+      "reason": "JOB_STALE_RECOVERY_TEST_DATABASE_URL is absent; dedicated disposable PostgreSQL lane is disabled in this offline root Jest run.",
+      "tests": [
+        "bounded stale recovery on PostgreSQL 18 recovers one oldest-first batch per call and drains overflow later",
+        "bounded stale recovery on PostgreSQL 18 preserves cancellation precedence, retry requeue, and exhausted dead-letter behavior",
+        "bounded stale recovery on PostgreSQL 18 lets overlapping global and worker-specific passes claim disjoint batches"
+      ]
+    },
+    {
+      "path": "tests/integration/job-claim-fencing.pg18.integration.test.ts",
+      "suiteEntirelySkipped": false,
+      "skippedTests": 11,
+      "category": "postgres",
+      "reason": "JOB_CLAIM_FENCING_TEST_DATABASE_URL is absent; dedicated disposable PostgreSQL lane is disabled in this offline root Jest run.",
+      "tests": [
+        "generic job claim fencing on PostgreSQL 18 installs the exact BIGINT/default/not-null/validated-check contract",
+        "generic job claim fencing on PostgreSQL 18 increments claims and rejects stale-owner heartbeat and terminal writes",
+        "generic job claim fencing on PostgreSQL 18 lets cancellation win exact-fence terminal, retry, and provider-deferral races",
+        "generic job claim fencing on PostgreSQL 18 fails closed on a wrong pre-existing column type",
+        "generic job claim fencing on PostgreSQL 18 resumes and validates an exact partial NOT VALID constraint",
+        "generic job claim fencing on PostgreSQL 18 validates an exact NOT VALID constraint and rejects negative data",
+        "generic job claim fencing on PostgreSQL 18 rejects a wrong existing constraint with the expected name",
+        "generic job claim fencing on PostgreSQL 18 rollback rejects a drifted claim-generation column type",
+        "generic job claim fencing on PostgreSQL 18 rollback rejects a drifted constraint with the expected name",
+        "generic job claim fencing on PostgreSQL 18 rollback treats a running NULL job type as unsafe",
+        "generic job claim fencing on PostgreSQL 18 rollback refuses generic running jobs but permits local-agent-only running rows"
+      ]
+    },
+    {
+      "path": "tests/integration/dag-token-accounting.pg18.integration.test.ts",
+      "suiteEntirelySkipped": true,
+      "skippedTests": 4,
+      "category": "postgres",
+      "reason": "JOB_CLAIM_FENCING_TEST_DATABASE_URL is absent; dedicated disposable PostgreSQL lane is disabled in this offline root Jest run.",
+      "tests": [
+        "DAG aggregate accounting across PostgreSQL 18 queue persistence round-trips aggregate 107 and public final usage 7, blocking descendants at cap 100",
+        "DAG aggregate accounting across PostgreSQL 18 queue persistence charges persisted failed and successful attempts 27 plus 43 exactly once before retry and descendant admission",
+        "DAG aggregate accounting across PostgreSQL 18 queue persistence preserves a malformed child usage failure and its non-retryable hint across JSONB and the result gateway",
+        "DAG aggregate accounting across PostgreSQL 18 queue persistence retains cancelled child usage and charges it once through repeated durable terminal observations"
+      ]
+    },
+    {
+      "path": "tests/integration/dag-snapshot-generation.pg18.integration.test.ts",
+      "suiteEntirelySkipped": false,
+      "skippedTests": 10,
+      "category": "postgres",
+      "reason": "DAG_SNAPSHOT_GENERATION_TEST_DATABASE_URL is absent; dedicated disposable PostgreSQL lane is disabled in this offline root Jest run.",
+      "tests": [
+        "DAG snapshot generation fencing on PostgreSQL 18 installs the exact validated BIGINT contract",
+        "DAG snapshot generation fencing on PostgreSQL 18 accepts only successively higher snapshot generations",
+        "DAG snapshot generation fencing on PostgreSQL 18 resumes an exact partial NOT VALID constraint",
+        "DAG snapshot generation fencing on PostgreSQL 18 fails forward on wrong column or named constraint drift",
+        "DAG snapshot generation fencing on PostgreSQL 18 rollback fails closed on missing constraint",
+        "DAG snapshot generation fencing on PostgreSQL 18 rollback fails closed on unvalidated constraint",
+        "DAG snapshot generation fencing on PostgreSQL 18 rollback fails closed on nullable column",
+        "DAG snapshot generation fencing on PostgreSQL 18 rollback fails closed on wrong default",
+        "DAG snapshot generation fencing on PostgreSQL 18 rollback refuses unknown or nonterminal rows",
+        "DAG snapshot generation fencing on PostgreSQL 18 rollback succeeds for known terminal rows only"
+      ]
+    },
+    {
+      "path": "tests/integration/backstage-storyline-atomicity.pg18.integration.test.ts",
+      "suiteEntirelySkipped": false,
+      "skippedTests": 21,
+      "category": "postgres",
+      "reason": "BACKSTAGE_STORYLINE_ATOMICITY_TEST_DATABASE_URL is absent; dedicated disposable PostgreSQL lane is disabled in this offline root Jest run.",
+      "tests": [
+        "Backstage storyline lifecycle on PostgreSQL 18 applies the forward migration twice without duplicating its storage contract",
+        "Backstage storyline lifecycle on PostgreSQL 18 executes the focused runtime TABLE_DEFINITIONS contract on PostgreSQL 18",
+        "Backstage storyline lifecycle on PostgreSQL 18 fails closed when only the reserved verifier constraint name exists",
+        "Backstage storyline lifecycle on PostgreSQL 18 refuses rollback after authoritative storyline content is populated",
+        "Backstage storyline lifecycle on PostgreSQL 18 rolls back a verified empty storyline installation without touching the base table",
+        "Backstage storyline lifecycle on PostgreSQL 18 serializes concurrent writers even when callers begin at repeatable read",
+        "Backstage storyline lifecycle on PostgreSQL 18 persists a non-legacy beat after the in-transaction activation check",
+        "Backstage storyline lifecycle on PostgreSQL 18 fences mixed-version writers and retains legacy beats after authoritative state",
+        "Backstage storyline lifecycle on PostgreSQL 18 retains the deterministic newest 100 across 101 tied timestamps",
+        "Backstage storyline lifecycle on PostgreSQL 18 compacts duplicate BIGINT extremes before appending without overflow",
+        "Backstage storyline lifecycle on PostgreSQL 18 retains an old canonical beat while it remains within the newest 100",
+        "Backstage storyline lifecycle on PostgreSQL 18 admits only bounded finite legacy objects during the first mutation",
+        "Backstage storyline lifecycle on PostgreSQL 18 accepts exact bounded object text and Unicode escapes without a JSONB cast",
+        "Backstage storyline lifecycle on PostgreSQL 18 rejects a root array at the database contract",
+        "Backstage storyline lifecycle on PostgreSQL 18 rejects invalid JSON at the database contract",
+        "Backstage storyline lifecycle on PostgreSQL 18 rejects one byte above the limit at the database contract",
+        "Backstage storyline lifecycle on PostgreSQL 18 rejects an infinite timestamp at the database contract",
+        "Backstage storyline lifecycle on PostgreSQL 18 rejects a missing timestamp at the database contract",
+        "Backstage storyline lifecycle on PostgreSQL 18 rejects authoritative storage with missing serialized text",
+        "Backstage storyline lifecycle on PostgreSQL 18 rejects authoritative storage with missing storage sequence",
+        "Backstage storyline lifecycle on PostgreSQL 18 fails closed when the reserved constraint name has a different expression"
+      ]
+    },
+    {
+      "path": "tests/integration/backstage-roster-atomicity.pg18.integration.test.ts",
+      "suiteEntirelySkipped": false,
+      "skippedTests": 4,
+      "category": "postgres",
+      "reason": "BACKSTAGE_ROSTER_ATOMICITY_TEST_DATABASE_URL is absent; dedicated disposable PostgreSQL lane is disabled in this offline root Jest run.",
+      "tests": [
+        "Backstage roster atomicity on PostgreSQL 18 serializes two real mutation connections and returns the complete committed roster",
+        "Backstage roster atomicity on PostgreSQL 18 rejects a delayed older latest-snapshot publication in PostgreSQL",
+        "Backstage roster atomicity on PostgreSQL 18 rejects a fail-open universe check that reuses the canonical name",
+        "Backstage roster atomicity on PostgreSQL 18 activates universe scope without deadlocking the context-read lock order"
+      ]
+    },
+    {
+      "path": "tests/integration/backstage-notion-rag-candidate-search.pg18.integration.test.ts",
+      "suiteEntirelySkipped": true,
+      "skippedTests": 8,
+      "category": "postgres",
+      "reason": "BACKSTAGE_CANON_STORYLINE_PG18_TEST_DATABASE_URL is absent; dedicated disposable PostgreSQL lane is disabled in this offline root Jest run.",
+      "tests": [
+        "Backstage Notion candidate search on PostgreSQL 18 synchronizes database-parent authority through PostgreSQL activation and continuity",
+        "Backstage Notion candidate search on PostgreSQL 18 keeps rollback repeat-safe when the sidecar table is already absent",
+        "Backstage Notion candidate search on PostgreSQL 18 rejects a legacy canonical-only activation and retains the current head",
+        "Backstage Notion candidate search on PostgreSQL 18 rejects non-finite persisted embedding norms at the PostgreSQL boundary",
+        "Backstage Notion candidate search on PostgreSQL 18 fails closed when an idempotent backfill encounters mismatched derived material",
+        "Backstage Notion candidate search on PostgreSQL 18 rolls back a sidecar batch when its bounded statement deadline expires",
+        "Backstage Notion candidate search on PostgreSQL 18 does not report completion when the active authority head rotates at final verification",
+        "Backstage Notion candidate search on PostgreSQL 18 ranks exact 2,751 and 4,096 chunk corpora with bounded native search"
+      ]
+    },
+    {
+      "path": "tests/integration/backstage-notion-partition-storage.pg18.integration.test.ts",
+      "suiteEntirelySkipped": true,
+      "skippedTests": 17,
+      "category": "postgres",
+      "reason": "BACKSTAGE_NOTION_PARTITION_PG18_TEST_DATABASE_URL is absent; dedicated disposable PostgreSQL lane is disabled in this offline root Jest run.",
+      "tests": [
+        "Backstage Notion partition storage on PostgreSQL 18 applies migration and runtime DDL repeatedly with exact array storage",
+        "Backstage Notion partition storage on PostgreSQL 18 database-validates embedding shape, finiteness, non-zero norm, and tolerance",
+        "Backstage Notion partition storage on PostgreSQL 18 ranks exact immutable manifest candidates on stock PostgreSQL without loading embeddings",
+        "Backstage Notion partition storage on PostgreSQL 18 preserves per-shard semantic recall above 2,048 total chunks",
+        "Backstage Notion partition storage on PostgreSQL 18 fences scoped candidates before ranking and keyset-pages one immutable manifest",
+        "Backstage Notion partition storage on PostgreSQL 18 seals only exact rooted ancestor paths and exact occurrence dimensions",
+        "Backstage Notion partition storage on PostgreSQL 18 rejects shard-head publication when the durable Notion authority fence is inactive",
+        "Backstage Notion partition storage on PostgreSQL 18 seals immutable evidence, fences child mutations, and activates exact sealed heads",
+        "Backstage Notion partition storage on PostgreSQL 18 rotates an active shard atomically and reassigns roots without deleting LKG history",
+        "Backstage Notion partition storage on PostgreSQL 18 runs repository registration, leases, shard activation, and manifest publication as one real cycle",
+        "Backstage Notion partition storage on PostgreSQL 18 blocks a mixed-generation overlapping archive without exposing a partial manifest",
+        "Backstage Notion partition storage on PostgreSQL 18 keeps the previous manifest active when a changed optional definition is omitted",
+        "Backstage Notion partition storage on PostgreSQL 18 reuses unchanged material while keeping an incomplete archive manifest inactive",
+        "Backstage Notion partition storage on PostgreSQL 18 compares active monolith and partition heads with bounded identity-only samples",
+        "Backstage Notion partition storage on PostgreSQL 18 preserves repeated heading occurrences and resolves manifest scope without content loads",
+        "Backstage Notion partition storage on PostgreSQL 18 empty rollback succeeds and both migration paths reinstall cleanly",
+        "Backstage Notion partition storage on PostgreSQL 18 populated rollback refuses atomically and preserves the installed schema"
+      ]
+    },
+    {
+      "path": "tests/integration/backstage-canon-storyline.pg18.integration.test.ts",
+      "suiteEntirelySkipped": false,
+      "skippedTests": 11,
+      "category": "postgres",
+      "reason": "BACKSTAGE_CANON_STORYLINE_PG18_TEST_DATABASE_URL is absent; dedicated disposable PostgreSQL lane is disabled in this offline root Jest run.",
+      "tests": [
+        "Backstage canon/storyline persistence on PostgreSQL 18 applies the Phase 1, Phase 2, and Notion RAG migrations idempotently",
+        "Backstage canon/storyline persistence on PostgreSQL 18 database-fences mixed, partial, and lower Notion index activations",
+        "Backstage canon/storyline persistence on PostgreSQL 18 fences live and stale Notion leases across real expiry and promotion",
+        "Backstage canon/storyline persistence on PostgreSQL 18 activates 2,117 complete chunks and refuses a destructive V3 rollback",
+        "Backstage canon/storyline persistence on PostgreSQL 18 normalizes UUID defaults independently of the runtime search path",
+        "Backstage canon/storyline persistence on PostgreSQL 18 trims saved-storyline leading whitespace before applying the read projection cap",
+        "Backstage canon/storyline persistence on PostgreSQL 18 exact-reads and reconstructs a maximum canon summary through PostgreSQL",
+        "Backstage canon/storyline persistence on PostgreSQL 18 serializes concurrent update CAS attempts without a revision gap",
+        "Backstage canon/storyline persistence on PostgreSQL 18 replays exact mutations without duplicate beats or revision gaps",
+        "Backstage canon/storyline persistence on PostgreSQL 18 rejects cross-universe roster, event, and supersede references",
+        "Backstage canon/storyline persistence on PostgreSQL 18 refuses populated rollback with 55000 and succeeds only after canon is empty"
+      ]
+    }
+  ],
+  "categoryTotals": {
+    "postgres": 155,
+    "ios": 3,
+    "platform": 2,
+    "redis": 4,
+    "external-server": 3
+  }
+}

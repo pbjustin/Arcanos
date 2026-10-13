@@ -3493,6 +3493,8 @@ describe('native PR contained application', () => {
     }
   });
 
+  // The guide selector runs the full large-source proof set; match the existing
+  // 30-second served-guide test bound for coverage instrumentation.
   it('serves closed, correlated, bounded public Gaming fixtures without provider execution', async () => {
     const { app } = buildApplication();
     runGamingLargeSourceFixture.mockClear();
@@ -3701,7 +3703,7 @@ describe('native PR contained application', () => {
       'trace-preview-operational',
       true
     );
-  });
+  }, 30_000);
 
   it('withholds every Gaming proof and success output when live-source assertions fail', async () => {
     const { app } = buildApplication();
@@ -3747,6 +3749,8 @@ describe('native PR contained application', () => {
     expect(failed.headers[NATIVE_PR_PREVIEW_GAMING_CONTRACT.proofHeader]).toBeUndefined();
   });
 
+  // Failure and recovery both run the real guide proof chain, including large-source work.
+  // Use the existing full-guide allowance for coverage-instrumented execution.
   it('withholds every Gaming proof and success output when the large-source assertions fail and recovers on a later request', async () => {
     const { app } = buildApplication();
     const body = {
@@ -3774,7 +3778,7 @@ describe('native PR contained application', () => {
     expect(recovered.body.result.data).toEqual({ response: 'Sealed preview guide response.', sources: [] });
     expect(recovered.headers[NATIVE_PR_PREVIEW_GAMING_CONTRACT.largeSourceProofHeader])
       .toBe('gaming-large-source/v1');
-  });
+  }, 30_000);
 
   it.each([
     ['closed payload', { action: 'query', payload: { mode: 'guide',

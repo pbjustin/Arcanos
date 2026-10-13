@@ -1,0 +1,123 @@
+{
+  "scope": "Original unchanged test budgets, quiet single worker, Node24.18.1, coverage enabled; diagnostic selection cannot satisfy unrelated all-file coverage thresholds.",
+  "commandExitCode": 1,
+  "sourceReport": "timeout-reproduction-covered.json",
+  "sourceReportSha256": "1a5bb86fa5c7f49d6460e3ea8c838d7122b3b497cbcf1cdd41beef05c7f61ac6",
+  "passedSuites": 2,
+  "failedSuites": 4,
+  "passedTests": 101,
+  "failedTests": 12,
+  "skippedTests": 0,
+  "coverageThresholdsChanged": false,
+  "testTimeoutChanged": false,
+  "failures": [
+    {
+      "path": "tests/gaming-currentness-preview-failure.test.ts",
+      "name": "served Gaming currentness proof boundary withholds every Gaming proof and success body after advisory freshness drift: honest passive warning rejected",
+      "durationMs": 5518,
+      "classification": "default 5000ms timeout",
+      "messages": [
+        "Error: thrown: \"Exceeded timeout of 5000 ms for a test.\nAdd a timeout value to this test to increase the timeout, if this is a long-running test. See https://jestjs.io/docs/api#testname-fn-timeout.\"\n    at eachBind (/workspace/Arcanos-pr1541/node_modules/jest-each/build/index.js:54:13)\n    at /workspace/Arcanos-pr1541/tests/gaming-currentness-preview-failure.test.ts:53:129\n    at _dispatchDescribe (/workspace/Arcanos-pr1541/node_modules/jest-circus/build/jestAdapterInit.js:604:26)\n    at describe (/workspace/Arcanos-pr1541/node_modules/jest-circus/build/jestAdapterInit.js:572:44)\n    at /workspace/Arcanos-pr1541/tests/gaming-currentness-preview-failure.test.ts:44:1\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)"
+      ]
+    },
+    {
+      "path": "tests/gaming-currentness-preview-failure.test.ts",
+      "name": "served Gaming currentness proof boundary withholds every Gaming proof and success body after advisory freshness drift: affirmative currentness claim admitted",
+      "durationMs": 5893,
+      "classification": "default 5000ms timeout",
+      "messages": [
+        "Error: thrown: \"Exceeded timeout of 5000 ms for a test.\nAdd a timeout value to this test to increase the timeout, if this is a long-running test. See https://jestjs.io/docs/api#testname-fn-timeout.\"\n    at eachBind (/workspace/Arcanos-pr1541/node_modules/jest-each/build/index.js:54:13)\n    at /workspace/Arcanos-pr1541/tests/gaming-currentness-preview-failure.test.ts:53:129\n    at _dispatchDescribe (/workspace/Arcanos-pr1541/node_modules/jest-circus/build/jestAdapterInit.js:604:26)\n    at describe (/workspace/Arcanos-pr1541/node_modules/jest-circus/build/jestAdapterInit.js:572:44)\n    at /workspace/Arcanos-pr1541/tests/gaming-currentness-preview-failure.test.ts:44:1\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)"
+      ]
+    },
+    {
+      "path": "tests/gaming-currentness-preview-failure.test.ts",
+      "name": "served Gaming currentness proof boundary withholds every Gaming proof and success body after continuation drift: same-URL source retained",
+      "durationMs": 10880,
+      "classification": "default 5000ms timeout",
+      "messages": [
+        "Error: thrown: \"Exceeded timeout of 5000 ms for a test.\nAdd a timeout value to this test to increase the timeout, if this is a long-running test. See https://jestjs.io/docs/api#testname-fn-timeout.\"\n    at eachBind (/workspace/Arcanos-pr1541/node_modules/jest-each/build/index.js:54:13)\n    at /workspace/Arcanos-pr1541/tests/gaming-currentness-preview-failure.test.ts:76:106\n    at _dispatchDescribe (/workspace/Arcanos-pr1541/node_modules/jest-circus/build/jestAdapterInit.js:604:26)\n    at describe (/workspace/Arcanos-pr1541/node_modules/jest-circus/build/jestAdapterInit.js:572:44)\n    at /workspace/Arcanos-pr1541/tests/gaming-currentness-preview-failure.test.ts:44:1\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)"
+      ]
+    },
+    {
+      "path": "tests/gaming-currentness-preview-failure.test.ts",
+      "name": "served Gaming currentness proof boundary withholds every Gaming proof and success body after continuation drift: prior contradiction dropped",
+      "durationMs": 6328,
+      "classification": "default 5000ms timeout",
+      "messages": [
+        "Error: thrown: \"Exceeded timeout of 5000 ms for a test.\nAdd a timeout value to this test to increase the timeout, if this is a long-running test. See https://jestjs.io/docs/api#testname-fn-timeout.\"\n    at eachBind (/workspace/Arcanos-pr1541/node_modules/jest-each/build/index.js:54:13)\n    at /workspace/Arcanos-pr1541/tests/gaming-currentness-preview-failure.test.ts:76:106\n    at _dispatchDescribe (/workspace/Arcanos-pr1541/node_modules/jest-circus/build/jestAdapterInit.js:604:26)\n    at describe (/workspace/Arcanos-pr1541/node_modules/jest-circus/build/jestAdapterInit.js:572:44)\n    at /workspace/Arcanos-pr1541/tests/gaming-currentness-preview-failure.test.ts:44:1\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)"
+      ]
+    },
+    {
+      "path": "tests/gaming-currentness-preview-failure.test.ts",
+      "name": "served Gaming currentness proof boundary withholds every Gaming proof and success body after continuation drift: evaluated contradiction dropped",
+      "durationMs": 6262,
+      "classification": "default 5000ms timeout",
+      "messages": [
+        "Error: thrown: \"Exceeded timeout of 5000 ms for a test.\nAdd a timeout value to this test to increase the timeout, if this is a long-running test. See https://jestjs.io/docs/api#testname-fn-timeout.\"\n    at eachBind (/workspace/Arcanos-pr1541/node_modules/jest-each/build/index.js:54:13)\n    at /workspace/Arcanos-pr1541/tests/gaming-currentness-preview-failure.test.ts:76:106\n    at _dispatchDescribe (/workspace/Arcanos-pr1541/node_modules/jest-circus/build/jestAdapterInit.js:604:26)\n    at describe (/workspace/Arcanos-pr1541/node_modules/jest-circus/build/jestAdapterInit.js:572:44)\n    at /workspace/Arcanos-pr1541/tests/gaming-currentness-preview-failure.test.ts:44:1\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)"
+      ]
+    },
+    {
+      "path": "tests/gaming-currentness-preview-failure.test.ts",
+      "name": "served Gaming currentness proof boundary gates all Gaming proof headers on the fixed currentness scenario and keeps the sealed response",
+      "durationMs": 5001,
+      "classification": "default 5000ms timeout",
+      "messages": [
+        "Error: thrown: \"Exceeded timeout of 5000 ms for a test.\nAdd a timeout value to this test to increase the timeout, if this is a long-running test. See https://jestjs.io/docs/api#testname-fn-timeout.\"\n    at /workspace/Arcanos-pr1541/tests/gaming-currentness-preview-failure.test.ts:99:3\n    at _dispatchDescribe (/workspace/Arcanos-pr1541/node_modules/jest-circus/build/jestAdapterInit.js:604:26)\n    at describe (/workspace/Arcanos-pr1541/node_modules/jest-circus/build/jestAdapterInit.js:572:44)\n    at /workspace/Arcanos-pr1541/tests/gaming-currentness-preview-failure.test.ts:44:1\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)"
+      ]
+    },
+    {
+      "path": "tests/gaming-durable-rag-preview-failure.test.ts",
+      "name": "served Gaming durable RAG proof boundary adds the durable proof only after the real fixture succeeds and preserves the existing guide body",
+      "durationMs": 5575,
+      "classification": "default 5000ms timeout",
+      "messages": [
+        "Error: thrown: \"Exceeded timeout of 5000 ms for a test.\nAdd a timeout value to this test to increase the timeout, if this is a long-running test. See https://jestjs.io/docs/api#testname-fn-timeout.\"\n    at /workspace/Arcanos-pr1541/tests/gaming-durable-rag-preview-failure.test.ts:42:3\n    at _dispatchDescribe (/workspace/Arcanos-pr1541/node_modules/jest-circus/build/jestAdapterInit.js:604:26)\n    at describe (/workspace/Arcanos-pr1541/node_modules/jest-circus/build/jestAdapterInit.js:572:44)\n    at /workspace/Arcanos-pr1541/tests/gaming-durable-rag-preview-failure.test.ts:36:1\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)"
+      ]
+    },
+    {
+      "path": "tests/gaming-generation-budget-preview-failure.test.ts",
+      "name": "served Gaming generation budget proof boundary adds budget proof after assertions pass and preserves the guide response",
+      "durationMs": 5442,
+      "classification": "default 5000ms timeout",
+      "messages": [
+        "Error: thrown: \"Exceeded timeout of 5000 ms for a test.\nAdd a timeout value to this test to increase the timeout, if this is a long-running test. See https://jestjs.io/docs/api#testname-fn-timeout.\"\n    at /workspace/Arcanos-pr1541/tests/gaming-generation-budget-preview-failure.test.ts:47:3\n    at _dispatchDescribe (/workspace/Arcanos-pr1541/node_modules/jest-circus/build/jestAdapterInit.js:604:26)\n    at describe (/workspace/Arcanos-pr1541/node_modules/jest-circus/build/jestAdapterInit.js:572:44)\n    at /workspace/Arcanos-pr1541/tests/gaming-generation-budget-preview-failure.test.ts:41:1\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)"
+      ]
+    },
+    {
+      "path": "tests/gaming-generation-budget-preview-failure.test.ts",
+      "name": "served Gaming generation budget proof boundary returns fixed 503 and withholds every Gaming marker when the actual execution envelope drifts",
+      "durationMs": 5601,
+      "classification": "default 5000ms timeout",
+      "messages": [
+        "Error: thrown: \"Exceeded timeout of 5000 ms for a test.\nAdd a timeout value to this test to increase the timeout, if this is a long-running test. See https://jestjs.io/docs/api#testname-fn-timeout.\"\n    at /workspace/Arcanos-pr1541/tests/gaming-generation-budget-preview-failure.test.ts:60:3\n    at _dispatchDescribe (/workspace/Arcanos-pr1541/node_modules/jest-circus/build/jestAdapterInit.js:604:26)\n    at describe (/workspace/Arcanos-pr1541/node_modules/jest-circus/build/jestAdapterInit.js:572:44)\n    at /workspace/Arcanos-pr1541/tests/gaming-generation-budget-preview-failure.test.ts:41:1\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)"
+      ]
+    },
+    {
+      "path": "tests/gaming-generation-budget-preview-failure.test.ts",
+      "name": "served Gaming generation budget proof boundary returns fixed 503 and withholds every Gaming marker after assertion failure",
+      "durationMs": 5004,
+      "classification": "default 5000ms timeout",
+      "messages": [
+        "Error: thrown: \"Exceeded timeout of 5000 ms for a test.\nAdd a timeout value to this test to increase the timeout, if this is a long-running test. See https://jestjs.io/docs/api#testname-fn-timeout.\"\n    at eachBind (/workspace/Arcanos-pr1541/node_modules/jest-each/build/index.js:54:13)\n    at /workspace/Arcanos-pr1541/tests/gaming-generation-budget-preview-failure.test.ts:72:60\n    at _dispatchDescribe (/workspace/Arcanos-pr1541/node_modules/jest-circus/build/jestAdapterInit.js:604:26)\n    at describe (/workspace/Arcanos-pr1541/node_modules/jest-circus/build/jestAdapterInit.js:572:44)\n    at /workspace/Arcanos-pr1541/tests/gaming-generation-budget-preview-failure.test.ts:41:1\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)"
+      ]
+    },
+    {
+      "path": "tests/gaming-generation-budget-preview-failure.test.ts",
+      "name": "served Gaming generation budget proof boundary returns fixed 503 and withholds every Gaming marker after partial fixture failure",
+      "durationMs": 4626,
+      "classification": "assertion failure",
+      "messages": [
+        "Error: expect(jest.fn()).toHaveBeenCalledTimes(expected)\n\nExpected number of calls: 1\nReceived number of calls: 2\n    at /workspace/Arcanos-pr1541/tests/gaming-generation-budget-preview-failure.test.ts:79:33\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)"
+      ]
+    },
+    {
+      "path": "tests/native-pr-preview-application.test.ts",
+      "name": "native PR contained application serves closed, correlated, bounded public Gaming fixtures without provider execution",
+      "durationMs": 5331,
+      "classification": "default 5000ms timeout",
+      "messages": [
+        "Error: thrown: \"Exceeded timeout of 5000 ms for a test.\nAdd a timeout value to this test to increase the timeout, if this is a long-running test. See https://jestjs.io/docs/api#testname-fn-timeout.\"\n    at /workspace/Arcanos-pr1541/tests/native-pr-preview-application.test.ts:3496:3\n    at _dispatchDescribe (/workspace/Arcanos-pr1541/node_modules/jest-circus/build/jestAdapterInit.js:604:26)\n    at describe (/workspace/Arcanos-pr1541/node_modules/jest-circus/build/jestAdapterInit.js:572:44)\n    at /workspace/Arcanos-pr1541/tests/native-pr-preview-application.test.ts:611:1\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)"
+      ]
+    }
+  ]
+}

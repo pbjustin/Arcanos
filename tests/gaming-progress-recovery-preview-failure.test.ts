@@ -22,6 +22,8 @@ async function queryGuide() {
 describe('served Gaming progression and recovery proof boundary', () => {
   beforeEach(() => mockRecovery.mockReset().mockImplementation(actualRecovery.buildGamingRecoveryResponse));
 
+  // The complete guide proof includes large-source work; match its existing
+  // 30-second test bound for coverage instrumentation.
   it('serves the unchanged body and all six markers after production-core assertions pass', async () => {
     const response = await queryGuide();
     expect(response.status).toBe(200);
@@ -32,7 +34,7 @@ describe('served Gaming progression and recovery proof boundary', () => {
     }
     expect(response.body.result).toEqual({ ok: true, route: 'gaming', mode: 'guide', data: { response: 'Sealed preview guide response.', sources: [] } });
     expect(mockRecovery).toHaveBeenCalled();
-  });
+  }, 30_000);
 
   it.each(['recovery drift', 'unexpected failure'])('withholds all Gaming markers after %s', async scenario => {
     mockRecovery.mockImplementation(() => {

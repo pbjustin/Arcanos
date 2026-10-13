@@ -50,6 +50,8 @@ describe('served Gaming currentness proof boundary', () => {
     claimsCurrentness.mockReset().mockImplementation(actualDisposition.gamingAnswerClaimsVerifiedCurrentness);
   });
 
+  // Guide requests run the full large-source proof set before currentness checks.
+  // Use the existing 30-second served-guide test bound for coverage instrumentation.
   it.each(['mixed current-state request admitted', 'honest passive warning rejected', 'affirmative currentness claim admitted'])(
     'withholds every Gaming proof and success body after advisory freshness drift: %s', async scenario => {
       if (scenario === 'mixed current-state request admitted') disposition.mockImplementation(input =>
@@ -71,7 +73,7 @@ describe('served Gaming currentness proof boundary', () => {
       expect(response.headers[NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.name]).toBe(NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.value);
       expect(response.text).not.toContain('Sealed preview guide response.');
       expect(response.text).not.toContain('currentness-preview.example');
-    });
+    }, 30_000);
 
   it.each(['same-URL source retained', 'prior contradiction dropped', 'evaluated contradiction dropped'])(
     'withholds every Gaming proof and success body after continuation drift: %s', async scenario => {
@@ -94,7 +96,7 @@ describe('served Gaming currentness proof boundary', () => {
       expect(response.headers[NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.name]).toBe(NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.value);
       expect(response.text).not.toContain('Sealed preview guide response.');
       expect(response.text).not.toContain('synthetic-continuation');
-    });
+    }, 30_000);
 
   it('gates all Gaming proof headers on the fixed currentness scenario and keeps the sealed response', async () => {
     const response = await queryGuide();
@@ -106,7 +108,7 @@ describe('served Gaming currentness proof boundary', () => {
       evidence: expect.arrayContaining([expect.objectContaining({ url: 'https://currentness-preview.example/guides/mage' })]) }));
     expect(response.text).not.toContain('dimensionScores');
     expect(response.text).not.toContain('currentness-preview.example');
-  });
+  }, 30_000);
 
   it.each(['missing build admitted', 'missing platform admitted', 'unexpected extraction error'])(
     'withholds every Gaming proof and success body after %s', async scenario => {

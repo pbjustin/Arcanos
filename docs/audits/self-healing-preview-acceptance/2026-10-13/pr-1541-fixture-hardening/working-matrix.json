@@ -1,0 +1,139 @@
+{
+  "schema": "arcanos-production-inspection-e2e-matrix/v1",
+  "status": "PASS",
+  "sourceSha": "2a235722a345d9ece6752f9f7eec6b19a4d2cc6a",
+  "relevantWorktreeDirty": true,
+  "files": [
+    {
+      "path": "scripts/railway-auto-deploy-observer.mjs",
+      "sha256": "f005f506a1e68520558972e99f7014866c35cd0ed057fde8cb1601b01dfbbfbe",
+      "headSha256": "f005f506a1e68520558972e99f7014866c35cd0ed057fde8cb1601b01dfbbfbe"
+    },
+    {
+      "path": "scripts/railway-production-readonly-inspection.mjs",
+      "sha256": "78e901fb57355eb6552080ab77d383880b0d00390e83684e5f4e4281bd531503",
+      "headSha256": "78e901fb57355eb6552080ab77d383880b0d00390e83684e5f4e4281bd531503"
+    },
+    {
+      "path": "scripts/run-railway-inspection-e2e.mjs",
+      "sha256": "02b8f79afc79f0a56e75d5101d5751df37f5aee62c6a3c58819b1a416a9944a1",
+      "headSha256": "fed10b7a30f0b47d92199a9822aa9716305e9d6cb02c0c04c83d120517ad7af2"
+    },
+    {
+      "path": "tests/fixtures/railway-production-inspection/Dockerfile",
+      "sha256": "b2985f36c7f31f3ce67fa78dd880867bd490548f9c118fea5e18c479eada7cfd",
+      "headSha256": "b2985f36c7f31f3ce67fa78dd880867bd490548f9c118fea5e18c479eada7cfd"
+    },
+    {
+      "path": "tests/fixtures/railway-production-inspection/cases.mjs",
+      "sha256": "90ea46fd1e772ea2e6c7f8457ca564fb9e7ef67eb89641c68a3083bde451b3dc",
+      "headSha256": "86fec5de3d3f7764bac3e2117f1f025600fd24c22d6ac1be84275f904488106e"
+    },
+    {
+      "path": "tests/fixtures/railway-production-inspection/expired-certificate.mjs",
+      "sha256": "d66e180553fe05bf13d85e14e718a6229f7e0d38912a1977681f0fb5e7a3e343",
+      "headSha256": "186cf6d065485a75f6b47dad3b2086be07bb4811d04afe47cb078be6e86e1e47"
+    },
+    {
+      "path": "tests/fixtures/railway-production-inspection/fixture-schema.sql",
+      "sha256": "cccf4adf28480488c76820acb1a09bd0e74602c4dc051ed5e8ccefba88f3f6e6",
+      "headSha256": "cccf4adf28480488c76820acb1a09bd0e74602c4dc051ed5e8ccefba88f3f6e6"
+    },
+    {
+      "path": "tests/fixtures/railway-production-inspection/railway.mjs",
+      "sha256": "c83a9b034f9619100137fc3052020a158ed83961eb7e72802f46fa4570c7fa81",
+      "headSha256": "c83a9b034f9619100137fc3052020a158ed83961eb7e72802f46fa4570c7fa81"
+    },
+    {
+      "path": "tests/fixtures/railway-production-inspection/run-fixtures.mjs",
+      "sha256": "fc4a8be7d76ab409ec4d49ae87f9d0bd7f378de3bd921434ea79fc24f7430279",
+      "headSha256": "16d2d77ec6e6892c1da8265764987e346eec5c4158ef80d08dfcc20f7f887863"
+    }
+  ],
+  "pgPackages": [
+    {
+      "name": "pg",
+      "version": "8.16.3"
+    },
+    {
+      "name": "pg-cloudflare",
+      "version": "1.2.7"
+    },
+    {
+      "name": "pg-connection-string",
+      "version": "2.9.1"
+    },
+    {
+      "name": "pg-int8",
+      "version": "1.0.1"
+    },
+    {
+      "name": "pg-pool",
+      "version": "3.10.1"
+    },
+    {
+      "name": "pg-protocol",
+      "version": "1.10.3"
+    },
+    {
+      "name": "pg-types",
+      "version": "2.2.0"
+    },
+    {
+      "name": "pgpass",
+      "version": "1.0.5"
+    },
+    {
+      "name": "postgres-array",
+      "version": "2.0.0"
+    },
+    {
+      "name": "postgres-bytea",
+      "version": "1.0.0"
+    },
+    {
+      "name": "postgres-date",
+      "version": "1.0.7"
+    },
+    {
+      "name": "postgres-interval",
+      "version": "1.2.0"
+    },
+    {
+      "name": "split2",
+      "version": "4.2.0"
+    },
+    {
+      "name": "xtend",
+      "version": "4.0.2"
+    }
+  ],
+  "sourceProvenance": {
+    "gitMetadata": "actual-HEAD-commit-object-only",
+    "worktreeSnapshot": "selected-current-files",
+    "completeGitCheckout": false,
+    "syntheticGithubAuthority": true
+  },
+  "results": [
+    {
+      "postgresMajor": 17,
+      "status": "PASS",
+      "caseCount": 39,
+      "imageId": "sha256:977127846d4c73c743ce053e8deac745b1bd34d929366977553b4a47de2f2bbc",
+      "network": "none",
+      "publishedPorts": 0,
+      "credentialEnvironment": "empty",
+      "containerRemoved": true
+    },
+    {
+      "postgresMajor": 18,
+      "status": "PASS",
+      "caseCount": 40,
+      "imageId": "sha256:7bca88e8241ce8e438d0a51dad168c5eae68cf97335fb2912eda79a502d2048c",
+      "network": "none",
+      "publishedPorts": 0,
+      "credentialEnvironment": "empty",
+      "containerRemoved": true
+    }
+  ]
+}

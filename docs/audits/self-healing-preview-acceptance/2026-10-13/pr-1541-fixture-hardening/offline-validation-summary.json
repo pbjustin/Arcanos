@@ -1,0 +1,92 @@
+[
+  {
+    "command": "npm run test:live-pr-preview:offline",
+    "watchdog": "10m TERM; 15s KILL grace",
+    "startedAt": "2026-10-13T20:37:26.796812+00:00",
+    "completedAt": "2026-10-13T20:37:27.147139+00:00",
+    "exitCode": 0,
+    "counts": {
+      "tests": 16,
+      "suites": 0,
+      "pass": 16,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "log": "test-live-pr-preview-offline.log",
+    "sha256": "0fa285f7ee90591b63ab4d629396af7b8c282ee56817d0530d7662482ea89979"
+  },
+  {
+    "command": "npm run test:live-validation:offline",
+    "watchdog": "10m TERM; 15s KILL grace",
+    "startedAt": "2026-10-13T20:37:27.147542+00:00",
+    "completedAt": "2026-10-13T20:37:36.664827+00:00",
+    "exitCode": 0,
+    "counts": {
+      "tests": 234,
+      "suites": 0,
+      "pass": 234,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "log": "test-live-validation-offline.log",
+    "sha256": "83121803b9031367479695516420570c99037ebd67bb82f9a86ea8fdb652fe22"
+  },
+  {
+    "command": "npm run test:preview-e2e",
+    "watchdog": "10m TERM; 15s KILL grace",
+    "startedAt": "2026-10-13T20:37:36.665917+00:00",
+    "completedAt": "2026-10-13T20:37:37.030081+00:00",
+    "exitCode": 0,
+    "counts": {
+      "tests": 18,
+      "suites": 0,
+      "pass": 18,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "log": "test-preview-e2e.log",
+    "sha256": "f74a665fc08b6ca4d0551228e20193a8a72ef7690ed8b73df4a0253e4d35fc53"
+  },
+  {
+    "command": "npm run test:native-pr-preview-e2e",
+    "watchdog": "10m TERM; 15s KILL grace",
+    "startedAt": "2026-10-13T20:37:37.030446+00:00",
+    "completedAt": "2026-10-13T20:37:42.602389+00:00",
+    "exitCode": 0,
+    "counts": {
+      "tests": 42,
+      "suites": 0,
+      "pass": 42,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "log": "test-native-pr-preview-e2e.log",
+    "sha256": "3f42f9d1b0e1f5afe342dedf8008a23395f8ce8219747d028f6d3736f99c43f2"
+  },
+  {
+    "command": "npm run test:stacked-draft-preview",
+    "watchdog": "10m TERM; 15s KILL grace",
+    "startedAt": "2026-10-13T20:37:42.602861+00:00",
+    "completedAt": "2026-10-13T20:37:48.538810+00:00",
+    "exitCode": 0,
+    "counts": {
+      "tests": 135,
+      "suites": 0,
+      "pass": 135,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "log": "test-stacked-draft-preview.log",
+    "sha256": "6f81280d55399aef9c0050ef3902bc94a8ce44cab84767eac1d285129772ac99"
+  }
+]

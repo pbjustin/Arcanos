@@ -39,6 +39,8 @@ describe('served Gaming durable RAG proof boundary', () => {
     mockSelect.mockReset().mockImplementation(actualEvidence.selectStoredGamingEvidence);
   });
 
+  // The complete guide proof includes large-source work; match its existing
+  // 30-second test bound for coverage instrumentation.
   it('adds the durable proof only after the real fixture succeeds and preserves the existing guide body', async () => {
     const response = await queryGuide();
     expect(response.status).toBe(200);
@@ -56,7 +58,7 @@ describe('served Gaming durable RAG proof boundary', () => {
     expect(mockChunks).toHaveBeenCalled();
     expect(mockSelect).toHaveBeenCalled();
     expect(response.text).not.toContain('Clockwork Observatory');
-  });
+  }, 30_000);
 
   it.each(['chunk coverage drift', 'retrieval drift', 'unexpected core failure'])('withholds every Gaming proof header after %s', async (scenario) => {
     if (scenario === 'chunk coverage drift') {

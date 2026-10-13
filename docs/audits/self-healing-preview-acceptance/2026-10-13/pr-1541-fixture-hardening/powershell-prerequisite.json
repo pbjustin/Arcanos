@@ -1,0 +1,22 @@
+{
+  "missingExecutableEvidence": {
+    "command": "spawnSync(pwsh, [ -NoLogo, -NoProfile, -Command, READY ])",
+    "status": null,
+    "errorCode": "ENOENT",
+    "errorSyscall": "spawnSync pwsh"
+  },
+  "testLocation": "tests/gate-r2-projector-session.test.js:201",
+  "affectedSuites": [
+    "tests/gate-r2-projector-session.test.js",
+    "tests/gate-r1-projector-session.test.js"
+  ],
+  "installedAt": "2026-10-13T19:52:06.214737+00:00",
+  "version": "7.4.6",
+  "archiveSource": "https://github.com/PowerShell/PowerShell/releases/download/v7.4.6/powershell-7.4.6-linux-x64.tar.gz",
+  "checksumSource": "https://github.com/PowerShell/PowerShell/releases/download/v7.4.6/hashes.sha256",
+  "expectedSha256": "6f6015203c47806c5cc444c19d8ed019695e610fbd948154264bf9ca8e157561",
+  "actualSha256": "6f6015203c47806c5cc444c19d8ed019695e610fbd948154264bf9ca8e157561",
+  "installation": "/workspace/pr1541-toolchain/powershell-7.4.6",
+  "repoChanges": false,
+  "systemChanges": false
+}

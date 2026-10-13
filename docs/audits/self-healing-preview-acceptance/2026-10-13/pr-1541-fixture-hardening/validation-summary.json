@@ -1,0 +1,290 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-10-13T20:49:51.026736+00:00",
+  "repository": "pbjustin/Arcanos",
+  "pullRequest": 1541,
+  "sourceHeadAtLocalValidation": "2a235722a345d9ece6752f9f7eec6b19a4d2cc6a",
+  "validationIncludesUncommittedPrChanges": true,
+  "evidenceScope": "Local synthetic/offline validation only. This report does not assert production certificate acceptance, authenticated production access, or a complete full-CI pass.",
+  "toolchain": {
+    "node": "24.18.1",
+    "npm": "11.16.0",
+    "python": "3.12.14",
+    "jsonschema": "4.26.0",
+    "referencing": "0.37.0"
+  },
+  "fullRootJest": {
+    "command": "env -u GH_TOKEN -u GITHUB_TOKEN PATH=/workspace/pr1541-toolchain/node-v24.18.1-linux-x64/bin:$PATH timeout --signal=TERM --kill-after=30s 45m npm test -- --maxWorkers=1 --workerIdleMemoryLimit=768MB --json --outputFile=/workspace/pr1541-evidence/full-jest.json",
+    "exitCode": 124,
+    "status": "INCOMPLETE_FAILED",
+    "passedSuitesBeforeWatchdog": 794,
+    "failedSuiteCount": 6,
+    "coverageComplete": false,
+    "aggregateTestCountAvailable": false,
+    "report": "full-jest-partial-summary.json",
+    "historicalNote": "The 45-minute full run is incomplete and failed; later targeted repairs do not relabel it as passed. The first 2-worker attempt was deliberately stopped after a timeout while Docker fixtures overlapped."
+  },
+  "focusedInspectionSuites": {
+    "command": "node scripts/run-jest.mjs --runTestsByPath tests/railway-production-inspection-tls.test.js tests/railway-production-readonly-inspection.test.js tests/railway-inspection-e2e-harness.test.js tests/railway-auto-deploy-supply-chain.test.js --coverage=false --maxWorkers=1 --json --outputFile=/workspace/pr1541-evidence/focused-final.json",
+    "exitCode": 0,
+    "passedSuites": 4,
+    "passedTests": 112,
+    "failedTests": 0,
+    "skippedTests": 0,
+    "inventory": "focused-test-inventory.json"
+  },
+  "skipAndPrerequisiteValidation": {
+    "commandFile": "skip-prerequisite-validation-command.json",
+    "exitCode": 0,
+    "passedSuites": 11,
+    "passedTests": 132,
+    "skippedSuites": 13,
+    "skippedTests": 167,
+    "matchesSkipBaseline": true,
+    "skipCategories": {
+      "postgres": 155,
+      "ios": 3,
+      "platform": 2,
+      "redis": 4,
+      "external-server": 3
+    },
+    "inventory": "skipped-test-inventory.json",
+    "resolvedPrerequisite": "PowerShell7.4.6 installed in task-local toolchain from official SHA256-verified artifact after ENOENT; GateR2 38passed and GateR1 17passed, one Windows-only skip each."
+  },
+  "previewWrapperRepair": {
+    "change": "Eleven measured expensive preview test/group wrappers aligned from the generic 5000ms default to the existing repository 30000ms per-test convention. Assertions, production deadlines, and global Jest coverage thresholds are unchanged.",
+    "beforeRepair": {
+      "commandExitCode": 1,
+      "passedSuites": 2,
+      "failedSuites": 4,
+      "passedTests": 101,
+      "failedTests": 12,
+      "skippedTests": 0,
+      "timeoutFailures": 11,
+      "assertionFailures": 1,
+      "report": "timeout-reproduction-summary.json"
+    },
+    "afterTenWrappers": {
+      "commandExitCode": 1,
+      "passedSuites": 5,
+      "failedSuites": 1,
+      "passedTests": 112,
+      "failedTests": 1,
+      "report": "timeout-repaired-summary.json"
+    },
+    "afterEleventhWrapper": {
+      "nativeSuite": {
+        "commandExitCode": 1,
+        "passedSuites": 1,
+        "failedSuites": 0,
+        "passedTests": 79,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "report": "native-repaired-summary.json"
+      },
+      "unchangedOtherFiveSuites": {
+        "passedSuites": 5,
+        "passedTests": 34,
+        "failedTests": 0,
+        "source": "timeout-repaired-covered.json"
+      },
+      "uniqueAssertionsVerified": 113
+    },
+    "coverageScope": "All three diagnostic rounds kept coverage instrumentation and global thresholds. Focused selections exit1 because unrelated full-repository coverage requirements cannot be met; final native has79/79 passing assertions, and the unchanged otherfive have34/34. Complete coverage acceptance remains pending final-head hosted CI."
+  },
+  "offlineNodeCommands": [
+    {
+      "command": "npm run test:live-pr-preview:offline",
+      "watchdog": "10m TERM; 15s KILL grace",
+      "startedAt": "2026-10-13T20:37:26.796812+00:00",
+      "completedAt": "2026-10-13T20:37:27.147139+00:00",
+      "exitCode": 0,
+      "counts": {
+        "tests": 16,
+        "suites": 0,
+        "pass": 16,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "log": "test-live-pr-preview-offline.log",
+      "sha256": "0fa285f7ee90591b63ab4d629396af7b8c282ee56817d0530d7662482ea89979"
+    },
+    {
+      "command": "npm run test:live-validation:offline",
+      "watchdog": "10m TERM; 15s KILL grace",
+      "startedAt": "2026-10-13T20:37:27.147542+00:00",
+      "completedAt": "2026-10-13T20:37:36.664827+00:00",
+      "exitCode": 0,
+      "counts": {
+        "tests": 234,
+        "suites": 0,
+        "pass": 234,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "log": "test-live-validation-offline.log",
+      "sha256": "83121803b9031367479695516420570c99037ebd67bb82f9a86ea8fdb652fe22"
+    },
+    {
+      "command": "npm run test:preview-e2e",
+      "watchdog": "10m TERM; 15s KILL grace",
+      "startedAt": "2026-10-13T20:37:36.665917+00:00",
+      "completedAt": "2026-10-13T20:37:37.030081+00:00",
+      "exitCode": 0,
+      "counts": {
+        "tests": 18,
+        "suites": 0,
+        "pass": 18,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "log": "test-preview-e2e.log",
+      "sha256": "f74a665fc08b6ca4d0551228e20193a8a72ef7690ed8b73df4a0253e4d35fc53"
+    },
+    {
+      "command": "npm run test:native-pr-preview-e2e",
+      "watchdog": "10m TERM; 15s KILL grace",
+      "startedAt": "2026-10-13T20:37:37.030446+00:00",
+      "completedAt": "2026-10-13T20:37:42.602389+00:00",
+      "exitCode": 0,
+      "counts": {
+        "tests": 42,
+        "suites": 0,
+        "pass": 42,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "log": "test-native-pr-preview-e2e.log",
+      "sha256": "3f42f9d1b0e1f5afe342dedf8008a23395f8ce8219747d028f6d3736f99c43f2"
+    },
+    {
+      "command": "npm run test:stacked-draft-preview",
+      "watchdog": "10m TERM; 15s KILL grace",
+      "startedAt": "2026-10-13T20:37:42.602861+00:00",
+      "completedAt": "2026-10-13T20:37:48.538810+00:00",
+      "exitCode": 0,
+      "counts": {
+        "tests": 135,
+        "suites": 0,
+        "pass": 135,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "log": "test-stacked-draft-preview.log",
+      "sha256": "6f81280d55399aef9c0050ef3902bc94a8ce44cab84767eac1d285129772ac99"
+    }
+  ],
+  "offlineNodeTotals": {
+    "commands": 5,
+    "passedTests": 445,
+    "failedTests": 0,
+    "skippedTests": 0
+  },
+  "finalStaticChecks": [
+    {
+      "command": "npm run type-check",
+      "watchdog": "15m TERM; 15s KILL grace",
+      "startedAt": "2026-10-13T20:45:33.889210+00:00",
+      "completedAt": "2026-10-13T20:46:47.786163+00:00",
+      "exitCode": 0,
+      "log": "final-type-check.log",
+      "sha256": "82c45ad386f9769567052c6ed1b2b78434ef817bfe3d475c3cc908cb0dbfe9ec"
+    },
+    {
+      "command": "npm run lint",
+      "watchdog": "15m TERM; 15s KILL grace",
+      "startedAt": "2026-10-13T20:46:47.790027+00:00",
+      "completedAt": "2026-10-13T20:47:42.911467+00:00",
+      "exitCode": 0,
+      "log": "final-lint.log",
+      "sha256": "90923e3216fcaec54b1670c1deb904658b96ba164a59e7facb0e38748b257c24",
+      "lint": {
+        "problems": 77,
+        "errors": 0,
+        "warnings": 77
+      }
+    },
+    {
+      "command": "npm run build",
+      "watchdog": "15m TERM; 15s KILL grace",
+      "startedAt": "2026-10-13T20:47:42.913769+00:00",
+      "completedAt": "2026-10-13T20:48:55.766309+00:00",
+      "exitCode": 0,
+      "log": "final-build.log",
+      "sha256": "356363182f60e482b40782695f615794181ec0e5a0806bc2693640c53f4aa8b1"
+    },
+    {
+      "command": "npm run validate:railway",
+      "watchdog": "15m TERM; 15s KILL grace",
+      "startedAt": "2026-10-13T20:48:55.767184+00:00",
+      "completedAt": "2026-10-13T20:48:55.939572+00:00",
+      "exitCode": 0,
+      "log": "final-validate-railway.log",
+      "sha256": "2d768b97d1cbc16c2babe66e0677622d0d4ffd473b06f338aedfe38174f8450a"
+    }
+  ],
+  "lintBaseline": {
+    "expectedWarnings": 77,
+    "actualWarnings": 77,
+    "errors": 0,
+    "matches": true
+  },
+  "documentationChecks": [
+    {
+      "command": "npm run docs:check",
+      "exitCode": 0,
+      "observedBy": "coordinating agent",
+      "log": "final-docs-check.log",
+      "sha256": "4facdb79cb1a63b4689c904184ad5531b7f3ce75c1b87f98b5c08611f34f1363"
+    },
+    {
+      "command": "npm run docs:links -- --local-only",
+      "exitCode": 0,
+      "observedBy": "coordinating agent",
+      "log": "final-docs-links.log",
+      "sha256": "e2209f4fa6738bf645fd733944d6a0cec34a7759760884d2daf7681693414f94"
+    }
+  ],
+  "commitGuard": {
+    "command": "npm run guard:commit",
+    "status": "PASS observed by coordinating agent; final staged guard and its SHA256 are captured in the coordinating final attestation."
+  },
+  "production": "NOT_RUN: no real production credentials or external database connections were used by these validation commands.",
+  "executorIncident": "The exec transport became unavailable after original covered diagnostics completed and before JSON extraction began. Commands recovered with a fresh login:false session; coordinating observation reported zero OOM events. No unproven cause is assigned.",
+  "artifactSha256": {
+    "full-jest.log": "caf71fe673d8b918c2cc84a981609229605c53acde0a9cedfa05273ed9acd953",
+    "full-jest-context.json": "78c38222088a4f85e5c35d74aa0ed4cdec9932a30d60fb208e33bbafdb65d2ad",
+    "full-jest-partial-summary.json": "f38efa04343533da2771de35c70641c3528ffd8da562104d51c947ac595ce031",
+    "full-jest-contention-attempt.log": "292a3fd4cf48a7acccb0d9849cd936891d07aefe6cb6b7cfab536edbb1762b0a",
+    "full-jest-contention-attempt-summary.json": "6ca4fb6c86c9d4fb2b688889ef86d300422b3e023df19d2d7d032e080b414339",
+    "focused-final.json": "4deb9b20fe3722db0cc3dbb68f02a915821bf984e1567cd1a61fa9d6ec080644",
+    "focused-final.log": "c9547bc435fcb28571d45e759c8635e75338ef1936404391c2b6a63e02f53f6b",
+    "focused-test-inventory.json": "05b1d9e7a5e028d65c887093795922bbea390094220372e8ca1f45b6c0944aa8",
+    "skip-prerequisite-validation.json": "ba2cfa32fe6b5e50316bccacdad882b62d36329bb837ca1123151950a5e20f90",
+    "skip-prerequisite-validation.log": "71798519ce2f0a2030530e797e98e1b657af6a721833a074b9fa056eed45a07f",
+    "skipped-test-inventory.json": "8f5f928a3aec4f3bac94b67345505a9ddea93da2f73cc6789326f57629683280",
+    "powershell-prerequisite.json": "86ea00325e8452ea7521cbf0eaceeba88ea80f6faf736bca804c1e57c11b16ec",
+    "timeout-reproduction-covered.json": "1a5bb86fa5c7f49d6460e3ea8c838d7122b3b497cbcf1cdd41beef05c7f61ac6",
+    "timeout-reproduction-covered.log": "0658b6017196f515affd4fba91f9bd783a0a433d10c35cbd0c0c1847fa5f90cc",
+    "timeout-reproduction-summary.json": "abeac01f73107a8f207dd3f963f69d4eaa28e8094f4fd046052b47637769b44d",
+    "timeout-repaired-covered.json": "f23733b90e2196836063c46348e550f604aa91a9d188d5c45e250d5bc0e17bfa",
+    "timeout-repaired-covered.log": "d9e254e7aeb0f3a6af87ef9f36a71abe8415bb5698de3af9a42c072a9e1d019d",
+    "timeout-repaired-summary.json": "d4d23995f5bcf3d095023eba46f3e77c4fb94b8b60f9ed1cb860f69631e82207",
+    "native-repaired-covered.json": "6c688891b9114ff18e175b85ee95d11c52f082d990c5b69ca9759cae7c5e98f0",
+    "native-repaired-covered.log": "cf0de9b6925e712c8237616b765b16fac186f485f081e3397415ccfb74738919",
+    "native-repaired-summary.json": "cf5b96ba679ea135e5c2aa2738390aa1239e612e5636ee992d7f9d59d7eca216",
+    "offline-validation-summary.json": "8bc1596aaf1a064f4f268da1701161ea968c4fb526c40d2ca170d28cc3fd4b96",
+    "final-static-validation-summary.json": "caa2321666bfa2c192471a61791374296b83aa17fac7616c5ae763d36ce6952b",
+    "preview-timeout-investigation.md": "5dd25f35943bc6bbea298668f7aa7e6408921fe1177c0df942a0abfb281d9d48"
+  }
+}
