@@ -10,6 +10,7 @@ const ordinaryPrValidationWorkflows = [
   '.github/workflows/ci-cd.yml',
   '.github/workflows/doc-audit.yml',
   '.github/workflows/pr-ci.yml',
+  '.github/workflows/railway-inspection-fixture-e2e.yml',
 ];
 
 const requiredCiJobIds = [

@@ -1833,6 +1833,27 @@ rotation requires a reviewed secret update. Missing trust or a mismatched or
 expired certificate blocks collection and retains a sanitized failure receipt.
 This secret is exposed only to the collector step.
 
+The preview-linked inspection E2E job exercises the actual CLI separately from
+the sealed application preview. Run `npm run test:railway-inspection:e2e` on
+Linux with a local Docker daemon and installed dependencies to test both
+PostgreSQL 17 and 18. Use `-- --postgres-major 17` or `18` to select one. The
+runner builds a minimal source snapshot with recorded file hashes, starts a
+read-only container with `--network none`, and maps the fixed metadata and
+database hostnames to loopback fixtures. It uses real HTTPS, a real bounded
+Railway fixture subprocess, real PostgreSQL TLS/catalog queries, and the
+unchanged collector entry point and receipt writer. Only fixture setup mutates
+the disposable database. Inspection must leave the seeded data unchanged, close
+its session and retain sanitized failure receipts. The fixture inventory covers
+complete, absent and incomplete catalogs, PostgreSQL 18 unenforced constraints,
+TLS trust and expiry, metadata drift, credential withholding, size and timeout
+limits, trusted-entry gates and exclusive receipt creation. A passing proof must
+contain every case for its PostgreSQL major; setup failures retain a failure proof.
+GitHub authority is explicitly
+simulated; these results prove the command against fixtures, not production
+access or actual dispatch authority. The runner prints the retained proof path;
+an explicit `--output-directory` must name a new absolute directory. The
+preview label triggers the same PostgreSQL matrix in GitHub Actions.
+
 The collector uses only bounded metadata reads and a PostgreSQL repeatable-read
 `READ ONLY` transaction, with connection, statement, lock and idle timeouts. It
 selects installed column, constraint and index definitions without importing

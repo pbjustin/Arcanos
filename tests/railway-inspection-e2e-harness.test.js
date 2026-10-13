@@ -1,0 +1,112 @@
+import { afterEach, describe, expect, it } from '@jest/globals';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import yaml from 'js-yaml';
+import {
+  containerArguments, parseOptions, runFixtures, validateFixtureProof,
+} from '../scripts/run-railway-inspection-e2e.mjs';
+import { requiredFixtureCases } from './fixtures/railway-production-inspection/cases.mjs';
+
+const sourceSha = 'a'.repeat(40);
+const sourceContextSha256 = 'b'.repeat(64);
+const expected = { sourceSha, sourceContextSha256, postgresMajor: 17, relevantWorktreeDirty: false };
+const proof = (postgresMajor = 17) => ({
+  schema: 'arcanos-production-inspection-e2e/v1', status: 'PASS',
+  ...expected, postgresMajor, nodeVersion: 'v24.18.1', syntheticGithubAuthority: true,
+  cases: requiredFixtureCases(postgresMajor).map(name => ({
+    name, status: 'PASS', databaseFingerprintUnchanged: true, collectorSessionsRemaining: 0,
+  })),
+});
+
+describe('inspection E2E fixture safety', () => {
+  const directories = [];
+  afterEach(() => { for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
+
+  it.each([
+    ['--postgres-major', '19'], ['--postgres-major', 'production'],
+    ['--output-directory', 'relative'], ['--output-directory', '/tmp/fixture,src=/existing'],
+    ['--postgres-major'], ['--production', 'true'],
+    ['--postgres-major', '17', '--postgres-major', '18'],
+  ])('rejects unsafe or ambiguous arguments %j', (...args) => {
+    expect(() => parseOptions(args)).toThrow();
+  });
+
+  it('refuses an existing output directory without touching its files or starting Docker', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'inspection-e2e-existing-test-'));
+    directories.push(directory);
+    const sentinel = join(directory, 'preserve'); writeFileSync(sentinel, 'preserve existing work');
+    await expect(runFixtures({ postgresMajors: [17], outputDirectory: directory }))
+      .rejects.toThrow('FIXTURE_OUTPUT_DIRECTORY_EXISTS');
+    expect(readFileSync(sentinel, 'utf8')).toBe('preserve existing work');
+  });
+
+  it('requires a network-disabled read-only runtime with loopback aliases and no published ports', () => {
+    const args = containerArguments({ name: `arcanos-inspection-e2e-${'a'.repeat(24)}-pg17`,
+      imageId: `sha256:${'c'.repeat(64)}`, proofDirectory: '/tmp/test-only-proof',
+      sourceSha, postgresMajor: 17, relevantWorktreeDirty: false });
+    expect(args.slice(args.indexOf('--network'), args.indexOf('--network') + 2)).toEqual(['--network', 'none']);
+    expect(args).toContain('--read-only');
+    expect(args).not.toContain('--publish');
+    expect(args).not.toContain('--privileged');
+    expect(args).toContain('backboard.railway.com:127.0.0.1');
+    expect(args).toContain('shortline.proxy.rlwy.net:127.0.0.1');
+    expect(args).toContain('-i');
+    expect(args).not.toContain('HOME=/tmp');
+    expect(args.some(arg => /(?:RAILWAY_TOKEN|GITHUB_TOKEN|OPENAI_API_KEY|DATABASE_URL)=/u.test(arg))).toBe(false);
+  });
+
+  it.each([
+    value => { value.sourceSha = 'c'.repeat(40); },
+    value => { value.postgresMajor = 18; },
+    value => { value.relevantWorktreeDirty = true; },
+    value => { value.nodeVersion = 'v24.19.0'; },
+    value => { value.syntheticGithubAuthority = false; },
+    value => { value.sourceContextSha256 = 'c'.repeat(64); },
+    value => { value.cases = []; },
+    value => { value.cases.pop(); },
+    value => { value.cases.reverse(); },
+    value => { value.cases[1].name = value.cases[0].name; },
+    value => { value.cases[0].name = 'unknown-case'; },
+    value => { value.cases[0].status = 'FAIL'; },
+    value => { value.cases[0].databaseFingerprintUnchanged = false; },
+    value => { value.cases[0].collectorSessionsRemaining = 1; },
+  ])('rejects misbound or incomplete fixture evidence', change => {
+    const value = proof(); change(value);
+    expect(() => validateFixtureProof(value, expected)).toThrow();
+  });
+
+  it.each([17, 18])('accepts the complete PostgreSQL %i inventory', postgresMajor => {
+    const value = proof(postgresMajor);
+    expect(validateFixtureProof(value, { ...expected, postgresMajor })).toBe(value);
+    expect(value.cases.some(item => item.name === 'not-enforced-constraint')).toBe(postgresMajor === 18);
+  });
+
+  it('retains bound setup and partial failures without accepting incomplete success', () => {
+    const value = proof(); value.status = 'FAIL'; value.cases = [];
+    value.failureCode = 'FIXTURE_DATABASE_START_FAILED';
+    expect(validateFixtureProof(value, expected)).toBe(value);
+    value.cases = proof().cases.slice(0, 2); value.cases[1].status = 'FAIL';
+    expect(validateFixtureProof(value, expected).status).toBe('FAIL');
+    value.cases[1].name = 'unknown-case';
+    expect(() => validateFixtureProof(value, expected)).toThrow('FIXTURE_PROOF_CASE_ORDER_INVALID');
+  });
+
+  it('keeps the preview-linked PostgreSQL matrix credential-free and retains failure receipts', () => {
+    const text = readFileSync('.github/workflows/railway-inspection-fixture-e2e.yml', 'utf8');
+    const workflow = yaml.load(text);
+    expect(workflow.permissions).toEqual({ contents: 'read' });
+    expect(text).not.toMatch(/secrets\.|pull_request_target|workflow_dispatch|railway (?:up|redeploy|restart)/u);
+    const job = workflow.jobs['inspection-fixtures'];
+    expect(job.if).toContain("'railway-preview'");
+    expect(job.if).toContain('github.event.pull_request.head.repo.full_name == github.repository');
+    expect(job.strategy.matrix['postgres-major']).toEqual(['17', '18']);
+    const checkout = job.steps.find(step => step.uses?.startsWith('actions/checkout@'));
+    expect(checkout.with).toEqual({ ref: '${{ github.event.pull_request.head.sha }}', 'persist-credentials': false });
+    expect(job.steps.find(step => step.run?.startsWith('npm ci')).run).toContain('--ignore-scripts');
+    const artifact = job.steps.find(step => step.uses?.startsWith('actions/upload-artifact@'));
+    expect(artifact.if).toBe('always()');
+    expect(artifact.with.path).toContain('/**/*.json');
+    expect(artifact.with['if-no-files-found']).toBe('error');
+  });
+});

@@ -36,6 +36,12 @@ Core workflows to review first:
 - [Release](../.github/workflows/arcanos-release.yml)
 - [Arcanos deployment](../.github/workflows/arcanos-deploy.yml)
 - [Railway automatic deployment](../.github/workflows/railway-auto-deploy.yml)
+- [Railway inspection fixture E2E](../.github/workflows/railway-inspection-fixture-e2e.yml):
+  opted-in Railway preview PRs exercise the unchanged inspection command against
+  local HTTPS metadata, a fixture Railway executable and real PostgreSQL 17/18
+  over authenticated TLS. Runtime containers have no external network and use
+  only synthetic credentials. The workflow retains sanitized proof and failure
+  receipts for seven days. It does not dispatch the production inspection.
 - [Railway worker-diagnostics preview cleanup](../.github/workflows/railway-worker-diagnostics-preview-cleanup.yml)
 
 ## Configuration
