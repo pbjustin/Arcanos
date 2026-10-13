@@ -10,6 +10,14 @@ on:
       - main
   workflow_dispatch:
     inputs:
+      operation:
+        description: Deploy the approved pair or collect read-only production evidence
+        required: true
+        default: deploy
+        type: choice
+        options:
+          - deploy
+          - inspect
       coordinated_writer_rollout_confirmation:
         description: >-
           While the worker hard-budget rollout hold is active, type exactly:
@@ -32,14 +40,15 @@ jobs:
   rollout-policy:
     name: Coordinated writer rollout policy
     if: >-
-      (github.event_name == 'workflow_dispatch'
+      ((github.event_name == 'workflow_dispatch'
       && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
       || (github.event_name == 'workflow_run'
       && github.event.workflow_run.event == 'push'
       && github.event.workflow_run.conclusion == 'success'
       && github.event.workflow_run.head_branch == github.event.repository.default_branch
       && github.event.workflow_run.head_repository.full_name == github.repository
-      && github.event.workflow_run.head_sha == github.sha)
+      && github.event.workflow_run.head_sha == github.sha))
+      && (github.event.inputs.operation || 'deploy') == 'deploy'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -82,6 +91,7 @@ jobs:
       && github.event.workflow_run.head_branch == github.event.repository.default_branch
       && github.event.workflow_run.head_repository.full_name == github.repository
       && github.event.workflow_run.head_sha == github.sha))
+      && (github.event.inputs.operation || 'deploy') == 'deploy'
     runs-on: ubuntu-latest
     timeout-minutes: 130
     concurrency:
@@ -365,3 +375,106 @@ jobs:
             --fail-on-budget-abort \
             --service "${RAILWAY_WEB_SERVICE_ID}" \
             --environment "${RAILWAY_ENVIRONMENT_NAME}"
+
+  inspect-production:
+    name: Inspect Production (read only)
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      && github.event.inputs.operation == 'inspect'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    concurrency:
+      group: railway-auto-deploy-production
+      cancel-in-progress: false
+    env:
+      DEPLOY_REF: ${{ github.sha }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+    steps:
+      - name: Checkout read-only inspection
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify inspection ref is current default tip
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          live_default_record="$(
+            git ls-remote --exit-code --refs origin "refs/heads/${DEFAULT_BRANCH}"
+          )"
+          if [[ "${live_default_record}" == *$'\n'* ]]; then
+            echo "RAILWAY_DEPLOY_DEFAULT_REF_AMBIGUOUS"
+            exit 1
+          fi
+
+          IFS=$'\t' read -r live_default_sha live_default_ref live_default_extra <<< "${live_default_record}"
+          if (
+            [[ ! "${live_default_sha}" =~ ^[0-9a-f]{40}$ ]] ||
+            [ "${live_default_ref}" != "refs/heads/${DEFAULT_BRANCH}" ] ||
+            [ -n "${live_default_extra:-}" ]
+          ); then
+            echo "RAILWAY_DEPLOY_DEFAULT_REF_INVALID"
+            exit 1
+          fi
+          if [ "${live_default_sha}" != "${DEPLOY_REF}" ]; then
+            echo "RAILWAY_DEPLOY_REF_NOT_CURRENT_DEFAULT_TIP"
+            exit 1
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.18.1'
+
+      - name: Install verified Railway CLI
+        shell: bash
+        env:
+          RAILWAY_CLI_VERSION: '4.30.2'
+          RAILWAY_CLI_ARCHIVE_SHA256: e8bd57fd6517b5cf387a9c072ce79fdc069fc0b877c171b58e325b22e96c9000
+        run: |
+          set -euo pipefail
+
+          archive="${RUNNER_TEMP}/railway-v${RAILWAY_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          bin_dir="${RUNNER_TEMP}/railway-cli-${RAILWAY_CLI_VERSION}"
+          download_url="https://github.com/railwayapp/cli/releases/download/v${RAILWAY_CLI_VERSION}/railway-v${RAILWAY_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+
+          curl --fail --silent --show-error --location \
+            --proto '=https' \
+            --tlsv1.2 \
+            "${download_url}" \
+            --output "${archive}"
+
+          printf '%s  %s\n' "${RAILWAY_CLI_ARCHIVE_SHA256}" "${archive}" |
+            sha256sum --check --strict
+
+          mkdir -p "${bin_dir}"
+          tar -xzf "${archive}" -C "${bin_dir}"
+          chmod 0755 "${bin_dir}/railway"
+
+          actual_version="$("${bin_dir}/railway" --version)"
+          expected_version="railway ${RAILWAY_CLI_VERSION}"
+          test "${actual_version}" = "${expected_version}"
+          echo "${bin_dir}" >> "${GITHUB_PATH}"
+
+      - name: Install inspection dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Collect bounded read-only production receipt
+        id: inspection
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_PRODUCTION_PROJECT_TOKEN }}
+        run: node scripts/railway-production-readonly-inspection.mjs
+
+      - name: Preserve sanitized inspection receipt
+        if: always() && steps.inspection.outputs.inspection_receipt_written == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: production-readonly-inspection-${{ github.run_id }}
+          path: ${{ runner.temp }}/production-readonly-inspection.json
+          if-no-files-found: error
+          retention-days: 7

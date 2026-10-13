@@ -713,7 +713,15 @@ group limits, absence of restartable legacy paths, and paired health/readiness
 have all been verified. The PR introducing this rollout cannot remove its own
 hold.
 
-Both jobs use reviewed immutable commits for `actions/checkout` and
+The manual workflow also supports `operation=inspect` for bounded read-only
+production metadata and catalog collection. That mode excludes the policy and
+deployment jobs, retains the hold, requires the current default-branch tip, and
+preserves a sanitized seven-day receipt artifact. It creates no Railway
+resources and performs no migration, restart, deployment or fault injection.
+Collection does not establish historical quiet-window or exact-source evidence;
+see [read-only production inspection](RAILWAY_DEPLOYMENT.md#read-only-production-inspection).
+
+All three jobs use reviewed immutable commits for `actions/checkout` and
 `actions/setup-node`. The deployment job downloads the Railway CLI `4.30.2`
 GNU archive directly from its immutable upstream release, verifies SHA-256
 `e8bd57fd6517b5cf387a9c072ce79fdc069fc0b877c171b58e325b22e96c9000`

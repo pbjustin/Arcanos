@@ -1805,6 +1805,45 @@ repository change after all of those checks pass. The change introducing this
 rollout cannot remove its own hold. Missing, blank, whitespace-padded, or
 malformed hold values fail closed rather than restoring automatic promotion.
 
+#### Read-only production inspection
+
+When a release receipt is missing, choose `operation=inspect` in the existing
+**Railway Auto Deploy** manual workflow. The default remains `deploy` for
+previous dispatches. Inspection runs only from the current default-branch tip
+and shares the non-cancelling production concurrency lock. Both the policy and
+deployment jobs explicitly exclude this mode; it requires no drained-writers
+phrase and cannot release or remove the hold.
+
+The inspection job installs locked dependencies without lifecycle scripts before
+exposing the existing dedicated production project token to a single collector
+step. `scripts/railway-production-readonly-inspection.mjs` binds the fixed
+production project, environment, database, web and worker identities. It uses
+the already configured PostgreSQL public TCP proxy; it does not create a proxy,
+service, key, project or environment. If the proxy or target changes, collection
+fails closed pending a reviewed target update.
+
+The collector uses only bounded metadata reads and a PostgreSQL repeatable-read
+`READ ONLY` transaction, with connection, statement, lock and idle timeouts. It
+selects installed column, constraint and index definitions without importing
+application startup or migration code. The migration's verification phases can
+create temporary objects and are not substitutes for this read-only operation.
+Credentials, variable maps, driver errors and application payloads stay out of
+logs and artifacts. The fixed `production-readonly-inspection.json` receipt is
+retained as a workflow artifact for seven days, including sanitized failure
+receipts. Preserve necessary evidence in the maintained release record before
+artifact expiry.
+
+Collection is not a deployment or a successful contract-verification verdict.
+Compare the exact catalog definition and dependency vectors against the reviewed
+migration, verify current writer provenance and limits, and resolve any drift.
+A CLI commit message is a source claim; an image digest alone does not identify
+the source commit. Missing build provenance remains blocked. This receipt also
+cannot recreate a historical one-hour quiet window or prove that every external
+writer was drained. Keep those gates distinct, and retain the hold until the
+documented rollout requirements or a separately reviewed reconciliation procedure
+have actual supporting evidence. No production self-healing fault injection is
+part of inspection.
+
 ### Decoupled Notion authority rollout
 
 A cold authority synchronization does not require manual preactivation. Keep
