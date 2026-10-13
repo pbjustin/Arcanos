@@ -8,7 +8,7 @@ import {
 
 // Follow the in-memory certificate pattern in gaming-protected-transport.test.ts.
 // Keys are disposable, and every physical socket remains on loopback.
-function certificateFixture({ issuer, expired = false } = {}) {
+function certificateFixture({ issuer, expired = false, certificateAuthority = !issuer } = {}) {
   const der = (tag, ...values) => {
     const body = Buffer.concat(values);
     const octets = [];
@@ -30,7 +30,9 @@ function certificateFixture({ issuer, expired = false } = {}) {
     subject, pair.publicKey.export({ type: 'spki', format: 'der' }),
     der(0xa3, sequence(
       sequence(oid('551d13'), der(1, Buffer.from([255])),
-        der(4, issuer ? sequence() : sequence(der(1, Buffer.from([255]))))),
+        der(4, certificateAuthority ? sequence(der(1, Buffer.from([255]))) : sequence())),
+      ...(issuer && certificateAuthority ? [sequence(oid('551d0f'),
+        der(4, der(3, Buffer.from([4, 0xf0]))))] : []),
       sequence(oid('551d11'), der(4, sequence(der(0x82, Buffer.from('fixture.invalid'))))),
     )),
   );
@@ -74,10 +76,14 @@ describe('production inspection authenticated TLS', () => {
   let pinned;
   let alternative;
   let expired;
+  let signedAuthority;
+  let signedExpired;
   beforeAll(() => {
     pinned = certificateFixture();
     alternative = certificateFixture({ issuer: pinned });
     expired = certificateFixture({ expired: true });
+    signedAuthority = certificateFixture({ issuer: pinned, certificateAuthority: true });
+    signedExpired = certificateFixture({ issuer: pinned, expired: true, certificateAuthority: true });
   });
 
   it.each([undefined, ''])('keeps ordinary certificate verification when the pin is %s', value => {
@@ -94,6 +100,19 @@ describe('production inspection authenticated TLS', () => {
     const ssl = createProductionInspectionTlsOptions(pinned.cert);
     expect(ssl.rejectUnauthorized).toBe(true);
     await expect(handshake(pinned, ssl)).resolves.toEqual({ authorized: true });
+  });
+
+  it.each(['ordinary leaf', 'Railway-template signed authority'])('accepts the exact pinned %s without its issuer', async shape => {
+    const fixture = shape === 'ordinary leaf' ? alternative : signedAuthority;
+    const ssl = createProductionInspectionTlsOptions(fixture.cert);
+    expect(ssl.rejectUnauthorized).toBe(true);
+    await expect(handshake(fixture, ssl)).resolves.toEqual({ authorized: true });
+  });
+
+  it('rejects an expired issuer-signed certificate even when the exact peer is pinned', async () => {
+    await expect(handshake(signedExpired, createProductionInspectionTlsOptions(signedExpired.cert))).rejects.toMatchObject({
+      code: 'CERT_HAS_EXPIRED',
+    });
   });
 
   it('rejects another certificate even when its chain is trusted by the pin', async () => {

@@ -6,6 +6,7 @@ export function requiredFixtureCases(postgresMajor) {
     ...(postgresMajor === 18 ? ['not-enforced-constraint'] : []),
     'metadata-drift', 'catalog-token-leak', 'catalog-password-leak', 'oversized-receipt',
     'database-untrusted', 'database-wrong-pin', 'database-different-trusted-peer',
+    'database-issuer-signed-pin', 'database-template-signed-pin',
     'database-expired-pin', 'metadata-output-limit', 'metadata-stream-timeout',
     'metadata-provider-error', 'cli-output-limit', 'cli-provider-error', 'cli-timeout',
     'trusted-main-gate', 'trusted-checkout-gate', 'exclusive-existing-receipt',

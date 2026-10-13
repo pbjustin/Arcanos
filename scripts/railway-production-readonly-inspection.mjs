@@ -182,7 +182,9 @@ export function createProductionInspectionTlsOptions(certificatePem) {
   let pinned;
   try { pinned = new X509Certificate(pem); } catch { fail('DATABASE_CERTIFICATE_INVALID'); }
   return {
-    rejectUnauthorized: true, ca: pem,
+    // The reviewed peer certificate is the trust anchor, even when an omitted
+    // issuer signed it. Validity and the exact peer fingerprint remain enforced.
+    rejectUnauthorized: true, ca: pem, allowPartialTrustChain: true,
     checkServerIdentity(hostname, peer) {
       try {
         if (hostname === TARGET.proxyHost && new X509Certificate(peer.raw).fingerprint256 === pinned.fingerprint256) return undefined;

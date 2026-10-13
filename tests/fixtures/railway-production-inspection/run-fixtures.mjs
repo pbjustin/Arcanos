@@ -73,7 +73,7 @@ function postgresCommand(executable, args) {
   return command('runuser', ['-u', 'postgres', '--', join(postgresBin, executable), ...args]);
 }
 
-function generateCertificate(name, hostname, { issuer, expired = false } = {}) {
+function generateCertificate(name, hostname, { issuer, expired = false, certificateAuthority = !issuer } = {}) {
   proof.setupStage = `certificate-${name}`;
   const base = join(temporaryDirectory, name);
   const key = `${base}.key`;
@@ -87,7 +87,8 @@ function generateCertificate(name, hostname, { issuer, expired = false } = {}) {
     return { key, cert, pem: pair.cert };
   }
   writeFileSync(extensions,
-    `basicConstraints=critical,CA:${issuer ? 'FALSE' : 'TRUE'}\nsubjectAltName=DNS:${hostname}\n`);
+    `basicConstraints=critical,CA:${certificateAuthority ? 'TRUE' : 'FALSE'}\nsubjectAltName=DNS:${hostname}\n`
+    + (issuer && certificateAuthority ? 'keyUsage=digitalSignature,nonRepudiation,keyEncipherment,dataEncipherment\n' : ''));
   if (issuer) {
     command('openssl', ['req', '-new', '-newkey', 'rsa:2048', '-nodes', '-keyout', key,
       '-out', csr, '-subj', `/CN=${hostname}`]);
@@ -414,6 +415,8 @@ async function main() {
   const databasePair = generateCertificate('database', 'fixture.invalid');
   const otherPair = generateCertificate('other-database', 'fixture.invalid');
   const trustedAlternate = generateCertificate('trusted-alternate', 'alternate.fixture.invalid', { issuer: databasePair });
+  const templatePair = generateCertificate('template-database', 'fixture.invalid',
+    { issuer: databasePair, certificateAuthority: true });
   const expiredPair = generateCertificate('expired-database', 'fixture.invalid', { expired: true });
   const metadataPair = generateCertificate('metadata', 'backboard.railway.com');
   mkdirSync(join(temporaryDirectory, 'bin'));
@@ -589,6 +592,9 @@ log_disconnections=on
   await setDatabaseCertificate(trustedAlternate);
   await runCase('database-different-trusted-peer', { ...common,
     errorCode: 'DATABASE_CERTIFICATE_MISMATCH', stage: 'connecting', metadataCalls: 1, sql: 'none' });
+  await runCase('database-issuer-signed-pin', { ...common, certificatePem: trustedAlternate.pem });
+  await setDatabaseCertificate(templatePair);
+  await runCase('database-template-signed-pin', { ...common, certificatePem: templatePair.pem });
   await setDatabaseCertificate(expiredPair);
   await runCase('database-expired-pin', { ...common, certificatePem: expiredPair.pem,
     errorCode: 'INSPECTION_READ_FAILED', stage: 'connecting', metadataCalls: 1, sql: 'none' });

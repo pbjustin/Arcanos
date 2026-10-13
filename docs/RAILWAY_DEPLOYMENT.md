@@ -1823,11 +1823,13 @@ service, key, project or environment. If the proxy or target changes, collection
 fails closed pending a reviewed target update.
 
 Database TLS authenticates the server using the system trust store by default.
-For a self-signed server, configure the optional GitHub Actions secret
+For a server outside system trust, configure the optional GitHub Actions secret
 `RAILWAY_PRODUCTION_DATABASE_CERTIFICATE` with its single PEM server certificate,
 obtained and reviewed through an authenticated channel. The collector trusts
 that certificate and requires the peer's exact certificate fingerprint at the
-fixed proxy host; certificate-chain and validity checks remain enabled. Do not
+fixed proxy host. The reviewed peer is the trust anchor even when another
+certificate signed it and that issuer is not supplied; validity checks remain
+enabled. System-trust connections retain ordinary chain verification. Do not
 populate the secret from an unauthenticated proxy connection. A certificate
 rotation requires a reviewed secret update. Missing trust or a mismatched or
 expired certificate blocks collection and retains a sanitized failure receipt.
