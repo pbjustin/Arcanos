@@ -165,6 +165,7 @@ describe('Railway coordinated writer rollout policy', () => {
     expect(Object.keys(workflow.jobs ?? {})).toEqual([
       'rollout-policy',
       'deploy-production',
+      'inspect-production',
     ]);
 
     const policyJob = job('rollout-policy');
@@ -217,11 +218,15 @@ describe('Railway coordinated writer rollout policy', () => {
       ref: '${{ github.sha }}',
       'persist-credentials': false,
     });
-    expect(policyJob.if).toBe(TRUSTED_PROMOTION_PROVENANCE);
+    expect(policyJob.if).toBe(
+      `(${TRUSTED_PROMOTION_PROVENANCE}) `
+      + "&& (github.event.inputs.operation || 'deploy') == 'deploy'",
+    );
     expect(deployJob.env?.DEPLOY_REF).toBe('${{ github.sha }}');
     expect(deployJob.if).toBe(
       "needs.rollout-policy.outputs.should_deploy == 'true' "
-      + `&& (${TRUSTED_PROMOTION_PROVENANCE})`,
+      + `&& (${TRUSTED_PROMOTION_PROVENANCE}) `
+      + "&& (github.event.inputs.operation || 'deploy') == 'deploy'",
     );
   });
 
@@ -359,5 +364,69 @@ describe('Railway coordinated writer rollout policy', () => {
     for (const stepName of deployStepNames) {
       expect(namedStep('deploy-production', stepName)).toBeDefined();
     }
+  });
+});
+
+describe('Railway read-only production inspection admission', () => {
+  it('separates manual inspection from every deployment gate and retains the hold', () => {
+    expect(workflow.on.workflow_dispatch.inputs.operation).toEqual({
+      description: 'Deploy the approved pair or collect read-only production evidence',
+      required: true,
+      default: 'deploy',
+      type: 'choice',
+      options: ['deploy', 'inspect'],
+    });
+    expect(workflow.env.ARCANOS_COORDINATED_WRITER_ROLLOUT_HOLD).toBe(ACTIVE_HOLD);
+    for (const jobName of ['rollout-policy', 'deploy-production']) {
+      expect(job(jobName).if).toContain(
+        "(github.event.inputs.operation || 'deploy') == 'deploy'",
+      );
+    }
+    const inspection = job('inspect-production');
+    expect(inspection.if).toBe(
+      "github.event_name == 'workflow_dispatch' "
+      + "&& github.ref == format('refs/heads/{0}', github.event.repository.default_branch) "
+      + "&& github.event.inputs.operation == 'inspect'",
+    );
+    expect(inspection.permissions).toEqual({ contents: 'read' });
+    expect(inspection['timeout-minutes']).toBe(5);
+    expect(inspection.concurrency).toEqual({
+      group: 'railway-auto-deploy-production',
+      'cancel-in-progress': false,
+    });
+    expect(inspection.env.RAILWAY_TOKEN).toBeUndefined();
+    expect(namedStep('inspect-production', 'Checkout read-only inspection').with).toEqual({
+      ref: '${{ github.sha }}',
+      'persist-credentials': false,
+    });
+  });
+
+  it('checks current default tip and installs dependencies before exposing the token', () => {
+    const steps = job('inspect-production').steps;
+    const tip = namedStep('inspect-production', 'Verify inspection ref is current default tip');
+    const install = namedStep('inspect-production', 'Install inspection dependencies');
+    const collect = namedStep('inspect-production', 'Collect bounded read-only production receipt');
+    expect(collect.id).toBe('inspection');
+    expect(tip.run).toContain('git ls-remote --exit-code --refs origin');
+    expect(tip.run).toContain('RAILWAY_DEPLOY_REF_NOT_CURRENT_DEFAULT_TIP');
+    expect(tip.env).toBeUndefined();
+    expect(install.run).toBe('npm ci --ignore-scripts --no-audit --no-fund');
+    expect(install.env).toBeUndefined();
+    expect(steps.indexOf(tip)).toBeLessThan(steps.indexOf(collect));
+    expect(steps.indexOf(install)).toBeLessThan(steps.indexOf(collect));
+    expect(collect.env).toEqual({
+      RAILWAY_TOKEN: '${{ secrets.RAILWAY_PRODUCTION_PROJECT_TOKEN }}',
+      RAILWAY_PRODUCTION_DATABASE_CERTIFICATE: '${{ secrets.RAILWAY_PRODUCTION_DATABASE_CERTIFICATE }}',
+    });
+    expect(collect.run).toBe('node scripts/railway-production-readonly-inspection.mjs');
+    expect(steps.map(step => step.run ?? '').join('\n')).not.toMatch(
+      /\benqueue\b|railway (?:up|redeploy|restart|ssh|connect)|\bALTER\b|\bCREATE\b|npm (?:start|run build)/u,
+    );
+    const artifact = namedStep('inspect-production', 'Preserve sanitized inspection receipt');
+    expect(artifact.if).toBe("always() && steps.inspection.outputs.inspection_receipt_written == 'true'");
+    expect(artifact.with.path).toBe('${{ runner.temp }}/production-readonly-inspection.json');
+    expect(artifact.with['if-no-files-found']).toBe('error');
+    expect(artifact.with['retention-days']).toBe(7);
+    expect(artifact.env).toBeUndefined();
   });
 });

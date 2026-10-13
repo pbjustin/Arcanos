@@ -1,0 +1,55 @@
+name: Railway Inspection Fixture E2E
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, labeled, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  inspection-fixtures:
+    name: Inspection command E2E (PostgreSQL ${{ matrix.postgres-major }})
+    if: >-
+      github.repository == 'pbjustin/Arcanos'
+      && github.event.pull_request.state == 'open'
+      && github.event.pull_request.draft == false
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && contains(github.event.pull_request.labels.*.name, 'railway-preview')
+      && (github.event.action != 'labeled' || github.event.label.name == 'railway-preview')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres-major: ['17', '18']
+    steps:
+      - name: Check out exact preview head
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.18.1'
+
+      - name: Install locked fixture dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Exercise unchanged inspection CLI in an isolated fixture container
+        run: >-
+          npm run test:railway-inspection:e2e --
+          --postgres-major "${{ matrix.postgres-major }}"
+          --output-directory "${{ runner.temp }}/railway-inspection-e2e-${{ matrix.postgres-major }}"
+
+      - name: Retain sanitized fixture proof and failure receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: railway-inspection-fixture-pg${{ matrix.postgres-major }}-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/railway-inspection-e2e-${{ matrix.postgres-major }}/**/*.json
+          if-no-files-found: error
+          retention-days: 7

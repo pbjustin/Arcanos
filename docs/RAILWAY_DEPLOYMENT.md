@@ -1805,6 +1805,81 @@ repository change after all of those checks pass. The change introducing this
 rollout cannot remove its own hold. Missing, blank, whitespace-padded, or
 malformed hold values fail closed rather than restoring automatic promotion.
 
+#### Read-only production inspection
+
+When a release receipt is missing, choose `operation=inspect` in the existing
+**Railway Auto Deploy** manual workflow. The default remains `deploy` for
+previous dispatches. Inspection runs only from the current default-branch tip
+and shares the non-cancelling production concurrency lock. Both the policy and
+deployment jobs explicitly exclude this mode; it requires no drained-writers
+phrase and cannot release or remove the hold.
+
+The inspection job installs locked dependencies without lifecycle scripts before
+exposing the existing dedicated production project token to a single collector
+step. `scripts/railway-production-readonly-inspection.mjs` binds the fixed
+production project, environment, database, web and worker identities. It uses
+the already configured PostgreSQL public TCP proxy; it does not create a proxy,
+service, key, project or environment. If the proxy or target changes, collection
+fails closed pending a reviewed target update.
+
+Database TLS authenticates the server using the system trust store by default.
+For a self-signed server, configure the optional GitHub Actions secret
+`RAILWAY_PRODUCTION_DATABASE_CERTIFICATE` with its single PEM server certificate,
+obtained and reviewed through an authenticated channel. The collector trusts
+that certificate and requires the peer's exact certificate fingerprint at the
+fixed proxy host; certificate-chain and validity checks remain enabled. Do not
+populate the secret from an unauthenticated proxy connection. A certificate
+rotation requires a reviewed secret update. Missing trust or a mismatched or
+expired certificate blocks collection and retains a sanitized failure receipt.
+This secret is exposed only to the collector step.
+
+The preview-linked inspection E2E job exercises the actual CLI separately from
+the sealed application preview. Run `npm run test:railway-inspection:e2e` on
+Linux with a local Docker daemon and installed dependencies to test both
+PostgreSQL 17 and 18. Use `-- --postgres-major 17` or `18` to select one. The
+runner builds a minimal source snapshot with recorded file hashes, starts a
+read-only container with `--network none`, and maps the fixed metadata and
+database hostnames to loopback fixtures. It uses real HTTPS, a real bounded
+Railway fixture subprocess, real PostgreSQL TLS/catalog queries, and the
+unchanged collector entry point and receipt writer. Only fixture setup mutates
+the disposable database. Inspection must leave the seeded data unchanged, close
+its session and retain sanitized failure receipts. The fixture inventory covers
+complete, absent and incomplete catalogs, PostgreSQL 18 unenforced constraints,
+TLS trust and expiry, metadata drift, credential withholding, size and timeout
+limits, trusted-entry gates and exclusive receipt creation. A passing proof must
+contain every case for its PostgreSQL major; setup failures retain a failure proof.
+GitHub authority is explicitly
+simulated; these results prove the command against fixtures, not production
+access or actual dispatch authority. The runner prints the retained proof path;
+an explicit `--output-directory` must name a new absolute directory. The
+preview label triggers the same PostgreSQL matrix in GitHub Actions.
+
+The collector uses only bounded metadata reads and a PostgreSQL repeatable-read
+`READ ONLY` transaction, with connection, statement, lock and idle timeouts. It
+selects installed column, constraint and index definitions without importing
+application startup or migration code. The migration's verification phases can
+create temporary objects and are not substitutes for this read-only operation.
+Credentials, variable maps, driver errors and application payloads stay out of
+logs and artifacts. The fixed `production-readonly-inspection.json` receipt is
+retained as a workflow artifact for seven days, including sanitized failure
+receipts. Preserve necessary evidence in the maintained release record before
+artifact expiry.
+Inventory that exceeds the 64 KiB formatted-artifact limit becomes a minimal
+blocked receipt preserving inspection metadata, cleanup state and release
+verdicts. Catalog text containing the known project token or database password
+is withheld and blocks collection.
+
+Collection is not a deployment or a successful contract-verification verdict.
+Compare the exact catalog definition and dependency vectors against the reviewed
+migration, verify current writer provenance and limits, and resolve any drift.
+A CLI commit message is a source claim; an image digest alone does not identify
+the source commit. Missing build provenance remains blocked. This receipt also
+cannot recreate a historical one-hour quiet window or prove that every external
+writer was drained. Keep those gates distinct, and retain the hold until the
+documented rollout requirements or a separately reviewed reconciliation procedure
+have actual supporting evidence. No production self-healing fault injection is
+part of inspection.
+
 ### Decoupled Notion authority rollout
 
 A cold authority synchronization does not require manual preactivation. Keep

@@ -7,11 +7,15 @@ const CHECKOUT_ACTION =
   'actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955';
 const SETUP_NODE_ACTION =
   'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020';
+const UPLOAD_ARTIFACT_ACTION =
+  'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02';
 const RAILWAY_CLI_VERSION = '4.30.2';
 const RAILWAY_CLI_ARCHIVE_SHA256 =
   'e8bd57fd6517b5cf387a9c072ce79fdc069fc0b877c171b58e325b22e96c9000';
 const RAILWAY_PROJECT_TOKEN_SECRET =
   '${{ secrets.RAILWAY_PRODUCTION_PROJECT_TOKEN }}';
+const RAILWAY_DATABASE_CERTIFICATE_SECRET =
+  '${{ secrets.RAILWAY_PRODUCTION_DATABASE_CERTIFICATE }}';
 const RAILWAY_TOKEN_STEPS = [
   'Verify paired Railway targets',
   'Deploy and verify Railway worker',
@@ -28,6 +32,8 @@ const TIMEOUT_WATCHDOG_SOURCE_SHA256 =
   '717a6cda82721d2eb53d6099f462c8738212785e288fbebc3d6855d222bd11e4';
 const READINESS_VERIFIER_SOURCE_SHA256 =
   'a7ca9d9fb04dd15eb5901765cb311ff003d302d834619ef487e7cbd177b688c9';
+const READ_ONLY_INSPECTION_SOURCE_SHA256 =
+  '94ababb34f2bc052c64281c085411e0fa52e8b172da8b57ef9cc115cf6881c68';
 const TOKEN_STEP_RUN_SHA256 = {
   'Verify paired Railway targets':
     '8a590ff65e95c557a5fcd2b5daad65ce3ea51d3d228f55ed7ccf24449b256ec9',
@@ -121,6 +127,9 @@ describe('Railway auto-deploy supply-chain containment', () => {
       SETUP_NODE_ACTION,
       CHECKOUT_ACTION,
       SETUP_NODE_ACTION,
+      CHECKOUT_ACTION,
+      SETUP_NODE_ACTION,
+      UPLOAD_ARTIFACT_ACTION,
     ]);
     for (const reference of actionReferences) {
       expect(reference).toMatch(/^[^@\s]+@[0-9a-f]{40}$/u);
@@ -194,6 +203,8 @@ describe('Railway auto-deploy supply-chain containment', () => {
     expect(sha256(readinessVerifierSource)).toBe(
       READINESS_VERIFIER_SOURCE_SHA256,
     );
+    expect(sha256(readFileSync('scripts/railway-production-readonly-inspection.mjs', 'utf8')
+      .replaceAll('\r\n', '\n'))).toBe(READ_ONLY_INSPECTION_SOURCE_SHA256);
   });
 
   it('exposes one project token only to the four paired Railway steps', () => {
@@ -237,6 +248,8 @@ describe('Railway auto-deploy supply-chain containment', () => {
       [
         "${{ secrets.RAILWAY_PRODUCTION_PROJECT_TOKEN != '' }}",
         ...RAILWAY_TOKEN_STEPS.map(() => RAILWAY_PROJECT_TOKEN_SECRET),
+        RAILWAY_PROJECT_TOKEN_SECRET,
+        RAILWAY_DATABASE_CERTIFICATE_SECRET,
       ].sort(),
     );
 
@@ -260,5 +273,31 @@ describe('Railway auto-deploy supply-chain containment', () => {
     expect(workerScript).toContain(
       '| env -u RAILWAY_TOKEN RAILWAY_SERVICE_ID="${RAILWAY_WORKER_SERVICE_ID}"',
     );
+  });
+
+  it('contains the read-only project token in one inspection step after token-free setup', () => {
+    const inspectJob = job('inspect-production');
+    const steps = inspectJob.steps;
+    expect(inspectJob.env?.RAILWAY_TOKEN).toBeUndefined();
+    expect(inspectJob.permissions).toEqual({ contents: 'read' });
+    const privileged = steps.filter(step => Object.hasOwn(step.env ?? {}, 'RAILWAY_TOKEN'));
+    expect(privileged.map(step => step.name)).toEqual(['Collect bounded read-only production receipt']);
+    expect(privileged[0].env).toEqual({ RAILWAY_TOKEN: RAILWAY_PROJECT_TOKEN_SECRET,
+      RAILWAY_PRODUCTION_DATABASE_CERTIFICATE: RAILWAY_DATABASE_CERTIFICATE_SECRET });
+    expect(privileged[0].run).toBe('node scripts/railway-production-readonly-inspection.mjs');
+    expect(collectSecretReferences(inspectJob)).toEqual([RAILWAY_PROJECT_TOKEN_SECRET, RAILWAY_DATABASE_CERTIFICATE_SECRET]);
+    const install = namedStep('inspect-production', 'Install verified Railway CLI');
+    expect(sha256(install.run)).toBe(INSTALL_STEP_RUN_SHA256);
+    expect(install.env).toEqual({ RAILWAY_CLI_VERSION, RAILWAY_CLI_ARCHIVE_SHA256 });
+    const dependencies = namedStep('inspect-production', 'Install inspection dependencies');
+    expect(dependencies.run).toBe('npm ci --ignore-scripts --no-audit --no-fund');
+    expect(dependencies.env).toBeUndefined();
+    expect(steps.indexOf(dependencies)).toBeLessThan(steps.indexOf(privileged[0]));
+    const artifact = namedStep('inspect-production', 'Preserve sanitized inspection receipt');
+    expect(privileged[0].id).toBe('inspection');
+    expect(artifact.if).toBe("always() && steps.inspection.outputs.inspection_receipt_written == 'true'");
+    expect(artifact.uses).toBe(UPLOAD_ARTIFACT_ACTION);
+    expect(artifact.with.path).toBe('${{ runner.temp }}/production-readonly-inspection.json');
+    expect(artifact.env).toBeUndefined();
   });
 });
