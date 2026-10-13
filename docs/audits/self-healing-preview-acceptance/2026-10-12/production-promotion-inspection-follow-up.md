@@ -65,11 +65,13 @@ successfully created sanitized output. It cannot upload a rejected preexisting
 file. A collected inventory retains separate `NOT_EVALUATED` and `UNVERIFIED`
 contract, source and historical-window verdicts. It never clears the hold.
 
-The database TLS settings match the existing application transport policy:
-encryption is used without certificate-chain authentication. Do not describe
-the receipt as proof of authenticated database TLS.
+The PR blocker repair requires authenticated database TLS. System trust is the
+default; the optional `RAILWAY_PRODUCTION_DATABASE_CERTIFICATE` Actions secret
+pins one operator-reviewed server certificate for self-signed deployments while
+preserving chain and validity checks. Trust failure blocks collection. Live
+certificate provisioning and production collection remain unverified.
 
-## Local validation
+## Initial implementation validation
 
 Pinned Node `24.18.1`, npm `11.16.0`.
 
@@ -89,10 +91,40 @@ Pinned Node `24.18.1`, npm `11.16.0`.
 - `git diff --check`: PASS.
 - Two independent source reviews found no remaining inspection safety blocker.
 
-Collector SHA-256:
+Initial collector SHA-256:
 `88c6fd386e9d959f7b8c2da4d888e151abf13dc4c261c81ca0bd743bb1a4e222`.
 The existing protected deployment observer remains unchanged at
 `f005f506a1e68520558972e99f7014866c35cd0ed057fde8cb1601b01dfbbfbe`.
+
+## PR #1540 blocker review and validation
+
+The review reproduced two artifact-size failures: compact inventory above
+64 KiB rejected collection without a failure receipt, while inventory whose
+formatted JSON alone exceeded the limit passed collection and failed writing.
+Both now return a bounded sanitized blocked receipt. The collector and writer
+measure the same serialization and preserve cleanup state and release verdicts.
+
+The public database connection now authenticates TLS through system trust or
+one reviewed self-signed server-certificate pin. Local TLS handshakes verify
+untrusted, mismatched and expired certificates fail, while the exact pin
+succeeds despite the server's unrelated certificate hostname. Catalog text
+containing the known database password or project token also fails closed
+before it reaches the receipt. Seven focused assertions failed before repair.
+
+On pinned Node `24.18.1` and npm `11.16.0`:
+
+- Focused Jest: 6 suites, 161 tests passed, 0 skipped; the original five suites
+  plus `tests/railway-production-inspection-tls.test.js`.
+- Build, type-check, Railway static validation and documentation/index checks:
+  passed. Local link audit: 715 targets passed.
+- Lint: 0 errors, 77 existing warnings; no new warning in changed tests.
+- Independent source reviews found no remaining code blocker.
+
+Reviewed collector SHA-256:
+`94ababb34f2bc052c64281c085411e0fa52e8b172da8b57ef9cc115cf6881c68`.
+No live certificate provisioning, production inspection, deployment, migration
+or provider call was performed for this review. A self-signed production peer
+requires the reviewed Actions certificate secret before collection can succeed.
 
 ## Remaining release gates
 

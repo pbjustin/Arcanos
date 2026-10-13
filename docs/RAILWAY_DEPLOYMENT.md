@@ -1822,6 +1822,17 @@ the already configured PostgreSQL public TCP proxy; it does not create a proxy,
 service, key, project or environment. If the proxy or target changes, collection
 fails closed pending a reviewed target update.
 
+Database TLS authenticates the server using the system trust store by default.
+For a self-signed server, configure the optional GitHub Actions secret
+`RAILWAY_PRODUCTION_DATABASE_CERTIFICATE` with its single PEM server certificate,
+obtained and reviewed through an authenticated channel. The collector trusts
+that certificate and requires the peer's exact certificate fingerprint at the
+fixed proxy host; certificate-chain and validity checks remain enabled. Do not
+populate the secret from an unauthenticated proxy connection. A certificate
+rotation requires a reviewed secret update. Missing trust or a mismatched or
+expired certificate blocks collection and retains a sanitized failure receipt.
+This secret is exposed only to the collector step.
+
 The collector uses only bounded metadata reads and a PostgreSQL repeatable-read
 `READ ONLY` transaction, with connection, statement, lock and idle timeouts. It
 selects installed column, constraint and index definitions without importing
@@ -1832,6 +1843,10 @@ logs and artifacts. The fixed `production-readonly-inspection.json` receipt is
 retained as a workflow artifact for seven days, including sanitized failure
 receipts. Preserve necessary evidence in the maintained release record before
 artifact expiry.
+Inventory that exceeds the 64 KiB formatted-artifact limit becomes a minimal
+blocked receipt preserving inspection metadata, cleanup state and release
+verdicts. Catalog text containing the known project token or database password
+is withheld and blocks collection.
 
 Collection is not a deployment or a successful contract-verification verdict.
 Compare the exact catalog definition and dependency vectors against the reviewed

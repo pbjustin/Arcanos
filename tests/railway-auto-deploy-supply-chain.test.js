@@ -14,6 +14,8 @@ const RAILWAY_CLI_ARCHIVE_SHA256 =
   'e8bd57fd6517b5cf387a9c072ce79fdc069fc0b877c171b58e325b22e96c9000';
 const RAILWAY_PROJECT_TOKEN_SECRET =
   '${{ secrets.RAILWAY_PRODUCTION_PROJECT_TOKEN }}';
+const RAILWAY_DATABASE_CERTIFICATE_SECRET =
+  '${{ secrets.RAILWAY_PRODUCTION_DATABASE_CERTIFICATE }}';
 const RAILWAY_TOKEN_STEPS = [
   'Verify paired Railway targets',
   'Deploy and verify Railway worker',
@@ -31,7 +33,7 @@ const TIMEOUT_WATCHDOG_SOURCE_SHA256 =
 const READINESS_VERIFIER_SOURCE_SHA256 =
   'a7ca9d9fb04dd15eb5901765cb311ff003d302d834619ef487e7cbd177b688c9';
 const READ_ONLY_INSPECTION_SOURCE_SHA256 =
-  '88c6fd386e9d959f7b8c2da4d888e151abf13dc4c261c81ca0bd743bb1a4e222';
+  '94ababb34f2bc052c64281c085411e0fa52e8b172da8b57ef9cc115cf6881c68';
 const TOKEN_STEP_RUN_SHA256 = {
   'Verify paired Railway targets':
     '8a590ff65e95c557a5fcd2b5daad65ce3ea51d3d228f55ed7ccf24449b256ec9',
@@ -247,6 +249,7 @@ describe('Railway auto-deploy supply-chain containment', () => {
         "${{ secrets.RAILWAY_PRODUCTION_PROJECT_TOKEN != '' }}",
         ...RAILWAY_TOKEN_STEPS.map(() => RAILWAY_PROJECT_TOKEN_SECRET),
         RAILWAY_PROJECT_TOKEN_SECRET,
+        RAILWAY_DATABASE_CERTIFICATE_SECRET,
       ].sort(),
     );
 
@@ -279,9 +282,10 @@ describe('Railway auto-deploy supply-chain containment', () => {
     expect(inspectJob.permissions).toEqual({ contents: 'read' });
     const privileged = steps.filter(step => Object.hasOwn(step.env ?? {}, 'RAILWAY_TOKEN'));
     expect(privileged.map(step => step.name)).toEqual(['Collect bounded read-only production receipt']);
-    expect(privileged[0].env).toEqual({ RAILWAY_TOKEN: RAILWAY_PROJECT_TOKEN_SECRET });
+    expect(privileged[0].env).toEqual({ RAILWAY_TOKEN: RAILWAY_PROJECT_TOKEN_SECRET,
+      RAILWAY_PRODUCTION_DATABASE_CERTIFICATE: RAILWAY_DATABASE_CERTIFICATE_SECRET });
     expect(privileged[0].run).toBe('node scripts/railway-production-readonly-inspection.mjs');
-    expect(collectSecretReferences(inspectJob)).toEqual([RAILWAY_PROJECT_TOKEN_SECRET]);
+    expect(collectSecretReferences(inspectJob)).toEqual([RAILWAY_PROJECT_TOKEN_SECRET, RAILWAY_DATABASE_CERTIFICATE_SECRET]);
     const install = namedStep('inspect-production', 'Install verified Railway CLI');
     expect(sha256(install.run)).toBe(INSTALL_STEP_RUN_SHA256);
     expect(install.env).toEqual({ RAILWAY_CLI_VERSION, RAILWAY_CLI_ARCHIVE_SHA256 });

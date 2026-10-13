@@ -416,6 +416,7 @@ describe('Railway read-only production inspection admission', () => {
     expect(steps.indexOf(install)).toBeLessThan(steps.indexOf(collect));
     expect(collect.env).toEqual({
       RAILWAY_TOKEN: '${{ secrets.RAILWAY_PRODUCTION_PROJECT_TOKEN }}',
+      RAILWAY_PRODUCTION_DATABASE_CERTIFICATE: '${{ secrets.RAILWAY_PRODUCTION_DATABASE_CERTIFICATE }}',
     });
     expect(collect.run).toBe('node scripts/railway-production-readonly-inspection.mjs');
     expect(steps.map(step => step.run ?? '').join('\n')).not.toMatch(

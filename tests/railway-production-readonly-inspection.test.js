@@ -94,6 +94,7 @@ describe('production read-only inspection', () => {
       ...Object.values(CATALOG_QUERIES), 'ROLLBACK']);
     expect(Object.values(CATALOG_QUERIES).every(sql => /^SELECT\b/u.test(sql))).toBe(true);
     expect(f.state.config).toMatchObject({ connectionTimeoutMillis: 5000, query_timeout: 5000,
+      ssl: { rejectUnauthorized: true },
       options: '-c default_transaction_read_only=on -c statement_timeout=5000 -c lock_timeout=1000 -c idle_in_transaction_session_timeout=10000' });
     expect(f.state.end).toBe(1);
     expect(JSON.stringify(receipt)).not.toContain(SECRET);
@@ -260,6 +261,34 @@ describe('production read-only inspection', () => {
     const f = fixture(); f.rows.constraints[0].expression = 'x'.repeat(8193);
     expect(await f.collect()).toMatchObject({ status: 'BLOCKED', errorCode: 'CATALOG_SHAPE_INVALID', connectionClosed: true });
   });
+
+  it.each([SECRET, TOKEN])('withholds catalog definitions containing a known credential', async credential => {
+    const f = fixture(); f.rows.constraints[0].definition = `CHECK (operation <> '${credential}')`;
+    const receipt = await f.collect();
+    expect(receipt).toMatchObject({ status: 'BLOCKED', failedStage: 'constraints', errorCode: 'CATALOG_CREDENTIAL_LEAK', connectionClosed: true });
+    expect(receipt).not.toHaveProperty('constraints');
+    expect(JSON.stringify(receipt)).not.toContain(credential);
+    expect(f.state.queries.at(-1)).toBe('ROLLBACK');
+  });
+
+  it('blocks malformed certificate configuration before reading database credentials', async () => {
+    const f = fixture({ options: { databaseCertificatePem: SECRET } });
+    const receipt = await f.collect();
+    expect(receipt).toMatchObject({ status: 'BLOCKED', errorCode: 'DATABASE_CERTIFICATE_INVALID' });
+    expect(f.options.readVariables).not.toHaveBeenCalled();
+    expect(f.state.connect).toBe(0);
+    expect(JSON.stringify(receipt)).not.toContain(SECRET);
+  });
+
+  it('retains a sanitized receipt when database certificate authentication fails', async () => {
+    const f = fixture({ connect: () => { throw Object.assign(new Error(SECRET), { code: 'DEPTH_ZERO_SELF_SIGNED_CERT' }); } });
+    const receipt = await f.collect();
+    expect(receipt).toMatchObject({ status: 'BLOCKED', failedStage: 'connecting', errorCode: 'INSPECTION_READ_FAILED', connectionClosed: true });
+    expect(f.state.config.ssl.rejectUnauthorized).toBe(true);
+    expect(f.state.queries).toEqual([]);
+    expect(f.state.end).toBe(1);
+    expect(JSON.stringify(receipt)).not.toContain(SECRET);
+  });
 });
 
 describe('sanitized receipt retention', () => {
@@ -274,6 +303,38 @@ describe('sanitized receipt retention', () => {
     expect(statSync(path).mode & 0o777).toBe(0o600);
     expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual(receipt);
     expect(() => writeProductionInspectionReceipt(receipt, dir)).toThrow();
+  });
+
+  it.each([5000, 8192])('retains a blocked receipt when bounded inventory with %s-byte definitions exceeds artifact size', async length => {
+    const data = metadata();
+    for (const [role, edge] of data.environment.serviceInstances.edges.entries()) {
+      edge.node.activeDeployments[0].instances = Array.from({ length: 100 }, (_, i) => ({
+        id: fixtureId(1000 + role * 100 + i), status: 'RUNNING',
+      }));
+    }
+    const f = fixture({ options: { readMetadata: async () => data } });
+    for (const row of f.rows.constraints) {
+      row.definition = 'x'.repeat(length); row.expression = 'x'.repeat(length);
+    }
+    for (const row of f.rows.indexes) {
+      row.definition = 'x'.repeat(length); row.predicate = 'x'.repeat(length);
+    }
+    const inventory = { ...await fixture().collect(), deployments: sanitizeProductionMetadata(data),
+      constraints: f.rows.constraints, indexes: f.rows.indexes };
+    expect(Buffer.byteLength(`${JSON.stringify(inventory, null, 2)}\n`)).toBeGreaterThan(65536);
+    if (length === 5000) expect(Buffer.byteLength(JSON.stringify(inventory))).toBeLessThanOrEqual(65536);
+    else expect(Buffer.byteLength(JSON.stringify(inventory))).toBeGreaterThan(65536);
+
+    const receipt = await f.collect();
+    expect(receipt).toMatchObject({ status: 'BLOCKED', failedStage: 'receipt', errorCode: 'RECEIPT_TOO_LARGE',
+      inspectionSourceSha: SOURCE, target: TARGET, connectionClosed: true,
+      contractVerdict: 'NOT_EVALUATED', runningSourceVerdict: 'UNVERIFIED', historicalQuietWindow: 'UNVERIFIED',
+      deploymentPerformed: false, migrationPerformed: false, holdCleared: false });
+    expect(receipt).not.toHaveProperty('deployments');
+    expect(receipt).not.toHaveProperty('constraints');
+    expect(f.state.end).toBe(1);
+    expect(JSON.stringify(receipt)).not.toContain(SECRET);
+    expect(JSON.parse(readFileSync(writeProductionInspectionReceipt(receipt, directory()), 'utf8'))).toEqual(receipt);
   });
 
   it('refuses symlinked output and an oversized receipt', () => {

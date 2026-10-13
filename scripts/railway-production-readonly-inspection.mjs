@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /** Bounded production catalog inventory. It never authorizes or performs a rollout. */
 import { execFile } from 'node:child_process';
+import { X509Certificate } from 'node:crypto';
 import { appendFileSync, closeSync, openSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -78,6 +79,7 @@ export const CATALOG_QUERIES = Object.freeze({
 class InspectionError extends Error {}
 function fail(code) { throw new InspectionError(code); }
 function requireFact(condition, code) { if (!condition) fail(code); }
+function serializeReceipt(receipt) { return `${JSON.stringify(receipt, null, 2)}\n`; }
 function record(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 function text(value, limit = 8192, nullable = false) {
   if (nullable && value === null) return null;
@@ -169,6 +171,27 @@ export function resolveProductionDatabaseUrl(variables) {
   return url.toString();
 }
 
+/** Authenticate the public proxy with system trust or one operator-reviewed server certificate. */
+export function createProductionInspectionTlsOptions(certificatePem) {
+  if (certificatePem === undefined || certificatePem === '') return { rejectUnauthorized: true };
+  requireFact(typeof certificatePem === 'string' && Buffer.byteLength(certificatePem) <= 16384,
+    'DATABASE_CERTIFICATE_INVALID');
+  const pem = certificatePem.trim();
+  requireFact(/^-----BEGIN CERTIFICATE-----\r?\n[A-Za-z0-9+/=\r\n]+-----END CERTIFICATE-----$/u.test(pem),
+    'DATABASE_CERTIFICATE_INVALID');
+  let pinned;
+  try { pinned = new X509Certificate(pem); } catch { fail('DATABASE_CERTIFICATE_INVALID'); }
+  return {
+    rejectUnauthorized: true, ca: pem,
+    checkServerIdentity(hostname, peer) {
+      try {
+        if (hostname === TARGET.proxyHost && new X509Certificate(peer.raw).fingerprint256 === pinned.fingerprint256) return undefined;
+      } catch {}
+      return new InspectionError('DATABASE_CERTIFICATE_MISMATCH');
+    },
+  };
+}
+
 function sanitizeCatalogRows(kind, rows) {
   requireFact(Array.isArray(rows) && rows.length <= (kind === 'columns' ? 7 : kind === 'indexes' ? 2 : 1), 'CATALOG_SHAPE_INVALID');
   const keys = kind === 'columns'
@@ -249,6 +272,7 @@ export async function collectProductionReadOnlyInspection(options = {}) {
     requireFact(receipt.inspectionSourceSha !== null, 'INSPECTION_SOURCE_INVALID');
     requireFact(Number.isInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= 5000, 'INSPECTION_BOUNDS_INVALID');
     requireFact(typeof token === 'string' && token.length > 0 && token === token.trim(), 'PROJECT_TOKEN_MISSING');
+    const ssl = createProductionInspectionTlsOptions(options.databaseCertificatePem ?? process.env.RAILWAY_PRODUCTION_DATABASE_CERTIFICATE);
     const readMetadata = options.readMetadata ?? (() => fetchProductionMetadata(token, options.fetch ?? fetch));
     stage = 'metadata_before';
     receipt.deployments = sanitizeProductionMetadata(await bounded(readMetadata(), 'METADATA_TIMEOUT'));
@@ -256,9 +280,10 @@ export async function collectProductionReadOnlyInspection(options = {}) {
     const raw = await deadline((options.readVariables ?? (() => readRailwayVariables({ serviceId: TARGET.databaseServiceId,
       environmentName: TARGET.environmentName }, { runCommand: options.runCommand ?? runBoundedRailwayCommand })))(), 30000, 'VARIABLE_READ_TIMEOUT');
     const databaseUrl = resolveProductionDatabaseUrl(typeof raw === 'string' ? JSON.parse(raw) : raw);
+    const databasePassword = decodeURIComponent(new URL(databaseUrl).password);
     const Client = options.Client ?? (await import('pg')).Client;
     stage = 'connecting';
-    client = new Client({ connectionString: databaseUrl, ssl: { rejectUnauthorized: false },
+    client = new Client({ connectionString: databaseUrl, ssl,
       connectionTimeoutMillis: 5000, query_timeout: 5000, application_name: 'arcanos_production_readonly_inspection_v1',
       options: '-c default_transaction_read_only=on -c statement_timeout=5000 -c lock_timeout=1000 -c idle_in_transaction_session_timeout=10000' });
     client.on('error', () => {
@@ -280,7 +305,10 @@ export async function collectProductionReadOnlyInspection(options = {}) {
       readOnly: true, jobEventsExists: identity.job_events_exists };
     for (const kind of ['columns', 'constraints', 'indexes']) {
       stage = kind;
-      receipt[kind] = sanitizeCatalogRows(kind, (await bounded(client.query(CATALOG_QUERIES[kind]), 'DATABASE_TIMEOUT')).rows);
+      const rows = sanitizeCatalogRows(kind, (await bounded(client.query(CATALOG_QUERIES[kind]), 'DATABASE_TIMEOUT')).rows);
+      requireFact(rows.every(row => Object.values(row).every(value => typeof value !== 'string'
+        || (!value.includes(token) && !value.includes(databasePassword)))), 'CATALOG_CREDENTIAL_LEAK');
+      receipt[kind] = rows;
     }
     stage = 'metadata_after';
     const after = sanitizeProductionMetadata(await bounded(readMetadata(), 'METADATA_TIMEOUT'));
@@ -306,13 +334,22 @@ export async function collectProductionReadOnlyInspection(options = {}) {
       }
     }
   }
-  requireFact(Buffer.byteLength(JSON.stringify(receipt)) <= MAX_RECEIPT_BYTES, 'RECEIPT_TOO_LARGE');
+  if (Buffer.byteLength(serializeReceipt(receipt)) > MAX_RECEIPT_BYTES) {
+    return {
+      schema: receipt.schema, status: 'BLOCKED', target: TARGET,
+      inspectionSourceSha: receipt.inspectionSourceSha, observedAt: receipt.observedAt,
+      contractVerdict: receipt.contractVerdict, runningSourceVerdict: receipt.runningSourceVerdict,
+      historicalQuietWindow: receipt.historicalQuietWindow, nativeTriggers: receipt.nativeTriggers,
+      failedStage: 'receipt', errorCode: 'RECEIPT_TOO_LARGE', connectionClosed: receipt.connectionClosed,
+      deploymentPerformed: false, migrationPerformed: false, holdCleared: false,
+    };
+  }
   return receipt;
 }
 
 export function writeProductionInspectionReceipt(receipt, directory) {
   requireFact(typeof directory === 'string' && directory.startsWith('/'), 'RECEIPT_DIRECTORY_INVALID');
-  const serialized = `${JSON.stringify(receipt, null, 2)}\n`;
+  const serialized = serializeReceipt(receipt);
   requireFact(Buffer.byteLength(serialized) <= MAX_RECEIPT_BYTES, 'RECEIPT_TOO_LARGE');
   const output = resolve(directory, INSPECTION_RECEIPT_FILENAME);
   const descriptor = openSync(output, 'wx', 0o600);

@@ -468,6 +468,7 @@ jobs:
         id: inspection
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_PRODUCTION_PROJECT_TOKEN }}
+          RAILWAY_PRODUCTION_DATABASE_CERTIFICATE: ${{ secrets.RAILWAY_PRODUCTION_DATABASE_CERTIFICATE }}
         run: node scripts/railway-production-readonly-inspection.mjs
 
       - name: Preserve sanitized inspection receipt
