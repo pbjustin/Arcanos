@@ -7,6 +7,8 @@ import {
   performStartupPreflight,
 } from './core/startup.js';
 import { startSelfHealingLoop, stopSelfHealingLoop } from '@services/selfImprove/selfHealingLoop.js';
+import type { SelfHealingPreviewControl } from '@services/selfImprove/selfHealingPreviewControl.js';
+import { getEnv } from '@platform/runtime/env.js';
 import {
   primeSelfHealTelemetryPersistence,
   stopSelfHealTelemetryPersistence,
@@ -47,6 +49,7 @@ let activeStopTelemetryPersistence: () => Promise<void> = stopSelfHealTelemetryP
 let activeStopRedisLifecycle: () => Promise<void> = stopRedisLifecycle;
 let activeCloseDatabase: () => Promise<void> = closeDatabase;
 let activeStopSelfHealing: () => Promise<void> = stopSelfHealingLoop;
+let selfHealingPreviewControl: SelfHealingPreviewControl | null = null;
 
 interface StartupDeploymentSummary {
   serviceName: string;
@@ -203,7 +206,9 @@ async function performShutdown(signal: NodeJS.Signals): Promise<void> {
   try {
     // Capture synchronous drain failures as rejections so both admissions are
     // stopped and every active drain stays observed until completion/deadline.
-    const coordinatorDrain = (async () => { await activeStopSelfHealing(); })();
+    const coordinatorDrain = (async () => {
+      await Promise.all([activeStopSelfHealing(), selfHealingPreviewControl?.close()]);
+    })();
     const listenerDrainPromise = (async () => {
       if (httpServer) {
         httpServer.closeIdleConnections?.();
@@ -346,7 +351,10 @@ export async function startServer(options: StartServerOptions = {}): Promise<Ser
     fullRuntimeStarted = true;
     try {
       appRuntime.startAppRuntimeOnce(appRuntime.app);
-      const selfHealLoopStatus = startSelfHealing();
+      const selfHealLoopStatus = selfHealingPreviewControl
+        ? startSelfHealing(undefined, selfHealingPreviewControl.coordinatorOptions)
+        : startSelfHealing();
+      selfHealingPreviewControl?.markReady();
       console.log(
         `ARCANOS running on ${listenerConfig.host}:${listenerConfig.port} | service=${startupDeploymentSummary.serviceName} | deployment=${startupDeploymentSummary.deploymentId} | git=${startupDeploymentSummary.gitCommit} | branch=${startupDeploymentSummary.gitBranch} | workerHelperRoutes=enabled | askWorkerTools=enabled | selfHealLoop=${selfHealLoopStatus.loopRunning ? 'enabled' : 'disabled'} | selfHealIntervalMs=${selfHealLoopStatus.intervalMs}`
       );
@@ -378,7 +386,11 @@ export async function startServer(options: StartServerOptions = {}): Promise<Ser
   markStartupRuntimeInitializing();
 
   runtimeInitializationPromise = initializeDependencies()
-    .then(() => {
+    .then(async () => {
+      if (getEnv('ARCANOS_SELF_HEAL_PREVIEW_PROFILE') !== undefined) {
+        const { installSelfHealingPreviewControl } = await import('@services/selfImprove/selfHealingPreviewControl.js');
+        selfHealingPreviewControl = await installSelfHealingPreviewControl();
+      }
       markStartupRuntimeInitialized();
       startFullRuntimeIfReady();
     })

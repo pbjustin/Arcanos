@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-14T09:51:11.324Z",
+  "generatedAt": "2026-10-14T21:01:41.021Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2475,6 +2475,9 @@
         },
         {
           "relativePath": "src/services/selfImprove/selfHealingLoop.ts"
+        },
+        {
+          "relativePath": "src/services/selfImprove/selfHealingPreviewControl.ts"
         },
         {
           "relativePath": "src/services/selfImprove/selfHealingV2.ts"
@@ -5071,6 +5074,9 @@
           "relativePath": "tests/integration/public-provider-rate-limit-redis.integration.test.ts"
         },
         {
+          "relativePath": "tests/integration/self-heal-preview-ownership.pg18.integration.test.ts"
+        },
+        {
           "relativePath": "tests/integration/session-system.integration.test.ts"
         },
         {
@@ -5726,6 +5732,9 @@
         },
         {
           "relativePath": "tests/self-healing-loop.test.ts"
+        },
+        {
+          "relativePath": "tests/self-healing-preview-control.test.ts"
         },
         {
           "relativePath": "tests/self-healing-security-synthetic.integration.test.ts"

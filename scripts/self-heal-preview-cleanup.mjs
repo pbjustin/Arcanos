@@ -1,0 +1,204 @@
+#!/usr/bin/env node
+/** Receipt-bound cleanup/watchdog for one disposable self-healing preview. */
+import { execFile } from 'node:child_process';
+import { lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
+import process from 'node:process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
+import {
+  buildBackstageHeavyRailwayCliEnvironment,
+  railwayInvocationForBackstageHeavyProbe,
+} from './railway-backstage-heavy-e2e-probe.mjs';
+
+const ROOT = fileURLToPath(new URL('../', import.meta.url));
+const WORKSPACE = '1c9265a3-986f-4304-ad3e-5a874caab039';
+const MAX_LEASE_MS = 7_200_000;
+const MAX_BYTES = 2 * 1024 * 1024;
+const CLI_TIMEOUT_MS = 15_000;
+const ABSENCE_TIMEOUT_MS = 60_000;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const FORBIDDEN_IDS = new Set([
+  '7faf44e5-519c-4e73-8d7a-da9f389e6187', '8e4cb1eb-1441-4e83-b434-15c06c676a5f',
+  'fb583147-6c39-4343-9267-500f357d25ab', '1765befb-b805-4051-9af9-28634e986886',
+  'c4ade025-3f13-4fca-9309-5d0dd81396fe', '6647b5b1-d796-4783-b5f0-b8e356019ca6',
+  '81e4a1cf-7ae4-48bf-8321-23641bb23c0e',
+]);
+const RECEIPT_KEYS = Object.freeze(['version', 'owner', 'repository', 'prNumber', 'sourceSha', 'runId',
+  'projectId', 'projectName', 'workspaceId', 'environmentId', 'environmentName', 'issuedAt', 'expiresAt']);
+const SERVICES = new Map([
+  ['Postgres', '/var/lib/postgresql/data'], ['Redis', '/data'],
+  ['arcanos-web-pr1544-heavy', null], ['arcanos-worker-pr1544-heavy', null],
+]);
+const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+const sleep = ms => new Promise(resolveSleep => setTimeout(resolveSleep, ms));
+export class SelfHealPreviewCleanupError extends Error {
+  constructor(code) { super(`SELF_HEAL_PREVIEW_CLEANUP_${code}`); this.name = 'SelfHealPreviewCleanupError'; }
+}
+function fail(code) { throw new SelfHealPreviewCleanupError(code); }
+function validId(value) { return typeof value === 'string' && UUID.test(value) && !FORBIDDEN_IDS.has(value); }
+function iso(value) { const ms = Date.parse(value); return typeof value === 'string' && Number.isFinite(ms) && new Date(ms).toISOString() === value ? ms : NaN; }
+
+/** An expired receipt remains valid deletion authority for the same owned target. */
+export function validateSelfHealPreviewCleanupReceipt(receipt, options = {}) {
+  const now = options.now?.() ?? Date.now();
+  if (!record(receipt) || Object.keys(receipt).sort().join('\0') !== [...RECEIPT_KEYS].sort().join('\0')
+    || receipt.version !== 1 || receipt.owner !== 'pbjustin' || receipt.repository !== 'pbjustin/Arcanos'
+    || receipt.prNumber !== 1544 || !/^[0-9a-f]{40}$/u.test(receipt.sourceSha ?? '')
+    || !/^[a-z0-9][a-z0-9-]{7,63}$/u.test(receipt.runId ?? '')
+    || !validId(receipt.projectId) || !validId(receipt.environmentId) || receipt.projectId === receipt.environmentId
+    || receipt.workspaceId !== WORKSPACE || !/^arc-pr1544-heavy-[a-z0-9][a-z0-9-]{0,13}$/u.test(receipt.projectName ?? '')
+    || receipt.projectName.length > 32 || !/^backstage-heavy-pr-1544-e2e(?:-[a-z0-9]{1,16})?$/u.test(receipt.environmentName ?? '')) fail('RECEIPT_INVALID');
+  const issued = iso(receipt.issuedAt); const expires = iso(receipt.expiresAt);
+  if (!Number.isFinite(issued) || !Number.isFinite(expires) || issued > now || expires <= issued
+    || expires - issued > MAX_LEASE_MS || (options.allowExpired === false && expires <= now)) fail('LEASE_INVALID');
+  return Object.freeze({ ...receipt });
+}
+
+function connection(value) {
+  if (!record(value) || !Array.isArray(value.edges) || value.pageInfo?.hasNextPage === true) fail('INCOMPLETE_INVENTORY');
+  return value.edges.map(edge => { if (!record(edge?.node)) fail('INCOMPLETE_INVENTORY'); return edge.node; });
+}
+
+/** Permit only the exact project, one exact environment, and its partial four-service topology. */
+export function attestSelfHealPreviewCleanupTarget(status, receipt) {
+  if (!record(status) || status.id !== receipt.projectId || status.name !== receipt.projectName
+    || status.workspaceId !== WORKSPACE || status.deletedAt !== null || !validId(status.id)) fail('PROJECT_MISMATCH');
+  if (status.buckets !== undefined) {
+    const buckets = Array.isArray(status.buckets) ? status.buckets : connection(status.buckets);
+    if (buckets.length !== 0) fail('FOREIGN_RESOURCES');
+  }
+  const environments = connection(status.environments);
+  if (environments.length !== 1) fail('ENVIRONMENT_MISMATCH');
+  const environment = environments[0];
+  if (environment.id !== receipt.environmentId || environment.name !== receipt.environmentName
+    || environment.deletedAt !== null || !validId(environment.id)) fail('ENVIRONMENT_MISMATCH');
+  const services = connection(status.services);
+  if (services.length > 4 || new Set(services.map(service => service.id)).size !== services.length
+    || new Set(services.map(service => service.name)).size !== services.length
+    || services.some(service => !validId(service.id) || !SERVICES.has(service.name))) fail('FOREIGN_SERVICES');
+  const byId = new Map(services.map(service => [service.id, service.name]));
+  const instances = connection(environment.serviceInstances);
+  if (new Set(instances.map(instance => instance.serviceId)).size !== instances.length
+    || instances.some(instance => !byId.has(instance.serviceId)
+      || (instance.environmentId !== undefined && instance.environmentId !== receipt.environmentId))) fail('FOREIGN_SERVICES');
+  const volumes = connection(environment.volumeInstances);
+  if (volumes.length > 2 || new Set(volumes.map(volume => volume.id)).size !== volumes.length
+    || new Set(volumes.map(volume => volume.serviceId)).size !== volumes.length
+    || volumes.some(volume => !validId(volume.id) || !byId.has(volume.serviceId)
+      || SERVICES.get(byId.get(volume.serviceId)) === null
+      || volume.mountPath !== SERVICES.get(byId.get(volume.serviceId))
+      || (volume.environmentId !== undefined && volume.environmentId !== receipt.environmentId))) fail('FOREIGN_VOLUMES');
+  return { serviceCount: services.length, volumeCount: volumes.length, environmentCount: 1 };
+}
+
+export function parseSelfHealPreviewCleanupArgs(args) {
+  const config = { receiptFile: null, execute: false, allowDeleteOwnedProject: false, watchdog: false };
+  const seen = new Set();
+  for (let index = 0; index < args.length; index += 1) {
+    const name = args[index];
+    if (seen.has(name)) fail('ARGUMENT_INVALID'); seen.add(name);
+    if (name === '--receipt-file') {
+      const value = args[++index]; if (!value || !isAbsolute(value)) fail('RECEIPT_PATH_INVALID'); config.receiptFile = value;
+    } else if (name === '--execute') config.execute = true;
+    else if (name === '--allow-delete-owned-project') config.allowDeleteOwnedProject = true;
+    else if (name === '--watchdog') config.watchdog = true;
+    else fail('ARGUMENT_INVALID');
+  }
+  if (!config.receiptFile) fail('RECEIPT_PATH_INVALID');
+  if (config.execute !== config.allowDeleteOwnedProject || (config.watchdog && !config.execute)) fail('AUTHORIZATION_REQUIRED');
+  return config;
+}
+
+export function readSelfHealPreviewCleanupReceipt(path) {
+  try {
+    if (!isAbsolute(path)) fail('RECEIPT_PATH_INVALID');
+    const stat = lstatSync(path); if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 16_384) fail('RECEIPT_PATH_INVALID');
+    const resolved = realpathSync(path); const local = relative(ROOT, resolved);
+    if (local === '' || (local !== '..' && !local.startsWith(`..${sep}`) && !isAbsolute(local))) fail('RECEIPT_PATH_INVALID');
+    return JSON.parse(readFileSync(resolved, 'utf8'));
+  } catch (error) {
+    if (error instanceof SelfHealPreviewCleanupError) throw error;
+    fail('RECEIPT_READ_FAILED');
+  }
+}
+
+async function cli(args, options, timeout = CLI_TIMEOUT_MS, json = true) {
+  try {
+    const env = options.env ?? process.env;
+    const invocation = options.invocation ?? railwayInvocationForBackstageHeavyProbe(process.platform, env.APPDATA, process.execPath);
+    const command = options.command ?? promisify(execFile);
+    const result = await command(invocation.executable, [...invocation.argsPrefix, ...args], {
+      env: buildBackstageHeavyRailwayCliEnvironment(env), encoding: 'utf8', windowsHide: true,
+      maxBuffer: MAX_BYTES, timeout: Math.max(1, Math.min(timeout, CLI_TIMEOUT_MS)),
+    });
+    if (typeof result?.stdout !== 'string' || Buffer.byteLength(result.stdout) > MAX_BYTES
+      || (typeof result.stderr === 'string' && Buffer.byteLength(result.stderr) > MAX_BYTES)) fail('CLI_OUTPUT_INVALID');
+    return json ? JSON.parse(result.stdout) : null;
+  } catch (error) {
+    if (error instanceof SelfHealPreviewCleanupError) throw error;
+    fail('CLI_FAILED');
+  }
+}
+
+/** No head lookup is needed: cleanup authority remains bound to the receipt's resource identities. */
+export async function runSelfHealPreviewCleanup(config, options = {}) {
+  const now = options.now ?? Date.now; const wait = options.sleep ?? sleep;
+  const receipt = validateSelfHealPreviewCleanupReceipt(config.receipt, { now });
+  if (typeof config.execute !== 'boolean' || typeof config.allowDeleteOwnedProject !== 'boolean'
+    || config.execute !== config.allowDeleteOwnedProject || (config.watchdog && !config.execute)) fail('AUTHORIZATION_REQUIRED');
+  const output = { version: 1, owner: receipt.owner, repository: receipt.repository,
+    runId: receipt.runId, sourceSha: receipt.sourceSha, projectId: receipt.projectId,
+    environmentId: receipt.environmentId, expiresAt: receipt.expiresAt,
+    executed: Boolean(config.execute), deletionRequested: false, absenceVerified: false };
+  const emit = (status, extra = {}) => { const event = { ...output, status, ...extra, observedAt: new Date(now()).toISOString() }; options.onReceipt?.(event); return event; };
+  if (!config.execute) return emit('DRY_RUN');
+  const statusArgs = ['status', '--project', receipt.projectId, '--environment', receipt.environmentId, '--json'];
+  try {
+    attestSelfHealPreviewCleanupTarget(await cli(statusArgs, options), receipt);
+    if (config.watchdog) {
+      emit('WATCHDOG_ARMED');
+      const expires = Date.parse(receipt.expiresAt);
+      // Fixed finite deadline; the receipt is never reloaded or renewed.
+      for (let attempt = 0; now() < expires; attempt += 1) {
+        if (attempt >= 240) fail('WATCHDOG_CLOCK_STALLED');
+        await wait(Math.min(30_000, expires - now()));
+      }
+    }
+    const topology = attestSelfHealPreviewCleanupTarget(await cli(statusArgs, options), receipt);
+    Object.assign(output, topology); emit('OWNERSHIP_RECHECKED');
+    await cli(['delete', '--project', receipt.projectId, '--yes', '--json'], options, CLI_TIMEOUT_MS, false);
+    output.deletionRequested = true; emit('DELETION_REQUESTED');
+    const deadline = now() + ABSENCE_TIMEOUT_MS;
+    for (let attempt = 0; attempt < 31; attempt += 1) {
+      const remaining = deadline - now(); if (remaining <= 0) break;
+      const projects = await cli(['list', '--json'], options, Math.min(CLI_TIMEOUT_MS, remaining));
+      if (!Array.isArray(projects) || projects.some(project => !record(project) || !UUID.test(project.id ?? ''))
+        || new Set(projects.map(project => project.id)).size !== projects.length) fail('PROJECT_LIST_INVALID');
+      if (!projects.some(project => project.id === receipt.projectId)) {
+        output.absenceVerified = true; return emit('DELETED');
+      }
+      if (attempt < 30) await wait(Math.min(2000, Math.max(0, deadline - now())));
+    }
+    fail('ABSENCE_UNCONFIRMED');
+  } catch (error) {
+    const code = error instanceof SelfHealPreviewCleanupError ? error.message : 'SELF_HEAL_PREVIEW_CLEANUP_FAILED';
+    const failure = emit('FAILED', { errorCode: code });
+    if (error instanceof SelfHealPreviewCleanupError) { error.receipt = failure; throw error; }
+    const safeError = new SelfHealPreviewCleanupError('FAILED'); safeError.receipt = failure; throw safeError;
+  }
+}
+
+async function main() {
+  let failure;
+  try {
+    const config = parseSelfHealPreviewCleanupArgs(process.argv.slice(2));
+    await runSelfHealPreviewCleanup({ ...config, receipt: readSelfHealPreviewCleanupReceipt(config.receiptFile) }, {
+      onReceipt: receipt => process.stdout.write(`${JSON.stringify(receipt)}\n`),
+    });
+  } catch (error) {
+    failure = error instanceof SelfHealPreviewCleanupError ? error.message : 'SELF_HEAL_PREVIEW_CLEANUP_FAILED';
+    process.stderr.write(`${failure}\n`); process.exitCode = 1;
+  }
+}
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) void main();

@@ -22,6 +22,8 @@ import {
   getStatus as getDatabaseStatus
 } from '@core/db/index.js';
 import { getConfig, getStableWorkerRuntimeMode } from '@platform/runtime/unifiedConfig.js';
+import { getEnv } from '@platform/runtime/env.js';
+import type { SelfHealingPreviewControl } from '@services/selfImprove/selfHealingPreviewControl.js';
 import { configureBackendUnifiedOpenAIClient } from '@core/init-openai.js';
 import {
   classifyWorkerAiBudgetError,
@@ -2320,7 +2322,8 @@ export async function runWorkerConsumerSlot(
   onDispatcherReady: () => void = () => undefined,
   partitionSyncExecutor?: BackstageNotionPartitionSyncJobExecutor,
   providerDependencyState: WorkerProviderDependencyState = createWorkerProviderDependencyState(),
-  operationalStateReporter?: ReturnType<typeof createWorkerOperationalStateReporter>
+  operationalStateReporter?: ReturnType<typeof createWorkerOperationalStateReporter>,
+  beforeClaim?: () => void
 ): Promise<void> {
   let openai: OpenAIClient | null = null;
   let providerConfigVersion: string | null = null;
@@ -2489,6 +2492,7 @@ export async function runWorkerConsumerSlot(
         });
       }
 
+      beforeClaim?.();
       const { job, budgetAdmission } = await postgresQueueSchedulerAdapter.claimNext(
         autonomyService.getClaimOptions()
       );
@@ -3797,6 +3801,7 @@ export async function runJobWorker(): Promise<void> {
   let inspectorHandle: NodeJS.Timeout | undefined;
   const slotRuntimePromises: Promise<void>[] = [];
   let runtimeFailed = false;
+  let selfHealingPreviewControl: SelfHealingPreviewControl | null = null;
   const backstageNotionLoopHandles: {
     monolith: BackstageNotionSyncLoopHandle | null;
     partition: BackstageNotionPartitionShadowLoopHandle | null;
@@ -3806,6 +3811,10 @@ export async function runJobWorker(): Promise<void> {
   };
 
   try {
+    if (getEnv('ARCANOS_SELF_HEAL_PREVIEW_PROFILE') !== undefined) {
+      const { installSelfHealingPreviewControl } = await import('@services/selfImprove/selfHealingPreviewControl.js');
+      selfHealingPreviewControl = await installSelfHealingPreviewControl({ signal: workerProcessShutdownController.signal });
+    }
     watchdogHandle = startWatchdogLoop(inspectorAutonomyService);
     inspectorHandle = startInspectorLoop(inspectorAutonomyService);
     const backstageNotionSynchronizationCoordinator =
@@ -3840,7 +3849,8 @@ export async function runJobWorker(): Promise<void> {
         resolveSlotReadiness,
         partitionSyncExecutor,
         providerDependencyState,
-        operationalStateReporters.get(slotDefinition.workerId)
+        operationalStateReporters.get(slotDefinition.workerId),
+        selfHealingPreviewControl?.beforeClaim
       );
       slotRuntimePromises.push(slotRuntimePromise);
     }
@@ -3882,7 +3892,7 @@ export async function runJobWorker(): Promise<void> {
               loadCutoverEvidence:
                 loadBackstageNotionPartitionCutoverGateEvidenceSet,
             });
-          const selfHealing = startSelfHealingLoop(undefined, {
+          const selfHealing = startSelfHealingLoop(undefined, selfHealingPreviewControl?.coordinatorOptions ?? {
             signal: workerProcessShutdownController.signal,
           });
           if (selfHealing.coordinatorState !== 'RUNNING') {
@@ -3899,6 +3909,7 @@ export async function runJobWorker(): Promise<void> {
             selfHealingCoordinatorState: selfHealing.coordinatorState,
           });
           emitWorkerBootstrapReadySignal();
+          selfHealingPreviewControl?.markReady();
         }
       );
     } catch (error: unknown) {
@@ -3929,6 +3940,7 @@ export async function runJobWorker(): Promise<void> {
       await Promise.allSettled(slotRuntimePromises);
     cleanupResults.push(...await Promise.allSettled([
       Promise.resolve().then(() => stopSelfHealingLoop()),
+      Promise.resolve().then(() => selfHealingPreviewControl?.close()),
       Promise.resolve().then(() => backstageNotionLoopHandles.monolith?.stopAndDrain()),
       Promise.resolve().then(() => backstageNotionLoopHandles.partition?.stopAndDrain()),
     ]));

@@ -94,6 +94,7 @@ outbound call.
 | `ARCANOS_GPT_ACCESS_WORKSPACE_ID` | Yes for GPT Access-only tenant-scoped capabilities | none | Server-controlled workspace paired with the configured principal; missing identity fails closed. |
 | `ARCANOS_PROCESS_KIND` | Yes for Railway launcher | none | Must be `web` or `worker` when using the normal protected-digest startup wrapper and role launcher; omit for direct local `npm start`. |
 | `ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA` | Disposable Backstage durable proof only | none | Exact lowercase 40-hex revision staged on both isolated proof roles. The authorized runner also binds the deploy request and deployed manifests to this SHA. A Railway-provided `RAILWAY_GIT_COMMIT_SHA` is optional but must exactly match when present. Never configure this proof marker on the canonical project or ordinary PR previews. |
+| `ARCANOS_SELF_HEAL_PREVIEW_PROFILE` | Disposable self-healing acceptance only | absent; disabled | Exact `worker-coordinator-v1` opt-in for the dedicated heavy-supervisor profile; requires the full identity, fixed lease and control settings [below](#disposable-self-healing-preview-profile). Never configure on canonical services or native passive previews. |
 | `ARCANOS_NATIVE_PR_APPLICATION_PREVIEW` | Launcher-owned native PR child only | none | Exact internal version marker (`v1`) projected by the reviewed launcher. Do not configure or forward it manually. |
 | `ARCANOS_PREVIEW_PR_NUMBER` | Launcher-owned native PR child only | none | Validated positive PR number derived from Railway's native environment name. The launcher, not an operator or request, owns this value. |
 | `ARCANOS_PREVIEW_SOURCE_COMMIT` | Launcher-owned native PR child only | none | Validated lowercase 40-hex source commit projected into the contained preview child. It is identity evidence, not authorization. |
@@ -1498,6 +1499,61 @@ Explicit operator approval and service-role admission still precede dispatch.
 Target resolution does not authorize a deployment or establish preview
 isolation. A denied preflight is not an executed repair; dispatched failures
 consume the coordinator's cooldown and per-diagnosis attempt budget.
+
+### Disposable self-healing preview profile
+
+These settings belong only to the existing heavy supervisor's explicit
+`--self-heal-preview-v1` mode and
+[`railway.self-heal-preview.json`](../railway.self-heal-preview.json). The
+[acceptance runbook](RAILWAY_DEPLOYMENT.md#disposable-self-healing-worker-acceptance-profile)
+defines the fresh four-service topology, exact-source deployment, private data,
+process inspection and external cleanup. Their absence leaves normal startup
+unchanged. A present malformed profile fails closed; setting the profile name
+alone does not establish isolation or authorize actuation.
+
+| Setting | Required profile value / source | Meaning |
+| --- | --- | --- |
+| `ARCANOS_SELF_HEAL_PREVIEW_PROFILE` | `worker-coordinator-v1` | Opt-in marker; also a Docker build argument for the compiled artifact receipt. |
+| `ARCANOS_SELF_HEAL_PREVIEW_RUN_ID` | Same value as `ARCANOS_BACKSTAGE_HEAVY_PROOF_RUN_ID` | 8–64 lowercase alphanumeric/hyphen characters, starting alphanumeric; binds all controls, storage receipt and evidence. |
+| `ARCANOS_SELF_HEAL_PREVIEW_ISSUED_AT` | Canonical UTC ISO timestamp, not in the future | Fixed lease start; preserve across controlled restarts. |
+| `ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT` | Canonical UTC ISO timestamp after issue, at most 7,200,000 ms later | Fixed two-hour maximum; must still be future at startup. Runtime expiration stops work but does not delete resources. |
+| `ARCANOS_SELF_HEAL_PREVIEW_CONTROL_TOKEN` | Fresh preview-only secret, exactly 64 lowercase hexadecimal characters | Purpose-bound Bearer for loopback control/fixture inspection. Keep out of arguments, source, logs and reports. |
+| `ARCANOS_SELF_HEAL_PREVIEW_CONTROL_PORT` | Exact `8791` | Bound only to `127.0.0.1` in each application process; never expose via domain/proxy. |
+| `ARCANOS_SELF_HEAL_PREVIEW_STARTUP_MODE` | `normal`, or Worker-only `scheduler-failure` | Closed startup test selector; failure mode rejects coordinator installation before readiness. |
+| `ARCANOS_SELF_HEAL_PREVIEW_WEB_SERVICE_ID` | Fresh web service UUID from attested topology | Must match the web process identity and differ from Worker/PostgreSQL/Redis IDs. |
+| `ARCANOS_SELF_HEAL_PREVIEW_WORKER_SERVICE_ID` | Fresh Worker service UUID from attested topology | Must match Worker process identity and differ from web/PostgreSQL/Redis IDs. |
+
+Retain the existing heavy target marker, role-specific purpose credentials,
+private PostgreSQL/Redis names/hosts/IDs, and exact lowercase 40-hex
+`ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA`; the latter is also the Docker build
+argument for source binding. Do not override Railway-provided resource IDs.
+The profile requires `NODE_ENV=production`, `ARCANOS_PREVIEW_ISOLATION=true`,
+`FORCE_MOCK=true`, `ALLOW_MOCK_OPENAI=true` and
+`OPENAI_API_KEY_REQUIRED=false`, with the admitted private data references.
+Worker uses `http://127.0.0.1:8766/v1`; web uses the dead-loopback
+`http://127.0.0.1:9/v1`. Set no real provider key: the supervisor derives a fixed
+fictional key only after admission. `PORT`, if supplied, must be 1024–65535
+and distinct from 8766 and 8791.
+
+The literal child environment derives self-improvement disabled, autonomy 0,
+freeze false, prediction disabled, predictive dry-run true, a one-second
+coordinator interval and role-correct `RUN_WORKERS`. It derives the dedicated
+Redis kill-switch key `arcanos:preview:self-heal:<runId>:kill-switch:v1` and
+Worker identity `self-heal-preview-<runId>`; do not configure these separately.
+Ambient self-improvement, predictive, administration, proxy and provider
+settings are rejected rather than inherited. Fixed authenticated commands may
+change only the seven reviewed process policy values and this run's
+kill-switch override. Observation permission does not imply actuation;
+`policy_allowed` still depends on normal configured/effective authorization.
+
+The ownership preflight deliberately creates one preview-only PostgreSQL
+receipt in an empty database and holds a per-role advisory lock. Restart
+requires its exact resource/run/source/compiled-digest identity and no foreign
+jobs or active leases. It is a preview mutation, not read-only validation or a
+production schema migration. The self-signed private PostgreSQL transport uses
+the existing disposable TLS compatibility treatment; it is not server
+certificate-authentication evidence. See the runbook for artifact checks,
+bounded process controls, injected-evidence limits and receipt-bound deletion.
 
 ### Self-healing mitigation lifecycle
 

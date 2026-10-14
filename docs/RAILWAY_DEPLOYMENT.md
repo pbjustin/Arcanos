@@ -1151,6 +1151,184 @@ credential test, model-quality evidence, a production deployment, or rollback
 proof. A local operator orchestration file under `.codex-local/` may coordinate
 the disposable run, but it remains untracked and is never release evidence.
 
+### Disposable self-healing Worker acceptance profile
+
+The existing [Backstage supervisor](../scripts/railway-backstage-heavy-proof-supervisor.mjs)
+has a separate, explicit `--self-heal-preview-v1` entry for PR #1544's
+`worker-coordinator-v1` acceptance profile. The
+[profile implementation](../scripts/railway-self-heal-preview-profile.mjs)
+retains the normal integrity wrapper, role launcher and compiled Worker entry
+path. The original heavy-proof mode, native passive preview and production
+startup commands retain their existing contracts. This runbook describes the
+implementation and prerequisites; it is not a deployment or acceptance receipt.
+No deployment is established by adding the profile or passing its local tests.
+
+Use only a fresh dedicated project `arc-pr1544-heavy-<suffix>` and one
+environment `backstage-heavy-pr-1544-e2e` (optionally followed by a hyphen and
+1–16 lowercase alphanumeric characters). The project suffix is 1–14 lowercase
+alphanumeric/hyphen characters, starts alphanumeric, and the full project name
+is at most 32 characters. The exact four-service topology is `Postgres`,
+`Redis`, `arcanos-worker-pr1544-heavy`, and `arcanos-web-pr1544-heavy`; its two
+fresh private volumes mount at `/var/lib/postgresql/data` and `/data`.
+Application roles each have one replica. PostgreSQL, Redis and Worker have no
+public domain or TCP proxy; only web may have a temporary HTTPS domain. Keep
+the project private and provider-native PR deployments disabled. Do not reuse
+canonical or Live PR 1527 resources, copy production variables, or add this
+profile to the native preview base.
+
+Both roles require the existing heavy-proof target, run, exact source and
+private data-identity markers, plus the
+[self-healing profile settings](CONFIGURATION.md#disposable-self-healing-preview-profile).
+Use fresh preview-only database/Redis credentials and purpose-bound application
+secrets. The supervisor accepts a literal input allowlist, derives the fixed
+fictional provider key only for its application child, and discards ambient
+administration/provider authority. Worker provider traffic is restricted to
+the contained fixture at `127.0.0.1:8766`; web retains the dead-loopback provider
+base `http://127.0.0.1:9/v1`. This is not a platform egress firewall: independently
+attest source, resources and credential isolation before attaching code.
+
+The immutable issue/expiry pair must be canonical UTC ISO timestamps, with
+expiry after issue and at most **7,200,000 ms (two hours)** later. A restart
+does not extend that deadline. Expiry closes test controls and stops the
+supervised workload. Runtime expiry alone does not delete Railway resources
+or end storage charges; the external cleanup watchdog below owns deletion.
+
+Before attaching source or starting applications:
+
+1. Refresh PR head/base and review/check state; validate the exact committed
+   source with the supported local/CI matrix. Record the final source SHA and
+   the clean reviewed operator checkout separately from application credentials.
+2. Verify authenticated create/inspect/delete capability against the intended
+   workspace. Create only the empty dedicated project/environment, immediately
+   record their returned immutable IDs, and prepare the cleanup receipt outside
+   the repository. Never infer target identity from a local Railway link.
+3. Arm the receipt-bound watchdog while the project is empty and require its
+   `WATCHDOG_ARMED` receipt before provisioning billable services. Configure
+   the four fresh services, private data references, volumes, one-replica
+   limits and all role-specific settings before source attachment. The cleanup
+   predicate also permits a partial version of this exact topology.
+4. Pin both application services to `/railway.self-heal-preview.json`, which
+   selects the Dockerfile and the supervisor's explicit profile argument.
+   Set Railway healthcheck `/readyz`, restart policy `NEVER`, zero retries,
+   zero deployment overlap and a 60-second drain interval. This profile uses
+   its own ownership preflight: do not inherit the original heavy mode's
+   `--mode empty`/`--mode schema` pre-deploy commands. A controlled restart
+   requires renewed ownership checks within the same fixed lease.
+5. Supply the Docker build arguments `ARCANOS_SELF_HEAL_PREVIEW_PROFILE` and
+   `ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA` with the same admitted profile
+   and exact source SHA as runtime. Attach `pbjustin/Arcanos` only with the
+   explicit commit pin after all isolation/configuration checks; source
+   attachment can immediately build/deploy. Reconfirm automatic branch pushes
+   cannot deploy and attest the returned deployment source/manifest.
+6. Deploy Worker first, then web at the same SHA. The Worker must first create
+   an ownership receipt in an otherwise empty database; normal Worker startup
+   creates application schema. Resume requires the identical run, source,
+   compiled digest and resource identity, existing job tables, no foreign jobs
+   or orphan events, and no active job lease. A held PostgreSQL advisory lock
+   admits one supervisor per role; loss of its connection stops the workload.
+   This preview receipt is not a replacement for normal durable claim fencing.
+7. Independently verify Railway readiness, one active deployment/replica per
+   role, manifest/source identity and artifact digest before any fault command.
+   Then inspect coordinator state in that exact process. A heartbeat, health
+   response or configured policy is insufficient coordinator evidence.
+
+The Docker build writes an exclusive, read-only
+`scripts/self-heal-preview-artifact.json` containing the source SHA and a
+SHA-256 inventory of emitted application/workspace output, scripts,
+configuration and package manifests. The supervisor recomputes it before
+database preflight, and the preview image makes executable paths root-owned
+while retaining writable runtime data directories. Compare its source/digest
+with the independently attested exact-commit deployment; the source variable
+alone is not artifact provenance. Local artifact checks use:
+
+```text
+node scripts/self-heal-preview-artifact.mjs --verify --source-sha <exact-40-hex-SHA>
+```
+
+The [control client](../scripts/self-heal-preview-control.mjs) runs inside an
+independently attested Railway SSH instance selected by explicit project,
+environment, service and current deployment/instance identity. It accepts no
+URL, token, SQL, shell snippet or arbitrary payload argument. It reads the
+purpose credential from that preview's environment and reaches only loopback
+port **8791** for process control, or **8766** for provider-fixture control.
+Neither port is exposed publicly. Request authentication precedes body reads;
+process controls allow at most 4 KiB per command, 64 KiB per response, 120
+requests/minute and 2,000 requests per process, with one command in flight.
+The client bounds each request to six seconds and checks returned identities.
+
+Examples executed only inside the admitted instance:
+
+```text
+node scripts/self-heal-preview-control.mjs artifact
+node scripts/self-heal-preview-control.mjs inspect
+node scripts/self-heal-preview-control.mjs command duplicate_start
+node scripts/self-heal-preview-control.mjs command observation_throw_once
+node scripts/self-heal-preview-control.mjs command database_failure_once
+node scripts/self-heal-preview-control.mjs command tick
+node scripts/self-heal-preview-control.mjs fenced-job create
+node scripts/self-heal-preview-control.mjs fenced-job inspect
+node scripts/self-heal-preview-control.mjs provider timeout_next
+node scripts/self-heal-preview-control.mjs command trinity_run
+node scripts/self-heal-preview-control.mjs provider inspect
+node scripts/self-heal-preview-control.mjs command policy_restore
+```
+
+Select the remaining fixed commands from the client's exported allowlist.
+Policy cases change only the seven reviewed process settings and this run's
+dedicated kill-switch key. Observation starts with self-improvement disabled,
+autonomy zero and predictive execution disabled; permitted actuation requires
+the explicit `policy_allowed` case and normal action-boundary authorization.
+`policy_restore` restores the captured process policy. For shutdown tests,
+hold one observation with `hold_observation_once`, observe that hold, and
+deliver a controlled platform signal; shutdown drains the application before
+stopping its provider fixture and closing the ownership connection. A forced
+kill or drain timeout is a failed shutdown proof. Initial
+`STARTUP_MODE=scheduler-failure` is Worker-only and must never report ready.
+
+Record evidence at the boundary actually exercised:
+
+| Operation | Evidence and limit |
+| --- | --- |
+| Ordinary Worker startup and `fenced-job` | Uses the real compiled Worker, PostgreSQL claim generation and completion events; the helper creates/inspects one fixed synthetic exact-literal job. Completion does not prove provider recovery. |
+| `database_failure_once` | Injects one failure immediately before claim admission. It proves the real consumer's error/retry path, not a real PostgreSQL outage or broken SQL operation. |
+| Actual preview Redis outage | Use only the owned Redis instance and independently attested identity. Record lifecycle/kill-switch changes and restoration; a synthetic policy toggle is not Redis network recovery. The existing Redis probe's name allowlist does not admit this heavy-profile name. |
+| `trinity_run` and provider controls | Executes the real Trinity consumer against a bounded synthetic loopback adapter with requests/receipts. Timeout or recovery is provider-adapter evidence, not external OpenAI acceptance. |
+| `trinity_consumer`, activation/replacement | `consumerEvidence=policy_projection` proves local mitigation selection only; correlate with actual consumer execution before claiming an effect. |
+| `trinity_fresh_success` | Explicitly injected consumer outcome; cannot independently satisfy fresh recovery evidence. |
+| Policy and negative-effect cases | Fixed authenticated test controls exercise production authorization/mitigation code. Require rejected result plus unchanged consumer state/zero dispatch, not a success log. |
+
+Capture baseline, fault ID, detection, diagnosis, policy, action ID, consumer
+effect, post-action observation, rollback and final state for every scenario.
+Classify deployed observations separately from injected-component proof.
+Retain structured, bounded, redacted receipts and independently read provider,
+job and process state; never include tokens, connection strings or raw payloads.
+
+The [cleanup client](../scripts/self-heal-preview-cleanup.mjs) accepts a regular
+non-symlink receipt outside the checkout (at most 16 KiB). Its exact fields are
+`version`, `owner`, `repository`, `prNumber`, `sourceSha`, `runId`, `projectId`,
+`projectName`, `workspaceId`, `environmentId`, `environmentName`, `issuedAt`
+and `expiresAt`. Use version 1, owner `pbjustin`, repository
+`pbjustin/Arcanos`, PR 1544, the returned resource IDs and the same fixed lease.
+It rejects canonical/Live PR IDs, foreign resources and incomplete inventory;
+an expired receipt retains authority to delete its same owned target.
+
+```text
+node scripts/self-heal-preview-cleanup.mjs --receipt-file <absolute-path-outside-checkout>
+node scripts/self-heal-preview-cleanup.mjs --receipt-file <absolute-path-outside-checkout> --execute --allow-delete-owned-project --watchdog
+```
+
+The first invocation validates the receipt without network access. Run the
+watchdog as an independent authenticated operator process, retain its output,
+and do not place Railway management credentials in the application. It checks
+ownership before arming, waits only until the original deadline, rechecks the
+complete target, deletes by exact project ID, then bounds absence verification
+to 60 seconds. To clean up early after evidence capture, use the same executed
+command without `--watchdog`; stop the waiting watchdog after independently
+confirmed deletion. A `FAILED` or absent deletion receipt remains unresolved;
+runtime exit alone is not cleanup. Confirm project/control-plane absence,
+former web-domain behavior, and unchanged production identities before final
+acceptance reporting.
+
 ## Run locally
 
 Use the build, test, and `validate:railway` checks above for non-deploying validation. Do not start the application with Railway or production variables as a deployment check.

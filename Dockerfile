@@ -84,11 +84,27 @@ RUN npm install --include=dev --no-audit --no-fund && \
 # Clean up dev dependencies after build
 RUN npm prune --production
 
+# This receipt is produced only for the explicitly admitted disposable profile.
+# Its digest covers emitted application/workspace bytes and runtime scripts.
+ARG ARCANOS_SELF_HEAL_PREVIEW_PROFILE
+ARG ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA
+RUN if [ -n "${ARCANOS_SELF_HEAL_PREVIEW_PROFILE}" ]; then \
+      test "${ARCANOS_SELF_HEAL_PREVIEW_PROFILE}" = "worker-coordinator-v1" && \
+      node scripts/self-heal-preview-artifact.mjs --write \
+        --source-sha "${ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA}"; \
+    fi
+
 # Create runtime directories
 RUN mkdir -p ./memory ./logs
 
 # Change ownership to non-root user
 RUN chown -R arcanos:nodejs /app
+# The profile's executable receipt cannot be replaced by its non-root process.
+# Retain only the existing runtime data directories as writable in this mode.
+RUN if [ -f /app/scripts/self-heal-preview-artifact.json ]; then \
+      chown -R root:root /app && \
+      chown -R arcanos:nodejs /app/memory /app/logs; \
+    fi
 USER arcanos
 
 # Expose Railway port

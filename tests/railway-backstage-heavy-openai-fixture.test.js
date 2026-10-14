@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
+import { request as httpRequest } from 'node:http';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 import {
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_ATTESTATION_PATH,
@@ -11,11 +14,17 @@ import {
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_RECOVERY_MARKER,
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY,
   startBackstageHeavyOpenAIFixture,
+  startSelfHealPreviewOpenAIFixture,
+  SELF_HEAL_PREVIEW_OPENAI_FIXTURE_CONTROL_PATH,
+  SELF_HEAL_PREVIEW_OPENAI_FIXTURE_LIMITS,
+  SELF_HEAL_PREVIEW_OPENAI_FIXTURE_CHILD_ARGUMENT,
+  SELF_HEAL_PREVIEW_OPENAI_FIXTURE_READY_SENTINEL,
 } from '../scripts/railway-backstage-heavy-openai-fixture.mjs';
 import { createOpenAIAdapter } from '../src/core/adapters/openai.adapter.js';
 import { normalizeResponsesDraft } from '../src/services/openai/requestBuilders/normalize.js';
 import { resolveGenerativeModel } from '../src/services/openai/credentialProvider.js';
 import { createSingleChatCompletion, ensureModelMatchesExpectation } from '../src/services/openai/chatFallbacks.js';
+import { TRINITY_STRUCTURED_REASONING_SCHEMA } from '../src/core/logic/trinitySchema.js';
 
 describe('credential-free Backstage heavy OpenAI fixture', () => {
   const runId = 'proof-run-1460';
@@ -276,5 +285,255 @@ describe('credential-free Backstage heavy OpenAI fixture', () => {
     expect(sentPayloads[0].max_output_tokens).toBe(6000);
     expect(runtime.state.responsesCalls).toBe(1);
     expect(runtime.state.invalidRequests).toBe(0);
+  });
+});
+
+describe('bounded self-healing preview provider profile', () => {
+  const token = 'a'.repeat(64);
+  const promptSentinel = 'PRIVATE_REQUEST_MUST_NEVER_BE_REFLECTED';
+  let runtime;
+  const childEnv = (changes = {}) => ({
+    NODE_ENV: 'production', TZ: 'UTC',
+    ARCANOS_BACKSTAGE_HEAVY_OPENAI_FIXTURE_CHILD: 'v1',
+    ARCANOS_BACKSTAGE_HEAVY_PROOF_RUN_ID: 'self-heal-run-1544',
+    ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA: 'b'.repeat(40),
+    ARCANOS_SELF_HEAL_PREVIEW_PROFILE: 'worker-coordinator-v1',
+    ARCANOS_SELF_HEAL_PREVIEW_RUN_ID: 'self-heal-run-1544',
+    ARCANOS_SELF_HEAL_PREVIEW_ISSUED_AT: new Date(Date.now() - 1000).toISOString(),
+    ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT: new Date(Date.now() + 60_000).toISOString(),
+    ARCANOS_SELF_HEAL_PREVIEW_CONTROL_TOKEN: token,
+    ...changes,
+  });
+  const endpoint = () => `http://127.0.0.1:${runtime.server.address().port}`;
+  async function control(body, credential = token) {
+    const response = await fetch(`${endpoint()}${SELF_HEAL_PREVIEW_OPENAI_FIXTURE_CONTROL_PATH}`, {
+      method: 'POST', headers: { authorization: `Bearer ${credential}`,
+        'content-type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const result = await response.json();
+    return { status: response.status, json: async () => result };
+  }
+  const client = (extra = {}) => createOpenAIAdapter({
+    apiKey: BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY,
+    baseURL: `${endpoint()}/v1`, maxRetries: 0, ...extra,
+  }).getClient();
+  const responseBody = (extra = {}) => ({
+    model: BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID,
+    input: promptSentinel, ...extra,
+  });
+  const waitForActive = async () => {
+    const deadline = Date.now() + 1000;
+    while (!runtime.state.inFlight && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    expect(runtime.state.inFlight).not.toBeNull();
+  };
+
+  afterEach(async () => { await runtime?.close(); runtime = undefined; });
+
+  it.each([
+    { OPENAI_API_KEY: 'forbidden' }, { RAILWAY_TOKEN: 'forbidden' },
+    { DATABASE_URL: 'forbidden' }, { NODE_OPTIONS: '--import forbidden' },
+    { ARCANOS_SELF_HEAL_PREVIEW_PROFILE: 'other' },
+    { ARCANOS_SELF_HEAL_PREVIEW_CONTROL_TOKEN: 'A'.repeat(64) },
+    { ARCANOS_SELF_HEAL_PREVIEW_RUN_ID: 'different-run-1544' },
+    { ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA: 'invalid' },
+    { ARCANOS_SELF_HEAL_PREVIEW_ISSUED_AT: new Date(Date.now() + 600_000).toISOString() },
+    { ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT: new Date(0).toISOString() },
+    { ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT: new Date(Date.now() + 7_200_001).toISOString() },
+  ])('rejects an invalid or credential-bearing literal child environment %p', async changes => {
+    await expect(startSelfHealPreviewOpenAIFixture({ port: 0, env: childEnv(changes) }))
+      .rejects.toThrow('SELF_HEAL_PREVIEW_OPENAI_CHILD_CONTRACT_INVALID');
+  });
+
+  it('rejects non-loopback listeners before starting', async () => {
+    await expect(startSelfHealPreviewOpenAIFixture({ host: '0.0.0.0', env: childEnv() }))
+      .rejects.toThrow('SELF_HEAL_PREVIEW_OPENAI_LISTEN_TARGET_INVALID');
+  });
+
+  it('accepts actual SDK model, Responses, chat, and Trinity structured response decoding', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: childEnv() });
+    const sdk = client();
+    expect((await sdk.models.list()).data[0].id).toBe(BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID);
+    const response = await sdk.responses.create(responseBody());
+    expect(response.status).toBe('completed');
+    expect(response.output_text).toContain('Synthetic preview provider');
+    expect(response._request_id).toBe('self-heal-fixture-2');
+    const completion = await sdk.chat.completions.create({
+      model: BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID,
+      messages: [{ role: 'user', content: promptSentinel }],
+    });
+    expect(completion.choices[0].finish_reason).toBe('stop');
+    const structured = await sdk.responses.parse(responseBody({ text: { format: {
+      type: 'json_schema', ...TRINITY_STRUCTURED_REASONING_SCHEMA,
+    } } }));
+    expect(structured.output_parsed).toMatchObject({ response_mode: 'answer',
+      reasoning_steps: [], final_answer: expect.stringContaining('Synthetic') });
+    const receipt = await (await control({ command: 'inspect' })).json();
+    expect(receipt).toMatchObject({ providerRequests: 4, completed: 4, inFlight: null });
+    expect(receipt.receipts).toHaveLength(4);
+    expect(receipt.receipts.every(item => item.outcome === 'completed'
+      && item.endedAt >= item.startedAt)).toBe(true);
+    expect(JSON.stringify([response, completion, structured, receipt]))
+      .not.toContain(promptSentinel);
+    expect(JSON.stringify(receipt)).not.toContain(token);
+  });
+
+  it('authenticates controls before reading a body and separates provider authority', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: childEnv() });
+    const early = await new Promise((resolve, reject) => {
+      const request = httpRequest(`${endpoint()}${SELF_HEAL_PREVIEW_OPENAI_FIXTURE_CONTROL_PATH}`, {
+        method: 'POST', headers: { 'content-length': 1_000_000,
+          authorization: `Bearer ${BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY}` },
+      }, response => {
+        response.resume(); response.on('end', () => resolve(response.statusCode));
+      });
+      request.on('error', reject); request.flushHeaders();
+    });
+    expect(early).toBe(401);
+    expect(runtime.state.controlRequests).toBe(0);
+    const provider = await fetch(`${endpoint()}/v1/models`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(provider.status).toBe(401);
+    expect(runtime.state.providerRequests).toBe(0);
+    expect((await control({ command: 'timeout_next', count: 1, delayMs: 10 }, 'wrong')).status)
+      .toBe(401);
+    expect(runtime.state.nextFault).toBeNull();
+  });
+
+  it('observes bounded timeout effects, then independently observes provider recovery', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: childEnv() });
+    expect((await control({ command: 'timeout_next', count: 2, delayMs: 5 })).status).toBe(200);
+    const sdk = client();
+    for (let count = 0; count < 2; count += 1) {
+      await expect(sdk.responses.create(responseBody())).rejects.toMatchObject({ status: 504 });
+    }
+    expect((await control({ command: 'set_healthy' })).status).toBe(200);
+    await expect(sdk.responses.create(responseBody())).resolves.toMatchObject({ status: 'completed' });
+    const receipt = await (await control({ command: 'inspect' })).json();
+    expect(receipt).toMatchObject({ timedOut: 2, completed: 1, nextFault: null });
+    expect(receipt.receipts.map(item => item.outcome)).toEqual(['timeout', 'timeout', 'completed']);
+    expect(receipt.receipts.map(item => item.requestId)).toEqual([
+      'self-heal-fixture-1', 'self-heal-fixture-2', 'self-heal-fixture-3',
+    ]);
+  });
+
+  it('bounds concurrent faults, releases a held request, and rejects replacement while active', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: childEnv() });
+    await control({ command: 'hold_next', delayMs: 1000 });
+    const held = client().responses.create(responseBody()).then(value => value);
+    await waitForActive();
+    await expect(client().responses.create(responseBody())).rejects.toMatchObject({ status: 429 });
+    expect((await control({ command: 'timeout_next', count: 1, delayMs: 5 })).status).toBe(409);
+    expect((await control({ command: 'release' })).status).toBe(200);
+    await expect(held).resolves.toMatchObject({ status: 'completed' });
+    expect(runtime.inspect()).toMatchObject({ providerRequests: 1, completed: 1,
+      inFlight: null, timedOut: 0, rejected: 1 });
+  });
+
+  it('records client timeout independently and clears its hold for subsequent consumers', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: childEnv() });
+    await control({ command: 'hold_next', delayMs: 1000 });
+    await expect(client({ timeout: 30 }).responses.create(responseBody())).rejects.toThrow();
+    const deadline = Date.now() + 1000;
+    while (runtime.state.inFlight && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    expect(runtime.inspect()).toMatchObject({ clientClosed: 1, completed: 0, inFlight: null });
+    await expect(client().responses.create(responseBody())).resolves.toMatchObject({ status: 'completed' });
+  });
+
+  it.each([
+    { command: 'timeout_next', count: 0, delayMs: 1 },
+    { command: 'timeout_next', count: 5, delayMs: 1 },
+    { command: 'timeout_next', count: 1, delayMs: 5001 },
+    { command: 'hold_next', delayMs: 0 },
+    { command: 'inspect', extra: true }, { command: 'restart_production' },
+  ])('rejects an unbounded or unknown control without effects %p', async body => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: childEnv() });
+    expect((await control(body)).status).toBe(422);
+    expect(runtime.inspect()).toMatchObject({ providerRequests: 0, nextFault: null });
+  });
+
+  it('enforces body limits, closed wire contracts, and fixed nonreflective rejection', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: childEnv() });
+    expect((await control({ command: 'inspect', padding: 'x'.repeat(1024) })).status).toBe(413);
+    const sdk = client();
+    await expect(sdk.responses.create(responseBody({ input: 'x'.repeat(128 * 1024) })))
+      .rejects.toMatchObject({ status: 413 });
+    await expect(sdk.responses.create(responseBody({ stream: true })))
+      .rejects.toMatchObject({ status: 422 });
+    await expect(sdk.responses.create(responseBody({ model: promptSentinel })))
+      .rejects.toMatchObject({ status: 422 });
+    expect(runtime.inspect()).toMatchObject({ completed: 0, inFlight: null });
+    expect(JSON.stringify(runtime.inspect())).not.toContain(promptSentinel);
+  });
+
+  it('caps provider and control request counts while keeping receipts bounded', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: childEnv() });
+    const sdk = client();
+    for (let count = 0; count < SELF_HEAL_PREVIEW_OPENAI_FIXTURE_LIMITS.maxProviderRequests; count += 1) {
+      await sdk.models.list();
+    }
+    await expect(sdk.models.list()).rejects.toMatchObject({ status: 429 });
+    for (let count = 0; count < SELF_HEAL_PREVIEW_OPENAI_FIXTURE_LIMITS.maxControlRequests; count += 1) {
+      expect((await control({ command: 'inspect' })).status).toBe(200);
+    }
+    expect((await control({ command: 'inspect' })).status).toBe(429);
+    expect(runtime.state.receipts).toHaveLength(128);
+  });
+
+  it('times out an incomplete authenticated body and rejects its subsequent effect', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: childEnv() });
+    const status = await new Promise((resolve, reject) => {
+      const request = httpRequest(`${endpoint()}${SELF_HEAL_PREVIEW_OPENAI_FIXTURE_CONTROL_PATH}`, {
+        method: 'POST', headers: { authorization: `Bearer ${token}`,
+          'content-type': 'application/json', 'content-length': 100 },
+      }, response => {
+        response.resume(); response.on('end', () => resolve(response.statusCode));
+      });
+      request.on('error', reject);
+      request.write('{"command":"timeout_next"');
+    });
+    expect(status).toBe(408);
+    expect(runtime.inspect()).toMatchObject({ providerRequests: 0, nextFault: null });
+  });
+
+  it('runs the exact CLI child contract and exits automatically at the bounded expiry', async () => {
+    const child = spawn(process.execPath, [fileURLToPath(new URL(
+      '../scripts/railway-backstage-heavy-openai-fixture.mjs', import.meta.url
+    )), SELF_HEAL_PREVIEW_OPENAI_FIXTURE_CHILD_ARGUMENT], { env: childEnv({
+      ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT: new Date(Date.now() + 2000).toISOString(),
+    }), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    let output = '';
+    let errors = '';
+    child.stdout.on('data', chunk => { output += chunk; });
+    child.stderr.on('data', chunk => { errors += chunk; });
+    const result = await new Promise((resolve, reject) => {
+      const deadline = setTimeout(() => {
+        child.kill(); reject(new Error('preview fixture child did not expire'));
+      }, 5000);
+      child.once('error', error => { clearTimeout(deadline); reject(error); });
+      child.once('exit', code => { clearTimeout(deadline); resolve(code); });
+    });
+    expect(errors).toBe('');
+    expect(result).toBe(0);
+    expect(output).toBe(`${SELF_HEAL_PREVIEW_OPENAI_FIXTURE_READY_SENTINEL}\n`);
+    expect(output).not.toContain(token);
+  });
+
+  it('expires and drains a held provider operation without a late completion', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: childEnv({
+      ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT: new Date(Date.now() + 500).toISOString(),
+    }) });
+    const address = runtime.server.address();
+    await control({ command: 'hold_next', delayMs: 1000 });
+    await expect(client().responses.create(responseBody())).rejects.toMatchObject({ status: 503 });
+    await runtime.close();
+    expect(runtime.inspect()).toMatchObject({ expired: true, ready: false,
+      completed: 0, inFlight: null });
+    expect(runtime.state.receipts[0].outcome).toBe('shutdown');
+    await expect(fetch(`http://127.0.0.1:${address.port}/v1/models`)).rejects.toThrow();
   });
 });

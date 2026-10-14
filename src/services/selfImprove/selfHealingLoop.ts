@@ -4140,6 +4140,8 @@ export async function runSelfHealingLoop(options: {
   trigger?: 'startup' | 'interval' | 'manual';
   requestedCycle?: SelfImproveTrigger;
   signal?: AbortSignal;
+  /** Dependency seam used only by the bounded, isolated preview controller. */
+  beforeObservation?: (signal?: AbortSignal) => Promise<void>;
 } = {}): Promise<SelfHealingLoopRunResult> {
   const runtime = getRuntime();
   const trigger = options.trigger ?? 'manual';
@@ -4204,6 +4206,8 @@ export async function runSelfHealingLoop(options: {
 
     console.log(`[SELF-HEAL] tick ${tickAt} trigger=${trigger} tickCount=${runtime.status.tickCount}`);
 
+    await options.beforeObservation?.(options.signal);
+    options.signal?.throwIfAborted();
     const observation = await observeSelfHealingRuntime();
     options.signal?.throwIfAborted();
     runtime.status.lastObservationAt = new Date().toISOString();
@@ -4502,9 +4506,15 @@ export async function runSelfHealingLoop(options: {
 }
 
 /** Install the one canonical scheduler after its process dependencies are ready. */
+export interface SelfHealingCoordinatorOptions {
+  signal?: AbortSignal;
+  beforeObservation?: (signal?: AbortSignal) => Promise<void>;
+  installScheduler?: (callback: () => void, intervalMs: number) => ReturnType<typeof setInterval>;
+}
+
 export function startSelfHealingLoop(
   intervalMs = resolveLoopIntervalMs(),
-  options: { signal?: AbortSignal } = {}
+  options: SelfHealingCoordinatorOptions = {}
 ): SelfHealingLoopStatus {
   const runtime = getRuntime();
   const workerRuntimeMode = getStableWorkerRuntimeMode();
@@ -4541,7 +4551,7 @@ export function startSelfHealingLoop(
   runtime.status.intervalMs = intervalMs;
   const runScheduled = (trigger: 'startup' | 'interval'): void => {
     if (controller.signal.aborted || runtime.inFlight) return;
-    const pending = runSelfHealingLoop({ trigger, signal: controller.signal });
+    const pending = runSelfHealingLoop({ trigger, signal: controller.signal, beforeObservation: options.beforeObservation });
     runtime.scheduledRun = pending;
     // The evaluator normally captures failures itself. Also contain an unexpected
     // rejection here so telemetry/diagnostic failure cannot reject the worker loop.
@@ -4556,7 +4566,7 @@ export function startSelfHealingLoop(
     if (!Number.isFinite(intervalMs) || intervalMs < 1 || intervalMs > 2_147_483_647) {
       throw new Error('SELF_HEAL_INTERVAL_INVALID');
     }
-    runtime.timer = setInterval(() => runScheduled('interval'), intervalMs);
+    runtime.timer = (options.installScheduler ?? setInterval)(() => runScheduled('interval'), intervalMs);
     runtime.timer.unref?.();
     if (options.signal) {
       const onAbort = () => { void stopSelfHealingLoop('shutdown_requested'); };

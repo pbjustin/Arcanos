@@ -750,6 +750,17 @@ export async function runBackstageHeavyProofSupervisor(
 }
 
 async function main() {
+  if (process.argv.length === 3 && process.argv[2] === '--self-heal-preview-v1') {
+    const { runSelfHealPreviewSupervisor, SelfHealPreviewError } = await import('./railway-self-heal-preview-profile.mjs');
+    const processKind = process.env.ARCANOS_PROCESS_KIND?.trim().toLowerCase();
+    try {
+      process.exitCode = await runSelfHealPreviewSupervisor(processKind, process.env);
+    } catch (error) {
+      process.stderr.write(`${error instanceof SelfHealPreviewError ? error.message : 'SELF_HEAL_PREVIEW_FAILED'}\n`);
+      process.exitCode = 1;
+    }
+    return;
+  }
   if (process.argv.length !== 2) {
     fail('BACKSTAGE_HEAVY_PROOF_ARGUMENT_INVALID');
   }
