@@ -3,16 +3,17 @@ import type { GamingGameRegistry, GamingRegistryGame } from './gamingGameRegistr
 export const GAMING_LEGACY_EDITION_GAME = 'Minecraft';
 
 const provenance = { reviewedAt: '2026-10-10', references: ['src/services/gamingGameDetection.ts', 'issues/1532'] };
+const sourceAcceptanceProvenance = { reviewedAt: '2026-10-13', references: ['tests/gaming-source-acceptance-identity.test.ts'] };
 const game = (id: string, name: string, aliases: string[] = []): GamingRegistryGame => ({
   id, name, aliases, related: [], editions: [], platforms: [], provenance
 });
 
 /** Recognition data only. Publisher authority, acquired evidence and storage permissions live elsewhere. */
 export const GAMING_GAME_REGISTRY_DATA: GamingGameRegistry = {
-  version: 'gaming-game-registry/v1', revision: '2026-10-10.1',
+  version: 'gaming-game-registry/v1', revision: '2026-10-13.1',
   topicVocabulary: ['samurai', 'katana', 'katanas', 'blade', 'blades', 'bleed', 'blood', 'dexterity',
     'strength', 'intelligence', 'faith', 'arcane', 'vigor', 'endurance', 'weapon', 'weapons',
-    'beginner', 'beginners', 'starting', 'equipment', 'skills', 'talents'],
+    'beginner', 'beginners', 'starting', 'equipment', 'skills', 'talents', 'heavy', 'gunner', 'power', 'armor', 'armour'],
   games: [
     game('star-wars-the-old-republic', 'Star Wars: The Old Republic', ['The Old Republic', 'SWTOR']),
     { ...game('world-of-warcraft', 'World of Warcraft', ['WoW', 'WOW']), caseSensitiveAliases: ['WoW', 'WOW'] },
@@ -22,6 +23,10 @@ export const GAMING_GAME_REGISTRY_DATA: GamingGameRegistry = {
         { id: 'shadow-of-the-erdtree', name: 'shadow of the erdtree', kind: 'expansion', aliases: ['Shadow of the Erdtree'], platforms: [] }
       ] },
     game('elden-ring-nightreign', 'Elden Ring Nightreign'),
+    { ...game('fallout-76', 'Fallout 76'), provenance: sourceAcceptanceProvenance },
+    { ...game('fallout-4', 'Fallout 4'), provenance: sourceAcceptanceProvenance },
+    { ...game('fallout-3', 'Fallout 3'), provenance: sourceAcceptanceProvenance },
+    { ...game('fallout-new-vegas', 'Fallout: New Vegas', ['Fallout New Vegas']), provenance: sourceAcceptanceProvenance },
     game('destiny-2', 'Destiny 2'), game('diablo-4', 'Diablo 4', ['Diablo IV']),
     { ...game('path-of-exile', 'Path of Exile'), related: [{ id: 'path-of-exile-2', kind: 'sequel' }] },
     game('path-of-exile-2', 'Path of Exile 2'),

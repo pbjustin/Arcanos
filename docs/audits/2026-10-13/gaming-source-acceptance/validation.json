@@ -1,0 +1,418 @@
+{
+  "schema": "arcanos-gaming-source-acceptance-validation/v1",
+  "observedAt": "2026-10-14T02:24:11.656Z",
+  "baselineSha": "c8bb00ee000e3e188f17e1aa2b5e2893d0221fb8",
+  "node": "v24.18.1",
+  "npm": "11.16.0",
+  "coverage": false,
+  "syntheticOnly": true,
+  "liveAcceptance": "NOT_RUN",
+  "checks": [
+    {
+      "name": "final-fixture-baseline-identity",
+      "location": "detached baseline worktree",
+      "command": "node scripts/run-jest.mjs --runTestsByPath tests/gaming-source-acceptance-identity.test.ts --runInBand --coverage=false --json --outputFile=../identity-final-baseline.json",
+      "passedSuites": 0,
+      "failedSuites": 1,
+      "skippedSuites": 0,
+      "passed": 16,
+      "failed": 9,
+      "skipped": 0,
+      "rawResultSha256": "d60313349c024e61c5c9c3969d54737057e201f27a4b473d42980b3e9d19f177",
+      "suiteFiles": [
+        "tests/gaming-source-acceptance-identity.test.ts"
+      ],
+      "nonpassing": [
+        {
+          "fullName": "incident-shaped source identity and extraction (synthetic evidence) accepts independent Elden Ring body identity with a generic topic heading and unrelated furniture",
+          "status": "failed"
+        },
+        {
+          "fullName": "incident-shaped source identity and extraction (synthetic evidence) accepts independent Fallout 76 body identity with a generic topic heading and unrelated furniture",
+          "status": "failed"
+        },
+        {
+          "fullName": "incident-shaped source identity and extraction (synthetic evidence) does not invent an acquired game named Heavy Gunner build guide",
+          "status": "failed"
+        },
+        {
+          "fullName": "incident-shaped source identity and extraction (synthetic evidence) does not invent an acquired game named Beginner Power Armor Heavy Gunner guide",
+          "status": "failed"
+        },
+        {
+          "fullName": "incident-shaped source identity and extraction (synthetic evidence) does not invent an acquired game named Heavy Weapons guide",
+          "status": "failed"
+        },
+        {
+          "fullName": "incident-shaped source identity and extraction (synthetic evidence) does not let a generic instruction heading override independently verified Fallout 76",
+          "status": "failed"
+        },
+        {
+          "fullName": "incident-shaped source identity and extraction (synthetic evidence) retains an affirmative Fallout 4 body contradiction despite a Fallout 76 title",
+          "status": "failed"
+        },
+        {
+          "fullName": "incident-shaped source identity and extraction (synthetic evidence) retains an affirmative Fallout: New Vegas body contradiction despite a Fallout 76 title",
+          "status": "failed"
+        },
+        {
+          "fullName": "incident-shaped source identity and extraction (synthetic evidence) retains an affirmative Fallout 3 body contradiction despite a Fallout 76 title",
+          "status": "failed"
+        }
+      ]
+    },
+    {
+      "name": "final-fixture-baseline-workflow",
+      "location": "detached baseline worktree",
+      "command": "node scripts/run-jest.mjs --runTestsByPath tests/gaming-source-acceptance-workflow.integration.test.ts --runInBand --coverage=false --json --outputFile=../workflow-final-baseline.json",
+      "passedSuites": 0,
+      "failedSuites": 1,
+      "skippedSuites": 0,
+      "passed": 1,
+      "failed": 5,
+      "skipped": 0,
+      "rawResultSha256": "52632fb9be059c5a50b2584011224aeb6af6cdece908b2de38aeea1153c021b7",
+      "suiteFiles": [
+        "tests/gaming-source-acceptance-workflow.integration.test.ts"
+      ],
+      "nonpassing": [
+        {
+          "fullName": "source acceptance through the actual hybrid-v2 and Trinity pipeline grounds Elden Ring using acquired, selected passages without durable writes",
+          "status": "failed"
+        },
+        {
+          "fullName": "source acceptance through the actual hybrid-v2 and Trinity pipeline grounds Fallout 76 using acquired, selected passages without durable writes",
+          "status": "failed"
+        },
+        {
+          "fullName": "source acceptance through the actual hybrid-v2 and Trinity pipeline stops Elden Ring with accepted but insufficient evidence after its bounded recovery",
+          "status": "failed"
+        },
+        {
+          "fullName": "source acceptance through the actual hybrid-v2 and Trinity pipeline stops Fallout 76 with accepted but insufficient evidence after its bounded recovery",
+          "status": "failed"
+        },
+        {
+          "fullName": "source acceptance through the actual hybrid-v2 and Trinity pipeline stops Fallout 76 when both acquired guides actually declare another game",
+          "status": "failed"
+        }
+      ]
+    },
+    {
+      "name": "repaired-identity",
+      "location": "repair worktree",
+      "command": "node scripts/run-jest.mjs --runTestsByPath tests/gaming-source-acceptance-identity.test.ts --runInBand --coverage=false --json --outputFile=../identity-fixed.json",
+      "passedSuites": 1,
+      "failedSuites": 0,
+      "skippedSuites": 0,
+      "passed": 25,
+      "failed": 0,
+      "skipped": 0,
+      "rawResultSha256": "89369667e9372539852e90d63e708daef9aabb84e40388761ebf46650feb0bcf",
+      "suiteFiles": [
+        "tests/gaming-source-acceptance-identity.test.ts"
+      ],
+      "nonpassing": []
+    },
+    {
+      "name": "protected-acquisition",
+      "location": "repair worktree",
+      "command": "node scripts/run-jest.mjs --runTestsByPath tests/gaming-source-acceptance-acquisition.test.ts --runInBand --coverage=false --json --outputFile=../acquisition-tests.json",
+      "passedSuites": 1,
+      "failedSuites": 0,
+      "skippedSuites": 0,
+      "passed": 7,
+      "failed": 0,
+      "skipped": 0,
+      "rawResultSha256": "4d27abb9e4c176dd50b2ec8126d6d822e5355b74eec9766ab075e55839436aad",
+      "suiteFiles": [
+        "tests/gaming-source-acceptance-acquisition.test.ts"
+      ],
+      "nonpassing": []
+    },
+    {
+      "name": "all-gaming-except-new-e2e",
+      "location": "repair worktree",
+      "command": "node scripts/run-jest.mjs --runTestsByPath <exact files in suiteFiles> --maxWorkers=2 --coverage=false --json --outputFile=../gaming-focused.json",
+      "passedSuites": 145,
+      "failedSuites": 0,
+      "skippedSuites": 1,
+      "passed": 4436,
+      "failed": 0,
+      "skipped": 9,
+      "rawResultSha256": "23723ee0990371c1de32da12b14abb7a8c7a27c95fb86318e3c20b5250870c3e",
+      "suiteFiles": [
+        "tests/gaming-web-context-quality.test.ts",
+        "tests/gaming-source-ingestion.test.ts",
+        "tests/gaming-discovery-recovery.integration.test.ts",
+        "tests/gaming-hybrid-lifecycle.integration.test.ts",
+        "tests/gaming-samurai-guide-workflow.integration.test.ts",
+        "tests/gaming-source-http-boundary.test.ts",
+        "tests/gaming-freshness.test.ts",
+        "tests/integration/gaming-durable-rag.pg18.integration.test.ts",
+        "tests/gaming-document-resolution.test.ts",
+        "tests/gaming-hybrid-evidence-selection.test.ts",
+        "tests/gaming-currentness-workflow.test.ts",
+        "tests/gaming-hybrid-workflow.test.ts",
+        "tests/gaming-source-discovery.integration.test.ts",
+        "tests/gaming-ordinary-negative-acceptance.integration.test.ts",
+        "tests/gaming-hosted-mission-extraction.test.ts",
+        "tests/gaming-search-discovery.test.ts",
+        "tests/gaming-trinity-generation-budget.test.ts",
+        "tests/gaming-ordinary-gameplay-acceptance.integration.test.ts",
+        "tests/gaming-protected-transport.test.ts",
+        "tests/gaming-ordinary-request-coverage.test.ts",
+        "tests/gaming-stored-knowledge.test.ts",
+        "tests/gaming-clear-answer-audit.test.ts",
+        "tests/gaming-structural-sufficiency.test.ts",
+        "tests/gaming-hybrid-v2-lifecycle.test.ts",
+        "tests/gaming-source-repository.test.ts",
+        "tests/gaming-currentness-candidates.test.ts",
+        "tests/gaming-minecraft-edition-scope.test.ts",
+        "tests/gaming-claim-corroboration.test.ts",
+        "tests/gaming-hybrid-preview.test.ts",
+        "tests/gaming-html-evidence.test.ts",
+        "tests/gaming-structured-resources.test.ts",
+        "tests/gaming-skill-composition.test.ts",
+        "tests/gaming-clear-evidence.test.ts",
+        "tests/gaming-player-context.e2e.test.ts",
+        "tests/gaming-public-dispatch-http.test.ts",
+        "tests/gaming-resolved-source-ingestion.integration.test.ts",
+        "tests/gaming-json-evidence.test.ts",
+        "tests/gaming-currentness-adapters.test.ts",
+        "tests/gaming-archive-provider-http.integration.test.ts",
+        "tests/gaming-clear-pipeline.test.ts",
+        "tests/gaming-clarification-workflow.test.ts",
+        "tests/gaming-archive-resources.test.ts",
+        "tests/gaming-currentness-preview.test.ts",
+        "tests/gaming-advisory-strictness.test.ts",
+        "tests/gaming-platform-aliases.test.ts",
+        "tests/gaming-guide-outcomes.test.ts",
+        "tests/gaming-agents.routing.test.ts",
+        "tests/gaming-player-context.test.ts",
+        "tests/gaming-unrequested-base-edition.test.ts",
+        "tests/gaming-clear-policy.test.ts",
+        "tests/gaming-clear-source.test.ts",
+        "tests/gaming-live-runtime.test.ts",
+        "tests/gaming-generic-stored-source-scope.test.ts",
+        "tests/gaming-structured-evidence-preview.test.ts",
+        "tests/gaming-clarification-operation-budget.test.ts",
+        "tests/gaming-large-guide-rag.integration.test.ts",
+        "tests/gaming-clear-preview-fixture.test.ts",
+        "tests/gaming-ingress-audit.test.ts",
+        "tests/gaming-generation-budget-preview.test.ts",
+        "tests/gaming-archive-rag.integration.test.ts",
+        "tests/gaming-base-defaulting.test.ts",
+        "tests/gaming-retrieval-policy.test.ts",
+        "tests/gaming-public-dispatcher.test.ts",
+        "tests/gaming-guide-applicability.test.ts",
+        "tests/gaming-hybrid-preview-failure.test.ts",
+        "tests/gaming-large-source-preview.test.ts",
+        "tests/gaming-generic-late-applicability.test.ts",
+        "tests/gaming-acquired-primary-heading.test.ts",
+        "tests/gaming-freshness-disposition.test.ts",
+        "tests/gaming-progress-recovery.test.ts",
+        "tests/gaming-prompt-builder.test.ts",
+        "tests/gaming-currentness-preview-failure.test.ts",
+        "tests/gaming-live-source-validation-preview.test.ts",
+        "tests/gaming-hybrid-edition-budget.test.ts",
+        "tests/gaming-mcp-preview-fixture.test.ts",
+        "tests/gaming-progress-recovery-preview.test.ts",
+        "tests/gaming-mission-acquisition.integration.test.ts",
+        "tests/gaming-currentness-document.test.ts",
+        "tests/gaming-baseline-capture.test.ts",
+        "tests/gaming-durable-rag-preview.test.ts",
+        "tests/gaming-semantic-reasons.test.ts",
+        "tests/gaming-source-evaluation-stages.test.ts",
+        "tests/gaming-document-ingestion-preview.test.ts",
+        "tests/gaming-source-acquisition-preview.test.ts",
+        "tests/gaming-structured-supplied-rag.integration.test.ts",
+        "tests/gaming-clear-preview-failure.test.ts",
+        "tests/gaming-grounding-response.test.ts",
+        "tests/gaming-mcp-preview.integration.test.ts",
+        "tests/gaming-rag-local-fetch.integration.test.ts",
+        "tests/gaming-structure-diagnostics.test.ts",
+        "tests/gaming-minecraft-child-isolation.test.ts",
+        "tests/gaming-request-scope.test.ts",
+        "tests/gaming-clear-calibration.test.ts",
+        "tests/gaming-composition-preview-fixture.test.ts",
+        "tests/gaming-hybrid-corroboration.test.ts",
+        "tests/gaming-primary-heading-preface.test.ts",
+        "tests/gaming-guide-response-preview.test.ts",
+        "tests/gaming-mcp-preview-verifier.test.ts",
+        "tests/gaming-live-source-candidate-regressions.test.ts",
+        "tests/gaming-guide-assistance-preview.test.ts",
+        "tests/gaming-partial-guide-admission.test.ts",
+        "tests/gaming-execution-budget.test.ts",
+        "tests/gaming-location-scope.test.ts",
+        "tests/gaming-json-evidence-preflight.test.ts",
+        "tests/gaming-currentness-registry.test.ts",
+        "tests/gaming-mixed-candidate-failures.test.ts",
+        "tests/gaming-generic-benchmark.test.ts",
+        "tests/gaming-durable-rag-preview-failure.test.ts",
+        "tests/gaming-source-evaluation-trace.test.ts",
+        "tests/gaming-web-context-edition-scope.test.ts",
+        "tests/gaming-html-scan.test.ts",
+        "tests/gaming-frontend-guide-contract.test.ts",
+        "tests/gaming-generation-budget.test.ts",
+        "tests/gaming-document-ingestion-preview-failure.test.ts",
+        "tests/gaming-durable-document-chunks.test.ts",
+        "tests/gaming-answer-policy.test.ts",
+        "tests/gaming-archive-preview.test.ts",
+        "tests/gaming-clear-disabled-runtime-budget.test.ts",
+        "tests/gaming-guide-response-preview-failure.test.ts",
+        "tests/gaming-guide-intake-core.test.ts",
+        "tests/gaming-source-evaluation-failures.test.ts",
+        "tests/gaming-source-schema-parity.test.ts",
+        "tests/gaming-generation-budget-preview-failure.test.ts",
+        "tests/gaming-guide-assistance-preview-failure.test.ts",
+        "tests/gaming-progress-recovery-preview-failure.test.ts",
+        "tests/gaming-structured-evidence-preview-failure.test.ts",
+        "tests/gaming-source-acquisition-preview-failure.test.ts",
+        "tests/gaming-request-scope-negation.test.ts",
+        "tests/gaming-version.test.ts",
+        "tests/gaming-archive-preview-failure.test.ts",
+        "tests/gaming-clarification-context.test.ts",
+        "tests/gaming-json-evidence-resolution.test.ts",
+        "tests/gaming-request-scope-necessity.test.ts",
+        "tests/gaming-publisher-extraction-regressions.test.ts",
+        "tests/gaming-source-scope-negation.test.ts",
+        "tests/gaming-acquired-topic-identity.test.ts",
+        "tests/gaming-source-acceptance-acquisition.test.ts",
+        "tests/gaming-source-acceptance-identity.test.ts",
+        "tests/gaming-generic-source-scope.test.ts",
+        "tests/gaming-generic-late-source-scope.test.ts",
+        "tests/gaming-location-heading-identity.test.ts",
+        "tests/gaming-body-identity.test.ts",
+        "tests/gaming-live-source-identity-regressions.test.ts",
+        "tests/gaming-article-container-regression.test.ts",
+        "tests/gaming-game-registry.test.ts",
+        "tests/gaming-game-identity.test.ts"
+      ],
+      "nonpassing": [
+        {
+          "fullName": "durable Gaming chunk storage and retrieval on PostgreSQL 18 acquires a short structured source, passes real source CLEAR, ingests, and retrieves without its URL",
+          "status": "pending"
+        },
+        {
+          "fullName": "durable Gaming chunk storage and retrieval on PostgreSQL 18 persists acquired official currentness through SQL JSONB and reuses only bound, unexpired proof",
+          "status": "pending"
+        },
+        {
+          "fullName": "durable Gaming chunk storage and retrieval on PostgreSQL 18 retains JSON record provenance beyond 100K and revisions a late change through actual SQL",
+          "status": "pending"
+        },
+        {
+          "fullName": "durable Gaming chunk storage and retrieval on PostgreSQL 18 matches stored title formatting across three games without collapsing editions or reindexing historical keys",
+          "status": "pending"
+        },
+        {
+          "fullName": "durable Gaming chunk storage and retrieval on PostgreSQL 18 a separate edition field selects the complete trusted identity and rejects a base-only catalog",
+          "status": "pending"
+        },
+        {
+          "fullName": "durable Gaming chunk storage and retrieval on PostgreSQL 18 retrieves late and near-end facts through real indexed SQL and bounded evidence projection",
+          "status": "pending"
+        },
+        {
+          "fullName": "durable Gaming chunk storage and retrieval on PostgreSQL 18 keeps unchanged revisions and supersedes or reactivates complete chunk generations after a deep edit",
+          "status": "pending"
+        },
+        {
+          "fullName": "durable Gaming chunk storage and retrieval on PostgreSQL 18 advances unchanged hybrid resource verification monotonically without changing revision or active chunks",
+          "status": "pending"
+        },
+        {
+          "fullName": "durable Gaming chunk storage and retrieval on PostgreSQL 18 rolls back a failed new revision after supersession and retains the prior usable evidence",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "name": "preview-containment-and-final-e2e",
+      "location": "repair worktree",
+      "command": "node scripts/run-jest.mjs --runTestsByPath tests/native-pr-preview-import-boundary.test.js tests/gaming-source-acceptance-workflow.integration.test.ts --maxWorkers=2 --coverage=false --json --outputFile=../containment-and-e2e.json",
+      "passedSuites": 2,
+      "failedSuites": 0,
+      "skippedSuites": 0,
+      "passed": 416,
+      "failed": 0,
+      "skipped": 0,
+      "rawResultSha256": "7e2b52ec0a04d13683504a78a88f72609827a77864724f0222241edb1db453fc",
+      "suiteFiles": [
+        "tests/gaming-source-acceptance-workflow.integration.test.ts",
+        "tests/native-pr-preview-import-boundary.test.js"
+      ],
+      "nonpassing": []
+    },
+    {
+      "command": "npm run type-check",
+      "result": "PASS",
+      "detail": "Completed with exit 0"
+    },
+    {
+      "command": "npm run lint",
+      "result": "PASS",
+      "detail": "0 errors, 77 warnings in existing files"
+    },
+    {
+      "command": "npm run build",
+      "result": "PASS",
+      "detail": "Completed with exit 0"
+    },
+    {
+      "command": "npm run reindex",
+      "result": "PASS",
+      "detail": "Completed with exit 0"
+    },
+    {
+      "command": "npm run docs:check",
+      "result": "PASS",
+      "detail": "Completed with exit 0"
+    },
+    {
+      "command": "git diff --check",
+      "result": "PASS",
+      "detail": "Completed with exit 0"
+    }
+  ],
+  "skippedSql": "Gaming PostgreSQL suite: 9 skipped tests; no disposable or production database was configured or touched.",
+  "seams": "Synthetic HTTP/DNS and Responses provider transport; empty corpus retrieval; persistence calls trapped. Actual validation, selection, Trinity stages, response schema and answer audit bindings run.",
+  "fingerprints": [
+    {
+      "path": "src/services/gamingGameDetection.ts",
+      "localRawSha256": "2df556e692d13d0a198c69fc7dac0472001998d1ecbab49f3820dd21e80f4998",
+      "gitBlob": "03df6efb208df7824873bfd6da3f32a04f6ccada"
+    },
+    {
+      "path": "src/shared/gaming/gamingGameRegistryData.ts",
+      "localRawSha256": "05646f3dfb3c55fbf42a1f8232eea25a7e9c69991d889e294aea9b413dd757f6",
+      "gitBlob": "cda4541538c2a3b8c6a622abf07b56f7253d4ad1"
+    },
+    {
+      "path": "scripts/check-native-pr-preview-imports.mjs",
+      "localRawSha256": "cee1433fa4e7ca33d4360d52fd000f2fe6e137434e69111160ffc8e64deb7c08",
+      "gitBlob": "7b308566ae295ba6dd376f8c6ae8bf6466ce7a5b"
+    },
+    {
+      "path": "tests/fixtures/gaming-source-acceptance.ts",
+      "localRawSha256": "172005ee20215bf33d9c9483d562daf9c6f10e0b049f0a7d7825875aab3219b5",
+      "gitBlob": "e23628a2c3d0fe578d54b34f358451075f41438c"
+    },
+    {
+      "path": "tests/gaming-source-acceptance-identity.test.ts",
+      "localRawSha256": "6d3084a1ac080793bcb4c87d0bc9ada404040c8bac60c9f63c1d6184600d09f9",
+      "gitBlob": "1dadb31eca57bc91867da9295397456de10388d7"
+    },
+    {
+      "path": "tests/gaming-source-acceptance-acquisition.test.ts",
+      "localRawSha256": "15f814c567bfadbd352b0e8f9106ab52a7467d20272c6935ae7019b511fb594c",
+      "gitBlob": "bf7864d313d93f97683566d3dfa87e8740ca5a07"
+    },
+    {
+      "path": "tests/gaming-source-acceptance-workflow.integration.test.ts",
+      "localRawSha256": "315639c15ff8e0de6627e3142e0eedc6057d1d465072f0478d93f14587898792",
+      "gitBlob": "0a31ea171130af8cd81141a561eee3a337cc96e0"
+    }
+  ]
+}
