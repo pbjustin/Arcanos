@@ -219,6 +219,49 @@ describe('web server startup resilience', () => {
     expect(startSelfHealing).toHaveBeenCalledTimes(1);
   });
 
+  it('suppresses the real canonical coordinator through the explicit web production startup path', async () => {
+    const originalRole = process.env.ARCANOS_PROCESS_KIND;
+    const originalWorkers = process.env.RUN_WORKERS;
+    process.env.ARCANOS_PROCESS_KIND = 'web';
+    process.env.RUN_WORKERS = 'true';
+    jest.resetModules();
+    const serverModule = await import('../src/server.js');
+    const coordinator = await import('../src/services/selfImprove/selfHealingLoop.js');
+    const startupLifecycle = await import('../src/platform/runtime/startupLifecycle.js');
+    startupLifecycle.resetStartupLifecycleForTests();
+    coordinator.resetSelfHealingLoopStateForTests();
+    const { app } = buildFakeApp([]);
+    const exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    try {
+      await serverModule.startServer({
+        app, startAppRuntimeOnce: () => true,
+        performPreflight: async () => undefined,
+        initializeDependencies: async () => undefined,
+        startRedis: () => undefined, stopRedis: async () => undefined,
+        primeTelemetry: async () => undefined, stopTelemetry: async () => undefined,
+        getRedisSnapshot: () => redisSnapshot('READY'),
+        subscribeRedis: () => () => undefined,
+        closeDatabase: async () => undefined,
+        registerSignalHandlers: false,
+      });
+      await flushAsyncWork();
+      expect(startupLifecycle.getStartupLifecycleSnapshot().ready).toBe(true);
+      expect(coordinator.getSelfHealingLoopStatus()).toMatchObject({
+        coordinatorState: 'DISABLED', coordinatorReasonCode: 'service_role_suppressed',
+        loopRunning: false, tickCount: 0, processKind: 'web',
+      });
+      await serverModule.shutdownServer('SIGTERM');
+      expect(exitSpy).toHaveBeenCalledWith(0);
+    } finally {
+      coordinator.resetSelfHealingLoopStateForTests();
+      exitSpy.mockRestore();
+      if (originalRole === undefined) delete process.env.ARCANOS_PROCESS_KIND;
+      else process.env.ARCANOS_PROCESS_KIND = originalRole;
+      if (originalWorkers === undefined) delete process.env.RUN_WORKERS;
+      else process.env.RUN_WORKERS = originalWorkers;
+    }
+  });
+
   it('keeps the bound listener observable when deferred runtime initialization fails', async () => {
     jest.resetModules();
     const serverModule = await import('../src/server.js');

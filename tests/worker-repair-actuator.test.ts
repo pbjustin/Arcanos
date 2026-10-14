@@ -75,6 +75,23 @@ const {
   executeWorkerRepairActuator,
 } = await import('../src/services/selfImprove/workerRepairActuator.js');
 
+it('does not restart unrelated listeners as dedicated job-runner recovery', async () => {
+  getConfigMock.mockReturnValue({ runWorkers: true, workerApiTimeoutMs: 5_000 });
+  getStableWorkerRuntimeModeMock.mockReturnValue({
+    requestedRunWorkers: false, resolvedRunWorkers: true, processKind: 'worker',
+    railwayServiceName: 'Worker', reason: 'process_kind_worker'
+  });
+  isRailwayApiConfiguredMock.mockReturnValue(true);
+  expect(buildWorkerRepairActuatorStatus()).toMatchObject({
+    mode: 'unavailable', available: false,
+    reason: expect.stringContaining('not the durable job runner')
+  });
+  await expect(executeWorkerRepairActuator({ source: 'synthetic' })).rejects.toThrow('not the durable job runner');
+  expect(healWorkerRuntimeMock).not.toHaveBeenCalled();
+  expect(deployServiceMock).not.toHaveBeenCalled();
+  expect(listProjectsMock).not.toHaveBeenCalled();
+});
+
 function configureRemoteWorker(baseUrl = 'https://worker.example.test'): void {
   environment.set('SELF_HEAL_WORKER_SERVICE_URL', baseUrl);
 }

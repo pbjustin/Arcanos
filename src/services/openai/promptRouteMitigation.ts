@@ -1,5 +1,6 @@
 import { getEnvNumber } from '@platform/runtime/env.js';
 import { logger } from '@platform/logging/structuredLogging.js';
+import { getConfig, getStableWorkerRuntimeMode } from '@platform/runtime/unifiedConfig.js';
 
 export type PromptRouteMitigationMode = 'reduced_latency' | 'degraded_response' | null;
 
@@ -179,6 +180,14 @@ export function getPromptRouteMitigationState(): PromptRouteMitigationState {
 
 export function activatePromptRouteDegradedMode(reason: string): PromptRouteMitigationResult {
   const state = getMutableState();
+  // This command is consumed only by this process's HTTP prompt handler. The
+  // dedicated job runner cannot repair the web service by changing its own heap.
+  if (getStableWorkerRuntimeMode().processKind === 'worker') {
+    return {
+      applied: false, rolledBack: false, state: { ...state },
+      reason: 'cross_process_prompt_route_unavailable'
+    };
+  }
   if (state.active && state.mode === 'degraded_response') {
     return {
       applied: false,
@@ -215,6 +224,12 @@ export function activatePromptRouteDegradedMode(reason: string): PromptRouteMiti
 
 export function activatePromptRouteReducedLatencyMode(reason: string, defaultTokenLimit: number): PromptRouteMitigationResult {
   const state = getMutableState();
+  if (getStableWorkerRuntimeMode().processKind === 'worker') {
+    return {
+      applied: false, rolledBack: false, state: { ...state },
+      reason: 'cross_process_prompt_route_unavailable'
+    };
+  }
   if (state.active && state.mode === 'reduced_latency') {
     return {
       applied: false,
@@ -303,6 +318,17 @@ export function recordPromptRouteTimeoutIncident(
 
   state.lastTimeoutAt = now;
   state.recentTimeoutCount += 1;
+
+  const config = getConfig();
+  if (
+    !config.selfImproveEnabled || config.selfImproveActuatorMode !== 'daemon' ||
+    config.selfImproveFrozen || !(config.selfImproveAutonomyLevel >= 3)
+  ) {
+    return {
+      applied: false, rolledBack: false, state: { ...state },
+      reason: 'automatic_mitigation_not_authorized'
+    };
+  }
 
   if (state.active || state.recentTimeoutCount < timeoutThreshold) {
     return {

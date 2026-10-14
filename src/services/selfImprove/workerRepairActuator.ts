@@ -522,6 +522,19 @@ export function buildWorkerRepairActuatorStatus(
   const currentServiceName = getEnv('RAILWAY_SERVICE_NAME')?.trim() || null;
   const timeoutMs = Math.max(5_000, config.workerApiTimeoutMs);
 
+  if (workerRuntimeMode.processKind === 'worker') {
+    return {
+      mode: 'unavailable',
+      available: false,
+      reason: 'Dedicated job-runner restart is unavailable: the local repair helper controls in-process listeners, not the durable job runner.',
+      serviceName: currentServiceName,
+      targetServiceName: currentServiceName,
+      baseUrl: null,
+      path: null,
+      timeoutMs
+    };
+  }
+
   if (config.runWorkers) {
     return {
       mode: 'local_in_process',

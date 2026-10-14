@@ -8,7 +8,8 @@ import {
   type WorkerRuntimeStatus,
   type WorkerScaleUpResult
 } from '@platform/runtime/workerConfig.js';
-import { getConfig } from '@platform/runtime/unifiedConfig.js';
+import { getConfig, getStableWorkerRuntimeMode } from '@platform/runtime/unifiedConfig.js';
+import { getKillSwitchStatus } from '@services/incidentResponse/killSwitch.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import {
   activatePromptRouteDegradedMode,
@@ -446,6 +447,7 @@ interface PredictiveHealingExecutionRequest {
   executeRequested: boolean;
   allowAutoExecute: boolean;
   dryRunOverride?: boolean;
+  signal?: AbortSignal;
 }
 
 const GLOBAL_KEY = '__ARCANOS_PREDICTIVE_SELF_HEAL__';
@@ -2422,7 +2424,7 @@ export function evaluatePredictiveHealingRules(params: {
 
 function resolveExecutionMode(request: PredictiveHealingExecutionRequest): PredictiveHealingExecutionResult['mode'] {
   const config = getConfig();
-  const effectiveDryRun = request.dryRunOverride ?? config.predictiveHealingDryRun;
+  const effectiveDryRun = (config.predictiveHealingDryRun ?? true) || request.dryRunOverride === true;
   if (request.executeRequested) {
     return effectiveDryRun ? 'dry_run' : 'operator_execute';
   }
@@ -2499,6 +2501,21 @@ function buildSupportPreview(
       supported: false,
       message: 'Traffic shifting is not supported by this backend runtime.'
     };
+  }
+
+  if (getStableWorkerRuntimeMode().processKind === 'worker') {
+    if (decision.action === 'mark_node_degraded') {
+      return { supported: false, message: 'cross_process_prompt_route_unavailable' };
+    }
+    if (
+      decision.action === 'scale_workers_up' || decision.action === 'recycle_worker' ||
+      decision.action === 'recycle_worker_runtime' || decision.action === 'heal_worker_runtime'
+    ) {
+      return {
+        supported: false,
+        message: 'dedicated_job_runner_repair_unavailable: local listener controls do not own durable job-runner execution.'
+      };
+    }
   }
 
   if (decision.action === 'reinitialize_ai_provider') {
@@ -2703,6 +2720,34 @@ async function executeDecision(
     };
   }
 
+  // Re-read authorization after the asynchronous advisor. Neither a caller's
+  // execution request nor a stale configuration snapshot may elevate authority.
+  const effectiveControls = await getKillSwitchStatus();
+  const config = getConfig();
+  const reason = request.signal?.aborted
+    ? 'coordinator_cancelled'
+    : config.predictiveHealingEnabled !== true
+      ? 'predictive_execution_disabled'
+      : (config.predictiveHealingDryRun ?? true)
+        ? 'predictive_dry_run_enforced'
+        : !config.selfImproveEnabled || config.selfImproveActuatorMode !== 'daemon'
+          ? 'self_improve_execution_disabled'
+          : config.selfImproveFrozen || effectiveControls.frozen
+            ? 'self_improve_frozen'
+            : !(config.selfImproveAutonomyLevel >= 3) || effectiveControls.autonomyLevel < 3
+              ? 'insufficient_autonomy'
+              : mode === 'auto_execute' && config.autoExecuteHealing !== true
+                ? 'predictive_auto_execute_disabled'
+                : null;
+  if (reason) {
+    return {
+      attempted: false, status: 'refused', mode,
+      action: request.decision.action, target: request.decision.target,
+      message: reason, cooldownRemainingMs: null, actuatorResult: null,
+      recoveryOutcome: { status: 'not_executed', summary: reason }
+    };
+  }
+
   try {
     let actuatorResult:
       | WorkerScaleUpResult
@@ -2833,27 +2878,20 @@ async function executeDecision(
       }
     } else if (request.decision.action === 'mark_node_degraded') {
       const reason = `predictive_healing:${request.decision.matchedRule ?? 'mark_node_degraded'}`;
-      if (!request.observation.promptRoute.active) {
-        const result = activatePromptRouteReducedLatencyMode(reason, REDUCED_LATENCY_MODE_TOKEN_LIMIT);
-        actuatorResult = {
-          applied: result.applied,
-          rolledBack: result.rolledBack,
-          reason: result.reason,
-          state: result.state
+      const result = !request.observation.promptRoute.active
+        ? activatePromptRouteReducedLatencyMode(reason, REDUCED_LATENCY_MODE_TOKEN_LIMIT)
+        : activatePromptRouteDegradedMode(reason);
+      actuatorResult = { applied: result.applied, rolledBack: result.rolledBack, reason: result.reason, state: result.state };
+      message = result.reason;
+      if (!result.applied) {
+        return {
+          attempted: false, status: 'skipped', mode,
+          action: request.decision.action, target: request.decision.target,
+          message, cooldownRemainingMs: null, actuatorResult,
+          recoveryOutcome: { status: 'not_executed', summary: `Prompt mitigation was not applied: ${result.reason}.` }
         };
-        message = result.reason;
-        recoveryOutcome = buildPendingOutcome('Prompt route reduced-latency mitigation activated.');
-      } else {
-        const result = activatePromptRouteDegradedMode(reason);
-        actuatorResult = {
-          applied: result.applied,
-          rolledBack: result.rolledBack,
-          reason: result.reason,
-          state: result.state
-        };
-        message = result.reason;
-        recoveryOutcome = buildPendingOutcome('Prompt route degraded-response mitigation activated.');
       }
+      recoveryOutcome = buildPendingOutcome('Local prompt-route mitigation activated; awaiting local consumer evidence.');
     } else {
       actuatorResult = {};
       message = 'Unsupported predictive action.';
@@ -3095,7 +3133,9 @@ function buildAutomationStatus(
     autoExecuteReady: Boolean(
       (config.predictiveHealingEnabled ?? false) &&
       (config.autoExecuteHealing ?? false) &&
-      !(config.predictiveHealingDryRun ?? true)
+      !(config.predictiveHealingDryRun ?? true) &&
+      config.selfImproveEnabled && config.selfImproveActuatorMode === 'daemon' &&
+      !config.selfImproveFrozen && config.selfImproveAutonomyLevel >= 3
     ),
     pollIntervalMs: resolvePredictiveHealingLoopIntervalMs(DEFAULT_LOOP_INTERVAL_MS),
     minConfidence: config.predictiveHealingMinConfidence ?? DEFAULT_MIN_CONFIDENCE,
@@ -3203,12 +3243,13 @@ export async function runPredictiveHealingDecision(params: {
   dryRun?: boolean;
   simulate?: PredictiveHealingSimulationInput;
   observation?: PredictiveHealingObservation;
+  signal?: AbortSignal;
 }): Promise<PredictiveHealingDecisionResult> {
   const config = getConfig();
   const state = getState();
   const featureFlags = {
     enabled: config.predictiveHealingEnabled ?? false,
-    dryRun: params.dryRun ?? config.predictiveHealingDryRun ?? true,
+    dryRun: (config.predictiveHealingDryRun ?? true) || params.dryRun === true,
     autoExecute: config.autoExecuteHealing ?? false
   };
 
@@ -3249,7 +3290,8 @@ export async function runPredictiveHealingDecision(params: {
     allowAutoExecute: Boolean(
       params.allowAutoExecute && (config.predictiveHealingEnabled ?? false) && (config.autoExecuteHealing ?? false)
     ),
-    dryRunOverride: params.dryRun
+    dryRunOverride: params.dryRun,
+    signal: params.signal
   };
   const execution = await executeDecision(executionRequest);
   recordPredictiveRepairFeedback(executionRequest, execution);
@@ -3287,6 +3329,7 @@ export async function runPredictiveHealingDecision(params: {
 
 export async function runPredictiveHealingFromLoop(params: {
   source: string;
+  signal?: AbortSignal;
   observation: {
       requestWindow: RequestWindowSnapshot;
       workerHealth: WorkerControlHealthResponse | null;
@@ -3311,7 +3354,8 @@ export async function runPredictiveHealingFromLoop(params: {
   return runPredictiveHealingDecision({
     source: params.source,
     observation: loopObservation,
-    allowAutoExecute: true
+    allowAutoExecute: true,
+    signal: params.signal
   });
 }
 

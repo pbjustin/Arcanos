@@ -6,7 +6,7 @@ import {
   initializeRuntimeDependencies,
   performStartupPreflight,
 } from './core/startup.js';
-import { startSelfHealingLoop } from '@services/selfImprove/selfHealingLoop.js';
+import { startSelfHealingLoop, stopSelfHealingLoop } from '@services/selfImprove/selfHealingLoop.js';
 import {
   primeSelfHealTelemetryPersistence,
   stopSelfHealTelemetryPersistence,
@@ -46,6 +46,7 @@ let runtimeInitializationPromise: Promise<void> | null = null;
 let activeStopTelemetryPersistence: () => Promise<void> = stopSelfHealTelemetryPersistence;
 let activeStopRedisLifecycle: () => Promise<void> = stopRedisLifecycle;
 let activeCloseDatabase: () => Promise<void> = closeDatabase;
+let activeStopSelfHealing: () => Promise<void> = stopSelfHealingLoop;
 
 interface StartupDeploymentSummary {
   serviceName: string;
@@ -76,6 +77,7 @@ export interface StartServerOptions {
   getRedisSnapshot?: () => RedisLifecycleSnapshot;
   subscribeRedis?: (listener: (snapshot: RedisLifecycleSnapshot) => void) => () => void;
   startSelfHealing?: typeof startSelfHealingLoop;
+  stopSelfHealing?: typeof stopSelfHealingLoop;
   closeDatabase?: () => Promise<void>;
   registerSignalHandlers?: boolean;
 }
@@ -191,6 +193,7 @@ export async function shutdownServer(signal: NodeJS.Signals): Promise<void> {
 
   shutdownStarted = true;
   markStartupShutdown();
+  const coordinatorDrain = activeStopSelfHealing();
   const shutdownTimeoutMs = resolveShutdownTimeoutMs();
   console.log(`[SHUTDOWN] Received ${signal}; closing HTTP server and resources.`);
 
@@ -210,6 +213,7 @@ export async function shutdownServer(signal: NodeJS.Signals): Promise<void> {
 
     await Promise.all([
       listenerDrainPromise,
+      coordinatorDrain,
       stopDependencyLifecycles()
     ]);
     await closeRemainingResources();
@@ -311,6 +315,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Ser
   activeStopRedisLifecycle = options.stopRedis ?? stopRedisLifecycle;
   activeStopTelemetryPersistence = options.stopTelemetry ?? stopSelfHealTelemetryPersistence;
   activeCloseDatabase = options.closeDatabase ?? closeDatabase;
+  activeStopSelfHealing = options.stopSelfHealing ?? stopSelfHealingLoop;
 
   if (options.registerSignalHandlers !== false) {
     process.once('SIGTERM', () => void shutdownServer('SIGTERM'));

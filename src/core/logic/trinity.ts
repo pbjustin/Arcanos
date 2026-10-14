@@ -128,6 +128,16 @@ import {
   type TrinitySelfHealingAction,
   type TrinitySelfHealingStage
 } from '@services/selfImprove/selfHealingV2.js';
+import { getKillSwitchStatus } from '@services/incidentResponse/killSwitch.js';
+
+async function recordAuthorizedTrinityStageFailure(
+  params: Parameters<typeof recordTrinityStageFailure>[0]
+): Promise<TrinitySelfHealingAction | null> {
+  const controls = await getKillSwitchStatus();
+  throwIfRequestAborted();
+  if (controls.frozen || controls.autonomyLevel < 3) return null;
+  return recordTrinityStageFailure(params);
+}
 
 const MIN_ESCALATION_BUDGET_MS = 5000;
 const EXACT_LITERAL_DISPATCH_MODULE = 'exact-literal-dispatcher';
@@ -1742,7 +1752,7 @@ export async function runThroughBrain(
     } catch (error) {
       throwIfRequestAborted();
       if (!gamingAnswerAudit && !gamingGuideIntakePolicy && tier === 'simple' && isAbortError(error)) {
-        intakeRecoveryAction = recordTrinityStageFailure({
+        intakeRecoveryAction = await recordAuthorizedTrinityStageFailure({
           stage: 'intake',
           error: resolveErrorMessage(error),
           requestId,
@@ -1816,7 +1826,7 @@ export async function runThroughBrain(
     } catch (error) {
       throwIfRequestAborted();
       if (!gamingAnswerAudit && !gamingGuideIntakePolicy && tier === 'simple' && isAbortError(error)) {
-        reasoningRecoveryAction = recordTrinityStageFailure({
+        reasoningRecoveryAction = await recordAuthorizedTrinityStageFailure({
           stage: 'reasoning',
           error: resolveErrorMessage(error),
           requestId,
@@ -2052,7 +2062,7 @@ export async function runThroughBrain(
       } catch (error) {
         throwIfRequestAborted();
         if (!gamingAnswerAudit && !gamingGuideIntakePolicy && tier === 'simple' && isAbortError(error)) {
-          finalRecoveryAction = recordTrinityStageFailure({
+          finalRecoveryAction = await recordAuthorizedTrinityStageFailure({
             stage: 'final',
             error: resolveErrorMessage(error),
             requestId,

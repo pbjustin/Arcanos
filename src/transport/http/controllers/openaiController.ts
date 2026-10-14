@@ -34,6 +34,7 @@ import { getConfirmGateConfiguration } from "@transport/http/middleware/confirmG
 import { config } from "@platform/runtime/config.js";
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
 import { getEnv } from "@platform/runtime/env.js";
+import { getKillSwitchStatus } from '@services/incidentResponse/killSwitch.js';
 import { runWithRequestAbortTimeout, getRequestAbortSignal } from '@arcanos/runtime';
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import {
@@ -379,8 +380,11 @@ export async function handlePrompt(
       });
 
       if (promptRoutePolicy.mode === 'normal') {
-        const fastTripResult = recordPromptRouteTimeoutIncident(timeoutKind, PROMPT_MAX_TOKENS);
-        if (fastTripResult.applied) {
+        const controls = await getKillSwitchStatus();
+        const fastTripResult = controls.frozen || controls.autonomyLevel < 3 || getRequestAbortSignal()?.aborted
+          ? null
+          : recordPromptRouteTimeoutIncident(timeoutKind, PROMPT_MAX_TOKENS);
+        if (fastTripResult?.applied) {
           req.logger?.warn?.('prompt.route.fast_trip', {
             route: PROMPT_ROUTE_PATH,
             timeoutKind,

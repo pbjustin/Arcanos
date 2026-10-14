@@ -132,6 +132,7 @@ let budget: typeof import('../src/platform/resilience/runtimeBudget.js');
 let adapter: typeof import('../src/core/adapters/openai.adapter.js');
 let credentials: typeof import('../src/services/openai/credentialProvider.js');
 let healing: typeof import('../src/services/selfImprove/selfHealingV2.js');
+let killSwitch: typeof import('../src/services/incidentResponse/killSwitch.js');
 let coordinator: typeof import('../src/services/selfImprove/selfHealingLoop.js');
 let legacy: typeof import('../src/services/selfImprove/controlLoop.js');
 let completions: typeof import('../src/services/openai/chatFallbacks.js');
@@ -150,6 +151,7 @@ beforeAll(async () => {
   adapter = await import('../src/core/adapters/openai.adapter.js');
   credentials = await import('../src/services/openai/credentialProvider.js');
   healing = await import('../src/services/selfImprove/selfHealingV2.js');
+  killSwitch = await import('../src/services/incidentResponse/killSwitch.js');
   coordinator = await import('../src/services/selfImprove/selfHealingLoop.js');
   legacy = await import('../src/services/selfImprove/controlLoop.js');
   completions = await import('../src/services/openai/chatFallbacks.js');
@@ -176,6 +178,8 @@ beforeEach(async () => {
   credentials.resetCredentialCache();
   adapter.resetOpenAIAdapter();
   healing.resetTrinitySelfHealingStateForTests();
+  await killSwitch.unfreezeSelfImprove('synthetic reset');
+  await killSwitch.setAutonomyLevel(3, 'synthetic reset');
   coordinator.resetSelfHealingLoopStateForTests();
   legacy.stopSelfHealingControlLoopForTests();
   getRollingRequestWindow.mockImplementation(() => requestWindow());
@@ -345,6 +349,21 @@ describe('canonical self-healing owner through the real Trinity consumer', () =>
     expect(fixture.requests.filter(request => request.method === 'POST')).toHaveLength(6);
     expect(healing.getTrinitySelfHealingSnapshot().intake.attempts).toBe(0);
     expect(resilience.getCircuitBreakerSnapshot()).toMatchObject({ state: 'CLOSED', failureCount: 0 });
+  });
+
+  it.each(['freeze', 'autonomy'] as const)('blocks automatic Trinity activation under effective %s controls', async restriction => {
+    for (let index = 0; index < 2; index += 1) {
+      healing.recordTrinityStageFailure({ stage: 'intake', error: 'synthetic abort', requestId: `seed-${index}` });
+    }
+    if (restriction === 'freeze') await killSwitch.freezeSelfImprove('synthetic restriction');
+    else await killSwitch.setAutonomyLevel(1, 'synthetic restriction');
+    fixture.enqueue({ kind: 'timeout', holdForMs: 1_000 }, { kind: 'completion', text: answer });
+    const result = await runTrinity(false, {
+      resolveModelStageTimeoutMs: stage => stage === 'intake' ? 100 : 2_000
+    });
+    expect(result.routingStages).toContain('ARCANOS-DIRECT-ANSWER');
+    expect(healing.getTrinitySelfHealingSnapshot().intake).toMatchObject({ attempts: 0, activeAction: null });
+    expect(healing.getTrinitySelfHealingSnapshot().intake.observations).toHaveLength(2);
   });
 
   it('labels a finite timeout backstop separately from client-driven transport cancellation', async () => {

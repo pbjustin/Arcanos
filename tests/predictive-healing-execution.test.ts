@@ -6,6 +6,9 @@ const recycleWorkerMock = jest.fn();
 const healWorkerRuntimeMock = jest.fn();
 const recordSelfHealEventMock = jest.fn();
 const activateTrinitySelfHealingMitigationMock = jest.fn();
+const activatePromptRouteReducedLatencyModeMock = jest.fn();
+const activatePromptRouteDegradedModeMock = jest.fn();
+const getKillSwitchStatusMock = jest.fn();
 const getOpenAIClientOrAdapterMock = jest.fn();
 const runArcanosCoreQueryMock = jest.fn();
 const getOpenAIServiceHealthMock = jest.fn();
@@ -69,9 +72,13 @@ jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
   default: structuredLoggerMock
 }));
 
+jest.unstable_mockModule('@services/incidentResponse/killSwitch.js', () => ({
+  getKillSwitchStatus: getKillSwitchStatusMock
+}));
+
 jest.unstable_mockModule('@services/openai/promptRouteMitigation.js', () => ({
-  activatePromptRouteDegradedMode: jest.fn(),
-  activatePromptRouteReducedLatencyMode: jest.fn(),
+  activatePromptRouteDegradedMode: activatePromptRouteDegradedModeMock,
+  activatePromptRouteReducedLatencyMode: activatePromptRouteReducedLatencyModeMock,
   getPromptRouteMitigationState: jest.fn(() => ({
     active: false,
     mode: null,
@@ -354,6 +361,13 @@ describe('predictive healing execution', () => {
   beforeEach(() => {
     jest.useFakeTimers().setSystemTime(new Date('2026-03-26T12:00:00.000Z'));
     jest.clearAllMocks();
+    getKillSwitchStatusMock.mockResolvedValue({ frozen: false, autonomyLevel: 3 });
+    getStableWorkerRuntimeModeMock.mockReturnValue({
+      requestedRunWorkers: false, resolvedRunWorkers: false, processKind: 'unknown',
+      railwayServiceName: null, reason: 'requested'
+    });
+    activatePromptRouteReducedLatencyModeMock.mockReturnValue({ applied: true, rolledBack: false, reason: 'applied', state: {} });
+    activatePromptRouteDegradedModeMock.mockReturnValue({ applied: true, rolledBack: false, reason: 'applied', state: {} });
     loggerInfoMock.mockReset();
     loggerWarnMock.mockReset();
     loggerErrorMock.mockReset();
@@ -447,6 +461,8 @@ describe('predictive healing execution', () => {
       }
     });
     getConfigMock.mockReturnValue({
+      selfImproveEnabled: true, selfImproveActuatorMode: 'daemon',
+      selfImproveAutonomyLevel: 3, selfImproveFrozen: false,
       predictiveHealingEnabled: true,
       predictiveHealingDryRun: false,
       autoExecuteHealing: false,
@@ -560,6 +576,91 @@ describe('predictive healing execution', () => {
     expect(result.execution.status).toBe('failed');
     expect(result.execution.message).toContain('runtime restart failed');
     expect(recordSelfHealEventMock).toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ selfImproveEnabled: false }, 'self_improve_execution_disabled'],
+    [{ selfImproveActuatorMode: 'host' }, 'self_improve_execution_disabled'],
+    [{ selfImproveFrozen: true }, 'self_improve_frozen'],
+    [{ selfImproveAutonomyLevel: 2 }, 'insufficient_autonomy'],
+    [{ predictiveHealingEnabled: false }, 'predictive_execution_disabled']
+  ])('refuses predictive effects under restrictive current configuration %j', async (restriction, reason) => {
+    getConfigMock.mockReturnValue({ ...getConfigMock(), ...restriction });
+    const result = await runPredictiveHealingDecision({
+      source: 'policy_fixture', execute: true,
+      observation: createObservation({ errorRate: 0.28, requestCount: 40 })
+    });
+    expect(result.execution).toMatchObject({ attempted: false, status: 'refused', message: reason });
+    expect(healWorkerRuntimeMock).not.toHaveBeenCalled();
+    expect(scaleWorkersUpMock).not.toHaveBeenCalled();
+    expect(activateTrinitySelfHealingMitigationMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ frozen: true, autonomyLevel: 3 }, 'self_improve_frozen'],
+    [{ frozen: false, autonomyLevel: 1 }, 'insufficient_autonomy']
+  ])('honors effective emergency restrictions after advisor completion %j', async (controls, reason) => {
+    getKillSwitchStatusMock.mockResolvedValue(controls);
+    const result = await runPredictiveHealingDecision({
+      source: 'kill_switch_fixture', execute: true,
+      observation: createObservation({ errorRate: 0.28, requestCount: 40 })
+    });
+    expect(result.execution).toMatchObject({ status: 'refused', message: reason });
+    expect(healWorkerRuntimeMock).not.toHaveBeenCalled();
+  });
+
+  it('does not allow caller dryRun false to override configured dry-run', async () => {
+    getConfigMock.mockReturnValue({ ...getConfigMock(), predictiveHealingDryRun: true });
+    const result = await runPredictiveHealingDecision({
+      source: 'dry_run_fixture', execute: true, dryRun: false,
+      observation: createObservation({ errorRate: 0.28, requestCount: 40 })
+    });
+    expect(result.featureFlags.dryRun).toBe(true);
+    expect(result.execution).toMatchObject({ attempted: false, status: 'dry_run', mode: 'dry_run' });
+    expect(healWorkerRuntimeMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects cancellation arriving during the final authorization read', async () => {
+    const cancellation = new AbortController();
+    getKillSwitchStatusMock.mockImplementation(async () => {
+      cancellation.abort();
+      return { frozen: false, autonomyLevel: 3 };
+    });
+    const result = await runPredictiveHealingDecision({
+      source: 'cancellation_fixture', execute: true, signal: cancellation.signal,
+      observation: createObservation({ errorRate: 0.28, requestCount: 40 })
+    });
+    expect(result.execution).toMatchObject({ status: 'refused', message: 'coordinator_cancelled' });
+    expect(healWorkerRuntimeMock).not.toHaveBeenCalled();
+  });
+
+  it('blocks a worker-owned prompt mitigation without reporting execution', async () => {
+    getStableWorkerRuntimeModeMock.mockReturnValue({
+      requestedRunWorkers: false, resolvedRunWorkers: true, processKind: 'worker',
+      railwayServiceName: null, reason: 'process_kind_worker'
+    });
+    const result = await runPredictiveHealingDecision({
+      source: 'cross_process_fixture', execute: true, observation: createObservation()
+    });
+    expect(result.decision.action).toBe('mark_node_degraded');
+    expect(result.execution).toMatchObject({
+      attempted: false, status: 'unsupported', message: 'cross_process_prompt_route_unavailable'
+    });
+    expect(activatePromptRouteReducedLatencyModeMock).not.toHaveBeenCalled();
+    expect(activatePromptRouteDegradedModeMock).not.toHaveBeenCalled();
+  });
+
+  it('never reports an unapplied local prompt command as executed', async () => {
+    activatePromptRouteReducedLatencyModeMock.mockReturnValue({
+      applied: false, rolledBack: false, reason: 'already_active', state: {}
+    });
+    const result = await runPredictiveHealingDecision({
+      source: 'unapplied_command_fixture', execute: true, observation: createObservation()
+    });
+    expect(result.decision.action).toBe('mark_node_degraded');
+    expect(result.execution).toMatchObject({
+      attempted: false, status: 'skipped', recoveryOutcome: { status: 'not_executed' }
+    });
   });
 
   it('backs off predictive AI calls for idle windows after a successful attempt', async () => {
@@ -707,6 +808,8 @@ describe('predictive healing execution', () => {
 
   it('skips the background automation loop when predictive healing is disabled', async () => {
     getConfigMock.mockReturnValue({
+      selfImproveEnabled: true, selfImproveActuatorMode: 'daemon',
+      selfImproveAutonomyLevel: 3, selfImproveFrozen: false,
       predictiveHealingEnabled: false,
       predictiveHealingDryRun: true,
       autoExecuteHealing: false,
@@ -768,6 +871,8 @@ describe('predictive healing execution', () => {
   it('summarizes automated loop decisions and outcomes in status output', async () => {
     process.env.PREDICTIVE_HEALING_INTERVAL_MS = '15000';
     getConfigMock.mockReturnValue({
+      selfImproveEnabled: true, selfImproveActuatorMode: 'daemon',
+      selfImproveAutonomyLevel: 3, selfImproveFrozen: false,
       predictiveHealingEnabled: true,
       predictiveHealingDryRun: false,
       autoExecuteHealing: true,
@@ -992,6 +1097,8 @@ describe('predictive healing execution', () => {
 
   it('captures Trinity predictive automation in loop status history', async () => {
     getConfigMock.mockReturnValue({
+      selfImproveEnabled: true, selfImproveActuatorMode: 'daemon',
+      selfImproveAutonomyLevel: 3, selfImproveFrozen: false,
       predictiveHealingEnabled: true,
       predictiveHealingDryRun: false,
       autoExecuteHealing: true,

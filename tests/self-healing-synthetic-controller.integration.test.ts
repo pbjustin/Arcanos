@@ -14,6 +14,7 @@ const traces: Array<{ timestamp: string; name: string }> = [];
 const forbiddenEffect = jest.fn(async () => { throw new Error('Synthetic fixture forbids external effects.'); });
 const logger = { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() };
 let predictiveEnabled = false;
+let processKind = 'worker';
 
 jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
   logger, aiLogger: logger, apiLogger: logger, dbLogger: logger, workerLogger: logger
@@ -25,7 +26,7 @@ jest.unstable_mockModule('@platform/runtime/unifiedConfig.js', () => ({
     trinityFinalModel: 'synthetic-authority-model'
   }),
   getStableWorkerRuntimeMode: () => ({
-    requestedRunWorkers: false, resolvedRunWorkers: false, processKind: 'worker',
+    requestedRunWorkers: false, resolvedRunWorkers: false, processKind,
     railwayServiceName: null, reason: 'requested'
   }),
   isWorkerRuntimeSuppressedForServiceRole: () => false
@@ -131,6 +132,7 @@ beforeEach(() => {
   jest.spyOn(globalThis, 'fetch').mockImplementation(forbiddenEffect);
   traces.length = 0;
   predictiveEnabled = false;
+  processKind = 'worker';
   health.mockResolvedValue(healthyWorker());
   prediction.mockRejectedValue(new Error('Synthetic predictive advisor disabled.'));
   providerReload.mockResolvedValue({ ok: false, skipped: false, reloaded: false, reason: 'Synthetic provider unavailable.', runtime: {} });
@@ -230,6 +232,9 @@ describe('synthetic controller lifecycle with real diagnostics and mitigation st
   });
 
   it('S15 never rolls back a prompt command replacing the command under verification', async () => {
+    // This fixture represents a colocated local runtime; dedicated worker
+    // cross-process refusal is covered separately below.
+    processKind = 'unknown';
     recordFailure(12, '/api/openai/prompt');
     const activation = await coordinator.runSelfHealingLoop({ trigger: 'interval' });
     expect(activation.action).toBe('activatePromptRouteMitigation:reduced_latency');
@@ -240,6 +245,17 @@ describe('synthetic controller lifecycle with real diagnostics and mitigation st
     expect(result.verificationResult).toBeNull();
     expect(promptMitigation.getPromptRouteMitigationState()).toMatchObject({ active: true, mode: 'degraded_response', reason: 'new independent incident' });
     expect(events.some(event => event.actionTaken === 'rollbackPromptRouteMitigation')).toBe(false);
+  });
+
+  it('blocks dedicated-worker prompt commands without a web consumer or cross-process effect', async () => {
+    recordFailure(12, '/api/openai/prompt');
+    const result = await coordinator.runSelfHealingLoop({ trigger: 'interval' });
+    expect(result.action).toBeNull();
+    expect(promptMitigation.getPromptRouteMitigationState()).toMatchObject({ active: false, mitigationId: null });
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'noop', reason: expect.stringContaining('cross_process_prompt_route_unavailable') })
+    ]));
+    expect(events.some(event => event.kind === 'success')).toBe(false);
   });
 
   it('S03/S10/S18 bounds sustained provider attempts and escalation under deterministic cooldowns', async () => {

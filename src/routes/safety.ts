@@ -11,7 +11,6 @@ import {
 import { emitSafetyAuditEvent } from '../services/safety/auditEvents.js';
 import { assertDeterministicConfirmation } from '../services/safety/aiOutputBoundary.js';
 import { resolveHeader } from '@transport/http/requestHeaders.js';
-import { getTrinitySelfHealingStatus } from '@services/selfImprove/selfHealingV2.js';
 import { getSelfHealingLoopStatus } from '@services/selfImprove/selfHealingLoop.js';
 import { getPromptRouteMitigationState } from '@services/openai/promptRouteMitigation.js';
 import {
@@ -119,10 +118,9 @@ router.get('/status/safety', (_req: Request, res: Response) => {
   const activeConditions = getActiveUnsafeConditions();
   const activeQuarantines = getActiveQuarantines();
   const loopStatus = getSelfHealingLoopStatus();
-  const trinityStatus = getTrinitySelfHealingStatus();
   const promptRouteMitigation = getPromptRouteMitigationState();
   const selfHealTelemetry = buildSelfHealTelemetrySnapshot({
-    enabled: loopStatus.loopRunning || trinityStatus.enabled,
+    enabled: loopStatus.loopRunning,
     active: Boolean(loopStatus.activeMitigation || promptRouteMitigation.active),
     currentActionTaken: loopStatus.lastAction,
     currentHealedComponent: inferSelfHealComponentFromAction(loopStatus.lastAction)

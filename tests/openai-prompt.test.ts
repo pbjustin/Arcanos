@@ -26,6 +26,7 @@ const getOpenAIServiceHealth = jest.fn(() => ({
 const getOpenAIKeySource = jest.fn(() => null);
 const runWithRequestAbortTimeoutMock = jest.fn(async (_options: unknown, fn: () => Promise<unknown>) => await fn());
 const getRequestAbortSignalMock = jest.fn(() => undefined);
+const getKillSwitchStatusMock = jest.fn();
 
 let handlePrompt: (req: any, res: any) => Promise<void>;
 let activatePromptRouteDegradedMode: (reason: string) => unknown;
@@ -36,6 +37,7 @@ let DEFAULT_PROMPT_ROUTE_PIPELINE_TIMEOUT_MS: number;
 let DEFAULT_PROMPT_ROUTE_PROVIDER_TIMEOUT_MS: number;
 let originalNodeEnv: string | undefined;
 let originalAuthority: string | undefined;
+let originalEnvironment: NodeJS.ProcessEnv;
 
 function buildTrinityPromptResult(result: string, activeModel: string) {
   return {
@@ -66,6 +68,9 @@ function buildTrinityPromptResult(result: string, activeModel: string) {
 beforeEach(async () => {
   jest.resetModules();
   jest.clearAllMocks();
+  getKillSwitchStatusMock.mockResolvedValue({ frozen: false, autonomyLevel: 3 });
+  originalEnvironment = process.env;
+  process.env = { ...originalEnvironment };
   originalNodeEnv = process.env.NODE_ENV;
   process.env.NODE_ENV = 'test';
   originalAuthority = process.env.FINETUNED_MODEL_ID;
@@ -78,6 +83,9 @@ beforeEach(async () => {
     getGPT5Model,
     getOpenAIServiceHealth,
     getOpenAIKeySource
+  }));
+  jest.unstable_mockModule('@services/incidentResponse/killSwitch.js', () => ({
+    getKillSwitchStatus: getKillSwitchStatusMock
   }));
 
   jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
@@ -130,6 +138,7 @@ afterEach(() => {
   if (originalAuthority === undefined) delete process.env.FINETUNED_MODEL_ID;
   else process.env.FINETUNED_MODEL_ID = originalAuthority;
   jest.clearAllMocks();
+  process.env = originalEnvironment;
 });
 
 describe('handlePrompt', () => {
@@ -409,6 +418,10 @@ describe('handlePrompt', () => {
   );
 
   it('fast-trips into reduced latency mode after repeated prompt timeout incidents', async () => {
+    Object.assign(process.env, {
+      SELF_IMPROVE_ENABLED: 'true', SELF_IMPROVE_ACTUATOR_MODE: 'daemon',
+      SELF_IMPROVE_AUTONOMY_LEVEL: '3', SELF_IMPROVE_FREEZE: 'false'
+    });
     validateAIRequest.mockReturnValue({ input: 'hello', client: {} });
     classifyBudgetAbortKind.mockReturnValue('budget_abort');
     runTrinityWritingPipeline.mockRejectedValue(new Error('Request was aborted.'));
@@ -461,5 +474,24 @@ describe('handlePrompt', () => {
         pipelineTimeoutMs: 3500
       })
     );
+  });
+
+  it.each([
+    { frozen: true, autonomyLevel: 3 },
+    { frozen: false, autonomyLevel: 1 }
+  ])('prevents automatic timeout mitigation under effective emergency controls %j', async controls => {
+    Object.assign(process.env, {
+      SELF_IMPROVE_ENABLED: 'true', SELF_IMPROVE_ACTUATOR_MODE: 'daemon',
+      SELF_IMPROVE_AUTONOMY_LEVEL: '3', SELF_IMPROVE_FREEZE: 'false'
+    });
+    getKillSwitchStatusMock.mockResolvedValue(controls);
+    validateAIRequest.mockReturnValue({ input: 'hello', client: {} });
+    classifyBudgetAbortKind.mockReturnValue('budget_abort');
+    runTrinityWritingPipeline.mockRejectedValue(new Error('Request was aborted.'));
+    for (let index = 0; index < 3; index += 1) {
+      await handlePrompt({ body: { prompt: 'hello' } }, { json: jest.fn(), status: jest.fn().mockReturnThis() });
+    }
+    expect(getKillSwitchStatusMock).toHaveBeenCalledTimes(3);
+    expect(getPromptRouteMitigationState()).toMatchObject({ active: false, mitigationId: null });
   });
 });

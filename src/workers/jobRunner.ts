@@ -3635,7 +3635,7 @@ export async function runWorkerConsumerSlot(
   }
 }
 
-async function run(): Promise<void> {
+export async function runJobWorker(): Promise<void> {
   const workerRuntimeMode = getStableWorkerRuntimeMode();
   const entrypointRuntimeMode = resolveJobRunnerEntrypointRuntimeMode(workerRuntimeMode);
   const runtimeSettings = resolveJobRunnerRuntimeSettings();
@@ -3781,6 +3781,15 @@ async function run(): Promise<void> {
     return;
   }
 
+  // Load the canonical coordinator only on the actual worker bootstrap path,
+  // after database/autonomy/module initialization. Queue-slot imports alone
+  // must not start or load another background controller.
+  const { startSelfHealingLoop, stopSelfHealingLoop } =
+    await import('@services/selfImprove/selfHealingLoop.js');
+  const { startRedisLifecycle, stopRedisLifecycle } =
+    await import('@platform/runtime/redisLifecycle.js');
+  const { primeSelfHealTelemetryPersistence, stopSelfHealTelemetryPersistence } =
+    await import('@services/selfImprove/selfHealTelemetry.js');
   const watchdogHandle = startWatchdogLoop(inspectorAutonomyService);
   const inspectorHandle = startInspectorLoop(inspectorAutonomyService);
   const backstageNotionSynchronizationCoordinator =
@@ -3797,6 +3806,15 @@ async function run(): Promise<void> {
   };
 
   try {
+    // Resolve configured shared safety state before any healing evaluation.
+    // Recovery remains non-blocking for queue readiness; configured Redis
+    // outages make the shared kill switch restrictive until it becomes ready.
+    startRedisLifecycle();
+    void primeSelfHealTelemetryPersistence().catch(() => {
+      logger.warn('self_heal.coordinator.telemetry_deferred', {
+        module: 'job-runner', reasonCode: 'telemetry_persistence_unavailable',
+      });
+    });
     const slotReadinessPromises: Promise<void>[] = [];
     //audit Assumption: one Railway worker container should be able to host multiple queue-consumer slots safely; failure risk: an early readiness marker activates a revision after one slot fails while a sibling still starts; expected invariant: every slot completes synchronous dispatcher setup and remains running until the all-slot readiness barrier wins; handling strategy: race all-ready against the first runtime settlement, then keep failing the process if any long-lived slot exits unexpectedly.
     const slotRuntimePromises = slotDefinitions.map(slotDefinition => {
@@ -3857,6 +3875,12 @@ async function run(): Promise<void> {
               loadCutoverEvidence:
                 loadBackstageNotionPartitionCutoverGateEvidenceSet,
             });
+          const selfHealing = startSelfHealingLoop(undefined, {
+            signal: workerProcessShutdownController.signal,
+          });
+          if (selfHealing.coordinatorState !== 'RUNNING') {
+            throw new Error('WORKER_SELF_HEAL_COORDINATOR_NOT_RUNNING');
+          }
           logger.info('worker.bootstrap.completed', {
             module: 'job-runner',
             workerId: inspectorAutonomyService.getWorkerId(),
@@ -3864,7 +3888,8 @@ async function run(): Promise<void> {
             slots: slotDefinitions.length,
             recovered: bootstrapResult.recovered.recoveredJobs.length,
             failed: bootstrapResult.recovered.failedJobs.length,
-            cancelled: bootstrapResult.recovered.cancelledJobs?.length ?? 0
+            cancelled: bootstrapResult.recovered.cancelledJobs?.length ?? 0,
+            selfHealingCoordinatorState: selfHealing.coordinatorState,
           });
           emitWorkerBootstrapReadySignal();
         }
@@ -3886,9 +3911,12 @@ async function run(): Promise<void> {
     await Promise.all(slotRuntimePromises);
   } finally {
     await Promise.all([
+      stopSelfHealingLoop(),
       backstageNotionLoopHandles.monolith?.stopAndDrain(),
       backstageNotionLoopHandles.partition?.stopAndDrain(),
     ]);
+    await stopSelfHealTelemetryPersistence();
+    await stopRedisLifecycle();
     clearInterval(watchdogHandle);
     clearInterval(inspectorHandle);
     await inspectorAutonomyService.flushSnapshotPipeline('worker-process-shutdown');
@@ -3896,7 +3924,7 @@ async function run(): Promise<void> {
 }
 
 if (isEntrypointModule(import.meta.url)) {
-  run().catch(error => {
+  runJobWorker().catch(error => {
     logger.error(
       'worker.fatal',
       { module: 'job-runner' },

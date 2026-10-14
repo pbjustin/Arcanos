@@ -203,6 +203,14 @@ function getEnvBooleanWithFallbacks(
   return parseBooleanValue(getEnvVar(key, fallbacks), defaultValue);
 }
 
+function resolvePredictiveHealingDryRun(): boolean {
+  const raw = getEnvVar('PREDICTIVE_HEALING_DRY_RUN', ['PREDICTIVE_DRY_RUN']);
+  // Only an explicit recognized false value may remove the dry-run guard.
+  // A malformed higher-precedence value must not fall through to a false alias.
+  const normalized = raw?.trim().toLowerCase();
+  return normalized !== 'false' && normalized !== '0' && normalized !== 'no';
+}
+
 function getEnvNumberWithFallbacks(
   key: string,
   defaultValue: number,
@@ -418,7 +426,7 @@ export function getConfig(): AppConfig {
 
     // Predictive Self-Healing Configuration
     predictiveHealingEnabled: getEnvBoolean('PREDICTIVE_HEALING_ENABLED', false),
-    predictiveHealingDryRun: getEnvBooleanWithFallbacks('PREDICTIVE_HEALING_DRY_RUN', true, ['PREDICTIVE_DRY_RUN']),
+    predictiveHealingDryRun: resolvePredictiveHealingDryRun(),
     autoExecuteHealing: getEnvBooleanWithFallbacks('PREDICTIVE_AUTO_EXECUTE', false, ['AUTO_EXECUTE_HEALING']),
     predictiveHealingWindowMs: getEnvNumber('PREDICTIVE_HEALING_WINDOW_MS', 5 * 60_000),
     predictiveHealingMinObservations: getEnvNumber('PREDICTIVE_HEALING_MIN_OBSERVATIONS', 3),

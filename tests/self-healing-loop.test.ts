@@ -3,6 +3,7 @@ import type { PredictiveHealingDecisionResult } from '../src/services/selfImprov
 
 const actualUnifiedConfig = await import('../src/platform/runtime/unifiedConfig.js');
 const getConfigMock = jest.fn(() => createConfig());
+const getKillSwitchStatusMock = jest.fn(async () => ({ frozen: false, autonomyLevel: 3 }));
 const runSelfImproveCycleMock = jest.fn();
 const getTrinitySelfHealingStatusMock = jest.fn();
 const activateTrinitySelfHealingMitigationMock = jest.fn();
@@ -45,6 +46,10 @@ jest.unstable_mockModule('@platform/runtime/unifiedConfig.js', () => ({
 
 jest.unstable_mockModule('@services/selfImprove/controller.js', () => ({
   runSelfImproveCycle: runSelfImproveCycleMock
+}));
+
+jest.unstable_mockModule('@services/incidentResponse/killSwitch.js', () => ({
+  getKillSwitchStatus: getKillSwitchStatusMock
 }));
 
 jest.unstable_mockModule('@services/selfImprove/selfHealingV2.js', () => ({
@@ -126,10 +131,12 @@ const {
 function createConfig(overrides: Record<string, unknown> = {}) {
   return {
     ...actualUnifiedConfig.getConfig(),
-    selfImproveEnabled: false,
-    selfImproveActuatorMode: 'pr_bot',
+    // Effect fixtures explicitly grant local authority. Denial cases below
+    // override each gate; production defaults remain disabled and autonomy 0.
+    selfImproveEnabled: true,
+    selfImproveActuatorMode: 'daemon',
     selfImproveFrozen: false,
-    selfImproveAutonomyLevel: 0,
+    selfImproveAutonomyLevel: 3,
     ...overrides
   };
 }
@@ -457,6 +464,7 @@ describe('selfHealingLoop', () => {
 
     process.env.NODE_ENV = 'test';
     getConfigMock.mockReturnValue(createConfig());
+    getKillSwitchStatusMock.mockResolvedValue({ frozen: false, autonomyLevel: 3 });
     getWorkerRuntimeStatusMock.mockReturnValue(createWorkerRuntime());
     getWorkerControlHealthMock.mockResolvedValue(createWorkerHealth());
     healWorkerRuntimeMock.mockResolvedValue({
@@ -2674,6 +2682,75 @@ describe('selfHealingLoop', () => {
       action: null,
       controllerDecision: 'PATCH_PROPOSAL'
     }));
+  });
+
+  it.each([
+    { selfImproveEnabled: false },
+    { selfImproveActuatorMode: 'pr_bot' },
+    { selfImproveFrozen: true },
+    { selfImproveAutonomyLevel: 2 },
+  ])('refuses reactive effects under restricted policy %j', async (restriction) => {
+    getConfigMock.mockReturnValue(createConfig(restriction));
+    mockStalledWorkerObservation();
+    const result = await runSelfHealingLoop({ trigger: 'interval' });
+    expect(result.action).toBeNull();
+    expect(recoverStaleJobsMock).not.toHaveBeenCalled();
+    expect(runSelfImproveCycleMock).not.toHaveBeenCalled();
+    expect(buildSelfHealEventsSnapshot(50).events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'noop', details: expect.objectContaining({ reasonCode: expect.any(String) }) })
+    ]));
+  });
+
+  it.each([
+    { frozen: true, autonomyLevel: 3 },
+    { frozen: false, autonomyLevel: 0 },
+  ])('honors effective shared restrictions %j before reactive dispatch', async (controls) => {
+    getKillSwitchStatusMock.mockResolvedValue(controls);
+    mockStalledWorkerObservation();
+    expect((await runSelfHealingLoop({ trigger: 'interval' })).action).toBeNull();
+    expect(recoverStaleJobsMock).not.toHaveBeenCalled();
+    expect(runSelfImproveCycleMock).not.toHaveBeenCalled();
+  });
+
+  it('does not diagnose the durable worker from unrelated in-process listener state', async () => {
+    getStableWorkerRuntimeModeMock.mockReturnValue({
+      requestedRunWorkers: true, resolvedRunWorkers: true, processKind: 'worker',
+      railwayServiceName: null, reason: 'explicit_worker_role'
+    });
+    getWorkerRuntimeStatusMock.mockReturnValue(createWorkerRuntime({ started: false, activeListeners: 0 }));
+    const result = await runSelfHealingLoop({ trigger: 'interval' });
+    expect(result.diagnosis).toBe('healthy');
+    expect(result.action).toBeNull();
+    expect(healWorkerRuntimeMock).not.toHaveBeenCalled();
+  });
+
+  it('reports UNKNOWN coordinator evidence before startup despite healthy worker configuration', () => {
+    const snapshot = buildSelfHealRuntimeSnapshot();
+    expect(snapshot.enabled).toBe(false);
+    expect(snapshot.coordinator).toMatchObject({
+      state: 'UNKNOWN', scheduled: false, evidenceScope: 'current_process', remoteCoordinatorState: 'UNKNOWN'
+    });
+  });
+
+  it('does not turn a failed observation attempt into healthy inspection evidence', async () => {
+    getRollingRequestWindowMock.mockImplementationOnce(() => { throw new Error('Synthetic collection failure'); });
+    await runSelfHealingLoop({ trigger: 'interval' });
+    const snapshot = buildSelfHealRuntimeSnapshot();
+    expect(snapshot.loopStatus.lastTick).not.toBeNull();
+    expect(snapshot.loopStatus.lastObservationAt).toBeNull();
+    expect(snapshot.coordinator.state).toBe('FAILED');
+    expect(snapshot.systemState).toMatchObject({ status: 'unknown', lastCheck: null });
+  });
+
+  it.each([
+    { predictiveHealingEnabled: true, predictiveHealingDryRun: true, autoExecuteHealing: true },
+    { predictiveHealingEnabled: true, predictiveHealingDryRun: false, autoExecuteHealing: false },
+  ])('reports passive predictive ownership as observation only %j', async (policy) => {
+    getConfigMock.mockReturnValue(createConfig(policy));
+    await runSelfHealingLoop({ trigger: 'interval' });
+    expect(getSelfHealingLoopStatus()).toMatchObject({
+      operatingMode: 'observation_only', policyObservedAt: expect.any(String)
+    });
   });
 
   it('invokes AI diagnosis and records controller decisions on every loop cycle', async () => {
