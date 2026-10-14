@@ -578,6 +578,91 @@ describe('predictive healing execution', () => {
     expect(recordSelfHealEventMock).toHaveBeenCalled();
   });
 
+  it('dispatches one repair when concurrent decisions finish authorization together', async () => {
+    let authorize!: (controls: { frozen: boolean; autonomyLevel: number }) => void;
+    const authorization = new Promise<{ frozen: boolean; autonomyLevel: number }>(resolve => { authorize = resolve; });
+    getKillSwitchStatusMock.mockReturnValue(authorization);
+    let finishRepair!: (result: unknown) => void;
+    healWorkerRuntimeMock.mockReturnValueOnce(new Promise(resolve => { finishRepair = resolve; }));
+    const observation = createObservation({ errorRate: 0.28, requestCount: 40 });
+    const requests = [
+      runPredictiveHealingDecision({ source: 'concurrent_first', observation, execute: true }),
+      runPredictiveHealingDecision({ source: 'concurrent_second', observation, execute: true })
+    ];
+    for (let index = 0; index < 30 && getKillSwitchStatusMock.mock.calls.length < 2; index += 1) {
+      await Promise.resolve();
+    }
+    expect(getKillSwitchStatusMock).toHaveBeenCalledTimes(2);
+    expect(healWorkerRuntimeMock).not.toHaveBeenCalled();
+    authorize({ frozen: false, autonomyLevel: 3 });
+    for (let index = 0; index < 30 && healWorkerRuntimeMock.mock.calls.length === 0; index += 1) {
+      await Promise.resolve();
+    }
+    expect(healWorkerRuntimeMock).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(60_001);
+    const whilePending = await runPredictiveHealingDecision({
+      source: 'concurrent_later', observation, execute: true
+    });
+    expect(whilePending.execution).toMatchObject({ attempted: false, status: 'cooldown' });
+    expect(whilePending.execution.message).toContain('already in flight');
+    expect(healWorkerRuntimeMock).toHaveBeenCalledTimes(1);
+    finishRepair({ restart: { started: true, message: 'Synthetic repair completed.' }, runtime: { started: true } });
+    const results = await Promise.all(requests);
+    expect(healWorkerRuntimeMock).toHaveBeenCalledTimes(1);
+    expect(results.map(result => result.execution.status).sort()).toEqual(['cooldown', 'executed']);
+  });
+
+  it('charges a failed repair cooldown and releases its reservation for a later authorized retry', async () => {
+    healWorkerRuntimeMock.mockRejectedValueOnce(new Error('synthetic uncertain repair'));
+    const observation = createObservation({ errorRate: 0.28, requestCount: 40 });
+    const failed = await runPredictiveHealingDecision({ source: 'failed_attempt', observation, execute: true });
+    expect(failed.execution).toMatchObject({ attempted: true, status: 'failed' });
+    const blocked = await runPredictiveHealingDecision({ source: 'failed_attempt_retry', observation, execute: true });
+    expect(blocked.execution).toMatchObject({ attempted: false, status: 'cooldown', cooldownRemainingMs: 60_000 });
+    expect(healWorkerRuntimeMock).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(60_001);
+    const retried = await runPredictiveHealingDecision({ source: 'after_failed_cooldown', observation, execute: true });
+    expect(retried.execution.status).toBe('executed');
+    expect(healWorkerRuntimeMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not reserve an action when current authorization refuses execution', async () => {
+    const observation = createObservation({ errorRate: 0.28, requestCount: 40 });
+    getKillSwitchStatusMock.mockResolvedValueOnce({ frozen: true, autonomyLevel: 3 });
+    const refused = await runPredictiveHealingDecision({ source: 'frozen_attempt', observation, execute: true });
+    expect(refused.execution).toMatchObject({ attempted: false, status: 'refused' });
+    expect(healWorkerRuntimeMock).not.toHaveBeenCalled();
+    const allowed = await runPredictiveHealingDecision({ source: 'authorized_attempt', observation, execute: true });
+    expect(allowed.execution.status).toBe('executed');
+    expect(healWorkerRuntimeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [{ selfImproveEnabled: false }, 'self_improve_execution_disabled'],
+    [{ selfImproveActuatorMode: 'pr_bot' }, 'self_improve_execution_disabled'],
+    [{ selfImproveAutonomyLevel: 0 }, 'insufficient_autonomy'],
+    [{ selfImproveFrozen: true }, 'self_improve_frozen'],
+    [{ predictiveHealingEnabled: false }, 'predictive_execution_disabled'],
+    [{ predictiveHealingDryRun: true }, 'predictive_dry_run_enforced'],
+    [{ autoExecuteHealing: false }, 'predictive_auto_execute_disabled']
+  ])('honors configuration restriction applied during authorization: %j', async (restriction, message) => {
+    getConfigMock.mockReturnValue({ ...getConfigMock(), autoExecuteHealing: true });
+    let authorize!: (controls: { frozen: boolean; autonomyLevel: number }) => void;
+    getKillSwitchStatusMock.mockReturnValueOnce(new Promise(resolve => { authorize = resolve; }));
+    const pending = runPredictiveHealingDecision({
+      source: 'policy_changed_during_authorization', allowAutoExecute: true,
+      observation: createObservation({ errorRate: 0.28, requestCount: 40 })
+    });
+    for (let index = 0; index < 30 && getKillSwitchStatusMock.mock.calls.length === 0; index += 1) {
+      await Promise.resolve();
+    }
+    expect(getKillSwitchStatusMock).toHaveBeenCalledTimes(1);
+    getConfigMock.mockReturnValue({ ...getConfigMock(), ...restriction });
+    authorize({ frozen: false, autonomyLevel: 3 });
+    expect((await pending).execution).toMatchObject({ attempted: false, status: 'refused', message });
+    expect(healWorkerRuntimeMock).not.toHaveBeenCalled();
+  });
+
   it.each([
     [{ selfImproveEnabled: false }, 'self_improve_execution_disabled'],
     [{ selfImproveActuatorMode: 'host' }, 'self_improve_execution_disabled'],

@@ -427,6 +427,7 @@ interface PredictiveHealingState {
   recentObservations: PredictiveHealingObservation[];
   recentAudits: PredictiveHealingAuditEntry[];
   actionCooldowns: Map<string, number>;
+  inFlightActions: Set<string>;
   aiProvider: PredictiveHealingAIProviderStatusSnapshot;
 }
 
@@ -621,6 +622,7 @@ function createInitialState(): PredictiveHealingState {
     recentObservations: [],
     recentAudits: [],
     actionCooldowns: new Map(),
+    inFlightActions: new Set(),
     aiProvider: createInitialAiProviderStatus()
   };
 }
@@ -2748,6 +2750,24 @@ async function executeDecision(
     };
   }
 
+  // Authorization awaits shared state. Recheck and reserve the action together
+  // before dispatch so concurrent operator/loop requests cannot both execute.
+  // Keep the reservation until the actuator settles, even beyond its cooldown.
+  const state = getState();
+  const currentCooldownRemainingMs = getCooldownRemainingMs(cooldownKey);
+  if (state.inFlightActions.has(cooldownKey) || currentCooldownRemainingMs !== null) {
+    const message = state.inFlightActions.has(cooldownKey)
+      ? `Predictive action ${request.decision.action} is already in flight.`
+      : `Predictive action ${request.decision.action} is cooling down.`;
+    return {
+      attempted: false, status: 'cooldown', mode,
+      action: request.decision.action, target: request.decision.target,
+      message, cooldownRemainingMs: currentCooldownRemainingMs, actuatorResult: null,
+      recoveryOutcome: { status: 'not_executed', summary: message }
+    };
+  }
+  state.inFlightActions.add(cooldownKey);
+
   try {
     let actuatorResult:
       | WorkerScaleUpResult
@@ -2914,6 +2934,9 @@ async function executeDecision(
       recoveryOutcome
     };
   } catch (error) {
+    // A thrown actuator may already have applied an effect. Charge the attempt
+    // rather than immediately allowing another request to repeat it.
+    setActionCooldown(cooldownKey);
     return {
       attempted: true,
       status: 'failed',
@@ -2928,6 +2951,8 @@ async function executeDecision(
         summary: 'Execution threw before a stable recovery outcome could be measured.'
       }
     };
+  } finally {
+    state.inFlightActions.delete(cooldownKey);
   }
 }
 
