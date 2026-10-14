@@ -1864,6 +1864,9 @@ async function resolveAiDecision(params: {
       }),
       sourceEndpoint: PREDICTIVE_AI_SOURCE_ENDPOINT,
       runOptions: {
+        // A control-plane recommendation uses only the supplied observation.
+        disableMemoryAccess: true,
+        disableOptionalSideEffects: true,
         answerMode: 'direct',
         requestedVerbosity: 'minimal',
         maxWords: PREDICTIVE_AI_MAX_WORDS,

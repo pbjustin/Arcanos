@@ -19,6 +19,24 @@ const pipeline = jest.fn(async (_input: unknown) => ({
   result: 'A fictional blue kite floats over a meadow.', activeModel: 'synthetic-fixture-model',
   routingStages: ['intake', 'reasoning', 'final'], tierInfo: { tier: 'simple' }, dryRun: false, fallbackFlag: false,
 }));
+const recordCompletion = jest.fn();
+const predictiveAudits: Array<Record<string, unknown>> = [];
+const predictiveDecision = jest.fn(async (params: { source: string; allowAutoExecute: boolean; dryRun?: boolean; simulate: unknown; signal?: AbortSignal }) => {
+  const auditEntry = {
+    id: `predictive_heal_audit_${predictiveAudits.length + 1}`, timestamp: new Date().toISOString(), source: params.source,
+    observation: { secret: 'mock-unprojected-sensitive-observation' },
+    featureFlags: { enabled: true, dryRun: params.dryRun === true, autoExecute: process.env.PREDICTIVE_AUTO_EXECUTE === 'true' },
+    decision: { action: 'activate_trinity_mitigation', safeToExecute: true, advisor: 'rules_v1' },
+    execution: { mode: params.dryRun ? 'dry_run' : 'recommend_only', status: params.dryRun ? 'dry_run' : 'skipped', attempted: false },
+  };
+  predictiveAudits.push(auditEntry);
+  return { auditEntry };
+});
+let sdkClient = { synthetic: 1 };
+const getClient = jest.fn(() => sdkClient);
+const providerRuntime = { reloadCount: 1, lastReloadAt: null, lastAttemptAt: null, lastSuccessAt: null,
+  lastFailureAt: null, lastFailureCategory: null, consecutiveFailures: 0, backoffMs: 0, nextRetryAt: null,
+  configVersion: 'unprojected-sensitive-config-fingerprint', lastFailureReason: 'unprojected-sensitive-error' };
 const log = { info: jest.fn((_event: string, data: { event: string }) => { events.push(data.event); }), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
 
 jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({ logger: log }));
@@ -42,6 +60,7 @@ jest.unstable_mockModule('@services/incidentResponse/killSwitch.js', () => ({
   }),
 }));
 jest.unstable_mockModule('../src/services/selfImprove/selfHealingLoop.js', () => ({
+  SELF_HEAL_PREVIEW_CONSUMER_ROUTE: '/preview/self-heal/trinity-consumer',
   getSelfHealingLoopStatus: () => ({ ...status }), startSelfHealingLoop: start,
   stopSelfHealingLoop: stop, runSelfHealingLoop: tick,
 }));
@@ -60,8 +79,16 @@ jest.unstable_mockModule('../src/services/selfImprove/workerRepairActuator.js', 
   buildWorkerRepairActuatorStatus: () => ({ mode: 'unavailable', available: false }),
   executeWorkerRepairActuator: remoteRepair,
 }));
-jest.unstable_mockModule('@core/adapters/openai.adapter.js', () => ({ getOpenAIAdapter: () => ({ getClient: () => ({ synthetic: true }) }) }));
+jest.unstable_mockModule('@core/adapters/openai.adapter.js', () => ({ getOpenAIAdapter: () => ({ getClient }) }));
 jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({ runTrinityWritingPipeline: pipeline }));
+jest.unstable_mockModule('@services/runtimeDiagnosticsService.js', () => ({
+  runtimeDiagnosticsService: { recordRequestCompletion: recordCompletion },
+}));
+jest.unstable_mockModule('../src/services/selfImprove/predictiveHealingService.js', () => ({
+  buildPredictiveHealingStatusSnapshot: () => ({ recentAudits: predictiveAudits }),
+  runPredictiveHealingDecision: predictiveDecision,
+}));
+jest.unstable_mockModule('@services/openai/serviceHealth.js', () => ({ getOpenAIServiceHealth: () => ({ providerRuntime }) }));
 
 const controls = await import('../src/services/selfImprove/selfHealingPreviewControl.js');
 const { getRequestAbortSignal } = await import('@arcanos/runtime');
@@ -122,6 +149,8 @@ beforeEach(() => {
   process.env.NODE_ENV = 'production';
   jest.clearAllMocks(); events.length = 0;
   sharedOverrides = { freeze: null, autonomy: null };
+  predictiveAudits.length = 0;
+  sdkClient = { synthetic: 1 };
   status.loopRunning = false; status.coordinatorState = 'UNKNOWN';
 });
 afterEach(async () => {
@@ -154,6 +183,8 @@ describe('isolated self-healing preview admission and process-local controls', (
     expect(result.body.processInstanceId).toMatch(/^[0-9a-f-]{36}$/u);
     expect(JSON.stringify(result.body)).not.toContain(token);
     expect(tick).not.toHaveBeenCalled(); expect(start).not.toHaveBeenCalled();
+    expect(getClient).not.toHaveBeenCalled();
+    expect(JSON.stringify(result.body)).not.toContain('unprojected-sensitive');
     handle?.markReady();
     expect((await call()).body.ready).toBe(true);
   });
@@ -304,6 +335,69 @@ describe('isolated self-healing preview admission and process-local controls', (
       }),
     }) }));
     expect(JSON.stringify(inspection.body)).not.toContain('A fictional blue kite');
+    expect(recordCompletion).toHaveBeenCalledWith(200, expect.any(Number), '/preview/self-heal/trinity-consumer', {
+      timeoutKind: undefined, degradedModeReason: undefined, bypassedSubsystems: undefined,
+    });
+    expect(inspection.body.consumerRun).toMatchObject({ diagnostics: {
+      route: '/preview/self-heal/trinity-consumer', statusCode: 200, source: 'actual_preview_facade_invocation',
+    } });
+  });
+
+  it('records measured facade timeouts and cannot accept caller-authored success diagnostics', async () => {
+    handle = await controls.installSelfHealingPreviewControl();
+    expect((await call('trinity_run', { raw: '{"command":"trinity_run","diagnostics":{"statusCode":200}}' })).status).toBe(400);
+    expect(recordCompletion).not.toHaveBeenCalled();
+    pipeline.mockRejectedValueOnce(Object.assign(new Error('Synthetic model stage deadline.'), { name: 'AbortError' }));
+    await call('trinity_run');
+    for (let index = 0; index < 20 && recordCompletion.mock.calls.length === 0; index += 1) await new Promise(resolve => setImmediate(resolve));
+    expect(recordCompletion).toHaveBeenCalledWith(504, expect.any(Number), '/preview/self-heal/trinity-consumer', { timeoutKind: 'pipeline_timeout' });
+    expect((await call()).body.consumerRun).toMatchObject({ status: 'failed', diagnostics: { statusCode: 504 } });
+    await call('inspect');
+    expect(recordCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it('records SDK identity only when a real consumer uses the reference and observes replacement', async () => {
+    handle = await controls.installSelfHealingPreviewControl();
+    await call();
+    expect(getClient).not.toHaveBeenCalled();
+    await call('trinity_run');
+    for (let index = 0; index < 20 && recordCompletion.mock.calls.length === 0; index += 1) await new Promise(resolve => setImmediate(resolve));
+    expect((await call()).body.provider).toMatchObject({ observedConsumerClients: 1, lastConsumerClientId: 'consumer-client-1' });
+    sdkClient = { synthetic: 2 };
+    await call('trinity_run');
+    for (let index = 0; index < 20 && recordCompletion.mock.calls.length < 2; index += 1) await new Promise(resolve => setImmediate(resolve));
+    const after = await call();
+    expect(after.body.provider).toMatchObject({ observedConsumerClients: 2, lastConsumerClientId: 'consumer-client-2' });
+    expect(after.body.consumerRun).toMatchObject({ consumerClientId: 'consumer-client-2' });
+    expect(getClient).toHaveBeenCalledTimes(2);
+  });
+
+  it('admits predictive evaluation only in fixed dry-run or recommendation modes and projects bounded audits', async () => {
+    handle = await controls.installSelfHealingPreviewControl();
+    expect((await call('predictive_evaluate')).body).toMatchObject({ rejected: true });
+    expect(predictiveDecision).not.toHaveBeenCalled();
+    await call('policy_predictive_dry_run');
+    await call('predictive_evaluate');
+    for (let index = 0; index < 20 && predictiveAudits.length === 0; index += 1) await new Promise(resolve => setImmediate(resolve));
+    expect(predictiveDecision).toHaveBeenLastCalledWith(expect.objectContaining({
+      source: 'self-heal.preview.predictive-case', allowAutoExecute: true, dryRun: true,
+      simulate: expect.objectContaining({ trinity: expect.objectContaining({ enabled: true }) }),
+    }));
+    expect((await call()).body.predictiveRun).toMatchObject({ status: 'completed', evidence: 'synthetic_fault_observation', audit: { mode: 'dry_run', attempted: false } });
+    await call('policy_predictive_no_execute');
+    await call('predictive_evaluate');
+    for (let index = 0; index < 20 && predictiveAudits.length < 2; index += 1) await new Promise(resolve => setImmediate(resolve));
+    expect(predictiveDecision).toHaveBeenLastCalledWith(expect.objectContaining({ allowAutoExecute: false }));
+    expect(predictiveDecision.mock.calls[1][0]).not.toHaveProperty('execute');
+    expect(predictiveDecision.mock.calls[1][0]).not.toHaveProperty('dryRun');
+    const after = await call();
+    expect(after.body.predictiveRun).toMatchObject({ status: 'completed', audit: { mode: 'recommend_only', attempted: false } });
+    expect(JSON.stringify(after.body)).not.toContain('unprojected-sensitive');
+    predictiveAudits.push(...Array.from({ length: 5 }, () => predictiveAudits[0]));
+    expect((await call()).body.predictiveAudits).toHaveLength(3);
+    process.env.PREDICTIVE_AUTO_EXECUTE = 'true';
+    expect((await call('predictive_evaluate')).body).toMatchObject({ rejected: true });
+    expect(predictiveDecision).toHaveBeenCalledTimes(2);
   });
 
   it('rejects overlapping commands while a bounded policy operation is in flight', async () => {

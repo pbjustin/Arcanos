@@ -20,6 +20,7 @@ import {
   SELF_HEAL_PREVIEW_OPENAI_FIXTURE_LIMITS,
   SELF_HEAL_PREVIEW_OPENAI_FIXTURE_CHILD_ARGUMENT,
   SELF_HEAL_PREVIEW_OPENAI_FIXTURE_READY_SENTINEL,
+  SELF_HEAL_PREVIEW_OPENAI_FIXTURE_MODEL_IDS,
 } from '../scripts/railway-backstage-heavy-openai-fixture.mjs';
 import { createOpenAIAdapter } from '../src/core/adapters/openai.adapter.js';
 import { normalizeResponsesDraft } from '../src/services/openai/requestBuilders/normalize.js';
@@ -378,6 +379,85 @@ describe('bounded self-healing preview provider profile', () => {
     expect(JSON.stringify([response, completion, structured, receipt]))
       .not.toContain(promptSentinel);
     expect(JSON.stringify(receipt)).not.toContain(token);
+  });
+
+  it('admits exactly the fixed Trinity models and preserves each requested model identity', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: childEnv() });
+    const sdk = client();
+    expect(SELF_HEAL_PREVIEW_OPENAI_FIXTURE_MODEL_IDS).toEqual([
+      BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID, 'gpt-6.1-sol', 'gpt-6-luna',
+    ]);
+    expect((await sdk.models.list()).data.map(model => model.id))
+      .toEqual(SELF_HEAL_PREVIEW_OPENAI_FIXTURE_MODEL_IDS);
+    for (const model of SELF_HEAL_PREVIEW_OPENAI_FIXTURE_MODEL_IDS) {
+      await expect(sdk.responses.create(responseBody({ model })))
+        .resolves.toMatchObject({ model, status: 'completed' });
+      await expect(sdk.chat.completions.create({ model,
+        messages: [{ role: 'user', content: promptSentinel }] }))
+        .resolves.toMatchObject({ model });
+    }
+    for (const model of ['gpt-6.1-sol-unapproved', 'gpt-6-sol', promptSentinel]) {
+      await expect(sdk.responses.create(responseBody({ model })))
+        .rejects.toMatchObject({ status: 422 });
+    }
+    const receipt = runtime.inspect();
+    expect(receipt.receipts.slice(1, 7).map(item => [item.model, item.purpose]))
+      .toEqual(SELF_HEAL_PREVIEW_OPENAI_FIXTURE_MODEL_IDS.flatMap(model => [
+        [model, 'synthetic-completion'], [model, 'synthetic-completion'],
+      ]));
+    expect(receipt.receipts.slice(7).every(item => item.model === undefined)).toBe(true);
+    expect(JSON.stringify(receipt)).not.toContain(promptSentinel);
+  });
+
+  it('returns fixed CLEAR scores only for the production audit instructions', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: childEnv() });
+    const auditPrompt = 'You are an expert auditor for AI reasoning.\n'
+      + 'Evaluate the following Reasoning Ledger based on the CLEAR principles.\n'
+      + 'Each score must be between 0 and 5.\n' + promptSentinel;
+    const response = await client().responses.create(responseBody({ model: 'gpt-6-luna',
+      input: [{ role: 'developer', content: [{ type: 'input_text', text: auditPrompt }] }],
+      text: { format: { type: 'json_object' } } }));
+    expect(JSON.parse(response.output_text)).toEqual({ clarity: 5, leverage: 5,
+      efficiency: 5, alignment: 5, resilience: 5, overall: 5 });
+    expect(runtime.inspect().receipts[0]).toMatchObject({ model: 'gpt-6-luna', purpose: 'clear-audit' });
+    const unrelated = await client().responses.create(responseBody({ input: 'clarity leverage CLEAR' }));
+    expect(unrelated.output_text).toContain('Synthetic preview provider');
+    expect(JSON.stringify([response, runtime.inspect()])).not.toContain(promptSentinel);
+  });
+
+  const predictivePrompt = candidates => [
+    'ARCANOS:CORE bounded production self-healing decision agent.',
+    'Select at most one provided self-healing candidate, or choose no action.',
+    `Candidates=${candidates}`,
+    'Return JSON only with this schema: {"selectedCandidateIndex":number|null,"chooseNoAction":boolean,"reason":string,"safeToExecute":boolean,"confidence":number}',
+    promptSentinel,
+  ].join('\n');
+
+  it('returns a bounded predictive selection for a supplied candidate through direct and structured paths', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: childEnv() });
+    const input = predictivePrompt(JSON.stringify([{ index: 0, action: 'reload_ai_provider', target: 'local' }]));
+    const direct = await client().responses.create(responseBody({ input }));
+    const decision = JSON.parse(direct.output_text);
+    expect(decision).toEqual({ selectedCandidateIndex: 0, chooseNoAction: false,
+      reason: 'Synthetic isolated preview selection of the first supplied candidate.',
+      safeToExecute: true, confidence: 0.95 });
+    const structured = await client().responses.create(responseBody({ input, model: 'gpt-6.1-sol',
+      text: { format: { type: 'json_schema', ...TRINITY_STRUCTURED_REASONING_SCHEMA } } }));
+    expect(JSON.parse(parseStructuredJson(structured).final_answer)).toEqual(decision);
+    const chat = await client().chat.completions.create({ model: 'gpt-6-luna',
+      messages: [{ role: 'user', content: input }] });
+    expect(JSON.parse(chat.choices[0].message.content)).toEqual(decision);
+    expect(runtime.inspect().receipts.every(item => item.purpose === 'predictive-decision')).toBe(true);
+    expect(JSON.stringify([direct, structured, chat, runtime.inspect()])).not.toContain(promptSentinel);
+  });
+
+  it.each(['[]', 'not-json', '[{"index":1}]',
+    '[{"index":0}]\nCandidates=[{"index":0}]'])('refuses to invent a predictive candidate for %s', async candidates => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: childEnv() });
+    const response = await client().responses.create(responseBody({ input: predictivePrompt(candidates) }));
+    expect(JSON.parse(response.output_text)).toMatchObject({ selectedCandidateIndex: null,
+      chooseNoAction: true, safeToExecute: false });
+    expect(runtime.inspect()).toMatchObject({ completed: 1, timedOut: 0, inFlight: null });
   });
 
   it('authenticates controls before reading a body and separates provider authority', async () => {

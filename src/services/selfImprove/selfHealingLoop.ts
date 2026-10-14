@@ -85,6 +85,7 @@ const SELF_HEAL_RUNTIME_KEY = '__ARCANOS_SELF_HEAL_RUNTIME__';
 const PROMPT_ROUTE_PATH = '/api/openai/prompt';
 const TRINITY_REQUEST_ROUTE_PATTERN =
   /^(?:\/gpt\/:gptId|\/api\/arcanos\/ask|\/arcanos(?:-pipeline)?|\/query-finetune|\/siri)$/;
+export const SELF_HEAL_PREVIEW_CONSUMER_ROUTE = '/preview/self-heal/trinity-consumer';
 const PROMPT_ROUTE_SIGNIFICANT_SHARE = 0.15;
 const VERIFICATION_SUCCESS_SIGNAL_COUNT = 2;
 const VERIFICATION_FAILURE_SIGNAL_COUNT = 2;
@@ -396,6 +397,8 @@ type SelfHealingObservation = {
   requestWindow: RequestWindowSnapshot;
   telemetry: ReturnType<typeof getTelemetrySnapshot>;
   openaiHealth: ReturnType<typeof getOpenAIServiceHealth>;
+  /** Set only by the admitted preview controller's server-owned options. */
+  previewConsumerRoute?: typeof SELF_HEAL_PREVIEW_CONSUMER_ROUTE;
 };
 
 type TelemetrySignals = {
@@ -1599,7 +1602,9 @@ function recordLoopError(error: unknown): string {
   return message;
 }
 
-async function observeSelfHealingRuntime(): Promise<SelfHealingObservation> {
+async function observeSelfHealingRuntime(
+  previewConsumerRoute?: typeof SELF_HEAL_PREVIEW_CONSUMER_ROUTE
+): Promise<SelfHealingObservation> {
   const { getWorkerRuntimeStatus } = await import('@platform/runtime/workerConfig.js');
   const workerRuntime = getWorkerRuntimeStatus();
   let workerHealth: WorkerControlHealthResponse | null = null;
@@ -1618,7 +1623,8 @@ async function observeSelfHealingRuntime(): Promise<SelfHealingObservation> {
     trinityStatus: getTrinitySelfHealingStatus(),
     requestWindow: runtimeDiagnosticsService.getRollingRequestWindow(resolveSignalWindowMs()),
     telemetry: getTelemetrySnapshot(),
-    openaiHealth: getOpenAIServiceHealth()
+    openaiHealth: getOpenAIServiceHealth(),
+    ...(previewConsumerRoute === SELF_HEAL_PREVIEW_CONSUMER_ROUTE ? { previewConsumerRoute } : {})
   };
 }
 
@@ -2804,7 +2810,9 @@ function beginVerification(
   rollback: PendingVerification['rollback'] = null
 ): PendingVerification {
   const affectedTrinityRoute = observation.requestWindow.routes
-    .filter((route) => TRINITY_REQUEST_ROUTE_PATTERN.test(route.route))
+    .filter((route) => TRINITY_REQUEST_ROUTE_PATTERN.test(route.route)
+      || (observation.previewConsumerRoute === SELF_HEAL_PREVIEW_CONSUMER_ROUTE
+        && route.route === observation.previewConsumerRoute))
     .sort((left, right) =>
       (right.timeoutCount + right.errorCount + right.slowRequestCount)
       - (left.timeoutCount + left.errorCount + left.slowRequestCount)
@@ -4142,6 +4150,7 @@ export async function runSelfHealingLoop(options: {
   signal?: AbortSignal;
   /** Dependency seam used only by the bounded, isolated preview controller. */
   beforeObservation?: (signal?: AbortSignal) => Promise<void>;
+  previewConsumerRoute?: typeof SELF_HEAL_PREVIEW_CONSUMER_ROUTE;
 } = {}): Promise<SelfHealingLoopRunResult> {
   const runtime = getRuntime();
   const trigger = options.trigger ?? 'manual';
@@ -4208,7 +4217,7 @@ export async function runSelfHealingLoop(options: {
 
     await options.beforeObservation?.(options.signal);
     options.signal?.throwIfAborted();
-    const observation = await observeSelfHealingRuntime();
+    const observation = await observeSelfHealingRuntime(options.previewConsumerRoute);
     options.signal?.throwIfAborted();
     runtime.status.lastObservationAt = new Date().toISOString();
     runtime.status.operatingMode = resolveCoordinatorOperatingMode(await resolveReactiveEffectBlock() === null);
@@ -4510,6 +4519,7 @@ export interface SelfHealingCoordinatorOptions {
   signal?: AbortSignal;
   beforeObservation?: (signal?: AbortSignal) => Promise<void>;
   installScheduler?: (callback: () => void, intervalMs: number) => ReturnType<typeof setInterval>;
+  previewConsumerRoute?: typeof SELF_HEAL_PREVIEW_CONSUMER_ROUTE;
 }
 
 export function startSelfHealingLoop(
@@ -4551,7 +4561,8 @@ export function startSelfHealingLoop(
   runtime.status.intervalMs = intervalMs;
   const runScheduled = (trigger: 'startup' | 'interval'): void => {
     if (controller.signal.aborted || runtime.inFlight) return;
-    const pending = runSelfHealingLoop({ trigger, signal: controller.signal, beforeObservation: options.beforeObservation });
+    const pending = runSelfHealingLoop({ trigger, signal: controller.signal, beforeObservation: options.beforeObservation,
+      previewConsumerRoute: options.previewConsumerRoute });
     runtime.scheduledRun = pending;
     // The evaluator normally captures failures itself. Also contain an unexpected
     // rejection here so telemetry/diagnostic failure cannot reject the worker loop.

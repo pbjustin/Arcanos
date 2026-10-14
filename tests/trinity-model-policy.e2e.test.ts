@@ -1,5 +1,9 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { startGenerativeModelPolicyProvider } from './fixtures/generative-model-policy-provider.js';
+import {
+  BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID, BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY,
+  startSelfHealPreviewOpenAIFixture,
+} from '../scripts/railway-backstage-heavy-openai-fixture.mjs';
 
 const originalEnvironment = process.env;
 const authorityModel = 'ft:gpt-4.1:synthetic:trinity-http-authority';
@@ -70,6 +74,7 @@ const reserveWorkerAiProviderAttempt = jest.fn(async () => {
   throw new Error('The isolated request must not contact worker budget storage.');
 });
 const logAITaskLineage = jest.fn();
+const previewRuntimeEffect = jest.fn(async () => { throw new Error('Preview policy regression forbids worker control effects.'); });
 
 // Only unrelated persistence, background work and the on-disk audit sink are
 // replaced. The facade, role policy, stage runners, guards, audit/schema
@@ -81,6 +86,9 @@ jest.unstable_mockModule('@core/db/repositories/jobEventRepository.js', () => ({
 jest.unstable_mockModule('@core/db/repositories/workerBudgetRepository.js', () => ({
   reserveWorkerAiProviderAttempt,
   WORKER_BUDGET_NON_JOB_SUBJECT_ID: 'synthetic-non-job'
+}));
+jest.unstable_mockModule('@services/workerControlService.js', () => ({
+  getWorkerControlHealth: previewRuntimeEffect, healWorkerRuntime: previewRuntimeEffect,
 }));
 
 let pipeline: typeof import('../src/core/logic/trinityWritingPipeline.js');
@@ -141,6 +149,7 @@ afterEach(async () => {
   expect(runSelfImproveCycle).not.toHaveBeenCalled();
   expect(recordJobEvent).not.toHaveBeenCalled();
   expect(reserveWorkerAiProviderAttempt).not.toHaveBeenCalled();
+  expect(previewRuntimeEffect).not.toHaveBeenCalled();
 });
 
 afterAll(() => {
@@ -340,5 +349,109 @@ describe('Trinity model policy through the real SDK and loopback HTTP', () => {
     await expect(run()).rejects.toThrow(/synthetic/i);
     expect(responseRequests().map(request => request.model)).toEqual(['gpt-6-luna', 'gpt-6.1-sol', 'gpt-6-luna', authorityModel]);
     expect(logAITaskLineage).not.toHaveBeenCalled();
+  });
+
+  it('executes the actual sealed-preview provider through the full facade and observes a local mitigation in its consumer', async () => {
+    const now = Date.now();
+    const provider = await startSelfHealPreviewOpenAIFixture({ port: 0, env: {
+      NODE_ENV: 'production', TZ: 'UTC', ARCANOS_BACKSTAGE_HEAVY_OPENAI_FIXTURE_CHILD: 'v1',
+      ARCANOS_BACKSTAGE_HEAVY_PROOF_RUN_ID: 'preview-consumer-regression',
+      ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA: 'a'.repeat(40),
+      ARCANOS_SELF_HEAL_PREVIEW_PROFILE: 'worker-coordinator-v1',
+      ARCANOS_SELF_HEAL_PREVIEW_RUN_ID: 'preview-consumer-regression',
+      ARCANOS_SELF_HEAL_PREVIEW_ISSUED_AT: new Date(now - 1000).toISOString(),
+      ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT: new Date(now + 60_000).toISOString(),
+      ARCANOS_SELF_HEAL_PREVIEW_CONTROL_TOKEN: 'b'.repeat(64),
+    } });
+    try {
+      const address = provider.server.address();
+      if (!address || typeof address === 'string') throw new Error('PREVIEW_PROVIDER_LISTEN_FAILED');
+      process.env.FINETUNED_MODEL_ID = BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID;
+      process.env.OPENAI_API_KEY = BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY;
+      process.env.OPENAI_BASE_URL = `http://127.0.0.1:${address.port}/v1`;
+      credentials.resetCredentialCache(); adapter.resetOpenAIAdapter();
+      const client = adapter.getOpenAIAdapter({ apiKey: BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY,
+        baseURL: process.env.OPENAI_BASE_URL, defaultModel: BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID,
+        timeout: 2000, maxRetries: 0 }).getClient();
+      const consume = () => pipeline.runTrinityWritingPipeline({ input: {
+        prompt: 'Write a short fictional description of a blue paper kite above a quiet meadow.',
+        sourceEndpoint: 'self_heal.preview.synthetic_consumer',
+      }, context: { client, runtimeBudget: runtimeBudget.createRuntimeBudgetWithLimit(8000), runOptions: {
+        disableMemoryAccess: true, disableOptionalSideEffects: true, redactAuditContent: true,
+        preserveAggregateAbortContext: true, watchdogModelTimeoutMs: 8000, modelStageTimeoutMs: 2000,
+        cooperativeModelStageTimeout: true, requestedVerbosity: 'minimal', answerMode: 'explained', maxWords: 80,
+        toolBackedCapabilities: { browse: false, verifyProvidedData: false, verifyLiveData: false,
+          confirmExternalState: false, persistData: false, callBackend: false },
+      } } });
+      const baseline = await consume();
+      expect(baseline).toMatchObject({ activeModel: BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID, fallbackFlag: false });
+      expect(baseline.routingStages).toContain('GPT5-REASONING');
+      expect(baseline.routingStages).toContain('ARCANOS-FINAL');
+      expect(provider.inspect().receipts.filter(receipt => receipt.purpose === 'clear-audit')).toHaveLength(1);
+      process.env.SELF_IMPROVE_ENABLED = 'true';
+      process.env.SELF_IMPROVE_ACTUATOR_MODE = 'daemon';
+      process.env.SELF_IMPROVE_AUTONOMY_LEVEL = '3';
+      process.env.SELF_IMPROVE_FREEZE = 'false';
+      const action = selfHealing.activateTrinitySelfHealingMitigation({ stage: 'final', action: 'enable_degraded_mode',
+        reason: 'fixed sealed-preview consumer regression' });
+      expect(action.applied).toBe(true);
+      const changed = await consume();
+      expect(changed.routingStages).toContain('ARCANOS-DIRECT-ANSWER');
+      expect(changed.routingStages).not.toContain('GPT5-REASONING');
+      expect(changed).toMatchObject({ activeModel: BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID, fallbackFlag: false });
+      expect(selfHealing.getTrinitySelfHealingSnapshot().final).toMatchObject({
+        mitigationId: action.mitigationId, verificationSuccesses: 1,
+      });
+      expect(provider.inspect()).toMatchObject({ rejected: 0, timedOut: 0, inFlight: null });
+    } finally { await provider.close(); }
+  });
+
+  it('reaches actual predictive dry-run and recommendation gates through the sealed provider without actuation', async () => {
+    const now = Date.now();
+    const provider = await startSelfHealPreviewOpenAIFixture({ port: 0, env: {
+      NODE_ENV: 'production', TZ: 'UTC', ARCANOS_BACKSTAGE_HEAVY_OPENAI_FIXTURE_CHILD: 'v1',
+      ARCANOS_BACKSTAGE_HEAVY_PROOF_RUN_ID: 'preview-predictive-regression',
+      ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA: 'a'.repeat(40),
+      ARCANOS_SELF_HEAL_PREVIEW_PROFILE: 'worker-coordinator-v1',
+      ARCANOS_SELF_HEAL_PREVIEW_RUN_ID: 'preview-predictive-regression',
+      ARCANOS_SELF_HEAL_PREVIEW_ISSUED_AT: new Date(now - 1000).toISOString(),
+      ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT: new Date(now + 60_000).toISOString(),
+      ARCANOS_SELF_HEAL_PREVIEW_CONTROL_TOKEN: 'b'.repeat(64),
+    } });
+    try {
+      const address = provider.server.address();
+      if (!address || typeof address === 'string') throw new Error('PREVIEW_PROVIDER_LISTEN_FAILED');
+      Object.assign(process.env, { ARCANOS_PROCESS_KIND: 'worker',
+        FINETUNED_MODEL_ID: BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID,
+        OPENAI_API_KEY: BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY,
+        OPENAI_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
+        SELF_IMPROVE_ENABLED: 'true', SELF_IMPROVE_ACTUATOR_MODE: 'daemon',
+        SELF_IMPROVE_AUTONOMY_LEVEL: '3', SELF_IMPROVE_FREEZE: 'false',
+        PREDICTIVE_HEALING_ENABLED: 'true', PREDICTIVE_HEALING_DRY_RUN: 'true', PREDICTIVE_AUTO_EXECUTE: 'true' });
+      credentials.resetCredentialCache(); adapter.resetOpenAIAdapter();
+      adapter.getOpenAIAdapter({ apiKey: BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY,
+        baseURL: process.env.OPENAI_BASE_URL, defaultModel: BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID,
+        timeout: 2000, maxRetries: 0 });
+      for (let index = 0; index < 2; index += 1) selfHealing.recordTrinityStageFailure({
+        stage: 'final', error: 'Explicit synthetic predictive preheal observation.',
+        requestId: `preview-predictive-regression-${index}`, sourceEndpoint: 'preview-predictive-regression',
+      });
+      const predictive = await import('../src/services/selfImprove/predictiveHealingService.js');
+      const diagnostics = await import('../src/services/runtimeDiagnosticsService.js');
+      const worker = await import('../src/platform/runtime/workerConfig.js');
+      const evaluate = () => predictive.runPredictiveHealingFromLoop({ source: 'self-heal.preview.predictive-regression',
+        observation: { requestWindow: diagnostics.runtimeDiagnosticsService.getRollingRequestWindow(300_000),
+          workerHealth: null, workerRuntime: worker.getWorkerRuntimeStatus(),
+          trinityStatus: selfHealing.getTrinitySelfHealingStatus() } });
+      const dry = await evaluate();
+      expect(dry.decision).toMatchObject({ advisor: 'arcanos_core_v1', action: 'activate_trinity_mitigation', safeToExecute: true });
+      expect(dry.execution).toMatchObject({ attempted: false, status: 'dry_run', mode: 'dry_run' });
+      process.env.PREDICTIVE_HEALING_DRY_RUN = 'false'; process.env.PREDICTIVE_AUTO_EXECUTE = 'false';
+      const recommendation = await evaluate();
+      expect(recommendation.decision.action).not.toBe('none');
+      expect(recommendation.execution).toMatchObject({ attempted: false, status: 'skipped', mode: 'recommend_only' });
+      expect(selfHealing.getTrinitySelfHealingSnapshot().final.activeAction).toBeNull();
+      expect(provider.inspect().receipts.some(receipt => receipt.purpose === 'predictive-decision')).toBe(true);
+    } finally { await provider.close(); }
   });
 });

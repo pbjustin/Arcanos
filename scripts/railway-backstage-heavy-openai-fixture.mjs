@@ -498,6 +498,10 @@ export const SELF_HEAL_PREVIEW_OPENAI_FIXTURE_LIMITS = Object.freeze({
   maxProviderRequests: 128,
   maxControlRequests: 128,
 });
+export const SELF_HEAL_PREVIEW_OPENAI_FIXTURE_MODEL_IDS = Object.freeze([
+  BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID, 'gpt-6.1-sol', 'gpt-6-luna',
+]);
+const SELF_HEAL_MODEL_IDS = new Set(SELF_HEAL_PREVIEW_OPENAI_FIXTURE_MODEL_IDS);
 const SELF_HEAL_CHILD_ENV_NAMES = new Set([
   'NODE_ENV', 'TZ', BACKSTAGE_HEAVY_OPENAI_FIXTURE_CHILD_ENV,
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_RUN_ID_ENV,
@@ -513,6 +517,20 @@ const SELF_HEAL_CHILD_ENV_NAMES = new Set([
 ]);
 const SELF_HEAL_SYNTHETIC_OUTPUT =
   'Synthetic preview provider completed the isolated request.';
+const SELF_HEAL_PREDICTIVE_OUTPUT = JSON.stringify({
+  selectedCandidateIndex: 0, chooseNoAction: false,
+  reason: 'Synthetic isolated preview selection of the first supplied candidate.',
+  safeToExecute: true, confidence: 0.95,
+});
+const SELF_HEAL_PREDICTIVE_NO_ACTION_OUTPUT = JSON.stringify({
+  selectedCandidateIndex: null, chooseNoAction: true,
+  reason: 'Synthetic isolated preview found no supplied candidate.',
+  safeToExecute: false, confidence: 0.95,
+});
+const SELF_HEAL_PREDICTIVE_OUTPUT_CONTRACT = 'Return JSON only with this schema: {"selectedCandidateIndex":number|null,"chooseNoAction":boolean,"reason":string,"safeToExecute":boolean,"confidence":number}';
+const SELF_HEAL_CLEAR_OUTPUT = JSON.stringify({
+  clarity: 5, leverage: 5, efficiency: 5, alignment: 5, resilience: 5, overall: 5,
+});
 
 function selfHealFixtureConfig(env, now) {
   const issuedAt = Date.parse(env.ARCANOS_SELF_HEAL_PREVIEW_ISSUED_AT);
@@ -592,16 +610,55 @@ function exactSelfHealCommand(body, keys) {
     && keys.every(key => Object.hasOwn(body, key));
 }
 
-function selfHealFixtureOutput(body, chat) {
+function selfHealFixtureInputText(body, chat) {
+  const input = chat ? body.messages : body.input;
+  if (typeof input === 'string') return input;
+  if (!Array.isArray(input)) return '';
+  return input.flatMap(item => {
+    if (!isRecord(item)) return [];
+    if (typeof item.content === 'string') return [item.content];
+    if (!Array.isArray(item.content)) return [];
+    return item.content.filter(content => isRecord(content)
+      && typeof content.text === 'string').map(content => content.text);
+  }).join('\n');
+}
+
+function selfHealFixturePurpose(body, chat) {
+  const input = selfHealFixtureInputText(body, chat);
+  if (input.includes('You are an expert auditor for AI reasoning.')
+    && input.includes('Evaluate the following Reasoning Ledger based on the CLEAR principles.')
+    && input.includes('Each score must be between 0 and 5.')) return 'clear-audit';
+  if (input.includes('ARCANOS:CORE bounded production self-healing decision agent.')
+    && input.includes('Select at most one provided self-healing candidate, or choose no action.')
+    && input.includes(SELF_HEAL_PREDICTIVE_OUTPUT_CONTRACT)) return 'predictive-decision';
+  return 'synthetic-completion';
+}
+
+function selfHealPredictiveOutput(body, chat) {
+  const lines = selfHealFixtureInputText(body, chat).split(/\r?\n/u)
+    .filter(line => line.startsWith('Candidates='));
+  if (lines.length !== 1) return SELF_HEAL_PREDICTIVE_NO_ACTION_OUTPUT;
+  try {
+    const candidates = JSON.parse(lines[0].slice('Candidates='.length));
+    return Array.isArray(candidates) && candidates.length > 0 && candidates.length <= 5
+      && candidates.every((candidate, index) => isRecord(candidate) && candidate.index === index)
+      ? SELF_HEAL_PREDICTIVE_OUTPUT : SELF_HEAL_PREDICTIVE_NO_ACTION_OUTPUT;
+  } catch { return SELF_HEAL_PREDICTIVE_NO_ACTION_OUTPUT; }
+}
+
+function selfHealFixtureOutput(body, chat, purpose) {
+  const answer = purpose === 'clear-audit' ? SELF_HEAL_CLEAR_OUTPUT
+    : purpose === 'predictive-decision' ? selfHealPredictiveOutput(body, chat) : SELF_HEAL_SYNTHETIC_OUTPUT;
   const format = chat ? body.response_format?.json_schema : body.text?.format;
-  if (!format || format.type === 'text') return SELF_HEAL_SYNTHETIC_OUTPUT;
+  if (!format || format.type === 'text'
+    || (format.type === 'json_object' && purpose !== 'synthetic-completion')) return answer;
   const name = format.name;
   if (name !== 'trinity_structured_reasoning'
     && name !== 'trinity_structured_reasoning_compact') return null;
   const result = {
     response_mode: 'answer', achievable_subtasks: [], blocked_subtasks: [],
     user_visible_caveats: ['Synthetic isolated preview evidence.'],
-    claim_tags: [], final_answer: SELF_HEAL_SYNTHETIC_OUTPUT,
+    claim_tags: [], final_answer: answer,
   };
   if (name === 'trinity_structured_reasoning') Object.assign(result, {
     reasoning_steps: [], assumptions: [], constraints: [], tradeoffs: [],
@@ -753,25 +810,28 @@ export async function startSelfHealPreviewOpenAIFixture(options = {}) {
         if (!parsed.ok) { reject(parsed.status, parsed.code); return; }
         if (!state.ready || now() >= config.expiresAt) { reject(410, 'fixture_expired'); return; }
         body = parsed.body;
-        output = selfHealFixtureOutput(body, chat);
-        if (body.model !== BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID
+        const purpose = selfHealFixturePurpose(body, chat);
+        output = selfHealFixtureOutput(body, chat, purpose);
+        if (!SELF_HEAL_MODEL_IDS.has(body.model)
           || body.stream === true || output === null
           || (chat ? !Array.isArray(body.messages) || body.messages.length === 0
             : !(typeof body.input === 'string' || Array.isArray(body.input)))) {
           reject(422, 'fixture_provider_contract_invalid'); return;
         }
+        receipt.model = body.model;
+        receipt.purpose = purpose;
       }
       const success = () => finish('completed', 200, models ? {
-        object: 'list', data: [{ id: BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID,
-          object: 'model', created: 0, owned_by: 'arcanos-preview-fixture' }],
+        object: 'list', data: SELF_HEAL_PREVIEW_OPENAI_FIXTURE_MODEL_IDS.map(id => ({ id,
+          object: 'model', created: 0, owned_by: 'arcanos-preview-fixture' })),
       } : chat ? {
         id: `chatcmpl_${requestId}`, object: 'chat.completion', created: 0,
-        model: BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID,
+        model: body.model,
         choices: [{ index: 0, message: { role: 'assistant', content: output, refusal: null },
           finish_reason: 'stop', logprobs: null }],
         usage: { prompt_tokens: 64, completion_tokens: 32, total_tokens: 96 },
       } : buildResponseWireBody({ callNumber: state.providerRequests,
-        model: BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID, status: 'completed', text: output }));
+        model: body.model, status: 'completed', text: output }));
       active = { release: success, stop: () => {
         finish('shutdown', 503, { error: { code: 'fixture_stopped',
           message: 'The isolated preview fixture has stopped.', type: 'server_error' } });

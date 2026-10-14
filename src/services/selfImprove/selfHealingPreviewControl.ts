@@ -9,6 +9,7 @@ import {
 } from '@services/incidentResponse/killSwitch.js';
 import {
   getSelfHealingLoopStatus, runSelfHealingLoop, startSelfHealingLoop, stopSelfHealingLoop,
+  SELF_HEAL_PREVIEW_CONSUMER_ROUTE,
   type SelfHealingCoordinatorOptions,
 } from './selfHealingLoop.js';
 import {
@@ -16,6 +17,11 @@ import {
   getTrinitySelfHealingMitigation, rollbackTrinitySelfHealingMitigation, noteTrinityMitigationOutcome,
 } from './selfHealingV2.js';
 import { activatePromptRouteDegradedMode, getPromptRouteMitigationState } from '@services/openai/promptRouteMitigation.js';
+import { runtimeDiagnosticsService } from '@services/runtimeDiagnosticsService.js';
+import { getOpenAIServiceHealth } from '@services/openai/serviceHealth.js';
+import { buildPredictiveHealingStatusSnapshot, runPredictiveHealingDecision,
+  type PredictiveHealingAuditEntry, type PredictiveHealingSimulationInput,
+} from './predictiveHealingService.js';
 
 export const SELF_HEAL_PREVIEW_PROFILE = 'worker-coordinator-v1';
 export const SELF_HEAL_PREVIEW_CONTROL_PORT = 8791;
@@ -138,9 +144,21 @@ const COMMANDS = new Set([
   'trinity_rollback', 'trinity_consumer', 'trinity_fresh_success',
   'remote_mitigation_rejection', 'trinity_run',
   'database_failure_once',
+  'predictive_evaluate',
 ]);
 
 type Receipt = { sequence: number; at: string; event: string };
+function projectPredictiveAudit(entry: PredictiveHealingAuditEntry) {
+  return {
+    auditId: /^predictive_heal_audit_\d+$/u.test(entry.id) ? entry.id : 'unavailable',
+    timestamp: entry.timestamp.slice(0, 32),
+    source: entry.source === 'self-heal.preview.predictive-case' || entry.source === 'predictive_self_heal_loop' ? entry.source : 'other',
+    selectedAction: entry.decision.action, safeToExecute: entry.decision.safeToExecute,
+    advisor: entry.decision.advisor,
+    mode: entry.execution.mode, status: entry.execution.status, attempted: entry.execution.attempted,
+    featureFlags: { enabled: entry.featureFlags.enabled, dryRun: entry.featureFlags.dryRun, autoExecute: entry.featureFlags.autoExecute },
+  };
+}
 export interface SelfHealingPreviewControl {
   coordinatorOptions: SelfHealingCoordinatorOptions;
   beforeClaim: () => void;
@@ -211,6 +229,11 @@ export async function installSelfHealingPreviewControl(
   let lastTick: Promise<unknown> | null = null;
   let consumerRun: Record<string, unknown> | null = null;
   let consumerRunPromise: Promise<void> | null = null;
+  let predictiveRun: Record<string, unknown> | null = null;
+  let predictiveRunPromise: Promise<void> | null = null;
+  const consumerClients = new WeakMap<object, string>();
+  let consumerClientCount = 0;
+  let lastConsumerClientId: string | null = null;
   let closePromise: Promise<void> | null = null;
   let emergencyOverrideOwned = false;
   let ownedAutonomy: number | null = null;
@@ -231,6 +254,7 @@ export async function installSelfHealingPreviewControl(
   };
   const coordinatorOptions: SelfHealingCoordinatorOptions = {
     signal: controller.signal,
+    previewConsumerRoute: SELF_HEAL_PREVIEW_CONSUMER_ROUTE,
     installScheduler: (callback, intervalMs) => {
       if (closed || Date.now() >= profile.expiresAtMs) throw new Error('SELF_HEAL_PREVIEW_EXPIRED');
       if (failScheduler) {
@@ -271,6 +295,7 @@ export async function installSelfHealingPreviewControl(
 
   const inspect = async () => {
     const config = getConfig();
+    const provider = getOpenAIServiceHealth().providerRuntime;
     return {
       version: 'self-heal-preview-control/v1', processInstanceId, pid: process.pid,
       runId: profile.runId, sourceCommit: profile.sourceCommit, processKind: profile.role,
@@ -289,6 +314,15 @@ export async function installSelfHealingPreviewControl(
       observationHeld: releaseHold !== null, tickPending: lastTick !== null,
       claimFailurePending: failClaim,
       consumerRun,
+      predictiveRun,
+      predictiveAudits: buildPredictiveHealingStatusSnapshot().recentAudits.slice(-3).map(projectPredictiveAudit),
+      provider: {
+        reloadCount: provider.reloadCount, lastReloadAt: provider.lastReloadAt,
+        lastAttemptAt: provider.lastAttemptAt, lastSuccessAt: provider.lastSuccessAt,
+        lastFailureAt: provider.lastFailureAt, lastFailureCategory: provider.lastFailureCategory,
+        consecutiveFailures: provider.consecutiveFailures, backoffMs: provider.backoffMs, nextRetryAt: provider.nextRetryAt,
+        observedConsumerClients: consumerClientCount, lastConsumerClientId,
+      },
       receipts: [...receipts],
     };
   };
@@ -351,7 +385,8 @@ export async function installSelfHealingPreviewControl(
     else if (command === 'scheduler_failure_once') failScheduler = true;
     else if (command === 'tick') {
       if (!lastTick) {
-        const pending = runSelfHealingLoop({ trigger: 'interval', signal: controller.signal, beforeObservation: coordinatorOptions.beforeObservation });
+        const pending = runSelfHealingLoop({ trigger: 'interval', signal: controller.signal, beforeObservation: coordinatorOptions.beforeObservation,
+          previewConsumerRoute: coordinatorOptions.previewConsumerRoute });
         lastTick = pending;
         void pending.catch(() => record('unexpected_tick_rejection')).finally(() => { if (lastTick === pending) lastTick = null; });
       }
@@ -402,6 +437,52 @@ export async function installSelfHealingPreviewControl(
       } catch {
         return { rejected: true, dispatchAttempts, actuatorMode: actuator.mode, inspection: await inspect() };
       }
+    } else if (command === 'predictive_evaluate') {
+      const config = getConfig();
+      if (closed || profile.role !== 'worker' || predictiveRunPromise !== null
+          || config.predictiveHealingEnabled !== true
+          || (!config.predictiveHealingDryRun && config.autoExecuteHealing)) {
+        return { rejected: true, reasonCode: 'predictive_observation_policy_required', inspection: await inspect() };
+      }
+      // The existing production simulation contract supplies one closed, supported
+      // candidate. No caller can choose observations, targets, actions or execution.
+      const cleanStage = { observationsInWindow: 0, attempts: 0, activeAction: null, verified: false, cooldownUntil: null, failedActions: [] };
+      const simulate: PredictiveHealingSimulationInput = {
+        requestCount: 0, errorRate: 0, timeoutRate: 0, avgLatencyMs: 0, p95LatencyMs: 0, maxLatencyMs: 0, degradedCount: 0,
+        workerHealth: { overallStatus: 'healthy', pending: 0, running: 0, delayed: 0, stalledRunning: 0,
+          oldestPendingJobAgeMs: 0, alertCount: 0, alerts: [], degradedWorkerIds: [], unhealthyWorkerIds: [], workers: [] },
+        inactivity: { inactiveDegraded: false, workerIds: [] },
+        workerRuntime: { enabled: false, started: false, activeListeners: 0, workerIds: [] },
+        promptRoute: { active: false, mode: null },
+        trinity: { enabled: true, activeStage: null, activeAction: null, verified: false,
+          config: { triggerThreshold: 3, maxAttempts: 3 },
+          stages: { intake: { ...cleanStage }, reasoning: { ...cleanStage }, final: { ...cleanStage, observationsInWindow: 2 } } },
+      };
+      const fixedDryRun = config.predictiveHealingDryRun === true;
+      predictiveRun = { evidence: 'synthetic_fault_observation', status: 'running', startedAt: new Date().toISOString(),
+        source: 'self-heal.preview.predictive-case', processInstanceId };
+      const pending = (async () => {
+        const { createLinkedAbortController, runWithRequestAbortContext } = await import('@arcanos/runtime');
+        const linked = createLinkedAbortController({ timeoutMs: 8_000, parentSignal: controller.signal });
+        try {
+          linked.signal.throwIfAborted();
+          const result = await runWithRequestAbortContext({ controller: linked.controller, signal: linked.signal,
+            deadlineAt: linked.deadlineAt, timeoutMs: 8_000 }, () => runPredictiveHealingDecision({
+            source: 'self-heal.preview.predictive-case', simulate, signal: linked.signal,
+            // Recommend-only admission is fixed at entry; a later config change
+            // cannot grant execution. Dry-run admission remains explicitly dry.
+            allowAutoExecute: fixedDryRun, ...(fixedDryRun ? { dryRun: true } : {}),
+          }));
+          predictiveRun = { ...predictiveRun, status: 'completed', completedAt: new Date().toISOString(),
+            audit: projectPredictiveAudit(result.auditEntry) };
+          record('predictive_case_completed');
+        } finally { linked.cleanup(); }
+      })();
+      predictiveRunPromise = pending;
+      void pending.catch(() => {
+        predictiveRun = { ...predictiveRun, status: 'failed', reasonCode: 'SELF_HEAL_PREVIEW_PREDICTIVE_CASE_FAILED' };
+        record('predictive_case_failed');
+      }).finally(() => { if (predictiveRunPromise === pending) predictiveRunPromise = null; });
     } else if (command === 'trinity_run') {
       if (profile.role !== 'worker' || consumerRunPromise !== null) {
         return { rejected: true, reasonCode: 'consumer_unavailable_or_busy', inspection: await inspect() };
@@ -413,17 +494,26 @@ export async function installSelfHealingPreviewControl(
       const pending = (async () => {
         const { getOpenAIAdapter } = await import('@core/adapters/openai.adapter.js');
         const { runTrinityWritingPipeline } = await import('@core/logic/trinityWritingPipeline.js');
-        const { createRuntimeBudgetWithLimit, createLinkedAbortController, runWithRequestAbortContext } = await import('@arcanos/runtime');
+        const { createRuntimeBudgetWithLimit, createLinkedAbortController, runWithRequestAbortContext, isAbortError } = await import('@arcanos/runtime');
         const linked = createLinkedAbortController({ timeoutMs: 8_000, parentSignal: controller.signal });
+        const measuredStartedAt = Date.now();
+        let consumerEntered = false;
         try {
           linked.signal.throwIfAborted();
           // Run and await the real production consumer. Cancellation drains it;
           // no Promise.race leaves provider work running after this receipt.
+          record('consumer_started');
+          consumerEntered = true;
+          const client = getOpenAIAdapter().getClient();
+          let clientId = consumerClients.get(client);
+          if (!clientId) { clientId = `consumer-client-${++consumerClientCount}`; consumerClients.set(client, clientId); }
+          lastConsumerClientId = clientId;
+          consumerRun = { ...consumerRun, consumerClientId: clientId };
           const result = await runWithRequestAbortContext({
             requestId, controller: linked.controller, signal: linked.signal, deadlineAt: linked.deadlineAt, timeoutMs: 8_000,
           }, () => runTrinityWritingPipeline({
             input: { prompt: 'Write a short fictional description of a blue paper kite above a quiet meadow.', sourceEndpoint },
-            context: { client: getOpenAIAdapter().getClient(), requestId, runtimeBudget: createRuntimeBudgetWithLimit(8_000),
+            context: { client, requestId, runtimeBudget: createRuntimeBudgetWithLimit(8_000),
               runOptions: { disableMemoryAccess: true, disableOptionalSideEffects: true, redactAuditContent: true,
                 preserveAggregateAbortContext: true, watchdogModelTimeoutMs: 8_000, modelStageTimeoutMs: 2_000,
                 cooperativeModelStageTimeout: true, requestedVerbosity: 'minimal', answerMode: 'explained', maxWords: 80,
@@ -432,11 +522,28 @@ export async function installSelfHealingPreviewControl(
               },
             },
           }));
+          const latencyMs = Math.max(0, Date.now() - measuredStartedAt);
+          const statusCode = result.dryRun ? 503 : result.timeoutKind ? 504 : 200;
+          runtimeDiagnosticsService.recordRequestCompletion(statusCode, latencyMs, SELF_HEAL_PREVIEW_CONSUMER_ROUTE, {
+            timeoutKind: result.timeoutKind, degradedModeReason: result.degradedModeReason, bypassedSubsystems: result.bypassedSubsystems,
+          });
           consumerRun = { ...consumerRun, status: 'completed', completedAt: new Date().toISOString(),
             routingStages: result.routingStages, tierInfo: result.tierInfo, dryRun: result.dryRun, fallbackFlag: result.fallbackFlag,
             activeModel: result.activeModel, outputSha256: createHash('sha256').update(result.result).digest('hex'),
-            outputCharacters: result.result.length, mitigationAfter: getTrinitySelfHealingStatus().snapshot.final };
+            outputCharacters: result.result.length, mitigationAfter: getTrinitySelfHealingStatus().snapshot.final,
+            mitigationsAfter: getTrinitySelfHealingStatus().snapshot,
+            diagnostics: { route: SELF_HEAL_PREVIEW_CONSUMER_ROUTE, statusCode, latencyMs, source: 'actual_preview_facade_invocation' } };
           record('consumer_completed');
+        } catch (error) {
+          if (consumerEntered) {
+            const latencyMs = Math.max(0, Date.now() - measuredStartedAt);
+            const timeoutKind = !controller.signal.aborted && (linked.signal.aborted || isAbortError(error)) ? 'pipeline_timeout' as const : undefined;
+            const statusCode = controller.signal.aborted ? 499 : timeoutKind ? 504 : 502;
+            runtimeDiagnosticsService.recordRequestCompletion(statusCode, latencyMs, SELF_HEAL_PREVIEW_CONSUMER_ROUTE, { timeoutKind });
+            consumerRun = { ...consumerRun, diagnostics: { route: SELF_HEAL_PREVIEW_CONSUMER_ROUTE, statusCode, latencyMs,
+              source: 'actual_preview_facade_invocation' } };
+          }
+          throw error;
         } finally { linked.cleanup(); }
       })();
       consumerRunPromise = pending;
@@ -495,7 +602,7 @@ export async function installSelfHealingPreviewControl(
       releaseHold?.();
       const drain = stopSelfHealingLoop();
       server.closeAllConnections();
-      await Promise.all([drain, lastTick?.catch(() => undefined), consumerRunPromise?.catch(() => undefined), activeCommand?.catch(() => undefined), new Promise<void>((resolve, reject) => {
+      await Promise.all([drain, lastTick?.catch(() => undefined), consumerRunPromise?.catch(() => undefined), predictiveRunPromise?.catch(() => undefined), activeCommand?.catch(() => undefined), new Promise<void>((resolve, reject) => {
         server.close(error => error && (error as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING' ? reject(error) : resolve());
       })]);
       restorePolicy();

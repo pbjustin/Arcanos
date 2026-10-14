@@ -13,7 +13,7 @@ export const SELF_HEAL_PREVIEW_CONTROL_COMMANDS = Object.freeze([
   'policy_predictive_dry_run', 'policy_predictive_no_execute', 'policy_allowed', 'policy_restore',
   'prompt_worker_rejection', 'remote_mitigation_rejection',
   'trinity_activate', 'trinity_replace', 'trinity_stale_rollback', 'trinity_rollback',
-  'trinity_consumer', 'trinity_fresh_success', 'trinity_run',
+  'trinity_consumer', 'trinity_fresh_success', 'trinity_run', 'predictive_evaluate',
 ]);
 const PROVIDER_COMMANDS = new Set(['inspect', 'set_healthy', 'timeout_next', 'hold_next', 'release']);
 const MAX_BYTES = 65_536;

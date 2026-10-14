@@ -952,3 +952,128 @@ I/O, actual elapsed TTLs, and distributed ownership. Synthetic provider recovery
 remains synthetic. The next viable step is the reviewed, scoped heavy-supervisor
 extension described above with full isolation and cleanup established before
 any application deployment.
+
+## User-authorized scoped preview extension — predeployment snapshot
+
+This later phase records the user's authorization to implement the narrow
+heavy-supervisor extension and provision its disposable preview. It preserves
+the earlier preflight and no-op cleanup receipts as history; their zero-resource
+statement does not describe this phase. Snapshot: **2026-10-14 21:24:54 UTC**.
+The [PR handoff](https://github.com/pbjustin/Arcanos/pull/1544#issuecomment-6177135799)
+records the subsequent exact head, terminal CI/review, deployment evidence,
+acceptance gates and cleanup. A source commit cannot contain its own final SHA.
+
+### Implementation and scope
+
+The implementation is recorded in
+[890fc803](https://github.com/pbjustin/Arcanos/commit/890fc8034aecf57530ea4305c4ecc61965d15368),
+[7d5f3ece](https://github.com/pbjustin/Arcanos/commit/7d5f3ececcf99ed8c040013c3b704d9e872803dc)
+and [93e186d6](https://github.com/pbjustin/Arcanos/commit/93e186d65e563439582e760244b29d66d5d28d90).
+It reuses the existing heavy supervisor with an explicit
+`--self-heal-preview-v1` opt-in. The
+[runbook](../../../../RAILWAY_DEPLOYMENT.md#disposable-self-healing-worker-acceptance-profile)
+and [configuration reference](../../../../CONFIGURATION.md#disposable-self-healing-preview-profile)
+describe the dedicated four-service topology, literal child environment,
+compiled artifact manifest, process-local authenticated control, ownership-bound
+PostgreSQL resume, and fixed two-hour expiry with independent scoped deletion.
+The ordinary integrity wrapper, role launcher and compiled `jobRunner` remain
+the Worker entry path. The native passive preview and global deployment settings
+are unchanged; this is not a second generic preview framework.
+
+Predeployment validation found and corrected extension defects: exact Docker
+image environment values needed explicit admission; policy restoration needed
+to retain ownership of its own freeze/autonomy changes; expiry SQL and lease
+boolean validation needed fail-closed handling; cleanup needed explicit CLI
+target/absence verification; and a fixture used the SDK-guard-disallowed
+`responses.parse`. The fixture now uses permitted `responses.create` and owned
+`parseStructuredJson`, preserving the guard. These are extension corrections
+found before deployment, not reproduced defects in an existing production service.
+
+The next local batch adds measured canonical diagnostics for the real preview
+Trinity facade and a fixed, server-owned predictive simulation. The
+[control implementation](../../../../../src/services/selfImprove/selfHealingPreviewControl.ts)
+labels policy projection, injected outcome and simulated observation separately.
+Provider traffic terminates at a synthetic loopback adapter. Actual facade
+execution can establish its consumer effect; it cannot prove external-provider
+recovery. An injected claim failure likewise cannot prove a PostgreSQL outage.
+New batch results and hosted checks require their own exact-head receipt.
+
+An actual predictive-service/SDK regression then reproduced a production-path
+defect: its advisor queried backend memory before the provider call, violating
+the observation-only control-plane contract and causing fallback in the fixture.
+The smallest repair sets `disableMemoryAccess` and `disableOptionalSideEffects`
+on that advisor call. The strict no-memory/no-write sentinels remain enabled.
+With the real advisor, facade, SDK and sealed provider, the test now observes
+`arcanos_core_v1` selecting the supported synthetic candidate, actual `dry_run`
+and `recommend_only` gates with `attempted: false`, and no mitigation effect.
+The combined predictive selections pass 55 tests; the full model-policy file
+passes 17 tests including both new sealed-provider regressions. Initial fixture
+linkage and missing-policy test setup failures were corrected before these
+reruns; they are separate from the reproduced advisor memory-access defect.
+
+### Owned resources and bounded cleanup
+
+The redacted `extension-applied-isolation-receipt.json` and
+`extension-applied-variable-readback.json` are retained outside the checkout in
+`pr1544-acceptance-evidence`; the PR handoff carries the shareable evidence.
+Configuration was committed through staged metadata with `skipDeploys: true`.
+At this snapshot there are **zero deployments, source builds, provider calls
+or application PostgreSQL operations**. Metadata readback does not attest an
+executing artifact or prove application readiness.
+
+| Identity | Value |
+| --- | --- |
+| Run | `self-heal-1544-20261014-shv1` |
+| Private project | `arc-pr1544-heavy-1014shv1` / `c17cd955-d133-49cd-baf0-b10bb2c08c0f` |
+| Environment | `backstage-heavy-pr-1544-e2e-shv1` / `3cb2fa88-094d-491e-ba4a-105d519c9de1` |
+| Web | `93a6e2a2-15ce-4ed0-a27e-98e1802e8bcf` |
+| Worker | `5e205ed1-47e9-4336-b2c7-e56094a09aa2` |
+| PostgreSQL | `fc6adae7-f7c6-4c4a-bfd7-4151837ede1e` |
+| Redis | `101e772e-df22-4314-a622-a325e3ed2dab` |
+| Metadata source pin | `93e186d65e563439582e760244b29d66d5d28d90` |
+| Cleanup deadline | `2026-10-14T23:04:41.289Z` |
+
+Two owned 1 GiB volumes serve PostgreSQL and Redis. There are no shared
+variables, public domains, TCP proxies, buckets or cron jobs. All four services
+have one replica and restart policy `NEVER`; the two application sources have
+exact source pins, Dockerfile builds and explicit supervisor start commands.
+Readback matched private dependency references and fresh preview credentials
+without including their values in evidence. This establishes configured
+isolation only; runtime provenance and isolation still require deployment proof.
+The independent cleanup watcher, PID `43540`, armed at `21:04:42 UTC` against
+the immutable deadline. **Cleanup is pending**, not a completed deletion receipt.
+No production configuration, service, database, Redis, credential or traffic was
+changed, and no PR merge or production deployment/promotion occurred.
+
+### Validation receipts and outstanding gates
+
+The initial full unit run recorded 18,345 passed, two failed and 189 skipped.
+The SDK fixture failure was repaired as described above. The Windows Bash
+`ETIMEDOUT` case passed unchanged on its focused rerun. Neither failure is hidden.
+At `93e186d6`, the completed full unit run passed **923 suites / 18,351 tests**
+with 189 skipped; coverage was **94.35% lines / 87.17% branches**. Integration
+passed **42 suites / 874 tests**, with 186 skipped. Focused selections of 205
+and 109 passing tests overlap other runs and are not added to unique totals.
+Hosted PostgreSQL 18 exercised 24 new ownership tests plus nine guard tests;
+the hosted Docker profile test built and exercised the actual image. These
+prove their test environments, not this Railway project's runtime.
+
+The subsequent actual-facade fixture in
+[trinity-model-policy.e2e.test.ts](../../../../../tests/trinity-model-policy.e2e.test.ts)
+passed all 17 tests, including 15 existing cases, the added baseline versus
+authorized degraded-mode consumer effect and actual predictive policy gates.
+The provider suite passed 49 tests. The subsequent combined canonical, consumer,
+predictive and bootstrap selection passed 305 tests across 12 suites. These
+selections overlap; they are not added to unique totals. CodeRabbit was
+processing with no formal new finding recorded;
+that is not completed review. Final patch coverage and required GitHub checks
+must be refreshed after the next commit; use the PR handoff's exact-head links.
+
+**Deployed mandatory scenarios: 0 VERIFIED, 0 FAILED, 32 BLOCKED**
+(A01–A06, B01–B05, C01–C08, D01–D07, E01–E06). No component, local, container
+or hosted PostgreSQL result is promoted to a deployed scenario pass.
+`EXACT_HEAD_PROVENANCE`, runtime isolation and all deployed behavior gates
+remain unmet before deployment; missing evidence is not observed behavior failure.
+`E2E_ACCEPTANCE` and `MERGE_READY` remain **BLOCKED**. `PRODUCTION_PROMOTION`
+remains **NOT_AUTHORIZED**. The terminal handoff must include scenario receipts,
+new-head CI/review and actual owned-resource absence before superseding this snapshot.

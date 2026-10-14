@@ -1294,6 +1294,19 @@ stopping its provider fixture and closing the ownership connection. A forced
 kill or drain timeout is a failed shutdown proof. Initial
 `STARTUP_MODE=scheduler-failure` is Worker-only and must never report ready.
 
+`trinity_run` records the measured duration and outcome of its awaited production
+facade call in canonical runtime diagnostics under the fixed
+`/preview/self-heal/trinity-consumer` route. This is a diagnostic route identity,
+not an added public HTTP endpoint. Only the admitted preview coordinator opts
+into that route for mitigation verification; correlate its request ID, process,
+mitigation identity and provider receipt before claiming recovery. By contrast,
+`predictive_evaluate` supplies one server-owned simulated observation to the
+production predictive decision path, with an eight-second abort deadline. It
+requires either `policy_predictive_dry_run` or `policy_predictive_no_execute`,
+fixes that restriction at admission and never grants execution after a policy
+change. Inspect its completed audit separately from actual fault observations;
+its result remains synthetic evidence even when the process is deployed.
+
 Record evidence at the boundary actually exercised:
 
 | Operation | Evidence and limit |

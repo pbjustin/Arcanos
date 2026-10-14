@@ -61,11 +61,11 @@ describe('fixed self-heal preview SSH control client', () => {
     expect(result.observation).toEqual(inspection(env));
     expect(JSON.stringify(result)).not.toContain(env.ARCANOS_SELF_HEAL_PREVIEW_CONTROL_TOKEN);
   });
-  it('sends only the closed command body and joins returned process identity', async () => {
+  it.each(['prompt_worker_rejection', 'predictive_evaluate'])('sends only the closed %s command body and joins returned process identity', async command => {
     const env = environment();
     const fetchImpl = jest.fn(async () => response({ result: { rejected: true }, inspection: inspection(env) }));
-    await runSelfHealPreviewControl(['command', 'prompt_worker_rejection'], env, { fetchImpl });
-    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({ command: 'prompt_worker_rejection' });
+    await runSelfHealPreviewControl(['command', command], env, { fetchImpl });
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({ command });
   });
   it('uses the fixed provider endpoint and fixed bounded fault parameters', async () => {
     const env = environment();
