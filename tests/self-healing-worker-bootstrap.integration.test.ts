@@ -152,14 +152,26 @@ const workerHeartbeat = jest.fn(async () => undefined);
 const markIdle = jest.fn(async () => undefined);
 const markJobStarted = jest.fn(async () => undefined);
 const markJobCompleted = jest.fn(async () => undefined);
+const setClaimAcceptanceState = jest.fn(async () => undefined);
 const partitionExecutor = jest.fn(async () => ({
   status: 'completed', output: { synthetic: 'completed-during-coordinator-failure' }, retryable: false,
 }));
 const prediction = jest.fn(async () => { throw new Error('Synthetic prediction disabled.'); });
 const stopNotion = jest.fn(async () => undefined);
 let redisStarted = false;
+let redisReady = false;
 const startRedis = jest.fn(() => { redisStarted = true; });
 const stopRedis = jest.fn(async () => { redisStarted = false; });
+const readSharedSafetyState = jest.fn(async (_key: string) => JSON.stringify({ freeze: false, autonomy: 3 }));
+const executeRedisOperation = jest.fn(async (
+  operation: (client: { get: typeof readSharedSafetyState }) => Promise<unknown>,
+  options: { operation: string }
+) => {
+  // The only admitted storage operation is the production kill-switch read.
+  // Every write, unavailable-state call and unrelated Redis operation fails.
+  if (!redisStarted || !redisReady || options.operation !== 'incident.kill_switch.read') return forbidden();
+  return operation({ get: readSharedSafetyState });
+});
 const primeTelemetry = jest.fn(async () => undefined);
 const stopTelemetry = jest.fn(async () => undefined);
 
@@ -184,6 +196,7 @@ jest.unstable_mockModule('@services/workerAutonomyService.js', () => ({
     async recordHeartbeat(job: JobData) { return { ...job }; }
     markJobStarted = markJobStarted;
     markJobCompleted = markJobCompleted;
+    setClaimAcceptanceState = setClaimAcceptanceState;
     markJobLeaseLost = forbidden;
     markDispatcherStarted = dispatcherStarted;
     recordWorkerHeartbeat = workerHeartbeat;
@@ -208,8 +221,11 @@ jest.unstable_mockModule('@platform/logging/telemetry.js', () => ({
   recordTraceEvent: jest.fn(), recordLogEvent: jest.fn(), markOperation: jest.fn(), onTelemetry: jest.fn(),
 }));
 jest.unstable_mockModule('@platform/runtime/redisLifecycle.js', () => ({
-  executeRedisOperation: forbidden,
-  getRedisLifecycleSnapshot: () => ({ configured: redisStarted, connected: false, readyGeneration: 0, state: redisStarted ? 'DEGRADED' : 'IDLE' }),
+  executeRedisOperation,
+  getRedisLifecycleSnapshot: () => ({
+    configured: redisStarted, connected: redisStarted && redisReady, readyGeneration: redisReady ? 1 : 0,
+    state: redisStarted ? redisReady ? 'READY' : 'DEGRADED' : 'IDLE',
+  }),
   startRedisLifecycle: startRedis, stopRedisLifecycle: stopRedis,
 }));
 jest.unstable_mockModule('@services/moduleCatalog.js', () => ({ MODULE_CATALOG: [], isPublicGptModule: () => false }));
@@ -245,6 +261,7 @@ beforeEach(async () => {
   stopTelemetry.mockReset().mockResolvedValue(undefined);
   stopNotion.mockReset().mockResolvedValue(undefined);
   redisStarted = false;
+  redisReady = false;
   jest.useFakeTimers({ doNotFake: ['setImmediate'] }).setSystemTime(new Date('2026-10-14T12:00:00Z'));
   originalListeners = { SIGTERM: process.listeners('SIGTERM'), SIGINT: process.listeners('SIGINT') };
   stdout = [];
@@ -360,6 +377,161 @@ describe('actual production worker bootstrap with external boundaries replaced',
     expect(stopNotion).toHaveBeenCalledTimes(2);
     expect(flushSnapshots).toHaveBeenCalledTimes(3);
     expect(stopTelemetry).toHaveBeenCalledTimes(1);
+    expect(stopRedis).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries temporary database claim failures and completes one fenced job without restarting the Worker', async () => {
+    let databaseAvailable = false;
+    const unavailable = Object.assign(new Error('synthetic database claim unavailable'), { code: 'ECONNREFUSED' });
+    const claimAttempts: Array<{ atMs: number; workerId: string; available: boolean }> = [];
+    let durableJob = {
+      id: '22222222-2222-4222-8222-222222222222', worker_id: 'queue',
+      job_type: 'backstage-notion-partition-sync', status: 'pending', claim_generation: '1',
+      input: { synthetic: true }, output: null, error_message: null, retry_count: 0, max_retries: 2,
+      last_worker_id: '', lease_expires_at: null,
+      correlation_id: 'synthetic-claim-admission-recovery', cancel_requested_at: null, cancel_reason: null,
+      created_at: new Date(), updated_at: new Date(),
+    } as JobData;
+    const completedWrites: Array<{ workerId: string; generation: string }> = [];
+    // Execute the real repository completion path against a deterministic CAS
+    // ledger. This does not establish PostgreSQL locking or network recovery.
+    queryMock.mockImplementation(async (sql: unknown, params: unknown[] = []) => {
+      const source = String(sql);
+      if (source.startsWith('SELECT * FROM job_data')) return { rows: [{ ...durableJob }] };
+      if (!source.includes('UPDATE job_data')) throw new Error('Unexpected claim-recovery storage operation.');
+      expect(source).toContain("AND status = 'running'");
+      expect(source).toContain('AND last_worker_id =');
+      expect(source).toContain('AND claim_generation =');
+      expect(source).toContain('AND lease_expires_at >= NOW()');
+      expect(params[0]).toBe('completed');
+      if (durableJob.status !== 'running' || params[9] !== durableJob.id ||
+          params[10] !== durableJob.last_worker_id || String(params[11]) !== durableJob.claim_generation ||
+          !durableJob.lease_expires_at || durableJob.lease_expires_at.getTime() < Date.now()) {
+        return { rows: [] };
+      }
+      completedWrites.push({ workerId: String(params[10]), generation: String(params[11]) });
+      durableJob = { ...durableJob, status: 'completed', output: JSON.parse(String(params[1])), lease_expires_at: null };
+      return { rows: [{ ...durableJob }] };
+    });
+    claimNextMock.mockImplementation(async (options: { workerId: string }) => {
+      claimAttempts.push({ atMs: Date.now(), workerId: options.workerId, available: databaseAvailable });
+      if (!databaseAvailable) throw unavailable;
+      if (durableJob.status !== 'pending') return { job: null };
+      durableJob = { ...durableJob, status: 'running', last_worker_id: options.workerId,
+        lease_expires_at: new Date(Date.now() + 30_000) };
+      return { job: { ...durableJob } };
+    });
+    const running = worker.runJobWorker();
+    try {
+      await flushUntil(() => sleepMock.mock.calls.filter(([delay]) => delay === 5_000).length === 2);
+      expect(claimAttempts).toHaveLength(2);
+      expect(new Set(claimAttempts.map(attempt => attempt.workerId)).size).toBe(2);
+      expect(claimAttempts.every(attempt => !attempt.available)).toBe(true);
+      expect(setClaimAcceptanceState.mock.calls).toEqual([
+        ['dependency_failure', { reason: 'worker_budget_or_queue_database_unavailable' }],
+        ['dependency_failure', { reason: 'worker_budget_or_queue_database_unavailable' }],
+      ]);
+      expect(lifecycleLog.warn.mock.calls.filter(([event]) => event === 'worker.database.transient_error_retry')).toHaveLength(2);
+      expect(partitionExecutor).not.toHaveBeenCalled();
+      expect(queryMock).not.toHaveBeenCalled();
+      expect(completedWrites).toEqual([]);
+
+      await jest.advanceTimersByTimeAsync(4_999);
+      expect(claimNextMock).toHaveBeenCalledTimes(2);
+      expect(markJobStarted).not.toHaveBeenCalled();
+      databaseAvailable = true;
+      await jest.advanceTimersByTimeAsync(1);
+      await flushUntil(() => completedWrites.length === 1);
+      expect(claimAttempts).toHaveLength(4);
+      for (const firstAttempt of claimAttempts.slice(0, 2)) {
+        const retry = claimAttempts.find(attempt => attempt.workerId === firstAttempt.workerId && attempt.available);
+        expect(retry?.atMs).toBe(firstAttempt.atMs + 5_000);
+      }
+      expect(completedWrites).toEqual([{ workerId: durableJob.last_worker_id, generation: '1' }]);
+      expect(durableJob).toMatchObject({ status: 'completed', retry_count: 0 });
+      expect(partitionExecutor).toHaveBeenCalledTimes(1);
+      expect(markJobStarted).toHaveBeenCalledTimes(1);
+      expect(markJobCompleted).toHaveBeenCalledTimes(1);
+      expect(markJobCompleted).toHaveBeenCalledWith(durableJob.id);
+      await jest.advanceTimersByTimeAsync(1_000);
+      expect(claimNextMock.mock.calls.length).toBeGreaterThan(4);
+      expect(completedWrites).toHaveLength(1);
+      expect(partitionExecutor).toHaveBeenCalledTimes(1);
+      expect(initializeDatabaseMock).toHaveBeenCalledTimes(1);
+      expect(dispatcherStarted).toHaveBeenCalledTimes(2);
+      expect(coordinator.getSelfHealingLoopStatus()).toMatchObject({ coordinatorState: 'RUNNING', loopRunning: true });
+      expect(lifecycleLog.info.mock.calls.filter(([event]) => event === 'self_heal.coordinator.started')).toHaveLength(1);
+    } finally {
+      signalShutdown();
+      await running;
+    }
+    const finalClaims = claimNextMock.mock.calls.length;
+    await jest.advanceTimersByTimeAsync(5_000);
+    expect(claimNextMock).toHaveBeenCalledTimes(finalClaims);
+    expect(stopTelemetry).toHaveBeenCalledTimes(1);
+    expect(stopRedis).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps claim admission active while real safety policy follows Redis recovery and relapse', async () => {
+    const previousEnvironment = process.env;
+    process.env = {
+      ...previousEnvironment, SELF_IMPROVE_ENABLED: 'true', SELF_IMPROVE_ACTUATOR_MODE: 'daemon',
+      SELF_IMPROVE_AUTONOMY_LEVEL: '3', SELF_IMPROVE_FREEZE: 'false', PREDICTIVE_HEALING_ENABLED: 'false',
+    };
+    const { getKillSwitchStatus } = await import('../src/services/incidentResponse/killSwitch.js');
+    const running = worker.runJobWorker();
+    try {
+      await flushUntil(() => coordinator.getSelfHealingLoopStatus().policyObservedAt !== null &&
+        !coordinator.getSelfHealingLoopStatus().inFlight);
+      expect(stdout.filter(line => line.includes('ARCANOS_WORKER_BOOTSTRAP_READY_V1'))).toHaveLength(1);
+      expect(await getKillSwitchStatus()).toMatchObject({ frozen: true, autonomyLevel: 0 });
+      expect(coordinator.getSelfHealingLoopStatus().operatingMode).toBe('observation_only');
+      expect(readSharedSafetyState).not.toHaveBeenCalled();
+      const degradedClaims = claimNextMock.mock.calls.length;
+
+      // Only the lifecycle boundary changes. The production kill switch and
+      // coordinator resolve authority from the injected shared-state read.
+      redisReady = true;
+      await jest.advanceTimersByTimeAsync(1_000);
+      expect(await getKillSwitchStatus()).toMatchObject({ frozen: false, autonomyLevel: 3 });
+      expect(coordinator.getSelfHealingLoopStatus()).toMatchObject({
+        coordinatorState: 'RUNNING', operatingMode: 'local_mitigation', loopRunning: true,
+      });
+      expect(readSharedSafetyState).toHaveBeenCalledWith('arcanos:self-improve:kill-switch:v1');
+      expect(claimNextMock.mock.calls.length).toBeGreaterThan(degradedClaims);
+      const recoveredClaims = claimNextMock.mock.calls.length;
+      const recoveredSafetyReads = readSharedSafetyState.mock.calls.length;
+
+      redisReady = false;
+      await jest.advanceTimersByTimeAsync(1_000);
+      expect(await getKillSwitchStatus()).toMatchObject({ frozen: true, autonomyLevel: 0 });
+      expect(coordinator.getSelfHealingLoopStatus()).toMatchObject({
+        coordinatorState: 'RUNNING', operatingMode: 'observation_only', loopRunning: true,
+      });
+      expect(readSharedSafetyState).toHaveBeenCalledTimes(recoveredSafetyReads);
+      expect(claimNextMock.mock.calls.length).toBeGreaterThan(recoveredClaims);
+      expect(setClaimAcceptanceState).not.toHaveBeenCalled();
+      const operationalStates = stdout.filter(line => line.startsWith('ARCANOS_WORKER_OPERATIONAL_STATE_V1 '))
+        .map(line => JSON.parse(line.slice('ARCANOS_WORKER_OPERATIONAL_STATE_V1 '.length)) as { state: string });
+      expect(operationalStates).toHaveLength(2);
+      expect(operationalStates.every(signal => signal.state === 'accepting_claims')).toBe(true);
+      expect(stdout.filter(line => line.includes('ARCANOS_WORKER_BOOTSTRAP_READY_V1'))).toHaveLength(1);
+      expect(startRedis).toHaveBeenCalledTimes(1);
+      expect(lifecycleLog.info.mock.calls.filter(([event]) => event === 'self_heal.coordinator.started')).toHaveLength(1);
+      expect(forbidden).not.toHaveBeenCalled();
+    } finally {
+      try {
+        signalShutdown();
+        await running;
+      } finally {
+        process.env = previousEnvironment;
+      }
+    }
+    const finalClaims = claimNextMock.mock.calls.length;
+    const finalSafetyReads = readSharedSafetyState.mock.calls.length;
+    await jest.advanceTimersByTimeAsync(5_000);
+    expect(claimNextMock).toHaveBeenCalledTimes(finalClaims);
+    expect(readSharedSafetyState).toHaveBeenCalledTimes(finalSafetyReads);
     expect(stopRedis).toHaveBeenCalledTimes(1);
   });
 

@@ -2,6 +2,11 @@
 
 Date: 2026-10-14. Repository: `pbjustin/Arcanos`.
 
+The newer [PR #1544 sealed Railway acceptance preflight](#sealed-railway-acceptance-preflight--pr-1544)
+below is **BLOCKED before deployment**. Its mandatory deployed acceptance gates
+supersede the earlier task's synthetic-policy merge-readiness verdict for this
+request; historical receipts below remain unchanged.
+
 The original bootstrap audit and failure receipts below are retained as historical
 evidence. The [final review](#final-review-and-blocker-repair) records the later
 review, repairs and current readiness decision.
@@ -658,3 +663,292 @@ dependency advisories and lint warnings remain under the repository's current
 policy. The historical Windows Docker logout may have affected owner-local
 GHCR credentials; checking those is only necessary if the owner's local workflow
 needs them and is separate from PR merge readiness.
+
+## Sealed Railway acceptance preflight — PR #1544
+
+This section records the subsequent owner-authorized request for deployed
+self-healing acceptance, controlled preview faults, regression fixtures and
+cleanup. The earlier owner-deferred live acceptance policy does not satisfy
+this request. **E2E_ACCEPTANCE and MERGE_READY are BLOCKED.** No application or
+dependency was deployed and no hosted fault scenario ran. The blocker is the
+missing bounded runtime test capability in the existing preview lanes, not a
+claim that Railway authentication is unavailable.
+
+### Source, review and CI refresh
+
+- PR: [pbjustin/Arcanos #1544](https://github.com/pbjustin/Arcanos/pull/1544),
+  branch `fix/self-heal-worker-ownership`.
+- Refreshed starting head: `b51c2b5f08dbd4d4fe1976df7c6f3080b116a0be`.
+  Base and merge base: `7aee3bb9ace55e1fc19f1e83d0b6dfeca169c383`.
+  The supplied observed head remained current at this inspection.
+- The PR is now non-draft and open; the initial refreshed GitHub state was
+  `MERGEABLE` / `CLEAN`. This differs from historical draft-state receipts above.
+- Final publication SHA, final head/base refresh and final CI links belong in
+  the acceptance handoff comment on the PR, published after this report and its
+  regression changes. This avoids a self-referential commit hash. The starting
+  head's results below must not be transferred to a later head without refresh.
+
+Fully paginated review inspection found two threads, both resolved, with no
+unresolved threads. A [fresh CodeRabbit request](https://github.com/pbjustin/Arcanos/pull/1544#issuecomment-6176196994)
+received [completion](https://github.com/pbjustin/Arcanos/pull/1544#issuecomment-6176199203)
+at `2026-10-14T19:25:37Z`; its
+[summary](https://github.com/pbjustin/Arcanos/pull/1544#issuecomment-6165768734)
+explicitly covers the refreshed starting head and reports no actionable
+findings. The advisory docstring warning is not a required-check failure.
+CodeRabbit also identifies the need for deployed ownership/interruption proof;
+process-local reservations do not establish distributed leases.
+
+At that head, [Codecov patch coverage](https://app.codecov.io/gh/pbjustin/Arcanos/pull/1544)
+is `SUCCESS`, **93.82%**, above the unchanged 80% target. The earlier
+failure-looking issue comment is stale; current check `116064677466` completed
+at `2026-10-14T19:41:55Z`. Coverage is incomplete and is not hosted recovery
+evidence. Required `docs:check` and `All Checks Complete` both passed.
+
+[CI/CD run 38616395527](https://github.com/pbjustin/Arcanos/actions/runs/38616395527)
+passed. Its checkout was GitHub merge revision
+`0dd0bd96c7d0ee9f7c6e912683b5711007fece4d`, whose parents match this head/base
+and whose tree equals the raw head tree
+`8d9ba59224dca1978d2508f1748151b215c76d4b`. This is head-associated,
+tree-equivalent CI evidence, not a claim that the runner checked out raw head.
+
+| Starting-head validation area | Executed evidence |
+| --- | --- |
+| TypeScript, lint, production build | PASS on Node 24.18.1 / npm 11.16.0. |
+| Root Jest | 917 suites / 18,153 tests passed; 13 suites / 167 tests skipped; zero failed. |
+| Integration Jest | 41 suites / 863 tests passed; 12 suites / 162 tests skipped; zero failed. |
+| Disposable PostgreSQL | 6 local-agent plus 202 fencing/storage tests passed. |
+| Runtime and Redis | 79 runtime, 4 real disposable Redis admission, 14 public-provider Redis tests passed. |
+| Windows | 970 Python passed / 13 skipped; 44 inspection and 10 publishing tests passed. |
+| Linux sandbox | 29 passed. |
+| Security | Gitleaks, dependency/license gates and 12 manual scan-guard tests passed. |
+| Railway static/build and preview fixtures | PASS; 18 safety, 42 containment and 136 stacked-preview tests passed. |
+| Documentation/index | [Documentation run](https://github.com/pbjustin/Arcanos/actions/runs/38616395597) passed 1,066 checks, index drift and documentation-link tests. |
+| Aggregate coverage | Statements/lines 94.35%; branches 87.21%; functions 96.4%. |
+| Hosted acceptance | Railway preview E2E, Exact Head and inspection fixture jobs SKIPPED. |
+
+The [independent PR CI](https://github.com/pbjustin/Arcanos/actions/runs/38616395421)
+also passed at that tree. Generic unit/integration selections overlap and must
+not be added as unique tests. Dedicated service jobs supply PostgreSQL/Redis
+execution evidence; generic-suite skips are not passes. Successful lifecycle
+reconciliation/status jobs do not prove a preview deployment.
+
+### Current infrastructure and isolation preflight
+
+Fresh read-only inventory found the existing `Arcanos` and `Arcanos Live PR
+1527` projects. The native base `pr-preview-base-20260812` in `Arcanos` has
+exactly two application service instances, no PostgreSQL or Redis service,
+no volumes, no shared variables and no active deployments. No PR #1544
+preview environment, service, deployment, queue or scheduled job was created
+or found as an owned target of this run. The unrelated Live PR 1527 project
+was not adopted.
+
+Railway CLI **5.37.2 authentication succeeds**. The protected native lifecycle
+secret exists, and its GitHub environment has one custom deployment-branch
+policy admitting only `main`. Its provider-side scope was not independently
+verified and its value was not copied, printed or supplied to PR code. Historical missing-auth
+receipts are therefore not current blockers. The stacked-lane policy remains
+`enabled: false` with `target: null`; lookup of its protected GitHub
+environment returned HTTP 404. This does not establish that every possible
+preview credential is absent.
+
+The inspected capabilities support a fresh project with an explicitly named
+initial environment, fresh services/volumes, exact-commit source connection,
+bounded configuration and scoped resource deletion. The authenticated CLI
+also exposes project deletion with an explicit `--project` selector. These
+capabilities establish a possible operator path, not a provisioned or attested
+target. No creation/deletion rehearsal or credential mutation was performed.
+
+The lane comparison is grounded in the
+[native lifecycle](../../../../../scripts/railway-pr-preview-lifecycle.mjs),
+[native operating instructions](../../../../CI_CD.md),
+[stacked policy](../../../../../config/railway-stacked-draft-preview.json),
+[stacked operating instructions](../../../../RAILWAY_STACKED_DRAFT_PREVIEW.md),
+[Backstage heavy proof](../../../../RAILWAY_DEPLOYMENT.md#disposable-backstage-durable-heavy-flow-proof)
+and [Redis lifecycle procedure](../../../../RAILWAY_REDIS_LIFECYCLE_PREVIEW.md).
+
+| Lane | Reusable capability | Unsatisfied acceptance requirement |
+| --- | --- | --- |
+| Native sealed lifecycle | Trusted controller, exact SHA, worker-first deployment, ownership/cleanup checks. | Contract admits exactly two credential-empty roles and a passive Worker; PostgreSQL, Redis and ordinary consumers violate that contract. The opt-in label cannot supply them. |
+| Stacked draft lane | Secretless build, immutable artifact, bounded lease and cleanup. | Fixed Gaming #1533–#1535 admission, disabled target, passive Worker and no storage. |
+| Backstage heavy supervisor | Dedicated four-service topology, private PostgreSQL/Redis, unchanged integrity wrapper and ordinary job runner, loopback provider fixture. | One-shot, deliberately non-restartable database preflight; no self-healing fault controls or coordinator inspection channel. |
+| Redis lifecycle probe | Bounded outage/recovery observation against separately attested dependencies. | GET-only probe neither provisions nor injects faults; it cannot inspect the Worker coordinator and its target-name contract differs from the heavy lane. |
+
+The heavy supervisor is the appropriate existing implementation to extend.
+Its source validates disposable identities and private data hosts, then
+launches the normal integrity wrapper. Its Worker preflight rejects existing
+job tables, so merely restarting it cannot demonstrate single-owner recovery.
+Its fixed provider fixture demonstrates compact retry, not a general
+self-healing fault matrix. The normal web inspection explicitly reports the
+remote coordinator as `UNKNOWN`; launcher liveness/readiness cannot replace
+process-scoped inspection.
+
+A concrete extension would require all six elements below before deployment:
+
+1. An explicit non-production self-healing profile reusing the heavy supervisor
+   and normal production entry chain, preserving existing lane behavior.
+2. Receipt-bound restart admission to the same synthetic database, with
+   process/claim ownership checks instead of removing the fresh-database gate.
+3. Authenticated, bounded process-local test control and inspection for duplicate
+   initialization, scheduler installation failure, tick failure and shutdown.
+4. Contained provider timeout/recovery controls and correlated controller,
+   action, consumer and fresh recovery receipts.
+5. A literal preview configuration/authorization allowlist and runtime expiry,
+   plus receipt-bound external cleanup and absence verification.
+6. Narrow reuse of the Redis probe for the independently attested target and
+   preview-only outage/restoration controls.
+
+This is more than a sealed selector or a small fixture addition: it introduces
+restart admission and a privileged test-control boundary requiring its own
+review and regression coverage. No second generic framework, global preview
+setting change, native-lane weakening or production substitution was made.
+The request's fail-closed prerequisite applies: stop before deployment when
+required preview test capability cannot be established. Accordingly no hosted
+baseline, fault identity, detection, diagnosis, policy decision, attempted
+action, consumer effect, recovery observation or rollback receipt exists.
+
+### Required deployed scenario matrix
+
+All **32 deployed scenarios are BLOCKED: zero VERIFIED, zero FAILED**. The
+fixture column maps existing or newly extended deterministic coverage; it does
+not convert a deployed row to `SYNTHETIC_ONLY` or imply that a hosted scenario
+ran. Local fixture outcomes are reported separately below. A fresh compiled
+Worker restart and real preview dependency fault remain unverified.
+
+Fixture abbreviations link to the existing suites:
+[bootstrap](../../../../../tests/self-healing-worker-bootstrap.integration.test.ts),
+[lifecycle](../../../../../tests/self-healing-coordinator-lifecycle.integration.test.ts),
+[server](../../../../../tests/server-startup-resilience.test.ts),
+[worker](../../../../../tests/self-healing-worker-synthetic.integration.test.ts),
+[controller](../../../../../tests/self-healing-synthetic-controller.integration.test.ts),
+[Trinity](../../../../../tests/self-healing-trinity.integration.test.ts),
+[predictive](../../../../../tests/predictive-healing-execution.test.ts),
+[loop](../../../../../tests/self-healing-loop.test.ts),
+[prompt](../../../../../tests/prompt-route-mitigation.test.ts),
+[actuator](../../../../../tests/worker-repair-actuator.test.ts),
+[kill switch](../../../../../tests/incident-response-kill-switch.test.ts),
+[Redis lifecycle](../../../../../tests/redis-startup-lifecycle.test.ts),
+[restart](../../../../../tests/self-healing-restart.test.js).
+
+| ID | Scenario | Deployed result | Deterministic fixture mapping and limit |
+| --- | --- | --- | --- |
+| A01 | Normal Worker coordinator startup | BLOCKED | Bootstrap starts actual `runJobWorker()` body after dependencies/all slots. |
+| A02 | Web role suppression | BLOCKED | Server and lifecycle role suppression; Trinity automatic-start denial. |
+| A03 | Duplicate initialization | BLOCKED | Bootstrap and lifecycle prove one scheduler/idempotent initialization. |
+| A04 | Scheduler installation failure | BLOCKED | Bootstrap/lifecycle reject installation before readiness and drain started work. |
+| A05 | Worker restart/single-owner recovery | BLOCKED | Worker lease-generation simulation; not a compiled Worker restart. |
+| A06 | Shutdown during coordinator evaluation | BLOCKED | Lifecycle holds, cancels and drains observation before future ticks. |
+| B01 | Temporary Redis unavailability | BLOCKED | Redis lifecycle/kill-switch components; extended bootstrap joins authority changes to active claims. No real preview outage. |
+| B02 | Database operation failure | BLOCKED | Worker claim-admission failure; extended bootstrap joins one injected claim failure to retry/completion. |
+| B03 | Injected provider timeout | BLOCKED | Trinity real SDK/transport against bounded synthetic loopback provider. |
+| B04 | Retry/cooldown bounds | BLOCKED | Worker retry cap, controller attempt/escalation cooldown and Redis retry bounds. |
+| B05 | Recovery after dependency health | BLOCKED | Worker retry, Redis lifecycle, Trinity fresh receipts and extended bootstrap transitions. |
+| C01 | Authorized local mitigation | BLOCKED | Prompt same-process consumer and Trinity controller/consumer activation. |
+| C02 | Unauthorized remote mitigation | BLOCKED | Actuator asserts absent operator approval causes zero fetches. |
+| C03 | Worker attempts web-local prompt change | BLOCKED | Controller/predictive reject unsupported cross-process prompt actuation. |
+| C04 | Stale mitigation identity | BLOCKED | Loop identity fences; Trinity old consumer cannot verify replacement. |
+| C05 | Mitigation replacement race | BLOCKED | Prompt/controller/Trinity protect newer commands from old outcomes/rollback. |
+| C06 | TTL expiry | BLOCKED | Trinity and V2/prompt fake-time expiry; no elapsed hosted TTL proof. |
+| C07 | Recovery evidence older than mitigation | BLOCKED | Controller excludes same-clock pre-command samples; Trinity identity join. |
+| C08 | Fresh successful recovery | BLOCKED | Trinity actual synthetic consumer receipts; controller requires sufficient fresh traffic. |
+| D01 | Self-improvement disabled | BLOCKED | Predictive and loop reject disabled policy. |
+| D02 | Insufficient autonomy | BLOCKED | Predictive and loop enforce configured/effective autonomy. |
+| D03 | Freeze enabled | BLOCKED | Predictive/loop recheck freeze at the action boundary. |
+| D04 | Emergency kill switch | BLOCKED | Kill-switch and predictive coverage; extended bootstrap joins degraded Redis authority to continuing claims. |
+| D05 | Predictive dry-run | BLOCKED | Caller `dryRun: false` cannot override configured dry-run. |
+| D06 | Predictive execution unauthorized | BLOCKED | Predictive/loop deny missing execution authority. |
+| D07 | Explicitly allowed bounded action | BLOCKED | Predictive/Trinity execute authorized synthetic same-process effects. |
+| E01 | Coordinator tick exception | BLOCKED | Bootstrap/lifecycle report failed observation without poisoning consumers. |
+| E02 | Worker completes a fenced job | BLOCKED | Bootstrap completes one fenced synthetic job while coordinator failed. |
+| E03 | Coordinator recovery/no duplicate completion | BLOCKED | Bootstrap recovers next tick and asserts one consumer completion. |
+| E04 | Concurrent faults bounded | BLOCKED | Controller serializes ticks/priorities; predictive reserves one action. |
+| E05 | Restart does not reuse stale authority | BLOCKED | Worker generation simulation and V2-only fresh-process fixture; neither proves deployed Worker restart. |
+| E06 | Drain before dependency shutdown | BLOCKED | Bootstrap/server/lifecycle order held operations before telemetry/Redis/database teardown. |
+
+### Regression additions and remaining validation
+
+The additions extend the existing Worker-bootstrap suite with injected
+database claim failures, an exact five-second retry of both slots and one
+fenced completion without restart, and with Redis-driven kill-switch authority
+transitions `observation_only` → `local_mitigation` → `observation_only` while
+ordinary claims continue. The synthetic Redis seam permits only the expected
+read operation and rejects writes/unavailable/unrelated operations. They
+exercise the actual `runJobWorker()` body and production
+kill-switch authority code with substituted storage/network dependencies and
+bounded deterministic time. They do not launch the deployed compiled wrapper,
+connect to real preview PostgreSQL/Redis, or prove external-provider recovery.
+No production behavior defect was established by a hosted fault, because no
+hosted fault ran. No production code repair is claimed from these additions.
+
+Local checks used a clean isolated worktree, locked `npm ci` dependencies,
+Node 24.18.1 and npm 11.16.0. Installation used CI mode and skipped Git-hook
+and editor setup. Type-check, lint (zero errors, 77 existing warnings),
+production build and local Railway static validation passed. The exact Worker
+bootstrap command `node scripts/run-jest.mjs --runTestsByPath
+tests/self-healing-worker-bootstrap.integration.test.ts --coverage=false
+--runInBand` passed all eight tests, including the two new cases, on its first
+run. Nine related lifecycle, worker, controller, Trinity, security, predictive,
+kill-switch, Redis-startup and server-startup suites passed 158/158. These are
+local synthetic results, not deployed scenario passes. No runtime defect or
+failed test required a production-code correction during this acceptance run.
+Six additional loop, prompt mitigation, actuator, restart, controller-decision
+and V2 suites passed 198/198. The three disjoint local selections total
+**16 suites / 364 tests passed**, zero failed or skipped. Complete command
+output and Jest JSON results are retained outside the checkout in the local
+`pr1544-acceptance-evidence` directory, alongside sanitized GitHub counters and
+the read-only Railway inventory/no-op cleanup receipt.
+Independent review found no blocker. A nested cleanup `finally` now restores
+the test environment even if Worker shutdown rejects; the unchanged eight-test
+bootstrap selection and focused lint passed again after this hardening.
+Documentation audit passed 1,085 checks, generated indexes were current, and
+the local-link audit passed all 728 targets. `git diff --check` and the staged
+commit guard passed. No failures were hidden or converted to passes.
+
+The publication handoff on the PR records the final commit, fresh base,
+required checks, paginated review state, CodeRabbit, Codecov and final CI runs.
+The table below records the prepublication state; its code-review/full-CI
+entries require that handoff's final-head refresh. Previous-head results above
+are retained independently and are not substituted for the new head.
+
+### Cleanup receipt and acceptance gates
+
+This run created **zero** projects, environments, services, volumes, deployments,
+queues and scheduled jobs, and changed no preview or production configuration.
+It performed no live provider request or fault injection. No temporary resource
+therefore required deletion: cleanup is **PASS, no-op** for this run, not a
+claim that unrelated existing resources were removed or incur no cost.
+No production deployment, promotion, traffic change, database/Redis operation
+or credential change occurred. The PR was not merged. No runtime credentials
+were copied into evidence or fixtures.
+
+For gates whose allowed vocabulary is only PASS/FAIL, **FAIL means required
+deployed evidence is missing**, not that observed behavior was incorrect.
+There are no failed deployed scenarios. Source provenance and starting-head
+CI are separately recorded above; neither proves a deployed executable artifact.
+
+| Gate | Verdict | Evidence or unmet requirement |
+| --- | --- | --- |
+| EXACT_HEAD_PROVENANCE | FAIL | Git head/base known; no deployment/artifact exists to attest. |
+| PREVIEW_ISOLATION | FAIL | No four-service owned preview provisioned/attested. |
+| WEB_ROLE_SUPPRESSION | FAIL | Synthetic proof only; no deployed process. |
+| WORKER_COORDINATOR_STARTUP | FAIL | Synthetic proof only; no deployed ordinary Worker. |
+| SINGLE_CONTROLLER_OWNERSHIP | FAIL | No deployed startup/restart ownership evidence. |
+| FAULT_DETECTION | FAIL | No preview faults injected. |
+| AUTHORIZED_MITIGATION | FAIL | No deployed controller-to-consumer effect receipt. |
+| CROSS_PROCESS_SAFETY | FAIL | Synthetic rejection coverage; no deployed negative-effect observation. |
+| FRESH_RECOVERY_EVIDENCE | FAIL | No deployed matching post-action consumer receipt. |
+| SHUTDOWN_AND_RESTART | FAIL | No compiled/deployed Worker restart or shutdown proof. |
+| SECURITY_REGRESSION | PASS | Focused authorization/security regressions pass locally; full final-head CI is recorded in the handoff. |
+| FIXTURE_COMPLETENESS | FAIL | Runtime controls and compiled Worker/restart acceptance remain missing. |
+| CODE_REVIEW | BLOCKED | Starting-head review clear; refresh final publication head. |
+| FULL_CI | BLOCKED | Starting-head CI passes; refresh after regression additions. |
+| PREVIEW_CLEANUP | PASS | Zero created resources; no-op cleanup receipt above. |
+| E2E_ACCEPTANCE | BLOCKED | All 32 mandatory deployed scenarios blocked. |
+| MERGE_READY | BLOCKED | Current request requires deployed acceptance. |
+| PRODUCTION_PROMOTION | NOT_AUTHORIZED | No production action performed. |
+
+Remaining risks are the untested deployed bootstrap/inspection/control path,
+real dependency recovery, process restart authority, graceful drain under real
+I/O, actual elapsed TTLs, and distributed ownership. Synthetic provider recovery
+remains synthetic. The next viable step is the reviewed, scoped heavy-supervisor
+extension described above with full isolation and cleanup established before
+any application deployment.
