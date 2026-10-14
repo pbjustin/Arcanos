@@ -50,6 +50,15 @@ describe('universal acquired game identity without catalog additions', () => {
     expect(assess(`In Copperwind Loom III, ${guidance}`, 'Copperwind Loom 3')).toMatchObject({ status: 'verified' });
   });
 
+  it.each([['3', 'III'], ['III', '3']])('requires independent full-subject proof for requested numeral %s and acquired numeral %s', (requested, acquired) => {
+    const requestedGame = `${game} ${requested}`;
+    const acquiredGame = `${game} ${acquired}`;
+    expect(assess(`In ${acquiredGame}, ${guidance}`, requestedGame, `${acquiredGame} guide`).status).toBe('verified');
+    expect(assess(guidance, requestedGame, `${acquiredGame} guide`).status).not.toBe('verified');
+    expect(assess(`In ${acquiredGame}, ${guidance}`, requestedGame, `${acquiredGame} Moonbound guide`).status).not.toBe('verified');
+    expect(assess(`In ${acquiredGame}, ${guidance}`, requestedGame, `${game} IV guide`).status).not.toBe('verified');
+  });
+
   it.each(['Copperwind Loom Awakening', 'Copperwind Loom 2', 'Copperwind Loom Remastered'])('retains a distinct unknown family title %s', other => {
     expect(assess(`In ${game}, ${guidance} In the game ${other}, use a different route.`)).toMatchObject({ status: 'conflict' });
     expect(gamingRegistrySourceGameMatchesRequest(other, game)).toBe(false);

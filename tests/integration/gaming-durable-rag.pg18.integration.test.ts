@@ -19,6 +19,7 @@ import {
 } from '../../src/shared/gaming/gamingStoredEvidenceCore.js';
 import { buildGamingLargeGuideFixture } from '../testUtils/gamingLargeGuideFixture.js';
 import { gamingAcquisitionAxios } from '../testUtils/gamingAcquisitionFixtures.js';
+import { gamingDurableCurrentnessGuideHtml } from '../fixtures/gaming-universal-identity.js';
 import { extractGamingJsonEvidence } from '../../src/services/gamingJsonEvidence.js';
 import { assessGamingClearSource } from '../../src/shared/gaming/gamingClearSource.js';
 import { assessGamingSourcePolicy, extractGamingFreshnessMetadata } from '../../src/shared/gaming/gamingFreshnessCore.js';
@@ -231,9 +232,8 @@ describeWithDatabase('durable Gaming chunk storage and retrieval on PostgreSQL 1
     const articleUrl = `https://en.bandainamcoent.eu/elden-ring/news/elden-ring-patch-notes-version-110-pg18-${fixtureId}`;
     const date = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
     const cardDate = `${date.slice(8, 10)}/${date.slice(5, 7)}/${date.slice(0, 4)}`;
-    const passage = 'For a good Elden Ring mage build, invest in intelligence and vigor, carry a sorcery staff and a light backup weapon, and select ranged spells for safe attacks. This mage build explains equipment, stats, spells and progression.';
     const documents = new Map([
-      [guideUrl, `<html><title>Elden Ring mage build guide</title><main><p>Game: Elden Ring. Patch: 1.10. Build: 1.10.1. Platforms: all. Regions: all.</p><p>${passage}</p></main></html>`],
+      [guideUrl, gamingDurableCurrentnessGuideHtml()],
       [indexUrl, `<html><title>ELDEN RING news | Bandai Namco Europe</title><main><p>Latest News on ELDEN RING. Platforms: PC. Regions: EU. This synthetic official release listing establishes the applicable game update and its linked regulation article; it supplies no mage build recommendation.</p><div class="search__section"><h2 id="patch-notes">Patch Notes (1)</h2><ul class="cards-list"><li><a href="${articleUrl}"><h3>Elden Ring – Patch Notes Version 1.10</h3><time>${cardDate}</time></a></li></ul></div></main></html>`],
       [articleUrl, '<html><title>Elden Ring – Patch Notes Version 1.10 | Bandai Namco Europe</title><main><p>Game: Elden Ring. Regions: all.</p><p>Targeted Platforms</p><p>PlayStation 5 / Steam</p><p>App Ver. 1.10 Regulation Ver. 1.10.1 This update is required for online play.</p><p>This synthetic official article announces the application and regulation versions. It establishes release availability and platform scope without recommending a mage build.</p></main></html>']
     ]);

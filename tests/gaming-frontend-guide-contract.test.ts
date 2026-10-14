@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
+import { gamingDurableCurrentnessGuideHtml } from './fixtures/gaming-universal-identity.js';
 
 const http = jest.fn();
 jest.unstable_mockModule('axios', () => ({ default: gamingAcquisitionAxios(http) }));
@@ -47,6 +48,29 @@ describe('frontend discovery and independent backend guide evaluation', () => {
       headers: { 'content-type': 'text/html' } });
     const result = await evaluateGamingHybridCandidates({ ...request, candidates: [{ url,
       claimedGame: request.game, title: `${request.game} guide` }] }, context);
+    expect(result.accepted).toEqual([]);
+    expect(result.decisions[0].reasonCodes).toContain('GAME_IDENTITY_UNVERIFIED');
+  });
+
+  it('accepts the durable currentness fixture with independently scoped acquired mage guidance', async () => {
+    const guideUrl = 'https://guides.example.org/elden-ring/pg18-mage';
+    http.mockResolvedValue({ data: gamingDurableCurrentnessGuideHtml(), headers: { 'content-type': 'text/html' } });
+    const result = await evaluateGamingHybridCandidates({ game: 'Elden Ring', mode: 'build',
+      prompt: 'What is a good Elden Ring mage build now?', platform: 'PC', region: 'EU', candidates: [{ url: guideUrl }] }, context);
+    expect(http).toHaveBeenCalledTimes(1);
+    expect(result.accepted).toHaveLength(1);
+    expect(result.accepted[0].sourceAssessment).toMatchObject({ decision: 'partial', qualityEligible: false,
+      gates: { identity: 'verified', freshness: 'unknown' } });
+    expect(result.accepted[0].document.text).toContain('For a good Elden Ring mage build, invest in intelligence and vigor');
+    expect(result.accepted[0].sourcePolicy.authority).toBe('unreviewed');
+    expect(result.accepted[0].freshness).toMatchObject({ patch: '1.10', build: '1.10.1' });
+  });
+
+  it('withholds the durable currentness fixture when only its nominal game labels remain', async () => {
+    http.mockResolvedValue({ data: gamingDurableCurrentnessGuideHtml(false), headers: { 'content-type': 'text/html' } });
+    const result = await evaluateGamingHybridCandidates({ game: 'Elden Ring', mode: 'build',
+      prompt: 'What is a good Elden Ring mage build now?', platform: 'PC', region: 'EU', candidates: [{ url,
+        claimedGame: 'Elden Ring', title: 'Elden Ring mage build guide' }] }, context);
     expect(result.accepted).toEqual([]);
     expect(result.decisions[0].reasonCodes).toContain('GAME_IDENTITY_UNVERIFIED');
   });

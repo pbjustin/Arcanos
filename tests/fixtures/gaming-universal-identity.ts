@@ -86,3 +86,11 @@ export function gamingUniversalIdentityHtml(fixture: GamingUniversalIdentityFixt
     + (options.furniture ? `<aside>${furniture}</aside><div class="related-content">${furniture}</div>` : '')
     + '</article></body></html>';
 }
+
+/** Shared synthetic source for durable/currentness integration and SQL-free acquisition validation. */
+export function gamingDurableCurrentnessGuideHtml(independentScope = true): string {
+  const passage = 'For a good Elden Ring mage build, invest in intelligence and vigor, carry a sorcery staff and a light backup weapon, and select ranged spells for safe attacks. This mage build explains equipment, stats, spells and progression.';
+  return '<html><title>Elden Ring mage build guide</title><main><p>Game: Elden Ring. Patch: 1.10. Build: 1.10.1. Platforms: all. Regions: all.</p>'
+    + (independentScope ? '<p>In Elden Ring, this mage build uses intelligence and vigor for sorcery and survival.</p>' : '')
+    + `<p>${passage}</p></main></html>`;
+}

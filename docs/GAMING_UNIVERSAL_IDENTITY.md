@@ -145,10 +145,10 @@ and the implementation under review. Each of 14 cases uses three warmups and
 five measured repetitions under Node 24.18.1/npm 11.16.0 on Windows, with coverage
 disabled. Cases include 32K, 128K and 512K sources, a late foreign declaration,
 and the existing one-million-character and 1,024-assertion limits. For the matched
-512K known-game positive case, median assessment time was 21.880 ms before and
-16.003 ms after; the matched foreign-game rejection was 7.467 ms and 7.495 ms.
-The 1,025-assertion overflow remained unverified, with medians of 138.231 ms and
-147.037 ms. Novel-game positives were unverified on the baseline and verified
+512K known-game positive case, median assessment time was 21.619 ms before and
+16.279 ms after; the matched foreign-game rejection was 7.349 ms and 7.610 ms.
+The 1,025-assertion overflow remained unverified, with medians of 134.781 ms and
+141.736 ms. Novel-game positives were unverified on the baseline and verified
 afterward; their timings do not compare equivalent acceptance behavior.
 
 These are local warmed identity-assessment measurements, with scheduling and

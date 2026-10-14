@@ -394,7 +394,16 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     const identity = normalizeGamingGameIdentity(value);
     return identity === game || identity.startsWith(`${game}-`) && DOCUMENT_LABEL.test(identity.slice(game.length + 1));
   }));
-  const metadataAnchor = metadata.some(value => [...expected].some(game => containsIdentity(value, game)));
+  const metadataAnchor = metadata.some(value => [...expected].some(game => {
+    if (containsIdentity(value, game)) return true;
+    const subject = normalizeGamingGameIdentity(value);
+    const wanted = normalizeGamingComparableIdentity(game);
+    if (normalizeGamingComparableIdentity(subject) === wanted) return true;
+    // Full nominal subjects may use equivalent trailing sequel numerals. Strip
+    // only an existing closed document label, never a subtitle or alias prefix.
+    return [...subject.matchAll(/-/gu)].some(boundary => DOCUMENT_LABEL.test(subject.slice(boundary.index + 1))
+      && normalizeGamingComparableIdentity(subject.slice(0, boundary.index)) === wanted);
+  }));
   // The primary heading is acquired article metadata even when the extractor
   // repeats it in prose. It cannot corroborate itself or become a second anchor
   // through an inherited structural record heading.

@@ -1,6 +1,6 @@
 {
   "schema": "arcanos-gaming-universal-validation/v1",
-  "capturedAt": "2026-10-14T04:52:53.425Z",
+  "capturedAt": "2026-10-14T05:15:42.003Z",
   "baselineSha": "e24d5614748f39e25e27a0c062dfba2ea0adbb77",
   "baseSha": "c8bb00ee000e3e188f17e1aa2b5e2893d0221fb8",
   "scope": "Local frozen implementation before publication; source and fixture content bound below. Final pushed SHA is verified by the canonical CI/CD per-SHA receipt and PR check metadata.",
@@ -16,32 +16,41 @@
       "passedSuites": 162,
       "failedSuites": 0,
       "skippedSuites": 1,
-      "passedTests": 5150,
+      "passedTests": 5154,
       "failedTests": 0,
       "skippedTests": 9,
-      "rawResultSha256": "955991a8188dfa9eb85dab927630370b0551aaf25c371db86eca898ec17c0c4d",
+      "rawResultSha256": "56f738b659b0798f7aba5337244484ab16d5cb03fe90d80b6c9f066d229a08f6",
       "nonpassing": []
     },
     "previewAndPriorDiagnostics": {
-      "command": "node scripts/run-jest.mjs --runTestsByPath tests/native-pr-preview-import-boundary.test.js tests/phase2e-migration-validator.test.ts tests/dag-metrics-runtime.test.js --coverage=false --runInBand",
+      "command": "node scripts/run-jest.mjs --runTestsByPath tests/native-pr-preview-import-boundary.test.js tests/phase2e-migration-validator.test.ts tests/dag-metrics-runtime.test.js packages/cli/__tests__/transport-limits.test.ts tests/assistant-registry-service.test.ts --coverage=false --runInBand",
       "passedSuites": 3,
-      "failedSuites": 0,
+      "failedSuites": 2,
       "skippedSuites": 0,
-      "passedTests": 424,
-      "failedTests": 0,
+      "passedTests": 452,
+      "failedTests": 2,
       "skippedTests": 0,
-      "rawResultSha256": "33b850668ccd3a8bcffd616589b321a7bddb4a8ac79b14d784f6a822fcc7b45b",
-      "nonpassing": []
+      "rawResultSha256": "8d1c203fff36692fe64703340e08ab8d85735ee5678038f8f0f465561fc0457b",
+      "nonpassing": [
+        {
+          "file": "packages/cli/__tests__/transport-limits.test.ts",
+          "test": "bounded Python protocol transport integration kills a confirmed-started subprocess tree when the deadline expires"
+        },
+        {
+          "file": "tests/phase2e-migration-validator.test.ts",
+          "test": "Phase 2E inert migration validator boundary rejects Node preload injection before the Node validator process starts"
+        }
+      ]
     },
     "fullWindows": {
       "command": "npm test -- --coverage=false --json --outputFile=local_artifacts/universal-full-final.json",
-      "passedSuites": 910,
-      "failedSuites": 2,
+      "passedSuites": 907,
+      "failedSuites": 5,
       "skippedSuites": 13,
-      "passedTests": 17931,
-      "failedTests": 6,
+      "passedTests": 17932,
+      "failedTests": 9,
       "skippedTests": 165,
-      "rawResultSha256": "7f29dac34ab943f8883ce45189f886c97300fd98e3d543d270240337564baf66",
+      "rawResultSha256": "45a46e370b32608aed919a0cefc6efca7451bc8161ec7348050a14087f05cfa7",
       "nonpassing": [
         {
           "file": "tests/railway-production-readonly-inspection.test.js",
@@ -66,6 +75,18 @@
         {
           "file": "tests/self-healing-restart.test.js",
           "test": "self-healing restart isolation keeps automatic request-failure actuators suppressed in a real web-role process"
+        },
+        {
+          "file": "tests/phase2e-migration-validator.test.ts",
+          "test": "Phase 2E inert migration validator boundary rejects Node preload injection before the Node validator process starts"
+        },
+        {
+          "file": "packages/cli/__tests__/transport-limits.test.ts",
+          "test": "bounded Python protocol transport integration kills a confirmed-started subprocess tree when the deadline expires"
+        },
+        {
+          "file": "tests/assistant-registry-service.test.ts",
+          "test": "assistant registry synchronization and persistence validates bounded pagination and atomically installs a complete candidate"
         }
       ]
     },
@@ -102,6 +123,26 @@
         {
           "file": "tests/railway-production-readonly-inspection.test.js",
           "test": "sanitized receipt retention refuses symlinked output and an oversized receipt"
+        }
+      ]
+    },
+    "unchangedMainTimingComparison": {
+      "command": "node scripts/run-jest.mjs --runTestsByPath tests/phase2e-migration-validator.test.ts packages/cli/__tests__/transport-limits.test.ts tests/assistant-registry-service.test.ts --coverage=false --runInBand",
+      "passedSuites": 1,
+      "failedSuites": 2,
+      "skippedSuites": 0,
+      "passedTests": 41,
+      "failedTests": 2,
+      "skippedTests": 0,
+      "rawResultSha256": "9be4b0495f782706329c93d8ee53087325a9c30c7ec5e7eaac074855add6bcf2",
+      "nonpassing": [
+        {
+          "file": "packages/cli/__tests__/transport-limits.test.ts",
+          "test": "bounded Python protocol transport integration kills a confirmed-started subprocess tree when the deadline expires"
+        },
+        {
+          "file": "tests/phase2e-migration-validator.test.ts",
+          "test": "Phase 2E inert migration validator boundary rejects Node preload injection before the Node validator process starts"
         }
       ]
     },
@@ -261,11 +302,11 @@
     ],
     "fullHostedCI": "PENDING_PUBLICATION: use the canonical final-head CI/CD receipt; local checks do not establish hosted success"
   },
-  "nonRegressionDisposition": "Six Windows failures in unchanged receipt-path/symlink and ESM child-import tests reproduce on unchanged main. No changes to those implementations or tests. Hosted Linux verification remains required.",
+  "nonRegressionDisposition": "Six Windows failures in unchanged receipt-path/symlink and ESM child-import tests reproduce on unchanged main. Bash startup and process-tree deadline failures also reproduce on unchanged main. The assistant-registry timing failure clears in isolation. All failures and comparisons remain recorded without converting failed runs to passes. These test/implementation surfaces are byte-unchanged from main. Hosted Linux verification remains required.",
   "sourceFingerprints": [
     {
       "path": "scripts/check-native-pr-preview-imports.mjs",
-      "lfNormalizedSha256": "4b7ce9678b58db1915180cf5bce12ed041d754f973609608d285f6563a99c3bb"
+      "lfNormalizedSha256": "990c663d8e94c3b5dcd56c08d2c915140530da8c5d1232d2cf889f26abeba7bb"
     },
     {
       "path": "src/services/gamingGameDetection.ts",
@@ -289,7 +330,7 @@
     },
     {
       "path": "src/shared/gaming/gamingClearSource.ts",
-      "lfNormalizedSha256": "e186232ebaaaba3d6ff7ba72291b86971cbd7b4c498e6a1d31580c8d1bec5e5f"
+      "lfNormalizedSha256": "692fce93596b525a8edcfb026c5e216972f8cfdb18bac37a36cb3f93e3e14f48"
     },
     {
       "path": "src/shared/gaming/gamingCurrentnessPreviewFixture.ts",
@@ -313,7 +354,7 @@
     },
     {
       "path": "tests/fixtures/gaming-universal-identity.ts",
-      "lfNormalizedSha256": "67867ef924c123366d1ffeeb365d66a4e894653ed154aaeda6340719ec2bb4b2"
+      "lfNormalizedSha256": "2dd802889158fb157ad0242f03c03e8657111d65efbe4243d861488ab96c9291"
     },
     {
       "path": "tests/gaming-clear-answer-audit.test.ts",
@@ -333,7 +374,7 @@
     },
     {
       "path": "tests/gaming-frontend-guide-contract.test.ts",
-      "lfNormalizedSha256": "719c72c585df558087226d9b7b8ab7a43279dea4614751524dd4a154c456a7cd"
+      "lfNormalizedSha256": "dc27e2e995b76c577f4c45eeba679986f4a0f37ecb22691b0961d47620591a7d"
     },
     {
       "path": "tests/gaming-hybrid-evidence-selection.test.ts",
@@ -381,11 +422,15 @@
     },
     {
       "path": "tests/gaming-universal-source-identity.test.ts",
-      "lfNormalizedSha256": "7e6010c68e7eedb87be47b1d2324a46920836a2e44aa93d815a67d5db7f77a03"
+      "lfNormalizedSha256": "cfe8c357e2bbefb93cee18035f7eea632b8cb4535fbb4cc41c5ba43fd8de8a90"
     },
     {
       "path": "tests/gaming-universal-workflow.integration.test.ts",
       "lfNormalizedSha256": "78484d5d81891b3581ed16bd3375a93c8a031f02878e17fd02c13e6ec01b0337"
+    },
+    {
+      "path": "tests/integration/gaming-durable-rag.pg18.integration.test.ts",
+      "lfNormalizedSha256": "d2e66843bb29ce033c2cc781faf7931695af48d2b33fddd3cc45f2aea825d206"
     },
     {
       "path": "tests/native-pr-preview-import-boundary.test.js",

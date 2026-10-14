@@ -17,6 +17,7 @@ hosted result before that run completes.
 | --- | --- | --- |
 | Unknown game with a generic acquired heading rejected | Positive body scope depended on registry alias detection; use full acquired identity independently of topic vocabulary. | Nine-game real-validator matrix, including unregistered Copperwind Loom; unchanged parent fails the new workflow cases. |
 | Unknown subtitle collapsed to a known parent | Canonicalization scanned aliases inside longer titles; require exact canonicalization and preserve full suffixes. | Minecraft Moonbound, Features and Has Fallen controls; exact source lookup and wrong-edition tests. |
+| Equivalent numeral title failed under a full heading | The metadata anchor used a literal title while the acquired body used comparable numerals; apply full comparable identity with only existing document-label suffixes. | III/3 in both directions, with title-only, different sequel and unknown subtitle negatives. |
 | Ordinary words or topics self-promoted as games | Bare equality supplied identity without acquired game context; require explicit context for ambiguous names. | Heavy Weapons, Power Armor, Early Game, ordinary-word and acronym controls. |
 | Exclusion/reference prose admitted under a matching title | An unconstrained copular predicate counted references as ownership; require affirmative game-domain predicates and preserve quoted/negated exclusions. | Actual acquired HTML exclusion, comparison and requested-game controls. |
 | Official patch-page ownership lost under stricter proof | Existing valid release DOM lacked generic game-declaration prose; use its reviewed, independently parsed release records, retaining incomplete currentness. | 18 real resolver/adapter tests; malformed platform DOM remains refused. |
@@ -31,9 +32,10 @@ their negative labels, admission thresholds and effect boundaries remain intact.
 
 ## Local validation and remaining evidence gates
 
-The final Gaming sweep passes 5,150 tests in 162 suites; one database suite and
-nine tests are explicitly skipped locally. The final preview/runtime diagnostic
-selection passes 424 tests. Type-check, lint (zero errors; 77 existing warnings),
+The final Gaming sweep passes 5,154 tests in 162 suites; one database suite and
+nine tests are explicitly skipped locally. The final native preview import
+boundary passes 410 tests and the compiled metrics check passes one test.
+Type-check, lint (zero errors; 77 existing warnings),
 build, static Railway compatibility, documentation links/indexes and diff checks
 pass. The full local Windows result and the unchanged-main comparison are
 recorded separately in the JSON receipt, including all failures and skips.
@@ -43,7 +45,16 @@ unchanged main. They are not repaired as part of this Gaming capability. Hosted
 Linux CI must establish their final-head disposition, and hosted PostgreSQL
 suites supply the database evidence omitted locally. Earlier diagnostic runs
 included in-scope failures repaired above, a changing preview pin, a missing
-compiled prerequisite and one shell-start timeout; final focused reruns pass.
+compiled prerequisite and Windows timing failures. The final full Windows run
+passes 17,932 tests with nine failures and 165 skips. Isolated assistant-registry
+tests pass; Bash startup and subprocess-tree timing failures also reproduce on
+unchanged main. Their unchanged-main comparison and all failures remain
+explicit in the receipt. No unrelated implementation or test was altered.
+The first hosted PostgreSQL run at `e5c88eae` found a synthetic guide missing
+independently scoped acquired identity. Its shared fixture now supplies that
+scope while retaining the original recommendation; SQL-free acquisition tests
+prove the original insufficient body remains refused and the strengthened body
+still requires currentness verification. No production validator was relaxed.
 
 [performance.json](performance.json) records 14 paired bounded validation cases,
 45 adversarial cases and 18 official currentness cases. Measurements exclude
