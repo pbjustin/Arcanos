@@ -2,6 +2,10 @@
 
 Date: 2026-10-14. Repository: `pbjustin/Arcanos`.
 
+The original bootstrap audit and failure receipts below are retained as historical
+evidence. The [final review](#final-review-and-blocker-repair) records the later
+review, repairs and current readiness decision.
+
 - Audited source/base: `7aee3bb9ace55e1fc19f1e83d0b6dfeca169c383`.
 - Safety reference: merged PR #1539, final synthetic-verification head
   `031cf38acea5f022a867bf3e0899fc3584a80c21`.
@@ -351,7 +355,7 @@ did not exercise this missing propagation boundary.
   native `prDeploys=false` in both accessible ARCANOS projects; no setting was
   changed to publish this draft.
 
-## Final gates
+## Historical bootstrap gates
 
 | Gate | Local result; final-head CI remains separate |
 | --- | --- |
@@ -366,3 +370,284 @@ did not exercise this missing propagation boundary.
 | MERGE_READY | NOT_PASS until every required non-live gate passes |
 | LIVE_ACCEPTANCE | NOT_RUN |
 | PRODUCTION_PROMOTION | NOT_AUTHORIZED |
+
+## Final review and blocker repair
+
+Review began against freshly fetched head
+`85a1775ce193d280d4eac995a946485c7fb38a50` and base/merge-base
+`7aee3bb9ace55e1fc19f1e83d0b6dfeca169c383`: three commits ahead, zero behind,
+38 changed files, clean checkout. The supplied observed head was still current;
+no intervening repair existed. Work used the existing
+`fix/self-heal-worker-ownership` branch. The PR remains open, draft and unmerged.
+
+### Verified defects and repair commits
+
+| Commit | Defect and repair | Regression evidence |
+| --- | --- | --- |
+| `dc8a3b1c849f441b616e3c618d3c635d8687ee1f` | HTTP shutdown began coordinator drain and dependency teardown concurrently. Stop admission, await listener/coordinator/pending-startup drains, then telemetry/Redis/database; duplicate calls share completion and one deadline bounds all phases. An uncertified or expired drain forces unsuccessful process exit without racing explicit dependency teardown. | 17 server lifecycle tests; nine added cases cover held operations, duplicate calls, rejection/synchronous failure, timeout, cleanup timeout and partial startup. |
+| `3b7167e7eafd9524f8ba5041fe92ae152f7ab85e` | Status reads mixed last-tick authority with current configuration. Preserve the stored mode/timestamp pair. Also recheck configuration after awaited shared controls, reject predictive observation-only takeover during diagnosis, and retain completed-effect verification before honoring cancellation. | 20 new loop unit cases and three integrated coordinator cases; policy/recovery/security selection passes 8 suites / 216 tests. Original new-regression failures retained. |
+| `dd49b77d4d0144ca30cf26808f0cd1607655cb11` | Concurrent predictive requests passed cooldown before awaiting authorization and dispatched twice. Reserve the action after final authorization, recheck cooldown, hold ownership through settlement, release in `finally`, and charge uncertain thrown dispatches a cooldown. | 2 suites / 38 tests, including simultaneous policy reads, long-running overlap, failed-attempt retry and seven policy changes during authorization. |
+| `f7589d6a78f5e6a9b28fc9b9facb432ba668c0c9` | Failed coordinator installation left queue consumers polling while dependencies closed. Abort process admission with an accurate failure reason, await every slot, then drain coordinators and clean resources. Preserve the original failure and clean partially installed timers. | 6 actual worker-bootstrap tests, including held slot-finalization, no later claims, aborted-process restart refusal, cleanup errors, telemetry rejection and non-RUNNING coordinator return. |
+| `ae162fc7b38a3c973913b2c089e119e222c9d689` | Windows receipt validation assumed POSIX paths/modes/symlink privileges; publisher PATH interception could reach host Docker. Use native absolute paths, real junction fixtures and explicit restrictive-open assertions. A Node preloader denies external process/network APIs and positively records exact injected publisher commands. | Linux receipt 44/44, stacked-preview 136/136, live-validation 234/234, final publisher 10/10. The Windows CI job now runs the receipt and publisher fixtures. |
+| `eadbb27d13da45e3caf9a2aad776dd5d7d6898fd` | The maintained startup guide still described concurrent dependency teardown. Align it with the repaired drain ordering and deadline. | Documentation validation. |
+| `d53370a226427812b1f8bc8869a1a48f7fe6926d` | Full CI logs exceeded the connector response limit, obscuring exact test counts. Retain a bounded artifact and job summary containing exact-head Jest counters for both test selections. | Workflow YAML parses; test exit status, coverage upload and thresholds remain unchanged. |
+| `e264bf5a487555111efc56c47f648d2aaab6d058` | The supply-chain test correctly rejected the changed receipt-writer digest. After independently reviewing the portable path and filesystem-adapter change, update the pinned digest. | All five supply-chain containment tests pass; the original full-run failure is retained. |
+
+No execution flags/defaults, production permissions, coverage thresholds or
+production-source coverage exclusions were relaxed. The independent review
+inspected every original changed file, including all 13 production files,
+the affected tests, configuration and maintained/generated documentation.
+The generated-index command produced only timestamp changes; those incidental
+timestamp edits were discarded after confirming no index-content drift.
+
+### Review and Codecov evidence
+
+The two inline CodeRabbit findings were verified against code, rather than
+accepted solely from their suggested diffs:
+
+- Shutdown ordering: thread `PRRT_kwDOPKkVZ86sQ5YW`,
+  [comment 4269462199](https://github.com/pbjustin/Arcanos/pull/1544#discussion_r4269462199),
+  repaired by `dc8a3b1c`.
+- Historical operating mode: thread `PRRT_kwDOPKkVZ86sQ5Yp`,
+  [comment 4269462232](https://github.com/pbjustin/Arcanos/pull/1544#discussion_r4269462232),
+  repaired by `3b7167e7`.
+
+The walkthrough's additional cancellation/verification concern was also valid
+and repaired by `3b7167e7`. Completed effects retain evidence; cancellation still
+prevents subsequent dispatch. Both findings were resolved after committing,
+verifying and pushing their repairs; the
+[shutdown reply](https://github.com/pbjustin/Arcanos/pull/1544#discussion_r4274185190)
+and [policy reply](https://github.com/pbjustin/Arcanos/pull/1544#discussion_r4274185784)
+record the associated regression evidence. Final review state is refreshed
+again after the audit commit.
+
+The actual [Codecov report](https://app.codecov.io/gh/pbjustin/Arcanos/pull/1544)
+on the original head was **74.19355% (23/31 changed lines)**, with seven missed
+and one partial line, against the repository's **80%** patch target. The report
+had the correct base and a complete successful upload. Missing paths were the
+worker telemetry rejection, non-RUNNING start guard, optional recovery count and
+literal entrypoint. Meaningful worker fixtures cover the important missing
+failure branches; no instrumentation repair or policy exception was justified.
+Only `jobRunner.ts` among this PR's changed production modules belonged to the
+pre-existing explicit coverage scope, so patch coverage is not a substitute for
+the broader self-healing regression suite.
+
+Branch metadata and GraphQL `CheckRun.isRequired(pullRequestNumber: 1544)` agree:
+**`docs:check` and `All Checks Complete`** are the required check contexts
+(GitHub Actions app 15368). Codecov and CodeRabbit are informational to branch
+protection. Full protection settings beyond check requirements were inaccessible
+(403); ruleset/active-rule lists were empty. GitHub mergeability and engineering
+readiness are evaluated separately; draft status is intentionally retained.
+
+### Synthetic coverage and safety boundaries
+
+| Scenarios | Real internal paths and deterministic fixtures |
+| --- | --- |
+| S01–S05 | Actual `runJobWorker`, all-slot readiness, one canonical scheduler, role suppression, repeated initialization, failed installation and refused restart: worker-bootstrap/coordinator-lifecycle/server-startup suites. |
+| S06–S08 | Deferred coordinator/HTTP/startup drains, bounded failed shutdown and worker slot cleanup; actual worker completion with coordinator FAILED then RUNNING. |
+| S09–S11 | Config parsing plus reactive/predictive/Trinity/prompt execution; disabled autonomy, configured/shared freeze and predictive dry-run always restrict effects. |
+| S12–S13 | Worker prompt/listener actions explicitly unavailable; local prompt and Trinity mitigations reach their actual consumers. |
+| S14–S17 | Tick serialization and predictive action reservation; identity-fenced replacement/rollback, TTL expiry, bounded attempts and fresh matching consumer/provider evidence. |
+| S18–S20 | Historical mode remains paired with observation time; live action-boundary revocation; fresh-process isolation plus cancel/drain/restart retains completed repair verification without stale effect authority. |
+| S21 | Actual auth composition, bearer/principal checks, decision/execute/probe/control scopes, capability checks, ingress/principal rate limits and bounded detailed inspection responses. |
+| S22 | Credential-empty child fixtures, forbidden provider/storage adapters and positively asserted publisher interception; unexpected Docker/GHCR/Railway/GH/network paths fail before native execution. |
+
+All transport/database/provider effects in these scenarios are substituted.
+They do not establish production acceptance. Coordinator authority remains
+process-local, with one scheduler per process rather than distributed leader
+election. A web observation cannot establish remote-worker health: remote state
+remains `UNKNOWN`. Existing PR #1539 recovery, TTL, identity, replacement,
+failed-consumer, cooldown, bounded-history and rollback protections remain.
+
+### Cross-platform findings and retained failures
+
+The exact four historical Windows root failures were all in
+`railway-production-readonly-inspection.test.js`:
+
+- `writes only the fixed private receipt and refuses overwrites`
+- `retains a blocked receipt when bounded inventory with 5000-byte definitions exceeds artifact size`
+- `retains a blocked receipt when bounded inventory with 8192-byte definitions exceeds artifact size`
+- `refuses symlinked output and an oversized receipt`
+
+Native `path.isAbsolute` fixes the application path defect. Directory
+junctions exercise real link refusal without elevated Windows file-symlink
+privileges. Tests retain exclusive-open/no-overwrite/protected-target assertions
+and verify requested `0600` mode and descriptor cleanup. Comparing native mode
+representation to an independent restrictive reference does **not** establish
+NTFS ACL privacy.
+
+The original Windows raw files under `C:/Users/pbjus/.codex/tmp` were unavailable
+in this Linux workspace. Their original report and counts above are retained;
+no historical receipt was erased or converted to a pass. Linux baseline receipt
+tests passed 39/39 before repair; repaired tests pass 44/44. Supplemental Linux
+deployment fixtures still intentionally exercise `sh`/`bash`, Unix modes and
+umask; this is not a claim of full Windows parity for every deployment fixture.
+No broad skip or platform exemption was introduced. The exact repaired Windows
+contracts have their own CI execution within the existing Windows job.
+
+The historical synthetic-token Docker login/logout escape was an isolation
+defect. This review executed no real registry login, push, logout or credential
+repair. Owner-local GHCR credential availability remains unknown after that
+historical logout and should be checked only if needed for the owner's workflow.
+
+New failing receipts are also preserved: policy revocation (97 pass/1 fail),
+predictive observation-only takeover (98 pass/2 fail), cancelled completion
+(25 pass/1 fail), duplicate predictive dispatch (one selected failure), and
+worker bootstrap closing dependencies before slot finalization (one selected
+failure). The first shutdown fixture run failed on an unsupported Jest matcher;
+the assertion was rewritten as exact call-array equality. Later clean runs do
+not erase these original results. Raw local receipts are retained under
+`/tmp/arcanos-pr1544-evidence/`; predictive-race receipts are also retained under
+`/tmp/arcanos-pr1544-predictive-race-*.log`.
+
+The first Linux full-root attempt also exposed setup drift: installed
+`proxy-addr` was 2.0.7 versus locked 2.0.8, and the MCP SDK was 1.30.0 versus
+locked 1.31.0. A direct pinned-Node Express reproduction attributed the
+proxy-trust security assertion failures to the old dependency. `pwsh` was also
+missing, so projector fixtures failed with `ENOENT`. PowerShell 7.6.7 was
+installed in the isolated task toolchain from the official release, verified
+against both the release asset digest and published SHA256 list. Its focused
+rerun passed 55 tests with two existing Windows-only skips. These are environment
+prerequisites; no assertion or application permission was weakened. The first
+full-run receipt is retained separately from validation after locked dependency
+installation.
+
+That first Linux root attempt completed with **18,105 passed, 48 failed and
+167 skipped** across 930 suites (912 passed, five failed, 13 skipped).
+The failures comprised 44 missing-PowerShell assertions, three assertions
+against the older installed `proxy-addr`, and one expected receipt-writer
+integrity-pin mismatch. The pin was updated only after reviewing the writer's
+source diff. `npm ci` restored the exact lockfile versions without manifest or
+lockfile changes; the security/integrity focused rerun passed 50/50.
+
+The first push was rejected by GitHub's private-email protection (GH007).
+Only the eight new, unpublished commits were recreated with the authenticated
+account's GitHub noreply address. Every tree was preserved, and the original
+PR history was unchanged. The successful push used the commit IDs above;
+rejected-publication metadata and the old-to-new mapping remain in the local
+evidence directory.
+
+The second Linux root attempt was deliberately interrupted after eight passing
+and three failing suite markers. Three Jest workers competed with type-checking
+under a two-core cgroup quota (`cpu.max=200000 100000`); eight assertions timed
+out across `native-pr-preview-application.test.ts`,
+`native-pr-preview-import-boundary.test.js` and
+`gaming-currentness-preview-failure.test.ts`. Its complete emitted log and
+interruption metadata are retained; it is not counted as a completed full run.
+An unchanged, isolated replay passed all **501 tests in those three suites**
+with their existing timeouts. The subsequent full run uses two workers with no
+competing build/type-check process. That third run's execution session vanished
+after 150 passing suite markers and no failure markers; it emitted neither a
+Jest result file nor a final exit receipt. The execution service subsequently
+also reported a disconnected transport. No OOM event was recorded. The partial
+log and interruption record are preserved, and this is **not** reported as a
+completed local pass. Complete exact-head GitHub root and integration runs
+supply the full-suite evidence below. No timeout, assertion or platform gate
+was relaxed.
+
+### Final validation and exact-head gates
+
+The complete behavioral repair is commit
+`e264bf5a487555111efc56c47f648d2aaab6d058`, based on
+`7aee3bb9ace55e1fc19f1e83d0b6dfeca169c383`. The repair expands the original
+38-file diff to 47 files, including the narrowly scoped fixture and CI changes.
+The audit-only commit containing this final section does not change executable
+code. Its exact SHA and a fresh full-CI/check/thread snapshot are recorded in the
+owner-facing final review handoff, after that commit's checks finish; earlier
+green runs do not satisfy that final publication gate. This avoids embedding a
+commit's own hash in its contents while retaining an exact behavioral SHA and
+an independently verified final publication SHA.
+
+Local validation uses Node 24.18.1, npm 11.16.0, locked dependencies and
+PowerShell 7.6.7. Build, type-check, lint (zero errors; 77 existing warnings),
+static Railway compatibility, backend/CLI contract, documentation/local links
+and generated-index checks pass. No production environment was used.
+
+| Validation | Actual result at the behavioral repair SHA |
+| --- | --- |
+| Full root Jest | First completed run: 18,105 passed / 48 setup or reviewed-pin failures / 167 skipped. Subsequent interrupted runs are retained above; complete passing full-suite evidence comes from exact-head GitHub CI below. |
+| Focused policy/recovery/security | 8 suites / 216 passed. |
+| Server shutdown | 17 passed. |
+| Predictive execution and decisions | 38 passed. |
+| Worker bootstrap | 6 passed. |
+| Environment/security/integrity replay | 50 passed. |
+| Isolated timing-failure replay | 501 passed, original timeouts unchanged. |
+| Linux receipt / publishing | 44 / 10 passed. |
+| Stacked-preview / live-validation offline | 136 / 234 passed. |
+| Runtime integration | 79 passed. |
+| Preview / containment / live-preview offline | 18 / 42 / 16 passed. |
+| Compiled model policy / heartbeat | 4 / 6 passed. |
+
+These selections overlap; their counts are not summed as unique tests.
+Service-backed and native Windows validation comes from the supported CI matrix:
+
+| GitHub matrix component | Actual result at the behavioral repair SHA |
+| --- | --- |
+| Root Jest (`unit` job runs the full selection) | **18,153 passed, zero failed, 167 skipped**; 917 passed / 13 skipped suites, 930 total. |
+| Integration Jest selection | 863 passed, 162 skipped; 41 passed / 12 skipped suites. |
+| Windows Python 3.11 | 970 passed, 13 skipped. |
+| Windows receipt / publishing isolation | 44 / 10 passed, no skips. |
+| PostgreSQL 18 | 6 phase-2e plus 202 fencing/storage tests passed. |
+| Linux Docker sandbox | 29 passed. |
+| Standalone runtime / real Redis / provider bridge | 79 / 4 / 14 passed. |
+| Compiled model policy / heartbeat | 4 / 6 passed. |
+| Lint, type-check, build, security and convergence | PASS. |
+| Railway/Docker build and deployment-fixture validation | PASS; preview 18, containment 42 and stacked-preview 136 tests passed. |
+| Documentation Audit | PASS; 15 tests passed / one skipped, 1,066 documentation checks. |
+| PR CI and API Endpoint Tests | PASS. |
+
+The native Windows receipt and publisher results close the four reported root
+portability failures and the registry-interception defect. NTFS ACL privacy is
+not inferred from POSIX mode bits, and Linux shell/umask deployment fixtures are
+not advertised as general Windows application contracts. These are bounded,
+evidence-backed nonblocking limits; no blanket platform exclusion was added.
+
+The [main CI run 38608261630](https://github.com/pbjustin/Arcanos/actions/runs/38608261630)
+completed all 13 jobs successfully. The separate
+[PR CI](https://github.com/pbjustin/Arcanos/actions/runs/38608261681),
+[Documentation Audit](https://github.com/pbjustin/Arcanos/actions/runs/38608262120)
+and [API Endpoint Tests](https://github.com/pbjustin/Arcanos/actions/runs/38608262358)
+also passed. Exact-head Jest counter artifacts retain the complete counts above;
+oversized or inaccessible raw logs were never treated as evidence of success.
+Live inspection and Railway preview execution were intentionally skipped.
+
+Codecov at this exact behavioral SHA reports **93.82716% (76/81 changed lines)**,
+four missed lines and one partial line, against the unchanged 80% target and
+the correct base SHA. `codecov/patch=SUCCESS`; no policy exception is needed.
+Both required checks (`docs:check`, `All Checks Complete`) are successful.
+Both original review threads are resolved, with bot acknowledgments and no new
+unresolved findings. CodeRabbit's walkthrough says draft PRs are not
+automatically reviewed, so its status is not claimed as a fresh full review;
+the independent source review supplies that evidence.
+
+| Gate | Exact behavioral-head verdict and evidence |
+| --- | --- |
+| CODE_REPAIR | PASS — focused repairs committed and independently reviewed; build/type/lint/full CI pass. |
+| WORKER_BOOTSTRAP | PASS — actual entry body, readiness and failed-startup drain fixtures. |
+| SINGLE_CONTROLLER_OWNERSHIP | PASS — role suppression, one scheduler, repeated start and restart fencing. |
+| SHUTDOWN_DRAIN_ORDERING | PASS — held operations, normal/failed/timed-out drain, duplicate calls and partial startup. |
+| CONFIGURATION_POLICY | PASS — fail-closed defaults, historical snapshots and current action-boundary authorization. |
+| CROSS_PROCESS_EFFECT_SAFETY | PASS — unsupported worker prompt/listener effects explicitly unavailable; actual local consumers verified. |
+| RECOVERY_AND_ROLLBACK | PASS — fresh evidence, TTL, identity fencing, replacement, cooldown and cancellation receipts retained. |
+| SECURITY_REGRESSION | PASS — authentication, scopes, rate limits, bounded inspection and CI security policy. |
+| SYNTHETIC_E2E | PASS — S01–S22 mapped above; full exact-head suites pass. |
+| CROSS_PLATFORM_VALIDATION | PASS — supported Linux/Windows CI; explicit nonblocking NTFS-ACL/Linux-shell limits above. |
+| CODECOV_PATCH | PASS — 93.82716%, above 80%; correct head/base and completed upload. |
+| REQUIRED_GITHUB_CHECKS | PASS — both required contexts independently verified. |
+| REVIEW_THREADS | RESOLVED — zero unresolved threads after committed verification. |
+| MERGE_READY | PASS for this behavioral head under the owner's synthetic policy; the audit-only final head must independently pass its checks before handoff. |
+| LIVE_ACCEPTANCE | NOT_RUN — owner deferred. |
+| PRODUCTION_PROMOTION | NOT_AUTHORIZED. |
+
+GitHub reports `MERGEABLE` / `CLEAN` for the behavioral head, but the PR remains
+draft, open and unmerged. Those metadata do not replace engineering gates or
+authorize merging. The owner still reviews the repaired diff and final-head
+evidence before changing draft status or merging. No production action was
+performed or authorized.
+
+Residual limits are explicit: these tests do not prove live Railway recovery,
+distributed scheduler leadership or remote-web mitigation delivery. Existing
+dependency advisories and lint warnings remain under the repository's current
+policy. The historical Windows Docker logout may have affected owner-local
+GHCR credentials; checking those is only necessary if the owner's local workflow
+needs them and is separate from PR merge readiness.
