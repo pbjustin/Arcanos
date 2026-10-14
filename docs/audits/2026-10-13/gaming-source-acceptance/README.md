@@ -7,6 +7,10 @@ handoff; [validation.json](validation.json) binds the local checks to exact
 source and fixture SHA-256 fingerprints. All fixture documents are synthetic,
 not copied publisher articles or current gameplay recommendations.
 
+This original prepublication snapshot and its fingerprints are historical.
+The independent [review correction](review-correction.md) records the subsequent
+bare-topic repair; the final-head receipt is delivered with the review handoff.
+
 ## Gate assessment
 
 | Gate | Result | Evidence / limit |

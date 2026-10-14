@@ -115,8 +115,8 @@ Explicit acquired game labels, other game titles, sequels and expansion conflict
 continue to bind before the source is admitted.
 The acquired-topic filter does not discard real game names from player requests;
 names such as Vigor and Blood retain ordinary game detection.
-Closed topic labels such as `Early Game` and `Heavy Weapons`, including Heavy
-Gunner/Power Armor guide headings, also require affirmative acquired game scope
+Closed topic labels such as `Early Game`, `Heavy Weapons`, `Heavy Gunner`, and
+`Power Armor`/`Power Armour`, including their guide headings, require affirmative acquired game scope
 before acceptance. They cannot prove game identity on their own. The recognition
 registry distinguishes Fallout 76, Fallout 4, Fallout 3 and Fallout: New Vegas;
 their names are not interchangeable source identities. Complete extracted

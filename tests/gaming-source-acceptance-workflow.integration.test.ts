@@ -145,8 +145,10 @@ function harness(query: Record<string, unknown>) {
   return { retrieve, workflow, start, submit };
 }
 
-const fixtures = gamingSourceAcceptanceCases.map(fixture => ({
-  ...fixture, name: fixture.game, html: gamingSourceAcceptanceHtml(fixture, { furniture: true, records: '' }),
+const fixtures = gamingSourceAcceptanceCases.flatMap(fixture => (
+  fixture.id === 'fallout-76' ? [fixture.genericTitle, 'Heavy Gunner', 'Power Armor', 'Power Armour'] : [fixture.genericTitle]
+).map(title => ({
+  ...fixture, acquiredTitle: title, name: `${fixture.game} (${title})`, html: gamingSourceAcceptanceHtml(fixture, { title, furniture: true, records: '' }),
   class: fixture.id === 'elden-ring' ? 'Samurai' : undefined,
   role: fixture.id === 'fallout-76' ? 'Heavy Gunner' : undefined,
   progressPoint: fixture.id === 'elden-ring' ? 'just left the tutorial' : 'just left Vault 76',
@@ -155,9 +157,24 @@ const fixtures = gamingSourceAcceptanceCases.map(fixture => ({
       'Raise Vigor for survival and upgrade Uchigatana as Smithing Stones become available.']
     : ['In Fallout 76, a beginner Heavy Gunner immediately after leaving Vault 76 should first use available equipment, collect ammunition, and repair the starter weapon.',
       'The Heavy Gunner build is a later progression goal: do not assume heavy weapons, Power Armor, or later perks are already available.']
-}));
+})));
 
 describe('source acceptance through the actual hybrid-v2 and Trinity pipeline', () => {
+  it.each(['Heavy Gunner', 'Power Armor', 'Power Armour'].flatMap(title =>
+    ['missing', 'comparison'].map(scope => ({ title, scope }))))
+  ('does not select the bare topic $title with $scope affirmative game scope', async ({ title, scope }) => {
+    const fixture = fixtures[1];
+    currentHtml = gamingSourceAcceptanceHtml(fixture, { title, records: '', prose: fixture.prose.replace('In Fallout 76, ',
+      scope === 'comparison' ? 'Unlike in Fallout 76, ' : '') });
+    const run = harness({ game: fixture.game, question: fixture.question, role: fixture.role, progressPoint: fixture.progressPoint });
+    const initial = await run.start();
+    const final = await run.submit(initial.body);
+    expect(final.body).toMatchObject({ nextAction: 'search', evidenceSelected: false });
+    expect(final.body.candidates![0]).toMatchObject({ decision: 'rejected', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] });
+    expect(final.body.answer).toBeUndefined();
+    expect(mockProvider).not.toHaveBeenCalled();
+  });
+
   it.each(fixtures)('grounds $name using acquired, selected passages without durable writes', async fixture => {
     currentHtml = fixture.html; answerSentences = fixture.sentences; expectedQuestion = fixture.question;
     const run = harness({ game: fixture.game, question: fixture.question, class: fixture.class,
@@ -216,7 +233,7 @@ describe('source acceptance through the actual hybrid-v2 and Trinity pipeline', 
   });
 
   it.each(fixtures)('stops $name when both acquired guides actually declare another game', async fixture => {
-    currentHtml = gamingSourceAcceptanceHtml(fixture, { title: fixture.title,
+    currentHtml = gamingSourceAcceptanceHtml(fixture, { title: fixture.id === 'fallout-76' ? fixture.acquiredTitle : fixture.title,
       prose: fixture.prose.replaceAll(fixture.game, fixture.unrelatedGame), records: '' });
     const run = harness({ game: fixture.game, question: fixture.question,
       class: fixture.class, role: fixture.role, progressPoint: fixture.progressPoint });

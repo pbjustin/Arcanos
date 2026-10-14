@@ -37,13 +37,27 @@ describe('incident-shaped source identity and extraction (synthetic evidence)', 
     expect(document.evidenceUnits.every(unit => unit.integrity.status === 'complete')).toBe(true);
   });
 
-  it.each(['Heavy Gunner build guide', 'Beginner Power Armor Heavy Gunner guide', 'Heavy Weapons guide'])
+  it.each(['Heavy Gunner', 'Power Armor', 'Power Armour', 'Heavy Gunner build guide',
+    'Beginner Power Armor Heavy Gunner guide', 'Heavy Weapons guide'])
   ('does not invent an acquired game named %s', title => {
     const fixture = gamingSourceAcceptanceCases[1];
     expect(detectGamingDocumentGame({ canonicalUrl: '', pageTitle: title }).game).toBeUndefined();
     expect(assess(fixture, { title }).identity.status).toBe('verified');
     expect(assess(fixture, { title, prose: fixture.prose.replace('In Fallout 76, ', '') }).identity)
       .toMatchObject({ status: 'unknown', diagnostic: { ruleId: 'gaming.identity.independent_anchor_required' } });
+  });
+
+  it.each(['Heavy Gunner', 'Power Armor', 'Power Armour'])('keeps independent affirmative game scope mandatory for the bare topic %s', title => {
+    const fixture = gamingSourceAcceptanceCases[1];
+    expect(assess(fixture, { title, prose: fixture.prose.replace('In Fallout 76, ', 'Unlike in Fallout 76, ') }).identity)
+      .toMatchObject({ status: 'unknown', diagnostic: { ruleId: 'gaming.identity.independent_anchor_required' } });
+    for (const wrongGame of ['Fallout 4', 'Fallout 3', 'Fallout: New Vegas', 'Elden Ring Nightreign']) {
+      expect(assess(fixture, { title, prose: `${fixture.prose} In ${wrongGame}, use another weapon.` }).identity)
+        .toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'],
+          diagnostic: { ruleId: 'gaming.identity.affirmative_body_scope_conflict' } });
+      expect(assess(fixture, { title, prose: fixture.prose.replaceAll(fixture.game, wrongGame) }).identity)
+        .toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
+    }
   });
 
   it.each(gamingSourceAcceptanceCases)('does not turn generic $game topics or complete records into independent game proof', fixture => {
@@ -61,7 +75,7 @@ describe('incident-shaped source identity and extraction (synthetic evidence)', 
       diagnostic: { ruleId: 'gaming.identity.independent_anchor_required' } });
   });
 
-  it.each(['Heavy Weapons', 'Heavy Gunner', 'Power Armor'])('does not let topic vocabulary erase an explicit game named %s', game => {
+  it.each(['Heavy Weapons', 'Heavy Gunner', 'Power Armor', 'Power Armour'])('does not let topic vocabulary erase an explicit game named %s', game => {
     const fixture = gamingSourceAcceptanceCases[1];
     expect(assess(fixture, { title: fixture.title, prose: `${fixture.prose} In the game ${game}, use another weapon.` }).identity)
       .toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'],

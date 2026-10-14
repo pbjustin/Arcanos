@@ -54,7 +54,7 @@ export function isGamingAcquiredTopicTitle(value: string): boolean {
   // still supplies no game identity without an independent acquired declaration.
   const topicLabel = words.some(word => ['build', 'builds', 'guide', 'guides', 'loadout', 'walkthrough', 'tips',
     'weapon', 'weapons', 'equipment', 'skills', 'talents'].includes(word))
-    || /^(?:early|late) game$/u.test(words.join(' '));
+    || /^(?:(?:early|late) game|heavy gunner|power armou?r)$/u.test(words.join(' '));
   return words.length > 0 && words.length <= 12 && words.every(word => ACQUIRED_TOPIC_WORDS.has(word))
     && topicLabel;
 }
