@@ -587,7 +587,7 @@ Service-backed and native Windows validation comes from the supported CI matrix:
 | Integration Jest selection | 863 passed, 162 skipped; 41 passed / 12 skipped suites. |
 | Windows Python 3.11 | 970 passed, 13 skipped. |
 | Windows receipt / publishing isolation | 44 / 10 passed, no skips. |
-| PostgreSQL 18 | 6 phase-2e plus 202 fencing/storage tests passed. |
+| PostgreSQL 18 | 6 local-agent concurrency plus 202 fencing/storage tests passed. |
 | Linux Docker sandbox | 29 passed. |
 | Standalone runtime / real Redis / provider bridge | 79 / 4 / 14 passed. |
 | Compiled model policy / heartbeat | 4 / 6 passed. |
