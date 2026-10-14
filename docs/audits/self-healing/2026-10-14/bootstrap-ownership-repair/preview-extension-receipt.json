@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "collectionTimestamp": "2026-10-14T21:46:57.906Z",
+  "collectionTimestamp": "2026-10-14T22:19:21.753Z",
   "repository": "pbjustin/Arcanos",
   "pullRequest": 1544,
   "runId": "self-heal-1544-20261014-shv1",
@@ -12,7 +12,8 @@
       "890fc8034aecf57530ea4305c4ecc61965d15368",
       "7d5f3ececcf99ed8c040013c3b704d9e872803dc",
       "93e186d65e563439582e760244b29d66d5d28d90",
-      "18ac0ad0a9ed7a3341a9e028b1e528ff9ae2c149"
+      "18ac0ad0a9ed7a3341a9e028b1e528ff9ae2c149",
+      "abe8f9dd025e40460921426be87955ffd11f6e63"
     ],
     "lastConfiguredApplicationSha": "18ac0ad0a9ed7a3341a9e028b1e528ff9ae2c149",
     "configurationObservedAt": "2026-10-14T21:28:07.507Z",
@@ -357,6 +358,180 @@
     {
       "filename": "extension-approved-service-delete-1.json",
       "sha256": "02be5289e479c81e08b40e7dbaed2f548b5b7f2757a790b053ea6c1d30ca5a27"
+    },
+    {
+      "filename": "extension-local-credential-cleanup-blocker.json",
+      "sha256": "b6c16590be0ce4656b4afcba9504ebe9918726ba654fa1d6e900ee4372836c32"
+    },
+    {
+      "filename": "extension-final-secret-scan-receipt.json",
+      "sha256": "e6c2dca9d16934c78da17762d8f6d193ac6fabb19682771d06f44adfc3230990"
+    },
+    {
+      "filename": "extension-review-ci-abe8-provenance.json",
+      "sha256": "25a7af36660b288814a1c12da2d0c1e681eb50636c0667ab2374e7c361eaf135"
+    },
+    {
+      "filename": "extension-review-ci-abe8-report.md",
+      "sha256": "da74f8c1d79159315f8c0dee001386e4c703b6130e91b165ae939fc93236fa5c"
+    },
+    {
+      "filename": "extension-review-ci-abe8-unit.log",
+      "sha256": "69d781440d369941f26ca2c402d403065e68497d8a841044ad6dafa6c3c99744"
+    },
+    {
+      "filename": "extension-review-ci-abe8-integration.log",
+      "sha256": "b1f350b7f29fc0786b00afb3364488b6c5838752c184f45a200be34e0c0108e0"
+    },
+    {
+      "filename": "extension-review-ci-abe8-railway.log",
+      "sha256": "30193384ad0bba4dc694babf2ca022dba1fa2d070df7629206f784ff9cfcdb5d"
+    },
+    {
+      "filename": "extension-review-ci-abe8-codecov.json",
+      "sha256": "6531ebbf14a5e96f608f24396aa04fe23b931366691a23189c9a42a3898cdf7b"
+    },
+    {
+      "filename": "extension-review-ci-abe8-review5525454313.json",
+      "sha256": "0da8c2e65b369c7e7c325d8ef0ea400beba8e2086e706b2c271d3bc6c30f428e"
+    },
+    {
+      "filename": "extension-review-ci-abe8-diagnostics-finding.json",
+      "sha256": "0481d67dfd2b189a206f58ba59ccfea1a88013f8e39406b31ef6ad9a04ad39cd"
+    },
+    {
+      "filename": "extension-review-ci-abe8-terminal-cicd.json",
+      "sha256": "3767b54db38707035a164740d61ae56fc9a7046fd0e93231693ba8b23cb76409"
+    },
+    {
+      "filename": "extension-review-ci-abe8-terminal-prci.json",
+      "sha256": "bab196cb0aee7fc3000aca917db9015f4993b69232af521ce61fd9400a010a49"
     }
-  ]
+  ],
+  "previousHeadValidation": {
+    "sourceHead": "abe8f9dd025e40460921426be87955ffd11f6e63",
+    "baseSha": "7aee3bb9ace55e1fc19f1e83d0b6dfeca169c383",
+    "proofClass": "LOCAL_AND_HOSTED_CI_ONLY",
+    "successorStatus": "Repairs are in progress; successor CI and CodeRabbit review require the exact-head terminal PR handoff",
+    "workflowRuns": [
+      {
+        "name": "CI/CD",
+        "runId": 38643321790,
+        "result": "PASS",
+        "url": "https://github.com/pbjustin/Arcanos/actions/runs/38643321790"
+      },
+      {
+        "name": "PR CI",
+        "runId": 38643321771,
+        "result": "PASS",
+        "url": "https://github.com/pbjustin/Arcanos/actions/runs/38643321771"
+      },
+      {
+        "name": "Documentation Audit",
+        "runId": 38643321805,
+        "result": "PASS",
+        "url": "https://github.com/pbjustin/Arcanos/actions/runs/38643321805"
+      }
+    ],
+    "hostedRootUnit": {
+      "suitesPassed": 924,
+      "suitesSkipped": 13,
+      "testsPassed": 18385,
+      "testsFailed": 0,
+      "testsSkipped": 191
+    },
+    "hostedIntegration": {
+      "suitesPassed": 43,
+      "suitesSkipped": 12,
+      "testsPassed": 878,
+      "testsFailed": 0,
+      "testsSkipped": 186
+    },
+    "coveragePercent": {
+      "statements": 94.35,
+      "lines": 94.35,
+      "branches": 87.17,
+      "functions": 96.4
+    },
+    "codecovPatch": {
+      "result": "PASS",
+      "coveredPercent": 85.26,
+      "thresholdPercent": 80,
+      "checkId": 116133582092,
+      "sourceHead": "abe8f9dd025e40460921426be87955ffd11f6e63"
+    },
+    "hostedCiArtifact": {
+      "sourceHead": "abe8f9dd025e40460921426be87955ffd11f6e63",
+      "ciMergeSha": "613cd43bf6b9033f8d19503fa4ea1f0f3f5a11be",
+      "mergeTree": "a026264efbdc41721f41be6521c4af6da631444c",
+      "rawHeadTree": "a026264efbdc41721f41be6521c4af6da631444c",
+      "mergeTreeMatchesRaw": true,
+      "artifactSourceSha": "613cd43bf6b9033f8d19503fa4ea1f0f3f5a11be",
+      "compiledSha256": "061600f3211264f8b86ede0a04c27513769d2cc3e5ed3948385baf3033e1c4a2",
+      "fileCount": 2704,
+      "proofClass": "HOSTED_CI_CONTAINER_ONLY",
+      "railwayDeploymentArtifact": false
+    },
+    "localFullUnit": {
+      "suitesPassed": 880,
+      "suitesFailed": 1,
+      "suitesSkipped": 1,
+      "testsPassed": 17508,
+      "testsFailed": 1,
+      "testsSkipped": 3,
+      "failure": "Existing runtime-diagnostics.route.test.ts exceeded its 20-second startup/import timeout under full local load",
+      "unchangedFocusedRerun": {
+        "testsPassed": 9,
+        "testsFailed": 0,
+        "firstCaseMs": 2420,
+        "timeoutOrCodeChanged": false
+      },
+      "classification": "Local environmental failure retained separately from successful hosted run"
+    },
+    "review": {
+      "reviewedHead": "abe8f9dd025e40460921426be87955ffd11f6e63",
+      "codeRabbitReviewId": 5525454313,
+      "reviewUrl": "https://github.com/pbjustin/Arcanos/pull/1544#pullrequestreview-5525454313",
+      "validFindings": [
+        {
+          "kind": "cleanup durability",
+          "sourceCommentId": 6165768734,
+          "url": "https://github.com/pbjustin/Arcanos/pull/1544#issuecomment-6165768734",
+          "finding": "Receipt resource bindings existed only in memory; interruption after service deletion could prevent owner-bound cleanup resumption",
+          "status": "Being fixed in successor; not final-head review clearance"
+        },
+        {
+          "kind": "preview admission diagnostic",
+          "sourceCommentId": 4276853898,
+          "url": "https://github.com/pbjustin/Arcanos/pull/1544#discussion_r4276853898",
+          "finding": "Admission catch collapsed recognized fixed safe error codes into generic failure",
+          "status": "Being fixed in successor; not final-head review clearance"
+        }
+      ],
+      "finalHeadCodeReview": "PENDING_SUCCESSOR_REVIEW"
+    },
+    "uniqueTotalsCombined": false
+  },
+  "localCredentialCleanup": {
+    "result": "NOT_EXECUTED_POLICY_REJECTED",
+    "files": [
+      "extension-owned-preview-secrets.json",
+      "stage-owned-variables.variables.json"
+    ],
+    "state": "Two raw purpose-credential input files remain in the external evidence directory under existing protected current-user ACLs",
+    "deletionExecuted": false,
+    "retryAttempted": false,
+    "productionCredentialsTouched": false,
+    "receipt": "extension-local-credential-cleanup-blocker.json"
+  },
+  "latestRecordedSecretScan": {
+    "collectedAt": "2026-10-14T22:01:41.662Z",
+    "sourceCommit": "abe8f9dd025e40460921426be87955ffd11f6e63",
+    "status": "NO_UNEXPECTED_SECRET_MATCH",
+    "scannedFileCount": 235,
+    "unexpectedMatchCount": 0,
+    "scanManifestSha256": "0382ed81ab8646d6d6ef29a00db34eba12544c6e099fa2fdf9e2f5489fe5700f",
+    "receipt": "extension-final-secret-scan-receipt.json",
+    "limit": "Historical exact-value scan at its collection timestamp; does not cover later outputs automatically"
+  }
 }

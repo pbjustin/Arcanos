@@ -1,12 +1,16 @@
 import { EventEmitter } from 'node:events';
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { PassThrough } from 'node:stream';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import {
   bindSelfHealPreviewArtifact, buildSelfHealPreviewApplicationEnvironment, buildSelfHealPreviewFixtureEnvironment,
   preflightSelfHealPreviewDatabase, resolveSelfHealPreviewProfile,
-  runSelfHealPreviewSupervisor,
+  runSelfHealPreviewSupervisor, SelfHealPreviewError,
 } from '../scripts/railway-self-heal-preview-profile.mjs';
+import { resolveSelfHealPreviewFailureCode } from '../scripts/railway-backstage-heavy-proof-supervisor.mjs';
+import { verifySelfHealPreviewArtifact } from '../scripts/self-heal-preview-artifact.mjs';
 
 const NOW = Date.parse('2026-10-14T16:00:00.000Z');
 const IDS = { project: '11111111-1111-4111-8111-111111111111', environment: '22222222-2222-4222-8222-222222222222',
@@ -71,6 +75,48 @@ class Child extends EventEmitter {
 afterEach(() => { jest.useRealTimers(); });
 
 describe('opt-in self-heal profile of the existing heavy preview supervisor', () => {
+  it.each([
+    ['profile validation', ['--self-heal-preview-v1'], {}, 'SELF_HEAL_PREVIEW_PROFILE_INVALID'],
+    ['target validation', ['--self-heal-preview-v1'], { ARCANOS_SELF_HEAL_PREVIEW_PROFILE: 'worker-coordinator-v1' }, 'BACKSTAGE_HEAVY_PROOF_TARGET_INVALID'],
+    ['legacy target validation', [], {}, 'BACKSTAGE_HEAVY_PROOF_TARGET_INVALID'],
+  ])('retains the fixed %s diagnostic through the literal CLI entry point', (_label, args, env, expected) => {
+    // No inherited credentials or valid target: every child fails validation
+    // before artifact/database work or application/provider child creation.
+    const child = spawnSync(process.execPath, [fileURLToPath(new URL('../scripts/railway-backstage-heavy-proof-supervisor.mjs', import.meta.url)), ...args], {
+      env: { ARCANOS_PROCESS_KIND: 'worker', ...env }, encoding: 'utf8',
+      timeout: 5_000, maxBuffer: 64 * 1024, windowsHide: true,
+    });
+    expect(child.error).toBeUndefined();
+    expect(child.status).toBe(1);
+    expect(child.stdout).toBe('');
+    expect(child.stderr).toBe(`${expected}\n`);
+  });
+  it('retains the real artifact verifier diagnostic before database or child startup', async () => {
+    const db = database(); const spawnImpl = jest.fn();
+    const error = await runSelfHealPreviewSupervisor('worker', environment(), {
+      ...db, now: () => NOW, spawnImpl,
+      // A file cannot contain an artifact tree: fail independently of whether
+      // this checkout happens to have a generated artifact receipt.
+      verifyArtifact: () => verifySelfHealPreviewArtifact({
+        sourceSha: ARTIFACT.sourceSha, rootPath: fileURLToPath(new URL('../package.json', import.meta.url)),
+      }),
+    }).catch(error => error);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(SelfHealPreviewError);
+    await expect(resolveSelfHealPreviewFailureCode(error)).resolves.toBe('SELF_HEAL_PREVIEW_ARTIFACT_INVALID');
+    expect(db.client.connect).not.toHaveBeenCalled(); expect(spawnImpl).not.toHaveBeenCalled();
+  });
+  it.each([
+    new Error('postgresql://sensitive.invalid/password'),
+    new Error('SELF_HEAL_PREVIEW_ARTIFACT_INVALID token=sensitive'),
+    new SelfHealPreviewError('SELF_HEAL_PREVIEW_UNKNOWN_SENSITIVE_PAYLOAD'),
+    new Error('SELF_HEAL_PREVIEW_PROFILE_INVALID'),
+    new Error('BACKSTAGE_HEAVY_PROOF_TARGET_INVALID'),
+    { name: 'SelfHealPreviewError', message: 'SELF_HEAL_PREVIEW_PROFILE_INVALID' },
+    { name: 'Error', message: 'SELF_HEAL_PREVIEW_ARTIFACT_INVALID' },
+  ])('redacts unknown, decorated or forged failure diagnostics %#', async error => {
+    await expect(resolveSelfHealPreviewFailureCode(error)).resolves.toBe('SELF_HEAL_PREVIEW_FAILED');
+  });
   it('keeps the exact opt-in start command outside all existing Railway configuration', () => {
     expect(JSON.parse(readFileSync(new URL('../railway.self-heal-preview.json', import.meta.url), 'utf8'))).toEqual({
       $schema: 'https://railway.app/railway.schema.json', build: { builder: 'DOCKERFILE', dockerfilePath: 'Dockerfile' }, deploy: {

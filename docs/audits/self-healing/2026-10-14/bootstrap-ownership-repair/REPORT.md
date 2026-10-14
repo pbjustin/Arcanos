@@ -1161,6 +1161,27 @@ and refused deletion; its API fallback is read-only inventory only. Sixty
 deterministic tests cover ordering, retained metadata, global/instance ID
 confusion, partial retries, ownership drift, refusal and bounded waits.
 
+The later final-head review of `abe8f9dd` identified an additional reliability
+gap: an original unbound receipt could lose its in-memory resource identities
+after interruption between service and volume deletion. The successor repair
+persists a fixed `<receipt-file>.cleanup-resources.json` companion before any
+destructive call, retaining the original closed identity, source and lease.
+Exclusive creation and a flushed write precede mutation; an existing companion
+must match, and no authority is renewed. Restart and post-watchdog reloads recover
+the same bindings for detached volumes. Direct callers without durable storage
+or a prebound receipt fail before deletion. The interruption/retry regression
+uses a real temporary companion and synthetic Railway operations; it is not
+deployed crash evidence. The actual retained-resource cleanup remains blocked
+by the separate approval rejection below.
+
+The final companion suite passes 83 cases on Windows, with one explicitly
+POSIX-only symlink case skipped locally for hosted Linux execution. An independent
+source review found no remaining code blocker. The diagnostic
+selection passes 101 tests across three suites after its original precise-code
+failure was reproduced. The combined root rerun passes 184 tests across four
+suites with the same one Windows-skipped POSIX case. Successor CI supplies the
+complete final-head matrix.
+
 The user explicitly approved permanent removal of these four services and two
 volumes. A fresh ownership attestation passed, but automatic approval review
 again rejected the first service deletion, reporting: "Cancelled — the user did
@@ -1216,6 +1237,15 @@ Existing lifecycle fixtures require cleanup failures to reject without masking
 an earlier runtime failure. Final review completion and thread status are in
 the exact-head PR handoff.
 
+The [full review at `abe8f9dd`](https://github.com/pbjustin/Arcanos/pull/1544#pullrequestreview-5525454313)
+also requested [safe startup diagnostics](https://github.com/pbjustin/Arcanos/pull/1544#discussion_r4276853898).
+The supervisor now preserves only fixed recognized profile, target and artifact
+failure codes; arbitrary errors remain generic and sensitive text is not copied.
+Focused regressions cover both precise known failures and unknown-error redaction.
+The companion-binding reliability concern came from the review's main summary
+and is repaired as described above. Successor CI/review and exact final SHA are
+recorded in the terminal handoff.
+
 At `18ac0ad0`, terminal CI/CD, PR CI and documentation checks passed. Unit tests:
 924 suites, 18,366 passed, 191 skipped. Integration: 43 suites, 878 passed,
 186 skipped. Coverage: 94.35% lines/statements, 87.17% branches, 96.4% functions;
@@ -1223,16 +1253,32 @@ Codecov patch **85.26%**, above its 80% target. Hosted PostgreSQL 18, Redis,
 Windows/cross-platform, security, Docker and Railway validation passed. These
 figures apply to that earlier head, not the successor repair commit.
 
-The final repair selection passed **280 tests across six suites**, including
+At `abe8f9dd`, CI/CD, PR CI, docs and required `All Checks Complete` subsequently
+passed, with 18,385 root tests passed and 191 skipped, 878 integration tests passed
+and 186 skipped, 85.26% Codecov patch coverage and the same aggregate coverage
+percentages. Hosted Docker verified 2,704 files with digest
+`061600f3211264f8b86ede0a04c27513769d2cc3e5ed3948385baf3033e1c4a2`;
+its GitHub merge checkout tree matched the PR head, and it is still CI-only.
+These checks also precede the final companion/diagnostic repair.
+
+The supported local `test:unit` run at `abe8f9dd` exited 1: 880 suites passed,
+one failed and one skipped; 17,508 tests passed, one failed and three skipped.
+The sole failure was an unchanged runtime-diagnostics app-import/startup test
+exceeding its existing 20-second timeout. Its unchanged exact-file rerun passed
+9/9 with the first case taking 2.4 seconds. Hosted PR CI and CI/CD passed that
+same suite in 15.457 and 18.716 seconds respectively. No timeout or assertion was
+weakened, and the local failure remains preserved rather than folded into a pass.
+
+The earlier `abe8f9dd` repair selection passed **280 tests across six suites**, including
 60 cleanup tests. An initial command named a nonexistent lifecycle file and
 failed with `ENOENT` while its other 272 tests passed; the corrected exact-path
 rerun passed all six suites. A second command misspelled the integrity test
 filename; its correct-path rerun is recorded separately from the native-boundary
-suite. Both original invocation failures are preserved. The final commit's
+suite. Both original invocation failures are preserved. That batch's
 first type-check also correctly rejected the changed launcher semantic digest;
 the reviewed entry-file pin was advanced for the preview-only alias check,
 preserving the import-boundary guard and its negative mutation tests.
-The final commit's
+The successor's
 type-check, lint, production build, documentation/index and Railway static checks
 are recorded with its terminal hosted validation in the handoff. Local Docker
 and PostgreSQL executables were unavailable; hosted fixtures supply that evidence.

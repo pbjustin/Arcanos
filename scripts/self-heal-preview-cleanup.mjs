@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /** Receipt-bound cleanup/watchdog for one disposable self-healing preview. */
 import { execFile } from 'node:child_process';
-import { lstatSync, readFileSync, realpathSync } from 'node:fs';
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, readFileSync, readSync, realpathSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
@@ -197,6 +197,101 @@ export function readSelfHealPreviewCleanupReceipt(path) {
   }
 }
 
+function sameBaseReceipt(expected, observed) {
+  return RECEIPT_KEYS.every(key => expected[key] === observed[key]);
+}
+function bindingIdentity(resources) {
+  const byId = (left, right) => left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0;
+  return JSON.stringify({ services: resources.services.map(item => [item.id, item.name]).sort(byId),
+    volumes: resources.volumes.map(item => [item.id, item.name, item.serviceId, item.mountPath]).sort(byId) });
+}
+function validatedBoundReceipt(original, value, now) {
+  const bound = validateSelfHealPreviewCleanupReceipt(value, { now });
+  if (!bound.resources || !sameBaseReceipt(original, bound)
+    || (original.resources && bindingIdentity(original.resources) !== bindingIdentity(bound.resources))) fail('RESOURCE_COMPANION_MISMATCH');
+  return bound;
+}
+function resourceCompanionPath(receiptFile, original, now) {
+  const disk = validateSelfHealPreviewCleanupReceipt(readSelfHealPreviewCleanupReceipt(receiptFile), { now });
+  if (!sameBaseReceipt(original, disk)
+    || Object.hasOwn(original, 'resources') !== Object.hasOwn(disk, 'resources')
+    || (disk.resources && original.resources && bindingIdentity(disk.resources) !== bindingIdentity(original.resources))) fail('ORIGINAL_RECEIPT_CHANGED');
+  return `${realpathSync(receiptFile)}.cleanup-resources.json`;
+}
+function syncCompanionDirectory(path) {
+  // The file flush also works on Windows; Unix additionally supports flushing
+  // the directory entry before another cleanup may use the new authority.
+  if (process.platform !== 'win32') {
+    const directory = openSync(dirname(path), 'r');
+    try { fsyncSync(directory); } finally { closeSync(directory); }
+  }
+}
+function sameFile(left, right) { return left.dev === right.dev && left.ino === right.ino; }
+
+/** Reload only a closed companion beside the unchanged external owner receipt. */
+export function readSelfHealPreviewCleanupResourceReceipt(receiptFile, original, options = {}) {
+  const now = options.now ?? Date.now;
+  const owner = validateSelfHealPreviewCleanupReceipt(original, { now });
+  const path = resourceCompanionPath(receiptFile, owner, now);
+  let before;
+  try { before = lstatSync(path); }
+  catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    fail('RESOURCE_COMPANION_INVALID');
+  }
+  let descriptor;
+  try {
+    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.size > 16_384) fail('RESOURCE_COMPANION_INVALID');
+    descriptor = openSync(path, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
+    const opened = fstatSync(descriptor);
+    if (!opened.isFile() || opened.nlink !== 1 || opened.size > 16_384 || !sameFile(before, opened)) fail('RESOURCE_COMPANION_INVALID');
+    const bytes = Buffer.alloc(16_385);
+    const length = readSync(descriptor, bytes, 0, bytes.length, 0);
+    if (length > 16_384) fail('RESOURCE_COMPANION_INVALID');
+    const bound = validatedBoundReceipt(owner, JSON.parse(bytes.subarray(0, length).toString('utf8')), now);
+    // Another process may observe a complete exclusive write before its writer
+    // flushes it. Flush this same validated descriptor before accepting it.
+    fsyncSync(descriptor); syncCompanionDirectory(path);
+    const after = lstatSync(path); const final = fstatSync(descriptor);
+    if (!after.isFile() || after.isSymbolicLink() || after.nlink !== 1 || final.nlink !== 1
+      || !sameFile(after, opened) || !sameFile(final, opened) || final.size !== length) fail('RESOURCE_COMPANION_INVALID');
+    resourceCompanionPath(receiptFile, owner, now);
+    return bound;
+  }
+  catch (error) {
+    if (error instanceof SelfHealPreviewCleanupError && ['SELF_HEAL_PREVIEW_CLEANUP_RESOURCE_COMPANION_MISMATCH',
+      'SELF_HEAL_PREVIEW_CLEANUP_ORIGINAL_RECEIPT_CHANGED'].includes(error.message)) throw error;
+    fail('RESOURCE_COMPANION_INVALID');
+  } finally { if (descriptor !== undefined) closeSync(descriptor); }
+}
+
+/** Persist validated resource authority before the first destructive operation. */
+export function persistSelfHealPreviewCleanupResourceReceipt(receiptFile, value, options = {}) {
+  const now = options.now ?? Date.now;
+  const original = validateSelfHealPreviewCleanupReceipt(readSelfHealPreviewCleanupReceipt(receiptFile), { now });
+  const bound = validatedBoundReceipt(original, value, now);
+  const path = resourceCompanionPath(receiptFile, original, now);
+  let descriptor;
+  try {
+    try { descriptor = openSync(path, 'wx', 0o600); }
+    catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+      const existing = readSelfHealPreviewCleanupResourceReceipt(receiptFile, original, { now });
+      if (!existing || bindingIdentity(existing.resources) !== bindingIdentity(bound.resources)) fail('RESOURCE_COMPANION_MISMATCH');
+      return existing;
+    }
+    writeFileSync(descriptor, `${JSON.stringify(bound)}\n`, 'utf8');
+    fsyncSync(descriptor); closeSync(descriptor); descriptor = undefined;
+    syncCompanionDirectory(path);
+    const stored = readSelfHealPreviewCleanupResourceReceipt(receiptFile, original, { now });
+    if (!stored || bindingIdentity(stored.resources) !== bindingIdentity(bound.resources)) fail('RESOURCE_COMPANION_MISMATCH');
+    return stored;
+  } catch (error) {
+    if (error instanceof SelfHealPreviewCleanupError) throw error;
+    fail('RESOURCE_COMPANION_WRITE_FAILED');
+  } finally { if (descriptor !== undefined) closeSync(descriptor); }
+}
+
 async function cli(args, options, timeout = CLI_TIMEOUT_MS, json = true) {
   try {
     const env = options.env ?? process.env;
@@ -271,8 +366,24 @@ export async function runSelfHealPreviewCleanup(config, options = {}) {
   };
   if (!config.execute) return emit('DRY_RUN');
   try {
+    const loadResources = options.loadResourceReceipt ?? (config.receiptFile
+      ? () => readSelfHealPreviewCleanupResourceReceipt(config.receiptFile, receipt, { now }) : null);
+    const persistResources = options.persistResourceReceipt ?? (config.receiptFile
+      ? bound => persistSelfHealPreviewCleanupResourceReceipt(config.receiptFile, bound, { now }) : null);
+    let authority = receipt;
+    let companionSeen = false;
+    const reloadResources = async () => {
+      const stored = await loadResources?.(receipt);
+      if (stored !== null && stored !== undefined) {
+        authority = validatedBoundReceipt(receipt, stored, now); companionSeen = true;
+      } else {
+        if (companionSeen) fail('RESOURCE_COMPANION_MISSING');
+        authority = receipt;
+      }
+    };
+    await reloadResources();
     let status = await readOwnedProject(receipt, options);
-    if (status !== null) cleanupInventory(status, receipt, { now });
+    if (status !== null) cleanupInventory(status, authority, { now });
     if (config.watchdog) {
       emit('WATCHDOG_ARMED');
       const expires = Date.parse(receipt.expiresAt);
@@ -282,6 +393,7 @@ export async function runSelfHealPreviewCleanup(config, options = {}) {
         await wait(Math.min(30_000, expires - now()));
       }
     }
+    await reloadResources();
     status = await readOwnedProject(receipt, options);
     const finishAbsent = () => {
       Object.assign(output, { resourceAbsenceVerified: true, projectAbsenceVerified: true,
@@ -290,8 +402,15 @@ export async function runSelfHealPreviewCleanup(config, options = {}) {
       return emit('DELETED');
     };
     if (status === null) return finishAbsent();
-    let inventory = cleanupInventory(status, receipt, { now });
-    const bindings = inventory.bindings;
+    let inventory = cleanupInventory(status, authority, { now });
+    if (!authority.resources && !noResources(inventory)) {
+      if (typeof persistResources !== 'function') fail('DURABLE_RESOURCE_RECEIPT_REQUIRED');
+      const requested = validateSelfHealPreviewCleanupReceipt({ ...receipt, resources: inventory.bindings }, { now });
+      const stored = validatedBoundReceipt(receipt, await persistResources(requested), now);
+      if (bindingIdentity(stored.resources) !== bindingIdentity(requested.resources)) fail('RESOURCE_COMPANION_MISMATCH');
+      authority = stored; emit('RESOURCE_RECEIPT_DURABLE');
+    }
+    const bindings = authority.resources ?? inventory.bindings;
     Object.assign(output, inventory.counts, { resources: bindings,
       projectMetadataRetained: inventory.scheduledDeletionAt !== null,
       scheduledDeletionAt: inventory.scheduledDeletionAt }); emit('OWNERSHIP_RECHECKED');

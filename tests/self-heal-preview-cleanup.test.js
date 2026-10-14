@@ -1,10 +1,11 @@
-import { mkdtempSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, linkSync, mkdtempSync, openSync, readFileSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import {
   attestSelfHealPreviewCleanupTarget, parseSelfHealPreviewCleanupArgs,
-  readSelfHealPreviewCleanupReceipt, runSelfHealPreviewCleanup,
+  persistSelfHealPreviewCleanupResourceReceipt, readSelfHealPreviewCleanupReceipt,
+  readSelfHealPreviewCleanupResourceReceipt, runSelfHealPreviewCleanup,
   validateSelfHealPreviewCleanupReceipt,
 } from '../scripts/self-heal-preview-cleanup.mjs';
 
@@ -87,6 +88,7 @@ function harness(options = {}) {
   });
   const sleep = jest.fn(async ms => { if (!options.stalledClock) clockMs += ms; });
   return { command, sleep, events, now: () => clockMs,
+    ...(options.persistence === false ? {} : { persistResourceReceipt: jest.fn(async value => structuredClone(value)) }),
     env: { PATH: '/fixture/bin', RAILWAY_TOKEN: 'fixture-management-secret', OPENAI_API_KEY: 'mock-must-be-stripped' },
     invocation: { executable: 'railway-fixture', argsPrefix: [] }, onReceipt: event => events.push(event),
     current: () => current };
@@ -106,7 +108,12 @@ function temporaryReceipt(value) {
   tempFiles.push({ path, directory }); return path;
 }
 afterEach(() => {
-  for (const { path, directory } of tempFiles.splice(0)) { unlinkSync(path); rmdirSync(directory); }
+  for (const { path, directory } of tempFiles.splice(0)) {
+    for (const target of [`${path}.cleanup-resources.json`, `${path}.linked.json`, path]) {
+      try { unlinkSync(target); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    }
+    rmdirSync(directory);
+  }
 });
 
 describe('receipt-bound self-heal preview cleanup and fixed-expiry watchdog', () => {
@@ -239,6 +246,174 @@ describe('receipt-bound self-heal preview cleanup and fixed-expiry watchdog', ()
     const h = harness({ initialStatus: current });
     await expect(runSelfHealPreviewCleanup(execute(), h)).rejects.toThrow('SELF_HEAL_PREVIEW_CLEANUP_UNBOUND_VOLUME');
     expect(h.command.mock.calls.some(call => isMutation(call[1]))).toBe(false);
+  });
+  it('requires durable persistence before an unbound pure caller can delete any resource', async () => {
+    const h = harness({ persistence: false });
+    await expect(runSelfHealPreviewCleanup(execute(), h)).rejects.toThrow('SELF_HEAL_PREVIEW_CLEANUP_DURABLE_RESOURCE_RECEIPT_REQUIRED');
+    expect(h.command.mock.calls.some(call => isMutation(call[1]))).toBe(false);
+  });
+  it.each([
+    value => ({ ...value, sourceSha: 'b'.repeat(40) }),
+    value => ({ ...value, expiresAt: '2026-10-14T17:01:00.000Z' }),
+    value => ({ ...value, resources: { ...value.resources, volumes: [] } }),
+    () => undefined,
+  ])('validates durable callback acknowledgement %# before any destructive command', async response => {
+    const h = harness(); h.persistResourceReceipt.mockImplementation(async value => response(value));
+    await expect(runSelfHealPreviewCleanup(execute(), h)).rejects.toThrow(/^SELF_HEAL_PREVIEW_CLEANUP_/u);
+    expect(h.command.mock.calls.some(call => isMutation(call[1]))).toBe(false);
+  });
+  it('fails closed when durable persistence fails and does not reflect callback diagnostics', async () => {
+    const h = harness(); h.persistResourceReceipt.mockRejectedValue(new Error('confidential-filesystem-marker'));
+    const error = await runSelfHealPreviewCleanup(execute(), h).catch(error => error);
+    expect(error.message).toBe('SELF_HEAL_PREVIEW_CLEANUP_FAILED');
+    expect(JSON.stringify(error.receipt)).not.toContain('confidential-filesystem-marker');
+    expect(h.command.mock.calls.some(call => isMutation(call[1]))).toBe(false);
+  });
+  it('awaits durable persistence acknowledgement before issuing the first destructive command', async () => {
+    const h = harness(); let acknowledge; let entered;
+    const waiting = new Promise(resolve => { entered = resolve; });
+    h.persistResourceReceipt.mockImplementation(value => new Promise(resolve => {
+      acknowledge = () => resolve(value); entered();
+    }));
+    const operation = runSelfHealPreviewCleanup(execute(), h);
+    await waiting; expect(h.command.mock.calls.some(call => isMutation(call[1]))).toBe(false);
+    acknowledge(); expect((await operation).resourceAbsenceVerified).toBe(true);
+  });
+  it('persists before the first deletion and resumes detached volumes from the same original unbound file after interruption', async () => {
+    const original = receipt(); const path = temporaryReceipt(original); const companion = `${path}.cleanup-resources.json`;
+    const originalBytes = readFileSync(path, 'utf8');
+    const current = status(); current.services.edges.unshift(current.services.edges.splice(2, 1)[0]);
+    const originalBindings = { services: current.services.edges.map(({ node }) => ({ ...node })), volumes: boundResources().volumes };
+    const h = harness({ persistence: false, initialStatus: current }); const command = h.command; let interrupted = false;
+    h.command = jest.fn(async (...args) => {
+      if (interrupted) throw new Error('simulated-process-interruption');
+      if (isMutation(args[1])) expect(existsSync(companion)).toBe(true);
+      const result = await command(...args);
+      if (args[1][0] === 'service') interrupted = true;
+      return result;
+    });
+    const config = { ...execute(original), receiptFile: path };
+    await expect(runSelfHealPreviewCleanup(config, h)).rejects.toThrow('SELF_HEAL_PREVIEW_CLEANUP_CLI_FAILED');
+    const firstMutations = h.command.mock.calls.map(call => call[1]).filter(isMutation);
+    expect(firstMutations).toEqual([['service', 'delete', '--project', ID.project, '--environment', ID.environment, '--service', ID.postgres, '--yes', '--json']]);
+    expect(h.current().environments.edges[0].node.volumeInstances.edges[0].node.serviceId).toBeNull();
+    const companionBytes = readFileSync(companion, 'utf8');
+    expect(JSON.parse(companionBytes)).toEqual({ ...original, resources: originalBindings });
+    const resumed = harness({ persistence: false, initialStatus: structuredClone(h.current()) });
+    const result = await runSelfHealPreviewCleanup({ ...config, receipt: readSelfHealPreviewCleanupReceipt(path) }, resumed);
+    expect(result).toMatchObject({ status: 'RESOURCES_REMOVED_METADATA_RETAINED', resourceAbsenceVerified: true });
+    const mutations = resumed.command.mock.calls.map(call => call[1]).filter(isMutation);
+    expect(mutations.filter(args => args[0] === 'service').map(args => args[args.indexOf('--service') + 1]))
+      .toEqual([ID.web, ID.worker, ID.redis]);
+    expect(mutations.filter(args => args[0] === 'volume').map(args => args[args.indexOf('--volume') + 1]))
+      .toEqual([ID.pgVolume, ID.redisVolume]);
+    expect(mutations.every(args => args.includes(ID.project))).toBe(true);
+    expect(JSON.stringify(mutations)).not.toContain(ID.pgVolumeInstance);
+    expect(readFileSync(path, 'utf8')).toBe(originalBytes); expect(readFileSync(companion, 'utf8')).toBe(companionBytes);
+    expect(resumed.events.some(event => event.status === 'RESOURCE_RECEIPT_DURABLE')).toBe(false);
+  });
+  it('captures newly provisioned owned resources durably at a watchdog deadline while retaining the original lease', async () => {
+    const original = receipt({ expiresAt: '2026-10-14T16:00:01.000Z' }); const path = temporaryReceipt(original);
+    const companion = `${path}.cleanup-resources.json`; const h = harness({ persistence: false, initialStatus: status(true) });
+    const sleep = h.sleep; h.sleep = jest.fn(async ms => {
+      expect(h.events[0].status).toBe('WATCHDOG_ARMED'); expect(existsSync(companion)).toBe(false);
+      Object.assign(h.current(), status()); await sleep(ms);
+    });
+    const command = h.command; h.command = jest.fn(async (...args) => {
+      if (isMutation(args[1])) expect(existsSync(companion)).toBe(true);
+      return command(...args);
+    });
+    expect((await runSelfHealPreviewCleanup({ ...execute(original), receiptFile: path, watchdog: true }, h)).resourceAbsenceVerified).toBe(true);
+    expect(JSON.parse(readFileSync(companion, 'utf8'))).toEqual({ ...original, resources: boundResources() });
+    expect(h.now()).toBe(Date.parse(original.expiresAt));
+  });
+  it('reloads a matching companion at watchdog expiry before validating newly detached volumes', async () => {
+    const original = receipt({ expiresAt: '2026-10-14T16:00:01.000Z' }); const path = temporaryReceipt(original);
+    const h = harness({ persistence: false }); const sleep = h.sleep;
+    h.sleep = jest.fn(async ms => {
+      persistSelfHealPreviewCleanupResourceReceipt(path, { ...original, resources: boundResources() }, { now: h.now });
+      const current = h.current(); current.services.edges = []; const env = current.environments.edges[0].node;
+      env.serviceInstances.edges = []; for (const { node } of env.volumeInstances.edges) node.serviceId = null;
+      await sleep(ms);
+    });
+    expect((await runSelfHealPreviewCleanup({ ...execute(original), receiptFile: path, watchdog: true }, h)).resourceAbsenceVerified).toBe(true);
+    expect(h.command.mock.calls.map(call => call[1]).filter(isMutation).filter(args => args[0] === 'service')).toEqual([]);
+  });
+  it('fails closed if a previously admitted companion disappears while the watchdog waits', async () => {
+    const original = receipt({ expiresAt: '2026-10-14T16:00:01.000Z' }); const path = temporaryReceipt(original);
+    persistSelfHealPreviewCleanupResourceReceipt(path, { ...original, resources: boundResources() }, { now: () => NOW });
+    const h = harness({ persistence: false }); const sleep = h.sleep;
+    h.sleep = jest.fn(async ms => { unlinkSync(`${path}.cleanup-resources.json`); await sleep(ms); });
+    await expect(runSelfHealPreviewCleanup({ ...execute(original), receiptFile: path, watchdog: true }, h))
+      .rejects.toThrow('SELF_HEAL_PREVIEW_CLEANUP_RESOURCE_COMPANION_MISSING');
+    expect(h.command.mock.calls.some(call => isMutation(call[1]))).toBe(false);
+  });
+  it.each([
+    '{"partially-written":',
+    JSON.stringify({ ...receipt(), sourceSha: 'b'.repeat(40), resources: boundResources() }),
+    JSON.stringify({ ...receipt(), runId: 'another-owned-run', resources: boundResources() }),
+    JSON.stringify({ ...receipt(), expiresAt: '2026-10-14T17:01:00.000Z', resources: boundResources() }),
+    JSON.stringify({ ...receipt(), resources: { ...boundResources(), token: 'forbidden' } }),
+    JSON.stringify(receipt()),
+  ])('refuses malformed or foreign companion %# before CLI activity', async contents => {
+    const path = temporaryReceipt(receipt()); writeFileSync(`${path}.cleanup-resources.json`, contents);
+    const h = harness({ persistence: false });
+    await expect(runSelfHealPreviewCleanup({ ...execute(), receiptFile: path }, h)).rejects.toThrow(/^SELF_HEAL_PREVIEW_CLEANUP_RESOURCE_COMPANION_/u);
+    expect(h.command).not.toHaveBeenCalled(); expect(readFileSync(`${path}.cleanup-resources.json`, 'utf8')).toBe(contents);
+  });
+  it('accepts the same closed resource set in any API order without overwriting its original durable bytes', () => {
+    const original = receipt(); const path = temporaryReceipt(original); const resources = boundResources();
+    persistSelfHealPreviewCleanupResourceReceipt(path, { ...original, resources }, { now: () => NOW });
+    const companion = `${path}.cleanup-resources.json`; const before = readFileSync(companion, 'utf8');
+    const reordered = { services: [...resources.services].reverse(), volumes: [...resources.volumes].reverse() };
+    expect(persistSelfHealPreviewCleanupResourceReceipt(path, { ...original, resources: reordered }, { now: () => NOW }))
+      .toEqual({ ...original, resources });
+    expect(readFileSync(companion, 'utf8')).toBe(before);
+    const different = structuredClone(resources); different.volumes[0].id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    expect(() => persistSelfHealPreviewCleanupResourceReceipt(path, { ...original, resources: different }, { now: () => NOW }))
+      .toThrow('SELF_HEAL_PREVIEW_CLEANUP_RESOURCE_COMPANION_MISMATCH');
+    expect(readFileSync(companion, 'utf8')).toBe(before);
+  });
+  it('flushes and validates a complete companion even while its exclusive creator has not closed it', () => {
+    const original = receipt(); const path = temporaryReceipt(original); const value = { ...original, resources: boundResources() };
+    const descriptor = openSync(`${path}.cleanup-resources.json`, 'wx', 0o600);
+    try {
+      writeFileSync(descriptor, JSON.stringify(value), 'utf8');
+      expect(readSelfHealPreviewCleanupResourceReceipt(path, original, { now: () => NOW })).toEqual(value);
+    } finally { closeSync(descriptor); }
+  });
+  it('rejects a hardlinked companion instead of accepting shared mutable authority', async () => {
+    const path = temporaryReceipt(receipt()); const linked = `${path}.linked.json`;
+    writeFileSync(linked, JSON.stringify({ ...receipt(), resources: boundResources() })); linkSync(linked, `${path}.cleanup-resources.json`);
+    const h = harness({ persistence: false });
+    await expect(runSelfHealPreviewCleanup({ ...execute(), receiptFile: path }, h)).rejects.toThrow('SELF_HEAL_PREVIEW_CLEANUP_RESOURCE_COMPANION_INVALID');
+    expect(h.command).not.toHaveBeenCalled();
+  });
+  (process.platform === 'win32' ? it.skip : it)('rejects a symlink companion without following foreign authority', async () => {
+    const path = temporaryReceipt(receipt()); const linked = `${path}.linked.json`;
+    writeFileSync(linked, JSON.stringify({ ...receipt(), resources: boundResources() })); symlinkSync(linked, `${path}.cleanup-resources.json`);
+    const h = harness({ persistence: false });
+    await expect(runSelfHealPreviewCleanup({ ...execute(), receiptFile: path }, h)).rejects.toThrow('SELF_HEAL_PREVIEW_CLEANUP_RESOURCE_COMPANION_INVALID');
+    expect(h.command).not.toHaveBeenCalled();
+  });
+  it('does not renew or replace original owner identity from a companion or caller', async () => {
+    const original = receipt(); const path = temporaryReceipt(original);
+    persistSelfHealPreviewCleanupResourceReceipt(path, { ...original, resources: boundResources() }, { now: () => NOW });
+    writeFileSync(path, JSON.stringify({ ...original, sourceSha: 'b'.repeat(40) }));
+    const h = harness({ persistence: false });
+    await expect(runSelfHealPreviewCleanup({ ...execute(original), receiptFile: path }, h)).rejects.toThrow('SELF_HEAL_PREVIEW_CLEANUP_ORIGINAL_RECEIPT_CHANGED');
+    expect(h.command).not.toHaveBeenCalled();
+  });
+  it('rejects adding resource authority to the original owner file after admission', async () => {
+    const original = receipt(); const path = temporaryReceipt(original);
+    writeFileSync(path, JSON.stringify({ ...original, resources: boundResources() }));
+    const h = harness({ persistence: false });
+    await expect(runSelfHealPreviewCleanup({ ...execute(original), receiptFile: path }, h)).rejects.toThrow('SELF_HEAL_PREVIEW_CLEANUP_ORIGINAL_RECEIPT_CHANGED');
+    expect(h.command).not.toHaveBeenCalled();
+  });
+  it('keeps prebound receipt callers valid without requiring a separate persistence callback', async () => {
+    const h = harness({ persistence: false });
+    expect((await runSelfHealPreviewCleanup(execute(receipt({ resources: boundResources() })), h)).resourceAbsenceVerified).toBe(true);
   });
   it('refuses a foreign global volume instead of adopting it during partial cleanup', async () => {
     const current = status(); current.volumes.edges[0].node.id = ID.web;

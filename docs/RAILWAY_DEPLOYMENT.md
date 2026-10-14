@@ -1343,6 +1343,18 @@ global volume IDs. Use version 1, owner `pbjustin`, repository
 It rejects canonical/Live PR IDs, foreign resources and incomplete inventory;
 an expired receipt retains authority to delete its same owned target.
 
+Before its first destructive operation, the CLI persists derived resource
+bindings in the fixed companion `<receipt-file>.cleanup-resources.json` when the
+original receipt is unbound. The companion repeats the original closed identity,
+source and lease fields plus exact resources; exclusive creation and a flushed
+write precede deletion. Existing companions must match and are never overwritten
+or used to renew authority. Keep the companion with the original receipt for
+interruption/retry recovery, including detached volumes. The watcher reloads
+only these bound resources after its original deadline; the original identity
+and deadline remain fixed. A missing persistence capability, malformed or
+mismatched companion fails before destructive operations. Empty-project arming
+still works before provisioning.
+
 ```text
 node scripts/self-heal-preview-cleanup.mjs --receipt-file <absolute-path-outside-checkout>
 node scripts/self-heal-preview-cleanup.mjs --receipt-file <absolute-path-outside-checkout> --execute --allow-delete-owned-project --watchdog
