@@ -1207,8 +1207,13 @@ Before attaching source or starting applications:
    the four fresh services, private data references, volumes, one-replica
    limits and all role-specific settings before source attachment. The cleanup
    predicate also permits a partial version of this exact topology.
-4. Pin both application services to `/railway.self-heal-preview.json`, which
-   selects the Dockerfile and the supervisor's explicit profile argument.
+4. On existing services that still support Config as Code, pin both application
+   services to `/railway.self-heal-preview.json`. New Railway services cannot
+   opt into that retired setting; stage the equivalent service configuration
+   instead: `build.builder=DOCKERFILE`, `build.dockerfilePath=Dockerfile`, and
+   `deploy.startCommand=node scripts/railway-backstage-heavy-proof-supervisor.mjs --self-heal-preview-v1`.
+   Verify the effective configuration rather than assuming the repository file
+   is read. See Railway's [IaC versus Config as Code](https://docs.railway.com/infrastructure-as-code#iac-vs-config-as-code).
    Set Railway healthcheck `/readyz`, restart policy `NEVER`, zero retries,
    zero deployment overlap and a 60-second drain interval. This profile uses
    its own ownership preflight: do not inherit the original heavy mode's
@@ -1218,8 +1223,12 @@ Before attaching source or starting applications:
    `ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA` with the same admitted profile
    and exact source SHA as runtime. Attach `pbjustin/Arcanos` only with the
    explicit commit pin after all isolation/configuration checks; source
-   attachment can immediately build/deploy. Reconfirm automatic branch pushes
-   cannot deploy and attest the returned deployment source/manifest.
+   live attachment can immediately build/deploy. Use staged source attachment
+   with an explicit environment and SHA for admission preflight. Apply reviewed
+   staged configuration with `environmentPatchCommitStaged(skipDeploys: true)`,
+   verify zero deployments, then deploy each role explicitly at the pinned SHA.
+   Reconfirm automatic branch pushes cannot deploy and attest the returned
+   deployment source/manifest.
 6. Deploy Worker first, then web at the same SHA. The Worker must first create
    an ownership receipt in an otherwise empty database; normal Worker startup
    creates application schema. Resume requires the identical run, source,

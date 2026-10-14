@@ -1504,7 +1504,9 @@ consume the coordinator's cooldown and per-diagnosis attempt budget.
 
 These settings belong only to the existing heavy supervisor's explicit
 `--self-heal-preview-v1` mode and
-[`railway.self-heal-preview.json`](../railway.self-heal-preview.json). The
+[`railway.self-heal-preview.json`](../railway.self-heal-preview.json), or its
+explicit staged service configuration on new Railway services that no longer
+accept Config as Code. The
 [acceptance runbook](RAILWAY_DEPLOYMENT.md#disposable-self-healing-worker-acceptance-profile)
 defines the fresh four-service topology, exact-source deployment, private data,
 process inspection and external cleanup. Their absence leaves normal startup
