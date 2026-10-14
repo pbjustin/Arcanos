@@ -39,7 +39,7 @@ const DEFAULT_RAILWAY_HOST = '0.0.0.0';
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
 
 let httpServer: Server | null = null;
-let shutdownStarted = false;
+let shutdownPromise: Promise<void> | null = null;
 let fullRuntimeStarted = false;
 let unsubscribeRedisLifecycle: (() => void) | null = null;
 let runtimeInitializationPromise: Promise<void> | null = null;
@@ -172,58 +172,64 @@ function closeHttpServer(server: Server): Promise<void> {
   });
 }
 
-async function stopDependencyLifecycles(): Promise<void> {
+async function stopDependencyLifecycles(deadline: Promise<never>): Promise<void> {
   unsubscribeRedisLifecycle?.();
   unsubscribeRedisLifecycle = null;
   stopPublicProviderRateLimitReadinessTracker();
-  await activeStopTelemetryPersistence();
-  await activeStopRedisLifecycle();
-}
-
-async function closeRemainingResources(): Promise<void> {
-  await runtimeInitializationPromise?.catch(() => undefined);
-  await activeCloseDatabase();
+  await Promise.race([activeStopTelemetryPersistence(), deadline]);
+  await Promise.race([activeStopRedisLifecycle(), deadline]);
 }
 
 /** Gracefully stop the listener and its dependency lifecycle exactly once. */
-export async function shutdownServer(signal: NodeJS.Signals): Promise<void> {
-  if (shutdownStarted) {
-    return;
-  }
+export function shutdownServer(signal: NodeJS.Signals): Promise<void> {
+  shutdownPromise ??= performShutdown(signal);
+  return shutdownPromise;
+}
 
-  shutdownStarted = true;
+async function performShutdown(signal: NodeJS.Signals): Promise<void> {
   markStartupShutdown();
-  const coordinatorDrain = activeStopSelfHealing();
   const shutdownTimeoutMs = resolveShutdownTimeoutMs();
   console.log(`[SHUTDOWN] Received ${signal}; closing HTTP server and resources.`);
 
-  const timeoutHandle = setTimeout(() => {
-    console.error(`[SHUTDOWN] Timed out after ${shutdownTimeoutMs}ms; forcing process exit.`);
-    httpServer?.closeAllConnections?.();
-    process.exit(1);
-  }, shutdownTimeoutMs);
+  let timeoutHandle!: ReturnType<typeof setTimeout>;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timeoutHandle = setTimeout(() => {
+      console.error(`[SHUTDOWN] Timed out after ${shutdownTimeoutMs}ms; forcing process exit.`);
+      reject(new Error('SHUTDOWN_TIMEOUT'));
+    }, shutdownTimeoutMs);
+  });
   timeoutHandle.unref?.();
 
   try {
-    let listenerDrainPromise = Promise.resolve();
-    if (httpServer) {
-      httpServer.closeIdleConnections?.();
-      listenerDrainPromise = closeHttpServer(httpServer);
-    }
-
-    await Promise.all([
+    // Capture synchronous drain failures as rejections so both admissions are
+    // stopped and every active drain stays observed until completion/deadline.
+    const coordinatorDrain = (async () => { await activeStopSelfHealing(); })();
+    const listenerDrainPromise = (async () => {
+      if (httpServer) {
+        httpServer.closeIdleConnections?.();
+        await closeHttpServer(httpServer);
+      }
+    })();
+    const drainResults = await Promise.race([Promise.allSettled([
       listenerDrainPromise,
       coordinatorDrain,
-      stopDependencyLifecycles()
-    ]);
-    await closeRemainingResources();
-    clearTimeout(timeoutHandle);
+      runtimeInitializationPromise
+    ]), deadline]);
+    // A failed drain cannot certify that its admitted operations released the
+    // dependencies. Force exit without racing their teardown against that work.
+    const failedDrain = drainResults.find(result => result.status === 'rejected');
+    if (failedDrain?.status === 'rejected') throw failedDrain.reason;
+
+    await stopDependencyLifecycles(deadline);
+    await Promise.race([activeCloseDatabase(), deadline]);
     console.log('[SHUTDOWN] Completed graceful shutdown.');
     process.exit(0);
   } catch (error) {
-    clearTimeout(timeoutHandle);
+    httpServer?.closeAllConnections?.();
     console.error('[SHUTDOWN] Graceful shutdown failed:', error);
     process.exit(1);
+  } finally {
+    clearTimeout(timeoutHandle);
   }
 }
 
