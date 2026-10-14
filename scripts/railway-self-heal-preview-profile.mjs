@@ -44,6 +44,11 @@ const APP_INPUT_NAMES = Object.freeze([
   'ARCANOS_JOB_READ_CAPABILITY_SECRET',
 ]);
 const ALLOWED_INPUT_NAMES = new Set(APP_INPUT_NAMES);
+const IMAGE_METADATA = new Map([
+  ['ARCANOS_WORKSPACE_ROOT', '/app'],
+  ['ARCANOS_PYTHON_RUNTIME_DIR', '/app/daemon-python'],
+  ['RAILWAY_CLI_BIN', '/usr/local/bin/railway-native'],
+]);
 const BENIGN_AMBIENT_NAMES = new Set([
   'PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'PWD', 'OLDPWD', 'SHLVL', '_',
   'HOSTNAME', 'LANG', 'LC_ALL', 'TZ', 'TERM', 'TMPDIR', 'TMP', 'TEMP',
@@ -90,6 +95,10 @@ export function resolveSelfHealPreviewProfile(processKind, env, options = {}) {
   if (env.PORT !== undefined && (!/^\d{4,5}$/u.test(env.PORT) || Number(env.PORT) < 1024 || Number(env.PORT) > 65535
     || env.PORT === CONTROL_PORT || env.PORT === '8766')) fail('PORT_INVALID');
   for (const name of Object.keys(env)) {
+    if (IMAGE_METADATA.has(name)) {
+      if (env[name] !== IMAGE_METADATA.get(name)) fail('IMAGE_METADATA_INVALID');
+      continue;
+    }
     if (ALLOWED_INPUT_NAMES.has(name) || BENIGN_AMBIENT_NAMES.has(name)) continue;
     if (SENSITIVE_NAME.test(name) || name.startsWith('ARCANOS_') || name.startsWith('RAILWAY_')
       || name.startsWith('JOB_') || name.startsWith('RUN_') || name.startsWith('BOOKER_')) fail('ENV_FORBIDDEN');

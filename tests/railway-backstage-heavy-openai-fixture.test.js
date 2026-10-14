@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import { request as httpRequest } from 'node:http';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { parseStructuredJson } from '@arcanos/openai';
 
 import {
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_ATTESTATION_PATH,
@@ -364,10 +365,10 @@ describe('bounded self-healing preview provider profile', () => {
       messages: [{ role: 'user', content: promptSentinel }],
     });
     expect(completion.choices[0].finish_reason).toBe('stop');
-    const structured = await sdk.responses.parse(responseBody({ text: { format: {
+    const structured = await sdk.responses.create(responseBody({ text: { format: {
       type: 'json_schema', ...TRINITY_STRUCTURED_REASONING_SCHEMA,
     } } }));
-    expect(structured.output_parsed).toMatchObject({ response_mode: 'answer',
+    expect(parseStructuredJson(structured)).toMatchObject({ response_mode: 'answer',
       reasoning_steps: [], final_answer: expect.stringContaining('Synthetic') });
     const receipt = await (await control({ command: 'inspect' })).json();
     expect(receipt).toMatchObject({ providerRequests: 4, completed: 4, inFlight: null });

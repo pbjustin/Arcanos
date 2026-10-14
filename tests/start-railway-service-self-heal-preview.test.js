@@ -115,6 +115,28 @@ describe('opt-in self-heal profile of the existing heavy preview supervisor', ()
     expect(fixture).not.toHaveProperty('DATABASE_URL'); expect(fixture).not.toHaveProperty('REDIS_URL');
     expect(fixture).not.toHaveProperty('OPENAI_API_KEY'); expect(fixture.ARCANOS_SELF_HEAL_PREVIEW_RUN_ID).toBe('proof-run-1544');
   });
+  it('accepts the exact Docker image metadata and strips it from both role environments', () => {
+    const metadata = { ARCANOS_WORKSPACE_ROOT: '/app', ARCANOS_PYTHON_RUNTIME_DIR: '/app/daemon-python',
+      RAILWAY_CLI_BIN: '/usr/local/bin/railway-native', PYTHON: 'python3' };
+    for (const role of ['worker', 'web']) {
+      const env = { ...environment(role), ...metadata };
+      const resolved = resolveSelfHealPreviewProfile(role, env, { now: () => NOW });
+      expect(resolved.proofTarget.processKind).toBe(role);
+      const child = buildSelfHealPreviewApplicationEnvironment(resolved, env);
+      for (const name of Object.keys(metadata)) expect(child).not.toHaveProperty(name);
+    }
+  });
+  it.each([
+    ['ARCANOS_WORKSPACE_ROOT', '/foreign'], ['ARCANOS_PYTHON_RUNTIME_DIR', '/foreign/daemon-python'],
+    ['RAILWAY_CLI_BIN', '/foreign/railway'],
+  ])('rejects altered image metadata %s before artifact verification, database access, or spawning', async (name, value) => {
+    const db = database(); const spawnImpl = jest.fn(); const verifyArtifact = jest.fn(async () => ARTIFACT);
+    await expect(runSelfHealPreviewSupervisor('worker', { ...environment(), [name]: value }, {
+      ...db, now: () => NOW, spawnImpl, verifyArtifact,
+    })).rejects.toThrow('SELF_HEAL_PREVIEW_IMAGE_METADATA_INVALID');
+    expect(db.client.connect).not.toHaveBeenCalled(); expect(verifyArtifact).not.toHaveBeenCalled();
+    expect(spawnImpl).not.toHaveBeenCalled();
+  });
   it('creates only a fixed fixture ownership receipt after an empty catalog and holds its lock', async () => {
     const db = database(); const guard = await preflightSelfHealPreviewDatabase(profile(), db);
     expect(guard.mode).toBe('fresh-owned-receipt'); expect(db.client.end).not.toHaveBeenCalled();
