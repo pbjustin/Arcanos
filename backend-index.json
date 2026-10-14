@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-12T21:10:45.628Z",
+  "generatedAt": "2026-10-14T03:34:20.436Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4279,6 +4279,9 @@
           "relativePath": "tests/fixtures/gaming-currentness/second-publisher.ts"
         },
         {
+          "relativePath": "tests/fixtures/gaming-source-acceptance.ts"
+        },
+        {
           "relativePath": "tests/fixtures/gamingClearCalibration.ts"
         },
         {
@@ -4649,6 +4652,15 @@
         },
         {
           "relativePath": "tests/gaming-skill-composition.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-source-acceptance-acquisition.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-source-acceptance-identity.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-source-acceptance-workflow.integration.test.ts"
         },
         {
           "relativePath": "tests/gaming-source-acquisition-preview-failure.test.ts"

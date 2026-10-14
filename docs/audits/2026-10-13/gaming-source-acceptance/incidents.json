@@ -1,0 +1,1401 @@
+{
+  "schema": "arcanos-gaming-source-incidents/v1",
+  "observedAt": "2026-10-14T02:16:08.473Z",
+  "baselineSha": "c8bb00ee000e3e188f17e1aa2b5e2893d0221fb8",
+  "scope": "Read-only existing production diagnostics. No live Gaming workflow or source acquisition was started.",
+  "sanitization": "Closed allowlist of stage statuses, numeric counts, rule identifiers, enums, timestamps and owner-provided workflow IDs. Raw logs, payloads, URLs, source bodies, request/trace IDs, and credentials are omitted.",
+  "collection": {
+    "command": "railway logs 20916344-c022-4524-b0ce-fa4ad06aea10 --project 7faf44e5-519c-4e73-8d7a-da9f389e6187 --environment fb583147-6c39-4343-9267-500f357d25ab --service c4ade025-3f13-4fca-9309-5d0dd81396fe --lines 500 --filter gaming --since 2026-10-14T01:50:00Z --until 2026-10-14T02:05:00Z --json",
+    "locallyFilteredWorkflowIds": [
+      "34e0a25e-4393-4fcf-8fd6-28a19d1f58b6",
+      "1486dd80-61f7-41cc-a75f-5e56c78c9e76"
+    ],
+    "correlatedEventCount": 36,
+    "warning": "Railway free-text filtering by workflow UUID returned zero even when nested context contained matches; use the gaming event filter and local exact context.workflowId matching."
+  },
+  "incidents": [
+    {
+      "incident": "A",
+      "workflowId": "34e0a25e-4393-4fcf-8fd6-28a19d1f58b6",
+      "game": "Elden Ring",
+      "deploymentId": "20916344-c022-4524-b0ce-fa4ad06aea10",
+      "candidates": [
+        {
+          "ordinal": 1,
+          "submittedIndex": 0,
+          "sourceLabel": "wiki.gg Samurai",
+          "labelProvenance": "User incident list matched to per-round submittedIndex and timestamp; production diagnostics omit source URLs.",
+          "timestamp": "2026-10-14T01:55:39.419Z",
+          "rejection": "GAME_MISMATCH",
+          "firstFailingStage": "identity",
+          "exactRule": "gaming.identity.distinct_body_scope",
+          "assessment": "UNRESOLVED_SOURCE_CLASSIFICATION",
+          "assessmentBasis": "Exact acquired title, headings, body, and registry match details were not logged. Rule and stage are confirmed, but article contamination or genuine conflicts cannot be decided from these metadata alone.",
+          "bodyAvailability": "UNAVAILABLE",
+          "contaminationAssessment": "UNRESOLVED_NO_ACQUIRED_BODY",
+          "completeness": "AMBIGUOUS_UNITS",
+          "acquisition": {
+            "stage": "extraction",
+            "policyVersion": "gaming-https-acquisition-v1",
+            "redirectCount": 0,
+            "failingHop": 0
+          },
+          "extraction": {
+            "policyVersion": "gaming-evidence-units/v1",
+            "strategies": [
+              "prose",
+              "html_table",
+              "html_list",
+              "html_definition",
+              "json_ld"
+            ],
+            "contentType": "text/html",
+            "receivedBytes": 15804,
+            "acceptedBytes": 67925,
+            "rawChars": 67881,
+            "extractedChars": 1339,
+            "unitKinds": [
+              "table_row"
+            ],
+            "selectedUnits": 3,
+            "completeUnits": 0,
+            "partialUnits": 0,
+            "ambiguousUnits": 3,
+            "truncationStages": [],
+            "subreasons": [
+              "ambiguous_field_mapping",
+              "incomplete_record",
+              "required_context_missing"
+            ],
+            "elapsedMs": 719,
+            "budgetOutcome": "within_budget"
+          },
+          "identity": {
+            "ruleId": "gaming.identity.distinct_body_scope",
+            "evidenceCategory": "body_scope"
+          },
+          "elapsedMs": 908,
+          "stages": {
+            "acquisition": {
+              "status": "passed",
+              "reasonCode": "SOURCE_ACQUIRED",
+              "diagnostic": {}
+            },
+            "applicability": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "extraction": {
+              "status": "passed",
+              "reasonCode": "EXTRACTION_INTACT",
+              "diagnostic": {
+                "extractedChars": 1339,
+                "completeRecords": 0,
+                "partialRecords": 0,
+                "ambiguousRecords": 3,
+                "excludedRecords": 0,
+                "excludedReferences": 0,
+                "truncated": false
+              }
+            },
+            "freshness": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "generation": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "identity": {
+              "status": "rejected",
+              "reasonCode": "GAME_MISMATCH",
+              "diagnostic": {
+                "identityRuleId": "gaming.identity.distinct_body_scope",
+                "identityCategory": "body_scope"
+              }
+            },
+            "provenance": {
+              "status": "passed",
+              "reasonCode": "PROVENANCE_ACQUIRED",
+              "diagnostic": {
+                "authority": "unknown"
+              }
+            },
+            "relevance": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "selection": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            }
+          },
+          "downstreamResult": "No accepted source artifact; no applicability/relevance/provenance selection or Trinity generation reached for this candidate.",
+          "exactRuleProvenance": "Observed context.identity.ruleId in production source diagnostic",
+          "sourceCode": "src/shared/gaming/gamingClearSource.ts"
+        },
+        {
+          "ordinal": 2,
+          "submittedIndex": 1,
+          "sourceLabel": "ESO Wiki Uchigatana",
+          "labelProvenance": "User incident list matched to per-round submittedIndex and timestamp; production diagnostics omit source URLs.",
+          "timestamp": "2026-10-14T01:55:40.379Z",
+          "rejection": "GAME_MISMATCH",
+          "firstFailingStage": "identity",
+          "exactRule": "gaming.identity.affirmative_body_scope_conflict",
+          "assessment": "UNRESOLVED_SOURCE_CLASSIFICATION",
+          "assessmentBasis": "Exact acquired title, headings, body, and registry match details were not logged. Rule and stage are confirmed, but article contamination or genuine conflicts cannot be decided from these metadata alone.",
+          "bodyAvailability": "UNAVAILABLE",
+          "contaminationAssessment": "UNRESOLVED_NO_ACQUIRED_BODY",
+          "completeness": "MIXED_WITH_COMPLETE_UNITS",
+          "acquisition": {
+            "stage": "extraction",
+            "policyVersion": "gaming-https-acquisition-v1",
+            "redirectCount": 0,
+            "failingHop": 0
+          },
+          "extraction": {
+            "policyVersion": "gaming-evidence-units/v1",
+            "strategies": [
+              "prose",
+              "html_table",
+              "html_list",
+              "html_definition",
+              "json_ld"
+            ],
+            "contentType": "text/html",
+            "receivedBytes": 17272,
+            "acceptedBytes": 79255,
+            "rawChars": 79250,
+            "extractedChars": 8360,
+            "unitKinds": [
+              "table_row"
+            ],
+            "selectedUnits": 49,
+            "completeUnits": 25,
+            "partialUnits": 10,
+            "ambiguousUnits": 14,
+            "truncationStages": [],
+            "subreasons": [
+              "ambiguous_field_mapping",
+              "incomplete_record"
+            ],
+            "elapsedMs": 350,
+            "budgetOutcome": "within_budget"
+          },
+          "identity": {
+            "ruleId": "gaming.identity.affirmative_body_scope_conflict",
+            "evidenceCategory": "body_scope"
+          },
+          "elapsedMs": 959,
+          "stages": {
+            "acquisition": {
+              "status": "passed",
+              "reasonCode": "SOURCE_ACQUIRED",
+              "diagnostic": {}
+            },
+            "applicability": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "extraction": {
+              "status": "passed",
+              "reasonCode": "EXTRACTION_INTACT",
+              "diagnostic": {
+                "extractedChars": 8360,
+                "completeRecords": 25,
+                "partialRecords": 10,
+                "ambiguousRecords": 14,
+                "excludedRecords": 0,
+                "excludedReferences": 0,
+                "truncated": false
+              }
+            },
+            "freshness": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "generation": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "identity": {
+              "status": "rejected",
+              "reasonCode": "GAME_MISMATCH",
+              "diagnostic": {
+                "identityRuleId": "gaming.identity.affirmative_body_scope_conflict",
+                "identityCategory": "body_scope"
+              }
+            },
+            "provenance": {
+              "status": "passed",
+              "reasonCode": "PROVENANCE_ACQUIRED",
+              "diagnostic": {
+                "authority": "unknown"
+              }
+            },
+            "relevance": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "selection": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            }
+          },
+          "downstreamResult": "No accepted source artifact; no applicability/relevance/provenance selection or Trinity generation reached for this candidate.",
+          "exactRuleProvenance": "Observed context.identity.ruleId in production source diagnostic",
+          "sourceCode": "src/shared/gaming/gamingClearSource.ts"
+        },
+        {
+          "ordinal": 3,
+          "submittedIndex": 2,
+          "sourceLabel": "Game8 guide",
+          "labelProvenance": "User incident list matched to per-round submittedIndex and timestamp; production diagnostics omit source URLs.",
+          "timestamp": "2026-10-14T01:55:44.726Z",
+          "rejection": "GAME_IDENTITY_UNVERIFIED",
+          "firstFailingStage": "identity",
+          "exactRule": "gaming.identity.independent_anchor_required",
+          "assessment": "UNRESOLVED_SOURCE_CLASSIFICATION",
+          "assessmentBasis": "Exact acquired title, headings, body, and registry match details were not logged. Rule and stage are confirmed, but article contamination or genuine conflicts cannot be decided from these metadata alone.",
+          "bodyAvailability": "UNAVAILABLE",
+          "contaminationAssessment": "UNRESOLVED_NO_ACQUIRED_BODY",
+          "completeness": "MIXED_WITH_COMPLETE_UNITS",
+          "acquisition": {
+            "stage": "extraction",
+            "policyVersion": "gaming-https-acquisition-v1",
+            "redirectCount": 0,
+            "failingHop": 0
+          },
+          "extraction": {
+            "policyVersion": "gaming-evidence-units/v1",
+            "strategies": [
+              "prose",
+              "html_table",
+              "html_list",
+              "html_definition",
+              "json_ld"
+            ],
+            "contentType": "text/html",
+            "receivedBytes": 47742,
+            "acceptedBytes": 398482,
+            "rawChars": 398337,
+            "extractedChars": 64817,
+            "unitKinds": [
+              "table_row",
+              "definition",
+              "list_item"
+            ],
+            "selectedUnits": 99,
+            "completeUnits": 25,
+            "partialUnits": 46,
+            "ambiguousUnits": 28,
+            "truncationStages": [],
+            "subreasons": [
+              "content_truncated",
+              "ambiguous_field_mapping",
+              "incomplete_record",
+              "required_context_missing"
+            ],
+            "elapsedMs": 3804,
+            "budgetOutcome": "within_budget"
+          },
+          "identity": {
+            "ruleId": "gaming.identity.independent_anchor_required",
+            "evidenceCategory": "acquired_anchors"
+          },
+          "elapsedMs": 4347,
+          "stages": {
+            "acquisition": {
+              "status": "passed",
+              "reasonCode": "SOURCE_ACQUIRED",
+              "diagnostic": {}
+            },
+            "applicability": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "extraction": {
+              "status": "passed",
+              "reasonCode": "EXTRACTION_INTACT",
+              "diagnostic": {
+                "extractedChars": 64817,
+                "completeRecords": 25,
+                "partialRecords": 46,
+                "ambiguousRecords": 28,
+                "excludedRecords": 0,
+                "excludedReferences": 0,
+                "truncated": false
+              }
+            },
+            "freshness": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "generation": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "identity": {
+              "status": "rejected",
+              "reasonCode": "GAME_IDENTITY_UNVERIFIED",
+              "diagnostic": {
+                "identityRuleId": "gaming.identity.independent_anchor_required",
+                "identityCategory": "acquired_anchors"
+              }
+            },
+            "provenance": {
+              "status": "passed",
+              "reasonCode": "PROVENANCE_ACQUIRED",
+              "diagnostic": {
+                "authority": "unknown"
+              }
+            },
+            "relevance": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "selection": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            }
+          },
+          "downstreamResult": "No accepted source artifact; no applicability/relevance/provenance selection or Trinity generation reached for this candidate.",
+          "exactRuleProvenance": "Observed context.identity.ruleId in production source diagnostic",
+          "sourceCode": "src/shared/gaming/gamingClearSource.ts"
+        },
+        {
+          "ordinal": 4,
+          "submittedIndex": 0,
+          "sourceLabel": "Mobalytics Samurai",
+          "labelProvenance": "User incident list matched to per-round submittedIndex and timestamp; production diagnostics omit source URLs.",
+          "timestamp": "2026-10-14T01:55:49.378Z",
+          "rejection": "SOURCE_INACCESSIBLE",
+          "firstFailingStage": "acquisition",
+          "exactRule": "gaming.acquisition.http_response_unusable",
+          "assessment": "CORRECT_AS_OBSERVED_ACQUISITION_GATE",
+          "assessmentBasis": "Transport returned HTTP 403; no acquired body exists to validate.",
+          "bodyAvailability": "UNAVAILABLE",
+          "contaminationAssessment": "UNRESOLVED_NO_ACQUIRED_BODY",
+          "completeness": "NOT_EXTRACTED",
+          "acquisition": {
+            "stage": "transport",
+            "policyVersion": "gaming-https-acquisition-v1",
+            "ruleId": "gaming.acquisition.http_response_unusable",
+            "subreason": "HTTP_RESPONSE_UNUSABLE",
+            "httpStatus": 403,
+            "redirectCount": 0,
+            "failingHop": 0
+          },
+          "extraction": null,
+          "identity": null,
+          "elapsedMs": 41,
+          "stages": {
+            "acquisition": {
+              "status": "rejected",
+              "reasonCode": "SOURCE_INACCESSIBLE",
+              "diagnostic": {
+                "httpStatus": 403
+              }
+            },
+            "applicability": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "extraction": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "freshness": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "generation": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "identity": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "provenance": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "relevance": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "selection": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            }
+          },
+          "downstreamResult": "No accepted source artifact; no applicability/relevance/provenance selection or Trinity generation reached for this candidate.",
+          "exactRuleProvenance": "Observed context.acquisition.ruleId in production source diagnostic",
+          "sourceCode": "src/shared/gaming/gamingSourceAcquisitionCore.ts:244"
+        },
+        {
+          "ordinal": 5,
+          "submittedIndex": 1,
+          "sourceLabel": "Gamepur Samurai",
+          "labelProvenance": "User incident list matched to per-round submittedIndex and timestamp; production diagnostics omit source URLs.",
+          "timestamp": "2026-10-14T01:55:54.407Z",
+          "rejection": "SOURCE_TIMEOUT",
+          "firstFailingStage": "acquisition",
+          "exactRule": "gaming.acquisition.deadline_exceeded",
+          "assessment": "CORRECT_AS_OBSERVED_ACQUISITION_GATE",
+          "assessmentBasis": "Transport deadline_exceeded diagnostic supports timeout; source identity and legitimacy were not evaluated.",
+          "bodyAvailability": "UNAVAILABLE",
+          "contaminationAssessment": "UNRESOLVED_NO_ACQUIRED_BODY",
+          "completeness": "NOT_EXTRACTED",
+          "acquisition": {
+            "stage": "transport",
+            "policyVersion": "gaming-https-acquisition-v1",
+            "ruleId": "gaming.acquisition.deadline_exceeded",
+            "subreason": "DEADLINE_EXCEEDED",
+            "redirectCount": 0,
+            "failingHop": 0
+          },
+          "extraction": null,
+          "identity": null,
+          "elapsedMs": 5029,
+          "stages": {
+            "acquisition": {
+              "status": "rejected",
+              "reasonCode": "SOURCE_TIMEOUT",
+              "diagnostic": {}
+            },
+            "applicability": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "extraction": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "freshness": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "generation": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "identity": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "provenance": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "relevance": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "selection": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            }
+          },
+          "downstreamResult": "No accepted source artifact; no applicability/relevance/provenance selection or Trinity generation reached for this candidate.",
+          "exactRuleProvenance": "Observed context.acquisition.ruleId in production source diagnostic",
+          "sourceCode": "src/shared/gaming/gamingSourceAcquisitionCore.ts:244"
+        },
+        {
+          "ordinal": 6,
+          "submittedIndex": 2,
+          "sourceLabel": "Eneba Samurai",
+          "labelProvenance": "User incident list matched to per-round submittedIndex and timestamp; production diagnostics omit source URLs.",
+          "timestamp": "2026-10-14T01:55:55.634Z",
+          "rejection": "GAME_MISMATCH",
+          "firstFailingStage": "identity",
+          "exactRule": "gaming.identity.instruction_heading_conflict",
+          "assessment": "UNRESOLVED_SOURCE_CLASSIFICATION",
+          "assessmentBasis": "Exact acquired title, headings, body, and registry match details were not logged. Rule and stage are confirmed, but article contamination or genuine conflicts cannot be decided from these metadata alone.",
+          "bodyAvailability": "UNAVAILABLE",
+          "contaminationAssessment": "UNRESOLVED_NO_ACQUIRED_BODY",
+          "completeness": "PARTIAL_UNITS",
+          "acquisition": {
+            "stage": "extraction",
+            "policyVersion": "gaming-https-acquisition-v1",
+            "redirectCount": 0,
+            "failingHop": 0
+          },
+          "extraction": {
+            "policyVersion": "gaming-evidence-units/v1",
+            "strategies": [
+              "prose",
+              "html_table",
+              "html_list",
+              "html_definition",
+              "json_ld"
+            ],
+            "contentType": "text/html",
+            "receivedBytes": 29884,
+            "acceptedBytes": 145968,
+            "rawChars": 145890,
+            "extractedChars": 12163,
+            "unitKinds": [
+              "list_item"
+            ],
+            "selectedUnits": 9,
+            "completeUnits": 0,
+            "partialUnits": 9,
+            "ambiguousUnits": 0,
+            "truncationStages": [],
+            "subreasons": [
+              "content_truncated"
+            ],
+            "elapsedMs": 358,
+            "budgetOutcome": "within_budget"
+          },
+          "identity": {
+            "ruleId": "gaming.identity.instruction_heading_conflict",
+            "evidenceCategory": "body_heading"
+          },
+          "elapsedMs": 1226,
+          "stages": {
+            "acquisition": {
+              "status": "passed",
+              "reasonCode": "SOURCE_ACQUIRED",
+              "diagnostic": {}
+            },
+            "applicability": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "extraction": {
+              "status": "passed",
+              "reasonCode": "EXTRACTION_INTACT",
+              "diagnostic": {
+                "extractedChars": 12163,
+                "completeRecords": 0,
+                "partialRecords": 9,
+                "ambiguousRecords": 0,
+                "excludedRecords": 0,
+                "excludedReferences": 0,
+                "truncated": false
+              }
+            },
+            "freshness": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "generation": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "identity": {
+              "status": "rejected",
+              "reasonCode": "GAME_MISMATCH",
+              "diagnostic": {
+                "identityRuleId": "gaming.identity.instruction_heading_conflict",
+                "identityCategory": "body_heading"
+              }
+            },
+            "provenance": {
+              "status": "passed",
+              "reasonCode": "PROVENANCE_ACQUIRED",
+              "diagnostic": {
+                "authority": "unknown"
+              }
+            },
+            "relevance": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "selection": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            }
+          },
+          "downstreamResult": "No accepted source artifact; no applicability/relevance/provenance selection or Trinity generation reached for this candidate.",
+          "exactRuleProvenance": "Observed context.identity.ruleId in production source diagnostic",
+          "sourceCode": "src/shared/gaming/gamingClearSource.ts"
+        }
+      ],
+      "handoffs": [
+        {
+          "timestamp": "2026-10-14T01:55:34.691Z",
+          "state": "discovery_required",
+          "nextAction": "search",
+          "reason": "QUESTION_COVERAGE_INSUFFICIENT",
+          "coverageSatisfied": false,
+          "evidenceSelected": false,
+          "recoveryRemaining": 1,
+          "round": 0,
+          "revision": 0,
+          "candidateCount": 0,
+          "selectedCandidateCount": 0,
+          "selectedEvidenceCount": 0,
+          "submittedCandidateUrlCount": 0,
+          "acquisitionWorkMs": 0,
+          "elapsedMs": 132,
+          "protocolVersion": "gaming-hybrid-v2"
+        },
+        {
+          "timestamp": "2026-10-14T01:55:44.744Z",
+          "state": "discovery_required",
+          "nextAction": "search",
+          "reason": "CANDIDATE_SOURCES_REJECTED",
+          "coverageSatisfied": false,
+          "evidenceSelected": false,
+          "recoveryRemaining": 1,
+          "round": 1,
+          "revision": 1,
+          "candidateCount": 0,
+          "selectedCandidateCount": 0,
+          "selectedEvidenceCount": 0,
+          "submittedCandidateUrlCount": 3,
+          "acquisitionWorkMs": 6223,
+          "elapsedMs": 10185,
+          "protocolVersion": "gaming-hybrid-v2"
+        },
+        {
+          "timestamp": "2026-10-14T01:55:55.645Z",
+          "state": "discovery_required",
+          "nextAction": "stop",
+          "reason": "CANDIDATE_SOURCES_REJECTED",
+          "coverageSatisfied": false,
+          "evidenceSelected": false,
+          "recoveryRemaining": 0,
+          "round": 2,
+          "revision": 2,
+          "candidateCount": 0,
+          "selectedCandidateCount": 0,
+          "selectedEvidenceCount": 0,
+          "submittedCandidateUrlCount": 6,
+          "acquisitionWorkMs": 12524,
+          "elapsedMs": 21086,
+          "protocolVersion": "gaming-hybrid-v2"
+        }
+      ],
+      "ruleVersion": "gaming-source-evaluation-rules/v1",
+      "registryVersion": "gaming-game-registry/v1",
+      "registryRevision": "2026-10-10.1"
+    },
+    {
+      "incident": "B",
+      "workflowId": "1486dd80-61f7-41cc-a75f-5e56c78c9e76",
+      "game": "Fallout 76",
+      "deploymentId": "20916344-c022-4524-b0ce-fa4ad06aea10",
+      "candidates": [
+        {
+          "ordinal": 1,
+          "submittedIndex": 0,
+          "sourceLabel": "Fallout Builds beginner Power Armor Heavy Gunner",
+          "labelProvenance": "User incident list matched to per-round submittedIndex and timestamp; production diagnostics omit source URLs.",
+          "timestamp": "2026-10-14T02:01:17.344Z",
+          "rejection": "GAME_IDENTITY_UNVERIFIED",
+          "firstFailingStage": "identity",
+          "exactRule": "gaming.identity.independent_anchor_required",
+          "assessment": "UNRESOLVED_SOURCE_CLASSIFICATION",
+          "assessmentBasis": "Exact acquired title, headings, body, and registry match details were not logged. Rule and stage are confirmed, but article contamination or genuine conflicts cannot be decided from these metadata alone.",
+          "bodyAvailability": "UNAVAILABLE",
+          "contaminationAssessment": "UNRESOLVED_NO_ACQUIRED_BODY",
+          "completeness": "PROSE_PRESENT_NO_STRUCTURED_UNITS",
+          "acquisition": {
+            "stage": "extraction",
+            "policyVersion": "gaming-https-acquisition-v1",
+            "redirectCount": 0,
+            "failingHop": 0
+          },
+          "extraction": {
+            "policyVersion": "gaming-evidence-units/v1",
+            "strategies": [
+              "prose",
+              "html_table",
+              "html_list",
+              "html_definition"
+            ],
+            "contentType": "text/html",
+            "receivedBytes": 8177,
+            "acceptedBytes": 27563,
+            "rawChars": 27546,
+            "extractedChars": 1674,
+            "unitKinds": [],
+            "selectedUnits": 0,
+            "completeUnits": 0,
+            "partialUnits": 0,
+            "ambiguousUnits": 0,
+            "truncationStages": [],
+            "subreasons": [
+              "ambiguous_field_mapping",
+              "incomplete_record"
+            ],
+            "elapsedMs": 215,
+            "budgetOutcome": "within_budget"
+          },
+          "identity": {
+            "ruleId": "gaming.identity.independent_anchor_required",
+            "evidenceCategory": "acquired_anchors"
+          },
+          "elapsedMs": 801,
+          "stages": {
+            "acquisition": {
+              "status": "passed",
+              "reasonCode": "SOURCE_ACQUIRED",
+              "diagnostic": {}
+            },
+            "applicability": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "extraction": {
+              "status": "passed",
+              "reasonCode": "EXTRACTION_INTACT",
+              "diagnostic": {
+                "extractedChars": 1674,
+                "completeRecords": 0,
+                "partialRecords": 0,
+                "ambiguousRecords": 0,
+                "excludedRecords": 0,
+                "excludedReferences": 0,
+                "truncated": false
+              }
+            },
+            "freshness": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "generation": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "identity": {
+              "status": "rejected",
+              "reasonCode": "GAME_IDENTITY_UNVERIFIED",
+              "diagnostic": {
+                "identityRuleId": "gaming.identity.independent_anchor_required",
+                "identityCategory": "acquired_anchors"
+              }
+            },
+            "provenance": {
+              "status": "passed",
+              "reasonCode": "PROVENANCE_ACQUIRED",
+              "diagnostic": {
+                "authority": "unknown"
+              }
+            },
+            "relevance": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "selection": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            }
+          },
+          "downstreamResult": "No accepted source artifact; no applicability/relevance/provenance selection or Trinity generation reached for this candidate.",
+          "exactRuleProvenance": "Observed context.identity.ruleId in production source diagnostic",
+          "sourceCode": "src/shared/gaming/gamingClearSource.ts"
+        },
+        {
+          "ordinal": 2,
+          "submittedIndex": 1,
+          "sourceLabel": "NerdBurglars Heavy Gunner",
+          "labelProvenance": "User incident list matched to per-round submittedIndex and timestamp; production diagnostics omit source URLs.",
+          "timestamp": "2026-10-14T02:01:17.847Z",
+          "rejection": "GAME_MISMATCH",
+          "firstFailingStage": "identity",
+          "exactRule": "gaming.identity.affirmative_body_scope_conflict",
+          "assessment": "UNRESOLVED_SOURCE_CLASSIFICATION",
+          "assessmentBasis": "Exact acquired title, headings, body, and registry match details were not logged. Rule and stage are confirmed, but article contamination or genuine conflicts cannot be decided from these metadata alone.",
+          "bodyAvailability": "UNAVAILABLE",
+          "contaminationAssessment": "UNRESOLVED_NO_ACQUIRED_BODY",
+          "completeness": "PARTIAL_UNITS",
+          "acquisition": {
+            "stage": "extraction",
+            "policyVersion": "gaming-https-acquisition-v1",
+            "redirectCount": 0,
+            "failingHop": 0
+          },
+          "extraction": {
+            "policyVersion": "gaming-evidence-units/v1",
+            "strategies": [
+              "prose",
+              "html_table",
+              "html_list",
+              "html_definition",
+              "json_ld"
+            ],
+            "contentType": "text/html",
+            "receivedBytes": 29110,
+            "acceptedBytes": 117689,
+            "rawChars": 117669,
+            "extractedChars": 57849,
+            "unitKinds": [
+              "list_item"
+            ],
+            "selectedUnits": 18,
+            "completeUnits": 0,
+            "partialUnits": 18,
+            "ambiguousUnits": 0,
+            "truncationStages": [],
+            "subreasons": [
+              "content_truncated"
+            ],
+            "elapsedMs": 308,
+            "budgetOutcome": "within_budget"
+          },
+          "identity": {
+            "ruleId": "gaming.identity.affirmative_body_scope_conflict",
+            "evidenceCategory": "body_scope"
+          },
+          "elapsedMs": 502,
+          "stages": {
+            "acquisition": {
+              "status": "passed",
+              "reasonCode": "SOURCE_ACQUIRED",
+              "diagnostic": {}
+            },
+            "applicability": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "extraction": {
+              "status": "passed",
+              "reasonCode": "EXTRACTION_INTACT",
+              "diagnostic": {
+                "extractedChars": 57849,
+                "completeRecords": 0,
+                "partialRecords": 18,
+                "ambiguousRecords": 0,
+                "excludedRecords": 0,
+                "excludedReferences": 0,
+                "truncated": false
+              }
+            },
+            "freshness": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "generation": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "identity": {
+              "status": "rejected",
+              "reasonCode": "GAME_MISMATCH",
+              "diagnostic": {
+                "identityRuleId": "gaming.identity.affirmative_body_scope_conflict",
+                "identityCategory": "body_scope"
+              }
+            },
+            "provenance": {
+              "status": "passed",
+              "reasonCode": "PROVENANCE_ACQUIRED",
+              "diagnostic": {
+                "authority": "unknown"
+              }
+            },
+            "relevance": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "selection": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            }
+          },
+          "downstreamResult": "No accepted source artifact; no applicability/relevance/provenance selection or Trinity generation reached for this candidate.",
+          "exactRuleProvenance": "Observed context.identity.ruleId in production source diagnostic",
+          "sourceCode": "src/shared/gaming/gamingClearSource.ts"
+        },
+        {
+          "ordinal": 3,
+          "submittedIndex": 2,
+          "sourceLabel": "TimeSaver Heavy Gunner 2026",
+          "labelProvenance": "User incident list matched to per-round submittedIndex and timestamp; production diagnostics omit source URLs.",
+          "timestamp": "2026-10-14T02:01:22.853Z",
+          "rejection": "SOURCE_TIMEOUT",
+          "firstFailingStage": "acquisition",
+          "exactRule": "gaming.acquisition.deadline_exceeded",
+          "assessment": "CORRECT_AS_OBSERVED_ACQUISITION_GATE",
+          "assessmentBasis": "Transport deadline_exceeded diagnostic supports timeout; source identity and legitimacy were not evaluated.",
+          "bodyAvailability": "UNAVAILABLE",
+          "contaminationAssessment": "UNRESOLVED_NO_ACQUIRED_BODY",
+          "completeness": "NOT_EXTRACTED",
+          "acquisition": {
+            "stage": "transport",
+            "policyVersion": "gaming-https-acquisition-v1",
+            "ruleId": "gaming.acquisition.deadline_exceeded",
+            "subreason": "DEADLINE_EXCEEDED",
+            "redirectCount": 0,
+            "failingHop": 0
+          },
+          "extraction": null,
+          "identity": null,
+          "elapsedMs": 5005,
+          "stages": {
+            "acquisition": {
+              "status": "rejected",
+              "reasonCode": "SOURCE_TIMEOUT",
+              "diagnostic": {}
+            },
+            "applicability": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "extraction": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "freshness": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "generation": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "identity": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "provenance": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "relevance": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "selection": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            }
+          },
+          "downstreamResult": "No accepted source artifact; no applicability/relevance/provenance selection or Trinity generation reached for this candidate.",
+          "exactRuleProvenance": "Observed context.acquisition.ruleId in production source diagnostic",
+          "sourceCode": "src/shared/gaming/gamingSourceAcquisitionCore.ts:244"
+        },
+        {
+          "ordinal": 4,
+          "submittedIndex": 0,
+          "sourceLabel": "Fallout Builds Heavy Gunner overview",
+          "labelProvenance": "User incident list matched to per-round submittedIndex and timestamp; production diagnostics omit source URLs.",
+          "timestamp": "2026-10-14T02:01:33.187Z",
+          "rejection": "GAME_MISMATCH",
+          "firstFailingStage": "identity",
+          "exactRule": "gaming.identity.affirmative_body_scope_conflict",
+          "assessment": "UNRESOLVED_SOURCE_CLASSIFICATION",
+          "assessmentBasis": "Exact acquired title, headings, body, and registry match details were not logged. Rule and stage are confirmed, but article contamination or genuine conflicts cannot be decided from these metadata alone.",
+          "bodyAvailability": "UNAVAILABLE",
+          "contaminationAssessment": "UNRESOLVED_NO_ACQUIRED_BODY",
+          "completeness": "MIXED_WITH_COMPLETE_UNITS",
+          "acquisition": {
+            "stage": "extraction",
+            "policyVersion": "gaming-https-acquisition-v1",
+            "redirectCount": 0,
+            "failingHop": 0
+          },
+          "extraction": {
+            "policyVersion": "gaming-evidence-units/v1",
+            "strategies": [
+              "prose",
+              "html_table",
+              "html_list",
+              "html_definition"
+            ],
+            "contentType": "text/html",
+            "receivedBytes": 8638,
+            "acceptedBytes": 29109,
+            "rawChars": 29105,
+            "extractedChars": 17011,
+            "unitKinds": [
+              "table_row",
+              "list_item"
+            ],
+            "selectedUnits": 11,
+            "completeUnits": 1,
+            "partialUnits": 0,
+            "ambiguousUnits": 10,
+            "truncationStages": [],
+            "subreasons": [
+              "ambiguous_field_mapping"
+            ],
+            "elapsedMs": 145,
+            "budgetOutcome": "within_budget"
+          },
+          "identity": {
+            "ruleId": "gaming.identity.affirmative_body_scope_conflict",
+            "evidenceCategory": "body_scope"
+          },
+          "elapsedMs": 399,
+          "stages": {
+            "acquisition": {
+              "status": "passed",
+              "reasonCode": "SOURCE_ACQUIRED",
+              "diagnostic": {}
+            },
+            "applicability": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "extraction": {
+              "status": "passed",
+              "reasonCode": "EXTRACTION_INTACT",
+              "diagnostic": {
+                "extractedChars": 17011,
+                "completeRecords": 1,
+                "partialRecords": 0,
+                "ambiguousRecords": 10,
+                "excludedRecords": 0,
+                "excludedReferences": 0,
+                "truncated": false
+              }
+            },
+            "freshness": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "generation": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "identity": {
+              "status": "rejected",
+              "reasonCode": "GAME_MISMATCH",
+              "diagnostic": {
+                "identityRuleId": "gaming.identity.affirmative_body_scope_conflict",
+                "identityCategory": "body_scope"
+              }
+            },
+            "provenance": {
+              "status": "passed",
+              "reasonCode": "PROVENANCE_ACQUIRED",
+              "diagnostic": {
+                "authority": "unknown"
+              }
+            },
+            "relevance": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "selection": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            }
+          },
+          "downstreamResult": "No accepted source artifact; no applicability/relevance/provenance selection or Trinity generation reached for this candidate.",
+          "exactRuleProvenance": "Observed context.identity.ruleId in production source diagnostic",
+          "sourceCode": "src/shared/gaming/gamingClearSource.ts"
+        },
+        {
+          "ordinal": 5,
+          "submittedIndex": 1,
+          "sourceLabel": "Nuka Knights Heavy Weapons",
+          "labelProvenance": "User incident list matched to per-round submittedIndex and timestamp; production diagnostics omit source URLs.",
+          "timestamp": "2026-10-14T02:02:10.208Z",
+          "rejection": "GAME_MISMATCH",
+          "firstFailingStage": "identity",
+          "exactRule": "gaming.identity.affirmative_body_scope_conflict",
+          "assessment": "UNRESOLVED_SOURCE_CLASSIFICATION",
+          "assessmentBasis": "Exact acquired title, headings, body, and registry match details were not logged. Rule and stage are confirmed, but article contamination or genuine conflicts cannot be decided from these metadata alone.",
+          "bodyAvailability": "UNAVAILABLE",
+          "contaminationAssessment": "UNRESOLVED_NO_ACQUIRED_BODY",
+          "completeness": "AMBIGUOUS_UNITS",
+          "acquisition": {
+            "stage": "extraction",
+            "policyVersion": "gaming-https-acquisition-v1",
+            "redirectCount": 0,
+            "failingHop": 0
+          },
+          "extraction": {
+            "policyVersion": "gaming-evidence-units/v1",
+            "strategies": [
+              "prose",
+              "html_table",
+              "html_list",
+              "html_definition"
+            ],
+            "contentType": "text/html",
+            "receivedBytes": 29586,
+            "acceptedBytes": 241133,
+            "rawChars": 241100,
+            "extractedChars": 70120,
+            "unitKinds": [
+              "table_row",
+              "list_item"
+            ],
+            "selectedUnits": 37,
+            "completeUnits": 0,
+            "partialUnits": 1,
+            "ambiguousUnits": 36,
+            "truncationStages": [],
+            "subreasons": [
+              "required_context_missing",
+              "ambiguous_field_mapping",
+              "incomplete_record"
+            ],
+            "elapsedMs": 2879,
+            "budgetOutcome": "within_budget"
+          },
+          "identity": {
+            "ruleId": "gaming.identity.affirmative_body_scope_conflict",
+            "evidenceCategory": "body_scope"
+          },
+          "elapsedMs": 37021,
+          "stages": {
+            "acquisition": {
+              "status": "passed",
+              "reasonCode": "SOURCE_ACQUIRED",
+              "diagnostic": {}
+            },
+            "applicability": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "extraction": {
+              "status": "passed",
+              "reasonCode": "EXTRACTION_INTACT",
+              "diagnostic": {
+                "extractedChars": 70120,
+                "completeRecords": 0,
+                "partialRecords": 1,
+                "ambiguousRecords": 36,
+                "excludedRecords": 0,
+                "excludedReferences": 0,
+                "truncated": false
+              }
+            },
+            "freshness": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "generation": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "identity": {
+              "status": "rejected",
+              "reasonCode": "GAME_MISMATCH",
+              "diagnostic": {
+                "identityRuleId": "gaming.identity.affirmative_body_scope_conflict",
+                "identityCategory": "body_scope"
+              }
+            },
+            "provenance": {
+              "status": "passed",
+              "reasonCode": "PROVENANCE_ACQUIRED",
+              "diagnostic": {
+                "authority": "unknown"
+              }
+            },
+            "relevance": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "selection": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            }
+          },
+          "downstreamResult": "No accepted source artifact; no applicability/relevance/provenance selection or Trinity generation reached for this candidate.",
+          "exactRuleProvenance": "Observed context.identity.ruleId in production source diagnostic",
+          "sourceCode": "src/shared/gaming/gamingClearSource.ts"
+        },
+        {
+          "ordinal": 6,
+          "submittedIndex": 2,
+          "sourceLabel": "Fallout Builds Heavy Gunner 2025",
+          "labelProvenance": "User incident list matched to per-round submittedIndex and timestamp; production diagnostics omit source URLs.",
+          "timestamp": "2026-10-14T02:02:10.209Z",
+          "rejection": "FETCH_BUDGET_EXHAUSTED",
+          "firstFailingStage": "acquisition",
+          "exactRule": "candidate loop Date.now() >= deadlineAt guard",
+          "assessment": "CORRECT_AS_OBSERVED_ACQUISITION_GATE",
+          "assessmentBasis": "Candidate was not fetched after the batch deadline was consumed; cause and timeliness of prior candidate work require separate analysis.",
+          "bodyAvailability": "UNAVAILABLE",
+          "contaminationAssessment": "UNRESOLVED_NO_ACQUIRED_BODY",
+          "completeness": "NOT_EXTRACTED",
+          "acquisition": {
+            "stage": "admission",
+            "policyVersion": "gaming-https-acquisition-v1",
+            "redirectCount": 0,
+            "failingHop": 0
+          },
+          "extraction": null,
+          "identity": null,
+          "elapsedMs": 0,
+          "stages": {
+            "acquisition": {
+              "status": "rejected",
+              "reasonCode": "FETCH_BUDGET_EXHAUSTED",
+              "diagnostic": {}
+            },
+            "applicability": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "extraction": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "freshness": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "generation": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "identity": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "provenance": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "relevance": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            },
+            "selection": {
+              "status": "not_run",
+              "reasonCode": "STAGE_NOT_RUN",
+              "diagnostic": {}
+            }
+          },
+          "downstreamResult": "No accepted source artifact; no applicability/relevance/provenance selection or Trinity generation reached for this candidate.",
+          "exactRuleProvenance": "Derived from current repository source after observed FETCH_BUDGET_EXHAUSTED",
+          "sourceCode": "src/services/gamingHybridCandidates.ts:205"
+        }
+      ],
+      "handoffs": [
+        {
+          "timestamp": "2026-10-14T02:01:07.073Z",
+          "state": "discovery_required",
+          "nextAction": "search",
+          "reason": "QUESTION_COVERAGE_INSUFFICIENT",
+          "coverageSatisfied": false,
+          "evidenceSelected": false,
+          "recoveryRemaining": 1,
+          "round": 0,
+          "revision": 0,
+          "candidateCount": 0,
+          "selectedCandidateCount": 0,
+          "selectedEvidenceCount": 0,
+          "submittedCandidateUrlCount": 0,
+          "acquisitionWorkMs": 0,
+          "elapsedMs": 69,
+          "protocolVersion": "gaming-hybrid-v2"
+        },
+        {
+          "timestamp": "2026-10-14T02:01:22.902Z",
+          "state": "discovery_required",
+          "nextAction": "search",
+          "reason": "CANDIDATE_SOURCES_REJECTED",
+          "coverageSatisfied": false,
+          "evidenceSelected": false,
+          "recoveryRemaining": 1,
+          "round": 1,
+          "revision": 1,
+          "candidateCount": 0,
+          "selectedCandidateCount": 0,
+          "selectedEvidenceCount": 0,
+          "submittedCandidateUrlCount": 3,
+          "acquisitionWorkMs": 6330,
+          "elapsedMs": 15898,
+          "protocolVersion": "gaming-hybrid-v2"
+        },
+        {
+          "timestamp": "2026-10-14T02:02:10.229Z",
+          "state": "discovery_required",
+          "nextAction": "stop",
+          "reason": "CANDIDATE_SOURCES_REJECTED",
+          "coverageSatisfied": false,
+          "evidenceSelected": false,
+          "recoveryRemaining": 0,
+          "round": 2,
+          "revision": 2,
+          "candidateCount": 0,
+          "selectedCandidateCount": 0,
+          "selectedEvidenceCount": 0,
+          "submittedCandidateUrlCount": 6,
+          "acquisitionWorkMs": 43755,
+          "elapsedMs": 63225,
+          "protocolVersion": "gaming-hybrid-v2"
+        }
+      ],
+      "ruleVersion": "gaming-source-evaluation-rules/v1",
+      "registryVersion": "gaming-game-registry/v1",
+      "registryRevision": "2026-10-10.1"
+    }
+  ]
+}

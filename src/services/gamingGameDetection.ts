@@ -50,8 +50,13 @@ const ACQUIRED_TOPIC_WORDS = new Set([
 /** A closed gameplay topic does not invent an uncatalogued game identity. */
 export function isGamingAcquiredTopicTitle(value: string): boolean {
   const words = value.normalize('NFKC').replace(/[|–—].*$/u, '').toLowerCase().trim().split(/[\s-]+/u);
+  // Section labels need not include "guide". Their closed topic vocabulary
+  // still supplies no game identity without an independent acquired declaration.
+  const topicLabel = words.some(word => ['build', 'builds', 'guide', 'guides', 'loadout', 'walkthrough', 'tips',
+    'weapon', 'weapons', 'equipment', 'skills', 'talents'].includes(word))
+    || /^(?:(?:early|late) game|heavy gunner|power armou?r)$/u.test(words.join(' '));
   return words.length > 0 && words.length <= 12 && words.every(word => ACQUIRED_TOPIC_WORDS.has(word))
-    && words.some(word => ['build', 'builds', 'guide', 'guides', 'loadout', 'walkthrough', 'tips'].includes(word));
+    && topicLabel;
 }
 
 const GENERIC_HOST_LABELS = new Set([
