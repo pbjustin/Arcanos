@@ -2755,6 +2755,163 @@ describe('selfHealingLoop', () => {
     });
   });
 
+  it.each([
+    ['feature disabled', {}, { selfImproveEnabled: false }, 'local_mitigation', 'observation_only'],
+    ['actuator disabled', {}, { selfImproveActuatorMode: 'pr_bot' }, 'local_mitigation', 'observation_only'],
+    ['configuration frozen', {}, { selfImproveFrozen: true }, 'local_mitigation', 'observation_only'],
+    ['autonomy reduced', {}, { selfImproveAutonomyLevel: 2 }, 'local_mitigation', 'observation_only'],
+    ['predictive dry-run enabled', {}, { predictiveHealingEnabled: true, predictiveHealingDryRun: true }, 'local_mitigation', 'observation_only'],
+    ['predictive execution enabled', {}, { predictiveHealingEnabled: true, predictiveHealingDryRun: false, autoExecuteHealing: true }, 'local_mitigation', 'predictive_execution'],
+    ['local execution enabled', { selfImproveEnabled: false }, {}, 'observation_only', 'local_mitigation'],
+    ['predictive execution disabled', { predictiveHealingEnabled: true, predictiveHealingDryRun: false, autoExecuteHealing: true }, {}, 'predictive_execution', 'local_mitigation'],
+  ])('retains observed policy until another evaluation after %s', async (_label, initial, changed, previousMode, nextMode) => {
+    getConfigMock.mockReturnValue(createConfig({ predictiveHealingEnabled: false, ...initial }));
+    await runSelfHealingLoop({ trigger: 'interval' });
+    const observed = getSelfHealingLoopStatus();
+    expect(observed.operatingMode).toBe(previousMode);
+    const policyReads = getKillSwitchStatusMock.mock.calls.length;
+
+    jest.setSystemTime(new Date('2026-03-25T12:00:01.000Z'));
+    getConfigMock.mockReturnValue(createConfig({ predictiveHealingEnabled: false, ...changed }));
+    expect(getSelfHealingLoopStatus()).toMatchObject({
+      operatingMode: previousMode,
+      policyObservedAt: observed.policyObservedAt,
+      tickCount: observed.tickCount
+    });
+    expect(getKillSwitchStatusMock).toHaveBeenCalledTimes(policyReads);
+
+    await runSelfHealingLoop({ trigger: 'interval' });
+    expect(getSelfHealingLoopStatus()).toMatchObject({
+      operatingMode: nextMode,
+      policyObservedAt: '2026-03-25T12:00:01.000Z',
+      tickCount: observed.tickCount + 1
+    });
+  });
+
+  it.each([
+    { frozen: true, autonomyLevel: 3 },
+    { frozen: false, autonomyLevel: 0 },
+  ])('records shared-control changes only when evaluated: %j', async (changed) => {
+    getConfigMock.mockReturnValue(createConfig({ predictiveHealingEnabled: false }));
+    await runSelfHealingLoop({ trigger: 'interval' });
+    const observed = getSelfHealingLoopStatus();
+    expect(observed.operatingMode).toBe('local_mitigation');
+
+    getKillSwitchStatusMock.mockResolvedValue(changed);
+    jest.setSystemTime(new Date('2026-03-25T12:00:01.000Z'));
+    expect(getSelfHealingLoopStatus()).toMatchObject({
+      operatingMode: 'local_mitigation', policyObservedAt: observed.policyObservedAt
+    });
+    await runSelfHealingLoop({ trigger: 'interval' });
+    expect(getSelfHealingLoopStatus()).toMatchObject({
+      operatingMode: 'observation_only', policyObservedAt: '2026-03-25T12:00:01.000Z'
+    });
+  });
+
+  it('preserves the last observed policy when a later evaluation fails before observing policy', async () => {
+    getConfigMock.mockReturnValue(createConfig({ predictiveHealingEnabled: false }));
+    await runSelfHealingLoop({ trigger: 'interval' });
+    const observed = getSelfHealingLoopStatus();
+
+    getConfigMock.mockReturnValue(createConfig({ selfImproveFrozen: true }));
+    getRollingRequestWindowMock.mockImplementationOnce(() => { throw new Error('Synthetic observation failure'); });
+    jest.setSystemTime(new Date('2026-03-25T12:00:01.000Z'));
+    await runSelfHealingLoop({ trigger: 'interval' });
+    expect(getSelfHealingLoopStatus()).toMatchObject({
+      operatingMode: 'local_mitigation',
+      policyObservedAt: observed.policyObservedAt,
+      coordinatorState: 'FAILED',
+      lastError: 'Synthetic observation failure'
+    });
+  });
+
+  it.each([
+    { selfImproveEnabled: false },
+    { selfImproveActuatorMode: 'pr_bot' },
+    { selfImproveFrozen: true },
+    { selfImproveAutonomyLevel: 2 },
+  ])('rechecks changed configuration at reactive dispatch without rewriting observed policy: %j', async (restriction) => {
+    getConfigMock.mockReturnValue(createConfig({ predictiveHealingEnabled: false }));
+    mockStalledWorkerObservation();
+    runPredictiveHealingFromLoopMock.mockImplementationOnce(async () => {
+      expect(getSelfHealingLoopStatus().operatingMode).toBe('local_mitigation');
+      getConfigMock.mockReturnValue(createConfig({ predictiveHealingEnabled: false, ...restriction }));
+      return createPredictiveBoundaryResult({ enabled: false });
+    });
+
+    const result = await runSelfHealingLoop({ trigger: 'interval' });
+    expect(result.action).toBeNull();
+    expect(recoverStaleJobsMock).not.toHaveBeenCalled();
+    expect(runSelfImproveCycleMock).not.toHaveBeenCalled();
+    expect(getSelfHealingLoopStatus()).toMatchObject({
+      operatingMode: 'local_mitigation', policyObservedAt: '2026-03-25T12:00:00.000Z'
+    });
+    expect(buildSelfHealEventsSnapshot(50).events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'noop', details: expect.objectContaining({ reasonCode: expect.any(String) }) })
+    ]));
+  });
+
+  it.each([
+    { frozen: true, autonomyLevel: 3 },
+    { frozen: false, autonomyLevel: 0 },
+  ])('rechecks changed shared controls at reactive dispatch: %j', async (restriction) => {
+    getConfigMock.mockReturnValue(createConfig({ predictiveHealingEnabled: false }));
+    mockStalledWorkerObservation();
+    runPredictiveHealingFromLoopMock.mockImplementationOnce(async () => {
+      getKillSwitchStatusMock.mockResolvedValue(restriction);
+      return createPredictiveBoundaryResult({ enabled: false });
+    });
+
+    expect((await runSelfHealingLoop({ trigger: 'interval' })).action).toBeNull();
+    expect(recoverStaleJobsMock).not.toHaveBeenCalled();
+    expect(runSelfImproveCycleMock).not.toHaveBeenCalled();
+    expect(getSelfHealingLoopStatus().operatingMode).toBe('local_mitigation');
+  });
+
+  it.each([
+    { predictiveHealingEnabled: true, predictiveHealingDryRun: true, autoExecuteHealing: true },
+    { predictiveHealingEnabled: true, predictiveHealingDryRun: false, autoExecuteHealing: false },
+  ])('blocks legacy effects when predictive observation-only policy takes over during diagnosis: %j', async (restriction) => {
+    getConfigMock.mockReturnValue(createConfig({ predictiveHealingEnabled: false }));
+    mockStalledWorkerObservation();
+    runPredictiveHealingFromLoopMock.mockImplementationOnce(async () => {
+      getConfigMock.mockReturnValue(createConfig(restriction));
+      return createPredictiveBoundaryResult({ enabled: false });
+    });
+
+    expect((await runSelfHealingLoop({ trigger: 'interval' })).action).toBeNull();
+    expect(recoverStaleJobsMock).not.toHaveBeenCalled();
+    expect(runSelfImproveCycleMock).not.toHaveBeenCalled();
+    expect(getSelfHealingLoopStatus().operatingMode).toBe('local_mitigation');
+    expect(buildSelfHealEventsSnapshot(50).events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'noop', details: expect.objectContaining({ reasonCode: 'predictive_observation_only' })
+      })
+    ]));
+  });
+
+  it('rechecks configuration revoked while the action-boundary shared-control read is pending', async () => {
+    getConfigMock.mockReturnValue(createConfig({ predictiveHealingEnabled: false }));
+    mockStalledWorkerObservation();
+    getKillSwitchStatusMock
+      .mockResolvedValueOnce({ frozen: false, autonomyLevel: 3 })
+      .mockImplementationOnce(async () => {
+        // The first read observed tick policy. Revoke while the second read
+        // awaits shared controls immediately before the queued action.
+        getConfigMock.mockReturnValue(createConfig({ predictiveHealingEnabled: false, selfImproveFrozen: true }));
+        return { frozen: false, autonomyLevel: 3 };
+      });
+
+    expect((await runSelfHealingLoop({ trigger: 'interval' })).action).toBeNull();
+    expect(recoverStaleJobsMock).not.toHaveBeenCalled();
+    expect(runSelfImproveCycleMock).not.toHaveBeenCalled();
+    expect(buildSelfHealEventsSnapshot(50).events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'noop', details: expect.objectContaining({ reasonCode: 'self_improve_frozen' })
+      })
+    ]));
+  });
+
   it('invokes AI diagnosis and records controller decisions on every loop cycle', async () => {
     runPredictiveHealingFromLoopMock
       .mockResolvedValueOnce(createPredictiveBoundaryResult({

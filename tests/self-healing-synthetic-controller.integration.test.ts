@@ -14,6 +14,7 @@ const traces: Array<{ timestamp: string; name: string }> = [];
 const forbiddenEffect = jest.fn(async () => { throw new Error('Synthetic fixture forbids external effects.'); });
 const logger = { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() };
 let predictiveEnabled = false;
+let effectsEnabled = true;
 let processKind = 'worker';
 
 jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
@@ -21,7 +22,7 @@ jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
 }));
 jest.unstable_mockModule('@platform/runtime/unifiedConfig.js', () => ({
   getConfig: () => ({
-    selfImproveEnabled: true, selfImproveActuatorMode: 'daemon', selfImproveFrozen: false,
+    selfImproveEnabled: effectsEnabled, selfImproveActuatorMode: 'daemon', selfImproveFrozen: false,
     selfImproveAutonomyLevel: 3, predictiveHealingEnabled: predictiveEnabled,
     trinityFinalModel: 'synthetic-authority-model'
   }),
@@ -132,6 +133,7 @@ beforeEach(() => {
   jest.spyOn(globalThis, 'fetch').mockImplementation(forbiddenEffect);
   traces.length = 0;
   predictiveEnabled = false;
+  effectsEnabled = true;
   processKind = 'worker';
   health.mockResolvedValue(healthyWorker());
   prediction.mockRejectedValue(new Error('Synthetic predictive advisor disabled.'));
@@ -153,6 +155,81 @@ afterEach(() => {
 });
 
 describe('synthetic controller lifecycle with real diagnostics and mitigation state', () => {
+  it('S18 preserves evaluated policy until the next real coordinator tick', async () => {
+    await coordinator.runSelfHealingLoop({ trigger: 'interval' });
+    const observed = coordinator.getSelfHealingLoopStatus();
+    expect(observed.operatingMode).toBe('local_mitigation');
+
+    effectsEnabled = false;
+    advance(1_000);
+    expect(coordinator.getSelfHealingLoopStatus()).toMatchObject({
+      operatingMode: 'local_mitigation', policyObservedAt: observed.policyObservedAt
+    });
+    await coordinator.runSelfHealingLoop({ trigger: 'interval' });
+    expect(coordinator.getSelfHealingLoopStatus()).toMatchObject({
+      operatingMode: 'observation_only', policyObservedAt: new Date().toISOString()
+    });
+    expect(queueRecovery).not.toHaveBeenCalled();
+  });
+
+  it('S19 rechecks revoked policy after asynchronous diagnosis before queue mutation', async () => {
+    health.mockResolvedValue({
+      ...healthyWorker(), overallStatus: 'unhealthy',
+      queueSummary: { pending: 1, running: 1, stalledRunning: 1, oldestPendingJobAgeMs: 90_000 }
+    });
+    prediction.mockImplementationOnce(async () => {
+      effectsEnabled = false;
+      throw new Error('Synthetic advisor failure after policy revocation.');
+    });
+
+    expect((await coordinator.runSelfHealingLoop({ trigger: 'interval' })).action).toBeNull();
+    expect(coordinator.getSelfHealingLoopStatus().operatingMode).toBe('local_mitigation');
+    expect(queueRecovery).not.toHaveBeenCalled();
+    expect(escalation).not.toHaveBeenCalled();
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'noop', details: expect.objectContaining({ reasonCode: 'self_improve_execution_disabled' }) })
+    ]));
+  });
+
+  it('S20 retains completed dispatch verification across cancellation and coordinator restart', async () => {
+    health.mockResolvedValue({
+      ...healthyWorker(), overallStatus: 'unhealthy',
+      queueSummary: { pending: 1, running: 1, stalledRunning: 1, oldestPendingJobAgeMs: 90_000 }
+    });
+    let release!: () => void;
+    let dispatched!: () => void;
+    const actionStarted = new Promise<void>(resolve => { dispatched = resolve; });
+    queueRecovery.mockImplementationOnce(() => new Promise(resolve => {
+      release = () => resolve({ recoveredJobs: ['synthetic-job'], failedJobs: [] });
+      dispatched();
+    }));
+    coordinator.startSelfHealingLoop(1_000);
+    await actionStarted;
+    const stopped = coordinator.stopSelfHealingLoop();
+    expect(coordinator.startSelfHealingLoop(1_000).coordinatorReasonCode).toBe('previous_evaluation_draining');
+    release();
+    await stopped;
+    expect(coordinator.getSelfHealingLoopStatus()).toMatchObject({
+      lastAction: 'recoverStaleJobs:recovered=1:failed=0',
+      lastVerificationResult: null,
+      coordinatorState: 'BLOCKED'
+    });
+    expect(escalation).not.toHaveBeenCalled();
+
+    advance(31_000);
+    effectsEnabled = false;
+    health.mockResolvedValue(healthyWorker());
+    coordinator.startSelfHealingLoop(1_000);
+    await jest.advanceTimersByTimeAsync(0);
+    expect(coordinator.getSelfHealingLoopStatus()).toMatchObject({
+      operatingMode: 'observation_only',
+      lastVerificationResult: { action: 'recoverStaleJobs', outcome: 'improved' }
+    });
+    expect(queueRecovery).toHaveBeenCalledTimes(1);
+    expect(escalation).not.toHaveBeenCalled();
+    await coordinator.stopSelfHealingLoop();
+  });
+
   it('S01/S07 observes healthy and sub-threshold requests without mutating runtime state', async () => {
     recordHealthy();
     expect(await coordinator.runSelfHealingLoop({ trigger: 'interval' })).toMatchObject({ diagnosis: 'healthy', action: null });

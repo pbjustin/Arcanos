@@ -2618,14 +2618,28 @@ function shouldOverrideActionCooldown(
   );
 }
 
-async function resolveReactiveEffectBlock(): Promise<string | null> {
+function resolveConfiguredReactiveEffectBlock(): string | null {
   const cfg = getConfig();
   if (!cfg.selfImproveEnabled || cfg.selfImproveActuatorMode !== 'daemon') {
     return 'self_improve_execution_disabled';
   }
   if (cfg.selfImproveFrozen) return 'self_improve_frozen';
   if (!(cfg.selfImproveAutonomyLevel >= 3)) return 'insufficient_autonomy';
+  if (cfg.predictiveHealingEnabled &&
+      (cfg.predictiveHealingDryRun !== false || cfg.autoExecuteHealing !== true)) {
+    return 'predictive_observation_only';
+  }
+  return null;
+}
+
+async function resolveReactiveEffectBlock(): Promise<string | null> {
+  const configurationBlock = resolveConfiguredReactiveEffectBlock();
+  if (configurationBlock) return configurationBlock;
   const effective = await getKillSwitchStatus();
+  // Shared controls can require I/O. A local revocation during that read must
+  // still prevent the effect admitted immediately after this check.
+  const currentConfigurationBlock = resolveConfiguredReactiveEffectBlock();
+  if (currentConfigurationBlock) return currentConfigurationBlock;
   if (effective.frozen) return 'self_improve_frozen';
   if (effective.autonomyLevel < 3) return 'insufficient_autonomy';
   return null;
@@ -4068,7 +4082,8 @@ export function getSelfHealingLoopStatus(): SelfHealingLoopStatus {
   const promptRouteMitigationState = getPromptRouteMitigationState();
   const snapshot: SelfHealingLoopStatus = {
     ...runtime.status,
-    operatingMode: resolveCoordinatorOperatingMode(runtime.status.operatingMode !== 'observation_only'),
+    // Policy and its observation timestamp are one historical record. Reading
+    // status must not reinterpret an earlier tick using current configuration.
     active: runtime.timer !== null,
     loopRunning: runtime.timer !== null,
     inFlight: runtime.inFlight,
@@ -4355,13 +4370,15 @@ export async function runSelfHealingLoop(options: {
     ) {
       // Reactive approval is explicit and separate from predictive recommendation telemetry.
       const actionResult = await executeAction(runtime, diagnosis, observation, trigger, options.signal);
-      options.signal?.throwIfAborted();
       if (actionResult.executed && actionResult.action) {
+        // Cancellation stops subsequent effects, but cannot undo a dispatch
+        // already completed. Preserve its verification across a later restart.
         action = actionResult.action;
         runtime.status.lastAction = action;
         runtime.status.lastActionAt = new Date().toISOString();
         runtime.pendingVerification = actionResult.pendingVerification;
       }
+      options.signal?.throwIfAborted();
     }
 
     runtime.status.lastTrinityMitigation = getActiveTrinityMitigation(getTrinitySelfHealingStatus());
