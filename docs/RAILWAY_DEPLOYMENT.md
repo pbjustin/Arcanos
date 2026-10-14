@@ -1199,7 +1199,12 @@ Before attaching source or starting applications:
    source with the supported local/CI matrix. Record the final source SHA and
    the clean reviewed operator checkout separately from application credentials.
 2. Verify authenticated create/inspect/delete capability against the intended
-   workspace. Create only the empty dedicated project/environment, immediately
+   workspace and authenticated Railway SSH process inspection **before creating
+   billable resources**. The fixed control client requires an already authorized
+   SSH identity; CLI account authentication alone is insufficient. Do not register
+   a new account-wide SSH key under preview-only authority. If process inspection
+   is unavailable, stop before provisioning or deploying the applications.
+   Create only the empty dedicated project/environment, immediately
    record their returned immutable IDs, and prepare the cleanup receipt outside
    the repository. Never infer target identity from a local Railway link.
 3. Arm the receipt-bound watchdog while the project is empty and require its
@@ -1329,7 +1334,11 @@ The [cleanup client](../scripts/self-heal-preview-cleanup.mjs) accepts a regular
 non-symlink receipt outside the checkout (at most 16 KiB). Its exact fields are
 `version`, `owner`, `repository`, `prNumber`, `sourceSha`, `runId`, `projectId`,
 `projectName`, `workspaceId`, `environmentId`, `environmentName`, `issuedAt`
-and `expiresAt`. Use version 1, owner `pbjustin`, repository
+and `expiresAt`. An optional closed `resources` field binds exact services
+(`id`, `name`) and global volumes (`id`, `name`, `serviceId`, `mountPath`) for
+safe retries after a service deletion detaches its volume. Populate these bindings
+only from an independently attested owned topology; volume-instance IDs are not
+global volume IDs. Use version 1, owner `pbjustin`, repository
 `pbjustin/Arcanos`, PR 1544, the returned resource IDs and the same fixed lease.
 It rejects canonical/Live PR IDs, foreign resources and incomplete inventory;
 an expired receipt retains authority to delete its same owned target.
@@ -1343,11 +1352,20 @@ The first invocation validates the receipt without network access. Run the
 watchdog as an independent authenticated operator process, retain its output,
 and do not place Railway management credentials in the application. It checks
 ownership before arming, waits only until the original deadline, rechecks the
-complete target, deletes by exact project ID, then bounds absence verification
-to 60 seconds. To clean up early after evidence capture, use the same executed
+complete target, deletes the exact owned services first, verifies their absence,
+then deletes only the attested global volume IDs and verifies resource absence.
+Only after services, service instances, global volumes, volume instances and
+buckets are empty does it schedule project deletion. Each absence wait is bounded
+to 60 seconds. Railway can retain scheduled project metadata for 48 hours;
+`RESOURCES_REMOVED_METADATA_RETAINED` explicitly distinguishes removed billable
+resources from unconfirmed project absence. Scheduling project deletion alone
+does not prove volume removal. A refused deletion fails closed without an API
+mutation fallback. Resolve an approval rejection through the approval flow.
+To clean up early after evidence capture, use the same executed
 command without `--watchdog`; stop the waiting watchdog after independently
-confirmed deletion. A `FAILED` or absent deletion receipt remains unresolved;
-runtime exit alone is not cleanup. Confirm project/control-plane absence,
+confirmed resource deletion. A `FAILED` or absent deletion receipt remains unresolved;
+runtime exit alone is not cleanup. Confirm resource absence and separately record
+project metadata retention,
 former web-domain behavior, and unchanged production identities before final
 acceptance reporting.
 

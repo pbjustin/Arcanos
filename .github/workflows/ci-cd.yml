@@ -237,6 +237,8 @@ jobs:
             --entrypoint node arcanos-self-heal-preview-test \
             scripts/self-heal-preview-artifact.mjs --verify --source-sha "$GITHUB_SHA"
           docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
+            --entrypoint node arcanos-self-heal-preview-test scripts/repair-dist-aliases.js --check
+          docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
             --entrypoint node arcanos-self-heal-preview-test --input-type=module -e '
               import { resolveSelfHealPreviewProfile, buildSelfHealPreviewApplicationEnvironment } from "./scripts/railway-self-heal-preview-profile.mjs";
               const fixture = JSON.parse(process.argv[1]);
@@ -263,6 +265,14 @@ jobs:
                 }
                 const profile = resolveSelfHealPreviewProfile(role, env, { now: () => now });
                 const child = buildSelfHealPreviewApplicationEnvironment(profile, env);
+                if (child.SELF_IMPROVE_EVIDENCE_DIR !== "/app/memory/self-heal-preview-evidence") {
+                  throw new Error("SELF_HEAL_PREVIEW_EVIDENCE_DIRECTORY_INVALID");
+                }
+                const fs = await import("node:fs");
+                fs.mkdirSync(child.SELF_IMPROVE_EVIDENCE_DIR, { recursive: true });
+                const evidenceProbe = `${child.SELF_IMPROVE_EVIDENCE_DIR}/image-${role}-probe.json`;
+                fs.writeFileSync(evidenceProbe, "{}");
+                fs.unlinkSync(evidenceProbe);
                 for (const name of Object.keys(imageMetadata)) {
                   if (Object.hasOwn(child, name)) throw new Error("SELF_HEAL_PREVIEW_IMAGE_METADATA_INHERITED");
                 }

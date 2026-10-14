@@ -133,6 +133,7 @@ export function buildSelfHealPreviewApplicationEnvironment(profile, env) {
   return {
     ...derived, PATH: '/usr/local/bin:/usr/bin:/bin', TZ: 'UTC', RUN_WORKERS: profile.proofTarget.processKind === 'worker' ? 'true' : 'false',
     SELF_IMPROVE_ENABLED: 'false', SELF_IMPROVE_AUTONOMY_LEVEL: '0', SELF_IMPROVE_FREEZE: 'false',
+    SELF_IMPROVE_EVIDENCE_DIR: '/app/memory/self-heal-preview-evidence',
     PREDICTIVE_HEALING_ENABLED: 'false', PREDICTIVE_HEALING_DRY_RUN: 'true',
     SELF_IMPROVE_KILL_SWITCH_KEY: `arcanos:preview:self-heal:${profile.proofTarget.runId}:kill-switch:v1`,
     SELF_HEAL_LOOP_INTERVAL_MS: '1000',

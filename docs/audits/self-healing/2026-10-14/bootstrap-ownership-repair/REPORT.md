@@ -1077,3 +1077,240 @@ remain unmet before deployment; missing evidence is not observed behavior failur
 `E2E_ACCEPTANCE` and `MERGE_READY` remain **BLOCKED**. `PRODUCTION_PROMOTION`
 remains **NOT_AUTHORIZED**. The terminal handoff must include scenario receipts,
 new-head CI/review and actual owned-resource absence before superseding this snapshot.
+
+## Scoped extension delivery and acceptance stop — 2026-10-14
+
+**E2E_ACCEPTANCE: BLOCKED. MERGE_READY: BLOCKED.** The scoped extension is
+implemented, but authenticated Railway SSH process inspection is unavailable.
+No application source was built or deployed on Railway. The 32 mandatory
+deployed scenarios have **0 passed, 0 failed and 32 blocked**. The failed cleanup
+operation below is a separate lifecycle failure, not an executed healing scenario.
+The preceding predeployment snapshot remains historical.
+
+### Source, artifact and isolation evidence
+
+PR: [#1544](https://github.com/pbjustin/Arcanos/pull/1544). The refreshed main and
+merge base are `7aee3bb9ace55e1fc19f1e83d0b6dfeca169c383`. The last staged
+application source pin was `18ac0ad0a9ed7a3341a9e028b1e528ff9ae2c149`;
+the subsequent repair commit containing this report was **not deployed**.
+The [existing PR audit handoff](https://github.com/pbjustin/Arcanos/pull/1544#issuecomment-6177135799)
+records the literal final published SHA and its terminal checks/review, avoiding
+a self-referential commit SHA in this file. The PR remains unmerged.
+
+The committed [redacted receipt](preview-extension-receipt.json) records all
+resource identities, image digests, source evidence hashes and scenario states.
+Twenty original receipts are retained in the operator's external
+`pr1544-acceptance-evidence` directory; credentials and raw variable values are
+excluded from the committed projection. Exact fresh-secret scanning found
+matches only in the two intentionally protected secret/variable input files.
+No matching credential value appeared in the shareable receipt or other logs.
+
+The owned environment is `3cb2fa88-094d-491e-ba4a-105d519c9de1`, in private
+project `c17cd955-d133-49cd-baf0-b10bb2c08c0f`, run
+`self-heal-1544-20261014-shv1`. Four distinct services and two fresh private
+1 GiB volumes were independently inventoried. There were no shared variables,
+public domains, TCP proxies, buckets or cron jobs. Sources and variables were
+staged with `skipDeploys: true`; the exact source pin and private PostgreSQL/Redis
+references were independently read back without their values.
+
+Only the dedicated dependencies were activated. PostgreSQL 18.6 deployment
+`39d786f9-6c44-41ea-a28c-261b87836296` and Redis 8.2.10 deployment
+`3da154bc-dd65-4a48-95b1-adfa16fe523a` reached readiness on their fresh volumes.
+Their immutable image digests and instance IDs are in the receipt. No application
+database initialization, SQL fixture, job creation/consumption, provider call or
+fault injection ran in this environment. Dependency readiness is not Worker,
+web or coordinator readiness. Both dependency deployments are now `REMOVED`
+with `deploymentStopped: true` and no running instances.
+
+There is **no Railway executable artifact identity**. Hosted CI built the
+immutable image at the earlier head and verified its compiled manifest, literal
+environment and non-root executable ownership. That is CI-container evidence;
+its digest cannot attest a nonexistent Railway application deployment.
+
+The staged policy was observation-only: self-improvement disabled, autonomy 0,
+freeze false, predictive execution disabled and dry-run true. The profile derives
+a per-run kill-switch key, one Worker consumer, fixed loopback fixture provider,
+web dead-loopback provider, bounded process lease and purpose-bound control
+credential. Its fixed `policy_allowed` control can authorize only the expiring
+preview process; no global or production policy was changed. Secrets remain
+redacted. Configuration isolation passed readback; runtime isolation remains
+unproven because the applications never started.
+
+### Prerequisite blocker and cleanup receipts
+
+The existing account credential can create and inspect this isolated project,
+but no registered Railway SSH identity/private key is available. A bounded
+15-second, exact-instance noninteractive probe failed in 471 ms without running
+the remote command. The control client requires authorized process-local
+inspection for artifact and consumer correlation. Creating an account-wide SSH
+identity exceeds preview-only credential authority. Application deployment
+therefore stopped. The runbook now requires this check before billable resources.
+
+The original cleanup helper scheduled project deletion, then failed its absence
+check: `SELF_HEAL_PREVIEW_CLEANUP_ABSENCE_UNCONFIRMED`. Independent inventory
+showed Railway's project deletion stops deployments but retains service metadata
+and volumes for 48 hours. Project `deletedAt` is
+`2026-10-16T21:35:06.849Z`; it is a scheduled deletion timestamp, not proof of
+resource absence. The original failure receipt is preserved.
+
+The helper is repaired to delete exact owned services, verify service/instance
+absence, delete the **global** volume IDs, verify storage absence, and only then
+schedule project deletion. A closed optional resource binding supports a safe
+retry after volume detachment. The helper rejects foreign/incomplete inventory
+and refused deletion; its API fallback is read-only inventory only. Sixty
+deterministic tests cover ordering, retained metadata, global/instance ID
+confusion, partial retries, ownership drift, refusal and bounded waits.
+
+The user explicitly approved permanent removal of these four services and two
+volumes. A fresh ownership attestation passed, but automatic approval review
+again rejected the first service deletion, reporting: "Cancelled — the user did
+not approve this action. No changes were made." No other deletion or alternate
+interface retry followed. **Cleanup is incomplete:** four service metadata
+records and two `READY` retained volumes remain; ongoing storage costs cannot
+be ruled out until deletion/retention ends. The bounded project deletion remains
+scheduled. The original local watcher was stopped after exact command-line
+attestation because its superseded helper could not remove retained resources.
+No local cleanup watcher, application queue or scheduled application job remains.
+The receipt records both approval attempts and the unresolved automatic rejection.
+
+No production deployment, promotion, configuration, variable, credential,
+database, Redis or traffic mutation occurred. Production was not substituted.
+
+### Repairs, durable fixtures and validation
+
+The extension adds artifact provenance, closed child-environment and lease
+guards, actual compiled Worker bootstrap controls, bounded injected database and
+provider faults, identity-bound synthetic jobs, measured canonical Trinity
+consumer diagnostics, predictive authorization controls and receipt-bound
+cleanup. Existing Jest, PostgreSQL 18 and Docker CI lanes exercise these surfaces;
+there is no second generic preview framework. The ordinary compiled Worker entry
+is retained. Injected observations, policy projections and provider adapters are
+explicit fixture seams, not external-service or deployed-process evidence.
+
+The actual advisor/SDK fixture reproduced and repaired backend memory access in
+the predictive control-plane path using `disableMemoryAccess` and
+`disableOptionalSideEffects`; strict no-memory/no-write assertions remain.
+The real facade/SDK fixture verifies model routing changes at the intended
+consumer and predictive dry-run/recommend-only denial. Forty control/diagnostic
+tests and 49 provider cases supplement the canonical ownership, TTL, stale
+identity, race, authorization, Worker continuation and drain suites. The new
+PostgreSQL suite has 24 real database cases and nine offline guard cases, run
+against the disposable PostgreSQL 18 CI service. They did not run on Railway.
+
+The full CodeRabbit review of `18ac0ad0` returned two valid actionable findings:
+
+- [Immutable preview image startup and evidence directory](https://github.com/pbjustin/Arcanos/pull/1544#discussion_r4276572260):
+  build-time alias repair already exists; the preview launcher now checks aliases
+  without rewriting immutable executable bytes. Both roles derive the writable
+  `/app/memory/self-heal-preview-evidence` directory. Hosted image verification
+  checks aliases and writes/removes a synthetic evidence file as the non-root user.
+- [Unavailable Worker repair action](https://github.com/pbjustin/Arcanos/pull/1544#discussion_r4276572278):
+  the Worker rejects `heal_worker_runtime` before dispatch bookkeeping with
+  `dedicated_job_runner_repair_unavailable`. A reproduced regression failed
+  before repair and now proves repeated ticks keep `RUNNING`, emit no false
+  dispatch/failure, consume no attempts/cooldowns, and preserve local stale-job repair.
+
+The `finally` cleanup-error nitpick is intentionally not adopted: a throw after
+the block could be bypassed by early return, weakening failure propagation.
+Existing lifecycle fixtures require cleanup failures to reject without masking
+an earlier runtime failure. Final review completion and thread status are in
+the exact-head PR handoff.
+
+At `18ac0ad0`, terminal CI/CD, PR CI and documentation checks passed. Unit tests:
+924 suites, 18,366 passed, 191 skipped. Integration: 43 suites, 878 passed,
+186 skipped. Coverage: 94.35% lines/statements, 87.17% branches, 96.4% functions;
+Codecov patch **85.26%**, above its 80% target. Hosted PostgreSQL 18, Redis,
+Windows/cross-platform, security, Docker and Railway validation passed. These
+figures apply to that earlier head, not the successor repair commit.
+
+The final repair selection passed **280 tests across six suites**, including
+60 cleanup tests. An initial command named a nonexistent lifecycle file and
+failed with `ENOENT` while its other 272 tests passed; the corrected exact-path
+rerun passed all six suites. A second command misspelled the integrity test
+filename; its correct-path rerun is recorded separately from the native-boundary
+suite. Both original invocation failures are preserved. The final commit's
+first type-check also correctly rejected the changed launcher semantic digest;
+the reviewed entry-file pin was advanced for the preview-only alias check,
+preserving the import-boundary guard and its negative mutation tests.
+The final commit's
+type-check, lint, production build, documentation/index and Railway static checks
+are recorded with its terminal hosted validation in the handoff. Local Docker
+and PostgreSQL executables were unavailable; hosted fixtures supply that evidence.
+All earlier failures and overlapping reruns remain distinct; counts are not added.
+
+### Mandatory deployed fault matrix
+
+Every row below is `BLOCKED` by missing authenticated deployed process
+inspection and absence of an application deployment. No baseline, detection,
+diagnosis, authorization/action identity, actual consumer effect, recovery or
+rollback receipt exists for any mandatory deployed scenario. Local fixture
+coverage remains `SYNTHETIC_ONLY` where it uses injected dependencies.
+
+| ID | Scenario | Result |
+| --- | --- | --- |
+| A01 | Normal Worker coordinator startup | BLOCKED |
+| A02 | Web role suppression | BLOCKED |
+| A03 | Duplicate initialization | BLOCKED |
+| A04 | Failed scheduler installation | BLOCKED |
+| A05 | Worker restart and single-owner recovery | BLOCKED |
+| A06 | Shutdown during evaluation | BLOCKED |
+| B01 | Temporary preview Redis unavailability | BLOCKED |
+| B02 | Simulated database operation failure | BLOCKED |
+| B03 | Injected provider timeout | BLOCKED |
+| B04 | Retry and cooldown bounds | BLOCKED |
+| B05 | Dependency becomes healthy | BLOCKED |
+| C01 | Authorized local mitigation | BLOCKED |
+| C02 | Unauthorized remote mitigation | BLOCKED |
+| C03 | Worker web-local prompt change | BLOCKED |
+| C04 | Stale mitigation identity | BLOCKED |
+| C05 | Mitigation replacement race | BLOCKED |
+| C06 | TTL expiry | BLOCKED |
+| C07 | Recovery evidence older than mitigation | BLOCKED |
+| C08 | Fresh evidence recovery | BLOCKED |
+| D01 | Self-improvement disabled | BLOCKED |
+| D02 | Insufficient autonomy | BLOCKED |
+| D03 | Freeze enabled | BLOCKED |
+| D04 | Emergency kill switch | BLOCKED |
+| D05 | Predictive dry-run | BLOCKED |
+| D06 | Predictive execution not authorized | BLOCKED |
+| D07 | Explicitly authorized bounded preview action | BLOCKED |
+| E01 | Coordinator tick throws | BLOCKED |
+| E02 | Worker processes fenced job | BLOCKED |
+| E03 | Recovery without duplicate completion | BLOCKED |
+| E04 | Concurrent bounded faults | BLOCKED |
+| E05 | Restart rejects stale process authority | BLOCKED |
+| E06 | Drain before dependency close | BLOCKED |
+
+### Acceptance gates at delivery snapshot
+
+`FAIL` below means a mandatory proof is absent or cleanup is incomplete; it
+does not assert an observed deployed behavioral defect. Review/CI gates remain
+`BLOCKED` here until the exact-head PR handoff records terminal results.
+
+| Gate | Verdict | Evidence / remaining requirement |
+| --- | --- | --- |
+| EXACT_HEAD_PROVENANCE | FAIL | No Railway application artifact. |
+| PREVIEW_ISOLATION | FAIL | Configuration attested; runtime unproven. |
+| WEB_ROLE_SUPPRESSION | FAIL | No deployed web process. |
+| WORKER_COORDINATOR_STARTUP | FAIL | No deployed Worker process. |
+| SINGLE_CONTROLLER_OWNERSHIP | FAIL | Local/CI fixtures only. |
+| FAULT_DETECTION | FAIL | No deployed fault injection. |
+| AUTHORIZED_MITIGATION | FAIL | No deployed consumer effect. |
+| CROSS_PROCESS_SAFETY | FAIL | No deployed negative-effect observation. |
+| FRESH_RECOVERY_EVIDENCE | FAIL | No deployed recovery correlation. |
+| SHUTDOWN_AND_RESTART | FAIL | No deployed lifecycle observation. |
+| SECURITY_REGRESSION | PASS | Focused and earlier hosted security checks; final checks in handoff. |
+| FIXTURE_COMPLETENESS | FAIL | Added durable fixtures; mandatory deployed rehearsal remains absent. |
+| CODE_REVIEW | BLOCKED | Successor findings/review refresh required. |
+| FULL_CI | BLOCKED | Successor terminal checks required. |
+| PREVIEW_CLEANUP | FAIL | Two volumes retained; automatic deletion approval rejected. |
+| E2E_ACCEPTANCE | BLOCKED | All 32 mandatory scenarios blocked. |
+| MERGE_READY | BLOCKED | E2E and cleanup requirements unmet. |
+| PRODUCTION_PROMOTION | NOT_AUTHORIZED | No production action performed. |
+
+Residual risks include the untested hosted SSH/control path, actual Worker/web
+bootstrap, real Redis recovery, dependency I/O during drain, restart authority,
+elapsed TTL/cooldown behavior and consumer-side recovery under deployment.
+Synthetic provider recovery cannot prove real external-provider recovery.
+Required next prerequisites are authorized Railway process inspection and
+resolution of the deletion approval rejection for the exact retained resources.

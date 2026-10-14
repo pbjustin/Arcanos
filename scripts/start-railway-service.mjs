@@ -945,8 +945,14 @@ export function waitForExit(childProcess, options = {}) {
   });
 }
 
+export function resolveDistAliasArguments(env = process.env) {
+  // Sealed preview images are repaired at build time and keep executable bytes immutable.
+  return ['scripts/repair-dist-aliases.js',
+    env.ARCANOS_SELF_HEAL_PREVIEW_PROFILE === 'worker-coordinator-v1' ? '--check' : '--rewrite'];
+}
+
 async function repairDistAliases(processKind) {
-  const repairProcess = spawnProcess('node', ['scripts/repair-dist-aliases.js', '--rewrite'], processKind);
+  const repairProcess = spawnProcess('node', resolveDistAliasArguments(), processKind);
   const exitCode = await waitForExit(repairProcess);
   if (exitCode !== 0) {
     throw new Error(`dist alias repair failed with exit code ${exitCode}`);

@@ -17,6 +17,7 @@ import {
   resolvePassivePrPreviewOrThrow,
   resolveNativePrPreviewOrThrow,
   resolveCliBridgeListenerConfig,
+  resolveDistAliasArguments,
   resolveHealthListenerConfig,
   waitForExit,
   WORKER_BOOTSTRAP_READY_SENTINEL,
@@ -48,6 +49,13 @@ function buildWorkerOperationalStateLine({
 }
 
 describe('start-railway-service launcher helpers', () => {
+  it('checks immutable preview aliases while preserving normal runtime repair', () => {
+    expect(resolveDistAliasArguments({ ARCANOS_SELF_HEAL_PREVIEW_PROFILE: 'worker-coordinator-v1' }))
+      .toEqual(['scripts/repair-dist-aliases.js', '--check']);
+    expect(resolveDistAliasArguments({})).toEqual(['scripts/repair-dist-aliases.js', '--rewrite']);
+    expect(resolveDistAliasArguments({ ARCANOS_SELF_HEAL_PREVIEW_PROFILE: 'other' }))
+      .toEqual(['scripts/repair-dist-aliases.js', '--rewrite']);
+  });
   const nativeApplicationPreviewEnvironment = {
     ARCANOS_PROCESS_KIND: 'web',
     PORT: '8080',

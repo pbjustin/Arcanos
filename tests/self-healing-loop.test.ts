@@ -2726,6 +2726,50 @@ describe('selfHealingLoop', () => {
     expect(healWorkerRuntimeMock).not.toHaveBeenCalled();
   });
 
+  it('keeps repeated degraded Worker observations healthy when the local restart actuator cannot own that process', async () => {
+    getStableWorkerRuntimeModeMock.mockReturnValue({
+      requestedRunWorkers: true, resolvedRunWorkers: true, processKind: 'worker',
+      railwayServiceName: null, reason: 'explicit_worker_role'
+    });
+    getWorkerControlHealthMock.mockResolvedValue(createWorkerHealth({ overallStatus: 'degraded' }));
+    const fetchSpy = jest.spyOn(globalThis, 'fetch');
+    startSelfHealingLoop(1_000);
+    await jest.advanceTimersByTimeAsync(3_100);
+
+    const snapshot = getSelfHealingLoopStatus();
+    expect(snapshot.tickCount).toBeGreaterThanOrEqual(3);
+    expect(snapshot).toMatchObject({
+      coordinatorState: 'RUNNING', coordinatorReasonCode: 'scheduled', loopRunning: true, inFlight: false,
+      lastError: null, lastAction: null, lastDispatchAttempt: null, lastHealResult: null,
+      attemptsByDiagnosis: {}, cooldowns: {},
+    });
+    const events = buildSelfHealEventsSnapshot(100).events;
+    expect(events).toEqual(expect.arrayContaining([expect.objectContaining({
+      kind: 'noop', trigger: 'action', reason: 'dedicated_job_runner_repair_unavailable',
+      details: { reasonCode: 'dedicated_job_runner_repair_unavailable', effectScope: 'current_process' },
+    })]));
+    expect(events.some(event => event.kind === 'ACTION_DISPATCH_ATTEMPT')).toBe(false);
+    expect(events.some(event => event.kind === 'failure' && event.trigger === 'action')).toBe(false);
+    expect(healWorkerRuntimeMock).not.toHaveBeenCalled();
+    expect(runSelfImproveCycleMock).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('preserves the durable Worker own-scope stale-job repair after rejecting listener restarts', async () => {
+    getStableWorkerRuntimeModeMock.mockReturnValue({
+      requestedRunWorkers: true, resolvedRunWorkers: true, processKind: 'worker',
+      railwayServiceName: null, reason: 'explicit_worker_role'
+    });
+    getWorkerControlHealthMock.mockResolvedValue(createWorkerHealth({
+      overallStatus: 'degraded', queueSummary: { pending: 0, running: 1, stalledRunning: 1, oldestPendingJobAgeMs: 0 },
+    }));
+    const result = await runSelfHealingLoop({ trigger: 'interval' });
+    expect(result.action).toMatch(/^recoverStaleJobs:/u);
+    expect(recoverStaleJobsMock).toHaveBeenCalledTimes(1);
+    expect(healWorkerRuntimeMock).not.toHaveBeenCalled();
+    expect(getSelfHealingLoopStatus().attemptsByDiagnosis).toEqual(expect.objectContaining({ worker_stall: 1 }));
+  });
+
   it('reports UNKNOWN coordinator evidence before startup despite healthy worker configuration', () => {
     const snapshot = buildSelfHealRuntimeSnapshot();
     expect(snapshot.enabled).toBe(false);

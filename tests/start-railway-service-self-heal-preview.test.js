@@ -107,9 +107,11 @@ describe('opt-in self-heal profile of the existing heavy preview supervisor', ()
     expect(child.PATH).toBe('/usr/local/bin:/usr/bin:/bin'); expect(child).not.toHaveProperty('HOME'); expect(child).not.toHaveProperty('UNRELATED_BENIGN');
     expect(child).toMatchObject({ NODE_ENV: 'production', SELF_IMPROVE_ENABLED: 'false', SELF_IMPROVE_AUTONOMY_LEVEL: '0',
       PREDICTIVE_HEALING_ENABLED: 'false', PREDICTIVE_HEALING_DRY_RUN: 'true', JOB_WORKER_CONCURRENCY: '1',
+      SELF_IMPROVE_EVIDENCE_DIR: '/app/memory/self-heal-preview-evidence',
       SELF_IMPROVE_KILL_SWITCH_KEY: 'arcanos:preview:self-heal:proof-run-1544:kill-switch:v1' });
     expect(child).not.toHaveProperty('ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN');
     const web = buildSelfHealPreviewApplicationEnvironment(profile('web'), environment('web'));
+    expect(web.SELF_IMPROVE_EVIDENCE_DIR).toBe('/app/memory/self-heal-preview-evidence');
     expect(web.OPENAI_BASE_URL).toBe('http://127.0.0.1:9/v1'); expect(web.RUN_WORKERS).toBe('false');
     const fixture = buildSelfHealPreviewFixtureEnvironment(profile());
     expect(fixture).not.toHaveProperty('DATABASE_URL'); expect(fixture).not.toHaveProperty('REDIS_URL');

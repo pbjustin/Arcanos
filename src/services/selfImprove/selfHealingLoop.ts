@@ -3369,11 +3369,11 @@ async function executeActionPlan(
   const actionTarget = getSelfHealingActionTarget(actionPlan);
   const policyBlock = await resolveReactiveEffectBlock();
   signal?.throwIfAborted();
-  const ownershipBlock = getStableWorkerRuntimeMode().processKind === 'worker' &&
-    (actionPlan.kind === 'activate_prompt_route_reduced_latency_mode' ||
-      actionPlan.kind === 'activate_prompt_route_degraded_mode')
-    ? 'cross_process_prompt_route_unavailable'
-    : null;
+  const workerRole = getStableWorkerRuntimeMode().processKind === 'worker';
+  const ownershipBlock = !workerRole ? null
+    : actionPlan.kind === 'heal_worker_runtime' ? 'dedicated_job_runner_repair_unavailable'
+      : actionPlan.kind === 'activate_prompt_route_reduced_latency_mode' || actionPlan.kind === 'activate_prompt_route_degraded_mode'
+        ? 'cross_process_prompt_route_unavailable' : null;
   const reasonCode = policyBlock ?? ownershipBlock;
   if (reasonCode) {
     recordSelfHealEvent({

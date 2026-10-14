@@ -26,6 +26,21 @@ const FORBIDDEN_IDS = new Set([
 ]);
 const RECEIPT_KEYS = Object.freeze(['version', 'owner', 'repository', 'prNumber', 'sourceSha', 'runId',
   'projectId', 'projectName', 'workspaceId', 'environmentId', 'environmentName', 'issuedAt', 'expiresAt']);
+const CLEANUP_INVENTORY_QUERY = `query SelfHealPreviewCleanupInventory($projectId: String!) {
+  project(id: $projectId) {
+    id name workspaceId deletedAt
+    services { edges { node { id name } } pageInfo { hasNextPage } }
+    volumes { edges { node { id name projectId } } pageInfo { hasNextPage } }
+    buckets { edges { node { id } } pageInfo { hasNextPage } }
+    environments { edges { node {
+      id name deletedAt
+      serviceInstances { edges { node { id serviceId serviceName environmentId } } pageInfo { hasNextPage } }
+      volumeInstances { edges { node {
+        id volumeId serviceId environmentId mountPath volume { id name projectId }
+      } } pageInfo { hasNextPage } }
+    } } pageInfo { hasNextPage } }
+  }
+}`;
 const SERVICES = new Map([
   ['Postgres', '/var/lib/postgresql/data'], ['Redis', '/data'],
   ['arcanos-web-pr1544-heavy', null], ['arcanos-worker-pr1544-heavy', null],
@@ -38,11 +53,33 @@ export class SelfHealPreviewCleanupError extends Error {
 function fail(code) { throw new SelfHealPreviewCleanupError(code); }
 function validId(value) { return typeof value === 'string' && UUID.test(value) && !FORBIDDEN_IDS.has(value); }
 function iso(value) { const ms = Date.parse(value); return typeof value === 'string' && Number.isFinite(ms) && new Date(ms).toISOString() === value ? ms : NaN; }
+function exact(value, keys) { return record(value) && Object.keys(value).sort().join('\0') === [...keys].sort().join('\0'); }
+function resourceBindings(value) {
+  if (!exact(value, ['services', 'volumes']) || !Array.isArray(value.services) || !Array.isArray(value.volumes)
+    || value.services.length > 4 || value.volumes.length > 2) fail('RESOURCE_BINDINGS_INVALID');
+  const services = value.services.map(service => {
+    if (!exact(service, ['id', 'name']) || !validId(service.id) || !SERVICES.has(service.name)) fail('RESOURCE_BINDINGS_INVALID');
+    return Object.freeze({ ...service });
+  });
+  const names = new Map(services.map(service => [service.id, service.name]));
+  const volumes = value.volumes.map(volume => {
+    if (!exact(volume, ['id', 'name', 'serviceId', 'mountPath']) || !validId(volume.id)
+      || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u.test(volume.name ?? '') || !names.has(volume.serviceId)
+      || !SERVICES.get(names.get(volume.serviceId)) || volume.mountPath !== SERVICES.get(names.get(volume.serviceId))) fail('RESOURCE_BINDINGS_INVALID');
+    return Object.freeze({ ...volume });
+  });
+  if (new Set(services.map(service => service.id)).size !== services.length
+    || new Set(services.map(service => service.name)).size !== services.length
+    || new Set(volumes.map(volume => volume.id)).size !== volumes.length
+    || new Set(volumes.map(volume => volume.serviceId)).size !== volumes.length
+    || new Set([...services.map(service => service.id), ...volumes.map(volume => volume.id)]).size !== services.length + volumes.length) fail('RESOURCE_BINDINGS_INVALID');
+  return Object.freeze({ services: Object.freeze(services), volumes: Object.freeze(volumes) });
+}
 
 /** An expired receipt remains valid deletion authority for the same owned target. */
 export function validateSelfHealPreviewCleanupReceipt(receipt, options = {}) {
   const now = options.now?.() ?? Date.now();
-  if (!record(receipt) || Object.keys(receipt).sort().join('\0') !== [...RECEIPT_KEYS].sort().join('\0')
+  if (!record(receipt) || !exact(receipt, Object.hasOwn(receipt, 'resources') ? [...RECEIPT_KEYS, 'resources'] : RECEIPT_KEYS)
     || receipt.version !== 1 || receipt.owner !== 'pbjustin' || receipt.repository !== 'pbjustin/Arcanos'
     || receipt.prNumber !== 1544 || !/^[0-9a-f]{40}$/u.test(receipt.sourceSha ?? '')
     || !/^[a-z0-9][a-z0-9-]{7,63}$/u.test(receipt.runId ?? '')
@@ -52,7 +89,7 @@ export function validateSelfHealPreviewCleanupReceipt(receipt, options = {}) {
   const issued = iso(receipt.issuedAt); const expires = iso(receipt.expiresAt);
   if (!Number.isFinite(issued) || !Number.isFinite(expires) || issued > now || expires <= issued
     || expires - issued > MAX_LEASE_MS || (options.allowExpired === false && expires <= now)) fail('LEASE_INVALID');
-  return Object.freeze({ ...receipt });
+  return Object.freeze({ ...receipt, ...(Object.hasOwn(receipt, 'resources') ? { resources: resourceBindings(receipt.resources) } : {}) });
 }
 
 function connection(value) {
@@ -61,9 +98,11 @@ function connection(value) {
 }
 
 /** Permit only the exact project, one exact environment, and its partial four-service topology. */
-export function attestSelfHealPreviewCleanupTarget(status, receipt) {
+function cleanupInventory(status, receipt, options = {}) {
+  const now = options.now?.() ?? Date.now();
   if (!record(status) || status.id !== receipt.projectId || status.name !== receipt.projectName
-    || status.workspaceId !== WORKSPACE || status.deletedAt !== null || !validId(status.id)) fail('PROJECT_MISMATCH');
+    || status.workspaceId !== WORKSPACE || !validId(status.id)
+    || (status.deletedAt !== null && !(iso(status.deletedAt) > now))) fail('PROJECT_MISMATCH');
   if (status.buckets !== undefined) {
     const buckets = Array.isArray(status.buckets) ? status.buckets : connection(status.buckets);
     if (buckets.length !== 0) fail('FOREIGN_RESOURCES');
@@ -77,19 +116,54 @@ export function attestSelfHealPreviewCleanupTarget(status, receipt) {
   if (services.length > 4 || new Set(services.map(service => service.id)).size !== services.length
     || new Set(services.map(service => service.name)).size !== services.length
     || services.some(service => !validId(service.id) || !SERVICES.has(service.name))) fail('FOREIGN_SERVICES');
-  const byId = new Map(services.map(service => [service.id, service.name]));
+  const expected = options.bindings ?? receipt.resources;
+  const knownServices = expected?.services ?? services;
+  const byId = new Map(knownServices.map(service => [service.id, service.name]));
+  if (services.some(service => byId.get(service.id) !== service.name)) fail('FOREIGN_SERVICES');
   const instances = connection(environment.serviceInstances);
   if (new Set(instances.map(instance => instance.serviceId)).size !== instances.length
     || instances.some(instance => !byId.has(instance.serviceId)
       || (instance.environmentId !== undefined && instance.environmentId !== receipt.environmentId))) fail('FOREIGN_SERVICES');
   const volumes = connection(environment.volumeInstances);
+  const globalVolumes = connection(status.volumes);
   if (volumes.length > 2 || new Set(volumes.map(volume => volume.id)).size !== volumes.length
-    || new Set(volumes.map(volume => volume.serviceId)).size !== volumes.length
-    || volumes.some(volume => !validId(volume.id) || !byId.has(volume.serviceId)
-      || SERVICES.get(byId.get(volume.serviceId)) === null
+    || globalVolumes.length > 2 || new Set(globalVolumes.map(volume => volume.id)).size !== globalVolumes.length
+    || globalVolumes.some(volume => !validId(volume.id) || volume.projectId !== receipt.projectId
+      || typeof volume.name !== 'string')) fail('FOREIGN_VOLUMES');
+  const globalById = new Map(globalVolumes.map(volume => [volume.id, volume]));
+  const expectedVolumes = expected ? new Map(expected.volumes.map(volume => [volume.id, volume])) : null;
+  for (const volume of volumes) {
+    const global = globalById.get(volume.volumeId);
+    const binding = expectedVolumes?.get(volume.volumeId);
+    if (!validId(volume.id) || !global || !record(volume.volume) || volume.volume.id !== volume.volumeId
+      || volume.id === volume.volumeId || volume.volume.projectId !== receipt.projectId
+      || volume.volume.name !== global.name
+      || (volume.environmentId !== undefined && volume.environmentId !== receipt.environmentId)) fail('FOREIGN_VOLUMES');
+    if (volume.serviceId === null || volume.serviceId === undefined) {
+      if (!binding || services.some(service => service.id === binding.serviceId)) fail('UNBOUND_VOLUME');
+    } else if (!byId.has(volume.serviceId) || !SERVICES.get(byId.get(volume.serviceId))
       || volume.mountPath !== SERVICES.get(byId.get(volume.serviceId))
-      || (volume.environmentId !== undefined && volume.environmentId !== receipt.environmentId))) fail('FOREIGN_VOLUMES');
-  return { serviceCount: services.length, volumeCount: volumes.length, environmentCount: 1 };
+      || (binding && binding.serviceId !== volume.serviceId)) fail('FOREIGN_VOLUMES');
+  }
+  let bindings = expected;
+  if (!bindings) {
+    const boundVolumes = globalVolumes.map(global => {
+      const instance = volumes.find(volume => volume.volumeId === global.id);
+      if (!instance || !instance.serviceId) fail('UNBOUND_VOLUME');
+      return { id: global.id, name: global.name, serviceId: instance.serviceId, mountPath: instance.mountPath };
+    });
+    bindings = resourceBindings({ services, volumes: boundVolumes });
+  }
+  const boundById = new Map(bindings.volumes.map(volume => [volume.id, volume]));
+  if (globalVolumes.some(volume => boundById.get(volume.id)?.name !== volume.name)) fail('FOREIGN_VOLUMES');
+  return { services, instances, globalVolumes, volumeInstances: volumes, bindings,
+    scheduledDeletionAt: status.deletedAt,
+    counts: { serviceCount: services.length, serviceInstanceCount: instances.length,
+      volumeCount: globalVolumes.length, volumeInstanceCount: volumes.length, environmentCount: 1 } };
+}
+
+export function attestSelfHealPreviewCleanupTarget(status, receipt, options = {}) {
+  return cleanupInventory(status, receipt, options).counts;
 }
 
 export function parseSelfHealPreviewCleanupArgs(args) {
@@ -141,6 +215,43 @@ async function cli(args, options, timeout = CLI_TIMEOUT_MS, json = true) {
   }
 }
 
+async function projectList(options, timeout = CLI_TIMEOUT_MS) {
+  const projects = await cli(['list', '--json'], options, timeout);
+  if (!Array.isArray(projects) || projects.some(project => !record(project) || !UUID.test(project.id ?? ''))
+    || new Set(projects.map(project => project.id)).size !== projects.length) fail('PROJECT_LIST_INVALID');
+  return projects;
+}
+
+async function readOwnedProject(receipt, options, deadline) {
+  const now = options.now ?? Date.now;
+  const timeout = () => {
+    const remaining = deadline === undefined ? CLI_TIMEOUT_MS : deadline - now();
+    if (remaining <= 0) fail('RESOURCE_ABSENCE_UNCONFIRMED');
+    return Math.min(CLI_TIMEOUT_MS, remaining);
+  };
+  let status;
+  try {
+    status = await cli(['status', '--project', receipt.projectId, '--environment', receipt.environmentId, '--json'], options, timeout());
+  } catch (error) {
+    if (!(error instanceof SelfHealPreviewCleanupError) || error.message !== 'SELF_HEAL_PREVIEW_CLEANUP_CLI_FAILED') throw error;
+  }
+  if (status?.volumes) return status;
+  // CLI status rejects a project as soon as deletion is scheduled, and its
+  // normal projection omits global volumes. Use one fixed read-only query;
+  // deletion never falls back to an API mutation or a different target.
+  const response = await cli(['api', CLEANUP_INVENTORY_QUERY, '--variables', JSON.stringify({ projectId: receipt.projectId }), '--compact'], options, timeout());
+  if (!record(response) || (Array.isArray(response.errors) && response.errors.length > 0)
+    || !record(response.data) || !Object.hasOwn(response.data, 'project')) fail('INVENTORY_QUERY_FAILED');
+  if (response.data.project === null) {
+    if ((await projectList(options, timeout())).some(project => project.id === receipt.projectId)) fail('PROJECT_INSPECTION_UNAVAILABLE');
+    return null;
+  }
+  return response.data.project;
+}
+
+function noServices(inventory) { return inventory.services.length === 0 && inventory.instances.length === 0; }
+function noResources(inventory) { return noServices(inventory) && inventory.globalVolumes.length === 0 && inventory.volumeInstances.length === 0; }
+
 /** No head lookup is needed: cleanup authority remains bound to the receipt's resource identities. */
 export async function runSelfHealPreviewCleanup(config, options = {}) {
   const now = options.now ?? Date.now; const wait = options.sleep ?? sleep;
@@ -150,12 +261,18 @@ export async function runSelfHealPreviewCleanup(config, options = {}) {
   const output = { version: 1, owner: receipt.owner, repository: receipt.repository,
     runId: receipt.runId, sourceSha: receipt.sourceSha, projectId: receipt.projectId,
     environmentId: receipt.environmentId, expiresAt: receipt.expiresAt,
-    executed: Boolean(config.execute), deletionRequested: false, absenceVerified: false };
-  const emit = (status, extra = {}) => { const event = { ...output, status, ...extra, observedAt: new Date(now()).toISOString() }; options.onReceipt?.(event); return event; };
+    executed: Boolean(config.execute), deletionRequested: false, absenceVerified: false,
+    resourceAbsenceVerified: false, projectAbsenceVerified: false, projectMetadataRetained: false,
+    scheduledDeletionAt: null, serviceDeleteRequests: [], volumeDeleteRequests: [] };
+  const emit = (status, extra = {}) => {
+    const event = { ...output, serviceDeleteRequests: [...output.serviceDeleteRequests],
+      volumeDeleteRequests: [...output.volumeDeleteRequests], status, ...extra, observedAt: new Date(now()).toISOString() };
+    options.onReceipt?.(event); return event;
+  };
   if (!config.execute) return emit('DRY_RUN');
-  const statusArgs = ['status', '--project', receipt.projectId, '--environment', receipt.environmentId, '--json'];
   try {
-    attestSelfHealPreviewCleanupTarget(await cli(statusArgs, options), receipt);
+    let status = await readOwnedProject(receipt, options);
+    if (status !== null) cleanupInventory(status, receipt, { now });
     if (config.watchdog) {
       emit('WATCHDOG_ARMED');
       const expires = Date.parse(receipt.expiresAt);
@@ -165,22 +282,85 @@ export async function runSelfHealPreviewCleanup(config, options = {}) {
         await wait(Math.min(30_000, expires - now()));
       }
     }
-    const topology = attestSelfHealPreviewCleanupTarget(await cli(statusArgs, options), receipt);
-    Object.assign(output, topology); emit('OWNERSHIP_RECHECKED');
-    await cli(['delete', '--project', receipt.projectId, '--yes', '--json'], options, CLI_TIMEOUT_MS, false);
-    output.deletionRequested = true; emit('DELETION_REQUESTED');
+    status = await readOwnedProject(receipt, options);
+    const finishAbsent = () => {
+      Object.assign(output, { resourceAbsenceVerified: true, projectAbsenceVerified: true,
+        absenceVerified: true, projectMetadataRetained: false, serviceCount: 0, serviceInstanceCount: 0,
+        volumeCount: 0, volumeInstanceCount: 0, environmentCount: 0 });
+      return emit('DELETED');
+    };
+    if (status === null) return finishAbsent();
+    let inventory = cleanupInventory(status, receipt, { now });
+    const bindings = inventory.bindings;
+    Object.assign(output, inventory.counts, { resources: bindings,
+      projectMetadataRetained: inventory.scheduledDeletionAt !== null,
+      scheduledDeletionAt: inventory.scheduledDeletionAt }); emit('OWNERSHIP_RECHECKED');
+    const refresh = async deadline => {
+      const latest = await readOwnedProject(receipt, options, deadline);
+      if (latest === null) return null;
+      const observed = cleanupInventory(latest, receipt, { now, bindings });
+      Object.assign(output, observed.counts, { projectMetadataRetained: observed.scheduledDeletionAt !== null,
+        scheduledDeletionAt: observed.scheduledDeletionAt });
+      if (!noResources(observed)) output.resourceAbsenceVerified = false;
+      return observed;
+    };
+    const poll = async predicate => {
+      const deadline = now() + ABSENCE_TIMEOUT_MS;
+      for (let attempt = 0; attempt < 31 && now() < deadline; attempt += 1) {
+        const latest = await refresh(deadline);
+        if (latest === null || predicate(latest)) return latest;
+        if (attempt < 30) await wait(Math.min(2000, Math.max(0, deadline - now())));
+      }
+      fail('RESOURCE_ABSENCE_UNCONFIRMED');
+    };
+    for (const service of bindings.services) {
+      inventory = await refresh(); if (inventory === null) return finishAbsent();
+      if (!inventory.services.some(current => current.id === service.id)) continue;
+      try {
+        await cli(['service', 'delete', '--project', receipt.projectId, '--environment', receipt.environmentId,
+          '--service', service.id, '--yes', '--json'], options, CLI_TIMEOUT_MS, false);
+      } catch (error) {
+        if (inventory.scheduledDeletionAt !== null) fail('SCHEDULED_RESOURCE_DELETE_REQUIRES_APPROVED_RECOVERY');
+        throw error;
+      }
+      output.serviceDeleteRequests.push(service.id); emit('SERVICE_DELETE_REQUESTED');
+    }
+    inventory = await poll(noServices); if (inventory === null) return finishAbsent();
+    for (const volume of bindings.volumes) {
+      inventory = await refresh(); if (inventory === null) return finishAbsent();
+      if (!inventory.globalVolumes.some(current => current.id === volume.id)) continue;
+      try {
+        await cli(['volume', '--project', receipt.projectId, '--environment', receipt.environmentId,
+          'delete', '--volume', volume.id, '--yes', '--json'], options, CLI_TIMEOUT_MS, false);
+      } catch (error) {
+        if (inventory.scheduledDeletionAt !== null) fail('SCHEDULED_RESOURCE_DELETE_REQUIRES_APPROVED_RECOVERY');
+        throw error;
+      }
+      output.volumeDeleteRequests.push(volume.id); emit('VOLUME_DELETE_REQUESTED');
+    }
+    inventory = await poll(noResources); if (inventory === null) return finishAbsent();
+    Object.assign(output, inventory.counts, { resourceAbsenceVerified: true }); emit('RESOURCES_ABSENT');
+    // Scheduling a project deletion retains its metadata for 48 hours. It is
+    // performed only after independently observing no services or volumes.
+    if (inventory.scheduledDeletionAt === null) {
+      inventory = await refresh(); if (inventory === null) return finishAbsent();
+      if (!noResources(inventory)) { output.resourceAbsenceVerified = false; fail('RESOURCES_REAPPEARED'); }
+      if (inventory.scheduledDeletionAt === null) {
+        await cli(['delete', '--project', receipt.projectId, '--yes', '--json'], options, CLI_TIMEOUT_MS, false);
+        output.deletionRequested = true; emit('PROJECT_DELETION_SCHEDULE_REQUESTED');
+      }
+    }
     const deadline = now() + ABSENCE_TIMEOUT_MS;
-    for (let attempt = 0; attempt < 31; attempt += 1) {
-      const remaining = deadline - now(); if (remaining <= 0) break;
-      const projects = await cli(['list', '--json'], options, Math.min(CLI_TIMEOUT_MS, remaining));
-      if (!Array.isArray(projects) || projects.some(project => !record(project) || !UUID.test(project.id ?? ''))
-        || new Set(projects.map(project => project.id)).size !== projects.length) fail('PROJECT_LIST_INVALID');
-      if (!projects.some(project => project.id === receipt.projectId)) {
-        output.absenceVerified = true; return emit('DELETED');
+    for (let attempt = 0; attempt < 31 && now() < deadline; attempt += 1) {
+      inventory = await refresh(deadline); if (inventory === null) return finishAbsent();
+      if (!noResources(inventory)) { output.resourceAbsenceVerified = false; fail('RESOURCES_REAPPEARED'); }
+      if (inventory.scheduledDeletionAt !== null) {
+        Object.assign(output, { projectMetadataRetained: true, scheduledDeletionAt: inventory.scheduledDeletionAt });
+        return emit('RESOURCES_REMOVED_METADATA_RETAINED');
       }
       if (attempt < 30) await wait(Math.min(2000, Math.max(0, deadline - now())));
     }
-    fail('ABSENCE_UNCONFIRMED');
+    fail('PROJECT_DELETION_SCHEDULE_UNCONFIRMED');
   } catch (error) {
     const code = error instanceof SelfHealPreviewCleanupError ? error.message : 'SELF_HEAL_PREVIEW_CLEANUP_FAILED';
     const failure = emit('FAILED', { errorCode: code });

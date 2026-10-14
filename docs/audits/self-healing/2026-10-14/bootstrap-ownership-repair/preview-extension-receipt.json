@@ -1,0 +1,362 @@
+{
+  "schemaVersion": 1,
+  "collectionTimestamp": "2026-10-14T21:46:57.906Z",
+  "repository": "pbjustin/Arcanos",
+  "pullRequest": 1544,
+  "runId": "self-heal-1544-20261014-shv1",
+  "scope": "Bounded user-authorized disposable self-healing preview; no production action or PR merge",
+  "terminalEvidencePointer": "https://github.com/pbjustin/Arcanos/pull/1544#issuecomment-6177135799",
+  "source": {
+    "baseSha": "7aee3bb9ace55e1fc19f1e83d0b6dfeca169c383",
+    "implementationHeads": [
+      "890fc8034aecf57530ea4305c4ecc61965d15368",
+      "7d5f3ececcf99ed8c040013c3b704d9e872803dc",
+      "93e186d65e563439582e760244b29d66d5d28d90",
+      "18ac0ad0a9ed7a3341a9e028b1e528ff9ae2c149"
+    ],
+    "lastConfiguredApplicationSha": "18ac0ad0a9ed7a3341a9e028b1e528ff9ae2c149",
+    "configurationObservedAt": "2026-10-14T21:28:07.507Z",
+    "configurationAppliedWithSkipDeploys": true,
+    "railwayApplicationDeployments": 0,
+    "railwayApplicationBuilds": 0,
+    "railwayExecutableArtifact": null,
+    "exactHeadRuntimeProvenance": "BLOCKED",
+    "finalPublicationSha": "Recorded in terminal PR handoff; not inferred from this receipt"
+  },
+  "resources": {
+    "projectId": "c17cd955-d133-49cd-baf0-b10bb2c08c0f",
+    "projectName": "arc-pr1544-heavy-1014shv1",
+    "environmentId": "3cb2fa88-094d-491e-ba4a-105d519c9de1",
+    "environmentName": "backstage-heavy-pr-1544-e2e-shv1",
+    "webServiceId": "93a6e2a2-15ce-4ed0-a27e-98e1802e8bcf",
+    "workerServiceId": "5e205ed1-47e9-4336-b2c7-e56094a09aa2",
+    "dependencies": {
+      "postgres": {
+        "serviceId": "fc6adae7-f7c6-4c4a-bfd7-4151837ede1e",
+        "deploymentId": "39d786f9-6c44-41ea-a28c-261b87836296",
+        "instanceId": "e077277f-ca6f-41d9-b23c-a28ea806dad1",
+        "image": "ghcr.io/railwayapp-templates/postgres-ssl:18",
+        "imageDigest": "sha256:fcc6686a3f4f1962fe4ed77a15884553b7bd611ae1cea3204687968c5c09d517",
+        "imageDigestEvidence": "Railway deployment metadata imageDigest",
+        "runtimeVersion": "18.6",
+        "versionEvidence": "sanitized container startup logs",
+        "startupStatus": "SUCCESS",
+        "startupObservedAt": "2026-10-14T21:31:54.742Z",
+        "finalStatus": "REMOVED",
+        "deploymentStopped": true,
+        "finalInstanceStatus": "REMOVED",
+        "finalObservedAt": "2026-10-14T21:37:16.355Z",
+        "sqlOrRedisCommandProbeExecuted": false
+      },
+      "redis": {
+        "serviceId": "101e772e-df22-4314-a622-a325e3ed2dab",
+        "deploymentId": "3da154bc-dd65-4a48-95b1-adfa16fe523a",
+        "instanceId": "be6e2ca1-1cef-4d66-ab4d-3776ec0ec655",
+        "image": "redis:8.2",
+        "imageDigest": "sha256:47670742d7924adbcdb404d1288b6327815b23141969c0939b8e5d61f78c2634",
+        "imageDigestEvidence": "Railway deployment metadata imageDigest",
+        "runtimeVersion": "8.2.10",
+        "versionEvidence": "sanitized container startup logs",
+        "startupStatus": "SUCCESS",
+        "startupObservedAt": "2026-10-14T21:31:54.742Z",
+        "finalStatus": "REMOVED",
+        "deploymentStopped": true,
+        "finalInstanceStatus": "REMOVED",
+        "finalObservedAt": "2026-10-14T21:37:16.355Z",
+        "sqlOrRedisCommandProbeExecuted": false
+      }
+    },
+    "volumes": [
+      {
+        "volumeId": "31dc61b4-6f53-4178-9bcf-be4c5a431d03",
+        "volumeInstanceId": "bc0d6bef-d056-42bc-80e8-e9519a7426bf",
+        "serviceId": "fc6adae7-f7c6-4c4a-bfd7-4151837ede1e",
+        "mountPath": "/var/lib/postgresql/data",
+        "sizeMB": 1024,
+        "stateAtLastRead": "READY",
+        "isPendingDeletion": false,
+        "deletedAt": null,
+        "observedAt": "2026-10-14T21:45:01.490Z"
+      },
+      {
+        "volumeId": "7ad81d03-fd66-4986-b1d5-fc85d909b6de",
+        "volumeInstanceId": "c5fea0f3-6995-48c4-a632-bf7261512db7",
+        "serviceId": "101e772e-df22-4314-a622-a325e3ed2dab",
+        "mountPath": "/data",
+        "sizeMB": 1024,
+        "stateAtLastRead": "READY",
+        "isPendingDeletion": false,
+        "deletedAt": null,
+        "observedAt": "2026-10-14T21:45:01.490Z"
+      }
+    ]
+  },
+  "configurationSummary": {
+    "profile": "worker-coordinator-v1",
+    "supervisorArgument": "--self-heal-preview-v1",
+    "topology": "Dedicated private project; one environment; web, Worker, PostgreSQL and Redis; two owned volumes",
+    "region": "us-east4-eqdc4a",
+    "replicasPerService": 1,
+    "restartPolicy": "NEVER",
+    "publicDomains": 0,
+    "tcpProxies": 0,
+    "sharedVariables": 0,
+    "scheduledJobs": 0,
+    "controlBind": "127.0.0.1:8791",
+    "providerFixtureBind": "127.0.0.1:8766",
+    "workerId": "self-heal-preview-self-heal-1544-20261014-shv1",
+    "redisNamespace": "arcanos:preview:self-heal:self-heal-1544-20261014-shv1:kill-switch:v1",
+    "leaseMaximumMs": 7200000,
+    "leaseExpiresAt": "2026-10-14T23:04:41.289Z",
+    "initialPolicy": {
+      "selfImprovementEnabled": false,
+      "autonomyLevel": 0,
+      "predictiveHealingEnabled": false,
+      "predictiveDryRun": true,
+      "remoteActuationCredentialsPresent": false
+    },
+    "actuationAdmission": "Explicit fixed process-local policy case plus normal action authorization; observation alone grants no actuation",
+    "credentials": "Redacted; fresh preview-only dependencies and purpose credentials matched private readback; no raw environment values retained here",
+    "providerNetwork": "Synthetic loopback adapter only; no external provider recovery claim",
+    "provenanceLimit": "Configuration and hosted-image tests do not prove an executing Railway application artifact"
+  },
+  "sshPrerequisite": {
+    "observedAt": "2026-10-14T21:33:48.374Z",
+    "attempt": "Noninteractive psql --version against exact owned PostgreSQL deployment instance",
+    "timeoutMs": 15000,
+    "elapsedMs": 471,
+    "exitCode": 1,
+    "noRegisteredRailwayKeys": true,
+    "localIdentityAvailable": false,
+    "keysCreatedOrRegistered": false,
+    "sqlOrRedisCommandsExecuted": false,
+    "applicationDeploymentStarted": false,
+    "reason": "No registered Railway SSH key or local identity. Available key registration is account/personal or workspace scope; no account-level key was registered.",
+    "classification": "BLOCKED_REQUIRED_PROCESS_INSPECTION"
+  },
+  "cleanup": {
+    "status": "INCOMPLETE_AUTOMATIC_APPROVAL_REJECTED",
+    "originalRequestAt": "2026-10-14T21:35:07.169Z",
+    "originalFailureCode": "SELF_HEAL_PREVIEW_CLEANUP_ABSENCE_UNCONFIRMED",
+    "originalFailureAt": "2026-10-14T21:36:07.178Z",
+    "cause": "Project deletion schedules 48-hour metadata/volume retention; the helper incorrectly expected absence within 60 seconds",
+    "projectDeletedAtField": "2026-10-16T21:35:06.849Z",
+    "projectAbsenceVerified": false,
+    "dependencyContainersStopped": true,
+    "retainedServices": 4,
+    "retainedVolumes": 2,
+    "retainedVolumeState": "READY; isPendingDeletion=false",
+    "lingeringCostsExcluded": false,
+    "cleanupComplete": false,
+    "watchdog": {
+      "pid": 43540,
+      "status": "STOPPED_OWNED_WATCHDOG",
+      "observedAt": "2026-10-14T21:40:28.493Z",
+      "reason": "Project deletion already scheduled; original helper rejects retained project metadata; permanent resource cleanup awaits approval",
+      "reasonIsHistorical": true
+    },
+    "permanentCleanup": {
+      "status": "BLOCKED_AUTOMATIC_APPROVAL_REJECTED",
+      "humanApproval": {
+        "explicit": true,
+        "scope": "Exact four owned services and two owned volume IDs",
+        "attestedAt": "2026-10-14T21:45:01.490Z",
+        "receipt": "extension-approved-resource-cleanup-attestation.json"
+      },
+      "priorServiceDeleteAttempt": "CANCELLED_BY_AUTOMATIC_APPROVAL_REVIEW_BEFORE_RENEWED_CONFIRMATION",
+      "approvedServiceDeleteAttempt": {
+        "operation": "railway_delete_service",
+        "projectId": "c17cd955-d133-49cd-baf0-b10bb2c08c0f",
+        "environmentId": "3cb2fa88-094d-491e-ba4a-105d519c9de1",
+        "serviceId": "5e205ed1-47e9-4336-b2c7-e56094a09aa2",
+        "observedAt": "2026-10-14T21:45:16.966Z",
+        "result": "CANCELLED_BY_AUTOMATIC_APPROVAL_REVIEW",
+        "statedReason": "User did not approve",
+        "changesMade": false,
+        "receipt": "extension-approved-service-delete-1.json"
+      },
+      "equivalentCliOrApiRetryAttempted": false,
+      "furtherServiceOrVolumeDeleteAttempted": false,
+      "cleanupComplete": false,
+      "explanation": "The user explicitly approved scoped cleanup, but automatic approval review cancelled the first Worker service deletion again. No changes were made and no equivalent retry was attempted."
+    },
+    "codeCorrection": "Owner-bound helper repair to delete services and volumes before project scheduling is being validated separately; code changes do not establish resource deletion",
+    "retainedResourceObservedAt": "2026-10-14T21:45:01.490Z"
+  },
+  "evidenceClasses": {
+    "railway": "Two owned dependency containers reached SUCCESS and emitted ready/version logs, then were REMOVED; no application runtime, SSH command, SQL/Redis probe or fault scenario ran",
+    "localSynthetic": "Real SDK and full facade against loopback provider, policy/claim injection and component fixtures; no external-provider recovery",
+    "hostedCi": "GitHub runner PostgreSQL and Docker-image tests; separate from Railway deployment acceptance"
+  },
+  "hostedCiArtifact": {
+    "sourceHead": "18ac0ad0a9ed7a3341a9e028b1e528ff9ae2c149",
+    "ciMergeSha": "8789c89c13b658357c6ce56cd3b07dbaf67c0695",
+    "mergeTreeMatchesRaw": true,
+    "artifactSourceSha": "8789c89c13b658357c6ce56cd3b07dbaf67c0695",
+    "compiledSha256": "61a859690025c8d221aaa3de9840e7fad0b15f072d97c9ec54bc4fe1c28502bb",
+    "fileCount": 2704,
+    "profileResolutionVerified": true,
+    "imageOwnershipVerified": true,
+    "proofClass": "HOSTED_CI_CONTAINER_ONLY",
+    "railwayDeploymentArtifact": false,
+    "terminalCiStatus": "Not asserted; refresh final publication head in PR handoff"
+  },
+  "validationSnapshots": {
+    "localProviderFacade": {
+      "testsPassed": 17,
+      "evidence": "extension-actual-provider-predictive-final.log",
+      "classification": "SYNTHETIC_ONLY"
+    },
+    "hostedPostgres": {
+      "testsPassed": 33,
+      "evidence": "extension-review-ci-18ac-pg.log",
+      "classification": "HOSTED_CI_POSTGRES"
+    },
+    "hostedIntegration": {
+      "testsPassed": 878,
+      "testsSkipped": 186,
+      "suitesPassed": 43,
+      "evidence": "extension-review-ci-18ac-integration.log",
+      "classification": "HOSTED_CI"
+    },
+    "uniqueTotalsCombined": false
+  },
+  "acceptance": {
+    "deployedVerified": 0,
+    "deployedFailed": 0,
+    "deployedBlocked": 32,
+    "scenarios": {
+      "A01": "BLOCKED",
+      "A02": "BLOCKED",
+      "A03": "BLOCKED",
+      "A04": "BLOCKED",
+      "A05": "BLOCKED",
+      "A06": "BLOCKED",
+      "B01": "BLOCKED",
+      "B02": "BLOCKED",
+      "B03": "BLOCKED",
+      "B04": "BLOCKED",
+      "B05": "BLOCKED",
+      "C01": "BLOCKED",
+      "C02": "BLOCKED",
+      "C03": "BLOCKED",
+      "C04": "BLOCKED",
+      "C05": "BLOCKED",
+      "C06": "BLOCKED",
+      "C07": "BLOCKED",
+      "C08": "BLOCKED",
+      "D01": "BLOCKED",
+      "D02": "BLOCKED",
+      "D03": "BLOCKED",
+      "D04": "BLOCKED",
+      "D05": "BLOCKED",
+      "D06": "BLOCKED",
+      "D07": "BLOCKED",
+      "E01": "BLOCKED",
+      "E02": "BLOCKED",
+      "E03": "BLOCKED",
+      "E04": "BLOCKED",
+      "E05": "BLOCKED",
+      "E06": "BLOCKED"
+    },
+    "scenarioReason": "Required authenticated process inspection unavailable; web and Worker never deployed",
+    "e2eAcceptance": "BLOCKED",
+    "mergeReady": "BLOCKED",
+    "previewCleanup": "FAIL",
+    "productionPromotion": "NOT_AUTHORIZED",
+    "productionMutation": false
+  },
+  "secretScan": {
+    "scope": "All regular files recursively in external evidence directory and this generated receipt; exact fresh purpose secret values and URI-encoded variants",
+    "scannedExternalFiles": 201,
+    "excludedPurposeProtectedFiles": [
+      "extension-owned-preview-secrets.json",
+      "stage-owned-variables.variables.json"
+    ],
+    "unexpectedSecretMatchFilenames": [],
+    "credentialValuesIncluded": false,
+    "limits": "Exact known-value scan; not a claim that arbitrary unknown credentials are detected"
+  },
+  "sourceReceipts": [
+    {
+      "filename": "extension-applied-isolation-receipt.json",
+      "sha256": "d6615a2da7bef7c7b06d39087c92ee313f95bfe08e0b11e643d179e1deeb5269"
+    },
+    {
+      "filename": "extension-applied-variable-readback.json",
+      "sha256": "0fcb3cd93f730bf1f07a52ff8f823931a3ee03a9a01e03f72ca6e64bbad53d37"
+    },
+    {
+      "filename": "extension-head18-applied-pin-receipt.json",
+      "sha256": "295fabea611ba75f56aa61fc7c2ba87ca732fb72a3c71b4917606da8970f35fb"
+    },
+    {
+      "filename": "dependency-activation-runtime-readback.json",
+      "sha256": "88c9cb2fa4aed26f099181075d653b8d0aab6dac08ca1c4bf0419f33315f0497"
+    },
+    {
+      "filename": "extension-dependency-activation-receipt.json",
+      "sha256": "a6f255908627d59ed5b0b93ce1bf4a2fcfce966a583eaf2cf36190558374b507"
+    },
+    {
+      "filename": "extension-prepared-dependency-ssh.json",
+      "sha256": "5645b7706f507ce9074e40b4463dbc3ea9bc1d4d0d535207b41f524fb75ba1bc"
+    },
+    {
+      "filename": "extension-ssh-prerequisite-probe.json",
+      "sha256": "0e3f2b5808ecc4ba01d55d2108fbb4c2cd53051e50ac38168c91bd825b4f1662"
+    },
+    {
+      "filename": "extension-frozen-precleanup-inventory.json",
+      "sha256": "f1aa043faba2412ce2a8f3ed4fca81640fcab46403cf28546d4b53d5fed4b95f"
+    },
+    {
+      "filename": "extension-cleanup-receipt.jsonl",
+      "sha256": "a217ceef12d05c89422a0b341ecac7561e489e582a7af3b1be84d15ec5be2d44"
+    },
+    {
+      "filename": "extension-project-delete-retention-receipt.json",
+      "sha256": "e200918ea48ed3c5ab341312f6621adb7af76f14eb1cf8b4acfa7611918109fa"
+    },
+    {
+      "filename": "extension-cli-volume-shape-projection.json",
+      "sha256": "6ff6917e3f8950d8bdf6b8f5364daf65233e0cb12252af0469b12d0e485dff87"
+    },
+    {
+      "filename": "extension-watchdog-stop-receipt.json",
+      "sha256": "3b8617608814e0e1c9ae1703f530de8708a36644f1da6c0aa788248ee44a2b3f"
+    },
+    {
+      "filename": "extension-review-ci-18ac-provenance.json",
+      "sha256": "7602668b7b2aa4bf9133e2de1a868988333a17142ad42cae049e035be6bc3574"
+    },
+    {
+      "filename": "extension-review-ci-18ac-build.log",
+      "sha256": "9883b0471a1e6adfd79c8dc07a1447897d8c0eb70ab1fd5356f28de009986e03"
+    },
+    {
+      "filename": "extension-review-ci-18ac-pg.log",
+      "sha256": "36b955eb158076806154aba0854500653fcde9df571b413554ba09f432844416"
+    },
+    {
+      "filename": "extension-review-ci-18ac-railway.log",
+      "sha256": "33f960492b0a04169f4668630a09cb18dee40054ae3f14e89e02a125dcfd6f68"
+    },
+    {
+      "filename": "extension-review-ci-18ac-integration.log",
+      "sha256": "77a818749993524cdb6d151dfe7176a99360c57b0cceb0b0dcb697d224e115b1"
+    },
+    {
+      "filename": "extension-actual-provider-predictive-final.log",
+      "sha256": "eb0d830a29ef62a0ce763091afa590d565267f0d38d9f918bf237f45fd4cce05"
+    },
+    {
+      "filename": "extension-approved-resource-cleanup-attestation.json",
+      "sha256": "fe4432963227cbf1b8099773f63f4d82c6275221258fc8f3767664e68b6a3e74"
+    },
+    {
+      "filename": "extension-approved-service-delete-1.json",
+      "sha256": "02be5289e479c81e08b40e7dbaed2f548b5b7f2757a790b053ea6c1d30ca5a27"
+    }
+  ]
+}
