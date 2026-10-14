@@ -34,7 +34,7 @@ export function hasGamingAffirmativeIdentityProse(unquotedText: string, game: st
   const names = [game, ...(entry ? [entry.name, ...entry.aliases] : [])];
   return names.some(name => {
     const title = gamingRegistryLiteralPattern(name);
-    const affirmativePredicate = '(?!(?:not|never|no|nothing|neither)\\b)(?!only\\s+(?:as|in)\\s+(?:a\\s+)?(?:comparison|reference|quote|quotation|request)\\b)';
+    const affirmativePredicate = '(?!(?:not|never|no|nothing|neither)\\b)(?!(?:only|merely|solely|just)\\s+(?:(?:as|in)\\s+)?(?:a\\s+)?(?:comparison|reference|quote|quotation|request)\\b)';
     return new RegExp(`(?:^|[.!?;\\n])\\s*${title}\\s+(?:has|uses|offers|features|releases|starts|begins|requires|supports|includes)\\s+${affirmativePredicate}[^.!?;\\n\\s]`, 'iu').test(unquotedText)
       || new RegExp(`(?:^|[.!?;\\n])\\s*${title}\\s+is\\s+(?:played\\s+(?:with|by|on|in)|set\\s+in|built\\s+around|focused\\s+on)\\s+${affirmativePredicate}[^.!?;\\n\\s]`, 'iu').test(unquotedText)
       || new RegExp(`(?:^|[.!?;\\n])\\s*this\\s+${title}\\s+(?:guide|article|build|walkthrough|source|page|document)\\s+(?:is\\s+(?:for|about)|covers|explains|describes|shows|documents|provides)\\b`, 'iu').test(unquotedText)

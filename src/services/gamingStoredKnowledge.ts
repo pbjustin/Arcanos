@@ -53,7 +53,15 @@ export function selectStoredGamingEvidence(records: readonly GamingKnowledgeProv
     const assessment = parseGamingClearAssessment(record.provenance?.gamingClear);
     const bound = assessment?.profile === 'source'
       && assessment.subjectHash === (record.provenance?.approvedContentHash ?? record.revisionId);
-    return { ...record, ...(bound ? { clearSourceAssessment: assessment } : {}) };
+    // An invalidated explicit approval cannot fall back to independently stored
+    // applicability and regain its old identity authority. Keep its text and
+    // restrictions readable, but require source reassessment before generation.
+    const priorAssessmentInvalid = record.provenance?.gamingClear !== undefined && !bound;
+    const acquiredApplicability = record.provenance?.acquiredApplicability;
+    const provenance = priorAssessmentInvalid && acquiredApplicability && typeof acquiredApplicability === 'object'
+      && !Array.isArray(acquiredApplicability) ? { ...record.provenance,
+        acquiredApplicability: { ...acquiredApplicability, metadataUnverified: true } } : record.provenance;
+    return { ...record, provenance, ...(bound ? { clearSourceAssessment: assessment } : {}) };
   });
   return selectStoredGamingEvidenceCore(validatedRecords, input, getStoredGamingEvidenceLimits(), resolvePatch, assessGamingRequestCoverage);
 }

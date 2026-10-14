@@ -286,6 +286,16 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
   // requested edition applicability. The same acquired subject boundary applies
   // to both admission and contradiction checks.
   const metadata = subjects.map(subject => subject.value);
+  // Novel topic headings are not registry identities. An independently named
+  // acquired game may own such a heading without a closed mechanic vocabulary.
+  const independentNamedGameScope = bodyScopes.subjects.some(subject => subject.index < PRIMARY_IDENTITY_SCOPE_CHARS
+    && subject.namedGameScope && sourceGameMatches(subject.text));
+  const acquiredUnknownTopicTitle = (value: string): boolean => {
+    const detected = detectGamingDocumentGame({ canonicalUrl: '', pageTitle: value });
+    return independentNamedGameScope && detected.source !== 'alias' && Boolean(detected.game)
+      && !bodyScopes.subjects.some(subject => subject.namedGameScope
+        && gamingRegistrySourceGameMatchesRequest(subject.text, detected.game!));
+  };
   for (const { value, category } of subjects) {
     // Closed editorial framing does not erase a sequel/edition subject. This
     // normalization is only for contradiction checks; full acquired names still
@@ -304,7 +314,8 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     // outside the alias catalog. A URL label must not hide that contradiction.
     const detected = detectGamingDocumentGame({ canonicalUrl: '', pageTitle: value });
     const acquiredBody = withoutGamingAcquiredGameDeclarations(document.text);
-    if (detected.game && (detected.source === 'alias' || !isGamingAcquiredTopicTitle(value) && !acquiredTopicSubject(value) && containsIdentity(acquiredBody, detected.game)) && detected.confidence >= 0.8 && !sourceGameMatches(detected.game)
+    if (detected.game && (detected.source === 'alias' || !isGamingAcquiredTopicTitle(value) && !acquiredTopicSubject(value)
+      && !acquiredUnknownTopicTitle(value) && containsIdentity(acquiredBody, detected.game)) && detected.confidence >= 0.8 && !sourceGameMatches(detected.game)
       && ![...expected].some(game => containsIdentity(value, game)))
       return result('conflict', 'GAME_MISMATCH', category === 'document_title'
         ? 'gaming.identity.acquired_title_conflict' : 'gaming.identity.acquired_primary_heading_conflict', category);
@@ -403,6 +414,12 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     // only an existing closed document label, never a subtitle or alias prefix.
     return [...subject.matchAll(/-/gu)].some(boundary => DOCUMENT_LABEL.test(subject.slice(boundary.index + 1))
       && normalizeGamingComparableIdentity(subject.slice(0, boundary.index)) === wanted);
+  }) || [input.game, ...(registryGame ? [registryGame.name, ...registryGame.aliases] : [])].some(game => {
+    const wanted = normalizeGamingComparableIdentity(game);
+    if (normalizeGamingComparableIdentity(value) === wanted) return true;
+    // Preserve explicit subtitle separators until numeral comparison completes.
+    return [...value.matchAll(/[\s-]/gu)].some(boundary => DOCUMENT_LABEL.test(normalizeGamingGameIdentity(value.slice(boundary.index + 1)))
+      && normalizeGamingComparableIdentity(value.slice(0, boundary.index)) === wanted);
   }));
   // The primary heading is acquired article metadata even when the extractor
   // repeats it in prose. It cannot corroborate itself or become a second anchor
@@ -456,7 +473,7 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
   // A generic acquired topic title still needs an affirmative acquired game
   // declaration. Neither matching player/topic terms nor a reference mention
   // can supply that proof, and all acquired contradictions above still bind.
-  const acquiredBodyScope = !metadataAnchor && (metadata.some(acquiredTopicSubject)
+  const acquiredBodyScope = !metadataAnchor && (metadata.some(acquiredTopicSubject) || metadata.some(acquiredUnknownTopicTitle)
     || metadata.some(value => isGamingAcquiredTopicTitle(value) || !detectGamingDocumentGame({ canonicalUrl: '', pageTitle: value }).game)
       && independentBodyScope);
   const ordinaryWordProof = !gamingIdentityNeedsExplicitContext(input.game)

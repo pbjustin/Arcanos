@@ -1,0 +1,238 @@
+{
+  "syntheticOnly": true,
+  "includesAcquisition": false,
+  "includesProvider": false,
+  "baselineSha": "e24d5614748f39e25e27a0c062dfba2ea0adbb77",
+  "baselineExpectedFailure": "Unknown-game positive cases fail correctness on unchanged baseline; all timings printed before assertions.",
+  "reviewState": "Uncommitted independent repairs over 6e136915 at current timing execution; root final validation will bind final SHA.",
+  "warmups": 3,
+  "repetitions": 5,
+  "caseCount": 14,
+  "pairs": [
+    {
+      "kind": "unknown-game",
+      "game": "Copper Harbor",
+      "chars": 32191,
+      "lateForeignScope": false,
+      "baselineStatuses": [
+        "unknown"
+      ],
+      "reviewStatuses": [
+        "verified"
+      ],
+      "baselineMedianMs": 1.7290999999986525,
+      "reviewMedianMs": 2.0809000000000424,
+      "medianDeltaMs": 0.3518000000013899,
+      "sameDecision": false
+    },
+    {
+      "kind": "unknown-game",
+      "game": "Copper Harbor",
+      "chars": 32202,
+      "lateForeignScope": true,
+      "baselineStatuses": [
+        "conflict"
+      ],
+      "reviewStatuses": [
+        "conflict"
+      ],
+      "baselineMedianMs": 1.1404999999995198,
+      "reviewMedianMs": 0.8113999999999351,
+      "medianDeltaMs": -0.3290999999995847,
+      "sameDecision": true
+    },
+    {
+      "kind": "unknown-game",
+      "game": "Copper Harbor",
+      "chars": 128222,
+      "lateForeignScope": false,
+      "baselineStatuses": [
+        "unknown"
+      ],
+      "reviewStatuses": [
+        "verified"
+      ],
+      "baselineMedianMs": 4.311200000000099,
+      "reviewMedianMs": 3.45169999999996,
+      "medianDeltaMs": -0.8595000000001392,
+      "sameDecision": false
+    },
+    {
+      "kind": "unknown-game",
+      "game": "Copper Harbor",
+      "chars": 128233,
+      "lateForeignScope": true,
+      "baselineStatuses": [
+        "conflict"
+      ],
+      "reviewStatuses": [
+        "conflict"
+      ],
+      "baselineMedianMs": 2.4354999999995925,
+      "reviewMedianMs": 2.1148999999999205,
+      "medianDeltaMs": -0.32059999999967204,
+      "sameDecision": true
+    },
+    {
+      "kind": "unknown-game",
+      "game": "Copper Harbor",
+      "chars": 512168,
+      "lateForeignScope": false,
+      "baselineStatuses": [
+        "unknown"
+      ],
+      "reviewStatuses": [
+        "verified"
+      ],
+      "baselineMedianMs": 14.162199999998847,
+      "reviewMedianMs": 11.554899999999975,
+      "medianDeltaMs": -2.6072999999988724,
+      "sameDecision": false
+    },
+    {
+      "kind": "unknown-game",
+      "game": "Copper Harbor",
+      "chars": 512179,
+      "lateForeignScope": true,
+      "baselineStatuses": [
+        "conflict"
+      ],
+      "reviewStatuses": [
+        "conflict"
+      ],
+      "baselineMedianMs": 8.582500000000437,
+      "reviewMedianMs": 7.690500000000043,
+      "medianDeltaMs": -0.8920000000003938,
+      "sameDecision": true
+    },
+    {
+      "kind": "known-game",
+      "game": "Elden Ring",
+      "chars": 32195,
+      "lateForeignScope": false,
+      "baselineStatuses": [
+        "verified"
+      ],
+      "reviewStatuses": [
+        "verified"
+      ],
+      "baselineMedianMs": 2.075300000000425,
+      "reviewMedianMs": 1.7683000000000675,
+      "medianDeltaMs": -0.30700000000035743,
+      "sameDecision": true
+    },
+    {
+      "kind": "known-game",
+      "game": "Elden Ring",
+      "chars": 32206,
+      "lateForeignScope": true,
+      "baselineStatuses": [
+        "conflict"
+      ],
+      "reviewStatuses": [
+        "conflict"
+      ],
+      "baselineMedianMs": 1.4941999999991822,
+      "reviewMedianMs": 0.8729000000000724,
+      "medianDeltaMs": -0.6212999999991098,
+      "sameDecision": true
+    },
+    {
+      "kind": "known-game",
+      "game": "Elden Ring",
+      "chars": 128226,
+      "lateForeignScope": false,
+      "baselineStatuses": [
+        "verified"
+      ],
+      "reviewStatuses": [
+        "verified"
+      ],
+      "baselineMedianMs": 6.260199999998804,
+      "reviewMedianMs": 5.447699999999941,
+      "medianDeltaMs": -0.8124999999988631,
+      "sameDecision": true
+    },
+    {
+      "kind": "known-game",
+      "game": "Elden Ring",
+      "chars": 128237,
+      "lateForeignScope": true,
+      "baselineStatuses": [
+        "conflict"
+      ],
+      "reviewStatuses": [
+        "conflict"
+      ],
+      "baselineMedianMs": 2.716899999999441,
+      "reviewMedianMs": 2.430799999999863,
+      "medianDeltaMs": -0.28609999999957836,
+      "sameDecision": true
+    },
+    {
+      "kind": "known-game",
+      "game": "Elden Ring",
+      "chars": 512172,
+      "lateForeignScope": false,
+      "baselineStatuses": [
+        "verified"
+      ],
+      "reviewStatuses": [
+        "verified"
+      ],
+      "baselineMedianMs": 21.795499999998356,
+      "reviewMedianMs": 16.53359999999998,
+      "medianDeltaMs": -5.261899999998377,
+      "sameDecision": true
+    },
+    {
+      "kind": "known-game",
+      "game": "Elden Ring",
+      "chars": 512183,
+      "lateForeignScope": true,
+      "baselineStatuses": [
+        "conflict"
+      ],
+      "reviewStatuses": [
+        "conflict"
+      ],
+      "baselineMedianMs": 8.28900000000067,
+      "reviewMedianMs": 8.050600000000031,
+      "medianDeltaMs": -0.2384000000006381,
+      "sameDecision": true
+    },
+    {
+      "kind": "document-over-limit",
+      "game": "Copper Harbor",
+      "chars": 1000094,
+      "lateForeignScope": false,
+      "baselineStatuses": [
+        "unknown"
+      ],
+      "reviewStatuses": [
+        "unknown"
+      ],
+      "baselineMedianMs": 0.00020000000040454324,
+      "reviewMedianMs": 0.00020000000017716957,
+      "medianDeltaMs": -2.2737367544323206e-13,
+      "sameDecision": true
+    },
+    {
+      "kind": "assertion-over-limit",
+      "game": "Copper Harbor",
+      "chars": 42115,
+      "lateForeignScope": false,
+      "baselineStatuses": [
+        "unknown"
+      ],
+      "reviewStatuses": [
+        "unknown"
+      ],
+      "baselineMedianMs": 206.40609999999833,
+      "reviewMedianMs": 163.0309000000002,
+      "medianDeltaMs": -43.37519999999813,
+      "sameDecision": true
+    }
+  ],
+  "limits": "Warmed local component measurements only; unknown-positive decisions differ and are not equivalent behavior. No end-to-end latency or live-provider inference."
+}

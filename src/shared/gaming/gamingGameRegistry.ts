@@ -7,10 +7,18 @@ export function normalizeGamingRegistryIdentity(value: string): string {
   return value.replace(/[™®©'’‘]/gu, '').normalize('NFKC').toLowerCase()
     .replace(/[^\p{L}\p{N}+]+/gu, '-').replace(/^-+|-+$/gu, '');
 }
-/** Formatting and standalone trailing sequel numerals only; every subtitle stays identity. */
+/** Formatting and standalone title-ending sequel numerals only; every subtitle stays identity. */
 export function normalizeGamingComparableIdentity(value: string): string {
   const parts = normalizeGamingRegistryIdentity(value).split('-');
   const numerals: Record<string, string> = { ii: '2', iii: '3', iv: '4', v: '5', vi: '6', vii: '7', viii: '8', ix: '9', x: '10' };
+  // An explicit subtitle separator preserves the main title's numeral boundary.
+  // Leading words such as V in V Rising are never treated as sequel numerals.
+  const formatted = value.normalize('NFKC');
+  const subtitle = /[:–—]/u.exec(formatted);
+  if (subtitle) {
+    const titleParts = normalizeGamingRegistryIdentity(formatted.slice(0, subtitle.index)).split('-');
+    if (titleParts.length > 1) parts[titleParts.length - 1] = numerals[titleParts.at(-1)!] ?? titleParts.at(-1)!;
+  }
   if (parts.length > 1) parts[parts.length - 1] = numerals[parts.at(-1)!] ?? parts.at(-1)!;
   return parts.join('-');
 }

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-14T05:01:59.153Z",
+  "generatedAt": "2026-10-14T06:12:52.381Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4282,6 +4282,9 @@
           "relativePath": "tests/fixtures/gaming-currentness/second-publisher.ts"
         },
         {
+          "relativePath": "tests/fixtures/gaming-independent-workflow.ts"
+        },
+        {
           "relativePath": "tests/fixtures/gaming-source-acceptance.ts"
         },
         {
@@ -4523,6 +4526,15 @@
         },
         {
           "relativePath": "tests/gaming-hybrid-workflow.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-independent-clear-review.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-independent-identity-review.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-independent-performance-review.test.ts"
         },
         {
           "relativePath": "tests/gaming-ingress-audit.test.ts"

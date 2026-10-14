@@ -391,7 +391,7 @@ describe('gaming source ingestion', () => {
       formatStoredGamingEvidence(selected, { game }, limits))).toMatchObject({ decision: 'accept', gates: { compatibility: 'verified' } });
   });
 
-  it.each(['missing', 'gaming-clear-policy/v1', 'gaming-clear-policy/v2'])('requires reassessment of queued hybrid approval from %s before acquisition or persistence', async priorPolicy => {
+  it.each(['missing', 'gaming-clear-policy/v1', 'gaming-clear-policy/v2', 'gaming-clear-policy/v3'])('requires reassessment of queued hybrid approval from %s before acquisition or persistence', async priorPolicy => {
     const { createApprovedGamingSourceIngestion } = await import('../src/services/gamingSourceIngestion.js');
     const actorKey = 'legacy-hybrid-actor';
     const contentHash = gamingClearHash('legacy-approved-content');

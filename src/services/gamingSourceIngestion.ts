@@ -1235,6 +1235,11 @@ async function ingestOneSource(
     if (
       detectedGame.game
       && detectedGame.confidence >= 0.8
+      // Current CLEAR approval already binds independently acquired identity to
+      // this exact complete artifact. Metadata inference can mistake a novel
+      // gameplay heading for a game or erase an equivalent sequel numeral.
+      // Public unapproved ingestion retains its existing mismatch guard.
+      && !source.hybridApproval
       // The detector recognizes broad aliases; it must not define the stored title or key.
       && !requestedGameIdentities.has(canonicalGameKey(detectedGame.game))
     ) {

@@ -6,7 +6,7 @@ import { extractGamingFreshnessMetadata, evaluateGamingFreshness,
   type GamingFreshnessEvidence, type GamingReviewedSourceRule } from './gamingFreshnessCore.js';
 import { assessGamingClearEvidence } from './gamingClearEvidence.js';
 import { createGamingClearAssessment, gamingClearContextFingerprint, gamingClearHash, parseGamingClearModelAssessment,
-  type GamingClearAssessment, type GamingClearDimensions } from './gamingClearPolicy.js';
+  GAMING_CLEAR_POLICY_VERSION, type GamingClearAssessment, type GamingClearDimensions } from './gamingClearPolicy.js';
 import { GAMING_CLEAR_APPROVED_ANSWER, hasBoundGamingClearAnswer } from './gamingClearAnswerBinding.js';
 import { projectGamingHybridCandidateEvidence, resolveGamingHybridCandidateAttempt,
   resolveGamingHybridCurrentnessReason } from './gamingHybridPolicyCore.js';
@@ -292,7 +292,7 @@ function requireAdvisoryFreshnessDisposition(): void {
     requireProof(strict.decision !== 'accept' && strict.gates.freshness === 'unknown');
     const clear = assessGamingClearEvidence(input, data, { freshness, freshnessEvidence: metadata, now: NOW,
       allowAdvisoryFreshness: true });
-    requireProof(clear.decision === 'accept' && clear.policyProfile === 'gaming-clear-policy/v3:advisory_recommendation:evidence'
+    requireProof(clear.decision === 'accept' && clear.policyProfile === `${GAMING_CLEAR_POLICY_VERSION}:advisory_recommendation:evidence`
       && clear.gates.freshness === 'unknown' && clear.gates.claimSupport === 'verified'
       && clear.gates.compatibility === 'verified' && clear.gates.provenance === 'verified');
     for (const qualification of ['This build has not been tested on the current patch.',
@@ -318,7 +318,7 @@ function requireAdvisoryFreshnessDisposition(): void {
       const blocked = assessGamingClearEvidence(required, data, { freshness, freshnessEvidence: metadata, now: NOW,
         allowAdvisoryFreshness: true });
       requireProof(blocked.decision !== 'accept' && blocked.gates.freshness === 'unknown'
-        && blocked.policyProfile !== 'gaming-clear-policy/v3:advisory_recommendation:evidence'
+        && blocked.policyProfile !== `${GAMING_CLEAR_POLICY_VERSION}:advisory_recommendation:evidence`
         && blocked.blockingFindings.some(finding => finding.code === 'REQUIRED_FRESHNESS_UNVERIFIED'));
       const answer = answerAssessment(blocked);
       requireProof(answer.decision !== 'accept'

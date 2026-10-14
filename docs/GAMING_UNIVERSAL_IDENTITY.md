@@ -52,8 +52,10 @@ topic recognition never supplies game identity or invents mechanics.
 existing public verified/unknown/conflict assessment. Full acquired subjects
 are compared deterministically. Registry aliases still disambiguate known
 games; unfamiliar subtitles are preserved. Formatting normalization handles
-case, punctuation and apostrophes, plus standalone trailing Roman numerals
-II through X. It does not perform fuzzy matching or infer translations.
+case, punctuation and apostrophes, plus standalone title-ending Roman numerals
+II through X, including before an explicit subtitle separator. The subtitle
+remains part of identity; leading title words such as V in V Rising are preserved.
+It does not perform fuzzy matching or infer translations.
 
 An article may declare a bounded source-local alias, but a separate canonical
 body assertion must corroborate it. Shared alias ownership remains unresolved,
@@ -64,8 +66,10 @@ cannot supply that context. Positive anchors are bounded to the primary 32K
 characters; contradiction inspection retains the complete bounded document.
 
 Bare unfamiliar headings can describe any gameplay system when independently
-acquired game scope is established. A guide-framed heading that could name
-another game still requires source-owned topic context. Existing topic lists
+acquired game scope is established. An unfamiliar guide-framed mechanic heading
+can be owned by a separately acquired explicit named-game scope without a closed
+topic vocabulary. Registered foreign headings and independently declared foreign
+game subjects still conflict. Existing topic lists
 remain useful conservative ambiguity signals, rather than a mandatory topic
 allowlist. Unsupported structural column schemas and ambiguous formats remain
 unverified. Trinity receives selected source mechanics and no longer requires
@@ -93,7 +97,7 @@ capability without adding a publisher allowlist for unfamiliar games.
 
 All nine exercise a positive answer, missing/comparison-only identity,
 wrong-game recovery and stopping, irrelevant furniture, and insufficient
-question coverage. The 63-case integration suite also exercises revision and
+question coverage. The original 63-case integration suite also exercises revision and
 idempotency enforcement, actor isolation, acquisition deadlines, no-consent
 write sentinels, semantic-audit refusal and mixed Elden Ring/Nightreign selection.
 The intake, reasoning, final and answer-audit stages use the existing Trinity
@@ -114,13 +118,33 @@ external transport and provider responses. These tests establish the exercised
 capability and negative controls, not compatibility with every game or publisher.
 Live source acquisition and live model acceptance require separate authorization.
 
-Internal CLEAR policy v3 invalidates prior v1/v2 assessments while preserving
+Independent review extended the actual workflow to 77 cases with four additional
+invented games absent from production code: Velvet Meridian, Velvet Meridian Echoes,
+Drift, and Aurora Atlas IV: The Quiet Tide. Their unfamiliar mechanics reach
+grounded Trinity answers; overlapping foreign titles, missing coverage and mixed
+acquired identities remain bounded negative paths. Additional acquired-document
+tests cover Journey, Silver Harbor, Slate Meridian, localized titles, novel
+guide-framed topics, incomplete statistics and durable consent.
+
+Internal CLEAR policy v4 invalidates prior v1/v2/v3 assessments while preserving
 the public `gaming-clear/v1` schema. Context fingerprints include the policy
 revision, and approved hybrid ingestion revisions bind that revision. Existing
 extraction caches may reuse bounded acquired bytes; approval decisions require
-current assessment. This change introduces no shared identity cache, catalog
+current assessment. Review tightened reference-only prose rejection; v3 snapshots
+must therefore be reassessed rather than carrying old identity authority forward.
+Invalidated explicit assessments also mark their request-local applicability
+projection unverified. A complete historical snapshot cannot restore acceptance
+through legacy fallback; stored text and existing restrictions remain readable,
+and no database record is changed by this validation.
+Exact-artifact current approvals govern durable identity instead of a second
+metadata-only guess. Unapproved ingestion retains its mismatch guard.
+This change introduces no shared identity cache, catalog
 service, model parser, or storage permission. Old queued approvals fail before
 acquisition or persistence and must be reassessed through the existing workflow.
+Source-local aliases can establish prose ownership, but an alias-valued structural
+Game field is conservatively excluded. It is not promoted into a canonical
+record or shared across sources; supporting it throughout storage and selection
+would require a separately designed provenance contract.
 
 Deployment identity and live acceptance remain separate gates:
 `DEPLOYED_SHA_UNVERIFIED` and `LIVE_ACCEPTANCE_NOT_RUN`.

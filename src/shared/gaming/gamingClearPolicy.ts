@@ -5,7 +5,7 @@ import { resolveGamingFreshnessDisposition } from './gamingFreshnessDisposition.
 import { GAMING_GAME_REGISTRY } from './gamingGameRegistry.js';
 
 export const GAMING_CLEAR_VERSION = 'gaming-clear/v1' as const;
-export const GAMING_CLEAR_POLICY_VERSION = 'gaming-clear-policy/v3' as const;
+export const GAMING_CLEAR_POLICY_VERSION = 'gaming-clear-policy/v4' as const;
 export const GAMING_CLEAR_DIMENSIONS = ['clarity', 'leverage', 'efficiency', 'alignment', 'resilience'] as const;
 export type GamingClearDimension = typeof GAMING_CLEAR_DIMENSIONS[number];
 export type GamingClearProfile = 'source' | 'evidence' | 'answer';

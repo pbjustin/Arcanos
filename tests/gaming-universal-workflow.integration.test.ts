@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 import { Readable } from 'node:stream';
 import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
 import { gamingUniversalIdentityFixtures, gamingUniversalIdentityHtml } from './fixtures/gaming-universal-identity.js';
+import { gamingIndependentWorkflowFixtures } from './fixtures/gaming-independent-workflow.js';
 import { GAMING_CLEAR_DIMENSIONS } from '../src/shared/gaming/gamingClearPolicy.js';
 import { resolveGamingRegistryGame } from '../src/shared/gaming/gamingGameRegistry.js';
 import type { GamingHybridResponse } from '../src/shared/gaming/gamingHybridContract.js';
@@ -53,6 +54,11 @@ const contractVersion = 'gaming-hybrid-v2';
 // URL paths and submitted metadata contain no acquired game identity.
 const url = 'https://guides.example.org/universal/fixture';
 const context = { actorKey: 'universal-transient-synthetic-fixture' };
+const reviewedFixtures = [...gamingUniversalIdentityFixtures, ...gamingIndependentWorkflowFixtures];
+// An ordinary word needs an explicit acquired game declaration. This source
+// assertion comes from the synthetic document, never from submitted metadata.
+const reviewedHtml: typeof gamingUniversalIdentityHtml = (fixture, options = {}) =>
+  gamingUniversalIdentityHtml(fixture, options).replace(/<p>In /gu, '<p>In the game ');
 const env = {
   ARCANOS_GAMING_RAG_ENABLED: 'false', ARCANOS_GAMING_DISCOVERY_ENABLED: 'false',
   ARCANOS_GAMING_CURATED_SOURCES_JSON: '[]', ARCANOS_GAMING_WEB_CONTEXT_CHARS: '12000',
@@ -157,10 +163,12 @@ describe('universal acquired evidence through actual hybrid-v2 and Trinity stage
   it('includes eight requested games plus a synthetic title absent from the production registry', () => {
     expect(new Set(gamingUniversalIdentityFixtures.map(fixture => fixture.game)).size).toBe(9);
     expect(resolveGamingRegistryGame('Copperwind Loom')).toBeUndefined();
+    for (const fixture of gamingIndependentWorkflowFixtures) expect(resolveGamingRegistryGame(fixture.game)).toBeUndefined();
   });
 
-  it.each(gamingUniversalIdentityFixtures)('answers $game / $genre from its novel generic topic without a class or registry override', async fixture => {
-    currentHtml = gamingUniversalIdentityHtml(fixture, { furniture: true });
+  it.each(reviewedFixtures)('answers $game / $genre from its novel generic topic without a class or registry override', async fixture => {
+    currentHtml = reviewedHtml(fixture, { furniture: true,
+      ...(gamingIndependentWorkflowFixtures.includes(fixture) ? { title: `${fixture.topic} guide` } : {}) });
     // Guide excerpt selection is conservative: answer the requested mechanic
     // from the independently selected first passage, not every article section.
     answerSentences = fixture.mode === 'guide' ? fixture.sentences.slice(0, 1) : fixture.sentences;
@@ -182,7 +190,7 @@ describe('universal acquired evidence through actual hybrid-v2 and Trinity stage
     expect(auditInputs[0].evidence.every((chunk: any) => final.body.selectedCandidateIds!.includes(chunk.sourceId)
       && final.body.selectedEvidenceIds!.includes(chunk.chunkId))).toBe(true);
     expect(JSON.stringify(auditInputs[0].evidence)).not.toMatch(/FURNITURE_ONLY/u);
-    expect(JSON.stringify(auditInputs[0].evidence)).not.toMatch(new RegExp(`${fixture.unrelatedGame.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}(?=[^\\p{L}\\p{N}]|$)`, 'u'));
+    expect(JSON.stringify(auditInputs[0].evidence)).not.toContain(`In the game ${fixture.unrelatedGame},`);
     expect(final.body.answer!.response).not.toContain('UNRELATED_ARTICLE_SECTION');
     if (fixture.mode === 'guide') expect(JSON.stringify(auditInputs[0].evidence)).not.toContain('UNRELATED_ARTICLE_SECTION');
     expect(mockHttp).toHaveBeenCalledTimes(1);
@@ -207,7 +215,7 @@ describe('universal acquired evidence through actual hybrid-v2 and Trinity stage
     expect(mockProvider).not.toHaveBeenCalled();
   });
 
-  it.each(gamingUniversalIdentityFixtures)('refuses $game after bounded wrong-game recovery', async fixture => {
+  it.each(reviewedFixtures)('refuses $game after bounded wrong-game recovery', async fixture => {
     currentHtml = gamingUniversalIdentityHtml(fixture, { scope: 'wrong' });
     const run = harness({ game: fixture.game, question: fixture.question, mode: fixture.mode });
     const initial = await run.start();
@@ -223,8 +231,8 @@ describe('universal acquired evidence through actual hybrid-v2 and Trinity stage
     expect(mockHttp).toHaveBeenCalledTimes(2); expect(mockProvider).not.toHaveBeenCalled();
   });
 
-  it.each(gamingUniversalIdentityFixtures)('keeps incomplete $game question coverage out of Trinity', async fixture => {
-    currentHtml = gamingUniversalIdentityHtml(fixture);
+  it.each(reviewedFixtures)('keeps incomplete $game question coverage out of Trinity', async fixture => {
+    currentHtml = reviewedHtml(fixture);
     const question = `${fixture.question} Explain luminescent cartography.`;
     const run = harness({ game: fixture.game, question, mode: fixture.mode });
     const initial = await run.start();
@@ -332,14 +340,14 @@ describe('universal acquired evidence through actual hybrid-v2 and Trinity stage
     expect(mockHttp).not.toHaveBeenCalled();
   });
 
-  it('selects only the independently acquired Elden Ring source when a competing Nightreign source is submitted beside it', async () => {
-    const fixture = gamingUniversalIdentityFixtures[0];
-    const goodHtml = gamingUniversalIdentityHtml(fixture, { furniture: true });
-    const wrongHtml = gamingUniversalIdentityHtml({ ...fixture, game: 'Elden Ring Nightreign',
-      unrelatedGame: 'Elden Ring', topic: 'Nightreign movement' });
+  it.each([gamingUniversalIdentityFixtures[0], gamingIndependentWorkflowFixtures[0]])
+  ('selects only independently acquired $game evidence beside a competing source', async fixture => {
+    const goodHtml = reviewedHtml(fixture, { furniture: true });
+    const wrongHtml = reviewedHtml({ ...fixture, game: fixture.unrelatedGame,
+      unrelatedGame: fixture.game, topic: 'Conflicting movement' });
     const syntheticTransport = mockHttp.getMockImplementation()!;
     mockHttp.mockImplementation(async (target: string, options: any) => {
-      currentHtml = new URL(target).pathname.endsWith('/nightreign') ? wrongHtml : goodHtml;
+      currentHtml = new URL(target).pathname.endsWith('/competing') ? wrongHtml : goodHtml;
       return syntheticTransport(target, options);
     });
     answerSentences = fixture.sentences.slice(0, 1); expectedQuestion = fixture.question;
@@ -347,13 +355,31 @@ describe('universal acquired evidence through actual hybrid-v2 and Trinity stage
     const initial = await run.start();
     const final = await run.workflow.candidates({ contractVersion, workflowId: initial.body.workflowId,
       expectedRevision: initial.body.revision, idempotencyKey: 'mixed-candidates', discoveryType: 'gameplay_evidence',
-      candidates: [{ url }, { url: `${url}/nightreign` }] }, context);
+      candidates: [{ url }, { url: `${url}/competing` }] }, context);
     expect(final.body).toMatchObject({ state: 'answer_ready', evidenceSelected: true, coverageSatisfied: true });
     expect(final.body.candidates![1]).toMatchObject({ decision: 'rejected', reasonCodes: ['GAME_MISMATCH'] });
     expect(final.body.selectedCandidateIds).toEqual([final.body.candidates![0].candidateId]);
     expect(final.body.answer!.sources).toEqual([expect.objectContaining({ url })]);
-    expect(JSON.stringify(auditInputs[0].evidence)).not.toContain('Nightreign');
+    expect(JSON.stringify(auditInputs[0].evidence)).not.toContain(fixture.unrelatedGame);
     expect(auditInputs[0].evidence.every((chunk: any) => chunk.sourceId === final.body.candidates![0].candidateId)).toBe(true);
     expect(mockHttp).toHaveBeenCalledTimes(2); expect(mockProvider).toHaveBeenCalledTimes(4);
+  });
+
+  it('withholds mixed acquired identities despite misleading URL and frontend claims', async () => {
+    const fixture = gamingIndependentWorkflowFixtures[0];
+    currentHtml = reviewedHtml(fixture, { title: 'Elden Ring Nightreign strategy' });
+    answerSentences = fixture.sentences.slice(0, 1); expectedQuestion = fixture.question;
+    const run = harness({ game: fixture.game, question: fixture.question });
+    const initial = await run.start();
+    const misleadingUrl = `${url}/fallout-76`;
+    const final = await run.submit(initial.body, 'misleading-source', misleadingUrl, context,
+      { claimedGame: 'Elden Ring', title: 'Fallout 76 guide' });
+    expect(final.body).toMatchObject({ state: 'discovery_required', revision: 1, coverageSatisfied: false, evidenceSelected: false });
+    expect(final.body.candidates![0]).toMatchObject({ decision: 'rejected', reasonCodes: ['GAME_MISMATCH'] });
+    expect(final.body.answer).toBeUndefined();
+    expect(mockProvider).not.toHaveBeenCalled();
+    const stopped = await run.submit(final.body, 'misleading-recovery', `${misleadingUrl}-replacement`);
+    expect(stopped.body).toMatchObject({ nextAction: 'stop', revision: 2, coverageSatisfied: false, evidenceSelected: false });
+    expect(mockProvider).not.toHaveBeenCalled();
   });
 });
