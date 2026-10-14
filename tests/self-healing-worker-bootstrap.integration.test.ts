@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import type { JobData } from '../src/core/db/schema.js';
 
 const queryMock = jest.fn();
 const isDatabaseConnectedMock = jest.fn(() => true);
@@ -149,6 +150,11 @@ const flushSnapshots = jest.fn(async () => undefined);
 const dispatcherStarted = jest.fn(async () => undefined);
 const workerHeartbeat = jest.fn(async () => undefined);
 const markIdle = jest.fn(async () => undefined);
+const markJobStarted = jest.fn(async () => undefined);
+const markJobCompleted = jest.fn(async () => undefined);
+const partitionExecutor = jest.fn(async () => ({
+  status: 'completed', output: { synthetic: 'completed-during-coordinator-failure' }, retryable: false,
+}));
 const prediction = jest.fn(async () => { throw new Error('Synthetic prediction disabled.'); });
 const stopNotion = jest.fn(async () => undefined);
 let redisStarted = false;
@@ -175,6 +181,10 @@ jest.unstable_mockModule('@services/workerAutonomyService.js', () => ({
     async evaluateBudgetsBeforeClaim() { return { allowed: true }; }
     recordClaimAttempt() {}
     recordClaimResult() {}
+    async recordHeartbeat(job: JobData) { return { ...job }; }
+    markJobStarted = markJobStarted;
+    markJobCompleted = markJobCompleted;
+    markJobLeaseLost = forbidden;
     markDispatcherStarted = dispatcherStarted;
     recordWorkerHeartbeat = workerHeartbeat;
     markIdle = markIdle;
@@ -213,7 +223,7 @@ jest.unstable_mockModule('../src/workers/backstageNotionPartitionShadowLoop.js',
   resolveBackstageNotionPartitionShadowPolicy: () => ({ partitionSyncEnabled: false }),
   startBackstageNotionPartitionShadowLoop: () => ({ stopAndDrain: stopNotion }),
 }));
-jest.unstable_mockModule('../src/workers/backstageNotionPartitionSyncJob.js', () => ({ createBackstageNotionPartitionSyncJobExecutor: () => ({}) }));
+jest.unstable_mockModule('../src/workers/backstageNotionPartitionSyncJob.js', () => ({ createBackstageNotionPartitionSyncJobExecutor: () => partitionExecutor }));
 jest.unstable_mockModule('@services/backstageNotionSync.js', () => ({
   BACKSTAGE_NOTION_SYNC_MAX_COLD_EMBEDDING_REQUESTS: 114,
   validateBackstageNotionSynchronizationConfiguration: () => ({ authorityConfigured: false, configuredUniverses: 0 }),
@@ -291,9 +301,51 @@ describe('actual production worker bootstrap with external boundaries replaced',
     expect(slots.every(index => index < started)).toBe(true);
     coordinator.startSelfHealingLoop();
     expect(lifecycleLog.info.mock.calls.filter(([event]) => event === 'self_heal.coordinator.started')).toHaveLength(1);
+    let durableJob = {
+      id: '11111111-1111-4111-8111-111111111111', worker_id: 'queue',
+      job_type: 'backstage-notion-partition-sync', status: 'running', claim_generation: '1',
+      input: { synthetic: true }, output: null, error_message: null, retry_count: 0, max_retries: 2,
+      last_worker_id: '', lease_expires_at: new Date(Date.now() + 30_000),
+      correlation_id: 'synthetic-coordinator-failure', cancel_requested_at: null, cancel_reason: null,
+      created_at: new Date(), updated_at: new Date(),
+    } as JobData;
+    const completedWrites: Array<{ generation: string; coordinatorState: string }> = [];
+    // Keep the repository's real completion SQL and CAS fences. Only storage is
+    // substituted; PostgreSQL transaction/locking behavior is separate evidence.
+    queryMock.mockImplementation(async (sql: unknown, params: unknown[] = []) => {
+      const source = String(sql);
+      if (source.startsWith('SELECT * FROM job_data')) return { rows: [{ ...durableJob }] };
+      if (!source.includes('UPDATE job_data')) throw new Error('Unexpected synthetic storage operation.');
+      expect(source).toContain("AND status = 'running'");
+      expect(source).toContain('AND last_worker_id =');
+      expect(source).toContain('AND claim_generation =');
+      expect(source).toContain('AND lease_expires_at >= NOW()');
+      expect(params[0]).toBe('completed');
+      if (durableJob.status !== 'running' || params[9] !== durableJob.id ||
+          params[10] !== durableJob.last_worker_id || String(params[11]) !== durableJob.claim_generation ||
+          !durableJob.lease_expires_at || durableJob.lease_expires_at.getTime() < Date.now()) {
+        return { rows: [] };
+      }
+      completedWrites.push({ generation: String(params[11]), coordinatorState: coordinator.getSelfHealingLoopStatus().coordinatorState });
+      durableJob = { ...durableJob, status: 'completed', output: JSON.parse(String(params[1])), lease_expires_at: null };
+      return { rows: [{ ...durableJob }] };
+    });
+    claimNextMock.mockImplementationOnce(async (options: { workerId: string }) => {
+      durableJob.last_worker_id = options.workerId;
+      return { job: { ...durableJob } };
+    });
     const claimsBefore = claimNextMock.mock.calls.length;
-    await jest.advanceTimersByTimeAsync(2_000);
+    await jest.advanceTimersByTimeAsync(500);
+    expect(completedWrites).toEqual([{ generation: '1', coordinatorState: 'FAILED' }]);
+    expect(markJobStarted).toHaveBeenCalledTimes(1);
+    expect(markJobCompleted).toHaveBeenCalledTimes(1);
+    expect(markJobCompleted).toHaveBeenCalledWith(durableJob.id);
+    expect(partitionExecutor).toHaveBeenCalledTimes(1);
+    expect(durableJob).toMatchObject({ status: 'completed', retry_count: 0,
+      output: { synthetic: 'completed-during-coordinator-failure' } });
+    await jest.advanceTimersByTimeAsync(1_500);
     expect(coordinator.getSelfHealingLoopStatus().coordinatorState).toBe('RUNNING');
+    expect(completedWrites).toHaveLength(1);
     expect(claimNextMock.mock.calls.length).toBeGreaterThan(claimsBefore);
     expect(workerHeartbeat).toHaveBeenCalled();
     signalShutdown();

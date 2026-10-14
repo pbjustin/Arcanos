@@ -2637,6 +2637,7 @@ describe('selfHealingLoop', () => {
   });
 
   it('runs the broader controller for manual self-heal requests when no direct action is needed', async () => {
+    const lifecycle = new AbortController();
     runSelfImproveCycleMock.mockResolvedValueOnce({
       id: 'cycle-manual',
       autonomyLevel: 1,
@@ -2656,6 +2657,7 @@ describe('selfHealingLoop', () => {
 
     const result = await runSelfHealingLoop({
       trigger: 'manual',
+      signal: lifecycle.signal,
       requestedCycle: {
         trigger: 'manual',
         component: 'planner',
@@ -2675,7 +2677,7 @@ describe('selfHealingLoop', () => {
           diagnosisType: 'manual'
         })
       })
-    }));
+    }), { signal: lifecycle.signal });
     expect(result).toEqual(expect.objectContaining({
       trigger: 'manual',
       diagnosis: 'manual self-heal evaluation',

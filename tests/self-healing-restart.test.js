@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, expect, it } from '@jest/globals';
 
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
@@ -27,12 +27,28 @@ const reviewedSourceFiles = [
 ];
 
 function runFreshProcess(cwd, activate, options = {}) {
+  // No spread of process.env: no parent credentials, NODE_OPTIONS, target IDs,
+  // database/Redis URLs or webhook configuration can reach either process.
+  const env = {
+    NODE_ENV: 'test', LOG_LEVEL: 'error', DOTENV_CONFIG_QUIET: 'true',
+    ARCANOS_PROCESS_KIND: options.processKind ?? 'worker', RUN_WORKERS: 'false',
+    FINETUNED_MODEL_ID: 'ft:gpt-4.1:synthetic:restart-consumer',
+    OPENAI_API_KEY: 'test-self-healing-restart-api-key',
+    SELF_IMPROVE_ENABLED: 'true', SELF_IMPROVE_ACTUATOR_MODE: 'daemon',
+    SELF_IMPROVE_AUTONOMY_LEVEL: '3', SELF_IMPROVE_FREEZE: 'false'
+  };
   const program = `
     import { registerHooks } from 'node:module';
     import { readFileSync } from 'node:fs';
     import path from 'node:path';
     import { fileURLToPath, pathToFileURL } from 'node:url';
-    import ts from ${JSON.stringify(path.join(repositoryRoot, 'node_modules/typescript/lib/typescript.js'))};
+    import ts from ${JSON.stringify(pathToFileURL(path.join(repositoryRoot, 'node_modules/typescript/lib/typescript.js')).href)};
+    // Windows may inject OS environment keys even with an explicit spawn env.
+    // Keep the exact fixture allowlist before loading any production module.
+    const allowedEnvironmentNames = new Set(${JSON.stringify(Object.keys(env))});
+    for (const key of Object.keys(process.env)) {
+      if (!allowedEnvironmentNames.has(key)) delete process.env[key];
+    }
     const root = ${JSON.stringify(repositoryRoot)};
     const reviewed = new Set(${JSON.stringify(reviewedSourceFiles)}.map(file => path.join(root, file)));
     const builtinModules = new Set(['module', 'fs', 'path', 'url', 'events', 'crypto', 'os', 'util']);
@@ -85,16 +101,6 @@ function runFreshProcess(cwd, activate, options = {}) {
       environmentNames: Object.keys(process.env).sort()
     }));
   `;
-  // No spread of process.env: no parent credentials, NODE_OPTIONS, target IDs,
-  // database/Redis URLs or webhook configuration can reach either process.
-  const env = {
-    NODE_ENV: 'test', LOG_LEVEL: 'error', DOTENV_CONFIG_QUIET: 'true',
-    ARCANOS_PROCESS_KIND: options.processKind ?? 'worker', RUN_WORKERS: 'false',
-    FINETUNED_MODEL_ID: 'ft:gpt-4.1:synthetic:restart-consumer',
-    OPENAI_API_KEY: 'test-self-healing-restart-api-key',
-    SELF_IMPROVE_ENABLED: 'true', SELF_IMPROVE_ACTUATOR_MODE: 'daemon',
-    SELF_IMPROVE_AUTONOMY_LEVEL: '3', SELF_IMPROVE_FREEZE: 'false'
-  };
   const output = execFileSync(process.execPath, ['--input-type=module', '--eval', program], {
     cwd, env, encoding: 'utf8', timeout: 10_000, maxBuffer: 64 * 1024,
     stdio: ['ignore', 'pipe', 'pipe']

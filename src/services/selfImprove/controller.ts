@@ -42,7 +42,11 @@ export interface SelfImproveDecision {
   notes?: string;
 }
 
-export async function runSelfImproveCycle(input: SelfImproveTrigger): Promise<SelfImproveDecision> {
+export async function runSelfImproveCycle(
+  input: SelfImproveTrigger,
+  options: { signal?: AbortSignal } = {}
+): Promise<SelfImproveDecision> {
+  options.signal?.throwIfAborted();
   const cfg = getConfig();
   const contract = loadLoopContract();
   const id = uuidv4();
@@ -57,7 +61,9 @@ export async function runSelfImproveCycle(input: SelfImproveTrigger): Promise<Se
   logDriftSignal(drift);
 
   const autonomyLevel = await getAutonomyLevel();
+  options.signal?.throwIfAborted();
   const frozen = await isSelfImproveFrozen();
+  options.signal?.throwIfAborted();
 
   // Decide
   let decision: SelfImproveDecision['decision'] = 'NOOP';
@@ -72,14 +78,17 @@ export async function runSelfImproveCycle(input: SelfImproveTrigger): Promise<Se
     // High severity drift => rollback posture (freeze + escalate)
     if (drift.severity === 'high') {
       await freezeSelfImprove(`High severity drift: ${drift.kind}`);
+      options.signal?.throwIfAborted();
       decision = 'ROLLBACK';
       notes = 'High severity drift: system frozen and rollback posture activated';
     } else {
       decision = (await canProposePatches()) ? 'PATCH_PROPOSAL' : 'ESCALATE';
+      options.signal?.throwIfAborted();
       notes = decision === 'PATCH_PROPOSAL' ? 'Proposing improvements based on drift' : 'Autonomy too low; escalation required';
     }
   } else {
     decision = input.trigger === 'manual' ? ((await canProposePatches()) ? 'PATCH_PROPOSAL' : 'ESCALATE') : 'NOOP';
+    options.signal?.throwIfAborted();
     notes = decision === 'NOOP' ? 'No drift signal' : 'Manual run';
   }
 
@@ -94,6 +103,7 @@ export async function runSelfImproveCycle(input: SelfImproveTrigger): Promise<Se
       category: input.component ? `component-${input.component}` : 'system',
       useMemory: true
     });
+    options.signal?.throwIfAborted();
 
     for (const [index, item] of queue.entries()) {
       //audit Assumption: reflection persistence is best-effort and may not return DB ids; risk: non-stable identifiers; invariant: evidence contains traceable reflection references; handling: generate deterministic local ids.
@@ -103,6 +113,7 @@ export async function runSelfImproveCycle(input: SelfImproveTrigger): Promise<Se
 
     if (input.component) {
       const comp = await generateComponentReflection(input.component, { priority: 'high', useMemory: true });
+      options.signal?.throwIfAborted();
       //audit Assumption: component reflection may not expose storage id; risk: weaker cross-linking; invariant: component reflection remains attributable in evidence; handling: synthesize component-scoped reference id.
       const generatedAt = comp.metadata?.generated ?? new Date().toISOString();
       reflectionIds.push(`component-${input.component}-${generatedAt}`);
@@ -126,6 +137,7 @@ export async function runSelfImproveCycle(input: SelfImproveTrigger): Promise<Se
         ],
         workingDir: process.cwd()
       }).catch(() => null);
+      options.signal?.throwIfAborted();
 
       const proposalContext = {
         ...(input.context || {}),
@@ -140,12 +152,14 @@ export async function runSelfImproveCycle(input: SelfImproveTrigger): Promise<Se
         context: proposalContext,
         prohibitedPaths: contract.prohibitedPaths
       });
+      options.signal?.throwIfAborted();
 
       metric('self_improve.patch_structured', { id, risk: patchProposal.risk, files: patchProposal.files.length });
 
       // Deterministic gating: run PRAssistant before proposing a PR.
       const assistant = new PRAssistant();
       const analysis = await assistant.analyzePR(patchProposal.diff, patchProposal.files);
+      options.signal?.throwIfAborted();
 
       //audit Assumption: conditional PR analysis can still be safe for human-reviewed PR creation; risk: weaker automated gate strictness; invariant: hard-fail status remains blocked; handling: allow ✅ and ⚠️, block ❌.
       const gatesOk = analysis.status === '✅' || analysis.status === '⚠️';
@@ -175,6 +189,7 @@ export async function runSelfImproveCycle(input: SelfImproveTrigger): Promise<Se
           base: 'main',
           labels: ['self-improve', `autonomy-${cfg.selfImproveAutonomyLevel}`, (cfg.selfImproveAutonomyLevel >= 2 ? 'requires-human-approval' : 'propose-only')]
         });
+        options.signal?.throwIfAborted();
 
         metric('self_improve.pr_created', { id, success: prResult.success, branch: prResult.branch });
       } else if (!gatesOk) {
@@ -182,6 +197,9 @@ export async function runSelfImproveCycle(input: SelfImproveTrigger): Promise<Se
         notes += ` | PR gates failed: ${analysis.summary}`;
       }
     } catch (e: unknown) {
+      // Cancellation owns the remainder of this cycle; it must not be converted
+      // into a recoverable proposal failure followed by another evidence write.
+      options.signal?.throwIfAborted();
       rethrowWorkerAiBudgetError(e);
       metric('self_improve.patch_structured_error', { id });
       errors.push({ stage: 'patch_proposal_or_pr', message: resolveErrorMessage(e), detail: { trigger: input.trigger, component: input.component } });
@@ -197,6 +215,7 @@ export async function runSelfImproveCycle(input: SelfImproveTrigger): Promise<Se
   }
 
   // Evidence pack
+  options.signal?.throwIfAborted();
   const evidencePath = await writeEvidencePack({
     id,
     createdAt: new Date().toISOString(),
@@ -223,6 +242,7 @@ export async function runSelfImproveCycle(input: SelfImproveTrigger): Promise<Se
     errors,
     rollback: decision === 'ROLLBACK' ? { frozen: true, reason: notes } : undefined
   });
+  options.signal?.throwIfAborted();
 
   return {
     id,

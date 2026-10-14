@@ -4398,7 +4398,7 @@ export async function runSelfHealingLoop(options: {
         });
       } else {
         try {
-          const decision = await runSelfImproveCycle(diagnosis.controllerInput);
+          const decision = await runSelfImproveCycle(diagnosis.controllerInput, { signal: options.signal });
           options.signal?.throwIfAborted();
           controllerDecision = decision.decision;
           runtime.status.lastControllerDecision = decision.decision;
