@@ -609,7 +609,14 @@ completed all 13 jobs successfully. The separate
 and [API Endpoint Tests](https://github.com/pbjustin/Arcanos/actions/runs/38608262358)
 also passed. Exact-head Jest counter artifacts retain the complete counts above;
 oversized or inaccessible raw logs were never treated as evidence of success.
-Live inspection and Railway preview execution were intentionally skipped.
+Railway preview execution was intentionally skipped. The separate inspection
+fixture workflow is an isolated Docker/PostgreSQL 17/18 test, not a live Railway
+inspection. Its job requires both a non-draft PR and the `railway-preview` label,
+so it remains skipped under this task's required PR state. The unchanged local
+runner can exercise its 40 PG17 and 41 PG18 cases with runtime networking
+disabled, synthetic credentials and no published ports. Its source-bound local
+result is recorded separately in the final owner handoff; workflow execution is
+not inferred from that local result.
 
 Codecov at this exact behavioral SHA reports **93.82716% (76/81 changed lines)**,
 four missed lines and one partial line, against the unchanged 80% target and
