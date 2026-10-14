@@ -423,6 +423,22 @@ jobs:
       - name: 📊 Skip Python Codecov upload
         run: echo "Python coverage is outside the current reported Codecov project scope."
 
+      - name: Set up pinned Node.js for Windows fixture contracts
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.18.1'
+          cache: 'npm'
+
+      - name: Install and build fixture dependencies
+        run: npm ci && npm run build:packages
+
+      - name: Verify Windows receipt and publishing isolation contracts
+        run: |
+          node scripts/run-jest.mjs --runTestsByPath tests/railway-production-readonly-inspection.test.js --coverage=false --runInBand
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test scripts/stacked-draft-preview-workflow.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
   local-agent-sandbox-linux:
     name: Local Agent Sandbox (Linux)
     runs-on: ubuntu-latest

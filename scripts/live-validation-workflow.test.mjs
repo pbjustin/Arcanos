@@ -276,10 +276,17 @@ test('validated tightened target limits reach preflight, paid execution and clea
       'Execute bounded live acceptance through trusted controller',
       'Close the paid run and verify cleanup while retaining facility']) {
       const step = named(live, name);
+      rmSync(argsFile, { force: true });
+      const commandLog = path.join(directory, 'offline-guard.jsonl');
+      rmSync(commandLog, { force: true });
       const run = spawnSync('bash', ['-c', step.run], { encoding: 'utf8', timeout: 5_000,
         env: { ...baseEnvironment(), ...limits, PATH: bin + path.delimiter + process.env.PATH,
+          NODE_OPTIONS: `--import=${new URL('./test-fixtures/offline-process-guard.mjs', import.meta.url).href}`,
+          OFFLINE_PROCESS_FIXTURE: 'deny', MOCK_COMMAND_LOG: commandLog,
           RUNNER_TEMP: directory, TARGET_FILE: outputs.target_file, ARTIFACT_FILE: path.join(directory, 'artifact.json'), ARGS_FILE: argsFile } });
       assert.equal(run.status, 0, run.stderr);
+      assert.deepEqual(readFileSync(commandLog, 'utf8').trim().split('\n').map(JSON.parse),
+        [{ guard: 'installed', mode: 'deny' }]);
       const args = JSON.parse(readFileSync(argsFile, 'utf8'));
       assert.equal(args[0], 'scripts/live-validation-controller.mjs');
       const parsed = parseLiveValidationControllerArguments(args.slice(1));

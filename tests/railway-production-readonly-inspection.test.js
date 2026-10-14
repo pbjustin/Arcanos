@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -298,11 +298,32 @@ describe('sanitized receipt retention', () => {
 
   it('writes only the fixed private receipt and refuses overwrites', async () => {
     const receipt = await fixture().collect(); const dir = directory();
-    const path = writeProductionInspectionReceipt(receipt, dir);
+    const fileSystem = { openSync: jest.fn(openSync), writeFileSync, closeSync: jest.fn(closeSync) };
+    const path = writeProductionInspectionReceipt(receipt, dir, fileSystem);
     expect(path).toBe(join(dir, INSPECTION_RECEIPT_FILENAME));
-    expect(statSync(path).mode & 0o777).toBe(0o600);
+    expect(fileSystem.openSync).toHaveBeenCalledWith(path, 'wx', 0o600);
+    expect(fileSystem.closeSync).toHaveBeenCalledWith(fileSystem.openSync.mock.results[0].value);
+    // NTFS does not expose POSIX owner/group mode bits. Keep the restrictive
+    // request assertion above and compare the OS representation with an
+    // independently created 0600 reference; this is not an NTFS ACL proof.
+    const reference = join(directory(), 'restrictive-mode-reference');
+    writeFileSync(reference, '', { mode: 0o600, flag: 'wx' });
+    expect(statSync(path).mode & 0o777).toBe(statSync(reference).mode & 0o777);
     expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual(receipt);
     expect(() => writeProductionInspectionReceipt(receipt, dir)).toThrow();
+  });
+
+  it.each(['', '.', 'relative/path', 'C:relative'])('rejects a nonabsolute receipt directory %j', value => {
+    const fileSystem = { openSync: jest.fn(), writeFileSync: jest.fn(), closeSync: jest.fn() };
+    expect(() => writeProductionInspectionReceipt({}, value, fileSystem)).toThrow('RECEIPT_DIRECTORY_INVALID');
+    expect(fileSystem.openSync).not.toHaveBeenCalled();
+  });
+
+  it('closes the exclusively opened descriptor when retaining a receipt fails', () => {
+    const fileSystem = { openSync: jest.fn(() => 71), writeFileSync: jest.fn(() => { throw new Error('fixture-write-failed'); }),
+      closeSync: jest.fn() };
+    expect(() => writeProductionInspectionReceipt({}, directory(), fileSystem)).toThrow('fixture-write-failed');
+    expect(fileSystem.closeSync).toHaveBeenCalledWith(71);
   });
 
   it.each([5000, 8192])('retains a blocked receipt when bounded inventory with %s-byte definitions exceeds artifact size', async length => {
@@ -338,8 +359,9 @@ describe('sanitized receipt retention', () => {
   });
 
   it('refuses symlinked output and an oversized receipt', () => {
-    const dir = directory(); const other = join(dir, 'test-only-protected'); writeFileSync(other, 'preserve');
-    symlinkSync(other, join(dir, INSPECTION_RECEIPT_FILENAME));
+    const dir = directory(); const target = directory(); const other = join(target, 'test-only-protected'); writeFileSync(other, 'preserve');
+    // Directory junctions exercise a real link without Windows symlink elevation.
+    symlinkSync(target, join(dir, INSPECTION_RECEIPT_FILENAME), 'junction');
     expect(() => writeProductionInspectionReceipt({ status: 'BLOCKED' }, dir)).toThrow();
     expect(readFileSync(other, 'utf8')).toBe('preserve');
     expect(() => writeProductionInspectionReceipt({ definition: 'x'.repeat(65536) }, directory())).toThrow('RECEIPT_TOO_LARGE');
