@@ -857,14 +857,26 @@ Launcher behavior:
 - The web listener binds before Redis initialization. `/health` and `/healthz` remain live during a Redis outage, missing backend configuration, or incomplete database schema initialization, while production web `/readyz` returns `503` unless PostgreSQL is configured, connected, and schema-ready, Redis is configured and connected, and that Redis ready generation has passed the isolated public-provider Lua/write capability probe; a new revision therefore cannot activate in an in-memory/no-Redis, schema-incomplete, or command-incompatible fallback. Local, test, development, and non-web modes preserve optional unconfigured dependencies. Railway does not continuously monitor the activation path after the first successful response; see `STARTUP_RESILIENCE.md`.
 - Worker `/readyz` remains `503` until database bootstrap,
   autonomy/module-registry bootstrap, every configured consumer slot's
-  dispatcher-start write, and a supported OpenAI key setting are present.
+  dispatcher-start write, canonical self-healing scheduler installation, and a
+  supported OpenAI key setting are present. The Worker initializes the existing
+  shared Redis lifecycle before starting the coordinator so shared freeze and
+  autonomy restrictions are effective. Redis connection readiness is not a new
+  queue-readiness prerequisite; configured Redis unavailability blocks healing
+  effects. Explicit web role suppresses the coordinator, and an actuator setting
+  alone never enables execution. See the
+  [effective configuration policy](CONFIGURATION.md#self-healing-coordinator-and-execution-policy).
   Configured Notion authority also requires a fast structural validation of its
   closed root mapping and dedicated purpose-bound token. Malformed required
   configuration is fatal, but a full Notion crawl, snapshot freshness, a busy
   sync lease, and partition cutover evidence are not process-startup invariants.
   The worker installs the existing monolith and partition background
-  coordinators at the all-slot barrier and emits its ready sentinel before their
-  asynchronous timers can execute. The monolith's first cycle is zero-delay.
+  coordinators and the single canonical self-healing scheduler at the all-slot
+  barrier, then emits its ready sentinel before their asynchronous timers can
+  execute. A self-healing scheduler installation failure prevents that sentinel.
+  Later tick failures are logged independently of queue processing; a healthy
+  Worker is not proof of a currently healthy coordinator. Structured
+  `self_heal.coordinator.*` lifecycle events and fresh observations provide that
+  separate process-local evidence. The monolith's first cycle is zero-delay.
   Partition synchronization in exact `shadow` mode retains its configured first
   interval, while the partitioned-mode evidence monitor schedules its first
   cycle with zero delay. The monolith cycle therefore reuses the same bounded
@@ -928,7 +940,7 @@ Launcher behavior:
   provider has no authoritative hierarchy delta feed. Immutable material reuse
   begins only after capture. Cycle logs expose only safe mode/status metadata and
   aggregate results.
-- Numeric `deploy.drainingSeconds=60` is the shared platform outer bound. The web runtime has a 10-second internal shutdown deadline. On a worker shutdown signal, the launcher immediately returns readiness `503` before forwarding the signal; the child then aborts provider work, leaves live claims for lease recovery, stops polling/heartbeats, and flushes runtime snapshots. The default 45-second lease-recovery horizon begins as old heartbeats cease and may complete in the new revision; the drain value does not itself guarantee that recovery. Sixty seconds gives the cooperative handlers a nonzero cleanup envelope, but stalled database I/O and real claim recovery still require a measured deployment rehearsal before promotion.
+- Numeric `deploy.drainingSeconds=60` is the shared platform outer bound. The web runtime has a 10-second internal shutdown deadline. On a worker shutdown signal, the launcher immediately returns readiness `503` before forwarding the signal; the child then aborts provider work, leaves live claims for lease recovery, stops polling/heartbeats, and flushes runtime snapshots. The canonical coordinator clears its timer, aborts and drains the active evaluation, and blocks replacement while draining; telemetry and Redis stop afterward. The default 45-second lease-recovery horizon begins as old heartbeats cease and may complete in the new revision; the drain value does not itself guarantee that recovery. Sixty seconds gives the cooperative handlers a nonzero cleanup envelope, but stalled database I/O and real claim recovery still require a measured deployment rehearsal before promotion.
 - `Procfile` remains in the repository as a historical fallback artifact and must not be treated as the canonical Railway start path.
 
 Environment variables:

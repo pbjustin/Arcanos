@@ -4,18 +4,25 @@
 
 Predictive self-healing adds a rules-first layer on top of the existing reactive self-heal loop.
 
-`src/server.ts` owns the canonical `selfHealingLoop` scheduler after startup
-readiness. The legacy `controlLoop` scheduler is retired; its exported inspection
-APIs remain available but cannot start another mitigation authority. The shared
-service-role policy suppresses automatic startup, interval ticks, and Trinity
-stage-failure actuation when the process is a web role with workers disabled.
-Explicit manual commands retain their existing caller scopes and server feature
-gates, including mitigation consumption, verification, and rollback. Mitigation
-state is process-local: this boundary does not establish delivery between a
-dedicated Worker service and a web service or across replicas. The dedicated
-`jobRunner` entrypoint does not start this scheduler, so a separated web/Worker
-deployment requires separate operational acceptance of coordinator ownership and
-mitigation delivery.
+The dedicated `jobRunner` production entry point owns the canonical
+`selfHealingLoop` scheduler after database, autonomy and module initialization
+and the all-consumer readiness barrier. Successful scheduler installation
+precedes its ready sentinel. The explicit web role suppresses automatic startup
+and interval ticks; the direct/local server lifecycle remains supported. The
+legacy `controlLoop` scheduler is retired, and Trinity V2 does not install a
+second scheduler. Repeated initialization is idempotent, concurrent ticks do not
+overlap, and shutdown aborts and drains active evaluation before dependencies
+stop. A failed scheduler installation fails bootstrap; a failed later evaluation
+is reported independently of queue processing. See
+[process ownership](ARCHITECTURE.md#self-healing-process-ownership).
+
+Mitigation state is process-local. This boundary does not establish delivery
+between a dedicated Worker and web service or across replicas. Automatic effects
+require enabled daemon mode, configured and effective autonomy at least 3, and
+both freeze controls false. The production Trinity failure and prompt-timeout
+consumers also consult the effective shared kill switch before automatic
+activation. Explicit commands retain their caller scopes and applicable server
+feature gates. No missing flag or selected actuator grants autonomous execution.
 
 Dispatched reactive failures consume the same cooldown and bounded
 per-diagnosis attempt budget as successful dispatches. Rejected worker-repair
@@ -48,8 +55,8 @@ only the samples needed for the configured activation threshold.
   - reuses the existing self-heal loop cadence instead of introducing a second scheduler
   - polls metrics on `PREDICTIVE_HEALING_INTERVAL_MS` when set, otherwise on the `SELF_HEAL_LOOP_INTERVAL_MS` cadence
   - evaluates predictive decisions on each loop tick and reports whether predictive healing is enabled
-  - permits predictive actuation only when `PREDICTIVE_HEALING_ENABLED=true`
-  - auto-executes only when confidence clears the configured threshold and `PREDICTIVE_AUTO_EXECUTE=true`
+  - permits predictive actuation only with the common execution policy, `PREDICTIVE_HEALING_ENABLED=true`, and `PREDICTIVE_HEALING_DRY_RUN=false`
+  - auto-executes only when confidence clears the configured threshold and `PREDICTIVE_AUTO_EXECUTE=true`; authorization is checked again after asynchronous diagnosis
 
 - Metrics source:
   - rolling request window from `runtimeDiagnosticsService`
@@ -71,13 +78,11 @@ only the samples needed for the configured activation threshold.
   - manual self-improve runs and direct `POST /api/self-heal/decide` execution retain their existing caller scopes and server feature gates; this coordinator policy does not replace those owners or create a new human-approval token
   - the one-shot debug heal override is available only in development and test environments and cannot retry an uncertain or completed predictive execution
 - Executors:
-  - reinitialize the AI provider
-  - scale in-process workers up
-  - recycle a local in-process worker
-  - restart the local worker runtime through `healWorkerRuntime`
-  - repair a remote worker runtime through the authenticated worker-helper actuator
-  - activate bounded Trinity self-healing mitigation
-  - activate prompt-route mitigation to preempt hard failure
+  - reinitialize the provider in the current process
+  - scale, recycle or restart the separate in-process listener runtime only where that runtime is actually owned; these controls are unavailable in the dedicated Worker
+  - use the existing remote worker-helper actuator only for its supported runtime with exact target validation and fresh action-matched operator approval
+  - activate bounded Trinity mitigation for consumers in the current process
+  - activate prompt-route mitigation only in a process that owns the HTTP consumer; the dedicated Worker rejects this action
   - refuse unsupported traffic-shift actions explicitly
 - Surfaces:
   - `POST /api/self-heal/decide`
@@ -130,7 +135,12 @@ health-only.
 
 ## Config / Env Vars
 
-The predictive layer is off by default and should be rolled out in dry-run first.
+The predictive layer is off by default. The
+[effective configuration matrix](CONFIGURATION.md#self-healing-coordinator-and-execution-policy)
+defines defaults, alias precedence and authorization for observation,
+recommendations, local effects and privileged repair. Missing or malformed
+predictive dry-run values retain dry-run. A request cannot override server
+dry-run, freeze, disabled execution or insufficient autonomy.
 
 - `PREDICTIVE_HEALING_ENABLED`
 - `PREDICTIVE_HEALING_DRY_RUN`
@@ -176,6 +186,11 @@ The predictive layer is off by default and should be rolled out in dry-run first
 
 ## Remote Worker Repair Boundary
 
+The dedicated database-backed Worker rejects this actuator because it controls
+the separate EventEmitter listener runtime, not `jobRunner`. Selecting a remote
+mode does not turn it into a dedicated Worker restart mechanism. No new remote
+executor or Railway deployment capability is introduced.
+
 The public `worker-helper status` command remains credential-free. Remote repair
 is different: the actuator is available only when it resolves one valid
 credentialed target. Every configured URL alias must be an explicit exact HTTPS
@@ -195,6 +210,29 @@ Remote success data is capped at 64 KiB and must be JSON with a matching
 `restart.runWorkers`, and a locally generated `restart.message`. The bounded
 target-controlled message is validated as part of the response contract but
 discarded, so arbitrary remote text and fields cannot enter logs or telemetry.
+
+## Action and Process Ownership
+
+Every coordinator effect requires the common execution policy above. Predictive
+execution adds its enabled/dry-run/automatic gates, and privileged repair retains
+its separate operator approval. Detection windows and mitigation identities
+belong to the observing process unless a row explicitly names the shared ledger.
+
+| Action | Detection and target owner | Application and authorization | Recovery evidence | Rollback or expiry |
+| --- | --- | --- | --- | --- |
+| Provider reinitialization | Local telemetry; provider client in the same process | Existing provider reload after common policy checks | Fresh affected-route completions plus fresh provider success receipts; reload receipt alone is insufficient | Bounded verification and ineffective-action cooldown; no claim of another process's recovery |
+| Trinity V2 mitigation | Local stage failures; same-process Trinity consumers, including queued Worker jobs | Identity-fenced bounded command; production automatic consumers also check effective freeze/autonomy | Matching-generation consumer successes and fresh post-action affected-route completions | Existing TTL, failed-consumer budget and identity-fenced rollback |
+| Prompt short-answer or direct-answer policy, including predictive `mark_node_degraded` | Local prompt telemetry; HTTP prompt consumer in that process | Local policy command; dedicated Worker returns `cross_process_prompt_route_unavailable` | Fresh post-action prompt completions for the active mitigation | Ten-minute TTL and identity-fenced rollback; old verification cannot clear a replacement |
+| Stale-job recovery | Shared PostgreSQL queue/lease evidence; durable job ledger | Existing `recoverStaleJobs` recovery under common policy and lease/ownership fences | Actual queue/runtime improvement; missing inspection and healthy HTTP alone are insufficient | Existing retry/dead-letter and ownership rules; no arbitrary process restart |
+| Scale, recycle or heal listener runtime | Local listener health; separate EventEmitter worker runtime | Existing listener controls only in a compatible owning runtime; unavailable in dedicated `jobRunner` | Bounded receipts plus observed runtime improvement | Existing bounded recovery/cooldown; no substitution with Railway restart |
+| Remote helper or privileged repair | Supported runtime and exact approved target | Existing purpose-bound target/credential validation plus unexpired action-matched operator approval; unavailable from the dedicated Worker helper path | Bounded validated receipt and fresh target improvement | Existing approval expiry and cooldown; no unrestricted remote command |
+| Traffic shift or cross-service prompt/Trinity delivery | No supported target control channel | Unavailable; local memory changes cannot report cross-service success | No success claimed | No action applied |
+| Existing proposal/rollback fallback | Local drift; existing reflection/evidence stores and shared kill switch | Canonical automatic policy plus the controller's own controls; daemon mode does not create a PR. Cancellation prevents later stages after an awaited operation. | Proposal/evidence output is not runtime recovery proof | Freeze remains governed by the kill switch; no automatic unfreeze, code rollout or production restart |
+
+The Worker initializes the existing shared Redis lifecycle before coordinator
+startup. Configured Redis unavailability restricts effective controls to frozen
+and autonomy 0; it does not add a dependency gate to queue readiness. Healthy
+jobs, heartbeats or HTTP responses do not establish cross-process healing.
 
 ## Decision Rules V1
 
@@ -219,6 +257,22 @@ The engine prefers the smallest safe action first, refuses stale data, and block
 
 ## Audit Logging
 
+Structured lifecycle events distinguish `self_heal.coordinator.started`,
+`self_heal.coordinator.disabled`, `self_heal.coordinator.start_failed`,
+`self_heal.coordinator.stopped` and `self_heal.coordinator.tick_failed`. Metadata
+includes bounded role, mode, interval, state/reason and validated deployment
+identity where available; credentials, complete environment values and payloads
+are excluded. Authenticated runtime inspection separately exposes coordinator
+`RUNNING`, `DISABLED`, `BLOCKED`, `FAILED` or `UNKNOWN`, scheduling and observation
+timestamps. `RUNNING` establishes scheduler ownership, not successful recovery
+or permission to actuate; `operatingMode` and `policyObservedAt` describe the
+last observed execution policy. Web inspection reports remote coordinator state
+as `UNKNOWN` rather than inferring it from Worker health.
+Action-executed events identify `effectScope` as `current_process`,
+`shared_job_queue` for stale-job recovery, or `actuator_reported_target` for
+worker-repair operations; the last label requires the actuator's target receipt
+and does not itself prove that target recovered.
+
 Every predictive evaluation stores:
 
 - input observation snapshot
@@ -234,6 +288,16 @@ Actionable predictive decisions are also mirrored into the existing self-heal te
 
 ## Rollout Plan
 
+Deployment and live acceptance require separate owner authorization. This
+repair's live acceptance is **NOT_RUN** and production promotion is
+**NOT_AUTHORIZED**. Before an authorized rollout, verify exact source/toolchain,
+service roles, effective flag provenance, shared safety-store access and existing
+deployment holds. Confirm the Worker coordinator lifecycle and observation
+evidence independently of queue readiness. Process-local effects require a
+consumer in that same process; the blocked cross-service actions remain blocked.
+
+For a separately approved predictive rollout:
+
 1. Enable `PREDICTIVE_HEALING_ENABLED=true` with `PREDICTIVE_HEALING_DRY_RUN=true` and `PREDICTIVE_AUTO_EXECUTE=false`.
    While prediction is enabled, recommendation-only and dry-run outcomes do not fall through to a separate reactive action or automatic controller. Set prediction explicitly disabled to retain the legacy reactive policy during a rollback.
 2. With the control-plane bearer and `arcanos:read`, watch
@@ -243,7 +307,10 @@ Actionable predictive decisions are also mirrored into the existing self-heal te
    behavior, always with `dryRun: true`. Keep `self-heal:execute` absent during
    this stage.
 4. Tune thresholds until dry-run recommendations are stable.
-5. Enable `PREDICTIVE_AUTO_EXECUTE=true` only after reviewing cooldown behavior and audit logs.
+5. Consider execution only after reviewing cooldown behavior, fresh recovery
+   evidence and audit logs, with explicit owner authorization for every required
+   enabled/daemon/autonomy/dry-run/automatic setting. No step here changes those
+   settings automatically.
 
 ## Example Request
 

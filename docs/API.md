@@ -2080,6 +2080,21 @@ execution request cannot override server policy: it returns 409 while
 `PREDICTIVE_HEALING_ENABLED` is false or
 `PREDICTIVE_HEALING_DRY_RUN` is true.
 
+Authenticated runtime and inspection responses include a `coordinator` object
+with `state`, `reasonCode`, `processKind`, `operatingMode`, `scheduled`,
+`inFlight`, `intervalMs`, `lastObservationAt` and `policyObservedAt`. Its
+`evidenceScope` is `current_process`, and `remoteCoordinatorState` is `UNKNOWN`:
+a web response does not attest to the dedicated Worker's coordinator. States
+distinguish `RUNNING` (scheduler installed), `DISABLED` (role suppressed),
+`BLOCKED` (shutdown or an evaluation still draining), `FAILED` (startup or
+evaluation failure) and `UNKNOWN` (not started). A later successful scheduled
+evaluation can clear a tick failure. `operatingMode` reflects the last observed
+execution authorization, with `policyObservedAt` identifying its freshness; it
+does not replace execution-time policy checks. No successful observation means
+runtime health is unknown, and Worker queue readiness is separate evidence.
+See [self-healing policy](PREDICTIVE_SELF_HEALING.md) for action ownership and
+verification requirements.
+
 The compact `GET /status/safety` route remains public but exposes only
 allowlisted condition/quarantine classifications, counts, and aggregate
 counters—never raw IDs, reasons, metadata, or entity-keyed counters. Its

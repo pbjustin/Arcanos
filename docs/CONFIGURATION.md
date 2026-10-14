@@ -1323,6 +1323,58 @@ Previously created JSONL files remain sensitive and require an explicitly
 approved operator rotation or deletion procedure; the application does not
 remove them during rollout.
 
+### Self-healing coordinator and execution policy
+
+The dedicated Worker owns the canonical coordinator after its required runtime
+bootstrap completes. An explicit web role suppresses automatic scheduling.
+`RUN_WORKERS`, Worker readiness, and an actuator selection do not authorize
+autonomous healing. A running coordinator can observe and diagnose while its
+execution policy remains blocked; inspect the coordinator lifecycle separately
+from queue health and mitigation availability.
+
+| Setting | Default when absent or blank | Resolution |
+| --- | --- | --- |
+| `ARCANOS_PROCESS_KIND` | No launcher default | The Railway launcher requires `web` or `worker`. Direct runtime configuration treats other values as `unknown`; it does not infer role from the service name. |
+| `RUN_WORKERS` | `true` outside tests, `false` in tests | Explicit `web` forces `false`; explicit `worker` forces `true`. The launcher overwrites its child value from the selected role. |
+| `SELF_IMPROVE_ENABLED` | `false` | Exact environment name; selecting an actuator does not enable it. |
+| `SELF_IMPROVE_ACTUATOR_MODE` | `pr_bot` | Exact environment name; accepts `pr_bot` or `daemon`; invalid values retain `pr_bot`. |
+| `SELF_IMPROVE_AUTONOMY_LEVEL` | `0` | Exact environment name; finite numeric parsing. Effective autonomy is bounded to 0–3 and subject to the shared kill switch. |
+| `SELF_IMPROVE_FREEZE` | `false` | Exact environment name; shared kill-switch restrictions also apply to coordinator execution. |
+| `PREDICTIVE_HEALING_ENABLED` | `false` | Exact environment name. |
+| `PREDICTIVE_HEALING_DRY_RUN` | `true` | First nonblank value from the primary name, `RAILWAY_PREDICTIVE_HEALING_DRY_RUN`, then `PREDICTIVE_DRY_RUN`. Only `false`, `0`, or `no` disables dry-run, ignoring case and surrounding whitespace. Invalid values keep dry-run enabled and do not fall through to an alias. |
+| `PREDICTIVE_AUTO_EXECUTE` | `false` | First nonblank value from the primary name, `RAILWAY_PREDICTIVE_AUTO_EXECUTE`, then `AUTO_EXECUTE_HEALING`. |
+
+Other boolean settings in this table recognize `true`, `1`, and `yes`, ignoring
+case and surrounding whitespace; other nonblank inputs resolve to `false`.
+The normal launcher inherits the injected process environment before replacing
+its role and worker toggle. Local `.env` loading preserves already injected
+values. The other self-improve flags above do not use implicit `RAILWAY_`
+aliases. A partial production variable listing cannot distinguish inherited
+values from absent ones; a rendered inventory plus shared-variable inventory
+can establish their presence and provenance. Values remain **UNKNOWN** when the
+connector redacts them or the running process may differ from that inventory.
+This repair performs read-only variable-name inspection without configuration
+mutation; see the [audit snapshot](audits/self-healing/2026-10-14/bootstrap-ownership-repair/REPORT.md#production-inventory-and-unknown-running-state).
+
+| Capability | Required configuration and authorization |
+| --- | --- |
+| Observation | A running coordinator in its owning process and initialized observation dependencies. Disabled self-improvement flags retain observation without granting effects. |
+| Diagnosis | Bounded observations and the existing diagnostic/provider policy. A diagnosis does not authorize its proposed action. |
+| Recommendations | Recommendation-only or dry-run evaluation; no runtime mutation permission follows from a recommendation. The separate patch-proposal controller retains its enabled, freeze, autonomy, and publication gates. |
+| Coordinator local mitigation | `SELF_IMPROVE_ENABLED=true`, `SELF_IMPROVE_ACTUATOR_MODE=daemon`, configured and effective autonomy at least 3, and both configured and effective freeze false. The action must own the actual local consumer, satisfy cooldown/attempt limits, and await fresh verification evidence. |
+| Predictive execution | All local execution gates plus `PREDICTIVE_HEALING_ENABLED=true` and `PREDICTIVE_HEALING_DRY_RUN=false`. Automatic execution additionally requires `PREDICTIVE_AUTO_EXECUTE=true`; manual HTTP execution requires authenticated decision/execution scopes. Request parameters cannot lower the server dry-run guard. |
+| Privileged remote repair | A supported purpose-bound actuator, exact target, required credentials, and explicit action-matched operator approval with approver, reason, and future expiry, in addition to the applicable execution policy. No flag alone authorizes a Railway deployment or remote repair. |
+
+Configured Redis unavailability makes the effective kill switch frozen with
+autonomy 0. Shared overrides cannot substitute for missing enabled, daemon, or
+configured-autonomy gates. Process-local Trinity and prompt-route state cannot
+repair a different web process; unsupported cross-process actions remain
+blocked. EventEmitter worker-listener controls likewise cannot repair or scale
+the dedicated PostgreSQL job runner. See [architecture](ARCHITECTURE.md) and
+[deployment guidance](RAILWAY_DEPLOYMENT.md) for process ownership and acceptance
+boundaries. Live acceptance remains **NOT_RUN** and production promotion remains
+**NOT_AUTHORIZED** for this repair.
+
 For HTTP predictive decisions, server feature flags remain authoritative.
 `simulate` is accepted only with explicit `dryRun: true` and without
 `execute: true`. Live execution returns 409 while predictive healing is

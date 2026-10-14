@@ -123,6 +123,59 @@ Primary backend flow:
 3. `src/app.ts` composes the app and `src/routes/register.ts` mounts route groups. The startup lifecycle admits background runtime work only after initialization is ready; the canonical Railway web role disables in-process workers.
 4. `src/services/openai/*` handles OpenAI client and request flows behind the shared adapter boundary.
 
+## Self-healing process ownership
+
+The canonical coordinator is `src/services/selfImprove/selfHealingLoop.ts`.
+The Railway Worker starts it from the guarded `jobRunner` entry point after
+database, autonomy and module initialization and every consumer's dispatcher
+readiness write. Scheduler installation must succeed before the Worker emits
+its ready sentinel. The explicit web role suppresses automatic scheduling;
+the existing direct/local server lifecycle remains supported. The retired
+`controlLoop` cannot install a competing scheduler, and Trinity V2 is a local
+mitigation state machine, not another coordinator.
+
+The ownership correction is:
+
+```mermaid
+flowchart LR
+  subgraph Before
+    BW[Railway web] --> BS[Server startup]
+    BS --> BD[Canonical coordinator suppressed]
+    BJ[Railway Worker] --> BQ[Job consumers only]
+  end
+  subgraph After
+    AW[Railway web] --> AD[Canonical coordinator suppressed]
+    AJ[Railway Worker] --> AB[Dependencies and all consumers ready]
+    AB --> AC[One canonical coordinator]
+    AC --> AR[Ready sentinel]
+    AC --> AL[Local observation and authorized effects]
+  end
+```
+
+Repeated coordinator initialization reuses its timer. Concurrent evaluations
+are serialized. Shutdown cancels scheduled work, aborts the active evaluation,
+and drains it before dependency cleanup; a draining evaluation prevents a
+replacement scheduler. The canonical loop forwards cancellation into its
+existing `runSelfImproveCycle` fallback. That controller checks cancellation
+after awaited work and before subsequent freeze, reflection, provider, PR or
+evidence effects, and rethrows cancellation instead of converting it into a
+recoverable error followed by more work. Already-dispatched dependency I/O can
+only drain cooperatively; these checks do not force-abort a third-party
+operation. Startup failure prevents readiness, while a later tick
+failure is reported separately from queue processing and can recover on a
+subsequent successful tick. Shared Redis lifecycle initialization makes the
+effective kill switch available to the Worker; a configured Redis outage
+restricts effects without adding a queue-readiness prerequisite.
+
+Trinity, provider and prompt-route mitigations affect consumers in the owning
+process. A Worker cannot repair the web prompt route by changing its own memory.
+EventEmitter listener controls do not own the durable job runner and are
+unavailable from the dedicated Worker. Authenticated HTTP inspection describes
+the current process and reports a remote coordinator as `UNKNOWN`; queue
+health alone cannot prove it is running. See the
+[configuration policy](CONFIGURATION.md#self-healing-coordinator-and-execution-policy)
+and [action ownership matrix](PREDICTIVE_SELF_HEALING.md#action-and-process-ownership).
+
 ## Repository Map and Entry Points
 
 | Area | Current entry point or source |
