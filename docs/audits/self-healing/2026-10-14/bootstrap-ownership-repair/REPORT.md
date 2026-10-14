@@ -1174,13 +1174,38 @@ uses a real temporary companion and synthetic Railway operations; it is not
 deployed crash evidence. The actual retained-resource cleanup remains blocked
 by the separate approval rejection below.
 
-The final companion suite passes 83 cases on Windows, with one explicitly
+At `22833c80`, the companion suite passed 83 cases on Windows, with one explicitly
 POSIX-only symlink case skipped locally for hosted Linux execution. An independent
 source review found no remaining code blocker. The diagnostic
 selection passes 101 tests across three suites after its original precise-code
 failure was reproduced. The combined root rerun passes 184 tests across four
 suites with the same one Windows-skipped POSIX case. Successor CI supplies the
 complete final-head matrix.
+
+The next [review of `22833c80`](https://github.com/pbjustin/Arcanos/pull/1544#pullrequestreview-5525612759)
+identified a further valid [atomic-publication gap](https://github.com/pbjustin/Arcanos/pull/1544#discussion_r4276976770):
+interruption during a direct final-path write could leave a partial record that
+blocks safe retry. The final repair writes and flushes a unique sibling first,
+then publishes it through an exclusive hardlink. The closed version-2 envelope
+binds a random publication ID to the unchanged owner receipt. Post-publication
+interruption is also recoverable: a reader removes only the exact staging link
+proved to share the same regular inode with the final record, with exactly two
+links in total. Other links remain rejected. The final record is flushed and
+single-linked before returning authority. Partial unpublished files are never
+authority and do not prevent a fresh attempt; they may remain as local failure
+evidence. This is a scoped local-record repair, with no Railway mutation.
+
+The atomic-publication suite passes 99 cases, with two explicitly POSIX-only
+symlink cases skipped on Windows. An independent reviewer repeated that result.
+Credential-empty child processes exit during a partial write, before final link
+and immediately after final link; the same original unbound receipt resumes in
+each case. Fixtures also cover a competing publisher, foreign file/directory
+collisions, exact-link recovery, extra or unrelated hardlinks and recreated
+foreign staging paths. The final boundary check also reproduced and repaired
+array-to-string coercion of a publication ID; non-string metadata now rejects
+before CLI activity. The combined final rerun passes 200 cases across four
+suites, with the same two Windows-only skips. Unpublished files never become authority; staged files
+owned by another actor are not removed. Hosted Linux executes the skipped cases.
 
 The user explicitly approved permanent removal of these four services and two
 volumes. A fresh ownership attestation passed, but automatic approval review

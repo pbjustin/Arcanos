@@ -1,6 +1,7 @@
-import { closeSync, existsSync, linkSync, mkdtempSync, openSync, readFileSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { closeSync, existsSync, linkSync, lstatSync, mkdtempSync, openSync, readFileSync, readdirSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import {
   attestSelfHealPreviewCleanupTarget, parseSelfHealPreviewCleanupArgs,
@@ -107,10 +108,27 @@ function temporaryReceipt(value) {
   const path = join(directory, 'ownership.json'); writeFileSync(path, typeof value === 'string' ? value : JSON.stringify(value));
   tempFiles.push({ path, directory }); return path;
 }
+function publicationChild(path, body, value = { ...receipt(), resources: boundResources() }) {
+  const source = `import fs from 'node:fs';
+    import { syncBuiltinESMExports } from 'node:module';
+    const path = ${JSON.stringify(path)}; const value = ${JSON.stringify(value)};
+    const final = path + '.cleanup-resources.json';
+    ${body}
+    syncBuiltinESMExports();
+    const { persistSelfHealPreviewCleanupResourceReceipt } = await import(${JSON.stringify(new URL('../scripts/self-heal-preview-cleanup.mjs', import.meta.url).href)});
+    persistSelfHealPreviewCleanupResourceReceipt(path, value, { now: () => ${NOW} });`;
+  try {
+    execFileSync(process.execPath, ['--input-type=module', '--eval', source], { timeout: 5_000, windowsHide: true,
+      maxBuffer: 16_384, env: { PATH: process.env.PATH ?? '', ...(process.platform === 'win32' ? { SystemRoot: process.env.SystemRoot } : {}) }, stdio: 'pipe' });
+    return 0;
+  } catch (error) { if (Number.isInteger(error.status)) return error.status; throw error; }
+}
 afterEach(() => {
   for (const { path, directory } of tempFiles.splice(0)) {
-    for (const target of [`${path}.cleanup-resources.json`, `${path}.linked.json`, path]) {
-      try { unlinkSync(target); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    const stages = readdirSync(directory).filter(name => /^ownership\.json\.cleanup-resources\.json\.pending-[a-f0-9]{64}$/u.test(name));
+    for (const target of [...stages.map(name => join(directory, name)), `${path}.cleanup-resources.json`, `${path}.linked.json`, path]) {
+      try { if (lstatSync(target).isDirectory()) rmdirSync(target); else unlinkSync(target); }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
     }
     rmdirSync(directory);
   }
@@ -298,7 +316,8 @@ describe('receipt-bound self-heal preview cleanup and fixed-expiry watchdog', ()
     expect(firstMutations).toEqual([['service', 'delete', '--project', ID.project, '--environment', ID.environment, '--service', ID.postgres, '--yes', '--json']]);
     expect(h.current().environments.edges[0].node.volumeInstances.edges[0].node.serviceId).toBeNull();
     const companionBytes = readFileSync(companion, 'utf8');
-    expect(JSON.parse(companionBytes)).toEqual({ ...original, resources: originalBindings });
+    expect(JSON.parse(companionBytes)).toMatchObject({ version: 2, publicationId: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      receipt: { ...original, resources: originalBindings } });
     const resumed = harness({ persistence: false, initialStatus: structuredClone(h.current()) });
     const result = await runSelfHealPreviewCleanup({ ...config, receipt: readSelfHealPreviewCleanupReceipt(path) }, resumed);
     expect(result).toMatchObject({ status: 'RESOURCES_REMOVED_METADATA_RETAINED', resourceAbsenceVerified: true });
@@ -324,7 +343,7 @@ describe('receipt-bound self-heal preview cleanup and fixed-expiry watchdog', ()
       return command(...args);
     });
     expect((await runSelfHealPreviewCleanup({ ...execute(original), receiptFile: path, watchdog: true }, h)).resourceAbsenceVerified).toBe(true);
-    expect(JSON.parse(readFileSync(companion, 'utf8'))).toEqual({ ...original, resources: boundResources() });
+    expect(JSON.parse(readFileSync(companion, 'utf8')).receipt).toEqual({ ...original, resources: boundResources() });
     expect(h.now()).toBe(Date.parse(original.expiresAt));
   });
   it('reloads a matching companion at watchdog expiry before validating newly detached volumes', async () => {
@@ -361,6 +380,19 @@ describe('receipt-bound self-heal preview cleanup and fixed-expiry watchdog', ()
     await expect(runSelfHealPreviewCleanup({ ...execute(), receiptFile: path }, h)).rejects.toThrow(/^SELF_HEAL_PREVIEW_CLEANUP_RESOURCE_COMPANION_/u);
     expect(h.command).not.toHaveBeenCalled(); expect(readFileSync(`${path}.cleanup-resources.json`, 'utf8')).toBe(contents);
   });
+  it.each([
+    { version: 3, publicationId: 'c'.repeat(64) },
+    { version: 2, publicationId: 'C'.repeat(64) },
+    { version: 2, publicationId: ['c'.repeat(64)] },
+    { version: 2, publicationId: '../foreign-path' },
+    { version: 2, publicationId: 'c'.repeat(64), path: '../foreign-path' },
+  ])('rejects malformed closed publication metadata %# before CLI activity', async publication => {
+    const path = temporaryReceipt(receipt()); const final = `${path}.cleanup-resources.json`;
+    const contents = JSON.stringify({ ...publication, receipt: { ...receipt(), resources: boundResources() } });
+    writeFileSync(final, contents); const h = harness({ persistence: false });
+    await expect(runSelfHealPreviewCleanup({ ...execute(), receiptFile: path }, h)).rejects.toThrow('SELF_HEAL_PREVIEW_CLEANUP_RESOURCE_COMPANION_INVALID');
+    expect(h.command).not.toHaveBeenCalled(); expect(readFileSync(final, 'utf8')).toBe(contents);
+  });
   it('accepts the same closed resource set in any API order without overwriting its original durable bytes', () => {
     const original = receipt(); const path = temporaryReceipt(original); const resources = boundResources();
     persistSelfHealPreviewCleanupResourceReceipt(path, { ...original, resources }, { now: () => NOW });
@@ -373,6 +405,114 @@ describe('receipt-bound self-heal preview cleanup and fixed-expiry watchdog', ()
     expect(() => persistSelfHealPreviewCleanupResourceReceipt(path, { ...original, resources: different }, { now: () => NOW }))
       .toThrow('SELF_HEAL_PREVIEW_CLEANUP_RESOURCE_COMPANION_MISMATCH');
     expect(readFileSync(companion, 'utf8')).toBe(before);
+  });
+  it('recovers from an actual process exit before atomic publication without adopting its unpublished staging file', async () => {
+    const original = receipt(); const path = temporaryReceipt(original); const final = `${path}.cleanup-resources.json`;
+    expect(publicationChild(path, 'fs.linkSync = () => process.exit(73);')).toBe(73);
+    expect(existsSync(final)).toBe(false);
+    const staged = readdirSync(dirname(path)).filter(name => name.includes('.pending-'));
+    expect(staged).toHaveLength(1); const stage = join(dirname(path), staged[0]);
+    const unpublished = readFileSync(stage, 'utf8');
+    expect(JSON.parse(unpublished).receipt).toEqual({ ...original, resources: boundResources() });
+    expect(readSelfHealPreviewCleanupResourceReceipt(path, original, { now: () => NOW })).toBeNull();
+    const h = harness({ persistence: false });
+    expect((await runSelfHealPreviewCleanup({ ...execute(original), receiptFile: path }, h)).resourceAbsenceVerified).toBe(true);
+    expect(readFileSync(stage, 'utf8')).toBe(unpublished);
+    expect(lstatSync(final).nlink).toBe(1); expect(readSelfHealPreviewCleanupReceipt(path)).toEqual(original);
+  });
+  it('ignores a partial unpublished staging file left by an actual process exit during write', () => {
+    const original = receipt(); const path = temporaryReceipt(original); const final = `${path}.cleanup-resources.json`;
+    expect(publicationChild(path, `const write = fs.writeFileSync; fs.writeFileSync = (descriptor, data, ...args) => {
+      write(descriptor, data.slice(0, 31), ...args); process.exit(72);
+    };`)).toBe(72);
+    expect(existsSync(final)).toBe(false);
+    const stages = readdirSync(dirname(path)).filter(name => name.includes('.pending-'));
+    expect(stages).toHaveLength(1); const stage = join(dirname(path), stages[0]); const partial = readFileSync(stage, 'utf8');
+    expect(() => JSON.parse(partial)).toThrow();
+    expect(persistSelfHealPreviewCleanupResourceReceipt(path, { ...original, resources: boundResources() }, { now: () => NOW }))
+      .toEqual({ ...original, resources: boundResources() });
+    expect(readFileSync(stage, 'utf8')).toBe(partial); expect(lstatSync(final).nlink).toBe(1);
+  });
+  it('recovers from an actual process exit after atomic publication before staging-link removal', async () => {
+    const original = receipt(); const path = temporaryReceipt(original); const final = `${path}.cleanup-resources.json`;
+    expect(publicationChild(path, 'const link = fs.linkSync; fs.linkSync = (...args) => { link(...args); process.exit(74); };')).toBe(74);
+    const published = readFileSync(final, 'utf8'); const value = JSON.parse(published);
+    const stage = `${final}.pending-${value.publicationId}`;
+    expect(lstatSync(final).nlink).toBe(2); expect(lstatSync(stage).ino).toBe(lstatSync(final).ino);
+    const h = harness({ persistence: false });
+    expect((await runSelfHealPreviewCleanup({ ...execute(original), receiptFile: path }, h)).resourceAbsenceVerified).toBe(true);
+    expect(lstatSync(final).nlink).toBe(1); expect(existsSync(stage)).toBe(false);
+    expect(readFileSync(final, 'utf8')).toBe(published); expect(readSelfHealPreviewCleanupReceipt(path)).toEqual(original);
+  });
+  it('accepts the same single-link publication if another reader removes its stage between recovery inspections', () => {
+    const path = temporaryReceipt(receipt()); const final = `${path}.cleanup-resources.json`;
+    expect(publicationChild(path, 'const link = fs.linkSync; fs.linkSync = (...args) => { link(...args); process.exit(74); };')).toBe(74);
+    const before = readFileSync(final, 'utf8'); const stage = `${final}.pending-${JSON.parse(before).publicationId}`;
+    expect(publicationChild(path, `const stage = final + '.pending-' + JSON.parse(fs.readFileSync(final, 'utf8')).publicationId;
+      const stat = fs.lstatSync; let inspections = 0; fs.lstatSync = (target, ...args) => {
+        if (target === stage && ++inspections === 2) fs.unlinkSync(stage);
+        return stat(target, ...args);
+      };`)).toBe(0);
+    expect(existsSync(stage)).toBe(false); expect(lstatSync(final).nlink).toBe(1); expect(readFileSync(final, 'utf8')).toBe(before);
+  });
+  it('preserves a matching concurrent publication winner and removes only its own unpublished loser', () => {
+    const path = temporaryReceipt(receipt()); const final = `${path}.cleanup-resources.json`;
+    expect(publicationChild(path, `const link = fs.linkSync; fs.linkSync = (...args) => {
+      const descriptor = fs.openSync(final, 'wx', 0o600);
+      fs.writeFileSync(descriptor, JSON.stringify({ version: 2, publicationId: 'c'.repeat(64), receipt: value }));
+      fs.fsyncSync(descriptor); fs.closeSync(descriptor); return link(...args);
+    };`)).toBe(0);
+    expect(JSON.parse(readFileSync(final, 'utf8')).publicationId).toBe('c'.repeat(64));
+    expect(readdirSync(dirname(path)).some(name => name.includes('.pending-'))).toBe(false);
+    expect(lstatSync(final).nlink).toBe(1);
+  });
+  it('never overwrites a foreign record created concurrently at the final publication path', () => {
+    const path = temporaryReceipt(receipt()); const final = `${path}.cleanup-resources.json`;
+    expect(publicationChild(path, `const link = fs.linkSync; fs.linkSync = (...args) => {
+      fs.writeFileSync(final, JSON.stringify({ ...value, sourceSha: 'b'.repeat(40) }), { flag: 'wx' });
+      return link(...args);
+    };`)).toBe(1);
+    expect(JSON.parse(readFileSync(final, 'utf8')).sourceSha).toBe('b'.repeat(40));
+    expect(() => readSelfHealPreviewCleanupResourceReceipt(path, receipt(), { now: () => NOW }))
+      .toThrow('SELF_HEAL_PREVIEW_CLEANUP_RESOURCE_COMPANION_MISMATCH');
+  });
+  it('never replaces an empty directory created concurrently at the final publication path', () => {
+    const path = temporaryReceipt(receipt()); const final = `${path}.cleanup-resources.json`;
+    expect(publicationChild(path, `const link = fs.linkSync; fs.linkSync = (...args) => {
+      fs.mkdirSync(final); return link(...args);
+    };`)).toBe(1);
+    expect(lstatSync(final).isDirectory()).toBe(true); expect(readdirSync(final)).toEqual([]);
+  });
+  it.each(['missing', 'mismatched', 'extra'])('rejects an unproven %s publication hardlink without removing any file', async fault => {
+    const path = temporaryReceipt(receipt()); const final = `${path}.cleanup-resources.json`;
+    const publicationId = 'd'.repeat(64); const stage = `${final}.pending-${publicationId}`;
+    const published = JSON.stringify({ version: 2, publicationId, receipt: { ...receipt(), resources: boundResources() } });
+    writeFileSync(final, published); linkSync(final, `${path}.linked.json`);
+    if (fault === 'mismatched') writeFileSync(stage, 'foreign-stage-must-stay');
+    if (fault === 'extra') linkSync(final, stage);
+    const h = harness({ persistence: false });
+    await expect(runSelfHealPreviewCleanup({ ...execute(), receiptFile: path }, h)).rejects.toThrow('SELF_HEAL_PREVIEW_CLEANUP_RESOURCE_COMPANION_INVALID');
+    expect(h.command).not.toHaveBeenCalled(); expect(readFileSync(final, 'utf8')).toBe(published);
+    expect(existsSync(`${path}.linked.json`)).toBe(true);
+    if (fault === 'mismatched') expect(readFileSync(stage, 'utf8')).toBe('foreign-stage-must-stay');
+    if (fault === 'extra') expect(lstatSync(final).nlink).toBe(3);
+  });
+  it('does not remove a recreated foreign staging file beside a completed single-link publication', () => {
+    const original = receipt(); const path = temporaryReceipt(original); const final = `${path}.cleanup-resources.json`;
+    persistSelfHealPreviewCleanupResourceReceipt(path, { ...original, resources: boundResources() }, { now: () => NOW });
+    const stage = `${final}.pending-${JSON.parse(readFileSync(final, 'utf8')).publicationId}`;
+    writeFileSync(stage, 'foreign-stage-must-stay');
+    expect(readSelfHealPreviewCleanupResourceReceipt(path, original, { now: () => NOW })).toEqual({ ...original, resources: boundResources() });
+    expect(readFileSync(stage, 'utf8')).toBe('foreign-stage-must-stay'); expect(lstatSync(final).nlink).toBe(1);
+  });
+  (process.platform === 'win32' ? it.skip : it)('rejects a symlink at the nonce-derived staging path without deleting its target', async () => {
+    const path = temporaryReceipt(receipt()); const final = `${path}.cleanup-resources.json`; const publicationId = 'e'.repeat(64);
+    writeFileSync(final, JSON.stringify({ version: 2, publicationId, receipt: { ...receipt(), resources: boundResources() } }));
+    linkSync(final, `${path}.linked.json`); symlinkSync(`${path}.linked.json`, `${final}.pending-${publicationId}`);
+    const h = harness({ persistence: false });
+    await expect(runSelfHealPreviewCleanup({ ...execute(), receiptFile: path }, h)).rejects.toThrow('SELF_HEAL_PREVIEW_CLEANUP_RESOURCE_COMPANION_INVALID');
+    expect(h.command).not.toHaveBeenCalled(); expect(lstatSync(`${final}.pending-${publicationId}`).isSymbolicLink()).toBe(true);
+    expect(lstatSync(final).nlink).toBe(2);
   });
   it('flushes and validates a complete companion even while its exclusive creator has not closed it', () => {
     const original = receipt(); const path = temporaryReceipt(original); const value = { ...original, resources: boundResources() };

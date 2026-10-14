@@ -1345,10 +1345,16 @@ an expired receipt retains authority to delete its same owned target.
 
 Before its first destructive operation, the CLI persists derived resource
 bindings in the fixed companion `<receipt-file>.cleanup-resources.json` when the
-original receipt is unbound. The companion repeats the original closed identity,
-source and lease fields plus exact resources; exclusive creation and a flushed
-write precede deletion. Existing companions must match and are never overwritten
-or used to renew authority. Keep the companion with the original receipt for
+original receipt is unbound. Its closed version-2 envelope contains a random
+publication ID and the unchanged bound owner receipt. A unique sibling staging
+file is written and flushed before atomic, exclusive hardlink publication;
+an existing final record is never overwritten. A reader can remove a leftover
+staging link only when the publication ID derives its exact path and both paths
+prove the same regular inode with exactly two links. Other links fail closed.
+The final record is flushed and single-linked before deletion. Unpublished
+partial staging files never grant authority or block a fresh publication;
+they may remain as local failure evidence. Existing companions must match the
+original authority and cannot renew it. Keep the companion with the original receipt for
 interruption/retry recovery, including detached volumes. The watcher reloads
 only these bound resources after its original deadline; the original identity
 and deadline remain fixed. A missing persistence capability, malformed or

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /** Receipt-bound cleanup/watchdog for one disposable self-healing preview. */
 import { execFile } from 'node:child_process';
-import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, readFileSync, readSync, realpathSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, openSync, readFileSync, readSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -227,8 +228,36 @@ function syncCompanionDirectory(path) {
   }
 }
 function sameFile(left, right) { return left.dev === right.dev && left.ino === right.ino; }
+function publicationStagePath(path, publicationId) { return `${path}.pending-${publicationId}`; }
+function recoverPublicationLink(path, publicationId, descriptor, opened) {
+  const current = fstatSync(descriptor);
+  if (current.nlink === 1) return;
+  if (current.nlink !== 2 || !publicationId) fail('RESOURCE_COMPANION_INVALID');
+  const stage = publicationStagePath(path, publicationId);
+  let staged;
+  try { staged = lstatSync(stage); }
+  catch (error) {
+    // A concurrent reader or the publisher may already have removed this link.
+    if (error?.code === 'ENOENT' && fstatSync(descriptor).nlink === 1) return;
+    fail('RESOURCE_COMPANION_INVALID');
+  }
+  if (fstatSync(descriptor).nlink === 1) return;
+  if (!staged.isFile() || staged.isSymbolicLink() || staged.nlink !== 2 || !sameFile(staged, opened)) fail('RESOURCE_COMPANION_INVALID');
+  let confirmed;
+  try { confirmed = lstatSync(stage); }
+  catch (error) {
+    if (error?.code === 'ENOENT' && fstatSync(descriptor).nlink === 1) return;
+    fail('RESOURCE_COMPANION_INVALID');
+  }
+  if (fstatSync(descriptor).nlink === 1) return;
+  if (!confirmed.isFile() || confirmed.isSymbolicLink() || !sameFile(confirmed, opened)) fail('RESOURCE_COMPANION_INVALID');
+  try { unlinkSync(stage); }
+  catch (error) {
+    if (error?.code !== 'ENOENT' || fstatSync(descriptor).nlink !== 1) fail('RESOURCE_COMPANION_INVALID');
+  }
+}
 
-/** Reload only a closed companion beside the unchanged external owner receipt. */
+/** Reload a closed companion, recovering only its proven publication link. */
 export function readSelfHealPreviewCleanupResourceReceipt(receiptFile, original, options = {}) {
   const now = options.now ?? Date.now;
   const owner = validateSelfHealPreviewCleanupReceipt(original, { now });
@@ -241,17 +270,25 @@ export function readSelfHealPreviewCleanupResourceReceipt(receiptFile, original,
   }
   let descriptor;
   try {
-    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.size > 16_384) fail('RESOURCE_COMPANION_INVALID');
+    if (!before.isFile() || before.isSymbolicLink() || ![1, 2].includes(before.nlink) || before.size > 16_384) fail('RESOURCE_COMPANION_INVALID');
     descriptor = openSync(path, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
     const opened = fstatSync(descriptor);
-    if (!opened.isFile() || opened.nlink !== 1 || opened.size > 16_384 || !sameFile(before, opened)) fail('RESOURCE_COMPANION_INVALID');
+    if (!opened.isFile() || ![1, 2].includes(opened.nlink) || opened.size > 16_384 || !sameFile(before, opened)) fail('RESOURCE_COMPANION_INVALID');
     const bytes = Buffer.alloc(16_385);
     const length = readSync(descriptor, bytes, 0, bytes.length, 0);
     if (length > 16_384) fail('RESOURCE_COMPANION_INVALID');
-    const bound = validatedBoundReceipt(owner, JSON.parse(bytes.subarray(0, length).toString('utf8')), now);
-    // Another process may observe a complete exclusive write before its writer
-    // flushes it. Flush this same validated descriptor before accepting it.
+    const value = JSON.parse(bytes.subarray(0, length).toString('utf8'));
+    const published = exact(value, ['version', 'publicationId', 'receipt']);
+    if (published && (value.version !== 2 || typeof value.publicationId !== 'string'
+      || !/^[0-9a-f]{64}$/u.test(value.publicationId))) fail('RESOURCE_COMPANION_INVALID');
+    // Previously completed single-link bound receipts remain readable.
+    const bound = validatedBoundReceipt(owner, published ? value.receipt : value, now);
+    resourceCompanionPath(receiptFile, owner, now);
+    // The final name is linked only after the complete staging file is flushed.
+    // Readers flush again before recovering a publisher interrupted after link.
     fsyncSync(descriptor); syncCompanionDirectory(path);
+    recoverPublicationLink(path, published ? value.publicationId : null, descriptor, opened);
+    syncCompanionDirectory(path);
     const after = lstatSync(path); const final = fstatSync(descriptor);
     if (!after.isFile() || after.isSymbolicLink() || after.nlink !== 1 || final.nlink !== 1
       || !sameFile(after, opened) || !sameFile(final, opened) || final.size !== length) fail('RESOURCE_COMPANION_INVALID');
@@ -271,17 +308,29 @@ export function persistSelfHealPreviewCleanupResourceReceipt(receiptFile, value,
   const original = validateSelfHealPreviewCleanupReceipt(readSelfHealPreviewCleanupReceipt(receiptFile), { now });
   const bound = validatedBoundReceipt(original, value, now);
   const path = resourceCompanionPath(receiptFile, original, now);
+  const existing = readSelfHealPreviewCleanupResourceReceipt(receiptFile, original, { now });
+  if (existing) {
+    if (bindingIdentity(existing.resources) !== bindingIdentity(bound.resources)) fail('RESOURCE_COMPANION_MISMATCH');
+    return existing;
+  }
+  const publicationId = randomBytes(32).toString('hex');
+  const stage = publicationStagePath(path, publicationId);
   let descriptor;
   try {
-    try { descriptor = openSync(path, 'wx', 0o600); }
+    descriptor = openSync(stage, 'wx', 0o600);
+    writeFileSync(descriptor, `${JSON.stringify({ version: 2, publicationId, receipt: bound })}\n`, 'utf8');
+    fsyncSync(descriptor);
+    const staged = fstatSync(descriptor);
+    try { linkSync(stage, path); }
     catch (error) {
       if (error?.code !== 'EEXIST') throw error;
-      const existing = readSelfHealPreviewCleanupResourceReceipt(receiptFile, original, { now });
-      if (!existing || bindingIdentity(existing.resources) !== bindingIdentity(bound.resources)) fail('RESOURCE_COMPANION_MISMATCH');
-      return existing;
+      const winner = readSelfHealPreviewCleanupResourceReceipt(receiptFile, original, { now });
+      if (!winner || bindingIdentity(winner.resources) !== bindingIdentity(bound.resources)) fail('RESOURCE_COMPANION_MISMATCH');
+      const remaining = lstatSync(stage);
+      if (!remaining.isFile() || remaining.isSymbolicLink() || remaining.nlink !== 1 || !sameFile(remaining, staged)) fail('RESOURCE_COMPANION_INVALID');
+      unlinkSync(stage); syncCompanionDirectory(path);
+      return winner;
     }
-    writeFileSync(descriptor, `${JSON.stringify(bound)}\n`, 'utf8');
-    fsyncSync(descriptor); closeSync(descriptor); descriptor = undefined;
     syncCompanionDirectory(path);
     const stored = readSelfHealPreviewCleanupResourceReceipt(receiptFile, original, { now });
     if (!stored || bindingIdentity(stored.resources) !== bindingIdentity(bound.resources)) fail('RESOURCE_COMPANION_MISMATCH');
