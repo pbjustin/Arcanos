@@ -412,17 +412,20 @@ let workerProcessShutdownRequested = false;
 let workerProcessShutdownSignal: NodeJS.Signals | null = null;
 const workerProcessShutdownController = new AbortController();
 
-function requestWorkerProcessShutdown(signal: NodeJS.Signals): void {
+function requestWorkerProcessShutdown(signal: NodeJS.Signals | null): void {
   if (workerProcessShutdownRequested) {
     return;
   }
 
   workerProcessShutdownRequested = true;
   workerProcessShutdownSignal = signal;
-  workerProcessShutdownController.abort(createAbortError(`Worker process shutdown requested by ${signal}`));
+  workerProcessShutdownController.abort(createAbortError(signal
+    ? `Worker process shutdown requested by ${signal}`
+    : 'Worker process shutdown requested after a fatal runtime failure.'));
   logger.warn('job_runner.shutdown.requested', {
     module: 'worker',
-    signal
+    signal,
+    ...(signal === null ? { reasonCode: 'worker_runtime_failure' } : {})
   });
 }
 
@@ -3790,13 +3793,10 @@ export async function runJobWorker(): Promise<void> {
     await import('@platform/runtime/redisLifecycle.js');
   const { primeSelfHealTelemetryPersistence, stopSelfHealTelemetryPersistence } =
     await import('@services/selfImprove/selfHealTelemetry.js');
-  const watchdogHandle = startWatchdogLoop(inspectorAutonomyService);
-  const inspectorHandle = startInspectorLoop(inspectorAutonomyService);
-  const backstageNotionSynchronizationCoordinator =
-    createBackstageNotionSynchronizationCoordinator();
-  const partitionSyncExecutor = createBackstageNotionPartitionSyncJobExecutor({
-    coordinator: backstageNotionSynchronizationCoordinator,
-  });
+  let watchdogHandle: NodeJS.Timeout | undefined;
+  let inspectorHandle: NodeJS.Timeout | undefined;
+  const slotRuntimePromises: Promise<void>[] = [];
+  let runtimeFailed = false;
   const backstageNotionLoopHandles: {
     monolith: BackstageNotionSyncLoopHandle | null;
     partition: BackstageNotionPartitionShadowLoopHandle | null;
@@ -3806,6 +3806,13 @@ export async function runJobWorker(): Promise<void> {
   };
 
   try {
+    watchdogHandle = startWatchdogLoop(inspectorAutonomyService);
+    inspectorHandle = startInspectorLoop(inspectorAutonomyService);
+    const backstageNotionSynchronizationCoordinator =
+      createBackstageNotionSynchronizationCoordinator();
+    const partitionSyncExecutor = createBackstageNotionPartitionSyncJobExecutor({
+      coordinator: backstageNotionSynchronizationCoordinator,
+    });
     // Resolve configured shared safety state before any healing evaluation.
     // Recovery remains non-blocking for queue readiness; configured Redis
     // outages make the shared kill switch restrictive until it becomes ready.
@@ -3817,7 +3824,7 @@ export async function runJobWorker(): Promise<void> {
     });
     const slotReadinessPromises: Promise<void>[] = [];
     //audit Assumption: one Railway worker container should be able to host multiple queue-consumer slots safely; failure risk: an early readiness marker activates a revision after one slot fails while a sibling still starts; expected invariant: every slot completes synchronous dispatcher setup and remains running until the all-slot readiness barrier wins; handling strategy: race all-ready against the first runtime settlement, then keep failing the process if any long-lived slot exits unexpectedly.
-    const slotRuntimePromises = slotDefinitions.map(slotDefinition => {
+    for (const slotDefinition of slotDefinitions) {
       let resolveSlotReadiness!: () => void;
       const slotReadinessPromise = new Promise<void>((resolve) => {
         resolveSlotReadiness = resolve;
@@ -3835,8 +3842,8 @@ export async function runJobWorker(): Promise<void> {
         providerDependencyState,
         operationalStateReporters.get(slotDefinition.workerId)
       );
-      return slotRuntimePromise;
-    });
+      slotRuntimePromises.push(slotRuntimePromise);
+    }
 
     const finishShutdownDuringSlotStart = async (): Promise<void> => {
       logger.info('worker.shutdown.during_slot_start', {
@@ -3909,17 +3916,42 @@ export async function runJobWorker(): Promise<void> {
     }
 
     await Promise.all(slotRuntimePromises);
+  } catch (error: unknown) {
+    runtimeFailed = true;
+    // Startup can fail after consumers have begun polling. Cancel the process
+    // without inventing a signal, then drain every slot before its dependencies.
+    requestWorkerProcessShutdown(null);
+    throw error;
   } finally {
-    await Promise.all([
-      stopSelfHealingLoop(),
-      backstageNotionLoopHandles.monolith?.stopAndDrain(),
-      backstageNotionLoopHandles.partition?.stopAndDrain(),
-    ]);
-    await stopSelfHealTelemetryPersistence();
-    await stopRedisLifecycle();
     clearInterval(watchdogHandle);
     clearInterval(inspectorHandle);
-    await inspectorAutonomyService.flushSnapshotPipeline('worker-process-shutdown');
+    const cleanupResults: PromiseSettledResult<unknown>[] =
+      await Promise.allSettled(slotRuntimePromises);
+    cleanupResults.push(...await Promise.allSettled([
+      Promise.resolve().then(() => stopSelfHealingLoop()),
+      Promise.resolve().then(() => backstageNotionLoopHandles.monolith?.stopAndDrain()),
+      Promise.resolve().then(() => backstageNotionLoopHandles.partition?.stopAndDrain()),
+    ]));
+    for (const cleanup of [
+      () => stopSelfHealTelemetryPersistence(),
+      () => stopRedisLifecycle(),
+      () => inspectorAutonomyService.flushSnapshotPipeline('worker-process-shutdown'),
+    ]) {
+      // A rejected drain must not skip other resource cleanup or replace the
+      // original startup/runtime error that caused this process to stop.
+      cleanupResults.push(...await Promise.allSettled([Promise.resolve().then(cleanup)]));
+    }
+    const cleanupFailures = cleanupResults.filter(
+      (result): result is PromiseRejectedResult => result.status === 'rejected'
+    );
+    for (const failure of cleanupFailures) {
+      logger.warn('worker.shutdown.cleanup_failed', {
+        module: 'job-runner',
+      }, { errorMessage: resolveErrorMessage(failure.reason) });
+    }
+    if (!runtimeFailed && cleanupFailures.length > 0) {
+      throw cleanupFailures[0].reason;
+    }
   }
 }
 
