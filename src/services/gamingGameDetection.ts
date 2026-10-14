@@ -81,7 +81,7 @@ export function detectGamingLeadingGameAlias(value: string, wholeNameOnly = fals
 
 export function canonicalizeGamingGameName(value: string): string {
   const normalized = value.replace(/\s+/g, " ").trim();
-  return resolveGamingRegistryGame(normalized)?.name ?? canonicalAlias(normalized) ?? normalized;
+  return resolveGamingRegistryGame(normalized)?.name ?? normalized;
 }
 
 function displayCase(value: string): string {

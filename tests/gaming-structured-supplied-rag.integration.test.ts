@@ -16,7 +16,7 @@ let saved: Array<string | undefined>;
 const url = 'https://example.org/testspace-report';
 const input = { game: 'Testspace', mode: 'guide' as const, prompt: 'Which system body site reports Platinum?', guideUrl: url, guideUrls: [], spoilerMode: 'none' as const };
 const page = (rows = '<tr><td>T-1</td><td>B 2</td><td>PML 7</td><td>Platinum</td></tr>', extra = '') => `<html><head><title>Testspace guide</title></head><body><main><table><caption>Testspace</caption><tr><th>System</th><th>Body</th><th>Site</th><th>Resource</th></tr>${rows}</table></main>${extra}</body></html>`;
-const platinumProse = 'Testspace guide. This community source reports Platinum at system T-1, body B 2, site PML 7. It is a source assertion and current applicability remains unverified. Always check local conditions before using this reported resource location.';
+const platinumProse = 'In the game Testspace, this community source reports Platinum at system T-1, body B 2, site PML 7. It is a source assertion and current applicability remains unverified. Always check local conditions before using this reported resource location.';
 const mixedPage = (rows: string, prose = platinumProse) => page(rows).replace('<main>', `<main><article><p>${prose}</p></article>`);
 
 describe('actual secure acquisition into ordinary supplied URL structured RAG', () => {

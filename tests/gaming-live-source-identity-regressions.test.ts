@@ -97,9 +97,9 @@ describe('live source identity failure regressions (synthetic publisher-shaped d
         .toMatchObject({ status: 'unknown', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] });
     }
     const primary = 'Elden Ring Samurai build guide';
-    expect(assessGamingClearSourceIdentity(document(primary, `${primary}. ${reference}`), input, policy).status).toBe('verified');
+    expect(assessGamingClearSourceIdentity(document(primary, `${primary}. ${reference}`), input, policy).status).toBe('unknown');
     expect(assessGamingClearSourceIdentity(document('Samurai Blade Build Guide', `${primary}. ${reference}`, primary), input, policy).status)
-      .toBe('verified');
+      .toBe('unknown');
     expect(assessGamingClearSourceIdentity(document('Samurai Blade Build Guide', prose, 'Recommended: Elden Ring build guide'), input, policy))
       .toMatchObject({ status: 'verified', reasonCodes: ['ACQUIRED_BODY_SCOPE_IDENTITY'] });
   });

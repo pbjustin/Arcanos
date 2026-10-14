@@ -66,6 +66,7 @@ ownership, lifecycle, consolidation, and validation rules.
 | --- | --- | --- |
 | [Arcanos Gaming Custom GPT](ARCANOS_GAMING_CUSTOM_GPT.md) | Docs-as-contract | Builder instructions and OpenAPI contract expectations. |
 | [Gaming guide assistance](GAMING_GUIDE_ASSISTANCE.md) | Companion | Player context, guide intake, lexical retrieval, spoiler/depth policy, and deterministic evaluation. |
+| [Gaming identity beyond the registry](GAMING_UNIVERSAL_IDENTITY.md) | Companion | Acquired full-title identity, source-local aliases, unfamiliar-game evidence, and synthetic verification boundaries. |
 | [Gaming source acquisition](GAMING_SOURCE_ACQUISITION.md) | Companion | URL admission, protected redirects, provenance, and acquisition limits. |
 | [Gaming discovery recovery](GAMING_DISCOVERY_RECOVERY.md) | Companion | Backend selection and coverage, v1/v2 compatibility, bounded recovery and proposed frontend rollout. |
 | [Gaming structured evidence](GAMING_STRUCTURED_EVIDENCE.md) | Companion | Bounded table/list/JSON extraction, claim sufficiency, provenance, refresh, and regression evidence. |

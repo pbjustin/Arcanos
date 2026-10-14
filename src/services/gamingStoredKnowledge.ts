@@ -14,11 +14,11 @@ import {
 } from '@shared/gaming/gamingStoredEvidenceCore.js';
 import { GAMING_BUILD_RESOURCE_HARD_LIMITS } from './gamingBuildResourceSchema.js';
 import { getGamingRagChunkChars, getGamingRagMaxChunks, getGamingRagMaxSources, getGamingWebContextMaxChars } from './gamingConfig.js';
-import { canonicalizeGamingGameName } from './gamingGameDetection.js';
+import { canonicalizeGamingGameName, detectGamingLeadingGameAlias } from './gamingGameDetection.js';
 import { normalizeGamingGameIdentity } from '@shared/gaming/gamingGameIdentity.js';
 import { buildGamingRetrievalTerms, GAMING_RETRIEVAL_POLICY_VERSION } from '@shared/gaming/gamingRetrievalPolicy.js';
 import { assessGamingClearEvidence, assessGamingRequestCoverage } from '@shared/gaming/gamingClearEvidence.js';
-import { parseGamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
+import { GAMING_CLEAR_POLICY_VERSION, parseGamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
 
 export { buildStoredGamingLexicalQuery } from '@shared/gaming/gamingStoredEvidenceCore.js';
 export type {
@@ -53,7 +53,19 @@ export function selectStoredGamingEvidence(records: readonly GamingKnowledgeProv
     const assessment = parseGamingClearAssessment(record.provenance?.gamingClear);
     const bound = assessment?.profile === 'source'
       && assessment.subjectHash === (record.provenance?.approvedContentHash ?? record.revisionId);
-    return { ...record, ...(bound ? { clearSourceAssessment: assessment } : {}) };
+    // An invalidated explicit approval cannot fall back to independently stored
+    // applicability and regain its old identity authority. Keep its text and
+    // restrictions readable, but require source reassessment before generation.
+    const priorAssessmentInvalid = record.provenance?.gamingClear !== undefined && !bound;
+    // An unassessed historical revision has no independent acquired-identity
+    // proof. Keep its text readable, but do not let a complete old game snapshot
+    // regain generation authority before a current server-owned reassessment.
+    const identityProofMissing = !bound && record.provenance?.sourceIdentityPolicyVersion !== GAMING_CLEAR_POLICY_VERSION;
+    const acquiredApplicability = record.provenance?.acquiredApplicability;
+    const provenance = (priorAssessmentInvalid || identityProofMissing) && acquiredApplicability && typeof acquiredApplicability === 'object'
+      && !Array.isArray(acquiredApplicability) ? { ...record.provenance,
+        acquiredApplicability: { ...acquiredApplicability, metadataUnverified: true } } : record.provenance;
+    return { ...record, provenance, ...(bound ? { clearSourceAssessment: assessment } : {}) };
   });
   return selectStoredGamingEvidenceCore(validatedRecords, input, getStoredGamingEvidenceLimits(), resolvePatch, assessGamingRequestCoverage);
 }
@@ -73,7 +85,11 @@ export async function retrieveStoredGamingKnowledge(input: GamingStoredKnowledge
   const gameKey = input.mode === 'guide' || input.hybridRetrieval ? preciseGameKey
     : canonicalizeGamingGameName(input.game).normalize('NFKC').toLowerCase()
       .replace(/[^a-z0-9]+/gu, '-').replace(/^-+|-+$/gu, '').slice(0, 160);
-  const resolveSourceIdentity = input.mode === 'guide' || input.hybridRetrieval || preciseGameKey !== gameKey;
+  // Recognition may request the precise source lookup, but never replace the
+  // requested title with a franchise parent or strip an unfamiliar subtitle.
+  const recognizedParent = detectGamingLeadingGameAlias(input.game).game;
+  const resolveSourceIdentity = input.mode === 'guide' || input.hybridRetrieval || preciseGameKey !== gameKey
+    || Boolean(recognizedParent && normalizeGamingGameIdentity(recognizedParent) !== preciseGameKey);
   let sourceKnown = false;
   let records: GamingKnowledgeProvenanceRecord[];
   try {

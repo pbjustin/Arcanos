@@ -1,6 +1,7 @@
 import { jest } from '@jest/globals';
 import type { GamingKnowledgeProvenanceRecord } from '../src/core/db/repositories/gamingSourceRepository.js';
-import { createGamingClearAssessment } from '../src/shared/gaming/gamingClearPolicy.js';
+import { createGamingClearAssessment, GAMING_CLEAR_POLICY_VERSION } from '../src/shared/gaming/gamingClearPolicy.js';
+import { GAMING_FRESHNESS_POLICY_VERSION, GAMING_SOURCE_POLICY_VERSION } from '../src/shared/gaming/gamingFreshnessCore.js';
 
 const search = jest.fn<(...args: unknown[]) => Promise<GamingKnowledgeProvenanceRecord[]>>();
 const findSources = jest.fn<(...args: unknown[]) => Promise<Array<{ sourceId: string; gameKey: string; gameName: string }>>>();
@@ -122,7 +123,8 @@ describe('bounded stored Gaming chunk evidence', () => {
     const text = 'The Zephyrglass Compass opens the hidden route beyond the cobalt arch.';
     const bound = record('assessed', text, { provenance: { gamingClear: priorAssessment, approvedContentHash: priorAssessment.subjectHash } });
     expect(selectStoredGamingEvidence([bound], input)[0].source.clearSourceAssessment?.subjectHash).toBe(priorAssessment.subjectHash);
-    for (const gamingClear of [{ ...priorAssessment, rubricVersion: 'gaming-clear/v0' }, { ...priorAssessment, policyProfile: 'client-easy-policy' }]) {
+    for (const gamingClear of [{ ...priorAssessment, rubricVersion: 'gaming-clear/v0' }, { ...priorAssessment, policyProfile: 'client-easy-policy' },
+      { ...priorAssessment, policyProfile: 'gaming-clear-policy/v3:walkthrough:source' }]) {
       const result = selectStoredGamingEvidence([{ ...bound, provenance: { ...bound.provenance, gamingClear } }], input);
       expect(result[0].source.clearSourceAssessment).toBeUndefined();
     }
@@ -132,6 +134,87 @@ describe('bounded stored Gaming chunk evidence', () => {
     expect(current.clearEvidenceAssessment?.contextFingerprint).not.toBe(priorAssessment.contextFingerprint);
     const missing = await retrieveStoredGamingKnowledge({ ...input, prompt: 'Where is the violet tablet?' }, { resolveVerifiedPatch: () => undefined });
     expect(missing.evidence).toBeUndefined();
+  });
+
+  test.each([
+    ['v1', { policyProfile: 'gaming-clear-policy/v1:walkthrough:source' }],
+    ['v2', { policyProfile: 'gaming-clear-policy/v2:walkthrough:source' }],
+    ['v3', { policyProfile: 'gaming-clear-policy/v3:walkthrough:source' }],
+    ['untrusted policy', { policyProfile: 'client-easy-policy' }],
+    ['corrupt rubric', { rubricVersion: 'gaming-clear/v0' }]
+  ])('a complete acquired-applicability snapshot cannot restore invalidated %s hybrid source authority', async (_label, invalid) => {
+    const text = 'The Zephyrglass Compass opens the hidden route beyond the cobalt arch. Follow the blue path to find the Zephyrglass Compass.';
+    const request = { ...input, platform: 'PC', region: 'EU', edition: 'base-game', hybridRetrieval: true, requireRequestCoverage: true };
+    const stored = record('invalidated-source', text);
+    const subjectHash = 'a'.repeat(64);
+    const dimension = { status: 'evaluated' as const, score: 4.5, reasonCodes: ['SUPPORTED_EVIDENCE'],
+      evidenceRefs: ['source-one'], unresolvedFacts: [] };
+    const assessment = createGamingClearAssessment({ profile: 'source', questionProfile: 'walkthrough', sourceRole: 'gameplay_guide',
+      subjectId: 'source-one', subjectHash, contextFingerprint: 'b'.repeat(64), evidenceRefs: ['source-one'],
+      gates: { identity: 'verified', compatibility: 'verified', claimSupport: 'verified', freshness: 'not_applicable', provenance: 'verified', security: 'verified' },
+      dimensions: { clarity: dimension, leverage: dimension, efficiency: dimension, alignment: dimension, resilience: dimension } });
+    stored.provenance = { ...stored.provenance, approvedContentHash: subjectHash, gamingClear: assessment,
+      hybridFreshness: { id: stored.sourceId, url: stored.publicUrl, game: input.game, policyVersion: GAMING_SOURCE_POLICY_VERSION },
+      acquiredApplicability: { extractorVersion: GAMING_FRESHNESS_POLICY_VERSION, contentHash: stored.contentHash,
+        game: input.game, edition: 'base-game', platforms: ['PC'], regions: ['EU'], metadataConflict: false, metadataUnverified: false } };
+    search.mockResolvedValue([stored]);
+    const current = await retrieveStoredGamingKnowledge(request,
+      { resolveVerifiedPatch: () => undefined });
+    expect(current.clearEvidenceAssessment?.decision).toBe('accept');
+    expect(current.sources[0].clearSourceAssessment).toEqual(assessment);
+    expect(stored.provenance.sourceIdentityPolicyVersion).toBeUndefined();
+    stored.provenance.gamingClear = { ...assessment, ...invalid };
+    stored.provenance.sourceIdentityPolicyVersion = GAMING_CLEAR_POLICY_VERSION;
+    const before = JSON.stringify(stored);
+    const result = await retrieveStoredGamingKnowledge(request,
+      { resolveVerifiedPatch: () => undefined });
+    expect(result.context).toContain('Zephyrglass Compass');
+    expect(result.sources[0].clearSourceAssessment).toBeUndefined();
+    expect(result.clearEvidenceAssessment?.decision).not.toBe('accept');
+    expect(result.clearEvidenceAssessment?.gates.compatibility).toBe('unknown');
+    expect(result.sources[0].freshnessMetadata).toMatchObject({ game: input.game, edition: 'base-game',
+      platforms: ['PC'], regions: ['EU'], metadataUnverified: true });
+    expect(JSON.stringify(stored)).toBe(before);
+  });
+
+  test.each([
+    ['wrong-game', 'In the game Synthetic Quest Echoes, the Zephyrglass Compass opens the hidden route beyond the cobalt arch.'],
+    ['anonymous', 'The Zephyrglass Compass opens the hidden route beyond the cobalt arch.']
+  ])('an unassessed historical %s snapshot remains readable without current independent identity authority', async (_label, text) => {
+    const request = { ...input, platform: 'PC', region: 'EU', edition: 'base-game', hybridRetrieval: true, requireRequestCoverage: true };
+    const stored = record('historical-unapproved', text, { provenance: {
+      acquiredApplicability: { extractorVersion: GAMING_FRESHNESS_POLICY_VERSION, contentHash: 'c'.repeat(64),
+        game: input.game, edition: 'base-game', platforms: ['PC'], regions: ['EU'], metadataConflict: false, metadataUnverified: false }
+    } });
+    search.mockResolvedValue([stored]);
+    const before = JSON.stringify(stored);
+    for (const sourceIdentityPolicyVersion of [undefined, 'gaming-clear-policy/v3']) {
+      if (sourceIdentityPolicyVersion) stored.provenance!.sourceIdentityPolicyVersion = sourceIdentityPolicyVersion;
+      const result = await retrieveStoredGamingKnowledge(request, { resolveVerifiedPatch: () => undefined });
+      expect(result.context).toContain('Zephyrglass Compass');
+      expect(result.clearEvidenceAssessment?.decision).not.toBe('accept');
+      expect(result.sources[0].freshnessMetadata).toMatchObject({ game: input.game, edition: 'base-game',
+        platforms: ['PC'], regions: ['EU'], metadataUnverified: true });
+      expect(result.sources[0].clearSourceAssessment).toBeUndefined();
+      delete stored.provenance!.sourceIdentityPolicyVersion;
+    }
+    expect(JSON.stringify(stored)).toBe(before);
+  });
+
+  test('current server identity policy admits a content-bound independently acquired unapproved source', async () => {
+    const text = 'In the game Synthetic Quest, the Zephyrglass Compass opens the hidden route beyond the cobalt arch.';
+    const stored = record('current-independent-source', text, { provenance: {
+      sourceIdentityPolicyVersion: GAMING_CLEAR_POLICY_VERSION,
+      acquiredApplicability: { extractorVersion: GAMING_FRESHNESS_POLICY_VERSION, contentHash: 'c'.repeat(64),
+        game: input.game, edition: 'base-game', platforms: ['PC'], regions: ['EU'], metadataConflict: false, metadataUnverified: false }
+    } });
+    search.mockResolvedValue([stored]);
+    const request = { ...input, platform: 'PC', region: 'EU', edition: 'base-game', hybridRetrieval: true, requireRequestCoverage: true };
+    const result = await retrieveStoredGamingKnowledge(request, { resolveVerifiedPatch: () => undefined });
+    expect(result.clearEvidenceAssessment?.decision).toBe('accept');
+    expect(result.sources[0].clearSourceAssessment).toBeUndefined();
+    stored.provenance!.acquiredApplicability = { ...(stored.provenance!.acquiredApplicability as object), contentHash: 'd'.repeat(64) };
+    expect((await retrieveStoredGamingKnowledge(request, { resolveVerifiedPatch: () => undefined })).clearEvidenceAssessment?.decision).not.toBe('accept');
   });
 
   test('retains independently extracted structured equipment evidence without treating metadata as evidence', () => {
@@ -347,6 +430,15 @@ describe('bounded stored Gaming chunk evidence', () => {
     expect(findSources).toHaveBeenCalledWith({ game: 'Diablo IV', mode }, expect.any(Object));
     expect(search).toHaveBeenCalledWith({ gameKey: 'diablo-4', query: '"zephyrglass" OR "compass"', mode, limit: 20 }, expect.any(Object));
     expect(found.evidence?.map(entry => entry.recordId)).toEqual(['historical']);
+  });
+
+  test.each(['build', 'meta'] as const)('never falls back to a registered parent for an unfamiliar %s title', async mode => {
+    findSources.mockResolvedValue([]);
+    search.mockResolvedValue([]);
+    await retrieveStoredGamingKnowledge({ ...input, game: 'Minecraft Moonbound', mode }, { resolveVerifiedPatch: () => undefined });
+    expect(findSources).toHaveBeenCalledWith({ game: 'Minecraft Moonbound', mode }, expect.any(Object));
+    expect(search).toHaveBeenCalledWith(expect.objectContaining({ gameKey: 'minecraft-moonbound', mode }), expect.any(Object));
+    expect(search.mock.calls).toHaveLength(1);
   });
 
   test.each(['build', 'meta'] as const)('keeps the existing single lookup for an unchanged %s game key', async mode => {

@@ -1,0 +1,1014 @@
+{
+  "schema": "arcanos-gaming-universal-adversarial-performance/v1",
+  "capturedAt": "2026-10-14T04:58:58.687Z",
+  "baselineSha": "e24d5614748f39e25e27a0c062dfba2ea0adbb77",
+  "testedChange": "Uncommitted Roman/Arabic full-heading repair over e5c88eae1a2a860dc98384eb61ff30275f9ad00d, bound by fingerprints",
+  "node": "v24.18.1",
+  "npm": "11.16.0",
+  "coverage": false,
+  "syntheticOnly": true,
+  "liveAcceptance": "NOT_RUN",
+  "deployments": 0,
+  "persistentWrites": 0,
+  "adversarialAndPerformance": {
+    "command": "node scripts/run-jest.mjs --runTestsByPath tests/gaming-universal-adversarial.test.ts tests/gaming-universal-currentness-identity.test.ts tests/gaming-universal-performance.test.ts --runInBand --coverage=false --json --outputFile=local_artifacts/gaming-universal-adversarial-final.json",
+    "passedSuites": 3,
+    "failedSuites": 0,
+    "passedTests": 64,
+    "failedTests": 0,
+    "skippedTests": 0,
+    "result": "PASS",
+    "rawResultSha256": "8b10c8e368101c16648bf34b42496fdfd8ca0c52a82f4d08eadc4b6830b60872"
+  },
+  "benchmark": {
+    "fixtureRawSha256": "4bbc39b19364c8647786b5a2c26a7b1cdda76c03d56a40c2102da5b65fbcc22b",
+    "identicalBaselineFixture": true,
+    "warmupsPerCase": 3,
+    "measuredRepetitionsPerCase": 5,
+    "caseCount": 14,
+    "includesAcquisition": false,
+    "includesProvider": false,
+    "baselineExpectedJestResult": "FAIL: old source does not accept the newly supported unknown-game positive cases; all measurements emitted before correctness assertions",
+    "baseline": {
+      "syntheticOnly": true,
+      "includesAcquisition": false,
+      "includesProvider": false,
+      "warmups": 3,
+      "repetitions": 5,
+      "observations": [
+        {
+          "kind": "unknown-game",
+          "game": "Copper Harbor",
+          "chars": 32191,
+          "lateForeignScope": false,
+          "expectedStatus": "verified",
+          "statuses": [
+            "unknown"
+          ],
+          "reasons": [
+            "GAME_IDENTITY_UNVERIFIED"
+          ],
+          "minMs": 1.123299999999972,
+          "medianMs": 1.2514999999998508,
+          "maxMs": 1.3379999999999654,
+          "samplesMs": [
+            1.2514999999998508,
+            1.294800000000123,
+            1.123299999999972,
+            1.3379999999999654,
+            1.2221999999999298
+          ]
+        },
+        {
+          "kind": "unknown-game",
+          "game": "Copper Harbor",
+          "chars": 32202,
+          "lateForeignScope": true,
+          "expectedStatus": "conflict",
+          "statuses": [
+            "conflict"
+          ],
+          "reasons": [
+            "GAME_MISMATCH"
+          ],
+          "minMs": 0.8385000000000673,
+          "medianMs": 0.8454999999999018,
+          "maxMs": 0.9218999999998232,
+          "samplesMs": [
+            0.9218999999998232,
+            0.8454999999999018,
+            0.8448000000000775,
+            0.8385000000000673,
+            0.8826000000001386
+          ]
+        },
+        {
+          "kind": "unknown-game",
+          "game": "Copper Harbor",
+          "chars": 128222,
+          "lateForeignScope": false,
+          "expectedStatus": "verified",
+          "statuses": [
+            "unknown"
+          ],
+          "reasons": [
+            "GAME_IDENTITY_UNVERIFIED"
+          ],
+          "minMs": 3.3327999999999065,
+          "medianMs": 3.511099999999942,
+          "maxMs": 5.219699999999875,
+          "samplesMs": [
+            3.4348999999999705,
+            3.3327999999999065,
+            3.511099999999942,
+            3.8810000000000855,
+            5.219699999999875
+          ]
+        },
+        {
+          "kind": "unknown-game",
+          "game": "Copper Harbor",
+          "chars": 128233,
+          "lateForeignScope": true,
+          "expectedStatus": "conflict",
+          "statuses": [
+            "conflict"
+          ],
+          "reasons": [
+            "GAME_MISMATCH"
+          ],
+          "minMs": 2.1999000000000706,
+          "medianMs": 2.251399999999876,
+          "maxMs": 2.3134999999999764,
+          "samplesMs": [
+            2.2644000000000233,
+            2.3134999999999764,
+            2.2491999999999734,
+            2.1999000000000706,
+            2.251399999999876
+          ]
+        },
+        {
+          "kind": "unknown-game",
+          "game": "Copper Harbor",
+          "chars": 512168,
+          "lateForeignScope": false,
+          "expectedStatus": "verified",
+          "statuses": [
+            "unknown"
+          ],
+          "reasons": [
+            "GAME_IDENTITY_UNVERIFIED"
+          ],
+          "minMs": 13.18380000000002,
+          "medianMs": 13.616199999999935,
+          "maxMs": 14.877100000000155,
+          "samplesMs": [
+            14.877100000000155,
+            14.164599999999837,
+            13.18380000000002,
+            13.616199999999935,
+            13.298399999999901
+          ]
+        },
+        {
+          "kind": "unknown-game",
+          "game": "Copper Harbor",
+          "chars": 512179,
+          "lateForeignScope": true,
+          "expectedStatus": "conflict",
+          "statuses": [
+            "conflict"
+          ],
+          "reasons": [
+            "GAME_MISMATCH"
+          ],
+          "minMs": 7.138699999999972,
+          "medianMs": 7.790700000000015,
+          "maxMs": 8.028700000000072,
+          "samplesMs": [
+            7.790700000000015,
+            8.028700000000072,
+            7.879800000000159,
+            7.138699999999972,
+            7.5978999999999814
+          ]
+        },
+        {
+          "kind": "known-game",
+          "game": "Elden Ring",
+          "chars": 32195,
+          "lateForeignScope": false,
+          "expectedStatus": "verified",
+          "statuses": [
+            "verified"
+          ],
+          "reasons": [
+            "ACQUIRED_METADATA_AND_BODY_IDENTITY"
+          ],
+          "minMs": 1.838799999999992,
+          "medianMs": 2.0623999999997977,
+          "maxMs": 2.1286999999999807,
+          "samplesMs": [
+            2.0623999999997977,
+            2.0448999999998705,
+            2.100400000000036,
+            2.1286999999999807,
+            1.838799999999992
+          ]
+        },
+        {
+          "kind": "known-game",
+          "game": "Elden Ring",
+          "chars": 32206,
+          "lateForeignScope": true,
+          "expectedStatus": "conflict",
+          "statuses": [
+            "conflict"
+          ],
+          "reasons": [
+            "GAME_MISMATCH"
+          ],
+          "minMs": 0.8851999999999407,
+          "medianMs": 0.94399999999996,
+          "maxMs": 0.981899999999996,
+          "samplesMs": [
+            0.981899999999996,
+            0.9746000000000095,
+            0.8851999999999407,
+            0.94399999999996,
+            0.92450000000008
+          ]
+        },
+        {
+          "kind": "known-game",
+          "game": "Elden Ring",
+          "chars": 128226,
+          "lateForeignScope": false,
+          "expectedStatus": "verified",
+          "statuses": [
+            "verified"
+          ],
+          "reasons": [
+            "ACQUIRED_METADATA_AND_BODY_IDENTITY"
+          ],
+          "minMs": 5.550700000000006,
+          "medianMs": 5.837499999999864,
+          "maxMs": 5.9996000000001,
+          "samplesMs": [
+            5.9996000000001,
+            5.6983000000000175,
+            5.837499999999864,
+            5.550700000000006,
+            5.878199999999879
+          ]
+        },
+        {
+          "kind": "known-game",
+          "game": "Elden Ring",
+          "chars": 128237,
+          "lateForeignScope": true,
+          "expectedStatus": "conflict",
+          "statuses": [
+            "conflict"
+          ],
+          "reasons": [
+            "GAME_MISMATCH"
+          ],
+          "minMs": 2.110400000000027,
+          "medianMs": 2.188999999999851,
+          "maxMs": 2.350900000000138,
+          "samplesMs": [
+            2.188999999999851,
+            2.110400000000027,
+            2.1183999999998377,
+            2.350900000000138,
+            2.1963000000000648
+          ]
+        },
+        {
+          "kind": "known-game",
+          "game": "Elden Ring",
+          "chars": 512172,
+          "lateForeignScope": false,
+          "expectedStatus": "verified",
+          "statuses": [
+            "verified"
+          ],
+          "reasons": [
+            "ACQUIRED_METADATA_AND_BODY_IDENTITY"
+          ],
+          "minMs": 21.311300000000074,
+          "medianMs": 21.61949999999979,
+          "maxMs": 23.541799999999967,
+          "samplesMs": [
+            23.541799999999967,
+            21.311300000000074,
+            21.61949999999979,
+            22.408099999999877,
+            21.430000000000064
+          ]
+        },
+        {
+          "kind": "known-game",
+          "game": "Elden Ring",
+          "chars": 512183,
+          "lateForeignScope": true,
+          "expectedStatus": "conflict",
+          "statuses": [
+            "conflict"
+          ],
+          "reasons": [
+            "GAME_MISMATCH"
+          ],
+          "minMs": 7.089300000000094,
+          "medianMs": 7.34880000000021,
+          "maxMs": 7.4672999999997955,
+          "samplesMs": [
+            7.215499999999793,
+            7.34880000000021,
+            7.4672999999997955,
+            7.353799999999865,
+            7.089300000000094
+          ]
+        },
+        {
+          "kind": "document-over-limit",
+          "game": "Copper Harbor",
+          "chars": 1000094,
+          "lateForeignScope": false,
+          "expectedStatus": "unknown",
+          "statuses": [
+            "unknown"
+          ],
+          "reasons": [
+            "GAME_IDENTITY_UNVERIFIED"
+          ],
+          "minMs": 0.00010000000020227162,
+          "medianMs": 0.0001999999999497959,
+          "maxMs": 0.0003000000001520675,
+          "samplesMs": [
+            0.0003000000001520675,
+            0.0001999999999497959,
+            0.00029999999969732016,
+            0.0001999999999497959,
+            0.00010000000020227162
+          ]
+        },
+        {
+          "kind": "assertion-over-limit",
+          "game": "Copper Harbor",
+          "chars": 42115,
+          "lateForeignScope": false,
+          "expectedStatus": "unknown",
+          "statuses": [
+            "unknown"
+          ],
+          "reasons": [
+            "GAME_IDENTITY_UNVERIFIED"
+          ],
+          "minMs": 130.34029999999984,
+          "medianMs": 134.7813000000001,
+          "maxMs": 136.38530000000037,
+          "samplesMs": [
+            136.38530000000037,
+            133.6456000000003,
+            130.34029999999984,
+            134.7813000000001,
+            136.3759
+          ]
+        }
+      ]
+    },
+    "final": {
+      "syntheticOnly": true,
+      "includesAcquisition": false,
+      "includesProvider": false,
+      "warmups": 3,
+      "repetitions": 5,
+      "observations": [
+        {
+          "kind": "unknown-game",
+          "game": "Copper Harbor",
+          "chars": 32191,
+          "lateForeignScope": false,
+          "expectedStatus": "verified",
+          "statuses": [
+            "verified"
+          ],
+          "reasons": [
+            "ACQUIRED_BODY_SCOPE_IDENTITY"
+          ],
+          "minMs": 1.5609000000000606,
+          "medianMs": 1.6432999999999538,
+          "maxMs": 1.935200000000009,
+          "samplesMs": [
+            1.6131000000000313,
+            1.6432999999999538,
+            1.5609000000000606,
+            1.935200000000009,
+            1.6796000000000504
+          ]
+        },
+        {
+          "kind": "unknown-game",
+          "game": "Copper Harbor",
+          "chars": 32202,
+          "lateForeignScope": true,
+          "expectedStatus": "conflict",
+          "statuses": [
+            "conflict"
+          ],
+          "reasons": [
+            "GAME_MISMATCH"
+          ],
+          "minMs": 0.7524000000000797,
+          "medianMs": 0.8169000000000324,
+          "maxMs": 0.8953000000000202,
+          "samplesMs": [
+            0.7706999999999198,
+            0.7524000000000797,
+            0.8169000000000324,
+            0.8953000000000202,
+            0.8514999999999873
+          ]
+        },
+        {
+          "kind": "unknown-game",
+          "game": "Copper Harbor",
+          "chars": 128222,
+          "lateForeignScope": false,
+          "expectedStatus": "verified",
+          "statuses": [
+            "verified"
+          ],
+          "reasons": [
+            "ACQUIRED_BODY_SCOPE_IDENTITY"
+          ],
+          "minMs": 3.2024999999999864,
+          "medianMs": 3.2461000000000695,
+          "maxMs": 3.6105999999999767,
+          "samplesMs": [
+            3.2024999999999864,
+            3.220800000000054,
+            3.5588000000000193,
+            3.2461000000000695,
+            3.6105999999999767
+          ]
+        },
+        {
+          "kind": "unknown-game",
+          "game": "Copper Harbor",
+          "chars": 128233,
+          "lateForeignScope": true,
+          "expectedStatus": "conflict",
+          "statuses": [
+            "conflict"
+          ],
+          "reasons": [
+            "GAME_MISMATCH"
+          ],
+          "minMs": 2.0545000000000755,
+          "medianMs": 2.135499999999979,
+          "maxMs": 2.3385000000000673,
+          "samplesMs": [
+            2.2700999999999567,
+            2.135499999999979,
+            2.3385000000000673,
+            2.0545000000000755,
+            2.0715999999999894
+          ]
+        },
+        {
+          "kind": "unknown-game",
+          "game": "Copper Harbor",
+          "chars": 512168,
+          "lateForeignScope": false,
+          "expectedStatus": "verified",
+          "statuses": [
+            "verified"
+          ],
+          "reasons": [
+            "ACQUIRED_BODY_SCOPE_IDENTITY"
+          ],
+          "minMs": 11.109100000000012,
+          "medianMs": 11.31510000000003,
+          "maxMs": 12.115399999999909,
+          "samplesMs": [
+            11.31510000000003,
+            11.204700000000003,
+            11.109100000000012,
+            11.316599999999994,
+            12.115399999999909
+          ]
+        },
+        {
+          "kind": "unknown-game",
+          "game": "Copper Harbor",
+          "chars": 512179,
+          "lateForeignScope": true,
+          "expectedStatus": "conflict",
+          "statuses": [
+            "conflict"
+          ],
+          "reasons": [
+            "GAME_MISMATCH"
+          ],
+          "minMs": 7.371899999999982,
+          "medianMs": 7.782999999999902,
+          "maxMs": 8.82039999999995,
+          "samplesMs": [
+            7.782999999999902,
+            8.526599999999917,
+            7.371899999999982,
+            7.449399999999969,
+            8.82039999999995
+          ]
+        },
+        {
+          "kind": "known-game",
+          "game": "Elden Ring",
+          "chars": 32195,
+          "lateForeignScope": false,
+          "expectedStatus": "verified",
+          "statuses": [
+            "verified"
+          ],
+          "reasons": [
+            "ACQUIRED_METADATA_AND_BODY_IDENTITY"
+          ],
+          "minMs": 1.7399000000000342,
+          "medianMs": 1.811399999999935,
+          "maxMs": 1.9424999999999955,
+          "samplesMs": [
+            1.9424999999999955,
+            1.9288999999999987,
+            1.7932000000000698,
+            1.7399000000000342,
+            1.811399999999935
+          ]
+        },
+        {
+          "kind": "known-game",
+          "game": "Elden Ring",
+          "chars": 32206,
+          "lateForeignScope": true,
+          "expectedStatus": "conflict",
+          "statuses": [
+            "conflict"
+          ],
+          "reasons": [
+            "GAME_MISMATCH"
+          ],
+          "minMs": 0.9339999999999691,
+          "medianMs": 0.9959999999999809,
+          "maxMs": 1.0517999999999574,
+          "samplesMs": [
+            0.982900000000086,
+            1.0517999999999574,
+            0.9959999999999809,
+            0.9339999999999691,
+            1.00100000000009
+          ]
+        },
+        {
+          "kind": "known-game",
+          "game": "Elden Ring",
+          "chars": 128226,
+          "lateForeignScope": false,
+          "expectedStatus": "verified",
+          "statuses": [
+            "verified"
+          ],
+          "reasons": [
+            "ACQUIRED_METADATA_AND_BODY_IDENTITY"
+          ],
+          "minMs": 4.818499999999972,
+          "medianMs": 5.0569000000000415,
+          "maxMs": 5.240200000000073,
+          "samplesMs": [
+            4.818499999999972,
+            5.240200000000073,
+            5.0569000000000415,
+            4.93240000000003,
+            5.1679000000000315
+          ]
+        },
+        {
+          "kind": "known-game",
+          "game": "Elden Ring",
+          "chars": 128237,
+          "lateForeignScope": true,
+          "expectedStatus": "conflict",
+          "statuses": [
+            "conflict"
+          ],
+          "reasons": [
+            "GAME_MISMATCH"
+          ],
+          "minMs": 2.2704000000001088,
+          "medianMs": 2.4827999999999975,
+          "maxMs": 2.6815999999998894,
+          "samplesMs": [
+            2.6281000000000176,
+            2.4827999999999975,
+            2.27900000000011,
+            2.6815999999998894,
+            2.2704000000001088
+          ]
+        },
+        {
+          "kind": "known-game",
+          "game": "Elden Ring",
+          "chars": 512172,
+          "lateForeignScope": false,
+          "expectedStatus": "verified",
+          "statuses": [
+            "verified"
+          ],
+          "reasons": [
+            "ACQUIRED_METADATA_AND_BODY_IDENTITY"
+          ],
+          "minMs": 15.7346,
+          "medianMs": 16.279399999999896,
+          "maxMs": 16.448900000000094,
+          "samplesMs": [
+            16.279399999999896,
+            15.880799999999908,
+            15.7346,
+            16.445400000000063,
+            16.448900000000094
+          ]
+        },
+        {
+          "kind": "known-game",
+          "game": "Elden Ring",
+          "chars": 512183,
+          "lateForeignScope": true,
+          "expectedStatus": "conflict",
+          "statuses": [
+            "conflict"
+          ],
+          "reasons": [
+            "GAME_MISMATCH"
+          ],
+          "minMs": 7.5219999999999345,
+          "medianMs": 7.6095000000000255,
+          "maxMs": 9.186400000000049,
+          "samplesMs": [
+            9.186400000000049,
+            7.5219999999999345,
+            7.894199999999955,
+            7.5909999999998945,
+            7.6095000000000255
+          ]
+        },
+        {
+          "kind": "document-over-limit",
+          "game": "Copper Harbor",
+          "chars": 1000094,
+          "lateForeignScope": false,
+          "expectedStatus": "unknown",
+          "statuses": [
+            "unknown"
+          ],
+          "reasons": [
+            "GAME_IDENTITY_UNVERIFIED"
+          ],
+          "minMs": 0.00009999999997489795,
+          "medianMs": 0.0001999999999497959,
+          "maxMs": 0.0003999999998995918,
+          "samplesMs": [
+            0.0003999999998995918,
+            0.0001999999999497959,
+            0.0003000000001520675,
+            0.0001999999999497959,
+            0.00009999999997489795
+          ]
+        },
+        {
+          "kind": "assertion-over-limit",
+          "game": "Copper Harbor",
+          "chars": 42115,
+          "lateForeignScope": false,
+          "expectedStatus": "unknown",
+          "statuses": [
+            "unknown"
+          ],
+          "reasons": [
+            "GAME_IDENTITY_UNVERIFIED"
+          ],
+          "minMs": 140.83680000000004,
+          "medianMs": 141.73590000000013,
+          "maxMs": 147.6454000000001,
+          "samplesMs": [
+            147.6454000000001,
+            141.4529,
+            141.73590000000013,
+            144.5544,
+            140.83680000000004
+          ]
+        }
+      ]
+    },
+    "comparisons": [
+      {
+        "kind": "unknown-game",
+        "game": "Copper Harbor",
+        "chars": 32191,
+        "lateForeignScope": false,
+        "baselineStatuses": [
+          "unknown"
+        ],
+        "finalStatuses": [
+          "verified"
+        ],
+        "baselineMedianMs": 1.2514999999998508,
+        "finalMedianMs": 1.6432999999999538,
+        "medianDeltaMs": 0.39180000000010295
+      },
+      {
+        "kind": "unknown-game",
+        "game": "Copper Harbor",
+        "chars": 32202,
+        "lateForeignScope": true,
+        "baselineStatuses": [
+          "conflict"
+        ],
+        "finalStatuses": [
+          "conflict"
+        ],
+        "baselineMedianMs": 0.8454999999999018,
+        "finalMedianMs": 0.8169000000000324,
+        "medianDeltaMs": -0.028599999999869397
+      },
+      {
+        "kind": "unknown-game",
+        "game": "Copper Harbor",
+        "chars": 128222,
+        "lateForeignScope": false,
+        "baselineStatuses": [
+          "unknown"
+        ],
+        "finalStatuses": [
+          "verified"
+        ],
+        "baselineMedianMs": 3.511099999999942,
+        "finalMedianMs": 3.2461000000000695,
+        "medianDeltaMs": -0.26499999999987267
+      },
+      {
+        "kind": "unknown-game",
+        "game": "Copper Harbor",
+        "chars": 128233,
+        "lateForeignScope": true,
+        "baselineStatuses": [
+          "conflict"
+        ],
+        "finalStatuses": [
+          "conflict"
+        ],
+        "baselineMedianMs": 2.251399999999876,
+        "finalMedianMs": 2.135499999999979,
+        "medianDeltaMs": -0.11589999999989686
+      },
+      {
+        "kind": "unknown-game",
+        "game": "Copper Harbor",
+        "chars": 512168,
+        "lateForeignScope": false,
+        "baselineStatuses": [
+          "unknown"
+        ],
+        "finalStatuses": [
+          "verified"
+        ],
+        "baselineMedianMs": 13.616199999999935,
+        "finalMedianMs": 11.31510000000003,
+        "medianDeltaMs": -2.3010999999999058
+      },
+      {
+        "kind": "unknown-game",
+        "game": "Copper Harbor",
+        "chars": 512179,
+        "lateForeignScope": true,
+        "baselineStatuses": [
+          "conflict"
+        ],
+        "finalStatuses": [
+          "conflict"
+        ],
+        "baselineMedianMs": 7.790700000000015,
+        "finalMedianMs": 7.782999999999902,
+        "medianDeltaMs": -0.007700000000113505
+      },
+      {
+        "kind": "known-game",
+        "game": "Elden Ring",
+        "chars": 32195,
+        "lateForeignScope": false,
+        "baselineStatuses": [
+          "verified"
+        ],
+        "finalStatuses": [
+          "verified"
+        ],
+        "baselineMedianMs": 2.0623999999997977,
+        "finalMedianMs": 1.811399999999935,
+        "medianDeltaMs": -0.25099999999986267
+      },
+      {
+        "kind": "known-game",
+        "game": "Elden Ring",
+        "chars": 32206,
+        "lateForeignScope": true,
+        "baselineStatuses": [
+          "conflict"
+        ],
+        "finalStatuses": [
+          "conflict"
+        ],
+        "baselineMedianMs": 0.94399999999996,
+        "finalMedianMs": 0.9959999999999809,
+        "medianDeltaMs": 0.05200000000002092
+      },
+      {
+        "kind": "known-game",
+        "game": "Elden Ring",
+        "chars": 128226,
+        "lateForeignScope": false,
+        "baselineStatuses": [
+          "verified"
+        ],
+        "finalStatuses": [
+          "verified"
+        ],
+        "baselineMedianMs": 5.837499999999864,
+        "finalMedianMs": 5.0569000000000415,
+        "medianDeltaMs": -0.7805999999998221
+      },
+      {
+        "kind": "known-game",
+        "game": "Elden Ring",
+        "chars": 128237,
+        "lateForeignScope": true,
+        "baselineStatuses": [
+          "conflict"
+        ],
+        "finalStatuses": [
+          "conflict"
+        ],
+        "baselineMedianMs": 2.188999999999851,
+        "finalMedianMs": 2.4827999999999975,
+        "medianDeltaMs": 0.2938000000001466
+      },
+      {
+        "kind": "known-game",
+        "game": "Elden Ring",
+        "chars": 512172,
+        "lateForeignScope": false,
+        "baselineStatuses": [
+          "verified"
+        ],
+        "finalStatuses": [
+          "verified"
+        ],
+        "baselineMedianMs": 21.61949999999979,
+        "finalMedianMs": 16.279399999999896,
+        "medianDeltaMs": -5.340099999999893
+      },
+      {
+        "kind": "known-game",
+        "game": "Elden Ring",
+        "chars": 512183,
+        "lateForeignScope": true,
+        "baselineStatuses": [
+          "conflict"
+        ],
+        "finalStatuses": [
+          "conflict"
+        ],
+        "baselineMedianMs": 7.34880000000021,
+        "finalMedianMs": 7.6095000000000255,
+        "medianDeltaMs": 0.2606999999998152
+      },
+      {
+        "kind": "document-over-limit",
+        "game": "Copper Harbor",
+        "chars": 1000094,
+        "lateForeignScope": false,
+        "baselineStatuses": [
+          "unknown"
+        ],
+        "finalStatuses": [
+          "unknown"
+        ],
+        "baselineMedianMs": 0.0001999999999497959,
+        "finalMedianMs": 0.0001999999999497959,
+        "medianDeltaMs": 0
+      },
+      {
+        "kind": "assertion-over-limit",
+        "game": "Copper Harbor",
+        "chars": 42115,
+        "lateForeignScope": false,
+        "baselineStatuses": [
+          "unknown"
+        ],
+        "finalStatuses": [
+          "unknown"
+        ],
+        "baselineMedianMs": 134.7813000000001,
+        "finalMedianMs": 141.73590000000013,
+        "medianDeltaMs": 6.954600000000028
+      }
+    ],
+    "limits": "Local warmed microbenchmark of the real identity assessor; timings are observational and are not hosted, acquisition, provider, SQL or production performance evidence. No production limits changed.",
+    "baselineRawResultSha256": "a261318a3128ff99f90116526c42901af5d03584c760cb9b5604c60cd70b79b9"
+  },
+  "fingerprints": [
+    {
+      "path": "tests/gaming-universal-adversarial.test.ts",
+      "localRawSha256": "fbec4e6696b1930b2a28a8e758ea6eeef26ea476bc8207bb9a464e12418285d2",
+      "workingTreeGitBlob": "61e0cbb544cc2929dd3b42a4f84444635d0ab093"
+    },
+    {
+      "path": "tests/gaming-universal-performance.test.ts",
+      "localRawSha256": "4bbc39b19364c8647786b5a2c26a7b1cdda76c03d56a40c2102da5b65fbcc22b",
+      "workingTreeGitBlob": "afd077d481f9c6d00d0ca5249e5a0d6040c45cf8"
+    },
+    {
+      "path": "src/shared/gaming/gamingAcquiredIdentity.ts",
+      "localRawSha256": "7ff98added2de18bf41b591914e3d7c2419cd55267ea6698bf15ce95e44495a8",
+      "workingTreeGitBlob": "a4c97334a2561f3ddd218719d9090c344042f4b4"
+    },
+    {
+      "path": "src/shared/gaming/gamingClearSource.ts",
+      "localRawSha256": "1a12a45c22f68b90dfa08f4fbb3b3ad505e181b624d4ce10078205dd5e645043",
+      "workingTreeGitBlob": "67b139a242562721822c4c7f5dda8cf3757640cf"
+    },
+    {
+      "path": "src/shared/gaming/gamingGameRegistry.ts",
+      "localRawSha256": "d62e433fb8c5f9b231a545aa4c47d2f2dfc343a0464926a7caa04c55e97ea2cc",
+      "workingTreeGitBlob": "df98c8781b8be0b1059afd3820d3578a78bb3ed2"
+    },
+    {
+      "path": "src/shared/gaming/gamingGameRegistryData.ts",
+      "localRawSha256": "05646f3dfb3c55fbf42a1f8232eea25a7e9c69991d889e294aea9b413dd757f6",
+      "workingTreeGitBlob": "cda4541538c2a3b8c6a622abf07b56f7253d4ad1"
+    },
+    {
+      "path": "src/shared/gaming/gamingGameIdentity.ts",
+      "localRawSha256": "69775e3ad69602c8b6279f0b13d533e2e9e44d9976a7a653d78c34c9e73b7820",
+      "workingTreeGitBlob": "355a3c320629e354ce1cc4c3c255fab0b4b523f2"
+    },
+    {
+      "path": "src/services/gamingGameDetection.ts",
+      "localRawSha256": "42781616ac491200311776f2dbdca50408656415dbcb96ff886bc48b65706216",
+      "workingTreeGitBlob": "39fda837cde7ee5ad390994e071dd02dacec37d9"
+    },
+    {
+      "path": "src/shared/gaming/gamingClearPolicy.ts",
+      "localRawSha256": "4521acd5426cb2d855747ec58be62e05941f4c5bb9b0f79d646b5c71764f66d8",
+      "workingTreeGitBlob": "89d4caea18d1abccc9cab8bfdf071b736db19ad3"
+    },
+    {
+      "path": "src/shared/gaming/gamingStructuredEvidencePreviewFixture.ts",
+      "localRawSha256": "6f628d59584f63556c0931f1564d4d2a127f4fa9ec915f323f7dd12fb37bbcc3",
+      "workingTreeGitBlob": "2b774617fd4b405896d8fd808781300983364886"
+    },
+    {
+      "path": "tests/gaming-universal-currentness-identity.test.ts",
+      "localRawSha256": "1417f9105f64335138876d07d0b4766fed495a89ee6ac08e109675630efb0203",
+      "workingTreeGitBlob": "8ea497e351fa04aa4e3b772659b205655c82d20b"
+    },
+    {
+      "path": "tests/gaming-hybrid-lifecycle.integration.test.ts",
+      "localRawSha256": "29bd4d11c44bd930e48a28789ed0a5d49c40fd7a3315ac15aeced088f9a6f9aa",
+      "workingTreeGitBlob": "1d78e4df73269392b9bf4b96b239cc21e3db1a48"
+    },
+    {
+      "path": "tests/gaming-universal-source-identity.test.ts",
+      "localRawSha256": "cfe8c357e2bbefb93cee18035f7eea632b8cb4535fbb4cc41c5ba43fd8de8a90",
+      "workingTreeGitBlob": "791831ff4208df0056ee14037bfd3832aec50390"
+    }
+  ],
+  "baselineProductionSourceUnchanged": true,
+  "previewFixtureRepair": {
+    "path": "src/shared/gaming/gamingStructuredEvidencePreviewFixture.ts",
+    "rootCause": "Structured list/definition/JSON source payloads lacked independently acquired game ownership; old title/publisher association was insufficient under the current policy.",
+    "change": "Synthetic source records now carry actual Game fields; base-scope records retain explicit game ownership and the foreign-row-only control has independent parent-game prose. No source validator or gate was weakened.",
+    "initialPassedTests": 55,
+    "initialFailedTests": 14,
+    "finalPassedSuites": 4,
+    "finalPassedTests": 69,
+    "finalFailedTests": 0,
+    "finalSkippedTests": 0,
+    "testFiles": [
+      "tests/gaming-structured-evidence-preview.test.ts",
+      "tests/gaming-hybrid-preview-failure.test.ts",
+      "tests/gaming-currentness-preview-failure.test.ts",
+      "tests/gaming-clear-preview-failure.test.ts"
+    ],
+    "rawResultSha256": "843c6d50e01eec045b4a9c18a2f5143b787a5844a928fda792e3cd531558de9c",
+    "lint": "PASS",
+    "diffCheck": "PASS"
+  },
+  "officialCurrentnessControls": {
+    "passedTests": 18,
+    "failedTests": 0,
+    "syntheticHttpAndDnsOnly": true,
+    "realResolverAttestation": true,
+    "realReviewedAdapter": true,
+    "positives": "Reviewed DOM-bound index with pending exact companion and release article with complete versions/platform/activation proof establish ownership without claiming current build/latest release.",
+    "negatives": "Title-only URL association, copied unreviewed formats, wrong game, expansion conflict, hidden/unreviewed links, malformed platforms, conflicting versions and scheduled activation stay unverified or rejected."
+  },
+  "legacyCurrentnessExpectations": {
+    "file": "tests/gaming-hybrid-lifecycle.integration.test.ts",
+    "before": "2 failed expected-answer assertions",
+    "afterPassedSelectedTests": 7,
+    "unselectedTests": 99,
+    "change": "Only the two malformed/missing targeted-platform DOM scenarios now require explicit identity refusal and share the existing stop/no-generation/no-write/replay fences.",
+    "rawResultSha256": "80d60351f74e2e19cff587897b42edb0cca879dec67be6542f5e68504586e484"
+  }
+}

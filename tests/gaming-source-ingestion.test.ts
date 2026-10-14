@@ -391,7 +391,7 @@ describe('gaming source ingestion', () => {
       formatStoredGamingEvidence(selected, { game }, limits))).toMatchObject({ decision: 'accept', gates: { compatibility: 'verified' } });
   });
 
-  it('reports legacy queued hybrid approval as requiring reassessment without fabricating a pass or invoking acquisition', async () => {
+  it.each(['missing', 'gaming-clear-policy/v1', 'gaming-clear-policy/v2', 'gaming-clear-policy/v3'])('requires reassessment of queued hybrid approval from %s before acquisition or persistence', async priorPolicy => {
     const { createApprovedGamingSourceIngestion } = await import('../src/services/gamingSourceIngestion.js');
     const actorKey = 'legacy-hybrid-actor';
     const contentHash = gamingClearHash('legacy-approved-content');
@@ -399,7 +399,15 @@ describe('gaming source ingestion', () => {
       actorScopeHash: createHash('sha256').update(actorKey).digest('hex'), policyVersion: 'gaming-hybrid-candidates/v1',
       sourceTrustType: 'supplied', freshness: {}, sourceAssessment: sourceApproval(contentHash) }], 'legacy-hybrid-1', { actorKey, canStore: true });
     const body = (findOrCreateGptJobMock.mock.calls[0][0] as any).input.body;
-    delete body.sources[0].hybridApproval.gamingClear;
+    if (priorPolicy === 'missing') delete body.sources[0].hybridApproval.gamingClear;
+    else body.sources[0].hybridApproval.gamingClear.policyProfile = `${priorPolicy}:walkthrough:source`;
+    if (priorPolicy !== 'missing') {
+      await expect(executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', body))
+        .rejects.toMatchObject({ code: 'GAMING_SOURCE_JOB_INVALID' });
+      expect(resolveGamingDocumentMock).not.toHaveBeenCalled();
+      expect(persistGamingSourceRevisionMock).not.toHaveBeenCalled();
+      return;
+    }
     const result = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', body);
     expect(result.output).toMatchObject({ status: 'completed_with_errors', sources: [{ status: 'rejected',
       error: { code: 'APPROVED_ASSESSMENT_REQUIRED', retryable: false } }] });
@@ -764,7 +772,7 @@ describe('gaming source ingestion', () => {
     const lateFact = 'Rotation: Activate the Zephyrglass Overdrive after the shield breaks.';
     const evidenceText = `${'Equipment: Synthetic armor. '.repeat(400).slice(0, 8_000 - lateFact.length)}${lateFact}`;
     resolveGamingDocumentMock.mockResolvedValueOnce(resolvedDocument(url, text, {
-      metadata: { title: 'Synthetic build' }
+      metadata: { title: 'Equipment choices', headings: 'Equipment choices' }
     }));
     const normalized = await ingestGamingBuildResourceMock();
     ingestGamingBuildResourceMock.mockResolvedValueOnce({
@@ -810,8 +818,8 @@ describe('gaming source ingestion', () => {
   it.each([
     { url: 'https://example.org/Elden%20Ring/guide', title: 'Borderlands 4 progression guide' },
     { url: 'https://guides.example.org/article', title: 'Destiny 2 progression guide' }
-  ])('still rejects a source game mismatch from its URL or metadata: $url', async ({ url, title }) => {
-    resolveGamingDocumentMock.mockResolvedValueOnce(resolvedDocument(url, 'Borderlands 4 progression route. '.repeat(10), {
+  ])('prefers acquired identity over URL labels while retaining known-title conflicts: $url', async ({ url, title }) => {
+    resolveGamingDocumentMock.mockResolvedValueOnce(resolvedDocument(url, 'In Borderlands 4, follow the progression route. '.repeat(10), {
       metadata: { title }
     }));
     const result = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', {
@@ -819,9 +827,14 @@ describe('gaming source ingestion', () => {
       sources: [{ submittedIndex: 0, canonicalUrl: url,
         game: 'Borderlands 4', gameKey: 'borderlands-4', origin: 'user_supplied' }]
     });
-    expect(result.output.sources[0]).toMatchObject({ status: 'rejected', error: { code: 'GAME_MISMATCH' } });
-    expect(ingestGamingBuildResourceMock).not.toHaveBeenCalled();
-    expect(persistGamingSourceRevisionMock).not.toHaveBeenCalled();
+    if (title.startsWith('Destiny 2')) {
+      expect(result.output.sources[0]).toMatchObject({ status: 'rejected', error: { code: 'GAME_MISMATCH' } });
+      expect(ingestGamingBuildResourceMock).not.toHaveBeenCalled();
+      expect(persistGamingSourceRevisionMock).not.toHaveBeenCalled();
+    } else {
+      expect(result.output.sources[0].status).toBe('stored');
+      expect(persistGamingSourceRevisionMock).toHaveBeenCalledTimes(1);
+    }
   });
 
   it.each(['Dexterity build guide', 'Samurai Blade Build Guide', 'Early Game Samurai Build', 'Dexterity build guide | Independent News',

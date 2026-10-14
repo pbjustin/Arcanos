@@ -82,7 +82,7 @@ beforeEach(() => {
     if (!page) throw new Error('No deterministic source fixture for this request.');
     if (page.wait) await page.wait;
     clock += page.elapsedMs ?? 25; jest.setSystemTime(clock);
-    const html = page.html ?? `<html><title>${page.game} guide</title><body><article><p>${page.game} gameplay reference.</p><p>${page.text}</p></article></body></html>`;
+    const html = page.html ?? `<html><title>${page.game} guide</title><body><article><p>In the game ${page.game}, the following acquired gameplay applies.</p><p>${page.text}</p></article></body></html>`;
     const contentType = page.contentType ?? 'text/html';
     const data = Object.assign(Readable.from([Buffer.from(html)]), { rawHeaders: ['content-type', contentType] });
     // Real incoming HTTP responses have an error listener installed by Axios.
@@ -137,7 +137,7 @@ function sources() {
 function addStatPage(url: string, item: string, value: number) {
   const text = `Item: ${item} | Stat: weight | Value: ${value} | Unit: points | Scope: base`;
   addPage(url, text, `The source reports ${item}'s base weight as ${value} points. Current in-game applicability is unverified.`, game, {
-    html: `<html><title>${game} guide</title><body><p>${game} gameplay reference.</p><table><caption>${game} stats</caption>
+    html: `<html><title>${game} guide</title><body><p>In the game ${game}, the following acquired gameplay applies.</p><table><caption>${game} stats</caption>
       <tr><th>Item</th><th>Stat</th><th>Value</th><th>Unit</th><th>Scope</th></tr>
       <tr><td>${item}</td><td>weight</td><td>${value}</td><td>points</td><td>base</td></tr></table></body></html>`
   });
@@ -200,7 +200,7 @@ describe('backend-authoritative Gaming discovery recovery through served MCP', (
     const url = 'https://guides.example.org/late-complete-route';
     const complete = `${gateText} ${bridgeText}`;
     addPage(url, complete, complete, game, {
-      html: `<html><title>${game} guide</title><body><article><p>${game} gameplay reference.</p>
+      html: `<html><title>${game} guide</title><body><article><p>In the game ${game}, the following acquired gameplay applies.</p>
         ${Array.from({ length: 24 }, (_unused, index) => `<p>${gateText} Lantern marker ${index}.
           ${'This section describes safe timing beside the quiet cabinet. '.repeat(30)}</p>`).join('')}
         <p>${complete} LATE_ROUTE_SUPPORT.</p></article></body></html>`
@@ -224,7 +224,7 @@ describe('backend-authoritative Gaming discovery recovery through served MCP', (
     const longUrl = 'https://guides.example.org/long-copperblade-stats';
     const conflictUrl = 'https://different.example.org/late-copperblade-conflict';
     addPage(longUrl, 'Copperblade weight value is 10 points in base scope.', undefined, game, {
-      html: `<html><title>${game} guide</title><body><article><p>${game} gameplay reference.</p>
+      html: `<html><title>${game} guide</title><body><article><p>In the game ${game}, the following acquired gameplay applies.</p>
         <table><tr><th>Item</th><th>Stat</th><th>Value</th><th>Unit</th><th>Scope</th><th>Note</th></tr>
         ${Array.from({ length: 24 }, (_unused, index) => `<tr><td>Copperblade</td><td>weight</td><td>10</td><td>points</td><td>base</td><td>entry ${index}</td></tr>`).join('')}
         </table></article></body></html>`
@@ -682,7 +682,7 @@ describe('backend-authoritative Gaming discovery recovery through served MCP', (
     const index = 'https://en.bandainamcoent.eu/elden-ring/elden-ring/news';
     const articlePath = '/elden-ring/news/elden-ring-patch-notes-version-110';
     const article = `https://en.bandainamcoent.eu${articlePath}`;
-    const passage = `${proofGame} gameplay reference. ${gateText} These steps activate the amber gate with the documented controls.`;
+    const passage = `In the game ${proofGame}, the following acquired gameplay applies. ${gateText} These steps activate the amber gate with the documented controls.`;
     addPage(guide, passage, gateText, proofGame, { html: `<html><title>${proofGame} amber gate guide</title><body><main><p>Game: ${proofGame}. Patch: 1.10. Build: 1.10.1. Platforms: all. Regions: all.</p><p>${passage}</p></main></body></html>` });
     addPage(index, '', '', proofGame, { html: `<html><title>${proofGame} news</title><body><main><h1>Latest News on ELDEN RING</h1><div class="search__section"><h2 id="patch-notes">Patch Notes (2)</h2><ul class="cards-list"><li><a href="${articlePath}"><h3>Elden Ring – Patch Notes Version 1.10</h3><span>2 Like</span><time>02/10/2026</time></a></li><li><a href="/elden-ring/news/elden-ring-patch-notes-version-19"><h3>Elden Ring – Patch Notes Version 1.9</h3><span>1 Like</span><time>01/10/2026</time></a></li></ul><p>Load More</p></div><h2>Coming Soon (0)</h2></main></body></html>` });
     addPage(article, '', '', proofGame, { html: '<html><title>Elden Ring – Patch Notes Version 1.10</title><body><main><h1>Elden Ring – Patch Notes Version 1.10</h1><p>02/10/2026</p><p>Targeted Platforms</p><p>Steam</p><p>App Ver. 1.10</p><p>Regulation Ver. 1.10.1</p><p>Online play requires the player to apply this update. These official patch notes identify application and regulation versions. Follow the update instructions before online play. General maintenance fixes are included.</p></main></body></html>' });
@@ -725,8 +725,8 @@ describe('backend-authoritative Gaming discovery recovery through served MCP', (
 
   it('stops an explicit material mechanic conflict instead of granting recovery or a generic warning', async () => {
     sources();
-    pages.get(gateUrl)!.html = `<html><title>${game} guide</title><body><article><p>${game} gameplay reference. ${gateText}</p><p>Mechanic: telescope alignment = 2 points</p></article></body></html>`;
-    pages.get(bridgeUrl)!.html = `<html><title>${game} guide</title><body><article><p>${game} gameplay reference. ${bridgeText}</p><p>Mechanic: telescope alignment = 3 points</p></article></body></html>`;
+    pages.get(gateUrl)!.html = `<html><title>${game} guide</title><body><article><p>In the game ${game}, the following acquired gameplay applies. ${gateText}</p><p>Mechanic: telescope alignment = 2 points</p></article></body></html>`;
+    pages.get(bridgeUrl)!.html = `<html><title>${game} guide</title><body><article><p>In the game ${game}, the following acquired gameplay applies. ${bridgeText}</p><p>Mechanic: telescope alignment = 3 points</p></article></body></html>`;
     const run = harness(); const initial = await run.query(); const conflict = await run.submit(initial.result, [gateUrl, bridgeUrl]);
     expect(conflict.result).toMatchObject({ nextAction: 'stop' });
     expect(conflict.result.reason).toBe('CONTRADICTORY_EVIDENCE');

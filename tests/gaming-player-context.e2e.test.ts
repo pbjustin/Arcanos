@@ -106,6 +106,7 @@ const { default: errorHandler } = await import('../src/transport/http/middleware
 const { logger } = await import('../src/platform/logging/structuredLogging.js');
 const { hashGamingDocumentRevision } = await import('../src/services/gamingDurableDocumentChunks.js');
 const { extractGamingFreshnessMetadata, GAMING_FRESHNESS_POLICY_VERSION } = await import('../src/shared/gaming/gamingFreshnessCore.js');
+const { GAMING_CLEAR_POLICY_VERSION } = await import('../src/shared/gaming/gamingClearPolicy.js');
 const logInfo = jest.fn();
 const corpus = JSON.parse(readFileSync(new URL('./fixtures/gaming-guide-assistance.json', import.meta.url), 'utf8')) as {
   cases: Array<{ id: string; request: Record<string, unknown>; evidence: string; referenceAnswer: string; excludedFuture?: string }>
@@ -141,15 +142,17 @@ function record(fixture: typeof corpus.cases[number], text = fixture.evidence, i
   const game = fixture.request.game as string;
   const sourceGameName = fixture.request.edition ? `${game} ${fixture.request.edition}` : game;
   const fetchedAt = new Date('2026-09-01T00:00:00Z');
-  // This complete synthetic source is the supplied fixture text. Large/late
-  // document coverage has its own acquisition and durable revision suites.
-  const contentHash = hashGamingDocumentRevision(text, JSON.stringify({ game: sourceGameName, title: 'Synthetic gameplay guide' }));
-  const applicability = extractGamingFreshnessMetadata({ text, publicUrl: 'https://example.com/guide' }, { game }, fetchedAt, []);
+  // Model a complete source with an independently acquired game declaration;
+  // this public-path fixture starts after the bounded ingestion assessment.
+  // Large/late document coverage has its own acquisition and revision suites.
+  const sourceText = `In the game ${sourceGameName}, ${text}`;
+  const contentHash = hashGamingDocumentRevision(sourceText, JSON.stringify({ game: sourceGameName, title: 'Synthetic gameplay guide' }));
+  const applicability = extractGamingFreshnessMetadata({ text: sourceText, publicUrl: 'https://example.com/guide' }, { game }, fetchedAt, []);
   expect(applicability.metadataUnverified).toBeUndefined();
   return {
     recordId: id, recordType: 'guide', semanticKey: id, payloadHash: 'a'.repeat(64),
-    title: 'Synthetic gameplay guide', patch: fixture.request.version ?? null, searchText: text,
-    normalized: { text, chunk: { ordinal: 0, totalChunks: 1, startChar: 0, endChar: text.length } },
+    title: 'Synthetic gameplay guide', patch: fixture.request.version ?? null, searchText: sourceText,
+    normalized: { text: sourceText, chunk: { ordinal: 0, totalChunks: 1, startChar: 0, endChar: sourceText.length } },
     recordCreatedAt: new Date('2026-09-01T00:00:00Z'), sourceId: 'synthetic-source',
     gameKey: sourceGameName.toLowerCase().replace(/[^a-z0-9]+/gu, '-'), gameName: sourceGameName,
     canonicalUrl: 'https://example.com/guide', publicUrl: 'https://example.com/guide',
@@ -157,7 +160,8 @@ function record(fixture: typeof corpus.cases[number], text = fixture.evidence, i
     revisionId: 'synthetic-active-revision', contentHash,
     fetchedAt, publishedAt: null, revisionPatch: null,
     extractor: 'synthetic', extractorVersion: 'fixture-v1', normalizerSchemaVersion: 'gaming-document-chunks-v1',
-    provenance: { ...(fixture.request.version ? { patchVerificationMethod: 'extractor', verifiedPatchVersion: fixture.request.version } : {}),
+    provenance: { sourceIdentityPolicyVersion: GAMING_CLEAR_POLICY_VERSION,
+      ...(fixture.request.version ? { patchVerificationMethod: 'extractor', verifiedPatchVersion: fixture.request.version } : {}),
       acquiredApplicability: { extractorVersion: GAMING_FRESHNESS_POLICY_VERSION, contentHash, game: applicability.game,
         ...(applicability.edition ? { edition: applicability.edition } : {}),
         ...(applicability.platforms?.length ? { platforms: applicability.platforms } : {}),

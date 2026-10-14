@@ -143,7 +143,7 @@ describe('structural evidence survives the existing CLEAR source gates', () => {
     { System: 'OTHER-1', Body: 'A 1', Site: 'PML 1', Resource: 'Iron' }
   ])('preserves sufficient prose when a complementary unrelated table is present: %j', fields => {
     const unit = locationUnit(fields);
-    const prose = 'Testspace guide. This community source reports Platinum at system T-1, body B 2, site PML 7. It is a source assertion and current applicability remains unverified. Always check local conditions before using this reported resource location.';
+    const prose = 'In the game Testspace, this community source reports Platinum at system T-1, body B 2, site PML 7. It is a source assertion and current applicability remains unverified. Always check local conditions before using this reported resource location.';
     const input = { game: 'Testspace', prompt: 'Which system body site reports Platinum?', mode: 'guide' as const };
     for (const units of [[], [unit]]) {
       const doc = { ...document(unit), text: [prose, ...units.map(row => row.text)].join('\n\n'), evidenceUnits: units };

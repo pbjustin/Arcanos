@@ -662,7 +662,7 @@ describe('v2 independently acquired bound artifacts and failure work accounting'
   }
   it('retains acquired complete evidence after twenty-four relevant but incomplete records', async () => {
     mockHttp.mockImplementation(async () => ({ status: 200, headers: { 'content-type': 'text/html' },
-      data: `<html><title>Lantern Voyage guide</title><body><article><p>Lantern Voyage guide. Activate amber gate using the copper switch beside the lantern.
+      data: `<html><title>Lantern Voyage guide</title><body><article><p>In Lantern Voyage, activate amber gate using the copper switch beside the lantern.
         This guide explains safe amber gate activation and gives intact steps for using the switch before entering the gate.</p>
         <table><tr><th>Mechanic</th><th>Scope</th><th>Description</th></tr>
         ${Array.from({ length: 24 }, (_unused, index) => `<tr><td>Activate amber gate</td><td>base</td><td>Use the copper switch beside lantern ${index}.
@@ -716,7 +716,7 @@ describe('v2 independently acquired bound artifacts and failure work accounting'
   // Six HTML parses and 2,100 rows exercise both existing acquisition rounds under CI coverage.
   it('retains a structural conflict veto when six acquired tables exceed the per-document unit limit in aggregate', async () => {
     mockHttp.mockImplementation(async (requestUrl: string) => ({ status: 200, headers: { 'content-type': 'text/html' },
-      data: `<html><title>Lantern Voyage guide</title><body><article>Lantern Voyage weapon weights.
+      data: `<html><title>Lantern Voyage guide</title><body><article><p>In Lantern Voyage, the following records describe weapon weights.</p>
         <table><thead><tr><th>Item</th><th>Stat</th><th>Value</th><th>Unit</th><th>Scope</th><th>Note</th></tr></thead><tbody>
         ${Array.from({ length: 350 }, (_unused, index) => `<tr><td>Copperblade</td><td>weight</td><td>${requestUrl.endsWith('/contradiction') ? 11 : 10}</td><td>points</td><td>base</td><td>entry ${index}</td></tr>`).join('')}
         </tbody></table></article></body></html>` }));
@@ -738,8 +738,8 @@ describe('v2 independently acquired bound artifacts and failure work accounting'
 
   it('admits an intact explicitly requested facet below the whole-question lexical floor only in v2', async () => {
     mockHttp.mockImplementation(async () => ({ status: 200, headers: { 'content-type': 'text/html' },
-      data: `<html><title>Lantern Voyage guide</title><body><article>Lantern Voyage guide. Open amber gate using the copper switch beside the lantern.
-        This intact source explains the opening procedure in Lantern Voyage and the safe timing for the switch, preserving the action and prerequisite.</article></body></html>` }));
+      data: `<html><title>Lantern Voyage guide</title><body><article>In Lantern Voyage, open amber gate using the copper switch beside the lantern.
+        This intact source explains the opening procedure and the safe timing for the switch, preserving the action and prerequisite.</article></body></html>` }));
     const request = { ...input, prompt: 'Open amber gate and cross crystal bridge and repair silver lever and unlock violet tower and activate ruby portal and collect golden compass',
       candidates: [{ url }] };
     const legacy = await evaluateGamingHybridCandidates(request, actor);

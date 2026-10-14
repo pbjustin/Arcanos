@@ -7,6 +7,21 @@ export function normalizeGamingRegistryIdentity(value: string): string {
   return value.replace(/[™®©'’‘]/gu, '').normalize('NFKC').toLowerCase()
     .replace(/[^\p{L}\p{N}+]+/gu, '-').replace(/^-+|-+$/gu, '');
 }
+/** Formatting and standalone title-ending sequel numerals only; every subtitle stays identity. */
+export function normalizeGamingComparableIdentity(value: string): string {
+  const parts = normalizeGamingRegistryIdentity(value).split('-');
+  const numerals: Record<string, string> = { ii: '2', iii: '3', iv: '4', v: '5', vi: '6', vii: '7', viii: '8', ix: '9', x: '10' };
+  // An explicit subtitle separator preserves the main title's numeral boundary.
+  // Leading words such as V in V Rising are never treated as sequel numerals.
+  const formatted = value.normalize('NFKC');
+  const subtitle = /[:–—]/u.exec(formatted);
+  if (subtitle) {
+    const titleParts = normalizeGamingRegistryIdentity(formatted.slice(0, subtitle.index)).split('-');
+    if (titleParts.length > 1) parts[titleParts.length - 1] = numerals[titleParts.at(-1)!] ?? titleParts.at(-1)!;
+  }
+  if (parts.length > 1) parts[parts.length - 1] = numerals[parts.at(-1)!] ?? parts.at(-1)!;
+  return parts.join('-');
+}
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 const literal = (value: unknown, limit = 120): value is string => typeof value === 'string' && value.length > 0
   && value.length <= limit && value === value.trim() && !/[\u0000-\u001f\u007f]/u.test(value);
@@ -142,8 +157,8 @@ export function gamingRegistrySourceGameMatchesRequest(sourceGame: string, reque
   registry = GAMING_GAME_REGISTRY): boolean {
   const wanted = resolveGamingRegistryGame(requestGame, registry);
   const acquired = resolveGamingRegistryGame(sourceGame, registry);
-  if (acquired) return wanted ? acquired.id === wanted.id : normalizeGamingRegistryIdentity(sourceGame) === normalizeGamingRegistryIdentity(requestGame);
-  if (normalizeGamingRegistryIdentity(sourceGame) === normalizeGamingRegistryIdentity(requestGame)) return true;
+  if (acquired && wanted) return acquired.id === wanted.id;
+  if (normalizeGamingComparableIdentity(sourceGame) === normalizeGamingComparableIdentity(requestGame)) return true;
   if (!wanted) return false;
   const identity = normalizeGamingRegistryIdentity(sourceGame);
   return [wanted.name, ...wanted.aliases].some(name => wanted.editions.filter(edition => edition.kind === 'edition')
