@@ -1,27 +1,65 @@
 import { afterEach, describe, expect, it } from '@jest/globals';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import yaml from 'js-yaml';
 import {
-  containerArguments, parseOptions, runFixtures, validateFixtureProof,
+  containerArguments, parseOptions, retainProof, runFixtures, validateFixtureProof,
 } from '../scripts/run-railway-inspection-e2e.mjs';
-import { requiredFixtureCases } from './fixtures/railway-production-inspection/cases.mjs';
+import { fixtureCaseWritesReceipt, requiredFixtureCases } from './fixtures/railway-production-inspection/cases.mjs';
 
 const sourceSha = 'a'.repeat(40);
 const sourceContextSha256 = 'b'.repeat(64);
 const expected = { sourceSha, sourceContextSha256, postgresMajor: 17, relevantWorktreeDirty: false };
+/** Build complete synthetic evidence for validator tests without executing the collector. */
 const proof = (postgresMajor = 17) => ({
   schema: 'arcanos-production-inspection-e2e/v1', status: 'PASS',
   ...expected, postgresMajor, nodeVersion: 'v24.18.1', syntheticGithubAuthority: true,
+  postgresVersion: `${postgresMajor}.9`,
+  setupChecks: [{ name: 'database-server-key-mismatch', status: 'PASS',
+    postgresStartupRejected: true, collectorExecuted: false }],
+  teardown: { postgresStopped: true, fixtureDirectoryRemoved: true, pausedBackendsRemaining: 0 },
   cases: requiredFixtureCases(postgresMajor).map(name => ({
     name, status: 'PASS', databaseFingerprintUnchanged: true, collectorSessionsRemaining: 0,
+    ...(fixtureCaseWritesReceipt(name) ? { receiptSha256: 'd'.repeat(64), receiptStatus: 'BLOCKED' } : {}),
   })),
 });
 
 describe('inspection E2E fixture safety', () => {
   const directories = [];
   afterEach(() => { for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
+
+  /** Build synthetic artifact files to test independent validation, without executing any collector. */
+  function receiptBundle() {
+    const directory = mkdtempSync(join(tmpdir(), 'inspection-e2e-receipt-test-'));
+    directories.push(directory);
+    const source = join(directory, 'source');
+    const destination = join(directory, 'retained');
+    mkdirSync(source);
+    const value = proof();
+    for (const item of value.cases.filter(entry => fixtureCaseWritesReceipt(entry.name))) {
+      const serialized = `${JSON.stringify({ status: item.receiptStatus, syntheticCase: item.name })}\n`;
+      item.receiptSha256 = createHash('sha256').update(serialized).digest('hex');
+      writeFileSync(join(source, `${item.name}.json`), serialized, { mode: 0o600 });
+    }
+    writeFileSync(join(source, 'proof.json'), JSON.stringify(value), { mode: 0o600 });
+    return { source, destination };
+  }
+
+  it('independently hashes and retains an untampered receipt bundle', () => {
+    const { source, destination } = receiptBundle();
+    expect(retainProof(source, destination, expected).status).toBe('PASS');
+    expect(readFileSync(join(destination, 'complete-catalog.json'), 'utf8'))
+      .toBe(readFileSync(join(source, 'complete-catalog.json'), 'utf8'));
+  });
+
+  it('rejects changed receipt bytes even when JSON is valid and the claimed hash is unchanged', () => {
+    const { source, destination } = receiptBundle();
+    const receipt = join(source, 'complete-catalog.json');
+    writeFileSync(receipt, `${readFileSync(receipt, 'utf8')} `);
+    expect(() => retainProof(source, destination, expected)).toThrow('FIXTURE_PROOF_RECEIPT_HASH_MISMATCH');
+  });
 
   it.each([
     ['--postgres-major', '19'], ['--postgres-major', 'production'],
@@ -62,6 +100,15 @@ describe('inspection E2E fixture safety', () => {
     value => { value.relevantWorktreeDirty = true; },
     value => { value.nodeVersion = 'v24.19.0'; },
     value => { value.syntheticGithubAuthority = false; },
+    value => { delete value.postgresVersion; },
+    value => { value.postgresVersion = '18.1'; },
+    value => { delete value.setupChecks; },
+    value => { value.setupChecks[0].collectorExecuted = true; },
+    value => { value.setupChecks[0].postgresStartupRejected = false; },
+    value => { delete value.teardown; },
+    value => { value.teardown.pausedBackendsRemaining = 1; },
+    value => { value.teardown.postgresStopped = false; },
+    value => { value.teardown.fixtureDirectoryRemoved = false; },
     value => { value.sourceContextSha256 = 'c'.repeat(64); },
     value => { value.cases = []; },
     value => { value.cases.pop(); },
@@ -71,6 +118,8 @@ describe('inspection E2E fixture safety', () => {
     value => { value.cases[0].status = 'FAIL'; },
     value => { value.cases[0].databaseFingerprintUnchanged = false; },
     value => { value.cases[0].collectorSessionsRemaining = 1; },
+    value => { delete value.cases[0].receiptSha256; },
+    value => { value.cases[0].receiptStatus = 'SUCCESS'; },
   ])('rejects misbound or incomplete fixture evidence', change => {
     const value = proof(); change(value);
     expect(() => validateFixtureProof(value, expected)).toThrow();

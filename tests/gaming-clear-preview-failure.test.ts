@@ -51,6 +51,8 @@ describe('served Gaming CLEAR proof boundary', () => {
     binding.mockReset().mockImplementation(actualBinding.hasBoundGamingClearAnswer);
   });
 
+  // The complete guide proof includes large-source work; match its existing
+  // 30-second test bound for coverage instrumentation.
   it('runs the production decision cores and preserves the trusted response body', async () => {
     const response = await queryGuide();
     expect(response.status).toBe(200);
@@ -59,7 +61,7 @@ describe('served Gaming CLEAR proof boundary', () => {
       data: { response: 'Sealed preview guide response.', sources: [] } });
     for (const mock of [source, evidence, assessment, binding]) expect(mock).toHaveBeenCalled();
     expect(response.text).not.toContain('dimensionScores');
-  });
+  }, 30_000);
 
   it.each(['source acceptance bypass', 'evidence acceptance bypass', 'answer acceptance bypass', 'text binding bypass', 'unexpected error'])(
     'withholds every Gaming proof and the success body after %s', async scenario => {

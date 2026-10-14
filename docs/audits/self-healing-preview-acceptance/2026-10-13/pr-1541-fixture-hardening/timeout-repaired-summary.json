@@ -1,0 +1,21 @@
+{
+  "sourceReport": "timeout-repaired-covered.json",
+  "sourceReportSha256": "f23733b90e2196836063c46348e550f604aa91a9d188d5c45e250d5bc0e17bfa",
+  "commandExitCode": 1,
+  "scope": "After ten scoped preview-wrapper timeouts aligned to existing 30000ms repository convention. Global coverage thresholds and all assertions retained.",
+  "passedSuites": 5,
+  "failedSuites": 1,
+  "passedTests": 112,
+  "failedTests": 1,
+  "coverageScope": "Focused selection: unrelated all-file coverage thresholds remain unsatisfied; this is not a full coverage acceptance run.",
+  "failures": [
+    {
+      "path": "tests/native-pr-preview-application.test.ts",
+      "name": "native PR contained application withholds every Gaming proof and success output when the large-source assertions fail and recovers on a later request",
+      "durationMs": 5022,
+      "messages": [
+        "Error: thrown: \"Exceeded timeout of 5000 ms for a test.\nAdd a timeout value to this test to increase the timeout, if this is a long-running test. See https://jestjs.io/docs/api#testname-fn-timeout.\"\n    at /workspace/Arcanos-pr1541/tests/native-pr-preview-application.test.ts:3752:3\n    at _dispatchDescribe (/workspace/Arcanos-pr1541/node_modules/jest-circus/build/jestAdapterInit.js:604:26)\n    at describe (/workspace/Arcanos-pr1541/node_modules/jest-circus/build/jestAdapterInit.js:572:44)\n    at /workspace/Arcanos-pr1541/tests/native-pr-preview-application.test.ts:611:1\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)"
+      ]
+    }
+  ]
+}

@@ -11,7 +11,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { requiredFixtureCases } from '../tests/fixtures/railway-production-inspection/cases.mjs';
+import { fixtureCaseWritesReceipt, requiredFixtureCases } from '../tests/fixtures/railway-production-inspection/cases.mjs';
 
 const REPOSITORY = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const FIXTURES = 'tests/fixtures/railway-production-inspection';
@@ -208,6 +208,7 @@ async function inspectOwnedContainer(name, imageId, sourceSha) {
   return inspected;
 }
 
+/** Validate source-bound complete case evidence, including real PostgreSQL setup and teardown. */
 export function validateFixtureProof(proof, expected) {
   assert(proof?.schema === 'arcanos-production-inspection-e2e/v1' && ['PASS', 'FAIL'].includes(proof.status)
     && proof.sourceSha === expected.sourceSha && proof.postgresMajor === expected.postgresMajor
@@ -218,6 +219,14 @@ export function validateFixtureProof(proof, expected) {
     && proof.cases.every(item => typeof item?.name === 'string' && item.name.length <= 128
       && ['PASS', 'FAIL'].includes(item.status)), 'FIXTURE_PROOF_CASES_INVALID');
   const requiredCases = requiredFixtureCases(expected.postgresMajor);
+  if (proof.status === 'PASS') {
+    assert(typeof proof.postgresVersion === 'string' && proof.postgresVersion.length <= 128
+      && proof.postgresVersion.startsWith(`${expected.postgresMajor}.`), 'FIXTURE_PROOF_POSTGRES_VERSION_INVALID');
+    assert.deepEqual(proof.setupChecks, [{ name: 'database-server-key-mismatch', status: 'PASS',
+      postgresStartupRejected: true, collectorExecuted: false }], 'FIXTURE_PROOF_SETUP_CHECKS_INVALID');
+    assert.deepEqual(proof.teardown, { postgresStopped: true, fixtureDirectoryRemoved: true,
+      pausedBackendsRemaining: 0 }, 'FIXTURE_PROOF_TEARDOWN_INVALID');
+  }
   const observedCases = proof.cases.map(item => item.name);
   assert(proof.status !== 'PASS' || observedCases.length === requiredCases.length, 'FIXTURE_PROOF_CASES_INCOMPLETE');
   assert(observedCases.length <= requiredCases.length
@@ -225,10 +234,14 @@ export function validateFixtureProof(proof, expected) {
   assert(proof.status !== 'PASS' || proof.cases.every(item => item.status === 'PASS'), 'FIXTURE_PROOF_VERDICT_INVALID');
   assert(proof.cases.every(item => item.status !== 'PASS'
     || (item.databaseFingerprintUnchanged === true && item.collectorSessionsRemaining === 0)), 'FIXTURE_PROOF_DATABASE_EFFECT_INVALID');
+  assert(proof.cases.every(item => item.status !== 'PASS' || !fixtureCaseWritesReceipt(item.name)
+    || (/^[0-9a-f]{64}$/u.test(item.receiptSha256) && ['COLLECTION_COMPLETE', 'BLOCKED'].includes(item.receiptStatus))),
+  'FIXTURE_PROOF_RECEIPT_IDENTITY_INVALID');
   return proof;
 }
 
-function retainProof(directory, destination, expected) {
+/** Retain bounded proof only after independently hashing each reported collector receipt. */
+export function retainProof(directory, destination, expected) {
   const paths = regularFiles(directory);
   assert(paths.length <= 64 && paths.includes('proof.json'), 'FIXTURE_PROOF_FILES_INVALID');
   let bytes = 0;
@@ -240,6 +253,11 @@ function retainProof(directory, destination, expected) {
   }
   assert(bytes <= 2 * 1024 * 1024, 'FIXTURE_PROOF_BYTES_EXCEEDED');
   const proof = validateFixtureProof(JSON.parse(readFileSync(join(directory, 'proof.json'), 'utf8')), expected);
+  for (const item of proof.cases.filter(entry => entry.status === 'PASS' && fixtureCaseWritesReceipt(entry.name))) {
+    const receipt = readFileSync(join(directory, `${item.name}.json`));
+    assert(createHash('sha256').update(receipt).digest('hex') === item.receiptSha256
+      && JSON.parse(receipt.toString('utf8')).status === item.receiptStatus, 'FIXTURE_PROOF_RECEIPT_HASH_MISMATCH');
+  }
   mkdirSync(destination, { mode: 0o700 });
   for (const path of paths) copyInput(join(directory, path), join(destination, path));
   return proof;

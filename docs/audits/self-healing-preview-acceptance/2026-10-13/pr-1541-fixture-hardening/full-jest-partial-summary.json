@@ -1,0 +1,185 @@
+{
+  "status": "INCOMPLETE_FAILED",
+  "exitCode": 124,
+  "reason": "Outer45minute execution watchdog expired before all tests/coverage completed; failed tests also recorded.",
+  "passedSuitesBeforeTimeout": 794,
+  "failedSuiteLines": [
+    "FAIL tests/gate-r2-projector-session.test.js",
+    "FAIL tests/gaming-currentness-preview-failure.test.ts (47.124 s)",
+    "FAIL tests/gaming-clear-preview-failure.test.ts (38.533 s)",
+    "FAIL tests/gaming-durable-rag-preview-failure.test.ts (8.496 s)",
+    "FAIL tests/gaming-generation-budget-preview-failure.test.ts (22.822 s)",
+    "FAIL tests/gaming-progress-recovery-preview-failure.test.ts (8.327 s)"
+  ],
+  "failedAssertionsObserved": [
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a parses as PowerShell without executing"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a rejects an ambient projector token without echoing it"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a maps only fixed ledger request 1"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a maps only fixed ledger request 2"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a maps only fixed ledger request 3"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a maps only fixed ledger request 4"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a maps only fixed ledger request 5"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a maps only fixed ledger request 6"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a maps only fixed ledger request 7"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a maps only fixed ledger request 8"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a maps only fixed ledger request 9"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a maps only fixed ledger request 10"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a maps only fixed ledger request 11"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a maps only fixed ledger request 12"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a maps only fixed ledger request 13"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a rejects malformed, extended, or caller-selected projector requests"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a accepts only the projected result contract for ledger step 0"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a accepts only the projected result contract for ledger step 1"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a accepts only the projected result contract for ledger step 2"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a accepts only the projected result contract for ledger step 3"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a accepts only the projected result contract for ledger step 4"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a accepts only the projected result contract for ledger step 5"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a accepts only the projected result contract for ledger step 6"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a rejects a non-authoritative projector result for ledger step 0"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a rejects a non-authoritative projector result for ledger step 1"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a rejects a non-authoritative projector result for ledger step 2"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a rejects a non-authoritative projector result for ledger step 3"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a rejects a non-authoritative projector result for ledger step 4"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a rejects a non-authoritative projector result for ledger step 5"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a rejects a non-authoritative projector result for ledger step 6"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a fails closed for bounded-process fixture stdout-over"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a fails closed for bounded-process fixture stderr-over"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a fails closed for bounded-process fixture invalid-utf8"
+    },
+    {
+      "suite": "tests/gate-r2-projector-session.test.js",
+      "name": "Gate R2 bounded masked projector session \u203a fails closed for bounded-process fixture timeout"
+    },
+    {
+      "suite": "tests/gaming-currentness-preview-failure.test.ts",
+      "name": "served Gaming currentness proof boundary \u203a withholds every Gaming proof and success body after advisory freshness drift: mixed current-state request admitted"
+    },
+    {
+      "suite": "tests/gaming-currentness-preview-failure.test.ts",
+      "name": "served Gaming currentness proof boundary \u203a withholds every Gaming proof and success body after advisory freshness drift: honest passive warning rejected"
+    },
+    {
+      "suite": "tests/gaming-currentness-preview-failure.test.ts",
+      "name": "served Gaming currentness proof boundary \u203a withholds every Gaming proof and success body after continuation drift: prior contradiction dropped"
+    },
+    {
+      "suite": "tests/gaming-clear-preview-failure.test.ts",
+      "name": "served Gaming CLEAR proof boundary \u203a runs the production decision cores and preserves the trusted response body"
+    },
+    {
+      "suite": "tests/gaming-durable-rag-preview-failure.test.ts",
+      "name": "served Gaming durable RAG proof boundary \u203a adds the durable proof only after the real fixture succeeds and preserves the existing guide body"
+    },
+    {
+      "suite": "tests/gaming-generation-budget-preview-failure.test.ts",
+      "name": "served Gaming generation budget proof boundary \u203a adds budget proof after assertions pass and preserves the guide response"
+    },
+    {
+      "suite": "tests/gaming-progress-recovery-preview-failure.test.ts",
+      "name": "served Gaming progression and recovery proof boundary \u203a serves the unchanged body and all six markers after production-core assertions pass"
+    }
+  ],
+  "aggregateTestCounts": "unavailable (Jestdidnotcomplete)",
+  "jsonReportProduced": false,
+  "coverageComplete": false,
+  "logSha256": "caf71fe673d8b918c2cc84a981609229605c53acde0a9cedfa05273ed9acd953",
+  "completedAt": "2026-10-13T20:23:32.683176+00:00"
+}

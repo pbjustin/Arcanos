@@ -1,0 +1,414 @@
+{
+  "sourceReport": "native-repaired-covered.json",
+  "sourceReportSha256": "6c688891b9114ff18e175b85ee95d11c52f082d990c5b69ca9759cae7c5e98f0",
+  "commandExitCode": 1,
+  "scope": "After the eleventh scoped 30000ms wrapper alignment on native large-source recovery; all 79 assertions passed with coverage instrumentation.",
+  "passedSuites": 1,
+  "failedSuites": 0,
+  "passedTests": 79,
+  "failedTests": 0,
+  "skippedTests": 0,
+  "coverageResult": "Command exits 1 because focused-only execution cannot satisfy unchanged all-file coverage thresholds. This is assertion verification, not full coverage acceptance.",
+  "suites": [
+    {
+      "path": "tests/native-pr-preview-application.test.ts",
+      "tests": [
+        {
+          "name": "native PR contained application accepts only the exact credential-empty child environment",
+          "status": "passed",
+          "durationMs": 160
+        },
+        {
+          "name": "native PR contained application advertises an explicit trusted-PR containment scope and exact source identity",
+          "status": "passed",
+          "durationMs": 134
+        },
+        {
+          "name": "native PR contained application serves the canonical Backstage Booker Builder contract without synthetic provenance",
+          "status": "passed",
+          "durationMs": 44
+        },
+        {
+          "name": "native PR contained application returns 503 readiness until import and fixture sealing are complete and while draining",
+          "status": "passed",
+          "durationMs": 47
+        },
+        {
+          "name": "native PR contained application withholds Tutor honesty proof and success output when the shared composition fails",
+          "status": "passed",
+          "durationMs": 28
+        },
+        {
+          "name": "native PR contained application withholds both Tutor success markers and output when the migration core fixture fails",
+          "status": "passed",
+          "durationMs": 60
+        },
+        {
+          "name": "native PR contained application withholds all Gaming proof headers and output on query composition failure",
+          "status": "passed",
+          "durationMs": 24
+        },
+        {
+          "name": "native PR contained application withholds all Gaming proof headers and output on hybrid composition failure",
+          "status": "passed",
+          "durationMs": 6
+        },
+        {
+          "name": "native PR contained application requires successful DAG metrics proof for GET and HEAD readiness without changing the body",
+          "status": "passed",
+          "durationMs": 129
+        },
+        {
+          "name": "native PR contained application awaits DAG token accounting proof for GET and HEAD readiness before emitting any success marker",
+          "status": "passed",
+          "durationMs": 116
+        },
+        {
+          "name": "native PR contained application withholds readiness and all proof markers if draining begins while token accounting proof is pending",
+          "status": "passed",
+          "durationMs": 12
+        },
+        {
+          "name": "native PR contained application requires session context proof for GET and HEAD readiness and recovers after fixture failure",
+          "status": "passed",
+          "durationMs": 85
+        },
+        {
+          "name": "native PR contained application awaits session proof and withholds all markers if draining begins during get readiness",
+          "status": "passed",
+          "durationMs": 14
+        },
+        {
+          "name": "native PR contained application awaits session proof and withholds all markers if draining begins during head readiness",
+          "status": "passed",
+          "durationMs": 13
+        },
+        {
+          "name": "native PR contained application executes the real generic job handlers against immutable synthetic fixtures",
+          "status": "passed",
+          "durationMs": 27
+        },
+        {
+          "name": "native PR contained application executes the real Research validator and storage-key helper against sealed boundary fixtures",
+          "status": "passed",
+          "durationMs": 400
+        },
+        {
+          "name": "native PR contained application rejects unsealed Research fixture requests before contract evaluation",
+          "status": "passed",
+          "durationMs": 9
+        },
+        {
+          "name": "native PR contained application keeps the Research cancellation-drain proof isolated across requests",
+          "status": "passed",
+          "durationMs": 365
+        },
+        {
+          "name": "native PR contained application keeps the Research fixture selector behind transport and credential boundaries",
+          "status": "passed",
+          "durationMs": 24
+        },
+        {
+          "name": "native PR contained application executes the real Backstage storyline lifecycle components against sealed fixtures",
+          "status": "passed",
+          "durationMs": 62
+        },
+        {
+          "name": "native PR contained application keeps Backstage storyline fixtures sealed and transport-contained",
+          "status": "passed",
+          "durationMs": 22
+        },
+        {
+          "name": "native PR contained application executes sealed Backstage generation, HRC cache, review, Notion authority, and continuity contracts",
+          "status": "passed",
+          "durationMs": 13942
+        },
+        {
+          "name": "native PR contained application executes sealed output-admission and Notion Phase-A repair contracts",
+          "status": "passed",
+          "durationMs": 30
+        },
+        {
+          "name": "native PR contained application executes the managed Backstage async continuation contract without exposing credentials",
+          "status": "passed",
+          "durationMs": 8
+        },
+        {
+          "name": "native PR contained application executes the protected continuity failure policy without process fallback or draft output",
+          "status": "passed",
+          "durationMs": 8
+        },
+        {
+          "name": "native PR contained application executes the sealed GPT client identity and durable provenance contract",
+          "status": "passed",
+          "durationMs": 6
+        },
+        {
+          "name": "native PR contained application withholds GPT6 reasoning proof and success output on capabilities core drift",
+          "status": "passed",
+          "durationMs": 13268
+        },
+        {
+          "name": "native PR contained application withholds GPT6 reasoning proof and success output on effort core drift",
+          "status": "passed",
+          "durationMs": 13273
+        },
+        {
+          "name": "native PR contained application withholds GPT6 reasoning proof and success output on output-cap core drift",
+          "status": "passed",
+          "durationMs": 13276
+        },
+        {
+          "name": "native PR contained application withholds GPT6 reasoning proof and success output on sdk-max core drift",
+          "status": "passed",
+          "durationMs": 13306
+        },
+        {
+          "name": "native PR contained application keeps Backstage generation fixtures sealed",
+          "status": "passed",
+          "durationMs": 25
+        },
+        {
+          "name": "native PR contained application proves process readiness remains independent from a long authority sync",
+          "status": "passed",
+          "durationMs": 8
+        },
+        {
+          "name": "native PR contained application executes the production MCP pre-parser core against sealed streamed body boundaries",
+          "status": "passed",
+          "durationMs": 59
+        },
+        {
+          "name": "native PR contained application executes the production status auth boundary before its streamed body parser",
+          "status": "passed",
+          "durationMs": 43
+        },
+        {
+          "name": "native PR contained application executes the shared heartbeat auth, parser, and principal quota in sealed requests",
+          "status": "passed",
+          "durationMs": 62
+        },
+        {
+          "name": "native PR contained application redacts asynchronous heartbeat component failures and recovers without proof leakage",
+          "status": "passed",
+          "durationMs": 55
+        },
+        {
+          "name": "native PR contained application withholds heartbeat proof markers for every unlisted or credential-bearing request",
+          "status": "passed",
+          "durationMs": 20
+        },
+        {
+          "name": "native PR contained application keeps the status auth-boundary fixture sealed before outer parsing",
+          "status": "passed",
+          "durationMs": 17
+        },
+        {
+          "name": "native PR contained application keeps the MCP body-cap fixture sealed behind the preview transport boundary",
+          "status": "passed",
+          "durationMs": 16
+        },
+        {
+          "name": "native PR contained application executes the exact production GPT identifier boundary at 256 and 257 code units",
+          "status": "passed",
+          "durationMs": 13
+        },
+        {
+          "name": "native PR contained application keeps the dispatch identifier fixtures sealed before production parsing",
+          "status": "passed",
+          "durationMs": 25
+        },
+        {
+          "name": "native PR contained application executes the real effect-free self-heal approval policy through sealed fixtures",
+          "status": "passed",
+          "durationMs": 14
+        },
+        {
+          "name": "native PR contained application keeps the self-heal approval contract sealed and credential-free",
+          "status": "passed",
+          "durationMs": 18
+        },
+        {
+          "name": "native PR contained application serves closed, correlated, bounded public Gaming fixtures without provider execution",
+          "status": "passed",
+          "durationMs": 4890
+        },
+        {
+          "name": "native PR contained application withholds every Gaming proof and success output when live-source assertions fail",
+          "status": "passed",
+          "durationMs": 1476
+        },
+        {
+          "name": "native PR contained application withholds Gaming success when a returned report has omitted assertion",
+          "status": "passed",
+          "durationMs": 2707
+        },
+        {
+          "name": "native PR contained application withholds Gaming success when a returned report has missing case",
+          "status": "passed",
+          "durationMs": 2921
+        },
+        {
+          "name": "native PR contained application withholds Gaming success when a returned report has duplicate case",
+          "status": "passed",
+          "durationMs": 2877
+        },
+        {
+          "name": "native PR contained application withholds Gaming success when a returned report has failed check",
+          "status": "passed",
+          "durationMs": 2813
+        },
+        {
+          "name": "native PR contained application withholds Gaming success when a returned report has missing values",
+          "status": "passed",
+          "durationMs": 2756
+        },
+        {
+          "name": "native PR contained application withholds Gaming success when a returned report has false value",
+          "status": "passed",
+          "durationMs": 2907
+        },
+        {
+          "name": "native PR contained application withholds Gaming success when a returned report has wrong scope",
+          "status": "passed",
+          "durationMs": 2778
+        },
+        {
+          "name": "native PR contained application withholds Gaming success when a returned report has wrong version",
+          "status": "passed",
+          "durationMs": 2623
+        },
+        {
+          "name": "native PR contained application withholds every Gaming proof and success output when the large-source assertions fail and recovers on a later request",
+          "status": "passed",
+          "durationMs": 4830
+        },
+        {
+          "name": "native PR contained application rejects closed payload before large-source assertions or success proof",
+          "status": "passed",
+          "durationMs": 4
+        },
+        {
+          "name": "native PR contained application rejects unsupported action before large-source assertions or success proof",
+          "status": "passed",
+          "durationMs": 3
+        },
+        {
+          "name": "native PR contained application keeps exact Gaming-source paths closed with production-shaped unauthenticated responses",
+          "status": "passed",
+          "durationMs": 15
+        },
+        {
+          "name": "native PR contained application admits one canonical status decode and closes non-canonical encodings after the simulated selector",
+          "status": "passed",
+          "durationMs": 29
+        },
+        {
+          "name": "native PR contained application uses the closed 16 KiB Gaming-source parser boundary after the simulated selector",
+          "status": "passed",
+          "durationMs": 10
+        },
+        {
+          "name": "native PR contained application serves labeled, side-effect-free source admission and idempotency simulations",
+          "status": "passed",
+          "durationMs": 32
+        },
+        {
+          "name": "native PR contained application serves a deterministic source status lifecycle plus typed validation, absence, and outage",
+          "status": "passed",
+          "durationMs": 17
+        },
+        {
+          "name": "native PR contained application preserves blanket credential rejection and seals the preview-only selector",
+          "status": "passed",
+          "durationMs": 10
+        },
+        {
+          "name": "native PR contained application keeps synthetic cancellation deterministic across repeated runs",
+          "status": "passed",
+          "durationMs": 18
+        },
+        {
+          "name": "native PR contained application denies every unlisted method/path before application routing: GET /",
+          "status": "passed",
+          "durationMs": 3
+        },
+        {
+          "name": "native PR contained application denies every unlisted method/path before application routing: GET /gpt/arcanos-core",
+          "status": "passed",
+          "durationMs": 4
+        },
+        {
+          "name": "native PR contained application denies every unlisted method/path before application routing: POST /memory/save",
+          "status": "passed",
+          "durationMs": 4
+        },
+        {
+          "name": "native PR contained application denies every unlisted method/path before application routing: GET /metrics",
+          "status": "passed",
+          "durationMs": 5
+        },
+        {
+          "name": "native PR contained application denies every unlisted method/path before application routing: GET /jobs/11111111-1111-4111-8111-111111111111/stream",
+          "status": "passed",
+          "durationMs": 3
+        },
+        {
+          "name": "native PR contained application denies every unlisted method/path before application routing: OPTIONS /readyz",
+          "status": "passed",
+          "durationMs": 3
+        },
+        {
+          "name": "native PR contained application denies every unlisted method/path before application routing: GET /readyz?verbose=true",
+          "status": "passed",
+          "durationMs": 3
+        },
+        {
+          "name": "native PR contained application denies every unlisted method/path before application routing: GET /health%2fextra",
+          "status": "passed",
+          "durationMs": 8
+        },
+        {
+          "name": "native PR contained application rejects external credential carrier authorization without reflecting it",
+          "status": "passed",
+          "durationMs": 8
+        },
+        {
+          "name": "native PR contained application rejects external credential carrier cookie without reflecting it",
+          "status": "passed",
+          "durationMs": 3
+        },
+        {
+          "name": "native PR contained application rejects external credential carrier x-session-id without reflecting it",
+          "status": "passed",
+          "durationMs": 11
+        },
+        {
+          "name": "native PR contained application rejects external credential carrier x-arcanos-job-read-token without reflecting it",
+          "status": "passed",
+          "durationMs": 7
+        },
+        {
+          "name": "native PR contained application rejects external credential carrier x-openai-action-secret without reflecting it",
+          "status": "passed",
+          "durationMs": 3
+        },
+        {
+          "name": "native PR contained application rejects non-JSON cancellation bodies before routing: text/plain",
+          "status": "passed",
+          "durationMs": 6
+        },
+        {
+          "name": "native PR contained application rejects non-JSON cancellation bodies before routing: application/octet-stream",
+          "status": "passed",
+          "durationMs": 3
+        },
+        {
+          "name": "native PR contained application rejects bodies on read-only routes before routing",
+          "status": "passed",
+          "durationMs": 4
+        }
+      ]
+    }
+  ]
+}

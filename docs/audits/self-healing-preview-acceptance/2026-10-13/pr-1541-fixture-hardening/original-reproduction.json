@@ -1,0 +1,101 @@
+{
+  "schema": "arcanos-pr1541-original-regression/v1",
+  "initialHeadSha": "2a235722a345d9ece6752f9f7eec6b19a4d2cc6a",
+  "preFixSha": "f5e1d8f7266d906a1dd4adaaa10bb742be0d2e94",
+  "collectorSha256": "94ababb34f2bc052c64281c085411e0fa52e8b172da8b57ef9cc115cf6881c68",
+  "evidenceKind": "synthetic loopback PostgreSQL containers; original production collector bytes unchanged; fixture expectations adapted only in separate reproduction checkout",
+  "results": [
+    {
+      "postgresMajor": 17,
+      "unmodifiedAcceptanceTest": {
+        "status": "FAIL",
+        "failureCode": "database-issuer-signed-pin_EXIT_CODE_UNEXPECTED",
+        "proofSha256": "843638d07c509978813a322f8bad79d9dd571326b2e96eae919a148dd9078f73"
+      },
+      "adaptedNegativeExpectations": {
+        "status": "PASS",
+        "caseCount": 23,
+        "proofSha256": "0e3fed007f420d3f95eeee7733575146472dba1358860b942d3066ffa27a1397"
+      },
+      "certificates": [
+        {
+          "case": "complete-catalog",
+          "receiptSha256": "2e96095ef6b6a6e9ddbfefdbe6da15c4797663fe4708efc8cfae497e264c71c1",
+          "status": "COLLECTION_COMPLETE",
+          "failedStage": null,
+          "errorCode": null,
+          "connectionClosed": true,
+          "actualSqlStatementCount": 7,
+          "collectorSessionsRemaining": 0
+        },
+        {
+          "case": "database-issuer-signed-pin",
+          "receiptSha256": "8a938eae68050cf7d537f153034bae469d5f82e33b595354e80174653b13d7b3",
+          "status": "BLOCKED",
+          "failedStage": "connecting",
+          "errorCode": "INSPECTION_READ_FAILED",
+          "connectionClosed": true,
+          "actualSqlStatementCount": 0,
+          "collectorSessionsRemaining": 0
+        },
+        {
+          "case": "database-template-signed-pin",
+          "receiptSha256": "2db7f0c0eb7dc7332092a6685fcf51d6a7a14d0b334fc71d9cb4f466be20dbdd",
+          "status": "BLOCKED",
+          "failedStage": "connecting",
+          "errorCode": "INSPECTION_READ_FAILED",
+          "connectionClosed": true,
+          "actualSqlStatementCount": 0,
+          "collectorSessionsRemaining": 0
+        }
+      ]
+    },
+    {
+      "postgresMajor": 18,
+      "unmodifiedAcceptanceTest": {
+        "status": "FAIL",
+        "failureCode": "database-issuer-signed-pin_EXIT_CODE_UNEXPECTED",
+        "proofSha256": "97d7c8919dfff8db243b1393832b0a12d6749cb05766c23438c6291875609e72"
+      },
+      "adaptedNegativeExpectations": {
+        "status": "PASS",
+        "caseCount": 24,
+        "proofSha256": "f0011d0d414a7812f75f4ee23b672b47b57e4b706ef6554ef273d85b09a866dd"
+      },
+      "certificates": [
+        {
+          "case": "complete-catalog",
+          "receiptSha256": "7140410cf752953ccceef9dbb72639da7cc4026c04e9441112cac605b8875d3d",
+          "status": "COLLECTION_COMPLETE",
+          "failedStage": null,
+          "errorCode": null,
+          "connectionClosed": true,
+          "actualSqlStatementCount": 7,
+          "collectorSessionsRemaining": 0
+        },
+        {
+          "case": "database-issuer-signed-pin",
+          "receiptSha256": "ea2e63dffbdc49a88b662bebf3c9afd124bb135ac73033c4753017c8583f40f9",
+          "status": "BLOCKED",
+          "failedStage": "connecting",
+          "errorCode": "INSPECTION_READ_FAILED",
+          "connectionClosed": true,
+          "actualSqlStatementCount": 0,
+          "collectorSessionsRemaining": 0
+        },
+        {
+          "case": "database-template-signed-pin",
+          "receiptSha256": "3a99f1da09916f69de6e08097b3071297e19a26b02b2c7ab175dd3ae7c43a112",
+          "status": "BLOCKED",
+          "failedStage": "connecting",
+          "errorCode": "INSPECTION_READ_FAILED",
+          "connectionClosed": true,
+          "actualSqlStatementCount": 0,
+          "collectorSessionsRemaining": 0
+        }
+      ]
+    }
+  ],
+  "matrixSha256": "6fbe33a611fe9e590ed9b1614b453d44094f76a204a3343742a1ca9b3dd6be2f",
+  "expectationPatchSha256": "d9f1f824f9c93ba6aab4b55cff43ce38ece9da1ca19dc2aad4cb7235e46d1fdc"
+}

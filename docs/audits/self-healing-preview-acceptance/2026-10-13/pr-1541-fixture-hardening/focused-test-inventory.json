@@ -1,0 +1,484 @@
+{
+  "scope": "Local focused Jest validation; no production acceptance claimed.",
+  "sourceReport": "focused-final.json",
+  "sourceReportSha256": "4deb9b20fe3722db0cc3dbb68f02a915821bf984e1567cd1a61fa9d6ec080644",
+  "coverage": false,
+  "passedSuites": 4,
+  "passedTests": 112,
+  "failedTests": 0,
+  "skippedTests": 0,
+  "suites": [
+    {
+      "path": "tests/railway-production-inspection-tls.test.js",
+      "status": "passed",
+      "tests": [
+        {
+          "name": "production inspection authenticated TLS keeps ordinary certificate verification when the pin is undefined",
+          "status": "passed"
+        },
+        {
+          "name": "production inspection authenticated TLS keeps ordinary certificate verification when the pin is ",
+          "status": "passed"
+        },
+        {
+          "name": "production inspection authenticated TLS rejects an untrusted self-signed peer before completing the handshake",
+          "status": "passed"
+        },
+        {
+          "name": "production inspection authenticated TLS accepts the exact pinned certificate despite its unrelated hostname",
+          "status": "passed"
+        },
+        {
+          "name": "production inspection authenticated TLS accepts the exact pinned ordinary leaf without its issuer",
+          "status": "passed"
+        },
+        {
+          "name": "production inspection authenticated TLS accepts the exact pinned Railway-template signed authority without its issuer",
+          "status": "passed"
+        },
+        {
+          "name": "production inspection authenticated TLS reproduces the pre-fix rejection for the exact pinned ordinary leaf",
+          "status": "passed"
+        },
+        {
+          "name": "production inspection authenticated TLS reproduces the pre-fix rejection for the exact pinned Railway-template signed authority",
+          "status": "passed"
+        },
+        {
+          "name": "production inspection authenticated TLS rejects an expired issuer-signed certificate even when the exact peer is pinned",
+          "status": "passed"
+        },
+        {
+          "name": "production inspection authenticated TLS rejects a not-yet-valid issuer-signed certificate even when the exact peer is pinned",
+          "status": "passed"
+        },
+        {
+          "name": "production inspection authenticated TLS accepts a pinned server certificate with serverAuth extended key usage",
+          "status": "passed"
+        },
+        {
+          "name": "production inspection authenticated TLS accepts a pinned server certificate with serverAuth and clientAuth extended key usage",
+          "status": "passed"
+        },
+        {
+          "name": "production inspection authenticated TLS rejects a pinned certificate restricted to clientAuth",
+          "status": "passed"
+        },
+        {
+          "name": "production inspection authenticated TLS accepts a pinned server certificate restricted to digitalSignature key usage",
+          "status": "passed"
+        },
+        {
+          "name": "production inspection authenticated TLS rejects a pinned certificate restricted to keyCertSign key usage",
+          "status": "passed"
+        },
+        {
+          "name": "production inspection authenticated TLS rejects another certificate even when its chain is trusted by the pin",
+          "status": "passed"
+        },
+        {
+          "name": "production inspection authenticated TLS rejects a different certificate from the same issuer as the pin",
+          "status": "passed"
+        },
+        {
+          "name": "production inspection authenticated TLS rejects the pinned peer for requested hostname \"other.invalid\"",
+          "status": "passed"
+        },
+        {
+          "name": "production inspection authenticated TLS rejects the pinned peer for requested hostname \"shortline.proxy.rlwy.net.\"",
+          "status": "passed"
+        },
+        {
+          "name": "production inspection authenticated TLS rejects the pinned peer for requested hostname \"SHORTLINE.PROXY.RLWY.NET\"",
+          "status": "passed"
+        },
+        {
+          "name": "production inspection authenticated TLS rejects the pinned peer for requested hostname \"other.shortline.proxy.rlwy.net\"",
+          "status": "passed"
+        },
+        {
+          "name": "production inspection authenticated TLS rejects the pinned peer for requested hostname \"shortline.proxy.rlwy.net.other.invalid\"",
+          "status": "passed"
+        },
+        {
+          "name": "production inspection authenticated TLS rejects the pinned peer for requested hostname \"\"",
+          "status": "passed"
+        },
+        {
+          "name": "production inspection authenticated TLS rejects a certificate with another certificate's private key",
+          "status": "passed"
+        },
+        {
+          "name": "production inspection authenticated TLS does not downgrade TLS to a legacy protocol for an exact pinned peer",
+          "status": "passed"
+        },
+        {
+          "name": "production inspection authenticated TLS keeps certificate trust local to the pinned connection",
+          "status": "passed"
+        },
+        {
+          "name": "production inspection authenticated TLS still rejects an expired certificate whose fingerprint is pinned",
+          "status": "passed"
+        },
+        {
+          "name": "production inspection authenticated TLS rejects malformed certificates, bundles, extra content and oversized input",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "path": "tests/railway-production-readonly-inspection.test.js",
+      "status": "passed",
+      "tests": [
+        {
+          "name": "production read-only inspection collects a PG17 inventory with platform-default replicas and separates every release verdict",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection reads variables through only the existing bounded exact-target CLI helper",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection also inventories PG18 without converting collection into compatibility approval",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection rejects a mismatched RAILWAY_PROJECT_ID before connecting",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection rejects a mismatched RAILWAY_ENVIRONMENT_ID before connecting",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection rejects a mismatched RAILWAY_SERVICE_ID before connecting",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection rejects a mismatched RAILWAY_TCP_PROXY_DOMAIN before connecting",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection rejects a mismatched RAILWAY_TCP_PROXY_PORT before connecting",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection rejects a mismatched PGDATABASE before connecting",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection encodes credential characters in memory and accepts only the exact public proxy URL",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection blocks missing database credentials without exposing variable values",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection blocks read-only disabled and rolls back",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection blocks unsupported major and rolls back",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection blocks wrong actual database and rolls back",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection retains incomplete catalog inventory without asserting a valid contract",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection redacts raw query failures and forged inspectionCode properties while cleaning up",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection handles idle driver errors during the final metadata read without an unhandled raw error",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection bounds a hanging read and still attempts rollback and connection close",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection blocks unsuccessful rollback cleanup and never prints the error",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection blocks unsuccessful end cleanup and never prints the error",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection rejects deployment drift across independently fetched metadata snapshots",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection blocks partial pagination metadata before reading credentials",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection blocks wrong environment metadata before reading credentials",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection blocks duplicate instance metadata before reading credentials",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection blocks no running instance metadata before reading credentials",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection blocks missing target service metadata before reading credentials",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection accepts bounded JSON metadata but treats cli messages only as exact unverified claims",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection uses the supported endpoint/project-token header and a fixed metadata-only query at both reads",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection cancels streamed metadata immediately when the response exceeds its byte cap",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection never exposes GraphQL error payloads or HTTP errors in a receipt",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection rejects oversized catalog definitions rather than retaining arbitrary provider text",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection withholds catalog definitions containing a known credential",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection withholds catalog definitions containing a known credential",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection blocks malformed certificate configuration before reading database credentials",
+          "status": "passed"
+        },
+        {
+          "name": "production read-only inspection retains a sanitized receipt when database certificate authentication fails",
+          "status": "passed"
+        },
+        {
+          "name": "sanitized receipt retention writes only the fixed private receipt and refuses overwrites",
+          "status": "passed"
+        },
+        {
+          "name": "sanitized receipt retention retains a blocked receipt when bounded inventory with 5000-byte definitions exceeds artifact size",
+          "status": "passed"
+        },
+        {
+          "name": "sanitized receipt retention retains a blocked receipt when bounded inventory with 8192-byte definitions exceeds artifact size",
+          "status": "passed"
+        },
+        {
+          "name": "sanitized receipt retention refuses symlinked output and an oversized receipt",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "path": "tests/railway-inspection-e2e-harness.test.js",
+      "status": "passed",
+      "tests": [
+        {
+          "name": "inspection E2E fixture safety independently hashes and retains an untampered receipt bundle",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects changed receipt bytes even when JSON is valid and the claimed hash is unchanged",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects unsafe or ambiguous arguments \"--postgres-major\"",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects unsafe or ambiguous arguments \"--postgres-major\"",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects unsafe or ambiguous arguments \"--output-directory\"",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects unsafe or ambiguous arguments \"--output-directory\"",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects unsafe or ambiguous arguments \"--postgres-major\"",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects unsafe or ambiguous arguments \"--production\"",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects unsafe or ambiguous arguments \"--postgres-major\"",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety refuses an existing output directory without touching its files or starting Docker",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety requires a network-disabled read-only runtime with loopback aliases and no published ports",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects misbound or incomplete fixture evidence",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects misbound or incomplete fixture evidence",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects misbound or incomplete fixture evidence",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects misbound or incomplete fixture evidence",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects misbound or incomplete fixture evidence",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects misbound or incomplete fixture evidence",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects misbound or incomplete fixture evidence",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects misbound or incomplete fixture evidence",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects misbound or incomplete fixture evidence",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects misbound or incomplete fixture evidence",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects misbound or incomplete fixture evidence",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects misbound or incomplete fixture evidence",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects misbound or incomplete fixture evidence",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects misbound or incomplete fixture evidence",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects misbound or incomplete fixture evidence",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects misbound or incomplete fixture evidence",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects misbound or incomplete fixture evidence",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects misbound or incomplete fixture evidence",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects misbound or incomplete fixture evidence",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects misbound or incomplete fixture evidence",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects misbound or incomplete fixture evidence",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects misbound or incomplete fixture evidence",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects misbound or incomplete fixture evidence",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects misbound or incomplete fixture evidence",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety rejects misbound or incomplete fixture evidence",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety accepts the complete PostgreSQL 17 inventory",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety accepts the complete PostgreSQL 18 inventory",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety retains bound setup and partial failures without accepting incomplete success",
+          "status": "passed"
+        },
+        {
+          "name": "inspection E2E fixture safety keeps the preview-linked PostgreSQL matrix credential-free and retains failure receipts",
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "path": "tests/railway-auto-deploy-supply-chain.test.js",
+      "status": "passed",
+      "tests": [
+        {
+          "name": "Railway auto-deploy supply-chain containment uses only the reviewed immutable Action commits",
+          "status": "passed"
+        },
+        {
+          "name": "Railway auto-deploy supply-chain containment verifies the exact Railway CLI archive before executing it",
+          "status": "passed"
+        },
+        {
+          "name": "Railway auto-deploy supply-chain containment freezes the repository-owned executors that receive the project token",
+          "status": "passed"
+        },
+        {
+          "name": "Railway auto-deploy supply-chain containment exposes one project token only to the four paired Railway steps",
+          "status": "passed"
+        },
+        {
+          "name": "Railway auto-deploy supply-chain containment contains the read-only project token in one inspection step after token-free setup",
+          "status": "passed"
+        }
+      ]
+    }
+  ]
+}

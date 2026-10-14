@@ -50,6 +50,10 @@ let metadataServer;
 let currentCase;
 let clusterStarted = false;
 const sockets = new Set();
+const pausedBackends = new Set();
+let lockClient;
+let adminOptions;
+let fixtureVariables;
 
 function check(condition, code) {
   if (!condition) throw new Error(code);
@@ -73,21 +77,23 @@ function postgresCommand(executable, args) {
   return command('runuser', ['-u', 'postgres', '--', join(postgresBin, executable), ...args]);
 }
 
-function generateCertificate(name, hostname, { issuer, expired = false } = {}) {
+/** Generate only disposable keys; issuer-signed fixtures contain no issuer bundle. */
+function generateCertificate(name, hostname, { issuer, expired = false, future = false, certificateAuthority = !issuer } = {}) {
   proof.setupStage = `certificate-${name}`;
   const base = join(temporaryDirectory, name);
   const key = `${base}.key`;
   const cert = `${base}.crt`;
   const csr = `${base}.csr`;
   const extensions = `${base}.extensions`;
-  if (expired) {
-    const pair = generateExpiredCertificate();
+  if (expired || future) {
+    const pair = generateExpiredCertificate({ future });
     writeFileSync(key, pair.key, { mode: 0o600 });
     writeFileSync(cert, pair.cert, { mode: 0o600 });
     return { key, cert, pem: pair.cert };
   }
   writeFileSync(extensions,
-    `basicConstraints=critical,CA:${issuer ? 'FALSE' : 'TRUE'}\nsubjectAltName=DNS:${hostname}\n`);
+    `basicConstraints=critical,CA:${certificateAuthority ? 'TRUE' : 'FALSE'}\nsubjectAltName=DNS:${hostname}\n`
+    + (issuer && certificateAuthority ? 'keyUsage=digitalSignature,nonRepudiation,keyEncipherment,dataEncipherment\n' : ''));
   if (issuer) {
     command('openssl', ['req', '-new', '-newkey', 'rsa:2048', '-nodes', '-keyout', key,
       '-out', csr, '-subj', `/CN=${hostname}`]);
@@ -141,6 +147,7 @@ async function captureTlsSession() {
     cipher: rows[0].cipher };
 }
 
+/** Serve bounded synthetic provider responses and inject faults only at observed collector stages. */
 async function handleMetadata(request, response) {
   const active = currentCase;
   check(active, 'METADATA_OUTSIDE_CASE');
@@ -152,10 +159,15 @@ async function handleMetadata(request, response) {
       'METADATA_REQUEST_TOO_LARGE');
   }
   check(request.method === 'POST' && request.url === '/graphql/v2'
-    && request.headers['project-access-token'] === token,
+    && request.headers['project-access-token'] === (active.metadataMode === 'unauthorized' ? 'test-only-wrong-project-token' : token),
   'ACTUAL_METADATA_REQUEST_INVALID');
   check(JSON.stringify(JSON.parse(Buffer.concat(chunks).toString('utf8')))
     === JSON.stringify({ query: PRODUCTION_METADATA_QUERY }), 'ACTUAL_METADATA_QUERY_INVALID');
+  if (active.metadataMode === 'unauthorized') {
+    response.writeHead(403, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ errors: [{ message: 'synthetic authorization denied' }] }));
+    return;
+  }
   response.writeHead(200, { 'content-type': 'application/json' });
   if (active.metadataMode === 'timeout') {
     response.write('{');
@@ -179,7 +191,11 @@ async function handleMetadata(request, response) {
     response.end(JSON.stringify({ errors: [{ message: `${token} ${password}` }] }));
     return;
   }
-  if (active.metadataCalls === 2) await captureTlsSession();
+  if (active.metadataCalls === 2) {
+    await captureTlsSession();
+    if (active.afterInventory) await active.afterInventory();
+    if (active.interrupted) { response.destroy(); return; }
+  }
   // Two writes force the normal response through the streamed reader too.
   const body = JSON.stringify({ data: metadata({ expanded: active.expanded,
     drift: active.metadataMode === 'drift' && active.metadataCalls === 2 }) });
@@ -209,6 +225,7 @@ async function resetSchema() {
   await admin.query('GRANT USAGE ON SCHEMA public TO inspection_fixture_reader; GRANT SELECT ON ALL TABLES IN SCHEMA public TO inspection_fixture_reader;');
 }
 
+/** Replace the fixture's public certificate/private key and wait for PostgreSQL reload. */
 async function setDatabaseCertificate(pair) {
   copyFileSync(pair.cert, join(temporaryDirectory, 'server.crt'));
   copyFileSync(pair.key, join(temporaryDirectory, 'server.key'));
@@ -248,14 +265,16 @@ function collectorEnvironment(directory, certificatePem) {
   };
 }
 
+/** Execute the unchanged CLI and retain only bounded output and its actual termination status. */
 function executeCollector(environment) {
+  const active = currentCase;
   return new Promise(resolvePromise => {
-    execFile(process.execPath, [join(root, 'scripts/railway-production-readonly-inspection.mjs')], {
+    active.collectorProcess = execFile(process.execPath, [join(root, 'scripts/railway-production-readonly-inspection.mjs')], {
       cwd: root, env: environment, encoding: 'utf8', timeout: 45000,
       killSignal: 'SIGKILL', maxBuffer: 128 * 1024,
     }, (error, stdout, stderr) => {
       resolvePromise({ exitCode: error ? (Number.isInteger(error.code) ? error.code : null) : 0,
-        timedOut: error?.killed === true, stdout, stderr });
+        signal: error?.signal ?? null, timedOut: error?.killed === true && !active.interrupted, stdout, stderr });
     });
   });
 }
@@ -280,7 +299,94 @@ async function ensureNoSession() {
   throw new Error('COLLECTOR_SESSION_NOT_CLOSED');
 }
 
+/** Resume only a recorded disposable PostgreSQL backend, including failed-case teardown. */
+function resumeBackend(pid) {
+  if (!pausedBackends.has(pid)) return;
+  try { process.kill(pid, 'SIGCONT'); }
+  catch (error) { if (error.code !== 'ESRCH') throw error; }
+  pausedBackends.delete(pid);
+}
+
+/** Resolve the real collector session only after it reaches the expected PostgreSQL state. */
+async function collectorBackend(predicate) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const rows = (await admin.query(`SELECT pid, state, query, wait_event_type
+      FROM pg_stat_activity WHERE application_name=$1`, [applicationName])).rows;
+    check(rows.length <= 1, 'FIXTURE_MULTIPLE_COLLECTOR_BACKENDS');
+    if (rows.length === 1 && predicate(rows[0])) return rows[0];
+    await delay(20);
+  }
+  throw new Error('FIXTURE_COLLECTOR_STAGE_NOT_OBSERVED');
+}
+
+/** Pause an observed fixture backend for a bounded fault interval; always resume it afterward. */
+async function suspendBackend(backend, milliseconds) {
+  check(Number.isInteger(backend.pid) && backend.pid > 1, 'FIXTURE_BACKEND_PID_INVALID');
+  process.kill(backend.pid, 'SIGSTOP');
+  pausedBackends.add(backend.pid);
+  currentCase.injectedFault = { kind: 'backend-suspended', state: backend.state,
+    queryKind: normalizeSql(backend.query).split(' ')[0], durationMs: milliseconds };
+  try { await delay(milliseconds); } finally { resumeBackend(backend.pid); }
+}
+
+/** Reconnect the Unix-socket administrator after a deliberately stopped disposable cluster. */
+async function connectAdmin() {
+  admin = new Client({ ...adminOptions, database: 'railway' });
+  await admin.connect();
+}
+
+/** Reload a fixture PostgreSQL setting and verify the value through its live administrator. */
+async function setDatabaseSsl(enabled) {
+  appendFileSync(join(temporaryDirectory, 'data', 'postgresql.conf'), `\nssl=${enabled ? 'on' : 'off'}\n`);
+  postgresCommand('pg_ctl', ['-D', join(temporaryDirectory, 'data'), 'reload']);
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if ((await admin.query('SHOW ssl')).rows[0].ssl === (enabled ? 'on' : 'off')) return;
+    await delay(20);
+  }
+  throw new Error('FIXTURE_SSL_RELOAD_TIMEOUT');
+}
+
+/** Recover owned paused backends and locks even when a case assertion or injection fails. */
+async function cleanupCase() {
+  for (const pid of pausedBackends) resumeBackend(pid);
+  if (lockClient) {
+    try { await lockClient.query('ROLLBACK'); } finally { await lockClient.end(); lockClient = undefined; }
+  }
+  if (currentCase?.collectorProcess && currentCase.collectorProcess.exitCode === null
+    && currentCase.collectorProcess.signalCode === null) {
+    currentCase.collectorProcess.kill('SIGKILL');
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if (currentCase.collectorProcess.exitCode !== null || currentCase.collectorProcess.signalCode !== null) break;
+      await delay(20);
+    }
+    check(currentCase.collectorProcess.exitCode !== null || currentCase.collectorProcess.signalCode !== null,
+      'FIXTURE_COLLECTOR_CLEANUP_TIMEOUT');
+  }
+  if (currentCase?.backgroundFault) await currentCase.backgroundFault;
+}
+
+/** Execute and verify one case, restoring fault state before allowing any subsequent case. */
 async function runCase(name, options = {}) {
+  let afterCollectorRequired = false;
+  try {
+    await executeCase(name, { ...options,
+      beforeCollector: async () => {
+        afterCollectorRequired = Boolean(options.afterCollector);
+        if (options.beforeCollector) await options.beforeCollector();
+      },
+      afterCollector: async () => {
+        if (options.afterCollector) await options.afterCollector();
+        afterCollectorRequired = false;
+      },
+    });
+  } finally {
+    try { await cleanupCase(); }
+    finally { if (afterCollectorRequired) await options.afterCollector(); }
+  }
+}
+
+/** Assert actual SQL, immutable data, sanitized receipts and process/session cleanup for one case. */
+async function executeCase(name, options = {}) {
   check(requiredFixtureCases(postgresMajor)[proof.cases.length] === name, 'FIXTURE_CASE_ORDER_INVALID');
   const caseProof = { name, status: 'FAIL' };
   proof.cases.push(caseProof);
@@ -302,15 +408,36 @@ async function runCase(name, options = {}) {
   }
   const environment = { ...collectorEnvironment(directory,
     options.certificatePem ?? currentCase.defaultCertificatePem), ...options.environment };
+  const variables = { ...fixtureVariables, ...options.variables };
+  writeFileSync(environment.FIXTURE_VARIABLES_FILE, JSON.stringify(variables), { mode: 0o600 });
+  const secrets = [...new Set([token, password, environment.RAILWAY_TOKEN, variables.PGPASSWORD])]
+    .filter(value => typeof value === 'string' && value.length > 0);
+  await options.beforeCollector();
   const startedAt = Date.now();
-  const result = await executeCollector(environment);
+  const execution = executeCollector(environment);
+  if (options.duringCollector) {
+    currentCase.backgroundFault = options.duringCollector();
+    // Attach the rejection handler immediately, while still awaiting both operations below.
+    currentCase.backgroundFault.catch(() => currentCase.collectorProcess.kill('SIGKILL'));
+  }
+  const result = await execution;
+  // Measure the collector's exit before waiting for an injected fault to finish.
   const elapsedMs = Date.now() - startedAt;
+  if (currentCase.backgroundFault) await currentCase.backgroundFault;
+  await options.afterCollector();
   check(!result.timedOut, `${name}_COLLECTOR_HARNESS_TIMEOUT`);
-  check(![token, password].some(secret => result.stdout.includes(secret) || result.stderr.includes(secret)),
+  check(!currentCase.serverFailure, `${name}_METADATA_FIXTURE_FAILED`);
+  check(!secrets.some(secret => result.stdout.includes(secret) || result.stderr.includes(secret)),
     `${name}_OUTPUT_CREDENTIAL_LEAK`);
+  check(!/-----BEGIN (?:RSA |EC |ENCRYPTED )?PRIVATE KEY-----/u.test(result.stdout + result.stderr),
+    `${name}_OUTPUT_PRIVATE_KEY_LEAK`);
   await ensureNoSession();
   check(await fingerprint() === before, `${name}_DATABASE_MUTATED`);
   const log = readFileSync(join(temporaryDirectory, 'postgres.log')).subarray(logOffset).toString('utf8');
+  if (options.expectedPostgresError) {
+    check(options.expectedPostgresError.test(log), `${name}_SERVER_FAILURE_NOT_OBSERVED`);
+    caseProof.postgresFailureObserved = true;
+  }
   const statements = actualStatements(log);
   const expectedStatements = ['BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY',
     'SET LOCAL search_path = pg_catalog, public', ...Object.values(CATALOG_QUERIES), 'ROLLBACK'].map(normalizeSql);
@@ -329,7 +456,8 @@ async function runCase(name, options = {}) {
     check(terminated, `${name}_CLI_PROCESS_NOT_TERMINATED`);
     caseProof.cliSubprocessTerminated = true;
   }
-  check(result.exitCode === (options.exitCode ?? (options.errorCode ? 1 : 0)), `${name}_EXIT_CODE_UNEXPECTED`);
+  check(result.exitCode === (Object.hasOwn(options, 'exitCode') ? options.exitCode : (options.errorCode ? 1 : 0)), `${name}_EXIT_CODE_UNEXPECTED`);
+  check(result.signal === (options.exitSignal ?? null), `${name}_EXIT_SIGNAL_UNEXPECTED`);
   check(currentCase.metadataCalls === (options.metadataCalls ?? 2), `${name}_METADATA_CALL_COUNT_INVALID`);
   check(cliCalls === (options.cliCalls ?? 1), `${name}_CLI_CALL_COUNT_INVALID`);
   if (options.noReceipt || options.writer) {
@@ -343,7 +471,8 @@ async function runCase(name, options = {}) {
     const serialized = readFileSync(receiptPath, 'utf8');
     check(Buffer.byteLength(serialized) <= 65536 && (statSync(receiptPath).mode & 0o777) === 0o600,
       `${name}_RECEIPT_BOUNDS_OR_PERMISSIONS_INVALID`);
-    check(![token, password].some(secret => serialized.includes(secret)), `${name}_RECEIPT_CREDENTIAL_LEAK`);
+    check(!secrets.some(secret => serialized.includes(secret)), `${name}_RECEIPT_CREDENTIAL_LEAK`);
+    check(!/-----BEGIN (?:RSA |EC |ENCRYPTED )?PRIVATE KEY-----/u.test(serialized), `${name}_RECEIPT_PRIVATE_KEY_LEAK`);
     const receipt = JSON.parse(serialized);
     check(receipt.status === (options.errorCode ? 'BLOCKED' : 'COLLECTION_COMPLETE'), `${name}_RECEIPT_STATUS_INVALID`);
     check(receipt.inspectionSourceSha === sourceSha && receipt.contractVerdict === 'NOT_EVALUATED'
@@ -352,16 +481,22 @@ async function runCase(name, options = {}) {
     `${name}_RECEIPT_AUTHORITY_ESCALATED`);
     check(output === 'inspection_receipt_written=true\n', `${name}_OUTPUT_MARKER_INVALID`);
     if (options.errorCode) check([options.errorCode].flat().includes(receipt.errorCode), `${name}_RECEIPT_ERROR_INVALID`);
-    if (options.stage) check(receipt.failedStage === options.stage, `${name}_RECEIPT_STAGE_INVALID`);
+    if (options.stage) check([options.stage].flat().includes(receipt.failedStage), `${name}_RECEIPT_STAGE_INVALID`);
     writeFileSync(join(proofDirectory, `${name}.json`), serialized, { mode: 0o600, flag: 'wx' });
     Object.assign(caseProof, { receiptStatus: receipt.status, receiptBytes: Buffer.byteLength(serialized),
-      receiptMode: '0600', outputMarker: true });
+      receiptMode: '0600', receiptSha256: sha256(serialized), outputMarker: true });
     if (receipt.database) caseProof.databaseReadOnly = receipt.database.readOnly;
     if (receipt.errorCode) caseProof.errorCode = receipt.errorCode;
     if (options.inspectReceipt) await options.inspectReceipt(receipt);
   }
   if (options.sql === 'none') check(statements.length === 0, `${name}_UNEXPECTED_DATABASE_SQL`);
-  else if (options.sql === 'partial') {
+  else if (options.sql === 'before-rollback') {
+    check(JSON.stringify(statements) === JSON.stringify(expectedStatements.slice(0, -1)),
+      `${name}_ACTUAL_SQL_SEQUENCE_INVALID`);
+  } else if (options.sql === 'columns-failure') {
+    check(JSON.stringify(statements) === JSON.stringify([...expectedStatements.slice(0, 4), 'ROLLBACK']),
+      `${name}_ABORTED_TRANSACTION_NOT_ROLLED_BACK`);
+  } else if (options.sql === 'partial') {
     check(JSON.stringify(statements) === JSON.stringify([...expectedStatements.slice(0, 5), 'ROLLBACK']),
       `${name}_SQL_NOT_READ_ONLY`);
   } else {
@@ -375,6 +510,8 @@ async function runCase(name, options = {}) {
     actualSqlStatementKinds: statements.map(statement => statement.split(' ')[0]),
     databaseFingerprintUnchanged: true, collectorSessionsRemaining: 0 });
   if (currentCase.tls) caseProof.databaseTls = currentCase.tls;
+  if (currentCase.injectedFault) caseProof.injectedFault = currentCase.injectedFault;
+  if (result.signal) caseProof.collectorSignal = result.signal;
   if (currentCase.expectedInventoryBytes) caseProof.expectedInventoryBytes = currentCase.expectedInventoryBytes;
   if (options.metadataMode === 'oversized' || options.metadataMode === 'timeout') {
     check(currentCase.metadataStreamCancelled === true, `${name}_METADATA_STREAM_NOT_CANCELLED`);
@@ -383,10 +520,14 @@ async function runCase(name, options = {}) {
   if (options.cliMode === 'timeout') {
     check(elapsedMs >= 29000 && elapsedMs < 35000, `${name}_CLI_TIMEOUT_BOUND_INVALID`);
   }
+  if (options.elapsedBounds) {
+    check(elapsedMs >= options.elapsedBounds[0] && elapsedMs < options.elapsedBounds[1], `${name}_FAULT_TIMEOUT_BOUND_INVALID`);
+  }
   caseProof.status = 'PASS';
   process.stdout.write(`${name}: PASS\n`);
 }
 
+/** Assemble an isolated database/provider environment, then run the versioned failure matrix. */
 async function main() {
   proof.setupStage = 'input';
   if (existsSync(join(root, 'source-context.json'))) {
@@ -414,17 +555,22 @@ async function main() {
   const databasePair = generateCertificate('database', 'fixture.invalid');
   const otherPair = generateCertificate('other-database', 'fixture.invalid');
   const trustedAlternate = generateCertificate('trusted-alternate', 'alternate.fixture.invalid', { issuer: databasePair });
+  const siblingPair = generateCertificate('sibling-database', 'sibling.fixture.invalid', { issuer: databasePair });
+  const templatePair = generateCertificate('template-database', 'fixture.invalid',
+    { issuer: databasePair, certificateAuthority: true });
   const expiredPair = generateCertificate('expired-database', 'fixture.invalid', { expired: true });
+  const futurePair = generateCertificate('future-database', 'fixture.invalid', { future: true });
   const metadataPair = generateCertificate('metadata', 'backboard.railway.com');
   mkdirSync(join(temporaryDirectory, 'bin'));
   copyFileSync(join(fixtureDirectory, 'railway.mjs'), join(temporaryDirectory, 'bin', 'railway'));
   chmodSync(join(temporaryDirectory, 'bin', 'railway'), 0o755);
-  writeFileSync(join(temporaryDirectory, 'variables.json'), JSON.stringify({
+  fixtureVariables = {
     RAILWAY_PROJECT_ID: TARGET.projectId, RAILWAY_ENVIRONMENT_ID: TARGET.environmentId,
     RAILWAY_SERVICE_ID: TARGET.databaseServiceId, RAILWAY_TCP_PROXY_DOMAIN: TARGET.proxyHost,
     RAILWAY_TCP_PROXY_PORT: TARGET.proxyPort, PGDATABASE: TARGET.databaseName,
     PGUSER: 'inspection_fixture_reader', PGPASSWORD: password, ignoredSecret: token,
-  }), { mode: 0o600 });
+  };
+  writeFileSync(join(temporaryDirectory, 'variables.json'), JSON.stringify(fixtureVariables), { mode: 0o600 });
   const uid = Number(command('id', ['-u', 'postgres']).trim());
   const gid = Number(command('id', ['-g', 'postgres']).trim());
   mkdirSync(join(temporaryDirectory, 'data'), { mode: 0o700 });
@@ -452,11 +598,28 @@ log_disconnections=on
 `);
   writeFileSync(join(temporaryDirectory, 'data', 'pg_hba.conf'),
     'local all all trust\nhostssl railway inspection_fixture_reader 127.0.0.1/32 scram-sha-256\nhostnossl all all 127.0.0.1/32 reject\n');
+  // This is a PostgreSQL setup rejection, never evidence that a collector accepted or rejected TLS.
+  proof.setupStage = 'postgres-key-mismatch-rejection';
+  await setDatabaseCertificate({ cert: databasePair.cert, key: otherPair.key });
+  let mismatchedStartupRejected = false;
+  const mismatchLogOffset = statSync(join(temporaryDirectory, 'postgres.log')).size;
+  try {
+    postgresCommand('pg_ctl', ['-D', join(temporaryDirectory, 'data'), '-l',
+      join(temporaryDirectory, 'postgres.log'), '-w', '-t', '5', 'start']);
+    clusterStarted = true;
+  } catch { mismatchedStartupRejected = true; }
+  check(mismatchedStartupRejected && !existsSync(join(temporaryDirectory, 'data', 'postmaster.pid')),
+    'FIXTURE_MISMATCHED_KEY_STARTUP_NOT_REJECTED');
+  check(/(?:does not match[^\n]*certificate|could not load private key file[^\n]*key values mismatch)/u.test(readFileSync(join(temporaryDirectory, 'postgres.log'))
+    .subarray(mismatchLogOffset).toString('utf8')), 'FIXTURE_MISMATCHED_KEY_CAUSE_NOT_OBSERVED');
+  proof.setupChecks = [{ name: 'database-server-key-mismatch', status: 'PASS',
+    postgresStartupRejected: true, collectorExecuted: false }];
+  await setDatabaseCertificate(databasePair);
   proof.setupStage = 'postgres-start';
   postgresCommand('pg_ctl', ['-D', join(temporaryDirectory, 'data'), '-l',
     join(temporaryDirectory, 'postgres.log'), '-w', '-t', '10', 'start']);
   clusterStarted = true;
-  const adminOptions = { host: join(temporaryDirectory, 'socket'), port: Number(TARGET.proxyPort),
+  adminOptions = { host: join(temporaryDirectory, 'socket'), port: Number(TARGET.proxyPort),
     user: 'postgres', application_name: 'inspection_fixture_admin',
     connectionTimeoutMillis: 2000, query_timeout: 5000 };
   proof.setupStage = 'admin-connect';
@@ -466,9 +629,9 @@ log_disconnections=on
   await admin.query('CREATE DATABASE railway');
   await admin.query(`CREATE ROLE inspection_fixture_reader LOGIN PASSWORD ${sqlLiteral(password)}`);
   await admin.end();
-  admin = new Client({ ...adminOptions, database: 'railway' });
   proof.setupStage = 'admin-reconnect';
-  await admin.connect();
+  await connectAdmin();
+  proof.postgresVersion = (await admin.query('SHOW server_version')).rows[0].server_version;
   metadataServer = createServer({ key: readFileSync(metadataPair.key), cert: readFileSync(metadataPair.cert) },
     (request, response) => { handleMetadata(request, response).catch(() => {
       if (currentCase) currentCase.serverFailure = true;
@@ -589,10 +752,111 @@ log_disconnections=on
   await setDatabaseCertificate(trustedAlternate);
   await runCase('database-different-trusted-peer', { ...common,
     errorCode: 'DATABASE_CERTIFICATE_MISMATCH', stage: 'connecting', metadataCalls: 1, sql: 'none' });
+  await runCase('database-issuer-signed-pin', { ...common, certificatePem: trustedAlternate.pem });
+  await setDatabaseCertificate(templatePair);
+  await runCase('database-template-signed-pin', { ...common, certificatePem: templatePair.pem });
+  await setDatabaseCertificate(siblingPair);
+  await runCase('database-same-issuer-different-peer', { ...common, certificatePem: trustedAlternate.pem,
+    errorCode: 'INSPECTION_READ_FAILED', stage: 'connecting', metadataCalls: 1, sql: 'none' });
   await setDatabaseCertificate(expiredPair);
   await runCase('database-expired-pin', { ...common, certificatePem: expiredPair.pem,
     errorCode: 'INSPECTION_READ_FAILED', stage: 'connecting', metadataCalls: 1, sql: 'none' });
+  await setDatabaseCertificate(futurePair);
+  await runCase('database-future-pin', { ...common, certificatePem: futurePair.pem,
+    errorCode: 'INSPECTION_READ_FAILED', stage: 'connecting', metadataCalls: 1, sql: 'none' });
   await setDatabaseCertificate(databasePair);
+  await runCase('database-malformed-pin', { ...common, certificatePem: 'invalid fixture certificate',
+    errorCode: 'DATABASE_CERTIFICATE_INVALID', stage: 'input', metadataCalls: 0, cliCalls: 0, sql: 'none' });
+  await runCase('database-bundle-pin', { ...common, certificatePem: trustedAlternate.pem + databasePair.pem,
+    errorCode: 'DATABASE_CERTIFICATE_INVALID', stage: 'input', metadataCalls: 0, cliCalls: 0, sql: 'none' });
+  await runCase('project-token-missing', { ...common, environment: { RAILWAY_TOKEN: '' },
+    errorCode: 'PROJECT_TOKEN_MISSING', stage: 'input', metadataCalls: 0, cliCalls: 0, sql: 'none' });
+  await runCase('project-token-incorrect', { ...common, environment: { RAILWAY_TOKEN: 'test-only-wrong-project-token' },
+    metadataMode: 'unauthorized', errorCode: 'PROVIDER_READ_FAILED', stage: 'metadata_before',
+    metadataCalls: 1, cliCalls: 0, sql: 'none' });
+  await runCase('database-credentials-missing', { ...common, variables: { PGPASSWORD: '' },
+    errorCode: 'DATABASE_CREDENTIALS_MISSING', stage: 'variables', metadataCalls: 1, sql: 'none' });
+  await runCase('database-authentication-failure', { ...common, variables: { PGPASSWORD: 'test-only-wrong-database-password' },
+    errorCode: 'INSPECTION_READ_FAILED', stage: 'connecting', metadataCalls: 1, sql: 'none',
+    expectedPostgresError: /password authentication failed for user "inspection_fixture_reader"/u });
+  await runCase('database-target-mismatch', { ...common, variables: { RAILWAY_TCP_PROXY_DOMAIN: 'wrong.fixture.invalid' },
+    errorCode: 'DATABASE_TARGET_MISMATCH', stage: 'variables', metadataCalls: 1, sql: 'none' });
+  await runCase('database-tls-downgrade', { ...common,
+    beforeCollector: () => setDatabaseSsl(false), afterCollector: () => setDatabaseSsl(true),
+    errorCode: 'INSPECTION_READ_FAILED', stage: 'connecting', metadataCalls: 1, sql: 'none' });
+  await runCase('database-connection-refused', { ...common,
+    beforeCollector: async () => {
+      await admin.end(); admin = undefined;
+      postgresCommand('pg_ctl', ['-D', join(temporaryDirectory, 'data'), '-m', 'fast', '-w', '-t', '5', 'stop']);
+      clusterStarted = false;
+    },
+    afterCollector: async () => {
+      if (!clusterStarted) {
+        postgresCommand('pg_ctl', ['-D', join(temporaryDirectory, 'data'), '-l',
+          join(temporaryDirectory, 'postgres.log'), '-w', '-t', '10', 'start']);
+        clusterStarted = true;
+      }
+      if (!admin) await connectAdmin();
+    }, errorCode: 'INSPECTION_READ_FAILED', stage: 'connecting', metadataCalls: 1, sql: 'none' });
+  await runCase('database-query-error-aborted-transaction', { ...common,
+    beforeCollector: () => admin.query('REVOKE SELECT ON pg_catalog.pg_attribute FROM PUBLIC'),
+    afterCollector: () => admin.query('GRANT SELECT ON pg_catalog.pg_attribute TO PUBLIC'),
+    errorCode: 'INSPECTION_READ_FAILED', stage: 'columns', metadataCalls: 1, sql: 'columns-failure',
+    expectedPostgresError: /permission denied for table pg_attribute/u,
+    inspectReceipt: receipt => assert.equal(receipt.connectionClosed, true) });
+  await runCase('database-query-timeout', { ...common,
+    beforeCollector: async () => {
+      lockClient = new Client({ ...adminOptions, database: 'railway' });
+      await lockClient.connect();
+      await lockClient.query('BEGIN');
+      await lockClient.query('LOCK TABLE pg_catalog.pg_constraint IN ACCESS EXCLUSIVE MODE');
+    }, duringCollector: async () => {
+      const backend = await collectorBackend(row => row.wait_event_type === 'Lock'
+        && normalizeSql(row.query) === normalizeSql(CATALOG_QUERIES.constraints));
+      await captureTlsSession();
+      const suspended = suspendBackend(backend, 5500);
+      await lockClient.query('ROLLBACK');
+      await lockClient.end(); lockClient = undefined;
+      await suspended;
+    }, errorCode: ['DATABASE_TIMEOUT', 'INSPECTION_READ_FAILED'], stage: 'constraints',
+    metadataCalls: 1, sql: 'partial', elapsedBounds: [5000, 12000],
+    inspectReceipt: receipt => assert.equal(receipt.connectionClosed, true) });
+  await runCase('database-connection-loss', { ...common,
+    afterInventory: async () => {
+      const backend = await collectorBackend(row => row.state === 'idle in transaction'
+        && normalizeSql(row.query) === normalizeSql(CATALOG_QUERIES.indexes));
+      check((await admin.query('SELECT pg_terminate_backend($1, 1000) AS stopped', [backend.pid])).rows[0].stopped,
+        'FIXTURE_BACKEND_TERMINATION_FAILED');
+      currentCase.injectedFault = { kind: 'backend-terminated', state: backend.state };
+    }, errorCode: 'DATABASE_CLEANUP_FAILED', stage: 'cleanup', sql: 'before-rollback',
+    inspectReceipt: receipt => assert.equal(receipt.connectionClosed, false) });
+  await runCase('database-cleanup-timeout', { ...common,
+    afterInventory: async () => {
+      const backend = await collectorBackend(row => row.state === 'idle in transaction'
+        && normalizeSql(row.query) === normalizeSql(CATALOG_QUERIES.indexes));
+      currentCase.backgroundFault = suspendBackend(backend, 6500);
+    }, errorCode: 'DATABASE_CLEANUP_FAILED', stage: 'cleanup',
+    elapsedBounds: [5000, 12000],
+    inspectReceipt: receipt => assert.equal(receipt.connectionClosed, false) });
+  await runCase('collector-interrupted', { ...common,
+    afterInventory: async () => {
+      await collectorBackend(row => row.state === 'idle in transaction'
+        && normalizeSql(row.query) === normalizeSql(CATALOG_QUERIES.indexes));
+      currentCase.interrupted = true;
+      check(currentCase.collectorProcess.kill('SIGTERM'), 'FIXTURE_COLLECTOR_INTERRUPT_FAILED');
+      currentCase.injectedFault = { kind: 'collector-sigterm', state: 'idle in transaction' };
+    }, noReceipt: true, exitCode: null, exitSignal: 'SIGTERM', sql: 'before-rollback' });
+  await runCase('collector-interrupted-during-backend-pause', { ...common,
+    afterInventory: async () => {
+      const backend = await collectorBackend(row => row.state === 'idle in transaction'
+        && normalizeSql(row.query) === normalizeSql(CATALOG_QUERIES.indexes));
+      currentCase.backgroundFault = suspendBackend(backend, 6500);
+      currentCase.interrupted = true;
+      check(currentCase.collectorProcess.kill('SIGTERM'), 'FIXTURE_COLLECTOR_INTERRUPT_FAILED');
+      currentCase.injectedFault.kind = 'collector-sigterm-during-backend-pause';
+    }, noReceipt: true, exitCode: null, exitSignal: 'SIGTERM', sql: 'before-rollback',
+    // The real child must exit promptly even though fixture teardown resumes its backend later.
+    elapsedBounds: [0, 5000] });
   await runCase('metadata-output-limit', { ...common, metadataMode: 'oversized',
     errorCode: 'METADATA_TOO_LARGE', stage: 'metadata_before', metadataCalls: 1, cliCalls: 0, sql: 'none' });
   await runCase('metadata-stream-timeout', { ...common, metadataMode: 'timeout',
@@ -629,14 +893,23 @@ try {
   process.stderr.write(`${proof.failureCode}\n`);
   process.exitCode = 1;
 } finally {
+  try { await cleanupCase(); }
+  catch { proof.status = 'FAIL'; proof.cleanupFailure = 'FIXTURE_CASE_CLEANUP_FAILED'; process.exitCode = 1; }
   for (const socket of sockets) socket.destroy();
   if (metadataServer?.listening) await new Promise(resolvePromise => metadataServer.close(resolvePromise));
   if (admin) { try { await admin.end(); } catch {} }
   if (clusterStarted) {
-    try { postgresCommand('pg_ctl', ['-D', join(temporaryDirectory, 'data'), '-m', 'immediate', '-w', '-t', '5', 'stop']); }
+    try {
+      postgresCommand('pg_ctl', ['-D', join(temporaryDirectory, 'data'), '-m', 'immediate', '-w', '-t', '5', 'stop']);
+      check(!existsSync(join(temporaryDirectory, 'data', 'postmaster.pid')), 'FIXTURE_DATABASE_PID_REMAINS');
+      clusterStarted = false;
+    }
     catch { proof.status = 'FAIL'; proof.cleanupFailure = 'FIXTURE_DATABASE_STOP_FAILED'; process.exitCode = 1; }
   }
-  if (temporaryDirectory) rmSync(temporaryDirectory, { recursive: true, force: true });
+  if (temporaryDirectory && !clusterStarted) rmSync(temporaryDirectory, { recursive: true, force: true });
+  proof.teardown = { postgresStopped: !clusterStarted,
+    fixtureDirectoryRemoved: !temporaryDirectory || !existsSync(temporaryDirectory),
+    pausedBackendsRemaining: pausedBackends.size };
   mkdirSync(proofDirectory, { recursive: true });
   writeFileSync(join(proofDirectory, 'proof.json'), `${JSON.stringify(proof, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
   process.stdout.write(`inspection fixture PG${postgresMajor}: ${proof.status} (${proof.cases.filter(item => item.status === 'PASS').length}/${proof.cases.length})\n`);

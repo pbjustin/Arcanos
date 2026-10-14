@@ -1,0 +1,373 @@
+{
+  "schema": "arcanos-pr1541-artifact-hashes/v1",
+  "kind": "synthetic working-tree evidence; exact committed-head verification is a separate post-publication artifact",
+  "files": [
+    {
+      "path": "working-matrix/matrix.json",
+      "sha256": "409cb740e62e51ebcc8ce75feddd2b81d87a0a7a60d17f1f23578f8dc4444b9f",
+      "bytes": 4272
+    },
+    {
+      "path": "working-matrix/pg17/absent-catalog.json",
+      "sha256": "d003d77bbc126e201ccf4e0addde0f3614fdcce57b4e88198bafbe4e731a90ee",
+      "bytes": 3009
+    },
+    {
+      "path": "working-matrix/pg17/catalog-password-leak.json",
+      "sha256": "a85bb9a990cc808bffcbe7bbcf4484883f2d3504c9e4b53491e7d958b3a49f2a",
+      "bytes": 4623
+    },
+    {
+      "path": "working-matrix/pg17/catalog-token-leak.json",
+      "sha256": "509614e3189567beb98d3c21d3707807005baabc89c601390678ab55111f31cd",
+      "bytes": 4623
+    },
+    {
+      "path": "working-matrix/pg17/cli-output-limit.json",
+      "sha256": "7079aa27153b7880313864c4894b66d934672bfcb3b03ab23ab8f0b88b013c45",
+      "bytes": 2824
+    },
+    {
+      "path": "working-matrix/pg17/cli-provider-error.json",
+      "sha256": "86465be158645076cbe83b6493a4e74a89a7f650b0b485267741a71e2e68bb14",
+      "bytes": 2824
+    },
+    {
+      "path": "working-matrix/pg17/cli-timeout.json",
+      "sha256": "6b5a3c1d546dd12aba01facc8fde13dc24cd2c8acff68277bf55bd5716711740",
+      "bytes": 2823
+    },
+    {
+      "path": "working-matrix/pg17/complete-catalog.json",
+      "sha256": "0063423ee1c45b1edada3447c6b1202105639ae22f334c6ffd88320226a95fe5",
+      "bytes": 7090
+    },
+    {
+      "path": "working-matrix/pg17/database-authentication-failure.json",
+      "sha256": "0abc64f0afa9a3b8e8af931b4ed1ba889ea68a7839eccef3a7607f1215f78ab1",
+      "bytes": 2853
+    },
+    {
+      "path": "working-matrix/pg17/database-bundle-pin.json",
+      "sha256": "a324dd4c182851b81ef3095ba9fdfcbe9ba9dbdac9d6fe98258422bf2e226a37",
+      "bytes": 974
+    },
+    {
+      "path": "working-matrix/pg17/database-cleanup-timeout.json",
+      "sha256": "7dc4842d2b3bdcebeacb6b977bdeb56d24a97bdb6c2f94cd588f060e1dd05bd6",
+      "bytes": 7149
+    },
+    {
+      "path": "working-matrix/pg17/database-connection-loss.json",
+      "sha256": "c99cf0bacd4bacf2a5e0b99dd462a7ba28d64a46ca7252f4be3c388d2a12e0cb",
+      "bytes": 7123
+    },
+    {
+      "path": "working-matrix/pg17/database-connection-refused.json",
+      "sha256": "fb2d8df74d25982869862e59bc8d8fc34d4fb5b995ecb8331510383467d22fff",
+      "bytes": 2853
+    },
+    {
+      "path": "working-matrix/pg17/database-credentials-missing.json",
+      "sha256": "d2ac114c4df53ccaa3626dca8a09eef2d87dd6bb13148640d797c0e5bddee24d",
+      "bytes": 2830
+    },
+    {
+      "path": "working-matrix/pg17/database-different-trusted-peer.json",
+      "sha256": "4158c42954f6d8934938518045b46d11d51c705bb320a2122c02b77e61458dc2",
+      "bytes": 2860
+    },
+    {
+      "path": "working-matrix/pg17/database-expired-pin.json",
+      "sha256": "5685408525349694a208c7778ff60b5e57803e24cfbc8db1dd4c868836b67039",
+      "bytes": 2853
+    },
+    {
+      "path": "working-matrix/pg17/database-future-pin.json",
+      "sha256": "8c93066e624693ece1537890dff9086677fd2b620884e2b00fa358b1f928d775",
+      "bytes": 2853
+    },
+    {
+      "path": "working-matrix/pg17/database-issuer-signed-pin.json",
+      "sha256": "d93482925fe50b3e69300f7cffa3fe672d43c8d8c5ad68830857c08f5e33cd31",
+      "bytes": 7090
+    },
+    {
+      "path": "working-matrix/pg17/database-malformed-pin.json",
+      "sha256": "55f1768602c9104568006e83ffaf9b88f69654fb8b2f7ef57aedf6d77261f7b5",
+      "bytes": 974
+    },
+    {
+      "path": "working-matrix/pg17/database-query-error-aborted-transaction.json",
+      "sha256": "64726d916679ce369a2d33fe6ba95c8a6f4b62e464ced2c13aa6806bcacc3547",
+      "bytes": 2984
+    },
+    {
+      "path": "working-matrix/pg17/database-query-timeout.json",
+      "sha256": "906609eca3429bf8186ea2af612b458e5a687124d6070cb324ba13927254b356",
+      "bytes": 4622
+    },
+    {
+      "path": "working-matrix/pg17/database-same-issuer-different-peer.json",
+      "sha256": "427b33500c6d266c8a714163cdbae2917fa3bf129dbe6737020e882a90519b2c",
+      "bytes": 2853
+    },
+    {
+      "path": "working-matrix/pg17/database-target-mismatch.json",
+      "sha256": "33046368fe9ba609549b5a7ca073a2837c25ded3212d0092cb32944d2885a5a1",
+      "bytes": 2826
+    },
+    {
+      "path": "working-matrix/pg17/database-template-signed-pin.json",
+      "sha256": "9cc88db1706710d1019c7d2453d01efc8e150e066106efa5b147d49fe863c042",
+      "bytes": 7090
+    },
+    {
+      "path": "working-matrix/pg17/database-tls-downgrade.json",
+      "sha256": "a628830f11c5a67145c1bbac709e2592cfb139cdc224db33910c93d92d876d79",
+      "bytes": 2853
+    },
+    {
+      "path": "working-matrix/pg17/database-untrusted.json",
+      "sha256": "82a40da556cee23abb9a05c4c475333a47b43c1e6c38eea2f69c086dce727e91",
+      "bytes": 2853
+    },
+    {
+      "path": "working-matrix/pg17/database-wrong-pin.json",
+      "sha256": "23dcc28d52d00185a71c21c43d7208ea779a2b204d39fffb6b1344eaae33389f",
+      "bytes": 2853
+    },
+    {
+      "path": "working-matrix/pg17/incomplete-catalog.json",
+      "sha256": "27a6ecbce5497679adffb103975e2a00dfce05fa320c4aea67a20417ffddffe0",
+      "bytes": 4625
+    },
+    {
+      "path": "working-matrix/pg17/metadata-drift.json",
+      "sha256": "9e6bac6783a213508c33f1ee63e5975f78ecf1b8691113d62b5f58efac77c395",
+      "bytes": 7129
+    },
+    {
+      "path": "working-matrix/pg17/metadata-output-limit.json",
+      "sha256": "a6d72a005db1b2d921b9c9faa48cdc6069ebeb08cd7a21d75ee91d73896919af",
+      "bytes": 974
+    },
+    {
+      "path": "working-matrix/pg17/metadata-provider-error.json",
+      "sha256": "495f959d835b7770455ee42adadd85bbe9d1de18a180e09370d5bf3dccaacb96",
+      "bytes": 976
+    },
+    {
+      "path": "working-matrix/pg17/metadata-stream-timeout.json",
+      "sha256": "4cac6108f23a768e54f8faec3a8a91886575230cf2e75a8668ffa5b1663cf786",
+      "bytes": 972
+    },
+    {
+      "path": "working-matrix/pg17/oversized-receipt.json",
+      "sha256": "28920c6f1fdd2d0caf7e75d3bf4ed9ab08b2c6c52a791bb588525fc301ef5c10",
+      "bytes": 993
+    },
+    {
+      "path": "working-matrix/pg17/project-token-incorrect.json",
+      "sha256": "5c044d6192ad73f78c647b0b163bb286c4e8e34a76c84106b03af5ac8f1662fa",
+      "bytes": 976
+    },
+    {
+      "path": "working-matrix/pg17/project-token-missing.json",
+      "sha256": "ed1445cb6f137d42fa28b6b407f17918857f9acaef6ae96ae41709cf73415ffd",
+      "bytes": 967
+    },
+    {
+      "path": "working-matrix/pg17/proof.json",
+      "sha256": "6098afc3a7421e21526d6284e519e4746b47f800c9632188dce21fdf5e33ebc0",
+      "bytes": 30133
+    },
+    {
+      "path": "working-matrix/pg18/absent-catalog.json",
+      "sha256": "a796427e84e4bed5cd9f3172a9726804d4a786caf0e9bbaddd6a9d636d07fb3a",
+      "bytes": 3009
+    },
+    {
+      "path": "working-matrix/pg18/catalog-password-leak.json",
+      "sha256": "1996ab4af23e71a9619ea530be2c0ccfd347f85a1fb5a8d5cb08aa6a7c983afa",
+      "bytes": 4623
+    },
+    {
+      "path": "working-matrix/pg18/catalog-token-leak.json",
+      "sha256": "fd7f9286413b5ddffaacea87be466eacb7f920b64d851a6d9d5da1491ce16b0d",
+      "bytes": 4623
+    },
+    {
+      "path": "working-matrix/pg18/cli-output-limit.json",
+      "sha256": "3eeac2774cd4ec2e86bacc320ff50e851671d2d70607fc28d11225ac987bafd8",
+      "bytes": 2824
+    },
+    {
+      "path": "working-matrix/pg18/cli-provider-error.json",
+      "sha256": "8c05bd24e895f2d00feea238cc3ff1fa7f6188c50fc71f819f2254f6268c53cf",
+      "bytes": 2824
+    },
+    {
+      "path": "working-matrix/pg18/cli-timeout.json",
+      "sha256": "2a42c270e17f8f0d23cd244a6fa8913666abafa47d9366ee86bcb6f406653d1c",
+      "bytes": 2823
+    },
+    {
+      "path": "working-matrix/pg18/complete-catalog.json",
+      "sha256": "0b3ecb8bfceae6809e3a7dfe72dfc6bc91a570ab1c798de898af07c0c9fe8bff",
+      "bytes": 7090
+    },
+    {
+      "path": "working-matrix/pg18/database-authentication-failure.json",
+      "sha256": "40609be0588930e347e191163f0b2be17fa5147e4ff8dbc524505e82e59de73c",
+      "bytes": 2853
+    },
+    {
+      "path": "working-matrix/pg18/database-bundle-pin.json",
+      "sha256": "68b1ab5cafe7ce86940b8809605e4f27c70960e19e3464e8c7e309bf7e234022",
+      "bytes": 974
+    },
+    {
+      "path": "working-matrix/pg18/database-cleanup-timeout.json",
+      "sha256": "cbb2cdbf9edc56f702957cc3f1e984b0c93e54ffec36c24d69801db8de80e313",
+      "bytes": 7149
+    },
+    {
+      "path": "working-matrix/pg18/database-connection-loss.json",
+      "sha256": "e6012c368bc794b48fbce44fe17372ae14a668b5a8b8b27a34752d982af52a72",
+      "bytes": 7123
+    },
+    {
+      "path": "working-matrix/pg18/database-connection-refused.json",
+      "sha256": "3bc08a645188b5894355b5cc56f476bc5a8dd214220f29e9956270a30fe8e2f9",
+      "bytes": 2853
+    },
+    {
+      "path": "working-matrix/pg18/database-credentials-missing.json",
+      "sha256": "172fa11200ebe30d056d970950bee925be90d8a5479d71223bffc62841dacfdb",
+      "bytes": 2830
+    },
+    {
+      "path": "working-matrix/pg18/database-different-trusted-peer.json",
+      "sha256": "1412ecf447a20ccf576f2b86c1d0b0527a0de3c0b49bfe2d1bae369cffd59ca3",
+      "bytes": 2860
+    },
+    {
+      "path": "working-matrix/pg18/database-expired-pin.json",
+      "sha256": "f0ed1abd6bffae4c92e41826c66573c7b0ceb1f574c6097ac035a79dfc02f179",
+      "bytes": 2853
+    },
+    {
+      "path": "working-matrix/pg18/database-future-pin.json",
+      "sha256": "6f70e4219a64a4ea80060cbc8ba5c51fe37887186ab1a525d8629fe23521fb20",
+      "bytes": 2853
+    },
+    {
+      "path": "working-matrix/pg18/database-issuer-signed-pin.json",
+      "sha256": "219452554d91efdf3424453aa6c8cc005f151a062979e32690f9fbffb48ac660",
+      "bytes": 7090
+    },
+    {
+      "path": "working-matrix/pg18/database-malformed-pin.json",
+      "sha256": "74c09eb40d48609ef6d7d3dad97a15695e5f326c7e227a54d3bfcac81558c2fe",
+      "bytes": 974
+    },
+    {
+      "path": "working-matrix/pg18/database-query-error-aborted-transaction.json",
+      "sha256": "8b6e625521c83b4747409a3554cf88b40a350f320208664573fa3d0c13ab8fa5",
+      "bytes": 2984
+    },
+    {
+      "path": "working-matrix/pg18/database-query-timeout.json",
+      "sha256": "4e3209550001bf97b4df2e0c4d0ff6867209cf52a84f09023a6d412c8fa2cb8e",
+      "bytes": 4622
+    },
+    {
+      "path": "working-matrix/pg18/database-same-issuer-different-peer.json",
+      "sha256": "a9adeb6c8c07a7a4c8d6ae02ed9055fdeb3abd4a51ff4c779f91a1d7588057e7",
+      "bytes": 2853
+    },
+    {
+      "path": "working-matrix/pg18/database-target-mismatch.json",
+      "sha256": "913a3b2519f4ac73042f45c83dfee614b21273801ffa993f3d6c95ac6a176674",
+      "bytes": 2826
+    },
+    {
+      "path": "working-matrix/pg18/database-template-signed-pin.json",
+      "sha256": "b1deb0ea8b049179efca877723a14f2f6180d41e31b5d8bb4843424589dc0300",
+      "bytes": 7090
+    },
+    {
+      "path": "working-matrix/pg18/database-tls-downgrade.json",
+      "sha256": "721eb181d380799a8f9ce12a588a3ec67da8fdbb4939e14af256af6e34d30a0b",
+      "bytes": 2853
+    },
+    {
+      "path": "working-matrix/pg18/database-untrusted.json",
+      "sha256": "ccf2f043a7efaf1e3d16269e24fcaa474f381fed033ac422370b06ef9b49373f",
+      "bytes": 2853
+    },
+    {
+      "path": "working-matrix/pg18/database-wrong-pin.json",
+      "sha256": "bf06e5eb2349dc1185f4bfac74e9204871e39614fd07aeb8ae1f98e33a98428a",
+      "bytes": 2853
+    },
+    {
+      "path": "working-matrix/pg18/incomplete-catalog.json",
+      "sha256": "7da92d52be8475bb6ef7f9e676735d618b928d5b8ef57ad75d2ddb014c67c64c",
+      "bytes": 4625
+    },
+    {
+      "path": "working-matrix/pg18/metadata-drift.json",
+      "sha256": "7616c0e4ff5d50385e91f2dce6432831df847cc957f506d64dd782deeb06d864",
+      "bytes": 7129
+    },
+    {
+      "path": "working-matrix/pg18/metadata-output-limit.json",
+      "sha256": "0f631f4db6d024655414bfc68c6d537db2c2e2f639ede4d32506e2ca19182a98",
+      "bytes": 974
+    },
+    {
+      "path": "working-matrix/pg18/metadata-provider-error.json",
+      "sha256": "7ddcaff182c251abd8ac7dc4494eedd8eb3046465d50db2b1c163f7e5594bd9b",
+      "bytes": 976
+    },
+    {
+      "path": "working-matrix/pg18/metadata-stream-timeout.json",
+      "sha256": "980d4bddb49127c411eeb95941f5f4a857e7e098c29e4180cc8012dbaedfa688",
+      "bytes": 972
+    },
+    {
+      "path": "working-matrix/pg18/not-enforced-constraint.json",
+      "sha256": "22ab05574f0f3124453ba67b22b4695753b3f924f6890f46ebdcc877e317b822",
+      "bytes": 6427
+    },
+    {
+      "path": "working-matrix/pg18/oversized-receipt.json",
+      "sha256": "8ebd287974099e8351d54e8bed9d98ad721a8e1802e76ae6d79ed6120f93df22",
+      "bytes": 993
+    },
+    {
+      "path": "working-matrix/pg18/project-token-incorrect.json",
+      "sha256": "80830178cac66ec14c1c4d592bdf07c5b4128f94802ce53733ea475046e2b2bf",
+      "bytes": 976
+    },
+    {
+      "path": "working-matrix/pg18/project-token-missing.json",
+      "sha256": "2d06d272debae8260a542b9195ca5b3cec1acba90f084d7d05b695ef9f76ccc6",
+      "bytes": 967
+    },
+    {
+      "path": "working-matrix/pg18/proof.json",
+      "sha256": "2517c2211fe832c2f1276d3adf273c0e83fad9d34c7cdac096ac754bf0f7a24d",
+      "bytes": 31072
+    },
+    {
+      "path": "working-matrix/source-context.json",
+      "sha256": "5e7af8e6147aa5c4240a83a85e01c9507b1a5782f335c57a457d8acacc00130d",
+      "bytes": 3570
+    }
+  ],
+  "sourceFilesVerified": true,
+  "receiptHashesVerified": 69
+}

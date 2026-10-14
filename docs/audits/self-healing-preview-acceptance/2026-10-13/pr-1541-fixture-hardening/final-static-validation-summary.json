@@ -1,0 +1,43 @@
+[
+  {
+    "command": "npm run type-check",
+    "watchdog": "15m TERM; 15s KILL grace",
+    "startedAt": "2026-10-13T20:45:33.889210+00:00",
+    "completedAt": "2026-10-13T20:46:47.786163+00:00",
+    "exitCode": 0,
+    "log": "final-type-check.log",
+    "sha256": "82c45ad386f9769567052c6ed1b2b78434ef817bfe3d475c3cc908cb0dbfe9ec"
+  },
+  {
+    "command": "npm run lint",
+    "watchdog": "15m TERM; 15s KILL grace",
+    "startedAt": "2026-10-13T20:46:47.790027+00:00",
+    "completedAt": "2026-10-13T20:47:42.911467+00:00",
+    "exitCode": 0,
+    "log": "final-lint.log",
+    "sha256": "90923e3216fcaec54b1670c1deb904658b96ba164a59e7facb0e38748b257c24",
+    "lint": {
+      "problems": 77,
+      "errors": 0,
+      "warnings": 77
+    }
+  },
+  {
+    "command": "npm run build",
+    "watchdog": "15m TERM; 15s KILL grace",
+    "startedAt": "2026-10-13T20:47:42.913769+00:00",
+    "completedAt": "2026-10-13T20:48:55.766309+00:00",
+    "exitCode": 0,
+    "log": "final-build.log",
+    "sha256": "356363182f60e482b40782695f615794181ec0e5a0806bc2693640c53f4aa8b1"
+  },
+  {
+    "command": "npm run validate:railway",
+    "watchdog": "15m TERM; 15s KILL grace",
+    "startedAt": "2026-10-13T20:48:55.767184+00:00",
+    "completedAt": "2026-10-13T20:48:55.939572+00:00",
+    "exitCode": 0,
+    "log": "final-validate-railway.log",
+    "sha256": "2d768b97d1cbc16c2babe66e0677622d0d4ffd473b06f338aedfe38174f8450a"
+  }
+]

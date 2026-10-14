@@ -44,6 +44,8 @@ describe('served Gaming generation budget proof boundary', () => {
     executeBudget.mockReset().mockImplementation(execution.resolveGamingExecutionBudget);
   });
 
+  // Every guide request runs large-source proofs before the budget assertion.
+  // Match the existing 30-second served-guide test bound under coverage.
   it('adds budget proof after assertions pass and preserves the guide response', async () => {
     const response = await queryGuide();
     expect(response.status).toBe(200);
@@ -55,7 +57,7 @@ describe('served Gaming generation budget proof boundary', () => {
       ok: true, route: 'gaming', mode: 'guide',
       data: { response: 'Sealed preview guide response.', sources: [] },
     });
-  });
+  }, 30_000);
 
   it('returns fixed 503 and withholds every Gaming marker when the actual execution envelope drifts', async () => {
     executeBudget.mockImplementation(input => execution.resolveGamingExecutionBudget({ ...input, moduleTimeoutMs: 38_000 }));
@@ -67,7 +69,7 @@ describe('served Gaming generation budget proof boundary', () => {
     expect(response.headers[NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.name]).toBe(NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.value);
     expect(response.body).toEqual({ error: 'PREVIEW_GAMING_GENERATION_BUDGET_CONTRACT_INVALID' });
     expect(response.text).not.toContain('Sealed preview guide response.');
-  });
+  }, 30_000);
 
   it.each(['assertion failure', 'partial fixture failure'])('returns fixed 503 and withholds every Gaming marker after %s', async scenario => {
     assertBudgetFixture.mockImplementation(() => {
@@ -82,5 +84,5 @@ describe('served Gaming generation budget proof boundary', () => {
     expect(response.body).toEqual({ error: 'PREVIEW_GAMING_GENERATION_BUDGET_CONTRACT_INVALID' });
     expect(response.text).not.toContain('private-budget-preview-sentinel');
     expect(response.text).not.toContain('Sealed preview guide response.');
-  });
+  }, 30_000);
 });

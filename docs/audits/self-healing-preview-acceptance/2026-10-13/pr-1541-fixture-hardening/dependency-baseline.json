@@ -1,0 +1,60 @@
+{
+  "generatedAt": "2026-10-13T21:47:27.855681+00:00",
+  "repository": "pbjustin/Arcanos",
+  "pullRequest": 1541,
+  "baseSha": "f5e1d8f7266d906a1dd4adaaa10bb742be0d2e94",
+  "finalHeadSha": "6a3b29701bda8711a754b7e2b31b26af446466a9",
+  "reportedDefaultBranchBanner": {
+    "total": 19,
+    "critical": 2,
+    "high": 11,
+    "moderate": 6,
+    "source": "GitHub push response observed by coordinating agent; not independently enumerated through alerts API."
+  },
+  "dependabotMetadataAccess": {
+    "status": "BLOCKED",
+    "httpStatus": 403,
+    "error": "gh: Resource not accessible by integration (HTTP 403)",
+    "queriedAt": "2026-10-13T21:46:52.382889+00:00",
+    "endpoint": "GET /repos/pbjustin/Arcanos/dependabot/alerts?state=open&per_page=100",
+    "attempts": 1
+  },
+  "dependencyDelta": {
+    "changedDependencyManifestsOrLocks": [],
+    "unchangedFromBase": true,
+    "rootManifestSha256": "8b602722dcac534698719591ddcf0c4466520a45d667dac2b68eac0aefcebd68",
+    "rootLockSha256": "9383d72991e92fba8ade515b30a077a157489c4403acd743660f150791c2751b",
+    "conclusion": "The PR does not change dependency manifests or lockfiles. The banner concerns existing default-branch alerts; no new dependency version is introduced by this PR."
+  },
+  "collectorDependencyBoundary": {
+    "file": "scripts/railway-production-readonly-inspection.mjs",
+    "postgresClient": "pg",
+    "postgresClientPackages": {
+      "pg": "8.16.3",
+      "pg-pool": "3.10.1",
+      "pg-protocol": "1.10.3",
+      "pg-connection-string": "2.9.1",
+      "pg-types": "2.2.0",
+      "pgpass": "1.0.5",
+      "pg-cloudflare": "1.2.7"
+    },
+    "tlsImplementation": "Node.js built-in TLS/X509 certificate APIs; explicitly pinned connection options passed to pg.",
+    "localRuntime": {
+      "node": "24.18.1",
+      "openssl": "3.5.7"
+    }
+  },
+  "alertImpactOnCollector": {
+    "status": "UNKNOWN",
+    "reason": "The 403 prevents reading affected packages, vulnerable version ranges, patched versions, and dependency paths. It is not possible to determine whether any of the 19 alerts directly affects pg or the TLS collector from the banner alone.",
+    "requiredReadOnlyFollowup": "A repository owner or credential with Dependabot alerts read permission must inspect affected package/range/path metadata, especially the pg dependency tree and Node/OpenSSL runtime."
+  },
+  "actions": {
+    "dependencyChanges": false,
+    "packageInstalls": false,
+    "securityAlertChanges": false,
+    "secretsRetrieved": false,
+    "broadNetworkScans": false,
+    "productionAccess": false
+  }
+}
