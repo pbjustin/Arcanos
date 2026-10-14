@@ -1,0 +1,400 @@
+{
+  "schema": "arcanos-gaming-universal-validation/v1",
+  "capturedAt": "2026-10-14T04:52:53.425Z",
+  "baselineSha": "e24d5614748f39e25e27a0c062dfba2ea0adbb77",
+  "baseSha": "c8bb00ee000e3e188f17e1aa2b5e2893d0221fb8",
+  "scope": "Local frozen implementation before publication; source and fixture content bound below. Final pushed SHA is verified by the canonical CI/CD per-SHA receipt and PR check metadata.",
+  "node": "v24.18.1",
+  "npm": "11.16.0",
+  "platform": "win32",
+  "syntheticOnly": true,
+  "deploymentIdentity": "DEPLOYED_SHA_UNVERIFIED",
+  "liveAcceptance": "LIVE_ACCEPTANCE_NOT_RUN",
+  "checks": {
+    "gaming": {
+      "command": "node scripts/run-jest.mjs --runTestsByPath <163 files listed by Gaming test filename> --coverage=false",
+      "passedSuites": 162,
+      "failedSuites": 0,
+      "skippedSuites": 1,
+      "passedTests": 5150,
+      "failedTests": 0,
+      "skippedTests": 9,
+      "rawResultSha256": "955991a8188dfa9eb85dab927630370b0551aaf25c371db86eca898ec17c0c4d",
+      "nonpassing": []
+    },
+    "previewAndPriorDiagnostics": {
+      "command": "node scripts/run-jest.mjs --runTestsByPath tests/native-pr-preview-import-boundary.test.js tests/phase2e-migration-validator.test.ts tests/dag-metrics-runtime.test.js --coverage=false --runInBand",
+      "passedSuites": 3,
+      "failedSuites": 0,
+      "skippedSuites": 0,
+      "passedTests": 424,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "rawResultSha256": "33b850668ccd3a8bcffd616589b321a7bddb4a8ac79b14d784f6a822fcc7b45b",
+      "nonpassing": []
+    },
+    "fullWindows": {
+      "command": "npm test -- --coverage=false --json --outputFile=local_artifacts/universal-full-final.json",
+      "passedSuites": 910,
+      "failedSuites": 2,
+      "skippedSuites": 13,
+      "passedTests": 17931,
+      "failedTests": 6,
+      "skippedTests": 165,
+      "rawResultSha256": "7f29dac34ab943f8883ce45189f886c97300fd98e3d543d270240337564baf66",
+      "nonpassing": [
+        {
+          "file": "tests/railway-production-readonly-inspection.test.js",
+          "test": "sanitized receipt retention writes only the fixed private receipt and refuses overwrites"
+        },
+        {
+          "file": "tests/railway-production-readonly-inspection.test.js",
+          "test": "sanitized receipt retention retains a blocked receipt when bounded inventory with 5000-byte definitions exceeds artifact size"
+        },
+        {
+          "file": "tests/railway-production-readonly-inspection.test.js",
+          "test": "sanitized receipt retention retains a blocked receipt when bounded inventory with 8192-byte definitions exceeds artifact size"
+        },
+        {
+          "file": "tests/railway-production-readonly-inspection.test.js",
+          "test": "sanitized receipt retention refuses symlinked output and an oversized receipt"
+        },
+        {
+          "file": "tests/self-healing-restart.test.js",
+          "test": "self-healing restart isolation invalidates an active mitigation in a genuinely fresh process instead of replaying it"
+        },
+        {
+          "file": "tests/self-healing-restart.test.js",
+          "test": "self-healing restart isolation keeps automatic request-failure actuators suppressed in a real web-role process"
+        }
+      ]
+    },
+    "unchangedMainWindowsComparison": {
+      "command": "node scripts/run-jest.mjs --runTestsByPath tests/railway-production-readonly-inspection.test.js tests/self-healing-restart.test.js tests/phase2e-migration-validator.test.ts --coverage=false --runInBand",
+      "passedSuites": 1,
+      "failedSuites": 2,
+      "skippedSuites": 0,
+      "passedTests": 48,
+      "failedTests": 6,
+      "skippedTests": 0,
+      "rawResultSha256": "1a7421bc1e99025c0a20c251a4957f58acaaf1a9fae53190741a9ec8c3a3c0e7",
+      "nonpassing": [
+        {
+          "file": "tests/self-healing-restart.test.js",
+          "test": "self-healing restart isolation invalidates an active mitigation in a genuinely fresh process instead of replaying it"
+        },
+        {
+          "file": "tests/self-healing-restart.test.js",
+          "test": "self-healing restart isolation keeps automatic request-failure actuators suppressed in a real web-role process"
+        },
+        {
+          "file": "tests/railway-production-readonly-inspection.test.js",
+          "test": "sanitized receipt retention writes only the fixed private receipt and refuses overwrites"
+        },
+        {
+          "file": "tests/railway-production-readonly-inspection.test.js",
+          "test": "sanitized receipt retention retains a blocked receipt when bounded inventory with 5000-byte definitions exceeds artifact size"
+        },
+        {
+          "file": "tests/railway-production-readonly-inspection.test.js",
+          "test": "sanitized receipt retention retains a blocked receipt when bounded inventory with 8192-byte definitions exceeds artifact size"
+        },
+        {
+          "file": "tests/railway-production-readonly-inspection.test.js",
+          "test": "sanitized receipt retention refuses symlinked output and an oversized receipt"
+        }
+      ]
+    },
+    "unchangedReviewedParent": {
+      "command": "Identical universal workflow and prompt suites copied untracked to unchanged e24d5614 and run with the supported Jest runner",
+      "passedSuites": 0,
+      "failedSuites": 2,
+      "skippedSuites": 0,
+      "passedTests": 47,
+      "failedTests": 28,
+      "skippedTests": 0,
+      "rawResultSha256": "a6ceecdf3b3635727301ebf335cd83f127107e0d470a43d6f9161093c3ef29e3",
+      "nonpassing": [
+        {
+          "file": "tests/gaming-universal-prompt-review.test.ts",
+          "test": "gaming prompt web-evidence boundary adapts build output to the acquired mechanics of Civilization VI"
+        },
+        {
+          "file": "tests/gaming-universal-prompt-review.test.ts",
+          "test": "gaming prompt web-evidence boundary adapts build output to the acquired mechanics of Stardew Valley"
+        },
+        {
+          "file": "tests/gaming-universal-prompt-review.test.ts",
+          "test": "gaming prompt web-evidence boundary adapts build output to the acquired mechanics of Copperwind Loom"
+        },
+        {
+          "file": "tests/gaming-universal-prompt-review.test.ts",
+          "test": "gaming prompt web-evidence boundary keeps meta comparisons conditional on material context without demanding an unrelated character class"
+        },
+        {
+          "file": "tests/gaming-universal-workflow.integration.test.ts",
+          "test": "universal acquired evidence through actual hybrid-v2 and Trinity stages (synthetic providers) answers Elden Ring / action RPG from its novel generic topic without a class or registry override"
+        },
+        {
+          "file": "tests/gaming-universal-workflow.integration.test.ts",
+          "test": "universal acquired evidence through actual hybrid-v2 and Trinity stages (synthetic providers) answers Fallout 76 / online RPG from its novel generic topic without a class or registry override"
+        },
+        {
+          "file": "tests/gaming-universal-workflow.integration.test.ts",
+          "test": "universal acquired evidence through actual hybrid-v2 and Trinity stages (synthetic providers) answers Baldur's Gate 3 / turn based RPG from its novel generic topic without a class or registry override"
+        },
+        {
+          "file": "tests/gaming-universal-workflow.integration.test.ts",
+          "test": "universal acquired evidence through actual hybrid-v2 and Trinity stages (synthetic providers) answers Stardew Valley / farming from its novel generic topic without a class or registry override"
+        },
+        {
+          "file": "tests/gaming-universal-workflow.integration.test.ts",
+          "test": "universal acquired evidence through actual hybrid-v2 and Trinity stages (synthetic providers) answers Monster Hunter Wilds / hunting action from its novel generic topic without a class or registry override"
+        },
+        {
+          "file": "tests/gaming-universal-workflow.integration.test.ts",
+          "test": "universal acquired evidence through actual hybrid-v2 and Trinity stages (synthetic providers) answers Destiny 2 / shooter from its novel generic topic without a class or registry override"
+        },
+        {
+          "file": "tests/gaming-universal-workflow.integration.test.ts",
+          "test": "universal acquired evidence through actual hybrid-v2 and Trinity stages (synthetic providers) answers Civilization VI / strategy from its novel generic topic without a class or registry override"
+        },
+        {
+          "file": "tests/gaming-universal-workflow.integration.test.ts",
+          "test": "universal acquired evidence through actual hybrid-v2 and Trinity stages (synthetic providers) answers Hollow Knight / metroidvania from its novel generic topic without a class or registry override"
+        },
+        {
+          "file": "tests/gaming-universal-workflow.integration.test.ts",
+          "test": "universal acquired evidence through actual hybrid-v2 and Trinity stages (synthetic providers) answers Copperwind Loom / synthetic unknown from its novel generic topic without a class or registry override"
+        },
+        {
+          "file": "tests/gaming-universal-workflow.integration.test.ts",
+          "test": "universal acquired evidence through actual hybrid-v2 and Trinity stages (synthetic providers) refuses Hollow Knight after bounded wrong-game recovery"
+        },
+        {
+          "file": "tests/gaming-universal-workflow.integration.test.ts",
+          "test": "universal acquired evidence through actual hybrid-v2 and Trinity stages (synthetic providers) keeps incomplete Elden Ring question coverage out of Trinity"
+        },
+        {
+          "file": "tests/gaming-universal-workflow.integration.test.ts",
+          "test": "universal acquired evidence through actual hybrid-v2 and Trinity stages (synthetic providers) keeps incomplete Fallout 76 question coverage out of Trinity"
+        },
+        {
+          "file": "tests/gaming-universal-workflow.integration.test.ts",
+          "test": "universal acquired evidence through actual hybrid-v2 and Trinity stages (synthetic providers) keeps incomplete Baldur's Gate 3 question coverage out of Trinity"
+        },
+        {
+          "file": "tests/gaming-universal-workflow.integration.test.ts",
+          "test": "universal acquired evidence through actual hybrid-v2 and Trinity stages (synthetic providers) keeps incomplete Stardew Valley question coverage out of Trinity"
+        },
+        {
+          "file": "tests/gaming-universal-workflow.integration.test.ts",
+          "test": "universal acquired evidence through actual hybrid-v2 and Trinity stages (synthetic providers) keeps incomplete Monster Hunter Wilds question coverage out of Trinity"
+        },
+        {
+          "file": "tests/gaming-universal-workflow.integration.test.ts",
+          "test": "universal acquired evidence through actual hybrid-v2 and Trinity stages (synthetic providers) keeps incomplete Destiny 2 question coverage out of Trinity"
+        },
+        {
+          "file": "tests/gaming-universal-workflow.integration.test.ts",
+          "test": "universal acquired evidence through actual hybrid-v2 and Trinity stages (synthetic providers) keeps incomplete Civilization VI question coverage out of Trinity"
+        },
+        {
+          "file": "tests/gaming-universal-workflow.integration.test.ts",
+          "test": "universal acquired evidence through actual hybrid-v2 and Trinity stages (synthetic providers) keeps incomplete Hollow Knight question coverage out of Trinity"
+        },
+        {
+          "file": "tests/gaming-universal-workflow.integration.test.ts",
+          "test": "universal acquired evidence through actual hybrid-v2 and Trinity stages (synthetic providers) keeps incomplete Copperwind Loom question coverage out of Trinity"
+        },
+        {
+          "file": "tests/gaming-universal-workflow.integration.test.ts",
+          "test": "universal acquired evidence through actual hybrid-v2 and Trinity stages (synthetic providers) withholds the Stardew Valley answer when the synthetic semantic auditor rejects it"
+        },
+        {
+          "file": "tests/gaming-universal-workflow.integration.test.ts",
+          "test": "universal acquired evidence through actual hybrid-v2 and Trinity stages (synthetic providers) withholds the Copperwind Loom answer when the synthetic semantic auditor rejects it"
+        },
+        {
+          "file": "tests/gaming-universal-workflow.integration.test.ts",
+          "test": "universal acquired evidence through actual hybrid-v2 and Trinity stages (synthetic providers) keeps explicit platform contradictions terminal for an unregistered game"
+        },
+        {
+          "file": "tests/gaming-universal-workflow.integration.test.ts",
+          "test": "universal acquired evidence through actual hybrid-v2 and Trinity stages (synthetic providers) keeps explicit edition contradictions terminal for an unregistered game"
+        },
+        {
+          "file": "tests/gaming-universal-workflow.integration.test.ts",
+          "test": "universal acquired evidence through actual hybrid-v2 and Trinity stages (synthetic providers) selects only the independently acquired Elden Ring source when a competing Nightreign source is submitted beside it"
+        }
+      ]
+    },
+    "static": [
+      {
+        "command": "npm run type-check",
+        "result": "PASS"
+      },
+      {
+        "command": "npm run lint",
+        "result": "PASS"
+      },
+      {
+        "command": "npm run build",
+        "result": "PASS"
+      },
+      {
+        "command": "npm run validate:railway",
+        "result": "PASS"
+      },
+      {
+        "command": "npm run docs:check",
+        "result": "PASS"
+      },
+      {
+        "command": "npm run docs:links -- --local-only",
+        "result": "PASS"
+      },
+      {
+        "command": "git diff --check",
+        "result": "PASS"
+      }
+    ],
+    "fullHostedCI": "PENDING_PUBLICATION: use the canonical final-head CI/CD receipt; local checks do not establish hosted success"
+  },
+  "nonRegressionDisposition": "Six Windows failures in unchanged receipt-path/symlink and ESM child-import tests reproduce on unchanged main. No changes to those implementations or tests. Hosted Linux verification remains required.",
+  "sourceFingerprints": [
+    {
+      "path": "scripts/check-native-pr-preview-imports.mjs",
+      "lfNormalizedSha256": "4b7ce9678b58db1915180cf5bce12ed041d754f973609608d285f6563a99c3bb"
+    },
+    {
+      "path": "src/services/gamingGameDetection.ts",
+      "lfNormalizedSha256": "b93304859bbfc12c5d6491af9f6136b148847981de7af72871b6f2e9549b0682"
+    },
+    {
+      "path": "src/services/gamingSourceIngestion.ts",
+      "lfNormalizedSha256": "ceb2a510f5fa1f6373e4de4529300955eee188bb7b247cf7b17824c5294ccbe0"
+    },
+    {
+      "path": "src/services/gamingStoredKnowledge.ts",
+      "lfNormalizedSha256": "3551ef07207b9dc70dcd0f54460427ded55bb5ae488b1ded4173f1cb3a75ce82"
+    },
+    {
+      "path": "src/shared/gaming/gamingAcquiredIdentity.ts",
+      "lfNormalizedSha256": "7ff98added2de18bf41b591914e3d7c2419cd55267ea6698bf15ce95e44495a8"
+    },
+    {
+      "path": "src/shared/gaming/gamingClearPolicy.ts",
+      "lfNormalizedSha256": "d127b4c4515c2a10841482b50dbacb2ac6c7eae54cd14cd9c31c2ddf3e3ef7ef"
+    },
+    {
+      "path": "src/shared/gaming/gamingClearSource.ts",
+      "lfNormalizedSha256": "e186232ebaaaba3d6ff7ba72291b86971cbd7b4c498e6a1d31580c8d1bec5e5f"
+    },
+    {
+      "path": "src/shared/gaming/gamingCurrentnessPreviewFixture.ts",
+      "lfNormalizedSha256": "d8304f68e8a5625646f2be5bb77babbb0d618b3a0623d572bc92c7400cc52255"
+    },
+    {
+      "path": "src/shared/gaming/gamingGameIdentity.ts",
+      "lfNormalizedSha256": "8d0fec7a44bfca610adb1093a75fcc4921c6f97796d82ca282e46a4ef1c296ba"
+    },
+    {
+      "path": "src/shared/gaming/gamingGameRegistry.ts",
+      "lfNormalizedSha256": "0536514bb4db486e43e0065e46a49af3c03c9a0be38ffc4e0f5fd3f9502d33dc"
+    },
+    {
+      "path": "src/shared/gaming/gamingPromptCore.ts",
+      "lfNormalizedSha256": "9579c0f84f3c7940ac0a6a7c3d78e6386f3ebc8520128aefd9eb43898587b195"
+    },
+    {
+      "path": "src/shared/gaming/gamingStructuredEvidencePreviewFixture.ts",
+      "lfNormalizedSha256": "7b6acfd033f370be932dbb1acdd997a71814737f707a77055fb11b813e000d7f"
+    },
+    {
+      "path": "tests/fixtures/gaming-universal-identity.ts",
+      "lfNormalizedSha256": "67867ef924c123366d1ffeeb365d66a4e894653ed154aaeda6340719ec2bb4b2"
+    },
+    {
+      "path": "tests/gaming-clear-answer-audit.test.ts",
+      "lfNormalizedSha256": "0713c8e4f21bdde06d9dcb8cf2f6476c2b11881e1d72989b0300c598fb6ff32b"
+    },
+    {
+      "path": "tests/gaming-clear-evidence.test.ts",
+      "lfNormalizedSha256": "c99b3065a6ccba7522c80977d014c9b8f5fd94af5b6b4a42e17f11de40766a8c"
+    },
+    {
+      "path": "tests/gaming-clear-policy.test.ts",
+      "lfNormalizedSha256": "48862cf00418090b9caacc71016ae98fe1a4985e3e04769dfca6c7ea54010cc3"
+    },
+    {
+      "path": "tests/gaming-discovery-recovery.integration.test.ts",
+      "lfNormalizedSha256": "9ae3bb4d550b403ed8660a5452c3e8eab208d0002e6326f57f3971c4e63dd209"
+    },
+    {
+      "path": "tests/gaming-frontend-guide-contract.test.ts",
+      "lfNormalizedSha256": "719c72c585df558087226d9b7b8ab7a43279dea4614751524dd4a154c456a7cd"
+    },
+    {
+      "path": "tests/gaming-hybrid-evidence-selection.test.ts",
+      "lfNormalizedSha256": "9f983d9e49744c6f948314715d5fe37431f43b8d8aea4a8b766c45c44678ef02"
+    },
+    {
+      "path": "tests/gaming-hybrid-lifecycle.integration.test.ts",
+      "lfNormalizedSha256": "f79d1249f6e12c9709239047b0fda91f98cdf6a4eac1bce6b7c54b3a18820ede"
+    },
+    {
+      "path": "tests/gaming-live-source-identity-regressions.test.ts",
+      "lfNormalizedSha256": "68af5779f800d06cadcd2518d35afba6ff5ad7f7c1222655203645b8af8f2952"
+    },
+    {
+      "path": "tests/gaming-prompt-builder.test.ts",
+      "lfNormalizedSha256": "8512f480b1f73818f08a1e638781052aebe5174f31e5c30d30190b4c6c978836"
+    },
+    {
+      "path": "tests/gaming-source-ingestion.test.ts",
+      "lfNormalizedSha256": "a58896e7959681bc5755b21ff6c3f14e6c0fa1222827f726edf8653bb608fc85"
+    },
+    {
+      "path": "tests/gaming-stored-knowledge.test.ts",
+      "lfNormalizedSha256": "0c16d962c2eabe5c7784f592cbf9a17633861c093613b23e522c3fd76c7cd3e1"
+    },
+    {
+      "path": "tests/gaming-structural-sufficiency.test.ts",
+      "lfNormalizedSha256": "333492dfd5ce3cfcf4db58b9679b09af557123e94c8ee99a473cf26ff518a1c8"
+    },
+    {
+      "path": "tests/gaming-structured-supplied-rag.integration.test.ts",
+      "lfNormalizedSha256": "348f58100248372b2214d050595083680a75b1d38edafe33b2eba94a38dd216d"
+    },
+    {
+      "path": "tests/gaming-universal-adversarial.test.ts",
+      "lfNormalizedSha256": "fbec4e6696b1930b2a28a8e758ea6eeef26ea476bc8207bb9a464e12418285d2"
+    },
+    {
+      "path": "tests/gaming-universal-currentness-identity.test.ts",
+      "lfNormalizedSha256": "1417f9105f64335138876d07d0b4766fed495a89ee6ac08e109675630efb0203"
+    },
+    {
+      "path": "tests/gaming-universal-performance.test.ts",
+      "lfNormalizedSha256": "4bbc39b19364c8647786b5a2c26a7b1cdda76c03d56a40c2102da5b65fbcc22b"
+    },
+    {
+      "path": "tests/gaming-universal-source-identity.test.ts",
+      "lfNormalizedSha256": "7e6010c68e7eedb87be47b1d2324a46920836a2e44aa93d815a67d5db7f77a03"
+    },
+    {
+      "path": "tests/gaming-universal-workflow.integration.test.ts",
+      "lfNormalizedSha256": "78484d5d81891b3581ed16bd3375a93c8a031f02878e17fd02c13e6ec01b0337"
+    },
+    {
+      "path": "tests/native-pr-preview-import-boundary.test.js",
+      "lfNormalizedSha256": "fdc3d4e48b4346643cf2691c5a21be50e97bb2c74cd086b709ee8c8daa569e56"
+    },
+    {
+      "path": "tests/testUtils/gamingGenericBenchmarkFixtures.ts",
+      "lfNormalizedSha256": "41954f791cf09a68a599eca69b11340eaf395002cc1c19e22bcace0296865e32"
+    }
+  ],
+  "performanceReceipt": "performance.json"
+}

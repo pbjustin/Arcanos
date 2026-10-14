@@ -22,13 +22,13 @@ const NOW = new Date('2026-09-10T12:00:00.000Z');
 const INPUT: GamingStoredKnowledgeInput = {
   game: GAME, prompt: 'Where is Platinum? Give system, body, site and resource.', mode: 'guide', spoilerMode: 'none'
 };
-const LOCATION = { System: 'TEST-ORION-01', Body: 'B 2', Site: 'PML 7', Resource: 'Platinum' };
-const TABLE = '<table><caption>Testspace</caption><tr><th>System</th><th>Body</th><th>Site</th><th>Resource</th></tr>'
-  + '<tr><td>TEST-ORION-01</td><td>B 2</td><td>PML 7</td><td>Platinum</td></tr></table>';
-const LIST = '<ul><li>System: TEST-ORION-01; Body: B 2; Site: PML 7; Resource: Platinum</li></ul>';
-const DEFINITIONS = '<dl><dt>System</dt><dd>TEST-ORION-01</dd><dt>Body</dt><dd>B 2</dd>'
+const LOCATION = { Game: GAME, System: 'TEST-ORION-01', Body: 'B 2', Site: 'PML 7', Resource: 'Platinum' };
+const TABLE = '<table><caption>Testspace</caption><tr><th>Game</th><th>System</th><th>Body</th><th>Site</th><th>Resource</th></tr>'
+  + '<tr><td>Testspace</td><td>TEST-ORION-01</td><td>B 2</td><td>PML 7</td><td>Platinum</td></tr></table>';
+const LIST = '<ul><li>Game: Testspace; System: TEST-ORION-01; Body: B 2; Site: PML 7; Resource: Platinum</li></ul>';
+const DEFINITIONS = '<dl><dt>Game</dt><dd>Testspace</dd><dt>System</dt><dd>TEST-ORION-01</dd><dt>Body</dt><dd>B 2</dd>'
   + '<dt>Site</dt><dd>PML 7</dd><dt>Resource</dt><dd>Platinum</dd></dl>';
-const JSON_RECORD = '{"system":"TEST-ORION-01","body":"B 2","site":"PML 7","resource":"Platinum"}';
+const JSON_RECORD = '{"game":"Testspace","system":"TEST-ORION-01","body":"B 2","site":"PML 7","resource":"Platinum"}';
 const LIMITS = Object.freeze({ chunkChars: 2_000, maxChunks: 8, maxSources: 3, maxContextChars: 8_000, structuredEvidenceChars: 8_000 });
 // Fixed source associations exercise CLEAR policy without elevating any page's self-described authority.
 const RULES: readonly GamingReviewedSourceRule[] = [GAME, 'Ashfall', 'Rift Seasons', 'Elden Ring'].map(game => ({
@@ -246,10 +246,12 @@ async function requireBaseGameScope(): Promise<void> {
   const fact = 'Samurai Uchigatana Unsheathe attacks wait for enemy recovery. Use the heavy attack during a safe opening, then dodge and recover stamina.';
   const dlc = 'DLC_SCOPE_SENTINEL: this expansion record describes a different equipment rotation.';
   const prose = 'UNSCOPED_SCOPE_SENTINEL: this paragraph recommends another Samurai Uchigatana rotation.';
-  const table = (label: string, scope: string, description = fact, metadata: Record<string, string> = {}) =>
-    '<table><caption>Elden Ring guide</caption><tr><th>Mechanic</th>' + `<th>${label}</th><th>Description</th>`
-    + Object.keys(metadata).map(key => `<th>${key}</th>`).join('') + '</tr><tr><td>Samurai Uchigatana Unsheathe</td>'
-    + `<td>${scope}</td><td>${description}</td>` + Object.values(metadata).map(value => `<td>${value}</td>`).join('') + '</tr></table>';
+  const table = (label: string, scope: string, description = fact, metadata: Record<string, string> = {}) => {
+    const fields = { Game: input.game, ...metadata };
+    return '<table><caption>Elden Ring guide</caption><tr><th>Mechanic</th>' + `<th>${label}</th><th>Description</th>`
+      + Object.keys(fields).map(key => `<th>${key}</th>`).join('') + '</tr><tr><td>Samurai Uchigatana Unsheathe</td>'
+      + `<td>${scope}</td><td>${description}</td>` + Object.values(fields).map(value => `<td>${value}</td>`).join('') + '</tr></table>';
+  };
   const doc = (body: string, acquiredProse = '') => document(extract(body), input.game, acquiredProse);
   const fresh = (value: ResolvedGamingDocument) => extractGamingFreshnessMetadata(value, input, NOW, RULES);
   const scope = (value: ResolvedGamingDocument) => selectGamingEditionScopedEvidence(value, input);
@@ -274,7 +276,8 @@ async function requireBaseGameScope(): Promise<void> {
   const incompatibleScope = scope(incompatible);
   requireProof(incompatibleScope.status === 'conflict' && incompatibleScope.reasonCodes.includes('CONFLICTING_EDITION_SCOPE')
     && source(incompatible, input).decision === 'reject');
-  const wrongGame = doc(table('Scope', 'base-game', fact, { Game: 'Dark Souls III' }));
+  const wrongGame = doc(table('Scope', 'base-game', fact, { Game: 'Dark Souls III' }),
+    'In Elden Ring, this source records a separately scoped equipment entry.');
   // A complete local record can name a different game without contradicting
   // primary identity. It supplies no target-game evidence or storage eligibility.
   const foreignScope = scope(wrongGame);

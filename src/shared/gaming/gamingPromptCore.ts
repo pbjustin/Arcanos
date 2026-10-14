@@ -23,7 +23,7 @@ const modeInstructions: Record<GamingMode, string> = {
 };
 
 const outputShapeInstructions: Partial<Record<GamingMode, string>> = {
-  build: "Return only 5 short numbered bullets. Cover role, core stats, weapons/skills, gear/talismans, and play pattern. Keep each bullet compact."
+  build: "Return only 5 short numbered bullets. Cover the requested setup, priorities, tradeoffs, and how to use it, choosing details relevant to this game's acquired evidence. Include stats, equipment, skills, or other mechanics only when relevant and supported; do not require a character class or a fixed set of RPG categories. Keep each bullet compact."
 };
 
 const groundedGuideOutputInstruction = [
@@ -107,7 +107,7 @@ export function buildGamingSystemPrompt(mode: GamingMode, hasUsableSources = fal
       "Give practical meta guidance with enough context to compare viability, counters, and uncertainty.",
       "Avoid gameplay reenactment, roleplay framing, invented live patch details, hotline banter, and theatrical framing.",
       "If the user requests an exact literal response, return only that literal.",
-      "State missing platform, class, role, patch, or version details plainly instead of guessing."
+      "Mention missing context only when it materially changes the requested comparison; never guess unsupported platform, playstyle, patch, or version details."
     ].join(" ");
   }
 
@@ -120,7 +120,7 @@ export function buildGamingSystemPrompt(mode: GamingMode, hasUsableSources = fal
       "invent live patch notes",
       "add hotline banter or theatrical framing"
     ],
-    missingInfoBehavior: "State missing game, platform, class, or version details plainly instead of guessing."
+    missingInfoBehavior: "Mention missing context only when it materially changes the requested setup; never guess unsupported game, platform, playstyle, or version details."
   });
 }
 

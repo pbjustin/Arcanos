@@ -45,7 +45,15 @@ export function resolveGamingRequestEdition(input: { game?: string; edition?: st
   if (input.edition) return normalizeGamingEditionIdentity(input.edition) === 'base-game' ? 'base-game' : input.edition;
   const question = gamingRequestScopeText(input.prompt ?? input.question ?? '');
   const entry = resolveGamingRegistryGame(input.game ?? '');
-  if (!entry) return undefined;
+  if (!entry) {
+    // A missing catalog entry supplies no edition default. Explicit generic
+    // base-only requests still constrain acquired expansion evidence.
+    const base = /\bbase[\s-]+game\b/iu.test(question);
+    const remaining = question.replace(/\b(?:without|no|excluding)\s+(?:(?:any|the)\s+)?(?:dlcs?|expansions?(?:\s+content)?)\b/giu,
+      (clause: string, offset: number) => /\b(?:not|without|no)\s*$/iu.test(question.slice(0, offset)) ? clause : ' ');
+    const without = remaining !== question;
+    return (base || without) && !/\b(?:dlcs?|expansions?)\b/iu.test(remaining) ? 'base-game' : undefined;
+  }
   const independentEditions = entry.editions.filter(edition => edition.kind === 'edition');
   if (independentEditions.length) {
     const requestText = question.replace(/"[^"]*"|“[^”]*”|`[^`]*`|'[^']*'|‘[^’]*’/gu, ' ');

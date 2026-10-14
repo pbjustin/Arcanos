@@ -23,7 +23,7 @@ import {
   selectGamingSourceAdmissionUrl,
   selectGamingSourcePublicUrl
 } from '@shared/gaming/gamingDocumentIngestionCore.js';
-import { normalizeGamingGameIdentity } from '@shared/gaming/gamingGameIdentity.js';
+import { normalizeGamingGameIdentity, resolveGamingGuideIdentity } from '@shared/gaming/gamingGameIdentity.js';
 import { assessGamingSourcePolicy, evaluateGamingFreshness, extractGamingFreshnessMetadata, GAMING_FRESHNESS_POLICY_VERSION, GAMING_SOURCE_POLICY_VERSION, type GamingFreshnessEvidence } from '@shared/gaming/gamingFreshnessCore.js';
 import { gamingClearHistoricalSourceVerified } from '@shared/gaming/gamingClearSource.js';
 import { assessGamingStructuralUsability } from '@shared/gaming/gamingStructuralEvidence.js';
@@ -1223,11 +1223,20 @@ async function ingestOneSource(
       pageTitle,
       pageHeadings
     });
+    const approvedContext = source.hybridApproval?.applicabilityContext;
+    const requestedGame = approvedContext?.game ?? source.game;
+    // An edition-qualified catalog key is separate from the approved base game.
+    // Revalidation may recognize either exact acquired identity, but must not
+    // erase an unapproved sequel/edition qualifier to manufacture a match.
+    const requestedGameIdentities = new Set([
+      canonicalGameKey(canonicalizeGamingGameName(requestedGame)),
+      ...(approvedContext?.edition ? [resolveGamingGuideIdentity(requestedGame, approvedContext.edition)] : [])
+    ]);
     if (
       detectedGame.game
       && detectedGame.confidence >= 0.8
       // The detector recognizes broad aliases; it must not define the stored title or key.
-      && canonicalGameKey(detectedGame.game) !== canonicalGameKey(canonicalizeGamingGameName(source.game))
+      && !requestedGameIdentities.has(canonicalGameKey(detectedGame.game))
     ) {
       return {
         submittedIndex: source.submittedIndex,

@@ -14,7 +14,7 @@ import {
 } from '@shared/gaming/gamingStoredEvidenceCore.js';
 import { GAMING_BUILD_RESOURCE_HARD_LIMITS } from './gamingBuildResourceSchema.js';
 import { getGamingRagChunkChars, getGamingRagMaxChunks, getGamingRagMaxSources, getGamingWebContextMaxChars } from './gamingConfig.js';
-import { canonicalizeGamingGameName } from './gamingGameDetection.js';
+import { canonicalizeGamingGameName, detectGamingLeadingGameAlias } from './gamingGameDetection.js';
 import { normalizeGamingGameIdentity } from '@shared/gaming/gamingGameIdentity.js';
 import { buildGamingRetrievalTerms, GAMING_RETRIEVAL_POLICY_VERSION } from '@shared/gaming/gamingRetrievalPolicy.js';
 import { assessGamingClearEvidence, assessGamingRequestCoverage } from '@shared/gaming/gamingClearEvidence.js';
@@ -73,7 +73,11 @@ export async function retrieveStoredGamingKnowledge(input: GamingStoredKnowledge
   const gameKey = input.mode === 'guide' || input.hybridRetrieval ? preciseGameKey
     : canonicalizeGamingGameName(input.game).normalize('NFKC').toLowerCase()
       .replace(/[^a-z0-9]+/gu, '-').replace(/^-+|-+$/gu, '').slice(0, 160);
-  const resolveSourceIdentity = input.mode === 'guide' || input.hybridRetrieval || preciseGameKey !== gameKey;
+  // Recognition may request the precise source lookup, but never replace the
+  // requested title with a franchise parent or strip an unfamiliar subtitle.
+  const recognizedParent = detectGamingLeadingGameAlias(input.game).game;
+  const resolveSourceIdentity = input.mode === 'guide' || input.hybridRetrieval || preciseGameKey !== gameKey
+    || Boolean(recognizedParent && normalizeGamingGameIdentity(recognizedParent) !== preciseGameKey);
   let sourceKnown = false;
   let records: GamingKnowledgeProvenanceRecord[];
   try {

@@ -21,6 +21,7 @@ let database = new GamingResolvedSourceHarness();
 let documentText = PASSAGE;
 let documentGame = SOURCE_GAME;
 let documentTitle: string | undefined;
+let includeIndependentGameScope = true;
 let privateDns = false;
 let queueUnavailable = false;
 let jobSequence = 0;
@@ -114,7 +115,7 @@ async function discoverCurrent(mode: 'build' | 'meta', extras: Record<string, un
     const index = new globalThis.URL(url).pathname === '/patchnotes';
     const guide = new globalThis.URL(url).pathname === '/swtor-telescope-build';
     const labels = index ? 'Current patch: 2.1. Current build: 2.1.1.' : 'Patch: 2.1. Build: 2.1.1.';
-    return { data: `<html><title>${game} ${guide ? 'build guide' : 'patch notes'}</title><body><article>Game: ${game}. ${labels} Effective from: 2026-09-08. Platforms: all. Regions: all. ${game} gameplay reference. ${index ? 'This synthetic official release index identifies only the applicable update and hotfix for the disposable test. Do not infer the best strategy from this list.' : guide ? `For the telescope build at the obsidian observatory, ${PASSAGE}` : 'The telescope alignment value at the obsidian observatory changed in this synthetic update. This patch verifies the change only, without recommending a build.'}</article></body></html>`, headers: { 'content-type': 'text/html' } };
+    return { data: `<html><title>${game} ${guide ? 'build guide' : 'patch notes'}</title><body><article>Game: ${game}. ${labels} Effective from: 2026-09-08. Platforms: all. Regions: all. In ${game}, these acquired records describe telescope compatibility. ${index ? 'This synthetic official release index identifies only the applicable update and hotfix for the disposable test. Do not infer the best strategy from this list.' : guide ? `For the telescope build at the obsidian observatory, ${PASSAGE}` : 'The telescope alignment value at the obsidian observatory changed in this synthetic update. This patch verifies the change only, without recommending a build.'}</article></body></html>`, headers: { 'content-type': 'text/html' } };
   });
   const workflow = createGamingHybridWorkflow();
   const query = { contractVersion, idempotencyKey: 'mode-query-1', game, mode,
@@ -339,8 +340,12 @@ describe('Gaming hybrid durable lifecycle', () => {
   });
   beforeEach(() => {
     database = new GamingResolvedSourceHarness(); jobs.clear(); operations.clear(); jobSequence = 0;
-    documentText = PASSAGE; documentGame = SOURCE_GAME; documentTitle = undefined; privateDns = false; queueUnavailable = false;
+    documentText = PASSAGE; documentGame = SOURCE_GAME; documentTitle = undefined; includeIndependentGameScope = true;
+    privateDns = false; queueUnavailable = false;
     jest.clearAllMocks();
+    // A failed earlier assertion must not leak an unconsumed one-shot transport
+    // or provider response into a different lifecycle scenario.
+    mockHttp.mockReset(); mockTrinity.mockReset(); mockAuditCompletion.mockReset();
     prior = Object.fromEntries(Object.keys(environment).map(key => [key, process.env[key]]));
     Object.assign(process.env, environment);
     jest.spyOn(logger, 'info').mockImplementation(() => undefined);
@@ -364,7 +369,10 @@ describe('Gaming hybrid durable lifecycle', () => {
       expect(options).toMatchObject({ maxRedirects: 0, proxy: false, responseType: 'stream' });
       expect(options.maxContentLength).toBeLessThanOrEqual(2_000_000);
       const paragraphs = documentText.split('\n\n').map(text => `<p>${text}</p>`).join('');
-      return { data: `<html><title>${documentTitle ?? `${documentGame} guide`}</title><body><article><p>${documentGame} gameplay reference.</p>${paragraphs}</article></body></html>`, headers: { 'content-type': 'text/html' } };
+      // Lifecycle scenarios need independently acquired game scope, rather than
+      // relying on a title repeated in the body. Identity-negative cases opt out.
+      const gameScope = includeIndependentGameScope ? `<p>In ${documentGame}, the following acquired gameplay applies.</p>` : '';
+      return { data: `<html><title>${documentTitle ?? `${documentGame} guide`}</title><body><article><p>${documentGame} gameplay reference.</p>${gameScope}${paragraphs}</article></body></html>`, headers: { 'content-type': 'text/html' } };
     });
   });
   afterEach(() => {
@@ -508,7 +516,9 @@ describe('Gaming hybrid durable lifecycle', () => {
           ? `<p>${options.indexLabels ?? ''}</p><h1>Latest News on ELDEN RING</h1><div class="search__section"><h2 id="patch-notes">Patch Notes (2)</h2><ul class="cards-list"><li><a href="${articlePath}"><h3>Elden Ring – Patch Notes Version ${currentPatch}</h3><span>2 Like</span><time>08/09/2026</time></a></li><li><a href="/elden-ring/news/elden-ring-patch-notes-version-19"><h3>Elden Ring – Patch Notes Version 1.9</h3><span>1 Like</span><time>07/09/2026</time></a></li></ul><p>Load More</p></div><h2>Coming Soon (0)</h2>`
           : path === articlePath
             ? `<h1>Elden Ring – Patch Notes Version ${currentPatch}</h1><p>08/09/2026</p><p>${options.articleLabels ?? ''}</p>${articlePlatforms}${articleVersions}<p>Online play requires the player to apply this update. These official patch notes identify application and regulation versions. Follow the update instructions before online play. General maintenance fixes are included.</p>`
-            : '<p>Elden Ring merchandise inventory. Village merchants barter leather supplies and canvas tents while craftsmen prepare wooden boxes for visiting traders. Shipping information covers parcel sizes and delivery windows, with payment instructions for physical collectibles.</p>';
+            // Independently scope the irrelevant fixture so this scenario still
+            // tests question coverage, rather than failing earlier on identity.
+            : '<p>In Elden Ring, village merchants barter leather supplies and canvas tents while craftsmen prepare wooden boxes for visiting traders. Shipping information covers parcel sizes and delivery windows, with payment instructions for physical collectibles.</p>';
       return { data: `<html><title>${path.endsWith('/elden-ring-mage') ? 'Elden Ring synthetic mage build guide' : path === articlePath ? `Elden Ring – Patch Notes Version ${currentPatch}` : 'Elden Ring news'}</title><body><main>${text}</main></body></html>`, headers: { 'content-type': 'text/html' } };
     });
     mockTrinity.mockImplementation(async (request: any) => {
@@ -877,21 +887,13 @@ describe('Gaming hybrid durable lifecycle', () => {
     { name: 'article platform outside the narrower listing', indexLabels: 'Platforms: PC.', targetedPlatforms: 'PlayStation 5 / Steam', query: { platform: 'PlayStation 5' } },
     { name: 'article region outside the narrower listing', indexLabels: 'Regions: EU.', articleLabels: 'Regions: all.', query: { region: 'US' } },
     { name: 'contradictory article platform labels', articleLabels: 'Platforms: Nintendo Switch 2.', targetedPlatforms: 'Steam' },
-    { name: 'unsupported targeted platform qualifier', articleLabels: 'Platforms: all.', targetedPlatforms: 'Steam (rollout starts tomorrow)', advisory: true },
-    { name: 'missing targeted platform DOM', articleLabels: 'Platforms: all.', targetedPlatforms: null, advisory: true }
-  ])('preserves strict conflicts or qualifies incomplete HTTP currentness for $name', async scope => {
+    { name: 'unsupported targeted platform qualifier', articleLabels: 'Platforms: all.', targetedPlatforms: 'Steam (rollout starts tomorrow)', identityUnverified: true },
+    { name: 'missing targeted platform DOM', articleLabels: 'Platforms: all.', targetedPlatforms: null, identityUnverified: true }
+  ])('preserves strict conflicts or blocks unverified HTTP currentness for $name', async scope => {
     const { workflow, query, missing, verified, guideUrl, indexUrl, articleUrl } = await mageCurrentnessLifecycle(undefined, { http: true, ...scope });
-    if (scope.advisory) {
-      expect(verified.body).toMatchObject({ state: 'answer_ready', nextAction: 'answer', evidenceSelected: true, freshnessStatus: 'unverified' });
-      expect(verified.body.answer?.response).toContain('may be outdated');
-      expect(mockTrinity).toHaveBeenCalledTimes(1);
-      expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
-      expect((await workflow.candidates({ contractVersion, workflowId: missing.body.workflowId,
-        idempotencyKey: 'incomplete-metadata-extra-round', discoveryType: 'currentness_verification',
-        candidates: [{ url: indexUrl }] }, context)).status).toBe(409);
-      expect(jobs.size).toBe(0);
-      expect(database.queries.some(sql => /^(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b/iu.test(sql))).toBe(false);
-      return;
+    if (scope.identityUnverified) {
+      expect(verified.body.candidates?.some(candidate => candidate.url === articleUrl
+        && candidate.reasonCodes.includes('GAME_IDENTITY_UNVERIFIED'))).toBe(true);
     }
     expect(verified.body).toMatchObject({ state: 'discovery_required', nextAction: 'stop', evidenceSelected: false,
       discovery: { type: 'currentness_verification', round: 1, maxRounds: 1 } });
@@ -1232,7 +1234,7 @@ describe('Gaming hybrid durable lifecycle', () => {
     const patchUrl = 'https://swtor.com/patchnotes/synthetic-test-update';
     const guideUrl = 'https://guides.example.org/swtor-telescope-build';
     const indexText = `Game: ${game}. Current patch: 2.1. Current build: 2.1.1. Effective from: 2026-09-08. Platforms: all. Regions: all. Official synthetic update release index for the disposable Gaming test. This index identifies the applicable update and hotfix only.`;
-    const patchText = `Game: ${game}. Patch: 2.1. Build: 2.1.1. Effective from: 2026-09-08. Published at: 2026-09-08. Platforms: all. Regions: all. ${game} gameplay reference. ${PASSAGE}`;
+    const patchText = `Game: ${game}. Patch: 2.1. Build: 2.1.1. Effective from: 2026-09-08. Published at: 2026-09-08. Platforms: all. Regions: all. In ${game}, these acquired records describe telescope compatibility. ${PASSAGE}`;
     mockHttp.mockImplementation(async (url: string, options: any) => {
       expect(options).toMatchObject({ maxRedirects: 0, proxy: false });
       const index = new globalThis.URL(url).pathname === '/patchnotes';
@@ -1432,7 +1434,7 @@ describe('Gaming hybrid durable lifecycle', () => {
   });
 
   it('preserves the three distinct synthetic historical rejection causes and never scores a blocked redirect', async () => {
-    documentTitle = 'Unidentified notebook'; documentText = PASSAGE;
+    documentTitle = 'Unidentified notebook'; documentText = PASSAGE; includeIndependentGameScope = false;
     const identity = await evaluate();
     expect(identity.decisions[0].reasonCodes).toContain('GAME_IDENTITY_UNVERIFIED');
     expect(identity.accepted).toHaveLength(0);
@@ -1494,17 +1496,19 @@ describe('Gaming hybrid durable lifecycle', () => {
     expect(exact.accepted[0].freshness.game).toBe(requested);
   });
 
-  it('rejects unsupported platform/edition scope and preserves a confirmed edition in durable catalog identity', async () => {
+  it.each(['Remastered', 'Definitive Edition'])('rejects unsupported platform scope and preserves confirmed %s in durable catalog identity', async edition => {
     documentText = `Game: ${SOURCE_GAME}. Platform: Xbox. ${PASSAGE}`;
     expect((await evaluate({ platform: 'PC' })).decisions[0].reasonCodes).toContain('PLATFORM_MISMATCH');
-    documentGame = `${SOURCE_GAME} Remastered`;
-    documentText = `Game: ${SOURCE_GAME}. Edition: Remastered. ${PASSAGE}`;
-    const result = await evaluate({ edition: 'Remastered' });
-    expect(result.accepted[0].game).toBe(`${SOURCE_GAME} Remastered`);
+    documentGame = `${SOURCE_GAME} ${edition}`;
+    documentText = `Game: ${SOURCE_GAME}. Edition: ${edition}. ${PASSAGE}`;
+    const result = await evaluate({ edition });
+    expect(result.accepted[0].game).toBe(`${SOURCE_GAME} ${edition}`);
     const stored = await store(result.accepted);
-    expect((await complete((stored.payload as { ingestionId: string }).ingestionId)).sources[0].status).toBe('stored');
+    const completed = (await complete((stored.payload as { ingestionId: string }).ingestionId)).sources[0];
+    expect({ status: completed.status, error: completed.error?.code }).toEqual({ status: 'stored', error: undefined });
     const later = await createGamingHybridWorkflow().query({ contractVersion, idempotencyKey: 'edition-query-1',
-      game: SOURCE_GAME, edition: 'Remastered', question: input.prompt }, context);
+      game: SOURCE_GAME, edition, question: input.prompt }, context);
+    expect(later.body.reason).toBe('ACCEPTED_EVIDENCE');
     expect(later.body).toMatchObject({ state: 'answer_ready', sourceKnown: true });
   });
 

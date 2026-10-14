@@ -2088,7 +2088,7 @@ describe('native PR preview import boundary', () => {
   }, 30_000);
 
   it('pins the pure Gaming CLEAR decisions without admitting their effectful service graph', async () => {
-    for (const name of ['gamingClearPreviewFixture', 'gamingClearPolicy', 'gamingClearSource', 'gamingClearEvidence', 'gamingClearAnswerBinding']) {
+    for (const name of ['gamingClearPreviewFixture', 'gamingClearPolicy', 'gamingClearSource', 'gamingClearEvidence', 'gamingClearAnswerBinding', 'gamingAcquiredIdentity']) {
       const filePath = `src/shared/gaming/${name}.ts`;
       expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toContain(filePath);
       const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');

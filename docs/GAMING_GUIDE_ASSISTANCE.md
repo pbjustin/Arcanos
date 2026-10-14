@@ -1182,8 +1182,8 @@ edition boundaries, and add generic regression fixtures. Publisher authority,
 currentness adapters and durable storage eligibility require their separate
 existing source-policy review. Runtime submissions cannot mutate the registry.
 
-CLEAR policy v2 preserves the public `gaming-clear/v1` rubric and wire shape,
-while rejecting persisted v1 policy assessments until sources are reassessed.
+CLEAR policy v3 preserves the public `gaming-clear/v1` rubric and wire shape,
+while rejecting persisted v1/v2 policy assessments until sources are reassessed.
 Context fingerprints bind the registry schema, revision and a hash of its exact
 reviewed data. Existing bounded extraction caches can reuse acquired bytes, but
 validation decisions must be recomputed under the current rules. Approved hybrid durable Gaming
@@ -1196,6 +1196,10 @@ artifacts or force reassessment. An old binary may recognize historical v1
 assessments; restoring it is not evidence that those assessments satisfy the
 current identity rules. Existing workflow IDs, TTLs, idempotency, authentication,
 source authority and release gates remain in force.
+
+The [universal identity architecture](GAMING_UNIVERSAL_IDENTITY.md) explains the
+registry-independent acquired declaration path, its conservative evidence
+requirements, the dependency on PR #1542, and the synthetic validation boundary.
 
 ### Ordinary gameplay acceptance controls
 

@@ -349,6 +349,15 @@ describe('bounded stored Gaming chunk evidence', () => {
     expect(found.evidence?.map(entry => entry.recordId)).toEqual(['historical']);
   });
 
+  test.each(['build', 'meta'] as const)('never falls back to a registered parent for an unfamiliar %s title', async mode => {
+    findSources.mockResolvedValue([]);
+    search.mockResolvedValue([]);
+    await retrieveStoredGamingKnowledge({ ...input, game: 'Minecraft Moonbound', mode }, { resolveVerifiedPatch: () => undefined });
+    expect(findSources).toHaveBeenCalledWith({ game: 'Minecraft Moonbound', mode }, expect.any(Object));
+    expect(search).toHaveBeenCalledWith(expect.objectContaining({ gameKey: 'minecraft-moonbound', mode }), expect.any(Object));
+    expect(search.mock.calls).toHaveLength(1);
+  });
+
   test.each(['build', 'meta'] as const)('keeps the existing single lookup for an unchanged %s game key', async mode => {
     search.mockResolvedValue([record('common', 'Equip the Zephyrglass Compass before entering the cobalt arch.', { recordType: mode })]);
     const found = await retrieveStoredGamingKnowledge({ ...input, mode }, { resolveVerifiedPatch: () => undefined });

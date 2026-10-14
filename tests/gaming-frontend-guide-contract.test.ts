@@ -12,7 +12,7 @@ const { evaluateGamingHybridCandidates, createApprovedGamingHybridIngestion } = 
 const url = 'https://guides.example.org/copper-gate';
 const request = { game: 'Lantern Voyage', mode: 'guide' as const, prompt: 'How do I open the copper gate?' };
 const context = { actorKey: 'frontend-guide-reader', workflowId: '20000000-0000-4000-8000-000000000002' };
-const page = (game: string, extra = '') => `<html><title>${game} guide</title><body><article>${game} gameplay guide. To open the copper gate, rotate the bronze lever beside the entrance and wait for the latch to release. Cross the gate after the latch opens. ${extra}</article></body></html>`;
+const page = (game: string, extra = '') => `<html><title>${game} guide</title><body><article>${game} gameplay guide. In ${game}, to open the copper gate, rotate the bronze lever beside the entrance and wait for the latch to release. Cross the gate after the latch opens. ${extra}</article></body></html>`;
 
 beforeEach(() => {
   http.mockReset();
@@ -40,6 +40,15 @@ describe('frontend discovery and independent backend guide evaluation', () => {
     expect(result.accepted[0].freshness.patch).toBeUndefined();
     expect(result.accepted[0].sourcePolicy.authority).toBe('unreviewed');
     expect(JSON.stringify(result.knowledge)).not.toMatch(/99\.9|Verified latest guide|Different Game/u);
+  });
+
+  it('withholds nominal game labels without independently scoped acquired gameplay', async () => {
+    http.mockResolvedValue({ data: '<html><title>Lantern Voyage guide</title><body><article>Lantern Voyage gameplay guide. To open the copper gate, rotate the bronze lever beside the entrance and wait for the latch to release. Cross the gate after the latch opens.</article></body></html>',
+      headers: { 'content-type': 'text/html' } });
+    const result = await evaluateGamingHybridCandidates({ ...request, candidates: [{ url,
+      claimedGame: request.game, title: `${request.game} guide` }] }, context);
+    expect(result.accepted).toEqual([]);
+    expect(result.decisions[0].reasonCodes).toContain('GAME_IDENTITY_UNVERIFIED');
   });
 
   it('rejects acquired wrong-game content despite correct-looking discovery labels', async () => {

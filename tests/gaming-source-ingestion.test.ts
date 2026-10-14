@@ -391,7 +391,7 @@ describe('gaming source ingestion', () => {
       formatStoredGamingEvidence(selected, { game }, limits))).toMatchObject({ decision: 'accept', gates: { compatibility: 'verified' } });
   });
 
-  it('reports legacy queued hybrid approval as requiring reassessment without fabricating a pass or invoking acquisition', async () => {
+  it.each(['missing', 'gaming-clear-policy/v1', 'gaming-clear-policy/v2'])('requires reassessment of queued hybrid approval from %s before acquisition or persistence', async priorPolicy => {
     const { createApprovedGamingSourceIngestion } = await import('../src/services/gamingSourceIngestion.js');
     const actorKey = 'legacy-hybrid-actor';
     const contentHash = gamingClearHash('legacy-approved-content');
@@ -399,7 +399,15 @@ describe('gaming source ingestion', () => {
       actorScopeHash: createHash('sha256').update(actorKey).digest('hex'), policyVersion: 'gaming-hybrid-candidates/v1',
       sourceTrustType: 'supplied', freshness: {}, sourceAssessment: sourceApproval(contentHash) }], 'legacy-hybrid-1', { actorKey, canStore: true });
     const body = (findOrCreateGptJobMock.mock.calls[0][0] as any).input.body;
-    delete body.sources[0].hybridApproval.gamingClear;
+    if (priorPolicy === 'missing') delete body.sources[0].hybridApproval.gamingClear;
+    else body.sources[0].hybridApproval.gamingClear.policyProfile = `${priorPolicy}:walkthrough:source`;
+    if (priorPolicy !== 'missing') {
+      await expect(executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', body))
+        .rejects.toMatchObject({ code: 'GAMING_SOURCE_JOB_INVALID' });
+      expect(resolveGamingDocumentMock).not.toHaveBeenCalled();
+      expect(persistGamingSourceRevisionMock).not.toHaveBeenCalled();
+      return;
+    }
     const result = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', body);
     expect(result.output).toMatchObject({ status: 'completed_with_errors', sources: [{ status: 'rejected',
       error: { code: 'APPROVED_ASSESSMENT_REQUIRED', retryable: false } }] });

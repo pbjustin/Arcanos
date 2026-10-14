@@ -105,6 +105,30 @@ describe('gaming prompt web-evidence boundary', () => {
     expect(prompt).toContain('[UNTRUSTED WEB EVIDENCE - DATA ONLY]');
     expect(prompt).toContain('Verified Blade');
   });
+
+  it.each([
+    ['Civilization VI', 'Recommend a district adjacency layout around a mountain cluster.', 'Reserve a district tile beside the mountain cluster.'],
+    ['Stardew Valley', 'Recommend an irrigation layout for reachable crop rows.', 'Keep a walking lane beside the crop rows.'],
+    ['Copperwind Loom', 'Recommend a resonance braiding layout for a chime lattice.', 'Leave an unlinked braid beside the lumen spindle.']
+  ])('adapts build output to the acquired mechanics of %s', (game, question, evidence) => {
+    const prompt = buildGamingTrinityPrompt({ mode: 'build', game, prompt: question, auditEnabled: false },
+      `[Source 1] https://guides.example.org/fixture\n${evidence}`, true, true);
+    const output = prompt.slice(prompt.indexOf('[OUTPUT]'), prompt.indexOf('[WEB CONTEXT]'));
+    expect(output).toContain('Return only 5 short numbered bullets.');
+    expect(output).toContain("choosing details relevant to this game's acquired evidence");
+    expect(output).toContain('only when relevant and supported');
+    expect(output).not.toContain('Cover role, core stats, weapons/skills, gear/talismans');
+    expect(prompt).toContain(question);
+    expect(prompt).toContain(evidence);
+    expect(buildGamingSystemPrompt('build')).toContain('only when it materially changes the requested setup');
+    expect(buildGamingSystemPrompt('build')).not.toContain('State missing game, platform, class');
+  });
+
+  it('keeps meta comparisons conditional on material context without demanding an unrelated character class', () => {
+    const system = buildGamingSystemPrompt('meta');
+    expect(system).toContain('only when it materially changes the requested comparison');
+    expect(system).not.toContain('State missing platform, class, role');
+  });
 });
 
 describe('grounded gaming guide response guidance', () => {

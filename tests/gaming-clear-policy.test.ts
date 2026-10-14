@@ -171,10 +171,11 @@ describe('Gaming CLEAR canonical policy and strict boundary', () => {
   });
   test('invalidates old policy decisions while preserving the public rubric contract', () => {
     expect(GAMING_CLEAR_VERSION).toBe('gaming-clear/v1');
-    expect(GAMING_CLEAR_POLICY_VERSION).toBe('gaming-clear-policy/v2');
+    expect(GAMING_CLEAR_POLICY_VERSION).toBe('gaming-clear-policy/v3');
     const assessment = createGamingClearAssessment(input());
     expect(parseGamingClearAssessment(assessment)).toEqual(assessment);
     expect(parseGamingClearAssessment({ ...assessment, policyProfile: 'gaming-clear-policy/v1:walkthrough:source' })).toBeNull();
+    expect(parseGamingClearAssessment({ ...assessment, policyProfile: 'gaming-clear-policy/v2:walkthrough:source' })).toBeNull();
   });
   test('binds assessment context to registry schema, revision and reviewed data content', () => {
     const context = { game: 'Lantern Vale', prompt: 'Open the door' };
