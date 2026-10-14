@@ -1,0 +1,215 @@
+{
+  "schemaVersion": 1,
+  "state": "LOCAL_VALIDATED_FINAL_HEAD_CI_PENDING",
+  "mainMergeCommit": "f34da2cc1565bd2105af4254cf41b0a9634afe9e",
+  "reviewedDependencyHead": "e24d5614748f39e25e27a0c062dfba2ea0adbb77",
+  "priorPrHead": "741b00a8236f66c02beec700f68a9e1aa42e95b7",
+  "mergeStrategy": "non-fast-forward-merge-preserving-history",
+  "historicalReceipt": "independent-validation.json",
+  "dependencyResolved": true,
+  "runtimeSourceChangedByIntegration": true,
+  "postMergeRepairs": [
+    "generic_refresh_reassessment",
+    "unapproved_durable_identity",
+    "legacy_unassessed_retrieval"
+  ],
+  "sourceFingerprints": [
+    {
+      "path": "backend-index.json",
+      "sha256Lf": "5f9a169057029a80bb3cc07dbf64b65da551aa379ec2d14993fe17e38c525804",
+      "changedFromHistoricalReceipt": false
+    },
+    {
+      "path": "cli-agent-index.json",
+      "sha256Lf": "58e0f5117da50769e8124810eecd39a6223991ee667cf1160cbb88b68bc0f9db",
+      "changedFromHistoricalReceipt": false
+    },
+    {
+      "path": "docs/BACKEND_INDEX.md",
+      "sha256Lf": "ea61ae656253f465a2d602158d2aab16e24ef8ffc17b53ba0ccd8a75a8745736",
+      "changedFromHistoricalReceipt": false
+    },
+    {
+      "path": "docs/CLI_AGENT_INDEX.md",
+      "sha256Lf": "2c217494b0b574e81a46383ca4d8f5f50b737b30c46ab0d8ed635f55574a49cf",
+      "changedFromHistoricalReceipt": false
+    },
+    {
+      "path": "docs/GAMING_UNIVERSAL_IDENTITY.md",
+      "sha256Lf": "5ec07ef7f3c8c53aeed8b32d7541a31cc3bb2fd84017331e7b87968f7cc50e4a",
+      "changedFromHistoricalReceipt": true
+    },
+    {
+      "path": "docs/audits/2026-10-14/gaming-universal-identity/independent-review.md",
+      "sha256Lf": "418b36addf792cb5a6a79df8c466975537f783546ce123993866ae6670840011",
+      "changedFromHistoricalReceipt": false
+    },
+    {
+      "path": "scripts/check-native-pr-preview-imports.mjs",
+      "sha256Lf": "16011194afd102deab453e87872375fda8607a0fa5e41316a466c1bb2c5a77b4",
+      "changedFromHistoricalReceipt": false
+    },
+    {
+      "path": "src/services/gamingSourceIngestion.ts",
+      "sha256Lf": "b9cbb397a81770dd4d8d96257dbeff8fcb21d0193fb446dad3797e865224b33c",
+      "changedFromHistoricalReceipt": true
+    },
+    {
+      "path": "src/services/gamingStoredKnowledge.ts",
+      "sha256Lf": "8ff488d5e3dc49835e7385175dbfd17e734bc0fd331f7b745a8e23a19b6987ba",
+      "changedFromHistoricalReceipt": true
+    },
+    {
+      "path": "src/shared/gaming/gamingAcquiredIdentity.ts",
+      "sha256Lf": "aee8df40432ac0af3bbd1a4dc9b8ec60f69985d805e3e79413829fc534a4c928",
+      "changedFromHistoricalReceipt": false
+    },
+    {
+      "path": "src/shared/gaming/gamingClearPolicy.ts",
+      "sha256Lf": "a239a6db204a72cae125a2d3d1efc7ddb485a158af2517df59885e25b3a0c2e5",
+      "changedFromHistoricalReceipt": false
+    },
+    {
+      "path": "src/shared/gaming/gamingClearSource.ts",
+      "sha256Lf": "83f6c9d940fc0749a3b660e1a43070ec63065530bb8c39b54747cb483f31a689",
+      "changedFromHistoricalReceipt": false
+    },
+    {
+      "path": "src/shared/gaming/gamingCurrentnessPreviewFixture.ts",
+      "sha256Lf": "7a2e3b6b60891b941260c65538862890a1af327af10e3f5371403b66342d8b42",
+      "changedFromHistoricalReceipt": false
+    },
+    {
+      "path": "src/shared/gaming/gamingGameRegistry.ts",
+      "sha256Lf": "c1e960271aa1412c0c6937286f9b7d7a4240a0f4edada7a38a7b3f9e8dc010d7",
+      "changedFromHistoricalReceipt": false
+    },
+    {
+      "path": "tests/fixtures/gaming-independent-workflow.ts",
+      "sha256Lf": "def824608f7ec92fa3b477cca3c8785a26c6188e9fbf62965d5e6e8dccbb0fcd",
+      "changedFromHistoricalReceipt": false
+    },
+    {
+      "path": "tests/gaming-clear-answer-audit.test.ts",
+      "sha256Lf": "b3ef1c205f962c8cddeb0a2ff00bcd85cc5192145f1bdc73f25380c900980592",
+      "changedFromHistoricalReceipt": false
+    },
+    {
+      "path": "tests/gaming-clear-evidence.test.ts",
+      "sha256Lf": "29a412b93dfc29eeb52cca26c47007e77a866b93f2043e46c73772a01c0d9e42",
+      "changedFromHistoricalReceipt": false
+    },
+    {
+      "path": "tests/gaming-clear-policy.test.ts",
+      "sha256Lf": "7b055babac55aa3001d64acbf24995538256961576c708da4cecad4df4193370",
+      "changedFromHistoricalReceipt": false
+    },
+    {
+      "path": "tests/gaming-independent-clear-review.test.ts",
+      "sha256Lf": "b4f8f37e82cf5fe1fb5b5ade4b4ea8751c26c01703ae986a56feaa681425b544",
+      "changedFromHistoricalReceipt": true
+    },
+    {
+      "path": "tests/gaming-independent-identity-review.test.ts",
+      "sha256Lf": "b001feac897b2ca8c34830479c0f6002f8bb0f3d76b8a757eedd799771d51a4b",
+      "changedFromHistoricalReceipt": false
+    },
+    {
+      "path": "tests/gaming-independent-performance-review.test.ts",
+      "sha256Lf": "3d9434ec2eeb86898c4f252aa5963b0a69fd177cffe40f53a4b599cc750672ce",
+      "changedFromHistoricalReceipt": false
+    },
+    {
+      "path": "tests/gaming-source-ingestion.test.ts",
+      "sha256Lf": "ad57a6335a65b8233d5ae2b17003c8cb421f4b0908130be1a9434558f7dc6aca",
+      "changedFromHistoricalReceipt": true
+    },
+    {
+      "path": "tests/gaming-stored-knowledge.test.ts",
+      "sha256Lf": "551112dd62071e240cde09a00ec7f9beda609a001f6da68543562cae6bfb9c61",
+      "changedFromHistoricalReceipt": true
+    },
+    {
+      "path": "tests/gaming-universal-workflow.integration.test.ts",
+      "sha256Lf": "64c7573a88b1979fca98278aea0671ace4d8289018d5becec139acc39d999674",
+      "changedFromHistoricalReceipt": false
+    }
+  ],
+  "supplementalFingerprints": [
+    {
+      "path": "docs/GAMING_GUIDE_ASSISTANCE.md",
+      "sha256Lf": "a69e45bba6dcc1b2861c2099c85d5d8195508a5bc51b3ecff31924a16901253c"
+    },
+    {
+      "path": "docs/audits/2026-10-14/gaming-universal-identity/README.md",
+      "sha256Lf": "1773e4bb5ea17a6a6951b7df494276a00c0e3f7dd5fddf93bb14b522faaeddfc"
+    },
+    {
+      "path": "docs/audits/2026-10-14/gaming-universal-identity/post-merge-integration.md",
+      "sha256Lf": "cfb887b598f45e813b4012ec908af3e03d86df90082562e462590d77e54899eb"
+    },
+    {
+      "path": "tests/gaming-player-context.e2e.test.ts",
+      "sha256Lf": "fe9790d3207a458456bbb2eddb2fd8e0270e8b344d517a749a6b657aa086011c"
+    }
+  ],
+  "local": {
+    "gaming": {
+      "passed": 5240,
+      "failed": 0,
+      "skipped": 9,
+      "passedSuites": 165,
+      "failedSuites": 0
+    },
+    "previewBoundary": {
+      "passed": 410,
+      "failed": 0,
+      "skipped": 0
+    },
+    "checks": [
+      {
+        "name": "type-check",
+        "exitCode": 0
+      },
+      {
+        "name": "lint",
+        "exitCode": 0
+      },
+      {
+        "name": "build",
+        "exitCode": 0
+      },
+      {
+        "name": "railway-static",
+        "exitCode": 0
+      },
+      {
+        "name": "docs",
+        "exitCode": 0
+      },
+      {
+        "name": "links",
+        "exitCode": 0
+      },
+      {
+        "name": "index",
+        "exitCode": 0
+      },
+      {
+        "name": "diff-check",
+        "exitCode": 0
+      },
+      {
+        "name": "gaming",
+        "exitCode": 0
+      },
+      {
+        "name": "preview-boundary",
+        "exitCode": 0
+      }
+    ]
+  },
+  "hostedFinalCi": "PENDING",
+  "liveAcceptance": "NOT_RUN",
+  "productionReady": "BLOCKED"
+}

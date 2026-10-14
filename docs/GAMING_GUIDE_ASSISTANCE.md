@@ -827,8 +827,9 @@ automatically false; fetching an old document does not make its facts current.
 
 ### Server-owned policy and decisions
 
-`gaming-clear-policy/v2` separates audit profile, question profile and source
-role. Requests and source text cannot supply policy weights, floors or approval.
+The server-owned CLEAR policy separates audit profile, question profile and
+source role. The current internal version is `gaming-clear-policy/v4`.
+Requests and source text cannot supply policy weights, floors or approval.
 These initial hypotheses are conservative rubric judgments, not calibrated
 probabilities or accuracy percentages.
 
@@ -1182,14 +1183,25 @@ edition boundaries, and add generic regression fixtures. Publisher authority,
 currentness adapters and durable storage eligibility require their separate
 existing source-policy review. Runtime submissions cannot mutate the registry.
 
-CLEAR policy v3 preserves the public `gaming-clear/v1` rubric and wire shape,
-while rejecting persisted v1/v2 policy assessments until sources are reassessed.
+CLEAR policy v3 introduced rejection of persisted v1/v2 assessments. The
+current v4 policy also rejects v3 assessments until sources are reassessed.
+Both preserve the public `gaming-clear/v1` rubric and wire shape.
 Context fingerprints bind the registry schema, revision and a hash of its exact
 reviewed data. Existing bounded extraction caches can reuse acquired bytes, but
 validation decisions must be recomputed under the current rules. Approved hybrid durable Gaming
 revision metadata already includes the CLEAR policy version, so old and new
 policy assessments cannot silently share an approved revision. This adds no storage
 infrastructure and does not change transient-only or source licensing policy.
+When an explicit prior assessment is obsolete or unbound, stored applicability
+remains unverified during retrieval and hybrid compaction; readable source text
+and its restrictions are preserved without restoring approval authority.
+Generic source refreshes of a previously assessed source also require a fresh
+assessment before the replacement can support generation. Unapproved durable
+ingestion binds applicability only after independently acquired game and edition
+identity is verified; matching request, URL or page title metadata does not
+provide that proof. Older unapproved stored revisions without current
+server-written identity proof remain readable but cannot authorize generation
+until reassessed. These checks do not automatically write or migrate stored data.
 
 Rollback must use a reviewed private release and invalidate reusable decision
 artifacts or force reassessment. An old binary may recognize historical v1
@@ -1199,7 +1211,7 @@ source authority and release gates remain in force.
 
 The [universal identity architecture](GAMING_UNIVERSAL_IDENTITY.md) explains the
 registry-independent acquired declaration path, its conservative evidence
-requirements, the dependency on PR #1542, and the synthetic validation boundary.
+requirements, the merged PR #1542 baseline, and the synthetic validation boundary.
 
 ### Ordinary gameplay acceptance controls
 

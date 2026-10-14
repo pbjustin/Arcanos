@@ -18,7 +18,7 @@ import { canonicalizeGamingGameName, detectGamingLeadingGameAlias } from './gami
 import { normalizeGamingGameIdentity } from '@shared/gaming/gamingGameIdentity.js';
 import { buildGamingRetrievalTerms, GAMING_RETRIEVAL_POLICY_VERSION } from '@shared/gaming/gamingRetrievalPolicy.js';
 import { assessGamingClearEvidence, assessGamingRequestCoverage } from '@shared/gaming/gamingClearEvidence.js';
-import { parseGamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
+import { GAMING_CLEAR_POLICY_VERSION, parseGamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
 
 export { buildStoredGamingLexicalQuery } from '@shared/gaming/gamingStoredEvidenceCore.js';
 export type {
@@ -57,8 +57,12 @@ export function selectStoredGamingEvidence(records: readonly GamingKnowledgeProv
     // applicability and regain its old identity authority. Keep its text and
     // restrictions readable, but require source reassessment before generation.
     const priorAssessmentInvalid = record.provenance?.gamingClear !== undefined && !bound;
+    // An unassessed historical revision has no independent acquired-identity
+    // proof. Keep its text readable, but do not let a complete old game snapshot
+    // regain generation authority before a current server-owned reassessment.
+    const identityProofMissing = !bound && record.provenance?.sourceIdentityPolicyVersion !== GAMING_CLEAR_POLICY_VERSION;
     const acquiredApplicability = record.provenance?.acquiredApplicability;
-    const provenance = priorAssessmentInvalid && acquiredApplicability && typeof acquiredApplicability === 'object'
+    const provenance = (priorAssessmentInvalid || identityProofMissing) && acquiredApplicability && typeof acquiredApplicability === 'object'
       && !Array.isArray(acquiredApplicability) ? { ...record.provenance,
         acquiredApplicability: { ...acquiredApplicability, metadataUnverified: true } } : record.provenance;
     return { ...record, provenance, ...(bound ? { clearSourceAssessment: assessment } : {}) };

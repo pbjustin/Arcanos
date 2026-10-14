@@ -1,6 +1,6 @@
 import { jest } from '@jest/globals';
 import type { GamingKnowledgeProvenanceRecord } from '../src/core/db/repositories/gamingSourceRepository.js';
-import { createGamingClearAssessment } from '../src/shared/gaming/gamingClearPolicy.js';
+import { createGamingClearAssessment, GAMING_CLEAR_POLICY_VERSION } from '../src/shared/gaming/gamingClearPolicy.js';
 import { GAMING_FRESHNESS_POLICY_VERSION, GAMING_SOURCE_POLICY_VERSION } from '../src/shared/gaming/gamingFreshnessCore.js';
 
 const search = jest.fn<(...args: unknown[]) => Promise<GamingKnowledgeProvenanceRecord[]>>();
@@ -162,7 +162,9 @@ describe('bounded stored Gaming chunk evidence', () => {
       { resolveVerifiedPatch: () => undefined });
     expect(current.clearEvidenceAssessment?.decision).toBe('accept');
     expect(current.sources[0].clearSourceAssessment).toEqual(assessment);
+    expect(stored.provenance.sourceIdentityPolicyVersion).toBeUndefined();
     stored.provenance.gamingClear = { ...assessment, ...invalid };
+    stored.provenance.sourceIdentityPolicyVersion = GAMING_CLEAR_POLICY_VERSION;
     const before = JSON.stringify(stored);
     const result = await retrieveStoredGamingKnowledge(request,
       { resolveVerifiedPatch: () => undefined });
@@ -173,6 +175,46 @@ describe('bounded stored Gaming chunk evidence', () => {
     expect(result.sources[0].freshnessMetadata).toMatchObject({ game: input.game, edition: 'base-game',
       platforms: ['PC'], regions: ['EU'], metadataUnverified: true });
     expect(JSON.stringify(stored)).toBe(before);
+  });
+
+  test.each([
+    ['wrong-game', 'In the game Synthetic Quest Echoes, the Zephyrglass Compass opens the hidden route beyond the cobalt arch.'],
+    ['anonymous', 'The Zephyrglass Compass opens the hidden route beyond the cobalt arch.']
+  ])('an unassessed historical %s snapshot remains readable without current independent identity authority', async (_label, text) => {
+    const request = { ...input, platform: 'PC', region: 'EU', edition: 'base-game', hybridRetrieval: true, requireRequestCoverage: true };
+    const stored = record('historical-unapproved', text, { provenance: {
+      acquiredApplicability: { extractorVersion: GAMING_FRESHNESS_POLICY_VERSION, contentHash: 'c'.repeat(64),
+        game: input.game, edition: 'base-game', platforms: ['PC'], regions: ['EU'], metadataConflict: false, metadataUnverified: false }
+    } });
+    search.mockResolvedValue([stored]);
+    const before = JSON.stringify(stored);
+    for (const sourceIdentityPolicyVersion of [undefined, 'gaming-clear-policy/v3']) {
+      if (sourceIdentityPolicyVersion) stored.provenance!.sourceIdentityPolicyVersion = sourceIdentityPolicyVersion;
+      const result = await retrieveStoredGamingKnowledge(request, { resolveVerifiedPatch: () => undefined });
+      expect(result.context).toContain('Zephyrglass Compass');
+      expect(result.clearEvidenceAssessment?.decision).not.toBe('accept');
+      expect(result.sources[0].freshnessMetadata).toMatchObject({ game: input.game, edition: 'base-game',
+        platforms: ['PC'], regions: ['EU'], metadataUnverified: true });
+      expect(result.sources[0].clearSourceAssessment).toBeUndefined();
+      delete stored.provenance!.sourceIdentityPolicyVersion;
+    }
+    expect(JSON.stringify(stored)).toBe(before);
+  });
+
+  test('current server identity policy admits a content-bound independently acquired unapproved source', async () => {
+    const text = 'In the game Synthetic Quest, the Zephyrglass Compass opens the hidden route beyond the cobalt arch.';
+    const stored = record('current-independent-source', text, { provenance: {
+      sourceIdentityPolicyVersion: GAMING_CLEAR_POLICY_VERSION,
+      acquiredApplicability: { extractorVersion: GAMING_FRESHNESS_POLICY_VERSION, contentHash: 'c'.repeat(64),
+        game: input.game, edition: 'base-game', platforms: ['PC'], regions: ['EU'], metadataConflict: false, metadataUnverified: false }
+    } });
+    search.mockResolvedValue([stored]);
+    const request = { ...input, platform: 'PC', region: 'EU', edition: 'base-game', hybridRetrieval: true, requireRequestCoverage: true };
+    const result = await retrieveStoredGamingKnowledge(request, { resolveVerifiedPatch: () => undefined });
+    expect(result.clearEvidenceAssessment?.decision).toBe('accept');
+    expect(result.sources[0].clearSourceAssessment).toBeUndefined();
+    stored.provenance!.acquiredApplicability = { ...(stored.provenance!.acquiredApplicability as object), contentHash: 'd'.repeat(64) };
+    expect((await retrieveStoredGamingKnowledge(request, { resolveVerifiedPatch: () => undefined })).clearEvidenceAssessment?.decision).not.toBe('accept');
   });
 
   test('retains independently extracted structured equipment evidence without treating metadata as evidence', () => {

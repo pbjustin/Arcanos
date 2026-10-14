@@ -28,7 +28,7 @@ const { resolveGamingRegistryGame } = await import('../src/shared/gaming/gamingG
 const { assessGamingClearEvidence } = await import('../src/shared/gaming/gamingClearEvidence.js');
 const { selectGamingHybridEvidence } = await import('../src/services/gamingHybridCandidates.js');
 const { createApprovedGamingSourceIngestion, executeQueuedGamingSourceIngestion, hashGamingApprovedDocument,
-  buildStoredGamingKnowledgeContext } = await import('../src/services/gamingSourceIngestion.js');
+  buildStoredGamingKnowledgeContext, refreshGamingSources } = await import('../src/services/gamingSourceIngestion.js');
 const { logger } = await import('../src/platform/logging/structuredLogging.js');
 
 const url = 'https://guides.example.org/independent-clear-review';
@@ -121,6 +121,131 @@ describe('independent CLEAR review through acquired synthetic documents', () => 
     expect(database.records).toEqual([]);
   });
 
+  it('rejects newly acquired wrong-game prose despite an exact requested title during unapproved ingestion', async () => {
+    await acquired(`${game} guide`, `In the game Slate Meridian Echoes, ${guidance}`, game);
+    const result = await executeQueuedGamingSourceIngestion('independent-direct-wrong-game', {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: url, game, gameKey: 'slate-meridian', origin: 'user_supplied' }]
+    });
+    expect(result.output.sources[0]).toMatchObject({ status: 'rejected', error: { code: 'GAME_MISMATCH' } });
+    expect(database.queries).toEqual([]);
+    expect(database.records).toEqual([]);
+  });
+
+  it.each([false, true])('new unapproved source identity requires independent acquired proof beyond its title: %s', async proof => {
+    const fixture = await acquired(`${game} guide`, `${proof ? `In the game ${game}, ` : ''}${guidance}`, game);
+    const result = await executeQueuedGamingSourceIngestion('independent-direct-identity', {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: url, game, gameKey: 'slate-meridian', origin: 'user_supplied' }]
+    });
+    expect(result.output.sources[0].status).toBe('stored');
+    expect(database.revisions[0].provenance.sourceIdentityPolicyVersion).toBe('gaming-clear-policy/v4');
+    const knowledge = await buildStoredGamingKnowledgeContext({ ...fixture.input, hybridRetrieval: true, requireRequestCoverage: true });
+    expect(knowledge.context).toContain('tidal prism');
+    if (proof) {
+      expect(knowledge.clearEvidenceAssessment?.decision).toBe('accept');
+    } else {
+      expect(knowledge.clearEvidenceAssessment?.decision).not.toBe('accept');
+      expect(knowledge.sources[0].freshnessMetadata).toMatchObject({ metadataUnverified: true });
+    }
+  });
+
+  it('admits an independently acquired unfamiliar topic through unapproved ingestion', async () => {
+    const fixture = await acquired('Tidal Prism Alignment guide', `In the game ${game}, ${guidance}`);
+    const result = await executeQueuedGamingSourceIngestion('independent-direct-novel-topic', {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: url, game, gameKey: 'slate-meridian', origin: 'user_supplied' }]
+    });
+    expect(result.output.sources[0].status).toBe('stored');
+    expect((await buildStoredGamingKnowledgeContext({ ...fixture.input, hybridRetrieval: true,
+      requireRequestCoverage: true })).clearEvidenceAssessment?.decision).toBe('accept');
+  });
+
+  it('does not turn independently verified game ownership into unresolved edition approval', async () => {
+    const fixture = await acquired('Minecraft guide', `In the game Minecraft, ${guidance}`, 'Minecraft', '<p>Edition: Uncatalogued edition.</p>');
+    expect(assessGamingClearSourceIdentity(fixture.document, fixture.input, fixture.sourcePolicy))
+      .toMatchObject({ status: 'unknown', gameIdentityVerified: true });
+    const result = await executeQueuedGamingSourceIngestion('independent-direct-unknown-edition', {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: url, game: 'Minecraft', gameKey: 'minecraft', origin: 'user_supplied' }]
+    });
+    expect(result.output.sources[0].status).toBe('stored');
+    const knowledge = await buildStoredGamingKnowledgeContext({ ...fixture.input, edition: 'Uncatalogued edition', hybridRetrieval: true });
+    expect(knowledge.clearEvidenceAssessment?.decision).not.toBe('accept');
+    expect(database.revisions[0].provenance.acquiredApplicability.metadataUnverified).toBe(true);
+  });
+
+  it('rejects an independently established edition conflict before new-source persistence', async () => {
+    await acquired('Elden Ring guide', `In the game Elden Ring, ${guidance}`, 'Elden Ring', '<p>Edition: Shadow of the Erdtree.</p>');
+    const result = await executeQueuedGamingSourceIngestion('independent-direct-wrong-edition', {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: url, game: 'Elden Ring', gameKey: 'elden-ring', origin: 'user_supplied' }]
+    });
+    expect(result.output.sources[0]).toMatchObject({ status: 'rejected', error: { code: 'EDITION_CONFLICT' } });
+    expect(database.queries).toEqual([]);
+    expect(database.records).toEqual([]);
+  });
+
+  it('does not reactivate an older identical-byte revision without the current acquired-identity policy', async () => {
+    const fixture = await acquired(`${game} guide`, guidance);
+    const queued = { action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: url, game, gameKey: 'slate-meridian', origin: 'user_supplied' }] };
+    expect((await executeQueuedGamingSourceIngestion('independent-before-identity-policy', queued)).output.sources[0].status).toBe('stored');
+    // Model the historical unapproved revision whose extractor fingerprint did
+    // not include acquired identity policy and whose scope appeared complete.
+    database.revisions[0].extractor_version = 'historic-unapproved-identity-policy';
+    delete database.revisions[0].provenance.sourceIdentityPolicyVersion;
+    delete database.revisions[0].provenance.acquiredApplicability.metadataUnverified;
+    const historical = await buildStoredGamingKnowledgeContext({ ...fixture.input, hybridRetrieval: true });
+    expect(historical.context).toContain('tidal prism');
+    expect(historical.clearEvidenceAssessment?.decision).not.toBe('accept');
+    expect(historical.sources[0].freshnessMetadata?.metadataUnverified).toBe(true);
+    const result = await executeQueuedGamingSourceIngestion('independent-after-identity-policy', queued);
+    expect(result.output.sources[0].status).toBe('updated');
+    expect(database.revisions).toHaveLength(2);
+    expect(database.records.filter(record => record.status === 'active')
+      .every(record => record.source_revision_id === database.revisions[1].id)).toBe(true);
+    expect((await buildStoredGamingKnowledgeContext({ ...fixture.input, hybridRetrieval: true })).clearEvidenceAssessment?.decision).not.toBe('accept');
+  });
+
+  it.each([false, true])('unassessed historical acquired evidence cannot recover identity authority through hybrid compaction: conflicting=%s', async conflicting => {
+    const fixture = await acquired(`${game} guide`, `In the game ${game}, ${guidance}`);
+    expect((await executeQueuedGamingSourceIngestion('independent-current-identity-seed', {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: url, game, gameKey: 'slate-meridian', origin: 'user_supplied' }]
+    })).output.sources[0].status).toBe('stored');
+    const request = { ...fixture.input, hybridRetrieval: true, requireRequestCoverage: true };
+    expect((await buildStoredGamingKnowledgeContext(request)).clearEvidenceAssessment?.decision).toBe('accept');
+    const historical = await acquired(`${game} guide`, `${conflicting ? 'In the game Slate Meridian Echoes, ' : ''}${guidance}`);
+    // Reconstruct an old coherent acquired snapshot admitted before independent
+    // identity enforcement. Its claimed scope is complete, but has no receipt.
+    const revision = database.revisions[0];
+    const contentHash = createHash('sha256').update(historical.document.text).digest('hex');
+    revision.extractor_version = 'historic-unapproved-identity-policy';
+    revision.cleaned_content = historical.document.text;
+    revision.content_hash = contentHash;
+    revision.provenance.acquiredApplicability.contentHash = contentHash;
+    delete revision.provenance.sourceIdentityPolicyVersion;
+    delete revision.provenance.acquiredApplicability.metadataUnverified;
+    for (const row of database.records) {
+      row.search_text = historical.document.text;
+      row.normalized.text = historical.document.text;
+      row.normalized.chunk = { ordinal: 0, totalChunks: 1, startChar: 0, endChar: historical.document.text.length };
+    }
+    const before = JSON.stringify({ revision, records: database.records });
+    const knowledge = await buildStoredGamingKnowledgeContext(request);
+    expect(knowledge.context).toContain('tidal prism');
+    expect(knowledge.clearEvidenceAssessment?.decision).not.toBe('accept');
+    expect(knowledge.sources[0].freshnessMetadata).toMatchObject({ game, metadataUnverified: true });
+    const compact = selectGamingHybridEvidence(request, knowledge);
+    expect(compact.knowledge.context).toContain('tidal prism');
+    expect(compact.knowledge.sources[0].freshnessMetadata?.metadataUnverified).toBe(true);
+    expect(assessGamingClearEvidence(request, compact.knowledge, { requireRequestCoverage: true }).decision).not.toBe('accept');
+    expect(JSON.stringify({ revision, records: database.records })).toBe(before);
+    expect(database.revisions).toHaveLength(1);
+  });
+
+
   it('conservatively excludes source-local alias rows without lending their ownership to storage', async () => {
     const fixture = await acquired('Tidal Prism Alignment',
       `The game ${game} is also known as SM. In the game ${game}, ${guidance}`,
@@ -195,5 +320,70 @@ describe('independent CLEAR review through acquired synthetic documents', () => 
       .toMatchObject({ gates: { compatibility: 'unknown' }, decision: 'clarify' });
     expect(database.revisions).toHaveLength(1);
     expect(http).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    { name: 'obsolete v3 approval with unchanged acquired content', obsolete: true, changed: false, legacy: false },
+    { name: 'obsolete v3 approval with changed wrong-game content', obsolete: true, changed: true, legacy: false },
+    { name: 'current v4 approval with changed wrong-game content', obsolete: false, changed: true, legacy: false },
+    { name: 'historic approval without a CLEAR assessment', obsolete: false, changed: false, legacy: true }
+  ])('generic refresh cannot restore generation authority for $name', async ({ obsolete, changed, legacy }) => {
+    const fixture = await acquired(`${game} guide`, `In the game ${game}, ${guidance}`);
+    expect((await approvedIngestion(fixture)).output.sources[0].status).toBe('stored');
+    if (obsolete) {
+      database.revisions[0].provenance.gamingClear = {
+        ...database.revisions[0].provenance.gamingClear, policyProfile: 'gaming-clear-policy/v3:explanation:source'
+      };
+      database.revisions[0].extractor_version = 'historic-clear-v3';
+    }
+    if (legacy) {
+      delete database.revisions[0].provenance.gamingClear;
+      database.revisions[0].extractor_version = 'historic-before-clear';
+    }
+    const request = { ...fixture.input, hybridRetrieval: true, requireRequestCoverage: true };
+    if (obsolete) expect((await buildStoredGamingKnowledgeContext(request)).clearEvidenceAssessment?.decision).not.toBe('accept');
+    enqueue.mockClear();
+    const refresh = await refreshGamingSources({ action: 'refresh', payload: {
+      sourceIds: [database.source!.id], idempotencyKey: 'independent-generic-refresh'
+    } }, { actorKey });
+    expect(refresh.statusCode).toBe(202);
+    const body = (enqueue.mock.calls[0][0] as any).input.body;
+    expect(body.sources[0].hybridApproval).toBeUndefined();
+    expect(body.sources[0].clearReassessmentRequired).toBe(true);
+    // Simulate a queued refresh issued by an older binary without the marker.
+    delete body.sources[0].clearReassessmentRequired;
+    if (changed) http.mockResolvedValue({ status: 200, headers: { 'content-type': 'text/html' },
+      data: html(`${game} guide`, `In the game Slate Meridian Echoes, ${guidance}`) });
+    const result = await executeQueuedGamingSourceIngestion('independent-generic-refresh', body);
+    expect(['stored', 'updated', 'unchanged']).toContain(result.output.sources[0].status);
+    const knowledge = await buildStoredGamingKnowledgeContext(request);
+    expect(knowledge.context).toContain('tidal prism');
+    expect(knowledge.clearEvidenceAssessment?.decision).not.toBe('accept');
+    expect(knowledge.clearEvidenceAssessment?.gates.compatibility).toBe('unknown');
+    expect(knowledge.sources[0].clearSourceAssessment).toBeUndefined();
+    expect(database.revisions.at(-1)!.provenance.clearReassessmentRequired).toBe(true);
+
+    enqueue.mockClear();
+    const repeated = await refreshGamingSources({ action: 'refresh', payload: {
+      sourceIds: [database.source!.id], idempotencyKey: 'independent-second-refresh'
+    } }, { actorKey });
+    expect(repeated.statusCode).toBe(202);
+    const repeatedBody = (enqueue.mock.calls[0][0] as any).input.body;
+    expect(repeatedBody.sources[0].clearReassessmentRequired).toBe(true);
+    const sourceLookups = database.queries.filter(query => query.includes('LEFT JOIN LATERAL')).length;
+    expect((await executeQueuedGamingSourceIngestion('independent-second-refresh', repeatedBody)).output.sources[0].status).toBe('unchanged');
+    expect(database.queries.filter(query => query.includes('LEFT JOIN LATERAL'))).toHaveLength(sourceLookups);
+    expect((await buildStoredGamingKnowledgeContext(request)).clearEvidenceAssessment?.decision).not.toBe('accept');
+
+    // A fresh v4 acquired approval authorizes a new revision through the existing
+    // consent-bound hybrid path and clears the refresh-only restriction.
+    const reapproved = await acquired(`${game} guide`, `In the game ${game}, ${guidance}`);
+    enqueue.mockClear();
+    expect((await approvedIngestion(reapproved)).output.sources[0].status).toBe('updated');
+    const restored = await buildStoredGamingKnowledgeContext(request);
+    expect(restored.clearEvidenceAssessment?.decision).toBe('accept');
+    expect(restored.sources[0].clearSourceAssessment?.policyProfile).toContain('gaming-clear-policy/v4:');
+    const activeRevision = database.revisions.find(revision => revision.id === restored.evidence![0].revisionId)!;
+    expect(activeRevision.provenance.clearReassessmentRequired).toBeUndefined();
   });
 });

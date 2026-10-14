@@ -2,7 +2,10 @@
 
 Baseline: reviewed PR #1542, `e24d5614748f39e25e27a0c062dfba2ea0adbb77`.
 Target: `main`, `c8bb00ee000e3e188f17e1aa2b5e2893d0221fb8` at local verification.
-The new task branch depends on the still-open draft #1542; that branch is unchanged.
+At this original validation checkpoint, #1542 was still open and draft; its
+branch was unchanged. It later merged as
+`f34da2cc1565bd2105af4254cf41b0a9634afe9e`. See the
+[post-merge integration record](post-merge-integration.md) for current evidence.
 
 The [architecture and matrix](../../../GAMING_UNIVERSAL_IDENTITY.md) describe the
 generic implementation and its limits. [validation.json](validation.json) binds
@@ -64,4 +67,5 @@ workflow, provider acceptance, deployment or production database operation ran.
 
 `DEPLOYED_SHA_UNVERIFIED` and `LIVE_ACCEPTANCE_NOT_RUN` remain. Production
 readiness is blocked pending separately authorized runtime evidence. The draft
-PR and parent dependency remain for owner review; nothing has been merged.
+At this original checkpoint, the draft PR and unmerged parent dependency
+remained for owner review. The parent has since merged; PR #1543 remains draft.

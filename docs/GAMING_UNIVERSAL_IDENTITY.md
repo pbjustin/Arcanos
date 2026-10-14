@@ -1,13 +1,16 @@
 # Gaming identity beyond the registry
 
-## Baseline and dependency
+## Baseline and merged dependency
 
 This capability starts from reviewed PR #1542 commit
-`e24d5614748f39e25e27a0c062dfba2ea0adbb77`. PR #1542 was still open and
-draft when the task branch was created; its branch and regression fixtures are
-preserved. The new draft PR targets `main` so the canonical CI workflows run,
-and depends on #1542. Its incremental implementation can be reviewed against
-that commit until the parent merges.
+`e24d5614748f39e25e27a0c062dfba2ea0adbb77`. PR #1542 was open and
+draft when this branch was created, then merged into `main` as
+`f34da2cc1565bd2105af4254cf41b0a9634afe9e`. The merge commit has the
+reviewed #1542 tree and preserves its ancestry. PR #1543 remains draft and
+targets `main`; its capability increment is the diff after #1542's reviewed
+head. The original validation receipts record the earlier, unmerged baseline;
+the [post-merge integration record](audits/2026-10-14/gaming-universal-identity/post-merge-integration.md)
+records verification against the merged baseline.
 
 ## Architecture assessment before implementation
 
