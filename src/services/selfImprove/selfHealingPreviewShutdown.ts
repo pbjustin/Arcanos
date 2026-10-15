@@ -72,12 +72,12 @@ export class PreviewShutdownJournal {
     this.ownerHash = digest(JSON.stringify(owner));
   }
   static async open(database: ClientConfig, owner: ShutdownOwner,
-    createClient: (config: ClientConfig) => ShutdownPgClient = config => new pg.Client(config) as ShutdownPgClient) {
+    createPgClient: (config: ClientConfig) => ShutdownPgClient = config => new pg.Client(config) as ShutdownPgClient) {
     if (!/^[a-f0-9]{40}$/u.test(String(owner.sourceSha)) || !/^[a-f0-9]{64}$/u.test(String(owner.compiledSha256))
       || !/^[a-z0-9][a-z0-9-]{7,63}$/u.test(String(owner.runId))
       || owner.profile !== 'worker-coordinator-v1' || owner.repository !== 'pbjustin/Arcanos'
       || !Number.isFinite(Date.parse(String(owner.expiresAt))) || Date.parse(String(owner.expiresAt)) <= Date.now()) fail();
-    const client = createClient({ ...database, application_name: 'arcanos_self_heal_preview_shutdown_v1',
+    const client = createPgClient({ ...database, application_name: 'arcanos_self_heal_preview_shutdown_v1',
       connectionTimeoutMillis: 1_000, query_timeout: QUERY_TIMEOUT_MS, options: '-c statement_timeout=250 -c lock_timeout=100' });
     const journal = new PreviewShutdownJournal(client, owner);
     client.on?.('error', () => { journal.connectionLost = true; });

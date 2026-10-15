@@ -95,8 +95,17 @@ describe('Redis operation source boundary', () => {
       visit(sourceFile);
     }
 
-    expect(gateCallCount).toBe(15);
+    // The sealed shutdown probe adds one fixed CLIENT ID read through the same
+    // lifecycle gate; every call, including this one, still needs its identity.
+    expect(gateCallCount).toBe(16);
     expect(missingOperation).toEqual([]);
+  });
+
+  it('keeps the sealed shutdown identity read on the lifecycle operation gate', () => {
+    const previewSource = fs.readFileSync(path.join(SOURCE_ROOT,
+      'services/selfImprove/selfHealingPreviewControl.ts'), 'utf8');
+    expect(previewSource).toContain("executeRedisOperation(client => client.sendCommand(['CLIENT', 'ID']),");
+    expect(previewSource).toContain("{ operation: 'diagnostics.metrics.read', timeoutMs: 500 }");
   });
 
   it('does not export raw lifecycle clients to application code', () => {
