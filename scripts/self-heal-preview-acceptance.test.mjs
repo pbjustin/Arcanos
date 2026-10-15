@@ -808,6 +808,21 @@ test('C04 verifies stale rollback and consumer identity only after both actual m
   const result = await runSelfHealAcceptanceCase('C04', manifest(), options);
   assert.equal(result.classification, 'SYNTHETIC_ONLY');
 });
+test('final baseline references the fresh process receipt after a scenario restart', async () => {
+  const { options } = scenarioFixture('C04'); const published = [];
+  const result = await runSelfHealAcceptanceCase('C04', manifest(), {
+    ...options, onReceipt: event => { published.push(event); },
+  });
+  assert.equal(result.classification, 'SYNTHETIC_ONLY');
+  const initial = published.find(event => event.kind === 'baseline');
+  const fresh = published.find(event => event.kind === 'fresh_process_baseline');
+  assert.notEqual(initial.value.processInstanceId, fresh.value.processInstanceId);
+  assert.equal(initial.value.processInstanceId, id(30)); assert.equal(fresh.value.processInstanceId, id(31));
+  assert.deepEqual(result.baseline, result.eventReceipts.find(event => event.kind === 'fresh_process_baseline'));
+  assert.equal(result.baseline.sequence, fresh.sequence);
+  assert.equal(result.baseline.receiptSha256, createHash('sha256').update(JSON.stringify(fresh)).digest('hex'));
+  assert.deepEqual(result.finalState, result.eventReceipts.findLast(event => event.kind === 'restoration'));
+});
 for (const fault of ['activation-rejected', 'replacement-rejected', 'activation-not-applied', 'replacement-not-applied']) test(`C04 blocks ${fault} before challenging stale identity`, async () => {
   const { options, calls } = scenarioFixture('C04', fault);
   const result = await runSelfHealAcceptanceCase('C04', manifest(), options);

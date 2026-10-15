@@ -703,7 +703,7 @@ export async function runSelfHealAcceptanceCase(scenario, manifest, options = {}
     controllerSha: manifest.controllerSha, runId: manifest.receipt.runId, projectId: manifest.receipt.projectId,
     environmentId: manifest.receipt.environmentId,
     // Full snapshots remain in independently bounded event receipts; never combine them here.
-    baseline: events.find(event => event.kind === 'baseline') ?? null,
+    baseline: events.findLast(event => event.kind === 'baseline' || event.kind === 'fresh_process_baseline') ?? null,
     finalState: events.findLast(event => event.kind === 'restoration') ?? null, cleanupResult, errorCode,
     providerBoundary: 'synthetic_loopback_adapter', realExternalProviderRecoveryProven: false,
     eventCount: events.length, eventReceipts: events };
