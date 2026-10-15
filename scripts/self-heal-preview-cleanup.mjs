@@ -19,6 +19,8 @@ const MAX_LEASE_MS = 7_200_000;
 const MAX_BYTES = 2 * 1024 * 1024;
 const CLI_TIMEOUT_MS = 15_000;
 const ABSENCE_TIMEOUT_MS = 60_000;
+const INVENTORY_MAX_PAGES = 5;
+const INVENTORY_PAGE_SIZE = 100;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const FORBIDDEN_IDS = new Set([
   '7faf44e5-519c-4e73-8d7a-da9f389e6187', '8e4cb1eb-1441-4e83-b434-15c06c676a5f',
@@ -28,9 +30,9 @@ const FORBIDDEN_IDS = new Set([
 ]);
 const RECEIPT_KEYS = Object.freeze(['version', 'owner', 'repository', 'prNumber', 'sourceSha', 'runId',
   'projectId', 'projectName', 'workspaceId', 'environmentId', 'environmentName', 'issuedAt', 'expiresAt']);
-const CLEANUP_INVENTORY_QUERY = `query SelfHealPreviewCleanupOwnerInventory {
+const CLEANUP_INVENTORY_QUERY = `query SelfHealPreviewCleanupOwnerInventory($after: String) {
   me { id }
-  projects(first: 100, workspaceId: "${WORKSPACE}", includeDeleted: true) {
+  projects(first: 100, after: $after, workspaceId: "${WORKSPACE}", includeDeleted: true) {
     edges { node {
     id name workspaceId deletedAt
     services(first: 100) { edges { node { id name } } pageInfo { hasNextPage } }
@@ -43,7 +45,7 @@ const CLEANUP_INVENTORY_QUERY = `query SelfHealPreviewCleanupOwnerInventory {
         id volumeId serviceId environmentId mountPath volume { id name projectId }
       } } pageInfo { hasNextPage } }
     } } pageInfo { hasNextPage } }
-  } } pageInfo { hasNextPage } }
+  } } pageInfo { hasNextPage endCursor } }
 }`;
 const SERVICES = new Map([
   ['Postgres', '/var/lib/postgresql/data'], ['Redis', '/data'],
@@ -375,8 +377,9 @@ async function cli(args, options, timeout = CLI_TIMEOUT_MS, json = true) {
 
 async function readOwnedProject(receipt, options, deadline) {
   const now = options.now ?? Date.now;
+  const inventoryDeadline = Math.min(now() + ABSENCE_TIMEOUT_MS, deadline ?? Infinity);
   const timeout = () => {
-    const remaining = deadline === undefined ? CLI_TIMEOUT_MS : deadline - now();
+    const remaining = inventoryDeadline - now();
     if (remaining <= 0) fail('RESOURCE_ABSENCE_UNCONFIRMED');
     return Math.min(CLI_TIMEOUT_MS, remaining);
   };
@@ -386,36 +389,51 @@ async function readOwnedProject(receipt, options, deadline) {
   } catch (error) {
     if (!(error instanceof SelfHealPreviewCleanupError) || error.message !== 'SELF_HEAL_PREVIEW_CLEANUP_CLI_FAILED') throw error;
   }
+  timeout();
   if (status?.volumes && status.deletedAt === null) return status;
   // CLI status rejects a project as soon as deletion is scheduled, and its
   // normal projection omits global volumes. Per-project reads and ordinary
   // project lists filter deleted targets, so neither is absence evidence.
-  // Use one complete owner-visible includeDeleted collection instead;
+  // Traverse a bounded, complete owner-visible includeDeleted collection;
   // deletion never falls back to an API mutation or a different target.
-  const response = await cli(['api', CLEANUP_INVENTORY_QUERY, '--compact'], options, timeout());
-  if (!record(response) || (response.errors !== undefined && (!Array.isArray(response.errors) || response.errors.length > 0))
-    || !record(response.data) || !Object.hasOwn(response.data, 'projects')) fail('INVENTORY_QUERY_FAILED');
   const complete = value => {
     if (value?.pageInfo?.hasNextPage !== false) fail('INCOMPLETE_INVENTORY');
     return connection(value);
   };
-  const projects = complete(response.data.projects);
-  if (projects.some(project => !UUID.test(project.id ?? '') || project.workspaceId !== WORKSPACE)
-    || new Set(projects.map(project => project.id)).size !== projects.length) fail('PROJECT_LIST_INVALID');
-  const project = projects.find(candidate => candidate.id === receipt.projectId);
-  const assertOwner = () => { if (response.data.me?.id !== OWNER_USER_ID) fail('OWNER_IDENTITY_MISMATCH'); };
-  if (!project) {
-    assertOwner();
-    return null;
+  const projectIds = new Set(); const cursors = new Set();
+  let after = null; let project;
+  for (let page = 0; page < INVENTORY_MAX_PAGES; page += 1) {
+    const response = await cli(['api', CLEANUP_INVENTORY_QUERY, '--variables', JSON.stringify({ after }), '--compact'], options, timeout());
+    timeout();
+    if (!record(response) || (response.errors !== undefined && (!Array.isArray(response.errors) || response.errors.length > 0))
+      || !record(response.data) || !Object.hasOwn(response.data, 'projects')) fail('INVENTORY_QUERY_FAILED');
+    if (response.data.me?.id !== OWNER_USER_ID) fail('OWNER_IDENTITY_MISMATCH');
+    const collection = response.data.projects;
+    if (!record(collection) || !Array.isArray(collection.edges) || !record(collection.pageInfo)
+      || typeof collection.pageInfo.hasNextPage !== 'boolean'
+      || !Object.hasOwn(collection.pageInfo, 'endCursor')) fail('INCOMPLETE_INVENTORY');
+    if (collection.edges.length > INVENTORY_PAGE_SIZE) fail('INVENTORY_LIMIT_EXCEEDED');
+    for (const edge of collection.edges) {
+      const candidate = edge?.node;
+      if (!record(candidate) || !UUID.test(candidate.id ?? '') || candidate.workspaceId !== WORKSPACE
+        || projectIds.has(candidate.id)) fail('PROJECT_LIST_INVALID');
+      projectIds.add(candidate.id);
+      if (candidate.id === receipt.projectId) project = candidate;
+    }
+    if (!collection.pageInfo.hasNextPage) break;
+    const cursor = collection.pageInfo.endCursor;
+    if (typeof cursor !== 'string' || cursor.length === 0 || cursor.length > 1024
+      || cursor.trim() !== cursor || /[\u0000-\u001f\u007f]/u.test(cursor)
+      || cursors.has(cursor) || collection.edges.length === 0) fail('INVENTORY_CURSOR_INVALID');
+    if (page + 1 === INVENTORY_MAX_PAGES || projectIds.size >= INVENTORY_PAGE_SIZE * INVENTORY_MAX_PAGES) fail('INVENTORY_LIMIT_EXCEEDED');
+    cursors.add(cursor); after = cursor;
   }
-  const services = complete(project.services); const volumes = complete(project.volumes);
-  const buckets = complete(project.buckets); const environments = complete(project.environments);
+  if (!project) return null;
+  complete(project.services); complete(project.volumes); complete(project.buckets);
+  const environments = complete(project.environments);
   for (const environment of environments) {
     complete(environment.serviceInstances); complete(environment.volumeInstances);
   }
-  if (services.length === 0 && volumes.length === 0 && buckets.length === 0
-    && environments.every(environment => environment.serviceInstances.edges.length === 0
-      && environment.volumeInstances.edges.length === 0)) assertOwner();
   return project;
 }
 

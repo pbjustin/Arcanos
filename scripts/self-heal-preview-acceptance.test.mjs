@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmdirSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { SELF_HEAL_ACCEPTANCE_CASES, SelfHealAcceptanceError, attestSelfHealAcceptanceStatus, createSelfHealAcceptanceTransport,
-  publishSelfHealAcceptanceReceipt, runSelfHealAcceptanceCase, validateSelfHealAcceptanceManifest } from './self-heal-preview-acceptance.mjs';
+  attestSelfHealShutdownReceipt, publishSelfHealAcceptanceReceipt, runSelfHealAcceptanceCase, validateSelfHealAcceptanceManifest } from './self-heal-preview-acceptance.mjs';
 
 const NOW = Date.parse('2026-10-15T01:00:00.000Z');
 const id = n => `${String(n).padStart(8, '0')}-1111-4111-8111-111111111111`;
@@ -30,7 +31,7 @@ function status(m = manifest()) {
         volumeId: volume.id, serviceId: volume.serviceId, mountPath: volume.mountPath,
       }))), serviceInstances: connection(m.services.map((service, i) => {
         const deployment = { id: service.deploymentId, status: 'SUCCESS', deploymentStopped: false, instances: [{ id: id(20 + i), status: 'RUNNING' }],
-          meta: { commitHash: m.receipt.sourceSha, serviceManifest: { deploy: { numReplicas: 1, healthcheckPath: '/readyz', restartPolicyType: 'NEVER',
+          meta: { commitHash: m.receipt.sourceSha, imageDigest: service.imageDigest, serviceManifest: { deploy: { numReplicas: 1, healthcheckPath: '/readyz', restartPolicyType: 'NEVER',
             limitOverride: { containers: [{ cpu: 1, memoryBytes: 1073741824 }, { cpu: 1, memoryBytes: 2147483648 },
               { cpu: 0.5, memoryBytes: 536870912 }, { cpu: 0.25, memoryBytes: 268435456 }][i] },
             startCommand: 'node scripts/railway-backstage-heavy-proof-supervisor.mjs --self-heal-preview-v1' } } } };
@@ -95,8 +96,16 @@ for (const [name, mutate] of Object.entries({
   publicRedis: value => { value.environments.edges[0].node.serviceInstances.edges[3].node.tcpProxies.push({ id: id(91) }); },
   largerCpu: value => { value.environments.edges[0].node.serviceInstances.edges[1].node.latestDeployment.meta.serviceManifest.deploy.limitOverride.containers.cpu = 2; },
   largerRam: value => { value.environments.edges[0].node.serviceInstances.edges[1].node.latestDeployment.meta.serviceManifest.deploy.limitOverride.containers.memoryBytes = 4294967296; },
+  latestImageDrift: value => { value.environments.edges[0].node.serviceInstances.edges[1].node.latestDeployment.meta.imageDigest = `sha256:${'e'.repeat(64)}`; },
+  activeImageDrift: value => { value.environments.edges[0].node.serviceInstances.edges[1].node.activeDeployments[0].meta.imageDigest = `sha256:${'e'.repeat(64)}`; },
 })) test(`inventoryrejects${name}`, () => {
   const value = status(); mutate(value); assert.throws(() => attestSelfHealAcceptanceStatus(value, manifest(), { now: () => NOW }), /SELF_HEAL_ACCEPTANCE_/u);
+});
+
+test('replacing a manifest image pin cannot pass unchanged independent deployment metadata', () => {
+  const original = manifest(); const changed = structuredClone(original);
+  changed.services[1].imageDigest = `sha256:${'e'.repeat(64)}`;
+  assert.throws(() => attestSelfHealAcceptanceStatus(status(original), changed, { now: () => NOW }), /IMAGE_DRIFT/u);
 });
 test('headchangeblocksallSSHandrestartoperations', async () => {
   let calls = 0;
@@ -141,6 +150,24 @@ test('lostrestorationblocksacceptanceandpreservesoriginalfailure', async () => {
   const result = await runSelfHealAcceptanceCase('A01', manifest(), { now: () => NOW, execute: true, allowNetwork: true, syntheticTransport: true, transport });
   assert.equal(result.classification, 'BLOCKED'); assert.equal(result.cleanupResult, 'FAILED'); assert(!JSON.stringify(result).includes('secret-transport-marker'));
 });
+
+test('long-case final receipt references durable events without repeating their large bodies', async () => {
+  const published = []; let final;
+  const result = await runSelfHealAcceptanceCase('A01', manifest(), {
+    now: () => NOW, execute: true, allowNetwork: true,
+    transport: fakeTransport(snapshot({ diagnosticPadding: 'x'.repeat(350_000) })),
+    onReceipt: event => { published.push(event); }, onResult: value => { final = value; },
+  });
+  assert.equal(result.classification, 'SYNTHETIC_ONLY'); assert.equal(final.cleanupResult, 'SYNTHETIC_ONLY');
+  assert(published.reduce((bytes, event) => bytes + Buffer.byteLength(JSON.stringify(event)), 0) > 2 * 1024 * 1024);
+  assert(Buffer.byteLength(JSON.stringify(final)) < 2 * 1024 * 1024);
+  assert.equal(final.eventCount, published.length); assert.equal(final.eventReceipts.length, published.length);
+  assert.equal(Object.hasOwn(final, 'events'), false);
+  final.eventReceipts.forEach((reference, index) => {
+    assert.equal(reference.receiptSha256, createHash('sha256').update(JSON.stringify(published[index])).digest('hex'));
+    assert.equal(reference.sequence, published[index].sequence);
+  });
+});
 test('durablereceiptsareexclusiveandcannotoverwritefailureevidence', () => {
   const directory = mkdtempSync(join(tmpdir(), 'arcanos-acceptance-')); let path;
   try {
@@ -173,8 +200,107 @@ function cliFixture() {
         projectId: m.receipt.projectId, environmentId: m.receipt.environmentId,
         serviceId: pin.serviceId, deploymentId: pin.deploymentId }, observation: snapshot() }) };
     } };
-  return { current, transport: createSelfHealAcceptanceTransport(m, options) };
+  return { current, options, transport: createSelfHealAcceptanceTransport(m, options) };
 }
+
+test('held shutdown is one exact Worker operation and cannot target other scenarios or bypass a changed head', async () => {
+  const { current, transport } = cliFixture();
+  await assert.rejects(transport.shutdownHeld('A01'), /SHUTDOWN_SCENARIO_INVALID/u);
+  assert.equal(current.calls.length, 0);
+  current.head = 'f'.repeat(40);
+  await assert.rejects(transport.shutdownHeld('A06'), /PR_HEAD_CHANGED/u);
+  assert.equal(current.calls.length, 0);
+  current.head = manifest().receipt.sourceSha;
+  const result = await transport.shutdownHeld('A06');
+  assert.equal(result.effectEvidence, 'independent_shutdown_receipt_required');
+  const calls = current.calls.filter(args => args[0] === 'ssh');
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].slice(-4), ['node', 'scripts/self-heal-preview-control.mjs', 'shutdown-held', 'A06']);
+  assert.equal(calls[0][calls[0].indexOf('--service') + 1], id(4));
+  assert.equal(calls[0][calls[0].indexOf('--deployment-instance') + 1], id(21));
+  await assert.rejects(transport.shutdownHeld('E06'), /SHUTDOWN_BUDGET_EXHAUSTED/u);
+  assert.equal(current.calls.filter(args => args[0] === 'ssh').length, 1);
+});
+
+test('Web-side shutdown receipt tolerates only the owned Worker disappearance and retains source and lease fences', async () => {
+  const { current, transport } = cliFixture(); await transport.shutdownHeld('E06');
+  const worker = current.status.environments.edges[0].node.serviceInstances.edges[1].node;
+  worker.latestDeployment.instances = []; worker.latestDeployment.status = 'REMOVED'; worker.activeDeployments = [];
+  await transport.remote('web', ['shutdown-receipt', 'E06']);
+  await assert.rejects(transport.remote('worker', ['shutdown-receipt', 'E06']), /OPERATION_INVALID/u);
+  await assert.rejects(transport.remote('web', ['shutdown-held', 'E06']), /OPERATION_INVALID/u);
+  worker.latestDeployment.meta.commitHash = 'f'.repeat(40);
+  await assert.rejects(transport.remote('web', ['shutdown-receipt', 'E06']), /SOURCE_OR_LAUNCH_DRIFT/u);
+  worker.latestDeployment.meta.commitHash = manifest().receipt.sourceSha; current.clock += 120_001;
+  await assert.rejects(transport.remote('web', ['shutdown-receipt', 'E06']), /DEPLOYMENT_DRIFT/u);
+});
+
+test('shutdown SSH termination cannot consume the entire independent readback transition window', async () => {
+  const { current, options, transport } = cliFixture(); const original = options.command;
+  options.command = async (executable, args, execOptions) => {
+    if (args[0] === 'ssh' && args.includes('shutdown-held')) {
+      assert.equal(execOptions.timeout, 30_000); current.clock += execOptions.timeout;
+      throw new Error('fixture pod connection ended');
+    }
+    return original(executable, args, execOptions);
+  };
+  assert.equal((await transport.shutdownHeld('A06')).transportClosed, true);
+  const worker = current.status.environments.edges[0].node.serviceInstances.edges[1].node;
+  worker.latestDeployment.instances = []; worker.latestDeployment.status = 'REMOVED'; worker.activeDeployments = [];
+  await transport.remote('web', ['shutdown-receipt', 'A06']);
+  assert.equal(current.clock - NOW, 30_000);
+  assert.equal(current.calls.filter(args => args.includes('shutdown-receipt')).length, 1);
+});
+
+function shutdownEvidence() {
+  const m = manifest(); const baseline = snapshot({ pid: 1234 });
+  const recovered = snapshot({ processInstanceId: id(31), pid: 1234 });
+  const before = { worker: { instanceId: id(21) } }; const after = { worker: { instanceId: id(22) } };
+  const phases = [
+    ['prepared', { redisClientId: '91' }], ['evaluation_held', { inFlight: true }], ['shutdown_seen', { signalSeen: true }],
+    ['independent_held_probe', { processAlive: true, redisClientPresent: true, providerHealthy: true, drainAbsent: true,
+      readinessWithheld: true, redisServerRunId: '1'.repeat(40) }],
+    ['independent_barrier_releasing', {}], ['barrier_released', { signalSeen: true, elapsedMs: 100 }],
+    ['coordinator_drained', { inFlight: false, redisConnected: true }], ['redis_stop_begin', {}],
+    ['redis_stopped', { inFlight: false, redisConnected: false }],
+    ['independent_redis_closed', { redisClientPresent: false, redisServerRunId: '1'.repeat(40) }],
+  ];
+  const value = { evidence: 'independent_postgres_readback', receipt: { scenario: 'A06', sourceSha: m.receipt.sourceSha,
+    processInstanceId: baseline.processInstanceId, deploymentId: m.services[1].deploymentId, pid: baseline.pid, redisClientId: '91',
+    events: phases.map(([phase, data], i) => ({ phase, data, at: new Date(NOW + i + 1).toISOString() })) } };
+  return { m, baseline, recovered, before, after, value };
+}
+
+test('shutdown acceptance correlates a held evaluation, independent clients, actual drain order and a replacement instance', () => {
+  const f = shutdownEvidence();
+  const result = attestSelfHealShutdownReceipt(f.value, 'A06', f.baseline, f.recovered, f.m, f.before, f.after);
+  assert.equal(result.activeEvaluationDrained, true); assert.equal(result.redisClosureIndependentlyObserved, true);
+  assert.equal(result.oldProcessInstanceId, f.baseline.processInstanceId); assert.notEqual(result.oldInstanceId, result.newInstanceId);
+});
+for (const [name, change] of Object.entries({
+  staleProcess: f => { f.value.receipt.processInstanceId = id(99); },
+  stalePid: f => { f.value.receipt.pid += 1; },
+  staleDeployment: f => { f.value.receipt.deploymentId = id(99); },
+  staleSource: f => { f.value.receipt.sourceSha = 'f'.repeat(40); },
+  logOnly: f => { f.value.evidence = 'shutdown_log'; },
+  missingIndependentProbe: f => { f.value.receipt.events.splice(3, 1); },
+  outOfOrder: f => { [f.value.receipt.events[6], f.value.receipt.events[8]] = [f.value.receipt.events[8], f.value.receipt.events[6]]; },
+  disconnectedDuringEvaluation: f => { f.value.receipt.events[3].data.redisClientPresent = false; },
+  providerClosedEarly: f => { f.value.receipt.events[3].data.providerHealthy = false; },
+  prematureReadiness: f => { f.value.receipt.events[3].data.readinessWithheld = false; },
+  evaluationStillRunning: f => { f.value.receipt.events[6].data.inFlight = true; },
+  dependencyClosedBeforeDrain: f => { f.value.receipt.events[6].data.redisConnected = false; },
+  redisStillConnected: f => { f.value.receipt.events[9].data.redisClientPresent = true; },
+  redisServerReplacement: f => { f.value.receipt.events[9].data.redisServerRunId = '2'.repeat(40); },
+  barrierExpired: f => { f.value.receipt.events.push({ phase: 'barrier_expired', at: new Date(NOW + 20).toISOString(), data: {} }); },
+  automaticExpiryOnly: f => { f.value.receipt.events[5].data.elapsedMs = 5000; },
+  reusedInstance: f => { f.after.worker.instanceId = f.before.worker.instanceId; },
+  reusedProcess: f => { f.recovered.processInstanceId = f.baseline.processInstanceId; },
+  retainedAuthority: f => { f.recovered.policy.selfImproveEnabled = true; },
+})) test(`shutdown acceptance rejects ${name}`, () => {
+  const f = shutdownEvidence(); change(f);
+  assert.throws(() => attestSelfHealShutdownReceipt(f.value, 'A06', f.baseline, f.recovered, f.m, f.before, f.after), /SELF_HEAL_ACCEPTANCE_SHUTDOWN_/u);
+});
 
 test('closed restoration survives a changed PR head and cleanup reserve but never lease expiry', async () => {
   const { current, transport } = cliFixture(); current.head = 'f'.repeat(40);

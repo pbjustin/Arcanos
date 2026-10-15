@@ -111,6 +111,8 @@ export function attestSelfHealAcceptanceStatus(status, manifest, options = {}) {
       || !Array.isArray(running) || (transient ? running.length > 1 : running.length !== 1)
       || running.some(item => !UUID.test(item.id ?? ''))
       || deployment.meta?.serviceManifest?.deploy?.numReplicas !== 1) block('DEPLOYMENT_DRIFT');
+    if (deployment.meta?.imageDigest !== pin.imageDigest
+      || active.some(item => item.meta?.imageDigest !== pin.imageDigest)) block('IMAGE_DRIFT');
     if (['web', 'worker'].includes(pin.role)) {
       if (deployment.meta?.commitHash !== receipt.sourceSha
         || deployment.meta?.serviceManifest?.deploy?.startCommand !== 'node scripts/railway-backstage-heavy-proof-supervisor.mjs --self-heal-preview-v1'
@@ -157,13 +159,14 @@ export function createSelfHealAcceptanceTransport(manifest, options = {}) {
   let expectedRestart = null;
   let workerRestarted = false;
   let redisRestarted = false;
-  const cli = async args => {
+  let shutdownRequested = false;
+  const cli = async (args, operationTimeoutMs) => {
     if (!execute) block('DRY_RUN_TRANSPORT');
     const env = options.env ?? process.env;
     const invocation = options.invocation ?? railwayInvocationForBackstageHeavyProbe(process.platform, env.APPDATA, process.execPath);
     try {
       const result = await (options.command ?? promisify(execFile))(invocation.executable, [...invocation.argsPrefix, ...args], {
-        env: buildBackstageHeavyRailwayCliEnvironment(env), timeout: args[0] === 'ssh' ? 150_000 : 30_000,
+        env: buildBackstageHeavyRailwayCliEnvironment(env), timeout: operationTimeoutMs ?? (args[0] === 'ssh' ? 150_000 : 30_000),
         maxBuffer: MAX_BYTES, windowsHide: true, encoding: 'utf8',
       });
       if (typeof result?.stdout !== 'string' || Buffer.byteLength(result.stdout) > MAX_BYTES) block('TRANSPORT_OUTPUT_INVALID');
@@ -194,6 +197,7 @@ export function createSelfHealAcceptanceTransport(manifest, options = {}) {
       if (!['web', 'worker'].includes(role) || !Array.isArray(argv)) block('OPERATION_INVALID');
       const valid = (argv.length === 1 && ['inspect', 'artifact'].includes(argv[0]))
         || (role === 'worker' && argv.length === 1 && ['replacement-race', 'dependency-overlap'].includes(argv[0]))
+        || (role === 'web' && argv.length === 2 && argv[0] === 'shutdown-receipt' && ['A06', 'E06'].includes(argv[1]))
         || (argv.length === 2 && argv[0] === 'command' && COMMANDS.has(argv[1]))
         || (role === 'worker' && argv.length === 2 && argv[0] === 'provider' && PROVIDER.has(argv[1]))
         || (role === 'worker' && argv.length === 4 && argv[0] === 'fenced-job' && ['create', 'inspect'].includes(argv[1])
@@ -216,6 +220,26 @@ export function createSelfHealAcceptanceTransport(manifest, options = {}) {
   const transport = Object.freeze({
     remote: (role, argv) => remote(role, argv),
     restore: argv => remote('worker', argv, true),
+    async shutdownHeld(scenario) {
+      if (!['A06', 'E06'].includes(scenario)) block('SHUTDOWN_SCENARIO_INVALID');
+      if (shutdownRequested) block('SHUTDOWN_BUDGET_EXHAUSTED');
+      const target = (await targets()).worker;
+      if (!target.instanceId) block('TARGET_NOT_RUNNING');
+      shutdownRequested = true;
+      // A successful signal can terminate the initiating SSH connection. Only
+      // the independent Web-side database receipt may prove this operation.
+      expectedRestart = { role: 'worker', expiresAt: now() + 120_000 };
+      let transportClosed = false;
+      try {
+        await cli(['ssh', '--project', manifest.receipt.projectId, '--environment', manifest.receipt.environmentId,
+          '--service', target.serviceId, '--deployment-instance', target.instanceId, '--',
+          'node', 'scripts/self-heal-preview-control.mjs', 'shutdown-held', scenario], 30_000);
+      } catch (error) {
+        if (!(error instanceof SelfHealAcceptanceError) || error.message !== 'SELF_HEAL_ACCEPTANCE_TRANSPORT_UNAVAILABLE') throw error;
+        transportClosed = true;
+      }
+      return { role: 'worker', target, scenario, requested: true, transportClosed, effectEvidence: 'independent_shutdown_receipt_required' };
+    },
     async restart(role) {
       if (!['worker', 'redis'].includes(role)) block('RESTART_TARGET_INVALID');
       if ((role === 'worker' && workerRestarted) || (role === 'redis' && redisRestarted)) block('RESTART_BUDGET_EXHAUSTED');
@@ -238,6 +262,48 @@ export function createSelfHealAcceptanceTransport(manifest, options = {}) {
 function inspection(receipt) { return receipt?.observation?.inspection ?? receipt?.observation; }
 function finalStage(value) { return value?.trinity?.snapshot?.final; }
 
+/** An OS signal or a drain log alone cannot satisfy shutdown acceptance. */
+export function attestSelfHealShutdownReceipt(value, scenario, baseline, recovered, manifest, before, after) {
+  const receipt = value?.receipt;
+  requireProof(value?.evidence === 'independent_postgres_readback' && receipt?.scenario === scenario
+    && receipt.sourceSha === manifest.receipt.sourceSha && receipt.processInstanceId === baseline.processInstanceId
+    && receipt.deploymentId === manifest.services.find(pin => pin.role === 'worker').deploymentId
+    && receipt.pid === baseline.pid && /^[1-9]\d{0,18}$/u.test(receipt.redisClientId ?? ''), 'SHUTDOWN_IDENTITY_DRIFT');
+  const events = receipt.events;
+  requireProof(Array.isArray(events) && events.length <= 12
+    && new Set(events.map(event => event.phase)).size === events.length
+    && !events.some(event => event.phase === 'barrier_expired'), 'SHUTDOWN_BARRIER_NOT_PROVEN');
+  const ordered = ['prepared', 'evaluation_held', 'shutdown_seen', 'independent_held_probe',
+    'independent_barrier_releasing', 'barrier_released', 'coordinator_drained',
+    'redis_stop_begin', 'redis_stopped', 'independent_redis_closed'];
+  let previous = -1; let previousAt = Date.parse(manifest.receipt.issuedAt);
+  for (const phase of ordered) {
+    const index = events.findIndex(event => event.phase === phase);
+    const at = Date.parse(events[index]?.at);
+    requireProof(index > previous && Number.isFinite(at) && at >= previousAt
+      && at < Date.parse(manifest.receipt.expiresAt), 'SHUTDOWN_ORDER_NOT_PROVEN');
+    previous = index; previousAt = at;
+  }
+  const data = phase => events.find(event => event.phase === phase).data;
+  requireProof(data('prepared')?.redisClientId === receipt.redisClientId
+    && data('evaluation_held')?.inFlight === true && data('shutdown_seen')?.signalSeen === true
+    && ['processAlive', 'redisClientPresent', 'providerHealthy', 'drainAbsent', 'readinessWithheld'].every(key => data('independent_held_probe')?.[key] === true)
+    && data('barrier_released')?.signalSeen === true && data('barrier_released').elapsedMs >= 0
+    && data('barrier_released').elapsedMs < 5000, 'SHUTDOWN_ACTIVE_EVALUATION_NOT_PROVEN');
+  requireProof(data('coordinator_drained')?.inFlight === false && data('coordinator_drained').redisConnected === true
+    && data('redis_stopped')?.inFlight === false && data('redis_stopped').redisConnected === false
+    && data('independent_redis_closed')?.redisClientPresent === false
+    && /^[a-f0-9]{40}$/u.test(data('independent_held_probe')?.redisServerRunId ?? '')
+    && data('independent_redis_closed').redisServerRunId === data('independent_held_probe').redisServerRunId, 'SHUTDOWN_DEPENDENCY_ORDER_NOT_PROVEN');
+  requireProof(UUID.test(before?.worker?.instanceId ?? '') && UUID.test(after?.worker?.instanceId ?? '')
+    && before.worker.instanceId !== after.worker.instanceId
+    && recovered.ready === true && recovered.processInstanceId !== baseline.processInstanceId
+    && recovered.scheduler.installations === 1 && recovered.policy.selfImproveEnabled === false, 'SHUTDOWN_RESTART_NOT_PROVEN');
+  return { oldInstanceId: before.worker.instanceId, newInstanceId: after.worker.instanceId,
+    oldProcessInstanceId: baseline.processInstanceId, newProcessInstanceId: recovered.processInstanceId,
+    activeEvaluationDrained: true, redisClosureIndependentlyObserved: true, postgresAvailableThroughDrain: true };
+}
+
 /** Each case retains baseline, every operation, effects and restoration; incomplete evidence cannot pass. */
 export async function runSelfHealAcceptanceCase(scenario, manifest, options = {}) {
   if (!SELF_HEAL_ACCEPTANCE_CASES.includes(scenario)) block('SCENARIO_INVALID');
@@ -250,7 +316,9 @@ export async function runSelfHealAcceptanceCase(scenario, manifest, options = {}
   let classification = 'BLOCKED'; let cleanupResult = 'NOT_RUN';
   const emit = async (kind, value) => {
     const event = safeProjection({ scenario, sequence: ++sequence, observedAt: new Date(now()).toISOString(), kind, value });
-    events.push(event); await options.onReceipt?.(event); return value;
+    await options.onReceipt?.(event);
+    events.push({ sequence: event.sequence, kind: event.kind, observedAt: event.observedAt, receiptSha256: hash(event) });
+    return value;
   };
   const remote = async (role, args) => emit('operation', { role, args, receipt: await transport.remote(role, args) }).then(value => value.receipt);
   const inspect = async (role = 'worker') => inspection(await remote(role, ['inspect']));
@@ -331,10 +399,14 @@ export async function runSelfHealAcceptanceCase(scenario, manifest, options = {}
       requireProof(after.processInstanceId !== baseline.processInstanceId && after.scheduler.installations === 1
         && !finalStage(after)?.activeAction && after.policy.selfImproveEnabled === false, 'STALE_PROCESS_AUTHORITY'); await fenced(1);
     } else if (['A06', 'E06'].includes(scenario)) {
-      await command('hold_observation_once'); await command('tick');
-      await poll(inspect, value => value.observation.holding === true, 4000);
-      await restart('worker'); await fenced(1);
-      block('INDEPENDENT_SHUTDOWN_ORDER_RECEIPT_REQUIRED');
+      if (typeof transport.shutdownHeld !== 'function' || typeof transport.targets !== 'function') block('SHUTDOWN_CAPABILITY_REQUIRED');
+      const before = await transport.targets();
+      await emit('lifecycle', await transport.shutdownHeld(scenario));
+      const journal = await poll(() => remote('web', ['shutdown-receipt', scenario]), value =>
+        value.shutdown?.receipt?.events?.some(event => event.phase === 'independent_redis_closed'), 30_000, true);
+      const recovered = await restart('worker'); const after = await transport.targets();
+      await emit('shutdown_effect', attestSelfHealShutdownReceipt(journal.shutdown, scenario, baseline, recovered, manifest, before, after));
+      await fenced(1);
     } else if (scenario === 'B01') {
       await restart('redis'); const after = await poll(inspect, value => value.redis.state === 'READY' && value.redis.connected
         && value.redis.readyGeneration > baseline.redis.readyGeneration && value.redis.recoveryCount > baseline.redis.recoveryCount, 120_000);
@@ -558,7 +630,8 @@ export async function runSelfHealAcceptanceCase(scenario, manifest, options = {}
   const result = { version: 1, scenario, classification, executed: true, sourceSha: manifest.receipt.sourceSha,
     controllerSha: manifest.controllerSha, runId: manifest.receipt.runId, projectId: manifest.receipt.projectId,
     environmentId: manifest.receipt.environmentId, baseline, finalState, cleanupResult, errorCode,
-    providerBoundary: 'synthetic_loopback_adapter', realExternalProviderRecoveryProven: false, events };
+    providerBoundary: 'synthetic_loopback_adapter', realExternalProviderRecoveryProven: false,
+    eventCount: events.length, eventReceipts: events };
   await options.onResult?.(safeProjection(result)); return result;
 }
 

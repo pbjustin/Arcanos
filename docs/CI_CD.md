@@ -9,6 +9,14 @@ The driver admits only the 32 named PR1544 scenarios, four exact owned services,
 two bound volumes, an immutable source/artifact manifest and the original
 two-hour expiry. `--execute --allow-network` are both required for operations.
 Each scenario writes immutable, synchronously flushed evidence before proceeding.
+The final result references those receipts by sequence and SHA-256 instead of
+duplicating their bodies. Image pins must match both latest and active deployment
+metadata. Shutdown acceptance correlates the fixed held-evaluation journal with
+independent Redis/process observations, replacement-instance ownership and a
+fenced job. Its initiating SSH call has a separate 30-second deadline inside the
+120-second transition bound; lost SSH is never effect evidence. Cleanup traverses
+at most five complete owner-visible project pages within a 60-second lookup
+deadline and retains all owner, workspace and resource boundaries.
 Injected transports are always synthetic evidence. Missing independent shutdown,
 startup-failure or remote-effect inspection remains blocked, never a pass.
 

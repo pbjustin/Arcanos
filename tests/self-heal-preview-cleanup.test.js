@@ -23,7 +23,16 @@ function receipt(patch = {}) { return {
   environmentId: ID.environment, environmentName: 'backstage-heavy-pr-1544-e2e',
   issuedAt: '2026-10-14T15:59:00.000Z', expiresAt: '2026-10-14T17:00:00.000Z', ...patch,
 }; }
-function connection(nodes) { return { edges: nodes.map(node => ({ node })), pageInfo: { hasNextPage: false } }; }
+function connection(nodes) { return { edges: nodes.map(node => ({ node })), pageInfo: { hasNextPage: false, endCursor: null } }; }
+function projectPage(nodes, nextCursor = null) {
+  return { ...connection(nodes), pageInfo: { hasNextPage: nextCursor !== null, endCursor: nextCursor } };
+}
+function unrelatedProjects(start, count) {
+  return Array.from({ length: count }, (_, index) => ({
+    id: `${String(start + index).padStart(8, '0')}-1234-4123-8123-123456789abc`,
+    workspaceId: receipt().workspaceId,
+  }));
+}
 function status(partial = false) {
   return {
     id: ID.project, name: receipt().projectName, workspaceId: receipt().workspaceId, deletedAt: null, buckets: [],
@@ -58,11 +67,17 @@ function harness(options = {}) {
       return { stdout: JSON.stringify(payload), stderr: '' };
     }
     if (commandName === 'api') {
-      if (!/^query SelfHealPreviewCleanupOwnerInventory \{/u.test(args[1])
+      if (!/^query SelfHealPreviewCleanupOwnerInventory\(\$after: String\) \{/u.test(args[1])
         || !args[1].includes('workspaceId: "1c9265a3-986f-4304-ad3e-5a874caab039", includeDeleted: true')
-        || args.length !== 3 || args[2] !== '--compact' || /\bmutation\b/u.test(args[1])) throw new Error('UNEXPECTED_OWNER_INVENTORY_QUERY');
+        || !args[1].includes('projects(first: 100, after: $after,')
+        || args.length !== 5 || args[2] !== '--variables' || args[4] !== '--compact'
+        || /\bmutation\b/u.test(args[1])) throw new Error('UNEXPECTED_OWNER_INVENTORY_QUERY');
+      const variables = JSON.parse(args[3]);
+      if (Object.keys(variables).join() !== 'after' || (variables.after !== null && typeof variables.after !== 'string')) {
+        throw new Error('UNEXPECTED_OWNER_INVENTORY_VARIABLES');
+      }
       const project = current && { ...current, buckets: Array.isArray(current.buckets) ? connection(current.buckets) : current.buckets };
-      return { stdout: JSON.stringify(options.api?.(project) ?? { data: {
+      return { stdout: JSON.stringify(options.api?.(project, variables.after) ?? { data: {
         me: { id: 'e1c58b83-8740-4318-9ee2-780c2a6f4e8b' }, projects: connection(project ? [project] : []),
       } }), stderr: '' };
     }
@@ -100,7 +115,7 @@ function harness(options = {}) {
     ...(options.persistence === false ? {} : { persistResourceReceipt: jest.fn(async value => structuredClone(value)) }),
     env: { PATH: '/fixture/bin', RAILWAY_TOKEN: 'fixture-management-secret', OPENAI_API_KEY: 'mock-must-be-stripped' },
     invocation: { executable: 'railway-fixture', argsPrefix: [] }, onReceipt: event => events.push(event),
-    current: () => current };
+    current: () => current, advance: ms => { clockMs += ms; } };
 }
 function isMutation(args) { return args[0] === 'delete' || (args[0] === 'service' && args[1] === 'delete') || (args[0] === 'volume' && args.includes('delete')); }
 function boundResources() {
@@ -250,7 +265,7 @@ describe('receipt-bound self-heal preview cleanup and fixed-expiry watchdog', ()
   it('never accepts filtered project-null/list absence while owner includeDeleted inventory retains volumes', async () => {
     const current = status(); current.deletedAt = new Date(NOW + 48 * 60 * 60 * 1000).toISOString();
     const h = harness({ initialStatus: current, refuseResourceDelete: true, list: () => [],
-      api: value => ({ data: { project: null, projects: connection([value]) } }) });
+      api: value => ({ data: { project: null, me: { id: 'e1c58b83-8740-4318-9ee2-780c2a6f4e8b' }, projects: connection([value]) } }) });
     await expect(runSelfHealPreviewCleanup(execute(receipt({ resources: boundResources() })), h))
       .rejects.toThrow('SELF_HEAL_PREVIEW_CLEANUP_SCHEDULED_RESOURCE_DELETE_REQUIRES_APPROVED_RECOVERY');
     expect(h.events.some(event => event.absenceVerified === true || event.resourceAbsenceVerified === true)).toBe(false);
@@ -263,6 +278,115 @@ describe('receipt-bound self-heal preview cleanup and fixed-expiry watchdog', ()
     expect(result).toMatchObject({ status: 'RESOURCES_REMOVED_METADATA_RETAINED', resourceAbsenceVerified: true,
       projectAbsenceVerified: false, absenceVerified: false, projectMetadataRetained: true,
       environmentCount: 0, serviceCount: 0, volumeCount: 0 });
+    expect(h.command.mock.calls.some(call => isMutation(call[1]))).toBe(false);
+  });
+  it('proves project absence only after all five complete owner-verified pages', async () => {
+    const current = status(true); current.deletedAt = new Date(NOW - 1000).toISOString();
+    const h = harness({ initialStatus: current, api: (_value, after) => {
+      const page = after === null ? 0 : Number(after.slice('page-'.length));
+      return { data: { me: { id: 'e1c58b83-8740-4318-9ee2-780c2a6f4e8b' },
+        projects: projectPage(unrelatedProjects(page * 100 + 1, 100), page === 4 ? null : `page-${page + 1}`) } };
+    } });
+    const result = await runSelfHealPreviewCleanup(execute(), h);
+    expect(result).toMatchObject({ resourceAbsenceVerified: true, projectAbsenceVerified: true, absenceVerified: true });
+    const cursors = h.command.mock.calls.filter(call => call[1][0] === 'api').map(call => JSON.parse(call[1][3]).after);
+    expect(cursors).toEqual([null, 'page-1', 'page-2', 'page-3', 'page-4', null, 'page-1', 'page-2', 'page-3', 'page-4']);
+    expect(h.command.mock.calls.some(call => isMutation(call[1]))).toBe(false);
+  });
+  it.each(['missing-cursor', 'null-cursor', 'empty-cursor', 'oversized-cursor', 'cursor-cycle',
+    'duplicate-id', 'owner-drift', 'missing-owner', 'foreign-workspace', 'missing-page-info',
+    'unknown-next-page', 'query-error', 'page-over-100', 'more-than-five-pages', 'incomplete-target'])
+  ('rejects paginated inventory %s without absence or mutation', async fault => {
+    const current = status(true); current.deletedAt = new Date(NOW - 1000).toISOString(); current.environments = connection([]);
+    let pages = 0;
+    const h = harness({ initialStatus: current, api: (value, after) => {
+      const page = pages++;
+      let projects = page === 0
+        ? projectPage([value, ...unrelatedProjects(1, 99)], 'page-1')
+        : projectPage(unrelatedProjects(page * 100 + 1, 100));
+      const data = { me: { id: 'e1c58b83-8740-4318-9ee2-780c2a6f4e8b' }, projects };
+      if (fault === 'more-than-five-pages') data.projects = projectPage(unrelatedProjects(page * 100 + 1, 100), `page-${page + 1}`);
+      if (fault === 'page-over-100') data.projects = projectPage(unrelatedProjects(1, 101));
+      if (page === 0 && fault === 'missing-cursor') delete projects.pageInfo.endCursor;
+      if (page === 0 && fault === 'null-cursor') projects.pageInfo.endCursor = null;
+      if (page === 0 && fault === 'empty-cursor') projects.pageInfo.endCursor = '';
+      if (page === 0 && fault === 'oversized-cursor') projects.pageInfo.endCursor = 'x'.repeat(1025);
+      if (page === 0 && fault === 'incomplete-target') value.volumes.pageInfo.hasNextPage = true;
+      if (after !== null) {
+        if (fault === 'cursor-cycle') data.projects = projectPage(unrelatedProjects(page * 100 + 1, 100), 'page-1');
+        if (fault === 'duplicate-id') projects.edges[0].node = unrelatedProjects(1, 1)[0];
+        if (fault === 'owner-drift') data.me.id = ID.web;
+        if (fault === 'missing-owner') delete data.me;
+        if (fault === 'foreign-workspace') projects.edges[0].node.workspaceId = ID.web;
+        if (fault === 'missing-page-info') delete projects.pageInfo;
+        if (fault === 'unknown-next-page') delete projects.pageInfo.hasNextPage;
+        if (fault === 'query-error') return { data, errors: [{ message: 'private-owner-diagnostic' }] };
+      }
+      return { data };
+    } });
+    const error = await runSelfHealPreviewCleanup(execute(), h).catch(error => error);
+    expect(error.message).toMatch(/^SELF_HEAL_PREVIEW_CLEANUP_(?:INCOMPLETE_INVENTORY|INVENTORY_CURSOR_INVALID|INVENTORY_LIMIT_EXCEEDED|PROJECT_LIST_INVALID|OWNER_IDENTITY_MISMATCH|INVENTORY_QUERY_FAILED)$/u);
+    expect(h.command.mock.calls.filter(call => call[1][0] === 'api').length).toBeLessThanOrEqual(5);
+    expect(h.events.some(event => event.resourceAbsenceVerified === true || event.absenceVerified === true)).toBe(false);
+    expect(h.command.mock.calls.some(call => isMutation(call[1]))).toBe(false);
+    expect(JSON.stringify(error.receipt)).not.toContain('private-owner-diagnostic');
+  });
+  it('bounds the entire paginated owner lookup to 60 seconds without renewing per page', async () => {
+    const current = status(true); current.deletedAt = new Date(NOW - 1000).toISOString();
+    let page = 0;
+    const h = harness({ initialStatus: current, api: () => {
+      h.advance(15_000);
+      return { data: { me: { id: 'e1c58b83-8740-4318-9ee2-780c2a6f4e8b' },
+        projects: projectPage(unrelatedProjects(page++ * 100 + 1, 100), `page-${page}`) } };
+    } });
+    await expect(runSelfHealPreviewCleanup(execute(), h)).rejects.toThrow('SELF_HEAL_PREVIEW_CLEANUP_RESOURCE_ABSENCE_UNCONFIRMED');
+    expect(h.now()).toBe(NOW + 60_000);
+    expect(h.command.mock.calls.filter(call => call[1][0] === 'api')).toHaveLength(4);
+    expect(h.command.mock.calls.some(call => isMutation(call[1]))).toBe(false);
+    expect(h.events.some(event => event.resourceAbsenceVerified === true)).toBe(false);
+  });
+  it('uses the tighter ongoing absence-poll deadline for paginated lookup commands', async () => {
+    const h = harness({ retainServices: true,
+      status: (attempt, value) => { if (attempt >= 7) delete value.volumes; return value; },
+      api: value => {
+        h.advance(Math.min(14_000, NOW + 60_000 - h.now()));
+        return { data: { me: { id: 'e1c58b83-8740-4318-9ee2-780c2a6f4e8b' }, projects: projectPage([value]) } };
+      },
+    });
+    await expect(runSelfHealPreviewCleanup(execute(), h)).rejects.toThrow('SELF_HEAL_PREVIEW_CLEANUP_RESOURCE_ABSENCE_UNCONFIRMED');
+    expect(h.now()).toBe(NOW + 60_000);
+    expect(h.command.mock.calls.filter(call => call[1][0] === 'api').map(call => call[2].timeout))
+      .toEqual([15_000, 15_000, 15_000, 12_000]);
+    expect(h.command.mock.calls.filter(call => isMutation(call[1])).every(call => call[1][0] === 'service')).toBe(true);
+    expect(h.events.some(event => event.resourceAbsenceVerified === true)).toBe(false);
+  });
+  it('cleans only the bound project found after 100 unrelated projects', async () => {
+    const h = harness({ status: (_attempt, value) => { delete value.volumes; return value; },
+      api: (value, after) => ({ data: { me: { id: 'e1c58b83-8740-4318-9ee2-780c2a6f4e8b' },
+        projects: after === null ? projectPage(unrelatedProjects(1, 100), 'page-100') : projectPage([value]) } }),
+    });
+    const result = await runSelfHealPreviewCleanup(execute(), h);
+    expect(result).toMatchObject({ resourceAbsenceVerified: true, projectAbsenceVerified: false });
+    const mutations = h.command.mock.calls.filter(call => isMutation(call[1])).map(call => call[1]);
+    expect(mutations).toHaveLength(7);
+    expect(mutations.every(args => args[args.indexOf('--project') + 1] === ID.project)).toBe(true);
+    expect(mutations.filter(args => args[0] === 'service').map(args => args[args.indexOf('--service') + 1]))
+      .toEqual([ID.web, ID.worker, ID.postgres, ID.redis]);
+    expect(mutations.filter(args => args[0] === 'volume').map(args => args[args.indexOf('--volume') + 1]))
+      .toEqual([ID.pgVolume, ID.redisVolume]);
+  });
+  it('finds an owned empty tombstone beyond the first 100 projects before proving resource absence', async () => {
+    const current = status(true); current.deletedAt = new Date(NOW - 1000).toISOString(); current.environments = connection([]);
+    const h = harness({ initialStatus: current, api: (value, after) => ({ data: {
+      me: { id: 'e1c58b83-8740-4318-9ee2-780c2a6f4e8b' },
+      projects: after === null ? projectPage(unrelatedProjects(1, 100), 'page-100') : projectPage([value]),
+    } }) });
+    const result = await runSelfHealPreviewCleanup(execute(receipt({ resources: boundResources() })), h);
+    expect(result).toMatchObject({ resourceAbsenceVerified: true, projectAbsenceVerified: false, projectMetadataRetained: true });
+    const cursors = h.command.mock.calls.filter(call => call[1][0] === 'api').map(call => JSON.parse(call[1][3]).after);
+    expect(cursors.length).toBeGreaterThanOrEqual(4);
+    expect(cursors.length % 2).toBe(0);
+    expect(cursors.every((cursor, index) => cursor === (index % 2 === 0 ? null : 'page-100'))).toBe(true);
     expect(h.command.mock.calls.some(call => isMutation(call[1]))).toBe(false);
   });
   it.each(['volume', 'service', 'bucket', 'environment'])('refuses a past-deleted tombstone retaining %s before any mutation', async kind => {
@@ -659,9 +783,9 @@ describe('receipt-bound self-heal preview cleanup and fixed-expiry watchdog', ()
     const queries = h.command.mock.calls.map(call => call[1]).filter(args => args[0] === 'api');
     expect(queries.length).toBeGreaterThan(0);
     for (const args of queries) {
-      expect(args[1]).toMatch(/^query SelfHealPreviewCleanupOwnerInventory \{/u); expect(args[1]).not.toMatch(/\bmutation\b/u);
+      expect(args[1]).toMatch(/^query SelfHealPreviewCleanupOwnerInventory\(\$after: String\) \{/u); expect(args[1]).not.toMatch(/\bmutation\b/u);
       expect(args[1]).toContain('workspaceId: "1c9265a3-986f-4304-ad3e-5a874caab039", includeDeleted: true');
-      expect(args).not.toContain('--variables');
+      expect(args[2]).toBe('--variables'); expect(JSON.parse(args[3])).toEqual({ after: null });
       expect(args.at(-1)).toBe('--compact');
     }
     expect(h.command.mock.calls.some(call => isMutation(call[1]))).toBe(false);
