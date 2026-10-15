@@ -315,6 +315,34 @@ describe('opt-in self-heal profile of the existing heavy preview supervisor', ()
       for (const name of Object.keys(metadata)) expect(child).not.toHaveProperty(name);
     }
   });
+  it.each(['worker', 'web'])('admits only a matching legacy Railway environment alias for %s and strips it from children', role => {
+    const env = environment(role);
+    const original = resolveSelfHealPreviewProfile(role, env, { now: () => NOW });
+    env.RAILWAY_ENVIRONMENT = env.RAILWAY_ENVIRONMENT_NAME;
+    const resolved = resolveSelfHealPreviewProfile(role, env, { now: () => NOW });
+    expect(resolved.ownership).toEqual(original.ownership);
+    const child = buildSelfHealPreviewApplicationEnvironment(resolved, env);
+    expect(child).not.toHaveProperty('RAILWAY_ENVIRONMENT');
+    expect(child.RAILWAY_ENVIRONMENT_NAME).toBe(env.RAILWAY_ENVIRONMENT_NAME);
+    expect(buildSelfHealPreviewFixtureEnvironment(resolved, env)).not.toHaveProperty('RAILWAY_ENVIRONMENT');
+  });
+  it.each(['production', '', ' backstage-heavy-pr-1544-e2e', 'BACKSTAGE-HEAVY-PR-1544-E2E', undefined, null, 42])(
+    'rejects an invalid legacy Railway environment alias before artifact, database, or spawn effects %#', async alias => {
+      for (const role of ['worker', 'web']) {
+        const db = database(); const spawnImpl = jest.fn(); const verifyArtifact = jest.fn(async () => ARTIFACT);
+        await expect(runSelfHealPreviewSupervisor(role, { ...environment(role), RAILWAY_ENVIRONMENT: alias }, {
+          ...db, now: () => NOW, spawnImpl, verifyArtifact,
+        })).rejects.toThrow('SELF_HEAL_PREVIEW_ENVIRONMENT_ALIAS_INVALID');
+        expect(db.client.connect).not.toHaveBeenCalled(); expect(verifyArtifact).not.toHaveBeenCalled();
+        expect(spawnImpl).not.toHaveBeenCalled();
+      }
+    }
+  );
+  it('retains unknown Railway variable rejection when the legacy alias matches', () => {
+    const env = environment();
+    expect(() => resolveSelfHealPreviewProfile('worker', { ...env, RAILWAY_ENVIRONMENT: env.RAILWAY_ENVIRONMENT_NAME,
+      RAILWAY_UNRECOGNIZED_PREVIEW_FLAG: 'true' }, { now: () => NOW })).toThrow('SELF_HEAL_PREVIEW_ENV_FORBIDDEN');
+  });
   it.each([
     ['ARCANOS_WORKSPACE_ROOT', '/foreign'], ['ARCANOS_PYTHON_RUNTIME_DIR', '/foreign/daemon-python'],
     ['RAILWAY_CLI_BIN', '/foreign/railway'],
