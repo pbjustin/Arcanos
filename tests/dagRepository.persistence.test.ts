@@ -4,6 +4,7 @@ type DagRepositoryKind = 'artifact' | 'run';
 
 interface DagRepositoryHarness {
   invokeRead: () => Promise<unknown>;
+  invokeWrite: () => Promise<unknown>;
   initializeDatabaseMock: jest.Mock<(workerId: string) => Promise<boolean>>;
   initializeTablesMock: jest.Mock<() => Promise<boolean>>;
   queryMock: jest.Mock;
@@ -83,6 +84,10 @@ async function loadDagRepositoryHarness(
     const repository = await import('../src/core/db/repositories/dagArtifactRepository.js');
     return {
       invokeRead: () => repository.getDagArtifactPayloadByReference('artifact-1'),
+      invokeWrite: () => repository.upsertDagArtifact({
+        artifactReference: 'artifact-1', runId: 'run-1', nodeId: 'node-1',
+        attempt: 1, artifactKind: 'test', payload: {}, createdAt: '2026-10-15T00:00:00.000Z'
+      }),
       initializeDatabaseMock,
       initializeTablesMock,
       queryMock,
@@ -93,6 +98,11 @@ async function loadDagRepositoryHarness(
   const repository = await import('../src/core/db/repositories/dagRunRepository.js');
   return {
     invokeRead: () => repository.getDagRunSnapshotById('run-1'),
+    invokeWrite: () => repository.upsertDagRunSnapshot({
+      runId: 'run-1', sessionId: 'session-1', template: 'test', status: 'running',
+      snapshotGeneration: '1', plannerNodeId: null, rootNodeId: null,
+      createdAt: '2026-10-15T00:00:00.000Z', updatedAt: '2026-10-15T00:00:00.000Z', snapshot: {}
+    }),
     initializeDatabaseMock,
     initializeTablesMock,
     queryMock,
@@ -152,6 +162,18 @@ describe.each([
 
     expect(harness.initializeDatabaseMock).not.toHaveBeenCalled();
     expect(harness.initializeTablesMock).toHaveBeenCalledTimes(1);
+    expect(harness.queryMock).not.toHaveBeenCalled();
+  });
+
+  it('preserves the write error and never queries when schema setup fails', async () => {
+    const harness = await loadDagRepositoryHarness(kind, {
+      connectedInitially: true,
+      initializeTablesImpl: async () => false
+    });
+
+    await expect(harness.invokeWrite()).rejects.toThrow(
+      kind === 'artifact' ? 'DAG artifact persistence is unavailable' : 'DAG run persistence is unavailable'
+    );
     expect(harness.queryMock).not.toHaveBeenCalled();
   });
 

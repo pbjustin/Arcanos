@@ -6,6 +6,7 @@
 
 import { getPool, initializeDatabase, isDatabaseConnected } from '@core/db/client.js';
 import { query } from '@core/db/query.js';
+import { createDatabaseRepositoryReadinessGate } from '@core/db/repositoryReadiness.js';
 import { initializeTables, isDatabaseSchemaReady } from '@core/db/schema.js';
 import { resolveErrorMessage } from '@shared/errorUtils.js';
 import { safeJSONStringify } from '@shared/jsonHelpers.js';
@@ -23,78 +24,24 @@ export interface DagArtifactRecord {
 const DAG_ARTIFACT_REPOSITORY_WORKER_ID = 'dag-artifacts';
 const DAG_ARTIFACT_BOOTSTRAP_RETRY_COOLDOWN_MS = 30_000;
 
-let pendingBootstrap: Promise<boolean> | null = null;
-let lastBootstrapFailureAtMs = 0;
-
 /**
  * Ensure DAG artifact persistence can reach PostgreSQL.
  * Purpose: lazily bootstrap shared artifact storage for multi-service DAG execution.
  * Inputs/outputs: no inputs, returns a readiness boolean.
  * Edge case behavior: throttles repeated failed initialization attempts with a cooldown.
  */
-async function ensureDagArtifactPersistenceReady(): Promise<boolean> {
-  //audit Assumption: artifact persistence is safe only after the exact current pool has completed shared schema initialization; failure risk: a connected replacement pool is mistaken for a schema-ready pool; expected invariant: the fast path requires current connectivity and central schema readiness; handling strategy: consult both shared states.
-  if (isDatabaseConnected() && isDatabaseSchemaReady()) {
-    return true;
+const ensureDagArtifactPersistenceReady = createDatabaseRepositoryReadinessGate({
+  getPool,
+  isDatabaseConnected,
+  isDatabaseSchemaReady,
+  initializeDatabase,
+  initializeTables,
+  workerId: DAG_ARTIFACT_REPOSITORY_WORKER_ID,
+  cooldownMs: DAG_ARTIFACT_BOOTSTRAP_RETRY_COOLDOWN_MS,
+  onError: error => {
+    console.warn('[DAG Artifacts] Failed to initialize database persistence:', resolveErrorMessage(error));
   }
-
-  //audit Assumption: concurrent persistence calls should share one bootstrap attempt even while a prior failure timestamp is still active; failure risk: followers fail closed instead of awaiting the active recovery; expected invariant: an in-flight bootstrap takes precedence over cooldown; handling strategy: reuse the pending promise first.
-  if (pendingBootstrap) {
-    return pendingBootstrap;
-  }
-
-  const nowMs = Date.now();
-  const cooldownActive =
-    lastBootstrapFailureAtMs > 0 &&
-    nowMs - lastBootstrapFailureAtMs < DAG_ARTIFACT_BOOTSTRAP_RETRY_COOLDOWN_MS;
-
-  //audit Assumption: repeated bootstrap failures should be rate-limited; failure risk: noisy retry storms under DB outage; expected invariant: retries respect cooldown; handling strategy: fail closed until cooldown expires.
-  if (cooldownActive) {
-    return false;
-  }
-
-  pendingBootstrap = (async () => {
-    try {
-      if (!isDatabaseConnected()) {
-        await initializeDatabase(DAG_ARTIFACT_REPOSITORY_WORKER_ID);
-      }
-
-      if (!isDatabaseConnected()) {
-        lastBootstrapFailureAtMs = Date.now();
-        return false;
-      }
-
-      const bootstrapPool = getPool();
-      if (!bootstrapPool) {
-        lastBootstrapFailureAtMs = Date.now();
-        return false;
-      }
-
-      const tablesInitialized = await initializeTables();
-      const persistenceReady =
-        tablesInitialized &&
-        getPool() === bootstrapPool &&
-        isDatabaseConnected() &&
-        isDatabaseSchemaReady();
-      if (!persistenceReady) {
-        lastBootstrapFailureAtMs = Date.now();
-        return false;
-      }
-
-      lastBootstrapFailureAtMs = 0;
-      return true;
-    } catch (error: unknown) {
-      //audit Assumption: artifact bootstrap failures should not crash unrelated startup work; failure risk: DAG execution fails before service health settles; expected invariant: callers receive boolean readiness; handling strategy: warn and fail closed.
-      lastBootstrapFailureAtMs = Date.now();
-      console.warn('[DAG Artifacts] Failed to initialize database persistence:', resolveErrorMessage(error));
-      return false;
-    } finally {
-      pendingBootstrap = null;
-    }
-  })();
-
-  return pendingBootstrap;
-}
+});
 
 /**
  * Persist one DAG artifact payload by stable reference.

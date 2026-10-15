@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-15T01:54:28.452Z",
+  "generatedAt": "2026-10-15T23:32:39.474Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -537,6 +537,9 @@
         },
         {
           "relativePath": "src/core/db/repositories/workerRuntimeRepository.ts"
+        },
+        {
+          "relativePath": "src/core/db/repositoryReadiness.ts"
         },
         {
           "relativePath": "src/core/db/schema.ts"
@@ -5588,6 +5591,9 @@
         },
         {
           "relativePath": "tests/repo-tools.test.ts"
+        },
+        {
+          "relativePath": "tests/repository-readiness.test.ts"
         },
         {
           "relativePath": "tests/request-handler.feedback.test.ts"
