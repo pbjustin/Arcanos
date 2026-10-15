@@ -169,6 +169,39 @@ test('long-case final receipt references durable events without repeating their 
     assert.equal(reference.sequence, published[index].sequence);
   });
 });
+test('compact receipt admission preserves nested baseline, all restorations and the durable final result', async () => {
+  const state = snapshot({ diagnostics: Array.from({ length: 25_000 }, () => ({ nested: { value: 'synthetic' } })) });
+  const shape = { scenario: 'A01', sequence: 1, observedAt: new Date(NOW).toISOString(), kind: 'restoration',
+    value: { args: ['command', 'policy_restore'], receipt: { observation: state } } };
+  const limit = 2 * 1024 * 1024;
+  assert(Buffer.byteLength(JSON.stringify(shape)) < limit);
+  assert(Buffer.byteLength(JSON.stringify(shape, null, 2)) > limit);
+  const directory = mkdtempSync(join(tmpdir(), 'arcanos-acceptance-compact-')); const paths = [];
+  const publish = receipt => { paths.push(publishSelfHealAcceptanceReceipt(directory, paths.length + 1, receipt)); };
+  try {
+    const result = await runSelfHealAcceptanceCase('A01', manifest(), {
+      now: () => NOW, execute: true, allowNetwork: true, transport: fakeTransport(state),
+      onReceipt: publish, onResult: publish,
+    });
+    assert.equal(result.classification, 'SYNTHETIC_ONLY');
+    assert.equal(result.cleanupResult, 'SYNTHETIC_ONLY');
+    const receipts = paths.map(path => {
+      const text = readFileSync(path, 'utf8'); const receipt = JSON.parse(text);
+      assert(Buffer.byteLength(text) <= limit);
+      assert.equal(text, `${JSON.stringify(receipt)}\n`);
+      const { receiptSha256, ...body } = receipt;
+      assert.equal(receiptSha256, createHash('sha256').update(JSON.stringify(body)).digest('hex'));
+      return body;
+    });
+    assert.equal(receipts.filter(receipt => receipt.kind === 'baseline').length, 1);
+    assert.equal(receipts.filter(receipt => receipt.kind === 'restoration').length, 6);
+    assert.deepEqual(receipts.at(-1), JSON.parse(JSON.stringify(result)));
+  } finally {
+    for (const path of paths) unlinkSync(path);
+    rmdirSync(directory);
+  }
+});
+
 test('durablereceiptsareexclusiveandcannotoverwritefailureevidence', () => {
   const directory = mkdtempSync(join(tmpdir(), 'arcanos-acceptance-')); let path;
   try {
@@ -215,6 +248,28 @@ function diagnosticCliFixture(diagnostic) {
   };
   return fixture;
 }
+
+test('receipt size includes hash and newline at the exact UTF-8 publication boundary', async () => {
+  const diagnostic = { padding: '' }; const { transport } = diagnosticCliFixture(diagnostic);
+  const empty = await transport.remote('worker', ['inspect']);
+  const limit = 2 * 1024 * 1024;
+  const remaining = limit - Buffer.byteLength(`${JSON.stringify({ ...empty, receiptSha256: '0'.repeat(64) })}\n`);
+  diagnostic.padding = 'é'.repeat(Math.floor(remaining / 2)) + 'x'.repeat(remaining % 2);
+  const directory = mkdtempSync(join(tmpdir(), 'arcanos-acceptance-boundary-')); let path;
+  try {
+    const admitted = await transport.remote('worker', ['inspect']);
+    path = publishSelfHealAcceptanceReceipt(directory, 1, admitted);
+    const saved = readFileSync(path, 'utf8');
+    assert.equal(Buffer.byteLength(saved), limit);
+    assert.equal(JSON.parse(saved).receiptSha256, createHash('sha256').update(JSON.stringify(admitted)).digest('hex'));
+    diagnostic.padding += 'x';
+    await assert.rejects(transport.remote('worker', ['inspect']), /UNSAFE_DIAGNOSTIC/u);
+    assert.throws(() => publishSelfHealAcceptanceReceipt(directory, 2, {
+      ...admitted, observation: { ...admitted.observation, diagnostic },
+    }), /EVIDENCE_TOO_LARGE/u);
+    assert.throws(() => readFileSync(join(directory, '00002-run.json')), /ENOENT/u);
+  } finally { if (path) unlinkSync(path); rmdirSync(directory); }
+});
 
 for (const [name, diagnostic] of Object.entries({
   redis: 'redis://fixture-user:fixture-secret@example.invalid:6379',

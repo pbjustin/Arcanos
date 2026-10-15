@@ -49,6 +49,7 @@ const INVENTORY_QUERY = `query SelfHealAcceptanceInventory($projectId: String!, 
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const sleep = ms => new Promise(done => setTimeout(done, ms));
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+const serializeReceipt = value => `${JSON.stringify({ ...value, receiptSha256: hash(value) })}\n`;
 export class SelfHealAcceptanceError extends Error {
   constructor(code, classification = 'BLOCKED') { super(`SELF_HEAL_ACCEPTANCE_${code}`); this.classification = classification; }
 }
@@ -136,8 +137,7 @@ export function publishSelfHealAcceptanceReceipt(directory, sequence, receipt) {
   if (!isAbsolute(directory) || !stat.isDirectory() || stat.isSymbolicLink()
     || !Number.isSafeInteger(sequence) || sequence < 1) block('EVIDENCE_PATH_INVALID');
   const path = join(directory, `${String(sequence).padStart(5, '0')}-${receipt.scenario ?? 'run'}.json`);
-  const payload = { ...receipt, receiptSha256: hash(receipt) };
-  const serialized = `${JSON.stringify(payload, null, 2)}\n`;
+  const serialized = serializeReceipt(receipt);
   if (Buffer.byteLength(serialized) > MAX_BYTES) block('EVIDENCE_TOO_LARGE');
   const fd = openSync(path, 'wx', 0o600);
   try { writeFileSync(fd, serialized); fsyncSync(fd); } finally { closeSync(fd); }
@@ -146,8 +146,9 @@ export function publishSelfHealAcceptanceReceipt(directory, sequence, receipt) {
 
 function safeProjection(value) {
   const text = JSON.stringify(value);
-  if (Buffer.byteLength(text) > MAX_BYTES || /(?:Bearer\s|postgres(?:ql)?:\/\/|rediss?:\/\/|(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*:\/\/[^\s/"@?#]+@|-----BEGIN [A-Z ]*PRIVATE KEY-----|sk-proj-)/iu.test(text)) block('UNSAFE_DIAGNOSTIC');
-  return JSON.parse(text);
+  const projection = JSON.parse(text);
+  if (Buffer.byteLength(serializeReceipt(projection)) > MAX_BYTES || /(?:Bearer\s|postgres(?:ql)?:\/\/|rediss?:\/\/|(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*:\/\/[^\s/"@?#]+@|-----BEGIN [A-Z ]*PRIVATE KEY-----|sk-proj-)/iu.test(text)) block('UNSAFE_DIAGNOSTIC');
+  return projection;
 }
 
 /** Transport has a closed vocabulary; SSH executes only the reviewed fixed helper. */
