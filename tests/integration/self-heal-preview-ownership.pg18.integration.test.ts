@@ -6,6 +6,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } fr
 import { Client, type ClientConfig } from 'pg';
 import ts from 'typescript';
 import { runSelfHealPreviewFencedJob } from '../../scripts/self-heal-preview-job.mjs';
+import { SELF_HEAL_PREVIEW_OPENAI_FIXTURE_MODEL_IDS } from '../../scripts/railway-backstage-heavy-openai-fixture.mjs';
 import { PreviewShutdownJournal } from '../../src/services/selfImprove/selfHealingPreviewShutdown.js';
 import { beginSelfHealPreviewStartupProbe, readSelfHealPreviewStartupReceipt } from '../../src/services/selfImprove/selfHealingPreviewStartup.js';
 import {
@@ -31,10 +32,11 @@ const ID = { project: '11111111-1111-4111-8111-111111111111', environment: '2222
   deployment: '55555555-5555-4555-8555-555555555555', postgres: '66666666-6666-4666-8666-666666666666', redis: '77777777-7777-4777-8777-777777777777' };
 
 function productionJobTableSql() {
-  // Read two closed literal DDL entries without importing the configured DB
+  // Read the closed job-table and provider-budget column DDL without importing the configured DB
   // module, executing startup initialization, or rewriting production SQL.
   const source = ts.createSourceFile('schema.ts', readFileSync(new URL('../../src/core/db/schema.ts', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true);
   const statements = new Map<string, string>();
+  const budgetColumns = new Map<string, string>();
   const visit = (node: ts.Node) => {
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === 'TABLE_DEFINITIONS'
       && node.initializer && ts.isArrayLiteralExpression(node.initializer)) {
@@ -46,13 +48,19 @@ function productionJobTableSql() {
             statements.set(name, entry.text);
           }
         }
+        for (const name of ['stats_worker_id', 'claim_generation', 'operation']) {
+          if (entry.text.startsWith('ALTER TABLE job_events') && entry.text.includes(`ADD COLUMN IF NOT EXISTS ${name} `)) {
+            if (budgetColumns.has(name)) throw new Error('SELF_HEAL_PREVIEW_PG18_DUPLICATE_BUDGET_DDL');
+            budgetColumns.set(name, entry.text);
+          }
+        }
       }
     }
     ts.forEachChild(node, visit);
   };
   visit(source);
-  if (statements.size !== 2) throw new Error('SELF_HEAL_PREVIEW_PG18_JOB_DDL_MISSING');
-  return [...statements.values()];
+  if (statements.size !== 2 || budgetColumns.size !== 3) throw new Error('SELF_HEAL_PREVIEW_PG18_JOB_DDL_MISSING');
+  return [...statements.values(), ...budgetColumns.values()];
 }
 const JOB_TABLE_DDL = productionJobTableSql();
 
@@ -427,6 +435,50 @@ describeDatabase('literal self-heal ownership SQL and role locks on isolated Pos
     await initialized(); await observer.query("INSERT INTO public.job_events(job_id, event_type) VALUES ($1::uuid, 'job.completed')", [randomUUID()]);
     await expect(admit()).rejects.toThrow('SELF_HEAL_PREVIEW_FOREIGN_EVENTS');
     expect((await observer.query('SELECT COUNT(*)::integer AS count FROM public.job_events')).rows[0].count).toBe(1);
+  });
+  async function insertNonJobBudgetEvent(patch: Record<string, unknown> = {}) {
+    const worker = 'self-heal-preview-ownership-pg18-1544-slot-2';
+    const event = { jobId: '00000000-0000-0000-0000-000000000000', eventType: 'worker.budget.ai_provider_attempt',
+      worker, statsWorker: 'self-heal-preview-ownership-pg18-1544', operation: '/v1/models', claimGeneration: null,
+      traceId: null, durationMs: null, occurredAt: new Date(NOW).toISOString(), ...patch };
+    const metadata = patch.metadata ?? { budgetKind: 'ai_provider_attempt', workerId: event.worker,
+      operation: event.operation, claimGeneration: null, windowMs: 3600000 };
+    await observer.query(`INSERT INTO public.job_events
+      (job_id,event_type,worker_id,stats_worker_id,operation,claim_generation,trace_id,duration_ms,occurred_at,metadata)
+      VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9::timestamptz,$10::jsonb)`,
+    [event.jobId, event.eventType, event.worker, event.statsWorker, event.operation, event.claimGeneration,
+      event.traceId, event.durationMs, event.occurredAt, JSON.stringify(metadata)]);
+  }
+  test.each([1, 2])('resumes after owned slot %i non-job provider attempts without discarding budget evidence', async slot => {
+    await initialized();
+    const jobId = await insertJob();
+    await observer.query("INSERT INTO public.job_events(job_id,event_type) VALUES ($1::uuid,'job.completed')", [jobId]);
+    for (const operation of ['/v1/models', '/v1/responses', '/v1/chat/completions', `/v1/models/${SELF_HEAL_PREVIEW_OPENAI_FIXTURE_MODEL_IDS[0]}`]) {
+      await insertNonJobBudgetEvent({ worker: `self-heal-preview-ownership-pg18-1544-slot-${slot}`, operation });
+    }
+    const before = (await observer.query('SELECT * FROM public.job_events ORDER BY id')).rows;
+    const owner = (await observer.query('SELECT identity FROM public.arcanos_self_heal_preview_owner_v1')).rows;
+    const guard = await admit(); expect(guard.mode).toBe('receipt-bound-resume'); await guard.close();
+    expect((await observer.query('SELECT * FROM public.job_events ORDER BY id')).rows).toEqual(before);
+    expect((await observer.query('SELECT identity FROM public.arcanos_self_heal_preview_owner_v1')).rows).toEqual(owner);
+    expect((await observer.query('SELECT status FROM public.job_data WHERE id=$1::uuid', [jobId])).rows[0].status).toBe('completed');
+  });
+  test.each([
+    { jobId: '99999999-9999-4999-8999-999999999999' }, { eventType: 'job.completed' },
+    { worker: 'foreign-worker' }, { worker: 'self-heal-preview-ownership-pg18-1544' }, { worker: null },
+    { statsWorker: 'foreign-worker' }, { statsWorker: null }, { claimGeneration: 1 },
+    { traceId: 'foreign-trace' }, { durationMs: 1 }, { operation: '/v1/unknown' }, { operation: null },
+    { occurredAt: '2026-10-14T15:58:59.999Z' }, { occurredAt: '2026-10-14T17:00:00.000Z' },
+    { metadata: {} }, { metadata: [] },
+    { metadata: { budgetKind: 'ai_provider_attempt', workerId: 'self-heal-preview-ownership-pg18-1544-slot-2',
+      operation: '/v1/models', claimGeneration: null, windowMs: 3600000, extra: true } },
+    { metadata: { budgetKind: 'ai_provider_attempt', workerId: 'foreign-worker',
+      operation: '/v1/models', claimGeneration: null, windowMs: 3600000 } },
+  ])('rejects unmatched events outside the exact non-job budget contract and preserves them: %#', async patch => {
+    await initialized(); await insertNonJobBudgetEvent(patch);
+    const before = (await observer.query('SELECT * FROM public.job_events ORDER BY id')).rows;
+    await expect(admit()).rejects.toThrow('SELF_HEAL_PREVIEW_FOREIGN_EVENTS');
+    expect((await observer.query('SELECT * FROM public.job_events ORDER BY id')).rows).toEqual(before);
   });
   test('serializes receipt initialization through the real transaction advisory lock', async () => {
     await observer.query('BEGIN'); await observer.query('SELECT pg_advisory_xact_lock(1544,3)');
