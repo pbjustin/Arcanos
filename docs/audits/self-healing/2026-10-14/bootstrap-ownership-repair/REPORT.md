@@ -1483,3 +1483,33 @@ owned deployment. Full production equivalence is not claimed.
 At this snapshot no new resource, deployment, queue or injected fault exists.
 All 32 hosted cases remain unexecuted; E2E acceptance and merge readiness remain
 **BLOCKED**. Merge and production promotion remain **NOT_AUTHORIZED**.
+
+Before provisioning, the shutdown extension adds a fixed, owner-bound PostgreSQL
+barrier and journal for A06/E06. It observes the actual Worker cleanup awaits,
+correlates the active evaluation with independently inspected process, Redis
+client and provider state, and survives loss of the initiating SSH connection
+through Web-side readback. Barrier expiry is bounded at five seconds and cannot
+substitute for measured drain. This is added test capability, not hosted evidence.
+The separate controller also repairs reproduced final-receipt size loss and
+requires its image pins to match independent deployment metadata. Final run
+identities and scenario receipts still belong in the linked PR audit comment;
+no hosted pass is inferred from these local regressions.
+
+The initial scheduler-failure mode also gains a separate startup receipt. It
+samples the real launcher's 503/starting response before scheduler installation,
+retains any premature readiness commit, and records actual scheduler failure
+counters after drain. This closes the observation race without adding an
+administrative endpoint or delaying a normal startup. CodeRabbit's documented
+Railway snapshot metadata finding was reproduced and repaired by admitting only
+`RAILWAY_SNAPSHOT_ID` at the supervisor boundary and dropping it from both app
+and provider children; unknown Railway authority names still fail closed.
+
+A bounded local diagnosis also reproduced retained minimum PostgreSQL pool
+connections keeping the actual compiled database module's process alive after
+application work returned. Calling its existing close API allowed natural exit.
+The transport was a disposable loopback PostgreSQL-wire fixture, not a real
+database or the full hosted Worker. The dedicated Worker now closes its owned
+pool after all slot/coordinator/control drains, telemetry, Redis and final
+autonomy snapshot flush. Unknown-role exported helpers preserve a caller's
+shared pool. Lifecycle ordering and real-socket regression fixtures cover that
+repair; natural hosted Worker exit still requires the deployed shutdown case.

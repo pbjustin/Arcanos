@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-14T21:49:06.549Z",
+  "generatedAt": "2026-10-15T01:54:28.452Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2478,6 +2478,12 @@
         },
         {
           "relativePath": "src/services/selfImprove/selfHealingPreviewControl.ts"
+        },
+        {
+          "relativePath": "src/services/selfImprove/selfHealingPreviewShutdown.ts"
+        },
+        {
+          "relativePath": "src/services/selfImprove/selfHealingPreviewStartup.ts"
         },
         {
           "relativePath": "src/services/selfImprove/selfHealingV2.ts"
@@ -5711,6 +5717,12 @@
         },
         {
           "relativePath": "tests/self-heal-operator-approval.test.ts"
+        },
+        {
+          "relativePath": "tests/self-heal-preview-shutdown.test.ts"
+        },
+        {
+          "relativePath": "tests/self-heal-preview-startup.test.ts"
         },
         {
           "relativePath": "tests/self-heal-signals.test.ts"

@@ -7,6 +7,10 @@ const id = digit => `${digit.repeat(8)}-${digit.repeat(4)}-4${digit.repeat(3)}-8
 const databaseCertificate = readFileSync(new URL('./fixtures/self-heal-preview-database-ca.pem', import.meta.url), 'utf8');
 const webJob = jest.fn(async (_env, options) => ({ attempt: options.attempt, consumerPath: 'ordinary-protected-gpt-web-queue-worker-sdk' }));
 jest.unstable_mockModule('../scripts/self-heal-preview-web-job.mjs', () => ({ runSelfHealPreviewWebJob: webJob }));
+const shutdown = jest.fn(async (_operation, scenario) => ({ evidence: 'synthetic_injected_dependencies', receipt: { scenario } }));
+jest.unstable_mockModule('../scripts/self-heal-preview-shutdown.mjs', () => ({ runSelfHealPreviewShutdown: shutdown }));
+const startupReceipt = jest.fn(async () => ({ evidence: 'synthetic_injected_dependencies', completed: true }));
+jest.unstable_mockModule('../scripts/self-heal-preview-startup.mjs', () => ({ runSelfHealPreviewStartupReceipt: startupReceipt }));
 function environment(role = 'worker') {
   const now = Date.now();
   return {
@@ -89,6 +93,25 @@ function overlapFixture(env, config = {}) {
 }
 
 describe('fixed self-heal preview SSH control client', () => {
+  it('allows fixed startup failure readback only through the surviving Web role', async () => {
+    const result = await runSelfHealPreviewControl(['startup-failure-receipt'], environment('web'));
+    expect(result.startup.completed).toBe(true);
+    await expect(runSelfHealPreviewControl(['startup-failure-receipt'], environment())).rejects.toThrow('SELF_HEAL_PREVIEW_CONTROL_CLIENT_FAILED');
+    await expect(runSelfHealPreviewControl(['startup-failure-receipt', 'arbitrary'], environment('web'))).rejects.toThrow('SELF_HEAL_PREVIEW_CONTROL_CLIENT_FAILED');
+  });
+  it('accepts only the two fixed shutdown scenarios and allows independent readback from Web', async () => {
+    for (const scenario of ['A06', 'E06']) {
+      const result = await runSelfHealPreviewControl(['shutdown-held', scenario], environment());
+      expect(result.shutdown.receipt.scenario).toBe(scenario);
+      expect(shutdown).toHaveBeenLastCalledWith('held', scenario, expect.any(Object), expect.objectContaining({ local: expect.any(Function) }));
+    }
+    await runSelfHealPreviewControl(['shutdown-receipt', 'A06'], environment('web'));
+    expect(shutdown).toHaveBeenLastCalledWith('receipt', 'A06', expect.any(Object), expect.any(Object));
+    for (const args of [['shutdown-held', 'A01'], ['shutdown-held', 'A06', '1544'], ['shutdown-receipt', 'E06', 'arbitrary']]) {
+      await expect(runSelfHealPreviewControl(args, environment())).rejects.toThrow('SELF_HEAL_PREVIEW_CONTROL_CLIENT_FAILED');
+    }
+    await expect(runSelfHealPreviewControl(['shutdown-held', 'A06'], environment('web'))).rejects.toThrow('SELF_HEAL_PREVIEW_CONTROL_CLIENT_FAILED');
+  });
   it('uses only the authenticated fixed loopback inspection endpoint', async () => {
     const env = environment();
     const fetchImpl = jest.fn(async () => response(inspection(env)));

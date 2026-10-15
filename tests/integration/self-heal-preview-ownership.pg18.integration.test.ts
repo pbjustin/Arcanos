@@ -6,6 +6,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } fr
 import { Client, type ClientConfig } from 'pg';
 import ts from 'typescript';
 import { runSelfHealPreviewFencedJob } from '../../scripts/self-heal-preview-job.mjs';
+import { PreviewShutdownJournal } from '../../src/services/selfImprove/selfHealingPreviewShutdown.js';
+import { beginSelfHealPreviewStartupProbe, readSelfHealPreviewStartupReceipt } from '../../src/services/selfImprove/selfHealingPreviewStartup.js';
 import {
   bindSelfHealPreviewArtifact, preflightSelfHealPreviewDatabase,
   resolveSelfHealPreviewProfile, runSelfHealPreviewSupervisor,
@@ -241,6 +243,120 @@ describeDatabase('literal self-heal ownership SQL and role locks on isolated Pos
   afterAll(async () => {
     try { expect(databases.size).toBe(0); }
     finally { await admin?.end(); }
+  });
+
+  function evidenceClient(options: ClientConfig) {
+    assertOwnedDatabase(databaseName);
+    const client = new Client({ ...adminConfig, ...options, connectionString: undefined, database: databaseName,
+      host: adminConfig?.host, port: adminConfig?.port, user: adminConfig?.user, password: adminConfig?.password, ssl: false });
+    clients.add(client); return client;
+  }
+  async function shutdownJournal(owner: Record<string, unknown>) {
+    return PreviewShutdownJournal.open({}, owner, evidenceClient);
+  }
+  async function shutdownPhase(phase: string) {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const result = await observer.query(`SELECT EXISTS (SELECT 1 FROM public.arcanos_self_heal_preview_shutdown_v1,
+        jsonb_array_elements(events) e WHERE e->>'phase'=$1) AS found`, [phase]);
+      if (result.rows[0].found) return;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    throw new Error('SELF_HEAL_PREVIEW_PG18_SHUTDOWN_PHASE_MISSING');
+  }
+  test('rejects foreign shutdown ownership before creating a journal or holding an advisory barrier', async () => {
+    const { patch } = await realClockAuthority();
+    await expect(shutdownJournal({ ...profile('worker', patch, COMPILED, Date.now()).ownership, runId: 'foreign-test-shutdown-run' }))
+      .rejects.toThrow('SELF_HEAL_PREVIEW_SHUTDOWN_EVIDENCE_FAILED');
+    expect((await observer.query("SELECT to_regclass('public.arcanos_self_heal_preview_shutdown_v1') AS relation")).rows[0].relation).toBeNull();
+  });
+  test('persists actual barrier cancellation and independent release with immutable process binding', async () => {
+    const { patch } = await realClockAuthority(); const ownership = profile('worker', patch, COMPILED, Date.now()).ownership;
+    const runtime = await shutdownJournal(ownership); const helper = await shutdownJournal(ownership);
+    const processInstanceId = randomUUID(); const abort = new AbortController();
+    let settled = false;
+    let held: Promise<void> | undefined;
+    try {
+      await helper.holdBarrier();
+      await runtime.prepare({ scenario: 'A06', processInstanceId, deploymentId: ID.deployment, pid: 1544, redisClientId: '41' });
+      held = runtime.waitForShutdownRelease(abort.signal).then(() => { settled = true; });
+      await shutdownPhase('evaluation_held'); abort.abort(); await shutdownPhase('shutdown_seen');
+      expect(settled).toBe(false);
+      const during = await helper.read('A06');
+      expect(during.processInstanceId).toBe(processInstanceId);
+      expect(during.events.map(event => event.phase)).toEqual(['prepared', 'evaluation_held', 'shutdown_seen']);
+      await helper.releaseBarrier(); await held;
+      // These are journal SQL assertions, not a simulated Redis-close proof.
+      await runtime.append('coordinator_drained', { inFlight: false, redisConnected: true });
+      const after = await helper.read('A06');
+      expect(after.events.map(event => event.phase)).toEqual(['prepared', 'evaluation_held', 'shutdown_seen', 'barrier_released', 'coordinator_drained']);
+      await expect(runtime.prepare({ scenario: 'A06', processInstanceId: randomUUID(), deploymentId: ID.deployment, pid: 1545, redisClientId: '42' }))
+        .rejects.toThrow();
+      expect((await helper.read('A06')).processInstanceId).toBe(processInstanceId);
+    } finally { await helper.close(); await held?.catch(() => undefined); await runtime.close(); }
+  }, 10_000);
+  test('bounds a real unreleased PostgreSQL barrier and releases session authority on close', async () => {
+    const { patch } = await realClockAuthority(); const ownership = profile('worker', patch, COMPILED, Date.now()).ownership;
+    const runtime = await shutdownJournal(ownership); const helper = await shutdownJournal(ownership);
+    try {
+      await helper.holdBarrier();
+      await runtime.prepare({ scenario: 'E06', processInstanceId: randomUUID(), deploymentId: ID.deployment, pid: 1544, redisClientId: '41' });
+      const started = Date.now(); await runtime.waitForShutdownRelease();
+      expect(Date.now() - started).toBeLessThan(5_000);
+      const receipt = await helper.read('E06');
+      expect(receipt.events.at(-1)?.phase).toBe('barrier_expired');
+      expect(receipt.events.some(event => event.phase === 'coordinator_drained')).toBe(false);
+      await helper.close(); expect(await runtime.barrierAvailable()).toBe(true);
+    } finally { await helper.close(); await runtime.close(); }
+  }, 10_000);
+  test('current owner replacement blocks shutdown mutation/readback and preserves the durable receipt', async () => {
+    const { patch } = await realClockAuthority(); const ownership = profile('worker', patch, COMPILED, Date.now()).ownership;
+    const runtime = await shutdownJournal(ownership);
+    try {
+      await runtime.prepare({ scenario: 'A06', processInstanceId: randomUUID(), deploymentId: ID.deployment, pid: 1544, redisClientId: '41' });
+      const before = (await observer.query('SELECT * FROM public.arcanos_self_heal_preview_shutdown_v1')).rows;
+      await observer.query('UPDATE public.arcanos_self_heal_preview_owner_v1 SET identity=$1', [JSON.stringify({ ...ownership, runId: 'foreign-test-shutdown-run' })]);
+      await expect(runtime.append('coordinator_drained', { inFlight: false })).rejects.toThrow('SELF_HEAL_PREVIEW_SHUTDOWN_EVIDENCE_FAILED');
+      await expect(runtime.read('A06')).rejects.toThrow('SELF_HEAL_PREVIEW_SHUTDOWN_EVIDENCE_FAILED');
+      expect((await observer.query('SELECT * FROM public.arcanos_self_heal_preview_shutdown_v1')).rows).toEqual(before);
+    } finally { await runtime.close(); }
+  });
+  test('persists distinct actual PostgreSQL startup evidence with synthetic HTTP readiness and rejects rebinding', async () => {
+    const { patch } = await realClockAuthority(); const ownership = profile('worker', patch, COMPILED, Date.now()).ownership;
+    const processInstanceId = randomUUID();
+    const env = { ARCANOS_PROCESS_KIND: 'worker', ARCANOS_SELF_HEAL_PREVIEW_PROFILE: 'worker-coordinator-v1',
+      ARCANOS_SELF_HEAL_PREVIEW_STARTUP_MODE: 'scheduler-failure', RAILWAY_DEPLOYMENT_ID: ID.deployment };
+    const options = { createClient: evidenceClient, authority: () => ({ owner: ownership, database: {} }),
+      // This tests unchanged production SQL with a deliberately substituted HTTP
+      // boundary. It is not evidence of hosted launcher readiness or a real PID.
+      fetchImpl: async () => new Response(JSON.stringify({ ready: false, child: 'starting' }), { status: 503 }) };
+    const probe = await beginSelfHealPreviewStartupProbe(env, { processInstanceId, pid: 1544 }, options);
+    await probe.finish({ readinessCommitted: false,
+      scheduler: { installationAttempts: 1, installations: 0, installationFailures: 1, callbacks: 0 },
+      coordinator: { state: 'FAILED', reasonCode: 'scheduler_start_failed', inFlight: false } });
+    const read = await readSelfHealPreviewStartupReceipt({}, ownership, options);
+    expect(read.receipt).toMatchObject({ scenario: 'A04', sourceSha: SOURCE, compiledSha256: COMPILED,
+      processInstanceId, deploymentId: ID.deployment,
+      initialReadiness: { statusCode: 503, ready: false, child: 'starting' },
+      outcome: { readinessCommitted: false, scheduler: { installationAttempts: 1, installations: 0, installationFailures: 1 } } });
+    expect((await observer.query("SELECT to_regclass('public.arcanos_self_heal_preview_shutdown_v1') AS relation")).rows[0].relation).toBeNull();
+    const before = (await observer.query('SELECT * FROM public.arcanos_self_heal_preview_startup_v1')).rows;
+    await expect(beginSelfHealPreviewStartupProbe(env, { processInstanceId: randomUUID(), pid: 1545 }, options)).rejects.toThrow('SELF_HEAL_PREVIEW_STARTUP_EVIDENCE_FAILED');
+    expect((await observer.query('SELECT * FROM public.arcanos_self_heal_preview_startup_v1')).rows).toEqual(before);
+  });
+  test('blocks startup finish/readback after owner replacement without changing the original receipt', async () => {
+    const { patch } = await realClockAuthority(); const ownership = profile('worker', patch, COMPILED, Date.now()).ownership;
+    const env = { ARCANOS_PROCESS_KIND: 'worker', ARCANOS_SELF_HEAL_PREVIEW_PROFILE: 'worker-coordinator-v1',
+      ARCANOS_SELF_HEAL_PREVIEW_STARTUP_MODE: 'scheduler-failure', RAILWAY_DEPLOYMENT_ID: ID.deployment };
+    const options = { createClient: evidenceClient, authority: () => ({ owner: ownership, database: {} }),
+      fetchImpl: async () => new Response(JSON.stringify({ ready: false, child: 'starting' }), { status: 503 }) };
+    const probe = await beginSelfHealPreviewStartupProbe(env, { processInstanceId: randomUUID(), pid: 1544 }, options);
+    const before = (await observer.query('SELECT * FROM public.arcanos_self_heal_preview_startup_v1')).rows;
+    await observer.query('UPDATE public.arcanos_self_heal_preview_owner_v1 SET identity=$1', [JSON.stringify({ ...ownership, runId: 'foreign-test-startup-run' })]);
+    await expect(probe.finish({ readinessCommitted: false,
+      scheduler: { installationAttempts: 1, installations: 0, installationFailures: 1, callbacks: 0 },
+      coordinator: { state: 'FAILED', reasonCode: 'scheduler_start_failed', inFlight: false } })).rejects.toThrow('SELF_HEAL_PREVIEW_STARTUP_EVIDENCE_FAILED');
+    await expect(readSelfHealPreviewStartupReceipt({}, ownership, options)).rejects.toThrow('SELF_HEAL_PREVIEW_STARTUP_EVIDENCE_FAILED');
+    expect((await observer.query('SELECT * FROM public.arcanos_self_heal_preview_startup_v1')).rows).toEqual(before);
   });
 
   test('requires an empty database and atomically persists the exact compiled ownership receipt', async () => {

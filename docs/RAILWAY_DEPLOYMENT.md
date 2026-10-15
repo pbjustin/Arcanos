@@ -1319,12 +1319,44 @@ Policy cases change only the seven reviewed process settings and this run's
 dedicated kill-switch key. Observation starts with self-improvement disabled,
 autonomy zero and predictive execution disabled; permitted actuation requires
 the explicit `policy_allowed` case and normal action-boundary authorization.
-`policy_restore` restores the captured process policy. For shutdown tests,
-hold one observation with `hold_observation_once`, observe that hold, and
-deliver a controlled platform signal; shutdown drains the application before
-stopping its provider fixture and closing the ownership connection. A forced
-kill or drain timeout is a failed shutdown proof. Initial
+`policy_restore` restores the captured process policy. The ordinary five-second
+`hold_observation_once` cancels on shutdown; a later platform restart cannot
+prove that evaluation was still active when its signal arrived. For A06/E06,
+execute `node scripts/self-heal-preview-control.mjs shutdown-held A06` (or E06)
+only in the independently attested Worker instance. This fixed operation binds
+the actual Worker PID/start identity, holds a preview-database advisory barrier
+for at most five seconds, and signals its verified integrity-wrapper parent
+with SIGTERM. The normal wrapper and launcher forward that signal to the Worker.
+It independently verifies the launcher's readiness returns 503 while draining and
+independently observes the live process, its actual Redis client and the
+provider fixture while the evaluation remains held. The real Worker cleanup
+awaits persist closed phase receipts before and after Redis shutdown; independent
+client disappearance on the same Redis server identity corroborates the effect.
+No arbitrary PID, SQL, signal,
+URL or timeout is accepted. The barrier expires if its controller disappears.
+
+The initiating SSH connection may end with its pod. Read its owner-, source-,
+deployment-, process- and scenario-bound PostgreSQL journal from the surviving
+Web instance with `node scripts/self-heal-preview-control.mjs shutdown-receipt
+A06` (or E06), and independently verify the old Railway instance has ceased
+running, replacement ownership and fenced-job continuity. A signal, a stopped
+event, automatic barrier expiry or a successful cleanup log alone is insufficient.
+PostgreSQL availability through drain is observed; the Worker does not acquire
+a new database-close call for this test. A forced kill or drain timeout is a
+failed shutdown proof. Initial
 `STARTUP_MODE=scheduler-failure` is Worker-only and must never report ready.
+That mode samples the normal launcher's actual loopback `/readyz` 503/starting
+response before returning the control bootstrap handle. Its separate, immutable
+preview-database startup receipt retains whether readiness ever committed and
+the actual scheduler counters after failed startup drains. From the surviving
+Web instance, `node scripts/self-heal-preview-control.mjs
+startup-failure-receipt` reads only that run's A04 record. Correlate its failed
+deployment/process/artifact with independent Railway failure and stopped-instance
+observations, then restore normal mode on the same owned Worker, refresh the
+deployment manifest and independently verify fenced A04 attempt 2. Stop the old
+owner before this failed generation starts; zero deployment overlap alone cannot
+release its session lock. A deployment failure or a missing SSH response without
+the actual pre-initialization 503 receipt remains blocked.
 
 `trinity_run` records the measured duration and outcome of its awaited production
 facade call in canonical runtime diagnostics under the fixed
