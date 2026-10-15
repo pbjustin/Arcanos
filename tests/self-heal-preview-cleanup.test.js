@@ -194,11 +194,11 @@ describe('receipt-bound self-heal preview cleanup and fixed-expiry watchdog', ()
     const h = harness(); await expect(runSelfHealPreviewCleanup({ receipt: receipt(), ...flags }, h)).rejects.toThrow('SELF_HEAL_PREVIEW_CLEANUP_AUTHORIZATION_REQUIRED');
     expect(h.command).not.toHaveBeenCalled();
   });
-  it('deletes exact services then global volumes before scheduling the empty project and verifies independent absence', async () => {
-    const h = harness({ projectAbsent: true });
+  it('deletes exact services then global volumes and verifies retained empty project metadata', async () => {
+    const h = harness();
     const result = await runSelfHealPreviewCleanup(execute(), h);
-    expect(result).toMatchObject({ status: 'DELETED', executed: true, deletionRequested: true, absenceVerified: true,
-      resourceAbsenceVerified: true, projectAbsenceVerified: true, projectMetadataRetained: false, serviceCount: 0, volumeCount: 0 });
+    expect(result).toMatchObject({ status: 'RESOURCES_REMOVED_METADATA_RETAINED', executed: true, deletionRequested: true, absenceVerified: false,
+      resourceAbsenceVerified: true, projectAbsenceVerified: false, projectMetadataRetained: true, serviceCount: 0, volumeCount: 0 });
     expect(h.command.mock.calls.map(call => call[1]).filter(isMutation)).toEqual([
       ...[ID.web, ID.worker, ID.postgres, ID.redis].map(id => ['service', 'delete', '--project', ID.project, '--environment', ID.environment, '--service', id, '--yes', '--json']),
       ...[ID.pgVolume, ID.redisVolume].map(id => ['volume', '--project', ID.project, '--environment', ID.environment, 'delete', '--volume', id, '--yes', '--json']),
@@ -229,7 +229,7 @@ describe('receipt-bound self-heal preview cleanup and fixed-expiry watchdog', ()
     const payload = status(); payload.id = ID.web;
     expect(() => attestSelfHealPreviewCleanupTarget(payload, receipt())).toThrow('SELF_HEAL_PREVIEW_CLEANUP_PROJECT_MISMATCH');
     const h = harness({ inventory: () => payload });
-    await expect(runSelfHealPreviewCleanup(execute(), h)).resolves.toMatchObject({ absenceVerified: true, deletionRequested: false });
+    await expect(runSelfHealPreviewCleanup(execute(), h)).rejects.toThrow('SELF_HEAL_PREVIEW_CLEANUP_PROJECT_ABSENCE_UNCONFIRMED');
     expect(h.command.mock.calls.some(call => isMutation(call[1]))).toBe(false);
   });
   it.each([
@@ -361,17 +361,47 @@ describe('receipt-bound self-heal preview cleanup and fixed-expiry watchdog', ()
       environmentCount: 0, serviceCount: 0, volumeCount: 0 });
     expect(h.command.mock.calls.some(call => isMutation(call[1]))).toBe(false);
   });
-  it('proves project absence only after all five complete owner-verified pages', async () => {
+  it.each(['missing', 'transferred'])('blocks %s workspace omission without deletion or an absence claim', async kind => {
+    const h = harness({ api: project => {
+      if (kind === 'transferred') project.workspaceId = ID.web;
+      return { data: { me: { id: 'e1c58b83-8740-4318-9ee2-780c2a6f4e8b' }, projects: connection([]) } };
+    } });
+    const error = await runSelfHealPreviewCleanup(execute(), h).catch(error => error);
+    expect(error.message).toBe('SELF_HEAL_PREVIEW_CLEANUP_PROJECT_ABSENCE_UNCONFIRMED');
+    expect(error.receipt).toMatchObject({ absenceVerified: false, resourceAbsenceVerified: false, projectAbsenceVerified: false });
+    expect(h.command.mock.calls.some(call => isMutation(call[1]))).toBe(false);
+  });
+  it('invalidates prior resource absence on workspace omission before project deletion', async () => {
+    const h = harness({ api: project => ({ data: {
+      me: { id: 'e1c58b83-8740-4318-9ee2-780c2a6f4e8b' },
+      projects: connection(h.events.some(event => event.status === 'RESOURCES_ABSENT') ? [] : [project]),
+    } }) });
+    const error = await runSelfHealPreviewCleanup(execute(), h).catch(error => error);
+    expect(error.message).toBe('SELF_HEAL_PREVIEW_CLEANUP_PROJECT_ABSENCE_UNCONFIRMED');
+    expect(h.events.some(event => event.status === 'RESOURCES_ABSENT')).toBe(true);
+    expect(error.receipt).toMatchObject({ absenceVerified: false, resourceAbsenceVerified: false, projectAbsenceVerified: false });
+    expect(h.command.mock.calls.some(call => call[1][0] === 'delete')).toBe(false);
+  });
+  it('does not infer project deletion from omission after an acknowledged deletion request', async () => {
+    const h = harness({ projectAbsent: true });
+    const error = await runSelfHealPreviewCleanup(execute(), h).catch(error => error);
+    expect(error.message).toBe('SELF_HEAL_PREVIEW_CLEANUP_PROJECT_ABSENCE_UNCONFIRMED');
+    expect(error.receipt).toMatchObject({ deletionRequested: true, absenceVerified: false,
+      resourceAbsenceVerified: false, projectAbsenceVerified: false });
+    expect(h.command.mock.calls.filter(call => call[1][0] === 'delete')).toHaveLength(1);
+  });
+  it('does not infer deletion after all five complete owner-verified pages omit the project', async () => {
     const current = status(true); current.deletedAt = new Date(NOW - 1000).toISOString();
     const h = harness({ initialStatus: current, api: (_value, after) => {
       const page = after === null ? 0 : Number(after.slice('page-'.length));
       return { data: { me: { id: 'e1c58b83-8740-4318-9ee2-780c2a6f4e8b' },
         projects: projectPage(unrelatedProjects(page * 100 + 1, 100), page === 4 ? null : `page-${page + 1}`) } };
     } });
-    const result = await runSelfHealPreviewCleanup(execute(), h);
-    expect(result).toMatchObject({ resourceAbsenceVerified: true, projectAbsenceVerified: true, absenceVerified: true });
+    const error = await runSelfHealPreviewCleanup(execute(), h).catch(error => error);
+    expect(error.message).toBe('SELF_HEAL_PREVIEW_CLEANUP_PROJECT_ABSENCE_UNCONFIRMED');
+    expect(error.receipt).toMatchObject({ resourceAbsenceVerified: false, projectAbsenceVerified: false, absenceVerified: false });
     const cursors = h.command.mock.calls.filter(call => call[1][0] === 'api').map(call => JSON.parse(call[1][3]).after);
-    expect(cursors).toEqual([null, 'page-1', 'page-2', 'page-3', 'page-4', null, 'page-1', 'page-2', 'page-3', 'page-4']);
+    expect(cursors).toEqual([null, 'page-1', 'page-2', 'page-3', 'page-4']);
     expect(h.command.mock.calls.some(call => isMutation(call[1]))).toBe(false);
   });
   it.each(['missing-cursor', 'null-cursor', 'empty-cursor', 'oversized-cursor', 'cursor-cycle',

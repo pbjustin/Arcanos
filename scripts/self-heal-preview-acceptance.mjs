@@ -212,13 +212,13 @@ export function createSelfHealAcceptanceTransport(manifest, options = {}) {
       // Railway SSH adds session-only authority and context absent from the application parent.
       const stdout = await cli(['ssh', '--project', manifest.receipt.projectId, '--environment', manifest.receipt.environmentId,
         '--service', target.serviceId, '--deployment-instance', target.instanceId, '--',
-        'env', '-u', 'RAILWAY_API_TOKEN', '-u', 'RAILWAY_ENV', 'node', 'scripts/self-heal-preview-control.mjs', ...argv]);
+        'env', '-u', 'RAILWAY_API_TOKEN', '-u', 'RAILWAY_ENV', '-u', 'GH_TOKEN', 'node', 'scripts/self-heal-preview-control.mjs', ...argv]);
       let value; try { value = JSON.parse(stdout.trim()); } catch { block('REMOTE_RECEIPT_INVALID'); }
       if (value?.target?.role !== role || value.target.sourceSha !== manifest.receipt.sourceSha || value.target.runId !== manifest.receipt.runId
         || value.target.projectId !== manifest.receipt.projectId || value.target.environmentId !== manifest.receipt.environmentId
         || value.target.serviceId !== target.serviceId || value.target.deploymentId !== target.deploymentId) block('REMOTE_IDENTITY_DRIFT');
       if (argv[0] === 'artifact' && value.artifact?.compiledSha256 !== manifest.services.find(pin => pin.role === role).compiledSha256) block('ARTIFACT_DRIFT');
-      return safeProjection({ platformTarget: target, ...value });
+      return safeProjection({ ...value, platformTarget: target });
   };
   const transport = Object.freeze({
     remote: (role, argv) => remote(role, argv),
@@ -236,7 +236,7 @@ export function createSelfHealAcceptanceTransport(manifest, options = {}) {
       try {
         await cli(['ssh', '--project', manifest.receipt.projectId, '--environment', manifest.receipt.environmentId,
           '--service', target.serviceId, '--deployment-instance', target.instanceId, '--',
-          'env', '-u', 'RAILWAY_API_TOKEN', '-u', 'RAILWAY_ENV', 'node', 'scripts/self-heal-preview-control.mjs', 'shutdown-held', scenario], 30_000);
+          'env', '-u', 'RAILWAY_API_TOKEN', '-u', 'RAILWAY_ENV', '-u', 'GH_TOKEN', 'node', 'scripts/self-heal-preview-control.mjs', 'shutdown-held', scenario], 30_000);
       } catch (error) {
         if (!(error instanceof SelfHealAcceptanceError) || error.message !== 'SELF_HEAL_ACCEPTANCE_TRANSPORT_UNAVAILABLE') throw error;
         transportClosed = true;

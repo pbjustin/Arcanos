@@ -429,7 +429,8 @@ async function readOwnedProject(receipt, options, deadline) {
     if (page + 1 === INVENTORY_MAX_PAGES || projectIds.size >= INVENTORY_PAGE_SIZE * INVENTORY_MAX_PAGES) fail('INVENTORY_LIMIT_EXCEEDED');
     cursors.add(cursor); after = cursor;
   }
-  if (!project) return null;
+  // A workspace-scoped omission may be a transfer, not deletion.
+  if (!project) fail('PROJECT_ABSENCE_UNCONFIRMED');
   complete(project.services); complete(project.volumes); complete(project.buckets);
   const environments = complete(project.environments);
   for (const environment of environments) {
@@ -478,7 +479,7 @@ export async function runSelfHealPreviewCleanup(config, options = {}) {
     await reloadResources();
     await assertSupportedCli(options);
     let status = await readOwnedProject(receipt, options);
-    if (status !== null) cleanupInventory(status, authority, { now });
+    cleanupInventory(status, authority, { now });
     if (config.watchdog) {
       emit('WATCHDOG_ARMED');
       const expires = Date.parse(receipt.expiresAt);
@@ -490,13 +491,6 @@ export async function runSelfHealPreviewCleanup(config, options = {}) {
     }
     await reloadResources();
     status = await readOwnedProject(receipt, options);
-    const finishAbsent = () => {
-      Object.assign(output, { resourceAbsenceVerified: true, projectAbsenceVerified: true,
-        absenceVerified: true, projectMetadataRetained: false, serviceCount: 0, serviceInstanceCount: 0,
-        volumeCount: 0, volumeInstanceCount: 0, environmentCount: 0 });
-      return emit('DELETED');
-    };
-    if (status === null) return finishAbsent();
     let inventory = cleanupInventory(status, authority, { now });
     if (!authority.resources && !noResources(inventory)) {
       if (typeof persistResources !== 'function') fail('DURABLE_RESOURCE_RECEIPT_REQUIRED');
@@ -511,7 +505,6 @@ export async function runSelfHealPreviewCleanup(config, options = {}) {
       scheduledDeletionAt: inventory.scheduledDeletionAt }); emit('OWNERSHIP_RECHECKED');
     const refresh = async deadline => {
       const latest = await readOwnedProject(receipt, options, deadline);
-      if (latest === null) return null;
       const observed = cleanupInventory(latest, receipt, { now, bindings });
       Object.assign(output, observed.counts, { projectMetadataRetained: observed.scheduledDeletionAt !== null,
         scheduledDeletionAt: observed.scheduledDeletionAt });
@@ -522,13 +515,13 @@ export async function runSelfHealPreviewCleanup(config, options = {}) {
       const deadline = now() + ABSENCE_TIMEOUT_MS;
       for (let attempt = 0; attempt < 31 && now() < deadline; attempt += 1) {
         const latest = await refresh(deadline);
-        if (latest === null || predicate(latest)) return latest;
+        if (predicate(latest)) return latest;
         if (attempt < 30) await wait(Math.min(2000, Math.max(0, deadline - now())));
       }
       fail('RESOURCE_ABSENCE_UNCONFIRMED');
     };
     for (const service of bindings.services) {
-      inventory = await refresh(); if (inventory === null) return finishAbsent();
+      inventory = await refresh();
       if (!inventory.services.some(current => current.id === service.id)) continue;
       try {
         await cli(['service', 'delete', '--project', receipt.projectId, '--environment', receipt.environmentId,
@@ -539,9 +532,9 @@ export async function runSelfHealPreviewCleanup(config, options = {}) {
       }
       output.serviceDeleteRequests.push(service.id); emit('SERVICE_DELETE_REQUESTED');
     }
-    inventory = await poll(noServices); if (inventory === null) return finishAbsent();
+    inventory = await poll(noServices);
     for (const volume of bindings.volumes) {
-      inventory = await refresh(); if (inventory === null) return finishAbsent();
+      inventory = await refresh();
       if (!inventory.globalVolumes.some(current => current.id === volume.id)) continue;
       try {
         await cli(['volume', '--project', receipt.projectId, '--environment', receipt.environmentId,
@@ -552,12 +545,12 @@ export async function runSelfHealPreviewCleanup(config, options = {}) {
       }
       output.volumeDeleteRequests.push(volume.id); emit('VOLUME_DELETE_REQUESTED');
     }
-    inventory = await poll(noResources); if (inventory === null) return finishAbsent();
+    inventory = await poll(noResources);
     Object.assign(output, inventory.counts, { resourceAbsenceVerified: true }); emit('RESOURCES_ABSENT');
     // Scheduling a project deletion retains its metadata for 48 hours. It is
     // performed only after independently observing no services or volumes.
     if (inventory.scheduledDeletionAt === null) {
-      inventory = await refresh(); if (inventory === null) return finishAbsent();
+      inventory = await refresh();
       if (!noResources(inventory)) { output.resourceAbsenceVerified = false; fail('RESOURCES_REAPPEARED'); }
       if (inventory.scheduledDeletionAt === null) {
         await cli(['delete', '--project', receipt.projectId, '--yes', '--json'], options, CLI_TIMEOUT_MS, false);
@@ -566,7 +559,7 @@ export async function runSelfHealPreviewCleanup(config, options = {}) {
     }
     const deadline = now() + ABSENCE_TIMEOUT_MS;
     for (let attempt = 0; attempt < 31 && now() < deadline; attempt += 1) {
-      inventory = await refresh(deadline); if (inventory === null) return finishAbsent();
+      inventory = await refresh(deadline);
       if (!noResources(inventory)) { output.resourceAbsenceVerified = false; fail('RESOURCES_REAPPEARED'); }
       if (inventory.scheduledDeletionAt !== null) {
         Object.assign(output, { projectMetadataRetained: true, scheduledDeletionAt: inventory.scheduledDeletionAt });
@@ -577,6 +570,7 @@ export async function runSelfHealPreviewCleanup(config, options = {}) {
     fail('PROJECT_DELETION_SCHEDULE_UNCONFIRMED');
   } catch (error) {
     const code = error instanceof SelfHealPreviewCleanupError ? error.message : 'SELF_HEAL_PREVIEW_CLEANUP_FAILED';
+    if (code === 'SELF_HEAL_PREVIEW_CLEANUP_PROJECT_ABSENCE_UNCONFIRMED') output.resourceAbsenceVerified = false;
     const failure = emit('FAILED', { errorCode: code });
     if (error instanceof SelfHealPreviewCleanupError) { error.receipt = failure; throw error; }
     const safeError = new SelfHealPreviewCleanupError('FAILED'); safeError.receipt = failure; throw safeError;
