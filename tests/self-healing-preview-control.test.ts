@@ -33,6 +33,10 @@ const getRequestWindowSince = jest.fn(emptyWindow);
 const predictiveAudits: Array<Record<string, unknown>> = [];
 const coordinatorEvents: Array<Record<string, unknown>> = [];
 const providerTraces: Array<Record<string, unknown>> = [];
+const readRedisClientId = jest.fn(async () => 41);
+const startupFinish = jest.fn(async (_evidence: unknown) => undefined);
+const startupBegin = jest.fn(async () => ({ finish: startupFinish }));
+jest.unstable_mockModule('../src/services/selfImprove/selfHealingPreviewStartup.js', () => ({ beginSelfHealPreviewStartupProbe: startupBegin }));
 const predictiveDecision = jest.fn(async (params: { source: string; allowAutoExecute: boolean; dryRun?: boolean; simulate?: unknown; signal?: AbortSignal }) => {
   const auditEntry = {
     id: `predictive_heal_audit_${predictiveAudits.length + 1}`, timestamp: new Date().toISOString(), source: params.source,
@@ -67,7 +71,10 @@ jest.unstable_mockModule('@platform/runtime/unifiedConfig.js', () => ({
     autoExecuteHealing: process.env.PREDICTIVE_AUTO_EXECUTE === 'true',
   }),
 }));
-jest.unstable_mockModule('@platform/runtime/redisLifecycle.js', () => ({ getRedisLifecycleSnapshot: () => ({ state: 'READY' }) }));
+jest.unstable_mockModule('@platform/runtime/redisLifecycle.js', () => ({
+  getRedisLifecycleSnapshot: () => ({ state: 'READY', connected: true }),
+  executeRedisOperation: readRedisClientId,
+}));
 jest.unstable_mockModule('@services/incidentResponse/killSwitch.js', () => ({
   freezeSelfImprove: freeze, unfreezeSelfImprove: unfreeze, setAutonomyLevel: autonomy,
   getKillSwitchStatus: async () => ({
@@ -179,6 +186,18 @@ afterEach(async () => {
 });
 
 describe('isolated self-healing preview admission and process-local controls', () => {
+  it('rejects shutdown barrier preparation before Worker readiness and on the Web role', async () => {
+    handle = await controls.installSelfHealingPreviewControl();
+    expect((await call('shutdown_prepare_a06')).body).toMatchObject({ rejected: true,
+      reasonCode: 'shutdown_probe_requires_idle_stopped_worker' });
+    await handle!.close(); handle = null;
+    process.env.ARCANOS_PROCESS_KIND = 'web'; process.env.RAILWAY_SERVICE_ID = uid(6);
+    process.env.RAILWAY_SERVICE_NAME = 'arcanos-web-pr1544-heavy';
+    handle = await controls.installSelfHealingPreviewControl(); handle!.markReady();
+    expect((await call('shutdown_prepare_e06')).body).toMatchObject({ rejected: true,
+      reasonCode: 'shutdown_probe_requires_idle_stopped_worker' });
+    expect(readRedisClientId).not.toHaveBeenCalled();
+  });
   it('is inert without opt-in and rejects malformed/expired/canonical/ambiguous identities', async () => {
     expect(controls.resolveSelfHealingPreviewProfile({})).toBeNull();
     delete process.env.ARCANOS_SELF_HEAL_PREVIEW_PROFILE;
@@ -636,6 +655,8 @@ describe('isolated self-healing preview admission and process-local controls', (
     expect(() => handle?.coordinatorOptions.installScheduler?.(callback, 1_000)).toThrow('SELF_HEAL_PREVIEW_EXPIRED');
     expect(events).not.toContain('claim_operation_failure');
     expect(callback).not.toHaveBeenCalled();
+    expect(startupFinish).toHaveBeenCalledWith(expect.objectContaining({ readinessCommitted: false,
+      scheduler: { installationAttempts: 2, installations: 1, installationFailures: 1, callbacks: 0 } }));
   });
 
   it('serializes held ticks and waits for the admitted evaluation to settle before publishing closed', async () => {

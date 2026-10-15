@@ -14,6 +14,7 @@ export const SELF_HEAL_PREVIEW_CONTROL_COMMANDS = Object.freeze([
   'prompt_worker_rejection', 'remote_mitigation_rejection',
   'trinity_activate', 'trinity_replace', 'trinity_stale_rollback', 'trinity_rollback',
   'trinity_consumer', 'trinity_fresh_success', 'trinity_run', 'predictive_evaluate', 'predictive_evaluate_live',
+  'shutdown_prepare_a06', 'shutdown_prepare_e06', 'shutdown_cancel',
 ]);
 const PROVIDER_COMMANDS = new Set(['inspect', 'set_healthy', 'timeout_next', 'hold_next', 'release']);
 const MAX_BYTES = 65_536;
@@ -142,6 +143,16 @@ export async function runSelfHealPreviewControl(argv, env = process.env, options
     projectId: profile.proofTarget.projectId, environmentId: profile.proofTarget.environmentId,
     serviceId: profile.proofTarget.serviceId, deploymentId: env.RAILWAY_DEPLOYMENT_ID };
   const finish = receipt => { assertNoPurposeSecrets(receipt, env); return receipt; };
+  if (argv.length === 1 && argv[0] === 'startup-failure-receipt' && role === 'web') {
+    const { runSelfHealPreviewStartupReceipt } = await import('./self-heal-preview-startup.mjs');
+    return finish({ target, startup: await runSelfHealPreviewStartupReceipt(env, options) });
+  }
+  if (argv.length === 2 && ['shutdown-held', 'shutdown-receipt'].includes(argv[0]) && ['A06', 'E06'].includes(argv[1])
+    && (argv[0] === 'shutdown-receipt' || role === 'worker')) {
+    const { runSelfHealPreviewShutdown } = await import('./self-heal-preview-shutdown.mjs');
+    return finish({ target, shutdown: await runSelfHealPreviewShutdown(argv[0] === 'shutdown-held' ? 'held' : 'receipt', argv[1], env,
+      { ...options, local: args => runSelfHealPreviewControl(args, env, options) }) });
+  }
   if (argv.length === 1 && ['replacement-race', 'dependency-overlap'].includes(argv[0]) && role === 'worker') {
     return finish({ target, overlap: await runLocalOverlap(argv[0], env, options) });
   }

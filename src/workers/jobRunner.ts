@@ -19,7 +19,8 @@ import type { JobData } from '@core/db/schema.js';
 import { postgresQueueSchedulerAdapter } from '@core/scheduler/postgresAdapter.js';
 import {
   initializeDatabaseWithSchema as initializeDatabase,
-  getStatus as getDatabaseStatus
+  getStatus as getDatabaseStatus,
+  close as closeDatabase
 } from '@core/db/index.js';
 import { getConfig, getStableWorkerRuntimeMode } from '@platform/runtime/unifiedConfig.js';
 import { getEnv } from '@platform/runtime/env.js';
@@ -3946,8 +3947,15 @@ export async function runJobWorker(): Promise<void> {
     ]));
     for (const cleanup of [
       () => stopSelfHealTelemetryPersistence(),
+      () => selfHealingPreviewControl?.observeRedisShutdown('before'),
       () => stopRedisLifecycle(),
+      () => selfHealingPreviewControl?.observeRedisShutdown('after'),
       () => inspectorAutonomyService.flushSnapshotPipeline('worker-process-shutdown'),
+      // A dedicated Worker owns this pool. Retained minimum pg connections keep
+      // Node alive after its SIGTERM handler returns unless they are closed.
+      // An exported unknown-role helper must not close a caller's shared pool.
+      () => workerRuntimeMode.processKind === 'worker' || isEntrypointModule(import.meta.url)
+        ? closeDatabase() : undefined,
     ]) {
       // A rejected drain must not skip other resource cleanup or replace the
       // original startup/runtime error that caused this process to stop.

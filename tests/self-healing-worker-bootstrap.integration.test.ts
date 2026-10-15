@@ -38,7 +38,10 @@ const providerRuntime = {
 
 const originalEnvironment = process.env;
 const initializeDatabaseMock = jest.fn(async () => true);
+const closeDatabaseMock = jest.fn(async () => undefined);
 const initializeModuleRegistryMock = jest.fn(async () => ({ listRegisteredModules: () => [] }));
+const installPreviewControl = jest.fn<(...args: unknown[]) => Promise<import('../src/services/selfImprove/selfHealingPreviewControl.js').SelfHealingPreviewControl | null>>(async () => null);
+jest.unstable_mockModule('@services/selfImprove/selfHealingPreviewControl.js', () => ({ installSelfHealingPreviewControl: installPreviewControl }));
 process.env = { NODE_ENV: 'test', ARCANOS_PROCESS_KIND: 'worker', RUN_WORKERS: 'true', DIAGNOSTICS_SHARED_METRICS: 'false', DATABASE_URL: 'postgres://synthetic.invalid/fixture', SELF_HEAL_LOOP_INTERVAL_MS: '1000', JOB_WORKER_POLL_MS: '50', JOB_WORKER_IDLE_BACKOFF_MS: '50', JOB_WORKER_CONCURRENCY: '2' };
 
 jest.unstable_mockModule('@core/db/client.js', () => ({
@@ -66,7 +69,8 @@ jest.unstable_mockModule('@core/db/index.js', () => ({
   getBackstageNotionRagRepository: jest.fn(),
   getBackstageNotionSyncStatusRepository: jest.fn(),
   getStatus: () => ({ connected: true }),
-  initializeDatabaseWithSchema: initializeDatabaseMock
+  initializeDatabaseWithSchema: initializeDatabaseMock,
+  close: closeDatabaseMock
 }));
 
 jest.unstable_mockModule('@core/scheduler/postgresAdapter.js', () => ({
@@ -256,6 +260,8 @@ let originalListeners: { SIGTERM: Function[]; SIGINT: Function[] };
 beforeEach(async () => {
   jest.resetModules();
   jest.clearAllMocks();
+  installPreviewControl.mockReset().mockResolvedValue(null);
+  closeDatabaseMock.mockReset().mockResolvedValue(undefined);
   flushSnapshots.mockReset().mockResolvedValue(undefined);
   primeTelemetry.mockReset().mockResolvedValue(undefined);
   stopTelemetry.mockReset().mockResolvedValue(undefined);
@@ -301,6 +307,77 @@ async function flushUntil(predicate: () => boolean) {
 }
 
 describe('actual production worker bootstrap with external boundaries replaced', () => {
+  it('does not initialize or close the shared database for an explicit Web role', async () => {
+    const previous = process.env.ARCANOS_PROCESS_KIND; process.env.ARCANOS_PROCESS_KIND = 'web';
+    try {
+      await worker.runJobWorker();
+      expect(initializeDatabaseMock).not.toHaveBeenCalled(); expect(closeDatabaseMock).not.toHaveBeenCalled();
+      expect(dispatcherStarted).not.toHaveBeenCalled();
+    } finally { process.env.ARCANOS_PROCESS_KIND = previous; }
+  });
+  it('preserves an exported unknown-role helper caller pool while closing dedicated Worker pools', async () => {
+    const previous = process.env.ARCANOS_PROCESS_KIND; delete process.env.ARCANOS_PROCESS_KIND;
+    const running = worker.runJobWorker();
+    try {
+      await flushUntil(() => stdout.some(line => line.includes('ARCANOS_WORKER_BOOTSTRAP_READY_V1')));
+      signalShutdown(); await running; expect(closeDatabaseMock).not.toHaveBeenCalled();
+    } finally { signalShutdown(); await running; process.env.ARCANOS_PROCESS_KIND = previous; }
+  });
+  it('fails graceful shutdown when normal pool closure fails after the other cleanup has completed', async () => {
+    const closeError = new Error('synthetic graceful pool closure failure'); closeDatabaseMock.mockRejectedValueOnce(closeError);
+    const running = worker.runJobWorker(); const outcome = running.catch(error => error);
+    try {
+      await flushUntil(() => stdout.some(line => line.includes('ARCANOS_WORKER_BOOTSTRAP_READY_V1')));
+      signalShutdown(); expect(await outcome).toBe(closeError);
+      expect(stopTelemetry).toHaveBeenCalledTimes(1); expect(stopRedis).toHaveBeenCalledTimes(1);
+      expect(flushSnapshots.mock.calls.at(-1)).toEqual(['worker-process-shutdown']);
+    } finally { signalShutdown(); await outcome; }
+  });
+  it('awaits a held canonical evaluation before preview drain receipts and actual Redis shutdown', async () => {
+    const previous = process.env.ARCANOS_SELF_HEAL_PREVIEW_PROFILE;
+    process.env.ARCANOS_SELF_HEAL_PREVIEW_PROFILE = 'worker-coordinator-v1';
+    const order: string[] = [];
+    let release!: () => void;
+    let held = false;
+    closeDatabaseMock.mockImplementation(async () => {
+      expect(coordinator.getSelfHealingLoopStatus().inFlight).toBe(false);
+      expect(redisStarted).toBe(false);
+      expect(flushSnapshots.mock.calls.at(-1)).toEqual(['worker-process-shutdown']);
+      order.push('database_closed');
+    });
+    installPreviewControl.mockImplementation(async (...args: unknown[]) => {
+      const options = args[0] as { signal: AbortSignal };
+      return {
+        coordinatorOptions: { signal: options.signal, beforeObservation: async () => {
+          held = true; order.push('evaluation_held');
+          await new Promise<void>(resolve => { release = resolve; });
+          order.push('evaluation_released');
+        } },
+        beforeClaim: () => undefined, markReady: () => undefined,
+        close: async () => { await coordinator.stopSelfHealingLoop();
+          expect(coordinator.getSelfHealingLoopStatus().inFlight).toBe(false); order.push('coordinator_drained'); },
+        observeRedisShutdown: async phase => {
+          expect(coordinator.getSelfHealingLoopStatus().inFlight).toBe(false);
+          expect(redisStarted).toBe(phase === 'before'); order.push(`redis_${phase}`);
+        },
+      };
+    });
+    const running = worker.runJobWorker();
+    try {
+      await flushUntil(() => held); signalShutdown();
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(coordinator.getSelfHealingLoopStatus().inFlight).toBe(true);
+      expect(stopRedis).not.toHaveBeenCalled(); expect(stopTelemetry).not.toHaveBeenCalled();
+      expect(order).toEqual(['evaluation_held']);
+      release(); await running;
+      expect(order).toEqual(['evaluation_held', 'evaluation_released', 'coordinator_drained', 'redis_before', 'redis_after', 'database_closed']);
+      expect(closeDatabaseMock).toHaveBeenCalledTimes(1);
+    } finally {
+      release?.(); signalShutdown(); await running;
+      if (previous === undefined) delete process.env.ARCANOS_SELF_HEAL_PREVIEW_PROFILE;
+      else process.env.ARCANOS_SELF_HEAL_PREVIEW_PROFILE = previous;
+    }
+  });
   it('starts one coordinator after dependencies and slots, contains collector failure, and drains on SIGTERM', async () => {
     jest.spyOn(diagnostics.runtimeDiagnosticsService, 'getRollingRequestWindow')
       .mockImplementationOnce(() => { throw new Error('synthetic collector unavailable'); });
@@ -597,6 +674,7 @@ describe('actual production worker bootstrap with external boundaries replaced',
     flushSnapshots.mockRejectedValueOnce(new Error('synthetic slot drain failure'));
     stopNotion.mockRejectedValueOnce(new Error('synthetic authority drain failure'));
     stopTelemetry.mockRejectedValueOnce(new Error('synthetic telemetry stop failure'));
+    closeDatabaseMock.mockRejectedValueOnce(new Error('synthetic database close failure'));
     await expect(worker.runJobWorker()).rejects.toBe(schedulerError);
     expect(flushSnapshots.mock.calls.map(([reason]) => reason)).toEqual([
       'worker-slot-shutdown', 'worker-slot-shutdown', 'worker-process-shutdown',
@@ -604,8 +682,9 @@ describe('actual production worker bootstrap with external boundaries replaced',
     expect(stopNotion).toHaveBeenCalledTimes(2);
     expect(stopTelemetry).toHaveBeenCalledTimes(1);
     expect(stopRedis).toHaveBeenCalledTimes(1);
+    expect(closeDatabaseMock).toHaveBeenCalledTimes(1);
     for (const errorMessage of [
-      'synthetic slot drain failure', 'synthetic authority drain failure', 'synthetic telemetry stop failure',
+      'synthetic slot drain failure', 'synthetic authority drain failure', 'synthetic telemetry stop failure', 'synthetic database close failure',
     ]) {
       expect(lifecycleLog.warn).toHaveBeenCalledWith('worker.shutdown.cleanup_failed',
         { module: 'job-runner' }, { errorMessage });

@@ -4,7 +4,7 @@ import { logger } from '@platform/logging/structuredLogging.js';
 import { getTelemetrySnapshot } from '@platform/logging/telemetry.js';
 import { getEnv, writeRuntimeEnv, unsetRuntimeEnv } from '@platform/runtime/env.js';
 import { getConfig } from '@platform/runtime/unifiedConfig.js';
-import { getRedisLifecycleSnapshot } from '@platform/runtime/redisLifecycle.js';
+import { executeRedisOperation, getRedisLifecycleSnapshot } from '@platform/runtime/redisLifecycle.js';
 import {
   freezeSelfImprove, unfreezeSelfImprove, setAutonomyLevel, getKillSwitchStatus,
 } from '@services/incidentResponse/killSwitch.js';
@@ -24,6 +24,7 @@ import { buildSelfHealTelemetrySnapshot, type SelfHealEvent } from './selfHealTe
 import { buildPredictiveHealingStatusSnapshot, runPredictiveHealingDecision,
   type PredictiveHealingAuditEntry, type PredictiveHealingSimulationInput,
 } from './predictiveHealingService.js';
+import { PreviewShutdownJournal, shutdownChildAuthority, type PreviewShutdownScenario } from './selfHealingPreviewShutdown.js';
 
 export const SELF_HEAL_PREVIEW_PROFILE = 'worker-coordinator-v1';
 export const SELF_HEAL_PREVIEW_CONTROL_PORT = 8791;
@@ -153,6 +154,7 @@ const COMMANDS = new Set([
   'database_failure_once',
   'predictive_evaluate',
   'predictive_evaluate_live',
+  'shutdown_prepare_a06', 'shutdown_prepare_e06', 'shutdown_cancel',
 ]);
 
 type Receipt = { sequence: number; at: string; event: string };
@@ -199,6 +201,7 @@ export interface SelfHealingPreviewControl {
   beforeClaim: () => void;
   markReady: () => void;
   close: () => Promise<void>;
+  observeRedisShutdown: (phase: 'before' | 'after') => Promise<void>;
 }
 
 function writeJson(response: ServerResponse, status: number, body: unknown): void {
@@ -249,6 +252,7 @@ export async function installSelfHealingPreviewControl(
   const receipts: Receipt[] = [];
   let sequence = 0;
   let ready = false;
+  let readinessCommitted = false;
   let closed = false;
   let requestCount = 0;
   let minuteStartedAt = Date.now();
@@ -271,6 +275,13 @@ export async function installSelfHealingPreviewControl(
   let consumerClientCount = 0;
   let lastConsumerClientId: string | null = null;
   let closePromise: Promise<void> | null = null;
+  let shutdownJournal: PreviewShutdownJournal | null = null;
+  let shutdownScenario: PreviewShutdownScenario | null = null;
+  let shutdownArmed = false;
+  let shutdownHolding = false;
+  let shutdownRedisClientId: string | null = null;
+  let shutdownPrepareExpiry: ReturnType<typeof setTimeout> | undefined;
+  let startupProbe: Promise<Awaited<ReturnType<typeof import('./selfHealingPreviewStartup.js').beginSelfHealPreviewStartupProbe>>> | null = null;
   let emergencyOverrideOwned = false;
   let ownedAutonomy: number | null = null;
   const scheduler = { installationAttempts: 0, installations: 0, installationFailures: 0, callbacks: 0,
@@ -319,6 +330,16 @@ export async function installSelfHealingPreviewControl(
     beforeObservation: async signal => {
       observation.entries += 1;
       observation.lastEnteredAt = new Date().toISOString();
+      if (shutdownArmed && shutdownJournal) {
+        const journal = shutdownJournal;
+        shutdownArmed = false; shutdownHolding = true;
+        clearTimeout(shutdownPrepareExpiry);
+        try { await journal.waitForShutdownRelease(signal); }
+        finally {
+          shutdownHolding = false;
+          if (!signal?.aborted) { await journal.close(); shutdownJournal = null; }
+        }
+      }
       if (failObservation) {
         failObservation = false;
         observation.injectedFailures += 1;
@@ -388,6 +409,7 @@ export async function installSelfHealingPreviewControl(
       consumerRun,
       consumerHistory: [...consumerHistory],
       coordinatorEvents,
+      shutdownProbe: { scenario: shutdownScenario, armed: shutdownArmed, holding: shutdownHolding, redisClientId: shutdownRedisClientId },
       consumerMetrics: {
         evidence: 'production_runtime_diagnostics',
         rolling: projectConsumerWindow(runtimeDiagnosticsService.getRequestWindowSince(0, CONSUMER_WINDOW_MS, SELF_HEAL_PREVIEW_CONSUMER_ROUTE)),
@@ -470,6 +492,35 @@ export async function installSelfHealingPreviewControl(
     } else if (command.startsWith('policy_')) await setPolicy(command);
     else if (command === 'duplicate_start' || command === 'coordinator_start') startSelfHealingLoop(undefined, coordinatorOptions);
     else if (command === 'coordinator_stop') await stopSelfHealingLoop();
+    else if (command === 'shutdown_prepare_a06' || command === 'shutdown_prepare_e06') {
+      const state = getSelfHealingLoopStatus();
+      if (profile.role !== 'worker' || !ready || shutdownJournal || profile.expiresAtMs - Date.now() < 30_000 || state.loopRunning || state.inFlight
+        || consumerRunPromise || predictiveRunPromise || lastTick || holdNext || releaseHold) {
+        return { rejected: true, reasonCode: 'shutdown_probe_requires_idle_stopped_worker', inspection: await inspect() };
+      }
+      const redisId = await executeRedisOperation(client => client.sendCommand(['CLIENT', 'ID']),
+        { operation: 'diagnostics.metrics.read', timeoutMs: 500 });
+      if (typeof redisId !== 'number' || !Number.isSafeInteger(redisId) || redisId < 1) throw new Error('SELF_HEAL_PREVIEW_SHUTDOWN_EVIDENCE_FAILED');
+      const authority = shutdownChildAuthority(process.env);
+      const journal = await PreviewShutdownJournal.open(authority.database, authority.owner);
+      try {
+        if (await journal.barrierAvailable()) throw new Error('SELF_HEAL_PREVIEW_SHUTDOWN_EVIDENCE_FAILED');
+        const scenario = command === 'shutdown_prepare_a06' ? 'A06' : 'E06';
+        await journal.prepare({ scenario, processInstanceId, deploymentId: profile.deploymentId, pid: process.pid, redisClientId: String(redisId) });
+        shutdownScenario = scenario; shutdownRedisClientId = String(redisId);
+        shutdownJournal = journal; shutdownArmed = true;
+        shutdownPrepareExpiry = setTimeout(() => {
+          shutdownArmed = false;
+          if (!shutdownHolding) { shutdownJournal = null; void journal.close().catch(() => record('shutdown_probe_close_failed')); }
+        }, HOLD_MS);
+        shutdownPrepareExpiry.unref();
+      } catch (error) { await journal.close().catch(() => undefined); throw error; }
+    } else if (command === 'shutdown_cancel') {
+      if (shutdownHolding) return { rejected: true, reasonCode: 'shutdown_probe_is_holding', inspection: await inspect() };
+      shutdownArmed = false; clearTimeout(shutdownPrepareExpiry);
+      const journal = shutdownJournal; shutdownJournal = null;
+      await journal?.close();
+    }
     else if (command === 'observation_throw_once') failObservation = true;
     else if (command === 'database_failure_once') {
       if (profile.role !== 'worker') return { rejected: true, reasonCode: 'worker_role_required', inspection: await inspect() };
@@ -704,6 +755,7 @@ export async function installSelfHealingPreviewControl(
       ready = false;
       failClaim = false;
       clearTimeout(expiryTimer);
+      clearTimeout(shutdownPrepareExpiry);
       options.signal?.removeEventListener('abort', onAbort);
       controller.abort();
       releaseHold?.();
@@ -712,8 +764,20 @@ export async function installSelfHealingPreviewControl(
       await Promise.all([drain, lastTick?.catch(() => undefined), consumerRunPromise?.catch(() => undefined), predictiveRunPromise?.catch(() => undefined), activeCommand?.catch(() => undefined), new Promise<void>((resolve, reject) => {
         server.close(error => error && (error as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING' ? reject(error) : resolve());
       })]);
-      restorePolicy();
-      record('control_closed');
+      try {
+        if (shutdownJournal) {
+          const state = getSelfHealingLoopStatus();
+          if (state.inFlight || shutdownHolding) throw new Error('SELF_HEAL_PREVIEW_SHUTDOWN_NOT_DRAINED');
+          await shutdownJournal.append('coordinator_drained', { inFlight: false, redisConnected: getRedisLifecycleSnapshot().connected });
+        }
+        if (startupProbe) {
+          const probe = await startupProbe; const state = getSelfHealingLoopStatus();
+          await probe.finish({ readinessCommitted,
+            scheduler: { installationAttempts: scheduler.installationAttempts, installations: scheduler.installations,
+              installationFailures: scheduler.installationFailures, callbacks: scheduler.callbacks },
+            coordinator: { state: state.coordinatorState, reasonCode: state.coordinatorReasonCode, inFlight: state.inFlight } });
+        }
+      } finally { restorePolicy(); record('control_closed'); }
     })();
     return closePromise;
   };
@@ -729,6 +793,13 @@ export async function installSelfHealingPreviewControl(
     options.signal?.addEventListener('abort', onAbort, { once: true });
     if (options.signal?.aborted) { await close(); throw new Error('SELF_HEAL_PREVIEW_SHUTDOWN'); }
     record('control_listening');
+    if (profile.startupMode === 'scheduler-failure') {
+      const { beginSelfHealPreviewStartupProbe } = await import('./selfHealingPreviewStartup.js');
+      if (closed || options.signal?.aborted) { await close(); throw new Error('SELF_HEAL_PREVIEW_SHUTDOWN'); }
+      startupProbe = beginSelfHealPreviewStartupProbe(process.env, { processInstanceId, pid: process.pid });
+      await startupProbe;
+      if (closed || options.signal?.aborted) { await close(); throw new Error('SELF_HEAL_PREVIEW_SHUTDOWN'); }
+    }
     return {
       coordinatorOptions,
       beforeClaim: () => {
@@ -742,7 +813,15 @@ export async function installSelfHealingPreviewControl(
         record('claim_operation_failure');
         throw Object.assign(new Error('SELF_HEAL_PREVIEW_DATABASE_CLAIM_FAILURE'), { code: 'ECONNREFUSED' });
       },
-      markReady: () => { if (!closed) { ready = true; record('readiness_committed'); } }, close,
+      markReady: () => { if (!closed) { ready = true; readinessCommitted = true; record('readiness_committed'); } }, close,
+      observeRedisShutdown: async phase => {
+        if (!shutdownJournal) return;
+        const journal = shutdownJournal;
+        try {
+          await journal.append(phase === 'before' ? 'redis_stop_begin' : 'redis_stopped',
+            { inFlight: getSelfHealingLoopStatus().inFlight, redisConnected: getRedisLifecycleSnapshot().connected });
+        } finally { if (phase === 'after') { shutdownJournal = null; await journal.close(); } }
+      },
     };
   } catch (error) {
     await close().catch(() => undefined);

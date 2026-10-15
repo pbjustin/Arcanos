@@ -164,6 +164,13 @@ describe('opt-in self-heal profile of the existing heavy preview supervisor', ()
   it.each(['RAILWAY_TOKEN', 'GITHUB_TOKEN', 'AWS_SECRET_ACCESS_KEY', 'CUSTOM_API_KEY', 'SELF_IMPROVE_ENABLED', 'PREDICTIVE_HEALING_ENABLED', 'NODE_OPTIONS'])('rejects ambient authority %s', name => {
     expect(() => profile('worker', { [name]: 'forbidden' })).toThrow();
   });
+  it.each(['web', 'worker'])('admits the documented Railway snapshot metadata without projecting it into %s children', role => {
+    const env = { ...environment(role), RAILWAY_SNAPSHOT_ID: '88888888-8888-4888-8888-888888888888' };
+    const p = profile(role, { RAILWAY_SNAPSHOT_ID: env.RAILWAY_SNAPSHOT_ID });
+    expect(buildSelfHealPreviewApplicationEnvironment(p, env)).not.toHaveProperty('RAILWAY_SNAPSHOT_ID');
+    expect(buildSelfHealPreviewFixtureEnvironment(p)).not.toHaveProperty('RAILWAY_SNAPSHOT_ID');
+    expect(() => profile(role, { RAILWAY_SNAPSHOT_SECRET: 'test-sensitive-marker' })).toThrow('ENV_FORBIDDEN');
+  });
   it('builds literal role-specific environments and strips arbitrary ambient metadata', () => {
     const env = { ...environment(), PATH: '/ambient/bin', HOME: '/ambient/home', UNRELATED_BENIGN: 'discard' };
     const child = buildSelfHealPreviewApplicationEnvironment(profile(), env);
