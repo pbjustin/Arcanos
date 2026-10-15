@@ -6,7 +6,7 @@ import { closeSync, fsyncSync, lstatSync, openSync, readFileSync, writeFileSync 
 import { isAbsolute, join, resolve } from 'node:path';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
-import { promisify } from 'node:util';
+import { isDeepStrictEqual, promisify } from 'node:util';
 import { validateSelfHealPreviewCleanupReceipt } from './self-heal-preview-cleanup.mjs';
 import { buildBackstageHeavyRailwayCliEnvironment, railwayInvocationForBackstageHeavyProbe } from './railway-backstage-heavy-e2e-probe.mjs';
 
@@ -24,7 +24,7 @@ const PROVIDER = new Set(['inspect', 'set_healthy', 'timeout_next', 'hold_next',
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const SHA = /^[a-f0-9]{40}$/u;
 const DIGEST = /^[a-f0-9]{64}$/u;
-const REAL_TRANSPORTS = new WeakSet();
+const REAL_TRANSPORTS = new WeakMap();
 const MAX_BYTES = 2 * 1024 * 1024;
 const CLEANUP_RESERVE_MS = 10 * 60_000;
 const NAMES = { web: 'arcanos-web-pr1544-heavy', worker: 'arcanos-worker-pr1544-heavy', postgres: 'Postgres', redis: 'Redis' };
@@ -153,7 +153,7 @@ function safeProjection(value) {
 
 /** Transport has a closed vocabulary; SSH executes only the reviewed fixed helper. */
 export function createSelfHealAcceptanceTransport(manifest, options = {}) {
-  validateSelfHealAcceptanceManifest(manifest, options);
+  manifest = validateSelfHealAcceptanceManifest(manifest, options);
   const execute = options.execute === true; const allowNetwork = options.allowNetwork === true;
   if (execute !== allowNetwork) block('NETWORK_GATES_REQUIRED');
   const now = options.now ?? Date.now;
@@ -258,7 +258,7 @@ export function createSelfHealAcceptanceTransport(manifest, options = {}) {
     },
     targets,
   });
-  if (!options.command && !options.readHead && !options.invocation && !options.now && !options.env) REAL_TRANSPORTS.add(transport);
+  if (!options.command && !options.readHead && !options.invocation && !options.now && !options.env) REAL_TRANSPORTS.set(transport, manifest);
   return transport;
 }
 
@@ -376,11 +376,14 @@ export function attestSelfHealStartupFailureReceipt(value, failed, recovered, ma
 /** Each case retains baseline, every operation, effects and restoration; incomplete evidence cannot pass. */
 export async function runSelfHealAcceptanceCase(scenario, manifest, options = {}) {
   if (!SELF_HEAL_ACCEPTANCE_CASES.includes(scenario)) block('SCENARIO_INVALID');
-  validateSelfHealAcceptanceManifest(manifest, options);
+  manifest = validateSelfHealAcceptanceManifest(manifest, options);
   if (options.execute !== true && options.allowNetwork !== true) return { scenario, classification: 'NOT_RUN', executed: false, sourceSha: manifest.receipt.sourceSha };
   if (options.execute !== true || options.allowNetwork !== true) block('NETWORK_GATES_REQUIRED');
   const now = options.now ?? Date.now; const wait = options.sleep ?? sleep;
   const transport = options.transport ?? createSelfHealAcceptanceTransport(manifest, options);
+  const boundManifest = REAL_TRANSPORTS.get(transport);
+  if (boundManifest && !isDeepStrictEqual(boundManifest, manifest)) block('TRANSPORT_MANIFEST_MISMATCH');
+  const realTransport = boundManifest !== undefined;
   const events = []; let sequence = 0; let baseline; let finalState; let errorCode = null;
   let classification = 'BLOCKED'; let cleanupResult = 'NOT_RUN';
   const emit = async (kind, value) => {
@@ -679,7 +682,7 @@ export async function runSelfHealAcceptanceCase(scenario, manifest, options = {}
       await tick(); await fenced(1);
       const after = await inspect(); requireProof(!after.tickPending && !after.observation.holding && after.scheduler.installations === baseline.scheduler.installations, 'CONCURRENT_FAULTS_UNBOUNDED');
     }
-    classification = REAL_TRANSPORTS.has(transport) ? 'VERIFIED' : 'SYNTHETIC_ONLY';
+    classification = realTransport ? 'VERIFIED' : 'SYNTHETIC_ONLY';
   } catch (error) {
     classification = error instanceof SelfHealAcceptanceError ? error.classification : 'BLOCKED';
     errorCode = error instanceof SelfHealAcceptanceError ? error.message : 'SELF_HEAL_ACCEPTANCE_UNAVAILABLE';
@@ -696,7 +699,7 @@ export async function runSelfHealAcceptanceCase(scenario, manifest, options = {}
     try {
       requireProof(!finalState.observation.holding && !finalState.claimFailurePending && finalState.consumerRun?.status !== 'running'
         && finalState.policy.selfImproveEnabled === false && restoreFailures.length === 0, 'FAULT_CLEANUP_INCOMPLETE');
-      cleanupResult = REAL_TRANSPORTS.has(transport) ? 'VERIFIED' : 'SYNTHETIC_ONLY';
+      cleanupResult = realTransport ? 'VERIFIED' : 'SYNTHETIC_ONLY';
     } catch { cleanupResult = 'FAILED'; classification = 'BLOCKED'; errorCode ??= 'SELF_HEAL_ACCEPTANCE_FAULT_CLEANUP_FAILED'; }
   }
   const result = { version: 1, scenario, classification, executed: true, sourceSha: manifest.receipt.sourceSha,
