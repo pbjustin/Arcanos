@@ -40,6 +40,8 @@ const originalEnvironment = process.env;
 const initializeDatabaseMock = jest.fn(async () => true);
 const closeDatabaseMock = jest.fn(async () => undefined);
 const initializeModuleRegistryMock = jest.fn(async () => ({ listRegisteredModules: () => [] }));
+const configureOpenAIClientMock = jest.fn();
+const bootstrapAutonomyMock = jest.fn(async () => ({ healthStatus: 'healthy', recovered: { recoveredJobs: [], failedJobs: [], cancelledJobs: [] } }));
 const installPreviewControl = jest.fn<(...args: unknown[]) => Promise<import('../src/services/selfImprove/selfHealingPreviewControl.js').SelfHealingPreviewControl | null>>(async () => null);
 jest.unstable_mockModule('@services/selfImprove/selfHealingPreviewControl.js', () => ({ installSelfHealingPreviewControl: installPreviewControl }));
 process.env = { NODE_ENV: 'test', ARCANOS_PROCESS_KIND: 'worker', RUN_WORKERS: 'true', DIAGNOSTICS_SHARED_METRICS: 'false', DATABASE_URL: 'postgres://synthetic.invalid/fixture', SELF_HEAL_LOOP_INTERVAL_MS: '1000', JOB_WORKER_POLL_MS: '50', JOB_WORKER_IDLE_BACKOFF_MS: '50', JOB_WORKER_CONCURRENCY: '2' };
@@ -189,7 +191,7 @@ jest.unstable_mockModule('@services/workerAutonomyService.js', () => ({
     constructor(private settings: { workerId: string }) {}
     getWorkerId() { return this.settings.workerId; }
     getWorkerAiCallBudget() { return { statsWorkerId: 'synthetic', workerId: this.settings.workerId, maxCallsPerHour: 120 }; }
-    async bootstrap() { return { healthStatus: 'healthy', recovered: { recoveredJobs: [], failedJobs: [], cancelledJobs: [] } }; }
+    bootstrap = bootstrapAutonomyMock;
     getWatchdogIntervalMs() { return 30_000; }
     getHeartbeatIntervalMs() { return 1_000; }
     getRecommendedWorkerHeartbeatDelayMs() { return 1_000; }
@@ -208,7 +210,7 @@ jest.unstable_mockModule('@services/workerAutonomyService.js', () => ({
     flushSnapshotPipeline = flushSnapshots;
   },
 }));
-jest.unstable_mockModule('@core/init-openai.js', () => ({ configureBackendUnifiedOpenAIClient: jest.fn() }));
+jest.unstable_mockModule('@core/init-openai.js', () => ({ configureBackendUnifiedOpenAIClient: configureOpenAIClientMock }));
 jest.unstable_mockModule('@services/workerControlService.js', () => ({ getWorkerControlHealth: workerHealth, healWorkerRuntime: forbidden }));
 jest.unstable_mockModule('@platform/runtime/workerConfig.js', () => ({
   getWorkerRuntimeStatus: () => ({ enabled: false, started: false, activeListeners: 0, workerIds: [] }),
@@ -261,7 +263,12 @@ beforeEach(async () => {
   jest.resetModules();
   jest.clearAllMocks();
   installPreviewControl.mockReset().mockResolvedValue(null);
+  initializeDatabaseMock.mockReset().mockResolvedValue(true);
   closeDatabaseMock.mockReset().mockResolvedValue(undefined);
+  initializeModuleRegistryMock.mockReset().mockResolvedValue({ listRegisteredModules: () => [] });
+  configureOpenAIClientMock.mockReset();
+  bootstrapAutonomyMock.mockReset().mockResolvedValue({ healthStatus: 'healthy', recovered: { recoveredJobs: [], failedJobs: [], cancelledJobs: [] } });
+  lifecycleLog.info.mockReset();
   flushSnapshots.mockReset().mockResolvedValue(undefined);
   primeTelemetry.mockReset().mockResolvedValue(undefined);
   stopTelemetry.mockReset().mockResolvedValue(undefined);
@@ -307,6 +314,66 @@ async function flushUntil(predicate: () => boolean) {
 }
 
 describe('actual production worker bootstrap with external boundaries replaced', () => {
+  it('closes its pool when shutdown arrives immediately after database initialization', async () => {
+    initializeDatabaseMock.mockImplementationOnce(async () => { signalShutdown(); return true; });
+    await worker.runJobWorker();
+    expect(lifecycleLog.info).toHaveBeenCalledWith('worker.shutdown.before_autonomy_bootstrap', expect.any(Object));
+    expect(closeDatabaseMock).toHaveBeenCalledTimes(1);
+    expect(configureOpenAIClientMock).not.toHaveBeenCalled();
+    expect(bootstrapAutonomyMock).not.toHaveBeenCalled();
+    expect(dispatcherStarted).not.toHaveBeenCalled();
+    expect(startRedis).not.toHaveBeenCalled();
+  });
+  it.each(['after_module_registry_preload', 'before_slot_start'] as const)(
+    'flushes snapshots before closing its pool on early shutdown %s', async boundary => {
+      if (boundary === 'after_module_registry_preload') {
+        initializeModuleRegistryMock.mockImplementationOnce(async () => {
+          signalShutdown(); return { listRegisteredModules: () => [] };
+        });
+      } else {
+        lifecycleLog.info.mockImplementation(event => {
+          if (event === 'worker.module_registry.preloaded') signalShutdown();
+        });
+      }
+      await worker.runJobWorker();
+      expect(lifecycleLog.info).toHaveBeenCalledWith(`worker.shutdown.${boundary}`, expect.any(Object));
+      expect(flushSnapshots).toHaveBeenCalledTimes(1);
+      expect(flushSnapshots).toHaveBeenCalledWith('worker-process-shutdown');
+      expect(closeDatabaseMock).toHaveBeenCalledTimes(1);
+      expect(flushSnapshots.mock.invocationCallOrder[0]).toBeLessThan(closeDatabaseMock.mock.invocationCallOrder[0]);
+      expect(dispatcherStarted).not.toHaveBeenCalled();
+      expect(startRedis).not.toHaveBeenCalled();
+      expect(stdout.some(line => line.includes('ARCANOS_WORKER_BOOTSTRAP_READY_V1'))).toBe(false);
+    }
+  );
+  it.each(['database', 'adapter', 'autonomy', 'module_registry'] as const)(
+    'preserves an early %s failure and still attempts owned pool cleanup exactly once', async boundary => {
+      const startupError = new Error(`synthetic ${boundary} bootstrap failure`);
+      const closeError = new Error('synthetic early pool cleanup failure');
+      if (boundary === 'database') initializeDatabaseMock.mockRejectedValueOnce(startupError);
+      if (boundary === 'adapter') configureOpenAIClientMock.mockImplementationOnce(() => { throw startupError; });
+      if (boundary === 'autonomy') bootstrapAutonomyMock.mockRejectedValueOnce(startupError);
+      if (boundary === 'module_registry') initializeModuleRegistryMock.mockRejectedValueOnce(startupError);
+      closeDatabaseMock.mockRejectedValueOnce(closeError);
+      await expect(worker.runJobWorker()).rejects.toBe(startupError);
+      expect(closeDatabaseMock).toHaveBeenCalledTimes(1);
+      expect(lifecycleLog.warn).toHaveBeenCalledWith('worker.shutdown.cleanup_failed',
+        { module: 'job-runner' }, { errorMessage: closeError.message });
+      expect(dispatcherStarted).not.toHaveBeenCalled();
+      expect(startRedis).not.toHaveBeenCalled();
+      expect(stdout.some(line => line.includes('ARCANOS_WORKER_BOOTSTRAP_READY_V1'))).toBe(false);
+    }
+  );
+  it('leaves an unknown-role caller pool untouched after an early bootstrap failure', async () => {
+    const previous = process.env.ARCANOS_PROCESS_KIND; delete process.env.ARCANOS_PROCESS_KIND;
+    const startupError = new Error('synthetic shared helper bootstrap failure');
+    initializeModuleRegistryMock.mockRejectedValueOnce(startupError);
+    try {
+      await expect(worker.runJobWorker()).rejects.toBe(startupError);
+      expect(closeDatabaseMock).not.toHaveBeenCalled();
+      expect(dispatcherStarted).not.toHaveBeenCalled();
+    } finally { process.env.ARCANOS_PROCESS_KIND = previous; }
+  });
   it('does not initialize or close the shared database for an explicit Web role', async () => {
     const previous = process.env.ARCANOS_PROCESS_KIND; process.env.ARCANOS_PROCESS_KIND = 'web';
     try {

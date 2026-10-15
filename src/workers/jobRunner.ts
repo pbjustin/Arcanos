@@ -3645,6 +3645,36 @@ export async function runWorkerConsumerSlot(
 
 export async function runJobWorker(): Promise<void> {
   const workerRuntimeMode = getStableWorkerRuntimeMode();
+  // Cover database initialization and every early bootstrap exit as well as
+  // the consumer drain below. Only a dedicated, enabled Worker owns the pool;
+  // an exported unknown-role helper must leave its caller's shared pool alone.
+  const ownsDatabasePool = resolveJobRunnerEntrypointRuntimeMode(workerRuntimeMode).enabled
+    && (workerRuntimeMode.processKind === 'worker' || isEntrypointModule(import.meta.url));
+  let runtimeFailed = false;
+  try {
+    await runJobWorkerRuntime(workerRuntimeMode);
+  } catch (error: unknown) {
+    runtimeFailed = true;
+    throw error;
+  } finally {
+    if (ownsDatabasePool) {
+      try {
+        // Retained minimum pg sockets otherwise keep Node alive after SIGTERM.
+        // Existing slot, coordinator and snapshot drains finish before this.
+        await closeDatabase();
+      } catch (error: unknown) {
+        logger.warn('worker.shutdown.cleanup_failed', {
+          module: 'job-runner',
+        }, { errorMessage: resolveErrorMessage(error) });
+        if (!runtimeFailed) throw error;
+      }
+    }
+  }
+}
+
+async function runJobWorkerRuntime(
+  workerRuntimeMode: ReturnType<typeof getStableWorkerRuntimeMode>
+): Promise<void> {
   const entrypointRuntimeMode = resolveJobRunnerEntrypointRuntimeMode(workerRuntimeMode);
   const runtimeSettings = resolveJobRunnerRuntimeSettings();
   const databaseBootstrapSettings = resolveJobRunnerDatabaseBootstrapSettings();
@@ -3951,11 +3981,6 @@ export async function runJobWorker(): Promise<void> {
       () => stopRedisLifecycle(),
       () => selfHealingPreviewControl?.observeRedisShutdown('after'),
       () => inspectorAutonomyService.flushSnapshotPipeline('worker-process-shutdown'),
-      // A dedicated Worker owns this pool. Retained minimum pg connections keep
-      // Node alive after its SIGTERM handler returns unless they are closed.
-      // An exported unknown-role helper must not close a caller's shared pool.
-      () => workerRuntimeMode.processKind === 'worker' || isEntrypointModule(import.meta.url)
-        ? closeDatabase() : undefined,
     ]) {
       // A rejected drain must not skip other resource cleanup or replace the
       // original startup/runtime error that caused this process to stop.
