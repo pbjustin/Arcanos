@@ -258,7 +258,7 @@ export function createSelfHealAcceptanceTransport(manifest, options = {}) {
     },
     targets,
   });
-  if (!options.command && !options.readHead && !options.invocation && !options.now) REAL_TRANSPORTS.add(transport);
+  if (!options.command && !options.readHead && !options.invocation && !options.now && !options.env) REAL_TRANSPORTS.add(transport);
   return transport;
 }
 

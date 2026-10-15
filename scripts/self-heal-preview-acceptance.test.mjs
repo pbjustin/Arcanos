@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
+import childProcess from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmdirSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { syncBuiltinESMExports } from 'node:module';
 import { test } from 'node:test';
+import { promisify } from 'node:util';
 import { SELF_HEAL_ACCEPTANCE_CASES, SelfHealAcceptanceError, attestSelfHealAcceptanceStatus, createSelfHealAcceptanceTransport,
   attestSelfHealShutdownReceipt, attestSelfHealStartupFailureReceipt, publishSelfHealAcceptanceReceipt,
   runSelfHealAcceptanceCase, validateSelfHealAcceptanceManifest } from './self-heal-preview-acceptance.mjs';
@@ -219,6 +222,41 @@ test('an injected transport remains synthetic when its caller omits the syntheti
   });
   assert.equal(result.classification, 'SYNTHETIC_ONLY');
   assert.equal(result.cleanupResult, 'SYNTHETIC_ONLY');
+});
+
+test('an environment-only override cannot brand acceptance as real while the ordinary transport retains its classification', async () => {
+  const m = manifest(); const started = Date.now();
+  m.receipt.issuedAt = new Date(started).toISOString();
+  m.receipt.expiresAt = new Date(started + 7_200_000).toISOString(); m.cleanupArmedUntil = m.receipt.expiresAt;
+  const calls = []; const original = childProcess.execFile;
+  const stub = () => { throw new Error('unexpected unpromisified process invocation'); };
+  stub[promisify.custom] = async (executable, args, options) => {
+    calls.push({ executable, args, path: options.env?.PATH, appData: options.env?.APPDATA });
+    if (executable === 'gh') return { stdout: m.receipt.sourceSha };
+    if (args.includes('api')) return { stdout: JSON.stringify({ data: { project: status(m), workerTcpProxies: [], postgresTcpProxies: [], redisTcpProxies: [] } }) };
+    assert(args.includes('ssh'));
+    const pin = m.services.find(value => value.serviceId === args[args.indexOf('--service') + 1]);
+    assert(pin);
+    const value = { target: { role: pin.role, sourceSha: m.receipt.sourceSha, runId: m.receipt.runId,
+      projectId: m.receipt.projectId, environmentId: m.receipt.environmentId, serviceId: pin.serviceId, deploymentId: pin.deploymentId },
+      observation: snapshot(pin.role === 'web' ? { coordinator: { coordinatorState: 'DISABLED', loopRunning: false }, scheduler: { installations: 0 } } : {}) };
+    if (args.at(-1) === 'artifact') value.artifact = { compiledSha256: 'c'.repeat(64) };
+    return { stdout: JSON.stringify(value) };
+  };
+  childProcess.execFile = stub; syncBuiltinESMExports();
+  try {
+    // No command, readHead, invocation or clock option: each would independently
+    // force synthetic classification and conceal an omitted environment guard.
+    for (const env of [{ APPDATA: 'C:\\fixture-only-appdata', PATH: 'fixture-only-cli-path' }, undefined]) {
+      const options = { execute: true, allowNetwork: true, ...(env ? { env } : {}) };
+      const transport = createSelfHealAcceptanceTransport(m, options);
+      const result = await runSelfHealAcceptanceCase('A02', m, { ...options, transport });
+      assert.equal(result.errorCode, null);
+      assert.equal(result.classification, env ? 'SYNTHETIC_ONLY' : 'VERIFIED');
+      assert.equal(result.cleanupResult, env ? 'SYNTHETIC_ONLY' : 'VERIFIED');
+    }
+    assert(calls.some(call => call.path === 'fixture-only-cli-path' && call.appData === 'C:\\fixture-only-appdata'));
+  } finally { childProcess.execFile = original; syncBuiltinESMExports(); }
 });
 
 function cliFixture() {
