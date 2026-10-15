@@ -19,6 +19,11 @@ at most five complete owner-visible project pages within a 60-second lookup
 deadline and retains all owner, workspace and resource boundaries.
 Injected transports are always synthetic evidence. Missing independent shutdown,
 startup-failure or remote-effect inspection remains blocked, never a pass.
+The live A04 reinstallation recipe deliberately requires a separate initial
+failure generation. Its supplemental verifier consumes the fixed Web startup
+readback, exact failed deployment, fully bound restored-process envelopes and
+ordered A04 attempt-2 evidence: absent slot, pending creation, single completion,
+then the same restored process. A previously completed job cannot prove recovery.
 
 This is an extension of the existing sealed lane, not a production deployment
 workflow or a general administration endpoint. The native passive-worker lane

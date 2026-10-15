@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { SELF_HEAL_ACCEPTANCE_CASES, SelfHealAcceptanceError, attestSelfHealAcceptanceStatus, createSelfHealAcceptanceTransport,
-  attestSelfHealShutdownReceipt, publishSelfHealAcceptanceReceipt, runSelfHealAcceptanceCase, validateSelfHealAcceptanceManifest } from './self-heal-preview-acceptance.mjs';
+  attestSelfHealShutdownReceipt, attestSelfHealStartupFailureReceipt, publishSelfHealAcceptanceReceipt,
+  runSelfHealAcceptanceCase, validateSelfHealAcceptanceManifest } from './self-heal-preview-acceptance.mjs';
 
 const NOW = Date.parse('2026-10-15T01:00:00.000Z');
 const id = n => `${String(n).padStart(8, '0')}-1111-4111-8111-111111111111`;
@@ -300,6 +301,65 @@ for (const [name, change] of Object.entries({
 })) test(`shutdown acceptance rejects ${name}`, () => {
   const f = shutdownEvidence(); change(f);
   assert.throws(() => attestSelfHealShutdownReceipt(f.value, 'A06', f.baseline, f.recovered, f.m, f.before, f.after), /SELF_HEAL_ACCEPTANCE_SHUTDOWN_/u);
+});
+
+function startupEvidence() {
+  const m = manifest(); const worker = m.services[1]; const live = attestSelfHealAcceptanceStatus(status(m), m, { now: () => NOW });
+  const envelope = (role, index) => { const pin = m.services.find(item => item.role === role); return {
+    target: { role, projectId: m.receipt.projectId, environmentId: m.receipt.environmentId, serviceId: pin.serviceId,
+      deploymentId: pin.deploymentId, sourceSha: m.receipt.sourceSha, runId: m.receipt.runId },
+    platformTarget: live[role], observedAt: new Date(NOW + 10 + index).toISOString() }; };
+  const recovered = { before: { ...envelope('worker', 1), observation: snapshot({ processInstanceId: id(31) }) },
+    after: { ...envelope('worker', 5), observation: snapshot({ processInstanceId: id(31) }) } };
+  const failed = { id: id(50), projectId: m.receipt.projectId, environmentId: m.receipt.environmentId, serviceId: worker.serviceId,
+    status: 'CRASHED', deploymentStopped: true, instances: [], meta: { commitHash: m.receipt.sourceSha, imageDigest: worker.imageDigest } };
+  const value = { ...envelope('web', 0), startup: { evidence: 'independent_postgres_startup_readback', receipt: { scenario: 'A04', sourceSha: m.receipt.sourceSha,
+    compiledSha256: worker.compiledSha256, processInstanceId: id(30), deploymentId: failed.id, pid: 1234,
+    initialReadiness: { statusCode: 503, ready: false, child: 'starting', observedAt: new Date(NOW + 1).toISOString() },
+    finishedAt: new Date(NOW + 2).toISOString(), outcome: { readinessCommitted: false,
+      scheduler: { installationAttempts: 1, installations: 0, installationFailures: 1, callbacks: 0 },
+      coordinator: { state: 'FAILED', inFlight: false } } } } };
+  const probe = job => ({ scenario: 'A04', attempt: 2, correlationId: `self-heal-preview:${m.receipt.runId}:fenced:A04:2`, job });
+  const fenced = { absent: { ...envelope('worker', 2), fencedJob: probe(null) },
+    created: { ...envelope('worker', 3), fencedJob: probe({ id: id(60), status: 'pending', completionVerified: false, claimEvents: 0, completionEvents: 0 }) },
+    completed: { ...envelope('worker', 4), fencedJob: probe({ id: id(60), completionVerified: true, literalObserved: true, matchingClaimEvents: 1, matchingCompletionEvents: 1 }) } };
+  return { m, failed, value, recovered, fenced, inventory: status(m) };
+}
+test('A04 supplement requires the failed generation actual503, real scheduler failure and independently recovered job', () => {
+  const f = startupEvidence();
+  const result = attestSelfHealStartupFailureReceipt(f.value, f.failed, f.recovered, f.m, f.inventory, f.fenced, { now: () => NOW + 100 });
+  assert.equal(result.readinessWithheldBeforeInitialization, true); assert.equal(result.ordinaryJobContinuityVerified, true);
+  assert.notEqual(result.failedDeploymentId, result.recoveredDeploymentId);
+});
+for (const [name, change] of Object.entries({
+  failedStatusAlone: f => { delete f.value.startup.receipt.initialReadiness; },
+  reusedGeneration: f => { f.failed.id = f.m.services[1].deploymentId; f.value.startup.receipt.deploymentId = f.failed.id; },
+  differentSource: f => { f.failed.meta.commitHash = 'f'.repeat(40); },
+  differentImage: f => { f.failed.meta.imageDigest = `sha256:${'e'.repeat(64)}`; },
+  differentArtifact: f => { f.value.startup.receipt.compiledSha256 = 'e'.repeat(64); },
+  foreignEnvironment: f => { f.failed.environmentId = id(99); },
+  stillRunning: f => { f.failed.instances.push({ id: id(99), status: 'RUNNING' }); },
+  healthyStoppedDeployment: f => { f.failed.status = 'SUCCESS'; },
+  prematureReadiness: f => { f.value.startup.receipt.outcome.readinessCommitted = true; },
+  noSchedulerFailure: f => { f.value.startup.receipt.outcome.scheduler.installationFailures = 0; },
+  successfulScheduler: f => { f.value.startup.receipt.outcome.scheduler.installations = 1; },
+  staleProcess: f => { f.recovered.before.observation.processInstanceId = f.value.startup.receipt.processInstanceId; },
+  missingProcess: f => { delete f.recovered.before.observation.processInstanceId; },
+  changedProcess: f => { f.recovered.after.observation.processInstanceId = id(99); },
+  foreignRecovery: f => { f.recovered.before.target.environmentId = id(99); },
+  foreignStartupReader: f => { f.value.target.projectId = id(99); },
+  foreignFencedRole: f => { f.fenced.completed.target.role = 'web'; },
+  foreignFencedInstance: f => { f.fenced.completed.platformTarget = { ...f.fenced.completed.platformTarget, instanceId: id(99) }; },
+  duplicateCompletion: f => { f.fenced.completed.fencedJob.job.matchingCompletionEvents = 2; },
+  unrelatedJob: f => { f.fenced.completed.fencedJob.scenario = 'A01'; },
+  oldCompletedJob: f => { f.fenced.absent.fencedJob.job = f.fenced.completed.fencedJob.job; },
+  completionBeforeCreate: f => { f.fenced.completed.observedAt = new Date(NOW).toISOString(); },
+  differentCompletedJob: f => { f.fenced.completed.fencedJob.job.id = id(99); },
+  failureAfterJob: f => { f.value.startup.receipt.initialReadiness.observedAt = new Date(NOW + 1000).toISOString(); f.value.startup.receipt.finishedAt = new Date(NOW + 2000).toISOString(); },
+  futureObservation: f => { f.recovered.after.observedAt = new Date(NOW + 200).toISOString(); },
+})) test(`A04 supplement rejects ${name}`, () => {
+  const f = startupEvidence(); change(f);
+  assert.throws(() => attestSelfHealStartupFailureReceipt(f.value, f.failed, f.recovered, f.m, f.inventory, f.fenced, { now: () => NOW + 100 }), /SELF_HEAL_ACCEPTANCE_STARTUP_/u);
 });
 
 test('closed restoration survives a changed PR head and cleanup reserve but never lease expiry', async () => {

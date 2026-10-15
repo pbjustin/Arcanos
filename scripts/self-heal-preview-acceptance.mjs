@@ -304,6 +304,71 @@ export function attestSelfHealShutdownReceipt(value, scenario, baseline, recover
     activeEvaluationDrained: true, redisClosureIndependentlyObserved: true, postgresAvailableThroughDrain: true };
 }
 
+/** Supplement A04 with a real failed bootstrap generation and recovered owned topology. */
+export function attestSelfHealStartupFailureReceipt(value, failed, recovered, manifest, inventory, fenced, options = {}) {
+  const targets = attestSelfHealAcceptanceStatus(inventory, manifest, options);
+  const bind = (role, envelope) => {
+    const pin = manifest.services.find(service => service.role === role); const target = envelope?.target;
+    requireProof(target?.role === role && target.projectId === manifest.receipt.projectId
+      && target.environmentId === manifest.receipt.environmentId && target.runId === manifest.receipt.runId
+      && target.sourceSha === manifest.receipt.sourceSha && target.serviceId === pin.serviceId && target.deploymentId === pin.deploymentId
+      && envelope.platformTarget?.serviceId === pin.serviceId && envelope.platformTarget.deploymentId === pin.deploymentId
+      && envelope.platformTarget.instanceId === targets[role].instanceId, 'STARTUP_FAILURE_ENVELOPE_DRIFT');
+  };
+  bind('web', value); bind('worker', recovered?.before); bind('worker', recovered?.after);
+  for (const step of ['absent', 'created', 'completed']) bind('worker', fenced?.[step]);
+  const sequence = [value, recovered.before, fenced.absent, fenced.created, fenced.completed, recovered.after];
+  let lastAt = Date.parse(manifest.receipt.issuedAt);
+  for (const envelope of sequence) {
+    const at = Date.parse(envelope.observedAt);
+    requireProof(Number.isFinite(at) && at >= lastAt && at <= (options.now?.() ?? Date.now())
+      && at < Date.parse(manifest.receipt.expiresAt), 'STARTUP_FAILURE_EVIDENCE_ORDER');
+    lastAt = at;
+  }
+  const startup = value.startup; const receipt = startup?.receipt; const worker = manifest.services.find(pin => pin.role === 'worker');
+  requireProof(startup?.evidence === 'independent_postgres_startup_readback' && receipt?.scenario === 'A04'
+    && receipt.sourceSha === manifest.receipt.sourceSha && receipt.compiledSha256 === worker.compiledSha256
+    && UUID.test(receipt.processInstanceId ?? '') && Number.isSafeInteger(receipt.pid) && receipt.pid >= 2,
+  'STARTUP_FAILURE_IDENTITY_DRIFT');
+  requireProof(failed?.id === receipt.deploymentId && failed.id !== worker.deploymentId
+    && failed.projectId === manifest.receipt.projectId && failed.environmentId === manifest.receipt.environmentId
+    && failed.serviceId === worker.serviceId && ['FAILED', 'CRASHED'].includes(failed.status)
+    && failed.deploymentStopped === true && Array.isArray(failed.instances)
+    && failed.instances.every(instance => instance.status !== 'RUNNING')
+    && failed.meta?.commitHash === manifest.receipt.sourceSha && failed.meta?.imageDigest === worker.imageDigest,
+  'STARTUP_FAILURE_GENERATION_NOT_PROVEN');
+  const initial = receipt.initialReadiness; const outcome = receipt.outcome;
+  requireProof(initial?.statusCode === 503 && initial.ready === false && initial.child === 'starting'
+    && Date.parse(initial.observedAt) >= Date.parse(manifest.receipt.issuedAt)
+    && Date.parse(receipt.finishedAt) >= Date.parse(initial.observedAt)
+    && Date.parse(receipt.finishedAt) <= Date.parse(value.observedAt)
+    && Date.parse(receipt.finishedAt) < Date.parse(manifest.receipt.expiresAt)
+    && outcome?.readinessCommitted === false && outcome.scheduler?.installationAttempts === 1
+    && outcome.scheduler.installations === 0 && outcome.scheduler.installationFailures === 1 && outcome.scheduler.callbacks === 0
+    && ['FAILED', 'BLOCKED'].includes(outcome.coordinator?.state) && outcome.coordinator.inFlight === false,
+  'STARTUP_READINESS_WITHHOLDING_NOT_PROVEN');
+  const restoredBefore = inspection(recovered.before); const restoredAfter = inspection(recovered.after);
+  for (const state of [restoredBefore, restoredAfter]) requireProof(state?.ready === true && UUID.test(state.processInstanceId ?? '')
+    && state.processInstanceId !== receipt.processInstanceId && state.coordinator?.loopRunning === true
+    && state.scheduler?.installations === 1 && state.scheduler.installationAttempts === 1
+    && state.policy?.selfImproveEnabled === false, 'STARTUP_FAILURE_RECOVERY_NOT_PROVEN');
+  requireProof(restoredBefore.processInstanceId === restoredAfter.processInstanceId, 'STARTUP_FAILURE_PROCESS_CHANGED');
+  for (const step of ['absent', 'created', 'completed']) {
+    const probe = fenced[step].fencedJob;
+    requireProof(probe?.scenario === 'A04' && probe.attempt === 2
+      && probe.correlationId === `self-heal-preview:${manifest.receipt.runId}:fenced:A04:2`, 'STARTUP_FAILURE_JOB_IDENTITY');
+  }
+  const created = fenced.created.fencedJob.job; const job = fenced.completed.fencedJob.job;
+  requireProof(fenced.absent.fencedJob.job === null && UUID.test(created?.id ?? '') && created.status === 'pending'
+    && created.completionVerified === false && created.claimEvents === 0 && created.completionEvents === 0
+    && job?.id === created.id
+    && job?.completionVerified === true && job.literalObserved === true
+    && job.matchingClaimEvents === 1 && job.matchingCompletionEvents === 1, 'STARTUP_FAILURE_RECOVERY_NOT_PROVEN');
+  return { failedDeploymentId: failed.id, recoveredDeploymentId: worker.deploymentId,
+    recoveredInstanceId: targets.worker.instanceId, readinessWithheldBeforeInitialization: true,
+    initialSchedulerFailureObserved: true, ordinaryJobContinuityVerified: true };
+}
+
 /** Each case retains baseline, every operation, effects and restoration; incomplete evidence cannot pass. */
 export async function runSelfHealAcceptanceCase(scenario, manifest, options = {}) {
   if (!SELF_HEAL_ACCEPTANCE_CASES.includes(scenario)) block('SCENARIO_INVALID');
