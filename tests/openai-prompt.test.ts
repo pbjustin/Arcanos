@@ -494,4 +494,32 @@ describe('handlePrompt', () => {
     expect(getKillSwitchStatusMock).toHaveBeenCalledTimes(3);
     expect(getPromptRouteMitigationState()).toMatchObject({ active: false, mitigationId: null });
   });
+
+  it.each(['reject', 'throw'] as const)('preserves prompt errors and denies mitigation when safety inspection fails by %s', async failure => {
+    Object.assign(process.env, {
+      SELF_IMPROVE_ENABLED: 'true', SELF_IMPROVE_ACTUATOR_MODE: 'daemon',
+      SELF_IMPROVE_AUTONOMY_LEVEL: '3', SELF_IMPROVE_FREEZE: 'false'
+    });
+    const promptError = new Error('synthetic prompt timeout');
+    const controlError = new Error('synthetic-private-control-diagnostic');
+    if (failure === 'reject') getKillSwitchStatusMock.mockRejectedValue(controlError);
+    else getKillSwitchStatusMock.mockImplementation(() => { throw controlError; });
+    validateAIRequest.mockReturnValue({ input: 'hello', client: {} });
+    classifyBudgetAbortKind.mockReturnValue('budget_abort');
+    runTrinityWritingPipeline.mockRejectedValue(promptError);
+    const warn = jest.fn();
+    for (let index = 0; index < 3; index += 1) {
+      const response = { json: jest.fn(), status: jest.fn().mockReturnThis() };
+      await expect(handlePrompt({ body: { prompt: 'hello' }, logger: { warn } }, response)).resolves.toBeUndefined();
+      expect(handleAIError).toHaveBeenNthCalledWith(index + 1, promptError, 'hello', 'prompt', response);
+    }
+    expect(getPromptRouteMitigationState()).toMatchObject({ active: false, mitigationId: null, recentTimeoutCount: 0 });
+    expect(warn).toHaveBeenCalledWith('prompt.route.mitigation_authorization_unavailable', {
+      route: '/api/openai/prompt', reasonCode: 'safety_control_read_failed'
+    });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(controlError.message);
+    getKillSwitchStatusMock.mockResolvedValue({ frozen: false, autonomyLevel: 3 });
+    await handlePrompt({ body: { prompt: 'hello' } }, { json: jest.fn(), status: jest.fn().mockReturnThis() });
+    expect(getPromptRouteMitigationState()).toMatchObject({ active: false, recentTimeoutCount: 1 });
+  });
 });

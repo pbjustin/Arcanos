@@ -152,6 +152,7 @@ export class PreviewShutdownJournal {
   }
   async holdBarrier() {
     this.assertLease();
+    if (this.barrierOwned) fail();
     const result = await this.client.query('SELECT pg_try_advisory_lock(1544, 5) AS acquired');
     if (result.rows[0]?.acquired !== true) fail();
     this.barrierOwned = true;
@@ -159,14 +160,18 @@ export class PreviewShutdownJournal {
   async releaseBarrier() {
     if (!this.barrierOwned) return;
     const result = await this.client.query('SELECT pg_advisory_unlock(1544, 5) AS released');
-    this.barrierOwned = false;
     if (result.rows[0]?.released !== true) fail();
+    this.barrierOwned = false;
   }
   async barrierAvailable() {
     this.assertLease();
+    // A failed unlock remains ours until cleanup confirms release. PostgreSQL
+    // advisory locks are reentrant; probing again would increment that hold.
+    if (this.barrierOwned) fail();
     const result = await this.client.query('SELECT pg_try_advisory_lock(1544, 5) AS acquired');
     if (result.rows[0]?.acquired !== true) return false;
-    await this.client.query('SELECT pg_advisory_unlock(1544, 5) AS released');
+    this.barrierOwned = true;
+    await this.releaseBarrier();
     return true;
   }
   async waitForShutdownRelease(signal?: AbortSignal) {

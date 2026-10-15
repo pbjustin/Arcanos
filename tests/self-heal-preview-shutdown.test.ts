@@ -41,6 +41,41 @@ describe('bounded shutdown journal and independent advisory barrier', () => {
       options: '-c statement_timeout=250 -c lock_timeout=100' }));
     expect(fixture.client.query).toHaveBeenCalledTimes(1); expect(fixture.client.end).toHaveBeenCalledTimes(1);
   });
+  it.each(['timeout', 'false'] as const)('retains acquired probe ownership after an unlock %s and retries release on close', async failure => {
+    const fixture = transport(); const originalQuery = fixture.client.query;
+    let heldLocks = 0; let acquisitions = 0; let unlocks = 0;
+    fixture.client.query = async (sql, values) => {
+      if (sql.includes('pg_try_advisory_lock')) { acquisitions += 1; heldLocks += 1; return { rows: [{ acquired: true }] }; }
+      if (sql.includes('pg_advisory_unlock')) {
+        unlocks += 1;
+        if (unlocks === 1) {
+          if (failure === 'timeout') throw new Error('Synthetic advisory unlock query timeout.');
+          return { rows: [{ released: false }] };
+        }
+        heldLocks -= 1; return { rows: [{ released: true }] };
+      }
+      return originalQuery(sql, values);
+    };
+    const journal = await PreviewShutdownJournal.open({}, fixture.owner, () => fixture.client);
+    try {
+      await expect(journal.barrierAvailable()).rejects.toThrow(failure === 'timeout'
+        ? 'Synthetic advisory unlock query timeout.' : 'SELF_HEAL_PREVIEW_SHUTDOWN_EVIDENCE_FAILED');
+      expect(heldLocks).toBe(1);
+      await expect(journal.barrierAvailable()).rejects.toThrow('SELF_HEAL_PREVIEW_SHUTDOWN_EVIDENCE_FAILED');
+      await expect(journal.holdBarrier()).rejects.toThrow('SELF_HEAL_PREVIEW_SHUTDOWN_EVIDENCE_FAILED');
+      expect(acquisitions).toBe(1);
+    } finally { await journal.close(); }
+    expect(unlocks).toBe(2);
+    expect(heldLocks).toBe(0);
+    expect(fixture.client.end).toHaveBeenCalledTimes(1);
+  });
+  it('does not acquire ownership or unlock a barrier still held by another session', async () => {
+    const fixture = transport(); const journal = await PreviewShutdownJournal.open({}, fixture.owner, () => fixture.client);
+    expect(await journal.barrierAvailable()).toBe(false);
+    await journal.close();
+    expect((fixture.client.query as ReturnType<typeof jest.fn>).mock.calls.filter(([sql]) => String(sql).includes('pg_advisory_unlock'))).toEqual([]);
+    expect(fixture.client.end).toHaveBeenCalledTimes(1);
+  });
   it('keeps the actual evaluation pending across abort until independent release, then records the cancellation', async () => {
     jest.useFakeTimers(); const fixture = transport(); const journal = await PreviewShutdownJournal.open({}, fixture.owner, () => fixture.client);
     await journal.prepare(binding); const abort = new AbortController();

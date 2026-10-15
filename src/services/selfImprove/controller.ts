@@ -68,6 +68,7 @@ export async function runSelfImproveCycle(
   // Decide
   let decision: SelfImproveDecision['decision'] = 'NOOP';
   let notes = '';
+  let effectCommitted = false;
 
   if (frozen || cfg.selfImproveEnabled === false) {
     metric('self_improve.frozen', { id, reason: frozen ? 'kill_switch' : 'disabled' });
@@ -78,7 +79,7 @@ export async function runSelfImproveCycle(
     // High severity drift => rollback posture (freeze + escalate)
     if (drift.severity === 'high') {
       await freezeSelfImprove(`High severity drift: ${drift.kind}`);
-      options.signal?.throwIfAborted();
+      effectCommitted = true;
       decision = 'ROLLBACK';
       notes = 'High severity drift: system frozen and rollback posture activated';
     } else {
@@ -95,6 +96,7 @@ export async function runSelfImproveCycle(
   // Actuate (proposal + optional PR-bot actuator)
   const reflectionIds: string[] = [];
   let patchProposal: PatchProposal | undefined;
+  let analysis: Awaited<ReturnType<PRAssistant['analyzePR']>> | undefined;
   let prResult: { success: boolean; message: string; branch?: string; commitHash?: string; error?: string } | undefined;
   if (decision === 'PATCH_PROPOSAL') {
     // Create a small queue: prioritize high then medium.
@@ -158,7 +160,7 @@ export async function runSelfImproveCycle(
 
       // Deterministic gating: run PRAssistant before proposing a PR.
       const assistant = new PRAssistant();
-      const analysis = await assistant.analyzePR(patchProposal.diff, patchProposal.files);
+      analysis = await assistant.analyzePR(patchProposal.diff, patchProposal.files);
       options.signal?.throwIfAborted();
 
       //audit Assumption: conditional PR analysis can still be safe for human-reviewed PR creation; risk: weaker automated gate strictness; invariant: hard-fail status remains blocked; handling: allow ✅ and ⚠️, block ❌.
@@ -189,7 +191,7 @@ export async function runSelfImproveCycle(
           base: 'main',
           labels: ['self-improve', `autonomy-${cfg.selfImproveAutonomyLevel}`, (cfg.selfImproveAutonomyLevel >= 2 ? 'requires-human-approval' : 'propose-only')]
         });
-        options.signal?.throwIfAborted();
+        effectCommitted = true;
 
         metric('self_improve.pr_created', { id, success: prResult.success, branch: prResult.branch });
       } else if (!gatesOk) {
@@ -197,9 +199,9 @@ export async function runSelfImproveCycle(
         notes += ` | PR gates failed: ${analysis.summary}`;
       }
     } catch (e: unknown) {
-      // Cancellation owns the remainder of this cycle; it must not be converted
-      // into a recoverable proposal failure followed by another evidence write.
-      options.signal?.throwIfAborted();
+      // Cancellation stops new work. An actuator receipt that already returned
+      // still needs its audit record before cancellation reaches the caller.
+      if (!effectCommitted) options.signal?.throwIfAborted();
       rethrowWorkerAiBudgetError(e);
       metric('self_improve.patch_structured_error', { id });
       errors.push({ stage: 'patch_proposal_or_pr', message: resolveErrorMessage(e), detail: { trigger: input.trigger, component: input.component } });
@@ -215,7 +217,7 @@ export async function runSelfImproveCycle(
   }
 
   // Evidence pack
-  options.signal?.throwIfAborted();
+  if (!effectCommitted) options.signal?.throwIfAborted();
   const evidencePath = await writeEvidencePack({
     id,
     createdAt: new Date().toISOString(),
@@ -237,6 +239,7 @@ export async function runSelfImproveCycle(
     actions: {
       reflectionIds,
       patchProposal,
+      analysis,
       prResult
     },
     errors,

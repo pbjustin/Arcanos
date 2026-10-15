@@ -762,6 +762,49 @@ describe('bounded self-healing preview provider profile', () => {
     expect(output).not.toContain(token);
   });
 
+  it.each([['SIGTERM', true], ['SIGINT', true], ['expiry', true], ['SIGTERM', false], ['SIGINT', false]])(
+    'settles %s only from the close callback result (failure=%s)', async (trigger, failClose) => {
+      // Inject only the close result; the real CLI child still owns its loopback
+      // server, signal listeners, immutable expiry and runtime completion.
+      const preload = `
+        import { Server } from 'node:http';
+        const originalClose = Server.prototype.close;
+        Server.prototype.close = function(callback) {
+          return originalClose.call(this, () => {
+            setTimeout(() => callback(${failClose ? "new Error('fixture-sensitive-close-failure')" : 'undefined'}), 25);
+          });
+        };
+        ${trigger === 'expiry' ? '' : `
+          const originalWrite = process.stdout.write;
+          process.stdout.write = function(chunk, ...args) {
+            const result = originalWrite.call(this, chunk, ...args);
+            if (String(chunk).includes(${JSON.stringify(SELF_HEAL_PREVIEW_OPENAI_FIXTURE_READY_SENTINEL)})) {
+              setTimeout(() => process.emit(${JSON.stringify(trigger)}), 10);
+            }
+            return result;
+          };
+        `}
+      `;
+      const child = spawn(process.execPath, ['--import', `data:text/javascript,${encodeURIComponent(preload)}`,
+        fileURLToPath(new URL('../scripts/railway-backstage-heavy-openai-fixture.mjs', import.meta.url)),
+        SELF_HEAL_PREVIEW_OPENAI_FIXTURE_CHILD_ARGUMENT], { env: childEnv({
+        ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT: new Date(Date.now() + 1000).toISOString(),
+      }), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+      let output = ''; let errors = '';
+      child.stdout.on('data', chunk => { output += chunk; });
+      child.stderr.on('data', chunk => { errors += chunk; });
+      const result = await new Promise((resolve, reject) => {
+        const deadline = setTimeout(() => { child.kill(); reject(new Error('fixture close did not settle')); }, 5000);
+        child.once('error', error => { clearTimeout(deadline); reject(error); });
+        child.once('exit', code => { clearTimeout(deadline); resolve(code); });
+      });
+      expect(result).toBe(failClose ? 1 : 0);
+      expect(errors).toBe(failClose ? 'SELF_HEAL_PREVIEW_OPENAI_RUNTIME_FAILED\n' : '');
+      expect(output).toBe(`${SELF_HEAL_PREVIEW_OPENAI_FIXTURE_READY_SENTINEL}\n`);
+      expect(errors).not.toContain('fixture-sensitive-close-failure');
+    },
+  );
+
   it('expires and drains a held provider operation without a late completion', async () => {
     runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: childEnv({
       ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT: new Date(Date.now() + 500).toISOString(),
