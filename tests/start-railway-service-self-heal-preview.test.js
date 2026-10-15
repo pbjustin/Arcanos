@@ -161,7 +161,7 @@ describe('opt-in self-heal profile of the existing heavy preview supervisor', ()
     expect(profile('worker', { ARCANOS_SELF_HEAL_PREVIEW_STARTUP_MODE: 'scheduler-failure' }).startupMode).toBe('scheduler-failure');
     expect(() => profile('web', { ARCANOS_SELF_HEAL_PREVIEW_STARTUP_MODE: 'scheduler-failure' })).toThrow('SELF_HEAL_PREVIEW_STARTUP_MODE_INVALID');
   });
-  it.each(['RAILWAY_TOKEN', 'GITHUB_TOKEN', 'AWS_SECRET_ACCESS_KEY', 'CUSTOM_API_KEY', 'SELF_IMPROVE_ENABLED', 'PREDICTIVE_HEALING_ENABLED', 'NODE_OPTIONS'])('rejects ambient authority %s', name => {
+  it.each(['RAILWAY_TOKEN', 'RAILWAY_API_TOKEN', 'RAILWAY_ENV', 'GITHUB_TOKEN', 'AWS_SECRET_ACCESS_KEY', 'CUSTOM_API_KEY', 'SELF_IMPROVE_ENABLED', 'PREDICTIVE_HEALING_ENABLED', 'NODE_OPTIONS'])('rejects ambient authority %s', name => {
     expect(() => profile('worker', { [name]: 'forbidden' })).toThrow();
   });
   it.each(['web', 'worker'])('admits the documented Railway snapshot metadata without projecting it into %s children', role => {
@@ -304,15 +304,19 @@ describe('opt-in self-heal profile of the existing heavy preview supervisor', ()
         .toThrow('SELF_HEAL_PREVIEW_DATABASE_CERTIFICATE_FILE_INVALID');
     }
   });
-  it('accepts the exact Docker image metadata and strips it from both role environments', () => {
+  it('accepts exact image and runtime metadata and strips it from both child environments for each role', () => {
     const metadata = { ARCANOS_WORKSPACE_ROOT: '/app', ARCANOS_PYTHON_RUNTIME_DIR: '/app/daemon-python',
-      RAILWAY_CLI_BIN: '/usr/local/bin/railway-native', PYTHON: 'python3' };
+      RAILWAY_CLI_BIN: '/usr/local/bin/railway-native', RAILWAY_BETA_ENABLE_RUNTIME_V2: '1', PYTHON: 'python3' };
     for (const role of ['worker', 'web']) {
       const env = { ...environment(role), ...metadata };
       const resolved = resolveSelfHealPreviewProfile(role, env, { now: () => NOW });
       expect(resolved.proofTarget.processKind).toBe(role);
       const child = buildSelfHealPreviewApplicationEnvironment(resolved, env);
-      for (const name of Object.keys(metadata)) expect(child).not.toHaveProperty(name);
+      const fixtureChild = buildSelfHealPreviewFixtureEnvironment(resolved);
+      for (const name of Object.keys(metadata)) {
+        expect(child).not.toHaveProperty(name);
+        expect(fixtureChild).not.toHaveProperty(name);
+      }
     }
   });
   it.each(['worker', 'web'])('admits only a matching legacy Railway environment alias for %s and strips it from children', role => {
@@ -346,6 +350,7 @@ describe('opt-in self-heal profile of the existing heavy preview supervisor', ()
   it.each([
     ['ARCANOS_WORKSPACE_ROOT', '/foreign'], ['ARCANOS_PYTHON_RUNTIME_DIR', '/foreign/daemon-python'],
     ['RAILWAY_CLI_BIN', '/foreign/railway'],
+    ...['0', 'true', '', ' 1', 1, null, undefined].map(value => ['RAILWAY_BETA_ENABLE_RUNTIME_V2', value]),
   ])('rejects altered image metadata %s before artifact verification, database access, or spawning', async (name, value) => {
     const db = database(); const spawnImpl = jest.fn(); const verifyArtifact = jest.fn(async () => ARTIFACT);
     await expect(runSelfHealPreviewSupervisor('worker', { ...environment(), [name]: value }, {

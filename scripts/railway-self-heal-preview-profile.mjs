@@ -56,6 +56,7 @@ const IMAGE_METADATA = new Map([
   ['ARCANOS_WORKSPACE_ROOT', '/app'],
   ['ARCANOS_PYTHON_RUNTIME_DIR', '/app/daemon-python'],
   ['RAILWAY_CLI_BIN', '/usr/local/bin/railway-native'],
+  ['RAILWAY_BETA_ENABLE_RUNTIME_V2', '1'],
 ]);
 const BENIGN_AMBIENT_NAMES = new Set([
   'PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'PWD', 'OLDPWD', 'SHLVL', '_',
