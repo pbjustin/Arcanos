@@ -376,6 +376,14 @@ describe('opt-in self-heal profile of the existing heavy preview supervisor', ()
       'self-heal-preview:proof-run-1544:', ['self-heal-preview-proof-run-1544-slot-1', 'self-heal-preview-proof-run-1544-slot-2'],
     ]);
     expect(db.queries.find(query => query.sql.includes('AS foreign_jobs')).sql).toContain('last_worker_id <> ALL($2::text[])');
+    const events = db.queries.find(query => query.sql.includes('AS orphan_events'));
+    expect(events.values).toEqual([
+      ['self-heal-preview-proof-run-1544-slot-1', 'self-heal-preview-proof-run-1544-slot-2'],
+      'self-heal-preview-proof-run-1544', expect.arrayContaining(['/v1/models', '/v1/responses', '/v1/chat/completions']),
+      profile().issuedAt, profile().expiresAt,
+    ]);
+    expect(events.sql).toContain('IS NOT TRUE');
+    expect(events.sql).toContain('e.metadata = jsonb_build_object');
     await guard.close();
   });
   it.each([

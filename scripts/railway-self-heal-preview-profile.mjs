@@ -13,6 +13,7 @@ import {
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_CHILD_ENV,
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_CHILD_VALUE,
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_BASE_URL,
+  SELF_HEAL_PREVIEW_OPENAI_FIXTURE_MODEL_IDS,
   SELF_HEAL_PREVIEW_OPENAI_FIXTURE_SDK_KEY,
 } from './railway-backstage-heavy-openai-fixture.mjs';
 
@@ -332,7 +333,25 @@ export async function preflightSelfHealPreviewDatabase(profile, options = {}) {
         COUNT(*) FILTER (WHERE status = 'running' AND lease_expires_at > NOW())::integer AS active_leases
         FROM public.job_data`, [`self-heal-preview:${profile.proofTarget.runId}:`, resolveSelfHealPreviewWorkerIds(profile)]);
       if (jobs.rows?.[0]?.foreign_jobs !== 0 || jobs.rows?.[0]?.active_leases !== 0) fail('FOREIGN_OR_ACTIVE_JOBS');
-      const events = await client.query('SELECT COUNT(*)::integer AS orphan_events FROM public.job_events e WHERE NOT EXISTS (SELECT 1 FROM public.job_data j WHERE j.id = e.job_id)');
+      // The production provider-budget writer uses the reserved zero subject for
+      // non-job requests. Admit only its exact run-owned, fixture-supported shape.
+      const events = await client.query(`SELECT COUNT(*)::integer AS orphan_events FROM public.job_events e
+        WHERE NOT EXISTS (SELECT 1 FROM public.job_data j WHERE j.id = e.job_id)
+          AND (e.job_id = '00000000-0000-0000-0000-000000000000'::uuid
+            AND e.event_type = 'worker.budget.ai_provider_attempt'
+            AND e.worker_id = ANY($1::text[]) AND e.stats_worker_id = $2::text
+            AND e.claim_generation IS NULL AND e.trace_id IS NULL AND e.duration_ms IS NULL
+            AND e.operation = ANY($3::text[])
+            AND e.occurred_at >= $4::timestamptz AND e.occurred_at < $5::timestamptz
+            AND e.occurred_at <= clock_timestamp()
+            AND e.metadata = jsonb_build_object('budgetKind', 'ai_provider_attempt',
+              'workerId', e.worker_id, 'operation', e.operation,
+              'claimGeneration', NULL, 'windowMs', 3600000)) IS NOT TRUE`, [
+        resolveSelfHealPreviewWorkerIds(profile), `self-heal-preview-${profile.proofTarget.runId}`,
+        ['/v1/models', '/v1/responses', '/v1/chat/completions',
+          ...SELF_HEAL_PREVIEW_OPENAI_FIXTURE_MODEL_IDS.flatMap(id => [`/v1/models/${id}`, `/v1/models/${encodeURIComponent(id)}`])],
+        profile.issuedAt, profile.expiresAt,
+      ]);
       if (events.rows?.[0]?.orphan_events !== 0) fail('FOREIGN_EVENTS');
       mode = 'receipt-bound-resume';
     }
