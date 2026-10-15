@@ -252,7 +252,7 @@ function scenarioFixture(scenario, fault = null) {
     trinity: { snapshot: { intake: stage(), reasoning: stage(), final: stage() } },
     predictiveRun: { status: 'completed', startedAt: new Date(NOW - 1).toISOString(), audit: { auditId: 'predictive_heal_audit_1' } } });
   const calls = []; const providerReceipts = [];
-  const response = () => { state.observedAt = new Date(++clock).toISOString(); return { observation: structuredClone(state) }; };
+  const response = () => { state.policy.observedAt = new Date(++clock).toISOString(); return { observation: structuredClone(state) }; };
   const transport = {
     restart: async () => { state.processInstanceId = id(31); return { restartRequested: true }; },
     remote: async (role, args) => {

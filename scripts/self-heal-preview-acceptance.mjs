@@ -461,7 +461,7 @@ export async function runSelfHealAcceptanceCase(scenario, manifest, options = {}
       const injectedFaults = (providerAfter?.receipts ?? []).filter(value => !providerReceiptIds.has(value.requestId)
         && value.fault === 'timeout' && ['timeout', 'client_closed'].includes(value.outcome));
       await remote('worker', ['provider', 'set_healthy']);
-      const beforeTick = await inspect(); const tickStartedAt = Date.parse(beforeTick.observedAt); const after = await tick();
+      const beforeTick = await inspect(); const tickStartedAt = Date.parse(beforeTick.policy?.observedAt); const after = await tick();
       requireProof(after.processInstanceId === baseline.processInstanceId
         && after.coordinator.lastActionAt === baseline.coordinator.lastActionAt
         && Number.isSafeInteger(after.provider.reloadCount) && after.provider.reloadCount === baseline.provider.reloadCount
@@ -499,7 +499,7 @@ export async function runSelfHealAcceptanceCase(scenario, manifest, options = {}
         && value.fault === 'timeout' && ['timeout', 'client_closed'].includes(value.outcome));
       await remote('worker', ['provider', 'set_healthy']);
       if (observedFaults !== 2 || injectedFaults.length !== 2) block('PREDICTIVE_FAULT_PREREQUISITE');
-      const before = await inspect(); const requestedAt = Date.parse(before.observedAt);
+      const before = await inspect(); const requestedAt = Date.parse(before.policy?.observedAt);
       const admitted = await command('predictive_evaluate_live'); const started = inspection(admitted)?.predictiveRun;
       if (admitted.observation?.rejected === true || !started || started.processInstanceId !== baseline.processInstanceId
         || !Number.isFinite(requestedAt) || !Number.isFinite(Date.parse(started.startedAt))
