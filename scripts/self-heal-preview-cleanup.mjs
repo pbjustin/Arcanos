@@ -14,10 +14,14 @@ import {
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const WORKSPACE = '1c9265a3-986f-4304-ad3e-5a874caab039';
+const OWNER_USER_ID = 'e1c58b83-8740-4318-9ee2-780c2a6f4e8b';
 const MAX_LEASE_MS = 7_200_000;
 const MAX_BYTES = 2 * 1024 * 1024;
 const CLI_TIMEOUT_MS = 15_000;
+const CLI_MUTATION_TIMEOUT_MS = 180_000;
 const ABSENCE_TIMEOUT_MS = 60_000;
+const INVENTORY_MAX_PAGES = 5;
+const INVENTORY_PAGE_SIZE = 100;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const FORBIDDEN_IDS = new Set([
   '7faf44e5-519c-4e73-8d7a-da9f389e6187', '8e4cb1eb-1441-4e83-b434-15c06c676a5f',
@@ -27,20 +31,22 @@ const FORBIDDEN_IDS = new Set([
 ]);
 const RECEIPT_KEYS = Object.freeze(['version', 'owner', 'repository', 'prNumber', 'sourceSha', 'runId',
   'projectId', 'projectName', 'workspaceId', 'environmentId', 'environmentName', 'issuedAt', 'expiresAt']);
-const CLEANUP_INVENTORY_QUERY = `query SelfHealPreviewCleanupInventory($projectId: String!) {
-  project(id: $projectId) {
+const CLEANUP_INVENTORY_QUERY = `query SelfHealPreviewCleanupOwnerInventory($after: String) {
+  me { id }
+  projects(first: 100, after: $after, workspaceId: "${WORKSPACE}", includeDeleted: true) {
+    edges { node {
     id name workspaceId deletedAt
-    services { edges { node { id name } } pageInfo { hasNextPage } }
-    volumes { edges { node { id name projectId } } pageInfo { hasNextPage } }
-    buckets { edges { node { id } } pageInfo { hasNextPage } }
-    environments { edges { node {
+    services(first: 100) { edges { node { id name } } pageInfo { hasNextPage } }
+    volumes(first: 100) { edges { node { id name projectId } } pageInfo { hasNextPage } }
+    buckets(first: 100) { edges { node { id } } pageInfo { hasNextPage } }
+    environments(first: 100) { edges { node {
       id name deletedAt
-      serviceInstances { edges { node { id serviceId serviceName environmentId } } pageInfo { hasNextPage } }
-      volumeInstances { edges { node {
+      serviceInstances(first: 100) { edges { node { id serviceId serviceName environmentId } } pageInfo { hasNextPage } }
+      volumeInstances(first: 100) { edges { node {
         id volumeId serviceId environmentId mountPath volume { id name projectId }
       } } pageInfo { hasNextPage } }
     } } pageInfo { hasNextPage } }
-  }
+  } } pageInfo { hasNextPage endCursor } }
 }`;
 const SERVICES = new Map([
   ['Postgres', '/var/lib/postgresql/data'], ['Redis', '/data'],
@@ -103,12 +109,23 @@ function cleanupInventory(status, receipt, options = {}) {
   const now = options.now?.() ?? Date.now();
   if (!record(status) || status.id !== receipt.projectId || status.name !== receipt.projectName
     || status.workspaceId !== WORKSPACE || !validId(status.id)
-    || (status.deletedAt !== null && !(iso(status.deletedAt) > now))) fail('PROJECT_MISMATCH');
+    || (status.deletedAt !== null && !Number.isFinite(iso(status.deletedAt)))) fail('PROJECT_MISMATCH');
   if (status.buckets !== undefined) {
     const buckets = Array.isArray(status.buckets) ? status.buckets : connection(status.buckets);
     if (buckets.length !== 0) fail('FOREIGN_RESOURCES');
   }
   const environments = connection(status.environments);
+  // Owner-visible deleted project metadata can outlive all resource collections.
+  // Only that exact empty tombstone is admissible; retained resources after the
+  // deletion timestamp are neither absent nor authority for a recovery mutation.
+  if (status.deletedAt !== null && iso(status.deletedAt) <= now) {
+    if (environments.length !== 0 || connection(status.services).length !== 0
+      || connection(status.volumes).length !== 0) fail('DELETED_PROJECT_RESOURCES_RETAINED');
+    return { services: [], instances: [], globalVolumes: [], volumeInstances: [],
+      bindings: options.bindings ?? receipt.resources ?? resourceBindings({ services: [], volumes: [] }),
+      scheduledDeletionAt: status.deletedAt,
+      counts: { serviceCount: 0, serviceInstanceCount: 0, volumeCount: 0, volumeInstanceCount: 0, environmentCount: 0 } };
+  }
   if (environments.length !== 1) fail('ENVIRONMENT_MISMATCH');
   const environment = environments[0];
   if (environment.id !== receipt.environmentId || environment.name !== receipt.environmentName
@@ -348,7 +365,7 @@ async function cli(args, options, timeout = CLI_TIMEOUT_MS, json = true) {
     const command = options.command ?? promisify(execFile);
     const result = await command(invocation.executable, [...invocation.argsPrefix, ...args], {
       env: buildBackstageHeavyRailwayCliEnvironment(env), encoding: 'utf8', windowsHide: true,
-      maxBuffer: MAX_BYTES, timeout: Math.max(1, Math.min(timeout, CLI_TIMEOUT_MS)),
+      maxBuffer: MAX_BYTES, timeout: Math.max(1, Math.min(timeout, CLI_MUTATION_TIMEOUT_MS)),
     });
     if (typeof result?.stdout !== 'string' || Buffer.byteLength(result.stdout) > MAX_BYTES
       || (typeof result.stderr === 'string' && Buffer.byteLength(result.stderr) > MAX_BYTES)) fail('CLI_OUTPUT_INVALID');
@@ -360,8 +377,7 @@ async function cli(args, options, timeout = CLI_TIMEOUT_MS, json = true) {
 }
 
 async function assertSupportedCli(options) {
-  // The owner-visible fallback uses `railway api`, available from CLI 5.28.
-  // A complete status projection must not bypass this before watchdog arming.
+  // The strict owner-visible inventory uses `railway api`, available from CLI 5.28.
   const output = await cli(['--version'], options, CLI_TIMEOUT_MS, false);
   const match = /^railway (0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.exec(output.trim());
   const version = match?.slice(1).map(Number);
@@ -369,38 +385,59 @@ async function assertSupportedCli(options) {
     || !(version[0] > 5 || (version[0] === 5 && version[1] >= 28))) fail('CLI_VERSION_UNSUPPORTED');
 }
 
-async function projectList(options, timeout = CLI_TIMEOUT_MS) {
-  const projects = await cli(['list', '--json'], options, timeout);
-  if (!Array.isArray(projects) || projects.some(project => !record(project) || !UUID.test(project.id ?? ''))
-    || new Set(projects.map(project => project.id)).size !== projects.length) fail('PROJECT_LIST_INVALID');
-  return projects;
-}
-
 async function readOwnedProject(receipt, options, deadline) {
   const now = options.now ?? Date.now;
+  const inventoryDeadline = Math.min(now() + ABSENCE_TIMEOUT_MS, deadline ?? Infinity);
   const timeout = () => {
-    const remaining = deadline === undefined ? CLI_TIMEOUT_MS : deadline - now();
+    const remaining = inventoryDeadline - now();
     if (remaining <= 0) fail('RESOURCE_ABSENCE_UNCONFIRMED');
     return Math.min(CLI_TIMEOUT_MS, remaining);
   };
-  let status;
-  try {
-    status = await cli(['status', '--project', receipt.projectId, '--environment', receipt.environmentId, '--json'], options, timeout());
-  } catch (error) {
-    if (!(error instanceof SelfHealPreviewCleanupError) || error.message !== 'SELF_HEAL_PREVIEW_CLEANUP_CLI_FAILED') throw error;
-  }
-  if (status?.volumes) return status;
   // CLI status rejects a project as soon as deletion is scheduled, and its
-  // normal projection omits global volumes. Use one fixed read-only query;
+  // projection cannot prove owner identity or collection completeness.
+  // Per-project reads and ordinary project lists filter deleted targets.
+  // Traverse a bounded, complete owner-visible includeDeleted collection;
   // deletion never falls back to an API mutation or a different target.
-  const response = await cli(['api', CLEANUP_INVENTORY_QUERY, '--variables', JSON.stringify({ projectId: receipt.projectId }), '--compact'], options, timeout());
-  if (!record(response) || (Array.isArray(response.errors) && response.errors.length > 0)
-    || !record(response.data) || !Object.hasOwn(response.data, 'project')) fail('INVENTORY_QUERY_FAILED');
-  if (response.data.project === null) {
-    if ((await projectList(options, timeout())).some(project => project.id === receipt.projectId)) fail('PROJECT_INSPECTION_UNAVAILABLE');
-    return null;
+  const complete = value => {
+    if (value?.pageInfo?.hasNextPage !== false) fail('INCOMPLETE_INVENTORY');
+    return connection(value);
+  };
+  const projectIds = new Set(); const cursors = new Set();
+  let after = null; let project;
+  for (let page = 0; page < INVENTORY_MAX_PAGES; page += 1) {
+    const response = await cli(['api', CLEANUP_INVENTORY_QUERY, '--variables', JSON.stringify({ after }), '--compact'], options, timeout());
+    timeout();
+    if (!record(response) || (response.errors !== undefined && (!Array.isArray(response.errors) || response.errors.length > 0))
+      || !record(response.data) || !Object.hasOwn(response.data, 'projects')) fail('INVENTORY_QUERY_FAILED');
+    if (response.data.me?.id !== OWNER_USER_ID) fail('OWNER_IDENTITY_MISMATCH');
+    const collection = response.data.projects;
+    if (!record(collection) || !Array.isArray(collection.edges) || !record(collection.pageInfo)
+      || typeof collection.pageInfo.hasNextPage !== 'boolean'
+      || !Object.hasOwn(collection.pageInfo, 'endCursor')) fail('INCOMPLETE_INVENTORY');
+    if (collection.edges.length > INVENTORY_PAGE_SIZE) fail('INVENTORY_LIMIT_EXCEEDED');
+    for (const edge of collection.edges) {
+      const candidate = edge?.node;
+      if (!record(candidate) || !UUID.test(candidate.id ?? '') || candidate.workspaceId !== WORKSPACE
+        || projectIds.has(candidate.id)) fail('PROJECT_LIST_INVALID');
+      projectIds.add(candidate.id);
+      if (candidate.id === receipt.projectId) project = candidate;
+    }
+    if (!collection.pageInfo.hasNextPage) break;
+    const cursor = collection.pageInfo.endCursor;
+    if (typeof cursor !== 'string' || cursor.length === 0 || cursor.length > 1024
+      || cursor.trim() !== cursor || /[\u0000-\u001f\u007f]/u.test(cursor)
+      || cursors.has(cursor) || collection.edges.length === 0) fail('INVENTORY_CURSOR_INVALID');
+    if (page + 1 === INVENTORY_MAX_PAGES || projectIds.size >= INVENTORY_PAGE_SIZE * INVENTORY_MAX_PAGES) fail('INVENTORY_LIMIT_EXCEEDED');
+    cursors.add(cursor); after = cursor;
   }
-  return response.data.project;
+  // A workspace-scoped omission may be a transfer, not deletion.
+  if (!project) fail('PROJECT_ABSENCE_UNCONFIRMED');
+  complete(project.services); complete(project.volumes); complete(project.buckets);
+  const environments = complete(project.environments);
+  for (const environment of environments) {
+    complete(environment.serviceInstances); complete(environment.volumeInstances);
+  }
+  return project;
 }
 
 function noServices(inventory) { return inventory.services.length === 0 && inventory.instances.length === 0; }
@@ -443,7 +480,7 @@ export async function runSelfHealPreviewCleanup(config, options = {}) {
     await reloadResources();
     await assertSupportedCli(options);
     let status = await readOwnedProject(receipt, options);
-    if (status !== null) cleanupInventory(status, authority, { now });
+    cleanupInventory(status, authority, { now });
     if (config.watchdog) {
       emit('WATCHDOG_ARMED');
       const expires = Date.parse(receipt.expiresAt);
@@ -455,13 +492,6 @@ export async function runSelfHealPreviewCleanup(config, options = {}) {
     }
     await reloadResources();
     status = await readOwnedProject(receipt, options);
-    const finishAbsent = () => {
-      Object.assign(output, { resourceAbsenceVerified: true, projectAbsenceVerified: true,
-        absenceVerified: true, projectMetadataRetained: false, serviceCount: 0, serviceInstanceCount: 0,
-        volumeCount: 0, volumeInstanceCount: 0, environmentCount: 0 });
-      return emit('DELETED');
-    };
-    if (status === null) return finishAbsent();
     let inventory = cleanupInventory(status, authority, { now });
     if (!authority.resources && !noResources(inventory)) {
       if (typeof persistResources !== 'function') fail('DURABLE_RESOURCE_RECEIPT_REQUIRED');
@@ -476,7 +506,6 @@ export async function runSelfHealPreviewCleanup(config, options = {}) {
       scheduledDeletionAt: inventory.scheduledDeletionAt }); emit('OWNERSHIP_RECHECKED');
     const refresh = async deadline => {
       const latest = await readOwnedProject(receipt, options, deadline);
-      if (latest === null) return null;
       const observed = cleanupInventory(latest, receipt, { now, bindings });
       Object.assign(output, observed.counts, { projectMetadataRetained: observed.scheduledDeletionAt !== null,
         scheduledDeletionAt: observed.scheduledDeletionAt });
@@ -487,51 +516,51 @@ export async function runSelfHealPreviewCleanup(config, options = {}) {
       const deadline = now() + ABSENCE_TIMEOUT_MS;
       for (let attempt = 0; attempt < 31 && now() < deadline; attempt += 1) {
         const latest = await refresh(deadline);
-        if (latest === null || predicate(latest)) return latest;
+        if (predicate(latest)) return latest;
         if (attempt < 30) await wait(Math.min(2000, Math.max(0, deadline - now())));
       }
       fail('RESOURCE_ABSENCE_UNCONFIRMED');
     };
     for (const service of bindings.services) {
-      inventory = await refresh(); if (inventory === null) return finishAbsent();
+      inventory = await refresh();
       if (!inventory.services.some(current => current.id === service.id)) continue;
       try {
         await cli(['service', 'delete', '--project', receipt.projectId, '--environment', receipt.environmentId,
-          '--service', service.id, '--yes', '--json'], options, CLI_TIMEOUT_MS, false);
+          '--service', service.id, '--yes', '--json'], options, CLI_MUTATION_TIMEOUT_MS, false);
       } catch (error) {
         if (inventory.scheduledDeletionAt !== null) fail('SCHEDULED_RESOURCE_DELETE_REQUIRES_APPROVED_RECOVERY');
         throw error;
       }
       output.serviceDeleteRequests.push(service.id); emit('SERVICE_DELETE_REQUESTED');
     }
-    inventory = await poll(noServices); if (inventory === null) return finishAbsent();
+    inventory = await poll(noServices);
     for (const volume of bindings.volumes) {
-      inventory = await refresh(); if (inventory === null) return finishAbsent();
+      inventory = await refresh();
       if (!inventory.globalVolumes.some(current => current.id === volume.id)) continue;
       try {
         await cli(['volume', '--project', receipt.projectId, '--environment', receipt.environmentId,
-          'delete', '--volume', volume.id, '--yes', '--json'], options, CLI_TIMEOUT_MS, false);
+          'delete', '--volume', volume.id, '--yes', '--json'], options, CLI_MUTATION_TIMEOUT_MS, false);
       } catch (error) {
         if (inventory.scheduledDeletionAt !== null) fail('SCHEDULED_RESOURCE_DELETE_REQUIRES_APPROVED_RECOVERY');
         throw error;
       }
       output.volumeDeleteRequests.push(volume.id); emit('VOLUME_DELETE_REQUESTED');
     }
-    inventory = await poll(noResources); if (inventory === null) return finishAbsent();
+    inventory = await poll(noResources);
     Object.assign(output, inventory.counts, { resourceAbsenceVerified: true }); emit('RESOURCES_ABSENT');
     // Scheduling a project deletion retains its metadata for 48 hours. It is
     // performed only after independently observing no services or volumes.
     if (inventory.scheduledDeletionAt === null) {
-      inventory = await refresh(); if (inventory === null) return finishAbsent();
+      inventory = await refresh();
       if (!noResources(inventory)) { output.resourceAbsenceVerified = false; fail('RESOURCES_REAPPEARED'); }
       if (inventory.scheduledDeletionAt === null) {
-        await cli(['delete', '--project', receipt.projectId, '--yes', '--json'], options, CLI_TIMEOUT_MS, false);
+        await cli(['delete', '--project', receipt.projectId, '--yes', '--json'], options, CLI_MUTATION_TIMEOUT_MS, false);
         output.deletionRequested = true; emit('PROJECT_DELETION_SCHEDULE_REQUESTED');
       }
     }
     const deadline = now() + ABSENCE_TIMEOUT_MS;
     for (let attempt = 0; attempt < 31 && now() < deadline; attempt += 1) {
-      inventory = await refresh(deadline); if (inventory === null) return finishAbsent();
+      inventory = await refresh(deadline);
       if (!noResources(inventory)) { output.resourceAbsenceVerified = false; fail('RESOURCES_REAPPEARED'); }
       if (inventory.scheduledDeletionAt !== null) {
         Object.assign(output, { projectMetadataRetained: true, scheduledDeletionAt: inventory.scheduledDeletionAt });
@@ -542,6 +571,7 @@ export async function runSelfHealPreviewCleanup(config, options = {}) {
     fail('PROJECT_DELETION_SCHEDULE_UNCONFIRMED');
   } catch (error) {
     const code = error instanceof SelfHealPreviewCleanupError ? error.message : 'SELF_HEAL_PREVIEW_CLEANUP_FAILED';
+    if (code === 'SELF_HEAL_PREVIEW_CLEANUP_PROJECT_ABSENCE_UNCONFIRMED') output.resourceAbsenceVerified = false;
     const failure = emit('FAILED', { errorCode: code });
     if (error instanceof SelfHealPreviewCleanupError) { error.receipt = failure; throw error; }
     const safeError = new SelfHealPreviewCleanupError('FAILED'); safeError.receipt = failure; throw safeError;

@@ -1,5 +1,40 @@
 # CI/CD and Environment Separation
 
+The opt-in `worker-coordinator-v1` acceptance extension uses
+`scripts/self-heal-preview-acceptance.mjs` with the existing receipt-bound
+supervisor, fixed SSH client and cleanup watchdog. Its controller contract tests
+run in the lint/type-check job with `node --test
+scripts/self-heal-preview-acceptance.test.mjs`; they perform no Railway calls.
+The driver admits only the 32 named PR1544 scenarios, four exact owned services,
+two bound volumes, an immutable source/artifact manifest and the original
+two-hour expiry. `--execute --allow-network` are both required for operations.
+Each scenario writes immutable, synchronously flushed evidence before proceeding.
+The final result references those receipts by sequence and SHA-256 instead of
+duplicating their bodies. Image pins must match both latest and active deployment
+metadata. Shutdown acceptance correlates the fixed held-evaluation journal with
+independent Redis/process observations, replacement-instance ownership and a
+fenced job. Its initiating SSH call has a separate 30-second deadline inside the
+120-second transition bound; lost SSH is never effect evidence. Cleanup traverses
+at most five complete owner-visible project pages within a 60-second lookup
+deadline and retains all owner, workspace and resource boundaries.
+Injected transports are always synthetic evidence. Missing independent shutdown,
+startup-failure or remote-effect inspection remains blocked, never a pass.
+The live A04 reinstallation recipe deliberately requires a separate initial
+failure generation. Its supplemental verifier consumes the fixed Web startup
+readback, exact failed deployment, fully bound restored-process envelopes and
+ordered A04 attempt-2 evidence: absent slot, pending creation, single completion,
+then the same restored process. A previously completed job cannot prove recovery.
+
+This is an extension of the existing sealed lane, not a production deployment
+workflow or a general administration endpoint. The native passive-worker lane
+and its label do not admit this profile. Operator authentication, independent
+cleanup readiness and the owner-approved cost envelope must be established
+before resources are provisioned; no repository or production token is a
+fallback. The fixed Web queue probe currently covers Backstage Booker admission;
+Core, Gaming and Tutor can reuse the isolated topology but require their own
+reviewed application-specific probes. Synthetic provider responses do not prove
+external-provider recovery or full production equivalence.
+
 ## Overview
 This repository uses GitHub Actions workflows in `.github/workflows/` for build/test validation, docs checks, release automation, and Railway deployment helpers.
 
