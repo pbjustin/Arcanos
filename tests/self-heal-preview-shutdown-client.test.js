@@ -1,4 +1,6 @@
 import { describe, expect, it, jest } from '@jest/globals';
+import { createServer } from 'node:net';
+import { createClient } from 'redis';
 const profile = { proofTarget: { sourceCommit: 'a'.repeat(40), redisUrl: 'redis://test-user:test-password@redis.railway.internal:6379' },
   ownership: { runId: 'shutdown-test-1544' } };
 jest.unstable_mockModule('../scripts/railway-self-heal-preview-profile.mjs', () => ({
@@ -98,6 +100,74 @@ describe('closed independent shutdown SSH operation', () => {
     }
   });
 });
+// Real node-redis/TCP reply waits, with only a bounded loopback RESP fixture.
+// No Redis process, PostgreSQL server or configured infrastructure is contacted.
+describe('shutdown Redis connection and reply deadlines', () => {
+  it.each(['connect', 'INFO', 'CLIENT'])('releases the barrier when %s never replies', async withheld => {
+    const sockets = new Set();
+    const seen = [];
+    const server = createServer(socket => {
+      sockets.add(socket); socket.once('close', () => sockets.delete(socket));
+      socket.on('error', () => undefined);
+      let buffered = Buffer.alloc(0);
+      socket.on('data', chunk => {
+        buffered = Buffer.concat([buffered, chunk]);
+        if (buffered.length > 4096) { socket.destroy(); return; }
+        for (;;) {
+          const firstEnd = buffered.indexOf('\r\n');
+          if (firstEnd < 0) return;
+          const count = Number(buffered.subarray(1, firstEnd).toString());
+          if (buffered[0] !== 42 || !Number.isSafeInteger(count) || count < 1 || count > 16) { socket.destroy(); return; }
+          let offset = firstEnd + 2; const args = [];
+          for (let index = 0; index < count; index += 1) {
+            const lengthEnd = buffered.indexOf('\r\n', offset); if (lengthEnd < 0) return;
+            const length = Number(buffered.subarray(offset + 1, lengthEnd).toString());
+            if (buffered[offset] !== 36 || !Number.isSafeInteger(length) || length < 0 || length > 1024) { socket.destroy(); return; }
+            offset = lengthEnd + 2; if (buffered.length < offset + length + 2) return;
+            args.push(buffered.subarray(offset, offset + length).toString()); offset += length + 2;
+          }
+          buffered = buffered.subarray(offset); seen.push(args[0]);
+          if (withheld === 'connect' || args[0] === withheld && (withheld !== 'CLIENT' || args[1] === 'LIST')) continue;
+          const reply = args[0] === 'INFO' ? `run_id:${SERVER}\r\n` : null;
+          socket.write(reply === null ? '+OK\r\n' : `$${Buffer.byteLength(reply)}\r\n${reply}\r\n`);
+          if (!buffered.length) break;
+        }
+      });
+    });
+    await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+    const f = fixture(); f.env.ARCANOS_PROCESS_KIND = 'web';
+    f.receipt.events.push({ phase: 'independent_held_probe', at: new Date().toISOString(), data: { redisServerRunId: SERVER } },
+      { phase: 'redis_stopped', at: new Date().toISOString(), data: { redisConnected: false } });
+    let client; let timer;
+    f.options.createRedisClient = settings => {
+      client = createClient({ ...settings, url: `redis://127.0.0.1:${server.address().port}` });
+      jest.spyOn(client, 'destroy'); return client;
+    };
+    const started = Date.now();
+    const pending = runSelfHealPreviewShutdown('receipt', 'A06', f.env, f.options);
+    const outcome = pending.then(value => ({ value }), error => ({ error }));
+    try {
+      const result = await Promise.race([outcome, new Promise(resolve => {
+        timer = setTimeout(() => resolve({ error: new Error('TEST_REDIS_REPLY_DEADLINE_MISSING') }), 900);
+      })]);
+      expect(result.error?.message).toBe('SELF_HEAL_PREVIEW_SHUTDOWN_EVIDENCE_FAILED');
+      expect(Date.now() - started).toBeLessThan(900);
+      expect(client.destroy).toHaveBeenCalledTimes(1);
+      expect(client.isOpen).toBe(false);
+      expect(f.journal.releaseBarrier).toHaveBeenCalledTimes(1);
+      expect(f.journal.close).toHaveBeenCalledTimes(1);
+      expect(f.journal.append).not.toHaveBeenCalled();
+      if (withheld !== 'connect') expect(seen).toContain(withheld);
+    } finally {
+      clearTimeout(timer);
+      if (client?.isOpen) client.destroy();
+      for (const socket of sockets) socket.destroy();
+      await outcome;
+      await new Promise(resolve => server.close(resolve));
+    }
+  });
+});
+
 describe('exact process identity parsing', () => {
   const fields = ['S', '1501', ...Array.from({ length: 17 }, () => '0'), '12345'];
   const stat = `1544 (node) ${fields.join(' ')}`;

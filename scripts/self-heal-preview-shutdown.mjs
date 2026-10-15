@@ -79,17 +79,30 @@ export async function runSelfHealPreviewShutdown(operation, scenario, env, optio
     fail();
   };
   const has = (receipt, phase) => receipt.events.some(event => event.phase === phase);
+  const withRedisDeadline = async operation => {
+    let timer;
+    const deadline = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error('SELF_HEAL_PREVIEW_SHUTDOWN_EVIDENCE_FAILED'));
+        // node-redis command timeouts stop at socket write. Destroy this owned
+        // probe client as well, so a withheld handshake/reply cannot hold PG.
+        try { if (redis?.isOpen) redis.destroy(); } catch { /* Already closed. */ }
+      }, 500);
+    });
+    try { return await Promise.race([Promise.resolve().then(operation), deadline]); }
+    finally { clearTimeout(timer); }
+  };
   const connectRedis = async () => {
     redis = (options.createRedisClient ?? createClient)({ url: profile.proofTarget.redisUrl,
       disableOfflineQueue: true, socket: { connectTimeout: 500, reconnectStrategy: false } });
-    redis.on('error', () => undefined); await redis.connect();
+    redis.on('error', () => undefined); await withRedisDeadline(() => redis.connect());
   };
   const redisPresent = async id => {
-    const reply = await redis.sendCommand(['CLIENT', 'LIST', 'ID', id], { timeout: 500 });
+    const reply = await withRedisDeadline(() => redis.sendCommand(['CLIENT', 'LIST', 'ID', id], { timeout: 500 }));
     return String(reply).split('\n').some(line => line.split(' ').includes(`id=${id}`));
   };
   const redisServerRunId = async () => {
-    const info = await redis.sendCommand(['INFO', 'server'], { timeout: 500 });
+    const info = await withRedisDeadline(() => redis.sendCommand(['INFO', 'server'], { timeout: 500 }));
     const match = /^run_id:([a-f0-9]{40})\r?$/mu.exec(String(info)); if (!match) fail(); return match[1];
   };
   try {

@@ -181,6 +181,57 @@ describe('canonical coordinator production lifecycle with deterministic boundari
     expect(logger.info.mock.calls.filter(([event]) => event === 'self_heal.coordinator.stopped')).toHaveLength(1);
   });
 
+  it.each([false, true])('drains an unsignalled manual evaluation before shutdown returns (failure=%s)', async fails => {
+    const held = deferred<void>();
+    const manual = coordinator.runSelfHealingLoop({ trigger: 'manual', beforeObservation: async () => {
+      await held.promise;
+      if (fails) throw new Error('Synthetic held manual evaluation failure.');
+    } });
+    let firstStopped = false;
+    let secondStopped = false;
+    const firstStop = coordinator.stopSelfHealingLoop().then(() => { firstStopped = true; });
+    const secondStop = coordinator.stopSelfHealingLoop().then(() => { secondStopped = true; });
+    try {
+      await flush();
+      expect(coordinator.getSelfHealingLoopStatus().inFlight).toBe(true);
+      expect(firstStopped).toBe(false);
+      expect(secondStopped).toBe(false);
+    } finally {
+      held.resolve();
+      await Promise.all([manual, firstStop, secondStop]);
+    }
+    expect(coordinator.getSelfHealingLoopStatus().inFlight).toBe(false);
+    expect((await manual).lastError).toBe(fails ? 'Synthetic held manual evaluation failure.' : null);
+    expect(health).toHaveBeenCalledTimes(fails ? 0 : 1);
+    expect(queueRecovery).not.toHaveBeenCalled();
+    expect(providerReload).not.toHaveBeenCalled();
+    expect(escalation).not.toHaveBeenCalled();
+  });
+
+  it('drains a manual evaluation after its scheduled startup tick has already settled', async () => {
+    coordinator.startSelfHealingLoop(1_000);
+    await flush();
+    const observation = deferred<ReturnType<typeof healthyWorker>>();
+    health.mockReturnValueOnce(observation.promise);
+    const manual = coordinator.runSelfHealingLoop({ trigger: 'manual' });
+    let stopped = false;
+    const stop = coordinator.stopSelfHealingLoop().then(() => { stopped = true; });
+    try {
+      await flush();
+      expect(stopped).toBe(false);
+      await jest.advanceTimersByTimeAsync(10_000);
+      expect(health).toHaveBeenCalledTimes(2);
+      expect(coordinator.startSelfHealingLoop(1_000).coordinatorReasonCode).toBe('previous_evaluation_draining');
+    } finally {
+      observation.resolve(healthyWorker());
+      await Promise.all([manual, stop]);
+    }
+    expect(coordinator.getSelfHealingLoopStatus().inFlight).toBe(false);
+    expect(coordinator.startSelfHealingLoop(1_000).coordinatorState).toBe('RUNNING');
+    await flush();
+    expect(health).toHaveBeenCalledTimes(3);
+  });
+
   it('does not start from an already-cancelled bootstrap', () => {
     const shutdown = new AbortController();
     shutdown.abort();

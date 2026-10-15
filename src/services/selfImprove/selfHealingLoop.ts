@@ -379,6 +379,7 @@ type SelfHealingLoopRuntime = {
   controller: AbortController | null;
   removeShutdownListener: (() => void) | null;
   scheduledRun: Promise<unknown> | null;
+  activeRun: Promise<void> | null;
   inFlight: boolean;
   status: SelfHealingLoopStatus;
   actionCooldowns: Map<string, number>;
@@ -1563,6 +1564,7 @@ function createRuntime(): SelfHealingLoopRuntime {
     controller: null,
     removeShutdownListener: null,
     scheduledRun: null,
+    activeRun: null,
     inFlight: false,
     status: createInitialStatus(),
     actionCooldowns: new Map<string, number>(),
@@ -4201,6 +4203,11 @@ export async function runSelfHealingLoop(options: {
   }
 
   runtime.inFlight = true;
+  // Manual routes do not own a scheduledRun or supply its abort signal. Keep
+  // a completion barrier for every admitted evaluation before it can yield.
+  let resolveActiveRun!: () => void;
+  const activeRun = new Promise<void>(resolve => { resolveActiveRun = resolve; });
+  runtime.activeRun = activeRun;
 
   try {
     options.signal?.throwIfAborted();
@@ -4511,6 +4518,8 @@ export async function runSelfHealingLoop(options: {
     };
   } finally {
     runtime.inFlight = false;
+    if (runtime.activeRun === activeRun) runtime.activeRun = null;
+    resolveActiveRun();
   }
 }
 
@@ -4631,7 +4640,7 @@ export async function stopSelfHealingLoop(
     runtime.status.coordinatorReasonCode = reasonCode;
     logger.info('self_heal.coordinator.stopped', coordinatorEventMetadata(runtime));
   }
-  await runtime.scheduledRun?.catch(() => undefined);
+  await Promise.allSettled([runtime.scheduledRun, runtime.activeRun]);
 }
 
 export function resetSelfHealingLoopStateForTests(): void {
@@ -4650,6 +4659,7 @@ export function resetSelfHealingLoopStateForTests(): void {
   runtime.removeShutdownListener?.();
   runtime.removeShutdownListener = null;
   runtime.scheduledRun = null;
+  runtime.activeRun = null;
   runtime.inFlight = false;
   runtime.actionCooldowns.clear();
   runtime.controllerCooldowns.clear();
