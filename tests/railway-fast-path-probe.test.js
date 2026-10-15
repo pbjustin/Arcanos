@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@jest/globals';
+import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import {
   DEFAULTS,
   PROBE_STATUS,
@@ -6,6 +6,15 @@ import {
   parseArgs,
   runFastPathProbe,
 } from '../scripts/railway-fast-path-probe.js';
+import {
+  PROBE_RESPONSES,
+  createProbeResponse,
+  rejectOnRequestAbort,
+} from './fixtures/railway-probe-responses.js';
+
+afterEach(() => {
+  jest.useRealTimers();
+});
 
 function buildHeaders(entries = {}) {
   return {
@@ -109,5 +118,63 @@ describe('railway-fast-path-probe', () => {
 
     expect(result.status).toBe(PROBE_STATUS.FAIL);
     expect(result.detail).toContain('expected HTTP 200');
+  });
+
+  it.each(['', ' \n', '{broken', '[]', 'null', 'true', '7', '"fixture"'])('rejects non-record response bodies %p and clears the timeout', async (bodyText) => {
+    jest.useFakeTimers();
+    await expect(runFastPathProbe(DEFAULTS, {
+      fetchFn: async () => createProbeResponse({ bodyText }),
+    })).resolves.toEqual({ status: 'FAIL', detail: 'Fast-path probe returned non-JSON body (status=200).' });
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it('retains queued-job validation for an HTTP 200 response', async () => {
+    await expect(runFastPathProbe(DEFAULTS, {
+      fetchFn: async () => createProbeResponse({ ...PROBE_RESPONSES.queued, status: 200 }),
+    })).resolves.toEqual({ status: 'FAIL', detail: 'Fast-path probe unexpectedly queued job job-fixture.' });
+  });
+
+  it('preserves route header fallback and URL escaping', async () => {
+    const fetchFn = jest.fn(async () => createProbeResponse({
+      bodyText: '{}',
+      headers: { 'x-gpt-route-decision': 'fast_path', 'x-gpt-queue-bypassed': 'true' },
+    }));
+    await expect(runFastPathProbe({ ...DEFAULTS, baseUrl: ' http://example.com/// ', gptId: 'core/name' }, {
+      fetchFn,
+    })).resolves.toEqual({ status: 'PASS', detail: 'Fast-path probe completed inline for /gpt/core/name (no-reason).' });
+    expect(fetchFn.mock.calls[0][0]).toBe('http://example.com/gpt/core%2Fname');
+    expect(fetchFn.mock.calls[0][1].headers).toEqual({
+      'content-type': 'application/json', 'user-agent': 'arcanos-railway-fast-path-probe/1.0',
+    });
+  });
+
+  it('keeps body route metadata authoritative over header fallbacks', async () => {
+    await expect(runFastPathProbe(DEFAULTS, {
+      fetchFn: async () => createProbeResponse({
+        bodyText: JSON.stringify({ routeDecision: { path: 'orchestrated_path', queueBypassed: false } }),
+        headers: { 'x-gpt-route-decision': 'fast_path', 'x-gpt-queue-bypassed': 'true' },
+      }),
+    })).resolves.toEqual({ status: 'FAIL', detail: 'Fast-path probe did not return inline route metadata: path=orchestrated_path, queueBypassed=false.' });
+  });
+
+  it.each(['network', 'body'])('propagates %s failures and clears the timeout', async (stage) => {
+    jest.useFakeTimers();
+    const error = new Error(`fixture ${stage} failure`);
+    await expect(runFastPathProbe(DEFAULTS, {
+      fetchFn: async () => {
+        if (stage === 'network') throw error;
+        return { text: async () => { throw error; } };
+      },
+    })).rejects.toBe(error);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it('aborts a stalled request at its configured timeout and releases the timer', async () => {
+    jest.useFakeTimers();
+    const promise = runFastPathProbe({ ...DEFAULTS, requestTimeoutMs: 25 }, { fetchFn: rejectOnRequestAbort });
+    const rejection = expect(promise).rejects.toMatchObject({ name: 'AbortError' });
+    await jest.advanceTimersByTimeAsync(25);
+    await rejection;
+    expect(jest.getTimerCount()).toBe(0);
   });
 });

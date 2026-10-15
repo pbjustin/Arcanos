@@ -6,12 +6,19 @@
  */
 
 import process from 'node:process';
-import { pathToFileURL } from 'node:url';
+import {
+  PROBE_STATUS,
+  buildFailure,
+  buildSuccess,
+  createRequestTimeoutSignal,
+  isDirectExecution,
+  normalizeBaseUrl,
+  parseProbeArgs,
+  printProbeResult,
+  readJsonResponse,
+} from './lib/railway-probe.mjs';
 
-export const PROBE_STATUS = Object.freeze({
-  PASS: 'PASS',
-  FAIL: 'FAIL',
-});
+export { PROBE_STATUS, printProbeResult };
 
 export const RAILWAY_PRODUCTION_BASE_URL = 'https://acranos-production.up.railway.app';
 
@@ -27,102 +34,8 @@ export const DEFAULTS = Object.freeze({
   requestTimeoutMs: 15_000,
 });
 
-function readPositiveInteger(rawValue, fallbackValue) {
-  const parsedValue = Number(rawValue);
-  return Number.isFinite(parsedValue) && parsedValue > 0
-    ? Math.trunc(parsedValue)
-    : fallbackValue;
-}
-
 export function parseArgs(argv) {
-  const config = { ...DEFAULTS };
-
-  for (let index = 0; index < argv.length; index += 1) {
-    const argFlag = argv[index];
-    const next = argv[index + 1];
-
-    if (argFlag === '--base-url' && typeof next === 'string' && next.trim().length > 0) {
-      config.baseUrl = next.trim();
-      index += 1;
-      continue;
-    }
-
-    if (argFlag === '--gpt-id' && typeof next === 'string' && next.trim().length > 0) {
-      config.gptId = next.trim();
-      index += 1;
-      continue;
-    }
-
-    if (argFlag === '--prompt' && typeof next === 'string' && next.trim().length > 0) {
-      config.prompt = next.trim();
-      index += 1;
-      continue;
-    }
-
-    if (argFlag === '--request-timeout-ms' && typeof next === 'string' && next.trim().length > 0) {
-      config.requestTimeoutMs = readPositiveInteger(next, DEFAULTS.requestTimeoutMs);
-      index += 1;
-    }
-  }
-
-  return config;
-}
-
-function normalizeBaseUrl(baseUrl) {
-  const normalizedBaseUrl = baseUrl.trim().replace(/\/+$/, '');
-  return /^https?:\/\//i.test(normalizedBaseUrl)
-    ? normalizedBaseUrl
-    : `https://${normalizedBaseUrl}`;
-}
-
-function createRequestTimeoutSignal(timeoutMs) {
-  const abortController = new AbortController();
-  const timeoutHandle = setTimeout(() => abortController.abort(), timeoutMs);
-  return {
-    signal: abortController.signal,
-    dispose() {
-      clearTimeout(timeoutHandle);
-    },
-  };
-}
-
-async function readJsonResponse(response) {
-  const bodyText = await response.text();
-  if (!bodyText.trim()) {
-    return {
-      ok: false,
-      bodyText,
-      parsedBody: null,
-    };
-  }
-
-  try {
-    return {
-      ok: true,
-      bodyText,
-      parsedBody: JSON.parse(bodyText),
-    };
-  } catch {
-    return {
-      ok: false,
-      bodyText,
-      parsedBody: null,
-    };
-  }
-}
-
-function buildFailure(detail) {
-  return {
-    status: PROBE_STATUS.FAIL,
-    detail,
-  };
-}
-
-function buildSuccess(detail) {
-  return {
-    status: PROBE_STATUS.PASS,
-    detail,
-  };
+  return parseProbeArgs(argv, DEFAULTS);
 }
 
 function isRecord(value) {
@@ -198,10 +111,6 @@ export async function runFastPathProbe(config, dependencies = {}) {
   }
 }
 
-export function printProbeResult(result) {
-  process.stdout.write(`[${result.status}] ${result.detail}\n`);
-}
-
 async function main() {
   const config = parseArgs(process.argv.slice(2));
   const result = await runFastPathProbe(config);
@@ -209,7 +118,7 @@ async function main() {
   process.exitCode = result.status === PROBE_STATUS.PASS ? 0 : 1;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isDirectExecution(import.meta.url)) {
   main().catch((error) => {
     printProbeResult(buildFailure(error instanceof Error ? error.message : String(error)));
     process.exitCode = 1;
