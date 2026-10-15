@@ -1,6 +1,7 @@
 import express from 'express';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { environmentBooleanCases } from './fixtures/environmentBooleanCases.js';
 
 const mockRouteGptRequest = jest.fn();
 const mockResolveGptRouting = jest.fn();
@@ -65,6 +66,7 @@ describe('GPT DAG bridge route', () => {
   const originalDagBridgeEnabled = process.env.GPT_DAG_BRIDGE_ENABLED;
   const originalDagBridgeAllowedGpts = process.env.GPT_DAG_BRIDGE_ALLOWED_GPTS;
   const originalDagBridgeRequireAuth = process.env.GPT_DAG_BRIDGE_REQUIRE_AUTH;
+  const originalDagBridgeRequirePermissions = process.env.GPT_DAG_BRIDGE_REQUIRE_PERMISSIONS;
   const originalDagBridgeBearerToken = process.env.GPT_DAG_BRIDGE_BEARER_TOKEN;
   const originalOpenAiActionSharedSecret = process.env.OPENAI_ACTION_SHARED_SECRET;
 
@@ -73,6 +75,7 @@ describe('GPT DAG bridge route', () => {
     process.env.GPT_DAG_BRIDGE_ENABLED = 'true';
     process.env.GPT_DAG_BRIDGE_ALLOWED_GPTS = 'arcanos-core';
     delete process.env.GPT_DAG_BRIDGE_REQUIRE_AUTH;
+    delete process.env.GPT_DAG_BRIDGE_REQUIRE_PERMISSIONS;
     delete process.env.GPT_DAG_BRIDGE_BEARER_TOKEN;
     delete process.env.OPENAI_ACTION_SHARED_SECRET;
 
@@ -140,6 +143,11 @@ describe('GPT DAG bridge route', () => {
   });
 
   afterEach(() => {
+    if (originalDagBridgeRequirePermissions === undefined) {
+      delete process.env.GPT_DAG_BRIDGE_REQUIRE_PERMISSIONS;
+    } else {
+      process.env.GPT_DAG_BRIDGE_REQUIRE_PERMISSIONS = originalDagBridgeRequirePermissions;
+    }
     if (originalDagBridgeEnabled === undefined) {
       delete process.env.GPT_DAG_BRIDGE_ENABLED;
     } else {
@@ -457,5 +465,58 @@ describe('GPT DAG bridge route', () => {
     expect(response.status).toBe(403);
     expect(response.body.error.code).toBe('GPT_DAG_BRIDGE_DISABLED');
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it.each(environmentBooleanCases)('preserves bridge feature flag parsing for $label', async ({ value, legacy }) => {
+    if (value === undefined) {
+      delete process.env.GPT_DAG_BRIDGE_ENABLED;
+    } else {
+      process.env.GPT_DAG_BRIDGE_ENABLED = value;
+    }
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({ action: 'dag.capabilities' });
+
+    expect(response.status).toBe(legacy === true ? 200 : 403);
+    if (legacy !== true) expect(response.body.error.code).toBe('GPT_DAG_BRIDGE_DISABLED');
+  });
+
+  it.each(environmentBooleanCases)('preserves bridge authorization flag parsing for $label', async ({ value, legacy }) => {
+    for (const flag of ['GPT_DAG_BRIDGE_REQUIRE_AUTH', 'GPT_DAG_BRIDGE_REQUIRE_PERMISSIONS']) {
+      if (value === undefined) {
+        delete process.env[flag];
+      } else {
+        process.env[flag] = value;
+      }
+      const response = await request(buildApp())
+        .post('/gpt/arcanos-core')
+        .send({ action: 'dag.capabilities' });
+
+      expect(response.status).toBe(legacy === true ? (flag.endsWith('AUTH') ? 503 : 403) : 200);
+      if (legacy === true) {
+        expect(response.body.error.code).toBe(flag.endsWith('AUTH')
+          ? 'GPT_DAG_BRIDGE_AUTH_NOT_CONFIGURED'
+          : 'GPT_DAG_BRIDGE_PERMISSION_DENIED');
+      }
+      delete process.env[flag];
+    }
+  });
+
+  it.each([
+    { value: true, expected: true },
+    { value: false, expected: false },
+    { value: 'yes', expected: true },
+    { value: ' FALSE ', expected: false },
+    { value: 'on', expected: true },
+    { value: 'off', expected: true },
+    { value: 'unknown', expected: true },
+    { value: 0, expected: true },
+  ])('keeps HTTP async coercion separate for $value', async ({ value, expected }) => {
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({ action: 'dag.dispatch', payload: { input: { validation: true }, async: value } });
+
+    expect(response.status).toBe(202);
+    expect(response.body.dispatch.options.async).toBe(expected);
   });
 });

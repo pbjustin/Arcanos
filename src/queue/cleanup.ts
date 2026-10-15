@@ -21,6 +21,7 @@ import {
 } from '@core/db/repositories/jobEventRepository.js';
 import { recordJobEventCleanup } from '@platform/observability/appMetrics.js';
 import { logger } from '@platform/logging/structuredLogging.js';
+import { parseEnvBoolean } from '@platform/runtime/envParsers.js';
 
 let protectedLegacyNullRowsPresent = false;
 
@@ -65,22 +66,6 @@ export interface JobEventCleanupRunResult extends CleanupJobEventsResult {
   failed: boolean;
 }
 
-function parseBooleanEnv(value: string | undefined, fallback: boolean): boolean {
-  if (!value || value.trim().length === 0) {
-    return fallback;
-  }
-
-  const normalized = value.trim().toLowerCase();
-  if (['true', '1', 'yes', 'on'].includes(normalized)) {
-    return true;
-  }
-  if (['false', '0', 'no', 'off'].includes(normalized)) {
-    return false;
-  }
-
-  return fallback;
-}
-
 function parsePositiveIntegerEnv(
   value: string | undefined,
   fallback: number,
@@ -106,7 +91,7 @@ export function resolveFailedJobCleanupPolicy(
   env: NodeJS.ProcessEnv = process.env
 ): FailedJobCleanupPolicy {
   return {
-    enabled: parseBooleanEnv(env.QUEUE_FAILED_JOB_CLEANUP_ENABLED, true),
+    enabled: parseEnvBoolean(env.QUEUE_FAILED_JOB_CLEANUP_ENABLED, true),
     keep: parsePositiveIntegerEnv(
       env.QUEUE_FAILED_JOB_RETENTION_COUNT,
       DEFAULT_FAILED_JOB_RETENTION_COUNT,
@@ -124,7 +109,7 @@ export function resolveNonGptTerminalCleanupPolicy(
   env: NodeJS.ProcessEnv = process.env
 ): NonGptTerminalCleanupPolicy {
   return {
-    enabled: parseBooleanEnv(
+    enabled: parseEnvBoolean(
       env.QUEUE_NON_GPT_TERMINAL_CLEANUP_ENABLED,
       true
     ),
@@ -140,11 +125,11 @@ export function resolveJobEventCleanupPolicy(
   env: NodeJS.ProcessEnv = process.env
 ): JobEventCleanupPolicy {
   return {
-    enabled: parseBooleanEnv(
+    enabled: parseEnvBoolean(
       readEnvAlias(env, 'JOB_EVENTS_CLEANUP_ENABLED', 'JOB_EVENT_CLEANUP_ENABLED'),
       true
     ),
-    dryRun: parseBooleanEnv(
+    dryRun: parseEnvBoolean(
       readEnvAlias(env, 'JOB_EVENTS_CLEANUP_DRY_RUN', 'JOB_EVENT_CLEANUP_DRY_RUN'),
       true
     ),

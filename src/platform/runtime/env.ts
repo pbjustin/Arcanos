@@ -13,6 +13,7 @@
 import { APPLICATION_CONSTANTS } from "@shared/constants.js";
 import { resolveErrorMessage } from "@shared/errorUtils.js";
 import { hasConfiguredPurposeBoundCredentialCollision } from "@shared/security/purposeBoundCredential.js";
+import { parseLegacyEnvBoolean } from "@platform/runtime/envParsers.js";
 import dotenv from "dotenv";
 
 export interface EnvConfig {
@@ -256,10 +257,7 @@ export function getEnvIntegerAtLeast(key: string, defaultValue: number, minValue
  * @returns Parsed boolean or default
  */
 export function getEnvBoolean(key: string, defaultValue: boolean): boolean {
-  const value = readRuntimeEnv(key);
-  if (!value) return defaultValue;
-  const normalized = value.toLowerCase().trim();
-  return normalized === 'true' || normalized === '1' || normalized === 'yes';
+  return parseLegacyEnvBoolean(readRuntimeEnv(key), defaultValue);
 }
 
 function resolveBackendBaseUrlValue(): string | undefined {
