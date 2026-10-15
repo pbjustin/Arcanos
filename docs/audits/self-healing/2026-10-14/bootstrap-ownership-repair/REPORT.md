@@ -1385,3 +1385,101 @@ elapsed TTL/cooldown behavior and consumer-side recovery under deployment.
 Synthetic provider recovery cannot prove real external-provider recovery.
 Required next prerequisites are authorized Railway process inspection and
 resolution of the deletion approval rejection for the exact retained resources.
+
+## 2026-10-15 production-parity acceptance extension — pre-deployment snapshot
+
+This section supersedes the earlier cleanup and authentication blockers for
+planning the new run. It does not supersede historical failure receipts or claim
+that a hosted scenario passed. Final exact source, deployment identities,
+scenario evidence and cleanup results will be recorded in the PR's existing
+[acceptance audit comment](https://github.com/pbjustin/Arcanos/pull/1544#issuecomment-6177135799)
+after the bounded run; no source commit may be described as tested by a later
+deployment.
+
+The owner approved **up to $3 for one fixed two-hour run**, four capped services
+and two fresh 1 GiB volumes. The deadline begins no later than the first paid
+provisioning, cannot be renewed after a source change, and includes a cleanup
+reserve. No workspace billing limit, production setting, plan or replica count
+is authorized to change. Estimated usage at every approved cap for two hours,
+50 hours of storage retention and 1 GB egress is about $0.35 before credits;
+this is not a provider-enforced per-project dollar cap.
+
+| Owned component | vCPU limit | RAM limit | Volume |
+| --- | ---: | ---: | ---: |
+| Web | 1 | 1 GiB | none |
+| Worker | 1 | 2 GiB | none |
+| PostgreSQL 17 | 0.5 | 0.5 GiB | 1 GiB |
+| Redis 8.6.1 | 0.25 | 0.25 GiB | 1 GiB |
+
+The existing Windows Ed25519 registration was reverified by name and public
+fingerprint, and the workstation reached the Railway SSH endpoint on TCP22.
+The private key remains on the owner's Windows computer. This does not establish
+cloud credential access or prove a future pod can be inspected. First prove the
+supported channel on the newly owned dependency before deploying either app;
+failure requires cleanup rather than a production fallback.
+
+The owner manually cleaned up the previous project. A later complete
+owner-visible `projects(includeDeleted:true, workspaceId:...)` inventory at
+`2026-10-15T00:29:31.540Z` returned its exact deleted-project tombstone with empty
+service, global-volume and environment collections, all pages complete. This
+proves owner-visible resource absence; it does not claim physical-media erasure
+or an invoice adjustment. Filtered not-found responses remain insufficient
+cleanup evidence. The generic controller correction and regression belong to
+[stacked draft PR #1545](https://github.com/pbjustin/Arcanos/pull/1545).
+
+The runtime extension reuses the existing `worker-coordinator-v1` supervisor,
+ordinary integrity wrapper, production compiled Web/Worker entrypoints,
+PostgreSQL queue and Redis lifecycle. It adds no public administrative endpoint.
+Its parent admission remains sealed; only the precisely reconstructed app child
+uses normal SDK startup with both mock flags false, a fixed fictional key and a
+bounded adapter in each role pod. The ordinary launcher now admits that exact
+child after native-preview selection while preserving the generic mock-only
+guard and native import containment.
+
+The profile enforces a preview-owned, self-signed PostgreSQL certificate with
+the exact private DNS SAN and validity through the lease. The public certificate
+is bound into the readonly image and executable inventory, and normal database
+clients use hostname/chain verification. The private server key is generated
+inside the new owned PostgreSQL pod and never copied out. Worker concurrency is
+two exact slots; normal heartbeat, lease and coordinator timing resolve through
+their production defaults. Ordinary protected Web admission now has two fixed
+idempotent probe slots with independent PostgreSQL claim/completion proof.
+
+Pre-deployment tests reproduced and repaired preview-specific defects: the
+fictional SDK key failed normal startup validation; cold SDK model retrieval was
+unsupported and hidden by a warmed cache; the ordinary launcher rejected the
+new normal child; created queue responses omit `deduped` instead of returning
+false; and the generic adapter response could not satisfy the Web booking
+probe. The adapter now supports only the fixed model identities and closed,
+run-bound booking fixture slots. TLS verification and exact two-slot resume
+fencing also gained durable regression fixtures. No production self-healing
+failure is inferred from these preview defects.
+
+Local validation used Node 24.18.1/npm 11.16.0. Build, type-check, lint, Railway
+static validation, documentation/index checks and local links passed. The broad
+candidate run passed 927 suites/18,540 tests before the final refinements; the later
+16-suite focused selection passed 933 tests with 34 guarded PostgreSQL and two
+Windows/POSIX skips. Guard-remediation suites passed 122 tests; the final adapter,
+Web-helper and existing heavy-probe selection passed 99 tests. These overlapping
+counts are not summed. Exact-head GitHub CI, CodeRabbit and Codecov must be
+refreshed after the final push; earlier 19e results do not cover the extension.
+
+The separate driver currently has 81 local contract tests and 115 cleanup tests
+passing, with two POSIX-only cleanup skips. It accepts only the32named cases,
+attests owned source/deployment/resource limits before faults, limits Worker and
+Redis restarts, preserves original expiry, writes immutable receipts, and keeps
+injected transports synthetic. Missing independent proof remains blocked.
+
+Production configuration differences remain explicit: live services use the
+root Dockerfile but direct role-launcher overrides and `/healthz`; Worker adds
+three Notion preloads and Web has `/data` storage. Acceptance keeps the stronger
+integrity wrapper and `/readyz`, omits unrelated Notion effects and persistent
+Web storage, and substitutes synthetic external-provider responses. Current
+production binaries, provider behavior and schema were not probed. Immutable
+preview PostgreSQL17/Redis8.6.1 image digests were resolved, but actual engine,
+private-network TLS, source/artifact and process observations still require the
+owned deployment. Full production equivalence is not claimed.
+
+At this snapshot no new resource, deployment, queue or injected fault exists.
+All 32 hosted cases remain unexecuted; E2E acceptance and merge readiness remain
+**BLOCKED**. Merge and production promotion remain **NOT_AUTHORIZED**.
