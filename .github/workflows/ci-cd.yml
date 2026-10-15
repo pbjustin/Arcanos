@@ -163,7 +163,7 @@ jobs:
           export PORT=0
           npm run test:integration -- --json --outputFile="$RUNNER_TEMP/jest-result.json"
 
-      - name: Retain exact-head Jest counters
+      - name: Retain Jest counters and checkout provenance
         if: always()
         env:
           EVIDENCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -171,9 +171,20 @@ jobs:
         run: |
           node --input-type=module <<'NODE'
           import { existsSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs';
+          import { execFileSync } from 'node:child_process';
           import path from 'node:path';
+          const revision = ref => execFileSync('git', ['rev-parse', '--verify', ref],
+            { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+          const testedSha = revision('HEAD');
+          const testedTree = revision('HEAD^{tree}');
+          const headSha = process.env.EVIDENCE_HEAD_SHA;
+          let headTree = null;
+          if (/^[0-9a-f]{40}$/.test(headSha ?? '')) {
+            try { headTree = revision(`${headSha}^{tree}`); } catch { /* Shallow checkout may omit the head object. */ }
+          }
           const resultPath = path.join(process.env.RUNNER_TEMP, 'jest-result.json');
-          const counts = { headSha: process.env.EVIDENCE_HEAD_SHA,
+          const counts = { headSha, testedSha, testedTree, headTree,
+            exactHeadTree: headTree !== null && testedTree === headTree,
             selection: process.env.EVIDENCE_TEST_TYPE, resultAvailable: existsSync(resultPath) };
           if (counts.resultAvailable) {
             const result = JSON.parse(readFileSync(resultPath, 'utf8'));
@@ -187,7 +198,7 @@ jobs:
           console.log(serialized);
           NODE
 
-      - name: Upload exact-head Jest counters
+      - name: Upload Jest counters and checkout provenance
         if: always()
         uses: actions/upload-artifact@v4
         with:

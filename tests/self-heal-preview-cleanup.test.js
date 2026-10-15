@@ -51,6 +51,10 @@ function harness(options = {}) {
   const events = [];
   const command = jest.fn(async (_file, args) => {
     const commandName = args[0];
+    if (commandName === '--version') {
+      if (options.versionError) throw new Error(options.versionError);
+      return { stdout: options.cliVersion ?? 'railway 5.28.0\n', stderr: '' };
+    }
     if (options.commandError) throw new Error(options.commandError);
     if (commandName === 'status') {
       if (current?.deletedAt && options.allowScheduledStatus !== true) throw new Error('Project is deleted.');
@@ -215,7 +219,8 @@ describe('receipt-bound self-heal preview cleanup and fixed-expiry watchdog', ()
   it('rechecks resource ownership immediately before deletion and rejects drift', async () => {
     const h = harness({ status: attempt => { const payload = status(); if (attempt === 2) payload.name = 'different-project'; return payload; } });
     await expect(runSelfHealPreviewCleanup(execute(), h)).rejects.toThrow('SELF_HEAL_PREVIEW_CLEANUP_PROJECT_MISMATCH');
-    expect(h.command).toHaveBeenCalledTimes(2); expect(h.command.mock.calls.some(call => isMutation(call[1]))).toBe(false);
+    expect(h.command.mock.calls.filter(call => call[1][0] === 'status')).toHaveLength(2);
+    expect(h.command.mock.calls.some(call => isMutation(call[1]))).toBe(false);
   });
   it('arms one fixed-expiry watchdog then independently reattests before delete', async () => {
     const h = harness(); const value = receipt({ expiresAt: '2026-10-14T16:01:00.000Z' });
@@ -223,6 +228,57 @@ describe('receipt-bound self-heal preview cleanup and fixed-expiry watchdog', ()
     expect(h.events[0].status).toBe('WATCHDOG_ARMED'); expect(h.events[0].expiresAt).toBe(value.expiresAt);
     expect(h.sleep.mock.calls).toEqual([[30_000], [30_000]]); expect(h.now()).toBe(NOW + 60_000);
     expect(result.status).toBe('RESOURCES_REMOVED_METADATA_RETAINED');
+  });
+  it('rejects an unsupported CLI before arming even when status provides complete inventory', async () => {
+    const h = harness({ cliVersion: 'railway 5.27.9\n' });
+    const supportedCommands = h.command.getMockImplementation();
+    h.command.mockImplementation(async (...args) => {
+      if (args[1][0] === 'api') throw new Error('unexpected argument api');
+      return supportedCommands(...args);
+    });
+    await expect(runSelfHealPreviewCleanup({ ...execute(), watchdog: true }, h))
+      .rejects.toThrow('SELF_HEAL_PREVIEW_CLEANUP_CLI_VERSION_UNSUPPORTED');
+    expect(h.command.mock.calls.map(call => call[1])).toEqual([['--version']]);
+    expect(h.sleep).not.toHaveBeenCalled();
+    expect(h.events.some(event => event.status === 'WATCHDOG_ARMED')).toBe(false);
+    expect(h.persistResourceReceipt).not.toHaveBeenCalled();
+  });
+  it.each(['railway 5.28.0\n', 'railway 5.28.1\r\n', 'railway 5.37.2\n', 'railway 6.0.0\n'])(
+    'validates supported CLI %j through the bounded invocation before arming', async cliVersion => {
+      const h = harness({ cliVersion, initialStatus: status(true) });
+      h.onReceipt = event => {
+        if (event.status === 'WATCHDOG_ARMED') {
+          expect(h.command.mock.calls[0]).toMatchObject(['railway-fixture', ['--version'], {
+            timeout: 15_000, windowsHide: true, encoding: 'utf8',
+          }]);
+          expect(h.sleep).not.toHaveBeenCalled();
+        }
+        h.events.push(event);
+      };
+      await runSelfHealPreviewCleanup({ ...execute(receipt({ expiresAt: new Date(NOW + 1).toISOString() })), watchdog: true }, h);
+      expect(h.events[0].status).toBe('WATCHDOG_ARMED');
+    }
+  );
+  it.each(['railway 4.99.99', 'railway 5.27.99', 'railway 5.28.0-rc.1', '5.28.0', 'railway 5.28',
+    'railway 05.28.0', 'railway 9007199254740992.0.0', 'railway 5.28.0\nsensitive-marker', ''])(
+    'rejects unsupported or malformed CLI %j before any inventory, wait or mutation', async cliVersion => {
+      const h = harness({ cliVersion });
+      await expect(runSelfHealPreviewCleanup({ ...execute(), watchdog: true }, h))
+        .rejects.toThrow('SELF_HEAL_PREVIEW_CLEANUP_CLI_VERSION_UNSUPPORTED');
+      expect(h.command.mock.calls.map(call => call[1])).toEqual([['--version']]);
+      expect(h.sleep).not.toHaveBeenCalled();
+      expect(h.events.map(event => event.status)).toEqual(['FAILED']);
+      expect(JSON.stringify(h.events)).not.toContain('sensitive-marker');
+    }
+  );
+  it('contains a failed version invocation before any watchdog receipt or resource effect', async () => {
+    const h = harness({ versionError: 'sensitive-version-failure' });
+    await expect(runSelfHealPreviewCleanup({ ...execute(), watchdog: true }, h))
+      .rejects.toThrow('SELF_HEAL_PREVIEW_CLEANUP_CLI_FAILED');
+    expect(h.command.mock.calls.map(call => call[1])).toEqual([['--version']]);
+    expect(h.sleep).not.toHaveBeenCalled();
+    expect(h.events.map(event => event.status)).toEqual(['FAILED']);
+    expect(JSON.stringify(h.events)).not.toContain('sensitive-version-failure');
   });
   it('does not renew the fixed deadline from caller mutation while waiting', async () => {
     const h = harness(); const value = receipt({ expiresAt: '2026-10-14T16:00:01.000Z' });
