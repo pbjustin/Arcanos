@@ -157,18 +157,34 @@ test('lostrestorationblocksacceptanceandpreservesoriginalfailure', async () => {
   assert.equal(result.classification, 'BLOCKED'); assert.equal(result.cleanupResult, 'FAILED'); assert(!JSON.stringify(result).includes('secret-transport-marker'));
 });
 
-test('long-case final receipt references durable events without repeating their large bodies', async () => {
+for (const outcome of ['success', 'scenario-failure', 'cleanup-failure']) test(`large final snapshots preserve ${outcome} through durable event references`, async () => {
   const published = []; let final;
+  const state = snapshot({ diagnosticPadding: 'x'.repeat(1_100_000) });
+  if (outcome === 'scenario-failure') state.scheduler.installations = 0;
+  const transport = fakeTransport(state); const original = transport.remote;
+  if (outcome === 'cleanup-failure') transport.remote = async (role, args) => {
+    if (args[1] === 'policy_restore') throw new Error('synthetic-cleanup-failure');
+    return original(role, args);
+  };
   const result = await runSelfHealAcceptanceCase('A01', manifest(), {
     now: () => NOW, execute: true, allowNetwork: true,
-    transport: fakeTransport(snapshot({ diagnosticPadding: 'x'.repeat(350_000) })),
+    transport,
     onReceipt: event => { published.push(event); }, onResult: value => { final = value; },
   });
-  assert.equal(result.classification, 'SYNTHETIC_ONLY'); assert.equal(final.cleanupResult, 'SYNTHETIC_ONLY');
+  assert.equal(result.classification, outcome === 'scenario-failure' ? 'FAILED' : outcome === 'cleanup-failure' ? 'BLOCKED' : 'SYNTHETIC_ONLY');
+  assert.equal(final.cleanupResult, outcome === 'cleanup-failure' ? 'FAILED' : 'SYNTHETIC_ONLY');
+  assert.equal(final.errorCode, outcome === 'scenario-failure' ? 'SELF_HEAL_ACCEPTANCE_BOOTSTRAP_NOT_PROVEN'
+    : outcome === 'cleanup-failure' ? 'SELF_HEAL_ACCEPTANCE_FAULT_CLEANUP_FAILED' : null);
   assert(published.reduce((bytes, event) => bytes + Buffer.byteLength(JSON.stringify(event)), 0) > 2 * 1024 * 1024);
-  assert(Buffer.byteLength(JSON.stringify(final)) < 2 * 1024 * 1024);
+  assert(published.every(event => Buffer.byteLength(JSON.stringify(event)) < 2 * 1024 * 1024));
+  assert(Buffer.byteLength(JSON.stringify(final)) < 8_192);
   assert.equal(final.eventCount, published.length); assert.equal(final.eventReceipts.length, published.length);
   assert.equal(Object.hasOwn(final, 'events'), false);
+  assert.deepEqual(final.baseline, final.eventReceipts.find(event => event.kind === 'baseline'));
+  assert.deepEqual(final.finalState, final.eventReceipts.findLast(event => event.kind === 'restoration'));
+  assert.equal(published.filter(event => event.kind === 'restoration').length, outcome === 'cleanup-failure' ? 5 : 6);
+  assert.equal(published.find(event => event.sequence === final.baseline.sequence).value.diagnosticPadding, state.diagnosticPadding);
+  assert.equal(published.find(event => event.sequence === final.finalState.sequence).value.receipt.observation.diagnosticPadding, state.diagnosticPadding);
   final.eventReceipts.forEach((reference, index) => {
     assert.equal(reference.receiptSha256, createHash('sha256').update(JSON.stringify(published[index])).digest('hex'));
     assert.equal(reference.sequence, published[index].sequence);

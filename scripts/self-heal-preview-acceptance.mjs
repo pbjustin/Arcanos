@@ -701,7 +701,10 @@ export async function runSelfHealAcceptanceCase(scenario, manifest, options = {}
   }
   const result = { version: 1, scenario, classification, executed: true, sourceSha: manifest.receipt.sourceSha,
     controllerSha: manifest.controllerSha, runId: manifest.receipt.runId, projectId: manifest.receipt.projectId,
-    environmentId: manifest.receipt.environmentId, baseline, finalState, cleanupResult, errorCode,
+    environmentId: manifest.receipt.environmentId,
+    // Full snapshots remain in independently bounded event receipts; never combine them here.
+    baseline: events.find(event => event.kind === 'baseline') ?? null,
+    finalState: events.findLast(event => event.kind === 'restoration') ?? null, cleanupResult, errorCode,
     providerBoundary: 'synthetic_loopback_adapter', realExternalProviderRecoveryProven: false,
     eventCount: events.length, eventReceipts: events };
   await options.onResult?.(safeProjection(result)); return result;
