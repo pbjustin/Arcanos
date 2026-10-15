@@ -1,3 +1,4 @@
+import { isRecord } from '@shared/typeGuards.js';
 import { redactSensitive } from '@shared/redaction.js';
 
 import {
@@ -137,10 +138,6 @@ export interface ControlPlaneCliWrapperSummary {
   restrictedCommandsRequireApproval: boolean;
   readOnlyOperations: string[];
   restrictedOperations: string[];
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function uniqueSorted(values: Iterable<string>): string[] {

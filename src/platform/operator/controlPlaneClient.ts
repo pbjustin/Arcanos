@@ -1,3 +1,4 @@
+import { isRecord } from '@shared/typeGuards.js';
 export const APPROVED_DB_EXPLAIN_KEYS = [
   'worker_claim',
   'worker_liveliness_upsert',
@@ -204,10 +205,6 @@ export class OperatorControlPlaneRequestError extends Error {
     super(message);
     this.name = 'OperatorControlPlaneRequestError';
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function fail(message: string): never {
