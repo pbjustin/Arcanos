@@ -516,7 +516,7 @@ export async function runSelfHealAcceptanceCase(scenario, manifest, options = {}
       const observed = await consumer();
       requireProof(observed.consumerRun.canonicalActionAtStart.at === after.coordinator.lastActionAt
         && observed.consumerRun.status === 'completed', 'CONSUMER_ACTION_NOT_CORRELATED');
-      if (after.coordinator.lastAction === 'reinitializeOpenAIProvider') {
+      if (after.coordinator.lastAction === 'reinitializeOpenAIProvider:reloaded=true:ok=true:healthy') {
         requireProof(after.provider.reloadCount > baseline.provider.reloadCount
           && observed.consumerRun.consumerClientId !== baseline.provider.lastConsumerClientId, 'PROVIDER_CONSUMER_CLIENT_NOT_REPLACED');
       } else if (after.coordinator.lastAction.startsWith('activateTrinity')) {
@@ -579,7 +579,7 @@ export async function runSelfHealAcceptanceCase(scenario, manifest, options = {}
       requireProof(scenario === 'C07' ? observed.consumerMetrics.postAction?.requestCount === 0
         : observed.consumerMetrics.postAction?.requestCount >= 3
           && Date.parse(observed.coordinator.lastVerificationResult.verifiedAt) > Date.parse(after.coordinator.lastActionAt)
-          && (after.coordinator.lastAction !== 'reinitializeOpenAIProvider' || observed.provider.successesSinceCanonicalAction >= 3), 'RECOVERY_FRESHNESS_FAILED');
+          && (after.coordinator.lastAction !== 'reinitializeOpenAIProvider:reloaded=true:ok=true:healthy' || observed.provider.successesSinceCanonicalAction >= 3), 'RECOVERY_FRESHNESS_FAILED');
     } else if (/^D0[1-4]$/u.test(scenario)) {
       const policy = { D01: 'policy_disabled', D02: 'policy_insufficient_autonomy', D03: 'policy_freeze', D04: 'policy_kill_switch' }[scenario];
       const expectedReason = { D01: 'self_improve_execution_disabled', D02: 'insufficient_autonomy',

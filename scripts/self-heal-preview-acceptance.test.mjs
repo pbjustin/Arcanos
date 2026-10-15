@@ -613,8 +613,9 @@ test('restart polling retries an expected unavailable instance but not an identi
 
 function scenarioFixture(scenario, fault = null) {
   let clock = NOW; let sequence = 0; let armed = false;
+  const providerActionScenario = ['C01', 'C08', 'D07'].includes(scenario);
   const stage = () => ({ activeAction: null, mitigationId: null, verificationSuccesses: 0, verificationFailures: 0 });
-  const state = snapshot({ provider: { reloadCount: 0 }, coordinatorEvents: [],
+  const state = snapshot({ provider: { reloadCount: 0, lastConsumerClientId: 'client-before', successesSinceCanonicalAction: 0 }, coordinatorEvents: [],
     trinity: { snapshot: { intake: stage(), reasoning: stage(), final: stage() } },
     predictiveRun: { status: 'completed', startedAt: new Date(NOW - 1).toISOString(), audit: { auditId: 'predictive_heal_audit_1' } } });
   const calls = []; const providerReceipts = [];
@@ -663,6 +664,21 @@ function scenarioFixture(scenario, fault = null) {
         state.consumerRun = { requestId, processInstanceId: state.processInstanceId, status: 'completed', dryRun: false,
           diagnostics: { statusCode: actualFault ? 504 : 200 },
           recoveryPath: { reasoningTimeoutDirectAnswerFallback: actualFault } };
+        if (providerActionScenario) {
+          state.consumerRun.consumerClientId = state.coordinator.lastActionAt && fault !== 'same-client' ? 'client-after' : 'client-before';
+          state.consumerRun.canonicalActionAtStart = { at: fault === 'stale-correlation' ? null : state.coordinator.lastActionAt };
+          if (state.coordinator.lastActionAt) {
+            state.provider.successesSinceCanonicalAction = Math.min(fault === 'insufficient-successes' ? 2 : Infinity,
+              state.provider.successesSinceCanonicalAction + 1);
+            state.consumerMetrics = { postAction: { requestCount: (state.consumerMetrics?.postAction?.requestCount ?? 0) + 1 } };
+          }
+        }
+      }
+      if (providerActionScenario && command === 'coordinator_start' && state.policy.selfImproveEnabled) {
+        state.coordinator.lastDecision = 'heal'; state.coordinator.lastActionAt = new Date(clock).toISOString();
+        state.coordinator.lastAction = fault?.startsWith('reinitializeOpenAIProvider')
+          ? fault : 'reinitializeOpenAIProvider:reloaded=true:ok=true:healthy';
+        if (fault !== 'no-reload') state.provider.reloadCount += 1;
       }
       if (command === 'tick') {
         state.coordinator.tickCount += 1; state.coordinator.lastDecision = fault === 'healthy-no-action' ? 'observe' : 'heal';
@@ -671,6 +687,7 @@ function scenarioFixture(scenario, fault = null) {
         if (!['no-denial', 'healthy-no-action'].includes(fault)) state.coordinatorEvents.push({ id: 'self_heal_event_1',
           timestamp: new Date(clock).toISOString(), kind: 'noop', trigger: 'action', reasonCode, action: 'reinitializeOpenAIProvider' });
         if (fault === 'unauthorized-provider-effect') state.provider.reloadCount += 1;
+        if (scenario === 'C08') state.coordinator.lastVerificationResult = { outcome: 'improved', verifiedAt: new Date(clock).toISOString() };
       }
       if (command === 'predictive_evaluate_live') {
         const dryRun = scenario === 'D05';
@@ -690,6 +707,30 @@ function scenarioFixture(scenario, fault = null) {
   };
   return { calls, options: { now: () => clock, sleep: async ms => { clock += ms; }, execute: true, allowNetwork: true, transport } };
 }
+
+for (const scenario of ['C01', 'D07', 'C08']) test(`${scenario} accepts the canonical healthy provider action with observed consumer effects`, async () => {
+  const { options } = scenarioFixture(scenario);
+  const result = await runSelfHealAcceptanceCase(scenario, manifest(), options);
+  assert.equal(result.classification, 'SYNTHETIC_ONLY'); assert.equal(result.errorCode, null);
+});
+for (const action of ['reinitializeOpenAIProvider', 'reinitializeOpenAIProvider:reloaded=false:ok=true:healthy',
+  'reinitializeOpenAIProvider:reloaded=true:ok=false:healthy', 'reinitializeOpenAIProvider:reloaded=true:ok=true:unhealthy',
+  'reinitializeOpenAIProvider:reloaded=true:ok=true:healthy:extra']) test(`C01 rejects unsupported provider action ${action}`, async () => {
+  const { options } = scenarioFixture('C01', action);
+  const result = await runSelfHealAcceptanceCase('C01', manifest(), options);
+  assert.equal(result.classification, 'BLOCKED'); assert.equal(result.errorCode, 'SELF_HEAL_ACCEPTANCE_ACTION_EFFECT_INSPECTION_UNSUPPORTED');
+});
+for (const fault of ['no-reload', 'same-client', 'stale-correlation']) test(`C01 rejects missing provider effect ${fault}`, async () => {
+  const { options } = scenarioFixture('C01', fault);
+  const result = await runSelfHealAcceptanceCase('C01', manifest(), options);
+  assert.equal(result.classification, 'FAILED'); assert.equal(result.errorCode, fault === 'stale-correlation'
+    ? 'SELF_HEAL_ACCEPTANCE_CONSUMER_ACTION_NOT_CORRELATED' : 'SELF_HEAL_ACCEPTANCE_PROVIDER_CONSUMER_CLIENT_NOT_REPLACED');
+});
+test('C08 rejects fewer than three fresh provider successes despite improved diagnostics', async () => {
+  const { options } = scenarioFixture('C08', 'insufficient-successes');
+  const result = await runSelfHealAcceptanceCase('C08', manifest(), options);
+  assert.equal(result.classification, 'FAILED'); assert.equal(result.errorCode, 'SELF_HEAL_ACCEPTANCE_RECOVERY_FRESHNESS_FAILED');
+});
 
 test('C05 requires a successful same-request consumer and unchanged exact replacement counters', async () => {
   const { options } = scenarioFixture('C05');
