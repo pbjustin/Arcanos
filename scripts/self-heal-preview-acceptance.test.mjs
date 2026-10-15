@@ -204,6 +204,78 @@ function cliFixture() {
   return { current, options, transport: createSelfHealAcceptanceTransport(m, options) };
 }
 
+function diagnosticCliFixture(diagnostic) {
+  const fixture = cliFixture(); const original = fixture.options.command;
+  fixture.options.command = async (...args) => {
+    const result = await original(...args);
+    if (args[1][0] !== 'ssh') return result;
+    const receipt = JSON.parse(result.stdout);
+    receipt.observation.diagnostic = diagnostic;
+    return { stdout: JSON.stringify(receipt) };
+  };
+  return fixture;
+}
+
+for (const [name, diagnostic] of Object.entries({
+  redis: 'redis://fixture-user:fixture-secret@example.invalid:6379',
+  tlsRedis: 'rediss://fixture-user:fixture-secret@example.invalid:6379',
+  tlsRedisWithoutCredentials: 'ReDiSs://example.invalid:6379',
+  mongoSrv: 'mongodb+srv://fixture-user:fixture-secret@example.invalid/database',
+  httpsUserInfo: 'https://fixture-user:fixture-secret@example.invalid/path',
+  customScheme: 'Example+v1.2-test://fixture-user:fixture-secret@example.invalid/path',
+  emptyPassword: 'https://fixture-user:@example.invalid/path',
+  emptyUsername: 'https://:fixture-secret@example.invalid/path',
+  tokenUserInfo: 'https://fixture-secret@example.invalid/path',
+  encodedUserInfo: 'https://fixture%40user:fixture%3Asecret@example.invalid/path',
+  postgres: 'postgres://fixture-user:fixture-secret@example.invalid/database',
+  postgresql: 'postgresql://fixture-user:fixture-secret@example.invalid/database',
+  bearer: 'Bearer fixture-secret',
+  privateKey: '-----BEGIN PRIVATE KEY----- fixture-secret',
+  projectKey: 'sk-proj-fixture-secret',
+})) test(`diagnostic safety rejects ${name} before returning a remote receipt`, async () => {
+  const { current, transport } = diagnosticCliFixture({ nested: [diagnostic] });
+  await assert.rejects(transport.remote('worker', ['inspect']), error => {
+    assert.equal(error.message, 'SELF_HEAL_ACCEPTANCE_UNSAFE_DIAGNOSTIC');
+    assert.equal(error.classification, 'BLOCKED');
+    assert(!String(error).includes(diagnostic));
+    return true;
+  });
+  assert.deepEqual(current.calls.map(args => args[0]), ['api', 'ssh']);
+});
+
+for (const diagnostic of [
+  'https://example.invalid:443/path?attempt=1',
+  'mongodb+srv://example.invalid/database',
+  'https://example.invalid/path/fixture-user:fixture-value@example.invalid',
+  'https://example.invalid?contact=fixture-user:fixture-value@example.invalid',
+  'https://example.invalid#fixture-user:fixture-value@example.invalid',
+]) test(`diagnostic safety preserves credential-free URI ${diagnostic}`, async () => {
+  const { transport } = diagnosticCliFixture({ nested: [diagnostic] });
+  const receipt = await transport.remote('worker', ['inspect']);
+  assert.deepEqual(receipt.observation.diagnostic, { nested: [diagnostic] });
+});
+
+test('diagnostic safety never publishes a rejected TLS Redis credential in durable case evidence', async () => {
+  const secretMarker = 'fixture-secret-durable-rejection';
+  const { transport } = diagnosticCliFixture(`rediss://fixture-user:${secretMarker}@example.invalid:6379`);
+  const directory = mkdtempSync(join(tmpdir(), 'arcanos-acceptance-redaction-')); const paths = [];
+  const publish = receipt => { paths.push(publishSelfHealAcceptanceReceipt(directory, paths.length + 1, receipt)); };
+  try {
+    const result = await runSelfHealAcceptanceCase('A01', manifest(), {
+      now: () => NOW, execute: true, allowNetwork: true, transport, onReceipt: publish, onResult: publish,
+    });
+    for (const path of paths) assert(!readFileSync(path, 'utf8').includes(secretMarker), 'credential-containing receipt reached durable evidence');
+    assert.equal(result.classification, 'BLOCKED');
+    assert.equal(result.errorCode, 'SELF_HEAL_ACCEPTANCE_UNSAFE_DIAGNOSTIC');
+    assert.equal(result.cleanupResult, 'FAILED');
+    assert.equal(paths.length, 2);
+    assert(!JSON.stringify(result).includes(secretMarker));
+  } finally {
+    for (const path of paths) unlinkSync(path);
+    rmdirSync(directory);
+  }
+});
+
 test('held shutdown is one exact Worker operation and cannot target other scenarios or bypass a changed head', async () => {
   const { current, transport } = cliFixture();
   await assert.rejects(transport.shutdownHeld('A01'), /SHUTDOWN_SCENARIO_INVALID/u);

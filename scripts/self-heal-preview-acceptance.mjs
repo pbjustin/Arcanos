@@ -146,7 +146,7 @@ export function publishSelfHealAcceptanceReceipt(directory, sequence, receipt) {
 
 function safeProjection(value) {
   const text = JSON.stringify(value);
-  if (Buffer.byteLength(text) > MAX_BYTES || /(?:Bearer\s|postgres(?:ql)?:\/\/|redis:\/\/|-----BEGIN [A-Z ]*PRIVATE KEY-----|sk-proj-)/iu.test(text)) block('UNSAFE_DIAGNOSTIC');
+  if (Buffer.byteLength(text) > MAX_BYTES || /(?:Bearer\s|postgres(?:ql)?:\/\/|rediss?:\/\/|(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*:\/\/[^\s/"@?#]+@|-----BEGIN [A-Z ]*PRIVATE KEY-----|sk-proj-)/iu.test(text)) block('UNSAFE_DIAGNOSTIC');
   return JSON.parse(text);
 }
 
