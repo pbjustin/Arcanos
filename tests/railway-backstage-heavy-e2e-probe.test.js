@@ -1,4 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
+import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { win32 as win32Path } from 'node:path';
 
 import {
   attestBackstageHeavyRailwayControlPlane,
@@ -916,6 +919,7 @@ describe('Backstage heavy network proof', () => {
     expect(buildBackstageHeavyRailwayCliEnvironment({
       PATH: 'safe-path',
       APPDATA: 'safe-appdata',
+      ProgramData: 'safe-programdata',
       RAILWAY_TOKEN: 'railway-token',
       ARCANOS_BACKSTAGE_HEAVY_PROBE_BEARER: 'must-not-cross',
       DATABASE_URL: DATABASE_URL,
@@ -927,6 +931,7 @@ describe('Backstage heavy network proof', () => {
       NO_COLOR: '1',
       PATH: 'safe-path',
       APPDATA: 'safe-appdata',
+      ProgramData: 'safe-programdata',
       RAILWAY_TOKEN: 'railway-token',
     });
 
@@ -984,5 +989,31 @@ describe('Backstage heavy network proof', () => {
       );
       expect(error.message).not.toContain(railwaySecret);
     }
+  });
+
+  const systemRoot = process.env.SystemRoot ?? process.env.SYSTEMROOT;
+  const windowsSshExecutable = process.platform === 'win32' && systemRoot
+    ? win32Path.join(systemRoot, 'System32', 'OpenSSH', 'ssh.exe')
+    : null;
+  const windowsSshTest = windowsSshExecutable && existsSync(windowsSshExecutable)
+    ? it
+    : it.skip;
+  windowsSshTest('starts Windows OpenSSH offline with the filtered CLI environment', () => {
+    const result = spawnSync(windowsSshExecutable, ['-V'], {
+      env: buildBackstageHeavyRailwayCliEnvironment(process.env),
+      encoding: 'utf8',
+      timeout: 3_000,
+      windowsHide: true,
+      maxBuffer: 16 * 1024,
+    });
+    expect({
+      status: result.status,
+      error: result.error?.code ?? null,
+      output: `${result.stdout ?? ''}${result.stderr ?? ''}`,
+    }).toEqual({
+      status: 0,
+      error: null,
+      output: expect.stringMatching(/OpenSSH/iu),
+    });
   });
 });
