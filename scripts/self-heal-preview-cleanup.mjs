@@ -14,6 +14,7 @@ import {
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const WORKSPACE = '1c9265a3-986f-4304-ad3e-5a874caab039';
+const OWNER_USER_ID = 'e1c58b83-8740-4318-9ee2-780c2a6f4e8b';
 const MAX_LEASE_MS = 7_200_000;
 const MAX_BYTES = 2 * 1024 * 1024;
 const CLI_TIMEOUT_MS = 15_000;
@@ -27,20 +28,22 @@ const FORBIDDEN_IDS = new Set([
 ]);
 const RECEIPT_KEYS = Object.freeze(['version', 'owner', 'repository', 'prNumber', 'sourceSha', 'runId',
   'projectId', 'projectName', 'workspaceId', 'environmentId', 'environmentName', 'issuedAt', 'expiresAt']);
-const CLEANUP_INVENTORY_QUERY = `query SelfHealPreviewCleanupInventory($projectId: String!) {
-  project(id: $projectId) {
+const CLEANUP_INVENTORY_QUERY = `query SelfHealPreviewCleanupOwnerInventory {
+  me { id }
+  projects(first: 100, workspaceId: "${WORKSPACE}", includeDeleted: true) {
+    edges { node {
     id name workspaceId deletedAt
-    services { edges { node { id name } } pageInfo { hasNextPage } }
-    volumes { edges { node { id name projectId } } pageInfo { hasNextPage } }
-    buckets { edges { node { id } } pageInfo { hasNextPage } }
-    environments { edges { node {
+    services(first: 100) { edges { node { id name } } pageInfo { hasNextPage } }
+    volumes(first: 100) { edges { node { id name projectId } } pageInfo { hasNextPage } }
+    buckets(first: 100) { edges { node { id } } pageInfo { hasNextPage } }
+    environments(first: 100) { edges { node {
       id name deletedAt
-      serviceInstances { edges { node { id serviceId serviceName environmentId } } pageInfo { hasNextPage } }
-      volumeInstances { edges { node {
+      serviceInstances(first: 100) { edges { node { id serviceId serviceName environmentId } } pageInfo { hasNextPage } }
+      volumeInstances(first: 100) { edges { node {
         id volumeId serviceId environmentId mountPath volume { id name projectId }
       } } pageInfo { hasNextPage } }
     } } pageInfo { hasNextPage } }
-  }
+  } } pageInfo { hasNextPage } }
 }`;
 const SERVICES = new Map([
   ['Postgres', '/var/lib/postgresql/data'], ['Redis', '/data'],
@@ -103,12 +106,23 @@ function cleanupInventory(status, receipt, options = {}) {
   const now = options.now?.() ?? Date.now();
   if (!record(status) || status.id !== receipt.projectId || status.name !== receipt.projectName
     || status.workspaceId !== WORKSPACE || !validId(status.id)
-    || (status.deletedAt !== null && !(iso(status.deletedAt) > now))) fail('PROJECT_MISMATCH');
+    || (status.deletedAt !== null && !Number.isFinite(iso(status.deletedAt)))) fail('PROJECT_MISMATCH');
   if (status.buckets !== undefined) {
     const buckets = Array.isArray(status.buckets) ? status.buckets : connection(status.buckets);
     if (buckets.length !== 0) fail('FOREIGN_RESOURCES');
   }
   const environments = connection(status.environments);
+  // Owner-visible deleted project metadata can outlive all resource collections.
+  // Only that exact empty tombstone is admissible; retained resources after the
+  // deletion timestamp are neither absent nor authority for a recovery mutation.
+  if (status.deletedAt !== null && iso(status.deletedAt) <= now) {
+    if (environments.length !== 0 || connection(status.services).length !== 0
+      || connection(status.volumes).length !== 0) fail('DELETED_PROJECT_RESOURCES_RETAINED');
+    return { services: [], instances: [], globalVolumes: [], volumeInstances: [],
+      bindings: options.bindings ?? receipt.resources ?? resourceBindings({ services: [], volumes: [] }),
+      scheduledDeletionAt: status.deletedAt,
+      counts: { serviceCount: 0, serviceInstanceCount: 0, volumeCount: 0, volumeInstanceCount: 0, environmentCount: 0 } };
+  }
   if (environments.length !== 1) fail('ENVIRONMENT_MISMATCH');
   const environment = environments[0];
   if (environment.id !== receipt.environmentId || environment.name !== receipt.environmentName
@@ -359,13 +373,6 @@ async function cli(args, options, timeout = CLI_TIMEOUT_MS, json = true) {
   }
 }
 
-async function projectList(options, timeout = CLI_TIMEOUT_MS) {
-  const projects = await cli(['list', '--json'], options, timeout);
-  if (!Array.isArray(projects) || projects.some(project => !record(project) || !UUID.test(project.id ?? ''))
-    || new Set(projects.map(project => project.id)).size !== projects.length) fail('PROJECT_LIST_INVALID');
-  return projects;
-}
-
 async function readOwnedProject(receipt, options, deadline) {
   const now = options.now ?? Date.now;
   const timeout = () => {
@@ -379,18 +386,37 @@ async function readOwnedProject(receipt, options, deadline) {
   } catch (error) {
     if (!(error instanceof SelfHealPreviewCleanupError) || error.message !== 'SELF_HEAL_PREVIEW_CLEANUP_CLI_FAILED') throw error;
   }
-  if (status?.volumes) return status;
+  if (status?.volumes && status.deletedAt === null) return status;
   // CLI status rejects a project as soon as deletion is scheduled, and its
-  // normal projection omits global volumes. Use one fixed read-only query;
+  // normal projection omits global volumes. Per-project reads and ordinary
+  // project lists filter deleted targets, so neither is absence evidence.
+  // Use one complete owner-visible includeDeleted collection instead;
   // deletion never falls back to an API mutation or a different target.
-  const response = await cli(['api', CLEANUP_INVENTORY_QUERY, '--variables', JSON.stringify({ projectId: receipt.projectId }), '--compact'], options, timeout());
-  if (!record(response) || (Array.isArray(response.errors) && response.errors.length > 0)
-    || !record(response.data) || !Object.hasOwn(response.data, 'project')) fail('INVENTORY_QUERY_FAILED');
-  if (response.data.project === null) {
-    if ((await projectList(options, timeout())).some(project => project.id === receipt.projectId)) fail('PROJECT_INSPECTION_UNAVAILABLE');
+  const response = await cli(['api', CLEANUP_INVENTORY_QUERY, '--compact'], options, timeout());
+  if (!record(response) || (response.errors !== undefined && (!Array.isArray(response.errors) || response.errors.length > 0))
+    || !record(response.data) || !Object.hasOwn(response.data, 'projects')) fail('INVENTORY_QUERY_FAILED');
+  const complete = value => {
+    if (value?.pageInfo?.hasNextPage !== false) fail('INCOMPLETE_INVENTORY');
+    return connection(value);
+  };
+  const projects = complete(response.data.projects);
+  if (projects.some(project => !UUID.test(project.id ?? '') || project.workspaceId !== WORKSPACE)
+    || new Set(projects.map(project => project.id)).size !== projects.length) fail('PROJECT_LIST_INVALID');
+  const project = projects.find(candidate => candidate.id === receipt.projectId);
+  const assertOwner = () => { if (response.data.me?.id !== OWNER_USER_ID) fail('OWNER_IDENTITY_MISMATCH'); };
+  if (!project) {
+    assertOwner();
     return null;
   }
-  return response.data.project;
+  const services = complete(project.services); const volumes = complete(project.volumes);
+  const buckets = complete(project.buckets); const environments = complete(project.environments);
+  for (const environment of environments) {
+    complete(environment.serviceInstances); complete(environment.volumeInstances);
+  }
+  if (services.length === 0 && volumes.length === 0 && buckets.length === 0
+    && environments.every(environment => environment.serviceInstances.edges.length === 0
+      && environment.volumeInstances.edges.length === 0)) assertOwner();
+  return project;
 }
 
 function noServices(inventory) { return inventory.services.length === 0 && inventory.instances.length === 0; }

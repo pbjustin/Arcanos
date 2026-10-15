@@ -42,6 +42,9 @@ jobs:
       - name: 🛡️ Commit guardrails
         run: npm run guard:commit
 
+      - name: Verify bounded self-heal acceptance controller contracts
+        run: node --test scripts/self-heal-preview-acceptance.test.mjs
+
       - name: 🧾 Validate backend/CLI contract manifest
         run: npm run validate:backend-cli:contract
 

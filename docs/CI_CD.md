@@ -1,5 +1,27 @@
 # CI/CD and Environment Separation
 
+The opt-in `worker-coordinator-v1` acceptance extension uses
+`scripts/self-heal-preview-acceptance.mjs` with the existing receipt-bound
+supervisor, fixed SSH client and cleanup watchdog. Its controller contract tests
+run in the lint/type-check job with `node --test
+scripts/self-heal-preview-acceptance.test.mjs`; they perform no Railway calls.
+The driver admits only the 32 named PR1544 scenarios, four exact owned services,
+two bound volumes, an immutable source/artifact manifest and the original
+two-hour expiry. `--execute --allow-network` are both required for operations.
+Each scenario writes immutable, synchronously flushed evidence before proceeding.
+Injected transports are always synthetic evidence. Missing independent shutdown,
+startup-failure or remote-effect inspection remains blocked, never a pass.
+
+This is an extension of the existing sealed lane, not a production deployment
+workflow or a general administration endpoint. The native passive-worker lane
+and its label do not admit this profile. Operator authentication, independent
+cleanup readiness and the owner-approved cost envelope must be established
+before resources are provisioned; no repository or production token is a
+fallback. The fixed Web queue probe currently covers Backstage Booker admission;
+Core, Gaming and Tutor can reuse the isolated topology but require their own
+reviewed application-specific probes. Synthetic provider responses do not prove
+external-provider recovery or full production equivalence.
+
 ## Overview
 This repository uses GitHub Actions workflows in `.github/workflows/` for build/test validation, docs checks, release automation, and Railway deployment helpers.
 

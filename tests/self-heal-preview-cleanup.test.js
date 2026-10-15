@@ -23,7 +23,7 @@ function receipt(patch = {}) { return {
   environmentId: ID.environment, environmentName: 'backstage-heavy-pr-1544-e2e',
   issuedAt: '2026-10-14T15:59:00.000Z', expiresAt: '2026-10-14T17:00:00.000Z', ...patch,
 }; }
-function connection(nodes) { return { edges: nodes.map(node => ({ node })) }; }
+function connection(nodes) { return { edges: nodes.map(node => ({ node })), pageInfo: { hasNextPage: false } }; }
 function status(partial = false) {
   return {
     id: ID.project, name: receipt().projectName, workspaceId: receipt().workspaceId, deletedAt: null, buckets: [],
@@ -57,7 +57,15 @@ function harness(options = {}) {
       const payload = options.status?.(++statuses, structuredClone(current)) ?? current;
       return { stdout: JSON.stringify(payload), stderr: '' };
     }
-    if (commandName === 'api') return { stdout: JSON.stringify(options.api?.(current) ?? { data: { project: current } }), stderr: '' };
+    if (commandName === 'api') {
+      if (!/^query SelfHealPreviewCleanupOwnerInventory \{/u.test(args[1])
+        || !args[1].includes('workspaceId: "1c9265a3-986f-4304-ad3e-5a874caab039", includeDeleted: true')
+        || args.length !== 3 || args[2] !== '--compact' || /\bmutation\b/u.test(args[1])) throw new Error('UNEXPECTED_OWNER_INVENTORY_QUERY');
+      const project = current && { ...current, buckets: Array.isArray(current.buckets) ? connection(current.buckets) : current.buckets };
+      return { stdout: JSON.stringify(options.api?.(project) ?? { data: {
+        me: { id: 'e1c58b83-8740-4318-9ee2-780c2a6f4e8b' }, projects: connection(project ? [project] : []),
+      } }), stderr: '' };
+    }
     if (commandName === 'service' && args[1] === 'delete') {
       if (options.refuseResourceDelete) throw new Error('Project is deleted.');
       if (!options.retainServices) {
@@ -238,6 +246,68 @@ describe('receipt-bound self-heal preview cleanup and fixed-expiry watchdog', ()
       scheduledDeletionAt: new Date(NOW + 48 * 60 * 60 * 1000).toISOString() });
     expect(h.command.mock.calls.some(call => call[1][0] === 'api')).toBe(true);
     expect(h.command.mock.calls.filter(call => call[1][0] === 'delete')).toHaveLength(1);
+  });
+  it('never accepts filtered project-null/list absence while owner includeDeleted inventory retains volumes', async () => {
+    const current = status(); current.deletedAt = new Date(NOW + 48 * 60 * 60 * 1000).toISOString();
+    const h = harness({ initialStatus: current, refuseResourceDelete: true, list: () => [],
+      api: value => ({ data: { project: null, projects: connection([value]) } }) });
+    await expect(runSelfHealPreviewCleanup(execute(receipt({ resources: boundResources() })), h))
+      .rejects.toThrow('SELF_HEAL_PREVIEW_CLEANUP_SCHEDULED_RESOURCE_DELETE_REQUIRES_APPROVED_RECOVERY');
+    expect(h.events.some(event => event.absenceVerified === true || event.resourceAbsenceVerified === true)).toBe(false);
+    expect(h.command.mock.calls.some(call => call[1][0] === 'list')).toBe(false);
+  });
+  it('accepts complete owner-visible empty deleted metadata only as resource absence, with zero mutations', async () => {
+    const current = status(true); current.deletedAt = new Date(NOW - 1000).toISOString(); current.environments = connection([]);
+    const h = harness({ initialStatus: current });
+    const result = await runSelfHealPreviewCleanup(execute(receipt({ resources: boundResources() })), h);
+    expect(result).toMatchObject({ status: 'RESOURCES_REMOVED_METADATA_RETAINED', resourceAbsenceVerified: true,
+      projectAbsenceVerified: false, absenceVerified: false, projectMetadataRetained: true,
+      environmentCount: 0, serviceCount: 0, volumeCount: 0 });
+    expect(h.command.mock.calls.some(call => isMutation(call[1]))).toBe(false);
+  });
+  it.each(['volume', 'service', 'bucket', 'environment'])('refuses a past-deleted tombstone retaining %s before any mutation', async kind => {
+    const current = status(true); current.deletedAt = new Date(NOW - 1000).toISOString(); current.environments = connection([]);
+    if (kind === 'volume') current.volumes = status().volumes;
+    if (kind === 'service') current.services = status().services;
+    if (kind === 'bucket') current.buckets = [{ id: ID.redis }];
+    if (kind === 'environment') current.environments = status(true).environments;
+    const h = harness({ initialStatus: current });
+    const error = await runSelfHealPreviewCleanup(execute(receipt({ resources: boundResources() })), h).catch(error => error);
+    expect(error.message).toMatch(/^SELF_HEAL_PREVIEW_CLEANUP_(?:DELETED_PROJECT_RESOURCES_RETAINED|FOREIGN_RESOURCES)$/u);
+    expect(h.events.some(event => event.resourceAbsenceVerified === true)).toBe(false);
+    expect(h.command.mock.calls.some(call => isMutation(call[1]))).toBe(false);
+  });
+  it.each(['omitted', 'empty-tombstone'])('requires the pinned owner before accepting %s absence', async kind => {
+    const current = status(true); current.deletedAt = new Date(NOW - 1000).toISOString(); current.environments = connection([]);
+    const h = harness({ initialStatus: current, api: value => ({ data: {
+      me: { id: ID.web }, projects: connection(kind === 'omitted' ? [] : [value]),
+    } }) });
+    await expect(runSelfHealPreviewCleanup(execute(), h)).rejects.toThrow('SELF_HEAL_PREVIEW_CLEANUP_OWNER_IDENTITY_MISMATCH');
+    expect(h.events.some(event => event.resourceAbsenceVerified === true)).toBe(false);
+    expect(h.command.mock.calls.some(call => isMutation(call[1]))).toBe(false);
+  });
+  it.each(['truncated-projects', 'missing-page-info', 'truncated-volumes', 'legacy-filtered-null', 'duplicate-project', 'foreign-workspace'])(
+    'rejects incomplete or unscoped owner inventory %s before any mutation', async kind => {
+      const current = status(true); current.deletedAt = new Date(NOW - 1000).toISOString(); current.environments = connection([]);
+      const h = harness({ initialStatus: current, api: value => {
+        const projects = connection([value]);
+        if (kind === 'truncated-projects') projects.pageInfo.hasNextPage = true;
+        if (kind === 'missing-page-info') delete projects.pageInfo;
+        if (kind === 'truncated-volumes') value.volumes.pageInfo.hasNextPage = true;
+        if (kind === 'duplicate-project') projects.edges.push(projects.edges[0]);
+        if (kind === 'foreign-workspace') value.workspaceId = ID.web;
+        if (kind === 'legacy-filtered-null') return { data: { project: null } };
+        return { data: { me: { id: 'e1c58b83-8740-4318-9ee2-780c2a6f4e8b' }, projects } };
+      } });
+      await expect(runSelfHealPreviewCleanup(execute(), h)).rejects.toThrow(/^SELF_HEAL_PREVIEW_CLEANUP_/u);
+      expect(h.events.some(event => event.resourceAbsenceVerified === true)).toBe(false);
+      expect(h.command.mock.calls.some(call => isMutation(call[1]))).toBe(false);
+    });
+  it.each(['403 Forbidden', '404 Project not found'])('never interprets %s as absence', async commandError => {
+    const h = harness({ commandError });
+    await expect(runSelfHealPreviewCleanup(execute(), h)).rejects.toThrow('SELF_HEAL_PREVIEW_CLEANUP_CLI_FAILED');
+    expect(h.events.some(event => event.resourceAbsenceVerified === true)).toBe(false);
+    expect(h.command.mock.calls.some(call => isMutation(call[1]))).toBe(false);
   });
   it('uses global volume identities and never instance identities for deletion', async () => {
     const h = harness(); await runSelfHealPreviewCleanup(execute(), h);
@@ -589,8 +659,9 @@ describe('receipt-bound self-heal preview cleanup and fixed-expiry watchdog', ()
     const queries = h.command.mock.calls.map(call => call[1]).filter(args => args[0] === 'api');
     expect(queries.length).toBeGreaterThan(0);
     for (const args of queries) {
-      expect(args[1]).toMatch(/^query SelfHealPreviewCleanupInventory\(/u); expect(args[1]).not.toMatch(/\bmutation\b/u);
-      expect(JSON.parse(args[args.indexOf('--variables') + 1])).toEqual({ projectId: ID.project });
+      expect(args[1]).toMatch(/^query SelfHealPreviewCleanupOwnerInventory \{/u); expect(args[1]).not.toMatch(/\bmutation\b/u);
+      expect(args[1]).toContain('workspaceId: "1c9265a3-986f-4304-ad3e-5a874caab039", includeDeleted: true');
+      expect(args).not.toContain('--variables');
       expect(args.at(-1)).toBe('--compact');
     }
     expect(h.command.mock.calls.some(call => isMutation(call[1]))).toBe(false);
