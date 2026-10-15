@@ -94,6 +94,7 @@ outbound call.
 | `ARCANOS_GPT_ACCESS_WORKSPACE_ID` | Yes for GPT Access-only tenant-scoped capabilities | none | Server-controlled workspace paired with the configured principal; missing identity fails closed. |
 | `ARCANOS_PROCESS_KIND` | Yes for Railway launcher | none | Must be `web` or `worker` when using the normal protected-digest startup wrapper and role launcher; omit for direct local `npm start`. |
 | `ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA` | Disposable Backstage durable proof only | none | Exact lowercase 40-hex revision staged on both isolated proof roles. The authorized runner also binds the deploy request and deployed manifests to this SHA. A Railway-provided `RAILWAY_GIT_COMMIT_SHA` is optional but must exactly match when present. Never configure this proof marker on the canonical project or ordinary PR previews. |
+| `ARCANOS_SELF_HEAL_PREVIEW_PROFILE` | Disposable self-healing acceptance only | absent; disabled | Exact `worker-coordinator-v1` opt-in for the dedicated heavy-supervisor profile; requires the full identity, fixed lease and control settings [below](#disposable-self-healing-preview-profile). Never configure on canonical services or native passive previews. |
 | `ARCANOS_NATIVE_PR_APPLICATION_PREVIEW` | Launcher-owned native PR child only | none | Exact internal version marker (`v1`) projected by the reviewed launcher. Do not configure or forward it manually. |
 | `ARCANOS_PREVIEW_PR_NUMBER` | Launcher-owned native PR child only | none | Validated positive PR number derived from Railway's native environment name. The launcher, not an operator or request, owns this value. |
 | `ARCANOS_PREVIEW_SOURCE_COMMIT` | Launcher-owned native PR child only | none | Validated lowercase 40-hex source commit projected into the contained preview child. It is identity evidence, not authorization. |
@@ -1323,6 +1324,58 @@ Previously created JSONL files remain sensitive and require an explicitly
 approved operator rotation or deletion procedure; the application does not
 remove them during rollout.
 
+### Self-healing coordinator and execution policy
+
+The dedicated Worker owns the canonical coordinator after its required runtime
+bootstrap completes. An explicit web role suppresses automatic scheduling.
+`RUN_WORKERS`, Worker readiness, and an actuator selection do not authorize
+autonomous healing. A running coordinator can observe and diagnose while its
+execution policy remains blocked; inspect the coordinator lifecycle separately
+from queue health and mitigation availability.
+
+| Setting | Default when absent or blank | Resolution |
+| --- | --- | --- |
+| `ARCANOS_PROCESS_KIND` | No launcher default | The Railway launcher requires `web` or `worker`. Direct runtime configuration treats other values as `unknown`; it does not infer role from the service name. |
+| `RUN_WORKERS` | `true` outside tests, `false` in tests | Explicit `web` forces `false`; explicit `worker` forces `true`. The launcher overwrites its child value from the selected role. |
+| `SELF_IMPROVE_ENABLED` | `false` | Exact environment name; selecting an actuator does not enable it. |
+| `SELF_IMPROVE_ACTUATOR_MODE` | `pr_bot` | Exact environment name; accepts `pr_bot` or `daemon`; invalid values retain `pr_bot`. |
+| `SELF_IMPROVE_AUTONOMY_LEVEL` | `0` | Exact environment name; finite numeric parsing. Effective autonomy is bounded to 0–3 and subject to the shared kill switch. |
+| `SELF_IMPROVE_FREEZE` | `false` | Exact environment name; shared kill-switch restrictions also apply to coordinator execution. |
+| `PREDICTIVE_HEALING_ENABLED` | `false` | Exact environment name. |
+| `PREDICTIVE_HEALING_DRY_RUN` | `true` | First nonblank value from the primary name, `RAILWAY_PREDICTIVE_HEALING_DRY_RUN`, then `PREDICTIVE_DRY_RUN`. Only `false`, `0`, or `no` disables dry-run, ignoring case and surrounding whitespace. Invalid values keep dry-run enabled and do not fall through to an alias. |
+| `PREDICTIVE_AUTO_EXECUTE` | `false` | First nonblank value from the primary name, `RAILWAY_PREDICTIVE_AUTO_EXECUTE`, then `AUTO_EXECUTE_HEALING`. |
+
+Other boolean settings in this table recognize `true`, `1`, and `yes`, ignoring
+case and surrounding whitespace; other nonblank inputs resolve to `false`.
+The normal launcher inherits the injected process environment before replacing
+its role and worker toggle. Local `.env` loading preserves already injected
+values. The other self-improve flags above do not use implicit `RAILWAY_`
+aliases. A partial production variable listing cannot distinguish inherited
+values from absent ones; a rendered inventory plus shared-variable inventory
+can establish their presence and provenance. Values remain **UNKNOWN** when the
+connector redacts them or the running process may differ from that inventory.
+This repair performs read-only variable-name inspection without configuration
+mutation; see the [audit snapshot](audits/self-healing/2026-10-14/bootstrap-ownership-repair/REPORT.md#production-inventory-and-unknown-running-state).
+
+| Capability | Required configuration and authorization |
+| --- | --- |
+| Observation | A running coordinator in its owning process and initialized observation dependencies. Disabled self-improvement flags retain observation without granting effects. |
+| Diagnosis | Bounded observations and the existing diagnostic/provider policy. A diagnosis does not authorize its proposed action. |
+| Recommendations | Recommendation-only or dry-run evaluation; no runtime mutation permission follows from a recommendation. The separate patch-proposal controller retains its enabled, freeze, autonomy, and publication gates. |
+| Coordinator local mitigation | `SELF_IMPROVE_ENABLED=true`, `SELF_IMPROVE_ACTUATOR_MODE=daemon`, configured and effective autonomy at least 3, and both configured and effective freeze false. The action must own the actual local consumer, satisfy cooldown/attempt limits, and await fresh verification evidence. |
+| Predictive execution | All local execution gates plus `PREDICTIVE_HEALING_ENABLED=true` and `PREDICTIVE_HEALING_DRY_RUN=false`. Automatic execution additionally requires `PREDICTIVE_AUTO_EXECUTE=true`; manual HTTP execution requires authenticated decision/execution scopes. Request parameters cannot lower the server dry-run guard. |
+| Privileged remote repair | A supported purpose-bound actuator, exact target, required credentials, and explicit action-matched operator approval with approver, reason, and future expiry, in addition to the applicable execution policy. No flag alone authorizes a Railway deployment or remote repair. |
+
+Configured Redis unavailability makes the effective kill switch frozen with
+autonomy 0. Shared overrides cannot substitute for missing enabled, daemon, or
+configured-autonomy gates. Process-local Trinity and prompt-route state cannot
+repair a different web process; unsupported cross-process actions remain
+blocked. EventEmitter worker-listener controls likewise cannot repair or scale
+the dedicated PostgreSQL job runner. See [architecture](ARCHITECTURE.md) and
+[deployment guidance](RAILWAY_DEPLOYMENT.md) for process ownership and acceptance
+boundaries. Live acceptance remains **NOT_RUN** and production promotion remains
+**NOT_AUTHORIZED** for this repair.
+
 For HTTP predictive decisions, server feature flags remain authoritative.
 `simulate` is accepted only with explicit `dryRun: true` and without
 `execute: true`. Live execution returns 409 while predictive healing is
@@ -1446,6 +1499,83 @@ Explicit operator approval and service-role admission still precede dispatch.
 Target resolution does not authorize a deployment or establish preview
 isolation. A denied preflight is not an executed repair; dispatched failures
 consume the coordinator's cooldown and per-diagnosis attempt budget.
+
+### Disposable self-healing preview profile
+
+These settings belong only to the existing heavy supervisor's explicit
+`--self-heal-preview-v1` mode and
+[`railway.self-heal-preview.json`](../railway.self-heal-preview.json), or its
+explicit staged service configuration on new Railway services that no longer
+accept Config as Code. The
+[acceptance runbook](RAILWAY_DEPLOYMENT.md#disposable-self-healing-worker-acceptance-profile)
+defines the fresh four-service topology, exact-source deployment, private data,
+process inspection and external cleanup. Their absence leaves normal startup
+unchanged. A present malformed profile fails closed; setting the profile name
+alone does not establish isolation or authorize actuation.
+
+| Setting | Required profile value / source | Meaning |
+| --- | --- | --- |
+| `ARCANOS_SELF_HEAL_PREVIEW_PROFILE` | `worker-coordinator-v1` | Opt-in marker; also a Docker build argument for the compiled artifact receipt. |
+| `ARCANOS_SELF_HEAL_PREVIEW_RUN_ID` | Same value as `ARCANOS_BACKSTAGE_HEAVY_PROOF_RUN_ID` | 8–64 lowercase alphanumeric/hyphen characters, starting alphanumeric; binds all controls, storage receipt and evidence. |
+| `ARCANOS_SELF_HEAL_PREVIEW_ISSUED_AT` | Canonical UTC ISO timestamp, not in the future | Fixed lease start; preserve across controlled restarts. |
+| `ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT` | Canonical UTC ISO timestamp after issue, at most 7,200,000 ms later | Fixed two-hour maximum; must still be future at startup. Runtime expiration stops work but does not delete resources. |
+| `ARCANOS_SELF_HEAL_PREVIEW_CONTROL_TOKEN` | Fresh preview-only secret, exactly 64 lowercase hexadecimal characters | Purpose-bound Bearer for loopback control/fixture inspection. Keep out of arguments, source, logs and reports. |
+| `ARCANOS_SELF_HEAL_PREVIEW_CONTROL_PORT` | Exact `8791` | Bound only to `127.0.0.1` in each application process; never expose via domain/proxy. |
+| `ARCANOS_SELF_HEAL_PREVIEW_STARTUP_MODE` | `normal`, or Worker-only `scheduler-failure` | Closed startup test selector; failure mode rejects coordinator installation before readiness. |
+| `ARCANOS_SELF_HEAL_PREVIEW_WEB_SERVICE_ID` | Fresh web service UUID from attested topology | Must match the web process identity and differ from Worker/PostgreSQL/Redis IDs. |
+| `ARCANOS_SELF_HEAL_PREVIEW_WORKER_SERVICE_ID` | Fresh Worker service UUID from attested topology | Must match Worker process identity and differ from web/PostgreSQL/Redis IDs. |
+| `ARCANOS_SELF_HEAL_PREVIEW_DATABASE_CERTIFICATE_PEM` | One public preview-owned self-signed certificate, at most 16 KiB; identical Docker build argument and runtime value | Requires exact `postgres.railway.internal` DNS SAN without wildcard matching and validity through the fixed expiry. Its SHA-256 fingerprint binds the ownership receipt; no private key belongs in application configuration. |
+
+Retain the existing heavy target marker, role-specific purpose credentials,
+private PostgreSQL/Redis names/hosts/IDs, and exact lowercase 40-hex
+`ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA`; the latter is also the Docker build
+argument for source binding. Do not override Railway-provided resource IDs.
+The parent requires `NODE_ENV=production`, `ARCANOS_PREVIEW_ISOLATION=true`,
+`FORCE_MOCK=true`, `ALLOW_MOCK_OPENAI=true` and
+`OPENAI_API_KEY_REQUIRED=false`, with the admitted private data references.
+Worker parent uses `http://127.0.0.1:8766/v1`; web parent uses the dead-loopback
+`http://127.0.0.1:9/v1`. After admission, both application children derive
+`FORCE_MOCK=false`, `ALLOW_MOCK_OPENAI=false`, `OPENAI_API_KEY_REQUIRED=true`,
+the fixed fictional SDK key and `http://127.0.0.1:8766/v1`. Each role pod starts
+its own contained provider adapter before ordinary application startup, including
+the real SDK health probe. Set no real provider key. `PORT`, if supplied, must be 1024–65535
+and distinct from 8766 and 8791.
+
+The literal child environment derives self-improvement disabled, autonomy 0,
+freeze false, prediction disabled, predictive dry-run true and role-correct
+`RUN_WORKERS`. It uses the normal 30-second coordinator default and ordinary
+5-second heartbeat/15-second lease defaults. Worker concurrency matches the
+maintained Railway setting of two, with exact consumer IDs
+`self-heal-preview-<runId>-slot-1` and `self-heal-preview-<runId>-slot-2`.
+It derives the dedicated
+Redis kill-switch key `arcanos:preview:self-heal:<runId>:kill-switch:v1` and
+shared Worker stats identity `self-heal-preview-<runId>`; do not configure these separately.
+Web also derives a distinct purpose-separated GPT Access token from the run's
+control secret, with only `runtime.read` and a loopback advertised base URL,
+to satisfy normal startup validation without production gateway authority.
+Ambient self-improvement, predictive, administration, proxy and provider
+settings are rejected rather than inherited. Fixed authenticated commands may
+change only the seven reviewed process policy values and this run's
+kill-switch override. Observation permission does not imply actuation;
+`policy_allowed` still depends on normal configured/effective authorization.
+
+The ownership preflight deliberately creates one preview-only PostgreSQL
+receipt in an empty database and holds a per-role advisory lock. Restart
+requires its exact resource/run/source/compiled-digest/certificate identity and
+no foreign jobs or active leases. Resume admits only the two exact consumer IDs;
+the base ID, a third slot, or a matching prefix does not confer authority.
+It is a preview mutation, not read-only validation or a production schema migration.
+The profile-only Docker build materializes the public certificate at the fixed
+root-owned, mode-0444 `/app/config/self-heal-preview-database-ca.pem` path before
+creating the executable inventory. Startup verifies that file against the
+admitted fingerprint before opening SQL. The child URL uses `sslmode=verify-full`
+and that literal `sslrootcert` path; direct preview clients use
+`rejectUnauthorized:true` and the same CA. No process-wide TLS bypass is set.
+An absent, expired, mismatched or wrong-host certificate blocks startup; obtain
+only the independently attested preview certificate, never production material.
+These checks do not prove a deployed database handshake until it is observed.
+See the runbook for artifact checks,
+bounded process controls, injected-evidence limits and receipt-bound deletion.
 
 ### Self-healing mitigation lifecycle
 

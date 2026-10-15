@@ -19,9 +19,12 @@ import type { JobData } from '@core/db/schema.js';
 import { postgresQueueSchedulerAdapter } from '@core/scheduler/postgresAdapter.js';
 import {
   initializeDatabaseWithSchema as initializeDatabase,
-  getStatus as getDatabaseStatus
+  getStatus as getDatabaseStatus,
+  close as closeDatabase
 } from '@core/db/index.js';
 import { getConfig, getStableWorkerRuntimeMode } from '@platform/runtime/unifiedConfig.js';
+import { getEnv } from '@platform/runtime/env.js';
+import type { SelfHealingPreviewControl } from '@services/selfImprove/selfHealingPreviewControl.js';
 import { configureBackendUnifiedOpenAIClient } from '@core/init-openai.js';
 import {
   classifyWorkerAiBudgetError,
@@ -412,17 +415,20 @@ let workerProcessShutdownRequested = false;
 let workerProcessShutdownSignal: NodeJS.Signals | null = null;
 const workerProcessShutdownController = new AbortController();
 
-function requestWorkerProcessShutdown(signal: NodeJS.Signals): void {
+function requestWorkerProcessShutdown(signal: NodeJS.Signals | null): void {
   if (workerProcessShutdownRequested) {
     return;
   }
 
   workerProcessShutdownRequested = true;
   workerProcessShutdownSignal = signal;
-  workerProcessShutdownController.abort(createAbortError(`Worker process shutdown requested by ${signal}`));
+  workerProcessShutdownController.abort(createAbortError(signal
+    ? `Worker process shutdown requested by ${signal}`
+    : 'Worker process shutdown requested after a fatal runtime failure.'));
   logger.warn('job_runner.shutdown.requested', {
     module: 'worker',
-    signal
+    signal,
+    ...(signal === null ? { reasonCode: 'worker_runtime_failure' } : {})
   });
 }
 
@@ -2317,7 +2323,8 @@ export async function runWorkerConsumerSlot(
   onDispatcherReady: () => void = () => undefined,
   partitionSyncExecutor?: BackstageNotionPartitionSyncJobExecutor,
   providerDependencyState: WorkerProviderDependencyState = createWorkerProviderDependencyState(),
-  operationalStateReporter?: ReturnType<typeof createWorkerOperationalStateReporter>
+  operationalStateReporter?: ReturnType<typeof createWorkerOperationalStateReporter>,
+  beforeClaim?: () => void
 ): Promise<void> {
   let openai: OpenAIClient | null = null;
   let providerConfigVersion: string | null = null;
@@ -2486,6 +2493,7 @@ export async function runWorkerConsumerSlot(
         });
       }
 
+      beforeClaim?.();
       const { job, budgetAdmission } = await postgresQueueSchedulerAdapter.claimNext(
         autonomyService.getClaimOptions()
       );
@@ -3635,8 +3643,38 @@ export async function runWorkerConsumerSlot(
   }
 }
 
-async function run(): Promise<void> {
+export async function runJobWorker(): Promise<void> {
   const workerRuntimeMode = getStableWorkerRuntimeMode();
+  // Cover database initialization and every early bootstrap exit as well as
+  // the consumer drain below. Only a dedicated, enabled Worker owns the pool;
+  // an exported unknown-role helper must leave its caller's shared pool alone.
+  const ownsDatabasePool = resolveJobRunnerEntrypointRuntimeMode(workerRuntimeMode).enabled
+    && (workerRuntimeMode.processKind === 'worker' || isEntrypointModule(import.meta.url));
+  let runtimeFailed = false;
+  try {
+    await runJobWorkerRuntime(workerRuntimeMode);
+  } catch (error: unknown) {
+    runtimeFailed = true;
+    throw error;
+  } finally {
+    if (ownsDatabasePool) {
+      try {
+        // Retained minimum pg sockets otherwise keep Node alive after SIGTERM.
+        // Existing slot, coordinator and snapshot drains finish before this.
+        await closeDatabase();
+      } catch (error: unknown) {
+        logger.warn('worker.shutdown.cleanup_failed', {
+          module: 'job-runner',
+        }, { errorMessage: resolveErrorMessage(error) });
+        if (!runtimeFailed) throw error;
+      }
+    }
+  }
+}
+
+async function runJobWorkerRuntime(
+  workerRuntimeMode: ReturnType<typeof getStableWorkerRuntimeMode>
+): Promise<void> {
   const entrypointRuntimeMode = resolveJobRunnerEntrypointRuntimeMode(workerRuntimeMode);
   const runtimeSettings = resolveJobRunnerRuntimeSettings();
   const databaseBootstrapSettings = resolveJobRunnerDatabaseBootstrapSettings();
@@ -3781,13 +3819,20 @@ async function run(): Promise<void> {
     return;
   }
 
-  const watchdogHandle = startWatchdogLoop(inspectorAutonomyService);
-  const inspectorHandle = startInspectorLoop(inspectorAutonomyService);
-  const backstageNotionSynchronizationCoordinator =
-    createBackstageNotionSynchronizationCoordinator();
-  const partitionSyncExecutor = createBackstageNotionPartitionSyncJobExecutor({
-    coordinator: backstageNotionSynchronizationCoordinator,
-  });
+  // Load the canonical coordinator only on the actual worker bootstrap path,
+  // after database/autonomy/module initialization. Queue-slot imports alone
+  // must not start or load another background controller.
+  const { startSelfHealingLoop, stopSelfHealingLoop } =
+    await import('@services/selfImprove/selfHealingLoop.js');
+  const { startRedisLifecycle, stopRedisLifecycle } =
+    await import('@platform/runtime/redisLifecycle.js');
+  const { primeSelfHealTelemetryPersistence, stopSelfHealTelemetryPersistence } =
+    await import('@services/selfImprove/selfHealTelemetry.js');
+  let watchdogHandle: NodeJS.Timeout | undefined;
+  let inspectorHandle: NodeJS.Timeout | undefined;
+  const slotRuntimePromises: Promise<void>[] = [];
+  let runtimeFailed = false;
+  let selfHealingPreviewControl: SelfHealingPreviewControl | null = null;
   const backstageNotionLoopHandles: {
     monolith: BackstageNotionSyncLoopHandle | null;
     partition: BackstageNotionPartitionShadowLoopHandle | null;
@@ -3797,9 +3842,29 @@ async function run(): Promise<void> {
   };
 
   try {
+    if (getEnv('ARCANOS_SELF_HEAL_PREVIEW_PROFILE') !== undefined) {
+      const { installSelfHealingPreviewControl } = await import('@services/selfImprove/selfHealingPreviewControl.js');
+      selfHealingPreviewControl = await installSelfHealingPreviewControl({ signal: workerProcessShutdownController.signal });
+    }
+    watchdogHandle = startWatchdogLoop(inspectorAutonomyService);
+    inspectorHandle = startInspectorLoop(inspectorAutonomyService);
+    const backstageNotionSynchronizationCoordinator =
+      createBackstageNotionSynchronizationCoordinator();
+    const partitionSyncExecutor = createBackstageNotionPartitionSyncJobExecutor({
+      coordinator: backstageNotionSynchronizationCoordinator,
+    });
+    // Resolve configured shared safety state before any healing evaluation.
+    // Recovery remains non-blocking for queue readiness; configured Redis
+    // outages make the shared kill switch restrictive until it becomes ready.
+    startRedisLifecycle();
+    void primeSelfHealTelemetryPersistence().catch(() => {
+      logger.warn('self_heal.coordinator.telemetry_deferred', {
+        module: 'job-runner', reasonCode: 'telemetry_persistence_unavailable',
+      });
+    });
     const slotReadinessPromises: Promise<void>[] = [];
     //audit Assumption: one Railway worker container should be able to host multiple queue-consumer slots safely; failure risk: an early readiness marker activates a revision after one slot fails while a sibling still starts; expected invariant: every slot completes synchronous dispatcher setup and remains running until the all-slot readiness barrier wins; handling strategy: race all-ready against the first runtime settlement, then keep failing the process if any long-lived slot exits unexpectedly.
-    const slotRuntimePromises = slotDefinitions.map(slotDefinition => {
+    for (const slotDefinition of slotDefinitions) {
       let resolveSlotReadiness!: () => void;
       const slotReadinessPromise = new Promise<void>((resolve) => {
         resolveSlotReadiness = resolve;
@@ -3815,10 +3880,11 @@ async function run(): Promise<void> {
         resolveSlotReadiness,
         partitionSyncExecutor,
         providerDependencyState,
-        operationalStateReporters.get(slotDefinition.workerId)
+        operationalStateReporters.get(slotDefinition.workerId),
+        selfHealingPreviewControl?.beforeClaim
       );
-      return slotRuntimePromise;
-    });
+      slotRuntimePromises.push(slotRuntimePromise);
+    }
 
     const finishShutdownDuringSlotStart = async (): Promise<void> => {
       logger.info('worker.shutdown.during_slot_start', {
@@ -3857,6 +3923,12 @@ async function run(): Promise<void> {
               loadCutoverEvidence:
                 loadBackstageNotionPartitionCutoverGateEvidenceSet,
             });
+          const selfHealing = startSelfHealingLoop(undefined, selfHealingPreviewControl?.coordinatorOptions ?? {
+            signal: workerProcessShutdownController.signal,
+          });
+          if (selfHealing.coordinatorState !== 'RUNNING') {
+            throw new Error('WORKER_SELF_HEAL_COORDINATOR_NOT_RUNNING');
+          }
           logger.info('worker.bootstrap.completed', {
             module: 'job-runner',
             workerId: inspectorAutonomyService.getWorkerId(),
@@ -3864,9 +3936,11 @@ async function run(): Promise<void> {
             slots: slotDefinitions.length,
             recovered: bootstrapResult.recovered.recoveredJobs.length,
             failed: bootstrapResult.recovered.failedJobs.length,
-            cancelled: bootstrapResult.recovered.cancelledJobs?.length ?? 0
+            cancelled: bootstrapResult.recovered.cancelledJobs?.length ?? 0,
+            selfHealingCoordinatorState: selfHealing.coordinatorState,
           });
           emitWorkerBootstrapReadySignal();
+          selfHealingPreviewControl?.markReady();
         }
       );
     } catch (error: unknown) {
@@ -3884,19 +3958,50 @@ async function run(): Promise<void> {
     }
 
     await Promise.all(slotRuntimePromises);
+  } catch (error: unknown) {
+    runtimeFailed = true;
+    // Startup can fail after consumers have begun polling. Cancel the process
+    // without inventing a signal, then drain every slot before its dependencies.
+    requestWorkerProcessShutdown(null);
+    throw error;
   } finally {
-    await Promise.all([
-      backstageNotionLoopHandles.monolith?.stopAndDrain(),
-      backstageNotionLoopHandles.partition?.stopAndDrain(),
-    ]);
     clearInterval(watchdogHandle);
     clearInterval(inspectorHandle);
-    await inspectorAutonomyService.flushSnapshotPipeline('worker-process-shutdown');
+    const cleanupResults: PromiseSettledResult<unknown>[] =
+      await Promise.allSettled(slotRuntimePromises);
+    cleanupResults.push(...await Promise.allSettled([
+      Promise.resolve().then(() => stopSelfHealingLoop()),
+      Promise.resolve().then(() => selfHealingPreviewControl?.close()),
+      Promise.resolve().then(() => backstageNotionLoopHandles.monolith?.stopAndDrain()),
+      Promise.resolve().then(() => backstageNotionLoopHandles.partition?.stopAndDrain()),
+    ]));
+    for (const cleanup of [
+      () => stopSelfHealTelemetryPersistence(),
+      () => selfHealingPreviewControl?.observeRedisShutdown('before'),
+      () => stopRedisLifecycle(),
+      () => selfHealingPreviewControl?.observeRedisShutdown('after'),
+      () => inspectorAutonomyService.flushSnapshotPipeline('worker-process-shutdown'),
+    ]) {
+      // A rejected drain must not skip other resource cleanup or replace the
+      // original startup/runtime error that caused this process to stop.
+      cleanupResults.push(...await Promise.allSettled([Promise.resolve().then(cleanup)]));
+    }
+    const cleanupFailures = cleanupResults.filter(
+      (result): result is PromiseRejectedResult => result.status === 'rejected'
+    );
+    for (const failure of cleanupFailures) {
+      logger.warn('worker.shutdown.cleanup_failed', {
+        module: 'job-runner',
+      }, { errorMessage: resolveErrorMessage(failure.reason) });
+    }
+    if (!runtimeFailed && cleanupFailures.length > 0) {
+      throw cleanupFailures[0].reason;
+    }
   }
 }
 
 if (isEntrypointModule(import.meta.url)) {
-  run().catch(error => {
+  runJobWorker().catch(error => {
     logger.error(
       'worker.fatal',
       { module: 'job-runner' },

@@ -83,6 +83,13 @@ jest.unstable_mockModule('@services/prAssistant.js', () => ({
 
 const controllerModule = await import('../src/services/selfImprove/controller.js');
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
 describe('services/selfImprove/controller decision branches', () => {
   beforeEach(() => {
     getConfigMock.mockReset();
@@ -389,4 +396,161 @@ describe('services/selfImprove/controller decision branches', () => {
       ])
     }));
   });
+
+  it('rejects a cancelled cycle before reading controls or starting effects', async () => {
+    const lifecycle = new AbortController();
+    const reason = new Error('Synthetic coordinator shutdown.');
+    lifecycle.abort(reason);
+
+    await expect(controllerModule.runSelfImproveCycle(
+      { trigger: 'incident' }, { signal: lifecycle.signal }
+    )).rejects.toBe(reason);
+
+    expect(loadLoopContractMock).not.toHaveBeenCalled();
+    expect(getAutonomyLevelMock).not.toHaveBeenCalled();
+    expect(freezeSelfImproveMock).not.toHaveBeenCalled();
+    expect(createImprovementQueueMock).not.toHaveBeenCalled();
+    expect(writeEvidencePackMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['freeze', 'pr'] as const)('audits an already committed %s before propagating cancellation', async effect => {
+    const lifecycle = new AbortController();
+    const reason = new Error('Synthetic coordinator shutdown after committed effect.');
+    const entered = deferred<void>();
+    const pendingEffect = deferred<unknown>();
+    const pendingEvidence = deferred<string>();
+    const prResult = { success: true, message: 'test PR created', branch: 'test-self-improve-branch', commitHash: 'abc1234' };
+    evaluateDriftMock.mockReturnValue({ kind: 'self_test_fail', severity: effect === 'freeze' ? 'high' : 'medium', details: {} });
+    canProposePatchesMock.mockResolvedValue(true);
+    const effectMock = effect === 'freeze' ? freezeSelfImproveMock : createPullRequestFromPatchMock;
+    effectMock.mockImplementationOnce(() => { entered.resolve(); return pendingEffect.promise; });
+    writeEvidencePackMock.mockImplementationOnce(() => pendingEvidence.promise);
+    let settled = false;
+    const cycle = controllerModule.runSelfImproveCycle({ trigger: 'incident' }, { signal: lifecycle.signal });
+    const outcome = cycle.then(value => { settled = true; return value; }, error => { settled = true; return error; });
+    try {
+      await entered.promise;
+      lifecycle.abort(reason);
+      pendingEffect.resolve(effect === 'freeze' ? undefined : prResult);
+      for (let index = 0; index < 20; index += 1) await Promise.resolve();
+      expect(writeEvidencePackMock).toHaveBeenCalledTimes(1);
+      expect(settled).toBe(false);
+      const evidence = writeEvidencePackMock.mock.calls[0][0];
+      expect(evidence).toMatchObject({ id: 'cycle-id-123', decision: effect === 'freeze' ? 'ROLLBACK' : 'PATCH_PROPOSAL' });
+      if (effect === 'freeze') {
+        expect(evidence.rollback).toEqual({ frozen: true, reason: 'High severity drift: system frozen and rollback posture activated' });
+        expect(createImprovementQueueMock).not.toHaveBeenCalled();
+        expect(generatePatchProposalMock).not.toHaveBeenCalled();
+        expect(createPullRequestFromPatchMock).not.toHaveBeenCalled();
+      } else {
+        expect(evidence.actions).toMatchObject({ prResult, analysis: analyzePRResult,
+          patchProposal: { summary: 'improve reliability paths', risk: 'low' } });
+        expect(createPullRequestFromPatchMock).toHaveBeenCalledTimes(1);
+        expect(generatePatchProposalMock).toHaveBeenCalledTimes(1);
+        expect(freezeSelfImproveMock).not.toHaveBeenCalled();
+      }
+      expect(generateComponentReflectionMock).not.toHaveBeenCalled();
+      pendingEvidence.resolve('/tmp/evidence/committed-effect-test.json');
+      expect(await outcome).toBe(reason);
+    } finally {
+      pendingEffect.resolve(effect === 'freeze' ? undefined : prResult);
+      pendingEvidence.resolve('/tmp/evidence/committed-effect-test.json');
+      await outcome;
+    }
+  });
+
+  it('does not claim or audit a PR commit when the pending actuator rejects after cancellation', async () => {
+    const lifecycle = new AbortController(); const reason = new Error('Synthetic cancelled PR attempt.');
+    const entered = deferred<void>(); const pending = deferred<never>();
+    evaluateDriftMock.mockReturnValue({ kind: 'clear_drop', severity: 'medium', details: {} });
+    canProposePatchesMock.mockResolvedValue(true);
+    createPullRequestFromPatchMock.mockImplementationOnce(() => { entered.resolve(); return pending.promise; });
+    const cycle = controllerModule.runSelfImproveCycle({ trigger: 'incident' }, { signal: lifecycle.signal });
+    const rejected = expect(cycle).rejects.toBe(reason);
+    await entered.promise; lifecycle.abort(reason); pending.reject(new Error('Synthetic PR attempt failed before completion.'));
+    await rejected;
+    expect(writeEvidencePackMock).not.toHaveBeenCalled();
+    expect(freezeSelfImproveMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['autonomy', 'freeze'] as const)(
+    'cancels after a pending shared %s read before starting later effects',
+    async (control) => {
+      const lifecycle = new AbortController();
+      const reason = new Error('Synthetic coordinator shutdown.');
+      const entered = deferred<void>();
+      const pending = deferred<number | boolean>();
+      const controlMock = control === 'autonomy' ? getAutonomyLevelMock : isSelfImproveFrozenMock;
+      controlMock.mockImplementationOnce(() => { entered.resolve(); return pending.promise; });
+      evaluateDriftMock.mockReturnValue({ kind: 'self_test_fail', severity: 'high', details: {} });
+
+      const cycle = controllerModule.runSelfImproveCycle({ trigger: 'incident' }, { signal: lifecycle.signal });
+      const rejected = expect(cycle).rejects.toBe(reason);
+      await entered.promise;
+      lifecycle.abort(reason);
+      pending.resolve(control === 'autonomy' ? 3 : false);
+      await rejected;
+
+      expect(freezeSelfImproveMock).not.toHaveBeenCalled();
+      expect(createImprovementQueueMock).not.toHaveBeenCalled();
+      expect(generateComponentReflectionMock).not.toHaveBeenCalled();
+      expect(generatePatchProposalMock).not.toHaveBeenCalled();
+      expect(createPullRequestFromPatchMock).not.toHaveBeenCalled();
+      expect(writeEvidencePackMock).not.toHaveBeenCalled();
+    }
+  );
+
+  it('stops after an in-flight reflection settles without starting component or proposal work', async () => {
+    const lifecycle = new AbortController();
+    const reason = new Error('Synthetic coordinator shutdown.');
+    const entered = deferred<void>();
+    const pending = deferred<unknown[]>();
+    evaluateDriftMock.mockReturnValue({ kind: 'clear_drop', severity: 'medium', details: {} });
+    canProposePatchesMock.mockResolvedValue(true);
+    createImprovementQueueMock.mockImplementationOnce(() => { entered.resolve(); return pending.promise; });
+
+    const cycle = controllerModule.runSelfImproveCycle(
+      { trigger: 'incident', component: 'planner' }, { signal: lifecycle.signal }
+    );
+    const rejected = expect(cycle).rejects.toBe(reason);
+    await entered.promise;
+    lifecycle.abort(reason);
+    pending.resolve([]);
+    await rejected;
+
+    expect(generateComponentReflectionMock).not.toHaveBeenCalled();
+    expect(gatherRepoContextMock).not.toHaveBeenCalled();
+    expect(generatePatchProposalMock).not.toHaveBeenCalled();
+    expect(createPullRequestFromPatchMock).not.toHaveBeenCalled();
+    expect(writeEvidencePackMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['resolve', 'reject'] as const)(
+    'stops later effects when a pending proposal provider will %s after cancellation',
+    async (settlement) => {
+      const lifecycle = new AbortController();
+      const reason = new Error('Synthetic coordinator shutdown.');
+      const entered = deferred<void>();
+      const pending = deferred<unknown>();
+      evaluateDriftMock.mockReturnValue({ kind: 'clear_drop', severity: 'medium', details: {} });
+      canProposePatchesMock.mockResolvedValue(true);
+      generatePatchProposalMock.mockImplementationOnce(() => { entered.resolve(); return pending.promise; });
+
+      const cycle = controllerModule.runSelfImproveCycle({ trigger: 'incident' }, { signal: lifecycle.signal });
+      const rejected = expect(cycle).rejects.toBe(reason);
+      await entered.promise;
+      lifecycle.abort(reason);
+      if (settlement === 'resolve') {
+        pending.resolve({ risk: 'low', files: [], diff: '' });
+      } else {
+        pending.reject(new Error('Synthetic provider cancelled.'));
+      }
+      await rejected;
+
+      expect(metricMock).not.toHaveBeenCalledWith('self_improve.patch_structured', expect.anything());
+      expect(metricMock).not.toHaveBeenCalledWith('self_improve.patch_structured_error', expect.anything());
+      expect(createPullRequestFromPatchMock).not.toHaveBeenCalled();
+      expect(writeEvidencePackMock).not.toHaveBeenCalled();
+    }
+  );
 });

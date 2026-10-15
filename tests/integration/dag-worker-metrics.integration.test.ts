@@ -56,6 +56,7 @@ jest.unstable_mockModule('@core/db/repositories/jobEventRepository.js', () => ({
   recordJobEventWithClient: jest.fn()
 }));
 jest.unstable_mockModule('@core/db/index.js', () => ({
+  close: jest.fn(async () => undefined),
   getBackstageNotionPartitionCutoverEvidenceRepository: jest.fn(),
   getBackstageNotionPartitionRepository: jest.fn(),
   getBackstageNotionRagRepository: jest.fn(),

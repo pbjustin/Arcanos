@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-14T06:12:52.381Z",
+  "generatedAt": "2026-10-15T01:54:28.452Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2475,6 +2475,15 @@
         },
         {
           "relativePath": "src/services/selfImprove/selfHealingLoop.ts"
+        },
+        {
+          "relativePath": "src/services/selfImprove/selfHealingPreviewControl.ts"
+        },
+        {
+          "relativePath": "src/services/selfImprove/selfHealingPreviewShutdown.ts"
+        },
+        {
+          "relativePath": "src/services/selfImprove/selfHealingPreviewStartup.ts"
         },
         {
           "relativePath": "src/services/selfImprove/selfHealingV2.ts"
@@ -5071,6 +5080,9 @@
           "relativePath": "tests/integration/public-provider-rate-limit-redis.integration.test.ts"
         },
         {
+          "relativePath": "tests/integration/self-heal-preview-ownership.pg18.integration.test.ts"
+        },
+        {
           "relativePath": "tests/integration/session-system.integration.test.ts"
         },
         {
@@ -5707,6 +5719,12 @@
           "relativePath": "tests/self-heal-operator-approval.test.ts"
         },
         {
+          "relativePath": "tests/self-heal-preview-shutdown.test.ts"
+        },
+        {
+          "relativePath": "tests/self-heal-preview-startup.test.ts"
+        },
+        {
           "relativePath": "tests/self-heal-signals.test.ts"
         },
         {
@@ -5722,7 +5740,16 @@
           "relativePath": "tests/self-healing-control-rate-limit.test.ts"
         },
         {
+          "relativePath": "tests/self-healing-coordinator-lifecycle.integration.test.ts"
+        },
+        {
           "relativePath": "tests/self-healing-loop.test.ts"
+        },
+        {
+          "relativePath": "tests/self-healing-preview-control.test.ts"
+        },
+        {
+          "relativePath": "tests/self-healing-preview-diagnostics.integration.test.ts"
         },
         {
           "relativePath": "tests/self-healing-security-synthetic.integration.test.ts"
@@ -5735,6 +5762,9 @@
         },
         {
           "relativePath": "tests/self-healing-v2.test.ts"
+        },
+        {
+          "relativePath": "tests/self-healing-worker-bootstrap.integration.test.ts"
         },
         {
           "relativePath": "tests/self-healing-worker-synthetic.integration.test.ts"

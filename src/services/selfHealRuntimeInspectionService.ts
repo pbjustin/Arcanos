@@ -108,14 +108,13 @@ function getLastSelfHealResultEvent(recentEvents: SelfHealEvent[]): SelfHealEven
 function buildTelemetrySnapshot(): SelfHealTelemetrySnapshot {
   const loopStatus = getSelfHealingLoopStatus();
   const controlLoop = getSelfHealingControlLoopStatus();
-  const trinityStatus = getTrinitySelfHealingStatus();
   const promptRouteMitigation = getPromptRouteMitigationState();
   const currentHealedComponent =
     inferSelfHealComponentFromAction(loopStatus.lastAction) ??
     inferSelfHealComponentFromAction(controlLoop.lastAction);
 
   return buildSelfHealTelemetrySnapshot({
-    enabled: loopStatus.loopRunning || trinityStatus.enabled || controlLoop.active || controlLoop.loopRunning,
+    enabled: loopStatus.loopRunning,
     active: Boolean(
       loopStatus.inFlight ||
       loopStatus.activeMitigation ||
@@ -138,7 +137,7 @@ function buildSystemState(params: {
   latency: number;
   lastCheck: string | null;
   operationalRequests: number;
-  status: 'healthy' | 'inactive_degraded';
+  status: 'healthy' | 'inactive_degraded' | 'unknown';
   inactiveDegraded: boolean;
   reason: string | null;
   uptimeMs: number;
@@ -192,17 +191,20 @@ function buildSystemState(params: {
       idleThresholdMs === null ||
       uptimeMs >= idleThresholdMs
     );
+  const hasObservation = loopStatus.coordinatorState !== 'FAILED' &&
+    Boolean(controlLoop.lastObservedAt || loopStatus.lastObservationAt || latestObservation);
 
   return {
     errorRate: hasControlLoopObservation ? controlLoop.errorRate : boundedLoopErrorRate,
     latency: hasControlLoopObservation ? controlLoop.avgLatencyMs : boundedLoopLatency,
-    lastCheck: controlLoop.lastObservedAt ?? loopStatus.lastTick ?? null,
+    lastCheck: controlLoop.lastObservedAt ?? loopStatus.lastObservationAt ?? null,
     operationalRequests: hasControlLoopObservation ? controlLoop.operationalRequests : boundedLoopOperationalRequests,
-    status: inactiveDegraded ? 'inactive_degraded' : 'healthy',
+    status: inactiveDegraded ? 'inactive_degraded'
+      : hasObservation ? 'healthy' : 'unknown',
     inactiveDegraded,
     reason: inactiveDegraded
       ? inactivity?.reason ?? 'No operational activity has been observed beyond the worker idle threshold.'
-      : null,
+      : !hasObservation ? 'no_runtime_observation' : null,
     uptimeMs,
     idleThresholdMs,
     lastWorkerActivityAt: latestWorkerActivityAt,
@@ -302,7 +304,7 @@ function deriveInspectionFields(params: {
   aiProvider: predictiveHealingService.PredictiveHealingAIProviderStatusSnapshot;
 }) {
   const { timestamp, loopStatus, controlLoop, telemetry, predictiveHealing, aiProvider } = params;
-  const combinedEnabled = Boolean(telemetry.enabled || controlLoop.active || controlLoop.loopRunning);
+  const combinedEnabled = loopStatus.loopRunning;
   const combinedActive = Boolean(
     telemetry.active ||
     loopStatus.inFlight ||
@@ -412,6 +414,21 @@ function deriveInspectionFields(params: {
     status: 'ok' as const,
     timestamp,
     enabled: combinedEnabled,
+    coordinator: {
+      state: loopStatus.coordinatorState ?? 'UNKNOWN',
+      reasonCode: loopStatus.coordinatorReasonCode ?? 'not_started',
+      processKind: loopStatus.processKind,
+      operatingMode: loopStatus.operatingMode,
+      policyObservedAt: loopStatus.policyObservedAt,
+      lastObservationAt: loopStatus.lastObservationAt,
+      scheduled: loopStatus.loopRunning,
+      inFlight: loopStatus.inFlight,
+      intervalMs: loopStatus.intervalMs,
+      evidenceScope: 'current_process' as const,
+      // HTTP inspection runs in its own process; it cannot attest to the
+      // dedicated worker's coordinator from queue health or configuration.
+      remoteCoordinatorState: 'UNKNOWN' as const,
+    },
     active: combinedActive,
     isHealing: combinedActive,
     lastHealRun,
@@ -606,6 +623,7 @@ export function buildSafetySelfHealSnapshot() {
     status: 'ok' as const,
     timestamp: runtimeSnapshot.timestamp,
     enabled: runtimeSnapshot.enabled,
+    coordinator: runtimeSnapshot.coordinator,
     active: runtimeSnapshot.active,
     isHealing: runtimeSnapshot.isHealing,
     lastTriggerAt: getEventTimestamp(telemetry.lastTrigger) ?? controlLoop.lastObservedAt,

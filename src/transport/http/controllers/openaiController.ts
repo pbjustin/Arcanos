@@ -34,6 +34,7 @@ import { getConfirmGateConfiguration } from "@transport/http/middleware/confirmG
 import { config } from "@platform/runtime/config.js";
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
 import { getEnv } from "@platform/runtime/env.js";
+import { getKillSwitchStatus } from '@services/incidentResponse/killSwitch.js';
 import { runWithRequestAbortTimeout, getRequestAbortSignal } from '@arcanos/runtime';
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import {
@@ -379,8 +380,17 @@ export async function handlePrompt(
       });
 
       if (promptRoutePolicy.mode === 'normal') {
-        const fastTripResult = recordPromptRouteTimeoutIncident(timeoutKind, PROMPT_MAX_TOKENS);
-        if (fastTripResult.applied) {
+        let controls: Awaited<ReturnType<typeof getKillSwitchStatus>> | null = null;
+        try { controls = await getKillSwitchStatus(); }
+        catch {
+          req.logger?.warn?.('prompt.route.mitigation_authorization_unavailable', {
+            route: PROMPT_ROUTE_PATH, reasonCode: 'safety_control_read_failed'
+          });
+        }
+        const fastTripResult = !controls || controls.frozen || controls.autonomyLevel < 3 || getRequestAbortSignal()?.aborted
+          ? null
+          : recordPromptRouteTimeoutIncident(timeoutKind, PROMPT_MAX_TOKENS);
+        if (fastTripResult?.applied) {
           req.logger?.warn?.('prompt.route.fast_trip', {
             route: PROMPT_ROUTE_PATH,
             timeoutKind,

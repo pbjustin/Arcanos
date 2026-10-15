@@ -138,7 +138,7 @@ jobs:
 
       - name: 🧪 Run unit tests
         if: matrix.test-type == 'unit'
-        run: npm test
+        run: npm test -- --json --outputFile="$RUNNER_TEMP/jest-result.json"
 
       - name: Offline live validation security contracts
         run: npm run test:live-pr-preview:offline && npm run test:live-validation:offline
@@ -161,7 +161,50 @@ jobs:
           export OPENAI_API_KEY=mock-api-key
           export NODE_ENV=test
           export PORT=0
-          npm run test:integration
+          npm run test:integration -- --json --outputFile="$RUNNER_TEMP/jest-result.json"
+
+      - name: Retain Jest counters and checkout provenance
+        if: always()
+        env:
+          EVIDENCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EVIDENCE_TEST_TYPE: ${{ matrix.test-type }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { existsSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs';
+          import { execFileSync } from 'node:child_process';
+          import path from 'node:path';
+          const revision = ref => execFileSync('git', ['rev-parse', '--verify', ref],
+            { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+          const testedSha = revision('HEAD');
+          const testedTree = revision('HEAD^{tree}');
+          const headSha = process.env.EVIDENCE_HEAD_SHA;
+          let headTree = null;
+          if (/^[0-9a-f]{40}$/.test(headSha ?? '')) {
+            try { headTree = revision(`${headSha}^{tree}`); } catch { /* Shallow checkout may omit the head object. */ }
+          }
+          const resultPath = path.join(process.env.RUNNER_TEMP, 'jest-result.json');
+          const counts = { headSha, testedSha, testedTree, headTree,
+            exactHeadTree: headTree !== null && testedTree === headTree,
+            selection: process.env.EVIDENCE_TEST_TYPE, resultAvailable: existsSync(resultPath) };
+          if (counts.resultAvailable) {
+            const result = JSON.parse(readFileSync(resultPath, 'utf8'));
+            for (const key of ['success', 'numTotalTests', 'numPassedTests', 'numFailedTests',
+              'numPendingTests', 'numTodoTests', 'numTotalTestSuites', 'numPassedTestSuites',
+              'numFailedTestSuites', 'numPendingTestSuites', 'startTime']) counts[key] = result[key];
+          }
+          const serialized = JSON.stringify(counts, null, 2) + '\n';
+          writeFileSync(path.join(process.env.RUNNER_TEMP, 'jest-counts.json'), serialized);
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, '```json\n' + serialized + '```\n');
+          console.log(serialized);
+          NODE
+
+      - name: Upload Jest counters and checkout provenance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jest-counts-${{ matrix.test-type }}-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/jest-counts.json
+          retention-days: 30
 
   validate-railway-compatibility:
     name: Railway Compatibility
@@ -193,6 +236,93 @@ jobs:
         run: |
           docker build -t arcanos-test .
           echo "✅ Docker build successful"
+
+      - name: Verify isolated self-heal preview image artifact and executable ownership
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          certificate_dir="$(mktemp -d "$RUNNER_TEMP/self-heal-preview-ca.XXXXXX")"
+          trap 'rm -f "$certificate_dir/fixture.key" "$certificate_dir/fixture.pem"; rmdir "$certificate_dir"' EXIT
+          openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 2 \
+            -keyout "$certificate_dir/fixture.key" -out "$certificate_dir/fixture.pem" \
+            -subj '/CN=postgres.railway.internal' \
+            -addext 'subjectAltName=DNS:postgres.railway.internal' >/dev/null 2>&1
+          rm -f "$certificate_dir/fixture.key"
+          certificate_pem="$(cat "$certificate_dir/fixture.pem")"
+          docker build -t arcanos-self-heal-preview-test \
+            --build-arg ARCANOS_SELF_HEAL_PREVIEW_PROFILE=worker-coordinator-v1 \
+            --build-arg ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA="$GITHUB_SHA" \
+            --build-arg ARCANOS_SELF_HEAL_PREVIEW_DATABASE_CERTIFICATE_PEM="$certificate_pem" .
+          docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
+            --entrypoint node arcanos-self-heal-preview-test \
+            scripts/self-heal-preview-artifact.mjs --verify --source-sha "$GITHUB_SHA"
+          docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
+            --entrypoint node arcanos-self-heal-preview-test scripts/repair-dist-aliases.js --check
+          docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
+            --entrypoint node arcanos-self-heal-preview-test --input-type=module -e '
+              import { resolveSelfHealPreviewProfile, buildSelfHealPreviewApplicationEnvironment,
+                verifySelfHealPreviewDatabaseCertificateFile, SELF_HEAL_PREVIEW_DATABASE_CERTIFICATE_PATH } from "./scripts/railway-self-heal-preview-profile.mjs";
+              const fs = await import("node:fs");
+              const { Client } = await import("pg");
+              const fixture = JSON.parse(process.argv[1]);
+              fixture.ARCANOS_SELF_HEAL_PREVIEW_DATABASE_CERTIFICATE_PEM = fs.readFileSync(SELF_HEAL_PREVIEW_DATABASE_CERTIFICATE_PATH, "utf8");
+              const now = Date.now();
+              fixture.ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA = process.argv[2];
+              fixture.RAILWAY_GIT_COMMIT_SHA = process.argv[2];
+              fixture.ARCANOS_SELF_HEAL_PREVIEW_ISSUED_AT = new Date(now - 1000).toISOString();
+              fixture.ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT = new Date(now + 60000).toISOString();
+              const imageMetadata = { ARCANOS_WORKSPACE_ROOT: "/app", ARCANOS_PYTHON_RUNTIME_DIR: "/app/daemon-python", RAILWAY_CLI_BIN: "/usr/local/bin/railway-native" };
+              for (const [name, value] of Object.entries(imageMetadata)) {
+                if (process.env[name] !== value) throw new Error("SELF_HEAL_PREVIEW_IMAGE_METADATA_MISSING");
+              }
+              for (const role of ["worker", "web"]) {
+                const env = { ...process.env, ...fixture };
+                if (role === "web") {
+                  env.ARCANOS_PROCESS_KIND = "web";
+                  env.RAILWAY_SERVICE_ID = fixture.ARCANOS_SELF_HEAL_PREVIEW_WEB_SERVICE_ID;
+                  env.RAILWAY_SERVICE_NAME = "arcanos-web-pr1544-heavy";
+                  env.OPENAI_BASE_URL = "http://127.0.0.1:9/v1";
+                  delete env.ARCANOS_PREVIEW_OPENAI_FIXTURE;
+                  env.ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED = "true";
+                  env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = "fictional-image-preview-access-token-0001";
+                  env.ARCANOS_JOB_READ_CAPABILITY_SECRET = "fictional-image-preview-job-read-secret-0001";
+                }
+                const profile = resolveSelfHealPreviewProfile(role, env, { now: () => now });
+                verifySelfHealPreviewDatabaseCertificateFile(profile, { now: () => now });
+                const child = buildSelfHealPreviewApplicationEnvironment(profile, env);
+                // Constructor parsing does no network or SQL. It proves the
+                // production pool URL overrides its legacy false SSL object.
+                const client = new Client({ connectionString: child.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+                if (client.connectionParameters.ssl.rejectUnauthorized === false || client.connectionParameters.ssl.ca !== profile.databaseCertificatePem) {
+                  throw new Error("SELF_HEAL_PREVIEW_IMAGE_TLS_DOWNGRADE");
+                }
+                if (child.SELF_IMPROVE_EVIDENCE_DIR !== "/app/memory/self-heal-preview-evidence") {
+                  throw new Error("SELF_HEAL_PREVIEW_EVIDENCE_DIRECTORY_INVALID");
+                }
+                fs.mkdirSync(child.SELF_IMPROVE_EVIDENCE_DIR, { recursive: true });
+                const evidenceProbe = `${child.SELF_IMPROVE_EVIDENCE_DIR}/image-${role}-probe.json`;
+                fs.writeFileSync(evidenceProbe, "{}");
+                fs.unlinkSync(evidenceProbe);
+                for (const name of Object.keys(imageMetadata)) {
+                  if (Object.hasOwn(child, name)) throw new Error("SELF_HEAL_PREVIEW_IMAGE_METADATA_INHERITED");
+                }
+              }
+              console.log("SELF_HEAL_PREVIEW_IMAGE_PROFILE_RESOLUTION_VERIFIED");
+            ' \
+            '{"ARCANOS_BACKSTAGE_HEAVY_PROOF_TARGET":"dedicated-backstage-heavy-preview-v1","ARCANOS_BACKSTAGE_HEAVY_PROOF_RUN_ID":"image-proof-run-1544","ARCANOS_PROCESS_KIND":"worker","NODE_ENV":"production","ARCANOS_PREVIEW_ISOLATION":"true","FORCE_MOCK":"true","ALLOW_MOCK_OPENAI":"true","OPENAI_API_KEY_REQUIRED":"false","OPENAI_BASE_URL":"http://127.0.0.1:8766/v1","ARCANOS_PREVIEW_OPENAI_FIXTURE":"backstage-heavy-compact-retry-v1","ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","DATABASE_URL":"postgresql://synthetic:synthetic@postgres.railway.internal:5432/railway","REDIS_URL":"redis://default:synthetic@redis.railway.internal:6379","RAILWAY_PROJECT_ID":"11111111-1111-4111-8111-111111111111","RAILWAY_PROJECT_NAME":"arc-pr1544-heavy-image","RAILWAY_ENVIRONMENT_ID":"22222222-2222-4222-8222-222222222222","RAILWAY_ENVIRONMENT_NAME":"backstage-heavy-pr-1544-e2e","RAILWAY_SERVICE_ID":"44444444-4444-4444-8444-444444444444","RAILWAY_SERVICE_NAME":"arcanos-worker-pr1544-heavy","RAILWAY_DEPLOYMENT_ID":"55555555-5555-4555-8555-555555555555","ARCANOS_BACKSTAGE_HEAVY_POSTGRES_SERVICE_ID":"66666666-6666-4666-8666-666666666666","ARCANOS_BACKSTAGE_HEAVY_POSTGRES_SERVICE_NAME":"Postgres","ARCANOS_BACKSTAGE_HEAVY_POSTGRES_INTERNAL_HOST":"postgres.railway.internal","ARCANOS_BACKSTAGE_HEAVY_REDIS_SERVICE_ID":"77777777-7777-4777-8777-777777777777","ARCANOS_BACKSTAGE_HEAVY_REDIS_SERVICE_NAME":"Redis","ARCANOS_BACKSTAGE_HEAVY_REDIS_INTERNAL_HOST":"redis.railway.internal","ARCANOS_SELF_HEAL_PREVIEW_PROFILE":"worker-coordinator-v1","ARCANOS_SELF_HEAL_PREVIEW_RUN_ID":"image-proof-run-1544","ARCANOS_SELF_HEAL_PREVIEW_CONTROL_TOKEN":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","ARCANOS_SELF_HEAL_PREVIEW_CONTROL_PORT":"8791","ARCANOS_SELF_HEAL_PREVIEW_STARTUP_MODE":"normal","ARCANOS_SELF_HEAL_PREVIEW_WEB_SERVICE_ID":"33333333-3333-4333-8333-333333333333","ARCANOS_SELF_HEAL_PREVIEW_WORKER_SERVICE_ID":"44444444-4444-4444-8444-444444444444"}' "$GITHUB_SHA"
+          docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
+            --entrypoint node arcanos-self-heal-preview-test -e '
+              const fs = require("node:fs");
+              if (process.getuid() === 0) throw new Error("SELF_HEAL_PREVIEW_IMAGE_ROOT_USER");
+              for (const path of ["/app", "/app/scripts", "/app/dist", "/app/config", "/app/config/self-heal-preview-database-ca.pem", "/app/scripts/self-heal-preview-artifact.json"]) {
+                const stat = fs.statSync(path);
+                if (stat.uid !== 0 || (stat.mode & 0o022) !== 0) throw new Error("SELF_HEAL_PREVIEW_IMAGE_WRITABLE_EXECUTABLE");
+                let writable = true;
+                try { fs.accessSync(path, fs.constants.W_OK); } catch { writable = false; }
+                if (writable) throw new Error("SELF_HEAL_PREVIEW_IMAGE_EXECUTABLE_ACCESS");
+              }
+              console.log("SELF_HEAL_PREVIEW_IMAGE_OWNERSHIP_VERIFIED");
+            '
 
   validate-deployment-readiness:
     name: Deployment Readiness
@@ -423,6 +553,22 @@ jobs:
       - name: 📊 Skip Python Codecov upload
         run: echo "Python coverage is outside the current reported Codecov project scope."
 
+      - name: Set up pinned Node.js for Windows fixture contracts
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.18.1'
+          cache: 'npm'
+
+      - name: Install and build fixture dependencies
+        run: npm ci && npm run build:packages
+
+      - name: Verify Windows receipt and publishing isolation contracts
+        run: |
+          node scripts/run-jest.mjs --runTestsByPath tests/railway-production-readonly-inspection.test.js --coverage=false --runInBand
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test scripts/stacked-draft-preview-workflow.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
   local-agent-sandbox-linux:
     name: Local Agent Sandbox (Linux)
     runs-on: ubuntu-latest
@@ -516,6 +662,9 @@ jobs:
         postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
       GPT_ACCESS_DEVICE_TEST_DATABASE_URL: >-
         postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
+      SELF_HEAL_PREVIEW_OWNERSHIP_TEST_DATABASE_URL: >-
+        postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
+      SELF_HEAL_PREVIEW_OWNERSHIP_CONFIRM_DISPOSABLE: disposable-loopback-only
 
     steps:
       - name: 📥 Checkout code
@@ -540,6 +689,10 @@ jobs:
 
       - name: 🧱 Verify PostgreSQL fencing, Backstage atomicity, partition storage, and retention
         run: npm run test:postgres-fencing
+
+      - name: Verify self-heal preview ownership, real role locks, and restart admission
+        timeout-minutes: 5
+        run: node scripts/run-jest.mjs --runTestsByPath tests/integration/self-heal-preview-ownership.pg18.integration.test.ts --coverage=false --runInBand
 
       - name: Verify Swift device clients through HTTP and disposable PostgreSQL
         timeout-minutes: 10

@@ -1,0 +1,821 @@
+import { afterAll, afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import type { JobData } from '../src/core/db/schema.js';
+
+const queryMock = jest.fn();
+const isDatabaseConnectedMock = jest.fn(() => true);
+const recordJobEventMock = jest.fn(async () => undefined);
+const claimNextMock = jest.fn();
+const runWorkerTrinityPromptMock = jest.fn();
+const runDagNodeJobMock = jest.fn();
+const classifyWorkerAiBudgetErrorMock = jest.fn((_error: unknown): unknown => null);
+const routeGptRequestMock = jest.fn();
+const getOpenAIAdapterMock = jest.fn(() => ({
+  getClient: () => fakeOpenAIClient
+}));
+const probeOpenAIProviderHealthMock = jest.fn(async () => ({
+  ok: true,
+  runtime: providerRuntime
+}));
+const syncOpenAIProviderRuntimeMock = jest.fn(() => ({
+  runtime: providerRuntime
+}));
+const getGptModuleMapMock = jest.fn(async () => ({
+  'arcanos-core': { route: 'arcanos-core', module: 'ARCANOS:CORE' },
+  'backstage-booker': { route: 'backstage-booker', module: 'BACKSTAGE:BOOKER' },
+}));
+const fakeOpenAIClient = {};
+const sleepMock = jest.fn((delayMs: number, options?: { signal?: AbortSignal }) => new Promise<void>(resolve => {
+  const timer = setTimeout(resolve, delayMs);
+  options?.signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
+}));
+const providerRuntime = {
+  configVersion: 'provider-config-v1',
+  nextRetryAt: null,
+  lastFailureAt: null,
+  lastFailureCategory: null,
+  consecutiveFailures: 0
+};
+
+const originalEnvironment = process.env;
+const initializeDatabaseMock = jest.fn(async () => true);
+const closeDatabaseMock = jest.fn(async () => undefined);
+const initializeModuleRegistryMock = jest.fn(async () => ({ listRegisteredModules: () => [] }));
+const configureOpenAIClientMock = jest.fn();
+const bootstrapAutonomyMock = jest.fn(async () => ({ healthStatus: 'healthy', recovered: { recoveredJobs: [], failedJobs: [], cancelledJobs: [] } }));
+const installPreviewControl = jest.fn<(...args: unknown[]) => Promise<import('../src/services/selfImprove/selfHealingPreviewControl.js').SelfHealingPreviewControl | null>>(async () => null);
+jest.unstable_mockModule('@services/selfImprove/selfHealingPreviewControl.js', () => ({ installSelfHealingPreviewControl: installPreviewControl }));
+process.env = { NODE_ENV: 'test', ARCANOS_PROCESS_KIND: 'worker', RUN_WORKERS: 'true', DIAGNOSTICS_SHARED_METRICS: 'false', DATABASE_URL: 'postgres://synthetic.invalid/fixture', SELF_HEAL_LOOP_INTERVAL_MS: '1000', JOB_WORKER_POLL_MS: '50', JOB_WORKER_IDLE_BACKOFF_MS: '50', JOB_WORKER_CONCURRENCY: '2' };
+
+jest.unstable_mockModule('@core/db/client.js', () => ({
+  getPool: jest.fn(),
+  initializeDatabase: jest.fn(),
+  isDatabaseConnected: isDatabaseConnectedMock
+}));
+
+jest.unstable_mockModule('@platform/runtime/gptRouterConfig.js', () => ({
+  getGptModuleMap: getGptModuleMapMock,
+}));
+
+jest.unstable_mockModule('@core/db/query.js', () => ({
+  query: queryMock
+}));
+
+jest.unstable_mockModule('@core/db/repositories/jobEventRepository.js', () => ({
+  recordJobEvent: recordJobEventMock,
+  recordJobEventWithClient: jest.fn()
+}));
+
+jest.unstable_mockModule('@core/db/index.js', () => ({
+  getBackstageNotionPartitionCutoverEvidenceRepository: jest.fn(),
+  getBackstageNotionPartitionRepository: jest.fn(),
+  getBackstageNotionRagRepository: jest.fn(),
+  getBackstageNotionSyncStatusRepository: jest.fn(),
+  getStatus: () => ({ connected: true }),
+  initializeDatabaseWithSchema: initializeDatabaseMock,
+  close: closeDatabaseMock
+}));
+
+jest.unstable_mockModule('@core/scheduler/postgresAdapter.js', () => ({
+  postgresQueueSchedulerAdapter: {
+    claimNext: claimNextMock
+  }
+}));
+
+jest.unstable_mockModule('@core/adapters/openai.adapter.js', () => ({
+  assertValidResponsesCreateParams: jest.fn(),
+  classifyWorkerAiBudgetError: classifyWorkerAiBudgetErrorMock,
+  createOpenAIAdapter: getOpenAIAdapterMock,
+  normalizeWorkerAiBudgetError: jest.fn((error: unknown) => error),
+  normalizeResponsesCreateParams: jest.fn((value: unknown) => value),
+  getOpenAIAdapter: getOpenAIAdapterMock,
+  isOpenAIAdapterInitialized: jest.fn(() => true),
+  resetOpenAIAdapter: jest.fn()
+}));
+
+jest.unstable_mockModule('@services/openai/serviceHealth.js', () => ({
+  getOpenAIServiceHealth: jest.fn(() => ({ circuitBreaker: { state: 'CLOSED', failureCount: 0 }, providerRuntime })),
+  reinitializeOpenAIProvider: jest.fn(),
+  getOpenAIProviderRuntimeStatus: jest.fn(() => providerRuntime),
+  probeOpenAIProviderHealth: probeOpenAIProviderHealthMock,
+  syncOpenAIProviderRuntime: syncOpenAIProviderRuntimeMock
+}));
+
+jest.unstable_mockModule('@services/backstageBookerRouteShortcut.js', () => ({
+  detectBackstageBookerIntent: jest.fn(() => null)
+}));
+jest.unstable_mockModule('@services/gamingSourceIngestion.js', () => ({
+  executeQueuedGamingSourceIngestion: jest.fn(),
+  GAMING_SOURCE_INGESTION_GPT_ID: 'arcanos-gaming',
+  GAMING_SOURCE_INGESTION_REASON: 'gaming_source_ingestion',
+  GAMING_SOURCE_INGESTION_REQUEST_PATH: '/gpt-access/gaming/sources/ingestions',
+  GAMING_SOURCE_REFRESH_REQUEST_PATH: '/gpt-access/gaming/sources/refreshes',
+  parseQueuedGamingSourceIngestionBody: jest.fn()
+}));
+
+jest.unstable_mockModule('../src/workers/taskRunners.js', () => ({
+  runDagNodeJob: runDagNodeJobMock
+}));
+
+jest.unstable_mockModule('../src/workers/trinityWorkerPipeline.js', () => ({
+  runWorkerTrinityPrompt: runWorkerTrinityPromptMock
+}));
+
+jest.unstable_mockModule('@services/trinity/adapter.js', () => ({
+  isTrinityDagGptAccessEnabled: jest.fn(() => false),
+  routeDagNodeToGptAccess: jest.fn()
+}));
+
+jest.unstable_mockModule('@services/arcanosCoreRuntimeProviders.js', () => ({
+  configureDefaultArcanosCoreRuntimeProviders: jest.fn()
+}));
+
+jest.unstable_mockModule('@routes/_core/gptDispatch.js', () => ({
+  routeGptRequest: routeGptRequestMock
+}));
+
+jest.unstable_mockModule('@services/moduleRegistry.js', () => ({
+  initializeModuleRegistry: initializeModuleRegistryMock
+}));
+
+jest.unstable_mockModule('@shared/sleep.js', () => ({
+  sleep: sleepMock
+}));
+jest.unstable_mockModule('../src/queue/cleanup.js', () => ({
+  runFailedJobCleanup: jest.fn(),
+  runJobEventCleanup: jest.fn(),
+  runNonGptTerminalCleanup: jest.fn()
+}));
+
+
+const lifecycleLog = { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
+const forbidden = jest.fn(async () => { throw new Error('External effects forbidden in synthetic bootstrap.'); });
+const workerHealth = jest.fn(async () => ({ overallStatus: 'healthy', queueSummary: {
+  pending: 0, running: 0, stalledRunning: 0, oldestPendingJobAgeMs: 0,
+}, workers: [], alerts: [] }));
+const flushSnapshots = jest.fn(async (_reason?: string) => undefined);
+const dispatcherStarted = jest.fn(async () => undefined);
+const workerHeartbeat = jest.fn(async () => undefined);
+const markIdle = jest.fn(async () => undefined);
+const markJobStarted = jest.fn(async () => undefined);
+const markJobCompleted = jest.fn(async () => undefined);
+const setClaimAcceptanceState = jest.fn(async () => undefined);
+const partitionExecutor = jest.fn(async () => ({
+  status: 'completed', output: { synthetic: 'completed-during-coordinator-failure' }, retryable: false,
+}));
+const prediction = jest.fn(async () => { throw new Error('Synthetic prediction disabled.'); });
+const stopNotion = jest.fn(async () => undefined);
+let redisStarted = false;
+let redisReady = false;
+const startRedis = jest.fn(() => { redisStarted = true; });
+const stopRedis = jest.fn(async () => { redisStarted = false; });
+const readSharedSafetyState = jest.fn(async (_key: string) => JSON.stringify({ freeze: false, autonomy: 3 }));
+const executeRedisOperation = jest.fn(async (
+  operation: (client: { get: typeof readSharedSafetyState }) => Promise<unknown>,
+  options: { operation: string }
+) => {
+  // The only admitted storage operation is the production kill-switch read.
+  // Every write, unavailable-state call and unrelated Redis operation fails.
+  if (!redisStarted || !redisReady || options.operation !== 'incident.kill_switch.read') return forbidden();
+  return operation({ get: readSharedSafetyState });
+});
+const primeTelemetry = jest.fn(async () => undefined);
+const stopTelemetry = jest.fn(async () => undefined);
+
+jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
+  logger: lifecycleLog, aiLogger: lifecycleLog, dbLogger: lifecycleLog, apiLogger: lifecycleLog, workerLogger: lifecycleLog,
+}));
+jest.unstable_mockModule('@services/workerAutonomyService.js', () => ({
+  getWorkerAutonomySettings: (settings: Record<string, unknown> = {}) => ({ ...settings, staleAfterMs: 60_000, defaultMaxRetries: 2 }),
+  classifyWorkerExecutionError: forbidden,
+  WorkerAutonomyService: class {
+    constructor(private settings: { workerId: string }) {}
+    getWorkerId() { return this.settings.workerId; }
+    getWorkerAiCallBudget() { return { statsWorkerId: 'synthetic', workerId: this.settings.workerId, maxCallsPerHour: 120 }; }
+    bootstrap = bootstrapAutonomyMock;
+    getWatchdogIntervalMs() { return 30_000; }
+    getHeartbeatIntervalMs() { return 1_000; }
+    getRecommendedWorkerHeartbeatDelayMs() { return 1_000; }
+    getClaimOptions() { return { workerId: this.settings.workerId, leaseMs: 30_000 }; }
+    async evaluateBudgetsBeforeClaim() { return { allowed: true }; }
+    recordClaimAttempt() {}
+    recordClaimResult() {}
+    async recordHeartbeat(job: JobData) { return { ...job }; }
+    markJobStarted = markJobStarted;
+    markJobCompleted = markJobCompleted;
+    setClaimAcceptanceState = setClaimAcceptanceState;
+    markJobLeaseLost = forbidden;
+    markDispatcherStarted = dispatcherStarted;
+    recordWorkerHeartbeat = workerHeartbeat;
+    markIdle = markIdle;
+    flushSnapshotPipeline = flushSnapshots;
+  },
+}));
+jest.unstable_mockModule('@core/init-openai.js', () => ({ configureBackendUnifiedOpenAIClient: configureOpenAIClientMock }));
+jest.unstable_mockModule('@services/workerControlService.js', () => ({ getWorkerControlHealth: workerHealth, healWorkerRuntime: forbidden }));
+jest.unstable_mockModule('@platform/runtime/workerConfig.js', () => ({
+  getWorkerRuntimeStatus: () => ({ enabled: false, started: false, activeListeners: 0, workerIds: [] }),
+  recycleWorker: forbidden, scaleWorkersUp: forbidden,
+}));
+jest.unstable_mockModule('@services/selfImprove/controller.js', () => ({ runSelfImproveCycle: forbidden }));
+jest.unstable_mockModule('@services/selfImprove/predictiveHealingService.js', () => ({ runPredictiveHealingFromLoop: prediction }));
+jest.unstable_mockModule('@services/selfImprove/selfHealTelemetry.js', () => ({
+  inferSelfHealComponentFromAction: () => null, recordSelfHealEvent: jest.fn(), resetSelfHealTelemetryForTests: jest.fn(),
+  primeSelfHealTelemetryPersistence: primeTelemetry, stopSelfHealTelemetryPersistence: stopTelemetry,
+}));
+jest.unstable_mockModule('@platform/logging/telemetry.js', () => ({
+  getTelemetrySnapshot: () => ({ traces: { recentEvents: [], recentLogs: [] } }),
+  recordTraceEvent: jest.fn(), recordLogEvent: jest.fn(), markOperation: jest.fn(), onTelemetry: jest.fn(),
+}));
+jest.unstable_mockModule('@platform/runtime/redisLifecycle.js', () => ({
+  executeRedisOperation,
+  getRedisLifecycleSnapshot: () => ({
+    configured: redisStarted, connected: redisStarted && redisReady, readyGeneration: redisReady ? 1 : 0,
+    state: redisStarted ? redisReady ? 'READY' : 'DEGRADED' : 'IDLE',
+  }),
+  startRedisLifecycle: startRedis, stopRedisLifecycle: stopRedis,
+}));
+jest.unstable_mockModule('@services/moduleCatalog.js', () => ({ MODULE_CATALOG: [], isPublicGptModule: () => false }));
+jest.unstable_mockModule('@services/runtimeRouteTableService.js', () => ({ getActiveRouteTable: () => [] }));
+jest.unstable_mockModule('@services/railwayClient.js', () => ({ deployService: forbidden, listProjects: forbidden, isRailwayApiConfigured: () => false }));
+jest.unstable_mockModule('../src/workers/backstageNotionSyncLoop.js', () => ({
+  createBackstageNotionSynchronizationCoordinator: () => ({}),
+  startBackstageNotionSyncLoop: () => ({ stopAndDrain: stopNotion }),
+}));
+jest.unstable_mockModule('../src/workers/backstageNotionPartitionShadowLoop.js', () => ({
+  resolveBackstageNotionPartitionShadowPolicy: () => ({ partitionSyncEnabled: false }),
+  startBackstageNotionPartitionShadowLoop: () => ({ stopAndDrain: stopNotion }),
+}));
+jest.unstable_mockModule('../src/workers/backstageNotionPartitionSyncJob.js', () => ({ createBackstageNotionPartitionSyncJobExecutor: () => partitionExecutor }));
+jest.unstable_mockModule('@services/backstageNotionSync.js', () => ({
+  BACKSTAGE_NOTION_SYNC_MAX_COLD_EMBEDDING_REQUESTS: 114,
+  validateBackstageNotionSynchronizationConfiguration: () => ({ authorityConfigured: false, configuredUniverses: 0 }),
+}));
+
+// Actual exported production entry body, consumer polling and canonical loop.
+// Storage, provider, Notion and telemetry transports remain deterministic mocks.
+let worker: typeof import('../src/workers/jobRunner.js');
+let coordinator: typeof import('../src/services/selfImprove/selfHealingLoop.js');
+let diagnostics: typeof import('../src/services/runtimeDiagnosticsService.js');
+let stdout: string[];
+let originalListeners: { SIGTERM: Function[]; SIGINT: Function[] };
+
+beforeEach(async () => {
+  jest.resetModules();
+  jest.clearAllMocks();
+  installPreviewControl.mockReset().mockResolvedValue(null);
+  initializeDatabaseMock.mockReset().mockResolvedValue(true);
+  closeDatabaseMock.mockReset().mockResolvedValue(undefined);
+  initializeModuleRegistryMock.mockReset().mockResolvedValue({ listRegisteredModules: () => [] });
+  configureOpenAIClientMock.mockReset();
+  bootstrapAutonomyMock.mockReset().mockResolvedValue({ healthStatus: 'healthy', recovered: { recoveredJobs: [], failedJobs: [], cancelledJobs: [] } });
+  lifecycleLog.info.mockReset();
+  flushSnapshots.mockReset().mockResolvedValue(undefined);
+  primeTelemetry.mockReset().mockResolvedValue(undefined);
+  stopTelemetry.mockReset().mockResolvedValue(undefined);
+  stopNotion.mockReset().mockResolvedValue(undefined);
+  redisStarted = false;
+  redisReady = false;
+  jest.useFakeTimers({ doNotFake: ['setImmediate'] }).setSystemTime(new Date('2026-10-14T12:00:00Z'));
+  originalListeners = { SIGTERM: process.listeners('SIGTERM'), SIGINT: process.listeners('SIGINT') };
+  stdout = [];
+  jest.spyOn(process.stdout, 'write').mockImplementation(((line: string) => { stdout.push(String(line)); return true; }) as typeof process.stdout.write);
+  jest.spyOn(console, 'log').mockImplementation(() => undefined);
+  jest.spyOn(console, 'error').mockImplementation(() => undefined);
+  jest.spyOn(globalThis, 'fetch').mockImplementation(forbidden);
+  worker = await import('../src/workers/jobRunner.js');
+  coordinator = await import('../src/services/selfImprove/selfHealingLoop.js');
+  diagnostics = await import('../src/services/runtimeDiagnosticsService.js');
+  coordinator.resetSelfHealingLoopStateForTests();
+  claimNextMock.mockResolvedValue({ job: null });
+});
+afterEach(async () => {
+  signalShutdown();
+  await coordinator.stopSelfHealingLoop();
+  coordinator.resetSelfHealingLoopStateForTests();
+  for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+    for (const listener of process.listeners(signal)) {
+      if (!originalListeners[signal].includes(listener)) process.removeListener(signal, listener);
+    }
+  }
+  expect(forbidden).not.toHaveBeenCalled();
+  jest.restoreAllMocks();
+  jest.useRealTimers();
+});
+afterAll(() => { process.env = originalEnvironment; });
+
+function signalShutdown() {
+  for (const listener of process.listeners('SIGTERM')) {
+    if (!originalListeners.SIGTERM.includes(listener)) listener('SIGTERM');
+  }
+}
+async function flushUntil(predicate: () => boolean) {
+  for (let i = 0; i < 100 && !predicate(); i += 1) await new Promise<void>(resolve => setImmediate(resolve));
+  expect(predicate()).toBe(true);
+}
+
+describe('actual production worker bootstrap with external boundaries replaced', () => {
+  it('closes its pool when shutdown arrives immediately after database initialization', async () => {
+    initializeDatabaseMock.mockImplementationOnce(async () => { signalShutdown(); return true; });
+    await worker.runJobWorker();
+    expect(lifecycleLog.info).toHaveBeenCalledWith('worker.shutdown.before_autonomy_bootstrap', expect.any(Object));
+    expect(closeDatabaseMock).toHaveBeenCalledTimes(1);
+    expect(configureOpenAIClientMock).not.toHaveBeenCalled();
+    expect(bootstrapAutonomyMock).not.toHaveBeenCalled();
+    expect(dispatcherStarted).not.toHaveBeenCalled();
+    expect(startRedis).not.toHaveBeenCalled();
+  });
+  it.each(['after_module_registry_preload', 'before_slot_start'] as const)(
+    'flushes snapshots before closing its pool on early shutdown %s', async boundary => {
+      if (boundary === 'after_module_registry_preload') {
+        initializeModuleRegistryMock.mockImplementationOnce(async () => {
+          signalShutdown(); return { listRegisteredModules: () => [] };
+        });
+      } else {
+        lifecycleLog.info.mockImplementation(event => {
+          if (event === 'worker.module_registry.preloaded') signalShutdown();
+        });
+      }
+      await worker.runJobWorker();
+      expect(lifecycleLog.info).toHaveBeenCalledWith(`worker.shutdown.${boundary}`, expect.any(Object));
+      expect(flushSnapshots).toHaveBeenCalledTimes(1);
+      expect(flushSnapshots).toHaveBeenCalledWith('worker-process-shutdown');
+      expect(closeDatabaseMock).toHaveBeenCalledTimes(1);
+      expect(flushSnapshots.mock.invocationCallOrder[0]).toBeLessThan(closeDatabaseMock.mock.invocationCallOrder[0]);
+      expect(dispatcherStarted).not.toHaveBeenCalled();
+      expect(startRedis).not.toHaveBeenCalled();
+      expect(stdout.some(line => line.includes('ARCANOS_WORKER_BOOTSTRAP_READY_V1'))).toBe(false);
+    }
+  );
+  it.each(['database', 'adapter', 'autonomy', 'module_registry'] as const)(
+    'preserves an early %s failure and still attempts owned pool cleanup exactly once', async boundary => {
+      const startupError = new Error(`synthetic ${boundary} bootstrap failure`);
+      const closeError = new Error('synthetic early pool cleanup failure');
+      if (boundary === 'database') initializeDatabaseMock.mockRejectedValueOnce(startupError);
+      if (boundary === 'adapter') configureOpenAIClientMock.mockImplementationOnce(() => { throw startupError; });
+      if (boundary === 'autonomy') bootstrapAutonomyMock.mockRejectedValueOnce(startupError);
+      if (boundary === 'module_registry') initializeModuleRegistryMock.mockRejectedValueOnce(startupError);
+      closeDatabaseMock.mockRejectedValueOnce(closeError);
+      await expect(worker.runJobWorker()).rejects.toBe(startupError);
+      expect(closeDatabaseMock).toHaveBeenCalledTimes(1);
+      expect(lifecycleLog.warn).toHaveBeenCalledWith('worker.shutdown.cleanup_failed',
+        { module: 'job-runner' }, { errorMessage: closeError.message });
+      expect(dispatcherStarted).not.toHaveBeenCalled();
+      expect(startRedis).not.toHaveBeenCalled();
+      expect(stdout.some(line => line.includes('ARCANOS_WORKER_BOOTSTRAP_READY_V1'))).toBe(false);
+    }
+  );
+  it('leaves an unknown-role caller pool untouched after an early bootstrap failure', async () => {
+    const previous = process.env.ARCANOS_PROCESS_KIND; delete process.env.ARCANOS_PROCESS_KIND;
+    const startupError = new Error('synthetic shared helper bootstrap failure');
+    initializeModuleRegistryMock.mockRejectedValueOnce(startupError);
+    try {
+      await expect(worker.runJobWorker()).rejects.toBe(startupError);
+      expect(closeDatabaseMock).not.toHaveBeenCalled();
+      expect(dispatcherStarted).not.toHaveBeenCalled();
+    } finally { process.env.ARCANOS_PROCESS_KIND = previous; }
+  });
+  it('does not initialize or close the shared database for an explicit Web role', async () => {
+    const previous = process.env.ARCANOS_PROCESS_KIND; process.env.ARCANOS_PROCESS_KIND = 'web';
+    try {
+      await worker.runJobWorker();
+      expect(initializeDatabaseMock).not.toHaveBeenCalled(); expect(closeDatabaseMock).not.toHaveBeenCalled();
+      expect(dispatcherStarted).not.toHaveBeenCalled();
+    } finally { process.env.ARCANOS_PROCESS_KIND = previous; }
+  });
+  it('preserves an exported unknown-role helper caller pool while closing dedicated Worker pools', async () => {
+    const previous = process.env.ARCANOS_PROCESS_KIND; delete process.env.ARCANOS_PROCESS_KIND;
+    const running = worker.runJobWorker();
+    try {
+      await flushUntil(() => stdout.some(line => line.includes('ARCANOS_WORKER_BOOTSTRAP_READY_V1')));
+      signalShutdown(); await running; expect(closeDatabaseMock).not.toHaveBeenCalled();
+    } finally { signalShutdown(); await running; process.env.ARCANOS_PROCESS_KIND = previous; }
+  });
+  it('fails graceful shutdown when normal pool closure fails after the other cleanup has completed', async () => {
+    const closeError = new Error('synthetic graceful pool closure failure'); closeDatabaseMock.mockRejectedValueOnce(closeError);
+    const running = worker.runJobWorker(); const outcome = running.catch(error => error);
+    try {
+      await flushUntil(() => stdout.some(line => line.includes('ARCANOS_WORKER_BOOTSTRAP_READY_V1')));
+      signalShutdown(); expect(await outcome).toBe(closeError);
+      expect(stopTelemetry).toHaveBeenCalledTimes(1); expect(stopRedis).toHaveBeenCalledTimes(1);
+      expect(flushSnapshots.mock.calls.at(-1)).toEqual(['worker-process-shutdown']);
+    } finally { signalShutdown(); await outcome; }
+  });
+  it('awaits a held canonical evaluation before preview drain receipts and actual Redis shutdown', async () => {
+    const previous = process.env.ARCANOS_SELF_HEAL_PREVIEW_PROFILE;
+    process.env.ARCANOS_SELF_HEAL_PREVIEW_PROFILE = 'worker-coordinator-v1';
+    const order: string[] = [];
+    let release!: () => void;
+    let held = false;
+    closeDatabaseMock.mockImplementation(async () => {
+      expect(coordinator.getSelfHealingLoopStatus().inFlight).toBe(false);
+      expect(redisStarted).toBe(false);
+      expect(flushSnapshots.mock.calls.at(-1)).toEqual(['worker-process-shutdown']);
+      order.push('database_closed');
+    });
+    installPreviewControl.mockImplementation(async (...args: unknown[]) => {
+      const options = args[0] as { signal: AbortSignal };
+      return {
+        coordinatorOptions: { signal: options.signal, beforeObservation: async () => {
+          held = true; order.push('evaluation_held');
+          await new Promise<void>(resolve => { release = resolve; });
+          order.push('evaluation_released');
+        } },
+        beforeClaim: () => undefined, markReady: () => undefined,
+        close: async () => { await coordinator.stopSelfHealingLoop();
+          expect(coordinator.getSelfHealingLoopStatus().inFlight).toBe(false); order.push('coordinator_drained'); },
+        observeRedisShutdown: async phase => {
+          expect(coordinator.getSelfHealingLoopStatus().inFlight).toBe(false);
+          expect(redisStarted).toBe(phase === 'before'); order.push(`redis_${phase}`);
+        },
+      };
+    });
+    const running = worker.runJobWorker();
+    try {
+      await flushUntil(() => held); signalShutdown();
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(coordinator.getSelfHealingLoopStatus().inFlight).toBe(true);
+      expect(stopRedis).not.toHaveBeenCalled(); expect(stopTelemetry).not.toHaveBeenCalled();
+      expect(order).toEqual(['evaluation_held']);
+      release(); await running;
+      expect(order).toEqual(['evaluation_held', 'evaluation_released', 'coordinator_drained', 'redis_before', 'redis_after', 'database_closed']);
+      expect(closeDatabaseMock).toHaveBeenCalledTimes(1);
+    } finally {
+      release?.(); signalShutdown(); await running;
+      if (previous === undefined) delete process.env.ARCANOS_SELF_HEAL_PREVIEW_PROFILE;
+      else process.env.ARCANOS_SELF_HEAL_PREVIEW_PROFILE = previous;
+    }
+  });
+  it('starts one coordinator after dependencies and slots, contains collector failure, and drains on SIGTERM', async () => {
+    jest.spyOn(diagnostics.runtimeDiagnosticsService, 'getRollingRequestWindow')
+      .mockImplementationOnce(() => { throw new Error('synthetic collector unavailable'); });
+    const running = worker.runJobWorker();
+    await flushUntil(() => stdout.some(line => line.includes('ARCANOS_WORKER_BOOTSTRAP_READY_V1')));
+    await flushUntil(() => coordinator.getSelfHealingLoopStatus().coordinatorState === 'FAILED');
+    expect(initializeDatabaseMock).toHaveBeenCalledTimes(1);
+    expect(initializeModuleRegistryMock).toHaveBeenCalledTimes(1);
+    expect(dispatcherStarted).toHaveBeenCalledTimes(2);
+    expect(startRedis).toHaveBeenCalledTimes(1);
+    expect(primeTelemetry).toHaveBeenCalledTimes(1);
+    expect(startRedis.mock.invocationCallOrder[0]).toBeLessThan(dispatcherStarted.mock.invocationCallOrder[0]);
+    const { getKillSwitchStatus } = await import('../src/services/incidentResponse/killSwitch.js');
+    expect(await getKillSwitchStatus()).toMatchObject({ frozen: true, autonomyLevel: 0 });
+    expect(initializeDatabaseMock.mock.invocationCallOrder[0]).toBeLessThan(initializeModuleRegistryMock.mock.invocationCallOrder[0]);
+    const started = lifecycleLog.info.mock.calls.findIndex(([event]) => event === 'self_heal.coordinator.started');
+    const slots = lifecycleLog.info.mock.calls.map(([event], index) => event === 'worker.slot.started' ? index : -1).filter(index => index >= 0);
+    expect(slots).toHaveLength(2);
+    expect(slots.every(index => index < started)).toBe(true);
+    coordinator.startSelfHealingLoop();
+    expect(lifecycleLog.info.mock.calls.filter(([event]) => event === 'self_heal.coordinator.started')).toHaveLength(1);
+    let durableJob = {
+      id: '11111111-1111-4111-8111-111111111111', worker_id: 'queue',
+      job_type: 'backstage-notion-partition-sync', status: 'running', claim_generation: '1',
+      input: { synthetic: true }, output: null, error_message: null, retry_count: 0, max_retries: 2,
+      last_worker_id: '', lease_expires_at: new Date(Date.now() + 30_000),
+      correlation_id: 'synthetic-coordinator-failure', cancel_requested_at: null, cancel_reason: null,
+      created_at: new Date(), updated_at: new Date(),
+    } as JobData;
+    const completedWrites: Array<{ generation: string; coordinatorState: string }> = [];
+    // Keep the repository's real completion SQL and CAS fences. Only storage is
+    // substituted; PostgreSQL transaction/locking behavior is separate evidence.
+    queryMock.mockImplementation(async (sql: unknown, params: unknown[] = []) => {
+      const source = String(sql);
+      if (source.startsWith('SELECT * FROM job_data')) return { rows: [{ ...durableJob }] };
+      if (!source.includes('UPDATE job_data')) throw new Error('Unexpected synthetic storage operation.');
+      expect(source).toContain("AND status = 'running'");
+      expect(source).toContain('AND last_worker_id =');
+      expect(source).toContain('AND claim_generation =');
+      expect(source).toContain('AND lease_expires_at >= NOW()');
+      expect(params[0]).toBe('completed');
+      if (durableJob.status !== 'running' || params[9] !== durableJob.id ||
+          params[10] !== durableJob.last_worker_id || String(params[11]) !== durableJob.claim_generation ||
+          !durableJob.lease_expires_at || durableJob.lease_expires_at.getTime() < Date.now()) {
+        return { rows: [] };
+      }
+      completedWrites.push({ generation: String(params[11]), coordinatorState: coordinator.getSelfHealingLoopStatus().coordinatorState });
+      durableJob = { ...durableJob, status: 'completed', output: JSON.parse(String(params[1])), lease_expires_at: null };
+      return { rows: [{ ...durableJob }] };
+    });
+    claimNextMock.mockImplementationOnce(async (options: { workerId: string }) => {
+      durableJob.last_worker_id = options.workerId;
+      return { job: { ...durableJob } };
+    });
+    const claimsBefore = claimNextMock.mock.calls.length;
+    await jest.advanceTimersByTimeAsync(500);
+    expect(completedWrites).toEqual([{ generation: '1', coordinatorState: 'FAILED' }]);
+    expect(markJobStarted).toHaveBeenCalledTimes(1);
+    expect(markJobCompleted).toHaveBeenCalledTimes(1);
+    expect(markJobCompleted).toHaveBeenCalledWith(durableJob.id);
+    expect(partitionExecutor).toHaveBeenCalledTimes(1);
+    expect(durableJob).toMatchObject({ status: 'completed', retry_count: 0,
+      output: { synthetic: 'completed-during-coordinator-failure' } });
+    await jest.advanceTimersByTimeAsync(1_500);
+    expect(coordinator.getSelfHealingLoopStatus().coordinatorState).toBe('RUNNING');
+    expect(completedWrites).toHaveLength(1);
+    expect(claimNextMock.mock.calls.length).toBeGreaterThan(claimsBefore);
+    expect(workerHeartbeat).toHaveBeenCalled();
+    signalShutdown();
+    await running;
+    const tickCount = coordinator.getSelfHealingLoopStatus().tickCount;
+    await jest.advanceTimersByTimeAsync(5_000);
+    expect(coordinator.getSelfHealingLoopStatus()).toMatchObject({ coordinatorState: 'BLOCKED', loopRunning: false, tickCount });
+    expect(stopNotion).toHaveBeenCalledTimes(2);
+    expect(flushSnapshots).toHaveBeenCalledTimes(3);
+    expect(stopTelemetry).toHaveBeenCalledTimes(1);
+    expect(stopRedis).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries temporary database claim failures and completes one fenced job without restarting the Worker', async () => {
+    let databaseAvailable = false;
+    const unavailable = Object.assign(new Error('synthetic database claim unavailable'), { code: 'ECONNREFUSED' });
+    const claimAttempts: Array<{ atMs: number; workerId: string; available: boolean }> = [];
+    let durableJob = {
+      id: '22222222-2222-4222-8222-222222222222', worker_id: 'queue',
+      job_type: 'backstage-notion-partition-sync', status: 'pending', claim_generation: '1',
+      input: { synthetic: true }, output: null, error_message: null, retry_count: 0, max_retries: 2,
+      last_worker_id: '', lease_expires_at: null,
+      correlation_id: 'synthetic-claim-admission-recovery', cancel_requested_at: null, cancel_reason: null,
+      created_at: new Date(), updated_at: new Date(),
+    } as JobData;
+    const completedWrites: Array<{ workerId: string; generation: string }> = [];
+    // Execute the real repository completion path against a deterministic CAS
+    // ledger. This does not establish PostgreSQL locking or network recovery.
+    queryMock.mockImplementation(async (sql: unknown, params: unknown[] = []) => {
+      const source = String(sql);
+      if (source.startsWith('SELECT * FROM job_data')) return { rows: [{ ...durableJob }] };
+      if (!source.includes('UPDATE job_data')) throw new Error('Unexpected claim-recovery storage operation.');
+      expect(source).toContain("AND status = 'running'");
+      expect(source).toContain('AND last_worker_id =');
+      expect(source).toContain('AND claim_generation =');
+      expect(source).toContain('AND lease_expires_at >= NOW()');
+      expect(params[0]).toBe('completed');
+      if (durableJob.status !== 'running' || params[9] !== durableJob.id ||
+          params[10] !== durableJob.last_worker_id || String(params[11]) !== durableJob.claim_generation ||
+          !durableJob.lease_expires_at || durableJob.lease_expires_at.getTime() < Date.now()) {
+        return { rows: [] };
+      }
+      completedWrites.push({ workerId: String(params[10]), generation: String(params[11]) });
+      durableJob = { ...durableJob, status: 'completed', output: JSON.parse(String(params[1])), lease_expires_at: null };
+      return { rows: [{ ...durableJob }] };
+    });
+    claimNextMock.mockImplementation(async (options: { workerId: string }) => {
+      claimAttempts.push({ atMs: Date.now(), workerId: options.workerId, available: databaseAvailable });
+      if (!databaseAvailable) throw unavailable;
+      if (durableJob.status !== 'pending') return { job: null };
+      durableJob = { ...durableJob, status: 'running', last_worker_id: options.workerId,
+        lease_expires_at: new Date(Date.now() + 30_000) };
+      return { job: { ...durableJob } };
+    });
+    const running = worker.runJobWorker();
+    try {
+      await flushUntil(() => sleepMock.mock.calls.filter(([delay]) => delay === 5_000).length === 2);
+      expect(claimAttempts).toHaveLength(2);
+      expect(new Set(claimAttempts.map(attempt => attempt.workerId)).size).toBe(2);
+      expect(claimAttempts.every(attempt => !attempt.available)).toBe(true);
+      expect(setClaimAcceptanceState.mock.calls).toEqual([
+        ['dependency_failure', { reason: 'worker_budget_or_queue_database_unavailable' }],
+        ['dependency_failure', { reason: 'worker_budget_or_queue_database_unavailable' }],
+      ]);
+      expect(lifecycleLog.warn.mock.calls.filter(([event]) => event === 'worker.database.transient_error_retry')).toHaveLength(2);
+      expect(partitionExecutor).not.toHaveBeenCalled();
+      expect(queryMock).not.toHaveBeenCalled();
+      expect(completedWrites).toEqual([]);
+
+      await jest.advanceTimersByTimeAsync(4_999);
+      expect(claimNextMock).toHaveBeenCalledTimes(2);
+      expect(markJobStarted).not.toHaveBeenCalled();
+      databaseAvailable = true;
+      await jest.advanceTimersByTimeAsync(1);
+      await flushUntil(() => completedWrites.length === 1);
+      expect(claimAttempts).toHaveLength(4);
+      for (const firstAttempt of claimAttempts.slice(0, 2)) {
+        const retry = claimAttempts.find(attempt => attempt.workerId === firstAttempt.workerId && attempt.available);
+        expect(retry?.atMs).toBe(firstAttempt.atMs + 5_000);
+      }
+      expect(completedWrites).toEqual([{ workerId: durableJob.last_worker_id, generation: '1' }]);
+      expect(durableJob).toMatchObject({ status: 'completed', retry_count: 0 });
+      expect(partitionExecutor).toHaveBeenCalledTimes(1);
+      expect(markJobStarted).toHaveBeenCalledTimes(1);
+      expect(markJobCompleted).toHaveBeenCalledTimes(1);
+      expect(markJobCompleted).toHaveBeenCalledWith(durableJob.id);
+      await jest.advanceTimersByTimeAsync(1_000);
+      expect(claimNextMock.mock.calls.length).toBeGreaterThan(4);
+      expect(completedWrites).toHaveLength(1);
+      expect(partitionExecutor).toHaveBeenCalledTimes(1);
+      expect(initializeDatabaseMock).toHaveBeenCalledTimes(1);
+      expect(dispatcherStarted).toHaveBeenCalledTimes(2);
+      expect(coordinator.getSelfHealingLoopStatus()).toMatchObject({ coordinatorState: 'RUNNING', loopRunning: true });
+      expect(lifecycleLog.info.mock.calls.filter(([event]) => event === 'self_heal.coordinator.started')).toHaveLength(1);
+    } finally {
+      signalShutdown();
+      await running;
+    }
+    const finalClaims = claimNextMock.mock.calls.length;
+    await jest.advanceTimersByTimeAsync(5_000);
+    expect(claimNextMock).toHaveBeenCalledTimes(finalClaims);
+    expect(stopTelemetry).toHaveBeenCalledTimes(1);
+    expect(stopRedis).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps claim admission active while real safety policy follows Redis recovery and relapse', async () => {
+    const previousEnvironment = process.env;
+    process.env = {
+      ...previousEnvironment, SELF_IMPROVE_ENABLED: 'true', SELF_IMPROVE_ACTUATOR_MODE: 'daemon',
+      SELF_IMPROVE_AUTONOMY_LEVEL: '3', SELF_IMPROVE_FREEZE: 'false', PREDICTIVE_HEALING_ENABLED: 'false',
+    };
+    const { getKillSwitchStatus } = await import('../src/services/incidentResponse/killSwitch.js');
+    const running = worker.runJobWorker();
+    try {
+      await flushUntil(() => coordinator.getSelfHealingLoopStatus().policyObservedAt !== null &&
+        !coordinator.getSelfHealingLoopStatus().inFlight);
+      expect(stdout.filter(line => line.includes('ARCANOS_WORKER_BOOTSTRAP_READY_V1'))).toHaveLength(1);
+      expect(await getKillSwitchStatus()).toMatchObject({ frozen: true, autonomyLevel: 0 });
+      expect(coordinator.getSelfHealingLoopStatus().operatingMode).toBe('observation_only');
+      expect(readSharedSafetyState).not.toHaveBeenCalled();
+      const degradedClaims = claimNextMock.mock.calls.length;
+
+      // Only the lifecycle boundary changes. The production kill switch and
+      // coordinator resolve authority from the injected shared-state read.
+      redisReady = true;
+      await jest.advanceTimersByTimeAsync(1_000);
+      expect(await getKillSwitchStatus()).toMatchObject({ frozen: false, autonomyLevel: 3 });
+      expect(coordinator.getSelfHealingLoopStatus()).toMatchObject({
+        coordinatorState: 'RUNNING', operatingMode: 'local_mitigation', loopRunning: true,
+      });
+      expect(readSharedSafetyState).toHaveBeenCalledWith('arcanos:self-improve:kill-switch:v1');
+      expect(claimNextMock.mock.calls.length).toBeGreaterThan(degradedClaims);
+      const recoveredClaims = claimNextMock.mock.calls.length;
+      const recoveredSafetyReads = readSharedSafetyState.mock.calls.length;
+
+      redisReady = false;
+      await jest.advanceTimersByTimeAsync(1_000);
+      expect(await getKillSwitchStatus()).toMatchObject({ frozen: true, autonomyLevel: 0 });
+      expect(coordinator.getSelfHealingLoopStatus()).toMatchObject({
+        coordinatorState: 'RUNNING', operatingMode: 'observation_only', loopRunning: true,
+      });
+      expect(readSharedSafetyState).toHaveBeenCalledTimes(recoveredSafetyReads);
+      expect(claimNextMock.mock.calls.length).toBeGreaterThan(recoveredClaims);
+      expect(setClaimAcceptanceState).not.toHaveBeenCalled();
+      const operationalStates = stdout.filter(line => line.startsWith('ARCANOS_WORKER_OPERATIONAL_STATE_V1 '))
+        .map(line => JSON.parse(line.slice('ARCANOS_WORKER_OPERATIONAL_STATE_V1 '.length)) as { state: string });
+      expect(operationalStates).toHaveLength(2);
+      expect(operationalStates.every(signal => signal.state === 'accepting_claims')).toBe(true);
+      expect(stdout.filter(line => line.includes('ARCANOS_WORKER_BOOTSTRAP_READY_V1'))).toHaveLength(1);
+      expect(startRedis).toHaveBeenCalledTimes(1);
+      expect(lifecycleLog.info.mock.calls.filter(([event]) => event === 'self_heal.coordinator.started')).toHaveLength(1);
+      expect(forbidden).not.toHaveBeenCalled();
+    } finally {
+      try {
+        signalShutdown();
+        await running;
+      } finally {
+        process.env = previousEnvironment;
+      }
+    }
+    const finalClaims = claimNextMock.mock.calls.length;
+    const finalSafetyReads = readSharedSafetyState.mock.calls.length;
+    await jest.advanceTimersByTimeAsync(5_000);
+    expect(claimNextMock).toHaveBeenCalledTimes(finalClaims);
+    expect(readSharedSafetyState).toHaveBeenCalledTimes(finalSafetyReads);
+    expect(stopRedis).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels and drains every consumer before dependency teardown when coordinator installation fails', async () => {
+    const schedulerError = new Error('synthetic scheduler unavailable');
+    const slotDrains: Array<() => void> = [];
+    flushSnapshots.mockImplementation(async reason => {
+      if (reason === 'worker-slot-shutdown') {
+        await new Promise<void>(resolve => slotDrains.push(resolve));
+      }
+    });
+    const realSetInterval = globalThis.setInterval;
+    jest.spyOn(globalThis, 'setInterval').mockImplementation(((callback: (...args: unknown[]) => void, ms: number, ...args: unknown[]) => {
+      if (ms === 1_000) throw schedulerError;
+      return realSetInterval(callback, ms, ...args);
+    }) as typeof setInterval);
+    let settled = false;
+    const running = worker.runJobWorker().then(
+      () => { settled = true; return undefined; },
+      error => { settled = true; return error; },
+    );
+    try {
+      await flushUntil(() => slotDrains.length === 2 || stopRedis.mock.calls.length > 0);
+      expect(slotDrains).toHaveLength(2);
+      expect(settled).toBe(false);
+      expect(stopTelemetry).not.toHaveBeenCalled();
+      expect(stopRedis).not.toHaveBeenCalled();
+      const claimCount = claimNextMock.mock.calls.length;
+      await jest.advanceTimersByTimeAsync(5_000);
+      expect(claimNextMock).toHaveBeenCalledTimes(claimCount);
+      slotDrains[0]();
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(stopRedis).not.toHaveBeenCalled();
+      slotDrains[1]();
+      expect(await running).toBe(schedulerError);
+      expect(stdout.some(line => line.includes('ARCANOS_WORKER_BOOTSTRAP_READY_V1'))).toBe(false);
+      expect(coordinator.getSelfHealingLoopStatus()).toMatchObject({ coordinatorState: 'FAILED', loopRunning: false });
+      expect(lifecycleLog.error).toHaveBeenCalledWith('self_heal.coordinator.start_failed', expect.objectContaining({ reasonCode: 'scheduler_start_failed' }));
+      expect(stopTelemetry).toHaveBeenCalledTimes(1);
+      expect(stopRedis).toHaveBeenCalledTimes(1);
+      expect(lifecycleLog.warn).toHaveBeenCalledWith('job_runner.shutdown.requested', {
+        module: 'worker', signal: null, reasonCode: 'worker_runtime_failure',
+      });
+      await worker.runJobWorker();
+      expect(dispatcherStarted).toHaveBeenCalledTimes(2);
+      expect(startRedis).toHaveBeenCalledTimes(1);
+      expect(stdout.some(line => line.includes('ARCANOS_WORKER_BOOTSTRAP_READY_V1'))).toBe(false);
+    } finally {
+      signalShutdown();
+      for (const resolve of slotDrains) resolve();
+      flushSnapshots.mockResolvedValue(undefined);
+      await running;
+    }
+  });
+
+  it('retains the startup error and attempts every cleanup after slot, coordinator drain and telemetry failures', async () => {
+    const schedulerError = new Error('synthetic scheduler unavailable');
+    const realSetInterval = globalThis.setInterval;
+    jest.spyOn(globalThis, 'setInterval').mockImplementation(((callback: (...args: unknown[]) => void, ms: number, ...args: unknown[]) => {
+      if (ms === 1_000) throw schedulerError;
+      return realSetInterval(callback, ms, ...args);
+    }) as typeof setInterval);
+    flushSnapshots.mockRejectedValueOnce(new Error('synthetic slot drain failure'));
+    stopNotion.mockRejectedValueOnce(new Error('synthetic authority drain failure'));
+    stopTelemetry.mockRejectedValueOnce(new Error('synthetic telemetry stop failure'));
+    closeDatabaseMock.mockRejectedValueOnce(new Error('synthetic database close failure'));
+    await expect(worker.runJobWorker()).rejects.toBe(schedulerError);
+    expect(flushSnapshots.mock.calls.map(([reason]) => reason)).toEqual([
+      'worker-slot-shutdown', 'worker-slot-shutdown', 'worker-process-shutdown',
+    ]);
+    expect(stopNotion).toHaveBeenCalledTimes(2);
+    expect(stopTelemetry).toHaveBeenCalledTimes(1);
+    expect(stopRedis).toHaveBeenCalledTimes(1);
+    expect(closeDatabaseMock).toHaveBeenCalledTimes(1);
+    for (const errorMessage of [
+      'synthetic slot drain failure', 'synthetic authority drain failure', 'synthetic telemetry stop failure', 'synthetic database close failure',
+    ]) {
+      expect(lifecycleLog.warn).toHaveBeenCalledWith('worker.shutdown.cleanup_failed',
+        { module: 'job-runner' }, { errorMessage });
+    }
+    expect(stdout.some(line => line.includes('ARCANOS_WORKER_BOOTSTRAP_READY_V1'))).toBe(false);
+  });
+
+  it('clears installed timers when process setup fails before consumer creation', async () => {
+    const setupError = new Error('synthetic inspector scheduler unavailable');
+    const realSetInterval = globalThis.setInterval;
+    let installedIntervals = 0;
+    jest.spyOn(globalThis, 'setInterval').mockImplementation(((callback: (...args: unknown[]) => void, ms: number, ...args: unknown[]) => {
+      installedIntervals += 1;
+      if (installedIntervals === 2) throw setupError;
+      return realSetInterval(callback, ms, ...args);
+    }) as typeof setInterval);
+    await expect(worker.runJobWorker()).rejects.toBe(setupError);
+    expect(installedIntervals).toBe(2);
+    expect(jest.getTimerCount()).toBe(0);
+    expect(dispatcherStarted).not.toHaveBeenCalled();
+    expect(startRedis).not.toHaveBeenCalled();
+    expect(stopRedis).toHaveBeenCalledTimes(1);
+    expect(flushSnapshots).toHaveBeenCalledWith('worker-process-shutdown');
+  });
+
+  it('keeps telemetry persistence priming failure nonfatal to readiness and queue polling', async () => {
+    primeTelemetry.mockRejectedValueOnce(new Error('synthetic telemetry storage unavailable'));
+    const running = worker.runJobWorker();
+    try {
+      await flushUntil(() => stdout.some(line => line.includes('ARCANOS_WORKER_BOOTSTRAP_READY_V1')));
+      expect(lifecycleLog.warn).toHaveBeenCalledWith('self_heal.coordinator.telemetry_deferred', {
+        module: 'job-runner', reasonCode: 'telemetry_persistence_unavailable',
+      });
+      expect(coordinator.getSelfHealingLoopStatus()).toMatchObject({ coordinatorState: 'RUNNING', loopRunning: true });
+      const initialClaims = claimNextMock.mock.calls.length;
+      await jest.advanceTimersByTimeAsync(500);
+      expect(claimNextMock.mock.calls.length).toBeGreaterThan(initialClaims);
+    } finally {
+      signalShutdown();
+      await running;
+    }
+  });
+
+  it('withholds readiness and drains a previous evaluation when coordinator start returns BLOCKED', async () => {
+    let releaseObservation!: (health: Awaited<ReturnType<typeof workerHealth>>) => void;
+    workerHealth.mockReturnValueOnce(new Promise(resolve => { releaseObservation = resolve; }));
+    coordinator.startSelfHealingLoop(1_000);
+    await flushUntil(() => workerHealth.mock.calls.length === 1);
+    const draining = coordinator.stopSelfHealingLoop();
+    const running = worker.runJobWorker().then(() => undefined, error => error);
+    try {
+      await flushUntil(() => lifecycleLog.info.mock.calls.some(([event, metadata]) =>
+        event === 'self_heal.coordinator.disabled' && metadata.reasonCode === 'previous_evaluation_draining'));
+      expect(stdout.some(line => line.includes('ARCANOS_WORKER_BOOTSTRAP_READY_V1'))).toBe(false);
+      expect(stopTelemetry).not.toHaveBeenCalled();
+      expect(stopRedis).not.toHaveBeenCalled();
+    } finally {
+      releaseObservation({ overallStatus: 'healthy', queueSummary: {
+        pending: 0, running: 0, stalledRunning: 0, oldestPendingJobAgeMs: 0,
+      }, workers: [], alerts: [] });
+      await draining;
+    }
+    expect(await running).toEqual(new Error('WORKER_SELF_HEAL_COORDINATOR_NOT_RUNNING'));
+    expect(stopRedis).toHaveBeenCalledTimes(1);
+    expect(flushSnapshots.mock.calls.filter(([reason]) => reason === 'worker-slot-shutdown')).toHaveLength(2);
+  });
+});

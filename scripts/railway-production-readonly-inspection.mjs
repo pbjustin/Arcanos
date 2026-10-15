@@ -3,7 +3,7 @@
 import { execFile } from 'node:child_process';
 import { X509Certificate } from 'node:crypto';
 import { appendFileSync, closeSync, openSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import {
@@ -349,13 +349,13 @@ export async function collectProductionReadOnlyInspection(options = {}) {
   return receipt;
 }
 
-export function writeProductionInspectionReceipt(receipt, directory) {
-  requireFact(typeof directory === 'string' && directory.startsWith('/'), 'RECEIPT_DIRECTORY_INVALID');
+export function writeProductionInspectionReceipt(receipt, directory, fileSystem = { openSync, writeFileSync, closeSync }) {
+  requireFact(typeof directory === 'string' && isAbsolute(directory), 'RECEIPT_DIRECTORY_INVALID');
   const serialized = serializeReceipt(receipt);
   requireFact(Buffer.byteLength(serialized) <= MAX_RECEIPT_BYTES, 'RECEIPT_TOO_LARGE');
   const output = resolve(directory, INSPECTION_RECEIPT_FILENAME);
-  const descriptor = openSync(output, 'wx', 0o600);
-  try { writeFileSync(descriptor, serialized); } finally { closeSync(descriptor); }
+  const descriptor = fileSystem.openSync(output, 'wx', 0o600);
+  try { fileSystem.writeFileSync(descriptor, serialized); } finally { fileSystem.closeSync(descriptor); }
   return output;
 }
 

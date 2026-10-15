@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { assertNoInstalledDevDependencies, createCompiledManifest, hashCompiledArtifacts, productionInventoryArguments, sha256, validateBuildReceipt, validateReviewedTooling, verifyImageArchive } from './stacked-draft-preview-build.mjs';
 
 const authorization = { controllerSha: 'a'.repeat(40), sourceArchiveSha256: 'b'.repeat(64),
@@ -123,26 +124,30 @@ test('restrictive host umask cannot remove nonroot read access to root-owned run
     };
     git(['init', '-q']);
     git(['add', '.']);
-    git(['-c', 'core.hooksPath=/dev/null', 'commit', '-qm', 'Fixture source']);
+    const hooks = path.join(root, 'empty-hooks'); mkdirSync(hooks);
+    git(['-c', `core.hooksPath=${hooks}`, 'commit', '-qm', 'Fixture source']);
     const candidateSha = git(['rev-parse', 'HEAD']);
     const archive = spawnSync('git', ['archive', '--format=tar', candidateSha], { cwd: root, timeout: 10_000 });
     assert.equal(archive.status, 0);
     const authorizationFile = path.join(root, 'authorization.json');
     writeFileSync(authorizationFile, JSON.stringify({ ...authorization, sourceArchiveSha256: sha256(archive.stdout),
       stack: [{ headSha: candidateSha, treeSha: git(['rev-parse', 'HEAD^{tree}']) }] }));
-    const commands = path.join(root, 'commands');
-    mkdirSync(commands);
-    const docker = path.join(commands, 'docker');
-    writeFileSync(docker, '#!/bin/sh\nexit 1\n');
-    chmodSync(docker, 0o700);
     const output = path.join(root, 'output');
     const helper = new URL('./stacked-draft-preview-build.mjs', import.meta.url);
-    const program = 'process.umask(0o077); process.argv = [process.execPath, ' + JSON.stringify(helper.pathname) + ', "build", ' +
+    const program = 'process.umask(0o077); process.argv = [process.execPath, ' + JSON.stringify(fileURLToPath(helper)) + ', "build", ' +
       JSON.stringify(authorizationFile) + ', ' + JSON.stringify(output) + ']; await import(' + JSON.stringify(helper.href) + ');';
-    const result = spawnSync(process.execPath, ['--input-type=module', '--eval', program], { cwd: root,
-      encoding: 'utf8', timeout: 10_000, env: { ...process.env, PATH: `${commands}:${process.env.PATH}`, GITHUB_TOKEN: '' } });
+    const commandLog = path.join(root, 'commands.jsonl');
+    const result = spawnSync(process.execPath, ['--import', new URL('./test-fixtures/offline-process-guard.mjs', import.meta.url).href,
+      '--input-type=module', '--eval', program], { cwd: root, encoding: 'utf8', timeout: 10_000,
+      env: { PATH: process.env.PATH, SYSTEMROOT: process.env.SYSTEMROOT, OFFLINE_PROCESS_FIXTURE: 'build-context',
+        MOCK_COMMAND_LOG: commandLog, DOCKER_CONFIG: path.join(root, 'empty-docker-config') } });
     assert.equal(result.status, 1, result.stderr);
     assert.match(result.stderr, /STACKED_BUILD_COMMAND_FAILED/u);
+    const commands = readFileSync(commandLog, 'utf8').trim().split('\n').map(JSON.parse);
+    assert.deepEqual(commands[0], { guard: 'installed', mode: 'build-context' });
+    assert.equal(commands.length, 2);
+    assert.equal(commands[1].program, 'docker');
+    assert.deepEqual(commands[1].args.slice(0, 3), ['--host=unix:///var/run/docker.sock', 'buildx', 'create']);
     // The real context helper reproduces the original 0600 source; Docker must
     // normalize final metadata, rather than relying on an ambient runner umask.
     assert.equal(statSync(path.join(output, 'context/runtime.mjs')).mode & 0o777, 0o600);

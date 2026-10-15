@@ -128,13 +128,14 @@ ownership boundary and prevents duplicate execution.
 ## Shutdown
 
 Shutdown first marks readiness unavailable and stops accepting new requests.
-While active HTTP requests drain, it removes lifecycle subscriptions, cancels
-telemetry timers, aborts Redis retry timers and bounded attempts, and closes the
-Redis client once. Idle clients close gracefully; a client with an active
-bounded command is destroyed so shutdown cannot wait on that command. It then
-waits for in-flight runtime initialization and closes the database. Late Redis
-events cannot restore readiness or start background runtime work after shutdown
-begins.
+It stops coordinator scheduling and waits for active HTTP requests, the
+self-healing evaluation and in-flight runtime initialization to drain before
+removing lifecycle subscriptions or stopping dependencies. It then stops
+telemetry persistence, stops Redis and closes the database. Duplicate shutdown
+calls share the same completion, and one deadline bounds every phase. A failed
+or expired drain forces unsuccessful process exit without explicitly tearing
+dependencies down underneath unresolved work. Late Redis events cannot restore
+readiness or start background runtime work after shutdown begins.
 
 ## Local verification
 

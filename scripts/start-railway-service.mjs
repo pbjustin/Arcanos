@@ -685,6 +685,24 @@ export function assertPreviewIsolationOrThrow(env = process.env) {
 }
 
 /**
+ * Admit the ordinary application child only after native-preview selection.
+ * The exact module URL and helper body are pinned by the native import check;
+ * native previews return before this helper can import any active machinery.
+ */
+export async function assertRailwayProcessIsolationOrThrow(env, options = {}) {
+  if (
+    env?.ARCANOS_PREVIEW_ISOLATION !== 'true'
+    || env?.ARCANOS_SELF_HEAL_PREVIEW_PROFILE !== 'worker-coordinator-v1'
+  ) {
+    return assertPreviewIsolationOrThrow(env);
+  }
+  const profileModule = await import(
+    new URL('./railway-self-heal-preview-profile.mjs', import.meta.url).href
+  );
+  return profileModule.assertSelfHealPreviewApplicationChildOrThrow(env, options);
+}
+
+/**
  * Emit a stable startup log for operator visibility.
  *
  * Inputs/outputs:
@@ -945,8 +963,14 @@ export function waitForExit(childProcess, options = {}) {
   });
 }
 
+export function resolveDistAliasArguments(env = process.env) {
+  // Sealed preview images are repaired at build time and keep executable bytes immutable.
+  return ['scripts/repair-dist-aliases.js',
+    env.ARCANOS_SELF_HEAL_PREVIEW_PROFILE === 'worker-coordinator-v1' ? '--check' : '--rewrite'];
+}
+
 async function repairDistAliases(processKind) {
-  const repairProcess = spawnProcess('node', ['scripts/repair-dist-aliases.js', '--rewrite'], processKind);
+  const repairProcess = spawnProcess('node', resolveDistAliasArguments(), processKind);
   const exitCode = await waitForExit(repairProcess);
   if (exitCode !== 0) {
     throw new Error(`dist alias repair failed with exit code ${exitCode}`);
@@ -1436,13 +1460,14 @@ async function main() {
     }
 
     const processKind = resolveProcessKindOrThrow();
-    const previewIsolation = assertPreviewIsolationOrThrow();
+    const previewIsolation = await assertRailwayProcessIsolationOrThrow(process.env);
     if (previewIsolation.enabled) {
       console.log('[railway-launcher] preview.isolation.verified', JSON.stringify({
         module: 'railway-launcher',
         environmentCategory: previewIsolation.environmentCategory,
         providerCategory: previewIsolation.providerCategory,
-        forceMock: true
+        forceMock: process.env.FORCE_MOCK === 'true',
+        ...(previewIsolation.selfHealProfile ? { selfHealProfile: previewIsolation.selfHealProfile } : {})
       }));
     }
     logStartup(processKind);

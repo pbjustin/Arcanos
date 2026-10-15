@@ -30,7 +30,7 @@
     "clean": "rm -rf dist",
     "rebuild": "npm run clean && npm run build",
     "build:workers": "npm run build:packages && npm run build:workers:only",
-    "test": "npm run build:packages && node scripts/run-jest.mjs",
+    "test": "npm run build && node scripts/run-jest.mjs",
     "test:integration": "npm run build:packages && node scripts/run-jest.mjs --testPathPatterns=integration --coverage=false",
     "test:local-agent-postgres": "node scripts/run-jest.mjs --testPathPatterns=local-agent-hardening.pg.integration --coverage=false --runInBand",
     "test:postgres-fencing": "node scripts/run-jest.mjs --runTestsByPath tests/integration/job-claim-fencing.pg18.integration.test.ts tests/integration/dag-snapshot-generation.pg18.integration.test.ts tests/integration/job-worker-budget-identity.pg18.integration.test.ts tests/integration/job-stale-recovery-batching.pg18.integration.test.ts tests/integration/backstage-roster-atomicity.pg18.integration.test.ts tests/integration/backstage-storyline-atomicity.pg18.integration.test.ts tests/integration/backstage-canon-storyline.pg18.integration.test.ts tests/integration/backstage-notion-rag-candidate-search.pg18.integration.test.ts tests/integration/backstage-notion-authority-http.pg18.integration.test.ts tests/integration/backstage-notion-partition-storage.pg18.integration.test.ts tests/integration/non-gpt-terminal-retention.pg18.integration.test.ts tests/integration/gaming-durable-rag.pg18.integration.test.ts tests/integration/gpt-access-device-auth.pg18.integration.test.ts tests/integration/dag-token-accounting.pg18.integration.test.ts tests/dag-accounting-e2e.test.ts --coverage=false --runInBand",

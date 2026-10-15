@@ -857,14 +857,26 @@ Launcher behavior:
 - The web listener binds before Redis initialization. `/health` and `/healthz` remain live during a Redis outage, missing backend configuration, or incomplete database schema initialization, while production web `/readyz` returns `503` unless PostgreSQL is configured, connected, and schema-ready, Redis is configured and connected, and that Redis ready generation has passed the isolated public-provider Lua/write capability probe; a new revision therefore cannot activate in an in-memory/no-Redis, schema-incomplete, or command-incompatible fallback. Local, test, development, and non-web modes preserve optional unconfigured dependencies. Railway does not continuously monitor the activation path after the first successful response; see `STARTUP_RESILIENCE.md`.
 - Worker `/readyz` remains `503` until database bootstrap,
   autonomy/module-registry bootstrap, every configured consumer slot's
-  dispatcher-start write, and a supported OpenAI key setting are present.
+  dispatcher-start write, canonical self-healing scheduler installation, and a
+  supported OpenAI key setting are present. The Worker initializes the existing
+  shared Redis lifecycle before starting the coordinator so shared freeze and
+  autonomy restrictions are effective. Redis connection readiness is not a new
+  queue-readiness prerequisite; configured Redis unavailability blocks healing
+  effects. Explicit web role suppresses the coordinator, and an actuator setting
+  alone never enables execution. See the
+  [effective configuration policy](CONFIGURATION.md#self-healing-coordinator-and-execution-policy).
   Configured Notion authority also requires a fast structural validation of its
   closed root mapping and dedicated purpose-bound token. Malformed required
   configuration is fatal, but a full Notion crawl, snapshot freshness, a busy
   sync lease, and partition cutover evidence are not process-startup invariants.
   The worker installs the existing monolith and partition background
-  coordinators at the all-slot barrier and emits its ready sentinel before their
-  asynchronous timers can execute. The monolith's first cycle is zero-delay.
+  coordinators and the single canonical self-healing scheduler at the all-slot
+  barrier, then emits its ready sentinel before their asynchronous timers can
+  execute. A self-healing scheduler installation failure prevents that sentinel.
+  Later tick failures are logged independently of queue processing; a healthy
+  Worker is not proof of a currently healthy coordinator. Structured
+  `self_heal.coordinator.*` lifecycle events and fresh observations provide that
+  separate process-local evidence. The monolith's first cycle is zero-delay.
   Partition synchronization in exact `shadow` mode retains its configured first
   interval, while the partitioned-mode evidence monitor schedules its first
   cycle with zero delay. The monolith cycle therefore reuses the same bounded
@@ -928,7 +940,7 @@ Launcher behavior:
   provider has no authoritative hierarchy delta feed. Immutable material reuse
   begins only after capture. Cycle logs expose only safe mode/status metadata and
   aggregate results.
-- Numeric `deploy.drainingSeconds=60` is the shared platform outer bound. The web runtime has a 10-second internal shutdown deadline. On a worker shutdown signal, the launcher immediately returns readiness `503` before forwarding the signal; the child then aborts provider work, leaves live claims for lease recovery, stops polling/heartbeats, and flushes runtime snapshots. The default 45-second lease-recovery horizon begins as old heartbeats cease and may complete in the new revision; the drain value does not itself guarantee that recovery. Sixty seconds gives the cooperative handlers a nonzero cleanup envelope, but stalled database I/O and real claim recovery still require a measured deployment rehearsal before promotion.
+- Numeric `deploy.drainingSeconds=60` is the shared platform outer bound. The web runtime has a 10-second internal shutdown deadline. On a worker shutdown signal, the launcher immediately returns readiness `503` before forwarding the signal; the child then aborts provider work, leaves live claims for lease recovery, stops polling/heartbeats, and flushes runtime snapshots. The canonical coordinator clears its timer, aborts and drains the active evaluation, and blocks replacement while draining; telemetry and Redis stop afterward. The default 45-second lease-recovery horizon begins as old heartbeats cease and may complete in the new revision; the drain value does not itself guarantee that recovery. Sixty seconds gives the cooperative handlers a nonzero cleanup envelope, but stalled database I/O and real claim recovery still require a measured deployment rehearsal before promotion.
 - `Procfile` remains in the repository as a historical fallback artifact and must not be treated as the canonical Railway start path.
 
 Environment variables:
@@ -1138,6 +1150,302 @@ evidence, not canonical top-level start-command parity, a real OpenAI or Notion
 credential test, model-quality evidence, a production deployment, or rollback
 proof. A local operator orchestration file under `.codex-local/` may coordinate
 the disposable run, but it remains untracked and is never release evidence.
+
+### Disposable self-healing Worker acceptance profile
+
+The existing [Backstage supervisor](../scripts/railway-backstage-heavy-proof-supervisor.mjs)
+has a separate, explicit `--self-heal-preview-v1` entry for PR #1544's
+`worker-coordinator-v1` acceptance profile. The
+[profile implementation](../scripts/railway-self-heal-preview-profile.mjs)
+retains the normal integrity wrapper, role launcher and compiled Worker entry
+path. The original heavy-proof mode, native passive preview and production
+startup commands retain their existing contracts. This runbook describes the
+implementation and prerequisites; it is not a deployment or acceptance receipt.
+No deployment is established by adding the profile or passing its local tests.
+
+Use only a fresh dedicated project `arc-pr1544-heavy-<suffix>` and one
+environment `backstage-heavy-pr-1544-e2e` (optionally followed by a hyphen and
+1–16 lowercase alphanumeric characters). The project suffix is 1–14 lowercase
+alphanumeric/hyphen characters, starts alphanumeric, and the full project name
+is at most 32 characters. The exact four-service topology is `Postgres`,
+`Redis`, `arcanos-worker-pr1544-heavy`, and `arcanos-web-pr1544-heavy`; its two
+fresh private volumes mount at `/var/lib/postgresql/data` and `/data`.
+Application roles each have one replica. PostgreSQL, Redis and Worker have no
+public domain or TCP proxy; only web may have a temporary HTTPS domain. Keep
+the project private and provider-native PR deployments disabled. Do not reuse
+canonical or Live PR 1527 resources, copy production variables, or add this
+profile to the native preview base.
+
+Both roles require the existing heavy-proof target, run, exact source and
+private data-identity markers, plus the
+[self-healing profile settings](CONFIGURATION.md#disposable-self-healing-preview-profile).
+Use fresh preview-only database/Redis credentials and purpose-bound application
+secrets. The supervisor accepts a literal input allowlist, derives the fixed
+fictional provider key only for its application child, and discards ambient
+administration/provider authority. The parent retains the original sealed mock
+admission and web dead-loopback base `http://127.0.0.1:9/v1`. Only this profile's
+application children derive normal SDK flags (`FORCE_MOCK=false`,
+`ALLOW_MOCK_OPENAI=false`, `OPENAI_API_KEY_REQUIRED=true`), a fixed fictional
+key and the contained adapter at `127.0.0.1:8766` in each role pod. Web derives a
+distinct preview GPT Access token with only `runtime.read` and a loopback
+advertised origin. This is not a platform egress firewall: independently
+attest source, resources and credential isolation before attaching code.
+
+Worker concurrency is two, with the ordinary 5-second heartbeat, 15-second
+lease and 30-second coordinator defaults. Resume recognizes only the exact
+`self-heal-preview-<runId>-slot-1` and `-slot-2` consumer identities.
+Production service overrides can start the role launcher directly, select
+`/healthz`, or add Notion diagnostic preloads. Record those effective settings
+independently: this preview deliberately retains the maintained integrity
+wrapper and `/readyz`, omits production Notion credentials/preloads, and does
+not prove equivalent running production configuration or external-provider recovery.
+
+The immutable issue/expiry pair must be canonical UTC ISO timestamps, with
+expiry after issue and at most **7,200,000 ms (two hours)** later. A restart
+does not extend that deadline. Expiry closes test controls and stops the
+supervised workload. Runtime expiry alone does not delete Railway resources
+or end storage charges; the external cleanup watchdog below owns deletion.
+
+Before attaching source or starting applications:
+
+1. Refresh PR head/base and review/check state; validate the exact committed
+   source with the supported local/CI matrix. Record the final source SHA and
+   the clean reviewed operator checkout separately from application credentials.
+2. Verify authenticated create/inspect/delete capability against the intended
+   workspace and authenticated Railway SSH process inspection **before creating
+   billable resources**. The fixed control client requires an already authorized
+   SSH identity; CLI account authentication alone is insufficient. Do not register
+   a new account-wide SSH key under preview-only authority. If process inspection
+   is unavailable, stop before provisioning or deploying the applications.
+   Create only the empty dedicated project/environment, immediately
+   record their returned immutable IDs, and prepare the cleanup receipt outside
+   the repository. Never infer target identity from a local Railway link.
+3. Arm the receipt-bound watchdog while the project is empty and require its
+   `WATCHDOG_ARMED` receipt before provisioning billable services. Configure
+   the four fresh services, private data references, volumes, one-replica
+   limits and all role-specific settings before source attachment. The cleanup
+   predicate also permits a partial version of this exact topology.
+4. On existing services that still support Config as Code, pin both application
+   services to `/railway.self-heal-preview.json`. New Railway services cannot
+   opt into that retired setting; stage the equivalent service configuration
+   instead: `build.builder=DOCKERFILE`, `build.dockerfilePath=Dockerfile`, and
+   `deploy.startCommand=node scripts/railway-backstage-heavy-proof-supervisor.mjs --self-heal-preview-v1`.
+   Verify the effective configuration rather than assuming the repository file
+   is read. See Railway's [IaC versus Config as Code](https://docs.railway.com/infrastructure-as-code#iac-vs-config-as-code).
+   Set Railway healthcheck `/readyz`, restart policy `NEVER`, zero retries,
+   zero deployment overlap and a 60-second drain interval. This profile uses
+   its own ownership preflight: do not inherit the original heavy mode's
+   `--mode empty`/`--mode schema` pre-deploy commands. A controlled restart
+   requires renewed ownership checks within the same fixed lease.
+5. Obtain one public self-signed certificate only from the independently owned
+   preview PostgreSQL instance. It must have exact DNS SAN
+   `postgres.railway.internal` and remain valid through the fixed lease. If the
+   template certificate cannot authenticate that host, configure a new certificate
+   only inside the owned preview PostgreSQL pod through the authorized procedure;
+   its private key must never leave that pod. Otherwise stop before application
+   deployment. Never use a production certificate/key or disable verification.
+   Supply Docker build arguments `ARCANOS_SELF_HEAL_PREVIEW_PROFILE`,
+   `ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA` and
+   `ARCANOS_SELF_HEAL_PREVIEW_DATABASE_CERTIFICATE_PEM` with the same admitted
+   profile, exact source SHA and public PEM as runtime. The opt-in build writes
+   `/app/config/self-heal-preview-database-ca.pem` root-owned and readonly before
+   hashing configuration into its artifact; startup checks the exact fingerprint
+   before SQL. Normal app clients use the fixed CA file with `sslmode=verify-full`;
+   direct preview clients enforce the same CA and hostname verification.
+   Attach `pbjustin/Arcanos` only with the
+   explicit commit pin after all isolation/configuration checks; source
+   live attachment can immediately build/deploy. Use staged source attachment
+   with an explicit environment and SHA for admission preflight. Apply reviewed
+   staged configuration with `environmentPatchCommitStaged(skipDeploys: true)`,
+   verify zero deployments, then deploy each role explicitly at the pinned SHA.
+   Reconfirm automatic branch pushes cannot deploy and attest the returned
+   deployment source/manifest.
+6. Deploy Worker first, then web at the same SHA. The Worker must first create
+   an ownership receipt in an otherwise empty database; normal Worker startup
+   creates application schema. Resume requires the identical run, source,
+   compiled digest, certificate fingerprint and resource identity, existing job tables, no foreign jobs
+   or orphan events, and no active job lease. A held PostgreSQL advisory lock
+   admits one supervisor per role; loss of its connection stops the workload.
+   This preview receipt is not a replacement for normal durable claim fencing.
+7. Independently verify Railway readiness, one active deployment/replica per
+   role, manifest/source identity and artifact digest before any fault command.
+   Then inspect coordinator state in that exact process. A heartbeat, health
+   response or configured policy is insufficient coordinator evidence.
+
+The Docker build writes an exclusive, read-only
+`scripts/self-heal-preview-artifact.json` containing the source SHA and a
+SHA-256 inventory of emitted application/workspace output, scripts,
+configuration and package manifests. The supervisor recomputes it before
+database preflight, and the preview image makes executable paths root-owned
+while retaining writable runtime data directories. Compare its source/digest
+with the independently attested exact-commit deployment; the source variable
+alone is not artifact provenance. Local artifact checks use:
+
+```text
+node scripts/self-heal-preview-artifact.mjs --verify --source-sha <exact-40-hex-SHA>
+```
+
+The [control client](../scripts/self-heal-preview-control.mjs) runs inside an
+independently attested Railway SSH instance selected by explicit project,
+environment, service and current deployment/instance identity. It accepts no
+URL, token, SQL, shell snippet or arbitrary payload argument. It reads the
+purpose credential from that preview's environment and reaches only loopback
+port **8791** for process control, or **8766** for provider-fixture control.
+Neither port is exposed publicly. Request authentication precedes body reads;
+process controls allow at most 4 KiB per command, 64 KiB per response, 120
+requests/minute and 2,000 requests per process, with one command in flight.
+The client bounds each request to six seconds and checks returned identities.
+
+Examples executed only inside the admitted instance:
+
+```text
+node scripts/self-heal-preview-control.mjs artifact
+node scripts/self-heal-preview-control.mjs inspect
+node scripts/self-heal-preview-control.mjs command duplicate_start
+node scripts/self-heal-preview-control.mjs command observation_throw_once
+node scripts/self-heal-preview-control.mjs command database_failure_once
+node scripts/self-heal-preview-control.mjs command tick
+node scripts/self-heal-preview-control.mjs fenced-job create E02 1
+node scripts/self-heal-preview-control.mjs fenced-job inspect E02 1
+node scripts/self-heal-preview-control.mjs web-job run 1
+node scripts/self-heal-preview-control.mjs provider timeout_next
+node scripts/self-heal-preview-control.mjs command trinity_run
+node scripts/self-heal-preview-control.mjs provider inspect
+node scripts/self-heal-preview-control.mjs command policy_restore
+```
+
+Select the remaining fixed commands from the client's exported allowlist.
+Policy cases change only the seven reviewed process settings and this run's
+dedicated kill-switch key. Observation starts with self-improvement disabled,
+autonomy zero and predictive execution disabled; permitted actuation requires
+the explicit `policy_allowed` case and normal action-boundary authorization.
+`policy_restore` restores the captured process policy. The ordinary five-second
+`hold_observation_once` cancels on shutdown; a later platform restart cannot
+prove that evaluation was still active when its signal arrived. For A06/E06,
+execute `node scripts/self-heal-preview-control.mjs shutdown-held A06` (or E06)
+only in the independently attested Worker instance. This fixed operation binds
+the actual Worker PID/start identity, holds a preview-database advisory barrier
+for at most five seconds, and signals its verified integrity-wrapper parent
+with SIGTERM. The normal wrapper and launcher forward that signal to the Worker.
+It independently verifies the launcher's readiness returns 503 while draining and
+independently observes the live process, its actual Redis client and the
+provider fixture while the evaluation remains held. The real Worker cleanup
+awaits persist closed phase receipts before and after Redis shutdown; independent
+client disappearance on the same Redis server identity corroborates the effect.
+No arbitrary PID, SQL, signal,
+URL or timeout is accepted. The barrier expires if its controller disappears.
+
+The initiating SSH connection may end with its pod. Read its owner-, source-,
+deployment-, process- and scenario-bound PostgreSQL journal from the surviving
+Web instance with `node scripts/self-heal-preview-control.mjs shutdown-receipt
+A06` (or E06), and independently verify the old Railway instance has ceased
+running, replacement ownership and fenced-job continuity. A signal, a stopped
+event, automatic barrier expiry or a successful cleanup log alone is insufficient.
+PostgreSQL availability through drain is observed; the Worker does not acquire
+a new database-close call for this test. A forced kill or drain timeout is a
+failed shutdown proof. Initial
+`STARTUP_MODE=scheduler-failure` is Worker-only and must never report ready.
+That mode samples the normal launcher's actual loopback `/readyz` 503/starting
+response before returning the control bootstrap handle. Its separate, immutable
+preview-database startup receipt retains whether readiness ever committed and
+the actual scheduler counters after failed startup drains. From the surviving
+Web instance, `node scripts/self-heal-preview-control.mjs
+startup-failure-receipt` reads only that run's A04 record. Correlate its failed
+deployment/process/artifact with independent Railway failure and stopped-instance
+observations, then restore normal mode on the same owned Worker, refresh the
+deployment manifest and independently verify fenced A04 attempt 2. Stop the old
+owner before this failed generation starts; zero deployment overlap alone cannot
+release its session lock. A deployment failure or a missing SSH response without
+the actual pre-initialization 503 receipt remains blocked.
+
+`trinity_run` records the measured duration and outcome of its awaited production
+facade call in canonical runtime diagnostics under the fixed
+`/preview/self-heal/trinity-consumer` route. This is a diagnostic route identity,
+not an added public HTTP endpoint. Only the admitted preview coordinator opts
+into that route for mitigation verification; correlate its request ID, process,
+mitigation identity and provider receipt before claiming recovery. By contrast,
+`predictive_evaluate` supplies one server-owned simulated observation to the
+production predictive decision path, with an eight-second abort deadline. It
+requires either `policy_predictive_dry_run` or `policy_predictive_no_execute`,
+fixes that restriction at admission and never grants execution after a policy
+change. Inspect its completed audit separately from actual fault observations;
+its result remains synthetic evidence even when the process is deployed.
+
+Record evidence at the boundary actually exercised:
+
+| Operation | Evidence and limit |
+| --- | --- |
+| Ordinary Worker startup and `fenced-job` | Uses the real compiled Worker, PostgreSQL claim generation and completion events; the helper creates/inspects a fixed exact-literal job for a closed scenario ID and attempt 1 or 2. The same slot is idempotent, while separate slots produce fresh jobs. Completion does not prove provider recovery. |
+| `web-job run 1` or `2` | Uses ordinary protected web admission with a fixed synthetic request, then independently inspects its actual PostgreSQL claim/completion identity. The loopback provider remains injected; this does not prove external-provider or production admission. |
+| `database_failure_once` | Injects one failure immediately before claim admission. It proves the real consumer's error/retry path, not a real PostgreSQL outage or broken SQL operation. |
+| Actual preview Redis outage | Use only the owned Redis instance and independently attested identity. Record lifecycle/kill-switch changes and restoration; a synthetic policy toggle is not Redis network recovery. The existing Redis probe's name allowlist does not admit this heavy-profile name. |
+| `trinity_run` and provider controls | Executes the real Trinity consumer against a bounded synthetic loopback adapter with requests/receipts. Timeout or recovery is provider-adapter evidence, not external OpenAI acceptance. |
+| `trinity_consumer`, activation/replacement | `consumerEvidence=policy_projection` proves local mitigation selection only; correlate with actual consumer execution before claiming an effect. |
+| `trinity_fresh_success` | Explicitly injected consumer outcome; cannot independently satisfy fresh recovery evidence. |
+| Policy and negative-effect cases | Fixed authenticated test controls exercise production authorization/mitigation code. Require rejected result plus unchanged consumer state/zero dispatch, not a success log. |
+
+Capture baseline, fault ID, detection, diagnosis, policy, action ID, consumer
+effect, post-action observation, rollback and final state for every scenario.
+Classify deployed observations separately from injected-component proof.
+Retain structured, bounded, redacted receipts and independently read provider,
+job and process state; never include tokens, connection strings or raw payloads.
+
+The [cleanup client](../scripts/self-heal-preview-cleanup.mjs) accepts a regular
+non-symlink receipt outside the checkout (at most 16 KiB). Its exact fields are
+`version`, `owner`, `repository`, `prNumber`, `sourceSha`, `runId`, `projectId`,
+`projectName`, `workspaceId`, `environmentId`, `environmentName`, `issuedAt`
+and `expiresAt`. An optional closed `resources` field binds exact services
+(`id`, `name`) and global volumes (`id`, `name`, `serviceId`, `mountPath`) for
+safe retries after a service deletion detaches its volume. Populate these bindings
+only from an independently attested owned topology; volume-instance IDs are not
+global volume IDs. Use version 1, owner `pbjustin`, repository
+`pbjustin/Arcanos`, PR 1544, the returned resource IDs and the same fixed lease.
+It rejects canonical/Live PR IDs, foreign resources and incomplete inventory;
+an expired receipt retains authority to delete its same owned target.
+
+Before its first destructive operation, the CLI persists derived resource
+bindings in the fixed companion `<receipt-file>.cleanup-resources.json` when the
+original receipt is unbound. Its closed version-2 envelope contains a random
+publication ID and the unchanged bound owner receipt. A unique sibling staging
+file is written and flushed before atomic, exclusive hardlink publication;
+an existing final record is never overwritten. A reader can remove a leftover
+staging link only when the publication ID derives its exact path and both paths
+prove the same regular inode with exactly two links. Other links fail closed.
+The final record is flushed and single-linked before deletion. Unpublished
+partial staging files never grant authority or block a fresh publication;
+they may remain as local failure evidence. Existing companions must match the
+original authority and cannot renew it. Keep the companion with the original receipt for
+interruption/retry recovery, including detached volumes. The watcher reloads
+only these bound resources after its original deadline; the original identity
+and deadline remain fixed. A missing persistence capability, malformed or
+mismatched companion fails before destructive operations. Empty-project arming
+still works before provisioning.
+
+```text
+node scripts/self-heal-preview-cleanup.mjs --receipt-file <absolute-path-outside-checkout>
+node scripts/self-heal-preview-cleanup.mjs --receipt-file <absolute-path-outside-checkout> --execute --allow-delete-owned-project --watchdog
+```
+
+The first invocation validates the receipt without network access. Run the
+watchdog as an independent authenticated operator process, retain its output,
+and do not place Railway management credentials in the application. It checks
+ownership before arming, waits only until the original deadline, rechecks the
+complete target, deletes the exact owned services first, verifies their absence,
+then deletes only the attested global volume IDs and verifies resource absence.
+Only after services, service instances, global volumes, volume instances and
+buckets are empty does it schedule project deletion. Each absence wait is bounded
+to 60 seconds. Railway can retain scheduled project metadata for 48 hours;
+`RESOURCES_REMOVED_METADATA_RETAINED` explicitly distinguishes removed billable
+resources from unconfirmed project absence. Scheduling project deletion alone
+does not prove volume removal. A refused deletion fails closed without an API
+mutation fallback. Resolve an approval rejection through the approval flow.
+To clean up early after evidence capture, use the same executed
+command without `--watchdog`; stop the waiting watchdog after independently
+confirmed resource deletion. A `FAILED` or absent deletion receipt remains unresolved;
+runtime exit alone is not cleanup. Confirm resource absence and separately record
+project metadata retention,
+former web-domain behavior, and unchanged production identities before final
+acceptance reporting.
 
 ## Run locally
 

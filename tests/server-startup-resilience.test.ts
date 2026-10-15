@@ -3,18 +3,22 @@ import type { Server } from 'node:http';
 import type { Express } from 'express';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import type { RedisLifecycleSnapshot } from '../src/platform/runtime/redisLifecycle.js';
+import type { StartServerOptions } from '../src/server.js';
 
 interface Deferred<T> {
   promise: Promise<T>;
   resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason: unknown) => void;
 }
 
 function createDeferred<T>(): Deferred<T> {
   let resolve!: (value: T | PromiseLike<T>) => void;
-  const promise = new Promise<T>((resolvePromise) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
     resolve = resolvePromise;
+    reject = rejectPromise;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 class FakeHttpServer extends EventEmitter {
@@ -219,6 +223,49 @@ describe('web server startup resilience', () => {
     expect(startSelfHealing).toHaveBeenCalledTimes(1);
   });
 
+  it('suppresses the real canonical coordinator through the explicit web production startup path', async () => {
+    const originalRole = process.env.ARCANOS_PROCESS_KIND;
+    const originalWorkers = process.env.RUN_WORKERS;
+    process.env.ARCANOS_PROCESS_KIND = 'web';
+    process.env.RUN_WORKERS = 'true';
+    jest.resetModules();
+    const serverModule = await import('../src/server.js');
+    const coordinator = await import('../src/services/selfImprove/selfHealingLoop.js');
+    const startupLifecycle = await import('../src/platform/runtime/startupLifecycle.js');
+    startupLifecycle.resetStartupLifecycleForTests();
+    coordinator.resetSelfHealingLoopStateForTests();
+    const { app } = buildFakeApp([]);
+    const exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    try {
+      await serverModule.startServer({
+        app, startAppRuntimeOnce: () => true,
+        performPreflight: async () => undefined,
+        initializeDependencies: async () => undefined,
+        startRedis: () => undefined, stopRedis: async () => undefined,
+        primeTelemetry: async () => undefined, stopTelemetry: async () => undefined,
+        getRedisSnapshot: () => redisSnapshot('READY'),
+        subscribeRedis: () => () => undefined,
+        closeDatabase: async () => undefined,
+        registerSignalHandlers: false,
+      });
+      await flushAsyncWork();
+      expect(startupLifecycle.getStartupLifecycleSnapshot().ready).toBe(true);
+      expect(coordinator.getSelfHealingLoopStatus()).toMatchObject({
+        coordinatorState: 'DISABLED', coordinatorReasonCode: 'service_role_suppressed',
+        loopRunning: false, tickCount: 0, processKind: 'web',
+      });
+      await serverModule.shutdownServer('SIGTERM');
+      expect(exitSpy).toHaveBeenCalledWith(0);
+    } finally {
+      coordinator.resetSelfHealingLoopStateForTests();
+      exitSpy.mockRestore();
+      if (originalRole === undefined) delete process.env.ARCANOS_PROCESS_KIND;
+      else process.env.ARCANOS_PROCESS_KIND = originalRole;
+      if (originalWorkers === undefined) delete process.env.RUN_WORKERS;
+      else process.env.RUN_WORKERS = originalWorkers;
+    }
+  });
+
   it('keeps the bound listener observable when deferred runtime initialization fails', async () => {
     jest.resetModules();
     const serverModule = await import('../src/server.js');
@@ -416,7 +463,7 @@ describe('web server startup resilience', () => {
     }
   });
 
-  it('cancels dependency recovery while an active request is still draining', async () => {
+  it('preserves dependencies while an active request is still draining', async () => {
     jest.resetModules();
     const serverModule = await import('../src/server.js');
     const startupLifecycle = await import('../src/platform/runtime/startupLifecycle.js');
@@ -471,21 +518,207 @@ describe('web server startup resilience', () => {
       const shutdownPromise = serverModule.shutdownServer('SIGTERM');
       await flushAsyncWork();
 
-      expect(stopTelemetry).toHaveBeenCalledTimes(1);
-      expect(stopRedis).toHaveBeenCalledTimes(1);
+      expect(stopTelemetry).not.toHaveBeenCalled();
+      expect(stopRedis).not.toHaveBeenCalled();
       expect(closeDatabase).not.toHaveBeenCalled();
       expect(exitSpy).not.toHaveBeenCalled();
-      expect(sequence.indexOf('listener.stop_accepting')).toBeLessThan(sequence.indexOf('redis.stop'));
+      expect(sequence).toContain('listener.stop_accepting');
 
       expect(finishListenerDrain).not.toBeNull();
       finishListenerDrain?.();
       await shutdownPromise;
 
+      expect(stopTelemetry).toHaveBeenCalledTimes(1);
+      expect(stopRedis).toHaveBeenCalledTimes(1);
       expect(closeDatabase).toHaveBeenCalledTimes(1);
       expect(exitSpy).toHaveBeenCalledWith(0);
     } finally {
       exitSpy.mockRestore();
     }
+  });
+});
+
+describe('bounded server shutdown with admitted coordinator operations', () => {
+  const originalEnvironment = process.env;
+
+  beforeEach(() => {
+    process.env = { ...originalEnvironment, NODE_ENV: 'test', PORT: '32123', HOST: '127.0.0.1', ARCANOS_SHUTDOWN_TIMEOUT_MS: '100' };
+    jest.resetModules();
+    jest.spyOn(console, 'log').mockImplementation(() => undefined);
+    jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    jest.useRealTimers();
+    process.env = originalEnvironment;
+  });
+
+  async function startFixture(overrides: Partial<StartServerOptions> = {}) {
+    const serverModule = await import('../src/server.js');
+    const startupLifecycle = await import('../src/platform/runtime/startupLifecycle.js');
+    startupLifecycle.resetStartupLifecycleForTests();
+    const sequence: string[] = [];
+    const { app, server } = buildFakeApp(sequence);
+    const stopSelfHealing = jest.fn(async () => { sequence.push('coordinator.drained'); });
+    const stopTelemetry = jest.fn(async () => { sequence.push('telemetry.stop'); });
+    const stopRedis = jest.fn(async () => { sequence.push('redis.stop'); });
+    const closeDatabase = jest.fn(async () => { sequence.push('database.close'); });
+    const startSelfHealing = jest.fn(() => ({ loopRunning: false, intervalMs: 30_000 }));
+    const exit = jest.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    await serverModule.startServer({
+      app,
+      performPreflight: async () => undefined,
+      startAppRuntimeOnce: () => true,
+      initializeDependencies: async () => undefined,
+      startRedis: () => undefined,
+      primeTelemetry: async () => undefined,
+      getRedisSnapshot: () => redisSnapshot('READY'),
+      subscribeRedis: () => () => { sequence.push('redis.unsubscribe'); },
+      startSelfHealing: startSelfHealing as never,
+      stopSelfHealing,
+      stopTelemetry,
+      stopRedis,
+      closeDatabase,
+      registerSignalHandlers: false,
+      ...overrides
+    });
+    await flushAsyncWork();
+    return { ...serverModule, startupLifecycle, server, sequence, exit, stopSelfHealing, stopTelemetry, stopRedis, closeDatabase, startSelfHealing };
+  }
+
+  it('waits for the coordinator to release admitted dependency operations before closing them', async () => {
+    const operation = createDeferred<void>();
+    let activeOperations = 1;
+    let admitsEvaluations = true;
+    const stopSelfHealing = jest.fn(async () => {
+      admitsEvaluations = false;
+      await operation.promise;
+      activeOperations -= 1;
+    });
+    const stopRedis = jest.fn(async () => { expect(activeOperations).toBe(0); });
+    const fixture = await startFixture({ stopSelfHealing, stopRedis });
+    const shutdown = fixture.shutdownServer('SIGTERM');
+    await flushAsyncWork();
+    expect(admitsEvaluations).toBe(false);
+    expect(fixture.startupLifecycle.getStartupLifecycleSnapshot()).toMatchObject({ ready: false, shuttingDown: true });
+    expect(fixture.server.close).toHaveBeenCalledTimes(1);
+    expect(fixture.stopTelemetry).not.toHaveBeenCalled();
+    expect(stopRedis).not.toHaveBeenCalled();
+    expect(fixture.closeDatabase).not.toHaveBeenCalled();
+    expect(fixture.exit).not.toHaveBeenCalled();
+    operation.resolve(undefined);
+    await shutdown;
+    expect(stopRedis).toHaveBeenCalledTimes(1);
+    expect(fixture.closeDatabase).toHaveBeenCalledTimes(1);
+    expect(fixture.exit.mock.calls).toEqual([[0]]);
+  });
+
+  it('returns one pending completion and runs cleanup once for duplicate shutdown calls', async () => {
+    const operation = createDeferred<void>();
+    const stopSelfHealing = jest.fn(() => operation.promise);
+    const fixture = await startFixture({ stopSelfHealing });
+    const first = fixture.shutdownServer('SIGTERM');
+    const second = fixture.shutdownServer('SIGINT');
+    expect(second).toBe(first);
+    await flushAsyncWork();
+    expect(stopSelfHealing).toHaveBeenCalledTimes(1);
+    expect(fixture.server.close).toHaveBeenCalledTimes(1);
+    expect(fixture.exit).not.toHaveBeenCalled();
+    operation.resolve(undefined);
+    await Promise.all([first, second]);
+    expect(fixture.stopTelemetry).toHaveBeenCalledTimes(1);
+    expect(fixture.stopRedis).toHaveBeenCalledTimes(1);
+    expect(fixture.closeDatabase).toHaveBeenCalledTimes(1);
+    expect(fixture.exit.mock.calls).toEqual([[0]]);
+  });
+
+  it.each(['rejected coordinator', 'throwing coordinator', 'failed listener'] as const)(
+    'keeps the other drain observed after a %s and reports failure without unsafe teardown',
+    async (failure) => {
+      const remainingDrain = createDeferred<void>();
+      const error = new Error(`synthetic ${failure}`);
+      const stopSelfHealing = jest.fn(() => {
+        if (failure === 'throwing coordinator') throw error;
+        return failure === 'rejected coordinator' ? Promise.reject(error) : remainingDrain.promise;
+      });
+      const fixture = await startFixture({ stopSelfHealing });
+      fixture.server.close.mockImplementation(callback => {
+        if (failure === 'failed listener') callback?.(error);
+        else void remainingDrain.promise.then(() => { callback?.(); });
+        return fixture.server;
+      });
+      const shutdown = fixture.shutdownServer('SIGTERM');
+      await flushAsyncWork();
+      expect(fixture.server.close).toHaveBeenCalledTimes(1);
+      expect(fixture.exit).not.toHaveBeenCalled();
+      expect(fixture.stopTelemetry).not.toHaveBeenCalled();
+      remainingDrain.resolve(undefined);
+      await shutdown;
+      expect(fixture.stopTelemetry).not.toHaveBeenCalled();
+      expect(fixture.stopRedis).not.toHaveBeenCalled();
+      expect(fixture.closeDatabase).not.toHaveBeenCalled();
+      expect(fixture.server.closeAllConnections).toHaveBeenCalledTimes(1);
+      expect(fixture.exit.mock.calls).toEqual([[1]]);
+      expect(console.error).toHaveBeenCalledWith('[SHUTDOWN] Graceful shutdown failed:', error);
+    }
+  );
+
+  it('bounds a hung coordinator by the original deadline and never tears dependencies down after timeout', async () => {
+    const operation = createDeferred<void>();
+    const fixture = await startFixture({ stopSelfHealing: () => operation.promise });
+    jest.useFakeTimers();
+    const shutdown = fixture.shutdownServer('SIGTERM');
+    await jest.advanceTimersByTimeAsync(99);
+    expect(fixture.exit).not.toHaveBeenCalled();
+    expect(fixture.shutdownServer('SIGINT')).toBe(shutdown);
+    await jest.advanceTimersByTimeAsync(1);
+    await shutdown;
+    expect(fixture.server.closeAllConnections).toHaveBeenCalledTimes(1);
+    expect(fixture.exit.mock.calls).toEqual([[1]]);
+    expect(console.error).toHaveBeenCalledWith('[SHUTDOWN] Timed out after 100ms; forcing process exit.');
+    operation.resolve(undefined);
+    await flushAsyncWork();
+    expect(fixture.stopTelemetry).not.toHaveBeenCalled();
+    expect(fixture.stopRedis).not.toHaveBeenCalled();
+    expect(fixture.closeDatabase).not.toHaveBeenCalled();
+    expect(fixture.exit).toHaveBeenCalledTimes(1);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it('applies the same deadline to dependency cleanup and prevents later phases after it expires', async () => {
+    const telemetry = createDeferred<void>();
+    const fixture = await startFixture({ stopTelemetry: () => telemetry.promise });
+    jest.useFakeTimers();
+    const shutdown = fixture.shutdownServer('SIGTERM');
+    await jest.advanceTimersByTimeAsync(100);
+    await shutdown;
+    telemetry.resolve(undefined);
+    await flushAsyncWork();
+    expect(fixture.stopRedis).not.toHaveBeenCalled();
+    expect(fixture.closeDatabase).not.toHaveBeenCalled();
+    expect(fixture.exit.mock.calls).toEqual([[1]]);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it.each(['completed', 'failed'] as const)('drains partially initialized startup when initialization %s', async outcome => {
+    const initialization = createDeferred<void>();
+    const fixture = await startFixture({ initializeDependencies: () => initialization.promise });
+    expect(fixture.startSelfHealing).not.toHaveBeenCalled();
+    const shutdown = fixture.shutdownServer('SIGTERM');
+    await flushAsyncWork();
+    expect(fixture.stopTelemetry).not.toHaveBeenCalled();
+    expect(fixture.stopRedis).not.toHaveBeenCalled();
+    if (outcome === 'completed') initialization.resolve(undefined);
+    else initialization.reject(new Error('synthetic startup failure'));
+    await shutdown;
+    expect(fixture.startSelfHealing).not.toHaveBeenCalled();
+    expect(fixture.stopTelemetry).toHaveBeenCalledTimes(1);
+    expect(fixture.stopRedis).toHaveBeenCalledTimes(1);
+    expect(fixture.closeDatabase).toHaveBeenCalledTimes(1);
+    expect(fixture.exit.mock.calls).toEqual([[0]]);
+    expect(fixture.startupLifecycle.getStartupLifecycleSnapshot()).toMatchObject({ ready: false, shuttingDown: true });
   });
 });
 

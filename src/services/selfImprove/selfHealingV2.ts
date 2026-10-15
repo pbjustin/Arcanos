@@ -537,6 +537,10 @@ export function getTrinitySelfHealingStatus() {
   const cfg = getRuntimeConfig();
   return {
     enabled: cfg.enabled,
+    // State and consumer receipts belong to this heap. They never attest to
+    // another Railway service or process using the same model or route.
+    scope: 'local_process' as const,
+    processKind: getStableWorkerRuntimeMode().processKind,
     config: {
       triggerThreshold: cfg.triggerThreshold,
       windowMs: cfg.windowMs,

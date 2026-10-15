@@ -153,6 +153,32 @@ function isKnownProofError(error) {
     && KNOWN_PROOF_ERRORS.has(error.message);
 }
 
+const KNOWN_SELF_HEAL_PREVIEW_ERRORS = new Set([
+  'PROFILE_INVALID', 'LEASE_INVALID', 'IDENTITY_INVALID', 'CONTROL_INVALID',
+  'STARTUP_MODE_INVALID', 'PORT_INVALID', 'IMAGE_METADATA_INVALID', 'ENV_FORBIDDEN',
+  'ARTIFACT_INVALID', 'OWNERSHIP_LOST', 'OWNER_ALREADY_ACTIVE', 'RECEIPT_MISSING',
+  'DATABASE_NOT_FRESH', 'RECEIPT_MISMATCH', 'DATABASE_SCHEMA_MISSING',
+  'DATABASE_CERTIFICATE_INVALID', 'DATABASE_CERTIFICATE_FILE_INVALID',
+  'FOREIGN_OR_ACTIVE_JOBS', 'FOREIGN_EVENTS', 'DATABASE_PREFLIGHT_FAILED',
+  'CHILD_START_FAILED', 'CHILD_TEARDOWN_TIMEOUT', 'FIXTURE_STDOUT_REQUIRED',
+  'FIXTURE_HANDSHAKE_INVALID', 'FIXTURE_EXITED_BEFORE_READY',
+  'FIXTURE_HANDSHAKE_TIMEOUT', 'CHILD_DRAIN_TIMEOUT', 'TEARDOWN_FAILED',
+].map(code => `SELF_HEAL_PREVIEW_${code}`));
+
+/** Keep reviewed failure codes without exposing arbitrary dependency messages. */
+export async function resolveSelfHealPreviewFailureCode(error) {
+  if (isKnownProofError(error)) return error.message;
+  if (error instanceof Error) {
+    // The executable artifact verifier deliberately throws a plain Error.
+    if (error.message === 'SELF_HEAL_PREVIEW_ARTIFACT_INVALID') return error.message;
+    if (KNOWN_SELF_HEAL_PREVIEW_ERRORS.has(error.message)) {
+      const { SelfHealPreviewError } = await import('./railway-self-heal-preview-profile.mjs');
+      if (error instanceof SelfHealPreviewError) return error.message;
+    }
+  }
+  return 'SELF_HEAL_PREVIEW_FAILED';
+}
+
 function validateUuid(rawValue) {
   const value = rawValue?.trim().toLowerCase() || '';
   if (!UUID_PATTERN.test(value) || CANONICAL_IDS.has(value)) {
@@ -750,6 +776,17 @@ export async function runBackstageHeavyProofSupervisor(
 }
 
 async function main() {
+  if (process.argv.length === 3 && process.argv[2] === '--self-heal-preview-v1') {
+    const { runSelfHealPreviewSupervisor } = await import('./railway-self-heal-preview-profile.mjs');
+    const processKind = process.env.ARCANOS_PROCESS_KIND?.trim().toLowerCase();
+    try {
+      process.exitCode = await runSelfHealPreviewSupervisor(processKind, process.env);
+    } catch (error) {
+      process.stderr.write(`${await resolveSelfHealPreviewFailureCode(error)}\n`);
+      process.exitCode = 1;
+    }
+    return;
+  }
   if (process.argv.length !== 2) {
     fail('BACKSTAGE_HEAVY_PROOF_ARGUMENT_INVALID');
   }

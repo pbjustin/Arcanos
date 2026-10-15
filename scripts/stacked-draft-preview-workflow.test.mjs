@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -39,9 +39,41 @@ const baseEnvironment = directory => ({ PATH: process.env.PATH, LANG: 'C', LC_AL
   EVENT_WORKFLOW_REF: 'pbjustin/Arcanos/.github/workflows/railway-stacked-draft-preview.yml@refs/heads/main',
   CONTROLLER_SHA: SHA, WORKFLOW_RUN_ID: '1234', WORKFLOW_RUN_ATTEMPT: '1', RUNNER_TEMP: directory,
   AUTHORIZATION_JSON: JSON.stringify(authorization()) });
-const runInline = (step, directory, environment = {}) => spawnSync(process.execPath, ['--input-type=module'], {
+const processGuard = new URL('./test-fixtures/offline-process-guard.mjs', import.meta.url).href;
+const runInline = (step, directory, environment = {}) => spawnSync(process.execPath,
+  ['--import', processGuard, '--input-type=module'], {
   input: inline(step), cwd: directory, encoding: 'utf8', timeout: 5_000,
-  env: { ...baseEnvironment(directory), ...environment },
+  env: { ...baseEnvironment(directory), OFFLINE_PROCESS_FIXTURE: 'deny',
+    MOCK_COMMAND_LOG: path.join(directory, 'commands.jsonl'), ...environment },
+});
+
+for (const logPath of [undefined, '']) test(`offline guard diagnoses ${logPath === undefined ? 'missing' : 'empty'} command log before fixture execution`, () => {
+  const result = spawnSync(process.execPath, ['--import', processGuard, '--input-type=module'], {
+    input: "throw new Error('FIXTURE_BODY_MUST_NOT_EXECUTE');", encoding: 'utf8', timeout: 5000,
+    env: { OFFLINE_PROCESS_FIXTURE: 'deny', ...(logPath === undefined ? {} : { MOCK_COMMAND_LOG: logPath }) },
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /OFFLINE_FIXTURE_LOG_REQUIRED/u);
+  assert.doesNotMatch(result.stderr, /ERR_INVALID_ARG_TYPE|FIXTURE_BODY_MUST_NOT_EXECUTE/u);
+});
+
+test('offline workflow fixtures deny unexpected process and provider calls before any native fallback', () => {
+  for (const program of [
+    "import { execFileSync } from 'node:child_process'; execFileSync('docker', ['login', 'ghcr.io']);",
+    "import { spawnSync } from 'node:child_process'; spawnSync('railway', ['up']);",
+    "import { execSync } from 'node:child_process'; execSync('gh api user');",
+    "await fetch('https://api.openai.com/v1/models');",
+    "import { request } from 'node:https'; request('https://ghcr.io/v2/');",
+  ]) {
+    const directory = mkdtempSync(path.join(tmpdir(), 'stacked-workflow-deny-'));
+    try {
+      const result = runInline({ run: `node --input-type=module <<'NODE'\n${program}\nNODE` }, directory);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /OFFLINE_FIXTURE_EXTERNAL_EFFECT_BLOCKED/u);
+      assert.deepEqual(readFileSync(path.join(directory, 'commands.jsonl'), 'utf8').trim().split('\n').map(JSON.parse),
+        [{ guard: 'installed', mode: 'deny' }]);
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  }
 });
 
 test('stacked preview is owner-dispatched, disabled by default and separate from production admission', () => {
@@ -193,7 +225,10 @@ test('failed builds retain only bounded regular-file diagnostics without widenin
       if (variant === 'valid') {
         writeFileSync(path.join(root, 'builder-create.log'), 'bounded builder creation evidence\n');
         writeFileSync(path.join(root, 'build.log'), 'registry HTTP 503 failure evidence\n');
-      } else if (variant === 'symlink') symlinkSync(path.join(root, 'authorization.json'), path.join(root, 'build.log'));
+      } else if (variant === 'symlink') {
+        const target = path.join(root, 'linked-diagnostics'); mkdirSync(target);
+        symlinkSync(target, path.join(root, 'build.log'), 'junction');
+      }
       else if (variant === 'oversized') writeFileSync(path.join(root, 'build.log'), Buffer.alloc(16 * 1024 * 1024 + 3));
       const result = runInline(collect, directory);
       assert.equal(result.status, ['missing', 'valid'].includes(variant) ? 0 : 1, result.stderr);
@@ -230,7 +265,7 @@ test('publisher verifies image before credentials and binds publication to diges
   assert.match(push.run, /\['logout', 'ghcr\.io'\]/u);
 
   for (const [index, environment] of [{}, { MOCK_DIGEST: 'ghcr.io/other/image@sha256:' + 'c'.repeat(64) },
-    { MOCK_IMAGE_ID: `sha256:${'f'.repeat(64)}` }].entries()) {
+    { MOCK_IMAGE_ID: `sha256:${'f'.repeat(64)}` }, { MOCK_LOGIN_FAIL: 'true' }].entries()) {
     const directory = mkdtempSync(path.join(tmpdir(), 'stacked-workflow-publish-'));
     try {
       mkdirSync(path.join(directory, '.stacked-preview'));
@@ -239,22 +274,19 @@ test('publisher verifies image before credentials and binds publication to diges
       writeFileSync(path.join(directory, '.stacked-preview/authorization.json'), JSON.stringify({
         ...authorization(), expiresAt: new Date(Date.now() + 60_000).toISOString(),
       }));
-      const dockerFile = path.join(directory, 'docker');
-      writeFileSync(dockerFile, `#!${process.execPath}\n` +
-        "import { appendFileSync } from 'node:fs';\n" +
-        "const args = process.argv.slice(2); appendFileSync(process.env.MOCK_COMMAND_LOG, JSON.stringify(args) + '\\n');\n" +
-        "if (args[0] === 'image' && args.includes('{{.Id}}')) console.log(process.env.MOCK_IMAGE_ID);\n" +
-        "if (args[0] === 'image' && args.includes('{{json .RepoDigests}}')) console.log(JSON.stringify([process.env.MOCK_DIGEST]));\n");
-      chmodSync(dockerFile, 0o700);
-      const result = runInline(push, directory, { PATH: `${directory}:${process.env.PATH}`,
+      const result = runInline(push, directory, { OFFLINE_PROCESS_FIXTURE: 'publisher',
         GHCR_TOKEN: 'test-only-token-sentinel', MOCK_IMAGE_ID: IMAGE_ID, MOCK_DIGEST: IMAGE,
         MOCK_COMMAND_LOG: path.join(directory, 'commands.jsonl'), ...environment });
       assert.equal(result.status, index === 0 ? 0 : 1, result.stderr);
       assert.equal(existsSync(path.join(directory, '.stacked-preview/published.json')), index === 0);
-      const commands = readFileSync(path.join(directory, 'commands.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      const events = readFileSync(path.join(directory, 'commands.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      assert.deepEqual(events[0], { guard: 'installed', mode: 'publisher' });
+      const commands = events.slice(1).map(event => { assert.equal(event.program, 'docker'); return event.args; });
       assert.equal(commands[0][0], 'login');
       assert.deepEqual(commands.at(-1), ['logout', 'ghcr.io']);
       assert.ok(commands.every(args => !['run', 'exec', 'build'].includes(args[0])));
+      assert.deepEqual(commands.map(args => args[0]), index === 3 ? ['login', 'logout']
+        : ['login', 'tag', 'push', 'image', 'image', 'logout']);
       assert.doesNotMatch(result.stdout + result.stderr, /test-only-token-sentinel/u);
       if (index === 0) assert.deepEqual(JSON.parse(readFileSync(path.join(directory, '.stacked-preview/published.json'), 'utf8')),
         { image: IMAGE, imageId: IMAGE_ID, buildReceiptSha256: createHash('sha256').update(buildBytes).digest('hex') });
@@ -292,11 +324,14 @@ test('public, missing, inaccessible or malformed container packages cannot reach
           headers: new Headers({ 'content-type': fixture.contentType }),
           body: new ReadableStream({ start(controller) { controller.enqueue(bytes); controller.close(); } }) };
       };\n`;
-      const result = spawnSync(process.execPath, ['--input-type=module'], {
+      const result = spawnSync(process.execPath, ['--import', processGuard, '--input-type=module'], {
         cwd: directory, input: setup + inline(step), encoding: 'utf8', timeout: 5_000,
-        env: { ...baseEnvironment(directory), GITHUB_TOKEN: 'test-only-token-sentinel' },
+        env: { ...baseEnvironment(directory), GITHUB_TOKEN: 'test-only-token-sentinel',
+          OFFLINE_PROCESS_FIXTURE: 'deny', MOCK_COMMAND_LOG: path.join(directory, 'commands.jsonl') },
       });
       assert.equal(result.status, index === 0 ? 0 : 1, result.stderr);
+      assert.deepEqual(readFileSync(path.join(directory, 'commands.jsonl'), 'utf8').trim().split('\n').map(JSON.parse),
+        [{ guard: 'installed', mode: 'deny' }]);
       assert.equal(existsSync(path.join(directory, '.stacked-preview/registry-visibility.json')), index === 0);
       assert.equal(existsSync(path.join(directory, '.stacked-preview/published.json')), false);
       assert.doesNotMatch(result.stdout + result.stderr, /test-only-token-sentinel/u);

@@ -120,6 +120,18 @@ describe('required PostgreSQL CI truth contract', () => {
     }
   });
 
+  it('requires the literal self-heal ownership SQL suite against the dedicated disposable service', () => {
+    const postgresJob = readWorkflowJob(readNormalized('.github/workflows/ci-cd.yml'),
+      'local-agent-postgres-concurrency', 'runtime-redis-admission');
+    const path = 'tests/integration/self-heal-preview-ownership.pg18.integration.test.ts';
+    expect(postgresJob).toContain('SELF_HEAL_PREVIEW_OWNERSHIP_TEST_DATABASE_URL:');
+    expect(postgresJob).toContain('SELF_HEAL_PREVIEW_OWNERSHIP_CONFIRM_DISPOSABLE: disposable-loopback-only');
+    expect(postgresJob).toContain(`run: node scripts/run-jest.mjs --runTestsByPath ${path} --coverage=false --runInBand`);
+    expect(readNormalized(path)).toContain('resolvePostgresTestDatabaseUrl(');
+    expect(readNormalized(path)).toContain('assertDisposablePostgresTestDatabaseUrl(');
+    expect(postgresJob.indexOf(path)).toBeGreaterThan(postgresJob.indexOf('run: npm ci'));
+  });
+
   it('runs the aggregate gate after every dependency and fails on non-success', () => {
     const workflow = readNormalized('.github/workflows/ci-cd.yml');
     const aggregateStart = workflow.indexOf('  all-checks-complete:\n');

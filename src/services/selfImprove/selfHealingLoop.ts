@@ -2,7 +2,7 @@ import { recoverStaleJobs } from '@core/db/repositories/jobRepository.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { getTelemetrySnapshot, recordTraceEvent } from '@platform/logging/telemetry.js';
-import { getEnvBoolean, getEnvNumber } from '@platform/runtime/env.js';
+import { getEnv, getEnvBoolean, getEnvNumber } from '@platform/runtime/env.js';
 import {
   getConfig,
   getStableWorkerRuntimeMode,
@@ -38,6 +38,7 @@ import {
   type WorkerControlHealthResponse
 } from '@services/workerControlService.js';
 import { getWorkerAutonomySettings } from '@services/workerAutonomyService.js';
+import { getKillSwitchStatus } from '@services/incidentResponse/killSwitch.js';
 import {
   inferSelfHealComponentFromAction,
   recordSelfHealEvent,
@@ -84,6 +85,7 @@ const SELF_HEAL_RUNTIME_KEY = '__ARCANOS_SELF_HEAL_RUNTIME__';
 const PROMPT_ROUTE_PATH = '/api/openai/prompt';
 const TRINITY_REQUEST_ROUTE_PATTERN =
   /^(?:\/gpt\/:gptId|\/api\/arcanos\/ask|\/arcanos(?:-pipeline)?|\/query-finetune|\/siri)$/;
+export const SELF_HEAL_PREVIEW_CONSUMER_ROUTE = '/preview/self-heal/trinity-consumer';
 const PROMPT_ROUTE_SIGNIFICANT_SHARE = 0.15;
 const VERIFICATION_SUCCESS_SIGNAL_COUNT = 2;
 const VERIFICATION_FAILURE_SIGNAL_COUNT = 2;
@@ -211,11 +213,17 @@ export interface SelfHealingVerificationResult {
 }
 
 export interface SelfHealingLoopStatus {
+  coordinatorState: 'RUNNING' | 'DISABLED' | 'BLOCKED' | 'FAILED' | 'UNKNOWN';
+  coordinatorReasonCode: string;
+  processKind: 'web' | 'worker' | 'unknown';
+  operatingMode: 'observation_only' | 'local_mitigation' | 'predictive_execution';
   active: boolean;
   loopRunning: boolean;
   inFlight: boolean;
   startedAt: string | null;
   lastTick: string | null;
+  lastObservationAt: string | null;
+  policyObservedAt: string | null;
   tickCount: number;
   lastError: string | null;
   intervalMs: number;
@@ -368,6 +376,10 @@ type PendingVerification = {
 
 type SelfHealingLoopRuntime = {
   timer: ReturnType<typeof setInterval> | null;
+  controller: AbortController | null;
+  removeShutdownListener: (() => void) | null;
+  scheduledRun: Promise<unknown> | null;
+  activeRun: Promise<void> | null;
   inFlight: boolean;
   status: SelfHealingLoopStatus;
   actionCooldowns: Map<string, number>;
@@ -386,6 +398,8 @@ type SelfHealingObservation = {
   requestWindow: RequestWindowSnapshot;
   telemetry: ReturnType<typeof getTelemetrySnapshot>;
   openaiHealth: ReturnType<typeof getOpenAIServiceHealth>;
+  /** Set only by the admitted preview controller's server-owned options. */
+  previewConsumerRoute?: typeof SELF_HEAL_PREVIEW_CONSUMER_ROUTE;
 };
 
 type TelemetrySignals = {
@@ -1071,7 +1085,12 @@ function recordActionExecuted(params: {
   const details = {
     diagnosisType: params.diagnosis.type,
     executionSource: params.executionSource,
-    ...(params.details ?? {})
+    ...(params.details ?? {}),
+    processKind: getStableWorkerRuntimeMode().processKind,
+    effectScope: params.action.startsWith('recoverStaleJobs')
+      ? 'shared_job_queue'
+      : /^(?:healWorkerRuntime|heal_worker_runtime|recycle_worker_runtime)/u.test(params.action)
+        ? 'actuator_reported_target' : 'current_process',
   };
 
   logger.info(ACTION_EXECUTED_EVENT, {
@@ -1181,6 +1200,7 @@ async function aiDiagnoseAndDecide(params: {
   trigger: 'startup' | 'interval' | 'manual';
   diagnosis: SelfHealingDiagnosis;
   observation: SelfHealingObservation;
+  signal?: AbortSignal;
 }): Promise<SelfHealingAIDiagnosisResult> {
   logger.info('self_heal.ai_path.executed', {
     module: 'self_heal.loop',
@@ -1243,6 +1263,7 @@ async function aiDiagnoseAndDecide(params: {
   try {
     predictiveResult = await runPredictiveHealingFromLoop({
       source: 'predictive_self_heal_loop',
+      signal: params.signal,
       observation: {
         requestWindow: params.observation.requestWindow,
         workerHealth: params.observation.workerHealth,
@@ -1443,13 +1464,49 @@ function resolvePromptRouteVerificationMinRequests(): number {
   );
 }
 
+function resolveCoordinatorOperatingMode(effectsAuthorized = false): SelfHealingLoopStatus['operatingMode'] {
+  const config = getConfig();
+  if (!effectsAuthorized || !config.selfImproveEnabled || config.selfImproveActuatorMode !== 'daemon' ||
+      config.selfImproveFrozen || config.selfImproveAutonomyLevel < 3) {
+    return 'observation_only';
+  }
+  if (config.predictiveHealingEnabled) {
+    return config.predictiveHealingDryRun === false && config.autoExecuteHealing === true
+      ? 'predictive_execution' : 'observation_only';
+  }
+  return 'local_mitigation';
+}
+
+function coordinatorEventMetadata(runtime: SelfHealingLoopRuntime): Record<string, unknown> {
+  // Deployment identity is allowlisted; arbitrary environment values and error
+  // payloads must never enter these low-cardinality lifecycle events.
+  const deployment = getEnv('RAILWAY_DEPLOYMENT_ID');
+  return {
+    module: 'self_heal.coordinator',
+    processKind: runtime.status.processKind,
+    enabled: getConfig().selfImproveEnabled,
+    operatingMode: runtime.status.operatingMode,
+    policyObservedAt: runtime.status.policyObservedAt,
+    intervalMs: runtime.status.intervalMs,
+    state: runtime.status.coordinatorState,
+    reasonCode: runtime.status.coordinatorReasonCode,
+    deploymentId: deployment && /^[a-f0-9-]{36}$/iu.test(deployment) ? deployment : null,
+  };
+}
+
 function createInitialStatus(): SelfHealingLoopStatus {
   return {
+    coordinatorState: 'UNKNOWN',
+    coordinatorReasonCode: 'not_started',
+    processKind: getStableWorkerRuntimeMode().processKind,
+    operatingMode: resolveCoordinatorOperatingMode(),
     active: false,
     loopRunning: false,
     inFlight: false,
     startedAt: null,
     lastTick: null,
+    lastObservationAt: null,
+    policyObservedAt: null,
     tickCount: 0,
     lastError: null,
     intervalMs: resolveLoopIntervalMs(),
@@ -1504,6 +1561,10 @@ function createInitialStatus(): SelfHealingLoopStatus {
 function createRuntime(): SelfHealingLoopRuntime {
   return {
     timer: null,
+    controller: null,
+    removeShutdownListener: null,
+    scheduledRun: null,
+    activeRun: null,
     inFlight: false,
     status: createInitialStatus(),
     actionCooldowns: new Map<string, number>(),
@@ -1528,6 +1589,11 @@ function recordLoopError(error: unknown): string {
   const runtime = getRuntime();
   const message = resolveErrorMessage(error);
   runtime.status.lastError = message;
+  if (runtime.timer !== null) {
+    runtime.status.coordinatorState = 'FAILED';
+    runtime.status.coordinatorReasonCode = 'evaluation_failed';
+  }
+  logger.error('self_heal.coordinator.tick_failed', coordinatorEventMetadata(runtime));
   recordSelfHealEvent({
     kind: 'failure',
     source: 'self_heal_loop',
@@ -1540,7 +1606,9 @@ function recordLoopError(error: unknown): string {
   return message;
 }
 
-async function observeSelfHealingRuntime(): Promise<SelfHealingObservation> {
+async function observeSelfHealingRuntime(
+  previewConsumerRoute?: typeof SELF_HEAL_PREVIEW_CONSUMER_ROUTE
+): Promise<SelfHealingObservation> {
   const { getWorkerRuntimeStatus } = await import('@platform/runtime/workerConfig.js');
   const workerRuntime = getWorkerRuntimeStatus();
   let workerHealth: WorkerControlHealthResponse | null = null;
@@ -1559,7 +1627,8 @@ async function observeSelfHealingRuntime(): Promise<SelfHealingObservation> {
     trinityStatus: getTrinitySelfHealingStatus(),
     requestWindow: runtimeDiagnosticsService.getRollingRequestWindow(resolveSignalWindowMs()),
     telemetry: getTelemetrySnapshot(),
-    openaiHealth: getOpenAIServiceHealth()
+    openaiHealth: getOpenAIServiceHealth(),
+    ...(previewConsumerRoute === SELF_HEAL_PREVIEW_CONSUMER_ROUTE ? { previewConsumerRoute } : {})
   };
 }
 
@@ -2334,6 +2403,7 @@ function diagnoseSelfHealingRuntime(
   const promptRouteCandidate = getPromptRouteCandidate(requestWindow);
   const promptRouteStability = assessPromptRouteMitigationStability(requestWindow);
   const runtimeInactive =
+    getStableWorkerRuntimeMode().processKind !== 'worker' &&
     observation.workerRuntime.enabled &&
     (!observation.workerRuntime.started || observation.workerRuntime.activeListeners === 0);
   const minRequestCount = resolveMinRequestCount();
@@ -2558,7 +2628,34 @@ function shouldOverrideActionCooldown(
   );
 }
 
-function shouldAutoInvokeController(): boolean {
+function resolveConfiguredReactiveEffectBlock(): string | null {
+  const cfg = getConfig();
+  if (!cfg.selfImproveEnabled || cfg.selfImproveActuatorMode !== 'daemon') {
+    return 'self_improve_execution_disabled';
+  }
+  if (cfg.selfImproveFrozen) return 'self_improve_frozen';
+  if (!(cfg.selfImproveAutonomyLevel >= 3)) return 'insufficient_autonomy';
+  if (cfg.predictiveHealingEnabled &&
+      (cfg.predictiveHealingDryRun !== false || cfg.autoExecuteHealing !== true)) {
+    return 'predictive_observation_only';
+  }
+  return null;
+}
+
+async function resolveReactiveEffectBlock(): Promise<string | null> {
+  const configurationBlock = resolveConfiguredReactiveEffectBlock();
+  if (configurationBlock) return configurationBlock;
+  const effective = await getKillSwitchStatus();
+  // Shared controls can require I/O. A local revocation during that read must
+  // still prevent the effect admitted immediately after this check.
+  const currentConfigurationBlock = resolveConfiguredReactiveEffectBlock();
+  if (currentConfigurationBlock) return currentConfigurationBlock;
+  if (effective.frozen) return 'self_improve_frozen';
+  if (effective.autonomyLevel < 3) return 'insufficient_autonomy';
+  return null;
+}
+
+async function shouldAutoInvokeController(): Promise<boolean> {
   const cfg = getConfig();
   const workerRuntimeMode = getStableWorkerRuntimeMode();
   const disabledForServiceRole = isWorkerRuntimeSuppressedForServiceRole(workerRuntimeMode);
@@ -2566,7 +2663,8 @@ function shouldAutoInvokeController(): boolean {
     cfg.selfImproveEnabled &&
     cfg.selfImproveActuatorMode === 'daemon' &&
     !cfg.selfImproveFrozen &&
-    !disabledForServiceRole
+    !disabledForServiceRole &&
+    await resolveReactiveEffectBlock() === null
   );
 }
 
@@ -2716,7 +2814,9 @@ function beginVerification(
   rollback: PendingVerification['rollback'] = null
 ): PendingVerification {
   const affectedTrinityRoute = observation.requestWindow.routes
-    .filter((route) => TRINITY_REQUEST_ROUTE_PATTERN.test(route.route))
+    .filter((route) => TRINITY_REQUEST_ROUTE_PATTERN.test(route.route)
+      || (observation.previewConsumerRoute === SELF_HEAL_PREVIEW_CONSUMER_ROUTE
+        && route.route === observation.previewConsumerRoute))
     .sort((left, right) =>
       (right.timeoutCount + right.errorCount + right.slowRequestCount)
       - (left.timeoutCount + left.errorCount + left.slowRequestCount)
@@ -3241,7 +3341,8 @@ async function executeActionPlan(
   runtime: SelfHealingLoopRuntime,
   diagnosis: SelfHealingDiagnosis,
   observation: SelfHealingObservation,
-  trigger: 'startup' | 'interval' | 'manual'
+  trigger: 'startup' | 'interval' | 'manual',
+  signal?: AbortSignal
 ): Promise<SelfHealingActionExecution> {
   if (runtime.pendingVerification) {
     console.log('[SELF-HEAL] action skipped reason=pending-verification');
@@ -3270,6 +3371,23 @@ async function executeActionPlan(
 
   const actionPlan = diagnosis.actionPlan;
   const actionTarget = getSelfHealingActionTarget(actionPlan);
+  const policyBlock = await resolveReactiveEffectBlock();
+  signal?.throwIfAborted();
+  const workerRole = getStableWorkerRuntimeMode().processKind === 'worker';
+  const ownershipBlock = !workerRole ? null
+    : actionPlan.kind === 'heal_worker_runtime' ? 'dedicated_job_runner_repair_unavailable'
+      : actionPlan.kind === 'activate_prompt_route_reduced_latency_mode' || actionPlan.kind === 'activate_prompt_route_degraded_mode'
+        ? 'cross_process_prompt_route_unavailable' : null;
+  const reasonCode = policyBlock ?? ownershipBlock;
+  if (reasonCode) {
+    recordSelfHealEvent({
+      kind: 'noop', source: 'self_heal_loop', trigger: 'action',
+      reason: reasonCode, actionTaken: resolveActionTrackingKey(actionPlan),
+      healedComponent: actionTarget,
+      details: { reasonCode, effectScope: 'current_process' }
+    });
+    return { executed: false, action: null, pendingVerification: null };
+  }
   const cooldownOverrideActive = shouldOverrideActionCooldown(runtime, diagnosis, observation);
 
   const actionTrackingKey = resolveActionTrackingKey(actionPlan);
@@ -3964,9 +4082,10 @@ async function executeAction(
   runtime: SelfHealingLoopRuntime,
   diagnosis: SelfHealingDiagnosis,
   observation: SelfHealingObservation,
-  trigger: 'startup' | 'interval' | 'manual'
+  trigger: 'startup' | 'interval' | 'manual',
+  signal?: AbortSignal
 ): Promise<SelfHealingActionExecution> {
-  return executeActionPlan(runtime, diagnosis, observation, trigger);
+  return executeActionPlan(runtime, diagnosis, observation, trigger, signal);
 }
 
 export function getSelfHealingLoopStatus(): SelfHealingLoopStatus {
@@ -3975,6 +4094,8 @@ export function getSelfHealingLoopStatus(): SelfHealingLoopStatus {
   const promptRouteMitigationState = getPromptRouteMitigationState();
   const snapshot: SelfHealingLoopStatus = {
     ...runtime.status,
+    // Policy and its observation timestamp are one historical record. Reading
+    // status must not reinterpret an earlier tick using current configuration.
     active: runtime.timer !== null,
     loopRunning: runtime.timer !== null,
     inFlight: runtime.inFlight,
@@ -4030,6 +4151,10 @@ export function getSelfHealingLoopStatus(): SelfHealingLoopStatus {
 export async function runSelfHealingLoop(options: {
   trigger?: 'startup' | 'interval' | 'manual';
   requestedCycle?: SelfImproveTrigger;
+  signal?: AbortSignal;
+  /** Dependency seam used only by the bounded, isolated preview controller. */
+  beforeObservation?: (signal?: AbortSignal) => Promise<void>;
+  previewConsumerRoute?: typeof SELF_HEAL_PREVIEW_CONSUMER_ROUTE;
 } = {}): Promise<SelfHealingLoopRunResult> {
   const runtime = getRuntime();
   const trigger = options.trigger ?? 'manual';
@@ -4037,14 +4162,15 @@ export async function runSelfHealingLoop(options: {
 
   // Enforce the automatic ownership boundary at the tick as well as startup;
   // explicit manual requests retain their existing scope and approval gates.
-  if (trigger !== 'manual' && isWorkerRuntimeSuppressedForServiceRole(getStableWorkerRuntimeMode())) {
+  if (options.signal?.aborted ||
+      (trigger !== 'manual' && isWorkerRuntimeSuppressedForServiceRole(getStableWorkerRuntimeMode()))) {
     return {
       trigger,
       tickAt,
       tickCount: runtime.status.tickCount,
       loopRunning: false,
       lastError: null,
-      diagnosis: 'disabled_for_service_role',
+      diagnosis: options.signal?.aborted ? 'coordinator_cancelled' : 'disabled_for_service_role',
       action: null,
       controllerDecision: null,
       evidence: null,
@@ -4079,8 +4205,14 @@ export async function runSelfHealingLoop(options: {
   }
 
   runtime.inFlight = true;
+  // Manual routes do not own a scheduledRun or supply its abort signal. Keep
+  // a completion barrier for every admitted evaluation before it can yield.
+  let resolveActiveRun!: () => void;
+  const activeRun = new Promise<void>(resolve => { resolveActiveRun = resolve; });
+  runtime.activeRun = activeRun;
 
   try {
+    options.signal?.throwIfAborted();
     runtime.status.lastTick = tickAt;
     runtime.status.tickCount += 1;
     runtime.status.lastError = null;
@@ -4092,7 +4224,14 @@ export async function runSelfHealingLoop(options: {
 
     console.log(`[SELF-HEAL] tick ${tickAt} trigger=${trigger} tickCount=${runtime.status.tickCount}`);
 
-    const observation = await observeSelfHealingRuntime();
+    await options.beforeObservation?.(options.signal);
+    options.signal?.throwIfAborted();
+    const observation = await observeSelfHealingRuntime(options.previewConsumerRoute);
+    options.signal?.throwIfAborted();
+    runtime.status.lastObservationAt = new Date().toISOString();
+    runtime.status.operatingMode = resolveCoordinatorOperatingMode(await resolveReactiveEffectBlock() === null);
+    runtime.status.policyObservedAt = new Date().toISOString();
+    options.signal?.throwIfAborted();
     const verification = maybeVerifyPendingAction(runtime, observation);
 
     const diagnosis = diagnoseSelfHealingRuntime(options, observation);
@@ -4120,8 +4259,9 @@ export async function runSelfHealingLoop(options: {
       runtime,
       trigger,
       diagnosis,
-      observation
+      observation,
     });
+    options.signal?.throwIfAborted();
 
     if (verification.followUpAction) {
       // A successful rollback owns this tick. Prediction waits for the next tick so
@@ -4163,8 +4303,10 @@ export async function runSelfHealingLoop(options: {
       runtime,
       trigger,
       diagnosis,
-      observation
+      observation,
+      signal: options.signal,
     });
+    options.signal?.throwIfAborted();
     recordControllerDecision({
       runtime,
       trigger,
@@ -4207,6 +4349,7 @@ export async function runSelfHealingLoop(options: {
     const predictiveExecutionConfirmed = Boolean(
       predictiveResult && isConfirmedPredictiveExecution(predictiveResult)
     );
+    const previousReactiveAttempts = runtime.diagnosisAttempts.get(diagnosis.type)?.count ?? 0;
     let action: string | null = null;
     if (predictiveResult && predictiveExecutionConfirmed) {
       action = predictiveResult.decision.action;
@@ -4248,13 +4391,16 @@ export async function runSelfHealingLoop(options: {
       aiDiagnosisResult.diagnosis.decision === 'heal'
     ) {
       // Reactive approval is explicit and separate from predictive recommendation telemetry.
-      const actionResult = await executeAction(runtime, diagnosis, observation, trigger);
+      const actionResult = await executeAction(runtime, diagnosis, observation, trigger, options.signal);
       if (actionResult.executed && actionResult.action) {
+        // Cancellation stops subsequent effects, but cannot undo a dispatch
+        // already completed. Preserve its verification across a later restart.
         action = actionResult.action;
         runtime.status.lastAction = action;
         runtime.status.lastActionAt = new Date().toISOString();
         runtime.pendingVerification = actionResult.pendingVerification;
       }
+      options.signal?.throwIfAborted();
     }
 
     runtime.status.lastTrinityMitigation = getActiveTrinityMitigation(getTrinitySelfHealingStatus());
@@ -4265,12 +4411,19 @@ export async function runSelfHealingLoop(options: {
     let controllerDecision: SelfImproveDecision['decision'] | 'ERROR' | null = null;
     const shouldRunController = shouldRunSelfHealingController({
       actionPresent: action !== null,
-      allowAutomaticController: aiDiagnosisResult.allowAutomaticController,
-      automaticControllerConfigured: shouldAutoInvokeController(),
+      // Preserve bounded escalation on a later tick, but neither a refused
+      // preflight nor a newly dispatched failure authorizes another effect now.
+      allowAutomaticController: aiDiagnosisResult.allowAutomaticController && (
+        diagnosis.actionPlan === null ||
+        (previousReactiveAttempts > 0 &&
+          (runtime.diagnosisAttempts.get(diagnosis.type)?.count ?? 0) === previousReactiveAttempts)
+      ),
+      automaticControllerConfigured: await shouldAutoInvokeController(),
       hasControllerInput: diagnosis.controllerInput !== null,
       trigger
     });
     if (shouldRunController && diagnosis.controllerInput) {
+      options.signal?.throwIfAborted();
       const controllerKey = diagnosis.incidentKey ?? diagnosis.controllerInput.trigger;
       if (trigger !== 'manual' && isCooldownActive(runtime.controllerCooldowns, controllerKey)) {
         console.log(`[SELF-HEAL] controller skipped key=${controllerKey} reason=cooldown`);
@@ -4284,7 +4437,8 @@ export async function runSelfHealingLoop(options: {
         });
       } else {
         try {
-          const decision = await runSelfImproveCycle(diagnosis.controllerInput);
+          const decision = await runSelfImproveCycle(diagnosis.controllerInput, { signal: options.signal });
+          options.signal?.throwIfAborted();
           controllerDecision = decision.decision;
           runtime.status.lastControllerDecision = decision.decision;
           runtime.status.lastControllerRunAt = new Date().toISOString();
@@ -4299,6 +4453,7 @@ export async function runSelfHealingLoop(options: {
           });
           console.log(`[SELF-HEAL] controller decision=${decision.decision} id=${decision.id}`);
         } catch (error) {
+          if (options.signal?.aborted) throw error;
           controllerDecision = 'ERROR';
           runtime.status.lastControllerDecision = 'ERROR';
           runtime.status.lastControllerRunAt = new Date().toISOString();
@@ -4324,6 +4479,10 @@ export async function runSelfHealingLoop(options: {
       }
     }
 
+    if (runtime.timer !== null && !options.signal?.aborted) {
+      runtime.status.coordinatorState = runtime.status.lastError ? 'FAILED' : 'RUNNING';
+      runtime.status.coordinatorReasonCode = runtime.status.lastError ? 'evaluation_failed' : 'scheduled';
+    }
     refreshStatusViews(runtime);
 
     return {
@@ -4339,6 +4498,13 @@ export async function runSelfHealingLoop(options: {
       verificationResult: verification.verificationResult
     };
   } catch (error) {
+    if (options.signal?.aborted) {
+      return {
+        trigger, tickAt, tickCount: runtime.status.tickCount, loopRunning: false,
+        lastError: null, diagnosis: 'coordinator_cancelled', action: null,
+        controllerDecision: null, evidence: null, verificationResult: null,
+      };
+    }
     refreshStatusViews(runtime);
     return {
       trigger,
@@ -4354,53 +4520,129 @@ export async function runSelfHealingLoop(options: {
     };
   } finally {
     runtime.inFlight = false;
+    if (runtime.activeRun === activeRun) runtime.activeRun = null;
+    resolveActiveRun();
   }
 }
 
-export function startSelfHealingLoop(intervalMs = resolveLoopIntervalMs()): SelfHealingLoopStatus {
-  const runtime = getRuntime();
-  runtime.status.intervalMs = intervalMs;
-  const workerRuntimeMode = getStableWorkerRuntimeMode();
-  const disabledForServiceRole = isWorkerRuntimeSuppressedForServiceRole(workerRuntimeMode);
+/** Install the one canonical scheduler after its process dependencies are ready. */
+export interface SelfHealingCoordinatorOptions {
+  signal?: AbortSignal;
+  beforeObservation?: (signal?: AbortSignal) => Promise<void>;
+  installScheduler?: (callback: () => void, intervalMs: number) => ReturnType<typeof setInterval>;
+  previewConsumerRoute?: typeof SELF_HEAL_PREVIEW_CONSUMER_ROUTE;
+}
 
-  if (disabledForServiceRole) {
-    runtime.status.active = false;
-    runtime.status.loopRunning = false;
-    runtime.status.lastError = null;
-    logger.info('self_heal.loop.disabled_for_service_role', {
-      module: 'self_heal.loop',
-      processKind: workerRuntimeMode.processKind,
-      serviceName: workerRuntimeMode.railwayServiceName ?? 'unknown',
-      reason: workerRuntimeMode.reason,
-    });
+export function startSelfHealingLoop(
+  intervalMs = resolveLoopIntervalMs(),
+  options: SelfHealingCoordinatorOptions = {}
+): SelfHealingLoopStatus {
+  const runtime = getRuntime();
+  const workerRuntimeMode = getStableWorkerRuntimeMode();
+  runtime.status.processKind = workerRuntimeMode.processKind;
+  if (isWorkerRuntimeSuppressedForServiceRole(workerRuntimeMode)) {
+    void stopSelfHealingLoop('service_role_suppressed');
+    runtime.status.coordinatorState = 'DISABLED';
+    runtime.status.coordinatorReasonCode = 'service_role_suppressed';
+    logger.info('self_heal.coordinator.disabled', coordinatorEventMetadata(runtime));
     return getSelfHealingLoopStatus();
   }
-
-  if (runtime.timer !== null || runtime.status.loopRunning) {
+  if (options.signal?.aborted) {
+    void stopSelfHealingLoop();
+    runtime.status.coordinatorState = 'BLOCKED';
+    runtime.status.coordinatorReasonCode = 'shutdown_requested';
+    logger.info('self_heal.coordinator.disabled', coordinatorEventMetadata(runtime));
+    return getSelfHealingLoopStatus();
+  }
+  if (runtime.timer !== null) {
     console.log(
       `[SELF-HEAL] start skipped; already running startedAt=${runtime.status.startedAt ?? 'unknown'} intervalMs=${runtime.status.intervalMs}`
     );
     return getSelfHealingLoopStatus();
   }
-
-  runtime.status.active = true;
-  runtime.status.loopRunning = true;
-  runtime.status.startedAt = new Date().toISOString();
-  runtime.status.lastError = null;
-
-  console.log(`[SELF-HEAL] loop started startedAt=${runtime.status.startedAt} intervalMs=${intervalMs}`);
-
-  void runSelfHealingLoop({ trigger: 'startup' });
-
-  runtime.timer = setInterval(() => {
-    void runSelfHealingLoop({ trigger: 'interval' });
-  }, intervalMs);
-
-  if (typeof runtime.timer.unref === 'function') {
-    runtime.timer.unref();
+  if (runtime.inFlight) {
+    runtime.status.coordinatorState = 'BLOCKED';
+    runtime.status.coordinatorReasonCode = 'previous_evaluation_draining';
+    logger.info('self_heal.coordinator.disabled', coordinatorEventMetadata(runtime));
+    return getSelfHealingLoopStatus();
   }
 
-  return getSelfHealingLoopStatus();
+  const controller = new AbortController();
+  runtime.controller = controller;
+  runtime.status.intervalMs = intervalMs;
+  const runScheduled = (trigger: 'startup' | 'interval'): void => {
+    if (controller.signal.aborted || runtime.inFlight) return;
+    const pending = runSelfHealingLoop({ trigger, signal: controller.signal, beforeObservation: options.beforeObservation,
+      previewConsumerRoute: options.previewConsumerRoute });
+    runtime.scheduledRun = pending;
+    // The evaluator normally captures failures itself. Also contain an unexpected
+    // rejection here so telemetry/diagnostic failure cannot reject the worker loop.
+    void pending.catch(error => {
+      if (!controller.signal.aborted) recordLoopError(error);
+    }).finally(() => {
+      if (runtime.scheduledRun === pending) runtime.scheduledRun = null;
+    });
+  };
+
+  try {
+    if (!Number.isFinite(intervalMs) || intervalMs < 1 || intervalMs > 2_147_483_647) {
+      throw new Error('SELF_HEAL_INTERVAL_INVALID');
+    }
+    runtime.timer = (options.installScheduler ?? setInterval)(() => runScheduled('interval'), intervalMs);
+    runtime.timer.unref?.();
+    if (options.signal) {
+      const onAbort = () => { void stopSelfHealingLoop('shutdown_requested'); };
+      options.signal.addEventListener('abort', onAbort, { once: true });
+      runtime.removeShutdownListener = () => options.signal?.removeEventListener('abort', onAbort);
+    }
+    runtime.status.active = true;
+    runtime.status.loopRunning = true;
+    runtime.status.startedAt = new Date().toISOString();
+    runtime.status.lastError = null;
+    runtime.status.coordinatorState = 'RUNNING';
+    runtime.status.coordinatorReasonCode = 'scheduled';
+    logger.info('self_heal.coordinator.started', coordinatorEventMetadata(runtime));
+    console.log(`[SELF-HEAL] loop started startedAt=${runtime.status.startedAt} intervalMs=${intervalMs}`);
+    runScheduled('startup');
+    return getSelfHealingLoopStatus();
+  } catch (error) {
+    if (runtime.timer !== null) clearInterval(runtime.timer);
+    runtime.timer = null;
+    controller.abort();
+    runtime.controller = null;
+    runtime.removeShutdownListener?.();
+    runtime.removeShutdownListener = null;
+    runtime.status.active = false;
+    runtime.status.loopRunning = false;
+    runtime.status.startedAt = null;
+    runtime.status.lastError = 'SELF_HEAL_COORDINATOR_START_FAILED';
+    runtime.status.coordinatorState = 'FAILED';
+    runtime.status.coordinatorReasonCode = 'scheduler_start_failed';
+    logger.error('self_heal.coordinator.start_failed', coordinatorEventMetadata(runtime));
+    throw error;
+  }
+}
+
+/** Stop scheduling immediately; drain the active tick before dependency shutdown. */
+export async function stopSelfHealingLoop(
+  reasonCode: 'shutdown_requested' | 'service_role_suppressed' = 'shutdown_requested'
+): Promise<void> {
+  const runtime = getRuntime();
+  const wasRunning = runtime.timer !== null || runtime.controller !== null;
+  if (runtime.timer !== null) clearInterval(runtime.timer);
+  runtime.timer = null;
+  runtime.controller?.abort();
+  runtime.controller = null;
+  runtime.removeShutdownListener?.();
+  runtime.removeShutdownListener = null;
+  runtime.status.active = false;
+  runtime.status.loopRunning = false;
+  if (wasRunning) {
+    runtime.status.coordinatorState = 'BLOCKED';
+    runtime.status.coordinatorReasonCode = reasonCode;
+    logger.info('self_heal.coordinator.stopped', coordinatorEventMetadata(runtime));
+  }
+  await Promise.allSettled([runtime.scheduledRun, runtime.activeRun]);
 }
 
 export function resetSelfHealingLoopStateForTests(): void {
@@ -4414,6 +4656,12 @@ export function resetSelfHealingLoopStateForTests(): void {
   }
 
   runtime.timer = null;
+  runtime.controller?.abort();
+  runtime.controller = null;
+  runtime.removeShutdownListener?.();
+  runtime.removeShutdownListener = null;
+  runtime.scheduledRun = null;
+  runtime.activeRun = null;
   runtime.inFlight = false;
   runtime.actionCooldowns.clear();
   runtime.controllerCooldowns.clear();

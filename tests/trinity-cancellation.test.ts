@@ -3,6 +3,7 @@ import type OpenAI from 'openai';
 
 const authorityModel = 'ft:gpt-4.1:synthetic:cancellation-authority';
 const previousAuthorityModel = process.env.FINETUNED_MODEL_ID;
+const previousAutonomyLevel = process.env.SELF_IMPROVE_AUTONOMY_LEVEL;
 
 const mockCreateSingleChatCompletion = jest.fn();
 const mockRunStructuredReasoning = jest.fn();
@@ -177,6 +178,7 @@ const CRITICAL_DIRECT_PROMPT = [
 describe('Trinity cancellation and optional side effects', () => {
   beforeEach(() => {
     process.env.FINETUNED_MODEL_ID = authorityModel;
+    process.env.SELF_IMPROVE_AUTONOMY_LEVEL = '3';
     jest.clearAllMocks();
     mockCreateSingleChatCompletion.mockReset();
     mockRunStructuredReasoning.mockReset();
@@ -199,6 +201,8 @@ describe('Trinity cancellation and optional side effects', () => {
   afterEach(() => {
     if (previousAuthorityModel === undefined) delete process.env.FINETUNED_MODEL_ID;
     else process.env.FINETUNED_MODEL_ID = previousAuthorityModel;
+    if (previousAutonomyLevel === undefined) delete process.env.SELF_IMPROVE_AUTONOMY_LEVEL;
+    else process.env.SELF_IMPROVE_AUTONOMY_LEVEL = previousAutonomyLevel;
   });
 
   it('skips feedback persistence and detached self-improvement for normal results when disabled', async () => {
