@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { startGenerativeModelPolicyProvider } from './fixtures/generative-model-policy-provider.js';
 import {
-  BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID, BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY,
+  BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID, SELF_HEAL_PREVIEW_OPENAI_FIXTURE_SDK_KEY,
   startSelfHealPreviewOpenAIFixture,
 } from '../scripts/railway-backstage-heavy-openai-fixture.mjs';
 
@@ -367,12 +367,15 @@ describe('Trinity model policy through the real SDK and loopback HTTP', () => {
       const address = provider.server.address();
       if (!address || typeof address === 'string') throw new Error('PREVIEW_PROVIDER_LISTEN_FAILED');
       process.env.FINETUNED_MODEL_ID = BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID;
-      process.env.OPENAI_API_KEY = BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY;
+      process.env.OPENAI_API_KEY = SELF_HEAL_PREVIEW_OPENAI_FIXTURE_SDK_KEY;
       process.env.OPENAI_BASE_URL = `http://127.0.0.1:${address.port}/v1`;
       credentials.resetCredentialCache(); adapter.resetOpenAIAdapter();
-      const client = adapter.getOpenAIAdapter({ apiKey: BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY,
+      const client = adapter.getOpenAIAdapter({ apiKey: SELF_HEAL_PREVIEW_OPENAI_FIXTURE_SDK_KEY,
         baseURL: process.env.OPENAI_BASE_URL, defaultModel: BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID,
         timeout: 2000, maxRetries: 0 }).getClient();
+      // Exercise the real cold-start lookup even if another test warmed the
+      // production intake model-validation cache in this ESM process.
+      expect((await client.models.retrieve('gpt-6-luna')).id).toBe('gpt-6-luna');
       const consume = () => pipeline.runTrinityWritingPipeline({ input: {
         prompt: 'Write a short fictional description of a blue paper kite above a quiet meadow.',
         sourceEndpoint: 'self_heal.preview.synthetic_consumer',
@@ -388,6 +391,18 @@ describe('Trinity model policy through the real SDK and loopback HTTP', () => {
       expect(baseline.routingStages).toContain('GPT5-REASONING');
       expect(baseline.routingStages).toContain('ARCANOS-FINAL');
       expect(provider.inspect().receipts.filter(receipt => receipt.purpose === 'clear-audit')).toHaveLength(1);
+      const control = (command: string, extra: Record<string, number> = {}) => fetch(
+        `http://127.0.0.1:${address.port}/__arcanos/self-heal-openai-fixture/control`, {
+          method: 'POST', headers: { authorization: `Bearer ${'b'.repeat(64)}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ command, ...extra }), signal: AbortSignal.timeout(1_000),
+        });
+      expect((await control('timeout_next', { count: 1, delayMs: 5_000 })).status).toBe(200);
+      const recoveredTimeout = await consume();
+      expect(recoveredTimeout.routingStages).toContain('ARCANOS-DIRECT-ANSWER');
+      expect(recoveredTimeout.auditSafe.auditFlags).toContain('REASONING_TIMEOUT_DIRECT_ANSWER_FALLBACK');
+      expect(recoveredTimeout.fallbackSummary.fallbackReasons.some(reason => reason.includes('intake_timeout_fallback'))).toBe(true);
+      expect(provider.inspect().receipts.some(receipt => ['timeout', 'client_closed'].includes(receipt.outcome))).toBe(true);
+      expect((await control('set_healthy')).status).toBe(200);
       process.env.SELF_IMPROVE_ENABLED = 'true';
       process.env.SELF_IMPROVE_ACTUATOR_MODE = 'daemon';
       process.env.SELF_IMPROVE_AUTONOMY_LEVEL = '3';
@@ -402,7 +417,22 @@ describe('Trinity model policy through the real SDK and loopback HTTP', () => {
       expect(selfHealing.getTrinitySelfHealingSnapshot().final).toMatchObject({
         mitigationId: action.mitigationId, verificationSuccesses: 1,
       });
-      expect(provider.inspect()).toMatchObject({ rejected: 0, timedOut: 0, inFlight: null });
+      expect((await control('hold_next', { delayMs: 5_000 })).status).toBe(200);
+      const held = consume();
+      for (let attempt = 0; attempt < 100 && provider.inspect().inFlight === null; attempt += 1) {
+        await new Promise(resolve => setTimeout(resolve, 5));
+      }
+      expect(provider.inspect().inFlight).not.toBeNull();
+      const replacement = selfHealing.activateTrinitySelfHealingMitigation({ stage: 'final', action: 'bypass_final_stage',
+        reason: 'overlapped actual consumer replacement regression' });
+      expect(replacement.applied).toBe(true);
+      expect(replacement.mitigationId).not.toBe(action.mitigationId);
+      expect((await control('release')).status).toBe(200);
+      expect((await held).routingStages).toContain('ARCANOS-DIRECT-ANSWER');
+      expect(selfHealing.getTrinitySelfHealingSnapshot().final).toMatchObject({
+        mitigationId: replacement.mitigationId, verificationSuccesses: 0, verifiedAtMs: null,
+      });
+      expect(provider.inspect()).toMatchObject({ rejected: 0, inFlight: null });
     } finally { await provider.close(); }
   });
 
@@ -423,13 +453,13 @@ describe('Trinity model policy through the real SDK and loopback HTTP', () => {
       if (!address || typeof address === 'string') throw new Error('PREVIEW_PROVIDER_LISTEN_FAILED');
       Object.assign(process.env, { ARCANOS_PROCESS_KIND: 'worker',
         FINETUNED_MODEL_ID: BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID,
-        OPENAI_API_KEY: BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY,
+        OPENAI_API_KEY: SELF_HEAL_PREVIEW_OPENAI_FIXTURE_SDK_KEY,
         OPENAI_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
         SELF_IMPROVE_ENABLED: 'true', SELF_IMPROVE_ACTUATOR_MODE: 'daemon',
         SELF_IMPROVE_AUTONOMY_LEVEL: '3', SELF_IMPROVE_FREEZE: 'false',
         PREDICTIVE_HEALING_ENABLED: 'true', PREDICTIVE_HEALING_DRY_RUN: 'true', PREDICTIVE_AUTO_EXECUTE: 'true' });
       credentials.resetCredentialCache(); adapter.resetOpenAIAdapter();
-      adapter.getOpenAIAdapter({ apiKey: BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY,
+      adapter.getOpenAIAdapter({ apiKey: SELF_HEAL_PREVIEW_OPENAI_FIXTURE_SDK_KEY,
         baseURL: process.env.OPENAI_BASE_URL, defaultModel: BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID,
         timeout: 2000, maxRetries: 0 });
       for (let index = 0; index < 2; index += 1) selfHealing.recordTrinityStageFailure({

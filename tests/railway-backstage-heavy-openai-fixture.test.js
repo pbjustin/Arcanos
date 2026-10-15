@@ -16,6 +16,7 @@ import {
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY,
   startBackstageHeavyOpenAIFixture,
   startSelfHealPreviewOpenAIFixture,
+  SELF_HEAL_PREVIEW_OPENAI_FIXTURE_SDK_KEY,
   SELF_HEAL_PREVIEW_OPENAI_FIXTURE_CONTROL_PATH,
   SELF_HEAL_PREVIEW_OPENAI_FIXTURE_LIMITS,
   SELF_HEAL_PREVIEW_OPENAI_FIXTURE_CHILD_ARGUMENT,
@@ -316,7 +317,7 @@ describe('bounded self-healing preview provider profile', () => {
     return { status: response.status, json: async () => result };
   }
   const client = (extra = {}) => createOpenAIAdapter({
-    apiKey: BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY,
+    apiKey: SELF_HEAL_PREVIEW_OPENAI_FIXTURE_SDK_KEY,
     baseURL: `${endpoint()}/v1`, maxRetries: 0, ...extra,
   }).getClient();
   const responseBody = (extra = {}) => ({
@@ -351,6 +352,31 @@ describe('bounded self-healing preview provider profile', () => {
   it('rejects non-loopback listeners before starting', async () => {
     await expect(startSelfHealPreviewOpenAIFixture({ host: '0.0.0.0', env: childEnv() }))
       .rejects.toThrow('SELF_HEAL_PREVIEW_OPENAI_LISTEN_TARGET_INVALID');
+  });
+
+  it('separates the normal-startup self-heal SDK key from the legacy profile', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: childEnv() });
+    const normalStartupKey = 'sk-arcanos-self-heal-preview-protocol-v1';
+    const sdk = client({ apiKey: normalStartupKey });
+    await expect(sdk.models.list()).resolves.toMatchObject({ object: 'list' });
+    const legacyKeyResponse = await fetch(`${endpoint()}/v1/models`, {
+      headers: { authorization: `Bearer ${BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY}` },
+    });
+    expect(legacyKeyResponse.status).toBe(401);
+    expect(runtime.inspect()).toMatchObject({ providerRequests: 1, rejected: 1 });
+
+    const legacy = await startBackstageHeavyOpenAIFixture({
+      port: 0, firstResponseDelayMs: 0, expectedRunId: 'legacy-key-profile-1544',
+    });
+    try {
+      const legacyBaseURL = `http://127.0.0.1:${legacy.server.address().port}/v1`;
+      const wrongProfile = createOpenAIAdapter({ apiKey: normalStartupKey,
+        baseURL: legacyBaseURL, maxRetries: 0 }).getClient();
+      await expect(wrongProfile.models.list()).rejects.toMatchObject({ status: 401 });
+      const legacyClient = createOpenAIAdapter({ apiKey: BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY,
+        baseURL: legacyBaseURL, maxRetries: 0 }).getClient();
+      await expect(legacyClient.models.list()).resolves.toMatchObject({ object: 'list' });
+    } finally { await legacy.close(); }
   });
 
   it('accepts actual SDK model, Responses, chat, and Trinity structured response decoding', async () => {
@@ -409,6 +435,23 @@ describe('bounded self-healing preview provider profile', () => {
     expect(JSON.stringify(receipt)).not.toContain(promptSentinel);
   });
 
+  it('serves cold SDK model retrieval only for the three fixed preview identities', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: childEnv() });
+    const sdk = client();
+    for (const model of SELF_HEAL_PREVIEW_OPENAI_FIXTURE_MODEL_IDS) {
+      await expect(sdk.models.retrieve(model)).resolves.toMatchObject({ id: model,
+        object: 'model', created: 0, owned_by: 'arcanos-preview-fixture' });
+    }
+    for (const model of ['gpt-6-sol', 'gpt-6-luna/extra', promptSentinel]) {
+      await expect(sdk.models.retrieve(model)).rejects.toMatchObject({ status: 404 });
+    }
+    const extraQuery = await fetch(`${endpoint()}/v1/models/gpt-6-luna?other=1`, {
+      headers: { authorization: `Bearer ${SELF_HEAL_PREVIEW_OPENAI_FIXTURE_SDK_KEY}` },
+    });
+    expect(extraQuery.status).toBe(404);
+    expect(JSON.stringify(runtime.inspect())).not.toContain(promptSentinel);
+  });
+
   it('returns fixed CLEAR scores only for the production audit instructions', async () => {
     runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: childEnv() });
     const auditPrompt = 'You are an expert auditor for AI reasoning.\n'
@@ -465,7 +508,7 @@ describe('bounded self-healing preview provider profile', () => {
     const early = await new Promise((resolve, reject) => {
       const request = httpRequest(`${endpoint()}${SELF_HEAL_PREVIEW_OPENAI_FIXTURE_CONTROL_PATH}`, {
         method: 'POST', headers: { 'content-length': 1_000_000,
-          authorization: `Bearer ${BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY}` },
+          authorization: `Bearer ${SELF_HEAL_PREVIEW_OPENAI_FIXTURE_SDK_KEY}` },
       }, response => {
         response.resume(); response.on('end', () => resolve(response.statusCode));
       });

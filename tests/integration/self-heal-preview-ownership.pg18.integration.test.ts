@@ -23,6 +23,7 @@ const TEMP_DATABASE = /^self_heal_preview_pg18_[0-9a-f]{32}$/u;
 const SOURCE = 'a'.repeat(40);
 const COMPILED = 'c'.repeat(64);
 const NOW = Date.parse('2026-10-14T16:00:00.000Z');
+const CERTIFICATE = readFileSync(new URL('../fixtures/self-heal-preview-database-ca.pem', import.meta.url), 'utf8');
 const ID = { project: '11111111-1111-4111-8111-111111111111', environment: '22222222-2222-4222-8222-222222222222',
   web: '33333333-3333-4333-8333-333333333333', worker: '44444444-4444-4444-8444-444444444444',
   deployment: '55555555-5555-4555-8555-555555555555', postgres: '66666666-6666-4666-8666-666666666666', redis: '77777777-7777-4777-8777-777777777777' };
@@ -90,6 +91,7 @@ function environment(role = 'worker', patch: Record<string, string> = {}) {
     ARCANOS_BACKSTAGE_HEAVY_REDIS_SERVICE_ID: ID.redis, ARCANOS_BACKSTAGE_HEAVY_REDIS_SERVICE_NAME: 'Redis',
     ARCANOS_BACKSTAGE_HEAVY_REDIS_INTERNAL_HOST: 'redis.railway.internal',
     ARCANOS_SELF_HEAL_PREVIEW_PROFILE: 'worker-coordinator-v1', ARCANOS_SELF_HEAL_PREVIEW_RUN_ID: 'ownership-pg18-1544',
+    ARCANOS_SELF_HEAL_PREVIEW_DATABASE_CERTIFICATE_PEM: CERTIFICATE,
     ARCANOS_SELF_HEAL_PREVIEW_ISSUED_AT: '2026-10-14T15:59:00.000Z', ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT: '2026-10-14T17:00:00.000Z',
     ARCANOS_SELF_HEAL_PREVIEW_CONTROL_TOKEN: 'b'.repeat(64), ARCANOS_SELF_HEAL_PREVIEW_CONTROL_PORT: '8791',
     ARCANOS_SELF_HEAL_PREVIEW_STARTUP_MODE: 'normal', ARCANOS_SELF_HEAL_PREVIEW_WEB_SERVICE_ID: ID.web,
@@ -181,7 +183,7 @@ describeDatabase('literal self-heal ownership SQL and role locks on isolated Pos
     const admissionNow = expired ? expires - 1 : databaseNow;
     await initialized(patch, admissionNow);
     return { env: environment('worker', patch), patch,
-      options: { Client: GuardedProfileClient, now: () => admissionNow,
+      options: { Client: GuardedProfileClient, now: () => admissionNow, scenario: 'E02', attempt: 1,
         verifyArtifact: async () => ({ sourceSha: SOURCE, compiledSha256: COMPILED, fileCount: 1 }) } };
   }
   async function insertJob(patch: { correlation?: string | null; worker?: string | null; status?: string; liveLease?: boolean } = {}) {
@@ -189,7 +191,7 @@ describeDatabase('literal self-heal ownership SQL and role locks on isolated Pos
     await observer.query(`INSERT INTO public.job_data (id, worker_id, job_type, input, correlation_id, status, last_worker_id, lease_expires_at)
       VALUES ($1::uuid, 'self-heal-preview-ownership-pg18-1544', 'ask', '{}'::jsonb, $2, $3, $4, NOW() + $5::interval)`, [id,
       patch.correlation === undefined ? 'self-heal-preview:ownership-pg18-1544:fixture' : patch.correlation,
-      patch.status ?? 'completed', patch.worker === undefined ? 'self-heal-preview-ownership-pg18-1544' : patch.worker,
+      patch.status ?? 'completed', patch.worker === undefined ? 'self-heal-preview-ownership-pg18-1544-slot-1' : patch.worker,
       patch.liveLease ? '1 minute' : '-1 minute']);
     return id;
   }
@@ -268,8 +270,8 @@ describeDatabase('literal self-heal ownership SQL and role locks on isolated Pos
     await expect(admit('web')).rejects.toThrow('SELF_HEAL_PREVIEW_OWNER_ALREADY_ACTIVE');
     await web.close(); await expect(admit()).rejects.toThrow('SELF_HEAL_PREVIEW_OWNER_ALREADY_ACTIVE'); await worker.close();
   });
-  test('resumes completed synthetic jobs while preserving their receipt, rows and events', async () => {
-    await initialized(); const jobId = await insertJob(); await observer.query("INSERT INTO public.job_events(job_id, event_type) VALUES ($1::uuid, 'job.completed')", [jobId]);
+  test.each([1, 2])('resumes completed synthetic jobs claimed by exact slot %i while preserving evidence', async slot => {
+    await initialized(); const jobId = await insertJob({ worker: `self-heal-preview-ownership-pg18-1544-slot-${slot}` }); await observer.query("INSERT INTO public.job_events(job_id, event_type) VALUES ($1::uuid, 'job.completed')", [jobId]);
     const before = (await observer.query('SELECT identity FROM public.arcanos_self_heal_preview_owner_v1')).rows;
     expect((await admit()).mode).toBe('receipt-bound-resume');
     expect((await observer.query('SELECT identity FROM public.arcanos_self_heal_preview_owner_v1')).rows).toEqual(before);
@@ -291,6 +293,9 @@ describeDatabase('literal self-heal ownership SQL and role locks on isolated Pos
   });
   test.each([
     { correlation: null }, { correlation: 'another-run:fixture' }, { worker: 'foreign-worker' },
+    { worker: 'self-heal-preview-ownership-pg18-1544' },
+    { worker: 'self-heal-preview-ownership-pg18-1544-slot-3' },
+    { worker: 'self-heal-preview-ownership-pg18-1544-foreign-slot-1' },
     { status: 'running', liveLease: true },
   ])('rejects foreign correlation, worker or live lease without changing the job: %#', async patch => {
     await initialized(); const jobId = await insertJob(patch); const before = (await observer.query('SELECT * FROM public.job_data WHERE id=$1::uuid', [jobId])).rows;
@@ -346,6 +351,51 @@ describeDatabase('literal self-heal ownership SQL and role locks on isolated Pos
     expect(first.job.id).toBe(second.job.id);
     expect((await observer.query('SELECT COUNT(*)::integer AS count FROM public.job_data')).rows[0].count).toBe(1);
   });
+  test('allocates fresh closed scenario/attempt slots while repeated calls retain each exact job identity', async () => {
+    const { env, options } = await realClockAuthority();
+    const ids = new Set<string>();
+    for (const scenario of ['B02', 'E02', 'E03']) {
+      for (const attempt of [1, 2]) {
+        const slot = { ...options, scenario, attempt };
+        const created = await runSelfHealPreviewFencedJob('create', env, slot);
+        expect((await runSelfHealPreviewFencedJob('create', env, slot)).job.id).toBe(created.job.id);
+        expect(created.correlationId).toBe(`self-heal-preview:ownership-pg18-1544:fenced:${scenario}:${attempt}`);
+        ids.add(created.job.id);
+      }
+    }
+    expect(ids.size).toBe(6);
+    expect((await observer.query('SELECT COUNT(*)::integer AS count FROM public.job_data')).rows[0].count).toBe(6);
+  });
+  test.each([1, 2])('correlates a single completion to the claimed generation and exact consumer slot %i', async slot => {
+    const { env, options } = await realClockAuthority();
+    const created = await runSelfHealPreviewFencedJob('create', env, options);
+    const worker = `self-heal-preview-ownership-pg18-1544-slot-${slot}`;
+    await observer.query(`UPDATE public.job_data SET status='completed', claim_generation=1, last_worker_id=$2,
+      output='{"result":"SEALED_PREVIEW_FENCED_OK"}'::jsonb WHERE id=$1::uuid`, [created.job.id, worker]);
+    await observer.query(`INSERT INTO public.job_events(job_id,event_type,worker_id,metadata)
+      VALUES ($1::uuid,'job.claimed',$2,'{"claimGeneration":"1"}'::jsonb),
+      ($1::uuid,'job.completed',$2,'{"claimGeneration":"1"}'::jsonb)`, [created.job.id, worker]);
+    const result = await runSelfHealPreviewFencedJob('inspect', env, options);
+    expect(result.job).toMatchObject({ completionVerified: true, claimEvents: 1, completionEvents: 1,
+      matchingCompletionEvents: 1, lastWorkerId: worker, literalObserved: true });
+    const before = (await observer.query('SELECT * FROM public.job_events ORDER BY event_type')).rows;
+    expect((await runSelfHealPreviewFencedJob('create', env, options)).job).toEqual(result.job);
+    expect((await observer.query('SELECT * FROM public.job_events ORDER BY event_type')).rows).toEqual(before);
+  });
+  test.each(['duplicate', 'stale-generation', 'foreign-worker'])('rejects %s completion evidence without repairing or concealing it', async fault => {
+    const { env, options } = await realClockAuthority();
+    const created = await runSelfHealPreviewFencedJob('create', env, options);
+    const worker = 'self-heal-preview-ownership-pg18-1544-slot-1';
+    await observer.query(`UPDATE public.job_data SET status='completed', claim_generation=2,last_worker_id=$2 WHERE id=$1::uuid`, [created.job.id, worker]);
+    await observer.query(`INSERT INTO public.job_events(job_id,event_type,worker_id,metadata)
+      VALUES ($1::uuid,'job.completed',$2,$3::jsonb)`, [created.job.id,
+      fault === 'foreign-worker' ? 'foreign-worker' : worker, JSON.stringify({ claimGeneration: fault === 'stale-generation' ? '1' : '2' })]);
+    if (fault === 'duplicate') await observer.query(`INSERT INTO public.job_events(job_id,event_type,worker_id,metadata)
+      VALUES ($1::uuid,'job.completed',$2,'{"claimGeneration":"2"}'::jsonb)`, [created.job.id, worker]);
+    const before = (await observer.query('SELECT * FROM public.job_events ORDER BY id')).rows;
+    await expect(runSelfHealPreviewFencedJob('inspect', env, options)).rejects.toThrow('SELF_HEAL_PREVIEW_FENCED_JOB_FAILED');
+    expect((await observer.query('SELECT * FROM public.job_events ORDER BY id')).rows).toEqual(before);
+  });
   test('rejects a foreign owner receipt before inserting or changing any fenced job', async () => {
     const { env, options } = await realClockAuthority();
     const owner = (await observer.query('SELECT identity FROM public.arcanos_self_heal_preview_owner_v1')).rows[0].identity;
@@ -385,6 +435,9 @@ describeDatabase('literal self-heal ownership SQL and role locks on isolated Pos
     const runtime = runSelfHealPreviewSupervisor('worker', environment(), {
       Client: GuardedProfileClient, now: () => NOW, processRef: new EventEmitter(),
       verifyArtifact: async () => ({ sourceSha: SOURCE, compiledSha256: COMPILED, fileCount: 1 }),
+      // This suite runs unchanged ownership SQL against disposable loopback PG;
+      // image filesystem ownership is verified separately by the container lane.
+      verifyDatabaseCertificateFile: (active: { ownership: { databaseCertificateSha256: string } }) => active.ownership.databaseCertificateSha256,
       spawnImpl: (_file: string, args: string[]) => {
         if (args[0].includes('openai-fixture')) {
           void Promise.resolve().then(() => fixture.stdout.write('SELF_HEAL_PREVIEW_OPENAI_READY_V1\n')); return fixture;

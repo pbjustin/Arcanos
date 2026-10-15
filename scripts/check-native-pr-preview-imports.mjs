@@ -607,6 +607,12 @@ const ALLOWED_MUTABLE_PROCESS_CALL_ARGUMENTS = new Map([
     'scripts/start-railway-service.mjs',
     new Map([
       [
+        'assertRailwayProcessIsolationOrThrow:0:env:main',
+        [
+          'e13b728ae92bdf2733af0c454b83014a746ef8f66cc2f8944dd5618063622279',
+        ],
+      ],
+      [
         'assertNativePrApplicationIdentityOrThrow:0:env:resolveNativePrPreviewOrThrow',
         [
           '78e2a8c05e6b89c6a90fae6afd28082defd99b9b883edfe79f452a0c77853068',
@@ -740,6 +746,12 @@ const ALLOWED_LISTENER_CALLS = new Map([
   ],
 ]);
 const RAILWAY_LAUNCHER_FILE = 'scripts/start-railway-service.mjs';
+// This one exact active-profile import is reached after native preview returns.
+// Keep it outside the native graph; neither generic dynamic imports nor the
+// active supervisor/provider/database graph are native-preview capabilities.
+const SELF_HEAL_PROFILE_ISOLATION_FUNCTION = 'assertRailwayProcessIsolationOrThrow';
+const SELF_HEAL_PROFILE_ISOLATION_FUNCTION_DIGEST =
+  'cb31d52954b6549c7f2c5a5d4cdf9c086a5601744dd64a600092a0b13647e034';
 const NATIVE_PREVIEW_LAUNCH_FUNCTION = 'runNativePrApplicationPreview';
 const LAUNCHER_REPOSITORY_ROOT_STATEMENT_DIGEST =
   'd396b2efbae912e708125ebb4535806f5b516cf91aa48bc2ba579e6fb413e0d2';
@@ -968,7 +980,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'scripts/start-railway-service.mjs',
-    'd5f7fe0be8bc0f31195ed43cbb00a07b63899d8e8d1e763cd5d2f52a9df7402d',
+    '1aade905313d94b2fd11affc3a076d10e43b1521d29019ede0c32da6fe4607f7',
   ],
   [
     'src/start-native-pr-preview.ts',
@@ -5070,6 +5082,15 @@ export function findUnsafeRuntimeSyntax(filePath, sourceText) {
   const launcherContract = filePath === RAILWAY_LAUNCHER_FILE
     ? createNativePreviewLauncherContract(sourceFile)
     : null;
+  const profileIsolationFunction = filePath === RAILWAY_LAUNCHER_FILE
+    ? uniqueTopLevelFunctionBinding(sourceFile, bindingIdentifiers, SELF_HEAL_PROFILE_ISOLATION_FUNCTION)
+    : null;
+  const reviewedProfileIsolationFunction = Boolean(
+    hasExactReviewedEntryDigest
+    && launcherContract?.sensitiveHelperContractSafe
+    && profileIsolationFunction
+    && sourceNodeDigest(profileIsolationFunction, sourceFile) === SELF_HEAL_PROFILE_ISOLATION_FUNCTION_DIGEST
+  );
 
   function checkSpecifier(specifier, lineNumber) {
     const fileSpecificImports =
@@ -5245,6 +5266,12 @@ export function findUnsafeRuntimeSyntax(filePath, sourceText) {
         violations.push(
           `${filePath}:${lineNumber}: unsafe contained child application import timing`
         );
+      } else if (
+        reviewedProfileIsolationFunction
+        && nearestContainingFunction(node) === profileIsolationFunction
+      ) {
+        // The pinned helper admits only the exact sealed application child and
+        // imports one fixed launcher-relative module after native-mode return.
       } else if (!argument || !ts.isStringLiteral(argument)) {
         violations.push(`${filePath}:${lineNumber}: non-literal dynamic import`);
       } else if (!isLocalImportSpecifier(argument.text)) {
@@ -5333,6 +5360,10 @@ export function findUnsafeRuntimeSyntax(filePath, sourceText) {
         mutableProcessCallContract.approvedArguments
       ).length > 0
       && !allowsReviewedStatusAuthDynamicCall
+      && !(
+        reviewedProfileIsolationFunction
+        && nearestContainingFunction(node) === profileIsolationFunction
+      )
     ) {
       violations.push(
         `${filePath}:${lineNumber}: mutable process object escapes to an unreviewed call`

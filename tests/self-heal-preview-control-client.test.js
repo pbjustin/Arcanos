@@ -1,8 +1,12 @@
 import { describe, expect, it, jest } from '@jest/globals';
+import { readFileSync } from 'node:fs';
 import { runSelfHealPreviewControl } from '../scripts/self-heal-preview-control.mjs';
 import { bindSelfHealPreviewArtifact, resolveSelfHealPreviewProfile } from '../scripts/railway-self-heal-preview-profile.mjs';
 
 const id = digit => `${digit.repeat(8)}-${digit.repeat(4)}-4${digit.repeat(3)}-8${digit.repeat(3)}-${digit.repeat(12)}`;
+const databaseCertificate = readFileSync(new URL('./fixtures/self-heal-preview-database-ca.pem', import.meta.url), 'utf8');
+const webJob = jest.fn(async (_env, options) => ({ attempt: options.attempt, consumerPath: 'ordinary-protected-gpt-web-queue-worker-sdk' }));
+jest.unstable_mockModule('../scripts/self-heal-preview-web-job.mjs', () => ({ runSelfHealPreviewWebJob: webJob }));
 function environment(role = 'worker') {
   const now = Date.now();
   return {
@@ -13,6 +17,7 @@ function environment(role = 'worker') {
     ARCANOS_SELF_HEAL_PREVIEW_CONTROL_TOKEN: 'f'.repeat(64),
     ARCANOS_SELF_HEAL_PREVIEW_CONTROL_PORT: '8791',
     ARCANOS_SELF_HEAL_PREVIEW_STARTUP_MODE: 'normal',
+    ARCANOS_SELF_HEAL_PREVIEW_DATABASE_CERTIFICATE_PEM: databaseCertificate,
     ARCANOS_SELF_HEAL_PREVIEW_WEB_SERVICE_ID: id('3'),
     ARCANOS_SELF_HEAL_PREVIEW_WORKER_SERVICE_ID: id('4'),
     ARCANOS_BACKSTAGE_HEAVY_PROOF_TARGET: 'dedicated-backstage-heavy-preview-v1',
@@ -27,8 +32,11 @@ function environment(role = 'worker') {
     ARCANOS_PROCESS_KIND: role, ARCANOS_PREVIEW_ISOLATION: 'true', NODE_ENV: 'production',
     FORCE_MOCK: 'true', ALLOW_MOCK_OPENAI: 'true', OPENAI_API_KEY_REQUIRED: 'false',
     OPENAI_BASE_URL: role === 'worker' ? 'http://127.0.0.1:8766/v1' : 'http://127.0.0.1:9/v1',
-    ARCANOS_PREVIEW_OPENAI_FIXTURE: 'backstage-heavy-compact-retry-v1',
+    ...(role === 'worker' ? { ARCANOS_PREVIEW_OPENAI_FIXTURE: 'backstage-heavy-compact-retry-v1' } : {}),
     ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY: `${'A'.repeat(43)}=`,
+    ...(role === 'web' ? { ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED: 'true',
+      ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN: 'synthetic-web-access-token-purpose-only',
+      ARCANOS_JOB_READ_CAPABILITY_SECRET: 'synthetic-job-result-read-purpose-only' } : {}),
     DATABASE_URL: 'postgresql://synthetic-user:synthetic-password@postgres.railway.internal:5432/railway',
     REDIS_URL: 'redis://default:synthetic-redis-password@redis.railway.internal:6379',
     RAILWAY_PROJECT_ID: id('1'), RAILWAY_PROJECT_NAME: 'arc-pr1544-heavy-client',
@@ -42,9 +50,43 @@ function inspection(env) {
   return { runId: env.ARCANOS_SELF_HEAL_PREVIEW_RUN_ID,
     sourceCommit: env.ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA,
     serviceId: env.RAILWAY_SERVICE_ID, projectId: env.RAILWAY_PROJECT_ID,
-    environmentId: env.RAILWAY_ENVIRONMENT_ID, processInstanceId: id('8') };
+    environmentId: env.RAILWAY_ENVIRONMENT_ID, processInstanceId: id('8'),
+    deploymentId: env.RAILWAY_DEPLOYMENT_ID, processKind: env.ARCANOS_PROCESS_KIND };
 }
 const response = value => new Response(JSON.stringify(value), { status: 200 });
+function overlapFixture(env, config = {}) {
+  let clock = Date.now(); const commands = [];
+  const worker = { ...inspection(env), ready: true, tickPending: false,
+    consumerRun: null, observation: { holding: false },
+    trinity: { snapshot: { final: { activeAction: 'bypass_final_stage', mitigationId: 1, verificationSuccesses: 0 } } } };
+  const provider = { runId: env.ARCANOS_SELF_HEAL_PREVIEW_RUN_ID, sourceSha: env.ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA,
+    issuedAt: env.ARCANOS_SELF_HEAL_PREVIEW_ISSUED_AT, expiresAt: env.ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT,
+    expired: false, inFlight: null, nextFault: null };
+  const fetchImpl = jest.fn(async (url, request) => {
+    const command = request.body ? JSON.parse(request.body).command : 'inspect';
+    commands.push({ provider: url.includes(':8766/'), command });
+    if (url.includes(':8766/')) {
+      if (command === 'hold_next') provider.nextFault = { kind: 'hold' };
+      if (command === 'inspect' && worker.consumerRun?.status === 'running' && provider.nextFault && !config.noProviderRequest) {
+        provider.inFlight = 'self-heal-fixture-1'; provider.nextFault = null;
+      }
+      if (command === 'release') {
+        provider.inFlight = null;
+        if (worker.consumerRun) worker.consumerRun.status = 'completed';
+      }
+      if (command === 'set_healthy') provider.nextFault = null;
+      return response(provider);
+    }
+    if (command === 'tick') { worker.tickPending = true; worker.observation.holding = true; }
+    if (command === 'release_observation') { worker.tickPending = false; worker.observation.holding = false; }
+    if (command === 'trinity_run') worker.consumerRun = { requestId: 'preview-consumer-observed', status: 'running',
+      mitigationBefore: { mitigationId: 1, activeAction: 'bypass_final_stage' } };
+    if (command === 'trinity_replace') worker.trinity.snapshot.final = { activeAction: 'enable_degraded_mode', mitigationId: 2, verificationSuccesses: 0 };
+    if (command === 'inspect' && worker.consumerRun && config.drift) worker.processInstanceId = id('9');
+    return response(worker);
+  });
+  return { worker, provider, commands, fetchImpl, now: () => clock, sleep: async ms => { clock += ms; } };
+}
 
 describe('fixed self-heal preview SSH control client', () => {
   it('uses only the authenticated fixed loopback inspection endpoint', async () => {
@@ -61,7 +103,7 @@ describe('fixed self-heal preview SSH control client', () => {
     expect(result.observation).toEqual(inspection(env));
     expect(JSON.stringify(result)).not.toContain(env.ARCANOS_SELF_HEAL_PREVIEW_CONTROL_TOKEN);
   });
-  it.each(['prompt_worker_rejection', 'predictive_evaluate'])('sends only the closed %s command body and joins returned process identity', async command => {
+  it.each(['prompt_worker_rejection', 'predictive_evaluate', 'predictive_evaluate_live'])('sends only the closed %s command body and joins returned process identity', async command => {
     const env = environment();
     const fetchImpl = jest.fn(async () => response({ result: { rejected: true }, inspection: inspection(env) }));
     await runSelfHealPreviewControl(['command', command], env, { fetchImpl });
@@ -73,10 +115,53 @@ describe('fixed self-heal preview SSH control client', () => {
       sourceSha: env.ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA, receipts: [] }));
     await runSelfHealPreviewControl(['provider', 'timeout_next'], env, { fetchImpl });
     expect(fetchImpl.mock.calls[0][0]).toBe('http://127.0.0.1:8766/__arcanos/self-heal-openai-fixture/control');
-    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({ command: 'timeout_next', count: 1, delayMs: 2000 });
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({ command: 'timeout_next', count: 1, delayMs: 5000 });
+  });
+  it.each(['replacement-race', 'dependency-overlap'])('joins the closed %s commands with correlated barrier receipts', async operation => {
+    const env = environment(); const fixture = overlapFixture(env);
+    const result = await runSelfHealPreviewControl([operation], env, fixture);
+    expect(result.overlap).toMatchObject({ operation, status: 'completed', requestId: 'preview-consumer-observed',
+      held: { consumer: { consumerRun: { status: 'running', mitigationBefore: { mitigationId: 1 } } },
+        provider: { inFlight: 'self-heal-fixture-1' } },
+      finalState: { consumerRun: { status: 'completed' } }, cleanup: { provider: 'released' } });
+    expect(fixture.commands.some(value => value.command.startsWith('policy_') || value.command === 'trinity_activate')).toBe(false);
+    if (operation === 'replacement-race') expect(result.overlap.replacement.trinity.snapshot.final)
+      .toMatchObject({ mitigationId: 2, verificationSuccesses: 0 });
+    else expect(result.overlap).toMatchObject({ held: { consumer: { observation: { holding: true } } },
+      cleanup: { observation: 'released' } });
+  });
+  it('rejects changed process authority before replacement while still releasing its owned provider hold', async () => {
+    const env = environment(); const fixture = overlapFixture(env, { drift: true });
+    const result = await runSelfHealPreviewControl(['replacement-race'], env, fixture);
+    expect(result.overlap).toMatchObject({ status: 'incomplete', reasonCode: 'SELF_HEAL_PREVIEW_OVERLAP_NOT_ESTABLISHED' });
+    expect(fixture.commands.some(value => value.command === 'trinity_replace')).toBe(false);
+    expect(fixture.commands.some(value => value.provider && value.command === 'release')).toBe(true);
+  });
+  it('does not release or replace a provider fault it did not arm', async () => {
+    const env = environment(); const fixture = overlapFixture(env); fixture.provider.nextFault = { kind: 'other-owned-fault' };
+    const result = await runSelfHealPreviewControl(['replacement-race'], env, fixture);
+    expect(result.overlap).toMatchObject({ status: 'incomplete', cleanup: { provider: 'not_armed' } });
+    expect(fixture.commands.map(value => value.command)).toEqual(['inspect', 'inspect']);
+  });
+  it('does not release an existing observation barrier owned by another operation', async () => {
+    const env = environment(); const fixture = overlapFixture(env); fixture.worker.observation.holding = true;
+    const result = await runSelfHealPreviewControl(['dependency-overlap'], env, fixture);
+    expect(result.overlap).toMatchObject({ status: 'incomplete', cleanup: { provider: 'not_armed', observation: 'not_armed' } });
+    expect(fixture.commands.map(value => value.command)).toEqual(['inspect']);
+    expect(fixture.worker.observation.holding).toBe(true);
+  });
+  it('bounds an unestablished provider overlap and restores only its own fault', async () => {
+    const env = environment(); const fixture = overlapFixture(env, { noProviderRequest: true });
+    const result = await runSelfHealPreviewControl(['replacement-race'], env, fixture);
+    expect(result.overlap).toMatchObject({ status: 'incomplete', cleanup: { provider: 'released' } });
+    expect(fixture.commands.filter(value => value.provider && value.command === 'inspect').length).toBeLessThanOrEqual(17);
+    expect(fixture.provider.nextFault).toBeNull(); expect(fixture.provider.inFlight).toBeNull();
   });
   it.each([[], ['http://example.invalid'], ['command', 'eval'], ['command', 'tick', 'extra'],
-    ['provider', 'http://example.invalid'], ['inspect', '--token=synthetic']])('rejects arbitrary arguments before networking: %s', async (...argv) => {
+    ['provider', 'http://example.invalid'], ['inspect', '--token=synthetic'], ['fenced-job', 'create'],
+    ['fenced-job', 'create', 'E02', '3'], ['fenced-job', 'create', 'E02', '01'],
+    ['fenced-job', 'create', 'E99', '1'], ['fenced-job', 'inspect', 'e02', '1'],
+    ['web-job', 'run', '3'], ['web-job', 'run', '01'], ['web-job', 'run', '1', 'extra']])('rejects arbitrary arguments before networking: %s', async (...argv) => {
     // Jest expands an array row into individual arguments.
     const args = argv.filter(value => typeof value === 'string');
     const fetchImpl = jest.fn();
@@ -90,7 +175,7 @@ describe('fixed self-heal preview SSH control client', () => {
     await expect(runSelfHealPreviewControl(['inspect'], env, { fetchImpl })).rejects.toThrow();
     expect(fetchImpl).not.toHaveBeenCalled();
   });
-  it.each(['runId', 'sourceCommit', 'serviceId', 'projectId', 'environmentId'])(
+  it.each(['runId', 'sourceCommit', 'serviceId', 'projectId', 'environmentId', 'deploymentId', 'processKind'])(
     'rejects response identity drift: %s', async field => {
       const env = environment();
       await expect(runSelfHealPreviewControl(['inspect'], env,
@@ -114,6 +199,20 @@ describe('fixed self-heal preview SSH control client', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(verifyArtifact).toHaveBeenCalledWith({ sourceSha: 'a'.repeat(40) });
   });
+  it.each(['1', '2'])('forwards only the closed web admission slot %s to the existing owned helper', async attempt => {
+    const env = environment('web'); const fetchImpl = jest.fn();
+    const result = await runSelfHealPreviewControl(['web-job', 'run', attempt], env, { fetchImpl, attempt: 99 });
+    expect(webJob).toHaveBeenLastCalledWith(env, expect.objectContaining({ attempt: Number(attempt), fetchImpl }));
+    expect(result.webJob).toMatchObject({ attempt: Number(attempt), consumerPath: 'ordinary-protected-gpt-web-queue-worker-sdk' });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+  it('rejects role-swapped web and fenced job operations before any effect', async () => {
+    const fetchImpl = jest.fn(); const connect = jest.fn();
+    class Client { connect = connect; }
+    await expect(runSelfHealPreviewControl(['web-job', 'run', '1'], environment(), { fetchImpl, Client })).rejects.toThrow();
+    await expect(runSelfHealPreviewControl(['fenced-job', 'create', 'E02', '1'], environment('web'), { fetchImpl, Client })).rejects.toThrow();
+    expect(fetchImpl).not.toHaveBeenCalled(); expect(connect).not.toHaveBeenCalled();
+  });
   it('creates only one fixed job after actual owner/artifact checks and reuses its identity', async () => {
     const env = environment();
     const artifact = { sourceSha: 'a'.repeat(40), compiledSha256: 'b'.repeat(64), fileCount: 10 };
@@ -130,20 +229,21 @@ describe('fixed self-heal preview SSH control client', () => {
           insertCount += 1;
           expect(args[0]).toBe('self-heal-preview-synthetic-client-run');
           expect(JSON.parse(args[1])).toMatchObject({ prompt: 'Reply with exactly SEALED_PREVIEW_FENCED_OK', answerMode: 'direct' });
-          expect(args[2]).toBe('self-heal-preview:synthetic-client-run:fenced-continuity');
+          expect(args[2]).toBe('self-heal-preview:synthetic-client-run:fenced:E02:1');
           job = { id: id('9'), status: 'pending', claim_generation: '0', last_worker_id: null,
-            retry_count: 0, lease_active: false, output: null, completion_events: 0 };
+            retry_count: 0, lease_active: false, lease_expires_at: null, output: null,
+            claim_events: 0, matching_claim_events: 0, completion_events: 0, matching_completion_events: 0 };
         }
         return { rows: [] };
       }
     }
     const options = { Client, verifyArtifact: () => artifact, fetchImpl: jest.fn() };
-    const created = await runSelfHealPreviewControl(['fenced-job', 'create'], env, options);
+    const created = await runSelfHealPreviewControl(['fenced-job', 'create', 'E02', '1'], env, options);
     expect(created.fencedJob.job.status).toBe('pending');
     expect(insertCount).toBe(1);
-    job = { ...job, status: 'completed', claim_generation: '1', last_worker_id: 'self-heal-preview-synthetic-client-run',
-      output: { result: 'SEALED_PREVIEW_FENCED_OK' }, completion_events: 1 };
-    const completed = await runSelfHealPreviewControl(['fenced-job', 'create'], env, options);
+    job = { ...job, status: 'completed', claim_generation: '1', last_worker_id: 'self-heal-preview-synthetic-client-run-slot-1',
+      output: { result: 'SEALED_PREVIEW_FENCED_OK' }, claim_events: 1, matching_claim_events: 1, completion_events: 1, matching_completion_events: 1 };
+    const completed = await runSelfHealPreviewControl(['fenced-job', 'create', 'E02', '1'], env, options);
     expect(completed.fencedJob.job).toMatchObject({ status: 'completed', completionEvents: 1, literalObserved: true, claimGeneration: '1', leaseActive: false });
     expect(insertCount).toBe(1);
     expect(options.fetchImpl).not.toHaveBeenCalled();
@@ -159,7 +259,7 @@ describe('fixed self-heal preview SSH control client', () => {
         return { rows: sql.startsWith('SELECT identity') ? [{ identity: 'foreign-owner' }] : [] };
       }
     }
-    await expect(runSelfHealPreviewControl(['fenced-job', 'create'], env, { Client,
+    await expect(runSelfHealPreviewControl(['fenced-job', 'create', 'E02', '1'], env, { Client,
       verifyArtifact: () => ({ sourceSha: 'a'.repeat(40), compiledSha256: 'b'.repeat(64) }) })).rejects.toThrow();
     expect(queries.some(sql => sql.startsWith('INSERT'))).toBe(false);
     expect(queries).toContain('ROLLBACK'); expect(end).toHaveBeenCalledTimes(1);
@@ -179,7 +279,7 @@ describe('fixed self-heal preview SSH control client', () => {
         return { rows: [] };
       }
     }
-    await expect(runSelfHealPreviewControl(['fenced-job', 'create'], env, { Client, now: () => clock,
+    await expect(runSelfHealPreviewControl(['fenced-job', 'create', 'E02', '1'], env, { Client, now: () => clock,
       verifyArtifact: () => { if (stage === 'artifact') expire(); return artifact; } })).rejects.toThrow();
     expect(queries.some(sql => sql.startsWith('INSERT'))).toBe(false);
     if (stage === 'artifact') expect(connect).not.toHaveBeenCalled();

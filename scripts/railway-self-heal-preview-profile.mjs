@@ -1,7 +1,10 @@
 /** Opt-in, expiring self-healing profile for the existing disposable supervisor. */
 import { spawn } from 'node:child_process';
+import { createHash, createHmac, X509Certificate } from 'node:crypto';
+import { lstatSync, readFileSync } from 'node:fs';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { verifySelfHealPreviewArtifact } from './self-heal-preview-artifact.mjs';
 import {
   buildBackstageHeavyApplicationChildEnvironment,
   resolveBackstageHeavyProofTargetOrThrow,
@@ -9,11 +12,15 @@ import {
 import {
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_CHILD_ENV,
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_CHILD_VALUE,
+  BACKSTAGE_HEAVY_OPENAI_FIXTURE_BASE_URL,
+  SELF_HEAL_PREVIEW_OPENAI_FIXTURE_SDK_KEY,
 } from './railway-backstage-heavy-openai-fixture.mjs';
 
 export const SELF_HEAL_PREVIEW_PROFILE = 'worker-coordinator-v1';
 export const SELF_HEAL_PREVIEW_ARGUMENT = '--self-heal-preview-v1';
 export const SELF_HEAL_PREVIEW_MAX_LEASE_MS = 7_200_000;
+export const SELF_HEAL_PREVIEW_WORKER_CONCURRENCY = 2;
+export const SELF_HEAL_PREVIEW_DATABASE_CERTIFICATE_PATH = '/app/config/self-heal-preview-database-ca.pem';
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const PREFIX = 'ARCANOS_SELF_HEAL_PREVIEW_';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -34,6 +41,7 @@ const PROOF_NAMES = Object.freeze([
 const PROFILE_NAMES = Object.freeze([
   'PROFILE', 'RUN_ID', 'ISSUED_AT', 'EXPIRES_AT', 'CONTROL_TOKEN', 'CONTROL_PORT',
   'STARTUP_MODE', 'WEB_SERVICE_ID', 'WORKER_SERVICE_ID',
+  'DATABASE_CERTIFICATE_PEM',
 ].map(name => `${PREFIX}${name}`));
 const APP_INPUT_NAMES = Object.freeze([
   ...PLATFORM_NAMES, ...PROOF_NAMES, ...PROFILE_NAMES, 'PORT', 'DATABASE_URL', 'REDIS_URL',
@@ -58,6 +66,8 @@ const BENIGN_AMBIENT_NAMES = new Set([
   'RAILWAY_HEALTHCHECK_TIMEOUT_SEC', 'RAILWAY_RUN_UID',
 ]);
 const SENSITIVE_NAME = /(?:TOKEN|SECRET|PASSWORD|CREDENTIAL|PRIVATE|PROXY|(?:^|_)KEY(?:$|_)|OPENAI|ANTHROPIC|AZURE|NOTION|DATABASE|POSTGRES|REDIS|SELF_HEAL|SELF_IMPROVE|PREDICTIVE|AUTONOMY|NODE_OPTIONS|NODE_EXTRA_CA|NODE_TLS)/iu;
+const WINDOWS_AUTOMATIC_NAMES = new Set(['HOMEDRIVE', 'HOMEPATH', 'LOGONSERVER', 'SYSTEMDRIVE',
+  'SYSTEMROOT', 'TEMP', 'USERDOMAIN', 'USERNAME', 'USERPROFILE', 'WINDIR']);
 
 export class SelfHealPreviewError extends Error {}
 function proofError(code) { return new SelfHealPreviewError(`SELF_HEAL_PREVIEW_${code}`); }
@@ -71,6 +81,23 @@ function literalPick(env, names) {
   return Object.fromEntries(names.filter(name => Object.hasOwn(env, name)).map(name => [name, env[name]]));
 }
 
+/** Only one preview-owned, self-signed public certificate for the exact private host. */
+export function validateSelfHealPreviewDatabaseCertificate(value, options = {}) {
+  const now = options.now?.() ?? Date.now();
+  const expiresAtMs = options.expiresAtMs ?? now + SELF_HEAL_PREVIEW_MAX_LEASE_MS;
+  if (typeof value !== 'string' || Buffer.byteLength(value) > 16_384) fail('DATABASE_CERTIFICATE_INVALID');
+  const pem = value.trim();
+  if (!/^-----BEGIN CERTIFICATE-----\r?\n[A-Za-z0-9+/=\r\n]+-----END CERTIFICATE-----$/u.test(pem)) fail('DATABASE_CERTIFICATE_INVALID');
+  try {
+    const certificate = new X509Certificate(pem);
+    if (Date.parse(certificate.validFrom) > now || Date.parse(certificate.validTo) <= expiresAtMs
+      || certificate.subject !== certificate.issuer || !certificate.verify(certificate.publicKey)
+      || certificate.checkHost('postgres.railway.internal', { wildcards: false, subject: 'never' }) !== 'postgres.railway.internal') fail('DATABASE_CERTIFICATE_INVALID');
+    return Object.freeze({ pem: certificate.toString(),
+      sha256: createHash('sha256').update(certificate.raw).digest('hex') });
+  } catch { fail('DATABASE_CERTIFICATE_INVALID'); }
+}
+
 /** Validate a single dedicated heavy-preview target and a finite process lease. */
 export function resolveSelfHealPreviewProfile(processKind, env, options = {}) {
   if (env[`${PREFIX}PROFILE`] !== SELF_HEAL_PREVIEW_PROFILE) fail('PROFILE_INVALID');
@@ -81,6 +108,8 @@ export function resolveSelfHealPreviewProfile(processKind, env, options = {}) {
   if (!Number.isFinite(issuedAtMs) || !Number.isFinite(expiresAtMs)
     || issuedAtMs > now || expiresAtMs <= now || expiresAtMs <= issuedAtMs
     || expiresAtMs - issuedAtMs > SELF_HEAL_PREVIEW_MAX_LEASE_MS) fail('LEASE_INVALID');
+  const databaseCertificate = validateSelfHealPreviewDatabaseCertificate(env[`${PREFIX}DATABASE_CERTIFICATE_PEM`],
+    { now: () => now, expiresAtMs });
   const webServiceId = env[`${PREFIX}WEB_SERVICE_ID`];
   const workerServiceId = env[`${PREFIX}WORKER_SERVICE_ID`];
   if (!UUID.test(webServiceId ?? '') || !UUID.test(workerServiceId ?? '')
@@ -112,8 +141,10 @@ export function resolveSelfHealPreviewProfile(processKind, env, options = {}) {
     webServiceId, workerServiceId, postgresServiceId: proofTarget.postgresServiceId,
     redisServiceId: proofTarget.redisServiceId, runId: proofTarget.runId,
     sourceSha: proofTarget.sourceCommit, issuedAt, expiresAt,
+    databaseCertificateSha256: databaseCertificate.sha256,
   });
   return Object.freeze({ proofTarget, ownership, issuedAt, expiresAt, expiresAtMs,
+    databaseCertificatePem: databaseCertificate.pem,
     controlToken: env[`${PREFIX}CONTROL_TOKEN`], controlPort: Number(CONTROL_PORT), startupMode });
 }
 
@@ -130,16 +161,97 @@ export function buildSelfHealPreviewApplicationEnvironment(profile, env) {
   const input = literalPick(env, APP_INPUT_NAMES);
   const derived = buildBackstageHeavyApplicationChildEnvironment(profile.proofTarget, input);
   const workerId = `self-heal-preview-${profile.proofTarget.runId}`;
+  // Let the ordinary Worker resolve heartbeat/lease defaults. The original
+  // heavy profile keeps its explicit short proof configuration unchanged.
+  delete derived.JOB_WORKER_HEARTBEAT_MS;
+  delete derived.JOB_WORKER_LEASE_MS;
+  delete derived[`${PREFIX}DATABASE_CERTIFICATE_PEM`];
+  const databaseUrl = new URL(profile.proofTarget.databaseUrl);
+  databaseUrl.searchParams.set('sslmode', 'verify-full');
+  databaseUrl.searchParams.set('sslrootcert', SELF_HEAL_PREVIEW_DATABASE_CERTIFICATE_PATH);
   return {
     ...derived, PATH: '/usr/local/bin:/usr/bin:/bin', TZ: 'UTC', RUN_WORKERS: profile.proofTarget.processKind === 'worker' ? 'true' : 'false',
+    // The parent remains sealed; only this reviewed application child uses the
+    // normal SDK startup graph against its fixed synthetic loopback adapter.
+    FORCE_MOCK: 'false', ALLOW_MOCK_OPENAI: 'false', OPENAI_API_KEY_REQUIRED: 'true',
+    OPENAI_API_KEY: SELF_HEAL_PREVIEW_OPENAI_FIXTURE_SDK_KEY,
+    OPENAI_BASE_URL: BACKSTAGE_HEAVY_OPENAI_FIXTURE_BASE_URL,
+    DATABASE_URL: databaseUrl.toString(),
     SELF_IMPROVE_ENABLED: 'false', SELF_IMPROVE_AUTONOMY_LEVEL: '0', SELF_IMPROVE_FREEZE: 'false',
     SELF_IMPROVE_EVIDENCE_DIR: '/app/memory/self-heal-preview-evidence',
     PREDICTIVE_HEALING_ENABLED: 'false', PREDICTIVE_HEALING_DRY_RUN: 'true',
     SELF_IMPROVE_KILL_SWITCH_KEY: `arcanos:preview:self-heal:${profile.proofTarget.runId}:kill-switch:v1`,
-    SELF_HEAL_LOOP_INTERVAL_MS: '1000',
     ...(profile.proofTarget.processKind === 'worker'
-      ? { JOB_WORKER_ID: workerId, JOB_WORKER_STATS_ID: workerId } : {}),
+      ? { JOB_WORKER_ID: workerId, JOB_WORKER_STATS_ID: workerId,
+          JOB_WORKER_CONCURRENCY: String(SELF_HEAL_PREVIEW_WORKER_CONCURRENCY) }
+      : { ARCANOS_GPT_ACCESS_TOKEN: createHmac('sha256', profile.controlToken)
+            .update(`arcanos:self-heal-preview:${profile.proofTarget.runId}:gpt-access:v1`).digest('hex'),
+          ARCANOS_GPT_ACCESS_BASE_URL: `http://127.0.0.1:${env.PORT ?? '8080'}`,
+          ARCANOS_GPT_ACCESS_SCOPES: 'runtime.read' }),
   };
+}
+
+/** Exact ordinary consumer identities; never grant authority by worker prefix. */
+export function resolveSelfHealPreviewWorkerIds(profile) {
+  return Object.freeze(Array.from({ length: SELF_HEAL_PREVIEW_WORKER_CONCURRENCY },
+    (_, index) => `self-heal-preview-${profile.proofTarget.runId}-slot-${index + 1}`));
+}
+
+/** All direct preview clients enforce the same CA and hostname verification. */
+export function buildSelfHealPreviewDatabaseClientOptions(profile) {
+  return { connectionString: profile.proofTarget.databaseUrl,
+    ssl: { rejectUnauthorized: true, ca: profile.databaseCertificatePem } };
+}
+
+/** The image trust file is literal, root-owned, readonly and artifact-inventoried. */
+function readImmutableDatabaseCertificateFile(options = {}) {
+  const fs = options.fileSystem ?? { lstatSync, readFileSync };
+  try {
+    const stat = fs.lstatSync(SELF_HEAL_PREVIEW_DATABASE_CERTIFICATE_PATH);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.uid !== 0
+      || (stat.mode & 0o222) !== 0 || stat.size > 16_384) fail('DATABASE_CERTIFICATE_FILE_INVALID');
+    return fs.readFileSync(SELF_HEAL_PREVIEW_DATABASE_CERTIFICATE_PATH, 'utf8');
+  } catch { fail('DATABASE_CERTIFICATE_FILE_INVALID'); }
+}
+export function verifySelfHealPreviewDatabaseCertificateFile(profile, options = {}) {
+  try {
+    const observed = validateSelfHealPreviewDatabaseCertificate(readImmutableDatabaseCertificateFile(options),
+      { now: options.now, expiresAtMs: profile.expiresAtMs });
+    if (observed.sha256 !== profile.ownership.databaseCertificateSha256) fail('DATABASE_CERTIFICATE_FILE_INVALID');
+    return observed.sha256;
+  } catch { fail('DATABASE_CERTIFICATE_FILE_INVALID'); }
+}
+
+/** Admit only an exact supervisor-derived child through the ordinary launcher. */
+export function assertSelfHealPreviewApplicationChildOrThrow(env, options = {}) {
+  try {
+    if (env.ARCANOS_SELF_HEAL_PREVIEW_PROFILE !== SELF_HEAL_PREVIEW_PROFILE) fail('PROFILE_INVALID');
+    const databaseUrl = new URL(env.DATABASE_URL);
+    if (databaseUrl.searchParams.size !== 2 || databaseUrl.searchParams.get('sslmode') !== 'verify-full'
+      || databaseUrl.searchParams.get('sslrootcert') !== SELF_HEAL_PREVIEW_DATABASE_CERTIFICATE_PATH) fail('ENV_FORBIDDEN');
+    databaseUrl.search = '';
+    const parent = { ...literalPick(env, APP_INPUT_NAMES), DATABASE_URL: databaseUrl.toString(),
+      FORCE_MOCK: 'true', ALLOW_MOCK_OPENAI: 'true', OPENAI_API_KEY_REQUIRED: 'false',
+      OPENAI_BASE_URL: env.ARCANOS_PROCESS_KIND === 'web' ? 'http://127.0.0.1:9/v1' : BACKSTAGE_HEAVY_OPENAI_FIXTURE_BASE_URL,
+      ARCANOS_SELF_HEAL_PREVIEW_DATABASE_CERTIFICATE_PEM: readImmutableDatabaseCertificateFile(options) };
+    const profile = resolveSelfHealPreviewProfile(env.ARCANOS_PROCESS_KIND, parent, options);
+    verifySelfHealPreviewDatabaseCertificateFile(profile, options);
+    const expected = buildSelfHealPreviewApplicationEnvironment(profile, parent);
+    if (Object.keys(expected).some(name => env[name] !== expected[name])
+      || Object.keys(env).some(name => !Object.hasOwn(expected, name)
+        && !(process.platform === 'win32' && WINDOWS_AUTOMATIC_NAMES.has(name.toUpperCase())))) fail('ENV_FORBIDDEN');
+    const fs = options.fileSystem ?? { lstatSync };
+    for (const path of [ROOT, fileURLToPath(new URL('./', import.meta.url))]) {
+      const stat = fs.lstatSync(path);
+      if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== 0 || (stat.mode & 0o022) !== 0) fail('ARTIFACT_INVALID');
+    }
+    const manifest = fs.lstatSync(fileURLToPath(new URL('./self-heal-preview-artifact.json', import.meta.url)));
+    if (!manifest.isFile() || manifest.isSymbolicLink() || manifest.nlink !== 1 || manifest.uid !== 0
+      || (manifest.mode & 0o222) !== 0) fail('ARTIFACT_INVALID');
+    const artifact = (options.verifyArtifact ?? verifySelfHealPreviewArtifact)({ sourceSha: profile.proofTarget.sourceCommit, rootPath: ROOT });
+    bindSelfHealPreviewArtifact(profile, artifact);
+    return { enabled: true, environmentCategory: 'non-production', providerCategory: 'loopback', selfHealProfile: SELF_HEAL_PREVIEW_PROFILE };
+  } catch { throw new Error('PREVIEW_ISOLATION_SELF_HEAL_PROFILE_INVALID'); }
 }
 
 export function buildSelfHealPreviewFixtureEnvironment(profile) {
@@ -164,7 +276,7 @@ export async function preflightSelfHealPreviewDatabase(profile, options = {}) {
     const pg = await import('pg');
     Client = pg.Client ?? pg.default?.Client;
   }
-  const client = new Client({ connectionString: profile.proofTarget.databaseUrl,
+  const client = new Client({ ...buildSelfHealPreviewDatabaseClientOptions(profile),
     application_name: 'arcanos_self_heal_preview_owner_v1', connectionTimeoutMillis: 5000,
     query_timeout: 5000, options: '-c statement_timeout=5000 -c lock_timeout=1000' });
   let transaction = false;
@@ -212,9 +324,9 @@ export async function preflightSelfHealPreviewDatabase(profile, options = {}) {
       if (row.job_data_exists !== true || row.job_events_exists !== true) fail('DATABASE_SCHEMA_MISSING');
       const jobs = await client.query(`SELECT COUNT(*) FILTER (WHERE correlation_id IS NULL
           OR left(correlation_id, length($1)) <> $1
-          OR (last_worker_id IS NOT NULL AND last_worker_id <> $2))::integer AS foreign_jobs,
+          OR (last_worker_id IS NOT NULL AND last_worker_id <> ALL($2::text[])))::integer AS foreign_jobs,
         COUNT(*) FILTER (WHERE status = 'running' AND lease_expires_at > NOW())::integer AS active_leases
-        FROM public.job_data`, [`self-heal-preview:${profile.proofTarget.runId}:`, `self-heal-preview-${profile.proofTarget.runId}`]);
+        FROM public.job_data`, [`self-heal-preview:${profile.proofTarget.runId}:`, resolveSelfHealPreviewWorkerIds(profile)]);
       if (jobs.rows?.[0]?.foreign_jobs !== 0 || jobs.rows?.[0]?.active_leases !== 0) fail('FOREIGN_OR_ACTIVE_JOBS');
       const events = await client.query('SELECT COUNT(*)::integer AS orphan_events FROM public.job_events e WHERE NOT EXISTS (SELECT 1 FROM public.job_data j WHERE j.id = e.job_id)');
       if (events.rows?.[0]?.orphan_events !== 0) fail('FOREIGN_EVENTS');
@@ -276,6 +388,9 @@ export async function runSelfHealPreviewSupervisor(processKind, env, options = {
   const verifyArtifact = options.verifyArtifact ?? (await import('./self-heal-preview-artifact.mjs')).verifySelfHealPreviewArtifact;
   const artifact = await verifyArtifact({ sourceSha: unboundProfile.proofTarget.sourceCommit, rootPath: ROOT });
   const profile = bindSelfHealPreviewArtifact(unboundProfile, artifact);
+  const verifyCertificate = options.verifyDatabaseCertificateFile ?? verifySelfHealPreviewDatabaseCertificateFile;
+  const certificateSha256 = await verifyCertificate(profile, options);
+  if (certificateSha256 !== profile.ownership.databaseCertificateSha256) fail('DATABASE_CERTIFICATE_FILE_INVALID');
   if (profile.expiresAtMs <= (options.now?.() ?? Date.now())) fail('LEASE_INVALID');
   const spawnImpl = options.spawnImpl ?? spawn;
   const processRef = options.processRef ?? process;
@@ -295,7 +410,7 @@ export async function runSelfHealPreviewSupervisor(processKind, env, options = {
   try {
     guard = await preflightSelfHealPreviewDatabase(profile, options);
     if (stopped || profile.expiresAtMs <= (options.now?.() ?? Date.now())) return 0;
-    if (processKind === 'worker') {
+    {
       const fixtureModule = await import('./railway-backstage-heavy-openai-fixture.mjs');
       const child = spawnImpl(process.execPath, ['scripts/railway-backstage-heavy-openai-fixture.mjs', fixtureModule.SELF_HEAL_PREVIEW_OPENAI_FIXTURE_CHILD_ARGUMENT],
         { cwd: ROOT, env: buildSelfHealPreviewFixtureEnvironment(profile), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });

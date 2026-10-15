@@ -1,10 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { request as httpRequest } from 'node:http';
-import { BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY } from '../scripts/railway-backstage-heavy-openai-fixture.mjs';
+import {
+  BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY,
+  SELF_HEAL_PREVIEW_OPENAI_FIXTURE_SDK_KEY,
+} from '../scripts/railway-backstage-heavy-openai-fixture.mjs';
 
 const originalEnvironment = process.env;
 const events: string[] = [];
-const status = { coordinatorState: 'UNKNOWN', loopRunning: false, inFlight: false, tickCount: 0 };
+const status = { coordinatorState: 'UNKNOWN', loopRunning: false, inFlight: false, tickCount: 0,
+  lastAction: null as string | null, lastActionAt: null as string | null, lastDiagnosis: null as string | null,
+  lastDecision: null as string | null, policyObservedAt: null as string | null };
 const stop = jest.fn(async () => { status.loopRunning = false; });
 const start = jest.fn(() => { status.loopRunning = true; return { ...status }; });
 const tick = jest.fn(async (_options: unknown) => ({ diagnosis: 'healthy' }));
@@ -20,11 +25,19 @@ const pipeline = jest.fn(async (_input: unknown) => ({
   routingStages: ['intake', 'reasoning', 'final'], tierInfo: { tier: 'simple' }, dryRun: false, fallbackFlag: false,
 }));
 const recordCompletion = jest.fn();
+const emptyWindow = (_since: unknown, _windowMs: number, _route: string) => ({
+  generatedAt: new Date().toISOString(), windowMs: 300_000, requestCount: 0, errorCount: 0, timeoutCount: 0,
+  errorRate: 0, timeoutRate: 0, avgLatencyMs: 0, p95LatencyMs: 0, maxLatencyMs: 0,
+});
+const getRequestWindowSince = jest.fn(emptyWindow);
 const predictiveAudits: Array<Record<string, unknown>> = [];
-const predictiveDecision = jest.fn(async (params: { source: string; allowAutoExecute: boolean; dryRun?: boolean; simulate: unknown; signal?: AbortSignal }) => {
+const coordinatorEvents: Array<Record<string, unknown>> = [];
+const providerTraces: Array<Record<string, unknown>> = [];
+const predictiveDecision = jest.fn(async (params: { source: string; allowAutoExecute: boolean; dryRun?: boolean; simulate?: unknown; signal?: AbortSignal }) => {
   const auditEntry = {
     id: `predictive_heal_audit_${predictiveAudits.length + 1}`, timestamp: new Date().toISOString(), source: params.source,
-    observation: { secret: 'mock-unprojected-sensitive-observation' },
+    observation: { secret: 'test-unprojected-sensitive-observation', collectedAt: new Date().toISOString(),
+      requestCount: 6, windowMs: 300_000, errorRate: 0.5, timeoutRate: 0.5, avgLatencyMs: 501, p95LatencyMs: 1000, degradedCount: 0 },
     featureFlags: { enabled: true, dryRun: params.dryRun === true, autoExecute: process.env.PREDICTIVE_AUTO_EXECUTE === 'true' },
     decision: { action: 'activate_trinity_mitigation', safeToExecute: true, advisor: 'rules_v1' },
     execution: { mode: params.dryRun ? 'dry_run' : 'recommend_only', status: params.dryRun ? 'dry_run' : 'skipped', attempted: false },
@@ -36,10 +49,14 @@ let sdkClient = { synthetic: 1 };
 const getClient = jest.fn(() => sdkClient);
 const providerRuntime = { reloadCount: 1, lastReloadAt: null, lastAttemptAt: null, lastSuccessAt: null,
   lastFailureAt: null, lastFailureCategory: null, consecutiveFailures: 0, backoffMs: 0, nextRetryAt: null,
-  configVersion: 'unprojected-sensitive-config-fingerprint', lastFailureReason: 'unprojected-sensitive-error' };
+  configVersion: 'test-unprojected-sensitive-config-fingerprint', lastFailureReason: 'test-unprojected-sensitive-error' };
 const log = { info: jest.fn((_event: string, data: { event: string }) => { events.push(data.event); }), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
 
 jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({ logger: log }));
+jest.unstable_mockModule('@platform/logging/telemetry.js', () => ({ getTelemetrySnapshot: () => ({ traces: { recentEvents: providerTraces } }) }));
+jest.unstable_mockModule('../src/services/selfImprove/selfHealTelemetry.js', () => ({
+  buildSelfHealTelemetrySnapshot: () => ({ recentEvents: coordinatorEvents }),
+}));
 jest.unstable_mockModule('@platform/runtime/unifiedConfig.js', () => ({
   getStableWorkerRuntimeMode: () => ({ processKind: process.env.ARCANOS_PROCESS_KIND }),
   isWorkerRuntimeSuppressedForServiceRole: () => process.env.ARCANOS_PROCESS_KIND === 'web',
@@ -82,7 +99,7 @@ jest.unstable_mockModule('../src/services/selfImprove/workerRepairActuator.js', 
 jest.unstable_mockModule('@core/adapters/openai.adapter.js', () => ({ getOpenAIAdapter: () => ({ getClient }) }));
 jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({ runTrinityWritingPipeline: pipeline }));
 jest.unstable_mockModule('@services/runtimeDiagnosticsService.js', () => ({
-  runtimeDiagnosticsService: { recordRequestCompletion: recordCompletion },
+  runtimeDiagnosticsService: { recordRequestCompletion: recordCompletion, getRequestWindowSince },
 }));
 jest.unstable_mockModule('../src/services/selfImprove/predictiveHealingService.js', () => ({
   buildPredictiveHealingStatusSnapshot: () => ({ recentAudits: predictiveAudits }),
@@ -100,7 +117,7 @@ const uid = (digit: number) => `10${digit}00000-0000-4000-8000-000000000000`;
 function validEnvironment(): NodeJS.ProcessEnv {
   return {
     NODE_ENV: 'production', ARCANOS_PROCESS_KIND: 'worker', ARCANOS_PREVIEW_ISOLATION: 'true',
-    FORCE_MOCK: 'true', ALLOW_MOCK_OPENAI: 'true', OPENAI_API_KEY_REQUIRED: 'false',
+    FORCE_MOCK: 'false', ALLOW_MOCK_OPENAI: 'false', OPENAI_API_KEY_REQUIRED: 'true',
     ARCANOS_SELF_HEAL_PREVIEW_PROFILE: 'worker-coordinator-v1', ARCANOS_SELF_HEAL_PREVIEW_RUN_ID: runId,
     ARCANOS_SELF_HEAL_PREVIEW_ISSUED_AT: new Date(Date.now() - 1_000).toISOString(),
     ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT: new Date(Date.now() + 60_000).toISOString(),
@@ -113,9 +130,9 @@ function validEnvironment(): NodeJS.ProcessEnv {
     RAILWAY_PROJECT_ID: uid(0), RAILWAY_ENVIRONMENT_ID: uid(1), RAILWAY_SERVICE_ID: uid(3), RAILWAY_DEPLOYMENT_ID: uid(2),
     RAILWAY_PROJECT_NAME: 'arc-pr1544-heavy-regression', RAILWAY_ENVIRONMENT_NAME: 'backstage-heavy-pr-1544-e2e-test',
     RAILWAY_SERVICE_NAME: 'arcanos-worker-pr1544-heavy', RAILWAY_GIT_COMMIT_SHA: 'b'.repeat(40),
-    DATABASE_URL: 'postgres://synthetic:synthetic@postgres.railway.internal:5432/fixture?sslmode=no-verify',
+    DATABASE_URL: 'postgres://synthetic:synthetic@postgres.railway.internal:5432/fixture?sslmode=verify-full&sslrootcert=%2Fapp%2Fconfig%2Fself-heal-preview-database-ca.pem',
     REDIS_URL: 'redis://synthetic:synthetic@redis.railway.internal:6379',
-    OPENAI_API_KEY: BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY, OPENAI_BASE_URL: 'http://127.0.0.1:8766/v1',
+    OPENAI_API_KEY: SELF_HEAL_PREVIEW_OPENAI_FIXTURE_SDK_KEY, OPENAI_BASE_URL: 'http://127.0.0.1:8766/v1',
     SELF_IMPROVE_KILL_SWITCH_KEY: `arcanos:preview:self-heal:${runId}:kill-switch:v1`,
     SELF_IMPROVE_ENABLED: 'false', SELF_IMPROVE_ACTUATOR_MODE: 'daemon', SELF_IMPROVE_AUTONOMY_LEVEL: '0',
     SELF_IMPROVE_FREEZE: 'false', PREDICTIVE_HEALING_ENABLED: 'false', PREDICTIVE_HEALING_DRY_RUN: 'true',
@@ -148,10 +165,13 @@ beforeEach(() => {
   actualTrinity.resetTrinitySelfHealingStateForTests();
   process.env.NODE_ENV = 'production';
   jest.clearAllMocks(); events.length = 0;
+  getRequestWindowSince.mockImplementation(emptyWindow);
   sharedOverrides = { freeze: null, autonomy: null };
   predictiveAudits.length = 0;
+  coordinatorEvents.length = 0; providerTraces.length = 0;
   sdkClient = { synthetic: 1 };
   status.loopRunning = false; status.coordinatorState = 'UNKNOWN';
+  status.lastAction = null; status.lastActionAt = null; status.lastDiagnosis = null; status.lastDecision = null; status.policyObservedAt = null;
 });
 afterEach(async () => {
   try { await handle?.close(); }
@@ -172,7 +192,16 @@ describe('isolated self-healing preview admission and process-local controls', (
       { SELF_IMPROVE_KILL_SWITCH_KEY: 'arcanos:production:kill-switch' },
       { ARCANOS_SELF_HEAL_PREVIEW_RUN_ID: 'different-run-1544' },
       { ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT: new Date(Date.now() + 7_300_000).toISOString() },
+      { FORCE_MOCK: 'true' }, { ALLOW_MOCK_OPENAI: 'true' }, { OPENAI_API_KEY_REQUIRED: 'false' },
+      { OPENAI_API_KEY: BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY }, { OPENAI_API_KEY: 'sk-test-unapproved-preview-fixture' },
+      { OPENAI_BASE_URL: 'http://127.0.0.1:9/v1' },
+      { DATABASE_URL: validEnvironment().DATABASE_URL!.replace('verify-full', 'no-verify') },
+      { DATABASE_URL: `${validEnvironment().DATABASE_URL}&extra=forbidden` },
+      { DATABASE_URL: validEnvironment().DATABASE_URL!.replace('self-heal-preview-database-ca.pem', 'foreign.pem') },
     ]) expect(() => controls.resolveSelfHealingPreviewProfile({ ...validEnvironment(), ...patch })).toThrow('SELF_HEAL_PREVIEW_PROFILE_INVALID');
+    const reordered = validEnvironment();
+    reordered.DATABASE_URL = 'postgres://synthetic:synthetic@postgres.railway.internal:5432/fixture?sslrootcert=/app/config/self-heal-preview-database-ca.pem&sslmode=verify-full';
+    expect(controls.resolveSelfHealingPreviewProfile(reordered)?.role).toBe('worker');
   });
 
   it('exposes the actual process identity on loopback and inspection never evaluates', async () => {
@@ -183,10 +212,48 @@ describe('isolated self-healing preview admission and process-local controls', (
     expect(result.body.processInstanceId).toMatch(/^[0-9a-f-]{36}$/u);
     expect(JSON.stringify(result.body)).not.toContain(token);
     expect(tick).not.toHaveBeenCalled(); expect(start).not.toHaveBeenCalled();
+    expect(result.body.runtime).toMatchObject({ nodeVersion: process.versions.node, platform: process.platform, architecture: process.arch });
+    expect(result.body.scheduler).toMatchObject({ installationAttempts: 0, installations: 0, callbacks: 0, scheduled: false });
+    expect(result.body.claimBoundary).toMatchObject({ attempts: 0, injectedFailures: 0,
+      completionEvidence: 'independent_fenced_job_receipt_required' });
+    expect(recordCompletion).not.toHaveBeenCalled();
     expect(getClient).not.toHaveBeenCalled();
-    expect(JSON.stringify(result.body)).not.toContain('unprojected-sensitive');
+    expect(JSON.stringify(result.body)).not.toContain('test-unprojected-sensitive');
     handle?.markReady();
     expect((await call()).body.ready).toBe(true);
+  });
+
+  it('projects measured fixed-route metrics since the canonical action without manufacturing samples or rewriting historical policy', async () => {
+    const actionAt = new Date(Date.now() - 2_000).toISOString();
+    status.lastAction = 'reinitializeOpenAIProvider'; status.lastActionAt = actionAt;
+    status.policyObservedAt = new Date(Date.now() - 5_000).toISOString();
+    getRequestWindowSince.mockImplementation((since, windowMs, route) => ({ ...emptyWindow(since, windowMs, route), requestCount: since === 0 ? 7 : 2 }));
+    handle = await controls.installSelfHealingPreviewControl();
+    const inspected = (await call()).body;
+    expect(inspected.consumerMetrics).toMatchObject({ evidence: 'production_runtime_diagnostics',
+      sinceCanonicalActionAt: actionAt, rolling: { requestCount: 7 }, postAction: { requestCount: 2 } });
+    expect(getRequestWindowSince).toHaveBeenCalledWith(actionAt, 300_000, '/preview/self-heal/trinity-consumer');
+    expect(inspected.policy).toMatchObject({ coordinatorObservedAt: status.policyObservedAt });
+    expect(recordCompletion).not.toHaveBeenCalled(); expect(tick).not.toHaveBeenCalled();
+  });
+
+  it('projects real verification deferrals and fresh provider counters without exposing raw event payloads', async () => {
+    status.lastActionAt = new Date(Date.now() - 2_000).toISOString();
+    coordinatorEvents.push({ id: 'self_heal_event_1', timestamp: new Date().toISOString(), source: 'self_heal_loop',
+      kind: 'noop', trigger: 'verification', reason: 'awaiting post-action consumer request samples before verification',
+      actionTaken: 'reinitializeOpenAIProvider', details: { requiredSamples: 3, observedSamples: 2,
+        route: '/preview/self-heal/trinity-consumer', secret: 'test-unprojected-sensitive-raw-event' },
+      payload: { secret: 'test-unprojected-sensitive-raw-payload' } });
+    providerTraces.push({ name: 'openai.resilience.success', timestamp: new Date(Date.now() - 3_000).toISOString() },
+      { name: 'openai.resilience.success', timestamp: new Date().toISOString(), attributes: { secret: 'test-unprojected-sensitive-trace' } },
+      { name: 'openai.call.failure', timestamp: new Date().toISOString() },
+      { name: 'test-unprojected-sensitive-custom-event', timestamp: new Date().toISOString() });
+    handle = await controls.installSelfHealingPreviewControl();
+    const inspected = (await call()).body;
+    expect(inspected.coordinatorEvents).toEqual([expect.objectContaining({ reasonCode: 'awaiting_consumer_request_samples', requiredSamples: 3, observedSamples: 2 })]);
+    expect(inspected.provider).toMatchObject({ successesSinceCanonicalAction: 1, failuresInWindow: 1 });
+    expect(JSON.stringify(inspected)).not.toContain('test-unprojected-sensitive');
+    expect(recordCompletion).not.toHaveBeenCalled(); expect(tick).not.toHaveBeenCalled();
   });
 
   it('authenticates before parsing oversized/invalid bodies and accepts only closed commands', async () => {
@@ -228,6 +295,29 @@ describe('isolated self-healing preview admission and process-local controls', (
     await expect(handle?.coordinatorOptions.beforeObservation?.()).rejects.toThrow('SELF_HEAL_PREVIEW_OBSERVATION_FAILURE');
     await expect(handle?.coordinatorOptions.beforeObservation?.()).resolves.toBeUndefined();
     expect(events).toContain('scheduler_installed'); expect(events).toContain('observation_failed');
+    expect((await call()).body).toMatchObject({
+      scheduler: { installationAttempts: 2, installations: 1, installationFailures: 1, intervalMs: 1_000 },
+      observation: { entries: 2, injectedFailures: 1 },
+    });
+  });
+
+  it('counts actual scheduler callbacks and held-observation overlap independently of inspection', async () => {
+    handle = await controls.installSelfHealingPreviewControl();
+    const callback = jest.fn();
+    const timer = handle!.coordinatorOptions.installScheduler!(callback, 10);
+    try {
+      await new Promise(resolve => setTimeout(resolve, 25));
+      clearInterval(timer);
+      expect(callback.mock.calls.length).toBeGreaterThan(0);
+      const inspected = (await call()).body;
+      expect((inspected.scheduler as { callbacks: number }).callbacks).toBe(callback.mock.calls.length);
+    } finally { clearInterval(timer); }
+    await call('hold_observation_once');
+    const held = handle!.coordinatorOptions.beforeObservation!(handle!.coordinatorOptions.signal);
+    await waitFor(() => events.includes('observation_held'));
+    expect((await call()).body.observation).toMatchObject({ holds: 1, holding: true, holdArmed: false, holdLimitMs: 5_000 });
+    await call('release_observation'); await held;
+    expect((await call()).body.observation).toMatchObject({ holding: false, lastHeldAt: expect.any(String), lastReleasedAt: expect.any(String) });
   });
 
   it('injects one claim-boundary database failure without inspection consuming or rearming it', async () => {
@@ -238,6 +328,8 @@ describe('isolated self-healing preview admission and process-local controls', (
     catch (error) { expect(error).toMatchObject({ message: 'SELF_HEAL_PREVIEW_DATABASE_CLAIM_FAILURE', code: 'ECONNREFUSED' }); }
     expect(() => handle?.beforeClaim()).not.toThrow();
     expect((await call()).body.claimFailurePending).toBe(false);
+    expect((await call()).body.claimBoundary).toMatchObject({ attempts: 2, injectedFailures: 1,
+      lastAttemptAt: expect.any(String), lastInjectedFailureAt: expect.any(String) });
     expect(events.filter(event => event === 'claim_operation_failure')).toHaveLength(1);
   });
 
@@ -392,12 +484,66 @@ describe('isolated self-healing preview admission and process-local controls', (
     expect(predictiveDecision.mock.calls[1][0]).not.toHaveProperty('dryRun');
     const after = await call();
     expect(after.body.predictiveRun).toMatchObject({ status: 'completed', audit: { mode: 'recommend_only', attempted: false } });
-    expect(JSON.stringify(after.body)).not.toContain('unprojected-sensitive');
+    expect(JSON.stringify(after.body)).not.toContain('test-unprojected-sensitive');
     predictiveAudits.push(...Array.from({ length: 5 }, () => predictiveAudits[0]));
     expect((await call()).body.predictiveAudits).toHaveLength(3);
     process.env.PREDICTIVE_AUTO_EXECUTE = 'true';
     expect((await call('predictive_evaluate')).body).toMatchObject({ rejected: true });
     expect(predictiveDecision).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses measured production predictive observations without simulation and cannot authorize execution', async () => {
+    handle = await controls.installSelfHealingPreviewControl();
+    expect((await call('predictive_evaluate_live')).body).toMatchObject({ rejected: true });
+    await call('policy_predictive_dry_run');
+    await call('predictive_evaluate_live');
+    await waitFor(() => predictiveAudits.length === 1);
+    expect(predictiveDecision).toHaveBeenLastCalledWith(expect.objectContaining({
+      source: 'self-heal.preview.measured-runtime', allowAutoExecute: true, dryRun: true,
+    }));
+    expect(predictiveDecision.mock.calls[0][0]).not.toHaveProperty('simulate');
+    expect(predictiveDecision.mock.calls[0][0]).not.toHaveProperty('observation');
+    expect((await call()).body.predictiveRun).toMatchObject({ evidence: 'measured_runtime_observation', status: 'completed',
+      audit: { source: 'self-heal.preview.measured-runtime', attempted: false, observation: { requestCount: 6, timeoutRate: 0.5 } } });
+    await call('policy_predictive_no_execute');
+    await call('predictive_evaluate_live');
+    await waitFor(() => predictiveAudits.length === 2);
+    expect(predictiveDecision.mock.calls[1][0]).toMatchObject({ allowAutoExecute: false });
+    for (const field of ['simulate', 'observation', 'execute', 'dryRun']) expect(predictiveDecision.mock.calls[1][0]).not.toHaveProperty(field);
+    const after = (await call()).body;
+    expect(after.predictiveRun).toMatchObject({ evidence: 'measured_runtime_observation', audit: { mode: 'recommend_only', attempted: false } });
+    expect(JSON.stringify(after)).not.toContain('test-unprojected-sensitive');
+    process.env.PREDICTIVE_AUTO_EXECUTE = 'true';
+    expect((await call('predictive_evaluate_live')).body).toMatchObject({ rejected: true });
+    expect(predictiveDecision).toHaveBeenCalledTimes(2);
+    expect(trinity).not.toHaveBeenCalled(); expect(remoteRepair).not.toHaveBeenCalled();
+  });
+
+  it('retains bounded causal consumer receipts without crediting a substituted success to actual mitigation recovery', async () => {
+    handle = await controls.installSelfHealingPreviewControl();
+    await call('policy_allowed'); await call('trinity_activate');
+    const mitigation = actualTrinity.getTrinitySelfHealingSnapshot().final;
+    status.lastAction = 'activateTrinitySelfHealingMitigation:final:bypass_final_stage';
+    status.lastActionAt = new Date().toISOString(); status.lastDiagnosis = 'preview-measured-fault'; status.lastDecision = 'heal';
+    for (let index = 0; index < 10; index += 1) {
+      await call('trinity_run');
+      await waitFor(() => recordCompletion.mock.calls.length === index + 1);
+    }
+    const inspected = (await call()).body;
+    expect(inspected.consumerHistory).toHaveLength(8);
+    expect(inspected.consumerRun).toMatchObject({ evidence: 'actual_preview_facade_invocation',
+      providerBoundary: 'injected_loopback_adapter', requestBudget: { aggregateMs: 8_000, modelStageMs: 2_000 },
+      canonicalActionAtStart: { action: status.lastAction, at: status.lastActionAt },
+      mitigationBefore: { mitigationId: mitigation.mitigationId },
+    });
+    const history = inspected.consumerHistory as Array<Record<string, unknown>>;
+    expect(new Set(history.map(receipt => receipt.requestId)).size).toBe(8);
+    expect(history[7]).toMatchObject({ status: 'completed', consumerClientId: 'consumer-client-1',
+      mitigationBefore: { mitigationId: mitigation.mitigationId },
+      mitigationAfter: { mitigationId: mitigation.mitigationId, verificationSuccesses: 0, verifiedAtMs: null },
+      diagnostics: { source: 'actual_preview_facade_invocation', statusCode: 200 } });
+    expect(actualTrinity.getTrinitySelfHealingSnapshot().final.verificationSuccesses).toBe(0);
+    expect(JSON.stringify(history)).not.toContain('A fictional blue kite');
   });
 
   it('rejects overlapping commands while a bounded policy operation is in flight', async () => {
@@ -457,7 +603,7 @@ describe('isolated self-healing preview admission and process-local controls', (
     process.env.ARCANOS_PROCESS_KIND = 'web';
     process.env.RAILWAY_SERVICE_ID = uid(6);
     process.env.RAILWAY_SERVICE_NAME = 'arcanos-web-pr1544-heavy';
-    process.env.OPENAI_BASE_URL = 'http://127.0.0.1:9/v1';
+    process.env.OPENAI_BASE_URL = 'http://127.0.0.1:8766/v1';
     handle = await controls.installSelfHealingPreviewControl();
     await call('policy_allowed');
     expect((await call('database_failure_once')).body).toMatchObject({ rejected: true, reasonCode: 'worker_role_required' });
