@@ -1589,8 +1589,10 @@ function recordLoopError(error: unknown): string {
   const runtime = getRuntime();
   const message = resolveErrorMessage(error);
   runtime.status.lastError = message;
-  runtime.status.coordinatorState = 'FAILED';
-  runtime.status.coordinatorReasonCode = 'evaluation_failed';
+  if (runtime.timer !== null) {
+    runtime.status.coordinatorState = 'FAILED';
+    runtime.status.coordinatorReasonCode = 'evaluation_failed';
+  }
   logger.error('self_heal.coordinator.tick_failed', coordinatorEventMetadata(runtime));
   recordSelfHealEvent({
     kind: 'failure',

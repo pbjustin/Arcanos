@@ -2778,13 +2778,58 @@ describe('selfHealingLoop', () => {
     });
   });
 
+  it.each([
+    ['UNKNOWN', 'not_started'],
+    ['DISABLED', 'service_role_suppressed'],
+    ['BLOCKED', 'shutdown_requested'],
+  ] as const)('preserves unscheduled %s ownership when a manual evaluation fails', async (state, reasonCode) => {
+    const previousRuntimeMode = getStableWorkerRuntimeModeMock();
+    const message = `Synthetic manual evaluation failure while ${state}.`;
+    try {
+      getStableWorkerRuntimeModeMock.mockReturnValue({
+        requestedRunWorkers: true, resolvedRunWorkers: state !== 'DISABLED',
+        processKind: state === 'DISABLED' ? 'web' : 'worker', railwayServiceName: null,
+        reason: state === 'DISABLED' ? 'service_role_suppressed' : 'explicit_worker_role'
+      });
+      if (state === 'DISABLED') {
+        startSelfHealingLoop(1_000);
+      } else if (state === 'BLOCKED') {
+        const shutdown = new AbortController();
+        shutdown.abort();
+        startSelfHealingLoop(1_000, { signal: shutdown.signal });
+      }
+      expect(getSelfHealingLoopStatus()).toMatchObject({
+        coordinatorState: state, coordinatorReasonCode: reasonCode, loopRunning: false
+      });
+
+      const result = await runSelfHealingLoop({ trigger: 'manual', beforeObservation: async () => {
+        throw new Error(message);
+      } });
+
+      expect(result).toMatchObject({ lastError: message, loopRunning: false, action: null });
+      expect(getSelfHealingLoopStatus()).toMatchObject({
+        coordinatorState: state, coordinatorReasonCode: reasonCode,
+        loopRunning: false, active: false, inFlight: false, lastError: message
+      });
+      expect(buildSelfHealEventsSnapshot(50).events).toEqual(expect.arrayContaining([
+        expect.objectContaining({ kind: 'failure', source: 'self_heal_loop', trigger: 'loop_error', reason: message })
+      ]));
+      expect(getWorkerControlHealthMock).not.toHaveBeenCalled();
+      expect(recoverStaleJobsMock).not.toHaveBeenCalled();
+      expect(runSelfImproveCycleMock).not.toHaveBeenCalled();
+    } finally {
+      getStableWorkerRuntimeModeMock.mockReturnValue(previousRuntimeMode);
+    }
+  });
+
   it('does not turn a failed observation attempt into healthy inspection evidence', async () => {
     getRollingRequestWindowMock.mockImplementationOnce(() => { throw new Error('Synthetic collection failure'); });
     await runSelfHealingLoop({ trigger: 'interval' });
     const snapshot = buildSelfHealRuntimeSnapshot();
     expect(snapshot.loopStatus.lastTick).not.toBeNull();
     expect(snapshot.loopStatus.lastObservationAt).toBeNull();
-    expect(snapshot.coordinator.state).toBe('FAILED');
+    expect(snapshot.coordinator.state).toBe('UNKNOWN');
+    expect(snapshot.loopStatus.lastError).toBe('Synthetic collection failure');
     expect(snapshot.systemState).toMatchObject({ status: 'unknown', lastCheck: null });
   });
 
@@ -2864,7 +2909,7 @@ describe('selfHealingLoop', () => {
     expect(getSelfHealingLoopStatus()).toMatchObject({
       operatingMode: 'local_mitigation',
       policyObservedAt: observed.policyObservedAt,
-      coordinatorState: 'FAILED',
+      coordinatorState: 'UNKNOWN',
       lastError: 'Synthetic observation failure'
     });
   });
