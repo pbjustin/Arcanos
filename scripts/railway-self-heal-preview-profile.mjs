@@ -61,7 +61,7 @@ const BENIGN_AMBIENT_NAMES = new Set([
   'PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'PWD', 'OLDPWD', 'SHLVL', '_',
   'HOSTNAME', 'LANG', 'LC_ALL', 'TZ', 'TERM', 'TMPDIR', 'TMP', 'TEMP',
   'RAILWAY_PUBLIC_DOMAIN', 'RAILWAY_PRIVATE_DOMAIN', 'RAILWAY_REPLICA_ID', 'RAILWAY_REPLICA_REGION',
-  'RAILWAY_SNAPSHOT_ID',
+  'RAILWAY_SNAPSHOT_ID', 'RAILWAY_ENVIRONMENT',
   'RAILWAY_GIT_AUTHOR', 'RAILWAY_GIT_BRANCH', 'RAILWAY_GIT_COMMIT_MESSAGE', 'RAILWAY_GIT_REPO_NAME',
   'RAILWAY_GIT_REPO_OWNER', 'RAILWAY_DEPLOYMENT_DRAINING_SECONDS', 'RAILWAY_GRACEFUL_SHUTDOWN_TIMEOUT',
   'RAILWAY_HEALTHCHECK_TIMEOUT_SEC', 'RAILWAY_RUN_UID',
@@ -103,6 +103,8 @@ export function validateSelfHealPreviewDatabaseCertificate(value, options = {}) 
 export function resolveSelfHealPreviewProfile(processKind, env, options = {}) {
   if (env[`${PREFIX}PROFILE`] !== SELF_HEAL_PREVIEW_PROFILE) fail('PROFILE_INVALID');
   const proofTarget = resolveBackstageHeavyProofTargetOrThrow(processKind, env);
+  if (Object.hasOwn(env, 'RAILWAY_ENVIRONMENT')
+    && env.RAILWAY_ENVIRONMENT !== env.RAILWAY_ENVIRONMENT_NAME) fail('ENVIRONMENT_ALIAS_INVALID');
   const issuedAtMs = exactIso(env[`${PREFIX}ISSUED_AT`]);
   const expiresAtMs = exactIso(env[`${PREFIX}EXPIRES_AT`]);
   const now = options.now?.() ?? Date.now();
