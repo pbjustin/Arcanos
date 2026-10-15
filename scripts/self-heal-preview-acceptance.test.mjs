@@ -432,7 +432,8 @@ function shutdownEvidence() {
     ['redis_stopped', { inFlight: false, redisConnected: false }],
     ['independent_redis_closed', { redisClientPresent: false, redisServerRunId: '1'.repeat(40) }],
   ];
-  const value = { evidence: 'independent_postgres_readback', receipt: { scenario: 'A06', sourceSha: m.receipt.sourceSha,
+  // Exact discriminator emitted by the production Web-side shutdown receipt helper.
+  const value = { evidence: 'independent_postgres_redis_readback', receipt: { scenario: 'A06', sourceSha: m.receipt.sourceSha,
     processInstanceId: baseline.processInstanceId, deploymentId: m.services[1].deploymentId, pid: baseline.pid, redisClientId: '91',
     events: phases.map(([phase, data], i) => ({ phase, data, at: new Date(NOW + i + 1).toISOString() })) } };
   return { m, baseline, recovered, before, after, value };
@@ -450,6 +451,9 @@ for (const [name, change] of Object.entries({
   staleDeployment: f => { f.value.receipt.deploymentId = id(99); },
   staleSource: f => { f.value.receipt.sourceSha = 'f'.repeat(40); },
   logOnly: f => { f.value.evidence = 'shutdown_log'; },
+  oldPostgresOnlyContract: f => { f.value.evidence = 'independent_postgres_readback'; },
+  syntheticContract: f => { f.value.evidence = 'synthetic_injected_dependencies'; },
+  suffixedContract: f => { f.value.evidence = 'independent_postgres_redis_readback:extra'; },
   missingIndependentProbe: f => { f.value.receipt.events.splice(3, 1); },
   outOfOrder: f => { [f.value.receipt.events[6], f.value.receipt.events[8]] = [f.value.receipt.events[8], f.value.receipt.events[6]]; },
   disconnectedDuringEvaluation: f => { f.value.receipt.events[3].data.redisClientPresent = false; },
@@ -664,6 +668,7 @@ function scenarioFixture(scenario, fault = null) {
         state.consumerRun = { requestId, processInstanceId: state.processInstanceId, status: 'completed', dryRun: false,
           diagnostics: { statusCode: actualFault ? 504 : 200 },
           recoveryPath: { reasoningTimeoutDirectAnswerFallback: actualFault } };
+        if (scenario === 'C04') state.consumerRun.mitigationBefore = { mitigationId: fault === 'foreign-consumer' ? 99 : 2 };
         if (providerActionScenario) {
           state.consumerRun.consumerClientId = state.coordinator.lastActionAt && fault !== 'same-client' ? 'client-after' : 'client-before';
           state.consumerRun.canonicalActionAtStart = { at: fault === 'stale-correlation' ? null : state.coordinator.lastActionAt };
@@ -673,6 +678,18 @@ function scenarioFixture(scenario, fault = null) {
             state.consumerMetrics = { postAction: { requestCount: (state.consumerMetrics?.postAction?.requestCount ?? 0) + 1 } };
           }
         }
+      }
+      if (scenario === 'C04' && ['trinity_activate', 'trinity_replace'].includes(command)) {
+        const operation = command === 'trinity_activate' ? 'activation' : 'replacement';
+        if (fault === `${operation}-rejected`) return { observation: { rejected: true, reasonCode: 'local_mitigation_policy_blocked', inspection: structuredClone(state) } };
+        if (fault === `${operation}-not-applied`) return { observation: { result: { applied: false }, inspection: structuredClone(state) } };
+        state.trinity.snapshot.final = { ...stage(), activeAction: command === 'trinity_activate' ? 'bypass_final_stage' : 'enable_degraded_mode',
+          mitigationId: command === 'trinity_activate' ? 1 : 2 };
+        return { observation: { result: { applied: true }, inspection: structuredClone(state) } };
+      }
+      if (scenario === 'C04' && command === 'trinity_stale_rollback') {
+        if (fault === 'stale-identity-changed') state.trinity.snapshot.final.mitigationId = 99;
+        return { observation: { result: { rolledBack: fault === 'stale-rollback-applied' }, inspection: structuredClone(state) } };
       }
       if (providerActionScenario && command === 'coordinator_start' && state.policy.selfImproveEnabled) {
         state.coordinator.lastDecision = 'heal'; state.coordinator.lastActionAt = new Date(clock).toISOString();
@@ -730,6 +747,25 @@ test('C08 rejects fewer than three fresh provider successes despite improved dia
   const { options } = scenarioFixture('C08', 'insufficient-successes');
   const result = await runSelfHealAcceptanceCase('C08', manifest(), options);
   assert.equal(result.classification, 'FAILED'); assert.equal(result.errorCode, 'SELF_HEAL_ACCEPTANCE_RECOVERY_FRESHNESS_FAILED');
+});
+
+test('C04 verifies stale rollback and consumer identity only after both actual mitigations apply', async () => {
+  const { options } = scenarioFixture('C04');
+  const result = await runSelfHealAcceptanceCase('C04', manifest(), options);
+  assert.equal(result.classification, 'SYNTHETIC_ONLY');
+});
+for (const fault of ['activation-rejected', 'replacement-rejected', 'activation-not-applied', 'replacement-not-applied']) test(`C04 blocks ${fault} before challenging stale identity`, async () => {
+  const { options, calls } = scenarioFixture('C04', fault);
+  const result = await runSelfHealAcceptanceCase('C04', manifest(), options);
+  assert.equal(result.classification, 'BLOCKED'); assert.equal(result.errorCode, 'SELF_HEAL_ACCEPTANCE_LOCAL_MITIGATION_PREREQUISITE');
+  assert(!calls.some(call => ['trinity_stale_rollback', 'trinity_run'].includes(call[1][1])));
+  if (fault.startsWith('activation')) assert(!calls.some(call => call[1][1] === 'trinity_replace'));
+});
+for (const fault of ['stale-identity-changed', 'stale-rollback-applied', 'foreign-consumer']) test(`C04 still rejects ${fault} after successful activation`, async () => {
+  const { options } = scenarioFixture('C04', fault);
+  const result = await runSelfHealAcceptanceCase('C04', manifest(), options);
+  assert.equal(result.classification, 'FAILED'); assert.equal(result.errorCode, fault === 'foreign-consumer'
+    ? 'SELF_HEAL_ACCEPTANCE_CONSUMER_IDENTITY_MISMATCH' : 'SELF_HEAL_ACCEPTANCE_STALE_IDENTITY_CHANGED_STATE');
 });
 
 test('C05 requires a successful same-request consumer and unchanged exact replacement counters', async () => {

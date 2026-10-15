@@ -268,7 +268,7 @@ function finalStage(value) { return value?.trinity?.snapshot?.final; }
 /** An OS signal or a drain log alone cannot satisfy shutdown acceptance. */
 export function attestSelfHealShutdownReceipt(value, scenario, baseline, recovered, manifest, before, after) {
   const receipt = value?.receipt;
-  requireProof(value?.evidence === 'independent_postgres_readback' && receipt?.scenario === scenario
+  requireProof(value?.evidence === 'independent_postgres_redis_readback' && receipt?.scenario === scenario
     && receipt.sourceSha === manifest.receipt.sourceSha && receipt.processInstanceId === baseline.processInstanceId
     && receipt.deploymentId === manifest.services.find(pin => pin.role === 'worker').deploymentId
     && receipt.pid === baseline.pid && /^[1-9]\d{0,18}$/u.test(receipt.redisClientId ?? ''), 'SHUTDOWN_IDENTITY_DRIFT');
@@ -537,8 +537,11 @@ export async function runSelfHealAcceptanceCase(scenario, manifest, options = {}
       const afterWeb = await inspect('web');
       requireProof(result.result?.applied === false && hash(beforeWeb.promptRoute) === hash(afterWeb.promptRoute), 'CROSS_PROCESS_EFFECT');
     } else if (scenario === 'C04') {
-      await command('policy_allowed'); const original = inspection(await command('trinity_activate'));
-      const replacement = inspection(await command('trinity_replace')); const stale = (await command('trinity_stale_rollback')).observation;
+      await command('policy_allowed'); const activated = (await command('trinity_activate')).observation;
+      if (activated?.rejected === true || activated?.result?.applied !== true) block('LOCAL_MITIGATION_PREREQUISITE');
+      const original = activated.inspection; const replaced = (await command('trinity_replace')).observation;
+      if (replaced?.rejected === true || replaced?.result?.applied !== true) block('LOCAL_MITIGATION_PREREQUISITE');
+      const replacement = replaced.inspection; const stale = (await command('trinity_stale_rollback')).observation;
       requireProof(finalStage(original).mitigationId !== finalStage(replacement).mitigationId && stale.result?.rolledBack === false
         && finalStage(stale.inspection).mitigationId === finalStage(replacement).mitigationId, 'STALE_IDENTITY_CHANGED_STATE');
       const observed = await consumer(); requireProof(observed.consumerRun.mitigationBefore?.mitigationId === finalStage(replacement).mitigationId, 'CONSUMER_IDENTITY_MISMATCH');
