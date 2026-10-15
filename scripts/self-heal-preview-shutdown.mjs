@@ -93,7 +93,7 @@ export async function runSelfHealPreviewShutdown(operation, scenario, env, optio
     finally { clearTimeout(timer); }
   };
   const connectRedis = async () => {
-    redis = (options.createRedisClient ?? createClient)({ url: profile.proofTarget.redisUrl,
+    redis = (options.createRedisClient ?? createClient)({ url: env.REDIS_URL,
       disableOfflineQueue: true, socket: { connectTimeout: 500, reconnectStrategy: false } });
     redis.on('error', () => undefined); await withRedisDeadline(() => redis.connect());
   };

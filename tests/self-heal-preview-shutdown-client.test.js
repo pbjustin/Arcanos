@@ -1,17 +1,45 @@
 import { describe, expect, it, jest } from '@jest/globals';
+import { readFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { createClient } from 'redis';
-const profile = { proofTarget: { sourceCommit: 'a'.repeat(40), redisUrl: 'redis://test-user:test-password@redis.railway.internal:6379' },
-  ownership: { runId: 'shutdown-test-1544' } };
-jest.unstable_mockModule('../scripts/railway-self-heal-preview-profile.mjs', () => ({
-  resolveSelfHealPreviewProfile: () => profile,
-  bindSelfHealPreviewArtifact: value => value,
-  buildSelfHealPreviewDatabaseClientOptions: () => ({}),
-}));
-const { runSelfHealPreviewShutdown, parsePreviewShutdownProcess } = await import('../scripts/self-heal-preview-shutdown.mjs');
+import { resolveSelfHealPreviewProfile } from '../scripts/railway-self-heal-preview-profile.mjs';
+import { runSelfHealPreviewShutdown, parsePreviewShutdownProcess } from '../scripts/self-heal-preview-shutdown.mjs';
 const UUID = '11111111-1111-4111-8111-111111111111';
 const DEPLOYMENT = '22222222-2222-4222-8222-222222222222';
 const SERVER = 'c'.repeat(40);
+const id = digit => `${digit.repeat(8)}-${digit.repeat(4)}-4${digit.repeat(3)}-8${digit.repeat(3)}-${digit.repeat(12)}`;
+const databaseCertificate = readFileSync(new URL('./fixtures/self-heal-preview-database-ca.pem', import.meta.url), 'utf8');
+function environment(role, now) {
+  return {
+    ARCANOS_SELF_HEAL_PREVIEW_PROFILE: 'worker-coordinator-v1',
+    ARCANOS_SELF_HEAL_PREVIEW_RUN_ID: 'shutdown-test-1544',
+    ARCANOS_SELF_HEAL_PREVIEW_ISSUED_AT: new Date(now - 1_000).toISOString(),
+    ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT: new Date(now + 60_000).toISOString(),
+    ARCANOS_SELF_HEAL_PREVIEW_CONTROL_TOKEN: 'f'.repeat(64), ARCANOS_SELF_HEAL_PREVIEW_CONTROL_PORT: '8791',
+    ARCANOS_SELF_HEAL_PREVIEW_STARTUP_MODE: 'normal', ARCANOS_SELF_HEAL_PREVIEW_DATABASE_CERTIFICATE_PEM: databaseCertificate,
+    ARCANOS_SELF_HEAL_PREVIEW_WEB_SERVICE_ID: id('3'), ARCANOS_SELF_HEAL_PREVIEW_WORKER_SERVICE_ID: id('4'),
+    ARCANOS_BACKSTAGE_HEAVY_PROOF_TARGET: 'dedicated-backstage-heavy-preview-v1',
+    ARCANOS_BACKSTAGE_HEAVY_PROOF_RUN_ID: 'shutdown-test-1544', ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA: 'a'.repeat(40),
+    ARCANOS_BACKSTAGE_HEAVY_POSTGRES_SERVICE_ID: id('6'), ARCANOS_BACKSTAGE_HEAVY_POSTGRES_SERVICE_NAME: 'Postgres',
+    ARCANOS_BACKSTAGE_HEAVY_POSTGRES_INTERNAL_HOST: 'postgres.railway.internal',
+    ARCANOS_BACKSTAGE_HEAVY_REDIS_SERVICE_ID: id('7'), ARCANOS_BACKSTAGE_HEAVY_REDIS_SERVICE_NAME: 'Redis',
+    ARCANOS_BACKSTAGE_HEAVY_REDIS_INTERNAL_HOST: 'redis.railway.internal',
+    ARCANOS_PROCESS_KIND: role, ARCANOS_PREVIEW_ISOLATION: 'true', NODE_ENV: 'production',
+    FORCE_MOCK: 'true', ALLOW_MOCK_OPENAI: 'true', OPENAI_API_KEY_REQUIRED: 'false',
+    OPENAI_BASE_URL: role === 'worker' ? 'http://127.0.0.1:8766/v1' : 'http://127.0.0.1:9/v1',
+    ...(role === 'worker' ? { ARCANOS_PREVIEW_OPENAI_FIXTURE: 'backstage-heavy-compact-retry-v1' } : {}),
+    ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY: `${'A'.repeat(43)}=`,
+    ...(role === 'web' ? { ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED: 'true',
+      ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN: 'synthetic-web-access-token-purpose-only',
+      ARCANOS_JOB_READ_CAPABILITY_SECRET: 'synthetic-job-result-read-purpose-only' } : {}),
+    DATABASE_URL: 'postgresql://synthetic-user:synthetic-password@postgres.railway.internal:5432/railway',
+    REDIS_URL: 'redis://default:synthetic-redis-password@redis.railway.internal:6379',
+    RAILWAY_PROJECT_ID: id('1'), RAILWAY_PROJECT_NAME: 'arc-pr1544-heavy-shutdown',
+    RAILWAY_ENVIRONMENT_ID: id('2'), RAILWAY_ENVIRONMENT_NAME: 'backstage-heavy-pr-1544-e2e',
+    RAILWAY_SERVICE_ID: id(role === 'worker' ? '4' : '3'), RAILWAY_SERVICE_NAME: `arcanos-${role}-pr1544-heavy`,
+    RAILWAY_DEPLOYMENT_ID: DEPLOYMENT,
+  };
+}
 function fixture(config = {}) {
   let clock = Date.now(); let released = false; let signalled = false;
   const commands = [];
@@ -51,7 +79,7 @@ function fixture(config = {}) {
       return { observation: structuredClone(worker) };
     }),
   };
-  return { receipt, journal, redis, options, commands, env: { ARCANOS_PROCESS_KIND: 'worker', RAILWAY_DEPLOYMENT_ID: DEPLOYMENT } };
+  return { receipt, journal, redis, options, commands, env: environment(config.role ?? 'worker', clock) };
 }
 describe('closed independent shutdown SSH operation', () => {
   it('requires actual overlap, signals the verified wrapper, and joins independent dependency observations before release', async () => {
@@ -66,6 +94,17 @@ describe('closed independent shutdown SSH operation', () => {
     expect(phases.indexOf('coordinator_drained')).toBeLessThan(phases.indexOf('redis_stop_begin'));
     expect(phases.at(-1)).toBe('independent_process_exited'); expect(f.redis.destroy).toHaveBeenCalledTimes(1);
     expect(f.redis.sendCommand).toHaveBeenCalledWith(['CLIENT', 'LIST', 'ID', '41'], { timeout: 500 });
+    expect(resolveSelfHealPreviewProfile('worker', f.env).proofTarget).not.toHaveProperty('redisUrl');
+    expect(f.options.createRedisClient).toHaveBeenCalledWith({ url: f.env.REDIS_URL,
+      disableOfflineQueue: true, socket: { connectTimeout: 500, reconnectStrategy: false } });
+  });
+  it.each(['missing', 'foreign'])('rejects a %s Redis target before acquiring a barrier or invoking clients', async target => {
+    const f = fixture();
+    if (target === 'missing') delete f.env.REDIS_URL;
+    else f.env.REDIS_URL = 'redis://default:synthetic-redis-password@foreign.railway.internal:6379';
+    await expect(runSelfHealPreviewShutdown('held', 'A06', f.env, f.options)).rejects.toThrow('BACKSTAGE_HEAVY_PROOF_DATA_URL_INVALID');
+    expect(f.journal.holdBarrier).not.toHaveBeenCalled(); expect(f.options.createRedisClient).not.toHaveBeenCalled();
+    expect(f.options.local).not.toHaveBeenCalled(); expect(f.options.signalProcess).not.toHaveBeenCalled();
   });
   it.each([{ neverHeld: true }, { expired: true }, { readyDuringShutdown: true }])('preserves missing evidence and releases its own barrier %#', async config => {
     const f = fixture(config);
@@ -75,7 +114,7 @@ describe('closed independent shutdown SSH operation', () => {
     if (config.neverHeld) { expect(f.options.signalProcess).not.toHaveBeenCalled(); expect(f.commands).toContain('shutdown_cancel'); }
   });
   it('recovers Redis closure independently through Web readback without claiming a Web provider is the Worker provider', async () => {
-    const f = fixture({ redisAbsent: true }); f.env.ARCANOS_PROCESS_KIND = 'web';
+    const f = fixture({ redisAbsent: true, role: 'web' });
     f.receipt.events.push({ phase: 'independent_held_probe', at: new Date().toISOString(), data: { redisServerRunId: SERVER } },
       { phase: 'redis_stopped', at: new Date().toISOString(), data: { redisConnected: false } });
     const result = await runSelfHealPreviewShutdown('receipt', 'A06', f.env, f.options);
@@ -83,9 +122,11 @@ describe('closed independent shutdown SSH operation', () => {
       data: { redisClientPresent: false, redisServerRunId: SERVER } });
     expect(f.options.local).not.toHaveBeenCalled(); expect(f.options.signalProcess).not.toHaveBeenCalled();
     expect(f.journal.append.mock.calls[0][1]).not.toHaveProperty('providerHealthy');
+    expect(f.options.createRedisClient).toHaveBeenCalledWith({ url: f.env.REDIS_URL,
+      disableOfflineQueue: true, socket: { connectTimeout: 500, reconnectStrategy: false } });
   });
   it('rejects Redis server replacement instead of crediting absence on an unrelated server', async () => {
-    const f = fixture({ redisAbsent: true, changedServer: true }); f.env.ARCANOS_PROCESS_KIND = 'web';
+    const f = fixture({ redisAbsent: true, changedServer: true, role: 'web' });
     f.receipt.events.push({ phase: 'independent_held_probe', at: new Date().toISOString(), data: { redisServerRunId: SERVER } },
       { phase: 'redis_stopped', at: new Date().toISOString(), data: { redisConnected: false } });
     await expect(runSelfHealPreviewShutdown('receipt', 'A06', f.env, f.options)).rejects.toThrow('SELF_HEAL_PREVIEW_SHUTDOWN_EVIDENCE_FAILED');
@@ -135,7 +176,7 @@ describe('shutdown Redis connection and reply deadlines', () => {
       });
     });
     await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
-    const f = fixture(); f.env.ARCANOS_PROCESS_KIND = 'web';
+    const f = fixture({ role: 'web' });
     f.receipt.events.push({ phase: 'independent_held_probe', at: new Date().toISOString(), data: { redisServerRunId: SERVER } },
       { phase: 'redis_stopped', at: new Date().toISOString(), data: { redisConnected: false } });
     let client; let timer;
