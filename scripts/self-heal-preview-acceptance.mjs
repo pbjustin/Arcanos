@@ -209,8 +209,10 @@ export function createSelfHealAcceptanceTransport(manifest, options = {}) {
         || (argv[0] === 'command' && ['release_observation', 'trinity_rollback', 'policy_restore', 'coordinator_start'].includes(argv[1]))))) block('RESTORATION_INVALID');
       const target = (await targets(restoring))[role];
       if (!target.instanceId) block('TARGET_NOT_RUNNING');
+      // Railway SSH adds session-only authority and context absent from the application parent.
       const stdout = await cli(['ssh', '--project', manifest.receipt.projectId, '--environment', manifest.receipt.environmentId,
-        '--service', target.serviceId, '--deployment-instance', target.instanceId, '--', 'node', 'scripts/self-heal-preview-control.mjs', ...argv]);
+        '--service', target.serviceId, '--deployment-instance', target.instanceId, '--',
+        'env', '-u', 'RAILWAY_API_TOKEN', '-u', 'RAILWAY_ENV', 'node', 'scripts/self-heal-preview-control.mjs', ...argv]);
       let value; try { value = JSON.parse(stdout.trim()); } catch { block('REMOTE_RECEIPT_INVALID'); }
       if (value?.target?.role !== role || value.target.sourceSha !== manifest.receipt.sourceSha || value.target.runId !== manifest.receipt.runId
         || value.target.projectId !== manifest.receipt.projectId || value.target.environmentId !== manifest.receipt.environmentId
@@ -234,7 +236,7 @@ export function createSelfHealAcceptanceTransport(manifest, options = {}) {
       try {
         await cli(['ssh', '--project', manifest.receipt.projectId, '--environment', manifest.receipt.environmentId,
           '--service', target.serviceId, '--deployment-instance', target.instanceId, '--',
-          'node', 'scripts/self-heal-preview-control.mjs', 'shutdown-held', scenario], 30_000);
+          'env', '-u', 'RAILWAY_API_TOKEN', '-u', 'RAILWAY_ENV', 'node', 'scripts/self-heal-preview-control.mjs', 'shutdown-held', scenario], 30_000);
       } catch (error) {
         if (!(error instanceof SelfHealAcceptanceError) || error.message !== 'SELF_HEAL_ACCEPTANCE_TRANSPORT_UNAVAILABLE') throw error;
         transportClosed = true;

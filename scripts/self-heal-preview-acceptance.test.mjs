@@ -119,7 +119,8 @@ test('arbitrarySQL,shell,URL,synthetic-successandproductionrestartareinexpressib
   let calls = 0;
   const transport = createSelfHealAcceptanceTransport(manifest(), { now: () => NOW, execute: true, allowNetwork: true,
     readHead: async () => 'a'.repeat(40), command: async () => { calls += 1; } });
-  for (const args of [['command', 'trinity_fresh_success'], ['shell', 'rm'], ['command', 'https://example.invalid'], ['fenced-job', 'create', 'E02', '3']]) {
+  for (const args of [['command', 'trinity_fresh_success'], ['shell', 'rm'], ['command', 'https://example.invalid'], ['fenced-job', 'create', 'E02', '3'],
+    ['env', '-u', 'ARCANOS_SELF_HEAL_PREVIEW_PROFILE', 'inspect'], ['inspect', 'RAILWAY_API_TOKEN=fixture-token']]) {
     await assert.rejects(transport.remote('worker', args), /OPERATION_INVALID/u);
   }
   await assert.rejects(transport.restart('postgres'), /RESTART_TARGET_INVALID/u); assert.equal(calls, 0);
@@ -237,6 +238,23 @@ function cliFixture() {
   return { current, options, transport: createSelfHealAcceptanceTransport(m, options) };
 }
 
+test('Worker, Web and restoration SSH commands discard only fixed session context before the control client', async () => {
+  const { current, transport } = cliFixture();
+  await transport.remote('worker', ['inspect']);
+  await transport.remote('web', ['inspect']);
+  await transport.restore(['command', 'policy_restore']);
+  const calls = current.calls.filter(args => args[0] === 'ssh');
+  assert.equal(calls.length, 3);
+  for (const [index, args] of calls.entries()) {
+    assert.deepEqual(args.slice(args.indexOf('--') + 1), [
+      'env', '-u', 'RAILWAY_API_TOKEN', '-u', 'RAILWAY_ENV', 'node', 'scripts/self-heal-preview-control.mjs',
+      ...(index === 2 ? ['command', 'policy_restore'] : ['inspect']),
+    ]);
+    assert.equal(args[args.indexOf('--service') + 1], id(index === 1 ? 3 : 4));
+    assert.equal(args[args.indexOf('--deployment-instance') + 1], id(index === 1 ? 20 : 21));
+  }
+});
+
 function diagnosticCliFixture(diagnostic) {
   const fixture = cliFixture(); const original = fixture.options.command;
   fixture.options.command = async (...args) => {
@@ -343,7 +361,9 @@ test('held shutdown is one exact Worker operation and cannot target other scenar
   assert.equal(result.effectEvidence, 'independent_shutdown_receipt_required');
   const calls = current.calls.filter(args => args[0] === 'ssh');
   assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0].slice(-4), ['node', 'scripts/self-heal-preview-control.mjs', 'shutdown-held', 'A06']);
+  assert.deepEqual(calls[0].slice(calls[0].indexOf('--') + 1), [
+    'env', '-u', 'RAILWAY_API_TOKEN', '-u', 'RAILWAY_ENV', 'node', 'scripts/self-heal-preview-control.mjs', 'shutdown-held', 'A06',
+  ]);
   assert.equal(calls[0][calls[0].indexOf('--service') + 1], id(4));
   assert.equal(calls[0][calls[0].indexOf('--deployment-instance') + 1], id(21));
   await assert.rejects(transport.shutdownHeld('E06'), /SHUTDOWN_BUDGET_EXHAUSTED/u);
