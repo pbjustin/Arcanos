@@ -1,7 +1,8 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { readFileSync } from 'node:fs';
 import { runSelfHealPreviewControl } from '../scripts/self-heal-preview-control.mjs';
-import { bindSelfHealPreviewArtifact, resolveSelfHealPreviewProfile } from '../scripts/railway-self-heal-preview-profile.mjs';
+import { bindSelfHealPreviewArtifact, buildSelfHealPreviewFixtureEnvironment, resolveSelfHealPreviewProfile } from '../scripts/railway-self-heal-preview-profile.mjs';
+import { startSelfHealPreviewOpenAIFixture } from '../scripts/railway-backstage-heavy-openai-fixture.mjs';
 
 const id = digit => `${digit.repeat(8)}-${digit.repeat(4)}-4${digit.repeat(3)}-8${digit.repeat(3)}-${digit.repeat(12)}`;
 const databaseCertificate = readFileSync(new URL('./fixtures/self-heal-preview-database-ca.pem', import.meta.url), 'utf8');
@@ -64,7 +65,7 @@ function overlapFixture(env, config = {}) {
     consumerRun: null, observation: { holding: false },
     trinity: { snapshot: { final: { activeAction: 'bypass_final_stage', mitigationId: 1, verificationSuccesses: 0 } } } };
   const provider = { runId: env.ARCANOS_SELF_HEAL_PREVIEW_RUN_ID, sourceSha: env.ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA,
-    issuedAt: env.ARCANOS_SELF_HEAL_PREVIEW_ISSUED_AT, expiresAt: env.ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT,
+    issuedAt: Date.parse(env.ARCANOS_SELF_HEAL_PREVIEW_ISSUED_AT), expiresAt: Date.parse(env.ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT),
     expired: false, inFlight: null, nextFault: null };
   const fetchImpl = jest.fn(async (url, request) => {
     const command = request.body ? JSON.parse(request.body).command : 'inspect';
@@ -153,6 +154,40 @@ describe('fixed self-heal preview SSH control client', () => {
     else expect(result.overlap).toMatchObject({ held: { consumer: { observation: { holding: true } } },
       cleanup: { observation: 'released' } });
   });
+  it('accepts the actual provider numeric lease envelope for both bounded overlap controls', async () => {
+    const env = environment();
+    const provider = await startSelfHealPreviewOpenAIFixture({
+      env: buildSelfHealPreviewFixtureEnvironment(resolveSelfHealPreviewProfile('worker', env)), port: 0,
+    });
+    try {
+      const actualEnvelope = provider.inspect();
+      expect(actualEnvelope).toMatchObject({
+        issuedAt: Date.parse(env.ARCANOS_SELF_HEAL_PREVIEW_ISSUED_AT),
+        expiresAt: Date.parse(env.ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT), expired: false,
+      });
+      for (const operation of ['replacement-race', 'dependency-overlap']) {
+        const fixture = overlapFixture(env); Object.assign(fixture.provider, actualEnvelope);
+        const result = await runSelfHealPreviewControl([operation], env, fixture);
+        expect(result.overlap).toMatchObject({ status: 'completed', cleanup: { provider: 'released' } });
+        expect(result.overlap.providerBaseline.issuedAt).toBe(actualEnvelope.issuedAt);
+        expect(result.overlap.providerBaseline.expiresAt).toBe(actualEnvelope.expiresAt);
+      }
+    } finally { await provider.close(); }
+  }, 5_000);
+  it.each(['issuedAt', 'expiresAt', 'issuedAtString', 'expiresAtString', 'expired'])(
+    'rejects provider lease drift before arming or releasing effects: %s', async defect => {
+      const env = environment(); const fixture = overlapFixture(env);
+      if (defect === 'expired') fixture.provider.expired = true;
+      else if (defect.endsWith('String')) {
+        const field = defect.replace('String', ''); fixture.provider[field] = new Date(fixture.provider[field]).toISOString();
+      } else fixture.provider[defect] += 1;
+      const result = await runSelfHealPreviewControl(['dependency-overlap'], env, fixture);
+      expect(result.overlap).toMatchObject({ status: 'incomplete', providerBaseline: null, held: null,
+        reasonCode: 'SELF_HEAL_PREVIEW_OVERLAP_NOT_ESTABLISHED', cleanup: { provider: 'not_armed', observation: 'not_armed' } });
+      expect(fixture.commands.map(value => value.command)).toEqual(['inspect', 'inspect']);
+      expect(fixture.provider.inFlight).toBeNull(); expect(fixture.provider.nextFault).toBeNull();
+      expect(fixture.worker.consumerRun).toBeNull(); expect(fixture.worker.observation.holding).toBe(false);
+    });
   it('rejects changed process authority before replacement while still releasing its owned provider hold', async () => {
     const env = environment(); const fixture = overlapFixture(env, { drift: true });
     const result = await runSelfHealPreviewControl(['replacement-race'], env, fixture);

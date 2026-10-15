@@ -64,8 +64,8 @@ async function runLocalOverlap(operation, env, options) {
     const value = receipt.observation?.inspection ?? receipt.observation;
     if (receipt.observation?.rejected === true) fail();
     if (argv[0] !== 'provider' && processInstanceId && value?.processInstanceId !== processInstanceId) fail();
-    if (argv[0] === 'provider' && (value?.issuedAt !== env.ARCANOS_SELF_HEAL_PREVIEW_ISSUED_AT
-      || value?.expiresAt !== env.ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT || value.expired !== false)) fail();
+    if (argv[0] === 'provider' && (value?.issuedAt !== Date.parse(env.ARCANOS_SELF_HEAL_PREVIEW_ISSUED_AT)
+      || value?.expiresAt !== Date.parse(env.ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT) || value.expired !== false)) fail();
     return value;
   };
   const boundedPoll = async (read, accept, timeoutMs, attempts) => {
