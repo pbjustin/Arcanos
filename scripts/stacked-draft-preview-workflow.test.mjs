@@ -47,6 +47,16 @@ const runInline = (step, directory, environment = {}) => spawnSync(process.execP
     MOCK_COMMAND_LOG: path.join(directory, 'commands.jsonl'), ...environment },
 });
 
+for (const logPath of [undefined, '']) test(`offline guard diagnoses ${logPath === undefined ? 'missing' : 'empty'} command log before fixture execution`, () => {
+  const result = spawnSync(process.execPath, ['--import', processGuard, '--input-type=module'], {
+    input: "throw new Error('FIXTURE_BODY_MUST_NOT_EXECUTE');", encoding: 'utf8', timeout: 5000,
+    env: { OFFLINE_PROCESS_FIXTURE: 'deny', ...(logPath === undefined ? {} : { MOCK_COMMAND_LOG: logPath }) },
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /OFFLINE_FIXTURE_LOG_REQUIRED/u);
+  assert.doesNotMatch(result.stderr, /ERR_INVALID_ARG_TYPE|FIXTURE_BODY_MUST_NOT_EXECUTE/u);
+});
+
 test('offline workflow fixtures deny unexpected process and provider calls before any native fallback', () => {
   for (const program of [
     "import { execFileSync } from 'node:child_process'; execFileSync('docker', ['login', 'ghcr.io']);",

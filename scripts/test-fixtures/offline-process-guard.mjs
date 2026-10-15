@@ -12,6 +12,7 @@ import dgram from 'node:dgram';
 
 const mode = process.env.OFFLINE_PROCESS_FIXTURE;
 assert.ok(['publisher', 'build-context', 'deny'].includes(mode), 'OFFLINE_FIXTURE_MODE_REQUIRED');
+assert.ok(process.env.MOCK_COMMAND_LOG, 'OFFLINE_FIXTURE_LOG_REQUIRED');
 const log = event => appendFileSync(process.env.MOCK_COMMAND_LOG, JSON.stringify(event) + '\n');
 const deny = () => { throw new Error('OFFLINE_FIXTURE_EXTERNAL_EFFECT_BLOCKED'); };
 const nativeSpawnSync = childProcess.spawnSync;

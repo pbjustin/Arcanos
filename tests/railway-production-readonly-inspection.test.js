@@ -360,8 +360,12 @@ describe('sanitized receipt retention', () => {
 
   it('refuses symlinked output and an oversized receipt', () => {
     const dir = directory(); const target = directory(); const other = join(target, 'test-only-protected'); writeFileSync(other, 'preserve');
-    // Directory junctions exercise a real link without Windows symlink elevation.
-    symlinkSync(target, join(dir, INSPECTION_RECEIPT_FILENAME), 'junction');
+    const output = join(dir, INSPECTION_RECEIPT_FILENAME);
+    // POSIX must exercise a file target. Windows uses a directory junction
+    // without elevation; that branch does not prove file-symlink protection.
+    if (process.platform === 'win32') symlinkSync(target, output, 'junction');
+    else symlinkSync(other, output, 'file');
+    expect(statSync(output).isFile()).toBe(process.platform !== 'win32');
     expect(() => writeProductionInspectionReceipt({ status: 'BLOCKED' }, dir)).toThrow();
     expect(readFileSync(other, 'utf8')).toBe('preserve');
     expect(() => writeProductionInspectionReceipt({ definition: 'x'.repeat(65536) }, directory())).toThrow('RECEIPT_TOO_LARGE');

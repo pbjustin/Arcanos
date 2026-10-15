@@ -380,8 +380,14 @@ export async function handlePrompt(
       });
 
       if (promptRoutePolicy.mode === 'normal') {
-        const controls = await getKillSwitchStatus();
-        const fastTripResult = controls.frozen || controls.autonomyLevel < 3 || getRequestAbortSignal()?.aborted
+        let controls: Awaited<ReturnType<typeof getKillSwitchStatus>> | null = null;
+        try { controls = await getKillSwitchStatus(); }
+        catch {
+          req.logger?.warn?.('prompt.route.mitigation_authorization_unavailable', {
+            route: PROMPT_ROUTE_PATH, reasonCode: 'safety_control_read_failed'
+          });
+        }
+        const fastTripResult = !controls || controls.frozen || controls.autonomyLevel < 3 || getRequestAbortSignal()?.aborted
           ? null
           : recordPromptRouteTimeoutIncident(timeoutKind, PROMPT_MAX_TOKENS);
         if (fastTripResult?.applied) {

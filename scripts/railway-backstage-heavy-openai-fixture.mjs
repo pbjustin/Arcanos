@@ -699,6 +699,9 @@ export async function startSelfHealPreviewOpenAIFixture(options = {}) {
   };
   let active = null;
   let closePromise = null;
+  const closed = Promise.withResolvers();
+  // Programmatic users may await close() only after automatic expiry.
+  void closed.promise.catch(() => {});
   let expiryTimer;
   const inspect = () => ({
     schemaVersion: 1, profile: 'worker-coordinator-v1', runId: config.runId,
@@ -886,6 +889,7 @@ export async function startSelfHealPreviewOpenAIFixture(options = {}) {
       drainTimer.unref?.();
       server.once('close', () => clearTimeout(drainTimer));
     });
+    closePromise.then(closed.resolve, closed.reject);
     return closePromise;
   };
   await new Promise((resolve, reject) => {
@@ -897,7 +901,7 @@ export async function startSelfHealPreviewOpenAIFixture(options = {}) {
     close().catch(() => server.closeAllConnections());
   }, Math.max(1, config.expiresAt - now()));
   expiryTimer.unref?.();
-  return { server, state, inspect, close };
+  return { server, state, inspect, close, closed: closed.promise };
 }
 
 async function runFixtureChild() {
@@ -973,7 +977,7 @@ async function runSelfHealFixtureChild() {
     process.once('SIGTERM', shutdown);
     process.once('SIGINT', shutdown);
     runtime.server.once('error', onError);
-    runtime.server.once('close', () => { cleanup(); resolve(); });
+    runtime.closed.then(() => { cleanup(); resolve(); }, onError);
   });
 }
 
