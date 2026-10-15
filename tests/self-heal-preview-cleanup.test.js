@@ -55,7 +55,7 @@ function status(partial = false) {
   };
 }
 function harness(options = {}) {
-  let clockMs = options.now ?? NOW; let statuses = 0; let lists = 0;
+  let clockMs = options.now ?? NOW; let inventories = 0; let lists = 0;
   let current = options.initialStatus ?? status();
   const events = [];
   const command = jest.fn(async (_file, args) => {
@@ -66,9 +66,7 @@ function harness(options = {}) {
     }
     if (options.commandError) throw new Error(options.commandError);
     if (commandName === 'status') {
-      if (current?.deletedAt && options.allowScheduledStatus !== true) throw new Error('Project is deleted.');
-      const payload = options.status?.(++statuses, structuredClone(current)) ?? current;
-      return { stdout: JSON.stringify(payload), stderr: '' };
+      return { stdout: JSON.stringify(current), stderr: '' };
     }
     if (commandName === 'api') {
       if (!/^query SelfHealPreviewCleanupOwnerInventory\(\$after: String\) \{/u.test(args[1])
@@ -80,7 +78,8 @@ function harness(options = {}) {
       if (Object.keys(variables).join() !== 'after' || (variables.after !== null && typeof variables.after !== 'string')) {
         throw new Error('UNEXPECTED_OWNER_INVENTORY_VARIABLES');
       }
-      const project = current && { ...current, buckets: Array.isArray(current.buckets) ? connection(current.buckets) : current.buckets };
+      const payload = options.inventory?.(++inventories, structuredClone(current)) ?? current;
+      const project = payload && { ...payload, buckets: Array.isArray(payload.buckets) ? connection(payload.buckets) : payload.buckets };
       return { stdout: JSON.stringify(options.api?.(project, variables.after) ?? { data: {
         me: { id: 'e1c58b83-8740-4318-9ee2-780c2a6f4e8b' }, projects: connection(project ? [project] : []),
       } }), stderr: '' };
@@ -213,7 +212,7 @@ describe('receipt-bound self-heal preview cleanup and fixed-expiry watchdog', ()
     expect(JSON.stringify(h.events)).not.toContain('fixture-management-secret');
   });
   it('allows cleanup after source head changes and receipt expiry without adopting another target', async () => {
-    const h = harness({ now: NOW + 3 * 60 * 60 * 1000, status: (_attempt, payload) => {
+    const h = harness({ now: NOW + 3 * 60 * 60 * 1000, inventory: (_attempt, payload) => {
       const instance = payload.environments.edges[0].node.serviceInstances.edges[0];
       if (instance) instance.node.latestDeployment = { meta: { commitHash: 'd'.repeat(40) } }; return payload;
     } });
@@ -226,8 +225,15 @@ describe('receipt-bound self-heal preview cleanup and fixed-expiry watchdog', ()
     const partial = status(true); partial.services.edges.push({ node: { id: ID.redis, name: 'Redis' } });
     expect(attestSelfHealPreviewCleanupTarget(partial, receipt()).serviceCount).toBe(1);
   });
+  it('rejects a different project as target but never deletes it from a complete owner inventory', async () => {
+    const payload = status(); payload.id = ID.web;
+    expect(() => attestSelfHealPreviewCleanupTarget(payload, receipt())).toThrow('SELF_HEAL_PREVIEW_CLEANUP_PROJECT_MISMATCH');
+    const h = harness({ inventory: () => payload });
+    await expect(runSelfHealPreviewCleanup(execute(), h)).resolves.toMatchObject({ absenceVerified: true, deletionRequested: false });
+    expect(h.command.mock.calls.some(call => isMutation(call[1]))).toBe(false);
+  });
   it.each([
-    payload => { payload.id = ID.web; }, payload => { payload.name = 'Arcanos Live PR 1527'; },
+    payload => { payload.name = 'Arcanos Live PR 1527'; },
     payload => { payload.workspaceId = ID.web; }, payload => { payload.environments.edges.push(payload.environments.edges[0]); },
     payload => { payload.services.edges[0].node.name = 'foreign-service'; },
     payload => { payload.environments.edges[0].node.volumeInstances.edges[0].node.serviceId = ID.web; },
@@ -235,14 +241,14 @@ describe('receipt-bound self-heal preview cleanup and fixed-expiry watchdog', ()
     payload => { payload.buckets = [{ id: ID.web }]; },
     payload => { payload.services.pageInfo = { hasNextPage: true }; },
   ])('refuses unrelated or incomplete resources %# with zero deletion', async mutate => {
-    const payload = status(); mutate(payload); const h = harness({ status: () => payload });
+    const payload = status(); mutate(payload); const h = harness({ inventory: () => payload });
     await expect(runSelfHealPreviewCleanup(execute(), h)).rejects.toThrow(/^SELF_HEAL_PREVIEW_CLEANUP_/u);
     expect(h.command.mock.calls.some(call => isMutation(call[1]))).toBe(false);
   });
   it('rechecks resource ownership immediately before deletion and rejects drift', async () => {
-    const h = harness({ status: attempt => { const payload = status(); if (attempt === 2) payload.name = 'different-project'; return payload; } });
+    const h = harness({ inventory: attempt => { const payload = status(); if (attempt === 2) payload.name = 'different-project'; return payload; } });
     await expect(runSelfHealPreviewCleanup(execute(), h)).rejects.toThrow('SELF_HEAL_PREVIEW_CLEANUP_PROJECT_MISMATCH');
-    expect(h.command.mock.calls.filter(call => call[1][0] === 'status')).toHaveLength(2);
+    expect(h.command.mock.calls.filter(call => call[1][0] === 'api')).toHaveLength(2);
     expect(h.command.mock.calls.some(call => isMutation(call[1]))).toBe(false);
   });
   it('arms one fixed-expiry watchdog then independently reattests before delete', async () => {
@@ -318,6 +324,25 @@ describe('receipt-bound self-heal preview cleanup and fixed-expiry watchdog', ()
     expect(h.command.mock.calls.some(call => call[1][0] === 'api')).toBe(true);
     expect(h.command.mock.calls.filter(call => call[1][0] === 'delete')).toHaveLength(1);
   });
+  it.each(['owner', 'services', 'volumes', 'buckets', 'environments', 'serviceInstances', 'volumeInstances'])(
+    'never lets complete CLI inventory bypass strict owner inventory %s before cleanup', async fault => {
+      const h = harness({ api: project => {
+        const data = { me: { id: 'e1c58b83-8740-4318-9ee2-780c2a6f4e8b' }, projects: connection([project]) };
+        if (fault === 'owner') data.me.id = ID.web;
+        else {
+          const collection = ['serviceInstances', 'volumeInstances'].includes(fault)
+            ? project.environments.edges[0].node[fault] : project[fault];
+          delete collection.pageInfo;
+        }
+        return { data };
+      } });
+      await expect(runSelfHealPreviewCleanup(execute(), h)).rejects.toThrow(fault === 'owner'
+        ? 'SELF_HEAL_PREVIEW_CLEANUP_OWNER_IDENTITY_MISMATCH' : 'SELF_HEAL_PREVIEW_CLEANUP_INCOMPLETE_INVENTORY');
+      expect(h.command.mock.calls.some(call => isMutation(call[1]))).toBe(false);
+      expect(h.command.mock.calls.some(call => call[1][0] === 'status')).toBe(false);
+      expect(h.events.some(event => event.resourceAbsenceVerified || event.absenceVerified)).toBe(false);
+    }
+  );
   it('never accepts filtered project-null/list absence while owner includeDeleted inventory retains volumes', async () => {
     const current = status(); current.deletedAt = new Date(NOW + 48 * 60 * 60 * 1000).toISOString();
     const h = harness({ initialStatus: current, refuseResourceDelete: true, list: () => [],
@@ -402,23 +427,22 @@ describe('receipt-bound self-heal preview cleanup and fixed-expiry watchdog', ()
     expect(h.events.some(event => event.resourceAbsenceVerified === true)).toBe(false);
   });
   it('uses the tighter ongoing absence-poll deadline for paginated lookup commands', async () => {
+    let reads = 0;
     const h = harness({ retainServices: true,
-      status: (attempt, value) => { if (attempt >= 7) delete value.volumes; return value; },
       api: value => {
-        h.advance(Math.min(14_000, NOW + 60_000 - h.now()));
+        if (++reads >= 7) h.advance(Math.min(14_000, NOW + 60_000 - h.now()));
         return { data: { me: { id: 'e1c58b83-8740-4318-9ee2-780c2a6f4e8b' }, projects: projectPage([value]) } };
       },
     });
     await expect(runSelfHealPreviewCleanup(execute(), h)).rejects.toThrow('SELF_HEAL_PREVIEW_CLEANUP_RESOURCE_ABSENCE_UNCONFIRMED');
     expect(h.now()).toBe(NOW + 60_000);
-    expect(h.command.mock.calls.filter(call => call[1][0] === 'api').map(call => call[2].timeout))
+    expect(h.command.mock.calls.filter(call => call[1][0] === 'api').slice(6).map(call => call[2].timeout))
       .toEqual([15_000, 15_000, 15_000, 12_000]);
     expect(h.command.mock.calls.filter(call => isMutation(call[1])).every(call => call[1][0] === 'service')).toBe(true);
     expect(h.events.some(event => event.resourceAbsenceVerified === true)).toBe(false);
   });
   it('cleans only the bound project found after 100 unrelated projects', async () => {
-    const h = harness({ status: (_attempt, value) => { delete value.volumes; return value; },
-      api: (value, after) => ({ data: { me: { id: 'e1c58b83-8740-4318-9ee2-780c2a6f4e8b' },
+    const h = harness({ api: (value, after) => ({ data: { me: { id: 'e1c58b83-8740-4318-9ee2-780c2a6f4e8b' },
         projects: after === null ? projectPage(unrelatedProjects(1, 100), 'page-100') : projectPage([value]) } }),
     });
     const result = await runSelfHealPreviewCleanup(execute(), h);
@@ -864,7 +888,7 @@ describe('receipt-bound self-heal preview cleanup and fixed-expiry watchdog', ()
     expect(h.now()).toBe(NOW + 60_000); expect(h.command.mock.calls.filter(call => call[1][0] === 'delete')).toHaveLength(1);
   });
   it('rechecks ownership between service deletions and stops before a new foreign resource', async () => {
-    const h = harness({ status: (attempt, current) => {
+    const h = harness({ inventory: (attempt, current) => {
       if (attempt === 4) current.services.edges.push({ node: { id: ID.pgVolumeInstance, name: 'foreign-service' } });
       return current;
     } });
@@ -872,16 +896,16 @@ describe('receipt-bound self-heal preview cleanup and fixed-expiry watchdog', ()
     const mutations = h.command.mock.calls.map(call => call[1]).filter(isMutation);
     expect(mutations).toEqual([['service', 'delete', '--project', ID.project, '--environment', ID.environment, '--service', ID.web, '--yes', '--json']]);
   });
-  it('supplements CLI projections missing global volumes with the fixed owned metadata read', async () => {
-    const h = harness({ status: (_attempt, current) => { delete current.volumes; return current; } });
+  it('reads global volumes only through the fixed owner-verified inventory query', async () => {
+    const h = harness();
     const result = await runSelfHealPreviewCleanup(execute(), h);
     expect(result.resourceAbsenceVerified).toBe(true);
     expect(h.command.mock.calls.some(call => call[1][0] === 'api')).toBe(true);
+    expect(h.command.mock.calls.some(call => call[1][0] === 'status')).toBe(false);
     expect(h.events.find(event => event.status === 'OWNERSHIP_RECHECKED').volumeDeleteRequests).toEqual([]);
   });
   it('fails closed on read-query errors without reflecting provider diagnostics or deleting resources', async () => {
-    const h = harness({ status: (_attempt, current) => { delete current.volumes; return current; },
-      api: () => ({ data: { project: null }, errors: [{ message: 'confidential-diagnostic-marker' }] }) });
+    const h = harness({ api: () => ({ data: { project: null }, errors: [{ message: 'confidential-diagnostic-marker' }] }) });
     const error = await runSelfHealPreviewCleanup(execute(), h).catch(error => error);
     expect(error.message).toBe('SELF_HEAL_PREVIEW_CLEANUP_INVENTORY_QUERY_FAILED');
     expect(JSON.stringify(error.receipt)).not.toContain('confidential-diagnostic-marker');

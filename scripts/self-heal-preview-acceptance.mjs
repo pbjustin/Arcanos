@@ -327,7 +327,8 @@ export function attestSelfHealStartupFailureReceipt(value, failed, recovered, ma
     lastAt = at;
   }
   const startup = value.startup; const receipt = startup?.receipt; const worker = manifest.services.find(pin => pin.role === 'worker');
-  requireProof(startup?.evidence === 'independent_postgres_startup_readback' && receipt?.scenario === 'A04'
+  if (startup?.evidence !== 'independent_postgres_startup_readback') block('STARTUP_FAILURE_INSPECTION_UNAVAILABLE');
+  requireProof(receipt?.scenario === 'A04'
     && receipt.sourceSha === manifest.receipt.sourceSha && receipt.compiledSha256 === worker.compiledSha256
     && UUID.test(receipt.processInstanceId ?? '') && Number.isSafeInteger(receipt.pid) && receipt.pid >= 2,
   'STARTUP_FAILURE_IDENTITY_DRIFT');

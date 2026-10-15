@@ -376,8 +376,7 @@ async function cli(args, options, timeout = CLI_TIMEOUT_MS, json = true) {
 }
 
 async function assertSupportedCli(options) {
-  // The owner-visible fallback uses `railway api`, available from CLI 5.28.
-  // A complete status projection must not bypass this before watchdog arming.
+  // The strict owner-visible inventory uses `railway api`, available from CLI 5.28.
   const output = await cli(['--version'], options, CLI_TIMEOUT_MS, false);
   const match = /^railway (0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.exec(output.trim());
   const version = match?.slice(1).map(Number);
@@ -393,17 +392,9 @@ async function readOwnedProject(receipt, options, deadline) {
     if (remaining <= 0) fail('RESOURCE_ABSENCE_UNCONFIRMED');
     return Math.min(CLI_TIMEOUT_MS, remaining);
   };
-  let status;
-  try {
-    status = await cli(['status', '--project', receipt.projectId, '--environment', receipt.environmentId, '--json'], options, timeout());
-  } catch (error) {
-    if (!(error instanceof SelfHealPreviewCleanupError) || error.message !== 'SELF_HEAL_PREVIEW_CLEANUP_CLI_FAILED') throw error;
-  }
-  timeout();
-  if (status?.volumes && status.deletedAt === null) return status;
   // CLI status rejects a project as soon as deletion is scheduled, and its
-  // normal projection omits global volumes. Per-project reads and ordinary
-  // project lists filter deleted targets, so neither is absence evidence.
+  // projection cannot prove owner identity or collection completeness.
+  // Per-project reads and ordinary project lists filter deleted targets.
   // Traverse a bounded, complete owner-visible includeDeleted collection;
   // deletion never falls back to an API mutation or a different target.
   const complete = value => {

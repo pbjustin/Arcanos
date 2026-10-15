@@ -459,6 +459,16 @@ test('A04 supplement requires the failed generation actual503, real scheduler fa
   assert.notEqual(result.failedDeploymentId, result.recoveredDeploymentId);
 });
 for (const [name, change] of Object.entries({
+  absentStartup: f => { delete f.value.startup; },
+  absentEvidence: f => { delete f.value.startup.evidence; },
+  syntheticEvidence: f => { f.value.startup.evidence = 'synthetic_startup_readback'; },
+})) test(`A04 missing independent inspection is blocked: ${name}`, () => {
+  const f = startupEvidence(); change(f);
+  assert.throws(() => attestSelfHealStartupFailureReceipt(f.value, f.failed, f.recovered, f.m, f.inventory, f.fenced, { now: () => NOW + 100 }), {
+    message: 'SELF_HEAL_ACCEPTANCE_STARTUP_FAILURE_INSPECTION_UNAVAILABLE', classification: 'BLOCKED',
+  });
+});
+for (const [name, change] of Object.entries({
   failedStatusAlone: f => { delete f.value.startup.receipt.initialReadiness; },
   reusedGeneration: f => { f.failed.id = f.m.services[1].deploymentId; f.value.startup.receipt.deploymentId = f.failed.id; },
   differentSource: f => { f.failed.meta.commitHash = 'f'.repeat(40); },
@@ -486,7 +496,11 @@ for (const [name, change] of Object.entries({
   futureObservation: f => { f.recovered.after.observedAt = new Date(NOW + 200).toISOString(); },
 })) test(`A04 supplement rejects ${name}`, () => {
   const f = startupEvidence(); change(f);
-  assert.throws(() => attestSelfHealStartupFailureReceipt(f.value, f.failed, f.recovered, f.m, f.inventory, f.fenced, { now: () => NOW + 100 }), /SELF_HEAL_ACCEPTANCE_STARTUP_/u);
+  assert.throws(() => attestSelfHealStartupFailureReceipt(f.value, f.failed, f.recovered, f.m, f.inventory, f.fenced, { now: () => NOW + 100 }), error => {
+    assert.match(error.message, /SELF_HEAL_ACCEPTANCE_STARTUP_/u);
+    assert.equal(error.classification, 'FAILED');
+    return true;
+  });
 });
 
 test('closed restoration survives a changed PR head and cleanup reserve but never lease expiry', async () => {
