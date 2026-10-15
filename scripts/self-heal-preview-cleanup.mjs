@@ -18,6 +18,7 @@ const OWNER_USER_ID = 'e1c58b83-8740-4318-9ee2-780c2a6f4e8b';
 const MAX_LEASE_MS = 7_200_000;
 const MAX_BYTES = 2 * 1024 * 1024;
 const CLI_TIMEOUT_MS = 15_000;
+const CLI_MUTATION_TIMEOUT_MS = 60_000;
 const ABSENCE_TIMEOUT_MS = 60_000;
 const INVENTORY_MAX_PAGES = 5;
 const INVENTORY_PAGE_SIZE = 100;
@@ -364,7 +365,7 @@ async function cli(args, options, timeout = CLI_TIMEOUT_MS, json = true) {
     const command = options.command ?? promisify(execFile);
     const result = await command(invocation.executable, [...invocation.argsPrefix, ...args], {
       env: buildBackstageHeavyRailwayCliEnvironment(env), encoding: 'utf8', windowsHide: true,
-      maxBuffer: MAX_BYTES, timeout: Math.max(1, Math.min(timeout, CLI_TIMEOUT_MS)),
+      maxBuffer: MAX_BYTES, timeout: Math.max(1, Math.min(timeout, CLI_MUTATION_TIMEOUT_MS)),
     });
     if (typeof result?.stdout !== 'string' || Buffer.byteLength(result.stdout) > MAX_BYTES
       || (typeof result.stderr === 'string' && Buffer.byteLength(result.stderr) > MAX_BYTES)) fail('CLI_OUTPUT_INVALID');
@@ -525,7 +526,7 @@ export async function runSelfHealPreviewCleanup(config, options = {}) {
       if (!inventory.services.some(current => current.id === service.id)) continue;
       try {
         await cli(['service', 'delete', '--project', receipt.projectId, '--environment', receipt.environmentId,
-          '--service', service.id, '--yes', '--json'], options, CLI_TIMEOUT_MS, false);
+          '--service', service.id, '--yes', '--json'], options, CLI_MUTATION_TIMEOUT_MS, false);
       } catch (error) {
         if (inventory.scheduledDeletionAt !== null) fail('SCHEDULED_RESOURCE_DELETE_REQUIRES_APPROVED_RECOVERY');
         throw error;
@@ -538,7 +539,7 @@ export async function runSelfHealPreviewCleanup(config, options = {}) {
       if (!inventory.globalVolumes.some(current => current.id === volume.id)) continue;
       try {
         await cli(['volume', '--project', receipt.projectId, '--environment', receipt.environmentId,
-          'delete', '--volume', volume.id, '--yes', '--json'], options, CLI_TIMEOUT_MS, false);
+          'delete', '--volume', volume.id, '--yes', '--json'], options, CLI_MUTATION_TIMEOUT_MS, false);
       } catch (error) {
         if (inventory.scheduledDeletionAt !== null) fail('SCHEDULED_RESOURCE_DELETE_REQUIRES_APPROVED_RECOVERY');
         throw error;
@@ -553,7 +554,7 @@ export async function runSelfHealPreviewCleanup(config, options = {}) {
       inventory = await refresh();
       if (!noResources(inventory)) { output.resourceAbsenceVerified = false; fail('RESOURCES_REAPPEARED'); }
       if (inventory.scheduledDeletionAt === null) {
-        await cli(['delete', '--project', receipt.projectId, '--yes', '--json'], options, CLI_TIMEOUT_MS, false);
+        await cli(['delete', '--project', receipt.projectId, '--yes', '--json'], options, CLI_MUTATION_TIMEOUT_MS, false);
         output.deletionRequested = true; emit('PROJECT_DELETION_SCHEDULE_REQUESTED');
       }
     }

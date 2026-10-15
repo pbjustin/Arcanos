@@ -204,12 +204,29 @@ describe('receipt-bound self-heal preview cleanup and fixed-expiry watchdog', ()
       ...[ID.pgVolume, ID.redisVolume].map(id => ['volume', '--project', ID.project, '--environment', ID.environment, 'delete', '--volume', id, '--yes', '--json']),
       ['delete', '--project', ID.project, '--yes', '--json'],
     ]);
-    for (const [file, , options] of h.command.mock.calls) {
+    for (const [file, args, options] of h.command.mock.calls) {
       expect(file).toBe('railway-fixture'); expect(options).toMatchObject({ windowsHide: true, maxBuffer: 2 * 1024 * 1024 });
-      expect(options.timeout).toBeLessThanOrEqual(15_000); expect(options.env.RAILWAY_TOKEN).toBe('fixture-management-secret');
+      expect(options.timeout).toBe(isMutation(args) ? 60_000 : 15_000); expect(options.env.RAILWAY_TOKEN).toBe('fixture-management-secret');
       expect(options.env).not.toHaveProperty('OPENAI_API_KEY');
     }
     expect(JSON.stringify(h.events)).not.toContain('fixture-management-secret');
+  });
+  it('allows bounded slow deletion commands while retaining the shorter read timeout', async () => {
+    const h = harness(); const originalCommand = h.command.getMockImplementation();
+    h.command.mockImplementation(async (file, args, options) => {
+      if (isMutation(args)) {
+        if (options.timeout < 20_000) throw new Error('fixture-delete-timeout');
+        expect(options.timeout).toBe(60_000);
+        h.advance(20_000);
+      } else expect(options.timeout).toBe(15_000);
+      return originalCommand(file, args, options);
+    });
+    const result = await runSelfHealPreviewCleanup(execute(), h);
+    expect(result.status).toBe('RESOURCES_REMOVED_METADATA_RETAINED');
+    expect(result.resourceAbsenceVerified).toBe(true);
+    expect(h.command.mock.calls.filter(call => isMutation(call[1]))).toHaveLength(7);
+    expect(h.now()).toBe(NOW + 7 * 20_000);
+    expect(h.sleep).not.toHaveBeenCalled();
   });
   it('allows cleanup after source head changes and receipt expiry without adopting another target', async () => {
     const h = harness({ now: NOW + 3 * 60 * 60 * 1000, inventory: (_attempt, payload) => {
