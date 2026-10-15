@@ -368,11 +368,21 @@ async function cli(args, options, timeout = CLI_TIMEOUT_MS, json = true) {
     });
     if (typeof result?.stdout !== 'string' || Buffer.byteLength(result.stdout) > MAX_BYTES
       || (typeof result.stderr === 'string' && Buffer.byteLength(result.stderr) > MAX_BYTES)) fail('CLI_OUTPUT_INVALID');
-    return json ? JSON.parse(result.stdout) : null;
+    return json ? JSON.parse(result.stdout) : result.stdout;
   } catch (error) {
     if (error instanceof SelfHealPreviewCleanupError) throw error;
     fail('CLI_FAILED');
   }
+}
+
+async function assertSupportedCli(options) {
+  // The owner-visible fallback uses `railway api`, available from CLI 5.28.
+  // A complete status projection must not bypass this before watchdog arming.
+  const output = await cli(['--version'], options, CLI_TIMEOUT_MS, false);
+  const match = /^railway (0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.exec(output.trim());
+  const version = match?.slice(1).map(Number);
+  if (!version?.every(Number.isSafeInteger)
+    || !(version[0] > 5 || (version[0] === 5 && version[1] >= 28))) fail('CLI_VERSION_UNSUPPORTED');
 }
 
 async function readOwnedProject(receipt, options, deadline) {
@@ -475,6 +485,7 @@ export async function runSelfHealPreviewCleanup(config, options = {}) {
       }
     };
     await reloadResources();
+    await assertSupportedCli(options);
     let status = await readOwnedProject(receipt, options);
     if (status !== null) cleanupInventory(status, authority, { now });
     if (config.watchdog) {
