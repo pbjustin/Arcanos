@@ -383,7 +383,7 @@ export async function runSelfHealAcceptanceCase(scenario, manifest, options = {}
   const transport = options.transport ?? createSelfHealAcceptanceTransport(manifest, options);
   const boundManifest = REAL_TRANSPORTS.get(transport);
   if (boundManifest && !isDeepStrictEqual(boundManifest, manifest)) block('TRANSPORT_MANIFEST_MISMATCH');
-  const realTransport = boundManifest !== undefined;
+  const realTransport = boundManifest !== undefined && !options.now && !options.sleep;
   const events = []; let sequence = 0; let baseline; let finalState; let errorCode = null;
   let classification = 'BLOCKED'; let cleanupResult = 'NOT_RUN';
   const emit = async (kind, value) => {

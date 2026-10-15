@@ -278,6 +278,11 @@ test('real transport classification binds immutable manifests and preserves synt
     const equivalent = Object.fromEntries(Object.entries(structuredClone(m)).reverse());
     const matching = await runSelfHealAcceptanceCase('A02', equivalent, { ...options, transport });
     assert.equal(matching.classification, 'VERIFIED'); assert.equal(matching.cleanupResult, 'VERIFIED');
+    for (const timing of [{ now: () => started + 60_000 }, { sleep: async () => {} }]) {
+      const synthetic = await runSelfHealAcceptanceCase('A02', equivalent, { ...options, transport, ...timing });
+      assert.equal(synthetic.classification, 'SYNTHETIC_ONLY');
+      assert.equal(synthetic.cleanupResult, 'SYNTHETIC_ONLY');
+    }
     for (const mutate of [
       value => { value.receipt.projectId = id(80); },
       value => { value.receipt.environmentId = id(81); },
