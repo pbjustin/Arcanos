@@ -76,9 +76,9 @@ function writeOpenAIError(response, statusCode, code) {
   });
 }
 
-function hasFixtureAuthorization(request) {
+function hasFixtureAuthorization(request, key = BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY) {
   return request.headers.authorization
-    === `Bearer ${BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY}`;
+    === `Bearer ${key}`;
 }
 
 function parseRequestUrl(request) {
@@ -484,6 +484,8 @@ export async function startBackstageHeavyOpenAIFixture(options = {}) {
 
 // This opt-in profile extends the same loopback wire fixture. It is never
 // selected by the compact-retry proof and cannot accept application credentials.
+export const SELF_HEAL_PREVIEW_OPENAI_FIXTURE_SDK_KEY =
+  'sk-arcanos-self-heal-preview-protocol-v1';
 export const SELF_HEAL_PREVIEW_OPENAI_FIXTURE_CHILD_ARGUMENT = '--serve-self-heal-v1';
 export const SELF_HEAL_PREVIEW_OPENAI_FIXTURE_READY_SENTINEL =
   'SELF_HEAL_PREVIEW_OPENAI_READY_V1';
@@ -705,7 +707,7 @@ export async function startSelfHealPreviewOpenAIFixture(options = {}) {
     // The purpose token cannot authorize provider calls and the fictional SDK
     // key cannot inspect or mutate fault state. Authenticate before body reads.
     if (!(isControl ? hasSelfHealControlAuthorization(request, config.controlToken)
-      : hasFixtureAuthorization(request))) {
+      : hasFixtureAuthorization(request, SELF_HEAL_PREVIEW_OPENAI_FIXTURE_SDK_KEY))) {
       state.rejected += 1;
       writeOpenAIError(response, 401, 'fixture_authorization_required');
       return;
@@ -757,7 +759,13 @@ export async function startSelfHealPreviewOpenAIFixture(options = {}) {
         delayMs: body.delayMs };
       writeJson(response, 200, inspect()); return;
     }
-    const models = request.method === 'GET' && url.pathname === '/v1/models';
+    const modelsList = request.method === 'GET' && url.pathname === '/v1/models';
+    // Cold production clients retrieve a model before their first completion.
+    // Match only literal server-owned identities, including the SDK's encoding.
+    const retrievedModel = request.method === 'GET'
+      ? SELF_HEAL_PREVIEW_OPENAI_FIXTURE_MODEL_IDS.find(id => url.pathname === `/v1/models/${id}`
+        || url.pathname === `/v1/models/${encodeURIComponent(id)}`) : undefined;
+    const models = modelsList || retrievedModel !== undefined;
     const chat = request.method === 'POST' && url.pathname === '/v1/chat/completions';
     const responses = request.method === 'POST' && url.pathname === '/v1/responses';
     if (!models && !chat && !responses) {
@@ -821,7 +829,9 @@ export async function startSelfHealPreviewOpenAIFixture(options = {}) {
         receipt.model = body.model;
         receipt.purpose = purpose;
       }
-      const success = () => finish('completed', 200, models ? {
+      const success = () => finish('completed', 200, retrievedModel !== undefined ? {
+        id: retrievedModel, object: 'model', created: 0, owned_by: 'arcanos-preview-fixture',
+      } : modelsList ? {
         object: 'list', data: SELF_HEAL_PREVIEW_OPENAI_FIXTURE_MODEL_IDS.map(id => ({ id,
           object: 'model', created: 0, owned_by: 'arcanos-preview-fixture' })),
       } : chat ? {

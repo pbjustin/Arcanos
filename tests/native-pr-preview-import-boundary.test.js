@@ -3598,6 +3598,43 @@ describe('native PR preview import boundary', () => {
     ]));
   });
 
+  it('keeps active self-heal machinery outside the native graph while admitting the exact post-selection gate', async () => {
+    const sourceText = await readRailwayLauncherSource();
+    expect(findUnsafeRuntimeSyntax('scripts/start-railway-service.mjs', sourceText)).toEqual([]);
+    for (const filePath of [
+      'scripts/railway-self-heal-preview-profile.mjs',
+      'scripts/railway-backstage-heavy-proof-supervisor.mjs',
+      'scripts/railway-backstage-heavy-openai-fixture.mjs',
+    ]) {
+      expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(filePath);
+    }
+  });
+
+  it.each([
+    ["new URL('./railway-self-heal-preview-profile.mjs', import.meta.url).href", "new URL('./foreign-profile.mjs', import.meta.url).href"],
+    ["env?.ARCANOS_SELF_HEAL_PREVIEW_PROFILE !== 'worker-coordinator-v1'", 'false'],
+    ['return profileModule.assertSelfHealPreviewApplicationChildOrThrow(env, options);', 'return { enabled: true };'],
+  ])('rejects active-profile import admission drift: %s', async (original, replacement) => {
+    const sourceText = replaceRequired(await readRailwayLauncherSource(), original, replacement);
+    expect(findUnsafeRuntimeSyntax('scripts/start-railway-service.mjs', sourceText)).toEqual(expect.arrayContaining([
+      expect.stringContaining('non-literal dynamic import'),
+      expect.stringContaining('critical entry file semantic digest'),
+    ]));
+  });
+
+  it('rejects an active-profile import or admission before native-preview selection', async () => {
+    const original = await readRailwayLauncherSource();
+    for (const insertion of [
+      "await import(new URL('./railway-self-heal-preview-profile.mjs', import.meta.url).href);",
+      'await assertRailwayProcessIsolationOrThrow(process.env);',
+    ]) {
+      const sourceText = replaceRequired(original, 'async function main() {\n  try {', `async function main() {\n  try {\n    ${insertion}`);
+      expect(findUnsafeRuntimeSyntax('scripts/start-railway-service.mjs', sourceText)).toEqual(expect.arrayContaining([
+        expect.stringContaining('launcher helper call surface must match the reviewed contract'),
+      ]));
+    }
+  });
+
   it.each([
     'await runWebRuntime();',
     'maybeStartCliBridgeDaemon();',

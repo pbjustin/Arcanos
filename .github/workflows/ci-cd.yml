@@ -230,9 +230,18 @@ jobs:
         timeout-minutes: 10
         run: |
           set -euo pipefail
+          certificate_dir="$(mktemp -d "$RUNNER_TEMP/self-heal-preview-ca.XXXXXX")"
+          trap 'rm -f "$certificate_dir/fixture.key" "$certificate_dir/fixture.pem"; rmdir "$certificate_dir"' EXIT
+          openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 2 \
+            -keyout "$certificate_dir/fixture.key" -out "$certificate_dir/fixture.pem" \
+            -subj '/CN=postgres.railway.internal' \
+            -addext 'subjectAltName=DNS:postgres.railway.internal' >/dev/null 2>&1
+          rm -f "$certificate_dir/fixture.key"
+          certificate_pem="$(cat "$certificate_dir/fixture.pem")"
           docker build -t arcanos-self-heal-preview-test \
             --build-arg ARCANOS_SELF_HEAL_PREVIEW_PROFILE=worker-coordinator-v1 \
-            --build-arg ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA="$GITHUB_SHA" .
+            --build-arg ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA="$GITHUB_SHA" \
+            --build-arg ARCANOS_SELF_HEAL_PREVIEW_DATABASE_CERTIFICATE_PEM="$certificate_pem" .
           docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
             --entrypoint node arcanos-self-heal-preview-test \
             scripts/self-heal-preview-artifact.mjs --verify --source-sha "$GITHUB_SHA"
@@ -240,8 +249,12 @@ jobs:
             --entrypoint node arcanos-self-heal-preview-test scripts/repair-dist-aliases.js --check
           docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
             --entrypoint node arcanos-self-heal-preview-test --input-type=module -e '
-              import { resolveSelfHealPreviewProfile, buildSelfHealPreviewApplicationEnvironment } from "./scripts/railway-self-heal-preview-profile.mjs";
+              import { resolveSelfHealPreviewProfile, buildSelfHealPreviewApplicationEnvironment,
+                verifySelfHealPreviewDatabaseCertificateFile, SELF_HEAL_PREVIEW_DATABASE_CERTIFICATE_PATH } from "./scripts/railway-self-heal-preview-profile.mjs";
+              const fs = await import("node:fs");
+              const { Client } = await import("pg");
               const fixture = JSON.parse(process.argv[1]);
+              fixture.ARCANOS_SELF_HEAL_PREVIEW_DATABASE_CERTIFICATE_PEM = fs.readFileSync(SELF_HEAL_PREVIEW_DATABASE_CERTIFICATE_PATH, "utf8");
               const now = Date.now();
               fixture.ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA = process.argv[2];
               fixture.RAILWAY_GIT_COMMIT_SHA = process.argv[2];
@@ -264,11 +277,17 @@ jobs:
                   env.ARCANOS_JOB_READ_CAPABILITY_SECRET = "fictional-image-preview-job-read-secret-0001";
                 }
                 const profile = resolveSelfHealPreviewProfile(role, env, { now: () => now });
+                verifySelfHealPreviewDatabaseCertificateFile(profile, { now: () => now });
                 const child = buildSelfHealPreviewApplicationEnvironment(profile, env);
+                // Constructor parsing does no network or SQL. It proves the
+                // production pool URL overrides its legacy false SSL object.
+                const client = new Client({ connectionString: child.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+                if (client.connectionParameters.ssl.rejectUnauthorized === false || client.connectionParameters.ssl.ca !== profile.databaseCertificatePem) {
+                  throw new Error("SELF_HEAL_PREVIEW_IMAGE_TLS_DOWNGRADE");
+                }
                 if (child.SELF_IMPROVE_EVIDENCE_DIR !== "/app/memory/self-heal-preview-evidence") {
                   throw new Error("SELF_HEAL_PREVIEW_EVIDENCE_DIRECTORY_INVALID");
                 }
-                const fs = await import("node:fs");
                 fs.mkdirSync(child.SELF_IMPROVE_EVIDENCE_DIR, { recursive: true });
                 const evidenceProbe = `${child.SELF_IMPROVE_EVIDENCE_DIR}/image-${role}-probe.json`;
                 fs.writeFileSync(evidenceProbe, "{}");
@@ -284,7 +303,7 @@ jobs:
             --entrypoint node arcanos-self-heal-preview-test -e '
               const fs = require("node:fs");
               if (process.getuid() === 0) throw new Error("SELF_HEAL_PREVIEW_IMAGE_ROOT_USER");
-              for (const path of ["/app", "/app/scripts", "/app/dist", "/app/config", "/app/scripts/self-heal-preview-artifact.json"]) {
+              for (const path of ["/app", "/app/scripts", "/app/dist", "/app/config", "/app/config/self-heal-preview-database-ca.pem", "/app/scripts/self-heal-preview-artifact.json"]) {
                 const stat = fs.statSync(path);
                 if (stat.uid !== 0 || (stat.mode & 0o022) !== 0) throw new Error("SELF_HEAL_PREVIEW_IMAGE_WRITABLE_EXECUTABLE");
                 let writable = true;

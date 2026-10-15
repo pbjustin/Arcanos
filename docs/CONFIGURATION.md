@@ -1524,24 +1524,35 @@ alone does not establish isolation or authorize actuation.
 | `ARCANOS_SELF_HEAL_PREVIEW_STARTUP_MODE` | `normal`, or Worker-only `scheduler-failure` | Closed startup test selector; failure mode rejects coordinator installation before readiness. |
 | `ARCANOS_SELF_HEAL_PREVIEW_WEB_SERVICE_ID` | Fresh web service UUID from attested topology | Must match the web process identity and differ from Worker/PostgreSQL/Redis IDs. |
 | `ARCANOS_SELF_HEAL_PREVIEW_WORKER_SERVICE_ID` | Fresh Worker service UUID from attested topology | Must match Worker process identity and differ from web/PostgreSQL/Redis IDs. |
+| `ARCANOS_SELF_HEAL_PREVIEW_DATABASE_CERTIFICATE_PEM` | One public preview-owned self-signed certificate, at most 16 KiB; identical Docker build argument and runtime value | Requires exact `postgres.railway.internal` DNS SAN without wildcard matching and validity through the fixed expiry. Its SHA-256 fingerprint binds the ownership receipt; no private key belongs in application configuration. |
 
 Retain the existing heavy target marker, role-specific purpose credentials,
 private PostgreSQL/Redis names/hosts/IDs, and exact lowercase 40-hex
 `ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA`; the latter is also the Docker build
 argument for source binding. Do not override Railway-provided resource IDs.
-The profile requires `NODE_ENV=production`, `ARCANOS_PREVIEW_ISOLATION=true`,
+The parent requires `NODE_ENV=production`, `ARCANOS_PREVIEW_ISOLATION=true`,
 `FORCE_MOCK=true`, `ALLOW_MOCK_OPENAI=true` and
 `OPENAI_API_KEY_REQUIRED=false`, with the admitted private data references.
-Worker uses `http://127.0.0.1:8766/v1`; web uses the dead-loopback
-`http://127.0.0.1:9/v1`. Set no real provider key: the supervisor derives a fixed
-fictional key only after admission. `PORT`, if supplied, must be 1024–65535
+Worker parent uses `http://127.0.0.1:8766/v1`; web parent uses the dead-loopback
+`http://127.0.0.1:9/v1`. After admission, both application children derive
+`FORCE_MOCK=false`, `ALLOW_MOCK_OPENAI=false`, `OPENAI_API_KEY_REQUIRED=true`,
+the fixed fictional SDK key and `http://127.0.0.1:8766/v1`. Each role pod starts
+its own contained provider adapter before ordinary application startup, including
+the real SDK health probe. Set no real provider key. `PORT`, if supplied, must be 1024–65535
 and distinct from 8766 and 8791.
 
 The literal child environment derives self-improvement disabled, autonomy 0,
-freeze false, prediction disabled, predictive dry-run true, a one-second
-coordinator interval and role-correct `RUN_WORKERS`. It derives the dedicated
+freeze false, prediction disabled, predictive dry-run true and role-correct
+`RUN_WORKERS`. It uses the normal 30-second coordinator default and ordinary
+5-second heartbeat/15-second lease defaults. Worker concurrency matches the
+maintained Railway setting of two, with exact consumer IDs
+`self-heal-preview-<runId>-slot-1` and `self-heal-preview-<runId>-slot-2`.
+It derives the dedicated
 Redis kill-switch key `arcanos:preview:self-heal:<runId>:kill-switch:v1` and
-Worker identity `self-heal-preview-<runId>`; do not configure these separately.
+shared Worker stats identity `self-heal-preview-<runId>`; do not configure these separately.
+Web also derives a distinct purpose-separated GPT Access token from the run's
+control secret, with only `runtime.read` and a loopback advertised base URL,
+to satisfy normal startup validation without production gateway authority.
 Ambient self-improvement, predictive, administration, proxy and provider
 settings are rejected rather than inherited. Fixed authenticated commands may
 change only the seven reviewed process policy values and this run's
@@ -1550,11 +1561,20 @@ kill-switch override. Observation permission does not imply actuation;
 
 The ownership preflight deliberately creates one preview-only PostgreSQL
 receipt in an empty database and holds a per-role advisory lock. Restart
-requires its exact resource/run/source/compiled-digest identity and no foreign
-jobs or active leases. It is a preview mutation, not read-only validation or a
-production schema migration. The self-signed private PostgreSQL transport uses
-the existing disposable TLS compatibility treatment; it is not server
-certificate-authentication evidence. See the runbook for artifact checks,
+requires its exact resource/run/source/compiled-digest/certificate identity and
+no foreign jobs or active leases. Resume admits only the two exact consumer IDs;
+the base ID, a third slot, or a matching prefix does not confer authority.
+It is a preview mutation, not read-only validation or a production schema migration.
+The profile-only Docker build materializes the public certificate at the fixed
+root-owned, mode-0444 `/app/config/self-heal-preview-database-ca.pem` path before
+creating the executable inventory. Startup verifies that file against the
+admitted fingerprint before opening SQL. The child URL uses `sslmode=verify-full`
+and that literal `sslrootcert` path; direct preview clients use
+`rejectUnauthorized:true` and the same CA. No process-wide TLS bypass is set.
+An absent, expired, mismatched or wrong-host certificate blocks startup; obtain
+only the independently attested preview certificate, never production material.
+These checks do not prove a deployed database handshake until it is observed.
+See the runbook for artifact checks,
 bounded process controls, injected-evidence limits and receipt-bound deletion.
 
 ### Self-healing mitigation lifecycle

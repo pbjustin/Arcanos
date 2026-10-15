@@ -1182,10 +1182,23 @@ private data-identity markers, plus the
 Use fresh preview-only database/Redis credentials and purpose-bound application
 secrets. The supervisor accepts a literal input allowlist, derives the fixed
 fictional provider key only for its application child, and discards ambient
-administration/provider authority. Worker provider traffic is restricted to
-the contained fixture at `127.0.0.1:8766`; web retains the dead-loopback provider
-base `http://127.0.0.1:9/v1`. This is not a platform egress firewall: independently
+administration/provider authority. The parent retains the original sealed mock
+admission and web dead-loopback base `http://127.0.0.1:9/v1`. Only this profile's
+application children derive normal SDK flags (`FORCE_MOCK=false`,
+`ALLOW_MOCK_OPENAI=false`, `OPENAI_API_KEY_REQUIRED=true`), a fixed fictional
+key and the contained adapter at `127.0.0.1:8766` in each role pod. Web derives a
+distinct preview GPT Access token with only `runtime.read` and a loopback
+advertised origin. This is not a platform egress firewall: independently
 attest source, resources and credential isolation before attaching code.
+
+Worker concurrency is two, with the ordinary 5-second heartbeat, 15-second
+lease and 30-second coordinator defaults. Resume recognizes only the exact
+`self-heal-preview-<runId>-slot-1` and `-slot-2` consumer identities.
+Production service overrides can start the role launcher directly, select
+`/healthz`, or add Notion diagnostic preloads. Record those effective settings
+independently: this preview deliberately retains the maintained integrity
+wrapper and `/readyz`, omits production Notion credentials/preloads, and does
+not prove equivalent running production configuration or external-provider recovery.
 
 The immutable issue/expiry pair must be canonical UTC ISO timestamps, with
 expiry after issue and at most **7,200,000 ms (two hours)** later. A restart
@@ -1224,9 +1237,22 @@ Before attaching source or starting applications:
    its own ownership preflight: do not inherit the original heavy mode's
    `--mode empty`/`--mode schema` pre-deploy commands. A controlled restart
    requires renewed ownership checks within the same fixed lease.
-5. Supply the Docker build arguments `ARCANOS_SELF_HEAL_PREVIEW_PROFILE` and
-   `ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA` with the same admitted profile
-   and exact source SHA as runtime. Attach `pbjustin/Arcanos` only with the
+5. Obtain one public self-signed certificate only from the independently owned
+   preview PostgreSQL instance. It must have exact DNS SAN
+   `postgres.railway.internal` and remain valid through the fixed lease. If the
+   template certificate cannot authenticate that host, configure a new certificate
+   only inside the owned preview PostgreSQL pod through the authorized procedure;
+   its private key must never leave that pod. Otherwise stop before application
+   deployment. Never use a production certificate/key or disable verification.
+   Supply Docker build arguments `ARCANOS_SELF_HEAL_PREVIEW_PROFILE`,
+   `ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA` and
+   `ARCANOS_SELF_HEAL_PREVIEW_DATABASE_CERTIFICATE_PEM` with the same admitted
+   profile, exact source SHA and public PEM as runtime. The opt-in build writes
+   `/app/config/self-heal-preview-database-ca.pem` root-owned and readonly before
+   hashing configuration into its artifact; startup checks the exact fingerprint
+   before SQL. Normal app clients use the fixed CA file with `sslmode=verify-full`;
+   direct preview clients enforce the same CA and hostname verification.
+   Attach `pbjustin/Arcanos` only with the
    explicit commit pin after all isolation/configuration checks; source
    live attachment can immediately build/deploy. Use staged source attachment
    with an explicit environment and SHA for admission preflight. Apply reviewed
@@ -1237,7 +1263,7 @@ Before attaching source or starting applications:
 6. Deploy Worker first, then web at the same SHA. The Worker must first create
    an ownership receipt in an otherwise empty database; normal Worker startup
    creates application schema. Resume requires the identical run, source,
-   compiled digest and resource identity, existing job tables, no foreign jobs
+   compiled digest, certificate fingerprint and resource identity, existing job tables, no foreign jobs
    or orphan events, and no active job lease. A held PostgreSQL advisory lock
    admits one supervisor per role; loss of its connection stops the workload.
    This preview receipt is not a replacement for normal durable claim fencing.
@@ -1279,8 +1305,9 @@ node scripts/self-heal-preview-control.mjs command duplicate_start
 node scripts/self-heal-preview-control.mjs command observation_throw_once
 node scripts/self-heal-preview-control.mjs command database_failure_once
 node scripts/self-heal-preview-control.mjs command tick
-node scripts/self-heal-preview-control.mjs fenced-job create
-node scripts/self-heal-preview-control.mjs fenced-job inspect
+node scripts/self-heal-preview-control.mjs fenced-job create E02 1
+node scripts/self-heal-preview-control.mjs fenced-job inspect E02 1
+node scripts/self-heal-preview-control.mjs web-job run 1
 node scripts/self-heal-preview-control.mjs provider timeout_next
 node scripts/self-heal-preview-control.mjs command trinity_run
 node scripts/self-heal-preview-control.mjs provider inspect
@@ -1316,7 +1343,8 @@ Record evidence at the boundary actually exercised:
 
 | Operation | Evidence and limit |
 | --- | --- |
-| Ordinary Worker startup and `fenced-job` | Uses the real compiled Worker, PostgreSQL claim generation and completion events; the helper creates/inspects one fixed synthetic exact-literal job. Completion does not prove provider recovery. |
+| Ordinary Worker startup and `fenced-job` | Uses the real compiled Worker, PostgreSQL claim generation and completion events; the helper creates/inspects a fixed exact-literal job for a closed scenario ID and attempt 1 or 2. The same slot is idempotent, while separate slots produce fresh jobs. Completion does not prove provider recovery. |
+| `web-job run 1` or `2` | Uses ordinary protected web admission with a fixed synthetic request, then independently inspects its actual PostgreSQL claim/completion identity. The loopback provider remains injected; this does not prove external-provider or production admission. |
 | `database_failure_once` | Injects one failure immediately before claim admission. It proves the real consumer's error/retry path, not a real PostgreSQL outage or broken SQL operation. |
 | Actual preview Redis outage | Use only the owned Redis instance and independently attested identity. Record lifecycle/kill-switch changes and restoration; a synthetic policy toggle is not Redis network recovery. The existing Redis probe's name allowlist does not admit this heavy-profile name. |
 | `trinity_run` and provider controls | Executes the real Trinity consumer against a bounded synthetic loopback adapter with requests/receipts. Timeout or recovery is provider-adapter evidence, not external OpenAI acceptance. |
