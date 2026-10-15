@@ -27,7 +27,11 @@ import { createOpenAIAdapter } from '../src/core/adapters/openai.adapter.js';
 import { normalizeResponsesDraft } from '../src/services/openai/requestBuilders/normalize.js';
 import { resolveGenerativeModel } from '../src/services/openai/credentialProvider.js';
 import { createSingleChatCompletion, ensureModelMatchesExpectation } from '../src/services/openai/chatFallbacks.js';
-import { TRINITY_STRUCTURED_REASONING_SCHEMA } from '../src/core/logic/trinitySchema.js';
+import { TRINITY_COMPACT_STRUCTURED_REASONING_SCHEMA,
+  TRINITY_STRUCTURED_REASONING_SCHEMA } from '../src/core/logic/trinitySchema.js';
+import { buildBackstageHeavyProbePrompt } from '../scripts/railway-backstage-heavy-e2e-probe.mjs';
+import { assertBackstageBookerFinalCompactOutputValid,
+  resolveBackstageCompactOutputContract } from '../src/shared/backstage/backstageCompactOutputContract.js';
 
 describe('credential-free Backstage heavy OpenAI fixture', () => {
   const runId = 'proof-run-1460';
@@ -435,6 +439,115 @@ describe('bounded self-healing preview provider profile', () => {
     expect(JSON.stringify(receipt)).not.toContain(promptSentinel);
   });
 
+  it.each([1, 2])('completes current run Web attempt %s through the actual Responses SDK and Backstage validator', async attempt => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: childEnv() });
+    const prompt = buildBackstageHeavyProbePrompt(`self-heal-run-1544-web-${attempt}`);
+    const normalized = normalizeResponsesDraft({
+      model: BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID,
+      prompt,
+      preparedMessages: [
+        { role: 'system', content: 'Complete the isolated fictional booking request.' },
+        { role: 'user', content: prompt },
+      ],
+      includeRoutingMessage: false,
+      maxTokens: BACKSTAGE_HEAVY_OPENAI_FIXTURE_OUTPUT_TOKEN_LIMIT,
+      temperature: 0, top_p: 1, store: false,
+    });
+    const response = await client().responses.create({
+      model: normalized.model, input: normalized.input,
+      max_output_tokens: normalized.maxOutputTokens, store: false,
+    });
+    expect(response.status).toBe('completed');
+    expect(response.output_text).toBe(BACKSTAGE_HEAVY_OPENAI_FIXTURE_COMPLETED_OUTPUT);
+    const contract = resolveBackstageCompactOutputContract(prompt, normalized.maxOutputTokens);
+    expect(contract.itemPolicy).toMatchObject({ mode: 'exact', count: 6 });
+    const validationOptions = { compactDirectResponse: true,
+      enforceParsedItemContract: true, usedCompactOutputRetry: false };
+    expect(() => assertBackstageBookerFinalCompactOutputValid(
+      response.output_text, contract, validationOptions)).not.toThrow();
+    expect(() => assertBackstageBookerFinalCompactOutputValid(
+      'Synthetic preview provider completed the isolated request.', contract, validationOptions))
+      .toThrow(expect.objectContaining({ code: 'BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE' }));
+    expect(runtime.inspect().receipts[0].purpose).toBe('backstage-web-completion');
+    expect(JSON.stringify([response, runtime.inspect()])).not.toContain(prompt);
+    expect(JSON.stringify(runtime.inspect())).not.toContain(token);
+  });
+
+  it('preserves the fixed Backstage answer through central production completion and Trinity decoding', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: childEnv() });
+    const prompt = buildBackstageHeavyProbePrompt('self-heal-run-1544-web-1');
+    const previousAuthority = process.env.FINETUNED_MODEL_ID;
+    process.env.FINETUNED_MODEL_ID = BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID;
+    try {
+      const final = await createSingleChatCompletion(client(), {
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: BACKSTAGE_HEAVY_OPENAI_FIXTURE_OUTPUT_TOKEN_LIMIT,
+        maxRetries: 0, timeoutMs: 2000,
+      });
+      expect(final.choices[0].message.content).toBe(BACKSTAGE_HEAVY_OPENAI_FIXTURE_COMPLETED_OUTPUT);
+      expect(final.fallbackFlag).toBe(false);
+    } finally {
+      if (previousAuthority === undefined) delete process.env.FINETUNED_MODEL_ID;
+      else process.env.FINETUNED_MODEL_ID = previousAuthority;
+    }
+    for (const schema of [TRINITY_STRUCTURED_REASONING_SCHEMA, TRINITY_COMPACT_STRUCTURED_REASONING_SCHEMA]) {
+      const response = await client().responses.create(responseBody({ input: prompt,
+        model: 'gpt-6.1-sol', text: { format: { type: 'json_schema', ...schema } } }));
+      expect(parseStructuredJson(response).final_answer)
+        .toBe(BACKSTAGE_HEAVY_OPENAI_FIXTURE_COMPLETED_OUTPUT);
+      const chat = await client().chat.completions.create({ model: 'gpt-6-luna',
+        messages: [{ role: 'user', content: prompt }],
+        response_format: { type: 'json_schema', json_schema: schema } });
+      expect(JSON.parse(chat.choices[0].message.content).final_answer)
+        .toBe(BACKSTAGE_HEAVY_OPENAI_FIXTURE_COMPLETED_OUTPUT);
+    }
+    const chat = await client().chat.completions.create({ model: BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID,
+      messages: [{ role: 'user', content: prompt }] });
+    expect(chat.choices[0].message.content).toBe(BACKSTAGE_HEAVY_OPENAI_FIXTURE_COMPLETED_OUTPUT);
+    expect(runtime.inspect().receipts).toHaveLength(6);
+    expect(runtime.inspect().receipts.every(receipt => receipt.purpose === 'backstage-web-completion'
+      && receipt.outcome === 'completed')).toBe(true);
+  });
+
+  it.each([
+    ['foreign run', prompt => prompt.replace('self-heal-run-1544-web-1', 'foreign-run-1544-web-1')],
+    ['unapproved attempt', prompt => prompt.replace('-web-1.', '-web-3.')],
+    ['base run', prompt => prompt.replace('-web-1.', '.')],
+    ['missing sentinel', prompt => prompt.replace(BACKSTAGE_HEAVY_OPENAI_FIXTURE_PROMPT_SENTINEL, '')],
+    ['missing directive', prompt => prompt.replace(BACKSTAGE_HEAVY_OPENAI_FIXTURE_BOOKING_DIRECTIVE, '')],
+    ['duplicate sentinel', prompt => `${prompt} ${BACKSTAGE_HEAVY_OPENAI_FIXTURE_PROMPT_SENTINEL}`],
+    ['duplicate directive', prompt => `${prompt} ${BACKSTAGE_HEAVY_OPENAI_FIXTURE_BOOKING_DIRECTIVE}`],
+    ['duplicate allowed run', prompt => `${prompt} Run self-heal-run-1544-web-2.`],
+    ['foreign additional run', prompt => `${prompt} Run foreign-run-1544-web-1.`],
+    ['truncated fixture', prompt => prompt.slice(0, 400)],
+  ])('does not select the Backstage completion for %s', async (_label, change) => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: childEnv() });
+    const response = await client().responses.create(responseBody({
+      input: change(buildBackstageHeavyProbePrompt('self-heal-run-1544-web-1')),
+    }));
+    expect(response.output_text).toBe('Synthetic preview provider completed the isolated request.');
+    expect(runtime.inspect().receipts[0].purpose).toBe('synthetic-completion');
+  });
+
+  it('requires the Backstage marker in user input and rejects an unsupported JSON object response', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: childEnv() });
+    const prompt = buildBackstageHeavyProbePrompt('self-heal-run-1544-web-1');
+    const response = await client().responses.create(responseBody({ input: [
+      { role: 'developer', content: [{ type: 'input_text', text: prompt }] },
+      { role: 'user', content: [{ type: 'input_text', text: promptSentinel }] },
+    ] }));
+    expect(response.output_text).toBe('Synthetic preview provider completed the isolated request.');
+    const chat = await client().chat.completions.create({ model: 'gpt-6-luna',
+      messages: [{ role: 'system', content: prompt }, { role: 'user', content: promptSentinel }] });
+    expect(chat.choices[0].message.content).toBe(response.output_text);
+    await expect(client().responses.create(responseBody({ input: prompt,
+      text: { format: { type: 'json_object' } } }))).rejects.toMatchObject({ status: 422 });
+    expect(runtime.inspect()).toMatchObject({ completed: 2, inFlight: null });
+    expect(runtime.inspect().receipts.map(receipt => receipt.outcome))
+      .toEqual(['completed', 'completed', 'rejected']);
+    expect(JSON.stringify(runtime.inspect())).not.toContain(promptSentinel);
+  });
+
   it('serves cold SDK model retrieval only for the three fixed preview identities', async () => {
     runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: childEnv() });
     const sdk = client();
@@ -456,7 +569,8 @@ describe('bounded self-healing preview provider profile', () => {
     runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: childEnv() });
     const auditPrompt = 'You are an expert auditor for AI reasoning.\n'
       + 'Evaluate the following Reasoning Ledger based on the CLEAR principles.\n'
-      + 'Each score must be between 0 and 5.\n' + promptSentinel;
+      + 'Each score must be between 0 and 5.\n' + promptSentinel + '\n'
+      + buildBackstageHeavyProbePrompt('self-heal-run-1544-web-1');
     const response = await client().responses.create(responseBody({ model: 'gpt-6-luna',
       input: [{ role: 'developer', content: [{ type: 'input_text', text: auditPrompt }] }],
       text: { format: { type: 'json_object' } } }));
@@ -478,7 +592,8 @@ describe('bounded self-healing preview provider profile', () => {
 
   it('returns a bounded predictive selection for a supplied candidate through direct and structured paths', async () => {
     runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: childEnv() });
-    const input = predictivePrompt(JSON.stringify([{ index: 0, action: 'reload_ai_provider', target: 'local' }]));
+    const input = predictivePrompt(JSON.stringify([{ index: 0, action: 'reload_ai_provider', target: 'local' }]))
+      + '\n' + buildBackstageHeavyProbePrompt('self-heal-run-1544-web-2');
     const direct = await client().responses.create(responseBody({ input }));
     const decision = JSON.parse(direct.output_text);
     expect(decision).toEqual({ selectedCandidateIndex: 0, chooseNoAction: false,

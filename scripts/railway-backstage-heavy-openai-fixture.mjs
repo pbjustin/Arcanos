@@ -612,12 +612,12 @@ function exactSelfHealCommand(body, keys) {
     && keys.every(key => Object.hasOwn(body, key));
 }
 
-function selfHealFixtureInputText(body, chat) {
+function selfHealFixtureInputText(body, chat, userOnly = false) {
   const input = chat ? body.messages : body.input;
   if (typeof input === 'string') return input;
   if (!Array.isArray(input)) return '';
   return input.flatMap(item => {
-    if (!isRecord(item)) return [];
+    if (!isRecord(item) || (userOnly && item.role !== 'user')) return [];
     if (typeof item.content === 'string') return [item.content];
     if (!Array.isArray(item.content)) return [];
     return item.content.filter(content => isRecord(content)
@@ -625,7 +625,7 @@ function selfHealFixtureInputText(body, chat) {
   }).join('\n');
 }
 
-function selfHealFixturePurpose(body, chat) {
+function selfHealFixturePurpose(body, chat, runId) {
   const input = selfHealFixtureInputText(body, chat);
   if (input.includes('You are an expert auditor for AI reasoning.')
     && input.includes('Evaluate the following Reasoning Ledger based on the CLEAR principles.')
@@ -633,6 +633,15 @@ function selfHealFixturePurpose(body, chat) {
   if (input.includes('ARCANOS:CORE bounded production self-healing decision agent.')
     && input.includes('Select at most one provided self-healing candidate, or choose no action.')
     && input.includes(SELF_HEAL_PREDICTIVE_OUTPUT_CONTRACT)) return 'predictive-decision';
+  const userInput = selfHealFixtureInputText(body, chat, true);
+  const runMarkers = userInput.match(/\bRun [^\s.]+\./gu) ?? [];
+  if (userInput.length >= 1200
+    && userInput.split(BACKSTAGE_HEAVY_OPENAI_FIXTURE_PROMPT_SENTINEL).length === 2
+    && userInput.split(BACKSTAGE_HEAVY_OPENAI_FIXTURE_BOOKING_DIRECTIVE).length === 2
+    && runMarkers.length === 1
+    && [1, 2].some(attempt => runMarkers[0] === `Run ${runId}-web-${attempt}.`)) {
+    return 'backstage-web-completion';
+  }
   return 'synthetic-completion';
 }
 
@@ -650,10 +659,13 @@ function selfHealPredictiveOutput(body, chat) {
 
 function selfHealFixtureOutput(body, chat, purpose) {
   const answer = purpose === 'clear-audit' ? SELF_HEAL_CLEAR_OUTPUT
-    : purpose === 'predictive-decision' ? selfHealPredictiveOutput(body, chat) : SELF_HEAL_SYNTHETIC_OUTPUT;
+    : purpose === 'predictive-decision' ? selfHealPredictiveOutput(body, chat)
+      : purpose === 'backstage-web-completion' ? BACKSTAGE_HEAVY_OPENAI_FIXTURE_COMPLETED_OUTPUT
+        : SELF_HEAL_SYNTHETIC_OUTPUT;
   const format = chat ? body.response_format?.json_schema : body.text?.format;
   if (!format || format.type === 'text'
-    || (format.type === 'json_object' && purpose !== 'synthetic-completion')) return answer;
+    || (format.type === 'json_object'
+      && (purpose === 'clear-audit' || purpose === 'predictive-decision'))) return answer;
   const name = format.name;
   if (name !== 'trinity_structured_reasoning'
     && name !== 'trinity_structured_reasoning_compact') return null;
@@ -818,7 +830,7 @@ export async function startSelfHealPreviewOpenAIFixture(options = {}) {
         if (!parsed.ok) { reject(parsed.status, parsed.code); return; }
         if (!state.ready || now() >= config.expiresAt) { reject(410, 'fixture_expired'); return; }
         body = parsed.body;
-        const purpose = selfHealFixturePurpose(body, chat);
+        const purpose = selfHealFixturePurpose(body, chat, config.runId);
         output = selfHealFixtureOutput(body, chat, purpose);
         if (!SELF_HEAL_MODEL_IDS.has(body.model)
           || body.stream === true || output === null
