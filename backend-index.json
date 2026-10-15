@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-15T01:54:28.452Z",
+  "generatedAt": "2026-10-15T23:33:41.798Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -3497,6 +3497,9 @@
         },
         {
           "relativePath": "tests/action-plan-execution-result-route.test.ts"
+        },
+        {
+          "relativePath": "tests/action-plan-execution-schema-contract.test.ts"
         },
         {
           "relativePath": "tests/action-plan-execution-schema-postgres18.test.ts"

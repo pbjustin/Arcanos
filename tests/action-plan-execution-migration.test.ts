@@ -333,6 +333,26 @@ describe('Phase 2E additive execution schema', () => {
     expect(ACTION_PLAN_EXECUTION_SNAPSHOT_SCHEMA_VERSION).toBe(1);
   });
 
+  it("preserves each consumer's independent internals and shallow-frozen requirements export", async () => {
+    const migration = await loadMigrationModule();
+    expect(Object.isFrozen(ACTION_PLAN_EXECUTION_SCHEMA_REQUIREMENTS)).toBe(true);
+    expect(Object.isFrozen(migration.ACTION_PLAN_EXECUTION_SCHEMA_REQUIREMENTS)).toBe(true);
+    expect(migration.ACTION_PLAN_EXECUTION_SCHEMA_REQUIREMENTS.columnSpecs)
+      .not.toBe(ACTION_PLAN_EXECUTION_SCHEMA_REQUIREMENTS.columnSpecs);
+    expect(migration.ACTION_PLAN_EXECUTION_SCHEMA_REQUIREMENTS.constraintSpecs)
+      .not.toBe(ACTION_PLAN_EXECUTION_SCHEMA_REQUIREMENTS.constraintSpecs);
+    const runnerSpec = migration.ACTION_PLAN_EXECUTION_SCHEMA_REQUIREMENTS
+      .columnSpecs.ActionPlanExecutionRun.eventSequence;
+    const original = runnerSpec.defaultKind;
+    try {
+      runnerSpec.defaultKind = 'sentinel';
+      expect(ACTION_PLAN_EXECUTION_SCHEMA_REQUIREMENTS
+        .columnSpecs.ActionPlanExecutionRun.eventSequence.defaultKind).toBe('zero');
+    } finally {
+      runnerSpec.defaultKind = original;
+    }
+  });
+
   it('accepts decoded string arrays or strict JSON text arrays from catalog queries', async () => {
     const migration = await loadMigrationModule();
 

@@ -402,7 +402,12 @@ describe('Phase 2E inert migration validator boundary', () => {
     expect(dockerfile.match(/^COPY\s+src\//gmu)).toEqual([
       'COPY src/',
       'COPY src/',
+      'COPY src/',
+      'COPY src/',
     ]);
+    expect(dockerfile).toContain('--resolveJsonModule');
+    expect(dockerfile.match(/^COPY src\/core\/db\/actionPlanExecutionSchemaContract\.json /gmu))
+      .toHaveLength(2);
     expect(dockerfile).not.toMatch(/^COPY\s+(?:workers\/src|daemon-python|openapi|config)\//mu);
     expect(dockerfile).not.toMatch(/(?:start-railway-service|start-server|start:worker)/u);
     expect(dockerfile).toContain('RUN chmod 0555 /app/scripts/phase2e-validator-entrypoint.sh');
@@ -451,6 +456,9 @@ describe('Phase 2E inert migration validator boundary', () => {
       'COPY tests/integration/action-plan-execution-migration.pg18.integration.test.ts',
     );
     expect(dockerfile).toContain('COPY jest.phase2e-pg18.config.js');
+    expect(dockerfile).toContain(
+      'COPY src/core/db/actionPlanExecutionSchemaContract.json ./src/core/db/actionPlanExecutionSchemaContract.json',
+    );
     expect(dockerfile).toContain('COPY scripts/phase2e-pg18-runner.mjs');
     expect(dockerfile).toContain('ENTRYPOINT ["/app/scripts/phase2e-validator-entrypoint.sh"]');
     expect(dockerfile).toContain('CMD ["--pg18-integration"]');
