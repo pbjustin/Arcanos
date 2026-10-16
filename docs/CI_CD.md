@@ -256,6 +256,9 @@ The same PostgreSQL job also runs
 pool-restart roundtrip runs against the guarded disposable database. The suite
 sets the application connection only after validating that dedicated URL and
 imports database consumers afterward; ambient `DATABASE_URL` never opts it in.
+Its separate `session-postgres` service on loopback port 5433 isolates full
+runtime-schema bootstrap from migration suites requiring an initially empty
+schema on the primary service.
 It shares the required-database sentinel, so missing configuration fails CI
 instead of silently skipping persistence evidence.
 

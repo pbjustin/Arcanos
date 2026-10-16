@@ -138,6 +138,11 @@ describe('required PostgreSQL CI truth contract', () => {
     const path = 'tests/integration/session-system.integration.test.ts';
     const source = readNormalized(path);
     expect(postgresJob).toContain('SESSION_SYSTEM_TEST_DATABASE_URL:');
+    // Runtime bootstrap installs the complete schema; migration suites require
+    // an empty primary service, so sharing its port would contaminate them.
+    expect(postgresJob).toContain('      session-postgres:\n        image: postgres:18-alpine');
+    expect(postgresJob).toContain('          - 5433:5432');
+    expect(postgresJob).toMatch(/SESSION_SYSTEM_TEST_DATABASE_URL:\s*>-\s*postgresql:\/\/[^\s]+@127\.0\.0\.1:5433\/arcanos_audit_pg18_20260727/u);
     expect(postgresJob).toContain(`run: node scripts/run-jest.mjs --runTestsByPath ${path} --coverage=false --runInBand`);
     expect(source).toContain('resolvePostgresTestDatabaseUrl(TEST_DATABASE_ENV)');
     const guard = source.indexOf('assertDisposablePostgresTestDatabaseUrl(configuredDatabaseUrl, TEST_DATABASE_ENV)');

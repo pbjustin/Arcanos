@@ -641,6 +641,19 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      session-postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: arcanos_ci
+          POSTGRES_PASSWORD: local-agent-ci-only
+          POSTGRES_DB: arcanos_audit_pg18_20260727
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U arcanos_ci -d arcanos_audit_pg18_20260727"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       ARCANOS_POSTGRES_TESTS_REQUIRE_DATABASE: '1'
       LOCAL_AGENT_HARDENING_TEST_DATABASE_URL: >-
@@ -669,7 +682,7 @@ jobs:
         postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
       SELF_HEAL_PREVIEW_OWNERSHIP_CONFIRM_DISPOSABLE: disposable-loopback-only
       SESSION_SYSTEM_TEST_DATABASE_URL: >-
-        postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
+        postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5433/arcanos_audit_pg18_20260727
 
     steps:
       - name: 📥 Checkout code
