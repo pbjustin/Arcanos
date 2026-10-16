@@ -1,3 +1,4 @@
+import { isRecord } from '@shared/typeGuards.js';
 import { randomUUID } from 'crypto';
 import { constants as fsConstants, type BigIntStats } from 'fs';
 import type OpenAI from 'openai';
@@ -90,10 +91,6 @@ interface ResolvedRegistryTarget {
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return typeof error === 'object' && error !== null && 'code' in error;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function compareStrings(left: string, right: string): number {

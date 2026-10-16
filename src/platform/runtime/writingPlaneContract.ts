@@ -1,3 +1,4 @@
+import { isRecord } from '@shared/typeGuards.js';
 import { classifyRuntimeInspectionPrompt } from '@shared/runtimeInspectionPrompt.js';
 import { shouldTreatPromptAsDagExecution } from '@shared/dag/dagExecutionRouting.js';
 import { normalizeGptRequestBody } from '@shared/gpt/gptIdempotency.js';
@@ -123,10 +124,6 @@ const EXPLICIT_WRITING_PLANE_CONTROL_CLASSIFICATIONS: Record<
   },
 };
 const GPT_PUBLIC_DIRECT_CONTROL_ACTIONS: readonly string[] = [];
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function normalizeAction(action: string | null | undefined): string | null {
   return typeof action === 'string' && action.trim().length > 0

@@ -1,3 +1,4 @@
+import { isRecord } from '@shared/typeGuards.js';
 import { z } from 'zod';
 
 const ASSISTANT_LIST_MAX_RECORDS = 1_000;
@@ -36,10 +37,6 @@ export class AssistantRegistryCandidateValidationError extends Error {
 
 function rejectCandidate(): never {
   throw new AssistantRegistryCandidateValidationError();
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function compareStrings(left: string, right: string): number {

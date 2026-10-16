@@ -1,3 +1,4 @@
+import { isRecord } from '@shared/typeGuards.js';
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -583,10 +584,6 @@ function resolveMcpToolApproval(input: Record<string, unknown>): boolean {
     readOnlyTools: Array.from(READ_ONLY_MCP_TOOLS).sort(),
     mutatingTools: Array.from(MUTATING_MCP_TOOLS).sort()
   });
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function filterMcpToolList(data: unknown): unknown {
