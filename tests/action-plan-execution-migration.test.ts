@@ -479,6 +479,81 @@ describe('Phase 2E additive execution schema', () => {
     }
   });
 
+  it.each([
+    ['equivalent PostgreSQL 18.6 rendering', '', ''],
+    ['altered lower bound', '>= 1::numeric', '>= 0::numeric'],
+    ['altered upper bound', '<= 86400000::numeric', '<= 86400001::numeric'],
+    ['changed lower operator', '>= 1::numeric', '> 1::numeric'],
+    ['changed upper operator', '<= 86400000::numeric', '< 86400000::numeric'],
+    ['changed Boolean logic', 'AND', 'OR'],
+    ['incorrect identifier', '"planId"', '"PlanId"'],
+    ['changed expression cast', '::NUMERIC', '::INTEGER'],
+    ['changed bound cast', '1::numeric', '1::integer'],
+    ['bound with a numeric typmod', '1::numeric', '1::numeric(10,0)'],
+    ['bound with a cast chain', '1::numeric', '1::numeric::integer'],
+    ['bound with arithmetic', '1::numeric', '1::numeric + 1'],
+    ['cast-like literal text', "'number'", "'number::numeric>=1::numeric'"],
+    ['removed constraint structure', '"actionSnapshot" ? \'params\'', 'TRUE']
+  ])('checks the snapshot constraint with %s in both verifiers', async (_label, from, to) => {
+    const migration = await loadMigrationModule();
+    const name = 'ck_ap_exec_run_snapshot_shape';
+    const reviewed = reviewedCheckDefinitions.get(name)!;
+    // These four integer-bound casts are emitted by pg_get_constraintdef on PostgreSQL 18.6.
+    const catalogDefinition = reviewed
+      .replace(
+        /(\("actionSnapshot"->>'timeout_ms'\)::NUMERIC) BETWEEN 1 AND 86400000/u,
+        '($1 >= 1::numeric AND $1 <= 86400000::numeric)'
+      )
+      .replace(
+        /(\("actionSnapshot"->>'(?:sort_order|plan_execution_generation)'\)::NUMERIC >= [01])\b/gu,
+        '$1::numeric'
+      );
+    expect(catalogDefinition.match(/[0-9]+::numeric/gu)).toEqual([
+      '1::numeric', '86400000::numeric', '0::numeric', '1::numeric'
+    ]);
+    const definition = from ? catalogDefinition.replace(from, to) : catalogDefinition;
+    if (from) expect(definition).not.toBe(catalogDefinition);
+    const client = new FakeMigrationClient(migration.ACTION_PLAN_EXECUTION_SCHEMA_REQUIREMENTS);
+    client.ledgerExists = true;
+    client.ledger = {
+      checksum: ACTION_PLAN_EXECUTION_SCHEMA_CHECKSUM,
+      completedPhase: 'complete',
+      validityState: 'VALID',
+      appliedAt: new Date('2026-07-17T00:00:00.000Z')
+    };
+    client.constraintOverrides.set(name, { definition });
+    const expected = {
+      ready: !from,
+      issues: from ? [`SCHEMA_CONSTRAINT_DEFINITION_INVALID:${name}`] : []
+    };
+    await expect(migration.verifyActionPlanExecutionSchemaWithClient(client))
+      .resolves.toMatchObject(expected);
+    await expect(verifyActionPlanExecutionSchema(client)).resolves.toMatchObject(expected);
+  });
+
+  it('still rejects a missing snapshot constraint and missing required snapshot columns', async () => {
+    const migration = await loadMigrationModule();
+    const name = 'ck_ap_exec_run_snapshot_shape';
+    const client = new FakeMigrationClient(migration.ACTION_PLAN_EXECUTION_SCHEMA_REQUIREMENTS);
+    client.ledgerExists = true;
+    client.ledger = {
+      checksum: ACTION_PLAN_EXECUTION_SCHEMA_CHECKSUM,
+      completedPhase: 'complete',
+      validityState: 'VALID',
+      appliedAt: new Date('2026-07-17T00:00:00.000Z')
+    };
+    for (const [override, issue] of [
+      [{ name: 'unexpected_snapshot_shape' }, `SCHEMA_CONSTRAINT_MISSING:${name}`],
+      [{ columns_json: JSON.stringify(['actionSnapshot']) }, `SCHEMA_CONSTRAINT_DEFINITION_INVALID:${name}`]
+    ] as const) {
+      client.constraintOverrides.set(name, override);
+      const expected = { ready: false, issues: [issue] };
+      await expect(migration.verifyActionPlanExecutionSchemaWithClient(client))
+        .resolves.toMatchObject(expected);
+      await expect(verifyActionPlanExecutionSchema(client)).resolves.toMatchObject(expected);
+    }
+  });
+
   it('keeps Phase 2E DDL out of ordinary runtime table initialization', () => {
     const runtimeBootstrapSql = TABLE_DEFINITIONS.join('\n');
 

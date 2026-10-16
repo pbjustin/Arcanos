@@ -929,6 +929,8 @@ function atomicBooleanNode(value: string): BooleanNode {
   const canonical = rewriteSqlSegments(
     value,
     segment => segment.replace(/[()[\]\s]/gu, '')
+      // PostgreSQL casts integer bounds when comparing an explicitly numeric expression.
+      .replace(/(::numeric(?:>=|<=))([0-9]+)::numeric$/u, '$1$2')
   );
   const between = canonical.match(/^(.+)between(-?[0-9]+)and(-?[0-9]+)$/u);
   if (between) {
