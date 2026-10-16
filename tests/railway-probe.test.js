@@ -121,7 +121,7 @@ describe('shared Railway probe infrastructure', () => {
 describe.each(['railway-fast-path-probe.js', 'railway-async-job-probe.js'])('%s standalone CLI', (scriptName) => {
   function runFixture(fixture) {
     return spawnSync(process.execPath, [
-      '--import', fileURLToPath(new URL('./fixtures/railway-probe-fetch.mjs', import.meta.url)),
+      '--import', new URL('./fixtures/railway-probe-fetch.mjs', import.meta.url).href,
       fileURLToPath(new URL(`../scripts/${scriptName}`, import.meta.url)),
       '--base-url', 'https://probe.invalid', '--request-timeout-ms', '1',
     ], {
