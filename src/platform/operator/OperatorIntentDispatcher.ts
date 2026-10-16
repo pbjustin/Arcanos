@@ -1,3 +1,4 @@
+import { isRecord } from '@shared/typeGuards.js';
 import {
   APPROVED_CONTROL_PLANE_ENDPOINTS,
   assertNoUnsafeTransportFields,
@@ -180,10 +181,6 @@ const STRING_REDACTIONS: Array<[RegExp, string]> = [
   [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[REDACTED_JWT]'],
   [/\b(authorization(?:[_-]?header)?|cookie(?:[_-]?header)?|set-cookie|api[_-]?key|openai[_-]?api[_-]?key|access[_-]?token|auth[_-]?token|bearer[_-]?token|openai[_-]?token|railway[_-]?token|refresh[_-]?token|session[_-]?token|token|secret|password|session(?:id)?|database[_-]?url)\s*[:=]\s*["']?[^"'\s,;}]+/gi, '$1=[REDACTED]']
 ];
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
 
 function normalizePayloadKey(key: string): string {
   return key.toLowerCase().replace(/[^a-z0-9]/g, '');

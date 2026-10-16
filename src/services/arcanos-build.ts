@@ -1,3 +1,4 @@
+import { isRecord } from '@shared/typeGuards.js';
 import { TRINITY_CORE_DAG_TEMPLATE_NAME } from '../dag/templates.js';
 import { generateRequestId } from '../shared/idGenerator.js';
 import type {
@@ -153,8 +154,4 @@ function extractBuildTemplate(payload: ArcanosBuildPayload): string {
   }
 
   return TRINITY_CORE_DAG_TEMPLATE_NAME;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }

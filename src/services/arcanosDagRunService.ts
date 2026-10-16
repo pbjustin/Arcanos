@@ -1,3 +1,4 @@
+import { stringifyError } from '@shared/errorUtils.js';
 import { isDeepStrictEqual } from 'node:util';
 import { generateRequestId } from '../shared/idGenerator.js';
 import {
@@ -2318,7 +2319,7 @@ export class ArcanosDagRunService {
       .catch((error: unknown) => {
         console.error('[DAG Runs] Background execution rejected:', {
           runId: record.runId,
-          errorMessage: error instanceof Error ? error.message : String(error)
+          errorMessage: stringifyError(error)
         });
       })
       .finally(() => {
@@ -3504,7 +3505,7 @@ export class ArcanosDagRunService {
 
       this.finalizeRun(record, internalSummary);
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = stringifyError(error);
       const cancellationRequested = record.abortController.signal.aborted;
       record.status = cancellationRequested ? 'cancelled' : 'failed';
       recordDagRunStatus(record.status);

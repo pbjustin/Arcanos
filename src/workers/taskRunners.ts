@@ -1,3 +1,5 @@
+import { stringifyError } from '@shared/errorUtils.js';
+import { isRecord } from '@shared/typeGuards.js';
 import { dagAgentManager } from '../agents/agentManager.js';
 import type { DagAgentPromptOptions } from '../agents/registry.js';
 import {
@@ -32,10 +34,6 @@ export interface DagTaskRunnerDependencies {
   logger?: DagLogger;
   metrics?: DagMetricsRecorder;
   artifactStore?: DagArtifactStore;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function truncateLogValue(value: string, maxLength = 240): string {
@@ -150,7 +148,7 @@ function buildDagFailureOutput(
   output: unknown;
   retryable?: boolean;
 } {
-  const errorMessage = error instanceof Error ? error.message : String(error);
+  const errorMessage = stringifyError(error);
   const plannerExecution = extractPlannerExecutionDetails(error);
 
   if (!plannerExecution) {
@@ -208,7 +206,7 @@ async function attachDagResultArtifactReference(
       artifactRef
     };
   } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorMessage = stringifyError(error);
 
     //audit Assumption: artifact persistence improves queue compactness and recovery but should not erase the real DAG result on storage failure; failure risk: a transient filesystem issue turns successful node work into a hard failure; expected invariant: callers still receive the original DAG result; handling strategy: log the artifact write failure and return the inline result unchanged.
     params.logger.warn('DAG node artifact persistence failed', {
@@ -386,7 +384,7 @@ export async function runDagNodeJob(
       throw withKnownUsage(normalizedWorkerBudgetError);
     }
     const durationMs = Date.now() - startedAt;
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorMessage = stringifyError(error);
     const failureOutput = buildDagFailureOutput(error, durationMs);
 
     activeMetrics.incrementCounter('node_failure');

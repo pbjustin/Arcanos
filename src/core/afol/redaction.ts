@@ -1,3 +1,4 @@
+import { isRecord } from '@shared/typeGuards.js';
 import { redactString } from '@shared/redaction.js';
 
 import type {
@@ -33,10 +34,6 @@ interface AfolAnalyticsSnapshot {
     ReturnType<typeof projectAfolDecisionForInspection>
   >;
   lastUpdated: string | null;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function asFiniteNonNegativeNumber(value: unknown): number {
