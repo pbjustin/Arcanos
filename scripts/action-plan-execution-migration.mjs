@@ -220,6 +220,13 @@ function splitTopLevelBoolean(value, operator) {
   return parts;
 }
 
+/**
+ * Turn an already normalized CHECK leaf into a BETWEEN node or opaque hash atom.
+ * Quoted text stays intact. Numeric-cast normalization is limited to an unsigned
+ * integer bound ending an unquoted segment after `::numeric >=` or `::numeric <=`;
+ * other casts, operators, and arithmetic remain distinguishable by the reviewed
+ * hash comparison. This helper does not establish general SQL equivalence or readiness.
+ */
 function atomicBooleanNode(value) {
   const canonical = rewriteSqlSegments(
     value,
@@ -560,6 +567,14 @@ export function calculateMigrationChecksum(
   return hash.digest('hex');
 }
 
+/**
+ * Check a repository-owned manifest and migration directory against reviewed artifacts.
+ * Return the calculated checksum and sorted issues, with `ok: false` on validation
+ * failure; checksum input normalizes SQL line endings from CRLF to LF only.
+ * File, JSON, and malformed-input errors propagate instead of producing success.
+ * No database is contacted: artifact validity establishes neither catalog readiness
+ * nor authorization to apply a migration.
+ */
 export function validateMigrationArtifacts({
   manifest = loadMigrationManifest(),
   directory = MIGRATION_DIRECTORY,

@@ -293,6 +293,13 @@ function splitTopLevelBoolean(value: string, operator: 'and' | 'or'): string[] {
   return parts;
 }
 
+/**
+ * Turn an already normalized CHECK leaf into a BETWEEN node or opaque hash atom.
+ * Quoted text stays intact. Numeric-cast normalization is limited to an unsigned
+ * integer bound ending an unquoted segment after `::numeric >=` or `::numeric <=`;
+ * other casts, operators, and arithmetic remain distinguishable by the reviewed
+ * hash comparison. This helper does not establish general SQL equivalence or readiness.
+ */
 function atomicBooleanNode(value: string): BooleanNode {
   const canonical = rewriteSqlSegments(
     value,
