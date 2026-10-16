@@ -69,6 +69,8 @@ const RESERVED_SQL_IDENTIFIERS = new Set([
 const SAFE_DEQUOTED_SQL_IDENTIFIERS = new Set(
   Object.values(EXPECTED_COLUMNS)
     .flat()
+    // Reviewed lowercase columns in the migration-history schema use this hash too.
+    .concat(['operation', 'phase'])
     .filter((identifier) => /^[a-z_][a-z0-9_$]*$/u.test(identifier))
     .filter((identifier) => !RESERVED_SQL_IDENTIFIERS.has(identifier)),
 );
@@ -221,7 +223,9 @@ function splitTopLevelBoolean(value, operator) {
 function atomicBooleanNode(value) {
   const canonical = rewriteSqlSegments(
     value,
-    (segment) => segment.replace(/[()[\]\s]/gu, ''),
+    (segment) => segment.replace(/[()[\]\s]/gu, '')
+      // PostgreSQL casts integer bounds when comparing an explicitly numeric expression.
+      .replace(/(::numeric(?:>=|<=))([0-9]+)::numeric$/u, '$1$2'),
   );
   const between = canonical.match(/^(.+)between(-?[0-9]+)and(-?[0-9]+)$/u);
   if (between) {
