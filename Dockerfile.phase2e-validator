@@ -16,12 +16,13 @@ COPY arcanos-ai-runtime/package.json ./arcanos-ai-runtime/package.json
 RUN npm ci --ignore-scripts --no-audit --no-fund
 
 COPY src/core/db/actionPlanExecutionSchema.ts ./src/core/db/actionPlanExecutionSchema.ts
+COPY src/core/db/actionPlanExecutionSchemaContract.json ./src/core/db/actionPlanExecutionSchemaContract.json
 COPY src/core/db/client.ts ./src/core/db/client.ts
 
 RUN ./node_modules/.bin/tsc \
       src/core/db/actionPlanExecutionSchema.ts src/core/db/client.ts \
       --rootDir src/core/db --outDir /runtime-verifier-dist \
-      --module NodeNext --moduleResolution NodeNext --target ES2022 \
+      --module NodeNext --moduleResolution NodeNext --target ES2022 --resolveJsonModule \
       --esModuleInterop --skipLibCheck --strict --declaration false --sourceMap false \
   && npm prune --omit=dev --ignore-scripts \
   && npm cache clean --force
@@ -38,6 +39,7 @@ COPY --from=runtime-verifier-build /app/package.json ./package.json
 COPY --from=runtime-verifier-build /app/node_modules/ ./node_modules/
 COPY --from=runtime-verifier-build /runtime-verifier-dist/ ./dist/core/db/
 
+COPY src/core/db/actionPlanExecutionSchemaContract.json ./src/core/db/actionPlanExecutionSchemaContract.json
 COPY scripts/action-plan-execution-migration.mjs ./scripts/action-plan-execution-migration.mjs
 COPY scripts/action-plan-execution-migration-history.mjs ./scripts/action-plan-execution-migration-history.mjs
 COPY scripts/phase2e-migration-validator.mjs ./scripts/phase2e-migration-validator.mjs
