@@ -67,6 +67,21 @@ sentinel; no production credential is required.
 | `contracts/job_status.openapi.v1.json` | Contract for job status reads. |
 | `contracts/job_result.openapi.v1.json` | Contract for job result reads. |
 
+## Action-plan execution schema contract
+
+`src/core/db/actionPlanExecutionSchemaContract.json` is the execution-free source
+of required catalog definitions and reviewed migration metadata shared by the
+runtime verifier and standalone migration runner. The reviewed SQL, manifest,
+checksum calculation, and migration lifecycle remain separate and unchanged.
+Catalog parsing and verifier control flow retain their existing consumer contracts.
+
+An offline migration bundle must include this JSON file at its repository-relative
+path alongside the two migration scripts and versioned migration directories.
+The runtime TypeScript build emits the JSON beside its compiled verifier through
+`resolveJsonModule`. Both dedicated Phase 2E images explicitly package the file;
+the validator build also enables JSON module resolution. Reading the contract or
+running `--plan` does not connect to a database or apply a migration.
+
 ## Runtime Behavior
 - The backend calls `initializeDatabaseWithSchema()` during startup, reusing
   an already-connected pool when available, and continues with in-memory
