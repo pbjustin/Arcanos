@@ -1,3 +1,4 @@
+import { isRecord } from '@shared/typeGuards.js';
 import { evaluateControlPlaneGptPolicy } from './gptPolicy.js';
 import type {
   ControlPlaneGptPolicy,
@@ -12,10 +13,6 @@ const CONFIRMED_TRINITY_STAGES = [
   'GPT5-REASONING',
   'ARCANOS-FINAL'
 ] as const;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function readStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) {

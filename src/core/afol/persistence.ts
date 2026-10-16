@@ -1,3 +1,4 @@
+import { isRecord } from '@shared/typeGuards.js';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -14,10 +15,6 @@ import type {
 const INVALID_TIMESTAMP = '1970-01-01T00:00:00.000Z';
 const DECISION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const MAX_PERSISTENCE_RECORDS = 1_000;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function isMissingFileError(error: unknown): boolean {
   return isRecord(error) && error.code === 'ENOENT';

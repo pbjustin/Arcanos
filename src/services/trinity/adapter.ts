@@ -1,3 +1,4 @@
+import { isRecord } from '@shared/typeGuards.js';
 import {
   TRINITY_CORE_DAG_TEMPLATE_NAME,
   buildDagTemplate,
@@ -227,10 +228,6 @@ function resolveAdapterTemplateName(
 
 function buildSyntheticSessionId(traceId: string | undefined): string {
   return ['trinity', 'pipeline', traceId || 'local', Date.now().toString(36)].join(':');
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function readGatewayPayload(payload: GatewayResult['payload'] | GatewayJobResult['payload']): Record<string, unknown> {

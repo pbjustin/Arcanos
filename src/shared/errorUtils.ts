@@ -13,3 +13,13 @@ export function resolveErrorMessage(error: unknown, fallback: string = "Unknown 
   }
   return fallback;
 }
+
+/**
+ * Preserve raw thrown-value diagnostics for callers that already stringify them.
+ * Unlike resolveErrorMessage, this does not extract message fields from objects
+ * or replace unknown values with a controlled fallback. String conversion can
+ * itself throw, matching the original diagnostic expression.
+ */
+export function stringifyError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}

@@ -1,3 +1,4 @@
+import { isRecord } from '@shared/typeGuards.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import {
   defineModuleCatalog,
@@ -75,10 +76,6 @@ type ModuleDefinitionRejection =
   | 'gpt_ids_mismatch';
 
 type LoadedModuleSnapshot = Readonly<LoadedModule>;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function getModuleDefinitionRejection(
   value: unknown,

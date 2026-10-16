@@ -1,3 +1,4 @@
+import { isRecord } from '@shared/typeGuards.js';
 import crypto from 'node:crypto';
 import type { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
@@ -1016,10 +1017,6 @@ function readOptionalString(params: Record<string, unknown>, key: string, fallba
     return fallback;
   }
   return value.trim().slice(0, 200);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function isGptAccessCreatedJob(
