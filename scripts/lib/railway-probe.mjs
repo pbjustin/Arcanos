@@ -16,6 +16,11 @@ const STRING_FLAGS = new Map([
   ['--prompt', 'prompt'],
 ]);
 
+/**
+ * Preserve the probes' legacy Number coercion and truncation for CLI values.
+ * Non-finite or non-positive inputs use the supplied default; positive fractions
+ * below one become zero. This is compatibility parsing, not a minimum bound.
+ */
 export function readPositiveInteger(rawValue, fallbackValue) {
   const parsedValue = Number(rawValue);
   // Preserve the probes' existing truncation, including positive fractions below one.
@@ -24,6 +29,12 @@ export function readPositiveInteger(rawValue, fallbackValue) {
     : fallbackValue;
 }
 
+/**
+ * Return a fresh config using the shared string flags and caller-owned numeric
+ * flags. Unknown flags and blank/missing values are ignored; invalid numbers
+ * reset that setting to its original default, even after an earlier override.
+ * Values that look like flags remain values, preserving the existing CLI grammar.
+ */
 export function parseProbeArgs(argv, defaults, additionalIntegerFlags = {}) {
   const config = { ...defaults };
   const integerFlags = new Map([
@@ -52,6 +63,10 @@ export function parseProbeArgs(argv, defaults, additionalIntegerFlags = {}) {
   return config;
 }
 
+/**
+ * Trim the target and trailing slashes, adding HTTPS when no HTTP(S) prefix exists.
+ * This preserves operator-supplied targets; it does not validate or allowlist them.
+ */
 export function normalizeBaseUrl(baseUrl) {
   const normalizedBaseUrl = baseUrl.trim().replace(/\/+$/, '');
   return /^https?:\/\//i.test(normalizedBaseUrl)
@@ -59,6 +74,11 @@ export function normalizeBaseUrl(baseUrl) {
     : `https://${normalizedBaseUrl}`;
 }
 
+/**
+ * Create a request-scoped abort signal. Call dispose in finally after both fetch
+ * and body consumption; disposal clears the timer without aborting completed work.
+ * The signal relies on the consumer honoring abort and is not a total probe deadline.
+ */
 export function createRequestTimeoutSignal(timeoutMs) {
   const abortController = new AbortController();
   const timeoutHandle = setTimeout(() => abortController.abort(), timeoutMs);
@@ -70,6 +90,11 @@ export function createRequestTimeoutSignal(timeoutMs) {
   };
 }
 
+/**
+ * Consume text once and retain it alongside the parsed JSON for probe-specific
+ * validation. Empty or malformed JSON returns ok=false; body-read errors propagate.
+ * Any JSON value may parse successfully. Retained raw text is not redacted.
+ */
 export async function readJsonResponse(response) {
   const bodyText = await response.text();
   if (!bodyText.trim()) {
@@ -91,10 +116,18 @@ export function buildSuccess(detail) {
   return { status: PROBE_STATUS.PASS, detail };
 }
 
+/**
+ * Write the existing stdout diagnostic format without setting the process exit
+ * code. Callers own outcome classification and any required detail redaction.
+ */
 export function printProbeResult(result) {
   process.stdout.write(`[${result.status}] ${result.detail}\n`);
 }
 
+/**
+ * Compare a module URL with Node's entrypoint path so importing a probe does not
+ * invoke its CLI. This preserves exact file-URL comparison, without realpath lookup.
+ */
 export function isDirectExecution(moduleUrl, argv = process.argv) {
   return Boolean(argv[1] && moduleUrl === pathToFileURL(argv[1]).href);
 }

@@ -63,6 +63,12 @@ function readRouteDecision(payload, headers) {
   };
 }
 
+/**
+ * Submit one configured request and require HTTP 200, an object body, no queued
+ * job ID, and explicit inline fast-path metadata. Validation returns PASS/FAIL;
+ * transport/body-read failures propagate, with the request timer always disposed.
+ * Tests inject fetchFn; the default fetch performs a real network request.
+ */
 export async function runFastPathProbe(config, dependencies = {}) {
   const fetchFn = dependencies.fetchFn ?? fetch;
   const normalizedBaseUrl = normalizeBaseUrl(config.baseUrl);
