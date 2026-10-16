@@ -85,6 +85,9 @@ async function importMcpHttpBodyParserWithLimit(
   process.env.JSON_LIMIT = jsonLimit;
   try {
     await jest.isolateModulesAsync(async () => {
+      // Jest's isolated ESM cache races when env and unifiedConfig first load
+      // their shared parser concurrently. Initialize that pure leaf first.
+      await import('../src/platform/runtime/envParsers.js');
       isolatedModule = await import('../src/mcp/httpBodyParser.js');
     });
   } finally {
