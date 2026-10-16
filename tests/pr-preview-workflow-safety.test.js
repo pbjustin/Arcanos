@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -31,17 +31,19 @@ const providerBearingPrJobs = [
   {
     path: '.github/workflows/arcanos-pr-assistant.yml',
     job: 'arcanos-pr-analysis',
-    expectedGate: "if: github.event_name == 'workflow_dispatch'",
+    expectedGate: "github.event_name == 'workflow_dispatch'",
   },
   {
     path: '.github/workflows/arcanos-code-analysis.yml',
     job: 'arcanos-analysis',
-    expectedGate: "if: github.event_name == 'workflow_dispatch'",
+    expectedGate: "github.event_name == 'workflow_dispatch'",
   },
   {
     path: '.github/workflows/auto-update-documentation.yml',
     job: 'analyze',
-    expectedGate: "if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'",
+    expectedGate: "github.event_name == 'workflow_dispatch'"
+      + " && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)"
+      + " && inputs.provider_confirmation == 'AUTHORIZE DOCUMENTATION PROVIDER REQUESTS'",
   },
 ];
 
@@ -210,6 +212,193 @@ function runPreviewResultSummary(result) {
   }
 }
 
+const maintainedDocumentationPath = 'docs/GPT_ASYNC_DOCUMENTATION_WORKFLOW.md';
+const baselineDocumentation = '# Existing documentation\n';
+
+function runDocumentationUpdate(payload, { untracked = false, dirtyOtherFile = false, rawJson } = {}) {
+  const job = parseWorkflow('.github/workflows/auto-update-documentation.yml').jobs.analyze;
+  const step = job.steps.find(candidate => candidate.id === 'process_updates');
+  const source = /^node --input-type=module <<'NODE'\n([\s\S]+)\nNODE\s*$/u.exec(step.run)?.[1];
+  if (!source) throw new Error('Expected reviewed inline documentation update validator');
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), 'arcanos-doc-update-'));
+  const directory = path.join(fixtureRoot, 'repository');
+  const outputPath = path.join(directory, 'outputs');
+  const environment = { PATH: process.env.PATH, LANG: 'C', LC_ALL: 'C',
+    GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0' };
+  const git = args => {
+    const result = spawnSync('git', ['-c', 'core.hooksPath=/dev/null', ...args], {
+      cwd: directory, env: environment, encoding: 'utf8', timeout: 5_000,
+    });
+    if (result.status !== 0) throw new Error(`Documentation fixture Git failed: ${result.stderr}`);
+    return result.stdout;
+  };
+  try {
+    mkdirSync(path.join(directory, 'docs'), { recursive: true });
+    writeFileSync(path.join(directory, maintainedDocumentationPath), baselineDocumentation);
+    writeFileSync(path.join(directory, 'README.md'), '# Unrelated document\n');
+    writeFileSync(outputPath, '');
+    git(['init', '--quiet']);
+    git(['add', '--', 'README.md', ...(untracked ? [] : [maintainedDocumentationPath])]);
+    git(['-c', 'user.name=Documentation fixture', '-c', 'user.email=fixture@example.invalid',
+      '-c', 'commit.gpgSign=false', 'commit', '--quiet', '-m', 'Disposable documentation fixture']);
+    const baselineHead = git(['rev-parse', 'HEAD']).trim();
+    if (dirtyOtherFile) writeFileSync(path.join(directory, 'README.md'), '# Unexpected side effect\n');
+    const proposal = typeof payload === 'function' ? payload(directory) : payload;
+    writeFileSync(path.join(directory, 'doc_analysis.json'), rawJson ?? JSON.stringify(proposal));
+    const result = spawnSync(process.execPath, ['--input-type=module'], {
+      input: source, cwd: directory, encoding: 'utf8', timeout: 5_000,
+      env: { ...environment, ...step.env, GITHUB_OUTPUT: outputPath },
+    });
+    return { ...result, outputs: readFileSync(outputPath, 'utf8'),
+      content: readFileSync(path.join(directory, maintainedDocumentationPath), 'utf8'),
+      changedFiles: git(['diff', '--name-only', 'HEAD', '--']).trim().split('\n').filter(Boolean),
+      committed: git(['rev-parse', 'HEAD']).trim() !== baselineHead };
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+}
+
+function runDocumentationSummary(status, hasUpdates) {
+  const job = parseWorkflow('.github/workflows/auto-update-documentation.yml').jobs.analyze;
+  const script = job.steps.find(step => step.name === 'Report analysis result').run
+    .replaceAll('${{ job.status }}', status)
+    .replaceAll('${{ steps.process_updates.outputs.has_updates }}', String(hasUpdates))
+    .replaceAll('${{ github.run_id }}', '12345')
+    .replaceAll('${{ github.run_attempt }}', '1');
+  const directory = mkdtempSync(path.join(tmpdir(), 'arcanos-doc-summary-'));
+  try {
+    return spawnSync('bash', ['-e', '-c', script], { encoding: 'utf8', timeout: 5_000,
+      env: { PATH: process.env.PATH, LANG: 'C', LC_ALL: 'C',
+        GITHUB_STEP_SUMMARY: path.join(directory, 'summary.md') } });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+describe('authorized documentation patch boundary', () => {
+  it('retains read-only workflow permissions and human publication of the single approved document', () => {
+    const workflow = parseWorkflow('.github/workflows/auto-update-documentation.yml');
+    expect(workflow.permissions).toEqual({ contents: 'read' });
+    for (const job of Object.values(workflow.jobs)) {
+      expect(job.permissions).toEqual({ contents: 'read' });
+      expect(job.steps.find(step => step.uses?.startsWith('actions/checkout@')).with['persist-credentials'])
+        .toBe(false);
+    }
+    const analysis = workflow.jobs.analyze;
+    const update = analysis.steps.find(step => step.id === 'process_updates');
+    expect(update.env).toEqual({ MAX_UPDATE_FILES: '1', MAX_FILE_BYTES: '262144', MAX_TOTAL_BYTES: '1048576' });
+    const allowlist = /const allowedDocuments = new Set\(\[([\s\S]*?)\]\)/u.exec(update.run)?.[1];
+    expect([...allowlist.matchAll(/'([^']+)'/gu)].map(match => match[1])).toEqual([maintainedDocumentationPath]);
+    const commands = Object.values(workflow.jobs).flatMap(job => job.steps.map(step => step.run ?? '')).join('\n');
+    expect(commands).not.toMatch(/\bgit\s+(?:commit|push)\b|\bgh\s+pr\s+create\b/u);
+    expect(JSON.stringify(workflow)).not.toMatch(/create-pull-request|contents:[ ]*write|pull-requests:[ ]*write/u);
+    const validate = analysis.steps.find(step => step.name === 'Validate proposed documentation');
+    expect(validate.if).toBe("steps.process_updates.outputs.has_updates == 'true'");
+    expect(validate.run).toContain('git diff --check HEAD -- "$ALLOWED_DOCUMENT"');
+    expect(validate.run).toContain('"$PATCH_BYTES" -gt 1048576');
+    expect(validate.run).toContain('> documentation-update.patch');
+  });
+
+  it.each([false, true])('applies a valid bounded proposal without committing it (response envelope: %s)', wrapped => {
+    const proposal = { ok: true, updates: [{ file: maintainedDocumentationPath, content: '# Reviewed proposal' }] };
+    const result = runDocumentationUpdate(wrapped ? { response: proposal } : proposal);
+    expect(result.status).toBe(0);
+    expect(result.content).toBe('# Reviewed proposal\n');
+    expect(result.outputs).toBe('has_updates=true\nupdate_count=1\n');
+    expect(result.changedFiles).toEqual([maintainedDocumentationPath]);
+    expect(result.committed).toBe(false);
+  });
+
+  it.each([
+    ['wrong maintained file', 'README.md'],
+    ['unapproved documentation', 'docs/OTHER.md'],
+    ['parent traversal', '../outside.md'],
+    ['normalized traversal', 'docs/../docs/GPT_ASYNC_DOCUMENTATION_WORKFLOW.md'],
+    ['absolute path', directory => path.join(directory, 'absolute.md')],
+    ['Windows separators', 'docs\\GPT_ASYNC_DOCUMENTATION_WORKFLOW.md'],
+    ['NUL path', `${maintainedDocumentationPath}\0`],
+    ['non-Markdown target', 'scripts/check-documentation.mjs'],
+    ['missing path', undefined],
+  ])('rejects %s without modifying tracked documentation', (_name, file) => {
+    const result = runDocumentationUpdate(directory => ({ ok: true,
+      updates: [{ file: typeof file === 'function' ? file(directory) : file, content: '# Rejected' }] }));
+    expect(result.status).toBe(1);
+    expect(result.content).toBe(baselineDocumentation);
+    expect(result.changedFiles).toEqual([]);
+    expect(result.outputs).toBe('');
+  });
+
+  it.each([
+    ['duplicate updates', [
+      { file: maintainedDocumentationPath, content: '# First' },
+      { file: maintainedDocumentationPath, content: '# Second' },
+    ]],
+    ['non-array updates', { file: maintainedDocumentationPath, content: '# Rejected' }],
+    ['non-string content', [{ file: maintainedDocumentationPath, content: 42 }]],
+    ['NUL content', [{ file: maintainedDocumentationPath, content: '# Rejected\0' }]],
+    ['oversize UTF-8 content', [{ file: maintainedDocumentationPath, content: 'é'.repeat(131073) }]],
+    ['newline exceeding the byte limit', [{ file: maintainedDocumentationPath, content: 'x'.repeat(262144) }]],
+  ])('rejects %s before applying any update', (_name, updates) => {
+    const result = runDocumentationUpdate({ ok: true, updates });
+    expect(result.status).toBe(1);
+    expect(result.content).toBe(baselineDocumentation);
+    expect(result.changedFiles).toEqual([]);
+    expect(result.outputs).toBe('');
+  });
+
+  it.each(['x'.repeat(262143), `${'x'.repeat(262143)}\n`])('accepts exactly 262144 written bytes (%#)', content => {
+    const result = runDocumentationUpdate({ ok: true, updates: [{ file: maintainedDocumentationPath, content }] });
+    expect(result.status).toBe(0);
+    expect(Buffer.byteLength(result.content, 'utf8')).toBe(262144);
+    expect(result.outputs).toBe('has_updates=true\nupdate_count=1\n');
+  });
+
+  it.each([false, undefined, 'true'])('does not apply degraded or nonboolean-success output (%s)', ok => {
+    const result = runDocumentationUpdate({ ok, updates: [{ file: maintainedDocumentationPath, content: '# Rejected' }] });
+    expect(result.status).toBe(0);
+    expect(result.content).toBe(baselineDocumentation);
+    expect(result.changedFiles).toEqual([]);
+    expect(result.outputs).toBe('has_updates=false\nupdate_count=0\n');
+  });
+
+  it('rejects malformed JSON without applying documentation', () => {
+    const result = runDocumentationUpdate(null, { rawJson: '{ invalid' });
+    expect(result.status).toBe(1);
+    expect(result.content).toBe(baselineDocumentation);
+    expect(result.changedFiles).toEqual([]);
+    expect(result.outputs).toBe('');
+  });
+
+  it('rejects the allowed document when it is not tracked', () => {
+    const result = runDocumentationUpdate({ ok: true, updates: [{ file: maintainedDocumentationPath, content: '# Rejected' }] }, { untracked: true });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('targets an untracked document');
+    expect(result.content).toBe(baselineDocumentation);
+    expect(result.outputs).toBe('');
+  });
+
+  it('rejects publication when another tracked file was modified', () => {
+    const result = runDocumentationUpdate({ ok: true, updates: [{ file: maintainedDocumentationPath, content: '# Proposal' }] }, { dirtyOtherFile: true });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('Refusing tracked side effects outside the documentation allowlist: README.md');
+    expect(result.outputs).toBe('');
+    expect(result.committed).toBe(false);
+  });
+
+  it.each(['failure', 'cancelled'])('does not advertise a successful patch after %s', status => {
+    const result = runDocumentationSummary(status, true);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('Documentation analysis or validation failed.');
+    expect(result.stdout).not.toContain('A validated documentation patch is available');
+  });
+
+  it('requires a human-authored branch and review for a successful patch', () => {
+    const result = runDocumentationSummary('success', true);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('Download and review it, then apply it on a human-authored branch and open a pull request.');
+  });
+});
+
 describe('supplemental exact-head preview workflow', () => {
   it('admits opted-in same-repository main PRs without repeating ordinary CI on opt-in or undraft', () => {
     const workflow = parseWorkflow('.github/workflows/pr-ci.yml');
@@ -350,12 +539,52 @@ describe('supplemental exact-head preview workflow', () => {
 });
 
 describe('native PR workflow safety', () => {
-  it.each(providerBearingPrJobs)('$path keeps $job manual or main-push only', ({ path, job, expectedGate }) => {
-    const workflow = readWorkflow(path);
-    const jobStart = workflow.indexOf(`  ${job}:\n`);
+  it.each(providerBearingPrJobs)('$path keeps $job behind its manual authorization gate', ({ path, job, expectedGate }) => {
+    const workflow = parseWorkflow(path);
 
-    expect(jobStart).toBeGreaterThan(-1);
-    expect(workflow.slice(jobStart, jobStart + 240)).toContain(`    ${expectedGate}`);
+    expect(workflow.jobs[job].if).toBe(expectedGate);
+  });
+
+  it('requires explicit default-branch authorization before exposing documentation provider credentials', () => {
+    const workflow = parseWorkflow('.github/workflows/auto-update-documentation.yml');
+    expect(workflow.on.workflow_dispatch.inputs.provider_confirmation).toMatchObject({
+      required: false, default: '', type: 'string',
+    });
+    expect(workflow.jobs.analyze.needs).toBe('validate-offline');
+    const analysisStep = workflow.jobs.analyze.steps.find(step => step.name === 'Run documentation analysis');
+    expect(analysisStep.env.OPENAI_API_KEY).toBe('${{ secrets.OPENAI_API_KEY }}');
+    expect(analysisStep.env.ARCANOS_GPT_ACCESS_TOKEN).toBe('ci-gpt-access-token-for-local-workflow-only');
+    expect(analysisStep.run).toContain('if [ -z "$OPENAI_API_KEY" ]; then');
+    expect(analysisStep.run).toContain('--strict');
+    expect(analysisStep.run).not.toContain('--allow-partial');
+    expect(JSON.stringify(workflow.env)).not.toContain('secrets.');
+    expect(JSON.stringify(workflow.jobs.analyze.env ?? {})).not.toContain('secrets.');
+  });
+
+  it('runs automatic documentation validation without credentials, install hooks, or application startup', () => {
+    const workflow = parseWorkflow('.github/workflows/auto-update-documentation.yml');
+    const offline = workflow.jobs['validate-offline'];
+    expect(workflow.on.push.branches).toEqual(['main']);
+    expect(offline.if).toBeUndefined();
+    expect(workflow.permissions).toEqual({ contents: 'read' });
+    expect(offline.permissions).toEqual({ contents: 'read' });
+    expect(offline.env).toBeUndefined();
+    expect(JSON.stringify(offline)).not.toMatch(/secrets\.|github\.token/iu);
+    const commands = offline.steps.map(step => step.run ?? '').join('\n');
+    expect(commands).not.toMatch(/npm\s+(?:ci|install|start|run\s+build)|generate-docs-update|start-server/iu);
+    expect(commands).toContain('sudo apt-get install --yes bubblewrap');
+    expect(offline.steps.find(step => step.name === 'Verify offline documentation security contracts').run)
+      .toBe('env -i PATH="$PATH" node --test scripts/documentation-offline.test.mjs');
+    expect(offline.steps.find(step => step.name === 'Validate documentation offline').run)
+      .toBe('env -i PATH="$PATH" node scripts/check-documentation-offline.mjs');
+    expect(offline.steps.find(step => step.uses?.startsWith('actions/checkout@')).with['persist-credentials'])
+      .toBe(false);
+    const evidence = offline.steps.find(step => step.name === 'Upload offline validation evidence');
+    expect(evidence.if).toBe('always()');
+    expect(evidence.with.path).toBe('documentation-offline-validation.json');
+    expect(evidence.with['if-no-files-found']).toBe('error');
+    expect(offline.steps.find(step => step.name === 'Report offline validation result').run)
+      .toContain('Provider generation in this job: skipped.');
   });
 
   it('does not remove the ordinary offline PR CI trigger', () => {
