@@ -20,6 +20,7 @@ RUN npm ci --ignore-scripts --no-audit --no-fund
 COPY jest.phase2e-pg18.config.js ./jest.phase2e-pg18.config.js
 COPY tsconfig.json ./tsconfig.json
 COPY src/core/db/actionPlanExecutionSchema.ts ./src/core/db/actionPlanExecutionSchema.ts
+COPY src/core/db/actionPlanExecutionSchemaContract.json ./src/core/db/actionPlanExecutionSchemaContract.json
 COPY src/core/db/client.ts ./src/core/db/client.ts
 COPY tests/integration/action-plan-execution-migration.pg18.integration.test.ts ./tests/integration/action-plan-execution-migration.pg18.integration.test.ts
 COPY scripts/action-plan-execution-migration.mjs ./scripts/action-plan-execution-migration.mjs

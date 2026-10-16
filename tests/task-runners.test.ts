@@ -155,6 +155,30 @@ describe('runDagNodeJob', () => {
     }));
   });
 
+  it.each([
+    ['message object', { message: 'object-only message' }, '[object Object]'],
+    ['null', null, 'null'],
+    ['symbol', Symbol('worker failure'), 'Symbol(worker failure)'],
+    ['empty Error message', new Error(''), ''],
+    ['string', 'worker failure', 'worker failure']
+  ])('preserves raw %s diagnostics in failed results and logs', async (_label, failure, expected) => {
+    const dependencies = buildTaskRunnerDependencies({
+      runPrompt: jest.fn(async () => { throw failure; })
+    });
+
+    const result = await runDagNodeJob(buildPlannerDagNodeJobInput(), dependencies);
+
+    expect(result.status).toBe('failed');
+    expect(result.errorMessage).toBe(expected);
+    expect(dependencies.logger?.error).toHaveBeenCalledWith('DAG node job failed', expect.objectContaining({
+      errorMessage: expected
+    }));
+    expect(dependencies.artifactStore?.writeArtifact).toHaveBeenCalledWith(expect.objectContaining({
+      artifactKind: 'failure',
+      payload: expect.objectContaining({ errorMessage: expected })
+    }));
+  });
+
   it('surfaces structured planner failure metadata and marks the result as non-retryable after planner retries exhaust', async () => {
     const plannerError = new Error('Request was aborted.') as Error & {
       plannerExecution?: Record<string, unknown>;

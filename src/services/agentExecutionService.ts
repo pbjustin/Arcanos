@@ -2,6 +2,7 @@
  * Capability-planner execution service above the CEF.
  */
 
+import { stringifyError } from '@shared/errorUtils.js';
 import { generateRequestId } from '@shared/idGenerator.js';
 import {
   createDagFailureResult,
@@ -255,7 +256,7 @@ class InProcessCapabilityDagJobQueue implements AgentDagJobQueue {
       };
     } catch (error: unknown) {
       const completedAt = new Date().toISOString();
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = stringifyError(error);
 
       return {
         jobId,
@@ -402,7 +403,7 @@ async function executePlannedCommandStep(
     return stepResult;
   } catch (error: unknown) {
     const completedAt = new Date().toISOString();
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorMessage = stringifyError(error);
     const failedResult = buildFallbackStepResult(
       step,
       'failed',
@@ -614,7 +615,7 @@ export function createAgentExecutionService(
       try {
         plan = authorization?.plan ?? planGoalExecution(request);
       } catch (error: unknown) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage = stringifyError(error);
 
         //audit Assumption: planner-layer boundary rejections must remain observable even when planning stops before any CEF command executes; failure risk: blocked exploit chains disappear from diagnostics and look like silent validation failures; expected invariant: rejected planner goals emit one trace event with a stable error code before the error bubbles to HTTP; handling strategy: record a dedicated blocked/rejected event and rethrow the original error.
         if (isAgentPlanningValidationError(error)) {

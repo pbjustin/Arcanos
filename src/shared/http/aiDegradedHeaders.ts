@@ -1,3 +1,4 @@
+import { isRecord } from '../typeGuards.js';
 import type { Response } from 'express';
 
 export type AITimeoutKind = 'pipeline_timeout' | 'provider_timeout' | 'worker_timeout' | 'budget_abort';
@@ -11,10 +12,6 @@ export interface AIDegradedResponseMetadata {
 export const AI_TIMEOUT_KIND_HEADER = 'x-ai-timeout-kind';
 export const AI_DEGRADED_REASON_HEADER = 'x-ai-degraded-reason';
 export const AI_BYPASSED_SUBSYSTEMS_HEADER = 'x-ai-bypassed-subsystems';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function normalizeTimeoutKind(value: unknown): AITimeoutKind | null {
   if (typeof value !== 'string') {

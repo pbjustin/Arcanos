@@ -22,6 +22,14 @@ const historySqlPath = join(
   '01_attempt_history.sql',
 );
 
+// Captured pg_get_constraintdef representations from PostgreSQL 18.6.
+const postgres18HistoryChecks = {
+  ck_ap_exec_migration_attempt_operation:
+    "CHECK (operation = ANY (ARRAY['HISTORY_SCHEMA_INSTALL'::text, 'APPLY'::text, 'COMPENSATE'::text]))",
+  ck_ap_exec_migration_attempt_event_phase:
+    'CHECK (phase IS NULL OR char_length(phase) >= 1 AND char_length(phase) <= 128)',
+};
+
 type QueryResult = { rows: Array<Record<string, any>>; rowCount: number };
 
 interface Attempt {
@@ -52,6 +60,7 @@ class FakeHistoryClient {
   canonicalLedger: Record<string, unknown> | null = null;
   columnTypeOverride: { table: string; column: string; type: string } | null = null;
   readonly columnDefaultOverrides = new Map<string, unknown>();
+  readonly constraintOverrides = new Map<string, Record<string, unknown>>();
   indexAccessMethodOverride: string | null = null;
   readonly indexPredicateOverrides = new Map<string, string | null>();
   omitInstallMarker = false;
@@ -99,6 +108,7 @@ class FakeHistoryClient {
       referenced_columns_json: JSON.stringify(spec.referencedColumns ?? []),
       update_action: spec.updateAction ?? ' ',
       delete_action: spec.deleteAction ?? ' ',
+      ...this.constraintOverrides.get(name),
     }));
   }
 
@@ -355,6 +365,74 @@ describe('Phase 2E durable migration-attempt history', () => {
     expect(client.events.size).toBe(2);
     expect(client.calls.slice(callsAfterInstall).some(call => call.text === 'BEGIN')).toBe(false);
     expect(client.calls.filter(call => call.text.includes('pg_try_advisory_lock'))).toHaveLength(1);
+  });
+
+  it.each([
+    ['ck_ap_exec_migration_attempt_operation', 'operation'],
+    ['ck_ap_exec_migration_attempt_event_phase', 'phase'],
+  ] as const)('accepts reviewed and PostgreSQL 18.6 quoted/unquoted %s', async (name, identifier) => {
+    const client = fake();
+    await history.installMigrationAttemptHistoryWithClient(client);
+    const catalog = postgres18HistoryChecks[name];
+    for (const definition of [
+      client.reviewedChecks.get(name),
+      catalog,
+      catalog.replaceAll(identifier, `"${identifier}"`),
+    ]) {
+      client.constraintOverrides.set(name, { definition });
+      await expect(history.verifyMigrationAttemptHistoryWithClient(client)).resolves.toMatchObject({
+        ready: true,
+        issues: [],
+      });
+    }
+  });
+
+  it.each([
+    ['wrong-case operation', 'ck_ap_exec_migration_attempt_operation', 'operation', '"Operation"'],
+    ['wrong operation identifier', 'ck_ap_exec_migration_attempt_operation', 'operation', 'phase'],
+    ['extra operation', 'ck_ap_exec_migration_attempt_operation', "'APPLY'::text", "'APPLY'::text, 'OTHER'::text"],
+    ['changed operation literal', 'ck_ap_exec_migration_attempt_operation', "'APPLY'", "'apply'"],
+    ['wrong-case phase', 'ck_ap_exec_migration_attempt_event_phase', 'phase', '"Phase"'],
+    ['wrong phase identifier', 'ck_ap_exec_migration_attempt_event_phase', 'phase', 'operation'],
+    ['changed phase threshold', 'ck_ap_exec_migration_attempt_event_phase', '<= 128', '<= 129'],
+    ['changed phase operator', 'ck_ap_exec_migration_attempt_event_phase', '>= 1', '> 1'],
+    ['changed phase Boolean logic', 'ck_ap_exec_migration_attempt_event_phase', 'AND', 'OR'],
+    ['removed phase bound', 'ck_ap_exec_migration_attempt_event_phase', 'AND char_length(phase) <= 128', ''],
+    ['changed phase null handling', 'ck_ap_exec_migration_attempt_event_phase', 'IS NULL', 'IS NOT NULL'],
+  ] as const)('rejects %s for the exact history constraint reason', async (_label, name, from, to) => {
+    const client = fake();
+    await history.installMigrationAttemptHistoryWithClient(client);
+    const catalog = postgres18HistoryChecks[name];
+    const definition = catalog.replace(from, to);
+    expect(definition).not.toBe(catalog);
+    client.constraintOverrides.set(name, { definition });
+    await expect(history.verifyMigrationAttemptHistoryWithClient(client)).resolves.toMatchObject({
+      ready: false,
+      issues: [`MIGRATION_HISTORY_CONSTRAINT_DEFINITION_INVALID:${name}`],
+    });
+  });
+
+  it('keeps unreviewed and case-sensitive identifier spellings distinct', () => {
+    for (const [quoted, unquoted] of [
+      ['"Operation"', 'operation'],
+      ['"Phase"', 'phase'],
+      ['"unreviewed_column"', 'unreviewed_column'],
+      ['"eventType"', 'eventtype'],
+    ]) {
+      expect(main.checkDefinitionHash(`CHECK (${quoted} IS NULL)`)).not.toBe(
+        main.checkDefinitionHash(`CHECK (${unquoted} IS NULL)`),
+      );
+    }
+  });
+
+  it.each(Object.keys(postgres18HistoryChecks))('rejects a missing history constraint %s', async name => {
+    const client = fake();
+    await history.installMigrationAttemptHistoryWithClient(client);
+    client.constraintOverrides.set(name, { name: 'unexpected_history_constraint' });
+    await expect(history.verifyMigrationAttemptHistoryWithClient(client)).resolves.toMatchObject({
+      ready: false,
+      issues: [`MIGRATION_HISTORY_CONSTRAINT_MISSING:${name}`],
+    });
   });
 
   it('fails closed for artifact mismatch, partial schema, malformed schema, or missing install marker', async () => {

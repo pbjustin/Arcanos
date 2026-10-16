@@ -1,3 +1,4 @@
+import { isRecord } from '../typeGuards.js';
 import type { GptDirectControlAction } from './gptControlActions.js';
 
 export const GPT_EXECUTION_PLAN_DETAILS = ['summary', 'standard', 'full'] as const;
@@ -88,10 +89,6 @@ const SECTION_CUE_PATTERNS: Array<{
   { section: 'system', pattern: /\bsystem\b|\bhealth\b/i },
   { section: 'predictive', pattern: /\bpredictive\b|\bforecast\b|\btrend(?:s)?\b/i },
 ];
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function normalizePrompt(promptText: string | null | undefined): string {
   return typeof promptText === 'string' ? promptText.trim() : '';
