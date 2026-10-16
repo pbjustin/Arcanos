@@ -1,3 +1,4 @@
+import { isRecord } from '@shared/typeGuards.js';
 import {
   OpenAIResponseMalformedJsonError,
   OpenAIResponseMissingOutputError,
@@ -77,10 +78,6 @@ const LLM_DISPATCH_CANDIDATE_KEYS = new Set([
 ]);
 const WORKER_RECOVERY_ACTION_PATTERN = /^workers\.(?:recycle|recover)$/iu;
 const WORKER_SLOT_ID_PATTERN = /^async-queue-slot-\d+$/u;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
 
 function clampText(value: string | undefined, maxLength: number): string | undefined {
   if (!value) return undefined;

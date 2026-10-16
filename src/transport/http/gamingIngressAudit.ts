@@ -1,3 +1,4 @@
+import { isRecord } from '@shared/typeGuards.js';
 import { createHash } from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
 
@@ -49,10 +50,6 @@ export type GamingIngressAuditData = {
   auditEnabled: true;
   timestamp: string;
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
 
 function sanitizeAuditLabel(value: unknown, maxLength: number): string | null {
   if (typeof value !== 'string') {

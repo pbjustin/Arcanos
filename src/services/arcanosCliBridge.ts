@@ -1,3 +1,4 @@
+import { isRecord } from '@shared/typeGuards.js';
 import crypto from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -632,8 +633,4 @@ function getOutputMaxBytes(policy: CliPolicyConfig): number {
 
 function hashProposal(value: Record<string, unknown>): string {
   return `cli-${crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 16)}`;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }

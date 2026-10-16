@@ -1,3 +1,4 @@
+import { isRecord } from '@shared/typeGuards.js';
 import type { NextFunction, Request, Response } from 'express';
 import type { TrinityResult } from '@core/logic/trinity.js';
 import { buildTrinityUserVisibleResponse } from '@shared/ask/trinityResponseSerializer.js';
@@ -10,10 +11,6 @@ import {
   buildCanonicalGptRoute
 } from '@shared/http/gptRouteHeaders.js';
 import { generateMockResponse } from '@services/openai/mock.js';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function readString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;

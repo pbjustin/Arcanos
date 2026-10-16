@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-15T01:54:28.452Z",
+  "generatedAt": "2026-10-15T23:30:00.421Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -5840,6 +5840,9 @@
         },
         {
           "relativePath": "tests/shared-generative-policy.test.ts"
+        },
+        {
+          "relativePath": "tests/shared-utility-characterization.test.ts"
         },
         {
           "relativePath": "tests/startup-health-routes.test.ts"

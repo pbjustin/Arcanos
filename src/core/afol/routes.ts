@@ -1,3 +1,4 @@
+import { isRecord } from '@shared/typeGuards.js';
 import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
 import { getDefaultModel, getFallbackModel, generateMockResponse } from "@services/openai.js";
 import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
@@ -39,10 +40,6 @@ function getMessageContent(message: unknown): string | undefined {
   }
   const record = message as Record<string, unknown>;
   return typeof record.content === 'string' ? record.content : undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function readTrinityCacheStatus(result: { meta?: unknown }): boolean {
