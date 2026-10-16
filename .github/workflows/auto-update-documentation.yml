@@ -10,6 +10,12 @@ on:
       - 'backend-index.json'
       - 'cli-agent-index.json'
   workflow_dispatch:
+    inputs:
+      provider_confirmation:
+        description: 'To authorize provider-backed documentation generation, type: AUTHORIZE DOCUMENTATION PROVIDER REQUESTS'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -22,9 +28,72 @@ env:
   NODE_VERSION: '24.18.1'
 
 jobs:
+  validate-offline:
+    name: Validate documentation without provider access
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout source commit
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install the offline network sandbox
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v bwrap >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install --yes bubblewrap
+          fi
+          bwrap --version
+
+      - name: Verify offline documentation security contracts
+        run: env -i PATH="$PATH" node --test scripts/documentation-offline.test.mjs
+
+      - name: Validate documentation offline
+        run: env -i PATH="$PATH" node scripts/check-documentation-offline.mjs
+
+      - name: Report offline validation result
+        if: always()
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync, existsSync, readFileSync } from 'node:fs';
+          const reportPath = 'documentation-offline-validation.json';
+          const report = existsSync(reportPath)
+            ? JSON.parse(readFileSync(reportPath, 'utf8'))
+            : null;
+          const status = ['passed', 'failed'].includes(report?.validation?.status)
+            ? report.validation.status
+            : 'unavailable';
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY,
+            `## Offline documentation validation\n\nValidation: ${status}.\n\nProvider generation in this job: skipped. No documentation updates were generated or published.\n`);
+          NODE
+
+      - name: Upload offline validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: documentation-offline-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: documentation-offline-validation.json
+          if-no-files-found: error
+          retention-days: 7
+
   analyze:
-    name: Analyze and validate documentation proposal
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    name: Generate and validate an authorized documentation proposal
+    needs: validate-offline
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      && inputs.provider_confirmation == 'AUTHORIZE DOCUMENTATION PROVIDER REQUESTS'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
@@ -54,8 +123,8 @@ jobs:
 
       - name: Run documentation analysis
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'sk-mock-for-ci-testing' }}
-          ARCANOS_GPT_ACCESS_TOKEN: ${{ secrets.ARCANOS_GPT_ACCESS_TOKEN || 'ci-gpt-access-token-for-local-workflow-only' }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ARCANOS_GPT_ACCESS_TOKEN: ci-gpt-access-token-for-local-workflow-only
           ARCANOS_GPT_ACCESS_BASE_URL: http://localhost:8080
           ARCANOS_GPT_ACCESS_SCOPES: >-
             runtime.read,workers.read,queue.read,jobs.create,jobs.result,
@@ -63,6 +132,11 @@ jobs:
             diagnostics.read
         run: |
           set -euo pipefail
+
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "::error::Authorized documentation generation requires an OpenAI provider credential."
+            exit 1
+          fi
 
           export PORT=8080
           export NODE_ENV=production
@@ -75,12 +149,6 @@ jobs:
           )"
           echo "::add-mask::${ARCANOS_JOB_READ_CAPABILITY_SECRET}"
           export ARCANOS_JOB_READ_CAPABILITY_SECRET
-
-          DOCS_MODE=--strict
-          if [ "$OPENAI_API_KEY" = "sk-mock-for-ci-testing" ]; then
-            echo "OPENAI_API_KEY is unavailable; running allow-partial analysis without applying degraded output."
-            DOCS_MODE=--allow-partial
-          fi
 
           npm start &
           SERVER_PID=$!
@@ -115,7 +183,7 @@ jobs:
             --timeout-ms 120000 \
             --poll-interval-ms 1000 \
             --concurrency 2 \
-            "$DOCS_MODE"
+            --strict
 
           kill "$SERVER_PID" 2>/dev/null || true
           trap - EXIT
@@ -221,7 +289,8 @@ jobs:
               throw new Error(`Update ${index + 1} targets an untracked document: ${file}`);
             }
 
-            const fileBytes = Buffer.byteLength(content, 'utf8');
+            const fileBytes = Buffer.byteLength(content, 'utf8')
+              + (content.endsWith('\n') ? 0 : 1);
             if (fileBytes > maxFileBytes) {
               throw new Error(`${file} exceeds the ${maxFileBytes}-byte per-file limit.`);
             }

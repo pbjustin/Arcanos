@@ -48,6 +48,16 @@ jobs:
       - name: 🧾 Validate backend/CLI contract manifest
         run: npm run validate:backend-cli:contract
 
+      - name: Verify provider-free documentation validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v bwrap >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install --yes bubblewrap
+          fi
+          env -i PATH="$PATH" node --test scripts/documentation-offline.test.mjs
+
       - name: 🧱 Enforce CEF boundaries
         run: |
           npm run check:boundaries

@@ -118,14 +118,43 @@ Documentation automation boundaries:
 
 - The `docs:check` job in `.github/workflows/doc-audit.yml` is the stable
   documentation-integrity status context required on `main`.
-- `.github/workflows/auto-update-documentation.yml` is report-only. It has
-  `contents: read`, validates bounded output for its single maintained target,
-  and uploads a patch for human review. It never commits, pushes, or opens a
-  pull request. Its production-mode localhost server receives a fresh masked
-  32-byte random `ARCANOS_JOB_READ_CAPABILITY_SECRET` only after install and
-  build; the parent shell unsets the value immediately after spawning the
-  server so the analysis client cannot inherit it. The workflow does not read
-  a repository or production job-read signing secret.
+- `.github/workflows/auto-update-documentation.yml` runs deterministic offline
+  validation on matching `main` pushes and on manual dispatch. Its
+  `validate-offline` job needs Node, Git, and Linux Bubblewrap with working user
+  and network namespaces; it does not install application dependencies, build,
+  start the backend, or receive repository secrets. The fixed checks are
+  `scripts/check-documentation.mjs`, `scripts/reindex-codebase.js --check`, and
+  `scripts/check-documentation-links.mjs --local-only`.
+- `node scripts/check-documentation-offline.mjs` starts each validator in a
+  separate Bubblewrap network namespace with a read-only root filesystem and
+  an allowlisted environment containing no credentials. A Node preload rejects
+  transport calls before use with the constant `DOCS_OFFLINE_NETWORK_BLOCKED`
+  error; process execution is denied except for the two bounded, read-only Git
+  query forms required by the validators. Missing or unusable isolation fails
+  validation. No application, provider, database, or memory runtime is started.
+  The launcher writes `documentation-offline-validation.json`, which reports
+  validation separately from `generation.status: "skipped"`,
+  `providerAccess: "blocked"`, and an empty `updates` array. It records only
+  fixed check names and exit results, not raw child output. A passing report
+  does not mean that documentation was generated or published.
+- Checkout, tool installation, and artifact upload use normal CI networking;
+  the validation subprocesses are isolated. This boundary contains accidental
+  effects from the reviewed validators, not arbitrary hostile code. In
+  particular, a read-only root mount does not conceal files already present on
+  the host. Run the validators from a trusted checkout on a suitable CI worker.
+- Provider-backed generation is a separate job that requires successful
+  offline validation and a manual dispatch on the default branch with
+  `provider_confirmation` exactly `AUTHORIZE DOCUMENTATION PROVIDER REQUESTS`.
+  The input defaults to empty, so ordinary dispatch performs offline validation
+  only. The authorized analysis step requires a real `OPENAI_API_KEY`; it has
+  no fake-key or partial-success fallback. This path builds and starts a
+  localhost backend, validates bounded output for its single maintained target,
+  and uploads a patch for human review. Both jobs have `contents: read`; neither
+  commits, pushes, or opens a pull request. The localhost server receives a
+  fresh masked 32-byte random `ARCANOS_JOB_READ_CAPABILITY_SECRET` only after
+  install and build; the parent shell unsets it immediately after spawning the
+  server so the analysis client cannot inherit it. The client bearer is a
+  local fixture, and the workflow reads no production job-read signing secret.
 - `.github/workflows/documentation-links.yml` runs a read-only external-link
   audit every Monday at 13:17 UTC and on manual dispatch. It writes only a job
   summary and a redacted workflow artifact.
