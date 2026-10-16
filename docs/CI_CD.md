@@ -215,8 +215,11 @@ registration claim remains unsupported registration. The workflow never supplies
 this option. These are local transport and mocked Core tests, not live backend
 or persistence acceptance.
 
-Run the focused suites with Node 24.18.1 and jq on PATH (or set `JQ_BINARY` to a
-local jq executable):
+Run the focused suites with Node 24.18.1. To include the historical jq regression,
+install jq on PATH or set `JQ_BINARY` to a local jq executable. Without jq, only
+that test is skipped locally, including in `npm test` and `npm run test:unit`;
+all JSON, transport and reporting tests still run. CI requires jq, and an invalid
+explicit `JQ_BINARY` fails rather than silently skipping the regression:
 
 ```bash
 node scripts/run-jest.mjs --runTestsByPath tests/repository-registration.test.js tests/arcanos-core-module.test.ts --coverage=false

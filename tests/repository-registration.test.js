@@ -17,13 +17,21 @@ const mockBaseUrl = 'http://127.0.0.1:12345';
 afterEach(() => { jest.useRealTimers(); });
 
 describe('repository registration serialization and contract boundary', () => {
-  it('reproduces the original jq compile failure with the recorded workflow input', () => {
+  const jqBinary = process.env.JQ_BINARY || 'jq';
+  const jqProbe = spawnSync(jqBinary, ['--version'], { encoding: 'utf8', timeout: 5000 });
+  // Only a missing optional local tool may skip; CI and explicit overrides must fail.
+  const jqTest = jqProbe.error?.code === 'ENOENT' && !process.env.CI && !process.env.JQ_BINARY
+    ? it.skip : it;
+
+  jqTest('reproduces the original jq compile failure with the recorded workflow input', () => {
+    expect(jqProbe.error).toBeUndefined();
+    expect(jqProbe.status).toBe(0);
     const filter = readFileSync(path.join(root, 'tests/fixtures/repository-registration/original-jq-filter.txt'), 'utf8');
     const payload = buildRepositoryRequest(input).metadata;
-    const failed = spawnSync(process.env.JQ_BINARY || 'jq', [
+    const failed = spawnSync(jqBinary, [
       '-nc', '--arg', 'prompt', `Register repository features and persist the attached metadata for later retrieval. Payload: ${JSON.stringify(payload)}`,
       '--argjson', 'metadata', JSON.stringify(payload), filter,
-    ], { encoding: 'utf8' });
+    ], { encoding: 'utf8', timeout: 5000 });
     expect(failed.error).toBeUndefined();
     expect(failed.status).not.toBe(0);
     expect(failed.stderr).toContain('compile error');
