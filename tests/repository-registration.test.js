@@ -84,7 +84,7 @@ describe('repository registration serialization and contract boundary', () => {
   it('never sends the production workflow candidate without a registration contract', async () => {
     const fetchFn = jest.fn();
     expect(await runRepositoryRegistration(input, { fetchFn })).toEqual({
-      schemaVersion: 1, workflowStatus: 'completed', registrationStatus: 'unsupported',
+      schemaVersion: 1, reportingStatus: 'completed', registrationStatus: 'unsupported',
       registrationSucceeded: false, requestStatus: 'not_sent_contract_unsupported', httpStatus: null,
     });
     expect(fetchFn).not.toHaveBeenCalled();

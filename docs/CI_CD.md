@@ -197,8 +197,9 @@ The [Core route contract](API.md#gpt-async-contract) has no durable repository
 registration action or receipt. The corrected workflow therefore **sends no
 request**, and reports `registrationStatus: unsupported`,
 `registrationSucceeded: false`, and `requestStatus: not_sent_contract_unsupported`.
-The status artifact and Actions summary distinguish completed reporting from
-registration success. Invalid input also remains noncritical, but inability to
+The status artifact's `reportingStatus: completed` describes only this reporting
+operation, not the final GitHub workflow result. The Actions summary distinguishes
+reporting completion from registration success. Invalid input also remains noncritical, but inability to
 write the report fails the step. No backend storage, authentication, SQL or
 production configuration is changed. A future registration feature requires a
 separately reviewed persistence, authorization and idempotency contract; an

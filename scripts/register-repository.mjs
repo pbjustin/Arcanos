@@ -75,7 +75,7 @@ export function validateRepositoryRequest(value) {
 function report(requestStatus, httpStatus = null) {
   return {
     schemaVersion: 1,
-    workflowStatus: 'completed',
+    reportingStatus: 'completed',
     registrationStatus: 'unsupported',
     registrationSucceeded: false,
     requestStatus,
