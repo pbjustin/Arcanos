@@ -132,6 +132,20 @@ describe('required PostgreSQL CI truth contract', () => {
     expect(postgresJob.indexOf(path)).toBeGreaterThan(postgresJob.indexOf('run: npm ci'));
   });
 
+  it('requires session persistence and pool restart against the guarded disposable service', () => {
+    const postgresJob = readWorkflowJob(readNormalized('.github/workflows/ci-cd.yml'),
+      'local-agent-postgres-concurrency', 'runtime-redis-admission');
+    const path = 'tests/integration/session-system.integration.test.ts';
+    const source = readNormalized(path);
+    expect(postgresJob).toContain('SESSION_SYSTEM_TEST_DATABASE_URL:');
+    expect(postgresJob).toContain(`run: node scripts/run-jest.mjs --runTestsByPath ${path} --coverage=false --runInBand`);
+    expect(source).toContain('resolvePostgresTestDatabaseUrl(TEST_DATABASE_ENV)');
+    const guard = source.indexOf('assertDisposablePostgresTestDatabaseUrl(configuredDatabaseUrl, TEST_DATABASE_ENV)');
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(source.indexOf("database = await import('@core/db/index.js')"));
+    expect(postgresJob.indexOf(path)).toBeGreaterThan(postgresJob.indexOf('npm run build:packages'));
+  });
+
   it('runs the aggregate gate after every dependency and fails on non-success', () => {
     const workflow = readNormalized('.github/workflows/ci-cd.yml');
     const aggregateStart = workflow.indexOf('  all-checks-complete:\n');

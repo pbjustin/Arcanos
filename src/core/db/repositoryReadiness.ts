@@ -22,6 +22,10 @@ interface DatabaseRepositoryReadinessOptions<Pool> {
  * Keep one repository's bootstrap, failure cooldown, and cleanup together.
  * Callbacks preserve repository-specific retries and failure reporting without
  * importing database or logging lifecycles into this module.
+ * Each returned gate owns its pending attempt and cooldown; successful readiness
+ * is never cached, and bootstrap success must also pass the live readiness check.
+ * Failed attempts return false and start the cooldown, including at clock zero.
+ * A throwing error reporter propagates its error, but still releases the attempt.
  */
 export function createRepositoryReadinessGate({
   isReady,
@@ -77,6 +81,10 @@ export function createRepositoryReadinessGate({
 /**
  * Build the standard single-attempt gate for repositories sharing schema setup.
  * Session persistence keeps its bounded retry and captured-pool cleanup callback.
+ * Injected callbacks supply the current pool, connectivity, schema state, and
+ * initialization. True requires schema success for the same captured pool and
+ * current readiness; disconnection, replacement, or initialization failure
+ * returns false without admitting repository writes.
  */
 export function createDatabaseRepositoryReadinessGate<Pool>(
   options: DatabaseRepositoryReadinessOptions<Pool>

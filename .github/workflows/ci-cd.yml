@@ -668,6 +668,8 @@ jobs:
       SELF_HEAL_PREVIEW_OWNERSHIP_TEST_DATABASE_URL: >-
         postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
       SELF_HEAL_PREVIEW_OWNERSHIP_CONFIRM_DISPOSABLE: disposable-loopback-only
+      SESSION_SYSTEM_TEST_DATABASE_URL: >-
+        postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
 
     steps:
       - name: 📥 Checkout code
@@ -686,6 +688,10 @@ jobs:
 
       - name: Build shared packages for PostgreSQL HTTP consumers
         run: npm run build:packages
+
+      - name: Verify session persistence and readiness after pool restart
+        timeout-minutes: 5
+        run: node scripts/run-jest.mjs --runTestsByPath tests/integration/session-system.integration.test.ts --coverage=false --runInBand
 
       - name: 🗄️ Verify database-enforced local-agent semantics
         run: npm run test:local-agent-postgres
