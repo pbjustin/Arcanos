@@ -95,6 +95,27 @@ describe('ARCANOS core module registration', () => {
     );
   });
 
+  it('maps arcanos-daemon to Core without a repository-registration action', () => {
+    expect(ArcanosCoreModule.gptIds).toContain('arcanos-daemon');
+    expect(Object.keys(ArcanosCoreModule.actions).sort()).toEqual(['query', 'system_state']);
+  });
+
+  it('treats repository metadata as query input, not a durable registration receipt', async () => {
+    const prompt = 'Describe the repository features supplied in metadata.';
+    const result = await ArcanosCoreModule.actions.query({
+      prompt,
+      metadata: {
+        event_type: 'repository_registration',
+        github_repository: 'fixture/example',
+        detected_features: { typescript: 1 },
+      },
+    });
+
+    expect(result).toBe('mock response');
+    expect(mockGenerateMockResponse).toHaveBeenCalledWith(prompt, 'gpt/arcanos-core');
+    expect(mockRunThroughBrain).not.toHaveBeenCalled();
+  });
+
   it('fails fast when query payloads omit prompt text', async () => {
     await expect(ArcanosCoreModule.actions.query({})).rejects.toThrow(/Prompt is required/);
   });

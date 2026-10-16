@@ -172,6 +172,59 @@ Release automation boundaries:
   are pinned to immutable commits. Release notes do not invoke an AI provider or
   receive a provider secret.
 
+## Repository registration reporting
+
+[Repository Registration](../.github/workflows/register.yml) retains its
+noncritical main/master push policy and six-language file discovery. It passes
+repository name, commit SHA, branch, feature counts and language names as
+environment data to [the registration reporter](../scripts/register-repository.mjs).
+The reporter uses `JSON.stringify` and validates the exact candidate Core query
+envelope before any transport can run. Missing feature lists become empty
+objects; malformed counts, inconsistent languages and invalid identities are
+reported as `payload_invalid`. No payload, credential, exception text or backend
+response is printed or uploaded.
+
+The former jq filter escaped double quotes inside a single-quoted shell string.
+Those literal backslashes made jq fail compilation. Because the command
+substitution was a curl argument, the shell still invoked curl with an empty
+body; the backend rejected the missing prompt, while the noncritical step could
+exit successfully. The regression fixture preserves that invalid filter. Local
+reproduction of the original Bash step used real jq and a shell-only curl mock:
+jq failed, the attempted body was empty, and the step exited zero without any
+network request.
+
+The [Core route contract](API.md#gpt-async-contract) has no durable repository
+registration action or receipt. The corrected workflow therefore **sends no
+request**, and reports `registrationStatus: unsupported`,
+`registrationSucceeded: false`, and `requestStatus: not_sent_contract_unsupported`.
+The status artifact's `reportingStatus: completed` describes only this reporting
+operation, not the final GitHub workflow result. The Actions summary distinguishes
+reporting completion from registration success. Invalid input also remains noncritical, but inability to
+write the report fails the step. No backend storage, authentication, SQL or
+production configuration is changed. A future registration feature requires a
+separately reviewed persistence, authorization and idempotency contract; an
+ordinary Core query must not substitute for one.
+
+Deterministic tests cover the old jq failure, JSON/schema validation, empty
+features, unusual metadata, redaction, missing/malformed responses, HTTP errors,
+network errors, deadlines, and one-attempt behavior. The reporter's explicit
+`--mock-base-url` test option accepts only HTTP numeric loopback addresses with an
+explicit port and fixed `/gpt/arcanos-daemon` path. It follows no redirects, uses
+no credentials, and never retries. Even a mock `ok: true` response or generated
+registration claim remains unsupported registration. The workflow never supplies
+this option. These are local transport and mocked Core tests, not live backend
+or persistence acceptance.
+
+Run the focused suites with Node 24.18.1. To include the historical jq regression,
+install jq on PATH or set `JQ_BINARY` to a local jq executable. Without jq, only
+that test is skipped locally, including in `npm test` and `npm run test:unit`;
+all JSON, transport and reporting tests still run. CI requires jq, and an invalid
+explicit `JQ_BINARY` fails rather than silently skipping the regression:
+
+```bash
+node scripts/run-jest.mjs --runTestsByPath tests/repository-registration.test.js tests/arcanos-core-module.test.ts --coverage=false
+```
+
 ## Run locally
 Pre-CI local validation:
 ```bash

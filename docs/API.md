@@ -199,6 +199,17 @@ and confirmation-gated flows after deploy.
 
 ## GPT Async Contract
 
+`arcanos-daemon` is an alias of `ARCANOS:CORE`, not a repository-registration
+service. Its `query` action accepts a prompt (or the supported message forms)
+and returns an ordinary query/job response. Attaching repository metadata or
+`event_type: "repository_registration"` does not establish a typed durable
+registration operation, storage contract, or receipt. HTTP success, `ok: true`,
+and generated text claiming registration are not evidence of persistence.
+Queries may still execute ordinary writing-plane behavior, including the
+documented job and memory paths. The repository registration workflow therefore
+validates its candidate metadata offline and reports registration as unsupported;
+see [repository registration reporting](CI_CD.md#repository-registration-reporting).
+
 Explicit-session continuity is a request-local exception to the execution paths
 below. A supported prompt-driven module action with a structured `sessionId`
 and a valid `x-arcanos-memory-token` executes through the synchronous module
