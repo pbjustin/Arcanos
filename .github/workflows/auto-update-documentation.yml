@@ -30,7 +30,8 @@ env:
 jobs:
   validate-offline:
     name: Validate documentation without provider access
-    runs-on: ubuntu-latest
+    # This supported image permits unprivileged Bubblewrap user namespaces.
+    runs-on: ubuntu-22.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -55,6 +56,7 @@ jobs:
             sudo apt-get install --yes bubblewrap
           fi
           bwrap --version
+          env -i PATH=/usr/bin:/bin /usr/bin/bwrap --unshare-user --unshare-net --ro-bind / / -- /bin/true
 
       - name: Verify offline documentation security contracts
         run: env -i PATH="$PATH" node --test scripts/documentation-offline.test.mjs

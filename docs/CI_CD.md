@@ -121,7 +121,10 @@ Documentation automation boundaries:
 - `.github/workflows/auto-update-documentation.yml` runs deterministic offline
   validation on matching `main` pushes and on manual dispatch. Its
   `validate-offline` job needs Node, Git, and Linux Bubblewrap with working user
-  and network namespaces; it does not install application dependencies, build,
+  and network namespaces. Isolation jobs use the supported `ubuntu-22.04` image
+  and check namespace creation before validation; they never disable host
+  security controls when isolation is unavailable. The automatic job does not
+  install application dependencies, build,
   start the backend, or receive repository secrets. The fixed checks are
   `scripts/check-documentation.mjs`, `scripts/reindex-codebase.js --check`, and
   `scripts/check-documentation-links.mjs --local-only`.

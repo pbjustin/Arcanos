@@ -22,7 +22,8 @@ env:
 jobs:
   lint-and-typecheck:
     name: Lint & Type Check
-    runs-on: ubuntu-latest
+    # Keep the required offline sandbox on an image with usable user namespaces.
+    runs-on: ubuntu-22.04
     
     steps:
       - name: 📥 Checkout code
@@ -56,6 +57,7 @@ jobs:
             sudo apt-get update
             sudo apt-get install --yes bubblewrap
           fi
+          env -i PATH=/usr/bin:/bin /usr/bin/bwrap --unshare-user --unshare-net --ro-bind / / -- /bin/true
           env -i PATH="$PATH" node --test scripts/documentation-offline.test.mjs
 
       - name: 🧱 Enforce CEF boundaries
