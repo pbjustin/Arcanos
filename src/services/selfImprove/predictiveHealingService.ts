@@ -818,6 +818,12 @@ function resolveInferenceFailureOutcome(
   failure: ReturnType<typeof classifyProviderFailure>,
   bounded: ReturnType<typeof createSelfHealingInferenceClient>
 ): 'authentication_failure' | 'uncertain' | 'failure' {
+  // A timed-out Core continuation can still run. Revoke this facade before
+  // releasing an unused reservation so a late dispatch cannot spend its budget.
+  bounded.close();
+  if (!bounded.wasRequested()) {
+    return failure.category === 'authentication' ? 'authentication_failure' : 'failure';
+  }
   const transportFailure = bounded.getFailure();
   const status = extractErrorStatus(transportFailure);
   if (bounded.isPending() || failure.category === 'timeout'
@@ -1890,6 +1896,7 @@ async function resolveAiDecision(params: {
       }
     });
 
+    boundedInference.close();
     // Core can convert provider failures into deterministic text. Retain the
     // transport failure so an authentication error still closes admission.
     if (boundedInference.getFailure()) throw boundedInference.getFailure();
@@ -3563,6 +3570,7 @@ export async function probePredictiveHealingAIProvider(): Promise<PredictiveHeal
         timeoutMs: 6_000
       });
 
+      boundedProbe.close();
       if (boundedProbe.getFailure()) throw boundedProbe.getFailure();
       probeOutcome = 'success';
 

@@ -58,4 +58,33 @@ describe('self-healing one-call provider facade (offline fixtures)', () => {
     await original.responses.create({ model: 'fixture', input: 'unrelated' });
     expect(create).toHaveBeenCalledTimes(2);
   });
+
+  it('synchronously closes an unused authorization before a delayed continuation can dispatch', async () => {
+    const create = jest.fn(async () => ({}));
+    const bounded = createSelfHealingInferenceClient({ responses: { create } } as unknown as OpenAI);
+    const delayed = Promise.resolve().then(() => bounded.client.responses.create({ model: 'fixture', input: 'late' }));
+    bounded.close();
+    bounded.close();
+    await expect(delayed).rejects.toThrow('authorization is closed');
+    expect(bounded.wasRequested()).toBe(false);
+    expect(bounded.isPending()).toBe(false);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('closing an already dispatched call never clears its pending state or claims transport cancellation', async () => {
+    let finish!: (value: unknown) => void;
+    const create = jest.fn(() => new Promise(resolve => { finish = resolve; }));
+    const bounded = createSelfHealingInferenceClient({ responses: { create } } as unknown as OpenAI);
+    const pending = bounded.client.responses.create({ model: 'fixture', input: 'started' });
+    bounded.close();
+    expect(bounded.wasRequested()).toBe(true);
+    expect(bounded.isPending()).toBe(true);
+    await expect(bounded.client.responses.create({ model: 'fixture', input: 'late' }))
+      .rejects.toThrow('authorization is closed');
+    finish({});
+    await pending;
+    expect(bounded.wasRequested()).toBe(true);
+    expect(bounded.isPending()).toBe(false);
+    expect(create).toHaveBeenCalledTimes(1);
+  });
 });

@@ -109,6 +109,13 @@ as failure, or authentication failure for rejected credentials. Mocked recovery
 tests verify retry eligibility after 60 seconds without clearing the rolling
 budget; paid-request uncertainty continues to retain its reservation.
 
+The subsequent full review at `7f7807a8` identified the corresponding
+pre-dispatch timeout case in diagnosis and completion helpers. Before releasing
+an unused reservation, the bounded client is now synchronously closed so a late
+Core continuation cannot dispatch against that released allowance. Timeout,
+abort and exhausted-budget regressions distinguish zero-request failures from
+already dispatched or pending paid calls, whose uncertain holds remain intact.
+
 The original failed runs [PR CI](https://github.com/pbjustin/Arcanos/actions/runs/39062649770)
 and [CI/CD](https://github.com/pbjustin/Arcanos/actions/runs/39062649796)
 reported 943 passing, two failing and 13 skipped suites; 19,431 passing,

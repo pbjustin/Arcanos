@@ -178,6 +178,13 @@ timeout or other non-authentication failure completes that probe attempt as a
 failure, retaining its 60-second failure cooldown and hourly budget charge; it
 never proceeds to completion after the timeout. A metadata 401/403 still latches
 the credential rejection across both purposes.
+If diagnosis or completion fails before its bounded provider request starts
+(including a pipeline timeout, exhausted runtime budget or abort), the unused
+facade is synchronously closed before the reservation completes as a failure.
+A late continuation cannot dispatch through that facade. The attempt remains
+charged and its failure cooldown still applies. Closing a facade does not
+cancel or clear an already started transport; ambiguous paid requests retain
+their durable reservation even if the local caller has returned.
 
 Reservations have no automatic TTL. A crash, unresolved paid transport timeout,
 connection failure or 5xx after a paid request was dispatched, or

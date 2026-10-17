@@ -11,11 +11,13 @@ const REQUEST_TIMEOUT_MS = 30_000;
  */
 export function createSelfHealingInferenceClient(originalClient: OpenAI) {
   let requested = false;
+  let closed = false;
   let pending = false;
   let failure: unknown = null;
   const client = Object.freeze({
     responses: Object.freeze({
       async create(params: ResponseCreateParamsNonStreaming, options?: OpenAI.RequestOptions) {
+        if (closed) throw new Error('Self-healing inference request authorization is closed.');
         if (requested) throw new Error('Self-healing inference request budget exhausted.');
         if ((params as { stream?: unknown }).stream === true) {
           throw new Error('Self-healing inference requires a bounded non-streaming response.');
@@ -51,6 +53,8 @@ export function createSelfHealingInferenceClient(originalClient: OpenAI) {
     client,
     getFailure: (): unknown => failure,
     isPending: (): boolean => pending,
-    wasRequested: (): boolean => requested
+    wasRequested: (): boolean => requested,
+    // Closing is synchronous and does not claim that an existing transport ended.
+    close: (): void => { closed = true; }
   };
 }

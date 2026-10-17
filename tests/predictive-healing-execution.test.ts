@@ -1867,8 +1867,9 @@ describe('predictive healing execution', () => {
 
   it('does not release an uncertain probe on cooldown expiry, process reset or credential rotation', async () => {
     const list = jest.fn().mockResolvedValue({ data: [] });
-    getOpenAIClientOrAdapterMock.mockReturnValue({ client: { models: { list } } });
-    createSingleChatCompletionMock.mockRejectedValue(new Error('Provider request timed out'));
+    const create = jest.fn().mockRejectedValue(new Error('Provider request timed out'));
+    getOpenAIClientOrAdapterMock.mockReturnValue({ client: { models: { list }, responses: { create } } });
+    createSingleChatCompletionMock.mockImplementation(client => client.responses.create({ model: 'gpt-4.1', input: 'synthetic paid timeout' }));
     await probePredictiveHealingAIProvider();
     jest.setSystemTime(Date.now() + 7 * 60 * 60_000);
     resetPredictiveHealingStateForTests();
@@ -1876,6 +1877,85 @@ describe('predictive healing execution', () => {
     expect((await probePredictiveHealingAIProvider()).failureReason).toBe('in_flight');
     expect(list).toHaveBeenCalledTimes(1);
     expect(createSingleChatCompletionMock).toHaveBeenCalledTimes(1);
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['ARCANOS:CORE pipeline timeout after 1000ms', 'runtime_budget_exhausted', 'Request was aborted'])(
+    'releases an unused diagnosis reservation after %s only after closing late dispatch', async message => {
+      const create = jest.fn().mockResolvedValue({});
+      getOpenAIClientOrAdapterMock.mockReturnValue({ client: { responses: { create } } });
+      let lateClient;
+      runArcanosCoreQueryMock.mockImplementationOnce(({ client }) => {
+        lateClient = client;
+        throw new Error(message);
+      });
+      const first = await runPredictiveHealingDecision({ source: 'pre_dispatch_timeout', observation: createObservation({ errorRate: 0.8 }) });
+      expect(first.decision.details.aiFallbackReason).toBe(message);
+      const state = JSON.parse(inferenceStates.get('diagnosis')!);
+      expect(state.inFlight).toBe(null);
+      expect(state.attemptTimestampsMs).toHaveLength(1);
+      expect(state.lastFailureMs).toBe(Date.now());
+      await expect(lateClient.responses.create({ model: 'gpt-4.1', input: 'late timed-out continuation' }))
+        .rejects.toThrow('authorization is closed');
+      expect(create).not.toHaveBeenCalled();
+      jest.setSystemTime(state.lastFailureMs + 21_599_999);
+      const beforeExpiry = await runPredictiveHealingDecision({ source: 'pre_dispatch_before_expiry',
+        observation: createObservation({ collectedAt: new Date().toISOString(), errorRate: 0.8 }) });
+      expect(beforeExpiry.decision.details.aiCooldownReason).toBe('provider_failure_backoff');
+      expect(runArcanosCoreQueryMock).toHaveBeenCalledTimes(1);
+      jest.setSystemTime(Date.now() + 1);
+      await runPredictiveHealingDecision({ source: 'pre_dispatch_recovered',
+        observation: createObservation({ collectedAt: new Date().toISOString(), errorRate: 0.8 }) });
+      expect(runArcanosCoreQueryMock).toHaveBeenCalledTimes(2);
+      expect(create).not.toHaveBeenCalled();
+    }
+  );
+
+  it('releases a probe completion timeout before dispatch, denies its late continuation, and preserves cooldown and budget', async () => {
+    const list = jest.fn().mockResolvedValue({ data: [] });
+    const create = jest.fn().mockResolvedValue({});
+    getOpenAIClientOrAdapterMock.mockReturnValue({ client: { models: { list }, responses: { create } } });
+    let lateClient;
+    createSingleChatCompletionMock.mockImplementationOnce(client => {
+      lateClient = client;
+      throw new Error('runtime_budget_exhausted before completion');
+    });
+    expect((await probePredictiveHealingAIProvider()).failureCategory).toBe('timeout');
+    const state = JSON.parse(inferenceStates.get('provider_probe')!);
+    expect(state.inFlight).toBe(null);
+    expect(state.attemptTimestampsMs).toHaveLength(1);
+    await expect(lateClient.responses.create({ model: 'gpt-4.1', input: 'late probe continuation' }))
+      .rejects.toThrow('authorization is closed');
+    expect(create).not.toHaveBeenCalled();
+    jest.setSystemTime(Date.now() + 59_999);
+    expect((await probePredictiveHealingAIProvider()).failureReason).toBe('cooldown');
+    createSingleChatCompletionMock.mockImplementation(client => client.responses.create({ model: 'gpt-4.1', input: 'new authorized probe' }));
+    jest.setSystemTime(Date.now() + 1);
+    expect((await probePredictiveHealingAIProvider()).completionHealthy).toBe(true);
+    jest.setSystemTime(Date.now() + 60_000);
+    expect((await probePredictiveHealingAIProvider()).failureReason).toBe('budget_exhausted');
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains an already dispatched diagnosis when Core times out before the transport settles', async () => {
+    let finish!: (value: unknown) => void;
+    const create = jest.fn(() => new Promise(resolve => { finish = resolve; }));
+    getOpenAIClientOrAdapterMock.mockReturnValue({ client: { responses: { create } } });
+    runArcanosCoreQueryMock.mockImplementationOnce(({ client }) => {
+      void client.responses.create({ model: 'gpt-4.1', input: 'started paid request' });
+      throw new Error('ARCANOS:CORE pipeline timeout after 1000ms');
+    });
+    await runPredictiveHealingDecision({ source: 'paid_timeout', observation: createObservation({ errorRate: 0.8 }) });
+    expect(JSON.parse(inferenceStates.get('diagnosis')!).inFlight).not.toBe(null);
+    finish({});
+    await Promise.resolve();
+    jest.setSystemTime(Date.now() + 7 * 60 * 60_000);
+    const retry = await runPredictiveHealingDecision({ source: 'paid_timeout_late_retry',
+      observation: createObservation({ collectedAt: new Date().toISOString(), errorRate: 0.8 }) });
+    expect(retry.decision.details.aiCooldownReason).toBe('in_flight');
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(runArcanosCoreQueryMock).toHaveBeenCalledTimes(1);
   });
 
   it.each([new Error('Connection error.'), Object.assign(new Error('Server failed after acceptance'), { status: 500 })])(
