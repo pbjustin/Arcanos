@@ -18,19 +18,58 @@ export const windowsSelections = {
 };
 const commandNames = ['install', 'type-check', 'build', ...Object.keys(windowsSelections)];
 const countNames = ['success', 'numTotalTests', 'numPassedTests', 'numFailedTests', 'numPendingTests',
-  'numTodoTests', 'numTotalTestSuites', 'numPassedTestSuites', 'numFailedTestSuites', 'numPendingTestSuites'];
+  'numTodoTests', 'numTotalTestSuites', 'numPassedTestSuites', 'numFailedTestSuites', 'numPendingTestSuites',
+  'numRuntimeErrorTestSuites', 'wasInterrupted'];
 const stopAckTitle = 'completes a no-network stop/ack session and removes its session directory';
+
+export function validateWindowsSource(record, source) {
+  const errors = [];
+  if (source.trackedSourceClean !== true) errors.push('CLEAN_SOURCE_REQUIRED');
+  if (!/^[0-9a-f]{40}$/u.test(record.headSha ?? '') || source.testedSha !== record.headSha) {
+    errors.push('EXACT_HEAD_SHA_REQUIRED');
+  }
+  if (!/^[0-9a-f]{40}$/u.test(record.headTree ?? '') || source.testedTree !== record.headTree) {
+    errors.push('EXACT_HEAD_TREE_REQUIRED');
+  }
+  return errors;
+}
 
 export function validateWindowsMetadata(record) {
   const errors = [];
   if (record.platform !== 'win32' || record.runnerOS !== 'Windows') errors.push('NATIVE_WINDOWS_REQUIRED');
   if (record.node !== 'v24.18.1' || record.npm !== '11.16.0') errors.push('PINNED_TOOLCHAIN_REQUIRED');
   if (record.powershell?.IsWindows !== true) errors.push('WINDOWS_POWERSHELL_REQUIRED');
-  if (record.trackedSourceClean !== true) errors.push('CLEAN_SOURCE_REQUIRED');
-  if (!/^[0-9a-f]{40}$/u.test(record.headSha ?? '') || !/^[0-9a-f]{40}$/u.test(record.testedSha ?? '')
-    || !/^[0-9a-f]{40}$/u.test(record.headTree ?? '') || record.headTree !== record.testedTree) {
-    errors.push('EXACT_HEAD_TREE_REQUIRED');
+  if (![record.nodePath, record.npmPath, record.powershell?.Path].every(value =>
+    typeof value === 'string' && (path.isAbsolute(value) || path.win32.isAbsolute(value)))
+    || !/^[0-9a-f]{64}$/u.test(record.nodeSha256 ?? '')) {
+    errors.push('EXECUTABLE_IDENTITY_REQUIRED');
   }
+  return [...errors, ...validateWindowsSource(record, record)];
+}
+
+export function validateWindowsJest(name, summary) {
+  const selected = windowsSelections[name];
+  if (!selected || !summary || !Array.isArray(summary.suites)
+    || summary.suites.some(suite => !suite || !Array.isArray(suite.assertions))) {
+    return ['JEST_REPORT_INVALID'];
+  }
+  const errors = [];
+  if (summary.success !== true || summary.wasInterrupted !== false) errors.push('JEST_NOT_PASSED');
+  if (['numFailedTests', 'numPendingTests', 'numTodoTests', 'numFailedTestSuites',
+    'numPendingTestSuites', 'numRuntimeErrorTestSuites'].some(key => summary[key] !== 0)) {
+    errors.push('JEST_FAILED_OR_SKIPPED_CASES');
+  }
+  if (JSON.stringify(summary.suites.map(suite => suite.file).sort()) !== JSON.stringify([...selected].sort())) {
+    errors.push('JEST_SELECTION_MISMATCH');
+  }
+  const assertions = summary.suites.flatMap(suite => suite.assertions);
+  if (summary.suites.some(suite => suite.status !== 'passed' || suite.assertions.length === 0)
+    || assertions.some(assertion => assertion?.status !== 'passed')) errors.push('JEST_CASES_NOT_PASSED');
+  if (summary.numTotalTests !== assertions.length || summary.numPassedTests !== assertions.length
+    || summary.numTotalTestSuites !== selected.length || summary.numPassedTestSuites !== selected.length) {
+    errors.push('JEST_COUNTS_MISMATCH');
+  }
+  if (name === 'yaml' && assertions.length !== 119) errors.push('YAML_REQUIRED_CASES_MISSING');
   return errors;
 }
 
@@ -66,6 +105,12 @@ function npmCli() {
   const file = path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js');
   if (!existsSync(file)) throw new Error('BUNDLED_NPM_CLI_REQUIRED');
   return file;
+}
+
+function sourceState() {
+  return { testedSha: query('git', ['rev-parse', '--verify', 'HEAD']),
+    testedTree: query('git', ['rev-parse', '--verify', 'HEAD^{tree}']),
+    trackedSourceClean: query('git', ['status', '--porcelain', '--untracked-files=no']) === '' };
 }
 
 function installedYaml() {
@@ -139,12 +184,12 @@ function metadata(directory) {
   const headSha = process.env.EVIDENCE_HEAD_SHA;
   const record = { platform: process.platform, runnerOS: process.env.RUNNER_OS,
     osRelease: os.release(), architecture: process.arch, node: process.version,
-    npm: query(process.execPath, [npmCli(), '--version']), headSha,
-    testedSha: revision('HEAD'), testedTree: revision('HEAD^{tree}'),
-    trackedSourceClean: query('git', ['status', '--porcelain', '--untracked-files=no']) === '',
+    nodePath: process.execPath, nodeSha256: createHash('sha256').update(readFileSync(process.execPath)).digest('hex'),
+    npmPath: npmCli(), npm: query(process.execPath, [npmCli(), '--version']), headSha,
+    ...sourceState(),
     headTree: /^[0-9a-f]{40}$/u.test(headSha ?? '') ? revision(`${headSha}^{tree}`) : null,
     powershell: JSON.parse(query('pwsh', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
-      '[ordered]@{Version=$PSVersionTable.PSVersion.ToString();Platform=$PSVersionTable.Platform;IsWindows=$IsWindows} | ConvertTo-Json -Compress'])),
+      '[ordered]@{Version=$PSVersionTable.PSVersion.ToString();Platform=$PSVersionTable.Platform;IsWindows=$IsWindows;Path=(Get-Process -Id $PID).Path} | ConvertTo-Json -Compress'])),
     lockfileSha256: createHash('sha256').update(readFileSync('package-lock.json')).digest('hex'),
     workflowCount: readdirSync('.github/workflows').filter(file => /\.ya?ml$/u.test(file)).length,
     runId: process.env.GITHUB_RUN_ID, runAttempt: process.env.GITHUB_RUN_ATTEMPT,
@@ -156,13 +201,15 @@ function metadata(directory) {
   return record.errors.length === 0 ? 0 : 1;
 }
 
-function runCommand(directory, name) {
+export function runCommand(directory, name) {
   if (!commandNames.includes(name)) throw new Error('UNKNOWN_WINDOWS_SELECTION');
-  if (validateWindowsMetadata(readJson(path.join(directory, 'metadata.json'))).length) {
+  const record = readJson(path.join(directory, 'metadata.json'));
+  if (validateWindowsMetadata(record).length) {
     throw new Error('WINDOWS_METADATA_NOT_VERIFIED');
   }
-  if (query('git', ['status', '--porcelain', '--untracked-files=no']) !== '') {
-    throw new Error('TRACKED_SOURCE_CHANGED');
+  const sourceBefore = sourceState();
+  if (validateWindowsSource(record, sourceBefore).length) {
+    throw new Error('EXACT_SOURCE_NOT_VERIFIED');
   }
   const selected = windowsSelections[name];
   const resultPath = path.join(directory, `${name}-jest.json`);
@@ -172,20 +219,29 @@ function runCommand(directory, name) {
     : [npmCli(), ...(name === 'install' ? ['ci'] : ['run', name])];
   const startedAt = new Date().toISOString();
   const child = spawnSync(process.execPath, args, { stdio: 'inherit', windowsHide: true });
-  const receipt = { name, command: ['node', ...args], startedAt, finishedAt: new Date().toISOString(),
+  const receipt = { name, command: [process.execPath, ...args], startedAt, finishedAt: new Date().toISOString(), sourceBefore,
     processExitCode: child.status, exitCode: child.status, validationErrors: [],
     signal: child.signal, errorCode: child.error?.code ?? null,
     execution: name === 'gaming' ? 'serial focused diagnostic' : selected ? 'two Jest workers' : 'canonical npm script',
     resultAvailable: selected ? existsSync(resultPath) : null };
-  if (selected && receipt.resultAvailable) receipt.jest = summarizeJest(readJson(resultPath));
-  if (name === 'install' && child.status === 0) {
-    receipt.installedYaml = installedYaml();
-    receipt.patchedYamlVersionsVerified = expectedYamlVersions(receipt.installedYaml);
-    if (!receipt.patchedYamlVersionsVerified) {
-      receipt.validationErrors.push('PATCHED_YAML_VERSIONS_NOT_VERIFIED');
-      receipt.exitCode = 1;
+  // Retain the actual child outcome even if parsing or provenance collection fails.
+  writeJson(directory, `${name}-receipt.json`, receipt);
+  try {
+    receipt.sourceAfter = sourceState();
+    receipt.validationErrors.push(...validateWindowsSource(record, receipt.sourceAfter));
+    if (selected) {
+      if (receipt.resultAvailable) receipt.jest = summarizeJest(readJson(resultPath));
+      receipt.validationErrors.push(...validateWindowsJest(name, receipt.jest));
     }
+    if (name === 'install' && child.status === 0) {
+      receipt.installedYaml = installedYaml();
+      receipt.patchedYamlVersionsVerified = expectedYamlVersions(receipt.installedYaml);
+      if (!receipt.patchedYamlVersionsVerified) receipt.validationErrors.push('PATCHED_YAML_VERSIONS_NOT_VERIFIED');
+    }
+  } catch {
+    receipt.validationErrors.push('COMMAND_EVIDENCE_INVALID');
   }
+  if (receipt.validationErrors.length) receipt.exitCode = 1;
   writeJson(directory, `${name}-receipt.json`, receipt);
   return receipt.exitCode ?? 1;
 }
@@ -200,10 +256,19 @@ function report(directory) {
     return [name, existsSync(file) ? readJson(file) : { name, status: 'NOT_RUN' }];
   }));
   const errors = record ? validateWindowsMetadata(record) : ['METADATA_MISSING'];
+  const sourceAfter = sourceState();
+  if (record) errors.push(...validateWindowsSource(record, sourceAfter));
   if (!capability || capability.errors.length || !capability.cleanup) errors.push('WINDOWS_CAPABILITIES_NOT_PASSED');
   for (const [name, receipt] of Object.entries(receipts)) {
-    if (receipt.exitCode !== 0) errors.push(`${name}:COMMAND_NOT_PASSED`);
-    if (windowsSelections[name] && receipt.jest?.success !== true) errors.push(`${name}:JEST_NOT_PASSED`);
+    if (receipt.exitCode !== 0 || receipt.processExitCode !== 0 || receipt.validationErrors?.length !== 0) {
+      errors.push(`${name}:COMMAND_NOT_PASSED`);
+    }
+    if (record) {
+      for (const source of [receipt.sourceBefore, receipt.sourceAfter]) {
+        errors.push(...validateWindowsSource(record, source ?? {}).map(error => `${name}:${error}`));
+      }
+    }
+    if (windowsSelections[name]) errors.push(...validateWindowsJest(name, receipt.jest).map(error => `${name}:${error}`));
   }
   if (!windowsStopAckPassed(receipts.windows.jest)) errors.push('WINDOWS_STOP_ACK_CASES_NOT_PASSED');
   if (!expectedYamlVersions(receipts.install.installedYaml)) errors.push('PATCHED_YAML_VERSIONS_NOT_VERIFIED');
@@ -213,7 +278,7 @@ function report(directory) {
     excludes: ['Python checks', 'receipt-reporting unit tests', 'receipt and publishing isolation tests'],
     jobConclusionIncluded: false
   };
-  const summary = { scope, metadata: record, capabilities: capability, receipts, errors, success: errors.length === 0 };
+  const summary = { scope, metadata: record, sourceAfter, capabilities: capability, receipts, errors, success: errors.length === 0 };
   writeJson(directory, 'summary.json', summary);
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY,
     `Native Windows command selections and filesystem checks: ${summary.success ? 'PASS' : 'FAIL'}\n\n`

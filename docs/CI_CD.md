@@ -94,16 +94,26 @@ administrator access. Installed consumer receipts require YAML 4.3.2/3.15.2.
 These checks do not claim full-root Windows Jest coverage or live-provider proof.
 
 `scripts/ci-windows-verification.mjs` rejects non-Windows execution, a mismatched
-toolchain, or a tested Git tree that differs from the exact PR source tree.
+toolchain, or a tested commit or tree that differs from the exact PR source.
+It verifies source identity and tracked cleanliness before and after commands
+and when assembling the final report. Required selections must contain every
+expected suite, consistent counts and only passing cases; the YAML selection
+requires all 119 security and consumer cases with no skips.
 The Windows job explicitly checks out the PR head (or the event SHA for pushes),
 so advancing main does not invalidate this receipt. Other CI jobs retain their
 existing synthetic-merge checkout behavior.
 Independent selections still run after an earlier test failure when the build
 succeeded; failures remain blocking. The always-uploaded `native-windows-*`
-artifact retains command exits, Jest results/counts including skips, and
-allowlisted OS, PowerShell, lockfile and source provenance. Both Windows-only
+artifact retains command exits even when a Jest report is malformed, results
+and counts, and allowlisted OS, PowerShell, lockfile and source provenance.
+Executable receipts record the actual Node path and SHA-256 plus npm and
+PowerShell paths. Both Windows-only
 stop/ack cases must pass, so Linux PowerShell cannot satisfy this gate. It adds
 no workflow dispatch, production credentials or deployment authorization.
+The separate `windows-projector-fixtures-*` artifact retains the complete
+projector identity, negative validation, stop/ack and cleanup verification with
+its own command exit and exact-source receipts. Both artifacts are required;
+production executable identity pins are unchanged.
 The artifact's `summary.json` describes only its listed commands, native
 metadata and filesystem capabilities. Its `success` field excludes the Python,
 receipt-reporting unit, and receipt/publishing-isolation tests; the workflow job

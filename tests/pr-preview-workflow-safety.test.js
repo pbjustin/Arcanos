@@ -578,9 +578,21 @@ describe('native PR workflow safety', () => {
     }
     expect(command('node scripts/ci-windows-verification.mjs report').if).toBe('always()');
     const upload = job.steps.filter(step => step.uses === 'actions/upload-artifact@v4');
-    expect(upload).toHaveLength(1);
-    expect(upload[0].if).toBe('always()');
-    expect(upload[0].with['if-no-files-found']).toBe('error');
+    expect(upload).toHaveLength(2);
+    for (const [name, artifact, directory] of [
+      ['Upload native Windows verification evidence', 'native-windows', 'arcanos-windows-verification'],
+      ['Upload native Windows projector fixture evidence', 'windows-projector-fixtures', 'arcanos-projector-fixtures']
+    ]) {
+      expect(upload.find(step => step.name === name)).toMatchObject({
+        if: 'always()',
+        with: {
+          name: `${artifact}-\${{ github.event.pull_request.head.sha || github.sha }}-\${{ github.run_attempt }}`,
+          path: `\${{ runner.temp }}/${directory}/`,
+          'retention-days': 30,
+          'if-no-files-found': 'error'
+        }
+      });
+    }
   });
 
   it.each(providerBearingPrJobs)('$path keeps $job behind its manual authorization gate', ({ path, job, expectedGate }) => {
