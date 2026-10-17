@@ -95,6 +95,9 @@ These checks do not claim full-root Windows Jest coverage or live-provider proof
 
 `scripts/ci-windows-verification.mjs` rejects non-Windows execution, a mismatched
 toolchain, or a tested Git tree that differs from the exact PR source tree.
+The Windows job explicitly checks out the PR head (or the event SHA for pushes),
+so advancing main does not invalidate this receipt. Other CI jobs retain their
+existing synthetic-merge checkout behavior.
 Independent selections still run after an earlier test failure when the build
 succeeded; failures remain blocking. The always-uploaded `native-windows-*`
 artifact retains command exits, Jest results/counts including skips, and

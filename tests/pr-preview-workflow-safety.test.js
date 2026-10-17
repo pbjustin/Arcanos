@@ -549,6 +549,13 @@ describe('native PR workflow safety', () => {
     expect(job['continue-on-error']).toBeUndefined();
     expect(job.steps.every(step => step['continue-on-error'] === undefined)).toBe(true);
     expect(JSON.stringify(job)).not.toContain('secrets.');
+    const checkout = job.steps.filter(step => step.uses === 'actions/checkout@v4');
+    expect(checkout).toHaveLength(1);
+    expect(checkout[0].with).toEqual({
+      ref: '${{ github.event.pull_request.head.sha || github.sha }}',
+      'fetch-depth': 0,
+      'persist-credentials': false
+    });
     const command = run => {
       const matches = job.steps.filter(step => step.run === run);
       expect(matches).toHaveLength(1);
