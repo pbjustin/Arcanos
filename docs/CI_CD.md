@@ -79,6 +79,29 @@ Core workflows to review first:
   receipts for seven days. It does not dispatch the production inspection.
 - [Railway worker-diagnostics preview cleanup](../.github/workflows/railway-worker-diagnostics-preview-cleanup.yml)
 
+## Native Windows verification scope
+
+The existing `python-cli-windows` job runs on `windows-latest`. It preserves
+Python CLI/offline checks and the receipt/publishing fixtures, and also verifies
+an exact Node 24.18.1/npm 11.16.0 locked installation, type-check and full build.
+Focused canonical Jest selections cover YAML security and real consumers,
+workflow authorization/deployment holds, artifact junction rejection, and both
+PowerShell projector stop/ack cases that skip on Linux. Normal selections use
+two workers; four mocked Gaming suites run as an explicitly serial diagnostic.
+An owned temporary fixture records file-URL/ESM import, junction traversal and
+Windows read-only attribute behavior, then verifies cleanup without requiring
+administrator access. Installed consumer receipts require YAML 4.3.2/3.15.2.
+These checks do not claim full-root Windows Jest coverage or live-provider proof.
+
+`scripts/ci-windows-verification.mjs` rejects non-Windows execution, a mismatched
+toolchain, or a tested Git tree that differs from the exact PR source tree.
+Independent selections still run after an earlier test failure when the build
+succeeded; failures remain blocking. The always-uploaded `native-windows-*`
+artifact retains command exits, Jest results/counts including skips, and
+allowlisted OS, PowerShell, lockfile and source provenance. Both Windows-only
+stop/ack cases must pass, so Linux PowerShell cannot satisfy this gate. It adds
+no workflow dispatch, production credentials or deployment authorization.
+
 ## Configuration
 Common secrets referenced in workflows:
 - `GITHUB_TOKEN` (provided by GitHub Actions)

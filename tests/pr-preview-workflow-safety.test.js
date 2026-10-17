@@ -539,6 +539,43 @@ describe('supplemental exact-head preview workflow', () => {
 });
 
 describe('native PR workflow safety', () => {
+  it('keeps native Windows verification required and preserves failures while collecting independent evidence', () => {
+    const workflow = parseWorkflow('.github/workflows/ci-cd.yml');
+    const job = workflow.jobs['python-cli-windows'];
+    expect(job['runs-on']).toBe('windows-latest');
+    expect(workflow.jobs['all-checks-complete'].needs).toContain('python-cli-windows');
+    expect(workflow.permissions).toEqual({ contents: 'read' });
+    expect(job.permissions).toBeUndefined();
+    expect(job['continue-on-error']).toBeUndefined();
+    expect(job.steps.every(step => step['continue-on-error'] === undefined)).toBe(true);
+    expect(JSON.stringify(job)).not.toContain('secrets.');
+    const command = run => {
+      const matches = job.steps.filter(step => step.run === run);
+      expect(matches).toHaveLength(1);
+      return matches[0];
+    };
+    const gate = id => `\${{ !cancelled() && steps.${id}.outcome == 'success' }}`;
+    expect(job.steps.find(step => step.id === 'windows_node').uses).toBe('actions/setup-node@v4');
+    expect(command('node scripts/ci-windows-verification.mjs metadata').id).toBe('windows_metadata');
+    expect(command('node scripts/ci-windows-verification.mjs metadata').env.EVIDENCE_HEAD_SHA)
+      .toBe('${{ github.event.pull_request.head.sha || github.sha }}');
+    expect(command('node scripts/ci-windows-verification.mjs run install').id).toBe('windows_install');
+    expect(command('node scripts/ci-windows-verification.mjs run build').id).toBe('windows_build');
+    expect(command('node scripts/ci-windows-verification.mjs metadata').if).toBe(gate('windows_node'));
+    expect(command('node scripts/ci-windows-verification.mjs capabilities').if).toBe(gate('windows_metadata'));
+    expect(command('node scripts/ci-windows-verification.mjs run install').if).toBe(gate('windows_metadata'));
+    expect(command('node scripts/ci-windows-verification.mjs run type-check').if).toBe(gate('windows_install'));
+    expect(command('node scripts/ci-windows-verification.mjs run build').if).toBe(gate('windows_install'));
+    for (const name of ['yaml', 'windows', 'workflows', 'gaming']) {
+      expect(command(`node scripts/ci-windows-verification.mjs run ${name}`).if).toBe(gate('windows_build'));
+    }
+    expect(command('node scripts/ci-windows-verification.mjs report').if).toBe('always()');
+    const upload = job.steps.filter(step => step.uses === 'actions/upload-artifact@v4');
+    expect(upload).toHaveLength(1);
+    expect(upload[0].if).toBe('always()');
+    expect(upload[0].with['if-no-files-found']).toBe('error');
+  });
+
   it.each(providerBearingPrJobs)('$path keeps $job behind its manual authorization gate', ({ path, job, expectedGate }) => {
     const workflow = parseWorkflow(path);
 
