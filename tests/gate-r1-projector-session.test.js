@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from '@jest/globals';
+import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import {
   copyFileSync,
@@ -6,11 +7,12 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
   writeFileSync
 } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 const sessionScriptUrl = new URL(
@@ -22,13 +24,19 @@ const sessionScriptPath = decodeURIComponent(sessionScriptUrl.pathname).replace(
 const cleanupDirectories = new Set();
 const windowsIt = process.platform === 'win32' ? it : it.skip;
 
-function createHarness({ copyProjectors = false } = {}) {
+function createHarness({ copyProjectors = false, bindFixtureNode = false } = {}) {
   const harnessRoot = mkdtempSync(join(tmpdir(), 'gate-r1-session-harness-'));
   cleanupDirectories.add(harnessRoot);
   const harnessScripts = join(harnessRoot, 'scripts');
   mkdirSync(harnessScripts);
   const harnessScript = join(harnessScripts, 'gate-r1-projector-session-20260719.ps1');
-  const harnessSource = sessionScript.replace(/\r?\nexit \(Invoke-GateR1ProjectorSessionMain\)\s*$/, '\n');
+  let harnessSource = sessionScript.replace(/\r?\nexit \(Invoke-GateR1ProjectorSessionMain\)\s*$/, '\n');
+  if (bindFixtureNode) {
+    // Bind only the temporary fixture; retain the operational script's pinned identity.
+    const nodePath = process.execPath.replaceAll("'", "''");
+    const nodeSha256 = createHash('sha256').update(readFileSync(process.execPath)).digest('hex').toUpperCase();
+    harnessSource += `\n$NodePath = '${nodePath}'\n$NodeSha256 = '${nodeSha256}'\n`;
+  }
   writeFileSync(harnessScript, harnessSource, 'utf8');
   if (copyProjectors) {
     for (const name of [
@@ -39,6 +47,48 @@ function createHarness({ copyProjectors = false } = {}) {
     }
   }
   return harnessScript;
+}
+
+function runFailedInitializationFixture(mode) {
+  const harnessScript = createHarness({ copyProjectors: true, bindFixtureNode: mode !== 'original' });
+  const sessionTemporaryRoot = mkdtempSync(join(tmpdir(), 'gate-r1-session-init-'));
+  cleanupDirectories.add(sessionTemporaryRoot);
+  const fixtureNodePath = join(dirname(harnessScript), 'fixture-node.exe');
+  if (mode === 'unreadable') copyFileSync(process.execPath, fixtureNodePath);
+  const command = [
+    `. '${harnessScript.replaceAll("'", "''")}'`,
+    '$lock=$null',
+    // A matching operational identity must still stop before credentials or session creation.
+    "function global:Read-Host { [CmdletBinding()] param([Parameter(Position=0)][string]$Prompt,[switch]$AsSecureString) [Security.SecureString]::new() }",
+    ...(['missing', 'unreadable'].includes(mode) ? [`$NodePath='${fixtureNodePath.replaceAll("'", "''")}'`] : []),
+    ...(mode === 'incorrect-hash' ? [
+      "$NodeSha256 = if ($NodeSha256[0] -eq '0') { '1' + $NodeSha256.Substring(1) } else { '0' + $NodeSha256.Substring(1) }"
+    ] : []),
+    ...(mode === 'unreadable' ? [
+      '$lock=[IO.File]::Open($NodePath,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None)'
+    ] : []),
+    'try { $exitCode=Invoke-GateR1ProjectorSessionMain } finally { if ($null -ne $lock) { $lock.Dispose() } }',
+    'exit $exitCode'
+  ].join('; ');
+  const result = spawnSync('pwsh', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command], {
+    encoding: 'utf8',
+    env: { ...withoutRailwayTokens(), TEMP: sessionTemporaryRoot, TMP: sessionTemporaryRoot, TMPDIR: sessionTemporaryRoot },
+    timeout: 15_000,
+    windowsHide: true
+  });
+  return { result, sessionTemporaryRoot };
+}
+
+function operationalNodeMatchesPin() {
+  const [, nodePath] = sessionScript.match(/^\$NodePath = '([^']+)'\r?$/mu);
+  const [, expectedHash] = sessionScript.match(/^\$NodeSha256 = '([A-F0-9]{64})'\r?$/mu);
+  let executable;
+  try {
+    executable = readFileSync(nodePath);
+  } catch {
+    return false;
+  }
+  return createHash('sha256').update(executable).digest('hex').toUpperCase() === expectedHash;
 }
 
 function runBoundedFixture(mode, timeoutMs = 5_000) {
@@ -400,12 +450,63 @@ describe('Gate R1 projector session', () => {
     expect(sessionScript).toContain('Try-WriteSafeJsonFile');
   });
 
-  windowsIt('completes a no-network stop/ack session and removes its session directory', async () => {
-    const harnessScript = createHarness({ copyProjectors: true });
+  it('accepts the fixture Node identity and rejects a mismatched hash', () => {
+    const harnessScript = createHarness({ bindFixtureNode: true });
+    const escapedHarness = harnessScript.replaceAll("'", "''");
+    const command = [
+      `. '${escapedHarness}'`,
+      "Assert-FileHash $NodePath $NodeSha256 'GATE_R1_SESSION_NODE_IDENTITY_INVALID'",
+      "$wrongHash = if ($NodeSha256[0] -eq '0') { '1' + $NodeSha256.Substring(1) } else { '0' + $NodeSha256.Substring(1) }",
+      '$failureCode=$null',
+      "try { Assert-FileHash $NodePath $wrongHash 'GATE_R1_SESSION_NODE_IDENTITY_INVALID' } catch { $failureCode=Resolve-SafeErrorCode $_ }",
+      '@{nodePath=$NodePath;accepted=$true;rejected=$failureCode} | ConvertTo-Json -Compress'
+    ].join('; ');
+    const result = spawnSync('pwsh', ['-NoLogo', '-NoProfile', '-Command', command], {
+      encoding: 'utf8',
+      env: withoutRailwayTokens(),
+      timeout: 15_000,
+      windowsHide: true
+    });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(JSON.parse(result.stdout)).toEqual({
+      nodePath: process.execPath,
+      accepted: true,
+      rejected: 'GATE_R1_SESSION_NODE_IDENTITY_INVALID'
+    });
+  });
+
+  for (const [mode, title, fixtureIt] of [
+    ['missing', 'rejects a missing fixture Node executable without creating a session directory', it],
+    ['incorrect-hash', 'rejects an incorrect fixture Node hash without creating a session directory', it],
+    ['unreadable', 'rejects an unreadable fixture Node executable without creating a session directory', windowsIt],
+    ['original', 'checks the unmodified fixture against the observed operational Node identity', windowsIt]
+  ]) {
+    fixtureIt(title, () => {
+      const expectedCode = mode === 'original' && operationalNodeMatchesPin()
+        ? 'GATE_R1_SESSION_TOKEN_INVALID'
+        : 'GATE_R1_SESSION_NODE_IDENTITY_INVALID';
+      const { result, sessionTemporaryRoot } = runFailedInitializationFixture(mode);
+      expect({ status: result.status, signal: result.signal, errorCode: result.error?.code ?? null })
+        .toEqual({ status: 1, signal: null, errorCode: null });
+      expect(result.stdout).toBe('');
+      expect(result.stderr.trim()).toBe(expectedCode);
+      expect(readdirSync(sessionTemporaryRoot)).toEqual([]);
+    });
+  }
+
+  windowsIt.each([
+    ['completes a no-network stop/ack session and removes its session directory', false],
+    ['propagates guarded cleanup failure after stop/ack without removing its session directory', true]
+  ])('%s', async (_title, failCleanup) => {
+    const harnessScript = createHarness({ copyProjectors: true, bindFixtureNode: true });
     const escapedHarness = harnessScript.replaceAll("'", "''");
     const command = [
       "function global:Read-Host { [CmdletBinding()] param([Parameter(Position=0)][string]$Prompt,[switch]$AsSecureString) ConvertTo-SecureString 'test-only-placeholder' -AsPlainText -Force }",
       `. '${escapedHarness}'`,
+      // PowerShell ignores thrown errors inside breakpoint actions; terminate before the network-capable body.
+      "$projectorTrap=Set-PSBreakpoint -Command Invoke-FixedProjector -Action { [Console]::Error.WriteLine('fixture-unexpected-projector-invocation'); [Environment]::Exit(97) }",
+      "if (-not $projectorTrap.Enabled) { throw 'fixture-projector-trap-unavailable' }",
       'exit (Invoke-GateR1ProjectorSessionMain)'
     ].join('; ');
     const child = spawn('pwsh', ['-NoLogo', '-NoProfile', '-Command', command], {
@@ -451,6 +552,8 @@ describe('Gate R1 projector session', () => {
       sequence: 1,
       status: 'stopped'
     });
+    const unexpectedPath = join(sessionDirectory, 'unexpected.txt');
+    if (failCleanup) writeFileSync(unexpectedPath, 'preserve-on-refusal', { flag: 'wx' });
     atomicWriteJson(join(sessionDirectory, 'acknowledge.json'), {
       consumedThroughSequence: 1,
       protocolVersion: 1,
@@ -468,10 +571,21 @@ describe('Gate R1 projector session', () => {
         resolve(code);
       });
     });
-    expect(exitCode).toBe(0);
-    expect(stderr).toBe('');
     expect(stdout).not.toContain('test-only-placeholder');
-    expect(existsSync(sessionDirectory)).toBe(false);
-    cleanupDirectories.delete(sessionDirectory);
+    if (failCleanup) {
+      expect(exitCode).toBe(1);
+      expect(stderr.trim()).toBe('GATE_R1_SESSION_CLEANUP_REFUSED');
+      expect(readFileSync(unexpectedPath, 'utf8')).toBe('preserve-on-refusal');
+      expect(JSON.parse(readFileSync(join(sessionDirectory, 'error.json'), 'utf8'))).toMatchObject({
+        protocolVersion: 1,
+        status: 'error',
+        code: 'GATE_R1_SESSION_CLEANUP_REFUSED'
+      });
+    } else {
+      expect(exitCode).toBe(0);
+      expect(stderr).toBe('');
+      expect(existsSync(sessionDirectory)).toBe(false);
+      cleanupDirectories.delete(sessionDirectory);
+    }
   }, 40_000);
 });
