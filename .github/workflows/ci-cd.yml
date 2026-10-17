@@ -571,15 +571,62 @@ jobs:
         run: echo "Python coverage is outside the current reported Codecov project scope."
 
       - name: Set up pinned Node.js for Windows fixture contracts
+        id: windows_node
+        if: ${{ !cancelled() }}
         uses: actions/setup-node@v4
         with:
           node-version: '24.18.1'
           cache: 'npm'
 
-      - name: Install and build fixture dependencies
-        run: npm ci && npm run build:packages
+      - name: Assert native Windows toolchain and checkout provenance
+        id: windows_metadata
+        if: ${{ !cancelled() && steps.windows_node.outcome == 'success' }}
+        env:
+          EVIDENCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          POWERSHELL_TELEMETRY_OPTOUT: '1'
+          POWERSHELL_UPDATECHECK: 'Off'
+        run: node scripts/ci-windows-verification.mjs metadata
+
+      - name: Verify native Windows ESM paths junctions and file permissions
+        if: ${{ !cancelled() && steps.windows_metadata.outcome == 'success' }}
+        run: node scripts/ci-windows-verification.mjs capabilities
+
+      - name: Install locked Windows dependencies
+        id: windows_install
+        if: ${{ !cancelled() && steps.windows_metadata.outcome == 'success' }}
+        run: node scripts/ci-windows-verification.mjs run install
+
+      - name: Type-check on native Windows
+        if: ${{ !cancelled() && steps.windows_install.outcome == 'success' }}
+        run: node scripts/ci-windows-verification.mjs run type-check
+
+      - name: Build on native Windows
+        id: windows_build
+        if: ${{ !cancelled() && steps.windows_install.outcome == 'success' }}
+        run: node scripts/ci-windows-verification.mjs run build
+
+      - name: Verify Windows receipt reporting contracts
+        if: ${{ !cancelled() && steps.windows_metadata.outcome == 'success' }}
+        run: node --test scripts/ci-windows-verification.test.mjs
+
+      - name: Verify patched YAML and real consumers on Windows
+        if: ${{ !cancelled() && steps.windows_build.outcome == 'success' }}
+        run: node scripts/ci-windows-verification.mjs run yaml
+
+      - name: Verify native PowerShell and junction contracts
+        if: ${{ !cancelled() && steps.windows_build.outcome == 'success' }}
+        run: node scripts/ci-windows-verification.mjs run windows
+
+      - name: Verify workflow authorization and deployment holds on Windows
+        if: ${{ !cancelled() && steps.windows_build.outcome == 'success' }}
+        run: node scripts/ci-windows-verification.mjs run workflows
+
+      - name: Diagnose mocked Gaming suites serially on Windows
+        if: ${{ !cancelled() && steps.windows_build.outcome == 'success' }}
+        run: node scripts/ci-windows-verification.mjs run gaming
 
       - name: Verify Windows receipt and publishing isolation contracts
+        if: ${{ !cancelled() && steps.windows_build.outcome == 'success' }}
         run: |
           node scripts/run-jest.mjs --runTestsByPath tests/railway-production-readonly-inspection.test.js --coverage=false --runInBand
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -587,6 +634,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Verify native Windows projector identity and stop-ack fixtures
+        if: ${{ !cancelled() && steps.windows_build.outcome == 'success' }}
         env:
           PROJECTOR_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           POWERSHELL_TELEMETRY_OPTOUT: '1'
@@ -664,6 +712,19 @@ jobs:
         with:
           name: windows-projector-fixtures-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/arcanos-projector-fixtures/
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Retain native Windows results and exact-tree receipt
+        if: always()
+        run: node scripts/ci-windows-verification.mjs report
+
+      - name: Upload native Windows verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-windows-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/arcanos-windows-verification/
           retention-days: 30
           if-no-files-found: error
 
