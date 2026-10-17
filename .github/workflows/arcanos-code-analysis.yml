@@ -47,6 +47,7 @@ jobs:
         run: npm run build
 
       - name: 🤖 Run ARCANOS Analysis
+        id: arcanos_analysis
         run: |
           echo "Starting ARCANOS code analysis..."
           COMMIT_SHA="${{ github.event.pull_request.head.sha || inputs.commit_sha || github.sha }}"
@@ -167,7 +168,7 @@ jobs:
           retention-days: 30
 
       - name: 📝 Post PR Comment (if PR)
-        if: always() && github.event_name == 'pull_request' && steps['🤖 Run ARCANOS Analysis'].outcome == 'success'
+        if: always() && github.event_name == 'pull_request' && steps.arcanos_analysis.outcome == 'success'
         uses: actions/github-script@v7
         with:
           script: |
@@ -217,7 +218,7 @@ jobs:
             }
 
       - name: 📝 Create Issue for Critical Findings
-        if: always() && steps['🤖 Run ARCANOS Analysis'].outcome == 'success'
+        if: always() && steps.arcanos_analysis.outcome == 'success'
         uses: actions/github-script@v7
         with:
           script: |
