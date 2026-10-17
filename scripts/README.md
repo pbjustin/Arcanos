@@ -23,6 +23,12 @@ and always pass an explicit approved target for network-enabled operations.
 
 Automation-token flows require the backend's `ARCANOS_AUTOMATION_SECRET`.
 
+The standalone fast-path and async-job probes share URL, CLI, request-timeout,
+JSON, and result-output helpers in `lib/railway-probe.mjs`; importing that module
+performs no requests. Their route validation, defaults, polling deadlines, and
+terminal-state policy remain in the individual scripts. Run their offline
+fixtures with `node scripts/run-jest.mjs --runTestsByPath tests/railway-probe.test.js tests/railway-fast-path-probe.test.js tests/railway-async-job-probe.test.js --runInBand --coverage=false`.
+
 ## Run locally
 Common scripts:
 - `npm run check:boundaries` (CEF layer-access policy plus TypeScript dependency-cycle gate)
