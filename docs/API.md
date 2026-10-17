@@ -2103,12 +2103,20 @@ execution request cannot override server policy: it returns 409 while
 `PREDICTIVE_HEALING_DRY_RUN` is true.
 
 Diagnosis and explicit provider probes have separate shared Redis admission
-purposes, each capped at two attempts per rolling hour. Diagnosis permits one
+purposes, each capped at two attempts per rolling hour across runtimes and
+credential changes. Explicit probes use a 60-second cooldown after the last
+attempt and after a settled failure, rather than the diagnosis cooldown;
+authentication denial, circuit restrictions and unresolved reservations still
+block a probe. Diagnosis permits one
 non-streaming Responses request with at most 512 output tokens and no SDK
 retries. Missing credentials, unavailable Redis, an active cooldown, or an
 in-flight reservation returns the deterministic fallback without inference.
-Authentication rejection blocks retries using the same credential identity;
-an uncertain reservation remains blocked pending reviewed operator
+Authentication rejection retains the normalized credential identity across
+subsequent rotations and successful requests, and blocks that identity in both
+purposes. Atomic admission compares both purpose records so a concurrent rejection
+cannot be bypassed using a stale snapshot; malformed sibling state denies admission.
+Budgets, cooldowns and in-flight holds remain separate for each purpose. A crash, ambiguous
+paid transport failure or uncertain reservation remains blocked pending reviewed operator
 reconciliation. The active provider-health endpoint remains separately scoped
 and rate-limited. See [inference policy](PREDICTIVE_SELF_HEALING.md#inference-eligibility-and-cost-containment)
 for cooldown defaults and durable-state recovery requirements.

@@ -1391,12 +1391,19 @@ and separate persistent diagnosis/provider-probe records shared across Worker
 and web instances in the same project/environment. Provider snapshots cannot
 regress diagnosis cooldowns. Each purpose has a fixed default budget of two
 attempts per rolling hour; this repair adds no configuration variable for that
-budget. Diagnosis is limited to one Responses request, 512 output tokens, a
+budget. Explicit operator probes use fixed 60-second attempt and settled-failure
+cooldowns, independent of the three diagnosis cooldown variables above. Rotation
+does not reset the shared probe budget or an unresolved reservation.
+Diagnosis is limited to one Responses request, 512 output tokens, a
 30-second request timeout, and zero SDK retries.
 
 Missing credentials, unavailable coordination, invalid state, clock regression,
 active cooldowns, and in-flight reservations retain deterministic rules without
-provider requests. Authentication rejection blocks the same credential identity.
+provider requests. Authentication rejection retains normalized credential
+identities across rotation and later success; its bounded history fails closed
+when full instead of evicting rejected identities. A rejection recorded by
+either purpose blocks that credential on both diagnosis and probe admission;
+the purposes retain separate cooldowns, attempt budgets and in-flight holds.
 An uncertain reservation has no automatic expiry: preserve the Redis state and
 require reviewed operator reconciliation before recovery, never automatic key
 deletion. See [inference policy](PREDICTIVE_SELF_HEALING.md#inference-eligibility-and-cost-containment).

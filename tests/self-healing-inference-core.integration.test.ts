@@ -144,4 +144,20 @@ describe('self-healing actual Core and SDK with mocked provider transport', () =
     expect(execution.summarizeAiExecutionContext(context)?.totals.calls).toBe(1);
     expect(circuit.getCircuitBreakerSnapshot().failureCount).toBeGreaterThan(failuresBefore);
   });
+
+  it('retains a socket-reset transport failure after a potentially accepted request without retrying', async () => {
+    mockFetch.mockImplementation(async () => {
+      // A lost response cannot establish whether the provider accepted or billed
+      // the request. The SDK wraps this as an APIConnectionError without status.
+      throw new TypeError('fetch failed', { cause: new Error('socket reset after request accepted') });
+    });
+    const { bounded, context, result } = startDiagnosis();
+    await result.catch(() => undefined);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(bounded.wasRequested()).toBe(true);
+    expect(bounded.isPending()).toBe(false);
+    expect(bounded.getFailure()).toMatchObject({ name: 'Error', message: 'Connection error.' });
+    expect(bounded.getFailure()).not.toHaveProperty('status', expect.any(Number));
+    expect(execution.summarizeAiExecutionContext(context)?.totals.calls).toBe(1);
+  });
 });

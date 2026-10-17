@@ -114,8 +114,9 @@ server-side guards.
 
 ### Inference eligibility and cost containment
 
-Healthy workers with no pending, running, or stalled jobs remain healthy when
-their last activity becomes old. Automatic evaluation of this idle state produces
+Healthy idle workers with no pending or stalled jobs remain healthy when
+their last activity becomes old, including when another slot is processing a
+legitimate long-running job. Automatic evaluation of this idle state produces
 no worker-repair candidate, no AI request, and no repair attempt. Stalled jobs, failed heartbeats,
 unavailable workers with pending work, and explicit dependency failures remain
 incident evidence even when the HTTP request count is zero.
@@ -144,16 +145,36 @@ outcomes are audited. Active provider-health probes retain their separate
 Diagnosis attempts use a dedicated Redis record shared by Worker and web
 runtimes in the same project/environment. Provider-health timestamps cannot
 replace its cooldown anchor. Existing defaults are 30 minutes with active
-incident load, six hours without that load, and six hours after failure. Each
-admission purpose (`diagnosis` or `provider_probe`) allows at most two attempts
-per rolling hour. A diagnosis permits one non-streaming Responses request,
+incident load, six hours without that load, and six hours after failure. Explicit
+operator provider probes instead wait 60 seconds after the last attempt and
+60 seconds after a settled failure; the later deadline wins. Probe cooldowns
+do not inherit or reset diagnosis cooldowns. Each admission purpose
+(`diagnosis` or `provider_probe`) allows at most two attempts per rolling hour
+across participating services and credential changes. A newly configured
+credential can be verified after the probe cooldown only with explicit probe
+authorization, remaining probe budget, an eligible circuit and no unresolved
+probe reservation. A diagnosis permits one non-streaming Responses request,
 at most 512 output tokens, a 30-second request timeout, and no SDK retries;
 other AI workflows keep their existing limits. Authentication failure latches
-the rejected credential identity for that purpose. A client reload does not
+the normalized rejected credential identity in the originating purpose's record,
+and both purposes consult both records before admitting another request. Rotation or a
+later successful request never erases earlier rejected identities. The bounded
+history retains up to 32 identities per record and blocks both purposes when either is full;
+it never evicts a rejected identity to make room. Legacy single-identity records
+retain their rejection when read by the new implementation. A client reload does not
 reactivate the credential, and self-heal provider reloads suppress probes for
 an unchanged credential/endpoint already rejected by the provider-health path.
+Admission atomically reads both records and compares both snapshots when reserving,
+so a rejection written between the read and reservation forces a retry that sees
+the rejection. Malformed sibling state also fails closed. Cooldowns, budgets and
+in-flight holds remain purpose-specific; this is not a global inference lock.
+Requests admitted before another purpose's authentication rejection became known
+remain subject to their original reservation and limits. Redis must support the
+two-key atomic scripts; an unsupported topology denies inference rather than
+falling back to process-local admission.
 
-Reservations have no automatic TTL. A crash, unresolved transport timeout, or
+Reservations have no automatic TTL. A crash, unresolved transport timeout,
+connection failure or 5xx after a paid request was dispatched, or
 uncertain completion write leaves admission blocked while rules-based healing
 continues under its existing execution gates. Recovery requires reviewed,
 target-specific operator reconciliation proving the prior operation has ended
@@ -161,6 +182,49 @@ and preserving cooldown, failure, and hourly-budget evidence. Do not delete or
 expire the admission record automatically, including during rollout or rollback.
 All participating runtimes must retain the same Redis scope and persistent
 state; local process restart is not an admission reset.
+The corrected Worker and V2/web revisions require a coordinated rollout before
+provider access is enabled: an older writer does not enforce the retained
+credential history and may produce a record that the new parser safely rejects.
+Keep inference unavailable until every participating runtime uses the corrected
+policy and the same durable ledger. An invalid mixed-version record must not
+be automatically cleared or rewritten to restore inference.
+
+#### Reconciling an abandoned reservation
+
+There is no automatic reset, public reset endpoint or general-purpose recovery
+CLI. Reconciliation is a separately authorized operator operation against the
+confirmed project, environment, Redis instance and admission purpose:
+
+1. Read the exact admission key and its current state through an approved
+   operator channel. The key is `arcanos:self-heal:inference:v1:<scope>:<purpose>`;
+   `scope` is the SHA-256 digest of the JSON array containing the configured
+   project and environment identifiers, as defined by `coordinationKey` in
+   `src/services/selfImprove/selfHealingInferenceAdmission.ts`. Worker and web
+   services must agree on these identifiers and the Redis instance. Retain the
+   current reservation token privately; do not publish raw state or credentials.
+2. Establish that the owning process and transport have ended, and reconcile
+   the provider outcome where a request may have reached it. Elapsed cooldown,
+   deployment success, local process absence alone, or a new credential is not
+   proof that an upstream operation ended. If the outcome remains uncertain,
+   leave the reservation blocked and continue deterministic healing.
+3. Use a reviewed one-shot operator procedure calling the existing
+   `completeSelfHealingInference` function with the observed token, original
+   `attemptedAt`, exact `purpose`, and `coordinationScope` equal to the observed
+   ledger key. Supply `success`, `failure`, or `authentication_failure` only
+   from verified terminal evidence. The function compares the token and whole
+   record atomically; a scope mismatch, stale token, malformed record or failed
+   write refuses completion. Do not replace the record, change its scope,
+   clear rejected identities, or delete its key. A malformed or saturated
+   record requires separate reviewed remediation preserving its evidence.
+4. Read the same record again and confirm that only the matching reservation
+   completed, attempt timestamps remain, completion/failure timestamps reflect
+   the outcome, and rejected credential history remains. A new verification
+   request still requires its usual authorization, cooldown and rolling budget.
+
+The mocked recovery regression demonstrates this ownership-preserving transition;
+it is not evidence of live provider reconciliation. Reservation read/CAS operations
+bind the purpose's ledger and its sibling rejection snapshot; only the purpose's
+ledger is written. Completion refuses a changed environment scope.
 
 ### Native PR preview approval contract
 

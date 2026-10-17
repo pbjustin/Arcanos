@@ -489,6 +489,9 @@ const DEFAULT_SCALE_UP_STEP = 1;
 const DEFAULT_AI_IDLE_COOLDOWN_MS = 6 * 60 * 60_000;
 const DEFAULT_AI_ACTIVE_COOLDOWN_MS = 30 * 60_000;
 const DEFAULT_AI_FAILURE_COOLDOWN_MS = 6 * 60 * 60_000;
+// Explicit operator probes retain their own short recovery window; the shared
+// rolling budget and durable in-flight reservation still bound every attempt.
+const PROVIDER_PROBE_COOLDOWN_MS = 60_000;
 const REDUCED_LATENCY_MODE_TOKEN_LIMIT = 96;
 const SINGLE_UNHEALTHY_WORKER_CONFIDENCE = 0.86;
 const LATENCY_RISING_BASE_CONFIDENCE = 0.68;
@@ -808,6 +811,20 @@ function updateAiProviderState(
   const nextSnapshot = updater(buildAiProviderStatusSnapshot(getOpenAIServiceHealth(), state.aiProvider));
   state.aiProvider = cloneAiProviderStatus(nextSnapshot);
   return cloneAiProviderStatus(state.aiProvider);
+}
+
+/** A failed transport can have spent tokens even after its local promise settles. */
+function resolveInferenceFailureOutcome(
+  failure: ReturnType<typeof classifyProviderFailure>,
+  bounded: ReturnType<typeof createSelfHealingInferenceClient>
+): 'authentication_failure' | 'uncertain' | 'failure' {
+  const transportFailure = bounded.getFailure();
+  const status = extractErrorStatus(transportFailure);
+  if (bounded.isPending() || failure.category === 'timeout'
+    || (transportFailure !== null && !(status !== null && status >= 400 && status < 500))) {
+    return 'uncertain';
+  }
+  return failure.category === 'authentication' ? 'authentication_failure' : 'failure';
 }
 
 function recordCircuitBreakerTransitionEvents(params: {
@@ -1722,8 +1739,9 @@ async function resolveAiDecision(params: {
   }
   const liveLoadSignal = hasLivePredictiveHealingLoad(params.observation);
   const cooldownMs = resolveDiagnosisCooldownMs(params.config, liveLoadSignal);
+  const admittedCredential = params.config.openaiApiKey?.trim() ?? '';
   const admission = await reserveSelfHealingInference({
-    credential: params.config.openaiApiKey ?? null,
+    credential: admittedCredential,
     cooldownMs,
     failureCooldownMs: resolveDiagnosisCooldownMs(params.config, liveLoadSignal, true)
   });
@@ -1789,7 +1807,20 @@ async function resolveAiDecision(params: {
   }
 
   const attemptAt = admission.reservation.attemptedAt;
-  const { client } = getOpenAIClientOrAdapter();
+  if ((getConfig().openaiApiKey?.trim() ?? '') !== admittedCredential) {
+    await completeSelfHealingInference(admission.reservation, { outcome: 'failure' });
+    return buildFallbackDecision(params.rulesDecision, 'inference_credential_changed');
+  }
+  let client: ReturnType<typeof getOpenAIClientOrAdapter>['client'];
+  try {
+    ({ client } = getOpenAIClientOrAdapter());
+  } catch {
+    await completeSelfHealingInference(admission.reservation, { outcome: 'failure' });
+    return buildFallbackDecision(params.rulesDecision, 'openai_client_unavailable', {
+      aiEligibilityReason: 'missing_client', aiProviderConfigured: providerStatusBeforeAttempt.configured,
+      aiProviderFailureCategory: 'missing_client'
+    });
+  }
   if (!client) {
     await completeSelfHealingInference(admission.reservation, { outcome: 'failure' });
     return buildFallbackDecision(params.rulesDecision, 'openai_client_unavailable', {
@@ -1982,8 +2013,7 @@ async function resolveAiDecision(params: {
   } catch (error) {
     const fallbackFailure = classifyProviderFailure(error);
     await completeSelfHealingInference(admission.reservation, {
-      outcome: fallbackFailure.category === 'authentication' ? 'authentication_failure'
-        : boundedInference.isPending() || fallbackFailure.category === 'timeout' ? 'uncertain' : 'failure'
+      outcome: resolveInferenceFailureOutcome(fallbackFailure, boundedInference)
     });
     const failureAt = new Date().toISOString();
     const postCallHealth = getOpenAIServiceHealth();
@@ -3434,6 +3464,7 @@ export async function probePredictiveHealingAIProvider(): Promise<PredictiveHeal
   const performedAt = new Date().toISOString();
   const serviceHealth = getOpenAIServiceHealth();
   const model = getFallbackModel();
+  const admittedCredential = getConfig().openaiApiKey?.trim() ?? '';
   const baseSnapshot = buildAiProviderStatusSnapshot(serviceHealth, {
     model,
     lastAttemptAt: performedAt
@@ -3458,9 +3489,10 @@ export async function probePredictiveHealingAIProvider(): Promise<PredictiveHeal
   const blocked = serviceHealth.providerRuntime.authenticationBlocked === true
     || providerCircuitBlocksInference(serviceHealth);
   const admission = blocked ? null : await reserveSelfHealingInference({
-    purpose: 'provider_probe', credential: getConfig().openaiApiKey,
-    cooldownMs: resolveDiagnosisCooldownMs(getConfig(), false),
-    failureCooldownMs: resolveDiagnosisCooldownMs(getConfig(), false, true)
+    purpose: 'provider_probe', credential: admittedCredential,
+    cooldownMs: PROVIDER_PROBE_COOLDOWN_MS,
+    failureCooldownMs: PROVIDER_PROBE_COOLDOWN_MS,
+    maxAttemptsPerHour: 2
   });
   if (!admission?.allowed) {
     const reason = blocked ? 'provider_authentication_or_circuit_blocked'
@@ -3472,12 +3504,16 @@ export async function probePredictiveHealingAIProvider(): Promise<PredictiveHeal
       failureStatus: providerStatus.lastFailureStatus
     };
   }
+  if ((getConfig().openaiApiKey?.trim() ?? '') !== admittedCredential) {
+    await completeSelfHealingInference(admission.reservation, { outcome: 'failure' });
+    return { performedAt, ...baseSnapshot, failureReason: 'inference_credential_changed',
+      failureCategory: 'unknown', failureStatus: null };
+  }
   const boundedProbe = createSelfHealingInferenceClient(client);
   let probeOutcome: 'success' | 'failure' | 'authentication_failure' | 'uncertain' = 'uncertain';
   const recordProbeFailure = (error: unknown) => {
     const failure = classifyProviderFailure(error);
-    probeOutcome = failure.category === 'authentication' ? 'authentication_failure'
-      : failure.category === 'timeout' || boundedProbe.isPending() ? 'uncertain' : 'failure';
+    probeOutcome = resolveInferenceFailureOutcome(failure, boundedProbe);
     updateAiProviderState(getState(), current => ({
       ...current, lastFailureAt: pickLatestTimestamp([current.lastFailureAt, performedAt]),
       lastFailureCategory: failure.category, lastFailureReason: failure.reason,
