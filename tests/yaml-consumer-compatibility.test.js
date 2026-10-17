@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from '@jest/globals';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
@@ -17,7 +17,9 @@ function fixture() {
   const root = mkdtempSync(path.join(os.tmpdir(), 'arcanos-yaml-consumer-'));
   roots.push(root);
   writeFileSync(path.join(root, 'package.json'), '{"private":true}\n');
-  return root;
+  // Consumers canonicalize paths or reject symlinks. Preserve the original
+  // path for guarded cleanup and use its real path for every fixture consumer.
+  return realpathSync(root);
 }
 
 afterEach(() => {
