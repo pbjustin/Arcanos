@@ -82,6 +82,7 @@ function buildFallbackOpenAIHealth(): OpenAIServiceHealth {
         maxTokens: RESILIENCE_CONSTANTS.DEFAULT_MAX_TOKENS
       },
       providerRuntime: {
+        authenticationBlocked: false,
         configSource: null,
         configVersion: null,
         lastReloadAt: null,

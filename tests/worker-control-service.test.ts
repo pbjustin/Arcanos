@@ -96,6 +96,60 @@ describe('workerControlService', () => {
     await expect(getWorkerJobDetailById('local-agent-job')).resolves.toBeNull();
   });
 
+  it.each([
+    ['healthy idle', 0, 'healthy', 'healthy', false],
+    ['inactive with pending work', 1, 'healthy', 'degraded', true],
+    ['offline with pending work', 1, 'offline', 'unhealthy', true]
+  ])('classifies eight workers correctly when %s', async (_label, pending, healthStatus, expectedStatus, restartRecommended) => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-10-17T18:40:00.000Z'));
+    getWorkerAutonomyHealthReportMock.mockResolvedValue({
+      timestamp: new Date().toISOString(),
+      overallStatus: healthStatus,
+      alerts: [],
+      queueSummary: {
+        pending, running: 0, completed: 0, failed: 0, total: pending,
+        delayed: 0, stalledRunning: 0, oldestPendingJobAgeMs: 0,
+        failureBreakdown: {}, recentFailureReasons: []
+      },
+      workers: Array.from({ length: 8 }, (_, index) => ({
+        workerId: `async-queue-slot-${index + 1}`,
+        workerType: 'async_queue',
+        healthStatus,
+        currentJobId: null,
+        lastError: null,
+        startedAt: '2026-10-17T18:00:00.000Z',
+        lastHeartbeatAt: '2026-10-17T18:40:00.000Z',
+        lastInspectorRunAt: '2026-10-17T18:40:00.000Z',
+        updatedAt: '2026-10-17T18:40:00.000Z',
+        // Older snapshots may omit the explicit watchdog. The fallback must
+        // distinguish a quiet queue from work which is not being processed.
+        snapshot: {
+          dispatcherStarted: true,
+          activeListeners: 1,
+          claimAcceptance: 'accepting',
+          lastActivityAt: '2026-10-17T18:10:00.000Z',
+          lastProcessedJobAt: null
+        }
+      })),
+      settings: getWorkerAutonomySettingsMock()
+    });
+
+    const health = await getWorkerControlHealth();
+
+    expect(health.overallStatus).toBe(expectedStatus);
+    expect(health.workers).toHaveLength(8);
+    for (const worker of health.workers) {
+      expect(worker.watchdog.restartRecommended).toBe(restartRecommended);
+      expect(worker.stale).toBe(false);
+      expect(worker.inactivityMs).toBe(30 * 60_000);
+    }
+    if (pending === 0) {
+      expect(health.alerts).toEqual([]);
+      expect(health.operationalHealth.degradedWorkerIds).toEqual([]);
+      expect(health.workers.every((worker) => worker.operationalStatus === 'healthy')).toBe(true);
+    }
+  });
+
   it('reports healthy operational status while preserving historical failure debt', async () => {
     getWorkerAutonomyHealthReportMock.mockResolvedValue({
       timestamp: '2026-04-11T22:29:00.637Z',

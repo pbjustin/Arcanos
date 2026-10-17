@@ -317,6 +317,22 @@ describe('predictive self-heal route', () => {
     expect(runPredictiveHealingDecisionMock).not.toHaveBeenCalled();
   });
 
+  it('requires explicit manual inference intent independently of the execution scope', async () => {
+    await request(createApp()).post('/api/self-heal/decide')
+      .set('Authorization', `Bearer ${controlPlaneAccessToken}`).send({}).expect(200);
+    expect(runPredictiveHealingDecisionMock).toHaveBeenLastCalledWith(expect.objectContaining({
+      inferenceAuthorization: 'disabled'
+    }));
+    await request(createApp()).post('/api/self-heal/decide')
+      .set('Authorization', `Bearer ${controlPlaneAccessToken}`).send({ aiDiagnosis: true }).expect(200);
+    expect(runPredictiveHealingDecisionMock).toHaveBeenLastCalledWith(expect.objectContaining({
+      inferenceAuthorization: 'manual', execute: undefined
+    }));
+    runPredictiveHealingDecisionMock.mockClear();
+    await request(createApp()).post('/api/self-heal/decide').send({ aiDiagnosis: true }).expect(401);
+    expect(runPredictiveHealingDecisionMock).not.toHaveBeenCalled();
+  });
+
   it('allows an explicitly scoped operator to request execution', async () => {
     configureControlPlane('self-heal:decide,self-heal:execute');
     process.env.PREDICTIVE_HEALING_ENABLED = 'true';

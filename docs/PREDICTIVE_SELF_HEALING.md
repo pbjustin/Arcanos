@@ -66,7 +66,7 @@ only the samples needed for the configured activation threshold.
 - Decision engine:
   - implemented in `src/services/selfImprove/predictiveHealingService.ts`
   - evaluates rolling trends instead of single snapshots
-  - builds deterministic rule candidates, then asks the bounded `ARCANOS:CORE` advisor to choose among them
+  - builds deterministic rule candidates and asks the bounded `ARCANOS:CORE` advisor only after inference eligibility and shared admission succeed
   - falls back to the rules decision when the AI provider is unavailable, unhealthy, in cooldown, or returns invalid output
 - Coordinator approval boundary:
   - when prediction is enabled, its disposition owns that loop tick; a refusal, unsupported action, cooldown, recommendation-only result, dry run, or deterministic fallback cannot authorize a different reactive action or the automatic self-improvement controller
@@ -106,11 +106,61 @@ label and is not caller identity. Manual self-improve runs require both
 `self-heal:decide` and `self-heal:execute`; freeze, unfreeze, and autonomy
 changes require `self-improve:control`.
 
-Simulation is never an actuator input: a request containing `simulate` must set
+Simulation never requests inference or supplies an actuator input: a request containing `simulate` must set
 `dryRun: true` and must not set `execute: true`. Live HTTP execution also
 requires `PREDICTIVE_HEALING_ENABLED=true` and
 `PREDICTIVE_HEALING_DRY_RUN=false`; request overrides cannot weaken those
 server-side guards.
+
+### Inference eligibility and cost containment
+
+Healthy workers with no pending, running, or stalled jobs remain healthy when
+their last activity becomes old. Automatic evaluation of this idle state produces
+no worker-repair candidate, no AI request, and no repair attempt. Stalled jobs, failed heartbeats,
+unavailable workers with pending work, and explicit dependency failures remain
+incident evidence even when the HTTP request count is zero.
+
+Automatic diagnosis requires `PREDICTIVE_HEALING_ENABLED=true`, fresh actionable
+rule evidence, a configured credential, an eligible provider circuit retry window,
+and successful shared Redis admission. No actionable candidate returns a
+deterministic no-action decision. Disabled prediction, unavailable Redis, invalid
+state, clock regression, active cooldown, or another in-flight diagnosis retains
+the deterministic rules result without making a provider request. Repair
+authorization is independent: dry-run and disabled execution do not themselves
+grant or forbid an otherwise authorized diagnosis, and diagnosis never grants
+permission to execute its recommendation.
+An open circuit blocks inference until its existing reset window expires; the
+next admitted call still passes through that circuit's recovery policy.
+
+The HTTP decision endpoint defaults to rules-only. An authenticated operator
+with `self-heal:decide` may explicitly set `aiDiagnosis: true` for a live
+observation, including while automatic predictive healing is disabled. This
+request still needs an actionable candidate and passes the same provider,
+cooldown, concurrency, and budget gates. Simulation remains provider-free even
+with `aiDiagnosis: true`. The request authorization and inference skip/admission
+outcomes are audited. Active provider-health probes retain their separate
+`arcanos:read` plus `self-heal:probe` authorization and admission purpose.
+
+Diagnosis attempts use a dedicated Redis record shared by Worker and web
+runtimes in the same project/environment. Provider-health timestamps cannot
+replace its cooldown anchor. Existing defaults are 30 minutes with active
+incident load, six hours without that load, and six hours after failure. Each
+admission purpose (`diagnosis` or `provider_probe`) allows at most two attempts
+per rolling hour. A diagnosis permits one non-streaming Responses request,
+at most 512 output tokens, a 30-second request timeout, and no SDK retries;
+other AI workflows keep their existing limits. Authentication failure latches
+the rejected credential identity for that purpose. A client reload does not
+reactivate the credential, and self-heal provider reloads suppress probes for
+an unchanged credential/endpoint already rejected by the provider-health path.
+
+Reservations have no automatic TTL. A crash, unresolved transport timeout, or
+uncertain completion write leaves admission blocked while rules-based healing
+continues under its existing execution gates. Recovery requires reviewed,
+target-specific operator reconciliation proving the prior operation has ended
+and preserving cooldown, failure, and hourly-budget evidence. Do not delete or
+expire the admission record automatically, including during rollout or rollback.
+All participating runtimes must retain the same Redis scope and persistent
+state; local process restart is not an admission reset.
 
 ### Native PR preview approval contract
 
@@ -249,7 +299,7 @@ jobs, heartbeats or HTTP responses do not establish cross-process healing.
 - Prompt route trending degraded before failure:
   - recommend `mark_node_degraded`
 - AI provider unavailable or unhealthy:
-  - recommend or execute `reinitialize_ai_provider`
+  - recommend `reinitialize_ai_provider`; execution retains its separate policy and authentication-probe suppression
 - Trinity stages repeatedly timing out or failing:
   - recommend or execute `activate_trinity_mitigation`
 

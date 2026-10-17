@@ -65,6 +65,7 @@ export interface OpenAIProviderReloadResult extends OpenAIProviderProbeResult {
 
 type OpenAIProviderRuntimeState = OpenAIProviderRuntimeStatus & {
   configFingerprint: string | null;
+  authenticationFailureFingerprint: string | null;
 };
 
 const DEFAULT_PROVIDER_RETRY_BASE_MS = 1_000;
@@ -92,7 +93,8 @@ function createInitialProviderRuntimeState(): OpenAIProviderRuntimeState {
     consecutiveFailures: 0,
     backoffMs: 0,
     nextRetryAt: null,
-    configFingerprint: null
+    configFingerprint: null,
+    authenticationFailureFingerprint: null
   };
 }
 
@@ -162,6 +164,15 @@ function resolveProviderConfigFingerprint(): {
     fingerprint,
     source
   };
+}
+
+function resolveProviderAuthenticationFingerprint(): string {
+  // Credential source is a lazy cache and changes when a client is reset.
+  // Authentication denial must instead follow the actual credential/endpoint.
+  return createHash('sha256').update(JSON.stringify({
+    apiKey: getConfig().openaiApiKey?.trim() ?? '',
+    baseUrl: resolveOpenAIBaseURL() ?? ''
+  })).digest('hex');
 }
 
 function resetConfiguredUnifiedOpenAIClient(): boolean {
@@ -346,6 +357,7 @@ function markProviderFailure(
   context: {
     attemptedAt: string;
     source: string;
+    authenticationFingerprint?: string;
   }
 ): OpenAIProviderRuntimeStatus {
   const state = getProviderRuntimeState();
@@ -362,6 +374,10 @@ function markProviderFailure(
   state.consecutiveFailures = consecutiveFailures;
   state.backoffMs = backoffMs;
   state.nextRetryAt = nextRetryAt;
+  if (failure.category === 'authentication') {
+    state.authenticationFailureFingerprint = context.authenticationFingerprint ??
+      resolveProviderAuthenticationFingerprint();
+  }
 
   logger.error('openai.provider.failure', {
     module: 'openai.service_health',
@@ -391,6 +407,7 @@ function markProviderSuccess(
   state.consecutiveFailures = 0;
   state.backoffMs = 0;
   state.nextRetryAt = null;
+  state.authenticationFailureFingerprint = null;
 
   logger.info('openai.provider.healthy', {
     module: 'openai.service_health',
@@ -500,6 +517,9 @@ export async function probeOpenAIProviderHealth(options: {
   }
 
   const timeoutMs = Math.max(1_000, options.timeoutMs ?? resolveProviderProbeTimeoutMs());
+  // Keep the failure bound to the configuration that sent this request even
+  // if another local reload happens while its transport is pending.
+  const attemptedAuthenticationFingerprint = resolveProviderAuthenticationFingerprint();
   const timeoutError = new Error(`OpenAI provider probe timed out after ${timeoutMs}ms`);
   const probeController = new AbortController();
   const probeExecutionContext = getAiExecutionContext();
@@ -556,7 +576,8 @@ export async function probeOpenAIProviderHealth(options: {
       reason: resolveErrorMessage(error),
       runtime: markProviderFailure(error, {
         attemptedAt,
-        source
+        source,
+        authenticationFingerprint: attemptedAuthenticationFingerprint
       })
     };
   } finally {
@@ -572,14 +593,38 @@ export async function probeOpenAIProviderHealth(options: {
 export async function reinitializeOpenAIProvider(options: {
   forceReload?: boolean;
   ignoreBackoff?: boolean;
+  suppressUnchangedAuthenticationProbe?: boolean;
   source?: string;
 } = {}): Promise<OpenAIProviderReloadResult> {
   const source = options.source ?? 'runtime_reinitialize';
+  const failedAuthenticationFingerprint = getProviderRuntimeState().authenticationFailureFingerprint;
   const reload = syncOpenAIProviderRuntime({
     forceReload: options.forceReload ?? true,
     reason: source
   });
   const state = getProviderRuntimeState();
+
+  // A local client reload cannot repair revoked credentials. Self-healing can
+  // opt into retaining this denial across reloads without changing the retry
+  // policy of explicitly requested probes or unrelated provider workflows.
+  if (
+    options.suppressUnchangedAuthenticationProbe === true &&
+    failedAuthenticationFingerprint !== null &&
+    failedAuthenticationFingerprint === resolveProviderAuthenticationFingerprint()
+  ) {
+    logger.info('openai.provider.reinitialize_probe_skipped', {
+      module: 'openai.service_health',
+      source,
+      reason: 'provider_authentication_unchanged'
+    });
+    return {
+      ok: false,
+      skipped: true,
+      reason: 'provider_authentication_unchanged',
+      runtime: cloneProviderRuntimeState(state),
+      reloaded: reload.reloaded
+    };
+  }
 
   if (!options.ignoreBackoff && isProviderBackoffActive(state)) {
     return {
@@ -637,7 +682,13 @@ export function getOpenAIServiceHealth() {
     defaults: {
       maxTokens: RESILIENCE_CONSTANTS.DEFAULT_MAX_TOKENS
     },
-    providerRuntime: getOpenAIProviderRuntimeStatus()
+    providerRuntime: {
+      ...getOpenAIProviderRuntimeStatus(),
+      // Historical failure categories remain visible after configuration changes;
+      // admission must compare their private identity with the current credential.
+      authenticationBlocked: getProviderRuntimeState().authenticationFailureFingerprint ===
+        resolveProviderAuthenticationFingerprint()
+    }
   };
   return result;
 }

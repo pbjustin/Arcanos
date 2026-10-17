@@ -23,7 +23,9 @@ const {
 } = await import('../src/services/openai/aiExecutionContext.js');
 const {
   getOpenAIProviderRuntimeStatus,
+  getOpenAIServiceHealth,
   probeOpenAIProviderHealth,
+  reinitializeOpenAIProvider,
   syncOpenAIProviderRuntime,
 } = await import('../src/services/openai/serviceHealth.js');
 const {
@@ -490,6 +492,78 @@ describe('worker OpenAI budget wiring', () => {
 
     expect(reserveWorkerAiProviderAttemptMock).toHaveBeenCalledTimes(1);
     expect(nativeFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps an unchanged authentication failure blocked across repeated self-heal reloads', async () => {
+    const nativeFetch = jest.fn(async () => modelListResponse(401));
+    configureWorkerOpenAI(nativeFetch, { apiKey: buildSyntheticOpenAIKey('self-heal-revoked') });
+    const failure = await probeOpenAIProviderHealth({ force: true, source: 'self_heal_test' });
+    expect(failure).toMatchObject({ ok: false, runtime: { lastFailureCategory: 'authentication' } });
+    expect(getOpenAIServiceHealth().providerRuntime.authenticationBlocked).toBe(true);
+
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const result = await reinitializeOpenAIProvider({
+        forceReload: true,
+        ignoreBackoff: true,
+        suppressUnchangedAuthenticationProbe: true,
+        source: 'self_heal_test'
+      });
+      expect(result).toMatchObject({
+        ok: false,
+        skipped: true,
+        reloaded: true,
+        reason: 'provider_authentication_unchanged',
+        runtime: {
+          lastAttemptAt: failure.runtime.lastAttemptAt,
+          lastFailureAt: failure.runtime.lastFailureAt,
+          lastFailureCategory: 'authentication',
+          consecutiveFailures: failure.runtime.consecutiveFailures,
+          nextRetryAt: failure.runtime.nextRetryAt
+        }
+      });
+    }
+    expect(getOpenAIServiceHealth().providerRuntime.authenticationBlocked).toBe(true);
+    expect(nativeFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('permits a bounded recovery probe after a failed authentication configuration changes', async () => {
+    const nativeFetch = jest.fn(async () => modelListResponse(401));
+    configureWorkerOpenAI(nativeFetch, { apiKey: buildSyntheticOpenAIKey('self-heal-old') });
+    await probeOpenAIProviderHealth({ force: true, source: 'self_heal_test' });
+    const failure = getOpenAIProviderRuntimeStatus();
+
+    // Synthetic credentials stay behind the mocked transport throughout.
+    process.env.OPENAI_API_KEY = buildSyntheticOpenAIKey('self-heal-new');
+    syncOpenAIProviderRuntime({ reason: 'synthetic_configuration_change' });
+    expect(getOpenAIServiceHealth().providerRuntime).toMatchObject({
+      lastFailureCategory: 'authentication',
+      authenticationBlocked: false
+    });
+    nativeFetch.mockImplementation(async () => modelListResponse());
+    const result = await reinitializeOpenAIProvider({
+      ignoreBackoff: true,
+      suppressUnchangedAuthenticationProbe: true,
+      source: 'self_heal_test'
+    });
+
+    expect(result).toMatchObject({ ok: true, skipped: false, reloaded: true });
+    expect(result.runtime.configVersion).not.toBe(failure.configVersion);
+    expect(result.runtime.lastFailureCategory).toBeNull();
+    expect(getOpenAIServiceHealth().providerRuntime.authenticationBlocked).toBe(false);
+    expect(nativeFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('preserves explicit provider reinitialization behavior when auth suppression is not requested', async () => {
+    const nativeFetch = jest.fn(async () => modelListResponse(401));
+    configureWorkerOpenAI(nativeFetch, { apiKey: buildSyntheticOpenAIKey('manual-recovery') });
+    await probeOpenAIProviderHealth({ force: true, source: 'explicit_probe_test' });
+    nativeFetch.mockImplementation(async () => modelListResponse());
+
+    await expect(reinitializeOpenAIProvider({
+      ignoreBackoff: true,
+      source: 'explicit_probe_test'
+    })).resolves.toMatchObject({ ok: true, skipped: false });
+    expect(nativeFetch).toHaveBeenCalledTimes(2);
   });
 
   it('routes the ambient semantic planner through the configured adapter and one reservation', async () => {

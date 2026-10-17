@@ -612,7 +612,8 @@ function readIsoTimestampToMs(value: string | null): number | null {
 
 function readWatchdogView(
   workerSnapshot: WorkerRuntimeSnapshotRecord,
-  idleThresholdMs: number
+  idleThresholdMs: number,
+  queueSummary: JobQueueSummary | null
 ): WorkerControlWorkerSnapshot['watchdog'] {
   const snapshot = readWorkerSnapshotObject(workerSnapshot);
   const rawWatchdog = snapshot.watchdog;
@@ -627,6 +628,7 @@ function readWatchdogView(
     const inactivityMs =
       inactivitySourceAt === null ? null : Math.max(0, Date.now() - inactivitySourceAt);
     const restartRecommended =
+      hasActiveQueueWork(queueSummary) &&
       workerSnapshot.currentJobId === null &&
       inactivityMs !== null &&
       inactivityMs >= idleThresholdMs;
@@ -635,7 +637,7 @@ function readWatchdogView(
       triggered: false,
       reason:
         restartRecommended
-          ? `No worker receipts or processed jobs observed for ${inactivityMs}ms.`
+          ? `No worker receipts or processed jobs observed for ${inactivityMs}ms while queue work remained active.`
           : null,
       restartRecommended,
       idleThresholdMs
@@ -745,7 +747,7 @@ function buildWorkerControlWorkerSnapshot(
   const inactivityMs = lastActivityAt && Number.isFinite(Date.parse(lastActivityAt))
     ? Math.max(0, Date.now() - Date.parse(lastActivityAt))
     : null;
-  const watchdog = readWatchdogView(workerSnapshot, idleThresholdMs);
+  const watchdog = readWatchdogView(workerSnapshot, idleThresholdMs, queueSummary);
 
   return {
     workerId: workerSnapshot.workerId,
@@ -884,7 +886,11 @@ function buildWorkerOperationalHealth(
         : fallbackStatus === 'offline'
         ? 'offline'
         : 'healthy';
-  } else if ((queueSummary?.stalledRunning ?? 0) > 0 || unhealthyWorkerIds.length > 0) {
+  } else if (
+    (queueSummary?.stalledRunning ?? 0) > 0 ||
+    unhealthyWorkerIds.length > 0 ||
+    (activeQueueWork && workers.every((worker) => worker.operationalStatus === 'offline'))
+  ) {
     overallStatus = 'unhealthy';
   } else if (alerts.length > 0 || degradedWorkerIds.length > 0) {
     overallStatus = 'degraded';

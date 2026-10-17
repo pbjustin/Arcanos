@@ -1344,6 +1344,9 @@ from queue health and mitigation availability.
 | `PREDICTIVE_HEALING_ENABLED` | `false` | Exact environment name. |
 | `PREDICTIVE_HEALING_DRY_RUN` | `true` | First nonblank value from the primary name, `RAILWAY_PREDICTIVE_HEALING_DRY_RUN`, then `PREDICTIVE_DRY_RUN`. Only `false`, `0`, or `no` disables dry-run, ignoring case and surrounding whitespace. Invalid values keep dry-run enabled and do not fall through to an alias. |
 | `PREDICTIVE_AUTO_EXECUTE` | `false` | First nonblank value from the primary name, `RAILWAY_PREDICTIVE_AUTO_EXECUTE`, then `AUTO_EXECUTE_HEALING`. |
+| `PREDICTIVE_HEALING_AI_ACTIVE_COOLDOWN_MS` | `1800000` (30 minutes) | Minimum interval between admitted diagnoses with active incident load. |
+| `PREDICTIVE_HEALING_AI_IDLE_COOLDOWN_MS` | `21600000` (six hours) | Minimum interval without active load; healthy idle itself never qualifies for inference. |
+| `PREDICTIVE_HEALING_AI_FAILURE_COOLDOWN_MS` | `21600000` (six hours) | Failure backoff, independent of generic provider-health probes. |
 
 Other boolean settings in this table recognize `true`, `1`, and `yes`, ignoring
 case and surrounding whitespace; other nonblank inputs resolve to `false`.
@@ -1360,7 +1363,7 @@ mutation; see the [audit snapshot](audits/self-healing/2026-10-14/bootstrap-owne
 | Capability | Required configuration and authorization |
 | --- | --- |
 | Observation | A running coordinator in its owning process and initialized observation dependencies. Disabled self-improvement flags retain observation without granting effects. |
-| Diagnosis | Bounded observations and the existing diagnostic/provider policy. A diagnosis does not authorize its proposed action. |
+| Diagnosis | Automatic inference requires predictive healing enabled, fresh actionable evidence, configured credentials, an eligible circuit retry window, and shared Redis admission. Explicit authenticated `aiDiagnosis: true` may request manual diagnosis while prediction is disabled; simulations never infer. Diagnosis does not authorize an action. |
 | Recommendations | Recommendation-only or dry-run evaluation; no runtime mutation permission follows from a recommendation. The separate patch-proposal controller retains its enabled, freeze, autonomy, and publication gates. |
 | Coordinator local mitigation | `SELF_IMPROVE_ENABLED=true`, `SELF_IMPROVE_ACTUATOR_MODE=daemon`, configured and effective autonomy at least 3, and both configured and effective freeze false. The action must own the actual local consumer, satisfy cooldown/attempt limits, and await fresh verification evidence. |
 | Predictive execution | All local execution gates plus `PREDICTIVE_HEALING_ENABLED=true` and `PREDICTIVE_HEALING_DRY_RUN=false`. Automatic execution additionally requires `PREDICTIVE_AUTO_EXECUTE=true`; manual HTTP execution requires authenticated decision/execution scopes. Request parameters cannot lower the server dry-run guard. |
@@ -1381,6 +1384,22 @@ For HTTP predictive decisions, server feature flags remain authoritative.
 `execute: true`. Live execution returns 409 while predictive healing is
 disabled or server dry-run is enabled; the request body cannot lower either
 server guard.
+
+`aiDiagnosis` defaults to false on `POST /api/self-heal/decide`; requesting it
+does not enable repair execution. Inference admission uses Redis server time
+and separate persistent diagnosis/provider-probe records shared across Worker
+and web instances in the same project/environment. Provider snapshots cannot
+regress diagnosis cooldowns. Each purpose has a fixed default budget of two
+attempts per rolling hour; this repair adds no configuration variable for that
+budget. Diagnosis is limited to one Responses request, 512 output tokens, a
+30-second request timeout, and zero SDK retries.
+
+Missing credentials, unavailable coordination, invalid state, clock regression,
+active cooldowns, and in-flight reservations retain deterministic rules without
+provider requests. Authentication rejection blocks the same credential identity.
+An uncertain reservation has no automatic expiry: preserve the Redis state and
+require reviewed operator reconciliation before recovery, never automatic key
+deletion. See [inference policy](PREDICTIVE_SELF_HEALING.md#inference-eligibility-and-cost-containment).
 
 The background coordinator evaluates prediction on every tick. When
 `PREDICTIVE_HEALING_ENABLED=true`, the predictive disposition owns that tick:
