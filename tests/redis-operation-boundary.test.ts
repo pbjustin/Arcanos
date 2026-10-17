@@ -54,6 +54,7 @@ describe('Redis operation source boundary', () => {
   it('requires an explicit operation identity at every application gate call', () => {
     const missingOperation: string[] = [];
     let gateCallCount = 0;
+    const inferenceOperations: string[] = [];
 
     for (const filePath of sourceFiles) {
       if (relativeSourcePath(filePath) === REDIS_LIFECYCLE_PATH) {
@@ -89,15 +90,25 @@ describe('Redis operation source boundary', () => {
               `${relativeSourcePath(filePath)}:${location.line + 1}`
             );
           }
+          if (relativeSourcePath(filePath) === 'services/selfImprove/selfHealingInferenceAdmission.ts'
+            && options && ts.isObjectLiteralExpression(options)) {
+            const identity = options.properties.find(property => ts.isPropertyAssignment(property)
+              && property.name.getText(sourceFile) === 'operation');
+            if (identity && ts.isPropertyAssignment(identity)) {
+              inferenceOperations.push(identity.initializer.getText(sourceFile));
+            }
+          }
         }
         ts.forEachChild(node, visit);
       };
       visit(sourceFile);
     }
 
-    // The sealed shutdown probe adds one fixed CLIENT ID read through the same
-    // lifecycle gate; every call, including this one, still needs its identity.
-    expect(gateCallCount).toBe(16);
+    // The original sixteen gates include the sealed CLIENT ID read. Shared
+    // inference adds exactly two: the durable ledger/time read and atomic CAS.
+    // Both remain inside the lifecycle gate with fixed allowlisted identities.
+    expect(gateCallCount).toBe(18);
+    expect(inferenceOperations).toEqual(["'self_heal.inference.reserve'", "'self_heal.inference.complete'"]);
     expect(missingOperation).toEqual([]);
   });
 

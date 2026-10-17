@@ -28,7 +28,7 @@ in the reported configuration but did not prevent provider calls.
 | --- | --- |
 | Scheduler ownership | `src/workers/jobRunner.ts`, `startSelfHealingLoop` bootstrap; `src/services/selfImprove/selfHealingLoop.ts`, `startSelfHealingLoop`. The dedicated Worker installs one coordinator after readiness; explicit web scheduling remains suppressed. |
 | Observation and watchdog | `src/services/selfImprove/selfHealingLoop.ts`, `observeSelfHealingRuntime`; `src/services/workerControlService.ts`, `readWatchdogView`. Queue work, activity, heartbeat, and explicit dependency evidence remain distinct. |
-| Worker classification | `src/services/workerControlService.ts`, `hasActiveQueueWork` and `deriveWorkerOperationalStatus`; `selfHealingLoop.ts`, `diagnoseSelfHealingRuntime`. Old activity alone cannot degrade healthy idle workers; failed heartbeats with pending work and explicit dependency failures remain detectable. |
+| Worker classification | `src/services/workerControlService.ts`, `hasPendingOrStalledQueueWork` and `deriveWorkerOperationalStatus`; `selfHealingLoop.ts`, `diagnoseSelfHealingRuntime`. Old activity alone cannot degrade healthy idle workers, including seven idle slots beside one running job; running-job liveness and explicit dependency failures remain detectable. |
 | Predictive candidates | `src/services/selfImprove/predictiveHealingService.ts`, `buildObservationFromSources`, `buildCandidates`, and `evaluatePredictiveHealingRules`. Healthy idle has no worker-repair candidate; stalled work remains actionable. |
 | Inference eligibility | `predictiveHealingService.ts`, `resolveAiDecision`. Automatic inference requires enabled prediction, fresh actionable evidence, a credential, and a provider circuit whose existing retry window permits an attempt. Simulations never infer. |
 | Provider snapshots | `predictiveHealingService.ts`, `buildAiProviderStatusSnapshot`; `src/services/openai/serviceHealth.ts`, `getOpenAIServiceHealth`. Recent diagnosis timestamps remain monotonic; current authentication blocking is distinguished from historical provider failure. |
@@ -89,7 +89,90 @@ The real Core/adapter/SDK fixture verifies one fine-tuned Responses transport,
 handling without fallback transport. Native fetch and unrelated effects fail
 the fixture if reached.
 
-## Validation status
+## Independent review corrections for PR 1557
+
+The review started from `b7ef97ac90cd37fa6ecccdb3117dc0cd3d92b4a1`,
+which was still the remote head, against main
+`4b961a0df8a700340dcf795a7f41223685211a31`. The PR was draft and mergeable,
+with three unresolved CodeRabbit findings. All three were verified:
+
+| Finding | Correction and regression evidence |
+| --- | --- |
+| A: running-only queues selected idle slots for repair | Both inactivity-specific worker-control checks require pending/stalled backlog. `worker-control-service.test.ts` covers one long-running job with seven idle slots, synthesized and retained watchdog recommendations, pending/stalled work, and genuine dispatcher failures. |
+| B: reactive inactivity disagreed with predictive classification | `self-healing-loop.test.ts` runs twenty ticks for empty and running-only queues with prediction enabled and disabled. Every tick remains healthy with no incident, provider attempt or repair; genuine heartbeat/dependency failures remain detectable. `predictive-healing-service.test.ts` separately covers the running-only candidate classifier. |
+| C: explicit probes inherited six-hour diagnosis cooldowns | Probe success and settled-failure cooldowns are 60 seconds; the later deadline wins. `predictive-healing-execution.test.ts` verifies rotation recovery, a second authorized attempt, third-attempt budget denial, circuit restrictions and unresolved-reservation blocking. Diagnosis cooldowns remain independent. |
+
+The original failed runs [PR CI](https://github.com/pbjustin/Arcanos/actions/runs/39062649770)
+and [CI/CD](https://github.com/pbjustin/Arcanos/actions/runs/39062649796)
+reported 943 passing, two failing and 13 skipped suites; 19,431 passing,
+two failing and 234 skipped cases. Their two causes were verified independently:
+
+- `trinity-model-policy.e2e.test.ts` had no configured Redis fixture. The exact
+  denial was `coordination_unavailable`, so deterministic fallback was correct.
+  The repaired test first asserts that denial and zero requests, then supplies
+  a synthetic atomic Redis command store while retaining the real coordinator,
+  Core, SDK and loopback provider. One explicitly authorized request uses the
+  expected model, a 512-output-token cap and 192 accounted tokens. Disabled
+  inference, cooldown and healthy idle produce no additional request or repair.
+- `redis-operation-boundary.test.ts` had an outdated inventory. The existing
+  sixteen operations are rate-limit (2), kill-switch (2), diagnostics (3),
+  safety lock (3), safety client (3), telemetry (2) and sealed preview (1).
+  Admission adds the ledger/time read and atomic CAS (2). The test now checks
+  eighteen calls and both exact new operation identities, rather than only
+  increasing the count.
+
+Independent security and reliability review identified and repaired these
+additional defects in the admission boundary:
+
+1. Rejected credentials could be forgotten after another rejected rotation.
+   Normalized identities are retained in a bounded history; legacy records
+   preserve their rejection and saturation denies admission without eviction.
+2. A settled socket failure without an HTTP response could clear a reservation
+   after a potentially accepted paid request. Ambiguous paid transport failures
+   now retain the hold, including server errors whose completion is uncertain.
+   Core/SDK and predictive regressions prove a single attempted request and
+   continued denial after cooldown and credential change.
+3. Credential changes during awaited admission could mismatch the request and
+   recorded identity. Both diagnosis and probe paths recheck before transport.
+   Client initialization failure before transport safely completes its charged
+   reservation instead of leaving an unexplained permanent hold.
+4. Recomputing environment scope between Redis read and CAS could target another
+   ledger. Each operation binds one key; changed scope withholds admission and
+   cannot complete the original reservation.
+5. A diagnosis rejection did not block the same key on the independent probe
+   path, or vice versa. Admission now reads both same-scope ledgers and checks
+   their rejection histories; its CAS validates both snapshots before writing
+   only the selected purpose. Tests cover both directions and a sibling rejection
+   arriving between read and CAS, while preserving rotation and separate budgets.
+
+The admission tests cover concurrency, lost acknowledgements, malformed state,
+clock rollback, stale-token rejection, retained uncertainty and operator
+reconciliation that preserves budgets and authentication history. The concrete
+[reconciliation procedure](../../../PREDICTIVE_SELF_HEALING.md#reconciling-an-abandoned-reservation)
+uses existing token-bound completion and atomic comparison. It adds no reset
+endpoint, expiry, credential-management capability or repair authorization.
+
+HTTP scopes, secondary capability checks, server dry-run, freeze/autonomy,
+action-bound operator approval, actuator ownership and token accounting retain
+their existing controls. Diagnosis and operator probes retain separate durable
+budgets, cooldowns and reservations, while both enforce the rejection history
+recorded in either ledger. Review did not establish a global denylist
+across unrelated provider workflows or live Redis durability.
+
+The three repaired finding suites and their adjacent suites passed 231 tests;
+the two original CI regression suites passed 23 tests, and Core/SDK integration
+passed four tests. Authorization/security-focused coverage also passed.
+These results are offline fixtures. Full-suite and final-head hosted outcomes
+are recorded in the PR report, independently of the historical validation below.
+
+Branch protection requires `docs:check`, `All Checks Complete`, an up-to-date
+base and resolved conversations. CodeRabbit's 6.38% versus 80% docstring warning
+is advisory: its status was successful and it is not a protected required check.
+Useful comments now explain backlog semantics, uncertain paid calls, retained
+credential identities and ledger binding; boilerplate was not added to chase
+that percentage. Draft status and owner merge permission remain separate gates.
+
+## Initial implementation validation at b7ef97ac
 
 Validation used Node `24.18.1` and bundled npm `11.16.0` in the isolated worktree.
 Final focused coverage is **32 suites, 493 tests passing**. The aggregate run
