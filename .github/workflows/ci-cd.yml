@@ -606,6 +606,7 @@ jobs:
           const hash = file => createHash('sha256').update(readFileSync(file)).digest('hex').toUpperCase();
           const headSha = process.env.PROJECTOR_PR_HEAD_SHA;
           assert.match(headSha, /^[0-9a-f]{40}$/u);
+          const npmPath = path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js');
           const operationalScript = readFileSync('scripts/gate-r1-projector-session-20260719.ps1', 'utf8');
           const pinnedNode = { path: /\$NodePath = '([^']+)'/u.exec(operationalScript)[1],
             expectedSha256: /\$NodeSha256 = '([^']+)'/u.exec(operationalScript)[1] };
@@ -613,15 +614,16 @@ jobs:
           catch (error) { pinnedNode.status = error.code === 'ENOENT' ? 'missing' : 'unreadable'; pinnedNode.errorCode = error.code; }
           const metadata = { platform: process.platform, runnerOS: process.env.RUNNER_OS, osRelease: os.release(), osVersion: os.version(), architecture: process.arch, node: process.version,
             nodePath: process.execPath, nodeSha256: hash(process.execPath), pinnedNode,
-            npm: query(process.execPath, [path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js'), '--version']),
+            npmPath, npm: query(process.execPath, [npmPath, '--version']),
             powershell: JSON.parse(query('pwsh', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
-              '[ordered]@{Version=$PSVersionTable.PSVersion.ToString();IsWindows=$IsWindows} | ConvertTo-Json -Compress'])),
+              '[ordered]@{Version=$PSVersionTable.PSVersion.ToString();IsWindows=$IsWindows;Path=(Get-Process -Id $PID).Path} | ConvertTo-Json -Compress'])),
             headSha, testedSha: query('git', ['rev-parse', 'HEAD']), testedTree: query('git', ['rev-parse', 'HEAD^{tree}']),
             headTree: query('git', ['rev-parse', `${headSha}^{tree}`]), clean: query('git', ['status', '--porcelain', '--untracked-files=no']) === '' };
           write('metadata.json', metadata);
           assert.equal(metadata.platform, 'win32'); assert.equal(metadata.runnerOS, 'Windows');
           assert.equal(metadata.node, 'v24.18.1'); assert.equal(metadata.npm, '11.16.0');
-          assert.equal(metadata.powershell.IsWindows, true); assert.equal(metadata.clean, true); assert.equal(metadata.testedTree, metadata.headTree);
+          assert.equal(metadata.powershell.IsWindows, true); assert.equal(metadata.clean, true);
+          assert.equal(metadata.testedSha, metadata.headSha); assert.equal(metadata.testedTree, metadata.headTree);
           const files = ['tests/gate-r1-projector-session.test.js', 'tests/gate-r2-projector-session.test.js'];
           const args = ['scripts/run-jest.mjs', '--runTestsByPath', ...files, '--coverage=false', '--runInBand', '--json', `--outputFile=${path.join(directory, 'jest.json')}`];
           const startedAt = new Date();
@@ -631,14 +633,27 @@ jobs:
           assert.equal(result.status, 0);
           const report = JSON.parse(readFileSync(path.join(directory, 'jest.json'), 'utf8'));
           assert.equal(report.success, true); assert.equal(report.wasInterrupted, false);
-          for (const key of ['numFailedTests', 'numPendingTests', 'numTodoTests', 'numRuntimeErrorTestSuites']) assert.equal(report[key], 0);
+          for (const key of ['numFailedTests', 'numPendingTests', 'numTodoTests', 'numRuntimeErrorTestSuites', 'numFailedTestSuites', 'numPendingTestSuites']) assert.equal(report[key], 0);
           assert.deepEqual(report.testResults.map(suite => path.relative(process.cwd(), suite.name).replaceAll('\\', '/')).sort(), files);
+          assert.equal(report.numTotalTestSuites, files.length); assert.equal(report.numPassedTestSuites, files.length);
+          assert.ok(report.testResults.every(suite => suite.status === 'passed'));
+          const assertions = report.testResults.flatMap(suite => suite.assertionResults);
+          assert.equal(report.numTotalTests, assertions.length); assert.equal(report.numPassedTests, assertions.length);
+          assert.ok(assertions.every(test => test.status === 'passed'));
           for (const prefix of ['Gate R1 projector session', 'Gate R2 bounded masked projector session']) {
-            for (const title of ['completes a no-network stop/ack session and removes its session directory', 'accepts the fixture Node identity and rejects a mismatched hash']) {
-              const matches = report.testResults.flatMap(suite => suite.assertionResults).filter(test => test.fullName === `${prefix} ${title}`);
+            for (const title of ['completes a no-network stop/ack session and removes its session directory', 'accepts the fixture Node identity and rejects a mismatched hash',
+              'rejects a missing fixture Node executable without creating a session directory',
+              'rejects an unreadable fixture Node executable without creating a session directory',
+              'reproduces the original unbound Node identity initialization failure',
+              'propagates guarded cleanup failure after stop/ack without removing its session directory']) {
+              const matches = assertions.filter(test => test.fullName === `${prefix} ${title}`);
               assert.equal(matches.length, 1); assert.equal(matches[0].status, 'passed');
             }
           }
+          const after = { testedSha: query('git', ['rev-parse', 'HEAD']), testedTree: query('git', ['rev-parse', 'HEAD^{tree}']),
+            clean: query('git', ['status', '--porcelain', '--untracked-files=no']) === '' };
+          write('source-after.json', after);
+          assert.equal(after.testedSha, metadata.headSha); assert.equal(after.testedTree, metadata.headTree); assert.equal(after.clean, true);
           '@ | node --input-type=module
           exit $LASTEXITCODE
 
