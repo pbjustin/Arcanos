@@ -37,16 +37,22 @@ function withoutRailwayTokens() {
   return environment;
 }
 
-function createHarness({ copyProjectors = false } = {}) {
+function createHarness({ copyProjectors = false, bindFixtureNode = false } = {}) {
   const harnessRoot = mkdtempSync(join(tmpdir(), 'gate-r2-session-harness-'));
   cleanupDirectories.add(harnessRoot);
   const harnessScripts = join(harnessRoot, 'scripts');
   mkdirSync(harnessScripts);
   const harnessScript = join(harnessScripts, 'gate-r2-projector-session-20260720.ps1');
-  const harnessSource = sessionScript.replace(
+  let harnessSource = sessionScript.replace(
     /\r?\nexit \(Invoke-GateR2ProjectorSessionMain\)\s*$/,
     '\n'
   );
+  if (bindFixtureNode) {
+    // Bind only the temporary fixture; retain the operational script's pinned identity.
+    const nodePath = process.execPath.replaceAll("'", "''");
+    const nodeSha256 = createHash('sha256').update(readFileSync(process.execPath)).digest('hex').toUpperCase();
+    harnessSource += `\n$NodePath = '${nodePath}'\n$NodeSha256 = '${nodeSha256}'\n`;
+  }
   writeFileSync(harnessScript, harnessSource, 'utf8');
   if (copyProjectors) {
     for (const name of [
@@ -440,8 +446,34 @@ describe('Gate R2 bounded masked projector session', () => {
     expect(sessionScript).toContain("'^arcanos-gate-r2-projector-[0-9a-f]{32}$'");
   });
 
+  it('accepts the fixture Node identity and rejects a mismatched hash', () => {
+    const harnessScript = createHarness({ bindFixtureNode: true });
+    const escapedHarness = harnessScript.replaceAll("'", "''");
+    const command = [
+      `. '${escapedHarness}'`,
+      "Assert-FileHash $NodePath $NodeSha256 'GATE_R2_SESSION_NODE_IDENTITY_INVALID'",
+      "$wrongHash = if ($NodeSha256[0] -eq '0') { '1' + $NodeSha256.Substring(1) } else { '0' + $NodeSha256.Substring(1) }",
+      '$failureCode=$null',
+      "try { Assert-FileHash $NodePath $wrongHash 'GATE_R2_SESSION_NODE_IDENTITY_INVALID' } catch { $failureCode=Resolve-SafeErrorCode $_ }",
+      '@{nodePath=$NodePath;accepted=$true;rejected=$failureCode} | ConvertTo-Json -Compress'
+    ].join('; ');
+    const result = spawnSync('pwsh', ['-NoLogo', '-NoProfile', '-Command', command], {
+      encoding: 'utf8',
+      env: withoutRailwayTokens(),
+      timeout: 15_000,
+      windowsHide: true
+    });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(JSON.parse(result.stdout)).toEqual({
+      nodePath: process.execPath,
+      accepted: true,
+      rejected: 'GATE_R2_SESSION_NODE_IDENTITY_INVALID'
+    });
+  });
+
   windowsIt('completes a no-network stop/ack session and removes its session directory', async () => {
-    const harnessScript = createHarness({ copyProjectors: true });
+    const harnessScript = createHarness({ copyProjectors: true, bindFixtureNode: true });
     const escapedHarness = harnessScript.replaceAll("'", "''");
     const command = [
       "function global:Read-Host { [CmdletBinding()] param([Parameter(Position=0)][string]$Prompt,[switch]$AsSecureString) ConvertTo-SecureString 'test-only-placeholder' -AsPlainText -Force }",

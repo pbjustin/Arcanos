@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from '@jest/globals';
+import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import {
   copyFileSync,
@@ -22,13 +23,19 @@ const sessionScriptPath = decodeURIComponent(sessionScriptUrl.pathname).replace(
 const cleanupDirectories = new Set();
 const windowsIt = process.platform === 'win32' ? it : it.skip;
 
-function createHarness({ copyProjectors = false } = {}) {
+function createHarness({ copyProjectors = false, bindFixtureNode = false } = {}) {
   const harnessRoot = mkdtempSync(join(tmpdir(), 'gate-r1-session-harness-'));
   cleanupDirectories.add(harnessRoot);
   const harnessScripts = join(harnessRoot, 'scripts');
   mkdirSync(harnessScripts);
   const harnessScript = join(harnessScripts, 'gate-r1-projector-session-20260719.ps1');
-  const harnessSource = sessionScript.replace(/\r?\nexit \(Invoke-GateR1ProjectorSessionMain\)\s*$/, '\n');
+  let harnessSource = sessionScript.replace(/\r?\nexit \(Invoke-GateR1ProjectorSessionMain\)\s*$/, '\n');
+  if (bindFixtureNode) {
+    // Bind only the temporary fixture; retain the operational script's pinned identity.
+    const nodePath = process.execPath.replaceAll("'", "''");
+    const nodeSha256 = createHash('sha256').update(readFileSync(process.execPath)).digest('hex').toUpperCase();
+    harnessSource += `\n$NodePath = '${nodePath}'\n$NodeSha256 = '${nodeSha256}'\n`;
+  }
   writeFileSync(harnessScript, harnessSource, 'utf8');
   if (copyProjectors) {
     for (const name of [
@@ -400,8 +407,34 @@ describe('Gate R1 projector session', () => {
     expect(sessionScript).toContain('Try-WriteSafeJsonFile');
   });
 
+  it('accepts the fixture Node identity and rejects a mismatched hash', () => {
+    const harnessScript = createHarness({ bindFixtureNode: true });
+    const escapedHarness = harnessScript.replaceAll("'", "''");
+    const command = [
+      `. '${escapedHarness}'`,
+      "Assert-FileHash $NodePath $NodeSha256 'GATE_R1_SESSION_NODE_IDENTITY_INVALID'",
+      "$wrongHash = if ($NodeSha256[0] -eq '0') { '1' + $NodeSha256.Substring(1) } else { '0' + $NodeSha256.Substring(1) }",
+      '$failureCode=$null',
+      "try { Assert-FileHash $NodePath $wrongHash 'GATE_R1_SESSION_NODE_IDENTITY_INVALID' } catch { $failureCode=Resolve-SafeErrorCode $_ }",
+      '@{nodePath=$NodePath;accepted=$true;rejected=$failureCode} | ConvertTo-Json -Compress'
+    ].join('; ');
+    const result = spawnSync('pwsh', ['-NoLogo', '-NoProfile', '-Command', command], {
+      encoding: 'utf8',
+      env: withoutRailwayTokens(),
+      timeout: 15_000,
+      windowsHide: true
+    });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(JSON.parse(result.stdout)).toEqual({
+      nodePath: process.execPath,
+      accepted: true,
+      rejected: 'GATE_R1_SESSION_NODE_IDENTITY_INVALID'
+    });
+  });
+
   windowsIt('completes a no-network stop/ack session and removes its session directory', async () => {
-    const harnessScript = createHarness({ copyProjectors: true });
+    const harnessScript = createHarness({ copyProjectors: true, bindFixtureNode: true });
     const escapedHarness = harnessScript.replaceAll("'", "''");
     const command = [
       "function global:Read-Host { [CmdletBinding()] param([Parameter(Position=0)][string]$Prompt,[switch]$AsSecureString) ConvertTo-SecureString 'test-only-placeholder' -AsPlainText -Force }",
