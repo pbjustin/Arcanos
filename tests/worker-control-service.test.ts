@@ -97,18 +97,19 @@ describe('workerControlService', () => {
   });
 
   it.each([
-    ['healthy idle', 0, 'healthy', 'healthy', false],
-    ['inactive with pending work', 1, 'healthy', 'degraded', true],
-    ['offline with pending work', 1, 'offline', 'unhealthy', true]
-  ])('classifies eight workers correctly when %s', async (_label, pending, healthStatus, expectedStatus, restartRecommended) => {
+    ['healthy idle', 0, 0, 'healthy', 'healthy', false],
+    ['inactive with pending work', 1, 0, 'healthy', 'degraded', true],
+    ['inactive with stalled work', 0, 1, 'healthy', 'unhealthy', true],
+    ['offline with pending work', 1, 0, 'offline', 'unhealthy', true]
+  ])('classifies eight workers correctly when %s', async (_label, pending, stalledRunning, healthStatus, expectedStatus, restartRecommended) => {
     jest.useFakeTimers().setSystemTime(new Date('2026-10-17T18:40:00.000Z'));
     getWorkerAutonomyHealthReportMock.mockResolvedValue({
       timestamp: new Date().toISOString(),
       overallStatus: healthStatus,
       alerts: [],
       queueSummary: {
-        pending, running: 0, completed: 0, failed: 0, total: pending,
-        delayed: 0, stalledRunning: 0, oldestPendingJobAgeMs: 0,
+        pending, running: stalledRunning, completed: 0, failed: 0, total: pending + stalledRunning,
+        delayed: 0, stalledRunning, oldestPendingJobAgeMs: 0,
         failureBreakdown: {}, recentFailureReasons: []
       },
       workers: Array.from({ length: 8 }, (_, index) => ({
@@ -143,10 +144,65 @@ describe('workerControlService', () => {
       expect(worker.stale).toBe(false);
       expect(worker.inactivityMs).toBe(30 * 60_000);
     }
-    if (pending === 0) {
+    if (pending === 0 && stalledRunning === 0) {
       expect(health.alerts).toEqual([]);
       expect(health.operationalHealth.degradedWorkerIds).toEqual([]);
       expect(health.workers.every((worker) => worker.operationalStatus === 'healthy')).toBe(true);
+    }
+  });
+
+  it.each([false, true])('keeps seven idle slots healthy while one long job runs (recorded inactivity recommendation: %s)', async (recordedRecommendation) => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-10-17T18:40:00.000Z'));
+    getWorkerAutonomyHealthReportMock.mockResolvedValue({
+      timestamp: new Date().toISOString(),
+      overallStatus: 'healthy',
+      alerts: [],
+      queueSummary: {
+        pending: 0, running: 1, completed: 0, failed: 0, total: 1,
+        delayed: 0, stalledRunning: 0, oldestPendingJobAgeMs: 0,
+        failureBreakdown: {}, recentFailureReasons: []
+      },
+      workers: Array.from({ length: 8 }, (_, index) => ({
+        workerId: `async-queue-slot-${index + 1}`,
+        workerType: 'async_queue',
+        healthStatus: 'healthy',
+        currentJobId: index === 0 ? 'long-running-job' : null,
+        lastError: null,
+        startedAt: '2026-10-17T18:00:00.000Z',
+        lastHeartbeatAt: new Date().toISOString(),
+        lastInspectorRunAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        snapshot: {
+          dispatcherStarted: true,
+          activeListeners: 1,
+          claimAcceptance: 'accepting',
+          lastActivityAt: '2026-10-17T18:10:00.000Z',
+          lastProcessedJobAt: null,
+          ...(recordedRecommendation ? {
+            watchdog: {
+              triggered: false,
+              reason: index === 0 ? null : 'No recent completed work.',
+              restartRecommended: index !== 0,
+              idleThresholdMs: 120000
+            }
+          } : {})
+        }
+      })),
+      settings: getWorkerAutonomySettingsMock()
+    });
+
+    const health = await getWorkerControlHealth();
+
+    expect(health.queueSummary).toMatchObject({ pending: 0, running: 1, stalledRunning: 0 });
+    expect(health.overallStatus).toBe('healthy');
+    expect(health.alerts).toEqual([]);
+    expect(health.operationalHealth.degradedWorkerIds).toEqual([]);
+    expect(health.operationalHealth.unhealthyWorkerIds).toEqual([]);
+    expect(health.workers).toHaveLength(8);
+    expect(health.workers[0]).toMatchObject({ currentJobId: 'long-running-job', operationalStatus: 'healthy' });
+    for (const worker of health.workers.slice(1)) {
+      expect(worker).toMatchObject({ currentJobId: null, operationalStatus: 'healthy', stale: false });
+      expect(worker.watchdog.restartRecommended).toBe(recordedRecommendation);
     }
   });
 
@@ -273,7 +329,10 @@ describe('workerControlService', () => {
     ]);
   });
 
-  it('marks a worker unhealthy when queue work is active but the dispatcher is inactive', async () => {
+  it.each([
+    ['pending', 1, 0],
+    ['running', 0, 1]
+  ])('marks a worker unhealthy when %s queue work is active but the dispatcher is inactive', async (_label, pending, running) => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date('2026-04-28T20:00:30.000Z'));
 
@@ -282,8 +341,8 @@ describe('workerControlService', () => {
       overallStatus: 'healthy',
       alerts: [],
       queueSummary: {
-        pending: 1,
-        running: 0,
+        pending,
+        running,
         completed: 0,
         failed: 0,
         total: 1,

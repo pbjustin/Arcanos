@@ -1454,15 +1454,32 @@ describe('selfHealingLoop', () => {
     expect(observableState).not.toContain(workerHelperToken);
   });
 
-  it('keeps twenty healthy-idle scheduler ticks free of repair incidents despite old activity timestamps', async () => {
+  it.each([
+    [false, 0],
+    [true, 0],
+    [false, 1],
+    [true, 1]
+  ])('keeps twenty healthy-idle ticks free of incidents (predictive enabled: %s, long-running jobs: %s)', async (predictiveHealingEnabled, running) => {
+    getConfigMock.mockReturnValue(createConfig({ predictiveHealingEnabled }));
+    runPredictiveHealingFromLoopMock.mockResolvedValue(createPredictiveBoundaryResult({
+      enabled: predictiveHealingEnabled,
+      advisor: 'rules_fallback_v1',
+      action: 'none',
+      target: null,
+      safeToExecute: false,
+      aiUsed: false,
+      status: 'skipped',
+      mode: 'recommend_only'
+    }));
     getRollingRequestWindowMock.mockReturnValue(createRequestWindow({ requestCount: 0 }));
     getWorkerControlHealthMock.mockImplementation(async () => createWorkerHealth({
+      queueSummary: { ...createWorkerHealth().queueSummary, running, total: running },
       workers: Array.from({ length: 8 }, (_, index) => ({
         workerId: `async-queue-slot-${index + 1}`,
         workerType: 'async_queue',
         healthStatus: 'healthy',
         operationalStatus: 'healthy',
-        currentJobId: null,
+        currentJobId: running > 0 && index === 0 ? 'long-running-job' : null,
         lastError: null,
         lastHeartbeatAt: new Date().toISOString(),
         lastActivityAt: '2026-03-25T11:00:00.000Z',
@@ -1478,7 +1495,15 @@ describe('selfHealingLoop', () => {
     const fetchSpy = jest.spyOn(globalThis, 'fetch');
 
     startSelfHealingLoop(30_000);
-    await jest.advanceTimersByTimeAsync(19 * 30_000);
+    await jest.advanceTimersByTimeAsync(0);
+    // Capture each tick before the bounded telemetry buffer evicts old events.
+    const observedEvents = new Map(buildSelfHealEventsSnapshot(100).events.map((event) => [event.id, event]));
+    for (let tick = 1; tick < 20; tick += 1) {
+      await jest.advanceTimersByTimeAsync(30_000);
+      for (const event of buildSelfHealEventsSnapshot(100).events) {
+        observedEvents.set(event.id, event);
+      }
+    }
 
     expect(getSelfHealingLoopStatus()).toMatchObject({
       tickCount: 20,
@@ -1491,18 +1516,44 @@ describe('selfHealingLoop', () => {
     expect(recoverStaleJobsMock).not.toHaveBeenCalled();
     expect(runSelfImproveCycleMock).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
-    const events = buildSelfHealEventsSnapshot(200).events;
+    expect(runPredictiveHealingFromLoopMock).toHaveBeenCalledTimes(20);
+    expect(getSelfHealingLoopStatus().lastAIDiagnosis).toMatchObject({
+      action: null,
+      safeToExecute: false,
+      aiUsedInRuntime: false
+    });
+    const events = [...observedEvents.values()];
     expect(events.some((event) => event.kind === 'ACTION_DISPATCH_ATTEMPT')).toBe(false);
     expect(events.some((event) => event.kind === 'AI_PROVIDER_CALL_ATTEMPT')).toBe(false);
-    expect(events.filter((event) => event.kind === 'AI_DIAGNOSIS_REQUEST')).toEqual(
-      expect.arrayContaining([expect.objectContaining({
-        details: expect.objectContaining({ phase: 'eligibility_evaluation', providerInvocation: false })
-      })])
-    );
+    expect(events.some((event) => event.kind === 'trigger')).toBe(false);
+    const evaluations = events.filter((event) => event.kind === 'AI_DIAGNOSIS_REQUEST');
+    expect(evaluations).toHaveLength(20);
+    for (const evaluation of evaluations) {
+      expect(evaluation).toMatchObject({
+        actionTaken: null,
+        details: {
+          diagnosisType: 'healthy',
+          incidentKey: null,
+          phase: 'eligibility_evaluation',
+          providerInvocation: false
+        }
+      });
+    }
   });
 
-  it('detects failed heartbeats with pending work even with no HTTP requests and observes recovery to idle', async () => {
-    getConfigMock.mockReturnValue(createConfig({ runWorkers: true }));
+  it.each([false, true])('detects failed heartbeats with pending work and recovery to idle (predictive enabled: %s)', async (predictiveHealingEnabled) => {
+    getConfigMock.mockReturnValue(createConfig({ runWorkers: true, predictiveHealingEnabled }));
+    if (predictiveHealingEnabled) {
+      runPredictiveHealingFromLoopMock.mockResolvedValueOnce(createPredictiveBoundaryResult({
+        enabled: true,
+        advisor: 'rules_fallback_v1',
+        aiUsed: false,
+        action: 'heal_worker_runtime',
+        safeToExecute: true,
+        status: 'skipped',
+        mode: 'recommend_only'
+      }));
+    }
     getRollingRequestWindowMock.mockReturnValue(createRequestWindow({ requestCount: 0, errorRate: 0 }));
     getWorkerControlHealthMock.mockResolvedValueOnce(createWorkerHealth({
       overallStatus: 'degraded',
@@ -1518,7 +1569,12 @@ describe('selfHealingLoop', () => {
 
     const incident = await runSelfHealingLoop({ trigger: 'interval' });
     expect(incident.diagnosis).toBe('worker runtime inactive');
-    expect(incident.action).not.toBeNull();
+    if (predictiveHealingEnabled) {
+      expect(getSelfHealingLoopStatus().lastAIDiagnosis?.action).toBe('heal_worker_runtime');
+      expect(incident.action).toBeNull();
+    } else {
+      expect(incident.action).not.toBeNull();
+    }
     const repairCalls = healWorkerRuntimeMock.mock.calls.length + recoverStaleJobsMock.mock.calls.length;
 
     await jest.advanceTimersByTimeAsync(30_000);
@@ -1528,7 +1584,17 @@ describe('selfHealingLoop', () => {
     expect(healWorkerRuntimeMock.mock.calls.length + recoverStaleJobsMock.mock.calls.length).toBe(repairCalls);
   });
 
-  it('preserves an explicit worker dependency failure when the queue and HTTP traffic are idle', async () => {
+  it.each([false, true])('preserves an explicit dependency failure with idle queue and traffic (predictive enabled: %s)', async (predictiveHealingEnabled) => {
+    getConfigMock.mockReturnValue(createConfig({ predictiveHealingEnabled }));
+    runPredictiveHealingFromLoopMock.mockResolvedValueOnce(createPredictiveBoundaryResult({
+      enabled: predictiveHealingEnabled,
+      advisor: 'rules_fallback_v1',
+      aiUsed: false,
+      action: 'heal_worker_runtime',
+      safeToExecute: true,
+      status: 'skipped',
+      mode: 'recommend_only'
+    }));
     getRollingRequestWindowMock.mockReturnValue(createRequestWindow({ requestCount: 0 }));
     getWorkerControlHealthMock.mockResolvedValueOnce(createWorkerHealth({
       overallStatus: 'unhealthy',

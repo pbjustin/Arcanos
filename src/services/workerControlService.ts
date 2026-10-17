@@ -628,7 +628,7 @@ function readWatchdogView(
     const inactivityMs =
       inactivitySourceAt === null ? null : Math.max(0, Date.now() - inactivitySourceAt);
     const restartRecommended =
-      hasActiveQueueWork(queueSummary) &&
+      hasPendingOrStalledQueueWork(queueSummary) &&
       workerSnapshot.currentJobId === null &&
       inactivityMs !== null &&
       inactivityMs >= idleThresholdMs;
@@ -637,7 +637,7 @@ function readWatchdogView(
       triggered: false,
       reason:
         restartRecommended
-          ? `No worker receipts or processed jobs observed for ${inactivityMs}ms while queue work remained active.`
+          ? `No worker receipts or processed jobs observed for ${inactivityMs}ms while queue work remained pending or stalled.`
           : null,
       restartRecommended,
       idleThresholdMs
@@ -668,12 +668,16 @@ function deriveObservationAgeMs(worker: {
   return observedAtMs === null ? null : Math.max(0, Date.now() - observedAtMs);
 }
 
-function hasActiveQueueWork(queueSummary: JobQueueSummary | null): boolean {
+/** Identify backlog that idle slots could help process; healthy running jobs are not backlog. */
+function hasPendingOrStalledQueueWork(queueSummary: JobQueueSummary | null): boolean {
   return Boolean(
     (queueSummary?.pending ?? 0) > 0 ||
-    (queueSummary?.running ?? 0) > 0 ||
     (queueSummary?.stalledRunning ?? 0) > 0
   );
+}
+
+function hasActiveQueueWork(queueSummary: JobQueueSummary | null): boolean {
+  return hasPendingOrStalledQueueWork(queueSummary) || (queueSummary?.running ?? 0) > 0;
 }
 
 function deriveWorkerOperationalStatus(
@@ -707,7 +711,11 @@ function deriveWorkerOperationalStatus(
     return activeQueueWork ? 'unhealthy' : 'healthy';
   }
 
-  if ((stale && activeQueueWork) || workerSnapshot.healthStatus === 'degraded' || watchdog.restartRecommended) {
+  if (
+    (stale && activeQueueWork) ||
+    workerSnapshot.healthStatus === 'degraded' ||
+    (watchdog.restartRecommended && hasPendingOrStalledQueueWork(queueSummary))
+  ) {
     return activeQueueWork ? 'degraded' : 'healthy';
   }
 

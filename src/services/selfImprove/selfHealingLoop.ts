@@ -2571,9 +2571,8 @@ function buildInactiveWorkerEvidence(
   workerIds: string[];
 } {
   const workers = Array.isArray(workerHealth?.workers) ? workerHealth.workers : [];
-  const queueHasWork =
+  const queueHasBacklog =
     (workerHealth?.queueSummary?.pending ?? 0) > 0 ||
-    (workerHealth?.queueSummary?.running ?? 0) > 0 ||
     (workerHealth?.queueSummary?.stalledRunning ?? 0) > 0;
   const idleWorkers = workers
     .filter((worker) => worker.currentJobId === null)
@@ -2592,9 +2591,9 @@ function buildInactiveWorkerEvidence(
   }, null);
 
   return {
-    // Activity measures completed work, not liveness. A healthy empty queue can
-    // remain inactive indefinitely without creating a repair incident.
-    detected: queueHasWork && relevantWorkers.length > 0,
+    // Activity measures completed work, not liveness. Idle slots are healthy
+    // while the only outstanding jobs are already being processed.
+    detected: queueHasBacklog && relevantWorkers.length > 0,
     maxInactivityMs: worstWorker?.inactivityMs ?? 0,
     lastActivityAt: worstWorker?.lastActivityAt ?? null,
     lastProcessedJobAt: worstWorker?.lastProcessedJobAt ?? null,

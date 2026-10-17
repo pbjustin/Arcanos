@@ -515,6 +515,27 @@ describe('predictive healing rule evaluation', () => {
     });
   });
 
+  it('keeps one legitimate running job and seven healthy idle slots free of inactivity repair candidates', () => {
+    const observation = createObservation({ requestCount: 0 });
+    observation.workerHealth = {
+      ...observation.workerHealth, pending: 0, running: 1, stalledRunning: 0,
+      workers: Array.from({ length: 8 }, (_, index) => ({
+        workerId: `slot-${index + 1}`, healthStatus: 'healthy',
+        currentJobId: index === 0 ? 'legitimate-long-job' : null,
+        stale: false, claimAcceptance: 'accepting', inactivityMs: 3_600_000,
+        watchdog: { triggered: false, restartRecommended: false, idleThresholdMs: 120000 }
+      }))
+    };
+    observation.inactivity = { ...observation.inactivity, inactiveDegraded: true,
+      maxInactivityMs: 3_600_000, workerIds: Array.from({ length: 7 }, (_, index) => `slot-${index + 2}`) };
+
+    const result = evaluatePredictiveHealingRules({ observation, history: [observation] });
+
+    expect(result.decision.action).toBe('none');
+    expect(result.decision.safeToExecute).toBe(false);
+    expect(result.candidates).toEqual([]);
+  });
+
   it.each([
     ['stalled jobs', { stalledRunning: 1, running: 1 }, {}, 'worker_stalled_jobs'],
     ['failed heartbeat', { pending: 1 }, { stale: true }, 'worker_heartbeat_or_availability_failure'],
