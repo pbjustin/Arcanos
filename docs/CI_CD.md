@@ -104,6 +104,11 @@ artifact retains command exits, Jest results/counts including skips, and
 allowlisted OS, PowerShell, lockfile and source provenance. Both Windows-only
 stop/ack cases must pass, so Linux PowerShell cannot satisfy this gate. It adds
 no workflow dispatch, production credentials or deployment authorization.
+The artifact's `summary.json` describes only its listed commands, native
+metadata and filesystem capabilities. Its `success` field excludes the Python,
+receipt-reporting unit, and receipt/publishing-isolation tests; the workflow job
+conclusion remains authoritative for the overall result. The JSON `scope` and
+step summary state these exclusions explicitly.
 
 ## Configuration
 Common secrets referenced in workflows:

@@ -207,13 +207,20 @@ function report(directory) {
   }
   if (!windowsStopAckPassed(receipts.windows.jest)) errors.push('WINDOWS_STOP_ACK_CASES_NOT_PASSED');
   if (!expectedYamlVersions(receipts.install.installedYaml)) errors.push('PATCHED_YAML_VERSIONS_NOT_VERIFIED');
-  const summary = { metadata: record, capabilities: capability, receipts, errors, success: errors.length === 0 };
+  const scope = {
+    commands: commandNames,
+    includes: ['native metadata', 'filesystem capabilities'],
+    excludes: ['Python checks', 'receipt-reporting unit tests', 'receipt and publishing isolation tests'],
+    jobConclusionIncluded: false
+  };
+  const summary = { scope, metadata: record, capabilities: capability, receipts, errors, success: errors.length === 0 };
   writeJson(directory, 'summary.json', summary);
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY,
-    `Native Windows verification: ${summary.success ? 'PASS' : 'FAIL'}\n\n`
+    `Native Windows command selections and filesystem checks: ${summary.success ? 'PASS' : 'FAIL'}\n\n`
       + `Exact source tree: ${record?.testedTree ?? 'unavailable'}\n\n`
+      + `Excluded from this summary: ${scope.excludes.join(', ')}. Consult the workflow job conclusion for the overall result.\n\n`
       + 'Focused fixtures only; full-root Windows Jest was not executed.\n');
-  console.log(JSON.stringify({ success: summary.success, errors }));
+  console.log(JSON.stringify({ scope, success: summary.success, errors }));
   return summary.success ? 0 : 1;
 }
 
