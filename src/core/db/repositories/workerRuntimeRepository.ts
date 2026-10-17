@@ -6,6 +6,7 @@
 
 import { getPool, initializeDatabase, isDatabaseConnected } from '@core/db/client.js';
 import { query } from '@core/db/query.js';
+import { createDatabaseRepositoryReadinessGate } from '@core/db/repositoryReadiness.js';
 import { initializeTables, isDatabaseSchemaReady } from '@core/db/schema.js';
 import { resolveErrorMessage } from '@shared/errorUtils.js';
 import { safeJSONParse, safeJSONStringify } from '@shared/jsonHelpers.js';
@@ -51,78 +52,24 @@ const WORKER_RUNTIME_REPOSITORY_WORKER_ID = 'worker-runtime-snapshots';
 const WORKER_RUNTIME_BOOTSTRAP_RETRY_COOLDOWN_MS = 30_000;
 const WORKER_RUNTIME_UPSERT_SLOW_LOG_MIN_MS = 250;
 
-let pendingBootstrap: Promise<boolean> | null = null;
-let lastBootstrapFailureAtMs = 0;
-
 /**
  * Ensure worker runtime persistence can reach PostgreSQL.
  * Purpose: lazily bootstrap database access for worker health inspection when app startup ordering varies.
  * Inputs/outputs: no inputs, returns a readiness boolean.
  * Edge case behavior: throttles repeated failed initialization attempts with a cooldown.
  */
-async function ensureWorkerRuntimePersistenceReady(): Promise<boolean> {
-  //audit Assumption: worker runtime persistence is safe only after the exact current pool has completed shared schema initialization; failure risk: a repository-local flag survives pool replacement; expected invariant: the fast path requires current connectivity and central schema readiness; handling strategy: consult both shared states.
-  if (isDatabaseConnected() && isDatabaseSchemaReady()) {
-    return true;
+const ensureWorkerRuntimePersistenceReady = createDatabaseRepositoryReadinessGate({
+  getPool,
+  isDatabaseConnected,
+  isDatabaseSchemaReady,
+  initializeDatabase,
+  initializeTables,
+  workerId: WORKER_RUNTIME_REPOSITORY_WORKER_ID,
+  cooldownMs: WORKER_RUNTIME_BOOTSTRAP_RETRY_COOLDOWN_MS,
+  onError: error => {
+    console.warn('[Worker Runtime] Failed to initialize database persistence:', resolveErrorMessage(error));
   }
-
-  //audit Assumption: concurrent calls should share one bootstrap attempt even while a prior failure timestamp is still active; failure risk: followers fail closed instead of awaiting active recovery; expected invariant: an in-flight bootstrap takes precedence over cooldown; handling strategy: reuse the pending promise first.
-  if (pendingBootstrap) {
-    return pendingBootstrap;
-  }
-
-  const nowMs = Date.now();
-  const cooldownActive =
-    lastBootstrapFailureAtMs > 0 &&
-    nowMs - lastBootstrapFailureAtMs < WORKER_RUNTIME_BOOTSTRAP_RETRY_COOLDOWN_MS;
-
-  //audit Assumption: repeated bootstrap failures should be rate-limited; failure risk: noisy retries under database outage; expected invariant: failed bootstrap attempts respect cooldown; handling strategy: fail closed until cooldown expires.
-  if (cooldownActive) {
-    return false;
-  }
-
-  pendingBootstrap = (async () => {
-    try {
-      if (!isDatabaseConnected()) {
-        await initializeDatabase(WORKER_RUNTIME_REPOSITORY_WORKER_ID);
-      }
-
-      if (!isDatabaseConnected()) {
-        lastBootstrapFailureAtMs = Date.now();
-        return false;
-      }
-
-      const bootstrapPool = getPool();
-      if (!bootstrapPool) {
-        lastBootstrapFailureAtMs = Date.now();
-        return false;
-      }
-
-      const tablesInitialized = await initializeTables();
-      const persistenceReady =
-        tablesInitialized &&
-        getPool() === bootstrapPool &&
-        isDatabaseConnected() &&
-        isDatabaseSchemaReady();
-      if (!persistenceReady) {
-        lastBootstrapFailureAtMs = Date.now();
-        return false;
-      }
-
-      lastBootstrapFailureAtMs = 0;
-      return true;
-    } catch (error: unknown) {
-      //audit Assumption: worker snapshot persistence failures should not crash request handling; failure risk: health endpoints become fatal during DB issues; expected invariant: callers receive a readiness boolean; handling strategy: warn and fail closed.
-      lastBootstrapFailureAtMs = Date.now();
-      console.warn('[Worker Runtime] Failed to initialize database persistence:', resolveErrorMessage(error));
-      return false;
-    } finally {
-      pendingBootstrap = null;
-    }
-  })();
-
-  return pendingBootstrap;
-}
+});
 
 /**
  * Persist the latest worker runtime snapshot.

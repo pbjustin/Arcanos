@@ -281,4 +281,14 @@ describe('workerRuntimeRepository', () => {
     );
   });
 
+  it('preserves the write error without querying when schema setup fails', async () => {
+    isDatabaseSchemaReadyMock.mockReturnValue(false);
+    initializeTablesMock.mockResolvedValueOnce(false);
+
+    await expect(upsertWorkerRuntimeSnapshot(buildSnapshotRecord())).rejects.toThrow(
+      'Worker runtime persistence is unavailable'
+    );
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
 });

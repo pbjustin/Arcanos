@@ -335,6 +335,18 @@ and canon-head concurrency, mixed-version table-writer fencing, retention
 order, and legacy-containment suite, plus retention-writer and lock-skipping
 cleanup proof.
 
+The same PostgreSQL job also runs
+`tests/integration/session-system.integration.test.ts` with
+`SESSION_SYSTEM_TEST_DATABASE_URL`. Its existing save/read/list/replay and
+pool-restart roundtrip runs against the guarded disposable database. The suite
+sets the application connection only after validating that dedicated URL and
+imports database consumers afterward; ambient `DATABASE_URL` never opts it in.
+Its separate `session-postgres` service on loopback port 5433 isolates full
+runtime-schema bootstrap from migration suites requiring an initially empty
+schema on the primary service.
+It shares the required-database sentinel, so missing configuration fails CI
+instead of silently skipping persistence evidence.
+
 CI sets the single sentinel `ARCANOS_POSTGRES_TESTS_REQUIRE_DATABASE=1` for both
 package commands. Every selected suite resolves its explicit test URL
 before it can select `describe.skip`; a missing or blank URL, or a nonempty
