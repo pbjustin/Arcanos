@@ -692,7 +692,7 @@ export function assertPreviewIsolationOrThrow(env = process.env) {
 export async function assertRailwayProcessIsolationOrThrow(env, options = {}) {
   if (
     env?.ARCANOS_PREVIEW_ISOLATION !== 'true'
-    || env?.ARCANOS_SELF_HEAL_PREVIEW_PROFILE !== 'worker-coordinator-v1'
+    || !['worker-coordinator-v1', 'worker-inference-containment-v1'].includes(env?.ARCANOS_SELF_HEAL_PREVIEW_PROFILE)
   ) {
     return assertPreviewIsolationOrThrow(env);
   }
@@ -966,7 +966,7 @@ export function waitForExit(childProcess, options = {}) {
 export function resolveDistAliasArguments(env = process.env) {
   // Sealed preview images are repaired at build time and keep executable bytes immutable.
   return ['scripts/repair-dist-aliases.js',
-    env.ARCANOS_SELF_HEAL_PREVIEW_PROFILE === 'worker-coordinator-v1' ? '--check' : '--rewrite'];
+    ['worker-coordinator-v1', 'worker-inference-containment-v1'].includes(env.ARCANOS_SELF_HEAL_PREVIEW_PROFILE) ? '--check' : '--rewrite'];
 }
 
 async function repairDistAliases(processKind) {

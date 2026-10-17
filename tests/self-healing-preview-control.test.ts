@@ -33,7 +33,16 @@ const getRequestWindowSince = jest.fn(emptyWindow);
 const predictiveAudits: Array<Record<string, unknown>> = [];
 const coordinatorEvents: Array<Record<string, unknown>> = [];
 const providerTraces: Array<Record<string, unknown>> = [];
-const readRedisClientId = jest.fn(async () => 41);
+const readRedisClientId = jest.fn<(...args: unknown[]) => Promise<unknown>>(async () => 41);
+const workerHealth = jest.fn(async () => ({ overallStatus: 'healthy',
+  queueSummary: { pending: 0, running: 0, stalledRunning: 0, oldestPendingJobAgeMs: 0 },
+  workers: Array.from({ length: 8 }, (_, index) => ({ workerId: `self-heal-preview-${runId}-slot-${index + 1}`,
+    operationalStatus: 'healthy', currentJobId: null, stale: false, inactivityMs: 180_000,
+    heartbeatAgeMs: 1_000, lastActivityAt: new Date(Date.now() - 180_000).toISOString(),
+    watchdog: { triggered: false, restartRecommended: false, idleThresholdMs: 120_000 } })) }));
+const providerProbe = jest.fn(async () => ({ reachable: true, authenticated: true, completionHealthy: true,
+  failureReason: null, failureCategory: null, failureStatus: null }));
+const syncProvider = jest.fn();
 const startupFinish = jest.fn(async (_evidence: unknown) => undefined);
 const startupBegin = jest.fn(async () => ({ finish: startupFinish }));
 jest.unstable_mockModule('../src/services/selfImprove/selfHealingPreviewStartup.js', () => ({ beginSelfHealPreviewStartupProbe: startupBegin }));
@@ -111,8 +120,11 @@ jest.unstable_mockModule('@services/runtimeDiagnosticsService.js', () => ({
 jest.unstable_mockModule('../src/services/selfImprove/predictiveHealingService.js', () => ({
   buildPredictiveHealingStatusSnapshot: () => ({ recentAudits: predictiveAudits }),
   runPredictiveHealingDecision: predictiveDecision,
+  probePredictiveHealingAIProvider: providerProbe,
 }));
-jest.unstable_mockModule('@services/openai/serviceHealth.js', () => ({ getOpenAIServiceHealth: () => ({ providerRuntime }) }));
+jest.unstable_mockModule('@services/workerControlService.js', () => ({ getWorkerControlHealth: workerHealth }));
+jest.unstable_mockModule('@services/openai/serviceHealth.js', () => ({ getOpenAIServiceHealth: () => ({ providerRuntime }),
+  syncOpenAIProviderRuntime: syncProvider }));
 
 const controls = await import('../src/services/selfImprove/selfHealingPreviewControl.js');
 const { getRequestAbortSignal } = await import('@arcanos/runtime');
@@ -176,6 +188,7 @@ beforeEach(() => {
   sharedOverrides = { freeze: null, autonomy: null };
   predictiveAudits.length = 0;
   coordinatorEvents.length = 0; providerTraces.length = 0;
+  readRedisClientId.mockImplementation(async () => 41);
   sdkClient = { synthetic: 1 };
   status.loopRunning = false; status.coordinatorState = 'UNKNOWN';
   status.lastAction = null; status.lastActionAt = null; status.lastDiagnosis = null; status.lastDecision = null; status.policyObservedAt = null;
@@ -186,6 +199,113 @@ afterEach(async () => {
 });
 
 describe('isolated self-healing preview admission and process-local controls', () => {
+  const useContainmentProfile = () => {
+    process.env.ARCANOS_SELF_HEAL_PREVIEW_PROFILE = 'worker-inference-containment-v1';
+    process.env.RAILWAY_PROJECT_NAME = 'arc-pr1557-heavy-regression';
+    process.env.RAILWAY_ENVIRONMENT_NAME = 'backstage-heavy-pr-1557-e2e-test';
+    process.env.RAILWAY_SERVICE_NAME = `arcanos-${process.env.ARCANOS_PROCESS_KIND}-pr1557-heavy`;
+    readRedisClientId.mockImplementation(async () => ['', '', -2, -2, '1800000000', '0']);
+  };
+
+  it('requires the exact PR1557 profile before admitting containment commands', async () => {
+    handle = await controls.installSelfHealingPreviewControl();
+    expect((await call('containment_probe')).body).toMatchObject({ rejected: true,
+      reasonCode: 'inference_containment_profile_required' });
+    expect(providerProbe).not.toHaveBeenCalled();
+    await handle?.close(); handle = null;
+    process.env.ARCANOS_SELF_HEAL_PREVIEW_PROFILE = 'worker-inference-containment-v1';
+    await expect(controls.installSelfHealingPreviewControl()).rejects.toThrow('SELF_HEAL_PREVIEW_PROFILE_INVALID');
+  });
+
+  it('counts twenty actual telemetry evaluations without confusing eligibility with inference or repair', async () => {
+    useContainmentProfile();
+    handle = await controls.installSelfHealingPreviewControl();
+    for (let index = 1; index <= 20; index += 1) {
+      coordinatorEvents.push({ id: `self_heal_event_${index}`, kind: 'AI_DIAGNOSIS_REQUEST', source: 'self_heal_loop',
+        timestamp: new Date().toISOString(), details: { phase: 'eligibility_evaluation', diagnosisType: 'healthy', incidentKey: null } });
+      await call();
+    }
+    const result = (await call()).body.containment as Record<string, unknown>;
+    expect(result.counters).toMatchObject({ complete: true, evaluations: 20, healthyEvaluations: 20,
+      incidentEvaluations: 0, providerAttempts: 0, repairAttempts: 0, actionsExecuted: 0 });
+    expect(result.health).toMatchObject({ overallStatus: 'healthy', unexpectedWorkerCount: 0,
+      queue: { pending: 0, running: 0, stalledRunning: 0 }, workers: expect.arrayContaining([
+        expect.objectContaining({ slot: 8, stale: false, inactivityMs: 180_000, idleThresholdMs: 120_000 })]) });
+    expect(workerHealth).toHaveBeenCalled();
+    expect(providerProbe).not.toHaveBeenCalled(); expect(predictiveDecision).not.toHaveBeenCalled();
+  });
+
+  it('marks evidence incomplete when the production telemetry ring has a sequence gap', async () => {
+    useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
+    coordinatorEvents.push({ id: 'self_heal_event_102', kind: 'AI_PROVIDER_CALL_ATTEMPT', timestamp: new Date().toISOString() });
+    expect(((await call()).body.containment as Record<string, unknown>).counters).toMatchObject({
+      complete: false, providerAttempts: 1, healthyEvaluations: 0 });
+  });
+
+  it('projects shared ledger ownership evidence without exposing reservation or credential identities', async () => {
+    useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
+    readRedisClientId.mockImplementation(async () => [JSON.stringify({ version: 1, lastAttemptMs: 1_800_000_000_000,
+      lastCompletedMs: null, inFlight: { token: 'test-reservation-token', credentialIdentity: 'private-identity' },
+      attemptTimestampsMs: [1_800_000_000_000], blockedCredentialIdentities: ['private-identity'] }), '', -1, -2, '1800000000', '0']);
+    const result = (await call()).body.containment as Record<string, unknown>;
+    expect(result.ledgers).toEqual([expect.objectContaining({ purpose: 'diagnosis', present: true,
+      inFlight: true, ttlMs: -1, attemptCount: 1, rejectedCredentialCount: 1 }), expect.objectContaining({ purpose: 'provider_probe', present: false })]);
+    expect(JSON.stringify(result)).not.toContain('test-reservation-token');
+    expect(JSON.stringify(result)).not.toContain('private-identity');
+  });
+
+  it.each(['worker', 'web'])('invokes the real service entry points with manual inference and no repair authorization from %s', async role => {
+    process.env.ARCANOS_PROCESS_KIND = role;
+    if (role === 'web') process.env.RAILWAY_SERVICE_ID = uid(6);
+    useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
+    await call('containment_diagnose'); await waitFor(() => predictiveDecision.mock.calls.length === 1);
+    expect(predictiveDecision).toHaveBeenCalledWith(expect.objectContaining({ source: 'self-heal.preview.measured-runtime',
+      inferenceAuthorization: 'manual', execute: false, allowAutoExecute: false }));
+    expect(predictiveDecision.mock.calls[0][0]).not.toHaveProperty('simulate');
+    await new Promise<void>(resolve => setImmediate(resolve));
+    await call('containment_probe'); await waitFor(() => providerProbe.mock.calls.length === 1);
+    expect(trinity).not.toHaveBeenCalled(); expect(remoteRepair).not.toHaveBeenCalled();
+  });
+
+  it('changes only the two server-owned fictional credentials and rejects caller payloads', async () => {
+    useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
+    expect((await call('containment_credential_rotate', { raw: '{"command":"containment_credential_rotate","key":"caller-value"}' })).status).toBe(400);
+    await call('containment_credential_rotate');
+    expect(process.env.OPENAI_API_KEY).toBe('sk-arcanos-self-heal-preview-rotated-protocol-v1');
+    expect(syncProvider).toHaveBeenLastCalledWith({ forceReload: true, reason: 'self-heal.preview.credential-rotation' });
+    await call('containment_credential_restore');
+    expect(process.env.OPENAI_API_KEY).toBe(SELF_HEAL_PREVIEW_OPENAI_FIXTURE_SDK_KEY);
+  });
+
+  it('runs exactly twenty sequential production ticks only on a stopped Worker and labels their evidence', async () => {
+    useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
+    status.loopRunning = true;
+    expect((await call('containment_tick_batch')).body).toMatchObject({ rejected: true,
+      reasonCode: 'tick_batch_requires_idle_stopped_worker' });
+    expect(tick).not.toHaveBeenCalled();
+    status.loopRunning = false;
+    await call('containment_tick_batch'); await waitFor(() => tick.mock.calls.length === 20);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(((await call()).body.containment as Record<string, unknown>).run).toMatchObject({
+      status: 'completed', ticksCompleted: 20, evidence: 'twenty_sequential_production_interval_evaluations' });
+    for (const [options] of tick.mock.calls) expect(options).toMatchObject({ trigger: 'interval', signal: expect.any(AbortSignal) });
+  });
+
+  it('bounds real claim-boundary dependency faults and can restore admission without fabricating worker health', async () => {
+    useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
+    status.loopRunning = true;
+    expect((await call('containment_dependency_failure')).body).toMatchObject({ rejected: true,
+      reasonCode: 'dependency_fault_requires_stopped_coordinator' });
+    status.loopRunning = false;
+    await call('containment_dependency_failure');
+    for (let count = 0; count < 64; count += 1) expect(() => handle?.beforeClaim()).toThrow('SELF_HEAL_PREVIEW_DATABASE_CLAIM_FAILURE');
+    expect(() => handle?.beforeClaim()).not.toThrow();
+    expect((await call()).body.claimBoundary).toMatchObject({ injectedFailures: 64, faultRemaining: 0 });
+    await call('containment_dependency_failure'); await call('containment_dependency_restore');
+    expect(() => handle?.beforeClaim()).not.toThrow();
+    expect(workerHealth).toHaveBeenCalled(); expect(predictiveDecision).not.toHaveBeenCalled();
+  });
+
   it('rejects shutdown barrier preparation before Worker readiness and on the Web role', async () => {
     handle = await controls.installSelfHealingPreviewControl();
     expect((await call('shutdown_prepare_a06')).body).toMatchObject({ rejected: true,

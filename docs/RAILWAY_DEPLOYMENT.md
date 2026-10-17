@@ -1158,7 +1158,8 @@ has a separate, explicit `--self-heal-preview-v1` entry for PR #1544's
 `worker-coordinator-v1` acceptance profile. The
 [profile implementation](../scripts/railway-self-heal-preview-profile.mjs)
 retains the normal integrity wrapper, role launcher and compiled Worker entry
-path. The original heavy-proof mode, native passive preview and production
+path. PR #1557 adds the separately admitted `worker-inference-containment-v1`
+profile for eight-slot inference containment. The original heavy-proof mode, native passive preview and production
 startup commands retain their existing contracts. This runbook describes the
 implementation and prerequisites; it is not a deployment or acceptance receipt.
 No deployment is established by adding the profile or passing its local tests.
@@ -1176,6 +1177,44 @@ the project private and provider-native PR deployments disabled. Do not reuse
 canonical or Live PR 1527 resources, copy production variables, or add this
 profile to the native preview base.
 
+For PR #1557, use the same isolation and lifecycle with independently owned
+`arc-pr1557-heavy-<suffix>`, `backstage-heavy-pr-1557-e2e[-suffix]`,
+`arcanos-worker-pr1557-heavy`, and `arcanos-web-pr1557-heavy` identities.
+The cleanup receipt must identify PR 1557. The closed ownership allowlist admits
+only 1544 and 1557 and rejects mixed names. Never reuse PR #1544 resources or
+receipts. The original 32-case coordinator matrix rejects a PR #1557 manifest;
+it cannot stand in for containment acceptance.
+
+The [inference containment runner](../scripts/self-heal-inference-preview-acceptance.mjs)
+executes one named PR #1557 case at a time with the same receipt-bound transport.
+Run `idle_off` and `idle_on` for twenty real scheduler callbacks each, after
+the healthy slots naturally exceed the inactivity threshold. `running_off`
+and `running_on` hold one ordinary database-backed job while twenty serial
+production evaluations inspect the other seven idle slots; this is explicitly
+different from twenty scheduler callbacks. The runner checks provider receipts,
+runtime telemetry, slot health, and the real job's claim/completion events.
+`diagnosis_once` holds an authorized bounded Worker Core diagnosis while V2
+attempts diagnosis against the same Redis ledger. It requires a concurrent
+in-flight denial without a V2 provider request, then checks completion and
+the subsequent shared cooldown. A fixed pending job during the bounded claim
+failure supplies real backlog evidence; it must complete after fault restoration.
+
+`probe_rotation`, `metadata_recovery`, and `uncertain_restart` exercise the
+fixed fictional credential and contained provider faults. Run only cases that
+fit the immutable lease and actual admission budgets: cases never clear Redis
+ledgers, advance time, reset cooldowns, or release uncertain reservations.
+A denied case is reported as blocked, not successful recovery. An unresolved
+request remains reserved across restart. Operator reconciliation requires
+independent terminal-request and ownership evidence and is not automated by
+this runner. Local injected transports and clocks produce `SYNTHETIC_ONLY`
+results; only the attested Railway transport can produce hosted `VERIFIED`
+receipts. Neither classification establishes production acceptance.
+
+```text
+node scripts/self-heal-inference-preview-acceptance.mjs --manifest <absolute-manifest-path> --evidence-directory <new-absolute-case-directory> --case idle_off
+node scripts/self-heal-inference-preview-acceptance.mjs --manifest <absolute-manifest-path> --evidence-directory <new-absolute-case-directory> --case idle_off --execute --allow-network
+```
+
 Both roles require the existing heavy-proof target, run, exact source and
 private data-identity markers, plus the
 [self-healing profile settings](CONFIGURATION.md#disposable-self-healing-preview-profile).
@@ -1191,9 +1230,10 @@ distinct preview GPT Access token with only `runtime.read` and a loopback
 advertised origin. This is not a platform egress firewall: independently
 attest source, resources and credential isolation before attaching code.
 
-Worker concurrency is two, with the ordinary 5-second heartbeat, 15-second
-lease and 30-second coordinator defaults. Resume recognizes only the exact
-`self-heal-preview-<runId>-slot-1` and `-slot-2` consumer identities.
+Worker concurrency is two for the coordinator profile and eight for PR #1557's
+containment profile, with the ordinary 5-second heartbeat, 15-second lease and
+30-second coordinator defaults. Resume recognizes only the exact
+`self-heal-preview-<runId>-slot-1` through the selected profile's last slot.
 Production service overrides can start the role launcher directly, select
 `/healthz`, or add Notion diagnostic preloads. Record those effective settings
 independently: this preview deliberately retains the maintained integrity
@@ -1399,7 +1439,8 @@ and `expiresAt`. An optional closed `resources` field binds exact services
 safe retries after a service deletion detaches its volume. Populate these bindings
 only from an independently attested owned topology; volume-instance IDs are not
 global volume IDs. Use version 1, owner `pbjustin`, repository
-`pbjustin/Arcanos`, PR 1544, the returned resource IDs and the same fixed lease.
+`pbjustin/Arcanos`, the matching admitted PR number (1544 or 1557), the returned
+resource IDs and the same fixed lease.
 It rejects canonical/Live PR IDs, foreign resources and incomplete inventory;
 an expired receipt retains authority to delete its same owned target.
 

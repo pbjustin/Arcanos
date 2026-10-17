@@ -17,6 +17,7 @@ import {
   startBackstageHeavyOpenAIFixture,
   startSelfHealPreviewOpenAIFixture,
   SELF_HEAL_PREVIEW_OPENAI_FIXTURE_SDK_KEY,
+  SELF_HEAL_INFERENCE_PREVIEW_OPENAI_FIXTURE_ROTATED_SDK_KEY,
   SELF_HEAL_PREVIEW_OPENAI_FIXTURE_CONTROL_PATH,
   SELF_HEAL_PREVIEW_OPENAI_FIXTURE_LIMITS,
   SELF_HEAL_PREVIEW_OPENAI_FIXTURE_CHILD_ARGUMENT,
@@ -381,6 +382,102 @@ describe('bounded self-healing preview provider profile', () => {
         baseURL: legacyBaseURL, maxRetries: 0 }).getClient();
       await expect(legacyClient.models.list()).resolves.toMatchObject({ object: 'list' });
     } finally { await legacy.close(); }
+  });
+
+  const inferenceEnv = () => childEnv({ ARCANOS_SELF_HEAL_PREVIEW_PROFILE: 'worker-inference-containment-v1',
+    ARCANOS_BACKSTAGE_HEAVY_PROOF_RUN_ID: 'self-heal-run-1557', ARCANOS_SELF_HEAL_PREVIEW_RUN_ID: 'self-heal-run-1557' });
+  it('confines rotated fictional credentials and new fault commands to the inference profile', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: childEnv() });
+    await expect(client({ apiKey: SELF_HEAL_INFERENCE_PREVIEW_OPENAI_FIXTURE_ROTATED_SDK_KEY }).models.list())
+      .rejects.toMatchObject({ status: 401 });
+    expect((await control({ command: 'inference_auth_failure_next' })).status).toBe(422);
+    expect(runtime.inspect().providerRequests).toBe(0);
+  });
+  it('receipts two fixed fictional identities and bounded inference metadata without prompt or key reflection', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: inferenceEnv() });
+    await client().responses.create(responseBody({ max_output_tokens: 256 }));
+    await client({ apiKey: SELF_HEAL_INFERENCE_PREVIEW_OPENAI_FIXTURE_ROTATED_SDK_KEY })
+      .responses.create(responseBody({ max_output_tokens: 128 }));
+    expect(runtime.inspect()).toMatchObject({ profile: 'worker-inference-containment-v1', providerRequests: 2,
+      receipts: [{ credential: 'original', operation: 'responses', maxOutputTokens: 256, status: 200,
+        inputTokens: 64, outputTokens: 128, totalTokens: 192 },
+      { credential: 'rotated', operation: 'responses', maxOutputTokens: 128, status: 200 }] });
+    const serialized = JSON.stringify(runtime.inspect());
+    for (const sensitive of [promptSentinel, SELF_HEAL_PREVIEW_OPENAI_FIXTURE_SDK_KEY,
+      SELF_HEAL_INFERENCE_PREVIEW_OPENAI_FIXTURE_ROTATED_SDK_KEY, token]) expect(serialized).not.toContain(sensitive);
+  });
+  it('keeps the synthetic wire usage and receipt within a sixteen-token probe cap', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: inferenceEnv() });
+    const result = await client().responses.create(responseBody({ max_output_tokens: 16 }));
+    expect(result.usage).toMatchObject({ input_tokens: 64, output_tokens: 16, total_tokens: 80 });
+    expect(runtime.inspect().receipts).toEqual([expect.objectContaining({ maxOutputTokens: 16,
+      inputTokens: 64, outputTokens: 16, totalTokens: 80 })]);
+  });
+  it('counts rejected and over-budget provider traffic before admission without reading its body', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: inferenceEnv() });
+    await expect(client({ apiKey: 'test-unrecognized-fixture-key' }).models.list()).rejects.toMatchObject({ status: 401 });
+    expect(runtime.inspect()).toMatchObject({ providerRequests: 0, providerWireRequests: 1, rejected: 1 });
+    runtime.state.providerRequests = SELF_HEAL_PREVIEW_OPENAI_FIXTURE_LIMITS.maxProviderRequests;
+    await expect(client().models.list()).rejects.toMatchObject({ status: 429 });
+    expect(runtime.inspect()).toMatchObject({ providerRequests: 128, providerWireRequests: 2, rejected: 1 });
+    expect((await control({ command: 'inspect' })).status).toBe(200);
+    expect(runtime.inspect().providerWireRequests).toBe(2);
+  });
+  it.each([
+    ['models_auth_failure_next', 401, true], ['models_forbidden_next', 403, true],
+    ['inference_auth_failure_next', 401, false], ['inference_forbidden_next', 403, false],
+    ['inference_rate_limit_next', 429, false], ['inference_unavailable_next', 503, false],
+  ])('returns one bounded %s failure only at its selected endpoint', async (command, status, models) => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: inferenceEnv() });
+    expect((await control({ command })).status).toBe(200);
+    if (models) {
+      await expect(client().responses.create(responseBody())).resolves.toMatchObject({ status: 'completed' });
+      await expect(client().models.list()).rejects.toMatchObject({ status });
+      await expect(client().models.list()).resolves.toMatchObject({ object: 'list' });
+    } else {
+      await expect(client().models.list()).resolves.toMatchObject({ object: 'list' });
+      await expect(client().responses.create(responseBody())).rejects.toMatchObject({ status });
+      await expect(client().responses.create(responseBody())).resolves.toMatchObject({ status: 'completed' });
+    }
+    expect(runtime.inspect()).toMatchObject({ providerRequests: 3, nextFault: null, inFlight: null });
+    expect(runtime.inspect().receipts.filter(receipt => receipt.outcome === 'synthetic_failure'))
+      .toEqual([expect.objectContaining({ endpoint: models ? 'models' : 'responses', status })]);
+  });
+  it('keeps unpaid metadata timeout receipts separate from paid inference', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: inferenceEnv() });
+    expect((await control({ command: 'models_timeout_next' })).status).toBe(200);
+    await expect(client().models.list()).rejects.toMatchObject({ status: 504 });
+    expect(runtime.inspect()).toMatchObject({ providerRequests: 1, timedOut: 1,
+      receipts: [{ endpoint: 'models', operation: 'models_list', outcome: 'timeout', status: 504 }] });
+    expect(runtime.inspect().receipts.filter(receipt => receipt.endpoint !== 'models')).toHaveLength(0);
+  }, 10_000);
+  it('holds only dispatched inference and records client cancellation without retaining an active fixture request', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: inferenceEnv() });
+    expect((await control({ command: 'inference_hold_next' })).status).toBe(200);
+    await client().models.list();
+    const controller = new AbortController();
+    const pending = client().responses.create(responseBody(), { signal: controller.signal }).catch(error => error);
+    await waitForActive();
+    expect(runtime.inspect()).toMatchObject({ nextFault: null, receipts: [
+      { endpoint: 'models', outcome: 'completed' }, { endpoint: 'responses', outcome: 'in_flight', fault: 'hold' }] });
+    controller.abort(); await pending;
+    for (let attempt = 0; runtime.state.inFlight && attempt < 100; attempt += 1) await new Promise(resolve => setTimeout(resolve, 5));
+    expect(runtime.inspect()).toMatchObject({ inFlight: null, clientClosed: 1, providerRequests: 2 });
+  });
+  it('drops one accepted inference transport with a sanitized receipt and no fixture retry', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: inferenceEnv() });
+    expect((await control({ command: 'inference_cancel_next' })).status).toBe(200);
+    await expect(client().responses.create(responseBody())).rejects.toThrow();
+    expect(runtime.inspect()).toMatchObject({ providerRequests: 1, inFlight: null, nextFault: null,
+      receipts: [{ endpoint: 'responses', outcome: 'transport_cancelled', fault: 'cancel' }] });
+  });
+  it.each([
+    { command: 'inference_hold_next', delayMs: 60_000 }, { command: 'models_auth_failure_next', status: 200 },
+    { command: 'credential', key: 'arbitrary' }, { command: 'inference_cancel_next', count: 100 },
+  ])('rejects unbounded inference control input %p', async body => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: inferenceEnv() });
+    expect((await control(body)).status).toBe(422);
+    expect(runtime.inspect()).toMatchObject({ providerRequests: 0, nextFault: null });
   });
 
   it('accepts actual SDK model, Responses, chat, and Trinity structured response decoding', async () => {

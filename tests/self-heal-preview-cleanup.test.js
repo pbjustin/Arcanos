@@ -127,6 +127,7 @@ function boundResources() {
     id: node.volumeId, name: node.volume.name, serviceId: node.serviceId, mountPath: node.mountPath,
   })) };
 }
+function forPr1557(value) { return JSON.parse(JSON.stringify(value).replaceAll('1544', '1557')); }
 const execute = value => ({ receipt: value ?? receipt(), execute: true, allowDeleteOwnedProject: true });
 const tempFiles = [];
 function temporaryReceipt(value) {
@@ -161,6 +162,60 @@ afterEach(() => {
 });
 
 describe('receipt-bound self-heal preview cleanup and fixed-expiry watchdog', () => {
+  it('admits PR 1557 only with its own names and deletes only its bound resources', async () => {
+    const owner = forPr1557({ ...receipt(), resources: boundResources() });
+    const h = harness({ initialStatus: forPr1557(status()) });
+    expect(validateSelfHealPreviewCleanupReceipt(owner, { now: h.now }).prNumber).toBe(1557);
+    const result = await runSelfHealPreviewCleanup(execute(owner), h);
+    expect(result).toMatchObject({ resourceAbsenceVerified: true, projectMetadataRetained: true });
+    expect(h.command.mock.calls.map(call => call[1]).filter(isMutation)).toEqual([
+      ...[ID.web, ID.worker, ID.postgres, ID.redis].map(id => ['service', 'delete', '--project', ID.project, '--environment', ID.environment, '--service', id, '--yes', '--json']),
+      ...[ID.pgVolume, ID.redisVolume].map(id => ['volume', '--project', ID.project, '--environment', ID.environment, 'delete', '--volume', id, '--yes', '--json']),
+      ['delete', '--project', ID.project, '--yes', '--json'],
+    ]);
+  });
+  it.each([
+    value => { value.prNumber = 1558; },
+    value => { value.prNumber = '1557'; },
+    value => { value.projectName = receipt().projectName; },
+    value => { value.environmentName = receipt().environmentName; },
+    value => { value.resources.services[0].name = 'arcanos-web-pr1544-heavy'; },
+    value => { value.resources.services[1].name = 'arcanos-worker-pr1558-heavy'; },
+  ])('rejects mixed or unapproved PR 1557 receipt authority before provider access %#', async mutate => {
+    const owner = forPr1557({ ...receipt(), resources: boundResources() }); mutate(owner);
+    const h = harness({ initialStatus: forPr1557(status()) });
+    await expect(runSelfHealPreviewCleanup(execute(owner), h)).rejects.toThrow(/^SELF_HEAL_PREVIEW_CLEANUP_/u);
+    expect(h.command).not.toHaveBeenCalled();
+  });
+  it('refuses PR 1544 services in a PR 1557 target before any deletion', async () => {
+    const target = forPr1557(status()); target.services.edges[0].node.name = 'arcanos-web-pr1544-heavy';
+    const h = harness({ initialStatus: target });
+    await expect(runSelfHealPreviewCleanup(execute(forPr1557(receipt())), h))
+      .rejects.toThrow('SELF_HEAL_PREVIEW_CLEANUP_FOREIGN_SERVICES');
+    expect(h.command.mock.calls.filter(call => isMutation(call[1]))).toHaveLength(0);
+  });
+  it('keeps PR 1557 partial topology and expired receipt cleanup bound to the original deadline', async () => {
+    const owner = forPr1557(receipt());
+    const h = harness({ initialStatus: forPr1557(status(true)), now: Date.parse(owner.expiresAt) + 1 });
+    expect(attestSelfHealPreviewCleanupTarget(forPr1557(status(true)), owner).serviceCount).toBe(0);
+    const result = await runSelfHealPreviewCleanup(execute(owner), h);
+    expect(result.resourceAbsenceVerified).toBe(true);
+    expect(h.command.mock.calls.filter(call => isMutation(call[1]))).toHaveLength(1);
+  });
+  it('derives PR 1557 cleanup authority after interruption with only the first attached volume allocated', async () => {
+    const target = forPr1557(status());
+    target.volumes.edges = target.volumes.edges.slice(0, 1);
+    target.environments.edges[0].node.volumeInstances.edges = target.environments.edges[0].node.volumeInstances.edges.slice(0, 1);
+    const h = harness({ initialStatus: target });
+    const result = await runSelfHealPreviewCleanup(execute(forPr1557(receipt())), h);
+    expect(result.resourceAbsenceVerified).toBe(true);
+    expect(h.persistResourceReceipt).toHaveBeenCalledWith(expect.objectContaining({
+      prNumber: 1557, resources: expect.objectContaining({ volumes: [expect.objectContaining({
+        id: ID.pgVolume, serviceId: ID.postgres, mountPath: '/var/lib/postgresql/data',
+      })] }),
+    }));
+    expect(h.command.mock.calls.map(call => call[1]).filter(isMutation)).toHaveLength(6);
+  });
   it('dry-runs valid ownership with zero CLI or timer activity', async () => {
     const h = harness();
     await expect(runSelfHealPreviewCleanup({ receipt: receipt(), execute: false, allowDeleteOwnedProject: false }, h))

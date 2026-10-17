@@ -68,6 +68,50 @@ function databaseFixture(env) {
 }
 
 describe('closed self-heal fenced-job scenarios', () => {
+  it.each(['I01', 'I02'])('admits the fixed real running-job scenario %s only in the eight-slot containment profile', async scenario => {
+    const legacy = environment(); const prior = databaseFixture(legacy);
+    await expect(runSelfHealPreviewFencedJob('create', legacy, { ...prior.options, scenario })).rejects.toThrow('SELF_HEAL_PREVIEW_FENCED_JOB_FAILED');
+    expect(prior.state.connections).toHaveLength(0);
+    const env = { ...environment(), ARCANOS_SELF_HEAL_PREVIEW_PROFILE: 'worker-inference-containment-v1',
+      RAILWAY_PROJECT_NAME: 'arc-pr1557-heavy-job', RAILWAY_ENVIRONMENT_NAME: 'backstage-heavy-pr-1557-e2e',
+      RAILWAY_SERVICE_NAME: 'arcanos-worker-pr1557-heavy' };
+    const { state, options } = databaseFixture(env);
+    const created = await runSelfHealPreviewFencedJob('create', env, { ...options, scenario });
+    expect(created.allowedWorkerIds).toHaveLength(8);
+    expect(created.consumerPath).toBe('ordinary-worker-ask-loopback-provider');
+    expect(created.job.status).toBe('pending');
+    const insert = state.queries.find(item => item.sql.startsWith('INSERT'));
+    expect(JSON.parse(insert.args[1])).toEqual({ prompt: 'Write a short fictional description of a blue paper kite above a quiet meadow.',
+      answerMode: 'direct', requestedVerbosity: 'minimal', maxWords: 8, endpointName: 'self-heal.preview.running-only' });
+    expect(insert.sql).toContain("'pending'"); expect(insert.sql).toContain("INTERVAL '120 seconds'");
+    expect(state.queries.some(item => /UPDATE|DELETE/u.test(item.sql))).toBe(false);
+  });
+  it('admits the fixed pending-work I03 case only in the containment profile and retains the literal dispatch path', async () => {
+    const legacy = environment(); const prior = databaseFixture(legacy);
+    await expect(runSelfHealPreviewFencedJob('create', legacy, { ...prior.options, scenario: 'I03' })).rejects.toThrow('SELF_HEAL_PREVIEW_FENCED_JOB_FAILED');
+    expect(prior.state.connections).toHaveLength(0);
+    const env = { ...environment(), ARCANOS_SELF_HEAL_PREVIEW_PROFILE: 'worker-inference-containment-v1',
+      RAILWAY_PROJECT_NAME: 'arc-pr1557-heavy-job', RAILWAY_ENVIRONMENT_NAME: 'backstage-heavy-pr-1557-e2e',
+      RAILWAY_SERVICE_NAME: 'arcanos-worker-pr1557-heavy' };
+    const { state, options } = databaseFixture(env);
+    const slot = { ...options, scenario: 'I03' };
+    const created = await runSelfHealPreviewFencedJob('create', env, slot);
+    expect(created.allowedWorkerIds).toHaveLength(8);
+    expect(created.consumerPath).toBe('ordinary-worker-ask-exact-literal-dispatch');
+    expect(created.job.status).toBe('pending');
+    expect((await runSelfHealPreviewFencedJob('create', env, slot)).job.id).toBe(created.job.id);
+    const inserts = state.queries.filter(item => item.sql.startsWith('INSERT'));
+    expect(inserts).toHaveLength(1);
+    expect(JSON.parse(inserts[0].args[1])).toEqual({ prompt: 'Reply with exactly SEALED_PREVIEW_FENCED_OK',
+      answerMode: 'direct', requestedVerbosity: 'minimal', maxWords: 8, endpointName: 'self-heal.preview.fenced' });
+    expect(inserts[0].sql).toContain("'pending'"); expect(inserts[0].sql).toContain("INTERVAL '120 seconds'");
+    expect(state.queries.some(item => /UPDATE|DELETE/u.test(item.sql))).toBe(false);
+    state.rows.set('self-heal-preview:synthetic-job-run:fenced:I03:1', completedJob(8));
+    expect((await runSelfHealPreviewFencedJob('inspect', env, slot)).job).toMatchObject({
+      completionVerified: true, literalObserved: true, matchingCompletionEvents: 1,
+      lastWorkerId: 'self-heal-preview-synthetic-job-run-slot-8',
+    });
+  });
   it('keeps every scenario/attempt independent and each slot idempotent, with no arbitrary SQL or prompt', async () => {
     const env = environment(); const { state, options } = databaseFixture(env);
     const ids = new Set();

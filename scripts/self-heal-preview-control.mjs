@@ -15,8 +15,15 @@ export const SELF_HEAL_PREVIEW_CONTROL_COMMANDS = Object.freeze([
   'trinity_activate', 'trinity_replace', 'trinity_stale_rollback', 'trinity_rollback',
   'trinity_consumer', 'trinity_fresh_success', 'trinity_run', 'predictive_evaluate', 'predictive_evaluate_live',
   'shutdown_prepare_a06', 'shutdown_prepare_e06', 'shutdown_cancel',
+  'containment_predictive_on', 'containment_predictive_off', 'containment_diagnose', 'containment_probe', 'containment_cancel',
+  'containment_credential_rotate', 'containment_credential_restore',
+  'containment_tick_batch',
+  'containment_dependency_failure', 'containment_dependency_restore',
 ]);
 const PROVIDER_COMMANDS = new Set(['inspect', 'set_healthy', 'timeout_next', 'hold_next', 'release']);
+const INFERENCE_PROVIDER_COMMANDS = new Set(['models_timeout_next', 'inference_hold_next', 'inference_cancel_next',
+  'models_auth_failure_next', 'inference_auth_failure_next', 'models_forbidden_next', 'inference_forbidden_next',
+  'inference_rate_limit_next', 'inference_unavailable_next']);
 const MAX_BYTES = 65_536;
 function fail() { throw new Error('SELF_HEAL_PREVIEW_CONTROL_CLIENT_FAILED'); }
 
@@ -161,8 +168,8 @@ export async function runSelfHealPreviewControl(argv, env = process.env, options
   }
   if (argv.length === 4 && argv[0] === 'fenced-job' && ['create', 'inspect'].includes(argv[1])
       && ['1', '2'].includes(argv[3]) && role === 'worker') {
-    const { runSelfHealPreviewFencedJob, SELF_HEAL_PREVIEW_JOB_SCENARIOS } = await import('./self-heal-preview-job.mjs');
-    if (!SELF_HEAL_PREVIEW_JOB_SCENARIOS.includes(argv[2])) fail();
+    const { runSelfHealPreviewFencedJob, SELF_HEAL_PREVIEW_JOB_SCENARIOS, SELF_HEAL_INFERENCE_PREVIEW_JOB_SCENARIOS } = await import('./self-heal-preview-job.mjs');
+    if (![...SELF_HEAL_PREVIEW_JOB_SCENARIOS, ...SELF_HEAL_INFERENCE_PREVIEW_JOB_SCENARIOS].includes(argv[2])) fail();
     return finish({ target, fencedJob: await runSelfHealPreviewFencedJob(argv[1], env,
       { ...options, scenario: argv[2], attempt: Number(argv[3]) }) });
   }
@@ -175,7 +182,9 @@ export async function runSelfHealPreviewControl(argv, env = process.env, options
   let provider = false;
   if (argv.length === 1 && argv[0] === 'inspect') command = 'inspect';
   else if (argv.length === 2 && argv[0] === 'command' && SELF_HEAL_PREVIEW_CONTROL_COMMANDS.includes(argv[1])) command = argv[1];
-  else if (argv.length === 2 && argv[0] === 'provider' && PROVIDER_COMMANDS.has(argv[1]) && role === 'worker') {
+  else if (argv.length === 2 && argv[0] === 'provider'
+    && ((PROVIDER_COMMANDS.has(argv[1]) && role === 'worker')
+      || (profile.ownership.profile === 'worker-inference-containment-v1' && (PROVIDER_COMMANDS.has(argv[1]) || INFERENCE_PROVIDER_COMMANDS.has(argv[1]))))) {
     provider = true; command = argv[1];
   } else fail();
   const body = { command, ...(provider && command === 'timeout_next' ? { count: 1, delayMs: 5_000 }

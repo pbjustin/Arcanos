@@ -11,6 +11,7 @@ import {
   buildSelfHealPreviewDatabaseClientOptions, validateSelfHealPreviewDatabaseCertificate,
   verifySelfHealPreviewDatabaseCertificateFile, SELF_HEAL_PREVIEW_DATABASE_CERTIFICATE_PATH,
   runSelfHealPreviewSupervisor, SelfHealPreviewError,
+  SELF_HEAL_INFERENCE_PREVIEW_PROFILE,
 } from '../scripts/railway-self-heal-preview-profile.mjs';
 import { resolveSelfHealPreviewFailureCode } from '../scripts/railway-backstage-heavy-proof-supervisor.mjs';
 import { assertPreviewIsolationOrThrow, assertRailwayProcessIsolationOrThrow } from '../scripts/start-railway-service.mjs';
@@ -52,6 +53,12 @@ function environment(role = 'worker') {
     ARCANOS_SELF_HEAL_PREVIEW_WORKER_SERVICE_ID: IDS.worker,
     ARCANOS_SELF_HEAL_PREVIEW_DATABASE_CERTIFICATE_PEM: DATABASE_CERTIFICATE_PEM,
   };
+}
+function inferenceEnvironment(role = 'worker') {
+  return { ...environment(role), ARCANOS_SELF_HEAL_PREVIEW_PROFILE: SELF_HEAL_INFERENCE_PREVIEW_PROFILE,
+    RAILWAY_PROJECT_NAME: 'arc-pr1557-heavy-test', RAILWAY_ENVIRONMENT_NAME: 'backstage-heavy-pr-1557-e2e',
+    RAILWAY_SERVICE_NAME: `arcanos-${role}-pr1557-heavy`,
+    ARCANOS_BACKSTAGE_HEAVY_PROOF_RUN_ID: 'proof-run-1557', ARCANOS_SELF_HEAL_PREVIEW_RUN_ID: 'proof-run-1557' };
 }
 const ARTIFACT = { sourceSha: 'a'.repeat(40), compiledSha256: 'c'.repeat(64), fileCount: 10 };
 function profile(role = 'worker', patch = {}) { return bindSelfHealPreviewArtifact(resolveSelfHealPreviewProfile(role, { ...environment(role), ...patch }, { now: () => NOW }), ARTIFACT); }
@@ -203,6 +210,28 @@ describe('opt-in self-heal profile of the existing heavy preview supervisor', ()
     expect(child).not.toHaveProperty('JOB_WORKER_HEARTBEAT_MS'); expect(child).not.toHaveProperty('JOB_WORKER_LEASE_MS');
     expect(child).not.toHaveProperty('SELF_HEAL_LOOP_INTERVAL_MS');
     expect(environment()).toMatchObject({ FORCE_MOCK: 'true', ALLOW_MOCK_OPENAI: 'true', OPENAI_API_KEY_REQUIRED: 'false' });
+  });
+  it.each(['worker', 'web'])('admits the separately owned PR1557 inference profile through the actual %s launcher', async role => {
+    const env = inferenceEnvironment(role);
+    const p = bindSelfHealPreviewArtifact(resolveSelfHealPreviewProfile(role, env, { now: () => NOW }), ARTIFACT);
+    const child = buildSelfHealPreviewApplicationEnvironment(p, env);
+    expect(p.ownership.profile).toBe(SELF_HEAL_INFERENCE_PREVIEW_PROFILE);
+    expect(resolveSelfHealPreviewWorkerIds(p)).toEqual(Array.from({ length: 8 }, (_, index) => `self-heal-preview-proof-run-1557-slot-${index + 1}`));
+    if (role === 'worker') {
+      expect(child.JOB_WORKER_CONCURRENCY).toBe('8');
+      expect(buildJobRunnerSlotDefinitions(resolveJobRunnerRuntimeSettings(child)).map(slot => slot.workerId))
+        .toEqual(resolveSelfHealPreviewWorkerIds(p));
+    } else expect(child.RUN_WORKERS).toBe('false');
+    expect(buildSelfHealPreviewFixtureEnvironment(p).ARCANOS_SELF_HEAL_PREVIEW_PROFILE).toBe(SELF_HEAL_INFERENCE_PREVIEW_PROFILE);
+    await expect(assertRailwayProcessIsolationOrThrow(child, launcherOptions())).resolves.toMatchObject({ selfHealProfile: SELF_HEAL_INFERENCE_PREVIEW_PROFILE });
+    await expect(assertRailwayProcessIsolationOrThrow({ ...child, JOB_WORKER_CONCURRENCY: '9' }, launcherOptions()))
+      .rejects.toThrow(/^PREVIEW_ISOLATION_/u);
+  });
+  it.each([1544, 1558])('rejects inference-profile authority for PR%s even when all names agree', prNumber => {
+    const env = inferenceEnvironment();
+    Object.assign(env, { RAILWAY_PROJECT_NAME: `arc-pr${prNumber}-heavy-test`,
+      RAILWAY_ENVIRONMENT_NAME: `backstage-heavy-pr-${prNumber}-e2e`, RAILWAY_SERVICE_NAME: `arcanos-worker-pr${prNumber}-heavy` });
+    expect(() => resolveSelfHealPreviewProfile('worker', env, { now: () => NOW })).toThrow('SELF_HEAL_PREVIEW_IDENTITY_INVALID');
   });
   it('passes actual normal startup key validation with only the fixed fictional SDK key', async () => {
     const child = buildSelfHealPreviewApplicationEnvironment(profile('web'), environment('web'));

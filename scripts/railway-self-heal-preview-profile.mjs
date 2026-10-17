@@ -18,9 +18,11 @@ import {
 } from './railway-backstage-heavy-openai-fixture.mjs';
 
 export const SELF_HEAL_PREVIEW_PROFILE = 'worker-coordinator-v1';
+export const SELF_HEAL_INFERENCE_PREVIEW_PROFILE = 'worker-inference-containment-v1';
 export const SELF_HEAL_PREVIEW_ARGUMENT = '--self-heal-preview-v1';
 export const SELF_HEAL_PREVIEW_MAX_LEASE_MS = 7_200_000;
 export const SELF_HEAL_PREVIEW_WORKER_CONCURRENCY = 2;
+export const SELF_HEAL_INFERENCE_PREVIEW_WORKER_CONCURRENCY = 8;
 export const SELF_HEAL_PREVIEW_DATABASE_CERTIFICATE_PATH = '/app/config/self-heal-preview-database-ca.pem';
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const PREFIX = 'ARCANOS_SELF_HEAL_PREVIEW_';
@@ -103,8 +105,13 @@ export function validateSelfHealPreviewDatabaseCertificate(value, options = {}) 
 
 /** Validate a single dedicated heavy-preview target and a finite process lease. */
 export function resolveSelfHealPreviewProfile(processKind, env, options = {}) {
-  if (env[`${PREFIX}PROFILE`] !== SELF_HEAL_PREVIEW_PROFILE) fail('PROFILE_INVALID');
+  const profileName = env[`${PREFIX}PROFILE`];
+  if (![SELF_HEAL_PREVIEW_PROFILE, SELF_HEAL_INFERENCE_PREVIEW_PROFILE].includes(profileName)) fail('PROFILE_INVALID');
   const proofTarget = resolveBackstageHeavyProofTargetOrThrow(processKind, env);
+  // The additional controls belong only to this independently owned PR1557 run.
+  // The generic target has already cross-checked project, environment and role names.
+  if (profileName === SELF_HEAL_INFERENCE_PREVIEW_PROFILE
+    && !/^backstage-heavy-pr-1557-e2e(?:-[a-z0-9]{1,16})?$/u.test(proofTarget.environmentName)) fail('IDENTITY_INVALID');
   if (Object.hasOwn(env, 'RAILWAY_ENVIRONMENT')
     && env.RAILWAY_ENVIRONMENT !== env.RAILWAY_ENVIRONMENT_NAME) fail('ENVIRONMENT_ALIAS_INVALID');
   const issuedAtMs = exactIso(env[`${PREFIX}ISSUED_AT`]);
@@ -140,7 +147,7 @@ export function resolveSelfHealPreviewProfile(processKind, env, options = {}) {
   const issuedAt = env[`${PREFIX}ISSUED_AT`];
   const expiresAt = env[`${PREFIX}EXPIRES_AT`];
   const ownership = Object.freeze({
-    version: 1, owner: 'pbjustin', repository: 'pbjustin/Arcanos', profile: SELF_HEAL_PREVIEW_PROFILE,
+    version: 1, owner: 'pbjustin', repository: 'pbjustin/Arcanos', profile: profileName,
     projectId: proofTarget.projectId, projectName: proofTarget.projectName,
     environmentId: proofTarget.environmentId, environmentName: proofTarget.environmentName,
     webServiceId, workerServiceId, postgresServiceId: proofTarget.postgresServiceId,
@@ -188,7 +195,7 @@ export function buildSelfHealPreviewApplicationEnvironment(profile, env) {
     SELF_IMPROVE_KILL_SWITCH_KEY: `arcanos:preview:self-heal:${profile.proofTarget.runId}:kill-switch:v1`,
     ...(profile.proofTarget.processKind === 'worker'
       ? { JOB_WORKER_ID: workerId, JOB_WORKER_STATS_ID: workerId,
-          JOB_WORKER_CONCURRENCY: String(SELF_HEAL_PREVIEW_WORKER_CONCURRENCY) }
+          JOB_WORKER_CONCURRENCY: String(resolveSelfHealPreviewWorkerConcurrency(profile)) }
       : { ARCANOS_GPT_ACCESS_TOKEN: createHmac('sha256', profile.controlToken)
             .update(`arcanos:self-heal-preview:${profile.proofTarget.runId}:gpt-access:v1`).digest('hex'),
           ARCANOS_GPT_ACCESS_BASE_URL: `http://127.0.0.1:${env.PORT ?? '8080'}`,
@@ -198,8 +205,14 @@ export function buildSelfHealPreviewApplicationEnvironment(profile, env) {
 
 /** Exact ordinary consumer identities; never grant authority by worker prefix. */
 export function resolveSelfHealPreviewWorkerIds(profile) {
-  return Object.freeze(Array.from({ length: SELF_HEAL_PREVIEW_WORKER_CONCURRENCY },
+  return Object.freeze(Array.from({ length: resolveSelfHealPreviewWorkerConcurrency(profile) },
     (_, index) => `self-heal-preview-${profile.proofTarget.runId}-slot-${index + 1}`));
+}
+
+/** Keep the historical profile at two slots and the PR1557 proof at exactly eight. */
+export function resolveSelfHealPreviewWorkerConcurrency(profile) {
+  return profile.ownership.profile === SELF_HEAL_INFERENCE_PREVIEW_PROFILE
+    ? SELF_HEAL_INFERENCE_PREVIEW_WORKER_CONCURRENCY : SELF_HEAL_PREVIEW_WORKER_CONCURRENCY;
 }
 
 /** All direct preview clients enforce the same CA and hostname verification. */
@@ -230,7 +243,7 @@ export function verifySelfHealPreviewDatabaseCertificateFile(profile, options = 
 /** Admit only an exact supervisor-derived child through the ordinary launcher. */
 export function assertSelfHealPreviewApplicationChildOrThrow(env, options = {}) {
   try {
-    if (env.ARCANOS_SELF_HEAL_PREVIEW_PROFILE !== SELF_HEAL_PREVIEW_PROFILE) fail('PROFILE_INVALID');
+    if (![SELF_HEAL_PREVIEW_PROFILE, SELF_HEAL_INFERENCE_PREVIEW_PROFILE].includes(env.ARCANOS_SELF_HEAL_PREVIEW_PROFILE)) fail('PROFILE_INVALID');
     const databaseUrl = new URL(env.DATABASE_URL);
     if (databaseUrl.searchParams.size !== 2 || databaseUrl.searchParams.get('sslmode') !== 'verify-full'
       || databaseUrl.searchParams.get('sslrootcert') !== SELF_HEAL_PREVIEW_DATABASE_CERTIFICATE_PATH) fail('ENV_FORBIDDEN');
@@ -255,7 +268,7 @@ export function assertSelfHealPreviewApplicationChildOrThrow(env, options = {}) 
       || (manifest.mode & 0o222) !== 0) fail('ARTIFACT_INVALID');
     const artifact = (options.verifyArtifact ?? verifySelfHealPreviewArtifact)({ sourceSha: profile.proofTarget.sourceCommit, rootPath: ROOT });
     bindSelfHealPreviewArtifact(profile, artifact);
-    return { enabled: true, environmentCategory: 'non-production', providerCategory: 'loopback', selfHealProfile: SELF_HEAL_PREVIEW_PROFILE };
+    return { enabled: true, environmentCategory: 'non-production', providerCategory: 'loopback', selfHealProfile: profile.ownership.profile };
   } catch { throw new Error('PREVIEW_ISOLATION_SELF_HEAL_PROFILE_INVALID'); }
 }
 
@@ -264,7 +277,7 @@ export function buildSelfHealPreviewFixtureEnvironment(profile) {
     [BACKSTAGE_HEAVY_OPENAI_FIXTURE_CHILD_ENV]: BACKSTAGE_HEAVY_OPENAI_FIXTURE_CHILD_VALUE,
     ARCANOS_BACKSTAGE_HEAVY_PROOF_RUN_ID: profile.proofTarget.runId,
     ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA: profile.proofTarget.sourceCommit,
-    ARCANOS_SELF_HEAL_PREVIEW_PROFILE: SELF_HEAL_PREVIEW_PROFILE,
+    ARCANOS_SELF_HEAL_PREVIEW_PROFILE: profile.ownership.profile,
     ARCANOS_SELF_HEAL_PREVIEW_RUN_ID: profile.proofTarget.runId,
     ARCANOS_SELF_HEAL_PREVIEW_ISSUED_AT: profile.issuedAt,
     ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT: profile.expiresAt,
@@ -446,7 +459,7 @@ export async function runSelfHealPreviewSupervisor(processKind, env, options = {
     const child = spawnImpl(process.execPath, ['scripts/start-railway-service-with-integrity.mjs'],
       { cwd: ROOT, env: buildSelfHealPreviewApplicationEnvironment(profile, env), stdio: 'inherit', windowsHide: true });
     application = { child, exit: exitPromise(child) }; void application.exit.catch(() => undefined);
-    console.log('self_heal.preview.application.start', JSON.stringify({ profile: SELF_HEAL_PREVIEW_PROFILE,
+    console.log('self_heal.preview.application.start', JSON.stringify({ profile: profile.ownership.profile,
       role: processKind, runId: profile.proofTarget.runId, sourceSha: profile.proofTarget.sourceCommit, expiresAt: profile.expiresAt, preflight: guard.mode }));
     const first = await Promise.race([stopRequested.then(() => ({ source: 'stop' })), guard.lost,
       application.exit.then(outcome => ({ source: 'application', outcome })),

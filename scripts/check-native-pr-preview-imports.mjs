@@ -751,7 +751,7 @@ const RAILWAY_LAUNCHER_FILE = 'scripts/start-railway-service.mjs';
 // active supervisor/provider/database graph are native-preview capabilities.
 const SELF_HEAL_PROFILE_ISOLATION_FUNCTION = 'assertRailwayProcessIsolationOrThrow';
 const SELF_HEAL_PROFILE_ISOLATION_FUNCTION_DIGEST =
-  'cb31d52954b6549c7f2c5a5d4cdf9c086a5601744dd64a600092a0b13647e034';
+  '877d5d8a2d39619f5acbe48577c71b962832a4a6d5064ef2a836a1b9e28a378c';
 const NATIVE_PREVIEW_LAUNCH_FUNCTION = 'runNativePrApplicationPreview';
 const LAUNCHER_REPOSITORY_ROOT_STATEMENT_DIGEST =
   'd396b2efbae912e708125ebb4535806f5b516cf91aa48bc2ba579e6fb413e0d2';
@@ -980,7 +980,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'scripts/start-railway-service.mjs',
-    '1aade905313d94b2fd11affc3a076d10e43b1521d29019ede0c32da6fe4607f7',
+    '6855253f26ef2814f2c194c615827ddc501cd4d8895b76a88666b4e84457030b',
   ],
   [
     'src/start-native-pr-preview.ts',

@@ -14,15 +14,16 @@ import { SELF_HEAL_ACCEPTANCE_CASES, SelfHealAcceptanceError, attestSelfHealAcce
 const NOW = Date.parse('2026-10-15T01:00:00.000Z');
 const id = n => `${String(n).padStart(8, '0')}-1111-4111-8111-111111111111`;
 const names = { web: 'arcanos-web-pr1544-heavy', worker: 'arcanos-worker-pr1544-heavy', postgres: 'Postgres', redis: 'Redis' };
-function manifest() {
-  const services = Object.keys(names).map((role, i) => ({ role, serviceId: id(i + 3), deploymentId: id(i + 7),
+function manifest(prNumber = 1544) {
+  const resourceNames = { ...names, web: `arcanos-web-pr${prNumber}-heavy`, worker: `arcanos-worker-pr${prNumber}-heavy` };
+  const services = Object.keys(resourceNames).map((role, i) => ({ role, serviceId: id(i + 3), deploymentId: id(i + 7),
     imageDigest: `sha256:${'d'.repeat(64)}`, compiledSha256: ['web', 'worker'].includes(role) ? 'c'.repeat(64) : null }));
   return { version: 1, budgetUsd: 3, controllerSha: 'b'.repeat(40), cleanupArmedUntil: '2026-10-15T03:00:00.000Z', services,
-    receipt: { version: 1, owner: 'pbjustin', repository: 'pbjustin/Arcanos', prNumber: 1544, sourceSha: 'a'.repeat(40),
-      runId: 'self-heal-run-1544', projectId: id(1), projectName: 'arc-pr1544-heavy-test',
-      workspaceId: '1c9265a3-986f-4304-ad3e-5a874caab039', environmentId: id(2), environmentName: 'backstage-heavy-pr-1544-e2e',
+    receipt: { version: 1, owner: 'pbjustin', repository: 'pbjustin/Arcanos', prNumber, sourceSha: 'a'.repeat(40),
+      runId: `self-heal-run-${prNumber}`, projectId: id(1), projectName: `arc-pr${prNumber}-heavy-test`,
+      workspaceId: '1c9265a3-986f-4304-ad3e-5a874caab039', environmentId: id(2), environmentName: `backstage-heavy-pr-${prNumber}-e2e`,
       issuedAt: new Date(NOW).toISOString(), expiresAt: '2026-10-15T03:00:00.000Z',
-      resources: { services: services.map(service => ({ id: service.serviceId, name: names[service.role] })), volumes: [
+      resources: { services: services.map(service => ({ id: service.serviceId, name: resourceNames[service.role] })), volumes: [
         { id: id(11), name: 'pg-test', serviceId: id(5), mountPath: '/var/lib/postgresql/data' },
         { id: id(12), name: 'redis-test', serviceId: id(6), mountPath: '/data' },
       ] } } };
@@ -39,7 +40,8 @@ function status(m = manifest()) {
             limitOverride: { containers: [{ cpu: 1, memoryBytes: 1073741824 }, { cpu: 1, memoryBytes: 2147483648 },
               { cpu: 0.5, memoryBytes: 536870912 }, { cpu: 0.25, memoryBytes: 268435456 }][i] },
             startCommand: 'node scripts/railway-backstage-heavy-proof-supervisor.mjs --self-heal-preview-v1' } } } };
-        return { serviceId: service.serviceId, serviceName: names[service.role], latestDeployment: deployment, activeDeployments: [structuredClone(deployment)],
+        return { serviceId: service.serviceId, serviceName: m.receipt.resources.services.find(bound => bound.id === service.serviceId).name,
+          latestDeployment: deployment, activeDeployments: [structuredClone(deployment)],
           domains: { serviceDomains: [], customDomains: [] }, tcpProxies: [] };
       })) }]) };
 }
@@ -62,6 +64,49 @@ function fakeTransport(state = snapshot()) {
 
 test('matrix has exactly the32ownedcaseidentities', () => {
   assert.equal(SELF_HEAL_ACCEPTANCE_CASES.length, 32); assert.equal(new Set(SELF_HEAL_ACCEPTANCE_CASES).size, 32);
+});
+test('PR 1557 admits only its own manifest and exact source deployment identities', () => {
+  const m = manifest(1557);
+  assert.equal(validateSelfHealAcceptanceManifest(m, { now: () => NOW }).receipt.prNumber, 1557);
+  assert.equal(attestSelfHealAcceptanceStatus(status(m), m, { now: () => NOW }).worker.instanceId, id(21));
+  for (const mutate of [
+    value => { value.receipt.prNumber = 1558; },
+    value => { value.receipt.prNumber = 1544; },
+    value => { value.receipt.resources.services[0].name = 'arcanos-web-pr1544-heavy'; },
+  ]) {
+    const changed = structuredClone(m); mutate(changed);
+    assert.throws(() => validateSelfHealAcceptanceManifest(changed, { now: () => NOW }), /SELF_HEAL_/u);
+  }
+  const drifted = status(m); drifted.environments.edges[0].node.serviceInstances.edges[1].node.latestDeployment.meta.commitHash = 'f'.repeat(40);
+  assert.throws(() => attestSelfHealAcceptanceStatus(drifted, m, { now: () => NOW }), /SOURCE_OR_LAUNCH_DRIFT/u);
+});
+test('the PR 1544 coordinator matrix cannot be presented as PR 1557 containment acceptance', async () => {
+  let calls = 0;
+  await assert.rejects(runSelfHealAcceptanceCase('A01', manifest(1557), {
+    now: () => NOW, execute: true, allowNetwork: true, transport: { remote: async () => { calls += 1; } },
+  }), /SCENARIO_PROFILE_MISMATCH/u);
+  assert.equal(calls, 0);
+});
+test('current-head reads select the receipt PR and fail before Railway access on source drift', async () => {
+  const original = childProcess.execFile; const inspected = [];
+  const stub = () => { throw new Error('unexpected unpromisified process invocation'); };
+  stub[promisify.custom] = async (executable, args) => {
+    assert.equal(executable, 'gh'); inspected.push(args);
+    return { stdout: 'f'.repeat(40) };
+  };
+  childProcess.execFile = stub; syncBuiltinESMExports();
+  try {
+    for (const prNumber of [1544, 1557]) {
+      let calls = 0;
+      const transport = createSelfHealAcceptanceTransport(manifest(prNumber), {
+        now: () => NOW, execute: true, allowNetwork: true, command: async () => { calls += 1; },
+      });
+      await assert.rejects(transport.remote('worker', ['inspect']), /PR_HEAD_CHANGED/u);
+      assert.equal(calls, 0);
+    }
+    assert.deepEqual(inspected, [1544, 1557].map(prNumber =>
+      ['pr', 'view', String(prNumber), '--repo', 'pbjustin/Arcanos', '--json', 'headRefOid', '--jq', '.headRefOid']));
+  } finally { childProcess.execFile = original; syncBuiltinESMExports(); }
 });
 test('dryrunneveropensCLI,SSH,providerorjobtransports', async () => {
   let calls = 0;
@@ -314,8 +359,8 @@ test('real transport classification binds immutable manifests and preserves synt
   } finally { childProcess.execFile = original; syncBuiltinESMExports(); }
 });
 
-function cliFixture() {
-  const m = manifest(); const current = { clock: NOW, head: m.receipt.sourceSha, status: status(m), calls: [] };
+function cliFixture(prNumber = 1544) {
+  const m = manifest(prNumber); const current = { clock: NOW, head: m.receipt.sourceSha, status: status(m), calls: [] };
   const options = { execute: true, allowNetwork: true, now: () => current.clock,
     readHead: async () => current.head, invocation: { executable: 'fixture-only-no-process', argsPrefix: [] },
     command: async (_executable, args) => {
@@ -331,6 +376,64 @@ function cliFixture() {
     } };
   return { current, options, transport: createSelfHealAcceptanceTransport(m, options) };
 }
+
+test('PR 1557 containment transport admits only the exact profile, roles and fixed job cases', async () => {
+  const workerOnly = ['containment_predictive_on', 'containment_predictive_off', 'containment_tick_batch',
+    'containment_dependency_failure', 'containment_dependency_restore'];
+  const shared = ['containment_diagnose', 'containment_probe', 'containment_cancel',
+    'containment_credential_rotate', 'containment_credential_restore'];
+  const faults = ['models_timeout_next', 'inference_hold_next', 'inference_cancel_next', 'models_auth_failure_next',
+    'inference_auth_failure_next', 'models_forbidden_next', 'inference_forbidden_next', 'inference_rate_limit_next',
+    'inference_unavailable_next'];
+  const original = cliFixture(); const containment = cliFixture(1557);
+  for (const command of [...workerOnly, ...shared]) {
+    await assert.rejects(original.transport.remote('worker', ['command', command]), /OPERATION_INVALID/u);
+    await containment.transport.remote('worker', ['command', command]);
+  }
+  for (const command of shared) await containment.transport.remote('web', ['command', command]);
+  for (const command of faults) {
+    await assert.rejects(original.transport.remote('worker', ['provider', command]), /OPERATION_INVALID/u);
+    await containment.transport.remote('worker', ['provider', command]);
+  }
+  for (const scenario of ['I01', 'I02', 'I03']) for (const operation of ['create', 'inspect']) for (const attempt of ['1', '2']) {
+    const args = ['fenced-job', operation, scenario, attempt];
+    await assert.rejects(original.transport.remote('worker', args), /OPERATION_INVALID/u);
+    await containment.transport.remote('worker', args);
+  }
+  await assert.rejects(original.transport.remote('web', ['provider', 'inspect']), /OPERATION_INVALID/u);
+  await containment.transport.remote('web', ['provider', 'inspect']);
+  assert.equal(original.current.calls.length, 0);
+  const beforeRejected = containment.current.calls.length;
+  for (const command of workerOnly) await assert.rejects(containment.transport.remote('web', ['command', command]), /OPERATION_INVALID/u);
+  for (const command of [...faults, 'set_healthy', 'release']) await assert.rejects(containment.transport.remote('web', ['provider', command]), /OPERATION_INVALID/u);
+  for (const args of [['command', 'containment_reset'], ['command', 'containment_probe', 'extra'],
+    ['provider', 'inference_delete_next'], ['fenced-job', 'create', 'A01', '1'], ['fenced-job', 'create', 'I04', '1'],
+    ['fenced-job', 'create', 'I01', '3']]) await assert.rejects(containment.transport.remote('worker', args), /OPERATION_INVALID/u);
+  assert.equal(containment.current.calls.length, beforeRejected);
+});
+
+test('PR 1557 restoration admits only cancel and fixed credential/dependency restoration after head drift', async () => {
+  const { current, transport } = cliFixture(1557); current.head = 'f'.repeat(40);
+  await assert.rejects(transport.remote('worker', ['command', 'containment_cancel']), /PR_HEAD_CHANGED/u);
+  for (const command of ['containment_cancel', 'containment_credential_restore', 'containment_dependency_restore']) {
+    await transport.restore(['command', command]);
+  }
+  for (const command of ['containment_cancel', 'containment_credential_restore', 'policy_restore']) {
+    await transport.restore(['command', command], 'web');
+  }
+  const beforeRejected = current.calls.length;
+  for (const command of ['containment_diagnose', 'containment_probe', 'containment_tick_batch', 'containment_credential_rotate',
+    'containment_dependency_failure']) await assert.rejects(transport.restore(['command', command]), /RESTORATION_INVALID/u);
+  for (const command of ['coordinator_start', 'trinity_rollback', 'containment_diagnose', 'containment_probe', 'containment_credential_rotate']) {
+    await assert.rejects(transport.restore(['command', command], 'web'), /RESTORATION_INVALID/u);
+  }
+  const original = cliFixture();
+  await assert.rejects(original.transport.restore(['command', 'policy_restore'], 'web'), /RESTORATION_INVALID/u);
+  assert.equal(original.current.calls.length, 0);
+  assert.equal(current.calls.length, beforeRejected);
+  current.clock = Date.parse(manifest(1557).receipt.expiresAt);
+  await assert.rejects(transport.restore(['command', 'containment_cancel']), /LEASE_EXPIRED/u);
+});
 
 test('remote receipts cannot overwrite the independently attested platform target', async () => {
   const { current, options, transport } = cliFixture(); const command = options.command;

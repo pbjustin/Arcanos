@@ -206,7 +206,7 @@ function validateResponsesRequest(body, callNumber, expectedRunId) {
   };
 }
 
-function buildResponseWireBody({ callNumber, model, status, text }) {
+function buildResponseWireBody({ callNumber, model, status, text, outputTokens = 128 }) {
   const incomplete = status === 'incomplete';
   return {
     id: `resp_arcanos_backstage_heavy_fixture_${callNumber}`,
@@ -245,9 +245,9 @@ function buildResponseWireBody({ callNumber, model, status, text }) {
     usage: {
       input_tokens: 64,
       input_tokens_details: { cached_tokens: 0 },
-      output_tokens: incomplete ? 12 : 128,
+      output_tokens: incomplete ? 12 : outputTokens,
       output_tokens_details: { reasoning_tokens: 0 },
-      total_tokens: incomplete ? 76 : 192,
+      total_tokens: incomplete ? 76 : 64 + outputTokens,
     },
     metadata: {},
   };
@@ -486,6 +486,8 @@ export async function startBackstageHeavyOpenAIFixture(options = {}) {
 // selected by the compact-retry proof and cannot accept application credentials.
 export const SELF_HEAL_PREVIEW_OPENAI_FIXTURE_SDK_KEY =
   'sk-arcanos-self-heal-preview-protocol-v1';
+export const SELF_HEAL_INFERENCE_PREVIEW_OPENAI_FIXTURE_ROTATED_SDK_KEY =
+  'sk-arcanos-self-heal-preview-rotated-protocol-v1';
 export const SELF_HEAL_PREVIEW_OPENAI_FIXTURE_CHILD_ARGUMENT = '--serve-self-heal-v1';
 export const SELF_HEAL_PREVIEW_OPENAI_FIXTURE_READY_SENTINEL =
   'SELF_HEAL_PREVIEW_OPENAI_READY_V1';
@@ -499,6 +501,18 @@ export const SELF_HEAL_PREVIEW_OPENAI_FIXTURE_LIMITS = Object.freeze({
   maxDelayMs: 5000,
   maxProviderRequests: 128,
   maxControlRequests: 128,
+});
+const SELF_HEAL_INFERENCE_PROFILE = 'worker-inference-containment-v1';
+const SELF_HEAL_INFERENCE_FAULTS = Object.freeze({
+  models_timeout_next: { endpoint: 'models', kind: 'timeout', delayMs: 5000 },
+  inference_hold_next: { endpoint: 'inference', kind: 'hold', delayMs: 30_000 },
+  inference_cancel_next: { endpoint: 'inference', kind: 'cancel', delayMs: 0 },
+  models_auth_failure_next: { endpoint: 'models', kind: 'status', status: 401 },
+  inference_auth_failure_next: { endpoint: 'inference', kind: 'status', status: 401 },
+  models_forbidden_next: { endpoint: 'models', kind: 'status', status: 403 },
+  inference_forbidden_next: { endpoint: 'inference', kind: 'status', status: 403 },
+  inference_rate_limit_next: { endpoint: 'inference', kind: 'status', status: 429 },
+  inference_unavailable_next: { endpoint: 'inference', kind: 'status', status: 503 },
 });
 export const SELF_HEAL_PREVIEW_OPENAI_FIXTURE_MODEL_IDS = Object.freeze([
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID, 'gpt-6.1-sol', 'gpt-6-luna',
@@ -543,7 +557,7 @@ function selfHealFixtureConfig(env, now) {
       || typeof env[name] !== 'string')
     || env.NODE_ENV !== 'production' || env.TZ !== 'UTC'
     || env[BACKSTAGE_HEAVY_OPENAI_FIXTURE_CHILD_ENV] !== 'v1'
-    || env.ARCANOS_SELF_HEAL_PREVIEW_PROFILE !== 'worker-coordinator-v1'
+    || !['worker-coordinator-v1', SELF_HEAL_INFERENCE_PROFILE].includes(env.ARCANOS_SELF_HEAL_PREVIEW_PROFILE)
     || typeof runId !== 'string' || !/^[a-z0-9][a-z0-9-]{7,63}$/u.test(runId)
     || env[BACKSTAGE_HEAVY_OPENAI_FIXTURE_RUN_ID_ENV] !== runId
     || !/^[0-9a-f]{40}$/u.test(env.ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA ?? '')
@@ -553,7 +567,7 @@ function selfHealFixtureConfig(env, now) {
     || expiresAt - issuedAt > SELF_HEAL_PREVIEW_OPENAI_FIXTURE_LIMITS.maxLifetimeMs
   ) throw new Error('SELF_HEAL_PREVIEW_OPENAI_CHILD_CONTRACT_INVALID');
   return {
-    runId, issuedAt, expiresAt,
+    runId, issuedAt, expiresAt, profile: env.ARCANOS_SELF_HEAL_PREVIEW_PROFILE,
     sourceSha: env.ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA,
     controlToken: env.ARCANOS_SELF_HEAL_PREVIEW_CONTROL_TOKEN,
   };
@@ -693,7 +707,7 @@ export async function startSelfHealPreviewOpenAIFixture(options = {}) {
     throw new Error('SELF_HEAL_PREVIEW_OPENAI_LISTEN_TARGET_INVALID');
   }
   const state = {
-    ready: true, expired: false, providerRequests: 0, controlRequests: 0,
+    ready: true, expired: false, providerRequests: 0, providerWireRequests: 0, controlRequests: 0,
     completed: 0, timedOut: 0, clientClosed: 0, rejected: 0,
     inFlight: null, nextFault: null, receipts: [],
   };
@@ -704,25 +718,34 @@ export async function startSelfHealPreviewOpenAIFixture(options = {}) {
   void closed.promise.catch(() => {});
   let expiryTimer;
   const inspect = () => ({
-    schemaVersion: 1, profile: 'worker-coordinator-v1', runId: config.runId,
+    schemaVersion: 1, profile: config.profile, runId: config.runId,
     sourceSha: config.sourceSha, issuedAt: config.issuedAt, expiresAt: config.expiresAt,
     ready: state.ready, expired: state.expired,
     providerRequests: state.providerRequests, controlRequests: state.controlRequests,
+    ...(config.profile === SELF_HEAL_INFERENCE_PROFILE ? { providerWireRequests: state.providerWireRequests } : {}),
     completed: state.completed, timedOut: state.timedOut,
     clientClosed: state.clientClosed, rejected: state.rejected,
     inFlight: state.inFlight,
     nextFault: state.nextFault ? { ...state.nextFault } : null,
     receipts: state.receipts.map(receipt => ({ ...receipt })),
-    limits: SELF_HEAL_PREVIEW_OPENAI_FIXTURE_LIMITS,
+    limits: config.profile === SELF_HEAL_INFERENCE_PROFILE
+      ? { ...SELF_HEAL_PREVIEW_OPENAI_FIXTURE_LIMITS, maxDelayMs: 30_000 }
+      : SELF_HEAL_PREVIEW_OPENAI_FIXTURE_LIMITS,
   });
   const server = createServer(async (request, response) => {
     response.setHeader('connection', 'close');
     const url = parseRequestUrl(request);
     const isControl = url?.pathname === SELF_HEAL_PREVIEW_OPENAI_FIXTURE_CONTROL_PATH;
+    // Count even rejected metadata, credential, route or over-budget requests.
+    // No request body is read before the independent authorization checks.
+    if (!isControl) state.providerWireRequests += 1;
     // The purpose token cannot authorize provider calls and the fictional SDK
     // key cannot inspect or mutate fault state. Authenticate before body reads.
-    if (!(isControl ? hasSelfHealControlAuthorization(request, config.controlToken)
-      : hasFixtureAuthorization(request, SELF_HEAL_PREVIEW_OPENAI_FIXTURE_SDK_KEY))) {
+    const credential = hasFixtureAuthorization(request, SELF_HEAL_PREVIEW_OPENAI_FIXTURE_SDK_KEY)
+      ? 'original' : config.profile === SELF_HEAL_INFERENCE_PROFILE
+        && hasFixtureAuthorization(request, SELF_HEAL_INFERENCE_PREVIEW_OPENAI_FIXTURE_ROTATED_SDK_KEY)
+        ? 'rotated' : null;
+    if (!(isControl ? hasSelfHealControlAuthorization(request, config.controlToken) : credential !== null)) {
       state.rejected += 1;
       writeOpenAIError(response, 401, 'fixture_authorization_required');
       return;
@@ -756,6 +779,16 @@ export async function startSelfHealPreviewOpenAIFixture(options = {}) {
         && exactSelfHealCommand(body, ['command'])) {
         if (body.command === 'set_healthy') state.nextFault = null;
         if (body.command === 'set_healthy' || body.command === 'release') active?.release();
+        writeJson(response, 200, inspect()); return;
+      }
+      const inferenceFault = config.profile === SELF_HEAL_INFERENCE_PROFILE
+        && Object.hasOwn(SELF_HEAL_INFERENCE_FAULTS, body.command)
+        ? SELF_HEAL_INFERENCE_FAULTS[body.command] : null;
+      if (inferenceFault && exactSelfHealCommand(body, ['command'])) {
+        if (state.inFlight || state.nextFault) {
+          writeOpenAIError(response, 409, 'fixture_fault_already_active'); return;
+        }
+        state.nextFault = { ...inferenceFault, remaining: 1 };
         writeJson(response, 200, inspect()); return;
       }
       const timeout = body.command === 'timeout_next';
@@ -797,6 +830,10 @@ export async function startSelfHealPreviewOpenAIFixture(options = {}) {
     const requestId = `self-heal-fixture-${++state.providerRequests}`;
     const receipt = { requestId, endpoint: models ? 'models' : chat ? 'chat' : 'responses',
       startedAt: now(), endedAt: null, outcome: 'in_flight' };
+    if (config.profile === SELF_HEAL_INFERENCE_PROFILE) {
+      receipt.credential = credential;
+      receipt.operation = modelsList ? 'models_list' : models ? 'models_retrieve' : chat ? 'chat' : 'responses';
+    }
     state.receipts.push(receipt);
     state.inFlight = requestId;
     response.setHeader('x-request-id', requestId);
@@ -808,8 +845,14 @@ export async function startSelfHealPreviewOpenAIFixture(options = {}) {
       clearTimeout(delayTimer);
       response.off('close', onClose);
       receipt.endedAt = now(); receipt.outcome = outcome;
+      if (config.profile === SELF_HEAL_INFERENCE_PROFILE && Number.isInteger(code)) receipt.status = code;
       state.inFlight = null; active = null;
       if (outcome === 'completed') state.completed += 1;
+      if (config.profile === SELF_HEAL_INFERENCE_PROFILE && outcome === 'completed' && !models) {
+        receipt.inputTokens = 64;
+        receipt.outputTokens = Math.min(chat ? 32 : 128, receipt.maxOutputTokens ?? 128);
+        receipt.totalTokens = receipt.inputTokens + receipt.outputTokens;
+      }
       if (outcome === 'timeout') state.timedOut += 1;
       if (outcome === 'client_closed') state.clientClosed += 1;
       if (body && !response.destroyed) writeJson(response, code, body);
@@ -843,6 +886,10 @@ export async function startSelfHealPreviewOpenAIFixture(options = {}) {
         }
         receipt.model = body.model;
         receipt.purpose = purpose;
+        if (config.profile === SELF_HEAL_INFERENCE_PROFILE) {
+          const outputLimit = chat ? body.max_completion_tokens ?? body.max_tokens : body.max_output_tokens;
+          receipt.maxOutputTokens = Number.isInteger(outputLimit) && outputLimit > 0 ? outputLimit : null;
+        }
       }
       const success = () => finish('completed', 200, retrievedModel !== undefined ? {
         id: retrievedModel, object: 'model', created: 0, owned_by: 'arcanos-preview-fixture',
@@ -854,17 +901,32 @@ export async function startSelfHealPreviewOpenAIFixture(options = {}) {
         model: body.model,
         choices: [{ index: 0, message: { role: 'assistant', content: output, refusal: null },
           finish_reason: 'stop', logprobs: null }],
-        usage: { prompt_tokens: 64, completion_tokens: 32, total_tokens: 96 },
+        usage: { prompt_tokens: 64,
+          completion_tokens: config.profile === SELF_HEAL_INFERENCE_PROFILE ? Math.min(32, receipt.maxOutputTokens ?? 32) : 32,
+          total_tokens: 64 + (config.profile === SELF_HEAL_INFERENCE_PROFILE ? Math.min(32, receipt.maxOutputTokens ?? 32) : 32) },
       } : buildResponseWireBody({ callNumber: state.providerRequests,
-        model: body.model, status: 'completed', text: output }));
+        model: body.model, status: 'completed', text: output,
+        outputTokens: config.profile === SELF_HEAL_INFERENCE_PROFILE ? Math.min(128, receipt.maxOutputTokens ?? 128) : 128 }));
       active = { release: success, stop: () => {
         finish('shutdown', 503, { error: { code: 'fixture_stopped',
           message: 'The isolated preview fixture has stopped.', type: 'server_error' } });
       } };
       const fault = state.nextFault;
-      if (!fault) { success(); return; }
+      if (!fault || (fault.endpoint && fault.endpoint !== (models ? 'models' : 'inference'))) { success(); return; }
       state.nextFault = fault.remaining > 1 ? { ...fault, remaining: fault.remaining - 1 } : null;
       receipt.fault = fault.kind;
+      if (fault.kind === 'status') {
+        finish('synthetic_failure', fault.status, { error: {
+          code: `fixture_provider_${fault.status}`, message: 'The isolated preview provider returned a synthetic failure.',
+          type: fault.status === 401 || fault.status === 403 ? 'authentication_error' : 'server_error',
+        } });
+        return;
+      }
+      if (fault.kind === 'cancel') {
+        finish('transport_cancelled');
+        response.destroy();
+        return;
+      }
       delayTimer = setTimeout(() => finish('timeout', 504, { error: {
         code: 'fixture_provider_timeout', message: 'The isolated preview provider timed out.',
         type: 'server_error',

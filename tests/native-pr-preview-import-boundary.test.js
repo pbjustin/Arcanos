@@ -3612,7 +3612,7 @@ describe('native PR preview import boundary', () => {
 
   it.each([
     ["new URL('./railway-self-heal-preview-profile.mjs', import.meta.url).href", "new URL('./foreign-profile.mjs', import.meta.url).href"],
-    ["env?.ARCANOS_SELF_HEAL_PREVIEW_PROFILE !== 'worker-coordinator-v1'", 'false'],
+    ["!['worker-coordinator-v1', 'worker-inference-containment-v1'].includes(env?.ARCANOS_SELF_HEAL_PREVIEW_PROFILE)", 'false'],
     ['return profileModule.assertSelfHealPreviewApplicationChildOrThrow(env, options);', 'return { enabled: true };'],
   ])('rejects active-profile import admission drift: %s', async (original, replacement) => {
     const sourceText = replaceRequired(await readRailwayLauncherSource(), original, replacement);

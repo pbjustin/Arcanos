@@ -19,14 +19,15 @@ import {
 } from './selfHealingV2.js';
 import { activatePromptRouteDegradedMode, getPromptRouteMitigationState } from '@services/openai/promptRouteMitigation.js';
 import { runtimeDiagnosticsService, type RequestWindowSnapshot } from '@services/runtimeDiagnosticsService.js';
-import { getOpenAIServiceHealth } from '@services/openai/serviceHealth.js';
+import { getOpenAIServiceHealth, syncOpenAIProviderRuntime } from '@services/openai/serviceHealth.js';
 import { buildSelfHealTelemetrySnapshot, type SelfHealEvent } from './selfHealTelemetry.js';
-import { buildPredictiveHealingStatusSnapshot, runPredictiveHealingDecision,
+import { buildPredictiveHealingStatusSnapshot, runPredictiveHealingDecision, probePredictiveHealingAIProvider,
   type PredictiveHealingAuditEntry, type PredictiveHealingSimulationInput,
 } from './predictiveHealingService.js';
 import { PreviewShutdownJournal, shutdownChildAuthority, type PreviewShutdownScenario } from './selfHealingPreviewShutdown.js';
 
 export const SELF_HEAL_PREVIEW_PROFILE = 'worker-coordinator-v1';
+export const SELF_HEAL_INFERENCE_PREVIEW_PROFILE = 'worker-inference-containment-v1';
 export const SELF_HEAL_PREVIEW_CONTROL_PORT = 8791;
 const PREFIX = 'ARCANOS_SELF_HEAL_PREVIEW_';
 const MAX_BODY_BYTES = 4_096;
@@ -63,6 +64,7 @@ const PROFILE_NAMES = [
 ] as const;
 
 export interface SelfHealingPreviewProfile {
+  profile: typeof SELF_HEAL_PREVIEW_PROFILE | typeof SELF_HEAL_INFERENCE_PREVIEW_PROFILE;
   role: 'web' | 'worker';
   runId: string;
   sourceCommit: string;
@@ -85,7 +87,8 @@ export function resolveSelfHealingPreviewProfile(
   nowMs = Date.now(),
 ): SelfHealingPreviewProfile | null {
   if (env[`${PREFIX}PROFILE`] === undefined) return null;
-  if (env[`${PREFIX}PROFILE`] !== SELF_HEAL_PREVIEW_PROFILE || env.NODE_ENV !== 'production'
+  const profile = env[`${PREFIX}PROFILE`];
+  if ((profile !== SELF_HEAL_PREVIEW_PROFILE && profile !== SELF_HEAL_INFERENCE_PREVIEW_PROFILE) || env.NODE_ENV !== 'production'
       || env.ARCANOS_BACKSTAGE_HEAVY_PROOF_TARGET !== 'dedicated-backstage-heavy-preview-v1'
       || env.ARCANOS_PREVIEW_ISOLATION !== 'true' || env.FORCE_MOCK !== 'false'
       || env.ALLOW_MOCK_OPENAI !== 'false' || env.OPENAI_API_KEY_REQUIRED !== 'true') failProfile();
@@ -94,6 +97,7 @@ export function resolveSelfHealingPreviewProfile(
   const projectMatch = /^arc-pr([1-9]\d*)-heavy-[a-z0-9][a-z0-9-]{0,13}$/u.exec(env.RAILWAY_PROJECT_NAME ?? '');
   if ((role !== 'web' && role !== 'worker') || !match || !projectMatch || match[1] !== projectMatch[1]
       || env.RAILWAY_SERVICE_NAME !== `arcanos-${role}-pr${match[1]}-heavy`) failProfile();
+  if (profile === SELF_HEAL_INFERENCE_PREVIEW_PROFILE && match[1] !== '1557') failProfile();
   const ids = [
     'RAILWAY_PROJECT_ID', 'RAILWAY_ENVIRONMENT_ID', 'RAILWAY_SERVICE_ID', 'RAILWAY_DEPLOYMENT_ID',
     'ARCANOS_BACKSTAGE_HEAVY_POSTGRES_SERVICE_ID', 'ARCANOS_BACKSTAGE_HEAVY_REDIS_SERVICE_ID',
@@ -138,7 +142,7 @@ export function resolveSelfHealingPreviewProfile(
         || (name === 'DATABASE_URL' ? !databaseQueryValid || parsed.pathname.length <= 1 : parsed.search !== '')) failProfile();
   }
   return {
-    role, runId, sourceCommit, projectId: ids[0], environmentId: ids[1], serviceId: ids[2], deploymentId: ids[3],
+    profile, role, runId, sourceCommit, projectId: ids[0], environmentId: ids[1], serviceId: ids[2], deploymentId: ids[3],
     postgresServiceId: ids[4], redisServiceId: ids[5], expiresAtMs, controlToken, startupMode,
   };
 }
@@ -155,6 +159,10 @@ const COMMANDS = new Set([
   'predictive_evaluate',
   'predictive_evaluate_live',
   'shutdown_prepare_a06', 'shutdown_prepare_e06', 'shutdown_cancel',
+  'containment_predictive_on', 'containment_predictive_off', 'containment_diagnose', 'containment_probe', 'containment_cancel',
+  'containment_credential_rotate', 'containment_credential_restore',
+  'containment_tick_batch',
+  'containment_dependency_failure', 'containment_dependency_restore',
 ]);
 
 type Receipt = { sequence: number; at: string; event: string };
@@ -165,6 +173,9 @@ function projectPredictiveAudit(entry: PredictiveHealingAuditEntry) {
     source: ['self-heal.preview.predictive-case', 'self-heal.preview.measured-runtime', 'predictive_self_heal_loop'].includes(entry.source) ? entry.source : 'other',
     selectedAction: entry.decision.action, safeToExecute: entry.decision.safeToExecute,
     advisor: entry.decision.advisor,
+    inferenceReason: typeof entry.decision.details?.aiEligibilityReason === 'string'
+      ? entry.decision.details.aiEligibilityReason : typeof entry.decision.details?.aiCooldownReason === 'string'
+        ? entry.decision.details.aiCooldownReason : null,
     mode: entry.execution.mode, status: entry.execution.status, attempted: entry.execution.attempted,
     featureFlags: { enabled: entry.featureFlags.enabled, dryRun: entry.featureFlags.dryRun, autoExecute: entry.featureFlags.autoExecute },
     observation: { collectedAt: entry.observation.collectedAt, requestCount: entry.observation.requestCount,
@@ -261,6 +272,8 @@ export async function installSelfHealingPreviewControl(
   let activeCommand: Promise<unknown> | null = null;
   let failObservation = false;
   let failClaim = false;
+  let containmentClaimFaultUntil = 0;
+  let containmentClaimFaultRemaining = 0;
   let failScheduler = profile.startupMode === 'scheduler-failure';
   let holdNext = false;
   let releaseHold: (() => void) | null = null;
@@ -271,6 +284,15 @@ export async function installSelfHealingPreviewControl(
   let consumerRunPromise: Promise<void> | null = null;
   let predictiveRun: Record<string, unknown> | null = null;
   let predictiveRunPromise: Promise<void> | null = null;
+  let containmentRun: Record<string, unknown> | null = null;
+  let containmentRunPromise: Promise<void> | null = null;
+  let containmentAbort: AbortController | null = null;
+  const containmentEnabled = profile.profile === SELF_HEAL_INFERENCE_PREVIEW_PROFILE;
+  const containmentStartedAt = new Date().toISOString();
+  let containmentEventCursor = 0;
+  const containmentEvidence = { complete: true, events: 0, evaluations: 0, healthyEvaluations: 0,
+    incidentEvaluations: 0, providerAttempts: 0, repairAttempts: 0, actionsExecuted: 0,
+    lastDiagnosisType: null as string | null, lastIncidentKey: null as string | null };
   const consumerClients = new WeakMap<object, string>();
   let consumerClientCount = 0;
   let lastConsumerClientId: string | null = null;
@@ -291,6 +313,76 @@ export async function installSelfHealingPreviewControl(
   const claimBoundary = { attempts: 0, injectedFailures: 0, lastAttemptAt: null as string | null,
     lastInjectedFailureAt: null as string | null };
   const controller = new AbortController();
+
+  const collectContainmentEvidence = (baseline = false) => {
+    if (!containmentEnabled) return;
+    const snapshot = buildSelfHealTelemetrySnapshot({ enabled: getConfig().selfImproveEnabled,
+      active: getSelfHealingLoopStatus().loopRunning });
+    const events = snapshot.recentEvents.map(event => ({ event, sequence: Number(/^self_heal_event_(\d+)$/u.exec(event.id)?.[1]) }))
+      .filter(item => Number.isSafeInteger(item.sequence) && item.sequence > containmentEventCursor)
+      .sort((left, right) => left.sequence - right.sequence);
+    if (baseline) { containmentEventCursor = events.at(-1)?.sequence ?? 0; return; }
+    for (const { event, sequence } of events) {
+      if (sequence !== containmentEventCursor + 1) containmentEvidence.complete = false;
+      containmentEventCursor = sequence;
+      containmentEvidence.events += 1;
+      if (event.kind === 'AI_PROVIDER_CALL_ATTEMPT') containmentEvidence.providerAttempts += 1;
+      if (event.kind === 'ACTION_DISPATCH_ATTEMPT' || event.kind === 'attempt') containmentEvidence.repairAttempts += 1;
+      if (event.kind === 'ACTION_EXECUTED') containmentEvidence.actionsExecuted += 1;
+      if (event.kind === 'AI_DIAGNOSIS_REQUEST' && event.source === 'self_heal_loop'
+        && event.details?.phase === 'eligibility_evaluation') {
+        containmentEvidence.evaluations += 1;
+        if (event.details.diagnosisType === 'healthy' && event.details.incidentKey === null) containmentEvidence.healthyEvaluations += 1;
+        else containmentEvidence.incidentEvaluations += 1;
+        containmentEvidence.lastDiagnosisType = typeof event.details.diagnosisType === 'string'
+          && /^[a-z_]{1,64}$/u.test(event.details.diagnosisType) ? event.details.diagnosisType : null;
+        containmentEvidence.lastIncidentKey = typeof event.details.incidentKey === 'string'
+          && /^[a-z_]{1,64}$/u.test(event.details.incidentKey) ? event.details.incidentKey : null;
+      }
+    }
+  };
+  collectContainmentEvidence(true);
+
+  const inspectContainment = async () => {
+    collectContainmentEvidence();
+    const { getWorkerControlHealth } = await import('@services/workerControlService.js');
+    const health = await getWorkerControlHealth();
+    const workerIds = Array.from({ length: 8 }, (_, index) => `self-heal-preview-${profile.runId}-slot-${index + 1}`);
+    const scope = createHash('sha256').update(JSON.stringify([profile.projectId, profile.environmentId])).digest('hex');
+    const keys = ['diagnosis', 'provider_probe'].map(purpose => `arcanos:self-heal:inference:v1:${scope}:${purpose}`);
+    const ledgerResult = await executeRedisOperation(client => client.eval(
+      "local function bounded(k) if redis.call('STRLEN',k)>16384 then return 'oversized' end return redis.call('GET',k) or '' end; local now=redis.call('TIME'); return {bounded(KEYS[1]),bounded(KEYS[2]),redis.call('PTTL',KEYS[1]),redis.call('PTTL',KEYS[2]),now[1],now[2]}",
+      { keys, arguments: [] }), { operation: 'diagnostics.metrics.read', timeoutMs: 500 });
+    const ledgers = Array.isArray(ledgerResult) && ledgerResult.length === 6 ? keys.map((_key, index) => {
+      const raw = ledgerResult[index];
+      if (typeof raw !== 'string' || Buffer.byteLength(raw) > 16_384) return { purpose: index === 0 ? 'diagnosis' : 'provider_probe', versionRecognized: false };
+      try {
+        const state = raw === '' ? null : JSON.parse(raw) as Record<string, unknown>;
+        return { purpose: index === 0 ? 'diagnosis' : 'provider_probe', versionRecognized: state === null || state.version === 1,
+          present: state !== null, ttlMs: ledgerResult[index + 2],
+          stateSha256: raw === '' ? null : createHash('sha256').update(raw).digest('hex'),
+          inFlight: state?.inFlight !== null && state?.inFlight !== undefined,
+          attemptCount: Array.isArray(state?.attemptTimestampsMs) ? state.attemptTimestampsMs.length : 0,
+          lastAttemptMs: typeof state?.lastAttemptMs === 'number' ? state.lastAttemptMs : null,
+          lastCompletedMs: typeof state?.lastCompletedMs === 'number' ? state.lastCompletedMs : null,
+          rejectedCredentialCount: Array.isArray(state?.blockedCredentialIdentities) ? state.blockedCredentialIdentities.length : 0 };
+      } catch { return { purpose: index === 0 ? 'diagnosis' : 'provider_probe', versionRecognized: false }; }
+    }) : null;
+    return { evidence: 'production_health_telemetry_and_redis', startedAt: containmentStartedAt,
+      counters: { ...containmentEvidence }, run: containmentRun,
+      health: { overallStatus: health.overallStatus, queue: health.queueSummary === null ? null : {
+        pending: health.queueSummary.pending, running: health.queueSummary.running,
+        stalledRunning: health.queueSummary.stalledRunning, oldestPendingJobAgeMs: health.queueSummary.oldestPendingJobAgeMs },
+      unexpectedWorkerCount: health.workers.filter(worker => !workerIds.includes(worker.workerId)).length,
+      workers: health.workers.filter(worker => workerIds.includes(worker.workerId)).map(worker => ({
+        slot: workerIds.indexOf(worker.workerId) + 1, operationalStatus: worker.operationalStatus,
+        busy: worker.currentJobId !== null, stale: worker.stale, inactivityMs: worker.inactivityMs,
+        heartbeatAgeMs: worker.heartbeatAgeMs, lastActivityAt: worker.lastActivityAt,
+        claimAcceptance: worker.claimAcceptance,
+        watchdogTriggered: worker.watchdog.triggered, restartRecommended: worker.watchdog.restartRecommended,
+        idleThresholdMs: worker.watchdog.idleThresholdMs,
+      })) }, ledgers };
+  };
 
   const record = (event: string) => {
     receipts.push({ sequence: ++sequence, at: new Date().toISOString(), event });
@@ -328,6 +420,7 @@ export async function installSelfHealingPreviewControl(
       }, intervalMs);
     },
     beforeObservation: async signal => {
+      collectContainmentEvidence();
       observation.entries += 1;
       observation.lastEnteredAt = new Date().toISOString();
       if (shutdownArmed && shutdownJournal) {
@@ -395,7 +488,9 @@ export async function installSelfHealingPreviewControl(
       coordinator, redis: getRedisLifecycleSnapshot(),
       scheduler: { ...scheduler, scheduled: coordinator.loopRunning, evidence: 'actual_scheduler_hook_and_canonical_status' },
       observation: { ...observation, holdArmed: holdNext, holding: releaseHold !== null, holdLimitMs: HOLD_MS },
-      claimBoundary: { ...claimBoundary, evidence: 'actual_worker_before_claim_hook', completionEvidence: 'independent_fenced_job_receipt_required' },
+      claimBoundary: { ...claimBoundary, evidence: 'actual_worker_before_claim_hook', completionEvidence: 'independent_fenced_job_receipt_required',
+        ...(containmentEnabled ? { faultUntil: containmentClaimFaultUntil > Date.now() ? new Date(containmentClaimFaultUntil).toISOString() : null,
+          faultRemaining: containmentClaimFaultRemaining } : {}) },
       policy: {
         observedAt, coordinatorObservedAt: coordinator.policyObservedAt,
         selfImproveEnabled: config.selfImproveEnabled, actuatorMode: config.selfImproveActuatorMode,
@@ -418,6 +513,7 @@ export async function installSelfHealingPreviewControl(
           runtimeDiagnosticsService.getRequestWindowSince(coordinator.lastActionAt, CONSUMER_WINDOW_MS, SELF_HEAL_PREVIEW_CONSUMER_ROUTE)),
       },
       predictiveRun,
+      ...(containmentEnabled ? { containment: await inspectContainment() } : {}),
       predictiveAudits: buildPredictiveHealingStatusSnapshot().recentAudits.slice(-3).map(projectPredictiveAudit),
       provider: {
         reloadCount: provider.reloadCount, lastReloadAt: provider.lastReloadAt,
@@ -478,6 +574,93 @@ export async function installSelfHealingPreviewControl(
   const execute = async (command: string): Promise<unknown> => {
     record(`command:${command}`);
     if (command === 'inspect') return inspect();
+    if (command.startsWith('containment_')) {
+      if (!containmentEnabled) return { rejected: true, reasonCode: 'inference_containment_profile_required', inspection: await inspect() };
+      if (command === 'containment_cancel') containmentAbort?.abort();
+      else if (command === 'containment_dependency_failure' || command === 'containment_dependency_restore') {
+        if (profile.role !== 'worker') return { rejected: true, reasonCode: 'worker_role_required', inspection: await inspect() };
+        if (command === 'containment_dependency_failure' && (getSelfHealingLoopStatus().loopRunning || getSelfHealingLoopStatus().inFlight)) {
+          return { rejected: true, reasonCode: 'dependency_fault_requires_stopped_coordinator', inspection: await inspect() };
+        }
+        containmentClaimFaultUntil = command === 'containment_dependency_failure' ? Date.now() + 30_000 : 0;
+        containmentClaimFaultRemaining = command === 'containment_dependency_failure' ? 64 : 0;
+      }
+      else if (command === 'containment_credential_rotate' || command === 'containment_credential_restore') {
+        if (containmentRunPromise || getSelfHealingLoopStatus().inFlight) {
+          return { rejected: true, reasonCode: 'inference_operation_in_flight', inspection: await inspect() };
+        }
+        // Only these two public fictional fixture keys can enter this closed profile.
+        writeRuntimeEnv('OPENAI_API_KEY', command === 'containment_credential_rotate'
+          ? 'sk-arcanos-self-heal-preview-rotated-protocol-v1' : 'sk-arcanos-self-heal-preview-protocol-v1');
+        syncOpenAIProviderRuntime({ forceReload: true, reason: 'self-heal.preview.credential-rotation' });
+      } else if (command === 'containment_predictive_on' || command === 'containment_predictive_off') {
+        writeRuntimeEnv('SELF_IMPROVE_ENABLED', 'true'); writeRuntimeEnv('SELF_IMPROVE_ACTUATOR_MODE', 'daemon');
+        writeRuntimeEnv('SELF_IMPROVE_AUTONOMY_LEVEL', '3'); writeRuntimeEnv('SELF_IMPROVE_FREEZE', 'false');
+        writeRuntimeEnv('PREDICTIVE_HEALING_ENABLED', command === 'containment_predictive_on' ? 'true' : 'false');
+        writeRuntimeEnv('PREDICTIVE_HEALING_DRY_RUN', 'false'); writeRuntimeEnv('PREDICTIVE_AUTO_EXECUTE', 'false');
+      } else if (command === 'containment_tick_batch') {
+        const status = getSelfHealingLoopStatus();
+        if (profile.role !== 'worker' || containmentRunPromise || status.loopRunning || status.inFlight || lastTick) {
+          return { rejected: true, reasonCode: 'tick_batch_requires_idle_stopped_worker', inspection: await inspect() };
+        }
+        containmentRun = { operation: 'tick_batch', status: 'running', startedAt: new Date().toISOString(),
+          processInstanceId, evidence: 'twenty_sequential_production_interval_evaluations', ticksCompleted: 0 };
+        const abort = new AbortController(); containmentAbort = abort;
+        const onClose = () => abort.abort(); controller.signal.addEventListener('abort', onClose, { once: true });
+        const timeout = setTimeout(() => abort.abort(), 25_000);
+        const pending = (async () => {
+          try {
+            for (let index = 0; index < 20; index += 1) {
+              abort.signal.throwIfAborted();
+              await runSelfHealingLoop({ trigger: 'interval', signal: abort.signal,
+                beforeObservation: coordinatorOptions.beforeObservation, previewConsumerRoute: coordinatorOptions.previewConsumerRoute });
+              collectContainmentEvidence();
+              containmentRun = { ...containmentRun, ticksCompleted: index + 1 };
+            }
+            containmentRun = { ...containmentRun, status: 'completed', completedAt: new Date().toISOString() };
+          } finally { clearTimeout(timeout); controller.signal.removeEventListener('abort', onClose); containmentAbort = null; }
+        })();
+        containmentRunPromise = pending;
+        void pending.catch(() => { containmentRun = { ...containmentRun, status: 'failed',
+          completedAt: new Date().toISOString(), reasonCode: 'SELF_HEAL_PREVIEW_TICK_BATCH_FAILED' }; })
+          .finally(() => { if (containmentRunPromise === pending) containmentRunPromise = null; });
+      } else if (command === 'containment_diagnose' || command === 'containment_probe') {
+        if (containmentRunPromise) return { rejected: true, reasonCode: 'inference_operation_in_flight', inspection: await inspect() };
+        const operation = command === 'containment_probe' ? 'provider_probe' : 'diagnosis';
+        containmentRun = { operation, status: 'running', startedAt: new Date().toISOString(),
+          processInstanceId, evidence: 'production_service_and_shared_admission', inferenceAuthorization: 'manual', executionAuthorized: false };
+        const pending = (async () => {
+          const { createLinkedAbortController, runWithRequestAbortContext } = await import('@arcanos/runtime');
+          const linked = createLinkedAbortController({ timeoutMs: 35_000, parentSignal: controller.signal });
+          containmentAbort = linked.controller;
+          try {
+            await runWithRequestAbortContext({ controller: linked.controller, signal: linked.signal,
+              deadlineAt: linked.deadlineAt, timeoutMs: 35_000 }, async () => {
+              linked.signal.throwIfAborted();
+              if (operation === 'provider_probe') {
+                const result = await probePredictiveHealingAIProvider();
+                const reason = result.failureReason;
+                containmentRun = { ...containmentRun, status: 'completed', completedAt: new Date().toISOString(),
+                  provider: { reachable: result.reachable, authenticated: result.authenticated,
+                    completionHealthy: result.completionHealthy, failureCategory: result.failureCategory,
+                    failureStatus: result.failureStatus,
+                    failureReason: typeof reason === 'string' && /^[a-z_]{1,80}$/u.test(reason) ? reason : reason === null ? null : 'provider_failure' } };
+              } else {
+                const result = await runPredictiveHealingDecision({ source: 'self-heal.preview.measured-runtime',
+                  signal: linked.signal, inferenceAuthorization: 'manual', execute: false, allowAutoExecute: false });
+                containmentRun = { ...containmentRun, status: 'completed', completedAt: new Date().toISOString(),
+                  audit: projectPredictiveAudit(result.auditEntry) };
+              }
+            });
+          } finally { containmentAbort = null; linked.cleanup(); collectContainmentEvidence(); }
+        })();
+        containmentRunPromise = pending;
+        void pending.catch(() => { containmentRun = { ...containmentRun, status: 'failed',
+          completedAt: new Date().toISOString(), reasonCode: 'SELF_HEAL_PREVIEW_CONTAINMENT_OPERATION_FAILED' }; })
+          .finally(() => { if (containmentRunPromise === pending) containmentRunPromise = null; });
+      }
+      return inspect();
+    }
     if (command === 'policy_restore') {
       restorePolicy();
       // Remove only this preview's emergency override through its production API.
@@ -495,7 +678,7 @@ export async function installSelfHealingPreviewControl(
     else if (command === 'shutdown_prepare_a06' || command === 'shutdown_prepare_e06') {
       const state = getSelfHealingLoopStatus();
       if (profile.role !== 'worker' || !ready || shutdownJournal || profile.expiresAtMs - Date.now() < 30_000 || state.loopRunning || state.inFlight
-        || consumerRunPromise || predictiveRunPromise || lastTick || holdNext || releaseHold) {
+        || consumerRunPromise || predictiveRunPromise || containmentRunPromise || lastTick || holdNext || releaseHold) {
         return { rejected: true, reasonCode: 'shutdown_probe_requires_idle_stopped_worker', inspection: await inspect() };
       }
       const redisId = await executeRedisOperation(client => client.sendCommand(['CLIENT', 'ID']),
@@ -754,6 +937,7 @@ export async function installSelfHealingPreviewControl(
       closed = true;
       ready = false;
       failClaim = false;
+      containmentClaimFaultUntil = 0; containmentClaimFaultRemaining = 0;
       clearTimeout(expiryTimer);
       clearTimeout(shutdownPrepareExpiry);
       options.signal?.removeEventListener('abort', onAbort);
@@ -761,7 +945,7 @@ export async function installSelfHealingPreviewControl(
       releaseHold?.();
       const drain = stopSelfHealingLoop();
       server.closeAllConnections();
-      await Promise.all([drain, lastTick?.catch(() => undefined), consumerRunPromise?.catch(() => undefined), predictiveRunPromise?.catch(() => undefined), activeCommand?.catch(() => undefined), new Promise<void>((resolve, reject) => {
+      await Promise.all([drain, lastTick?.catch(() => undefined), consumerRunPromise?.catch(() => undefined), predictiveRunPromise?.catch(() => undefined), containmentRunPromise?.catch(() => undefined), activeCommand?.catch(() => undefined), new Promise<void>((resolve, reject) => {
         server.close(error => error && (error as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING' ? reject(error) : resolve());
       })]);
       try {
@@ -806,7 +990,9 @@ export async function installSelfHealingPreviewControl(
         if (profile.role !== 'worker' || closed || Date.now() >= profile.expiresAtMs) return;
         claimBoundary.attempts += 1;
         claimBoundary.lastAttemptAt = new Date().toISOString();
-        if (!failClaim) return;
+        const containmentFault = containmentEnabled && containmentClaimFaultUntil > Date.now() && containmentClaimFaultRemaining > 0;
+        if (!failClaim && !containmentFault) return;
+        if (containmentFault) containmentClaimFaultRemaining -= 1;
         failClaim = false;
         claimBoundary.injectedFailures += 1;
         claimBoundary.lastInjectedFailureAt = new Date().toISOString();

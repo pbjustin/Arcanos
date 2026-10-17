@@ -48,9 +48,17 @@ const CLEANUP_INVENTORY_QUERY = `query SelfHealPreviewCleanupOwnerInventory($aft
     } } pageInfo { hasNextPage } }
   } } pageInfo { hasNextPage endCursor } }
 }`;
-const SERVICES = new Map([
-  ['Postgres', '/var/lib/postgresql/data'], ['Redis', '/data'],
-  ['arcanos-web-pr1544-heavy', null], ['arcanos-worker-pr1544-heavy', null],
+const OWNED_PREVIEWS = new Map([
+  [1544, Object.freeze({
+    projectName: /^arc-pr1544-heavy-[a-z0-9][a-z0-9-]{0,13}$/u,
+    environmentName: /^backstage-heavy-pr-1544-e2e(?:-[a-z0-9]{1,16})?$/u,
+    services: Object.freeze({ web: 'arcanos-web-pr1544-heavy', worker: 'arcanos-worker-pr1544-heavy', postgres: 'Postgres', redis: 'Redis' }),
+  })],
+  [1557, Object.freeze({
+    projectName: /^arc-pr1557-heavy-[a-z0-9][a-z0-9-]{0,13}$/u,
+    environmentName: /^backstage-heavy-pr-1557-e2e(?:-[a-z0-9]{1,16})?$/u,
+    services: Object.freeze({ web: 'arcanos-web-pr1557-heavy', worker: 'arcanos-worker-pr1557-heavy', postgres: 'Postgres', redis: 'Redis' }),
+  })],
 ]);
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const sleep = ms => new Promise(resolveSleep => setTimeout(resolveSleep, ms));
@@ -58,21 +66,33 @@ export class SelfHealPreviewCleanupError extends Error {
   constructor(code) { super(`SELF_HEAL_PREVIEW_CLEANUP_${code}`); this.name = 'SelfHealPreviewCleanupError'; }
 }
 function fail(code) { throw new SelfHealPreviewCleanupError(code); }
+function ownedPreview(prNumber) {
+  const ownership = OWNED_PREVIEWS.get(prNumber);
+  if (!ownership) fail('RECEIPT_INVALID');
+  return ownership;
+}
+/** Resource names belong only to the two explicitly admitted acceptance targets. */
+export function resolveSelfHealPreviewResourceNames(prNumber) { return ownedPreview(prNumber).services; }
+function serviceMounts(prNumber) {
+  const names = resolveSelfHealPreviewResourceNames(prNumber);
+  return new Map([[names.postgres, '/var/lib/postgresql/data'], [names.redis, '/data'], [names.web, null], [names.worker, null]]);
+}
 function validId(value) { return typeof value === 'string' && UUID.test(value) && !FORBIDDEN_IDS.has(value); }
 function iso(value) { const ms = Date.parse(value); return typeof value === 'string' && Number.isFinite(ms) && new Date(ms).toISOString() === value ? ms : NaN; }
 function exact(value, keys) { return record(value) && Object.keys(value).sort().join('\0') === [...keys].sort().join('\0'); }
-function resourceBindings(value) {
+function resourceBindings(value, prNumber) {
+  const servicesByName = serviceMounts(prNumber);
   if (!exact(value, ['services', 'volumes']) || !Array.isArray(value.services) || !Array.isArray(value.volumes)
     || value.services.length > 4 || value.volumes.length > 2) fail('RESOURCE_BINDINGS_INVALID');
   const services = value.services.map(service => {
-    if (!exact(service, ['id', 'name']) || !validId(service.id) || !SERVICES.has(service.name)) fail('RESOURCE_BINDINGS_INVALID');
+    if (!exact(service, ['id', 'name']) || !validId(service.id) || !servicesByName.has(service.name)) fail('RESOURCE_BINDINGS_INVALID');
     return Object.freeze({ ...service });
   });
   const names = new Map(services.map(service => [service.id, service.name]));
   const volumes = value.volumes.map(volume => {
     if (!exact(volume, ['id', 'name', 'serviceId', 'mountPath']) || !validId(volume.id)
       || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u.test(volume.name ?? '') || !names.has(volume.serviceId)
-      || !SERVICES.get(names.get(volume.serviceId)) || volume.mountPath !== SERVICES.get(names.get(volume.serviceId))) fail('RESOURCE_BINDINGS_INVALID');
+      || !servicesByName.get(names.get(volume.serviceId)) || volume.mountPath !== servicesByName.get(names.get(volume.serviceId))) fail('RESOURCE_BINDINGS_INVALID');
     return Object.freeze({ ...volume });
   });
   if (new Set(services.map(service => service.id)).size !== services.length
@@ -86,17 +106,18 @@ function resourceBindings(value) {
 /** An expired receipt remains valid deletion authority for the same owned target. */
 export function validateSelfHealPreviewCleanupReceipt(receipt, options = {}) {
   const now = options.now?.() ?? Date.now();
+  const ownership = ownedPreview(receipt?.prNumber);
   if (!record(receipt) || !exact(receipt, Object.hasOwn(receipt, 'resources') ? [...RECEIPT_KEYS, 'resources'] : RECEIPT_KEYS)
     || receipt.version !== 1 || receipt.owner !== 'pbjustin' || receipt.repository !== 'pbjustin/Arcanos'
-    || receipt.prNumber !== 1544 || !/^[0-9a-f]{40}$/u.test(receipt.sourceSha ?? '')
+    || !/^[0-9a-f]{40}$/u.test(receipt.sourceSha ?? '')
     || !/^[a-z0-9][a-z0-9-]{7,63}$/u.test(receipt.runId ?? '')
     || !validId(receipt.projectId) || !validId(receipt.environmentId) || receipt.projectId === receipt.environmentId
-    || receipt.workspaceId !== WORKSPACE || !/^arc-pr1544-heavy-[a-z0-9][a-z0-9-]{0,13}$/u.test(receipt.projectName ?? '')
-    || receipt.projectName.length > 32 || !/^backstage-heavy-pr-1544-e2e(?:-[a-z0-9]{1,16})?$/u.test(receipt.environmentName ?? '')) fail('RECEIPT_INVALID');
+    || receipt.workspaceId !== WORKSPACE || !ownership.projectName.test(receipt.projectName ?? '')
+    || receipt.projectName.length > 32 || !ownership.environmentName.test(receipt.environmentName ?? '')) fail('RECEIPT_INVALID');
   const issued = iso(receipt.issuedAt); const expires = iso(receipt.expiresAt);
   if (!Number.isFinite(issued) || !Number.isFinite(expires) || issued > now || expires <= issued
     || expires - issued > MAX_LEASE_MS || (options.allowExpired === false && expires <= now)) fail('LEASE_INVALID');
-  return Object.freeze({ ...receipt, ...(Object.hasOwn(receipt, 'resources') ? { resources: resourceBindings(receipt.resources) } : {}) });
+  return Object.freeze({ ...receipt, ...(Object.hasOwn(receipt, 'resources') ? { resources: resourceBindings(receipt.resources, receipt.prNumber) } : {}) });
 }
 
 function connection(value) {
@@ -107,6 +128,7 @@ function connection(value) {
 /** Permit only the exact project, one exact environment, and its partial four-service topology. */
 function cleanupInventory(status, receipt, options = {}) {
   const now = options.now?.() ?? Date.now();
+  const servicesByName = serviceMounts(receipt.prNumber);
   if (!record(status) || status.id !== receipt.projectId || status.name !== receipt.projectName
     || status.workspaceId !== WORKSPACE || !validId(status.id)
     || (status.deletedAt !== null && !Number.isFinite(iso(status.deletedAt)))) fail('PROJECT_MISMATCH');
@@ -122,7 +144,7 @@ function cleanupInventory(status, receipt, options = {}) {
     if (environments.length !== 0 || connection(status.services).length !== 0
       || connection(status.volumes).length !== 0) fail('DELETED_PROJECT_RESOURCES_RETAINED');
     return { services: [], instances: [], globalVolumes: [], volumeInstances: [],
-      bindings: options.bindings ?? receipt.resources ?? resourceBindings({ services: [], volumes: [] }),
+      bindings: options.bindings ?? receipt.resources ?? resourceBindings({ services: [], volumes: [] }, receipt.prNumber),
       scheduledDeletionAt: status.deletedAt,
       counts: { serviceCount: 0, serviceInstanceCount: 0, volumeCount: 0, volumeInstanceCount: 0, environmentCount: 0 } };
   }
@@ -133,7 +155,7 @@ function cleanupInventory(status, receipt, options = {}) {
   const services = connection(status.services);
   if (services.length > 4 || new Set(services.map(service => service.id)).size !== services.length
     || new Set(services.map(service => service.name)).size !== services.length
-    || services.some(service => !validId(service.id) || !SERVICES.has(service.name))) fail('FOREIGN_SERVICES');
+    || services.some(service => !validId(service.id) || !servicesByName.has(service.name))) fail('FOREIGN_SERVICES');
   const expected = options.bindings ?? receipt.resources;
   const knownServices = expected?.services ?? services;
   const byId = new Map(knownServices.map(service => [service.id, service.name]));
@@ -159,8 +181,8 @@ function cleanupInventory(status, receipt, options = {}) {
       || (volume.environmentId !== undefined && volume.environmentId !== receipt.environmentId)) fail('FOREIGN_VOLUMES');
     if (volume.serviceId === null || volume.serviceId === undefined) {
       if (!binding || services.some(service => service.id === binding.serviceId)) fail('UNBOUND_VOLUME');
-    } else if (!byId.has(volume.serviceId) || !SERVICES.get(byId.get(volume.serviceId))
-      || volume.mountPath !== SERVICES.get(byId.get(volume.serviceId))
+    } else if (!byId.has(volume.serviceId) || !servicesByName.get(byId.get(volume.serviceId))
+      || volume.mountPath !== servicesByName.get(byId.get(volume.serviceId))
       || (binding && binding.serviceId !== volume.serviceId)) fail('FOREIGN_VOLUMES');
   }
   let bindings = expected;
@@ -170,7 +192,7 @@ function cleanupInventory(status, receipt, options = {}) {
       if (!instance || !instance.serviceId) fail('UNBOUND_VOLUME');
       return { id: global.id, name: global.name, serviceId: instance.serviceId, mountPath: instance.mountPath };
     });
-    bindings = resourceBindings({ services, volumes: boundVolumes });
+    bindings = resourceBindings({ services, volumes: boundVolumes }, receipt.prNumber);
   }
   const boundById = new Map(bindings.volumes.map(volume => [volume.id, volume]));
   if (globalVolumes.some(volume => boundById.get(volume.id)?.name !== volume.name)) fail('FOREIGN_VOLUMES');

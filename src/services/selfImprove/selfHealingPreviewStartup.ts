@@ -22,7 +22,8 @@ function fail(): never { throw new Error('SELF_HEAL_PREVIEW_STARTUP_EVIDENCE_FAI
 function hash(owner: ShutdownOwner) { return createHash('sha256').update(JSON.stringify(owner)).digest('hex'); }
 function validateOwner(owner: ShutdownOwner) {
   const issued = Date.parse(String(owner.issuedAt)); const expires = Date.parse(String(owner.expiresAt));
-  if (owner.owner !== 'pbjustin' || owner.repository !== 'pbjustin/Arcanos' || owner.profile !== 'worker-coordinator-v1'
+  if (owner.owner !== 'pbjustin' || owner.repository !== 'pbjustin/Arcanos' || !['worker-coordinator-v1', 'worker-inference-containment-v1'].includes(String(owner.profile))
+    || (owner.profile === 'worker-inference-containment-v1' && !/^arc-pr1557-heavy-[a-z0-9][a-z0-9-]{0,13}$/u.test(String(owner.projectName)))
     || !/^[a-f0-9]{40}$/u.test(String(owner.sourceSha)) || !/^[a-f0-9]{64}$/u.test(String(owner.compiledSha256))
     || !/^[a-z0-9][a-z0-9-]{7,63}$/u.test(String(owner.runId)) || !Number.isFinite(issued) || !Number.isFinite(expires)
     || issued > Date.now() || expires <= Date.now() || expires - issued > 7_200_000 || expires <= issued) fail();
@@ -77,7 +78,7 @@ function iso(value: unknown) {
 /** The parent health server already exists; sample its real readiness before bootstrap can commit. */
 export async function beginSelfHealPreviewStartupProbe(env: NodeJS.ProcessEnv,
   binding: { processInstanceId: string; pid: number }, options: ProbeOptions = {}) {
-  if (env.ARCANOS_PROCESS_KIND !== 'worker' || env.ARCANOS_SELF_HEAL_PREVIEW_PROFILE !== 'worker-coordinator-v1'
+  if (env.ARCANOS_PROCESS_KIND !== 'worker' || !['worker-coordinator-v1', 'worker-inference-containment-v1'].includes(env.ARCANOS_SELF_HEAL_PREVIEW_PROFILE ?? '')
     || env.ARCANOS_SELF_HEAL_PREVIEW_STARTUP_MODE !== 'scheduler-failure' || !UUID.test(binding.processInstanceId)
     || !Number.isSafeInteger(binding.pid) || binding.pid < 2 || !UUID.test(env.RAILWAY_DEPLOYMENT_ID ?? '')) fail();
   const port = env.PORT ?? '8080';

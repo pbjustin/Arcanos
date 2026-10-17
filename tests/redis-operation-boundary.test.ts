@@ -55,6 +55,7 @@ describe('Redis operation source boundary', () => {
     const missingOperation: string[] = [];
     let gateCallCount = 0;
     const inferenceOperations: string[] = [];
+    const previewOperations: string[] = [];
 
     for (const filePath of sourceFiles) {
       if (relativeSourcePath(filePath) === REDIS_LIFECYCLE_PATH) {
@@ -90,12 +91,14 @@ describe('Redis operation source boundary', () => {
               `${relativeSourcePath(filePath)}:${location.line + 1}`
             );
           }
-          if (relativeSourcePath(filePath) === 'services/selfImprove/selfHealingInferenceAdmission.ts'
-            && options && ts.isObjectLiteralExpression(options)) {
+          const identities = relativeSourcePath(filePath) === 'services/selfImprove/selfHealingInferenceAdmission.ts'
+            ? inferenceOperations : relativeSourcePath(filePath) === 'services/selfImprove/selfHealingPreviewControl.ts'
+              ? previewOperations : undefined;
+          if (identities && options && ts.isObjectLiteralExpression(options)) {
             const identity = options.properties.find(property => ts.isPropertyAssignment(property)
               && property.name.getText(sourceFile) === 'operation');
             if (identity && ts.isPropertyAssignment(identity)) {
-              inferenceOperations.push(identity.initializer.getText(sourceFile));
+              identities.push(identity.initializer.getText(sourceFile));
             }
           }
         }
@@ -106,9 +109,11 @@ describe('Redis operation source boundary', () => {
 
     // The original sixteen gates include the sealed CLIENT ID read. Shared
     // inference adds exactly two: the durable ledger/time read and atomic CAS.
-    // Both remain inside the lifecycle gate with fixed allowlisted identities.
-    expect(gateCallCount).toBe(18);
+    // The PR 1557 preview adds one read-only GET/PTTL/TIME ledger observation.
+    // All remain inside the lifecycle gate with fixed allowlisted identities.
+    expect(gateCallCount).toBe(19);
     expect(inferenceOperations).toEqual(["'self_heal.inference.reserve'", "'self_heal.inference.complete'"]);
+    expect(previewOperations).toEqual(["'diagnostics.metrics.read'", "'diagnostics.metrics.read'"]);
     expect(missingOperation).toEqual([]);
   });
 

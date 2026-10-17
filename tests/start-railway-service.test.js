@@ -52,6 +52,8 @@ describe('start-railway-service launcher helpers', () => {
   it('checks immutable preview aliases while preserving normal runtime repair', () => {
     expect(resolveDistAliasArguments({ ARCANOS_SELF_HEAL_PREVIEW_PROFILE: 'worker-coordinator-v1' }))
       .toEqual(['scripts/repair-dist-aliases.js', '--check']);
+    expect(resolveDistAliasArguments({ ARCANOS_SELF_HEAL_PREVIEW_PROFILE: 'worker-inference-containment-v1' }))
+      .toEqual(['scripts/repair-dist-aliases.js', '--check']);
     expect(resolveDistAliasArguments({})).toEqual(['scripts/repair-dist-aliases.js', '--rewrite']);
     expect(resolveDistAliasArguments({ ARCANOS_SELF_HEAL_PREVIEW_PROFILE: 'other' }))
       .toEqual(['scripts/repair-dist-aliases.js', '--rewrite']);
