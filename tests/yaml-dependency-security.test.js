@@ -1,8 +1,11 @@
 import { describe, expect, it } from '@jest/globals';
-import { spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import {
+  emptyMergeFixtures, malformedYamlFixtures, measureOrderedMapWork, mergeChain,
+  nonEmptyMergeFixtures, orderedMapKeys, orderedMapSource
+} from './fixtures/yaml-dependency-security-fixtures.js';
 
 const require = createRequire(import.meta.url);
 const nycRequire = createRequire(require.resolve('@istanbuljs/load-nyc-config'));
@@ -12,14 +15,6 @@ const parsers = [
 ];
 const workflowDirectory = path.join(process.cwd(), '.github/workflows');
 const workflows = readdirSync(workflowDirectory).filter(file => /\.ya?ml$/u.test(file)).sort();
-
-function mergeChain(count) {
-  const lines = ['a0: &a0 { k0: 0 }'];
-  for (let index = 1; index < count; index += 1) {
-    lines.push(`a${index}: &a${index} { <<: *a${index - 1}, k${index}: ${index} }`);
-  }
-  return `${lines.join('\n')}\n`;
-}
 
 describe.each(parsers)('%s YAML dependency security', (_name, modulePath, yaml) => {
   it('preserves nested configuration, quoted scalars, and ordinary aliases', () => {
@@ -50,20 +45,22 @@ description: |-
     expect(yaml.load(yaml.dump(configuration))).toEqual(configuration);
   });
 
-  it.each([
-    ['duplicate authorization key', 'permissions:\n  contents: read\n  contents: write\n'],
-    ['unterminated sequence', 'jobs: [validate, build\n'],
-    ['unknown alias', 'job: *missing\n'],
-    ['non-mapping merge source', 'job: { <<: [true] }\n']
-  ])('rejects %s', (_case, source) => {
+  it.each(malformedYamlFixtures)('rejects %s', (_case, source) => {
     expect(() => yaml.load(source)).toThrow(yaml.YAMLException);
   });
 
-  it('bounds merge-key chains with the configured inclusive work limit (GHSA-52cp-r559-cp3m)', () => {
-    const source = mergeChain(4);
-    // The three merges cost (one source + its keys): 2 + 3 + 4 = 9 units.
-    expect(yaml.load(source, { maxTotalMergeKeys: 9 }).a3).toEqual({ k0: 0, k1: 1, k2: 2, k3: 3 });
-    expect(() => yaml.load(source, { maxTotalMergeKeys: 8 })).toThrow(/maxTotalMergeKeys/u);
+  it('preserves scalar types without treating quoted strings as configuration flags', () => {
+    expect(yaml.load('values: [true, false, null, 42, 3.5, "42", "false", "null"]\n')).toEqual({
+      values: [true, false, null, 42, 3.5, '42', 'false', 'null']
+    });
+  });
+
+  it.each(nonEmptyMergeFixtures)('bounds $name with an inclusive work limit', ({ source, budget, target, expected }) => {
+    // Each merge costs one source plus its keys after GHSA-2883-xcg3-v3hh;
+    // older GHSA-52cp-r559-cp3m fixes counted only keys for nonempty sources.
+    expect(yaml.load(source, { maxTotalMergeKeys: budget })[target]).toEqual(expected);
+    expect(yaml.load(source, { maxTotalMergeKeys: budget + 1 })[target]).toEqual(expected);
+    expect(() => yaml.load(source, { maxTotalMergeKeys: budget - 1 })).toThrow(/maxTotalMergeKeys/u);
   });
 
   it('enforces the default merge budget without a caller override (GHSA-52cp-r559-cp3m)', () => {
@@ -73,49 +70,52 @@ description: |-
     expect(() => yaml.load(source)).toThrow(/maxTotalMergeKeys/u);
   });
 
+  it('honors an explicit higher merge budget and its exact boundary', () => {
+    const source = mergeChain(145);
+    // 2 + 3 + ... + 145 source/key units = 10584.
+    const parsed = yaml.load(source, { maxTotalMergeKeys: 10584 });
+    expect(Object.keys(parsed.a144)).toHaveLength(145);
+    expect(parsed.a144.k0).toBe(0);
+    expect(parsed.a144.k144).toBe(144);
+    expect(() => yaml.load(source, { maxTotalMergeKeys: 10583 })).toThrow(/maxTotalMergeKeys/u);
+  });
+
   it('charges empty merge sources across the entire document (GHSA-2883-xcg3-v3hh)', () => {
     const source = 'sources: &sources [{}, {}]\ntargets:\n  - <<: *sources\n  - <<: *sources\n';
     expect(yaml.load(source, { maxTotalMergeKeys: 4 }).targets).toEqual([{}, {}]);
     expect(() => yaml.load(source, { maxTotalMergeKeys: 3 })).toThrow(/maxTotalMergeKeys/u);
   });
 
+  it.each(emptyMergeFixtures)('charges $name against the global merge budget', ({ source, budget, target, expected }) => {
+    expect(yaml.load(source, { maxTotalMergeKeys: budget })[target]).toEqual(expected);
+    expect(yaml.load(source, { maxTotalMergeKeys: budget + 1 })[target]).toEqual(expected);
+    expect(() => yaml.load(source, { maxTotalMergeKeys: budget - 1 })).toThrow(/maxTotalMergeKeys/u);
+  });
+
   it('preserves ordered maps and rejects duplicate prototype-like keys (GHSA-5p4m-2wfm-xmqj)', () => {
-    const keys = ['__proto__', 'constructor', 'toString', 'ordinary'];
-    const source = `!!omap\n${keys.map((key, index) => `- ${key}: ${index}`).join('\n')}\n`;
+    const keys = orderedMapKeys;
+    const source = orderedMapSource();
     const ordered = yaml.load(source);
     expect(ordered.map(pair => Object.keys(pair)[0])).toEqual(keys);
     for (const [index, key] of keys.entries()) {
       expect(Object.hasOwn(ordered[index], key)).toBe(true);
       expect(ordered[index][key]).toBe(index);
-      expect(() => yaml.load(`${source}- ${key}: duplicate\n`)).toThrow(yaml.YAMLException);
+      expect(() => yaml.load(`${source}- ${JSON.stringify(key)}: duplicate\n`)).toThrow(yaml.YAMLException);
     }
+  });
+
+  it.each([
+    ['a multi-key ordered-map entry', '!!omap\n- { one: 1, two: 2 }\n'],
+    ['a scalar ordered-map entry', '!!omap\n- ordinary\n'],
+    ['an empty ordered-map entry', '!!omap\n- {}\n']
+  ])('rejects %s', (_case, source) => {
+    expect(() => yaml.load(source)).toThrow(yaml.YAMLException);
   });
 
   it('avoids quadratic ordered-map key scans without a timing assertion (GHSA-5p4m-2wfm-xmqj)', () => {
     // Isolate instrumentation from Jest and all other consumers. Count work in
     // the advisory's Array#indexOf key scan, rather than measuring host speed.
-    const child = spawnSync(process.execPath, ['--input-type=commonjs', '-e', `
-      const yaml = require(process.argv[1]);
-      const indexOf = Array.prototype.indexOf;
-      const prefix = 'arcanos_omap_security_';
-      let comparisons = 0;
-      Array.prototype.indexOf = function (value, fromIndex) {
-        if (typeof value === 'string' && value.startsWith(prefix)) comparisons += this.length;
-        return indexOf.call(this, value, fromIndex);
-      };
-      try {
-        const results = [128, 256].map(count => {
-          const source = '!!omap\\n' + Array.from({ length: count },
-            (_, index) => '- ' + prefix + index + ': ' + index).join('\\n') + '\\n';
-          comparisons = 0;
-          const parsed = yaml.load(source);
-          return { count, comparisons, length: parsed.length, last: parsed[count - 1][prefix + (count - 1)] };
-        });
-        process.stdout.write(JSON.stringify(results));
-      } finally {
-        Array.prototype.indexOf = indexOf;
-      }
-    `, modulePath], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+    const child = measureOrderedMapWork(modulePath);
     expect({ status: child.status, error: child.error?.message, stderr: child.stderr }).toEqual({
       status: 0, error: undefined, stderr: ''
     });
