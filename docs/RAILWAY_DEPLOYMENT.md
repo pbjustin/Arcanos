@@ -1505,6 +1505,17 @@ and do not place Railway management credentials in the application. It checks
 ownership before arming, waits only until the original deadline, rechecks the
 complete target, deletes the exact owned services first, verifies their absence,
 then deletes only the attested global volume IDs and verifies resource absence.
+Railway can retain a detached volume for 48 hours after accepting its deletion.
+The cleanup client reads each volume instance's `deletedAt`,
+`isPendingDeletion`, and `state`; `READY` alone does not prove deletion. When
+all remaining volumes are exact receipt-bound, detached, and explicitly queued,
+it returns `VOLUMES_PENDING_DELETION` with their IDs and deletion timestamps.
+This terminal receipt keeps `resourceAbsenceVerified: false`, leaves the project
+undeleted, and does not claim storage charges have ended. A later cleanup or
+watchdog invocation skips already queued volumes instead of restarting their
+retention period. Missing, contradictory, foreign, or still-attached pending
+volume evidence fails closed. After physical volume absence is independently
+observed, the same receipt can authorize the remaining project retirement.
 Only after services, service instances, global volumes, volume instances and
 buckets are empty does it schedule project deletion. Each absence wait is bounded
 to 60 seconds. Railway can retain scheduled project metadata for 48 hours;

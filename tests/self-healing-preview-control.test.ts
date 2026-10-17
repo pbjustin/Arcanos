@@ -254,6 +254,72 @@ describe('isolated self-healing preview admission and process-local controls', (
     expect(JSON.stringify(result)).not.toContain('private-identity');
   });
 
+  it.each(['health', 'redis'])('preserves applied policy and restoration receipts when %s inspection is unavailable', async unavailable => {
+    useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
+    const failRead = () => {
+      const error = new Error('test-private-inspection-error-and-credential');
+      if (unavailable === 'health') workerHealth.mockRejectedValueOnce(error);
+      else readRedisClientId.mockRejectedValueOnce(error);
+    };
+    for (const [command, enabled] of [['containment_predictive_on', true], ['policy_restore', false]] as const) {
+      failRead();
+      const result = await call(command);
+      expect(result.status).toBe(200);
+      expect(result.body.policy).toMatchObject({ selfImproveEnabled: enabled });
+      expect(result.body.receipts).toEqual(expect.arrayContaining([expect.objectContaining({ event: `command:${command}` })]));
+      expect(result.body.containment).toMatchObject(unavailable === 'health'
+        ? { health: null, ledgers: expect.any(Array) }
+        : { health: expect.objectContaining({ overallStatus: 'healthy' }), ledgers: null });
+      expect(JSON.stringify(result.body)).not.toContain('test-private-inspection-error-and-credential');
+    }
+    expect(workerHealth).toHaveBeenCalledTimes(2);
+    expect(readRedisClientId).toHaveBeenCalledTimes(2);
+    const recovered = await call();
+    expect(recovered.status).toBe(200);
+    expect(recovered.body.containment).toMatchObject({ health: expect.objectContaining({ overallStatus: 'healthy' }), ledgers: expect.any(Array) });
+    expect(providerProbe).not.toHaveBeenCalled(); expect(predictiveDecision).not.toHaveBeenCalled();
+    expect(remoteRepair).not.toHaveBeenCalled();
+  });
+
+  it.each(['health', 'redis'])('acknowledges actual cancellation and credential restoration during a %s inspection failure', async unavailable => {
+    useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
+    const originalDecision = predictiveDecision.getMockImplementation()!;
+    let requestSignal: AbortSignal | undefined;
+    predictiveDecision.mockImplementationOnce(async params => {
+      requestSignal = getRequestAbortSignal();
+      await new Promise<void>(resolve => requestSignal?.addEventListener('abort', () => resolve(), { once: true }));
+      return originalDecision(params);
+    });
+    await call('containment_credential_rotate');
+    await call('containment_diagnose');
+    await waitFor(() => requestSignal !== undefined);
+    for (const command of ['containment_cancel', 'containment_credential_restore']) {
+      const error = new Error('test-private-inspection-cancel-secret');
+      if (unavailable === 'health') workerHealth.mockRejectedValueOnce(error);
+      else readRedisClientId.mockRejectedValueOnce(error);
+      const result = await call(command);
+      expect(result.status).toBe(200);
+      expect(result.body.receipts).toEqual(expect.arrayContaining([expect.objectContaining({ event: `command:${command}` })]));
+      expect(result.body.containment).toMatchObject(unavailable === 'health' ? { health: null } : { ledgers: null });
+      expect(JSON.stringify(result.body)).not.toContain('test-private-inspection-cancel-secret');
+      expect(requestSignal?.aborted).toBe(true);
+    }
+    expect(process.env.OPENAI_API_KEY).toBe(SELF_HEAL_PREVIEW_OPENAI_FIXTURE_SDK_KEY);
+    expect(syncProvider).toHaveBeenLastCalledWith({ forceReload: true, reason: 'self-heal.preview.credential-rotation' });
+    expect(remoteRepair).not.toHaveBeenCalled();
+  });
+
+  it('returns both unavailable projections without substituting healthy state when both reads fail', async () => {
+    useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
+    workerHealth.mockRejectedValueOnce(new Error('test-private-health-error'));
+    readRedisClientId.mockRejectedValueOnce(new Error('test-private-redis-error'));
+    const result = await call();
+    expect(result.status).toBe(200);
+    expect(result.body.containment).toMatchObject({ health: null, ledgers: null });
+    expect(workerHealth).toHaveBeenCalledTimes(1); expect(readRedisClientId).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(result.body)).not.toMatch(/test-private-(?:health|redis)-error/u);
+  });
+
   it.each(['worker', 'web'])('invokes the real service entry points with manual inference and no repair authorization from %s', async role => {
     process.env.ARCANOS_PROCESS_KIND = role;
     if (role === 'web') process.env.RAILWAY_SERVICE_ID = uid(6);

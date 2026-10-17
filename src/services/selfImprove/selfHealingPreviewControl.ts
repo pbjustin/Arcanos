@@ -346,13 +346,15 @@ export async function installSelfHealingPreviewControl(
   const inspectContainment = async () => {
     collectContainmentEvidence();
     const { getWorkerControlHealth } = await import('@services/workerControlService.js');
-    const health = await getWorkerControlHealth();
+    // Control effects can already be applied when diagnostics run. Preserve the
+    // acknowledgement while keeping unavailable evidence explicit and unusable.
+    const health = await getWorkerControlHealth().catch(() => null);
     const workerIds = Array.from({ length: 8 }, (_, index) => `self-heal-preview-${profile.runId}-slot-${index + 1}`);
     const scope = createHash('sha256').update(JSON.stringify([profile.projectId, profile.environmentId])).digest('hex');
     const keys = ['diagnosis', 'provider_probe'].map(purpose => `arcanos:self-heal:inference:v1:${scope}:${purpose}`);
     const ledgerResult = await executeRedisOperation(client => client.eval(
       "local function bounded(k) if redis.call('STRLEN',k)>16384 then return 'oversized' end return redis.call('GET',k) or '' end; local now=redis.call('TIME'); return {bounded(KEYS[1]),bounded(KEYS[2]),redis.call('PTTL',KEYS[1]),redis.call('PTTL',KEYS[2]),now[1],now[2]}",
-      { keys, arguments: [] }), { operation: 'diagnostics.metrics.read', timeoutMs: 500 });
+      { keys, arguments: [] }), { operation: 'diagnostics.metrics.read', timeoutMs: 500 }).catch(() => null);
     const ledgers = Array.isArray(ledgerResult) && ledgerResult.length === 6 ? keys.map((_key, index) => {
       const raw = ledgerResult[index];
       if (typeof raw !== 'string' || Buffer.byteLength(raw) > 16_384) return { purpose: index === 0 ? 'diagnosis' : 'provider_probe', versionRecognized: false };
@@ -370,7 +372,7 @@ export async function installSelfHealingPreviewControl(
     }) : null;
     return { evidence: 'production_health_telemetry_and_redis', startedAt: containmentStartedAt,
       counters: { ...containmentEvidence }, run: containmentRun,
-      health: { overallStatus: health.overallStatus, queue: health.queueSummary === null ? null : {
+      health: health === null ? null : { overallStatus: health.overallStatus, queue: health.queueSummary === null ? null : {
         pending: health.queueSummary.pending, running: health.queueSummary.running,
         stalledRunning: health.queueSummary.stalledRunning, oldestPendingJobAgeMs: health.queueSummary.oldestPendingJobAgeMs },
       unexpectedWorkerCount: health.workers.filter(worker => !workerIds.includes(worker.workerId)).length,

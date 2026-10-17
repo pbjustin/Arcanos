@@ -63,6 +63,7 @@ describe('PR1557 fixed hosted acceptance cases', () => {
       degradationIncidents: 0, busySlots: running ? 1 : 0, idleSlots: running ? 7 : 8 });
   });
   it.each([
+    state => { state.containment.health = null; },
     state => { state.containment.counters.complete = false; },
     state => { state.containment.counters.incidentEvaluations = 1; },
     state => { state.containment.counters.providerAttempts = 1; },
@@ -415,6 +416,19 @@ describe('PR1557 fixed hosted acceptance cases', () => {
     const result = await runSelfHealInferenceAcceptanceCase('uncertain_restart', manifest(), env);
     expect(result).toMatchObject({ classification: 'BLOCKED', errorCode: 'SELF_HEAL_ACCEPTANCE_INFERENCE_UNCERTAIN_DIAGNOSIS_NOT_ADMITTED' });
     expect(env.ledgers.get('diagnosis').stateSha256).toBe('retained');
+    expect(env.calls.some(call => call[0] === 'restart')).toBe(false);
+  });
+  it.each(['health', 'ledgers'])('rejects unavailable%s telemetry as diagnosis proof even when commands acknowledge effects', async field => {
+    const env = orchestrationHarness(); const remote = env.transport.remote;
+    env.transport.remote = async (role, argv) => {
+      const receipt = await remote(role, argv);
+      if (receipt.observation?.containment) receipt.observation.containment[field] = null;
+      return receipt;
+    };
+    const result = await runSelfHealInferenceAcceptanceCase('diagnosis_once', manifest(), env);
+    expect(['FAILED', 'BLOCKED']).toContain(result.classification);
+    expect(result.proof).toBeNull();
+    expect(env.calls).toContainEqual(['worker', 'command', 'policy_restore']);
     expect(env.calls.some(call => call[0] === 'restart')).toBe(false);
   });
   it('retains the same reservation through cancellation, late work and restart without claiming synthetic evidence as hosted', async () => {
