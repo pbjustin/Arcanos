@@ -506,6 +506,7 @@ const SELF_HEAL_INFERENCE_PROFILE = 'worker-inference-containment-v1';
 const SELF_HEAL_INFERENCE_FAULTS = Object.freeze({
   models_timeout_next: { endpoint: 'models', kind: 'timeout', delayMs: 5000 },
   inference_hold_next: { endpoint: 'inference', kind: 'hold', delayMs: 30_000 },
+  inference_late_completion_next: { endpoint: 'inference', kind: 'late_completion', delayMs: 40_000 },
   inference_cancel_next: { endpoint: 'inference', kind: 'cancel', delayMs: 0 },
   models_auth_failure_next: { endpoint: 'models', kind: 'status', status: 401 },
   inference_auth_failure_next: { endpoint: 'inference', kind: 'status', status: 401 },
@@ -729,7 +730,7 @@ export async function startSelfHealPreviewOpenAIFixture(options = {}) {
     nextFault: state.nextFault ? { ...state.nextFault } : null,
     receipts: state.receipts.map(receipt => ({ ...receipt })),
     limits: config.profile === SELF_HEAL_INFERENCE_PROFILE
-      ? { ...SELF_HEAL_PREVIEW_OPENAI_FIXTURE_LIMITS, maxDelayMs: 30_000 }
+      ? { ...SELF_HEAL_PREVIEW_OPENAI_FIXTURE_LIMITS, maxDelayMs: 30_000, maxSyntheticWorkMs: 40_000 }
       : SELF_HEAL_PREVIEW_OPENAI_FIXTURE_LIMITS,
   });
   const server = createServer(async (request, response) => {
@@ -788,6 +789,9 @@ export async function startSelfHealPreviewOpenAIFixture(options = {}) {
         if (state.inFlight || state.nextFault) {
           writeOpenAIError(response, 409, 'fixture_fault_already_active'); return;
         }
+        if (inferenceFault.kind === 'late_completion' && now() + 45_000 >= config.expiresAt) {
+          writeOpenAIError(response, 409, 'fixture_work_exceeds_lease'); return;
+        }
         state.nextFault = { ...inferenceFault, remaining: 1 };
         writeJson(response, 200, inspect()); return;
       }
@@ -839,6 +843,7 @@ export async function startSelfHealPreviewOpenAIFixture(options = {}) {
     response.setHeader('x-request-id', requestId);
     let settled = false;
     let delayTimer;
+    let lateWorkAccepted = false;
     const finish = (outcome, code, body) => {
       if (settled) return;
       settled = true;
@@ -857,7 +862,15 @@ export async function startSelfHealPreviewOpenAIFixture(options = {}) {
       if (outcome === 'client_closed') state.clientClosed += 1;
       if (body && !response.destroyed) writeJson(response, code, body);
     };
-    const onClose = () => finish('client_closed');
+    const onClose = () => {
+      if (!lateWorkAccepted) { finish('client_closed'); return; }
+      if (receipt.clientClosedAt === null) {
+        receipt.clientClosedAt = now();
+        state.clientClosed += 1;
+      }
+      // An accepted synthetic task can outlive its HTTP client. Its finite
+      // server-owned timer, rather than the socket, releases the fixture slot.
+    };
     response.once('close', onClose);
     const reject = (code, errorCode) => finish('rejected', code, { error: {
       code: errorCode, message: 'The isolated preview fixture rejected this request.',
@@ -915,6 +928,37 @@ export async function startSelfHealPreviewOpenAIFixture(options = {}) {
       if (!fault || (fault.endpoint && fault.endpoint !== (models ? 'models' : 'inference'))) { success(); return; }
       state.nextFault = fault.remaining > 1 ? { ...fault, remaining: fault.remaining - 1 } : null;
       receipt.fault = fault.kind;
+      if (fault.kind === 'late_completion') {
+        if (now() + 45_000 >= config.expiresAt) { reject(409, 'fixture_work_exceeds_lease'); return; }
+        lateWorkAccepted = true;
+        const workStartedAt = now();
+        Object.assign(receipt, { providerWorkKind: 'bounded_synthetic_completion',
+          providerWorkStartedAt: workStartedAt, providerWorkDeadlineAt: workStartedAt + fault.delayMs,
+          clientClosedAt: null, providerWorkCompletedAt: null, providerWorkCancelledAt: null,
+          responseDelivered: false });
+        const stopWork = () => {
+          if (settled) return;
+          receipt.providerWorkCancelledAt = now();
+          finish('synthetic_work_cancelled', 503, { error: { code: 'fixture_stopped',
+            message: 'The isolated preview fixture stopped before synthetic work completed.', type: 'server_error' } });
+        };
+        // Release and set_healthy cannot shorten accepted work or erase its
+        // terminal evidence. Shutdown/lease expiry records cancellation instead.
+        active = { release: () => {}, stop: stopWork };
+        delayTimer = setTimeout(() => {
+          if (settled) return;
+          if (!state.ready || now() >= config.expiresAt) { stopWork(); return; }
+          receipt.providerWorkCompletedAt = now();
+          if (response.destroyed || receipt.clientClosedAt !== null) {
+            onClose();
+            finish('synthetic_work_completed_after_client_close');
+          } else {
+            receipt.responseDelivered = true;
+            success();
+          }
+        }, fault.delayMs);
+        return;
+      }
       if (fault.kind === 'status') {
         finish('synthetic_failure', fault.status, { error: {
           code: `fixture_provider_${fault.status}`, message: 'The isolated preview provider returned a synthetic failure.',

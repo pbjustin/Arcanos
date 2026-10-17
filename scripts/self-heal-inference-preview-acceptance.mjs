@@ -15,9 +15,11 @@ import {
 
 export const SELF_HEAL_INFERENCE_ACCEPTANCE_CASES = Object.freeze([
   'idle_off', 'idle_on', 'running_off', 'running_on', 'diagnosis_once',
-  'probe_rotation', 'metadata_recovery', 'uncertain_restart',
+  'probe_rotation', 'metadata_recovery', 'uncertain_restart', 'late_completion',
 ]);
 const CLEANUP_RESERVE_MS = 10 * 60_000;
+// The fixed predictive path uses Trinity's direct-answer stage, whose deadline precedes the 30-second SDK cap.
+const PREDICTIVE_CORE_DEADLINE_MS = 12_000;
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const sleep = ms => new Promise(done => setTimeout(done, ms));
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -102,6 +104,39 @@ export function attestSelfHealInferenceQuietWindow(before, after, beforeProvider
     busySlots: running ? 1 : 0, idleSlots: running ? 7 : 8 };
 }
 
+/** Prove finite provider work finished after operator cancellation without claiming delivery or billing. */
+export function attestSelfHealInferenceLateCompletion(request, run, cancellationAt, overlappingAt) {
+  const runStartedAt = Date.parse(run?.startedAt);
+  const completedAt = Date.parse(run?.completedAt);
+  requireProof(request?.endpoint === 'responses' && request.purpose === 'predictive-decision'
+    && request.credential === 'rotated' && request.fault === 'late_completion'
+    && request.providerWorkKind === 'bounded_synthetic_completion'
+    && request.outcome === 'synthetic_work_completed_after_client_close'
+    && request.responseDelivered === false && request.providerWorkCancelledAt === null
+    && Number.isInteger(request.maxOutputTokens) && request.maxOutputTokens > 0 && request.maxOutputTokens <= 512,
+  'LATE_WORK_TERMINAL_RECEIPT_INVALID');
+  for (const value of [request.startedAt, request.providerWorkStartedAt, request.providerWorkDeadlineAt,
+    request.clientClosedAt, request.providerWorkCompletedAt, request.endedAt, cancellationAt, runStartedAt, completedAt, overlappingAt]) {
+    requireProof(Number.isSafeInteger(value), 'LATE_WORK_TIMESTAMPS_INVALID');
+  }
+  requireProof(request.startedAt <= request.providerWorkStartedAt
+    && request.providerWorkDeadlineAt === request.providerWorkStartedAt + 40_000
+    && request.providerWorkStartedAt <= cancellationAt && cancellationAt <= request.clientClosedAt
+    && cancellationAt <= completedAt && request.clientClosedAt < request.providerWorkCompletedAt
+    && completedAt < request.providerWorkCompletedAt && request.providerWorkCompletedAt >= request.providerWorkDeadlineAt
+    && request.endedAt >= request.providerWorkCompletedAt
+    && overlappingAt >= cancellationAt && overlappingAt < request.providerWorkCompletedAt, 'LATE_WORK_ORDER_NOT_PROVEN');
+  // Run entry is earlier than stage dispatch, so this conservatively excludes Core's automatic timeout.
+  if (cancellationAt >= runStartedAt + PREDICTIVE_CORE_DEADLINE_MS
+    || request.clientClosedAt >= runStartedAt + PREDICTIVE_CORE_DEADLINE_MS) block('EARLY_OPERATOR_CANCELLATION_NOT_PROVEN');
+  requireProof(['completed', 'failed'].includes(run?.status) && run.inferenceAuthorization === 'manual'
+    && run.executionAuthorized === false && (!run.audit || run.audit.attempted === false), 'LATE_WORK_EXECUTION_NOT_CONTAINED');
+  return { requestId: request.requestId, providerWorkStartedAt: request.providerWorkStartedAt,
+    cancellationAt, clientClosedAt: request.clientClosedAt, containmentRunCompletedAt: completedAt,
+    providerWorkCompletedAt: request.providerWorkCompletedAt, responseDelivered: false,
+    workEvidence: 'bounded_synthetic_completion_after_client_cancellation', maxOutputTokens: request.maxOutputTokens };
+}
+
 /** No scenario resets a budget, rejection history or unresolved reservation. */
 export async function runSelfHealInferenceAcceptanceCase(scenario, manifest, options = {}) {
   if (!SELF_HEAL_INFERENCE_ACCEPTANCE_CASES.includes(scenario)) block('SCENARIO_INVALID');
@@ -146,8 +181,11 @@ export async function runSelfHealInferenceAcceptanceCase(scenario, manifest, opt
   };
   const operation = async (name, role = 'worker') => {
     const initial = await command(name, role); const startedAt = initial?.containment?.run?.startedAt;
-    if (!startedAt) block('OPERATION_NOT_STARTED');
+    const expected = { containment_diagnose: 'diagnosis', containment_probe: 'provider_probe', containment_tick_batch: 'tick_batch' }[name];
+    if (!startedAt || !expected || initial.containment.run.operation !== expected) block('OPERATION_NOT_STARTED');
+    if (['completed', 'failed'].includes(initial.containment.run.status)) return initial;
     return poll(() => inspect(role), value => value.containment?.run?.startedAt === startedAt
+      && value.containment.run.operation === expected
       && ['completed', 'failed'].includes(value.containment.run.status), 45_000);
   };
   const dependency = async () => {
@@ -200,14 +238,21 @@ export async function runSelfHealInferenceAcceptanceCase(scenario, manifest, opt
       await remote('worker', ['fenced-job', 'create', slot, '1']);
       const before = await poll(inspect, value => value.containment?.health?.queue?.running === 1
         && value.containment.health.queue.pending === 0 && value.containment.health.workers.filter(worker => worker.busy).length === 1, 15_000, 250);
-      const beforeProvider = await provider(); const beforeWebProvider = await provider('web');
+      const [beforeProvider, beforeWebProvider] = await Promise.all([provider(), provider('web')]);
       requireProof(beforeProvider.inFlight !== null && paid(beforeProvider).at(-1)?.fault === 'hold', 'RUNNING_PROVIDER_NOT_HELD');
       await emit('baseline', before);
       const after = await operation('containment_tick_batch');
       requireProof(after.containment.run.status === 'completed' && after.containment.run.ticksCompleted === 20, 'TICK_BATCH_INCOMPLETE');
-      proof = attestSelfHealInferenceQuietWindow(before, after, beforeProvider, await provider(), { running: true, predictiveEnabled: scenario === 'running_on' });
+      // Capture all twenty evaluations while the job is busy, then release within the existing provider deadline.
+      const afterProvider = inspection(await remote('worker', ['provider', 'release']));
+      const terminal = afterProvider.receipts?.find(receipt => receipt.requestId === beforeProvider.inFlight);
+      requireProof(afterProvider.inFlight === null && terminal?.outcome === 'completed'
+        && Number.isFinite(terminal.endedAt), 'RUNNING_PROVIDER_COMPLETION_NOT_PROVEN');
+      const observedAt = after.policy?.observedAt ?? after.containment.run.completedAt;
+      if (observedAt !== undefined) requireProof(Number.isFinite(Date.parse(observedAt))
+        && Date.parse(observedAt) <= terminal.endedAt, 'RUNNING_OBSERVATION_AFTER_PROVIDER_COMPLETION');
+      proof = attestSelfHealInferenceQuietWindow(before, after, beforeProvider, afterProvider, { running: true, predictiveEnabled: scenario === 'running_on' });
       requireProof(sameWireCount(beforeWebProvider, await provider('web')), 'UNEXPECTED_WEB_PROVIDER_REQUEST');
-      await remote('worker', ['provider', 'release']);
       const completed = await poll(() => remote('worker', ['fenced-job', 'inspect', slot, '1']), value => value.fencedJob?.job?.completionVerified === true, 60_000);
       requireProof(completed.fencedJob.job.matchingClaimEvents === 1 && completed.fencedJob.job.matchingCompletionEvents === 1, 'ORDINARY_JOB_COMPLETION_NOT_PROVEN');
       proof.ordinaryJobCompletedOnce = true;
@@ -221,6 +266,10 @@ export async function runSelfHealInferenceAcceptanceCase(scenario, manifest, opt
       await remote('worker', ['fenced-job', 'create', 'I03', '1']);
       await dependency();
       await poll(inspect, value => value.containment.health.queue?.pending === 1, 10_000);
+      // Refresh before the paid request starts; leave the twelve-second Core window for overlap and release.
+      const refreshed = await command('containment_dependency_failure');
+      requireProof(refreshed.containment.health.queue?.pending === 1
+        && refreshed.containment.health.workers.some(worker => worker.claimAcceptance === 'dependency_failure'), 'OVERLAPPING_INCIDENT_NOT_PROVEN');
       await remote('worker', ['provider', 'inference_hold_next']);
       const started = await command('containment_diagnose');
       const [heldProvider, held] = await Promise.all([
@@ -230,10 +279,8 @@ export async function runSelfHealInferenceAcceptanceCase(scenario, manifest, opt
       ]);
       const heldState = ledger(held, 'diagnosis');
       requireProof(heldState?.inFlight === true && heldState.ttlMs === -1, 'IN_FLIGHT_RESERVATION_NOT_PROVEN');
-      // Keep the actual pending incident alive while the independent process attempts admission.
-      const refreshed = await command('containment_dependency_failure');
-      requireProof(refreshed.containment.health.queue?.pending === 1
-        && refreshed.containment.health.workers.some(worker => worker.claimAcceptance === 'dependency_failure'), 'OVERLAPPING_INCIDENT_NOT_PROVEN');
+      requireProof(held.containment.health.queue?.pending === 1
+        && held.containment.health.workers.some(worker => worker.claimAcceptance === 'dependency_failure'), 'OVERLAPPING_INCIDENT_NOT_PROVEN');
       const overlapping = await operation('containment_diagnose', 'web');
       requireProof(overlapping.containment.run?.audit?.advisor === 'rules_fallback_v1'
         && overlapping.containment.run.audit.inferenceReason === 'in_flight'
@@ -310,6 +357,107 @@ export async function runSelfHealInferenceAcceptanceCase(scenario, manifest, opt
       proof = { unpaidFailureReleasedReservation: true, revokedIdentityRetained: scenario === 'probe_rotation',
         authorizedRecoverySucceeded: true, inferenceRequests: 1, probeAttempts: 2, hourlyBudgetDeniedAfterCooldown: true,
         maxOutputTokens: 16, crossProcessDenied: true };
+    } else if (scenario === 'late_completion') {
+      if (Date.parse(manifest.receipt.expiresAt) - now() < CLEANUP_RESERVE_MS + 5 * 60_000) block('INSUFFICIENT_LEASE_FOR_LATE_WORK');
+      await stopped(); await command('containment_predictive_on'); await command('containment_credential_rotate');
+      await command('coordinator_stop', 'web'); await command('policy_predictive_no_execute', 'web');
+      await command('containment_credential_rotate', 'web');
+      const before = await inspect(); const beforeWebState = await inspect('web');
+      const beforeProvider = await provider(); const beforeWeb = await provider('web');
+      if (ledger(before, 'diagnosis')?.inFlight || ledger(before, 'diagnosis')?.attemptCount > 0) block('FRESH_DIAGNOSIS_SCOPE_REQUIRED');
+      requireProof(before.containment.health.queue?.pending === 0 && before.containment.health.queue.running === 0
+        && before.containment.health.queue.stalledRunning === 0 && beforeProvider.inFlight === null
+        && beforeProvider.nextFault === null && beforeWeb.inFlight === null && beforeWeb.nextFault === null
+        && [before, beforeWebState].every(state => state.containment.run?.status !== 'running'
+          && state.consumerRun?.status !== 'running' && state.predictiveRun?.status !== 'running'
+          && state.coordinator.loopRunning === false && state.coordinator.inFlight === false), 'LATE_WORK_BASELINE_NOT_IDLE');
+      const noRepairs = (state, initial = before) => requireProof(initial.containment.counters.complete === true
+        && state.containment.counters.complete === true
+        && Number.isSafeInteger(initial.containment.counters.repairAttempts)
+        && Number.isSafeInteger(initial.containment.counters.actionsExecuted)
+        && state.containment.counters.repairAttempts === initial.containment.counters.repairAttempts
+        && state.containment.counters.actionsExecuted === initial.containment.counters.actionsExecuted, 'LATE_WORK_REPAIR_EFFECT');
+      await dependency();
+      const absent = await remote('worker', ['fenced-job', 'inspect', 'I03', '1']);
+      if (absent.fencedJob?.job !== null) block('LATE_WORK_PENDING_JOB_ALREADY_USED');
+      await remote('worker', ['fenced-job', 'create', 'I03', '1']);
+      await dependency(); await poll(inspect, value => value.containment.health.queue?.pending === 1, 10_000);
+      await remote('worker', ['provider', 'inference_late_completion_next']);
+      const started = await command('containment_diagnose');
+      const startedAt = started.containment.run?.startedAt;
+      requireProof(typeof startedAt === 'string' && started.containment.run?.operation === 'diagnosis'
+        && started.containment.run.processInstanceId === before.processInstanceId, 'LATE_WORK_RUN_NOT_BOUND');
+      const [heldProvider, held] = await Promise.all([
+        poll(provider, value => value.inFlight !== null && paid(value).at(-1)?.fault === 'late_completion', 15_000, 250),
+        poll(inspect, value => ledger(value, 'diagnosis')?.inFlight === true, 15_000, 250),
+      ]);
+      const requestId = heldProvider.inFlight; const heldState = ledger(held, 'diagnosis');
+      requireProof(heldState?.versionRecognized === true && heldState.inFlight === true && heldState.ttlMs === -1
+        && /^[0-9a-f]{64}$/u.test(heldState.stateSha256), 'LATE_WORK_RESERVATION_NOT_PROVEN');
+      const receiptSequence = Math.max(0, ...(held.receipts ?? []).map(value => value.sequence));
+      const cancelled = await command('containment_cancel');
+      const cancelReceipt = cancelled.receipts?.find(value => value.sequence > receiptSequence && value.event === 'command:containment_cancel');
+      const cancellationAt = Date.parse(cancelReceipt?.at);
+      requireProof(Number.isFinite(cancellationAt), 'LATE_WORK_CANCELLATION_RECEIPT_MISSING');
+      const ended = await poll(inspect, value => value.containment.run?.startedAt === startedAt
+        && ['completed', 'failed'].includes(value.containment.run.status), 15_000, 250);
+      requireProof(ended.processInstanceId === before.processInstanceId
+        && ended.containment.run.processInstanceId === before.processInstanceId
+        && ledger(ended, 'diagnosis')?.stateSha256 === heldState.stateSha256, 'LATE_WORK_HOLD_CHANGED');
+      noRepairs(ended);
+      const stillActive = await provider();
+      requireProof(stillActive.inFlight === requestId && Number.isSafeInteger(paid(stillActive).at(-1)?.clientClosedAt),
+        'LATE_WORK_AFTER_CLOSE_NOT_OBSERVED');
+      const refreshed = await command('containment_dependency_failure');
+      requireProof(refreshed.containment.health.queue?.pending === 1
+        && refreshed.containment.health.workers.some(worker => worker.claimAcceptance === 'dependency_failure'), 'LATE_WORK_INCIDENT_NOT_LIVE');
+      const overlapping = await operation('containment_diagnose', 'web');
+      requireProof(overlapping.containment.run?.audit?.inferenceReason === 'in_flight'
+        && overlapping.containment.run.audit.attempted === false
+        && ledger(overlapping, 'diagnosis')?.stateSha256 === heldState.stateSha256, 'LATE_WORK_CROSS_PROCESS_HOLD_NOT_PROVEN');
+      noRepairs(overlapping, beforeWebState);
+      const workStartedAt = paid(heldProvider).find(receipt => receipt.requestId === requestId)?.providerWorkStartedAt;
+      requireProof(Number.isSafeInteger(workStartedAt), 'LATE_WORK_START_NOT_PROVEN');
+      const terminalProvider = await poll(provider, value => value.inFlight === null
+        && value.receipts.some(receipt => receipt.requestId === requestId && Number.isSafeInteger(receipt.providerWorkCompletedAt)),
+      Math.max(1, Math.min(45_000, workStartedAt + 45_000 - now())), 1000);
+      const requests = paid(terminalProvider).slice(paid(beforeProvider).length);
+      requireProof(requests.length === 1 && requests[0].requestId === requestId
+        && requests[0].providerWorkStartedAt >= Date.parse(startedAt), 'LATE_WORK_SINGLE_REQUEST_NOT_PROVEN');
+      const workProof = attestSelfHealInferenceLateCompletion(requests[0], ended.containment.run,
+        cancellationAt, Date.parse(overlapping.containment.run.audit.timestamp));
+      const terminal = await inspect(); noRepairs(terminal);
+      requireProof(ledger(terminal, 'diagnosis')?.stateSha256 === heldState.stateSha256
+        && ledger(terminal, 'diagnosis')?.inFlight === true && ledger(terminal, 'diagnosis')?.ttlMs === -1,
+      'LATE_WORK_TERMINAL_HOLD_CHANGED');
+      requireProof(terminalProvider.providerWireRequests - beforeProvider.providerWireRequests
+        === terminalProvider.providerRequests - beforeProvider.providerRequests
+        && sameWireCount(beforeWeb, await provider('web')), 'LATE_WORK_HIDDEN_PROVIDER_REQUEST');
+      await command('containment_dependency_restore');
+      const completed = await poll(() => remote('worker', ['fenced-job', 'inspect', 'I03', '1']), value => value.fencedJob?.job?.completionVerified === true, 60_000);
+      requireProof(completed.fencedJob.job.literalObserved === true && completed.fencedJob.job.matchingClaimEvents === 1
+        && completed.fencedJob.job.matchingCompletionEvents === 1, 'LATE_WORK_PENDING_JOB_RECOVERY_NOT_PROVEN');
+      // Restart only after the independent fixture proves terminal work, never to manufacture completion.
+      await emit('restart', await transport.restart('worker'));
+      const restarted = await poll(inspect, value => value.ready === true && value.processInstanceId !== before.processInstanceId, 120_000, 2000, true);
+      requireProof(ledger(restarted, 'diagnosis')?.stateSha256 === heldState.stateSha256
+        && ledger(restarted, 'diagnosis')?.inFlight === true && ledger(restarted, 'diagnosis')?.ttlMs === -1,
+      'LATE_WORK_RESERVATION_LOST_ON_RESTART');
+      await stopped(); await command('containment_predictive_on'); await command('containment_credential_rotate');
+      await dependency(); const restartProvider = await provider();
+      requireProof(paid(restartProvider).length === 0, 'LATE_WORK_RESTART_PROVIDER_REQUEST');
+      const denied = await operation('containment_diagnose');
+      requireProof(denied.containment.run?.audit?.inferenceReason === 'in_flight'
+        && denied.containment.run.audit.attempted === false
+        && ledger(denied, 'diagnosis')?.stateSha256 === heldState.stateSha256
+        && ledger(denied, 'diagnosis')?.inFlight === true && ledger(denied, 'diagnosis')?.ttlMs === -1
+        && sameWireCount(restartProvider, await provider()) && sameWireCount(beforeWeb, await provider('web')),
+      'LATE_WORK_RESTART_DUPLICATE_NOT_DENIED');
+      noRepairs(denied, restarted); noRepairs(await inspect('web'), beforeWebState);
+      proof = { ...workProof, acceptedInferenceRequests: 1, explicitOperatorCancellation: true,
+        crossProcessDeniedWhileWorkActive: true, reservationSurvivedLateCompletion: true,
+        reservationSurvivedRestart: true, reservationTtlMs: -1, duplicateDenied: true, repairAttempts: 0,
+        pendingJobRecovered: true, operatorReconciliation: 'REQUIRED_NOT_PERFORMED', automaticReservationDeletion: false };
     } else if (scenario === 'uncertain_restart') {
       await stopped(); await command('containment_predictive_on'); await command('containment_credential_rotate');
       await dependency();
@@ -362,6 +510,11 @@ export async function runSelfHealInferenceAcceptanceCase(scenario, manifest, opt
     };
     for (const argv of [['command', 'containment_cancel'], ['provider', 'release'], ['provider', 'set_healthy'],
       ['command', 'containment_dependency_restore'], ['command', 'policy_restore']]) await restore('worker', argv);
+    if (scenario === 'late_completion') {
+      // Release cannot accelerate accepted synthetic work; do not attest restoration until its finite timer drains.
+      try { await poll(provider, value => value.inFlight === null && value.nextFault === null, 45_000); }
+      catch { failures.push('worker:late-provider-work-drain'); }
+    }
     if (webTouched) { await restore('web', ['command', 'containment_cancel']); await restore('web', ['command', 'policy_restore']); }
     for (const role of webTouched ? ['worker', 'web'] : ['worker']) {
       let drained = false;
@@ -373,6 +526,7 @@ export async function runSelfHealInferenceAcceptanceCase(scenario, manifest, opt
       if (!drained) failures.push(`${role}:drain`);
     }
     await restore('worker', ['command', 'containment_credential_restore']);
+    if (scenario === 'late_completion' && webTouched) await restore('web', ['command', 'containment_credential_restore']);
     await restore('worker', ['command', 'coordinator_start']);
     try {
       const final = restoredState;

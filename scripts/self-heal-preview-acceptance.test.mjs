@@ -384,7 +384,7 @@ test('PR 1557 containment transport admits only the exact profile, roles and fix
     'containment_credential_rotate', 'containment_credential_restore'];
   const faults = ['models_timeout_next', 'inference_hold_next', 'inference_cancel_next', 'models_auth_failure_next',
     'inference_auth_failure_next', 'models_forbidden_next', 'inference_forbidden_next', 'inference_rate_limit_next',
-    'inference_unavailable_next'];
+    'inference_unavailable_next', 'inference_late_completion_next'];
   const original = cliFixture(); const containment = cliFixture(1557);
   for (const command of [...workerOnly, ...shared]) {
     await assert.rejects(original.transport.remote('worker', ['command', command]), /OPERATION_INVALID/u);

@@ -25,7 +25,7 @@ const INFERENCE_COMMANDS = new Set(['containment_predictive_on', 'containment_pr
   'containment_dependency_failure', 'containment_dependency_restore']);
 const SHARED_INFERENCE_COMMANDS = new Set(['containment_diagnose', 'containment_probe', 'containment_cancel',
   'containment_credential_rotate', 'containment_credential_restore']);
-const INFERENCE_PROVIDER = new Set(['models_timeout_next', 'inference_hold_next', 'inference_cancel_next',
+const INFERENCE_PROVIDER = new Set(['models_timeout_next', 'inference_hold_next', 'inference_cancel_next', 'inference_late_completion_next',
   'models_auth_failure_next', 'inference_auth_failure_next', 'models_forbidden_next', 'inference_forbidden_next',
   'inference_rate_limit_next', 'inference_unavailable_next']);
 const INFERENCE_JOB_CASES = new Set(['I01', 'I02', 'I03']);

@@ -1210,6 +1210,38 @@ this runner. Local injected transports and clocks produce `SYNTHETIC_ONLY`
 results; only the attested Railway transport can produce hosted `VERIFIED`
 receipts. Neither classification establishes production acceptance.
 
+The separate `late_completion` case requires a fresh diagnosis ledger and an
+unused `I03` attempt 1 in another independently owned scope. Its fixed
+`inference_late_completion_next` provider command accepts one validated paid
+request and performs 40 seconds of synthetic server work. Explicit client
+cancellation closes the SDK request without shortening that work. The provider
+receipt records the client-close and work-completion timestamps separately;
+`synthetic_work_completed_after_client_close` with `responseDelivered: false`
+proves synthetic work became terminal after disconnection, not that a response
+reached a closed client or that a real provider completed inference. Release and
+healthy-reset controls cannot accelerate accepted work. Shutdown or lease
+expiry records `synthetic_work_cancelled`, which cannot satisfy this case.
+Arming and accepting work each require more than 45 seconds of lease remaining.
+The production SDK deadlines, retry settings, admission budgets, and durable
+reservation behavior remain unchanged. Core's direct-answer stage retains its
+shorter 12-second deadline; the cancellation proof requires the operator command
+and client close before that deadline. The concurrent-diagnosis verifier refreshes
+the incident before dispatch and reuses terminal command receipts so its control
+round trips do not unnecessarily consume the completion window.
+The real Core direct-answer stage has a 12-second deadline. The case must
+observe both the operator cancellation and client close before that deadline,
+measured from the diagnosis run start, to distinguish cancellation from timeout.
+
+Keep the original eight cases and their evidence distinct. A supplemental fresh
+scope can perform the fixed 403 metadata probe, wait the real 60-second probe
+cooldown, rotate to the other fictional identity, and perform a 429 completion
+probe before `late_completion`. A subsequent 503 probe must wait until the
+rolling-hour budget actually admits it. Never reset either ledger to fit a case
+schedule. The late-completion case verifies retained reservation state after
+terminal work and Worker restart; it does not reconcile that reservation. Its
+terminal-work evidence requires a separately reviewed exact-token operator
+procedure rather than the original transport-cancellation receipt reader.
+
 ```text
 node scripts/self-heal-inference-preview-acceptance.mjs --manifest <absolute-manifest-path> --evidence-directory <new-absolute-case-directory> --case idle_off
 node scripts/self-heal-inference-preview-acceptance.mjs --manifest <absolute-manifest-path> --evidence-directory <new-absolute-case-directory> --case idle_off --execute --allow-network

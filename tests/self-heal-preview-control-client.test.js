@@ -94,18 +94,22 @@ function overlapFixture(env, config = {}) {
 }
 
 describe('fixed self-heal preview SSH control client', () => {
-  it.each(['worker', 'web'])('admits command-only containment provider faults on %s and excludes the legacy profile', async role => {
+  it.each(['worker', 'web'].flatMap(role => ['inference_auth_failure_next', 'inference_late_completion_next'].map(command => [role, command])))('admits command-only containment provider fault %s/%s and excludes the legacy profile', async (role, command) => {
     const legacy = environment(role); const fetchImpl = jest.fn();
-    await expect(runSelfHealPreviewControl(['provider', 'inference_auth_failure_next'], legacy, { fetchImpl })).rejects.toThrow('SELF_HEAL_PREVIEW_CONTROL_CLIENT_FAILED');
+    await expect(runSelfHealPreviewControl(['provider', command], legacy, { fetchImpl })).rejects.toThrow('SELF_HEAL_PREVIEW_CONTROL_CLIENT_FAILED');
     expect(fetchImpl).not.toHaveBeenCalled();
     const env = { ...legacy, ARCANOS_SELF_HEAL_PREVIEW_PROFILE: 'worker-inference-containment-v1',
       RAILWAY_PROJECT_NAME: 'arc-pr1557-heavy-client', RAILWAY_ENVIRONMENT_NAME: 'backstage-heavy-pr-1557-e2e',
       RAILWAY_SERVICE_NAME: `arcanos-${role}-pr1557-heavy` };
+    if (role === 'web' && command === 'inference_late_completion_next') {
+      await expect(runSelfHealPreviewControl(['provider', command], env, { fetchImpl })).rejects.toThrow('SELF_HEAL_PREVIEW_CONTROL_CLIENT_FAILED');
+      expect(fetchImpl).not.toHaveBeenCalled(); return;
+    }
     fetchImpl.mockImplementation(async () => response({ runId: env.ARCANOS_SELF_HEAL_PREVIEW_RUN_ID,
       sourceSha: env.ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA }));
-    await runSelfHealPreviewControl(['provider', 'inference_auth_failure_next'], env, { fetchImpl });
-    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({ command: 'inference_auth_failure_next' });
-    await expect(runSelfHealPreviewControl(['provider', 'inference_auth_failure_next', 'key'], env, { fetchImpl })).rejects.toThrow('SELF_HEAL_PREVIEW_CONTROL_CLIENT_FAILED');
+    await runSelfHealPreviewControl(['provider', command], env, { fetchImpl });
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({ command });
+    await expect(runSelfHealPreviewControl(['provider', command, 'key'], env, { fetchImpl })).rejects.toThrow('SELF_HEAL_PREVIEW_CONTROL_CLIENT_FAILED');
   });
   it('allows fixed startup failure readback only through the surviving Web role', async () => {
     const result = await runSelfHealPreviewControl(['startup-failure-receipt'], environment('web'));

@@ -21,7 +21,7 @@ export const SELF_HEAL_PREVIEW_CONTROL_COMMANDS = Object.freeze([
   'containment_dependency_failure', 'containment_dependency_restore',
 ]);
 const PROVIDER_COMMANDS = new Set(['inspect', 'set_healthy', 'timeout_next', 'hold_next', 'release']);
-const INFERENCE_PROVIDER_COMMANDS = new Set(['models_timeout_next', 'inference_hold_next', 'inference_cancel_next',
+const INFERENCE_PROVIDER_COMMANDS = new Set(['models_timeout_next', 'inference_hold_next', 'inference_cancel_next', 'inference_late_completion_next',
   'models_auth_failure_next', 'inference_auth_failure_next', 'models_forbidden_next', 'inference_forbidden_next',
   'inference_rate_limit_next', 'inference_unavailable_next']);
 const MAX_BYTES = 65_536;
@@ -183,6 +183,7 @@ export async function runSelfHealPreviewControl(argv, env = process.env, options
   if (argv.length === 1 && argv[0] === 'inspect') command = 'inspect';
   else if (argv.length === 2 && argv[0] === 'command' && SELF_HEAL_PREVIEW_CONTROL_COMMANDS.includes(argv[1])) command = argv[1];
   else if (argv.length === 2 && argv[0] === 'provider'
+    && (argv[1] !== 'inference_late_completion_next' || role === 'worker')
     && ((PROVIDER_COMMANDS.has(argv[1]) && role === 'worker')
       || (profile.ownership.profile === 'worker-inference-containment-v1' && (PROVIDER_COMMANDS.has(argv[1]) || INFERENCE_PROVIDER_COMMANDS.has(argv[1]))))) {
     provider = true; command = argv[1];

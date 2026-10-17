@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { attestSelfHealInferenceController, attestSelfHealInferenceQuietWindow, runSelfHealInferenceAcceptanceCase,
+import { attestSelfHealInferenceController, attestSelfHealInferenceQuietWindow, attestSelfHealInferenceLateCompletion, runSelfHealInferenceAcceptanceCase,
   SELF_HEAL_INFERENCE_ACCEPTANCE_CASES } from '../scripts/self-heal-inference-preview-acceptance.mjs';
 
 const NOW = Date.parse('2026-10-17T20:00:00.000Z');
@@ -20,7 +20,7 @@ function manifest(prNumber = 1557) {
       ] } } };
 }
 function snapshot(evaluations = 0, running = false) {
-  return { ready: true, processInstanceId: id(30), coordinator: { loopRunning: true, inFlight: false },
+  return { ready: true, processInstanceId: id(30), receipts: [], coordinator: { loopRunning: true, inFlight: false },
     scheduler: { callbacks: evaluations, intervalMs: 30_000 }, policy: { selfImproveEnabled: false, actuatorMode: 'daemon',
       autonomyLevel: 3, frozen: false, killSwitch: { frozen: false, autonomyLevel: 3 },
       predictiveEnabled: false, predictiveDryRun: false, predictiveAutoExecute: false }, claimBoundary: { faultRemaining: 0 },
@@ -31,7 +31,7 @@ function snapshot(evaluations = 0, running = false) {
         watchdogTriggered: false, restartRecommended: false, busy: running && index === 0,
         inactivityMs: 180_000, idleThresholdMs: 120_000 })) }, ledgers: [] } };
 }
-const fixture = receipts => ({ providerRequests: receipts.length, providerWireRequests: receipts.length, receipts, inFlight: null });
+const fixture = receipts => ({ providerRequests: receipts.length, providerWireRequests: receipts.length, receipts, inFlight: null, nextFault: null });
 
 describe('PR1557 fixed hosted acceptance cases', () => {
   it.each(['head', 'origin', 'dirty'])('rejects local controller%s drift before hosted effects', async drift => {
@@ -48,7 +48,7 @@ describe('PR1557 fixed hosted acceptance cases', () => {
     await expect(attestSelfHealInferenceController(value, { command })).resolves.toMatchObject({ clean: true, sourceSha: value.receipt.sourceSha });
   });
   it('does not reuse the32coordinator cases or accept arbitrary scenarios', async () => {
-    expect(SELF_HEAL_INFERENCE_ACCEPTANCE_CASES).toHaveLength(8);
+    expect(SELF_HEAL_INFERENCE_ACCEPTANCE_CASES).toHaveLength(9);
     await expect(runSelfHealInferenceAcceptanceCase('A01', manifest(), { now: () => NOW })).rejects.toThrow('SCENARIO_INVALID');
     await expect(runSelfHealInferenceAcceptanceCase('idle_off', manifest(1544), { now: () => NOW })).rejects.toThrow('PROFILE_MISMATCH');
   });
@@ -170,6 +170,16 @@ describe('PR1557 fixed hosted acceptance cases', () => {
     let clock = NOW; let serial = 0; let fault = null; let credential = 'original'; let blockedOriginal = false;
     const states = { worker: snapshot(), web: snapshot() }; const fixtures = { worker: fixture([]), web: fixture([]) };
     const jobs = new Map(); const ledgers = new Map(); const calls = [];
+    const advance = () => {
+      for (const value of Object.values(fixtures)) {
+        const active = value.receipts.find(receipt => receipt.requestId === value.inFlight);
+        if (active?.fault === 'late_completion' && clock >= active.providerWorkDeadlineAt) {
+          active.providerWorkCompletedAt = clock; active.endedAt = clock;
+          active.outcome = active.clientClosedAt !== null ? 'synthetic_work_completed_after_client_close' : 'completed';
+          active.responseDelivered = active.clientClosedAt === null; value.inFlight = null;
+        }
+      }
+    };
     const key = (scenario, attempt) => `${scenario}:${attempt}`;
     const state = role => {
       states[role].containment.ledgers = [...ledgers.values()].map(value => ({ ...value }));
@@ -185,6 +195,7 @@ describe('PR1557 fixed hosted acceptance cases', () => {
       matchingClaimEvents: 1, matchingCompletionEvents: 1, literalObserved: job.literal });
     const finishDiagnosis = () => {
       states.worker.containment.run.status = 'completed';
+      states.worker.containment.run.completedAt = new Date(clock).toISOString();
       states.worker.containment.run.audit = { advisor: 'arcanos_core_v1', attempted: false, mode: 'recommend_only' };
       Object.assign(ledgers.get('diagnosis'), { inFlight: false, stateSha256: 'settled-diagnosis', lastCompletedMs: clock });
     };
@@ -195,12 +206,13 @@ describe('PR1557 fixed hosted acceptance cases', () => {
         fixtures.worker = fixture([]); credential = 'original'; return { restartRequested: true };
       },
       remote: async (role, argv) => {
-        calls.push([role, ...argv]); clock += 1;
+        calls.push([role, ...argv]); clock += 1; advance();
         if (argv[0] === 'artifact') return { artifact: { compiledSha256: 'c'.repeat(64) } };
         if (argv[0] === 'provider') {
           if (argv[1] === 'set_healthy') fault = null;
           else if (argv[1] === 'release') {
             const held = fixtures.worker.receipts.find(receipt => receipt.requestId === fixtures.worker.inFlight);
+            if (held?.fault === 'late_completion') return { observation: structuredClone(fixtures[role]) };
             if (held) { held.outcome = 'completed'; held.endedAt = clock; }
             fixtures.worker.inFlight = null;
             if (states.worker.containment.run?.operation === 'diagnosis' && states.worker.containment.run.status === 'running') finishDiagnosis();
@@ -226,6 +238,7 @@ describe('PR1557 fixed hosted acceptance cases', () => {
         }
         if (argv[0] === 'command') {
           const name = argv[1]; const current = states[role];
+          current.receipts.push({ sequence: current.receipts.length + 1, event: `command:${name}`, at: new Date(clock).toISOString() });
           if (name === 'coordinator_stop') current.coordinator.loopRunning = false;
           if (name === 'coordinator_start') current.coordinator.loopRunning = true;
           if (name === 'policy_disabled' || name === 'policy_restore') current.policy.selfImproveEnabled = false;
@@ -235,6 +248,13 @@ describe('PR1557 fixed hosted acceptance cases', () => {
           }
           if (name === 'containment_credential_rotate') credential = 'rotated';
           if (name === 'containment_credential_restore') credential = 'original';
+          if (name === 'containment_cancel') {
+            const active = fixtures[role].receipts.find(receipt => receipt.requestId === fixtures[role].inFlight);
+            if (active?.fault === 'late_completion') {
+              active.clientClosedAt ??= clock;
+              current.containment.run.status = 'failed'; current.containment.run.completedAt = new Date(clock).toISOString();
+            }
+          }
           if (name === 'containment_dependency_failure') {
             states.worker.containment.health.workers[0].claimAcceptance = 'dependency_failure';
             states.worker.claimBoundary.faultRemaining = 64;
@@ -246,21 +266,27 @@ describe('PR1557 fixed hosted acceptance cases', () => {
           }
           if (name === 'containment_tick_batch') {
             current.containment.counters.evaluations += 20; current.containment.counters.healthyEvaluations += 20;
+            current.policy.observedAt = new Date(clock).toISOString();
             current.containment.run = { operation: 'tick_batch', status: 'completed', startedAt: new Date(clock).toISOString(), ticksCompleted: 20 };
           }
           if (name === 'containment_diagnose') {
             const existing = ledgers.get('diagnosis');
-            current.containment.run = { operation: 'diagnosis', status: 'completed', startedAt: new Date(clock).toISOString() };
+            current.containment.run = { operation: 'diagnosis', status: 'completed', startedAt: new Date(clock).toISOString(),
+              completedAt: new Date(clock).toISOString(), processInstanceId: current.processInstanceId,
+              inferenceAuthorization: 'manual', executionAuthorized: false };
             if (existing) {
               current.containment.run.audit = { advisor: 'rules_fallback_v1', attempted: false, mode: 'recommend_only',
                 timestamp: new Date(clock).toISOString(),
                 inferenceReason: existing.inFlight ? 'in_flight' : 'active_incident_backoff' };
             } else {
-              ledgers.set('diagnosis', { purpose: 'diagnosis', versionRecognized: true, stateSha256: 'held-diagnosis',
+              ledgers.set('diagnosis', { purpose: 'diagnosis', versionRecognized: true, stateSha256: 'e'.repeat(64),
                 inFlight: true, ttlMs: -1, attemptCount: 1, lastAttemptMs: clock, lastCompletedMs: null });
               const receipt = wire(role, 'responses', { purpose: 'predictive-decision', maxOutputTokens: 512,
-                fault: fault === 'inference_cancel_next' ? 'cancel' : 'hold',
+                fault: fault === 'inference_cancel_next' ? 'cancel' : fault === 'inference_late_completion_next' ? 'late_completion' : 'hold',
                 outcome: fault === 'inference_cancel_next' ? 'transport_cancelled' : 'in_flight' });
+              if (fault === 'inference_late_completion_next') Object.assign(receipt, { providerWorkKind: 'bounded_synthetic_completion',
+                providerWorkStartedAt: clock, providerWorkDeadlineAt: clock + 40_000, clientClosedAt: null,
+                providerWorkCompletedAt: null, providerWorkCancelledAt: null, responseDelivered: false, endedAt: null });
               if (fault === 'inference_cancel_next') current.containment.run.audit = { advisor: 'rules_fallback_v1', attempted: false, mode: 'recommend_only' };
               else { current.containment.run.status = 'running'; fixtures.worker.inFlight = receipt.requestId; }
               fault = null;
@@ -291,7 +317,7 @@ describe('PR1557 fixed hosted acceptance cases', () => {
         return { observation: state(role) };
       },
     };
-    return { execute: true, allowNetwork: true, transport, now: () => clock, sleep: async ms => { clock += ms; }, calls, ledgers };
+    return { execute: true, allowNetwork: true, transport, now: () => clock, sleep: async ms => { clock += ms; advance(); }, calls, ledgers };
   }
   it.each(['running_off', 'running_on', 'diagnosis_once', 'probe_rotation', 'metadata_recovery', 'uncertain_restart'])(
     'executes bounded%s orchestration with injected evidence and labels it synthetic', async scenario => {
@@ -315,6 +341,74 @@ describe('PR1557 fixed hosted acceptance cases', () => {
     const result = await runSelfHealInferenceAcceptanceCase('diagnosis_once', manifest(), env);
     expect(result).toMatchObject({ classification: 'FAILED', errorCode: 'SELF_HEAL_ACCEPTANCE_INFERENCE_CONCURRENT_PROVIDER_WINDOW_NOT_PROVEN' });
   });
+  it('reads independent running baselines concurrently and releases immediately after the busy tick snapshot', async () => {
+    const env = orchestrationHarness(); const remote = env.transport.remote;
+    let releaseWorkerBaseline; let workerBaselineStarted = false; let observedParallelBaseline = false;
+    env.transport.remote = async (role, argv) => {
+      const receipt = await remote(role, argv);
+      if (role === 'worker' && argv[0] === 'provider' && argv[1] === 'inspect' && !workerBaselineStarted) {
+        workerBaselineStarted = true;
+        return new Promise(resolve => { releaseWorkerBaseline = () => resolve(receipt); });
+      }
+      if (role === 'web' && argv[0] === 'provider' && argv[1] === 'inspect' && releaseWorkerBaseline) {
+        observedParallelBaseline = true; releaseWorkerBaseline(); releaseWorkerBaseline = null;
+      }
+      return receipt;
+    };
+    const result = await runSelfHealInferenceAcceptanceCase('running_off', manifest(), env);
+    expect(result).toMatchObject({ classification: 'SYNTHETIC_ONLY', proof: { evaluations: 20, ordinaryJobCompletedOnce: true } });
+    expect(observedParallelBaseline).toBe(true);
+    const batch = env.calls.findIndex(call => call[2] === 'containment_tick_batch');
+    const release = env.calls.findIndex(call => call[0] === 'worker' && call[1] === 'provider' && call[2] === 'release');
+    expect(env.calls.slice(batch + 1, release)).toEqual([]);
+    expect(env.calls[release + 1]).toEqual(['web', 'provider', 'inspect']);
+  });
+  it.each(['timeout', 'client_closed', 'different_request', 'early_terminal'])(
+    'does not accept a%s held request as the ordinary running-job completion', async failure => {
+      const env = orchestrationHarness(); const remote = env.transport.remote;
+      env.transport.remote = async (role, argv) => {
+        const receipt = await remote(role, argv);
+        if (role === 'worker' && argv[0] === 'provider' && argv[1] === 'release') {
+          const terminal = receipt.observation.receipts.at(-1);
+          if (failure === 'different_request') terminal.requestId = 'test-unrelated-request';
+          else if (failure === 'early_terminal') terminal.endedAt = NOW - 1000;
+          else terminal.outcome = failure;
+        }
+        return receipt;
+      };
+      const result = await runSelfHealInferenceAcceptanceCase('running_off', manifest(), env);
+      expect(result).toMatchObject({ classification: 'FAILED' });
+      expect(result.proof?.ordinaryJobCompletedOnce).not.toBe(true);
+    });
+  it('keeps the Core deadline for overlap and release by using the completed Web acknowledgement', async () => {
+    const env = orchestrationHarness();
+    const result = await runSelfHealInferenceAcceptanceCase('diagnosis_once', manifest(), env);
+    expect(result).toMatchObject({ classification: 'SYNTHETIC_ONLY', proof: { concurrentReservationDenialProven: true } });
+    const armed = env.calls.findIndex(call => call[2] === 'inference_hold_next');
+    const overlap = env.calls.findIndex(call => call[0] === 'web' && call[2] === 'containment_diagnose');
+    const release = env.calls.findIndex(call => call[0] === 'worker' && call[2] === 'release');
+    expect(env.calls.slice(armed + 1, release)).not.toContainEqual(['worker', 'command', 'containment_dependency_failure']);
+    expect(env.calls.slice(overlap + 1, release)).toEqual([]);
+  });
+  it('still polls a running initial operation and rejects a mismatched terminal operation', async () => {
+    const running = orchestrationHarness(); const runRemote = running.transport.remote;
+    running.transport.remote = async (role, argv) => {
+      const receipt = await runRemote(role, argv);
+      if (argv[2] === undefined && argv[1] === 'containment_tick_batch') receipt.observation.containment.run.status = 'running';
+      return receipt;
+    };
+    expect((await runSelfHealInferenceAcceptanceCase('running_off', manifest(), running)).classification).toBe('SYNTHETIC_ONLY');
+    const batch = running.calls.findIndex(call => call[2] === 'containment_tick_batch');
+    expect(running.calls[batch + 1]).toEqual(['worker', 'inspect']);
+    const wrong = orchestrationHarness(); const wrongRemote = wrong.transport.remote;
+    wrong.transport.remote = async (role, argv) => {
+      const receipt = await wrongRemote(role, argv);
+      if (role === 'web' && argv[1] === 'containment_diagnose') receipt.observation.containment.run.operation = 'provider_probe';
+      return receipt;
+    };
+    expect(await runSelfHealInferenceAcceptanceCase('diagnosis_once', manifest(), wrong)).toMatchObject({
+      classification: 'BLOCKED', errorCode: 'SELF_HEAL_ACCEPTANCE_INFERENCE_OPERATION_NOT_STARTED' });
+  });
   it('blocks a consumed diagnosis budget rather than resetting it for the uncertain case', async () => {
     const env = orchestrationHarness();
     env.ledgers.set('diagnosis', { purpose: 'diagnosis', versionRecognized: true, inFlight: false, stateSha256: 'retained', attemptCount: 1 });
@@ -322,5 +416,99 @@ describe('PR1557 fixed hosted acceptance cases', () => {
     expect(result).toMatchObject({ classification: 'BLOCKED', errorCode: 'SELF_HEAL_ACCEPTANCE_INFERENCE_UNCERTAIN_DIAGNOSIS_NOT_ADMITTED' });
     expect(env.ledgers.get('diagnosis').stateSha256).toBe('retained');
     expect(env.calls.some(call => call[0] === 'restart')).toBe(false);
+  });
+  it('retains the same reservation through cancellation, late work and restart without claiming synthetic evidence as hosted', async () => {
+    const env = orchestrationHarness(); const events = []; env.onReceipt = value => events.push(value);
+    const result = await runSelfHealInferenceAcceptanceCase('late_completion', manifest(), env);
+    expect(result).toMatchObject({ classification: 'SYNTHETIC_ONLY', restoration: 'SYNTHETIC_ONLY', errorCode: null,
+      proof: { explicitOperatorCancellation: true, acceptedInferenceRequests: 1, responseDelivered: false,
+        crossProcessDeniedWhileWorkActive: true, reservationSurvivedLateCompletion: true, reservationSurvivedRestart: true,
+        repairAttempts: 0, operatorReconciliation: 'REQUIRED_NOT_PERFORMED' } });
+    expect(env.calls.filter(call => call[0] === 'restart')).toHaveLength(1);
+    const terminal = events.find(event => event.kind === 'operation' && event.value.argv[0] === 'provider'
+      && event.value.receipt.observation.receipts.some(receipt => receipt.outcome === 'synthetic_work_completed_after_client_close'));
+    expect(terminal.sequence).toBeLessThan(events.find(event => event.kind === 'restart').sequence);
+    expect(env.calls).toContainEqual(['web', 'command', 'containment_credential_restore']);
+  });
+  it.each(['used_scope', 'queued_fault', 'running_operation', 'changed_hold', 'hidden_wire', 'missing_cancel', 'late_cancel', 'wrong_request', 'extra_repair'])(
+    'rejects late-work%s evidence and never restarts to manufacture terminal completion', async fault => {
+      const env = orchestrationHarness(); const remote = env.transport.remote;
+      if (fault === 'used_scope') env.ledgers.set('diagnosis', { purpose: 'diagnosis', versionRecognized: true,
+        stateSha256: 'f'.repeat(64), inFlight: false, attemptCount: 1 });
+      env.transport.remote = async (role, argv) => {
+        const receipt = await remote(role, argv); const value = receipt.observation;
+        if (fault === 'queued_fault' && argv[0] === 'provider' && argv[1] === 'inspect') value.nextFault = { kind: 'hold' };
+        if (fault === 'running_operation' && role === 'web' && argv[0] === 'inspect') value.consumerRun = { status: 'running' };
+        if (role === 'worker' && argv[1] === 'containment_cancel' && value?.containment?.run?.operation === 'diagnosis') {
+          if (fault === 'missing_cancel') value.receipts = [];
+          if (fault === 'late_cancel') value.receipts.filter(item => item.event === 'command:containment_cancel')
+            .forEach(item => { item.at = new Date(env.now() + 26_000).toISOString(); });
+        }
+        const completed = value?.receipts?.find(item => item.outcome === 'synthetic_work_completed_after_client_close');
+        if (completed) {
+          if (fault === 'changed_hold') env.ledgers.get('diagnosis').stateSha256 = 'f'.repeat(64);
+          if (fault === 'hidden_wire') value.providerWireRequests += 1;
+          if (fault === 'wrong_request') completed.requestId = 'unrelated-request';
+        }
+        if (fault === 'extra_repair' && value?.containment?.run?.status === 'failed') value.containment.counters.repairAttempts += 1;
+        return receipt;
+      };
+      const result = await runSelfHealInferenceAcceptanceCase('late_completion', manifest(), env);
+      expect(['FAILED', 'BLOCKED']).toContain(result.classification);
+      expect(env.calls.some(call => call[0] === 'restart')).toBe(false);
+      if (fault === 'used_scope') expect(env.calls).not.toContainEqual(['worker', 'provider', 'inference_late_completion_next']);
+    });
+  it('rejects a paid request during Worker startup before taking the new provider baseline', async () => {
+    const env = orchestrationHarness(); const remote = env.transport.remote; const restart = env.transport.restart;
+    let restarted = false;
+    env.transport.restart = async () => { const result = await restart(); restarted = true; return result; };
+    env.transport.remote = async (role, argv) => {
+      const receipt = await remote(role, argv);
+      if (restarted && role === 'worker' && argv[0] === 'provider') {
+        receipt.observation.receipts.push({ endpoint: 'responses', requestId: 'test-unexpected-startup-request' });
+        receipt.observation.providerRequests += 1; receipt.observation.providerWireRequests += 1;
+      }
+      return receipt;
+    };
+    const result = await runSelfHealInferenceAcceptanceCase('late_completion', manifest(), env);
+    expect(result).toMatchObject({ classification: 'FAILED', errorCode: 'SELF_HEAL_ACCEPTANCE_INFERENCE_LATE_WORK_RESTART_PROVIDER_REQUEST' });
+  });
+});
+
+describe('late synthetic completion receipt ordering', () => {
+  const evidence = () => ({ request: { requestId: 'test-late-request', endpoint: 'responses', purpose: 'predictive-decision',
+    credential: 'rotated', fault: 'late_completion', providerWorkKind: 'bounded_synthetic_completion',
+    outcome: 'synthetic_work_completed_after_client_close', responseDelivered: false, providerWorkCancelledAt: null,
+    maxOutputTokens: 512, startedAt: NOW, providerWorkStartedAt: NOW, providerWorkDeadlineAt: NOW + 40_000,
+    clientClosedAt: NOW + 6000, providerWorkCompletedAt: NOW + 40_000, endedAt: NOW + 40_000 },
+  run: { status: 'failed', inferenceAuthorization: 'manual', executionAuthorized: false,
+    startedAt: new Date(NOW - 100).toISOString(), completedAt: new Date(NOW + 5000).toISOString() },
+  cancellationAt: NOW + 4000, overlappingAt: NOW + 10_000 });
+  it('allows the client-close and operation-completion callbacks in either order', () => {
+    for (const completedAt of [NOW + 5000, NOW + 7000]) {
+      const value = evidence(); value.run.completedAt = new Date(completedAt).toISOString();
+      value.request.endedAt += 1;
+      expect(attestSelfHealInferenceLateCompletion(value.request, value.run, value.cancellationAt, value.overlappingAt))
+        .toMatchObject({ responseDelivered: false, workEvidence: 'bounded_synthetic_completion_after_client_cancellation' });
+    }
+  });
+  it.each([
+    value => { value.request.responseDelivered = true; },
+    value => { value.request.providerWorkCancelledAt = NOW + 40_000; },
+    value => { value.request.providerWorkCompletedAt = NOW + 39_999; },
+    value => { value.request.providerWorkDeadlineAt = NOW + 30_000; },
+    value => { value.request.clientClosedAt = NOW + 30_000; },
+    value => { value.request.clientClosedAt = NOW + 11_900; },
+    value => { value.request.clientClosedAt = NOW + 3000; },
+    value => { value.cancellationAt = NOW + 26_000; value.request.clientClosedAt = NOW + 27_000;
+      value.run.completedAt = new Date(NOW + 28_000).toISOString(); value.overlappingAt = NOW + 29_000; },
+    value => { value.run.completedAt = new Date(NOW + 40_001).toISOString(); },
+    value => { value.run.executionAuthorized = true; },
+    value => { value.run.audit = { attempted: true }; },
+    value => { value.overlappingAt = NOW + 40_000; },
+    value => { value.request.outcome = 'synthetic_work_cancelled'; },
+  ])('rejects invalid or ambiguous late-work proof %#', mutate => {
+    const value = evidence(); mutate(value);
+    expect(() => attestSelfHealInferenceLateCompletion(value.request, value.run, value.cancellationAt, value.overlappingAt)).toThrow();
   });
 });
