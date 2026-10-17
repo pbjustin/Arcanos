@@ -104,18 +104,35 @@ export const parsePositiveEnvInteger = (
 
 /**
  * Parse a boolean from an environment variable string.
- * Inputs: raw string value, fallback boolean.
- * Outputs: parsed boolean or fallback when value is unrecognized.
+ * Inputs: raw string value and fallback boolean or null for an optional override.
+ * Outputs: parsed boolean or the supplied fallback when value is unrecognized.
  * Edge cases: undefined or unexpected strings fall back.
  */
-export const parseEnvBoolean = (value: string | undefined, fallback: boolean): boolean => {
-  //audit Assumption: undefined means "use fallback"; risk: misconfig; invariant: boolean output; handling: guard and return fallback.
+export function parseEnvBoolean(value: string | undefined, fallback: boolean): boolean;
+export function parseEnvBoolean(value: string | undefined, fallback: null): boolean | null;
+export function parseEnvBoolean(
+  value: string | undefined,
+  fallback: boolean | null
+): boolean | null {
+  //audit Assumption: undefined means "use fallback"; risk: misconfig; invariant: recognized boolean or the supplied fallback; handling: guard and return fallback.
   if (value === undefined) return fallback;
   const normalized = value.trim().toLowerCase();
   //audit Assumption: "false"/"0"/"off"/"no" are explicit false; risk: misread; invariant: boolean output; handling: explicit false mapping.
   if (['false', '0', 'off', 'no'].includes(normalized)) return false;
   //audit Assumption: "true"/"1"/"on"/"yes" are explicit true; risk: misread; invariant: boolean output; handling: explicit true mapping.
   if (['true', '1', 'on', 'yes'].includes(normalized)) return true;
-  //audit Assumption: unknown values should not override fallback; risk: misconfig masked; invariant: boolean output; handling: return fallback.
+  //audit Assumption: unknown values should not override fallback; risk: misconfig masked; invariant: preserve the caller's fallback, including an absent override; handling: return fallback.
   return fallback;
-};
+}
+
+/**
+ * Preserve the runtime flag contract: only true, 1, and yes enable a flag.
+ * Blank/unset values use the fallback; every other non-empty value is false,
+ * including on and unknown values. Do not substitute the extended parser for
+ * security flags whose existing enablement contract uses this allowlist.
+ */
+export function parseLegacyEnvBoolean(value: string | undefined, fallback: boolean): boolean {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return fallback;
+  return normalized === 'true' || normalized === '1' || normalized === 'yes';
+}

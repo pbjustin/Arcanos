@@ -8,6 +8,7 @@ import { logger } from "@platform/logging/structuredLogging.js";
 import type { EnvironmentSecuritySummary } from "@platform/runtime/environmentSecurity.js";
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
 import { getEnv } from "@platform/runtime/env.js";
+import { parseEnvBoolean } from "@platform/runtime/envParsers.js";
 import { getQueryFinetuneAttemptLatencyBudgetDiagnostics } from "@config/queryFinetune.js";
 import {
   JOB_READ_CAPABILITY_PREVIOUS_SECRET_ENV_NAME,
@@ -279,32 +280,16 @@ function isSensitiveEnvironmentVariable(name: string): boolean {
   return /(key|token|secret|password|credential|database_url|connection|dsn|url)/i.test(name);
 }
 
-function parseBooleanEnvValue(value: string | undefined): boolean | null {
-  if (!value || value.trim().length === 0) {
-    return null;
-  }
-
-  const normalized = value.trim().toLowerCase();
-  if (['true', '1', 'yes', 'on'].includes(normalized)) {
-    return true;
-  }
-  if (['false', '0', 'no', 'off'].includes(normalized)) {
-    return false;
-  }
-
-  return null;
-}
-
 export function isOpenAIApiKeyRequiredForStartup(): boolean {
-  const explicitRequired = parseBooleanEnvValue(getEnv('OPENAI_API_KEY_REQUIRED'));
+  const explicitRequired = parseEnvBoolean(getEnv('OPENAI_API_KEY_REQUIRED'), null);
   if (explicitRequired !== null) {
     return explicitRequired;
   }
 
   if (
     getEnv('NODE_ENV') === 'test' ||
-    parseBooleanEnvValue(getEnv('ALLOW_MOCK_OPENAI')) === true ||
-    parseBooleanEnvValue(getEnv('FORCE_MOCK')) === true
+    parseEnvBoolean(getEnv('ALLOW_MOCK_OPENAI'), null) === true ||
+    parseEnvBoolean(getEnv('FORCE_MOCK'), null) === true
   ) {
     return false;
   }
@@ -316,8 +301,8 @@ export function isOpenAIApiKeyRequiredForStartup(): boolean {
 function isGptAccessTokenRequiredForStartup(): boolean {
   if (
     getEnv('NODE_ENV') === 'test' ||
-    parseBooleanEnvValue(getEnv('ALLOW_MOCK_OPENAI')) === true ||
-    parseBooleanEnvValue(getEnv('FORCE_MOCK')) === true
+    parseEnvBoolean(getEnv('ALLOW_MOCK_OPENAI'), null) === true ||
+    parseEnvBoolean(getEnv('FORCE_MOCK'), null) === true
   ) {
     return false;
   }

@@ -14,6 +14,7 @@ const reviewedSourceFiles = [
   'src/services/selfImprove/selfHealingV2.ts',
   'src/platform/runtime/unifiedConfig.ts',
   'src/platform/runtime/env.ts',
+  'src/platform/runtime/envParsers.ts',
   'src/platform/logging/structuredLogging.ts',
   'src/platform/logging/logger.ts',
   'src/platform/logging/telemetry.ts',

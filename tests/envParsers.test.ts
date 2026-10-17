@@ -3,10 +3,20 @@ import {
   parseEnvFloat,
   parseEnvInt,
   parseEnvInteger,
+  parseLegacyEnvBoolean,
   parsePositiveEnvInteger,
 } from '@platform/runtime/envParsers.js';
+import { environmentBooleanCases } from './fixtures/environmentBooleanCases.js';
 
 describe('envParsers', () => {
+  it.each(environmentBooleanCases)('preserves both Boolean contracts for $label', ({ value, legacy, extended }) => {
+    expect(parseLegacyEnvBoolean(value, false)).toBe(legacy ?? false);
+    expect(parseLegacyEnvBoolean(value, true)).toBe(legacy ?? true);
+    expect(parseEnvBoolean(value, false)).toBe(extended ?? false);
+    expect(parseEnvBoolean(value, true)).toBe(extended ?? true);
+    expect(parseEnvBoolean(value, null)).toBe(extended);
+  });
+
   describe('parseEnvInteger', () => {
     it('returns fallback when value is undefined', () => {
       expect(parseEnvInteger(undefined, 42)).toBe(42);

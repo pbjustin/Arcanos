@@ -6,6 +6,7 @@ import {
   resolvePublicDagTemplateName,
 } from '@dag/templates.js';
 import { arcanosDagRunService } from '@services/arcanosDagRunService.js';
+import { getEnvBoolean } from '@platform/runtime/env.js';
 import { redactSensitive } from '@shared/redaction.js';
 import {
   GPT_DAG_BRIDGE_ACTIONS,
@@ -77,15 +78,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
-}
-
-function parseBooleanEnv(name: string, fallbackValue: boolean): boolean {
-  const rawValue = process.env[name]?.trim().toLowerCase();
-  if (!rawValue) {
-    return fallbackValue;
-  }
-
-  return rawValue === 'true' || rawValue === '1' || rawValue === 'yes';
 }
 
 function parseBooleanLike(value: unknown): boolean | null {
@@ -322,7 +314,7 @@ export function assertGptCanUseDag(
   ctx: GptDagBridgeContext,
   action: GptDagBridgeAction
 ): GptDagBridgeResponse | null {
-  if (!parseBooleanEnv('GPT_DAG_BRIDGE_ENABLED', false)) {
+  if (!getEnvBoolean('GPT_DAG_BRIDGE_ENABLED', false)) {
     return buildErrorResponse(
       ctx,
       403,
@@ -343,7 +335,7 @@ export function assertGptCanUseDag(
     );
   }
 
-  if (parseBooleanEnv('GPT_DAG_BRIDGE_REQUIRE_AUTH', false)) {
+  if (getEnvBoolean('GPT_DAG_BRIDGE_REQUIRE_AUTH', false)) {
     const expectedToken = process.env.GPT_DAG_BRIDGE_BEARER_TOKEN?.trim() ?? '';
     if (!expectedToken) {
       return buildErrorResponse(
@@ -380,7 +372,7 @@ export function assertGptCanUseDag(
     }
   }
 
-  if (parseBooleanEnv('GPT_DAG_BRIDGE_REQUIRE_PERMISSIONS', false)) {
+  if (getEnvBoolean('GPT_DAG_BRIDGE_REQUIRE_PERMISSIONS', false)) {
     const requiredPermission = getRequiredPermission(action);
     const permissions = getRequestPermissions(ctx.req);
     if (!permissions.has(requiredPermission)) {

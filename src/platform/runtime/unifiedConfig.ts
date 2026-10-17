@@ -16,6 +16,7 @@
 
 import { APPLICATION_CONSTANTS } from "@shared/constants.js";
 import { getEnv, getEnvNumber, getEnvBoolean } from "@platform/runtime/env.js";
+import { parseLegacyEnvBoolean } from "@platform/runtime/envParsers.js";
 import { aiLogger } from "@platform/logging/structuredLogging.js";
 import { recordTraceEvent } from "@platform/logging/telemetry.js";
 import path from "path";
@@ -186,21 +187,12 @@ function parseSelfImproveActuatorMode(raw: string | undefined): AppConfig['selfI
   return 'pr_bot';
 }
 
-function parseBooleanValue(raw: string | undefined, defaultValue: boolean): boolean {
-  if (!raw || raw.trim().length === 0) {
-    return defaultValue;
-  }
-
-  const normalized = raw.trim().toLowerCase();
-  return normalized === 'true' || normalized === '1' || normalized === 'yes';
-}
-
 function getEnvBooleanWithFallbacks(
   key: string,
   defaultValue: boolean,
   fallbacks: string[] = []
 ): boolean {
-  return parseBooleanValue(getEnvVar(key, fallbacks), defaultValue);
+  return parseLegacyEnvBoolean(getEnvVar(key, fallbacks), defaultValue);
 }
 
 function resolvePredictiveHealingDryRun(): boolean {

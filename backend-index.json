@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-16T07:06:27.677Z",
+  "generatedAt": "2026-10-17T00:46:13.082Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4270,6 +4270,9 @@
           "relativePath": "tests/env-runtime-access.test.ts"
         },
         {
+          "relativePath": "tests/environment-boolean-contracts.test.ts"
+        },
+        {
           "relativePath": "tests/environment-security.test.ts"
         },
         {
@@ -4292,6 +4295,9 @@
         },
         {
           "relativePath": "tests/fixtures/chatgpt-tutor-e2e.ts"
+        },
+        {
+          "relativePath": "tests/fixtures/environmentBooleanCases.ts"
         },
         {
           "relativePath": "tests/fixtures/gaming-currentness/second-publisher.ts"
