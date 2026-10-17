@@ -3511,9 +3511,13 @@ export async function probePredictiveHealingAIProvider(): Promise<PredictiveHeal
   }
   const boundedProbe = createSelfHealingInferenceClient(client);
   let probeOutcome: 'success' | 'failure' | 'authentication_failure' | 'uncertain' = 'uncertain';
-  const recordProbeFailure = (error: unknown) => {
+  const recordProbeFailure = (error: unknown, stage: 'models_list' | 'completion') => {
     const failure = classifyProviderFailure(error);
-    probeOutcome = resolveInferenceFailureOutcome(failure, boundedProbe);
+    // The metadata GET cannot spend inference tokens, and this function exits
+    // before completion when it fails. Only paid-call uncertainty retains a lock.
+    probeOutcome = stage === 'models_list'
+      ? failure.category === 'authentication' ? 'authentication_failure' : 'failure'
+      : resolveInferenceFailureOutcome(failure, boundedProbe);
     updateAiProviderState(getState(), current => ({
       ...current, lastFailureAt: pickLatestTimestamp([current.lastFailureAt, performedAt]),
       lastFailureCategory: failure.category, lastFailureReason: failure.reason,
@@ -3538,7 +3542,7 @@ export async function probePredictiveHealingAIProvider(): Promise<PredictiveHeal
         'OpenAI model-list probe timed out after 4000ms'
       );
     } catch (error) {
-      const failure = recordProbeFailure(error);
+      const failure = recordProbeFailure(error, 'models_list');
       return {
         performedAt,
         ...baseSnapshot,
@@ -3581,7 +3585,7 @@ export async function probePredictiveHealingAIProvider(): Promise<PredictiveHeal
         failureStatus: null
       };
     } catch (error) {
-      const failure = recordProbeFailure(error);
+      const failure = recordProbeFailure(error, 'completion');
       const failureHealth = getOpenAIServiceHealth();
       return {
         performedAt,

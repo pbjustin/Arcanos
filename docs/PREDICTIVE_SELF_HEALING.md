@@ -173,7 +173,13 @@ remain subject to their original reservation and limits. Redis must support the
 two-key atomic scripts; an unsupported topology denies inference rather than
 falling back to process-local admission.
 
-Reservations have no automatic TTL. A crash, unresolved transport timeout,
+The preliminary model-list GET makes no paid inference request. A metadata
+timeout or other non-authentication failure completes that probe attempt as a
+failure, retaining its 60-second failure cooldown and hourly budget charge; it
+never proceeds to completion after the timeout. A metadata 401/403 still latches
+the credential rejection across both purposes.
+
+Reservations have no automatic TTL. A crash, unresolved paid transport timeout,
 connection failure or 5xx after a paid request was dispatched, or
 uncertain completion write leaves admission blocked while rules-based healing
 continues under its existing execution gates. Recovery requires reviewed,

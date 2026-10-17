@@ -1749,13 +1749,53 @@ describe('predictive healing execution', () => {
     expect(runArcanosCoreQueryMock).not.toHaveBeenCalled();
   });
 
-  it('bounds explicit provider probes and retains authentication failure without retrying', async () => {
-    const list = jest.fn().mockRejectedValue(Object.assign(new Error('Invalid API key'), { status: 401 }));
+  it.each([401, 403])('bounds explicit provider probes and retains model-list authentication status %s without retrying', async status => {
+    const list = jest.fn().mockRejectedValue(Object.assign(new Error('Invalid API key'), { status }));
     getOpenAIClientOrAdapterMock.mockReturnValue({ client: { models: { list } } });
     await probePredictiveHealingAIProvider();
-    await probePredictiveHealingAIProvider();
+    jest.setSystemTime(Date.now() + 60_000);
+    expect((await probePredictiveHealingAIProvider()).failureReason).toBe('authentication_blocked');
     expect(list).toHaveBeenCalledTimes(1);
     expect(createSingleChatCompletionMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['settled SDK timeout', 'unsettled metadata timeout'])('recovers a %s after 60 seconds without losing the two-probe hourly cap', async mode => {
+    let finishMetadata: ((value: unknown) => void) | undefined;
+    const list = jest.fn().mockResolvedValue({ data: [] });
+    if (mode === 'settled SDK timeout') {
+      list.mockRejectedValueOnce(new Error('OpenAI model-list request timed out'));
+    } else {
+      list.mockImplementationOnce(() => new Promise(resolve => { finishMetadata = resolve; }));
+    }
+    const create = jest.fn().mockResolvedValue({ output_text: 'ok' });
+    getOpenAIClientOrAdapterMock.mockReturnValue({ client: { models: { list }, responses: { create } } });
+    createSingleChatCompletionMock.mockImplementation((client, params) => client.responses.create({
+      model: params.model, input: 'synthetic probe', max_output_tokens: params.max_completion_tokens
+    }));
+    const first = probePredictiveHealingAIProvider();
+    await jest.advanceTimersByTimeAsync(4_000);
+    expect((await first).failureCategory).toBe('timeout');
+    expect(create).not.toHaveBeenCalled();
+    expect(createSingleChatCompletionMock).not.toHaveBeenCalled();
+    expect(list).toHaveBeenCalledWith(expect.objectContaining({ maxRetries: 0, timeout: 4_000 }));
+    const state = JSON.parse(inferenceStates.get('provider_probe')!);
+    expect(state.inFlight).toBe(null);
+    expect(state.attemptTimestampsMs).toHaveLength(1);
+    finishMetadata?.({ data: [] });
+    await Promise.resolve();
+    expect(create).not.toHaveBeenCalled();
+    jest.setSystemTime(state.lastFailureMs + 59_999);
+    expect((await probePredictiveHealingAIProvider()).failureReason).toBe('cooldown');
+    expect(list).toHaveBeenCalledTimes(1);
+    jest.setSystemTime(state.lastFailureMs + 60_000);
+    expect((await probePredictiveHealingAIProvider()).completionHealthy).toBe(true);
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(createSingleChatCompletionMock).toHaveBeenCalledTimes(1);
+    jest.setSystemTime(Date.now() + 60_000);
+    expect((await probePredictiveHealingAIProvider()).failureReason).toBe('budget_exhausted');
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(create).toHaveBeenCalledTimes(1);
   });
 
   it.each(['diagnosis', 'provider_probe'])('shares a durable %s authentication rejection with the other purpose without waiting for health telemetry', async firstPurpose => {

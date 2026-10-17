@@ -102,6 +102,13 @@ with three unresolved CodeRabbit findings. All three were verified:
 | B: reactive inactivity disagreed with predictive classification | `self-healing-loop.test.ts` runs twenty ticks for empty and running-only queues with prediction enabled and disabled. Every tick remains healthy with no incident, provider attempt or repair; genuine heartbeat/dependency failures remain detectable. `predictive-healing-service.test.ts` separately covers the running-only candidate classifier. |
 | C: explicit probes inherited six-hour diagnosis cooldowns | Probe success and settled-failure cooldowns are 60 seconds; the later deadline wins. `predictive-healing-execution.test.ts` verifies rotation recovery, a second authorized attempt, third-attempt budget denial, circuit restrictions and unresolved-reservation blocking. Diagnosis cooldowns remain independent. |
 
+A fresh full CodeRabbit review at `6be53879` identified one further valid
+recovery defect: an unbilled `models.list` timeout retained the probe reservation
+as if a paid completion had an uncertain outcome. Model-list failures now settle
+as failure, or authentication failure for rejected credentials. Mocked recovery
+tests verify retry eligibility after 60 seconds without clearing the rolling
+budget; paid-request uncertainty continues to retain its reservation.
+
 The original failed runs [PR CI](https://github.com/pbjustin/Arcanos/actions/runs/39062649770)
 and [CI/CD](https://github.com/pbjustin/Arcanos/actions/runs/39062649796)
 reported 943 passing, two failing and 13 skipped suites; 19,431 passing,
