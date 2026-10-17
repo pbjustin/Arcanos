@@ -8,6 +8,10 @@ This directory contains operational scripts for sync, diagnostics, migration, do
   and package-managed TypeScript entry points.
 - PowerShell for `.ps1` scripts on Windows.
 - Bash for `.sh` scripts in Unix-like environments.
+- Linux with Bubblewrap (`/usr/bin/bwrap`) and working user/network namespaces
+  for the isolated offline documentation runner and its security tests. An
+  unavailable sandbox fails validation; the ordinary documentation commands
+  remain available separately on other platforms.
 
 ## Setup
 Run scripts from repository root unless script comments specify otherwise.
@@ -19,12 +23,20 @@ and always pass an explicit approved target for network-enabled operations.
 
 Automation-token flows require the backend's `ARCANOS_AUTOMATION_SECRET`.
 
+The standalone fast-path and async-job probes share URL, CLI, request-timeout,
+JSON, and result-output helpers in `lib/railway-probe.mjs`; importing that module
+performs no requests. Their route validation, defaults, polling deadlines, and
+terminal-state policy remain in the individual scripts. Run their offline
+fixtures with `node scripts/run-jest.mjs --runTestsByPath tests/railway-probe.test.js tests/railway-fast-path-probe.test.js tests/railway-async-job-probe.test.js --runInBand --coverage=false`.
+
 ## Run locally
 Common scripts:
 - `npm run check:boundaries` (CEF layer-access policy plus TypeScript dependency-cycle gate)
 - `npm run docs:check` (cross-platform documentation audit)
 - `npm run docs:links -- --local-only` (maintained-document links without network access)
 - `npm run docs:links` (bounded external-link audit; network access required)
+- `node scripts/check-documentation-offline.mjs` (isolated fixed documentation, generated-index, and local-link checks; writes validation evidence)
+- `node --test scripts/documentation-offline.test.mjs` (offline documentation security contracts)
 - `./scripts/doc_audit.sh` (Bash compatibility wrapper)
 - `node scripts/validate-railway-compatibility.js`
 - `npm run check:native-pr-preview-imports` (build-blocking contained-preview import graph)
@@ -33,6 +45,29 @@ Common scripts:
 - `node scripts/check-railway-timeout-regressions.js --since 30m --lines 400`
 - `npm run validate:gpt:job-hardening` (safe dry run; reports `executed: false` and never reads ambient URL variables)
 - `ARCANOS_GPT_ACCESS_TOKEN=<token> npm run validate:gpt:job-hardening -- --execute --allow-network --target preview --base-url "https://<service>-arcanos-pr-<N>.up.railway.app" --environment "Arcanos-pr-<N>" --service "ARCANOS V2" --worker-service "ARCANOS Worker"`
+
+The offline documentation runner accepts no target or provider configuration.
+It runs only `check-documentation.mjs`, `reindex-codebase.js --check`, and
+`check-documentation-links.mjs --local-only`, each with an allowlisted,
+credential-empty environment, a read-only root mount, and a separate network
+namespace. Its Node preload rejects transport use with the fixed
+`DOCS_OFFLINE_NETWORK_BLOCKED` error and permits only the validators' bounded,
+read-only Git queries as subprocesses. It imports no application runtime and
+does not start a server or write database or memory state. The launcher writes
+`documentation-offline-validation.json` with separate validation results,
+generation explicitly `skipped`, provider access `blocked`, no updates, and
+`publication.requiresHumanReview: true`; raw validator output is not included.
+Failure to create the sandbox fails the check. This containment assumes trusted
+validator code; a read-only root does not hide existing host files.
+
+Automatic documentation CI uses this runner without provider secrets. To
+generate a proposal, manually dispatch `Analyze Documentation Updates` on the
+default branch with `provider_confirmation` exactly
+`AUTHORIZE DOCUMENTATION PROVIDER REQUESTS`. The separate generation job needs
+successful offline validation and a real provider key, then preserves the
+bounded patch artifact and human publication process. See
+[documentation automation boundaries](../docs/CI_CD.md) before using that
+network-enabled path.
 
 The live GPT job hardening validator requires both network flags and an explicit target triple. Preview environment and hostname PR numbers must match. Production additionally requires `--target production`, `--environment production`, `--allow-production`, and the repository-known production origin; never use that opt-in during PR validation.
 

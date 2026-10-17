@@ -147,6 +147,8 @@ eggs/
 lib/
 !src/lib/
 !src/lib/**
+!scripts/lib/
+!scripts/lib/railway-probe.mjs
 lib64/
 parts/
 sdist/
