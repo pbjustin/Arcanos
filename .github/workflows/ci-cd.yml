@@ -22,7 +22,8 @@ env:
 jobs:
   lint-and-typecheck:
     name: Lint & Type Check
-    runs-on: ubuntu-latest
+    # Keep the required offline sandbox on an image with usable user namespaces.
+    runs-on: ubuntu-22.04
     
     steps:
       - name: 📥 Checkout code
@@ -47,6 +48,17 @@ jobs:
 
       - name: 🧾 Validate backend/CLI contract manifest
         run: npm run validate:backend-cli:contract
+
+      - name: Verify provider-free documentation validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v bwrap >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install --yes bubblewrap
+          fi
+          env -i PATH=/usr/bin:/bin /usr/bin/bwrap --unshare-user --unshare-net --ro-bind / / -- /bin/true
+          env -i PATH="$PATH" node --test scripts/documentation-offline.test.mjs
 
       - name: 🧱 Enforce CEF boundaries
         run: |
@@ -641,6 +653,19 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      session-postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: arcanos_ci
+          POSTGRES_PASSWORD: local-agent-ci-only
+          POSTGRES_DB: arcanos_audit_pg18_20260727
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U arcanos_ci -d arcanos_audit_pg18_20260727"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       ARCANOS_POSTGRES_TESTS_REQUIRE_DATABASE: '1'
       LOCAL_AGENT_HARDENING_TEST_DATABASE_URL: >-
@@ -668,6 +693,8 @@ jobs:
       SELF_HEAL_PREVIEW_OWNERSHIP_TEST_DATABASE_URL: >-
         postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
       SELF_HEAL_PREVIEW_OWNERSHIP_CONFIRM_DISPOSABLE: disposable-loopback-only
+      SESSION_SYSTEM_TEST_DATABASE_URL: >-
+        postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5433/arcanos_audit_pg18_20260727
 
     steps:
       - name: 📥 Checkout code
@@ -686,6 +713,10 @@ jobs:
 
       - name: Build shared packages for PostgreSQL HTTP consumers
         run: npm run build:packages
+
+      - name: Verify session persistence and readiness after pool restart
+        timeout-minutes: 5
+        run: node scripts/run-jest.mjs --runTestsByPath tests/integration/session-system.integration.test.ts --coverage=false --runInBand
 
       - name: 🗄️ Verify database-enforced local-agent semantics
         run: npm run test:local-agent-postgres

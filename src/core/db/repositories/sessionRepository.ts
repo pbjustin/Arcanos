@@ -13,15 +13,13 @@ import {
   isDatabaseConnected
 } from '@core/db/client.js';
 import { query, transaction } from '@core/db/query.js';
+import { createRepositoryReadinessGate } from '@core/db/repositoryReadiness.js';
 import { initializeTables, isDatabaseSchemaReady } from '@core/db/schema.js';
 import { resolveErrorMessage } from '@shared/errorUtils.js';
 import { safeJSONStringify } from '@shared/jsonHelpers.js';
 
 const SESSION_REPOSITORY_WORKER_ID = 'session-repository';
 const SESSION_BOOTSTRAP_RETRY_COOLDOWN_MS = 30_000;
-
-let pendingBootstrap: Promise<boolean> | null = null;
-let lastBootstrapFailureAtMs = 0;
 
 function shouldRetrySessionBootstrap(error: unknown): boolean {
   const code =
@@ -48,7 +46,6 @@ async function bootstrapSessionPersistence(): Promise<boolean> {
 
   for (let attempt = 1; attempt <= maxBootstrapAttempts; attempt += 1) {
     if (isDatabaseConnected() && isDatabaseSchemaReady()) {
-      lastBootstrapFailureAtMs = 0;
       return true;
     }
 
@@ -73,7 +70,6 @@ async function bootstrapSessionPersistence(): Promise<boolean> {
         isDatabaseConnected() &&
         isDatabaseSchemaReady();
       if (persistenceReady) {
-        lastBootstrapFailureAtMs = 0;
         return true;
       }
 
@@ -196,46 +192,14 @@ export interface SessionStorageMetrics {
  * Edge case behavior:
  * - Repeated bootstrap failures are throttled with a cooldown to avoid request-time retry storms.
  */
-async function ensureSessionPersistenceReady(): Promise<boolean> {
-  //audit Assumption: session persistence is safe only after the exact current pool has completed shared schema initialization; failure risk: a repository-local flag survives pool replacement; expected invariant: the fast path requires current connectivity and central schema readiness; handling strategy: consult both shared states.
-  if (isDatabaseConnected() && isDatabaseSchemaReady()) {
-    return true;
+const ensureSessionPersistenceReady = createRepositoryReadinessGate({
+  isReady: () => isDatabaseConnected() && isDatabaseSchemaReady(),
+  bootstrap: bootstrapSessionPersistence,
+  cooldownMs: SESSION_BOOTSTRAP_RETRY_COOLDOWN_MS,
+  onError: error => {
+    console.warn('[Sessions] Failed to initialize persistent session storage:', resolveErrorMessage(error));
   }
-
-  //audit Assumption: concurrent requests should share one bootstrap attempt even while failure cleanup is in progress; failure risk: followers fail closed during an active recovery; expected invariant: an in-flight bootstrap takes precedence over cooldown; handling strategy: reuse the pending promise first.
-  if (pendingBootstrap) {
-    return pendingBootstrap;
-  }
-
-  const nowMs = Date.now();
-  const cooldownActive =
-    lastBootstrapFailureAtMs > 0 &&
-    nowMs - lastBootstrapFailureAtMs < SESSION_BOOTSTRAP_RETRY_COOLDOWN_MS;
-
-  //audit Assumption: repeated bootstrap failures should fail closed briefly instead of hammering the database; failure risk: request amplification during outages; expected invariant: retries respect the cooldown window; handling strategy: return false until the cooldown expires.
-  if (cooldownActive) {
-    return false;
-  }
-
-  pendingBootstrap = (async () => {
-    try {
-      const persistenceReady = await bootstrapSessionPersistence();
-      if (!persistenceReady) {
-        lastBootstrapFailureAtMs = Date.now();
-      }
-      return persistenceReady;
-    } catch (error: unknown) {
-      //audit Assumption: bootstrap failures must remain explicit and should not silently downgrade to memory-only state; failure risk: callers believe data is durable when it is not; expected invariant: readiness returns false on failure; handling strategy: warn and fail closed.
-      lastBootstrapFailureAtMs = Date.now();
-      console.warn('[Sessions] Failed to initialize persistent session storage:', resolveErrorMessage(error));
-      return false;
-    } finally {
-      pendingBootstrap = null;
-    }
-  })();
-
-  return pendingBootstrap;
-}
+});
 
 function normalizeStoredSessionRecord(row: SessionListRow): StoredSessionRecord {
   return {

@@ -118,14 +118,46 @@ Documentation automation boundaries:
 
 - The `docs:check` job in `.github/workflows/doc-audit.yml` is the stable
   documentation-integrity status context required on `main`.
-- `.github/workflows/auto-update-documentation.yml` is report-only. It has
-  `contents: read`, validates bounded output for its single maintained target,
-  and uploads a patch for human review. It never commits, pushes, or opens a
-  pull request. Its production-mode localhost server receives a fresh masked
-  32-byte random `ARCANOS_JOB_READ_CAPABILITY_SECRET` only after install and
-  build; the parent shell unsets the value immediately after spawning the
-  server so the analysis client cannot inherit it. The workflow does not read
-  a repository or production job-read signing secret.
+- `.github/workflows/auto-update-documentation.yml` runs deterministic offline
+  validation on matching `main` pushes and on manual dispatch. Its
+  `validate-offline` job needs Node, Git, and Linux Bubblewrap with working user
+  and network namespaces. Isolation jobs use the supported `ubuntu-22.04` image
+  and check namespace creation before validation; they never disable host
+  security controls when isolation is unavailable. The automatic job does not
+  install application dependencies, build,
+  start the backend, or receive repository secrets. The fixed checks are
+  `scripts/check-documentation.mjs`, `scripts/reindex-codebase.js --check`, and
+  `scripts/check-documentation-links.mjs --local-only`.
+- `node scripts/check-documentation-offline.mjs` starts each validator in a
+  separate Bubblewrap network namespace with a read-only root filesystem and
+  an allowlisted environment containing no credentials. A Node preload rejects
+  transport calls before use with the constant `DOCS_OFFLINE_NETWORK_BLOCKED`
+  error; process execution is denied except for the two bounded, read-only Git
+  query forms required by the validators. Missing or unusable isolation fails
+  validation. No application, provider, database, or memory runtime is started.
+  The launcher writes `documentation-offline-validation.json`, which reports
+  validation separately from `generation.status: "skipped"`,
+  `providerAccess: "blocked"`, and an empty `updates` array. It records only
+  fixed check names and exit results, not raw child output. A passing report
+  does not mean that documentation was generated or published.
+- Checkout, tool installation, and artifact upload use normal CI networking;
+  the validation subprocesses are isolated. This boundary contains accidental
+  effects from the reviewed validators, not arbitrary hostile code. In
+  particular, a read-only root mount does not conceal files already present on
+  the host. Run the validators from a trusted checkout on a suitable CI worker.
+- Provider-backed generation is a separate job that requires successful
+  offline validation and a manual dispatch on the default branch with
+  `provider_confirmation` exactly `AUTHORIZE DOCUMENTATION PROVIDER REQUESTS`.
+  The input defaults to empty, so ordinary dispatch performs offline validation
+  only. The authorized analysis step requires a real `OPENAI_API_KEY`; it has
+  no fake-key or partial-success fallback. This path builds and starts a
+  localhost backend, validates bounded output for its single maintained target,
+  and uploads a patch for human review. Both jobs have `contents: read`; neither
+  commits, pushes, or opens a pull request. The localhost server receives a
+  fresh masked 32-byte random `ARCANOS_JOB_READ_CAPABILITY_SECRET` only after
+  install and build; the parent shell unsets it immediately after spawning the
+  server so the analysis client cannot inherit it. The client bearer is a
+  local fixture, and the workflow reads no production job-read signing secret.
 - `.github/workflows/documentation-links.yml` runs a read-only external-link
   audit every Monday at 13:17 UTC and on manual dispatch. It writes only a job
   summary and a redacted workflow artifact.
@@ -171,6 +203,59 @@ Release automation boundaries:
   final notes-publication job has `contents: write`, and all reusable actions
   are pinned to immutable commits. Release notes do not invoke an AI provider or
   receive a provider secret.
+
+## Repository registration reporting
+
+[Repository Registration](../.github/workflows/register.yml) retains its
+noncritical main/master push policy and six-language file discovery. It passes
+repository name, commit SHA, branch, feature counts and language names as
+environment data to [the registration reporter](../scripts/register-repository.mjs).
+The reporter uses `JSON.stringify` and validates the exact candidate Core query
+envelope before any transport can run. Missing feature lists become empty
+objects; malformed counts, inconsistent languages and invalid identities are
+reported as `payload_invalid`. No payload, credential, exception text or backend
+response is printed or uploaded.
+
+The former jq filter escaped double quotes inside a single-quoted shell string.
+Those literal backslashes made jq fail compilation. Because the command
+substitution was a curl argument, the shell still invoked curl with an empty
+body; the backend rejected the missing prompt, while the noncritical step could
+exit successfully. The regression fixture preserves that invalid filter. Local
+reproduction of the original Bash step used real jq and a shell-only curl mock:
+jq failed, the attempted body was empty, and the step exited zero without any
+network request.
+
+The [Core route contract](API.md#gpt-async-contract) has no durable repository
+registration action or receipt. The corrected workflow therefore **sends no
+request**, and reports `registrationStatus: unsupported`,
+`registrationSucceeded: false`, and `requestStatus: not_sent_contract_unsupported`.
+The status artifact's `reportingStatus: completed` describes only this reporting
+operation, not the final GitHub workflow result. The Actions summary distinguishes
+reporting completion from registration success. Invalid input also remains noncritical, but inability to
+write the report fails the step. No backend storage, authentication, SQL or
+production configuration is changed. A future registration feature requires a
+separately reviewed persistence, authorization and idempotency contract; an
+ordinary Core query must not substitute for one.
+
+Deterministic tests cover the old jq failure, JSON/schema validation, empty
+features, unusual metadata, redaction, missing/malformed responses, HTTP errors,
+network errors, deadlines, and one-attempt behavior. The reporter's explicit
+`--mock-base-url` test option accepts only HTTP numeric loopback addresses with an
+explicit port and fixed `/gpt/arcanos-daemon` path. It follows no redirects, uses
+no credentials, and never retries. Even a mock `ok: true` response or generated
+registration claim remains unsupported registration. The workflow never supplies
+this option. These are local transport and mocked Core tests, not live backend
+or persistence acceptance.
+
+Run the focused suites with Node 24.18.1. To include the historical jq regression,
+install jq on PATH or set `JQ_BINARY` to a local jq executable. Without jq, only
+that test is skipped locally, including in `npm test` and `npm run test:unit`;
+all JSON, transport and reporting tests still run. CI requires jq, and an invalid
+explicit `JQ_BINARY` fails rather than silently skipping the regression:
+
+```bash
+node scripts/run-jest.mjs --runTestsByPath tests/repository-registration.test.js tests/arcanos-core-module.test.ts --coverage=false
+```
 
 ## Run locally
 Pre-CI local validation:
@@ -249,6 +334,18 @@ includes the storyline and canon forward/runtime/rollback DDL, advisory-lock
 and canon-head concurrency, mixed-version table-writer fencing, retention
 order, and legacy-containment suite, plus retention-writer and lock-skipping
 cleanup proof.
+
+The same PostgreSQL job also runs
+`tests/integration/session-system.integration.test.ts` with
+`SESSION_SYSTEM_TEST_DATABASE_URL`. Its existing save/read/list/replay and
+pool-restart roundtrip runs against the guarded disposable database. The suite
+sets the application connection only after validating that dedicated URL and
+imports database consumers afterward; ambient `DATABASE_URL` never opts it in.
+Its separate `session-postgres` service on loopback port 5433 isolates full
+runtime-schema bootstrap from migration suites requiring an initially empty
+schema on the primary service.
+It shares the required-database sentinel, so missing configuration fails CI
+instead of silently skipping persistence evidence.
 
 CI sets the single sentinel `ARCANOS_POSTGRES_TESTS_REQUIRE_DATABASE=1` for both
 package commands. Every selected suite resolves its explicit test URL

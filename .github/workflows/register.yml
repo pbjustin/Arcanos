@@ -80,50 +80,20 @@ jobs:
           echo "languages=$LANGUAGES" >> $GITHUB_OUTPUT
           echo "features=$FEATURES" >> $GITHUB_OUTPUT
 
-      - name: 📤 Register with ARCANOS backend
-        run: |
-          echo "Registering repository features with ARCANOS backend..."
+      - name: 🧰 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.18.1'
 
-          # Prepare JSON payload
-          PAYLOAD=$(cat <<EOF
-          {
-            "repo_name": "${{ steps.detect-features.outputs.repo_name }}",
-            "commit_hash": "${{ steps.detect-features.outputs.commit_hash }}",
-            "detected_features": ${{ steps.detect-features.outputs.features }},
-            "languages": "${{ steps.detect-features.outputs.languages }}",
-            "branch": "${GITHUB_REF_NAME}",
-            "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-            "event_type": "repository_registration",
-            "github_repository": "${GITHUB_REPOSITORY}"
-          }
-          EOF
-          )
-
-          echo "Payload:"
-          echo "$PAYLOAD" | jq '.' || echo "$PAYLOAD"
-
-          # Send registration request to ARCANOS backend
-          HTTP_CODE=$(curl -s -w "%{http_code}" -o response.json \
-            -X POST https://acranos-production.up.railway.app/gpt/arcanos-daemon \
-            -H "Content-Type: application/json" \
-            -H "User-Agent: ARCANOS-GitHub-Actions/1.0" \
-            -d "$(jq -nc --arg prompt "Register repository features and persist the attached metadata for later retrieval. Payload: $PAYLOAD" --argjson metadata "$PAYLOAD" '{action: \"query\", prompt: $prompt, metadata: $metadata}')")
-
-          echo "HTTP Response Code: $HTTP_CODE"
-
-          if [ -f response.json ]; then
-            echo "Response body:"
-            cat response.json | jq '.' 2>/dev/null || cat response.json
-          fi
-
-          # Check if registration was successful
-          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
-            echo "✅ Repository successfully registered with ARCANOS backend"
-          else
-            echo "⚠️ Registration request completed with HTTP $HTTP_CODE"
-            # Don't fail the workflow for non-critical registration
-            echo "Continuing workflow execution..."
-          fi
+      # Core query success is not a durable repository-registration receipt.
+      # Keep this noncritical step offline until that backend contract exists.
+      - name: 📋 Prepare repository registration report
+        id: registration
+        env:
+          REGISTRATION_REPO_NAME: ${{ steps.detect-features.outputs.repo_name }}
+          REGISTRATION_FEATURES: ${{ steps.detect-features.outputs.features }}
+          REGISTRATION_LANGUAGES: ${{ steps.detect-features.outputs.languages }}
+        run: node scripts/register-repository.mjs
 
       - name: 📊 Upload registration artifacts
         uses: actions/upload-artifact@v4
@@ -131,6 +101,5 @@ jobs:
         with:
           name: >-
             registration-data-${{ steps.detect-features.outputs.commit_hash }}
-          path: |
-            response.json
+          path: repository-registration-status.json
           retention-days: 7
