@@ -23,7 +23,8 @@ const requiredTitles = [
   'accepts the fixture Node identity and rejects a mismatched hash',
   'rejects a missing fixture Node executable without creating a session directory',
   'rejects an unreadable fixture Node executable without creating a session directory',
-  'reproduces the original unbound Node identity initialization failure',
+  'checks the unmodified fixture against the observed operational Node identity',
+  'rejects an incorrect fixture Node hash without creating a session directory',
   'propagates guarded cleanup failure after stop/ack without removing its session directory',
 ];
 const secretCanary = 'synthetic-secret-that-must-not-enter-receipts';

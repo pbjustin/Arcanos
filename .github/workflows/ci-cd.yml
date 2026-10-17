@@ -644,7 +644,8 @@ jobs:
             for (const title of ['completes a no-network stop/ack session and removes its session directory', 'accepts the fixture Node identity and rejects a mismatched hash',
               'rejects a missing fixture Node executable without creating a session directory',
               'rejects an unreadable fixture Node executable without creating a session directory',
-              'reproduces the original unbound Node identity initialization failure',
+              'rejects an incorrect fixture Node hash without creating a session directory',
+              'checks the unmodified fixture against the observed operational Node identity',
               'propagates guarded cleanup failure after stop/ack without removing its session directory']) {
               const matches = assertions.filter(test => test.fullName === `${prefix} ${title}`);
               assert.equal(matches.length, 1); assert.equal(matches[0].status, 'passed');

@@ -58,7 +58,12 @@ function runFailedInitializationFixture(mode) {
   const command = [
     `. '${harnessScript.replaceAll("'", "''")}'`,
     '$lock=$null',
-    ...(mode === 'original' ? [] : [`$NodePath='${fixtureNodePath.replaceAll("'", "''")}'`]),
+    // A matching operational identity must still stop before credentials or session creation.
+    "function global:Read-Host { [CmdletBinding()] param([Parameter(Position=0)][string]$Prompt,[switch]$AsSecureString) [Security.SecureString]::new() }",
+    ...(['missing', 'unreadable'].includes(mode) ? [`$NodePath='${fixtureNodePath.replaceAll("'", "''")}'`] : []),
+    ...(mode === 'incorrect-hash' ? [
+      "$NodeSha256 = if ($NodeSha256[0] -eq '0') { '1' + $NodeSha256.Substring(1) } else { '0' + $NodeSha256.Substring(1) }"
+    ] : []),
     ...(mode === 'unreadable' ? [
       '$lock=[IO.File]::Open($NodePath,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None)'
     ] : []),
@@ -72,6 +77,18 @@ function runFailedInitializationFixture(mode) {
     windowsHide: true
   });
   return { result, sessionTemporaryRoot };
+}
+
+function operationalNodeMatchesPin() {
+  const [, nodePath] = sessionScript.match(/^\$NodePath = '([^']+)'\r?$/mu);
+  const [, expectedHash] = sessionScript.match(/^\$NodeSha256 = '([A-F0-9]{64})'\r?$/mu);
+  let executable;
+  try {
+    executable = readFileSync(nodePath);
+  } catch {
+    return false;
+  }
+  return createHash('sha256').update(executable).digest('hex').toUpperCase() === expectedHash;
 }
 
 function runBoundedFixture(mode, timeoutMs = 5_000) {
@@ -461,15 +478,19 @@ describe('Gate R1 projector session', () => {
 
   for (const [mode, title, fixtureIt] of [
     ['missing', 'rejects a missing fixture Node executable without creating a session directory', it],
+    ['incorrect-hash', 'rejects an incorrect fixture Node hash without creating a session directory', it],
     ['unreadable', 'rejects an unreadable fixture Node executable without creating a session directory', windowsIt],
-    ['original', 'reproduces the original unbound Node identity initialization failure', windowsIt]
+    ['original', 'checks the unmodified fixture against the observed operational Node identity', windowsIt]
   ]) {
     fixtureIt(title, () => {
+      const expectedCode = mode === 'original' && operationalNodeMatchesPin()
+        ? 'GATE_R1_SESSION_TOKEN_INVALID'
+        : 'GATE_R1_SESSION_NODE_IDENTITY_INVALID';
       const { result, sessionTemporaryRoot } = runFailedInitializationFixture(mode);
       expect({ status: result.status, signal: result.signal, errorCode: result.error?.code ?? null })
         .toEqual({ status: 1, signal: null, errorCode: null });
       expect(result.stdout).toBe('');
-      expect(result.stderr.trim()).toBe('GATE_R1_SESSION_NODE_IDENTITY_INVALID');
+      expect(result.stderr.trim()).toBe(expectedCode);
       expect(readdirSync(sessionTemporaryRoot)).toEqual([]);
     });
   }
