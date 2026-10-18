@@ -36,7 +36,8 @@ const identity = (doc = document(), game = 'Minecraft') => assessGamingClearSour
 describe('closed Minecraft child identity', () => {
   it('rejects acquired Story Mode title and body as another game for the parent', () => {
     expect(identity()).toEqual({ status: 'conflict', gameIdentityVerified: false, reasonCodes: ['GAME_MISMATCH'],
-      diagnostic: { ruleId: 'gaming.identity.distinct_title_scope', evidenceCategory: 'document_title' } });
+      diagnostic: { ruleId: 'gaming.identity.distinct_title_scope', evidenceCategory: 'document_title',
+        subjectKind: 'game_identity', scope: 'source_global', determination: 'explicit_contradiction' } });
   });
   it('rejects an affirmative child subject even after valid parent-game prose', () => {
     expect(identity(document(`${minecraft} ${story}`, 'Minecraft crafting guide')))

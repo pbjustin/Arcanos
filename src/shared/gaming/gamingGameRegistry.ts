@@ -193,8 +193,8 @@ export function gamingApplicabilityAssertionText(value: string, game?: string, r
   const parents = entry ? [entry.name, ...entry.aliases] : [];
   const parentPattern = parents.map(gamingRegistryLiteralPattern).join('|');
   const introducer = 'in(?: the game)?|this (?:guide|build|walkthrough|article|source|page|document) (?:covers|is (?:for|about))|requires?|only (?:works|is available) (?:in|on)';
-  const declaredNamePrefix = new RegExp(`\\b(?:${introducer})\\s+(?:${parentPattern ? `(?:${parentPattern})[\\s-]+` : '(?!)'})?$`, 'iu');
-  const gameEditionPrefix = parentPattern ? new RegExp(`\\bgame\\s*:\\s*(?:${parentPattern})[\\s-]+$`, 'iu') : undefined;
+  const declaredNamePrefix = new RegExp(`\\b(?:${introducer})\\s+(?:${parentPattern ? `(?:${parentPattern})[\\s:–—-]+` : '(?!)'})?$`, 'iu');
+  const gameEditionPrefix = parentPattern ? new RegExp(`\\bgame\\s*:\\s*(?:${parentPattern})[\\s:–—-]+$`, 'iu') : undefined;
   const editions = entry?.editions.flatMap(edition => [edition.name, ...edition.aliases]) ?? [];
   const declaredNames = new Set([...parents, ...editions, ...parents.flatMap(parent => editions.map(edition => `${parent} ${edition}`))]
     .map(normalizeGamingRegistryIdentity));
@@ -216,7 +216,7 @@ export function gamingApplicabilityAssertionText(value: string, game?: string, r
   // Complete quotations were masked or had their exact declared-name boundary
   // removed above. A remaining standalone quote in explicit scope leaves its
   // edition boundary uninspectable; it cannot preserve earlier proof.
-  const scopeStart = new RegExp(`\\b(?:${introducer})\\s+|\\b(?:game|edition|platforms?|regions?|patch|build|season)\\s*:\\s*${parentPattern ? `|(?:^|[^\\p{L}\\p{N}])(?:${parentPattern})[\\s-]+` : ''}`, 'giu');
+  const scopeStart = new RegExp(`\\b(?:${introducer})\\s+|\\b(?:game|edition|platforms?|regions?|patch|build|season)\\s*:\\s*${parentPattern ? `|(?:^|[^\\p{L}\\p{N}])(?:${parentPattern})[\\s:–—-]+` : ''}`, 'giu');
   let inspected = 0;
   for (const match of text.matchAll(scopeStart)) {
     if (++inspected > APPLICABILITY_SCOPE_LIMITS.assertions) { complete = false; break; }
@@ -252,13 +252,13 @@ export function readGamingRegistryEditionScope(document: { text: string; metadat
   const normalize = (value: string) => (normalizeGamingRegistryEdition(game, value, registry)
     ?? normalizeGamingRegistryEdition(game, value.replace(/-/gu, ' '), registry))!;
   const metadata = [document.metadata?.title, document.metadata?.headings].flatMap(value => {
-    const match = new RegExp(`^(?:${gamePattern})[\\s-]+(${editionPattern})(?=$|[\\s:.,;!?-])`, 'iu').exec(value?.trim() ?? '');
+    const match = new RegExp(`^(?:${gamePattern})[\\s:–—-]+(${editionPattern})(?=$|[\\s:.,;!?-])`, 'iu').exec(value?.trim() ?? '');
     return match ? [normalize(match[1])] : [];
   });
   const scope = gamingApplicabilityAssertionText(document.text, game, registry);
   const text = scope.text.slice(0, 32_000), assertions: string[] = [], declared: string[] = [];
   const unquoted = text;
-  for (const match of unquoted.matchAll(new RegExp(`\\b(?:in(?: the game)?|this (?:guide|build|walkthrough) (?:covers|is for))\\s+(?:${gamePattern})[\\s-]+(${editionPattern})(?=$|[^\\p{L}\\p{N}])`, 'giu'))) {
+  for (const match of unquoted.matchAll(new RegExp(`\\b(?:in(?: the game)?|this (?:guide|build|walkthrough) (?:covers|is for))\\s+(?:${gamePattern})[\\s:–—-]+(${editionPattern})(?=$|[^\\p{L}\\p{N}])`, 'giu'))) {
     const local = gamingApplicabilityAssertionContext(unquoted, match.index);
     if (!local.complete) { scope.complete = false; continue; }
     if (local.reference) continue;
@@ -267,7 +267,7 @@ export function readGamingRegistryEditionScope(document: { text: string; metadat
       || /\b(?:not(?:\s+(?:apply|applicable|valid|available|supported|used|found|present|exist|included|be|for)){0,4}|(?:doesn|isn|aren|don|didn)['’]?t(?:\s+(?:apply|exist|work))?|without|except|excluding|unavailable|unsupported)\s*$/iu.test(before)) continue;
     assertions.push(normalize(match[1]));
   }
-  for (const match of text.matchAll(new RegExp(`\\b(?:edition\\s*:\\s*|game\\s*:\\s*(?:${gamePattern})[\\s-]+)(${editionPattern})(?=\\s*[.;|\\n]|$)`, 'giu'))) {
+  for (const match of text.matchAll(new RegExp(`\\b(?:edition\\s*:\\s*|game\\s*:\\s*(?:${gamePattern})[\\s:–—-]+)(${editionPattern})(?=\\s*[.;|\\n]|$)`, 'giu'))) {
     const local = gamingApplicabilityAssertionContext(text, match.index);
     if (!local.complete) { scope.complete = false; continue; }
     if (local.reference) continue;
@@ -275,7 +275,7 @@ export function readGamingRegistryEditionScope(document: { text: string; metadat
   }
   let exclusive = false;
   const scopeText = [document.metadata?.title, document.metadata?.headings, text].filter(Boolean).join('\n');
-  for (const match of scopeText.matchAll(new RegExp(`\\b(${editionPattern})[ -]only\\b|\\b(?:requires?|only (?:works|is available) (?:in|on))\\s+(?:(?:${gamePattern})\\s+)?(${editionPattern})(?=$|[^\\p{L}\\p{N}])`, 'giu'))) {
+  for (const match of scopeText.matchAll(new RegExp(`\\b(${editionPattern})[ -]only\\b|\\b(?:requires?|only (?:works|is available) (?:in|on))\\s+(?:(?:${gamePattern})[\\s:–—-]+)?(${editionPattern})(?=$|[^\\p{L}\\p{N}])`, 'giu'))) {
     const local = gamingApplicabilityAssertionContext(scopeText, match.index);
     if (!local.complete) { scope.complete = false; continue; }
     if (local.reference) continue;
@@ -303,9 +303,9 @@ export function readGamingRegistryEditionScope(document: { text: string; metadat
       if (exclusivity) exclusive = true;
     }
   };
-  collect(new RegExp(`\\b(?:in(?: the game)?|this (?:guide|build|walkthrough|article|source|page|document) (?:covers|is (?:for|about)))\\s+(?:${gamePattern})[\\s-]+(${editionPattern})(?=$|[^\\p{L}\\p{N}])`, 'giu'));
-  collect(new RegExp(`\\b(?:edition\\s*:\\s*|game\\s*:\\s*(?:${gamePattern})[\\s-]+)(${editionPattern})(?=\\s*[.;|\\n]|$)`, 'giu'), true);
-  collect(new RegExp(`\\b(${editionPattern})[ -]only\\b|\\b(?:requires?|only (?:works|is available) (?:in|on))\\s+(?:(?:${gamePattern})\\s+)?(${editionPattern})(?=$|[^\\p{L}\\p{N}])`, 'giu'), false, true);
+  collect(new RegExp(`\\b(?:in(?: the game)?|this (?:guide|build|walkthrough|article|source|page|document) (?:covers|is (?:for|about)))\\s+(?:${gamePattern})[\\s:–—-]+(${editionPattern})(?=$|[^\\p{L}\\p{N}])`, 'giu'));
+  collect(new RegExp(`\\b(?:edition\\s*:\\s*|game\\s*:\\s*(?:${gamePattern})[\\s:–—-]+)(${editionPattern})(?=\\s*[.;|\\n]|$)`, 'giu'), true);
+  collect(new RegExp(`\\b(${editionPattern})[ -]only\\b|\\b(?:requires?|only (?:works|is available) (?:in|on))\\s+(?:(?:${gamePattern})[\\s:–—-]+)?(${editionPattern})(?=$|[^\\p{L}\\p{N}])`, 'giu'), false, true);
   const fullChoices = [...new Set(fullAssertions)];
   if (new Set(fullDeclared).size > 1 || declared.length && fullChoices.some(value => value !== declared[0])
     || fullDeclared.length && fullChoices.some(value => value !== fullDeclared[0])

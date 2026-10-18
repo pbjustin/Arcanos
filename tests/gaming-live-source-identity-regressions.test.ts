@@ -152,7 +152,8 @@ describe('live source identity failure regressions (synthetic publisher-shaped d
     const assessment = assessGamingClearSourceIdentity(document(undefined, `${prose} ${conflict}`), input, policy);
     expect(assessment).toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
     expect(assessment.diagnostic.ruleId).toMatch(/^gaming\.identity\./u);
-    expect(Object.keys(assessment.diagnostic).sort()).toEqual(['evidenceCategory', 'ruleId']);
+    expect(Object.keys(assessment.diagnostic).sort()).toEqual(['determination', 'evidenceCategory', 'ruleId', 'scope', 'subjectKind']);
+    expect(assessment.diagnostic).toMatchObject({ determination: 'explicit_contradiction', scope: 'source_global', subjectKind: 'game_identity' });
     expect(JSON.stringify(assessment.diagnostic)).not.toContain(conflict);
   });
 

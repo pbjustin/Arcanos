@@ -32,7 +32,7 @@ import { extractGamingDocumentEvidence } from './gamingDocumentEvidence.js';
 import { extractGamingCurrentnessDocument } from './gamingCurrentnessDocument.js';
 import type { GamingCurrentnessDocumentMetadata } from '@shared/gaming/gamingCurrentnessAdapters.js';
 
-export const GAMING_DOCUMENT_RESOLVER_VERSION = "gaming-document-v3";
+export const GAMING_DOCUMENT_RESOLVER_VERSION = "gaming-document-v4";
 const acquisitionAttestations = new WeakMap<GamingDocumentAcquisition, string>();
 const documentBinding = (document: ResolvedGamingDocument): string => createHash("sha256")
   .update(JSON.stringify({ requestedUrl: document.requestedUrl, canonicalUrl: document.canonicalUrl,
@@ -332,6 +332,11 @@ export async function resolveGamingDocument(
       ...(effectiveExtraction.documentTitle ? { title: filterGamingDocumentInstructions(effectiveExtraction.documentTitle).slice(0, 240) } : {}),
       ...(effectiveExtraction.headingText ? { headings: filterGamingDocumentInstructions(effectiveExtraction.headingText).slice(0, 240) } : {})
     };
+    const metadataInstructionFiltered = [effectiveExtraction.documentTitle, effectiveExtraction.headingText]
+      .some(value => value !== undefined && filterGamingDocumentInstructions(value)
+        !== value.normalize('NFKC').replace(/\s+/gu, ' ').trim());
+    const instructionFiltered = projection.instructionFiltered || acquired.structure?.instructionFiltered === true
+      || metadataInstructionFiltered;
     options.onExtraction?.(effectiveExtraction);
     if (boundedRaw) options.onRawDocument?.(boundedRaw);
     const canonicalUrl = resolver.publicUrl(url) ?? acquired.finalUrl ?? description.publicUrl;
@@ -342,7 +347,7 @@ export async function resolveGamingDocument(
       finalUrl: canonicalUrl, redirectCount: acquired.transitions?.length ?? 0,
       transitions: acquired.transitions ?? [], contentType: contentType ?? "unknown",
       coverage: { selectedTextChars: effectiveExtraction.cleanedTextLength, returnedTextChars: projection.text.length,
-        truncated: projection.truncated, instructionFiltered: projection.instructionFiltered }
+        truncated: projection.truncated, instructionFiltered }
     } : undefined;
     const evidenceUnits = acquired.structure?.units.filter(unit => projection.text.includes(unit.text));
     const structureDiagnostics = acquired.structure ? { ...acquired.structure.diagnostics,
@@ -381,7 +386,7 @@ export async function resolveGamingDocument(
         rawTextLength: effectiveExtraction.rawTextLength,
         cleanedTextLength: projection.cleanedTextLength,
         truncated: projection.truncated || Boolean(acquired.structure?.diagnostics.truncationStages.includes('extraction')),
-        instructionFiltered: projection.instructionFiltered || acquired.structure?.instructionFiltered === true
+        instructionFiltered
       },
       ...(acquired.archiveResolution ? { archiveResolution: acquired.archiveResolution } : {}),
       ...(acquisition ? { acquisition } : {}),

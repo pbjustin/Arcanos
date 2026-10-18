@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-17T20:39:06.444Z",
+  "generatedAt": "2026-10-18T23:56:16.860Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4309,6 +4309,9 @@
           "relativePath": "tests/fixtures/gaming-currentness/second-publisher.ts"
         },
         {
+          "relativePath": "tests/fixtures/gaming-generic-scope.ts"
+        },
+        {
           "relativePath": "tests/fixtures/gaming-independent-workflow.ts"
         },
         {
@@ -4486,13 +4489,31 @@
           "relativePath": "tests/gaming-generic-benchmark.test.ts"
         },
         {
+          "relativePath": "tests/gaming-generic-detection.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-generic-diagnostics.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-generic-extraction.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-generic-instruction-boundary-review.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-generic-late-applicability.test.ts"
         },
         {
           "relativePath": "tests/gaming-generic-late-source-scope.test.ts"
         },
         {
+          "relativePath": "tests/gaming-generic-scope-acquisition.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-generic-source-scope.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-generic-source-validation.integration.test.ts"
         },
         {
           "relativePath": "tests/gaming-generic-stored-source-scope.test.ts"
@@ -5990,6 +6011,9 @@
         },
         {
           "relativePath": "tests/trinity-model-policy.e2e.test.ts"
+        },
+        {
+          "relativePath": "tests/trinity-persistence-claim-classification.test.ts"
         },
         {
           "relativePath": "tests/trinity-pipeline-adapter.test.ts"

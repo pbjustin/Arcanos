@@ -5,6 +5,25 @@ import { isGamingAcquiredTopicTitle } from '@services/gamingGameDetection.js';
 export type GamingIdentityResolutionState = 'IDENTITY_VERIFIED' | 'IDENTITY_UNVERIFIED'
   | 'IDENTITY_CONFLICT' | 'INSUFFICIENT_EVIDENCE';
 
+/** A prepositional scope ends before its independent gameplay subject/predicate.
+ * Without a nominal prefix, "in the game" refers to the established article game;
+ * the following player instructions are not a newly named title. Keep case and
+ * complete nominal suffixes so titles such as "Minecraft Has Fallen" stay intact. */
+export function gamingAcquiredNominalScope(value: string): string {
+  // Registry recognition protects a complete leading name regardless of case;
+  // lowercasing a wrong game must not turn it into an ordinary sentence subject.
+  const known = detectGamingRegistryAlias(value, true);
+  const nameEnd = known ? Math.max(0, ...[known.name, ...known.aliases].map(name =>
+    new RegExp(`^${gamingRegistryLiteralPattern(name)}(?=$|[^\\p{L}\\p{N}])`, 'iu').exec(value)?.[0].length ?? 0)) : 0;
+  const continuationText = value.slice(nameEnd);
+  const personClause = /(?:^|\s)(?:(?:[Yy]ou|[Ww]e|[Tt]hey|[Hh]e|[Ss]he|[Ii]t|(?:new\s+|experienced\s+)?[Pp]layers|[Cc]haracters|[Yy]our\s+character|[Tt]he\s+player)(?:['’](?:re|ve|ll|d|s))?\s+\p{Ll}[\p{L}'’]*\b|[Tt]here\s+(?:are|is)\b)/u.exec(continuationText);
+  // An unfamiliar noun after a recognized family name may be its subtitle.
+  // Only an independent person/existential clause can terminate that name.
+  const nominalClause = !known ? /(?:^|\s)(?:(?:\p{Lu}[\p{L}'’]*\s+){1,3}(?:can|could|may|might|must|should|will|would)\s+\p{Ll}[\p{L}'’]*\b|(?:(?:the|your|our|their)\s+)?(?:\p{Ll}[\p{L}'’]*\s+){1,3}(?:is|are|has|have|can|will|starts?|begins?|rewards?|requires?|offers?|contains?)\b)/u.exec(continuationText) : null;
+  const continuation = personClause && nominalClause ? (personClause.index < nominalClause.index ? personClause : nominalClause) : personClause ?? nominalClause;
+  return continuation ? value.slice(0, nameEnd + continuation.index).trim() : value;
+}
+
 /** Recognition never proves identity. Ordinary words and undeclared acronyms
  * need explicit acquired game context, even when they equal the request. */
 export function gamingIdentityNeedsExplicitContext(value: string): boolean {
@@ -50,7 +69,7 @@ export function readGamingAcquiredAliasDeclarations(unquotedText: string): {
   declarations: Array<{ canonical: string; alias: string; index: number }>; complete: boolean;
 } {
   const declarations: Array<{ canonical: string; alias: string; index: number }> = [];
-  for (const match of unquotedText.matchAll(/(?:^|[.!?;\n])\s*(?:the\s+)?game\s+([^.!?;\n]{1,120}?)\s+is\s+also\s+known\s+as\s+([\p{L}\p{N}][\p{L}\p{N}'’ -]{0,31})(?=[.;,\n]|$)/giu)) {
+  for (const match of unquotedText.matchAll(/(?:^|[.!?;\n])\s*(?:the\s+)?game\s+([^.!?;\n]{1,120}?)\s+is\s+also\s+known\s+as\s+([\p{L}\p{N}][\p{L}\p{N}'’:–— -]{0,119})(?=[.;,\n]|$)/giu)) {
     if (declarations.length >= 128) return { declarations, complete: false };
     declarations.push({ canonical: match[1].trim(), alias: match[2].trim(), index: match.index });
   }

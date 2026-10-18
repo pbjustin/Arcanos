@@ -5,6 +5,19 @@ extracts, and assesses documents before they become evidence. Acquisition succes
 does not establish the game, edition, current patch, requested gameplay fact,
 Gaming CLEAR acceptance, or permission to store a source.
 
+Ordinary gameplay evidence may come from public community wikis, discussions,
+player builds, walkthroughs, or specialist articles without official-publisher
+affiliation. Acquired ownership, intact relevant content, provenance and CLEAR
+remain required. Explicit current-patch and live-status requests retain their
+separate reviewed-authority verification. Publisher HTTP 403 responses remain
+access failures and are never retried through an access-control bypass.
+
+Source-evaluation rule v2 adds closed identity subject/scope/determination fields
+and a failure class separating security, source access, extraction, gameplay
+quality and workflow failures. Rejection retains earlier bounded extraction
+counts. These fields contain no article subjects, raw passages or URLs, and
+cannot grant acceptance, additional acquisition budget or storage permission.
+
 ## Confirmed failure classes
 
 At base `da27d1445dd443adc1f1abc7200b38f28acc10ff`, discovery admission assigned

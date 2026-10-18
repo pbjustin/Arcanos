@@ -1,0 +1,95 @@
+{
+  "lifecycle": "historical prepublication local receipt; final exact-head CI/review is recorded on draft PR",
+  "baselineSha": "0e7a8e607e3f2f3359dc86eabcf611d8dd3fe6b2",
+  "baselineRuntimeFilesVerified": 1342,
+  "toolchain": {
+    "node": "24.18.1",
+    "npm": "11.16.0",
+    "python": "3.11.16"
+  },
+  "baselineNewRegressionSuite": {
+    "numTotalTestSuites": 7,
+    "numPassedTestSuites": 1,
+    "numFailedTestSuites": 6,
+    "numTotalTests": 173,
+    "numPassedTests": 84,
+    "numFailedTests": 89,
+    "numPendingTests": 0
+  },
+  "repairedNewRegressionSuite": {
+    "numTotalTestSuites": 7,
+    "numPassedTestSuites": 7,
+    "numFailedTestSuites": 0,
+    "numTotalTests": 173,
+    "numPassedTests": 173,
+    "numFailedTests": 0,
+    "numPendingTests": 0
+  },
+  "ordinaryMockedTrinityAcceptance": {
+    "baseline": "4/8",
+    "repaired": "8/8"
+  },
+  "corroboratedAliasMockedTrinityAcceptance": {
+    "baseline": "0/2",
+    "repaired": "2/2"
+  },
+  "checksAlreadyPassed": [
+    "focused baseline 565 tests",
+    "type-check",
+    "lint (0 errors, 77 warnings)",
+    "production build",
+    "docs:check",
+    "docs:links -- --local-only",
+    "validate:railway",
+    "production npm audit policy (0 actionable)",
+    "production license policy"
+  ],
+  "remainingAtCapture": [
+    "final committed-head full root Jest",
+    "hosted full repository CI",
+    "CodeRabbit review",
+    "separate disposable service validation receipt"
+  ],
+  "livePublisherAcceptance": "NOT_RUN",
+  "deployment": "NOT_RUN",
+  "sourceAndFixtureSha256": {
+    "scripts/check-native-pr-preview-imports.mjs": "adee1e8ab9a8dd3b0b38447b7ee3b76d1c8ffb307e353f197d360ad60631eff4",
+    "src/core/logic/trinityHonesty.ts": "aca327303932bde2629813b3be08fa8b5096e58fccae0287ff287bfdcccf51a6",
+    "src/services/gamingDocumentEvidence.ts": "7d89e8d7b62e28de080ad3d68038525ce616ef9e7b2e9eb66db45423e2e451d5",
+    "src/services/gamingDocumentExtraction.ts": "9d1a63dd3a94897ae4f7aff74b810525208bbe162f00bf72d67f58a6de09cca8",
+    "src/services/gamingDocumentResolution.ts": "41848a8f081ece86bba2c1ae275f85cce0faa37acb1707bf8a55af4131af24e0",
+    "src/services/gamingGameDetection.ts": "a01c5f3e5acd7c6a7eb09c4665ebcd5948543b10efa79e2c89d5f3203cd6548c",
+    "src/services/gamingHtmlEvidence.ts": "a23733d48b5d7ed6f570557a3cf0ae2839285c8fa5cb876fa38f0c97c063c32d",
+    "src/services/gamingHybridCandidates.ts": "de578bc12f808ae13b03be3d2510267e8efa929473fa84ef86d434dc72205c0c",
+    "src/shared/gaming/gamingAcquiredIdentity.ts": "e3b2c5f1c62422b5397c0acc182acbf181625d1278c995c911a74364199a1099",
+    "src/shared/gaming/gamingClearPolicy.ts": "29c9907186986d6bc88a5917e4d2c2eec8e8e4613f7ce0e9cb8d1c2878960308",
+    "src/shared/gaming/gamingClearSource.ts": "ced1ab7671dd2e46fb1282f3429392d462e28267ecbe6cea182b9b42d6b3313d",
+    "src/shared/gaming/gamingDocumentIngestionCore.ts": "b1dc6865b91abb69fd2dc03ecd9d3eb5e9257e1034b4f3bf0a72217465a6bc6b",
+    "src/shared/gaming/gamingDocumentProjectionCore.ts": "73359d3729510e285e35370f6679339d43bf583ad3e2049a905d31e1ad844cac",
+    "src/shared/gaming/gamingGameRegistry.ts": "01a14080aba386074ca84e679a0daa2ad487b19df0b49a847b8eefdd08a0becb",
+    "src/shared/gaming/gamingSourceEvaluation.ts": "856f82b5b45766e20c9783b1ba61b16517eb712ee6d619c4c2f9b13716d6b041",
+    "tests/fixtures/gaming-generic-extraction/narrative-list.html": "2e4b85f8cf86cfa57d555340c30c5f8dd7dc4cfeafb05b7394908d130eaa309e",
+    "tests/fixtures/gaming-generic-scope.ts": "033be9d9ae23922829871e703cbc5d31a5cb19eff241080c77c77c7dcf33e667",
+    "tests/fixtures/gaming-generic-source-validation/README.md": "bb5e6c832faf20a92eb3f1ca612a49cccb27164c49f899fe82cac415813cbc6f",
+    "tests/fixtures/gaming-generic-source-validation/elden-build.html": "efe6f9317f34c30f2394dcf69d98d00797ed1110c519e9e749d71c9f32fbb228",
+    "tests/fixtures/gaming-generic-source-validation/elite-discussion.html": "4e1658344f4ad586c52107442fa246462a0cebe0ba56dcb77618d244d68d7a24",
+    "tests/fixtures/gaming-generic-source-validation/fallout-build.html": "7d69f4667d7aa5164e6bded73017f09d69c52c086eaf00d0c9b8a0f73199ac01",
+    "tests/fixtures/gaming-generic-source-validation/invented-build.html": "2ed52b4fb703e505fbba35abcf3b33495a20bc6cf2693dcbed574c4725f75dcc",
+    "tests/fixtures/gaming-generic-source-validation/invented-quest.html": "a83de22ce6eaa0e4e3cdc0243802e54acd3f29713248f01ae2355aef8ea39e80",
+    "tests/fixtures/gaming-generic-source-validation/manifest.json": "d48eab38fc0f348520ff001fbcc4b5795ac9ee819f8b1b879c0251b9c7a83db3",
+    "tests/fixtures/gaming-generic-source-validation/partial-stats.html": "b4b57982a502fce22ca436fb6fcbf58009faf714eb94b89e27d82d21ddb08455",
+    "tests/fixtures/gaming-generic-source-validation/partial-weapon.html": "904c87e80ee3712ac1e21d6dc489fa413ca00c27cd536822560117332dd258b3",
+    "tests/fixtures/gaming-generic-source-validation/strategy-blade.html": "d84c5dfe80b08318d11b497ccff05a82bfab8362600b1d5f37db4fdd38f65b81",
+    "tests/fixtures/gaming-generic-source-validation/strategy-shield.html": "f3167d66d09b6cdac8d368e8ada7182003f49572ed67001dd169781ff80be26e",
+    "tests/fixtures/gaming-generic-source-validation/witcher-location.html": "5ea04caf4ca853545cb5342d6123ad198859e41c83cb64b271b1dc673ce8a0bf",
+    "tests/fixtures/gaming-generic-source-validation/xenoblade-location.html": "0fcaa35c585fb6ff3259f38885d8666d55000e27e45fde30a44e8827c6d0e709",
+    "tests/fixtures/gaming-generic-source-validation/zelda-wiki.html": "6e47a001fe9e7c46bd7a9c40e030d3de8b2aa6e466691ff9b3f0f88a6a82db58",
+    "tests/gaming-generic-detection.test.ts": "2b8f89700a56db0aa308c6ed958632af4c3abfbb4a62c0d8b5e98960683ee1f3",
+    "tests/gaming-generic-diagnostics.test.ts": "cab461dbea6b853c663dd4c6a926cf7cd9f041d21f55b30e1a3439255b398559",
+    "tests/gaming-generic-extraction.test.ts": "e8dc37fe7538aba0b3173a5e58e323ef99be8e955f13bd35bc3a0f5bccf60b87",
+    "tests/gaming-generic-instruction-boundary-review.test.ts": "ce7984b7b708d787bf2b3bdae4af7d27bca74691189601829205ba4035cd2e09",
+    "tests/gaming-generic-scope-acquisition.test.ts": "a79b625354197a0e6673d415755d68964e7de935d791cc6bda6817096f2bfe8f",
+    "tests/gaming-generic-source-validation.integration.test.ts": "93036daaa64e888ea36d161dbd971c50fe87ad5d5fd74a0a2bb2097d96695b50",
+    "tests/trinity-persistence-claim-classification.test.ts": "c0bef99451d69aef41ce33c854542c7d2e753f38abd5c15344bee2aeade63766"
+  }
+}

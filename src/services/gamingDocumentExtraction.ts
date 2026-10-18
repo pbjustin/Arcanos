@@ -112,7 +112,14 @@ export const GAMING_DOCUMENT_FURNITURE_SELECTOR = COMMON_JUNK_SELECTORS
   .filter(selector => !['header', 'aside', '.comments', '#comments', "[class*='comment-list']"].includes(selector))
   .join(',');
 
-const SOURCE_INSTRUCTION_PATTERN = /\b(?:(?:ignore|disregard|override)\s+(?:all\s+)?(?:previous|prior|system|developer|assistant|user)\s+(?:instructions?|messages?|prompts?)|forget\s+(?:everything|all)\s+(?:above|before)|you\s+are\s+now|new\s+(?:system|developer|assistant)\s+(?:message|prompt|instructions?)|follow\s+(?:these|the\s+following)\s+instructions?|(?:system|developer|assistant)\s+(?:message|prompt|instructions?)|(?:reveal|print|show|expose|exfiltrate)\s+(?:the\s+)?(?:system|developer|secret|credential|token|api\s+key)\s*(?:prompt|message|instructions?|value)?|(?:call|invoke)\s+(?:the\s+)?(?:tool|function)|(?:execute|run)\s+(?:this\s+)?(?:command|shell|powershell|bash))\b/i;
+// Player instructions and progress narration are normal guide content. Require a
+// control-plane target for role reassignment; the remaining explicit override,
+// secret-disclosure and execution patterns keep their document rejection boundary.
+const SOURCE_INSTRUCTION_PATTERN = /\b(?:(?:ignore|disregard|override)\s+(?:(?:all|the)\s+)?(?:previous|prior|system|developer|assistant|user)(?:\s+(?:and|or)\s+(?:system|developer|assistant|user))*\s+(?:instructions?|messages?|prompts?)|forget\s+(?:everything|all)\s+(?:above|before)|new\s+(?:system|developer|assistant)\s+(?:message|prompt|instructions?)|(?:system|developer|assistant)\s+(?:message|prompt|instructions?)|(?:reveal|print|show|expose|exfiltrate|disclose|leak)\s+(?:(?:the|your|our|my|all|any|private)\s+)*(?:system|developer|secrets|secret(?=\s*(?:[.!?;,:]|$)|\s+(?:from|in|of|to|with)\b)|credentials?|passwords?|tokens?|api\s+keys?|secret\s+(?:keys?|tokens?|values?))\b|(?:call|invoke)\s+(?:the\s+)?(?:tools?|functions?|[a-z_]\w*(?:\.\w+|__\w+)+)\b|(?:execute|run)\s+(?:this\s+)?(?:command|shell|powershell|bash))\b/i;
+// Bounded modifiers describe a role without an adjective allowlist. An article
+// permits coordinated adjectives inside that noun phrase. Otherwise conjunction
+// and preposition boundaries keep later gameplay subjects out of the role.
+const SOURCE_ROLE_ASSIGNMENT_PATTERN = /\byou\s+are\s+now\s+(?:(?:(?:an?|the)\s+(?:(?!(?:but|to|of|in|on|at|near|with|without|from|for|as|by|that|which|who)\b)[a-z][a-z-]{0,31}\s+){0,4}|(?:(?!(?:and|or|but|to|of|in|on|at|near|with|without|from|for|as|by|that|which|who)\b)[a-z][a-z-]{0,31}\s+){0,4})(?:assistant|ai|chatgpt|(?:language\s+)?model|system|developer)\b|in\s+(?:system|developer|assistant)\s+mode\b)/i;
 
 /** Shared acquisition profiles: downstream query ranking does not select a different document transport. */
 export function gamingDocumentFetchOptions(url: string, options: FetchAndCleanOptions = {}): FetchAndCleanOptions {
@@ -142,12 +149,24 @@ export function filterGamingDocumentInstructions(text: string): string {
     .replace(/\s+/g, " ")
     .trim()
     .split(/(?<=[.!?])\s+/)
-    .filter((sentence) => sentence.length > 0 && !SOURCE_INSTRUCTION_PATTERN.test(sentence))
+    .filter((sentence) => sentence.length > 0 && !SOURCE_INSTRUCTION_PATTERN.test(sentence)
+      && !SOURCE_ROLE_ASSIGNMENT_PATTERN.test(sentence))
     .join(" ")
     .trim();
 }
 
 export const GAMEPLAY_CONTENT_PATTERN = /\b(?:boss|route|walkthrough|build|patch|weapon|stat|skill|class|quest|location|level|damage|talent|gear|rotation|viable|craft|resource|upgrade|exploration|progress|economy|unit|mission|encounter|ability|loadout|mechanic)\b/i;
+
+/** Complete player actions distinguish authored gameplay prose from link labels.
+ * This establishes text quality only; identity and claim support remain separate. */
+export function hasGamingActionableProse(text: string): boolean {
+  return text.split(/(?<=[.!?])\s+/).some((sentence) =>
+    /[.!?]$/u.test(sentence.trim())
+    && GAMEPLAY_CONTENT_PATTERN.test(sentence)
+    && new Set(sentence.toLowerCase().split(/[^a-z0-9+]+/i).filter((part) => part.length >= 3)).size >= 8
+    && /(?:^(?:(?:first|next|then)[,:]?\s+)?(?:to\s+)?|\b(?:should|must|can|then)\s+)(?:attack|avoid|block|collect|defeat|dodge|equip|explore|follow|gather|heal|jump|move|open|press|restore|save|select|spend|upgrade|use|wait)\b/i.test(sentence.trim())
+  );
+}
 
 export function isGamingCatalogMetadataOnly(text: string): boolean {
   const catalogLabels = text.match(/\b(?:identifier|addeddate|download options|scanner|isbn|publication date|publisher)\b/gi) ?? [];

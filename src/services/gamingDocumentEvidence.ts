@@ -24,6 +24,12 @@ export function extractGamingDocumentEvidence(input: GamingEvidenceExtractionInp
   let outputChars = 0;
   let instructionFiltered = subreasons.some(reason => ['source_instruction_filtered', 'source_instructions_rejected',
     'instruction_or_sensitive_content_filtered'].includes(reason));
+  // Plain-text acquisition has the same document-wide security boundary as
+  // HTML. Inspect the accepted response before downstream context truncation.
+  if (input.contentType === 'text/plain' && filterGamingDocumentInstructions(input.body) !== normalize(input.body)) {
+    instructionFiltered = true;
+    subreasons.push('source_instruction_filtered');
+  }
   let capped = false;
   const accessChallenge = subreasons.includes('access_challenge');
   for (const unit of markGamingEvidenceUnitConflicts(accessChallenge ? [] : [...html.units, ...json.units])) {

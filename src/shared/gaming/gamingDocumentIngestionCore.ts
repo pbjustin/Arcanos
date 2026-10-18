@@ -1,5 +1,5 @@
 import type { GamingExtractionQuality } from "@services/gamingBuildResourceSchema.js";
-import { isGamingCatalogMetadataOnly } from "@services/gamingDocumentExtraction.js";
+import { hasGamingActionableProse, isGamingCatalogMetadataOnly } from "@services/gamingDocumentExtraction.js";
 import { detectGamingGame, type GamingGameDetection } from "@services/gamingGameDetection.js";
 import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
 import { assessGamingStructuralUsability } from './gamingStructuralEvidence.js';
@@ -46,7 +46,7 @@ export function classifyGamingDocumentQuality(input: {
 }): 'unusable' | 'metadata-only' | 'partial' | 'complete' {
   if (assessGamingStructuralUsability({ units: input.evidenceUnits }).hasIntactUsableUnit) return input.truncated ? 'partial' : 'complete';
   const metadataOnly = isGamingCatalogMetadataOnly(input.cleanedText)
-    || (input.navigationDensity ?? 0) >= 0.62;
+    || (input.navigationDensity ?? 0) >= 0.62 && !hasGamingActionableProse(input.cleanedText);
   return input.cleanedText.length < input.minUsefulTextChars
     ? 'unusable'
     : metadataOnly ? 'metadata-only' : input.truncated ? 'partial' : 'complete';

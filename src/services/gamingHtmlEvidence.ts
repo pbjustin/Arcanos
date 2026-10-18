@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { load } from 'cheerio';
-import { countGamingHtmlElements, filterGamingDocumentInstructions, GAMING_DOCUMENT_FURNITURE_SELECTOR } from '@services/gamingDocumentExtraction.js';
+import { countGamingHtmlElements, filterGamingDocumentInstructions, hasGamingActionableProse, GAMING_DOCUMENT_FURNITURE_SELECTOR } from '@services/gamingDocumentExtraction.js';
 import {
   GAMING_EVIDENCE_UNIT_POLICY_VERSION,
   type GamingEvidenceExtractionInput,
@@ -31,7 +31,10 @@ const COMPARISON_PROSE = /^(?:unlike|compare(?:d)?|(?:for\s+)?comparison|contras
 // A comparison lead-in cannot erase an explicit qualification of the primary
 // record. Compared equipment alone remains unrelated context.
 const PRIMARY_RECORD_QUALIFICATION = /\b(?:this|these|the)\s+(?:records?|equipment|builds?|sources?|entry|entries|sites?|statistics?|resources?|weapons?|items?|stats?|routes?)\s+(?:(?:(?:is|are|was|were|remains?|may|might|can|could|would|should|must|will|be|been|being|has|have|had|now|still|also|already|yet|perhaps|requires?|needs?|a)|[\p{L}-]+ly)\s+)*(?:not|no longer|deplet\w*|unconfirmed|old patch|example only|outdated|unavailable|obsolete|correction|corrected)\b/iu;
-const LABELLED_FIELD = /^([^:;|\n]{1,80}):\s*(.+)$/;
+const LABELLED_FIELD = /^([^:;|\n]{1,80}):\s*(.*)$/;
+// These labels explicitly assert record fields. A complete sentence in a field
+// value cannot turn a partial tuple back into unrestricted prose.
+const RECORD_FIELD_LABEL = /^(?:game|edition|scope|applicability|patch|version|system|star system|body|planet|moon|site(?: number| identifier|[ _-]?id)?|pml(?:\/site)?|resource|material|mineral|item|equipment|weapon|armou?r|stat(?:istic)?|attribute|value|units?|mechanic|change|before|after|skill|build|notes?|requirements?|compatibility|description)$/iu;
 const PARAGRAPH_IDENTITY_FIELD = /^(Game|Edition)\s*:\s*([^;.!?\n]*?)(?=\s+(?:Game|Edition)\s*:|[;.!?]|$)/iu;
 
 function text(value: string): string {
@@ -93,7 +96,18 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
   if (deadlineExpired()) return result;
   const visibleBody = $('body').clone();
   visibleBody.find('script,style,template,noscript').remove();
+  // Match visible block separation before normalization: adjacent paragraphs
+  // cannot join "previous" and "instructions" into a different word and evade
+  // the full-response security scan after the context ceiling.
+  visibleBody.find('br').replaceWith(' ');
+  visibleBody.find('p,div,section,article,main,header,footer,nav,aside,li,dt,dd,table,tr,td,th,h1,h2,h3,h4,h5,h6')
+    .prepend(' ').append(' ');
   const visibleText = text(visibleBody.text());
+  // The context projection can omit a long article's tail or its title. Scan the
+  // entire bounded visible response before selection so omitted instructions
+  // cannot make a partially sanitized document eligible for grounding.
+  if ([visibleText, text($('title').first().text())].some(value =>
+    filterGamingDocumentInstructions(value) !== value)) fail('source_instruction_filtered');
   if (deadlineExpired()) return result;
   if (visibleText.length <= 300 && /\b(?:verify (?:that )?you are human|checking your browser|enable javascript and cookies to continue|sign in to continue|log in to continue)\b/iu.test(visibleText)) {
     result.proseBody = ''; fail('access_challenge'); return result;
@@ -476,6 +490,17 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
         for (const descendant of nested.find('ul,ol,dl').toArray()) consumedNestedLists.add(descendant);
       }
       if (!fields.some((field) => field.label)) continue;
+      // A topic-prefixed walkthrough step is still prose, not a one-column
+      // record. Retain only independently complete authored sentences; nested,
+      // incomplete and explicitly labelled record fields keep structural checks.
+      if (fields.length === 1 && !RECORD_FIELD_LABEL.test(fields[0].label)
+        && !nested.length && !$(item).find('table,ul,ol,dl,blockquote').length
+        && closed(item) && closed(list) && intactTransportScope(list)
+        && $(item).find('*').toArray().every(child => $(child).is('br') || closed(child))
+        && hasGamingActionableProse(fields[0].value)) {
+        fail('narrative_list_prose_retained');
+        continue;
+      }
       removedProseElements.add(item);
       const reasons = !closed(item) || !closed(list) || !intactTransportScope(list) ? ['content_truncated'] : [];
       if ($(item).find('table,ul,ol,dl').length > (nested.length ? 1 : 0)) reasons.push('ambiguous_field_mapping', 'required_context_missing');

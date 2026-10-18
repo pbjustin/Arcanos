@@ -140,6 +140,7 @@ describe('bounded stored Gaming chunk evidence', () => {
     ['v1', { policyProfile: 'gaming-clear-policy/v1:walkthrough:source' }],
     ['v2', { policyProfile: 'gaming-clear-policy/v2:walkthrough:source' }],
     ['v3', { policyProfile: 'gaming-clear-policy/v3:walkthrough:source' }],
+    ['v4', { policyProfile: 'gaming-clear-policy/v4:walkthrough:source' }],
     ['untrusted policy', { policyProfile: 'client-easy-policy' }],
     ['corrupt rubric', { rubricVersion: 'gaming-clear/v0' }]
   ])('a complete acquired-applicability snapshot cannot restore invalidated %s hybrid source authority', async (_label, invalid) => {

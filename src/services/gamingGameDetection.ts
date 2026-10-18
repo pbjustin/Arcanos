@@ -6,6 +6,8 @@ export type GamingGameDetection = {
   game?: string;
   confidence: number;
   source: GamingGameDetectionSource;
+  /** Metadata grammar extracts an article subject, not independently proven game ownership. */
+  subjectKind?: 'recognized_game' | 'article_subject';
 };
 
 type DetectionInput = {
@@ -76,7 +78,8 @@ function canonicalAlias(value: string): string | undefined {
 /** An acquired scope clause names its subject first; later comparisons cannot select it. */
 export function detectGamingLeadingGameAlias(value: string, wholeNameOnly = false): GamingGameDetection {
   const alias = detectGamingRegistryAlias(value, true, wholeNameOnly);
-  return alias ? { game: alias.name, confidence: 0.88, source: 'alias' } : { confidence: 0, source: 'none' };
+  return alias ? { game: alias.name, confidence: 0.88, source: 'alias', subjectKind: 'recognized_game' }
+    : { confidence: 0, source: 'none' };
 }
 
 export function canonicalizeGamingGameName(value: string): string {
@@ -190,14 +193,16 @@ function detectFromAnchoredText(value: string, source: "prompt" | "page_metadata
       return {
         game: candidate,
         confidence: aliasMatched ? (source === "prompt" ? 0.98 : 0.9) : (source === "prompt" ? 0.84 : 0.8),
-        source: aliasMatched ? "alias" : source
+        source: aliasMatched ? "alias" : source,
+        ...(source === 'page_metadata' ? { subjectKind: aliasMatched ? 'recognized_game' as const : 'article_subject' as const } : {})
       };
     }
   }
 
   const alias = canonicalAlias(text);
   if (alias) {
-    return { game: alias, confidence: source === "prompt" ? 0.96 : 0.88, source: "alias" };
+    return { game: alias, confidence: source === "prompt" ? 0.96 : 0.88, source: "alias",
+      ...(source === 'page_metadata' ? { subjectKind: 'recognized_game' as const } : {}) };
   }
 
   return { confidence: 0, source: "none" };
