@@ -370,9 +370,9 @@ export async function installSelfHealingPreviewControl(
     const scope = createHash('sha256').update(JSON.stringify([profile.projectId, profile.environmentId])).digest('hex');
     const keys = ['diagnosis', 'provider_probe'].map(purpose => `arcanos:self-heal:inference:v1:${scope}:${purpose}`);
     const ledgerResult = await executeRedisOperation(client => client.eval(
-      "local function bounded(k) if redis.call('STRLEN',k)>16384 then return 'oversized' end return redis.call('GET',k) or '' end; local now=redis.call('TIME'); return {bounded(KEYS[1]),bounded(KEYS[2]),redis.call('PTTL',KEYS[1]),redis.call('PTTL',KEYS[2]),now[1],now[2]}",
+      "local function bounded(k) if redis.call('STRLEN',k)>16384 then return 'oversized' end return redis.call('GET',k) or '' end; return {bounded(KEYS[1]),bounded(KEYS[2]),redis.call('PTTL',KEYS[1]),redis.call('PTTL',KEYS[2])}",
       { keys, arguments: [] }), { operation: 'diagnostics.metrics.read', timeoutMs: 500 }).catch(() => null);
-    const ledgers = Array.isArray(ledgerResult) && ledgerResult.length === 6 ? keys.map((_key, index) => {
+    const ledgers = Array.isArray(ledgerResult) && ledgerResult.length === 4 ? keys.map((_key, index) => {
       const raw = ledgerResult[index];
       if (typeof raw !== 'string' || Buffer.byteLength(raw) > 16_384) return { purpose: index === 0 ? 'diagnosis' : 'provider_probe', versionRecognized: false };
       try {

@@ -2243,6 +2243,46 @@ describe('predictive healing execution', () => {
     expect(state.attemptTimestampsMs).toHaveLength(1);
   });
 
+  it('retains provider failure evidence observed after admission even if the provider later returns stale health', async () => {
+    const earlierHealth = getOpenAIServiceHealthMock();
+    const failureAt = new Date().toISOString();
+    afterInferenceReservation = () => getOpenAIServiceHealthMock.mockReturnValue({
+      ...earlierHealth,
+      providerRuntime: {
+        ...earlierHealth.providerRuntime,
+        lastAttemptAt: failureAt,
+        lastFailureAt: failureAt,
+        lastFailureCategory: 'network',
+        lastFailureReason: 'Synthetic provider failure during admission',
+        lastFailureStatus: null
+      }
+    });
+    let observedProvider: ReturnType<typeof buildPredictiveHealingAIProviderStatusSnapshot> | undefined;
+    runArcanosCoreQueryMock.mockImplementationOnce(async () => {
+      getOpenAIServiceHealthMock.mockReturnValue(earlierHealth);
+      observedProvider = buildPredictiveHealingAIProviderStatusSnapshot();
+      jest.setSystemTime(Date.now() + 1);
+      return {
+        result: JSON.stringify({ selectedCandidateIndex: 0, reason: 'Synthetic bounded diagnosis.',
+          safeToExecute: false, confidence: 0.9 }),
+        activeModel: 'gpt-4.1', fallbackFlag: false, fallbackSummary: { fallbackReasons: [] }
+      };
+    });
+
+    const result = await runPredictiveHealingDecision({
+      source: 'health_during_admission', observation: createObservation({ errorRate: 0.8 })
+    });
+
+    expect(observedProvider).toMatchObject({
+      lastAttemptAt: failureAt, lastFailureAt: failureAt, lastFailureCategory: 'network',
+      reachable: false, completionHealthy: false
+    });
+    expect(result.decision.advisor).toBe('arcanos_core_v1');
+    expect(buildPredictiveHealingAIProviderStatusSnapshot()).toMatchObject({
+      lastFailureAt: failureAt, lastFailureCategory: null, completionHealthy: true
+    });
+  });
+
   it('completes a reservation when local client initialization throws before transport', async () => {
     getOpenAIClientOrAdapterMock.mockImplementationOnce(() => { throw new Error('Synthetic strict client unconfigured'); });
     const result = await runPredictiveHealingDecision({ source: 'client_initialization', observation: createObservation({ errorRate: 0.8 }) });

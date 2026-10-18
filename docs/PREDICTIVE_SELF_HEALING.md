@@ -266,6 +266,68 @@ it is not evidence of live provider reconciliation. Reservation read/CAS operati
 bind the purpose's ledger and its sibling rejection snapshot; only the purpose's
 ledger is written. Completion refuses a changed environment scope.
 
+After steps 1–2 and target-specific approval, the following one-shot invocation
+implements step 3 using the existing Redis lifecycle and completion function.
+Its imports load admission, Redis lifecycle, configuration, logging and metrics;
+they do not start the application, workers or provider requests.
+Run it from the matching reviewed, built repository root with the pinned Node
+toolchain, in an approved operator shell without a local `.env` or unrelated
+provider/database credentials. Inject the confirmed Redis connection and the
+exact `RAILWAY_PROJECT_ID` and `RAILWAY_ENVIRONMENT_ID` through the approved secret
+channel. Inject `ARCANOS_SELF_HEAL_RECONCILIATION` privately as a JSON object with
+`projectId`, `environmentId`, `outcome`, and `reservation`; the reservation contains
+the observed `token`, original `attemptedAt`, `purpose`, and `coordinationScope`.
+Do not place this input in command arguments, shell history, logs or committed
+files. The outcome must come from verified terminal evidence, not elapsed time.
+This input supplies parameters; it does not grant operator authorization.
+
+```bash
+node --import ./scripts/register-esm-loader.mjs --input-type=module <<'NODE'
+import { setTimeout as wait } from 'node:timers/promises';
+import { getEnv } from './dist/platform/runtime/env.js';
+import {
+  startRedisLifecycle, stopRedisLifecycle, getRedisLifecycleSnapshot
+} from './dist/platform/runtime/redisLifecycle.js';
+import { completeSelfHealingInference } from './dist/services/selfImprove/selfHealingInferenceAdmission.js';
+
+try {
+  const input = JSON.parse(getEnv('ARCANOS_SELF_HEAL_RECONCILIATION') ?? 'null');
+  const reservation = input?.reservation;
+  if (!input?.projectId || !input?.environmentId
+    || input.projectId !== getEnv('RAILWAY_PROJECT_ID')
+    || input.environmentId !== getEnv('RAILWAY_ENVIRONMENT_ID')
+    || !['success', 'failure', 'authentication_failure'].includes(input.outcome)
+    || !['diagnosis', 'provider_probe'].includes(reservation?.purpose)
+    || typeof reservation?.token !== 'string' || !reservation.token.trim()
+    || typeof reservation?.attemptedAt !== 'string'
+    || !Number.isFinite(Date.parse(reservation.attemptedAt))
+    || typeof reservation?.coordinationScope !== 'string') {
+    throw new Error('Invalid reconciliation input.');
+  }
+  startRedisLifecycle();
+  const deadline = performance.now() + 5_000;
+  while (getRedisLifecycleSnapshot().state !== 'READY' && performance.now() < deadline) {
+    await wait(50);
+  }
+  if (getRedisLifecycleSnapshot().state !== 'READY'
+    || !await completeSelfHealingInference(reservation, { outcome: input.outcome })) {
+    throw new Error('Reconciliation not confirmed.');
+  }
+  console.log('Completion confirmed; perform the read-back verification.');
+} catch {
+  process.exitCode = 1;
+  console.error('Completion not confirmed; preserve the ledger and inspect through the approved operator channel.');
+} finally {
+  await stopRedisLifecycle();
+}
+NODE
+```
+
+Perform step 4 even after a nonzero exit: a lost Redis acknowledgement can leave
+the terminal completion applied. Do not retry automatically, delete a key, or
+submit a verification inference to discover the outcome. Remove the private
+one-shot input from the operator shell after recording the sanitized result.
+
 ### Native PR preview approval contract
 
 The contained Railway PR web preview exposes the sealed, effect-free

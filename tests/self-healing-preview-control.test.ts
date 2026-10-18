@@ -225,7 +225,7 @@ describe('isolated self-healing preview admission and process-local controls', (
     process.env.RAILWAY_PROJECT_NAME = 'arc-pr1557-heavy-regression';
     process.env.RAILWAY_ENVIRONMENT_NAME = 'backstage-heavy-pr-1557-e2e-test';
     process.env.RAILWAY_SERVICE_NAME = `arcanos-${process.env.ARCANOS_PROCESS_KIND}-pr1557-heavy`;
-    readRedisClientId.mockImplementation(async () => ['', '', -2, -2, '1800000000', '0']);
+    readRedisClientId.mockImplementation(async () => ['', '', -2, -2]);
   };
 
   it('requires the exact PR1557 profile before admitting containment commands', async () => {
@@ -288,7 +288,7 @@ describe('isolated self-healing preview admission and process-local controls', (
     useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
     readRedisClientId.mockImplementationOnce(async () => {
       emitTelemetry({ kind: 'ACTION_EXECUTED' }, false);
-      return ['', '', -2, -2, '1800000000', '0'];
+      return ['', '', -2, -2];
     });
     expect(((await call()).body.containment as Record<string, unknown>).counters).toMatchObject({ complete: false });
     emitTelemetry({ kind: 'AI_PROVIDER_CALL_ATTEMPT' });
@@ -332,7 +332,7 @@ describe('isolated self-healing preview admission and process-local controls', (
     useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
     readRedisClientId.mockImplementation(async () => [JSON.stringify({ version: 1, lastAttemptMs: 1_800_000_000_000,
       lastCompletedMs: null, inFlight: { token: 'test-reservation-token', credentialIdentity: 'private-identity' },
-      attemptTimestampsMs: [1_800_000_000_000], blockedCredentialIdentities: ['private-identity'] }), '', -1, -2, '1800000000', '0']);
+      attemptTimestampsMs: [1_800_000_000_000], blockedCredentialIdentities: ['private-identity'] }), '', -1, -2]);
     const result = (await call()).body.containment as Record<string, unknown>;
     expect(result.ledgers).toEqual([expect.objectContaining({ purpose: 'diagnosis', present: true,
       inFlight: true, ttlMs: -1, attemptCount: 1, rejectedCredentialCount: 1 }), expect.objectContaining({ purpose: 'provider_probe', present: false })]);

@@ -807,9 +807,10 @@ function classifyProviderFailure(error: unknown): {
 
 function updateAiProviderState(
   state: PredictiveHealingState,
+  health: ReturnType<typeof getOpenAIServiceHealth>,
   updater: (current: PredictiveHealingAIProviderStatusSnapshot) => PredictiveHealingAIProviderStatusSnapshot
 ): PredictiveHealingAIProviderStatusSnapshot {
-  const nextSnapshot = updater(buildAiProviderStatusSnapshot(getOpenAIServiceHealth(), state.aiProvider));
+  const nextSnapshot = updater(buildAiProviderStatusSnapshot(health, state.aiProvider));
   state.aiProvider = cloneAiProviderStatus(nextSnapshot);
   return cloneAiProviderStatus(state.aiProvider);
 }
@@ -1715,8 +1716,8 @@ async function resolveAiDecision(params: {
   const actuator = buildWorkerRepairActuatorStatus();
   const expectedModel = getFallbackModel();
   const preCallHealth = getOpenAIServiceHealth();
-  const providerStatusBeforeAttempt = updateAiProviderState(state, (current) => ({
-    ...buildAiProviderStatusSnapshot(preCallHealth, current),
+  const providerStatusBeforeAttempt = updateAiProviderState(state, preCallHealth, (current) => ({
+    ...current,
     model: expectedModel
   }));
   const providerFailureMs = readIsoTimestampMs(providerStatusBeforeAttempt.lastFailureAt);
@@ -1868,8 +1869,9 @@ async function resolveAiDecision(params: {
       actuator
     });
 
-    updateAiProviderState(state, (current) => ({
-      ...buildAiProviderStatusSnapshot(preCallHealth, current),
+    // Admission awaited Redis; include provider changes observed during that wait.
+    updateAiProviderState(state, getOpenAIServiceHealth(), (current) => ({
+      ...current,
       model: expectedModel,
       lastAttemptAt: attemptAt
     }));
@@ -1985,8 +1987,8 @@ async function resolveAiDecision(params: {
 
     const successAt = new Date().toISOString();
     const postCallHealth = getOpenAIServiceHealth();
-    const providerStatus = updateAiProviderState(state, (current) => ({
-      ...buildAiProviderStatusSnapshot(postCallHealth, current),
+    const providerStatus = updateAiProviderState(state, postCallHealth, (current) => ({
+      ...current,
       model: aiResult.activeModel || expectedModel,
       lastAttemptAt: attemptAt,
       lastSuccessAt: successAt,
@@ -2042,8 +2044,8 @@ async function resolveAiDecision(params: {
     });
     const failureAt = new Date().toISOString();
     const postCallHealth = getOpenAIServiceHealth();
-    const providerStatus = updateAiProviderState(state, (current) => ({
-      ...buildAiProviderStatusSnapshot(postCallHealth, current),
+    const providerStatus = updateAiProviderState(state, postCallHealth, (current) => ({
+      ...current,
       model: expectedModel,
       lastAttemptAt: attemptAt,
       lastFailureAt: failureAt,
@@ -2260,10 +2262,7 @@ function buildCandidates(
       reason:
         observation.inactivity.reason ??
         'No worker activity has been observed beyond the watchdog threshold.',
-      confidence:
-        observation.workerHealth.pending > 0 || observation.workerHealth.stalledRunning > 0
-          ? 0.96
-          : 0.84,
+      confidence: 0.96,
       matchedRule: 'inactive_worker_runtime_heal',
       priority: 15,
       details: {
@@ -3546,7 +3545,7 @@ export async function probePredictiveHealingAIProvider(): Promise<PredictiveHeal
     probeOutcome = stage === 'models_list'
       ? failure.category === 'authentication' ? 'authentication_failure' : 'failure'
       : resolveInferenceFailureOutcome(failure, boundedProbe);
-    updateAiProviderState(getState(), current => ({
+    updateAiProviderState(getState(), getOpenAIServiceHealth(), current => ({
       ...current, lastFailureAt: pickLatestTimestamp([current.lastFailureAt, performedAt]),
       lastFailureCategory: failure.category, lastFailureReason: failure.reason,
       lastFailureStatus: failure.status, authenticated: failure.authenticated,
@@ -3597,7 +3596,9 @@ export async function probePredictiveHealingAIProvider(): Promise<PredictiveHeal
 
       const successHealth = getOpenAIServiceHealth();
       const successAt = new Date().toISOString();
-      const recoveredProvider = updateAiProviderState(getState(), current =>
+      const recoveredProvider = updateAiProviderState(getState(), successHealth, current =>
+        // Resolve recovery after merging the success time; an equal-time failure
+        // must remain conservative rather than being cleared by the assignment.
         buildAiProviderStatusSnapshot(successHealth, {
           ...current, model,
           lastAttemptAt: pickLatestTimestamp([current.lastAttemptAt, performedAt]),
@@ -3783,17 +3784,14 @@ function buildWorkerInactivityObservation(params: {
   return {
     inactiveDegraded,
     reason: inactiveDegraded
-      ? alertReason ??
-        (queueBacklogBlocked
-          ? `No worker activity for ${maxInactivityMs}ms while queue work remained pending.`
-          : `No worker receipts or processed jobs observed for ${fleetInactivityMs}ms.`)
+      ? alertReason ?? `No worker activity for ${maxInactivityMs}ms while queue work remained pending.`
       : null,
     idleThresholdMs: (queueBacklogBlocked ? idleThresholdMs : fleetIdleThresholdMs) ?? null,
     maxInactivityMs: queueBacklogBlocked ? maxInactivityMs : fleetInactivityMs,
     lastActivityAt: mostRecentActivityAt ?? worstWorker?.lastActivityAt ?? null,
     lastProcessedJobAt: mostRecentProcessedJobAt ?? worstWorker?.lastProcessedJobAt ?? null,
     workerIds: inactiveDegraded
-      ? (queueBacklogBlocked ? relevantWorkers : params.workers).map((worker) => worker.workerId).sort()
+      ? relevantWorkers.map((worker) => worker.workerId).sort()
       : []
   };
 }
