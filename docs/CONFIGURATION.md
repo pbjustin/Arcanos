@@ -1589,8 +1589,10 @@ kill-switch override. Observation permission does not imply actuation;
 The ownership preflight deliberately creates one preview-only PostgreSQL
 receipt in an empty database and holds a per-role advisory lock. Restart
 requires its exact resource/run/source/compiled-digest/certificate identity and
-no foreign jobs or active leases. Resume admits only the two exact consumer IDs;
-the base ID, a third slot, or a matching prefix does not confer authority.
+no foreign jobs or active leases. Resume admits only the profile's exact consumer
+IDs: two for the coordinator profile and eight for the PR #1557 containment
+profile. The base ID, an out-of-range slot, or a matching prefix does not confer
+authority.
 It is a preview mutation, not read-only validation or a production schema migration.
 The profile-only Docker build materializes the public certificate at the fixed
 root-owned, mode-0444 `/app/config/self-heal-preview-database-ca.pem` path before
