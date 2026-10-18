@@ -141,6 +141,10 @@ export function resolveSelfHealPreviewProfile(processKind, env, options = {}) {
       continue;
     }
     if (ALLOWED_INPUT_NAMES.has(name) || BENIGN_AMBIENT_NAMES.has(name)) continue;
+    // Railway injects the owned web domain into both PR1557 services. It is
+    // inert metadata, excluded from both literal child environments.
+    if (profileName === SELF_HEAL_INFERENCE_PREVIEW_PROFILE
+      && name === 'RAILWAY_SERVICE_ARCANOS_WEB_PR1557_HEAVY_URL') continue;
     if (SENSITIVE_NAME.test(name) || name.startsWith('ARCANOS_') || name.startsWith('RAILWAY_')
       || name.startsWith('JOB_') || name.startsWith('RUN_') || name.startsWith('BOOKER_')) fail('ENV_FORBIDDEN');
   }

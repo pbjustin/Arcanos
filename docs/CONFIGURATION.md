@@ -1594,6 +1594,10 @@ settings are rejected rather than inherited. Fixed authenticated commands may
 change only the seven reviewed process policy values and this run's
 kill-switch override. Observation permission does not imply actuation;
 `policy_allowed` still depends on normal configured/effective authorization.
+The PR #1557 profile admits Railway's generated
+`RAILWAY_SERVICE_ARCANOS_WEB_PR1557_HEAVY_URL` only as inert parent metadata;
+neither application nor provider-fixture children receive it. Other service URL
+names remain rejected, and the PR #1544 profile does not admit this variable.
 
 The ownership preflight deliberately creates one preview-only PostgreSQL
 receipt in an empty database and holds a per-role advisory lock. Restart

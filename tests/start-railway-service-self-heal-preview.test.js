@@ -227,6 +227,27 @@ describe('opt-in self-heal profile of the existing heavy preview supervisor', ()
     await expect(assertRailwayProcessIsolationOrThrow({ ...child, JOB_WORKER_CONCURRENCY: '9' }, launcherOptions()))
       .rejects.toThrow(/^PREVIEW_ISOLATION_/u);
   });
+  it.each(['worker', 'web'])('admits the PR1557 web domain metadata without projecting it into %s children', role => {
+    const env = inferenceEnvironment(role);
+    const original = resolveSelfHealPreviewProfile(role, env, { now: () => NOW });
+    const name = 'RAILWAY_SERVICE_ARCANOS_WEB_PR1557_HEAVY_URL';
+    env[name] = 'inert-metadata-not-used-as-a-url';
+    const resolved = resolveSelfHealPreviewProfile(role, env, { now: () => NOW });
+    expect(resolved.ownership).toEqual(original.ownership);
+    expect(buildSelfHealPreviewApplicationEnvironment(resolved, env)).not.toHaveProperty(name);
+    expect(buildSelfHealPreviewFixtureEnvironment(resolved)).not.toHaveProperty(name);
+  });
+  it.each(['worker', 'web'])('rejects foreign or sensitive Railway service metadata for PR1557 %s', role => {
+    for (const name of ['RAILWAY_SERVICE_ARCANOS_WEB_PR1558_HEAVY_URL', 'RAILWAY_SERVICE_ARCANOS_V2_URL',
+      'RAILWAY_SERVICE_ARCANOS_WEB_PR1557_HEAVY_URL_SECRET', 'RAILWAY_SERVICE_ARCANOS_WEB_PR1557_HEAVY_URL_TOKEN']) {
+      expect(() => resolveSelfHealPreviewProfile(role, { ...inferenceEnvironment(role), [name]: 'forbidden' },
+        { now: () => NOW })).toThrow('SELF_HEAL_PREVIEW_ENV_FORBIDDEN');
+    }
+  });
+  it.each(['worker', 'web'])('rejects PR1557 web domain metadata for the PR1544 %s profile', role => {
+    expect(() => profile(role, { RAILWAY_SERVICE_ARCANOS_WEB_PR1557_HEAVY_URL: 'inert-metadata' }))
+      .toThrow('SELF_HEAL_PREVIEW_ENV_FORBIDDEN');
+  });
   it.each([1544, 1558])('rejects inference-profile authority for PR%s even when all names agree', prNumber => {
     const env = inferenceEnvironment();
     Object.assign(env, { RAILWAY_PROJECT_NAME: `arc-pr${prNumber}-heavy-test`,
