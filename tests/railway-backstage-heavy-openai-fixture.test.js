@@ -348,9 +348,17 @@ describe('bounded self-healing preview provider profile', () => {
     { ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA: 'invalid' },
     { ARCANOS_SELF_HEAL_PREVIEW_ISSUED_AT: new Date(Date.now() + 600_000).toISOString() },
     { ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT: new Date(0).toISOString() },
-    { ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT: new Date(Date.now() + 7_200_001).toISOString() },
   ])('rejects an invalid or credential-bearing literal child environment %p', async changes => {
     await expect(startSelfHealPreviewOpenAIFixture({ port: 0, env: childEnv(changes) }))
+      .rejects.toThrow('SELF_HEAL_PREVIEW_OPENAI_CHILD_CONTRACT_INVALID');
+  });
+
+  it('rejects a lease exceeding two hours from its own issue time', async () => {
+    const env = childEnv();
+    env.ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT = new Date(
+      Date.parse(env.ARCANOS_SELF_HEAL_PREVIEW_ISSUED_AT) + 7_200_001,
+    ).toISOString();
+    await expect(startSelfHealPreviewOpenAIFixture({ port: 0, env }))
       .rejects.toThrow('SELF_HEAL_PREVIEW_OPENAI_CHILD_CONTRACT_INVALID');
   });
 

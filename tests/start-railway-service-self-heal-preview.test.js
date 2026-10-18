@@ -23,6 +23,21 @@ const DATABASE_CERTIFICATE_PEM = readFileSync(new URL('./fixtures/self-heal-prev
 const IDS = { project: '11111111-1111-4111-8111-111111111111', environment: '22222222-2222-4222-8222-222222222222',
   web: '33333333-3333-4333-8333-333333333333', worker: '44444444-4444-4444-8444-444444444444',
   deployment: '55555555-5555-4555-8555-555555555555', postgres: '66666666-6666-4666-8666-666666666666', redis: '77777777-7777-4777-8777-777777777777' };
+// Rendered-name inventory captured at ba9bf7b7; values and runtime identity below remain synthetic.
+const OBSERVED_RENDERED_COMMON_NAMES = [
+  'ALLOW_MOCK_OPENAI', 'ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY', 'ARCANOS_BACKSTAGE_HEAVY_POSTGRES_INTERNAL_HOST',
+  'ARCANOS_BACKSTAGE_HEAVY_POSTGRES_SERVICE_ID', 'ARCANOS_BACKSTAGE_HEAVY_POSTGRES_SERVICE_NAME',
+  'ARCANOS_BACKSTAGE_HEAVY_PROOF_RUN_ID', 'ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA', 'ARCANOS_BACKSTAGE_HEAVY_PROOF_TARGET',
+  'ARCANOS_BACKSTAGE_HEAVY_REDIS_INTERNAL_HOST', 'ARCANOS_BACKSTAGE_HEAVY_REDIS_SERVICE_ID', 'ARCANOS_BACKSTAGE_HEAVY_REDIS_SERVICE_NAME',
+  'ARCANOS_PREVIEW_ISOLATION', 'ARCANOS_PROCESS_KIND', 'ARCANOS_SELF_HEAL_PREVIEW_CONTROL_PORT',
+  'ARCANOS_SELF_HEAL_PREVIEW_CONTROL_TOKEN', 'ARCANOS_SELF_HEAL_PREVIEW_DATABASE_CERTIFICATE_PEM',
+  'ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT', 'ARCANOS_SELF_HEAL_PREVIEW_ISSUED_AT', 'ARCANOS_SELF_HEAL_PREVIEW_PROFILE',
+  'ARCANOS_SELF_HEAL_PREVIEW_RUN_ID', 'ARCANOS_SELF_HEAL_PREVIEW_STARTUP_MODE', 'ARCANOS_SELF_HEAL_PREVIEW_WEB_SERVICE_ID',
+  'ARCANOS_SELF_HEAL_PREVIEW_WORKER_SERVICE_ID', 'DATABASE_URL', 'FORCE_MOCK', 'NODE_ENV', 'OPENAI_API_KEY_REQUIRED',
+  'OPENAI_BASE_URL', 'PORT', 'RAILWAY_ENVIRONMENT', 'RAILWAY_ENVIRONMENT_ID', 'RAILWAY_ENVIRONMENT_NAME',
+  'RAILWAY_PRIVATE_DOMAIN', 'RAILWAY_PROJECT_ID', 'RAILWAY_PROJECT_NAME', 'RAILWAY_SERVICE_ARCANOS_WEB_PR1557_HEAVY_URL',
+  'RAILWAY_SERVICE_ID', 'RAILWAY_SERVICE_NAME', 'REDIS_URL',
+];
 function environment(role = 'worker') {
   return {
     ARCANOS_BACKSTAGE_HEAVY_PROOF_TARGET: 'dedicated-backstage-heavy-preview-v1',
@@ -59,6 +74,14 @@ function inferenceEnvironment(role = 'worker') {
     RAILWAY_PROJECT_NAME: 'arc-pr1557-heavy-test', RAILWAY_ENVIRONMENT_NAME: 'backstage-heavy-pr-1557-e2e',
     RAILWAY_SERVICE_NAME: `arcanos-${role}-pr1557-heavy`,
     ARCANOS_BACKSTAGE_HEAVY_PROOF_RUN_ID: 'proof-run-1557', ARCANOS_SELF_HEAL_PREVIEW_RUN_ID: 'proof-run-1557' };
+}
+function inferenceMetadataEnvironment(role = 'worker') {
+  const env = inferenceEnvironment(role);
+  // Retained rendered Railway metadata names, with synthetic values.
+  return { ...env, PORT: '8080', RAILWAY_ENVIRONMENT: env.RAILWAY_ENVIRONMENT_NAME,
+    RAILWAY_PRIVATE_DOMAIN: `arcanos-${role}-pr1557-heavy.railway.internal`,
+    RAILWAY_PUBLIC_DOMAIN: 'preview.example.invalid', RAILWAY_STATIC_URL: 'inert-static-metadata',
+    RAILWAY_SERVICE_ARCANOS_WEB_PR1557_HEAVY_URL: 'inert-service-metadata' };
 }
 const ARTIFACT = { sourceSha: 'a'.repeat(40), compiledSha256: 'c'.repeat(64), fileCount: 10 };
 function profile(role = 'worker', patch = {}) { return bindSelfHealPreviewArtifact(resolveSelfHealPreviewProfile(role, { ...environment(role), ...patch }, { now: () => NOW }), ARTIFACT); }
@@ -227,26 +250,93 @@ describe('opt-in self-heal profile of the existing heavy preview supervisor', ()
     await expect(assertRailwayProcessIsolationOrThrow({ ...child, JOB_WORKER_CONCURRENCY: '9' }, launcherOptions()))
       .rejects.toThrow(/^PREVIEW_ISOLATION_/u);
   });
-  it.each(['worker', 'web'])('admits the PR1557 web domain metadata without projecting it into %s children', role => {
+  it.each(['worker', 'web'].flatMap(role => ['RAILWAY_STATIC_URL', 'RAILWAY_SERVICE_ARCANOS_WEB_PR1557_HEAVY_URL']
+    .map(name => [role, name])))('admits PR1557 %s metadata %s without projecting it into children', (role, name) => {
     const env = inferenceEnvironment(role);
     const original = resolveSelfHealPreviewProfile(role, env, { now: () => NOW });
-    const name = 'RAILWAY_SERVICE_ARCANOS_WEB_PR1557_HEAVY_URL';
     env[name] = 'inert-metadata-not-used-as-a-url';
     const resolved = resolveSelfHealPreviewProfile(role, env, { now: () => NOW });
     expect(resolved.ownership).toEqual(original.ownership);
     expect(buildSelfHealPreviewApplicationEnvironment(resolved, env)).not.toHaveProperty(name);
     expect(buildSelfHealPreviewFixtureEnvironment(resolved)).not.toHaveProperty(name);
   });
-  it.each(['worker', 'web'])('rejects foreign or sensitive Railway service metadata for PR1557 %s', role => {
+  it.each(['worker', 'web'])('admits observed PR1557 %s metadata through the supervisor and actual startup gate', async role => {
+    jest.useFakeTimers();
+    const baseline = inferenceEnvironment(role);
+    const env = inferenceMetadataEnvironment(role);
+    const observedNames = [...OBSERVED_RENDERED_COMMON_NAMES, ...(role === 'worker' ? ['ARCANOS_PREVIEW_OPENAI_FIXTURE']
+      : ['ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN', 'ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED',
+          'ARCANOS_JOB_READ_CAPABILITY_SECRET', 'RAILWAY_PUBLIC_DOMAIN', 'RAILWAY_STATIC_URL'])];
+    expect(observedNames).toHaveLength(role === 'worker' ? 40 : 44);
+    expect(Object.keys(env)).toEqual(expect.arrayContaining(observedNames));
+    const metadataNames = ['RAILWAY_ENVIRONMENT', 'RAILWAY_PRIVATE_DOMAIN', 'RAILWAY_PUBLIC_DOMAIN',
+      'RAILWAY_STATIC_URL', 'RAILWAY_SERVICE_ARCANOS_WEB_PR1557_HEAVY_URL'];
+    const expected = bindSelfHealPreviewArtifact(resolveSelfHealPreviewProfile(role, baseline, { now: () => NOW }), ARTIFACT);
+    const db = database({ resume: true, role, identity: JSON.stringify(expected.ownership) });
+    const fixture = new Child(); const application = new Child(); const processRef = new EventEmitter();
+    const verifyArtifact = jest.fn(async () => ARTIFACT);
+    const spawnImpl = jest.fn((_, args) => {
+      if (args[0].includes('openai-fixture')) {
+        void Promise.resolve().then(() => fixture.stdout.write('SELF_HEAL_PREVIEW_OPENAI_READY_V1\n')); return fixture;
+      }
+      return application;
+    });
+    let outcome;
+    const pending = runSelfHealPreviewSupervisor(role, env, { ...db, now: () => NOW, verifyArtifact, processRef, spawnImpl })
+      .then(value => { outcome = { value }; }, error => { outcome = { error }; });
+    try {
+      await jest.advanceTimersByTimeAsync(0);
+      expect(outcome?.error).toBeUndefined(); expect(spawnImpl).toHaveBeenCalledTimes(2);
+      expect(verifyArtifact).toHaveBeenCalledWith(expect.objectContaining({ sourceSha: ARTIFACT.sourceSha }));
+      const fixtureEnv = spawnImpl.mock.calls[0][2].env; const childEnv = spawnImpl.mock.calls[1][2].env;
+      expect(spawnImpl.mock.calls[1][1]).toEqual(['scripts/start-railway-service-with-integrity.mjs']);
+      for (const name of metadataNames) {
+        expect(fixtureEnv).not.toHaveProperty(name); expect(childEnv).not.toHaveProperty(name);
+      }
+      await expect(assertRailwayProcessIsolationOrThrow(childEnv, launcherOptions()))
+        .resolves.toMatchObject({ selfHealProfile: SELF_HEAL_INFERENCE_PREVIEW_PROFILE });
+      for (const name of ['RAILWAY_STATIC_URL', 'RAILWAY_SERVICE_ARCANOS_WEB_PR1557_HEAVY_URL']) {
+        await expect(assertRailwayProcessIsolationOrThrow({ ...childEnv, [name]: env[name] }, launcherOptions()))
+          .rejects.toThrow('PREVIEW_ISOLATION_SELF_HEAL_PROFILE_INVALID');
+      }
+    } finally {
+      processRef.emit('SIGTERM'); await jest.advanceTimersByTimeAsync(0); await pending;
+    }
+    expect(outcome).toEqual({ value: 0 }); expect(db.client.end).toHaveBeenCalledTimes(1);
+  });
+  it.each(['worker', 'web'])('rejects foreign, sensitive, aliased or proxy metadata for PR1557 %s', role => {
     for (const name of ['RAILWAY_SERVICE_ARCANOS_WEB_PR1558_HEAVY_URL', 'RAILWAY_SERVICE_ARCANOS_V2_URL',
-      'RAILWAY_SERVICE_ARCANOS_WEB_PR1557_HEAVY_URL_SECRET', 'RAILWAY_SERVICE_ARCANOS_WEB_PR1557_HEAVY_URL_TOKEN']) {
-      expect(() => resolveSelfHealPreviewProfile(role, { ...inferenceEnvironment(role), [name]: 'forbidden' },
-        { now: () => NOW })).toThrow('SELF_HEAL_PREVIEW_ENV_FORBIDDEN');
+      'RAILWAY_SERVICE_ARCANOS_WEB_PR1557_HEAVY_URL_SECRET', 'RAILWAY_SERVICE_ARCANOS_WEB_PR1557_HEAVY_URL_TOKEN',
+      'RAILWAY_SERVICE_ARCANOS_WEB_PR1557_HEAVY_URL_PROXY', 'RAILWAY_STATIC_URL_TOKEN', 'RAILWAY_STATIC_URL_SECRET',
+      'RAILWAY_STATIC_URL_PROXY', 'RAILWAY_STATIC_URL_ALIAS', 'RAILWAY_STATIC_URI', 'RAILWAY_UNRECOGNIZED_PREVIEW_FLAG',
+      'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY']) {
+      const code = ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY'].includes(name)
+        ? 'BACKSTAGE_HEAVY_PROOF_ENV_FORBIDDEN' : 'SELF_HEAL_PREVIEW_ENV_FORBIDDEN';
+      expect(() => resolveSelfHealPreviewProfile(role, { ...inferenceMetadataEnvironment(role), [name]: 'forbidden' },
+        { now: () => NOW })).toThrow(code);
     }
   });
-  it.each(['worker', 'web'])('rejects PR1557 web domain metadata for the PR1544 %s profile', role => {
-    expect(() => profile(role, { RAILWAY_SERVICE_ARCANOS_WEB_PR1557_HEAVY_URL: 'inert-metadata' }))
-      .toThrow('SELF_HEAL_PREVIEW_ENV_FORBIDDEN');
+  it.each(['worker', 'web'])('rejects PR1557 domain metadata for the PR1544 %s profile', role => {
+    for (const name of ['RAILWAY_STATIC_URL', 'RAILWAY_SERVICE_ARCANOS_WEB_PR1557_HEAVY_URL']) {
+      expect(() => profile(role, { [name]: 'inert-metadata' })).toThrow('SELF_HEAL_PREVIEW_ENV_FORBIDDEN');
+    }
+  });
+  it.each(['worker', 'web'])('retains parent identity, lease, certificate and authority gates with PR1557 %s metadata', async role => {
+    for (const patch of [{ RAILWAY_ENVIRONMENT: 'production' }, { RAILWAY_SERVICE_ID: IDS.postgres },
+      { RAILWAY_GIT_COMMIT_SHA: 'b'.repeat(40) }, { ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT: '2026-10-14T16:00:00.000Z' },
+      { ARCANOS_SELF_HEAL_PREVIEW_DATABASE_CERTIFICATE_PEM: '' }, { ARCANOS_SELF_HEAL_PREVIEW_CONTROL_TOKEN: 'invalid' },
+      { OPENAI_KEY: 'forbidden' }, { RAILWAY_OPENAI_API_KEY: 'forbidden' }, { RAILWAY_OPENAI_BASE_URL: 'https://external.invalid/v1' }]) {
+      const db = database(); const verifyArtifact = jest.fn(); const spawnImpl = jest.fn();
+      await expect(runSelfHealPreviewSupervisor(role, { ...inferenceMetadataEnvironment(role), ...patch },
+        { ...db, now: () => NOW, verifyArtifact, spawnImpl })).rejects.toThrow();
+      expect(verifyArtifact).not.toHaveBeenCalled(); expect(db.client.connect).not.toHaveBeenCalled(); expect(spawnImpl).not.toHaveBeenCalled();
+    }
+  });
+  it.each(['worker', 'web'])('retains artifact verification before database or spawn effects with PR1557 %s metadata', async role => {
+    const db = database(); const spawnImpl = jest.fn();
+    await expect(runSelfHealPreviewSupervisor(role, inferenceMetadataEnvironment(role), { ...db, now: () => NOW,
+      verifyArtifact: async () => ({ ...ARTIFACT, sourceSha: 'b'.repeat(40) }), spawnImpl })).rejects.toThrow('SELF_HEAL_PREVIEW_ARTIFACT_INVALID');
+    expect(db.client.connect).not.toHaveBeenCalled(); expect(spawnImpl).not.toHaveBeenCalled();
   });
   it.each([1544, 1558])('rejects inference-profile authority for PR%s even when all names agree', prNumber => {
     const env = inferenceEnvironment();
