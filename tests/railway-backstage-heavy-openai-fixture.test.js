@@ -522,6 +522,47 @@ describe('bounded self-healing preview provider profile', () => {
       receipts: [{ outcome: 'synthetic_work_cancelled', providerWorkCompletedAt: null,
         providerWorkCancelledAt: expect.any(Number), responseDelivered: false }] });
   });
+  it.each(['complete', 'shutdown', 'expired'])('retains accepted work after an early timer and preserves its terminal outcome (%s)', async ending => {
+    let clock = Date.now();
+    const env = inferenceEnv();
+    const schedule = globalThis.setTimeout;
+    const timers = [];
+    let capturingRemainder = false;
+    jest.spyOn(globalThis, 'setTimeout').mockImplementation((callback, delay, ...args) => {
+      if (delay === 40_000 || (capturingRemainder && delay === 1)) {
+        const handle = schedule(() => {}, 120_000);
+        timers.push({ callback, delay, handle });
+        return handle;
+      }
+      return schedule(callback, delay, ...args);
+    });
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env, now: () => clock });
+    await control({ command: 'inference_late_completion_next' });
+    const controller = new AbortController();
+    const pending = client({ timeout: 30_000 }).responses.create(responseBody(), { signal: controller.signal }).catch(error => error);
+    await waitForLateWork(receipt => receipt?.providerWorkStartedAt !== undefined);
+    controller.abort(); await pending;
+    await waitForLateWork(receipt => Number.isFinite(receipt?.clientClosedAt));
+    const accepted = runtime.inspect().receipts[0];
+    clock = accepted.providerWorkDeadlineAt - 1;
+    clearTimeout(timers[0].handle);
+    capturingRemainder = true; timers[0].callback(); capturingRemainder = false;
+    expect(timers.map(timer => timer.delay)).toEqual([40_000, 1]);
+    expect(runtime.inspect()).toMatchObject({ inFlight: accepted.requestId, providerRequests: 1, providerWireRequests: 1,
+      completed: 0, receipts: [{ requestId: accepted.requestId, outcome: 'in_flight', endedAt: null,
+        providerWorkCompletedAt: null, providerWorkCancelledAt: null, responseDelivered: false }] });
+    if (ending === 'shutdown') await runtime.close();
+    clock = ending === 'expired' ? Date.parse(env.ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT) : accepted.providerWorkDeadlineAt;
+    timers[1].callback();
+    const terminal = runtime.inspect();
+    expect(terminal).toMatchObject({ inFlight: null, providerRequests: 1, providerWireRequests: 1, completed: 0,
+      receipts: [{ requestId: accepted.requestId, responseDelivered: false,
+        outcome: ending === 'complete' ? 'synthetic_work_completed_after_client_close' : 'synthetic_work_cancelled',
+        providerWorkCompletedAt: ending === 'complete' ? accepted.providerWorkDeadlineAt : null,
+        providerWorkCancelledAt: ending === 'complete' ? null : expect.any(Number) }] });
+    clock += 1000; timers[0].callback(); timers[1].callback(); await runtime.close();
+    expect(runtime.inspect().receipts).toEqual(terminal.receipts);
+  });
   it('rejects late work near lease expiry both when arming and after a previously valid arm', async () => {
     let clock = Date.now();
     const env = inferenceEnv();

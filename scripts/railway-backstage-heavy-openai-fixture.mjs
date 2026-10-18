@@ -945,10 +945,15 @@ export async function startSelfHealPreviewOpenAIFixture(options = {}) {
         // Release and set_healthy cannot shorten accepted work or erase its
         // terminal evidence. Shutdown/lease expiry records cancellation instead.
         active = { release: () => {}, stop: stopWork };
-        delayTimer = setTimeout(() => {
+        const completeWork = () => {
           if (settled) return;
-          if (!state.ready || now() >= config.expiresAt) { stopWork(); return; }
-          receipt.providerWorkCompletedAt = now();
+          const observedAt = now();
+          if (!state.ready || observedAt >= config.expiresAt) { stopWork(); return; }
+          // Timers can wake before the wall-clock deadline. Keep the same work
+          // and reservation until its declared duration has actually elapsed.
+          const remaining = receipt.providerWorkDeadlineAt - observedAt;
+          if (remaining > 0) { delayTimer = setTimeout(completeWork, remaining); return; }
+          receipt.providerWorkCompletedAt = observedAt;
           if (response.destroyed || receipt.clientClosedAt !== null) {
             onClose();
             finish('synthetic_work_completed_after_client_close');
@@ -956,7 +961,8 @@ export async function startSelfHealPreviewOpenAIFixture(options = {}) {
             receipt.responseDelivered = true;
             success();
           }
-        }, fault.delayMs);
+        };
+        delayTimer = setTimeout(completeWork, fault.delayMs);
         return;
       }
       if (fault.kind === 'status') {
