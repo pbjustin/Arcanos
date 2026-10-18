@@ -584,7 +584,8 @@ export async function installSelfHealingPreviewControl(
         if (command === 'containment_dependency_failure' && (getSelfHealingLoopStatus().loopRunning || getSelfHealingLoopStatus().inFlight)) {
           return { rejected: true, reasonCode: 'dependency_fault_requires_stopped_coordinator', inspection: await inspect() };
         }
-        containmentClaimFaultUntil = command === 'containment_dependency_failure' ? Date.now() + 30_000 : 0;
+        // Allow the existing 30-second idle claim backoff plus bounded observation latency.
+        containmentClaimFaultUntil = command === 'containment_dependency_failure' ? Date.now() + 45_000 : 0;
         containmentClaimFaultRemaining = command === 'containment_dependency_failure' ? 64 : 0;
       }
       else if (command === 'containment_credential_rotate' || command === 'containment_credential_restore') {

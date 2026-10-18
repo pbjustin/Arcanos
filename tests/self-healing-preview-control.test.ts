@@ -372,6 +372,37 @@ describe('isolated self-healing preview admission and process-local controls', (
     expect(workerHealth).toHaveBeenCalled(); expect(predictiveDecision).not.toHaveBeenCalled();
   });
 
+  it('keeps a claim fault active across the maximum idle backoff and expires it at forty-five seconds', async () => {
+    const armedAt = Date.now(); let clockMs = armedAt;
+    jest.spyOn(Date, 'now').mockImplementation(() => clockMs);
+    useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
+    expect((await call('containment_dependency_failure')).body.claimBoundary).toMatchObject({
+      faultUntil: new Date(armedAt + 45_000).toISOString(), faultRemaining: 64,
+    });
+    clockMs = armedAt + 30_000;
+    expect(() => handle?.beforeClaim()).toThrow('SELF_HEAL_PREVIEW_DATABASE_CLAIM_FAILURE');
+    clockMs = armedAt + 44_999;
+    expect(() => handle?.beforeClaim()).toThrow('SELF_HEAL_PREVIEW_DATABASE_CLAIM_FAILURE');
+    clockMs = armedAt + 45_000;
+    expect(() => handle?.beforeClaim()).not.toThrow();
+    expect((await call()).body.claimBoundary).toMatchObject({ injectedFailures: 2, faultUntil: null, faultRemaining: 62 });
+    expect(predictiveDecision).not.toHaveBeenCalled(); expect(providerProbe).not.toHaveBeenCalled();
+  });
+
+  it('does not extend the preview lease when arming the forty-five-second claim fault', async () => {
+    const armedAt = Date.now(); let clockMs = armedAt;
+    jest.spyOn(Date, 'now').mockImplementation(() => clockMs);
+    process.env.ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT = new Date(armedAt + 20_000).toISOString();
+    useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
+    await call('containment_dependency_failure');
+    clockMs = armedAt + 19_999;
+    expect(() => handle?.beforeClaim()).toThrow('SELF_HEAL_PREVIEW_DATABASE_CLAIM_FAILURE');
+    clockMs = armedAt + 20_000;
+    expect(() => handle?.beforeClaim()).not.toThrow();
+    expect(events.filter(event => event === 'claim_operation_failure')).toHaveLength(1);
+    expect(predictiveDecision).not.toHaveBeenCalled(); expect(providerProbe).not.toHaveBeenCalled();
+  });
+
   it('rejects shutdown barrier preparation before Worker readiness and on the Web role', async () => {
     handle = await controls.installSelfHealingPreviewControl();
     expect((await call('shutdown_prepare_a06')).body).toMatchObject({ rejected: true,

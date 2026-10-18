@@ -1193,6 +1193,17 @@ and `running_on` hold one ordinary database-backed job while twenty serial
 production evaluations inspect the other seven idle slots; this is explicitly
 different from twenty scheduler callbacks. The runner checks provider receipts,
 runtime telemetry, slot health, and the real job's claim/completion events.
+The ordinary worker can sleep for 30 seconds between empty-queue claims. The
+running-job pickup and dependency-failure observation windows therefore allow
+45 seconds, including transport and health-snapshot margin. The fixed preview
+claim fault also lasts at most 45 seconds or 64 attempts, and ends sooner at
+lease expiry. Dependency evidence must show a new actual claim failure in the
+same process and arm window; an old persisted failure or an expired arm cannot
+satisfy it. Before creating the fixed pending job, the runner checks absence,
+proves the initial failure, and explicitly renews the bounded fault. It then
+requires another fresh failure and pending-queue observation before diagnosis.
+These pre-claim bounds do not extend Core's 12-second request deadline, the
+30-second SDK/held-response bounds, or the 40-second late-work fixture.
 `diagnosis_once` holds an authorized bounded Worker Core diagnosis while V2
 attempts diagnosis against the same Redis ledger. It requires a concurrent
 in-flight denial without a V2 provider request, then checks completion and

@@ -18,6 +18,8 @@ export const SELF_HEAL_INFERENCE_ACCEPTANCE_CASES = Object.freeze([
   'probe_rotation', 'metadata_recovery', 'uncertain_restart', 'late_completion',
 ]);
 const CLEANUP_RESERVE_MS = 10 * 60_000;
+// Ordinary empty-queue polling can sleep thirty seconds; leave fifteen seconds for observation transport.
+const WORKER_CLAIM_OBSERVATION_MS = 45_000;
 // The fixed predictive path uses Trinity's direct-answer stage, whose deadline precedes the 30-second SDK cap.
 const PREDICTIVE_CORE_DEADLINE_MS = 12_000;
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
@@ -188,9 +190,38 @@ export async function runSelfHealInferenceAcceptanceCase(scenario, manifest, opt
       && value.containment.run.operation === expected
       && ['completed', 'failed'].includes(value.containment.run.status), 45_000);
   };
+  const armDependency = async processInstanceId => {
+    const armed = await command('containment_dependency_failure');
+    const arm = armed.receipts?.findLast(value => value.event === 'command:containment_dependency_failure');
+    const armedAt = Date.parse(arm?.at); const expiresAt = Date.parse(armed.claimBoundary?.faultUntil);
+    const observedAt = Date.parse(armed.policy?.observedAt);
+    if (typeof processInstanceId !== 'string' || processInstanceId.length === 0
+      || armed.processInstanceId !== processInstanceId || armed.claimBoundary?.evidence !== 'actual_worker_before_claim_hook'
+      || !Number.isSafeInteger(armed.claimBoundary.faultRemaining) || armed.claimBoundary.faultRemaining <= 0 || armed.claimBoundary.faultRemaining > 64
+      || !Number.isFinite(armedAt) || !Number.isFinite(expiresAt) || expiresAt <= armedAt
+      || !Number.isFinite(observedAt) || observedAt < armedAt || observedAt >= expiresAt) block('DEPENDENCY_ARM_NOT_PROVEN');
+    return { armed, armedAt, expiresAt };
+  };
   const dependency = async () => {
-    await command('containment_dependency_failure');
-    return poll(inspect, value => value.containment?.health?.workers?.some(worker => worker.claimAcceptance === 'dependency_failure'), 15_000);
+    const before = await inspect();
+    if (before.claimBoundary?.evidence !== 'actual_worker_before_claim_hook'
+      || !Number.isSafeInteger(before.claimBoundary.attempts) || before.claimBoundary.attempts < 0
+      || !Number.isSafeInteger(before.claimBoundary.injectedFailures) || before.claimBoundary.injectedFailures < 0) block('DEPENDENCY_ARM_NOT_PROVEN');
+    const { armed, armedAt, expiresAt } = await armDependency(before.processInstanceId);
+    const observed = value => {
+      const boundary = value.claimBoundary; const failureAt = Date.parse(boundary?.lastInjectedFailureAt);
+      const observedAt = Date.parse(value.policy?.observedAt);
+      return value.processInstanceId === before.processInstanceId
+        && boundary?.evidence === 'actual_worker_before_claim_hook'
+        && boundary.faultUntil === armed.claimBoundary.faultUntil && boundary.faultRemaining > 0 && boundary.faultRemaining < 64
+        && Number.isSafeInteger(boundary.attempts) && boundary.attempts > before.claimBoundary.attempts
+        && Number.isSafeInteger(boundary.injectedFailures) && boundary.injectedFailures > before.claimBoundary.injectedFailures
+        && Number.isFinite(failureAt) && failureAt >= armedAt && failureAt < expiresAt
+        && Number.isFinite(observedAt) && observedAt >= failureAt && observedAt < expiresAt
+        && value.containment?.health?.workers?.some(worker => worker.claimAcceptance === 'dependency_failure');
+    };
+    if (observed(armed)) return armed;
+    return poll(inspect, observed, WORKER_CLAIM_OBSERVATION_MS);
   };
   const stopped = async () => {
     await command('coordinator_stop'); await command('policy_disabled');
@@ -237,7 +268,7 @@ export async function runSelfHealInferenceAcceptanceCase(scenario, manifest, opt
       await remote('worker', ['provider', 'inference_hold_next']);
       await remote('worker', ['fenced-job', 'create', slot, '1']);
       const before = await poll(inspect, value => value.containment?.health?.queue?.running === 1
-        && value.containment.health.queue.pending === 0 && value.containment.health.workers.filter(worker => worker.busy).length === 1, 15_000, 250);
+        && value.containment.health.queue.pending === 0 && value.containment.health.workers.filter(worker => worker.busy).length === 1, WORKER_CLAIM_OBSERVATION_MS, 250);
       const [beforeProvider, beforeWebProvider] = await Promise.all([provider(), provider('web')]);
       requireProof(beforeProvider.inFlight !== null && paid(beforeProvider).at(-1)?.fault === 'hold', 'RUNNING_PROVIDER_NOT_HELD');
       await emit('baseline', before);
@@ -260,9 +291,11 @@ export async function runSelfHealInferenceAcceptanceCase(scenario, manifest, opt
       await stopped(); await command('containment_predictive_on');
       await command('policy_predictive_no_execute', 'web');
       const beforeProvider = await provider(); const beforeWeb = await provider('web');
-      await dependency();
       const absent = await remote('worker', ['fenced-job', 'inspect', 'I03', '1']);
       if (absent.fencedJob?.job !== null) block('DIAGNOSIS_PENDING_JOB_ALREADY_USED');
+      const initialDependency = await dependency();
+      // The first observation can arrive near expiry; arm a fresh bounded window before creating pending work.
+      await armDependency(initialDependency.processInstanceId);
       await remote('worker', ['fenced-job', 'create', 'I03', '1']);
       await dependency();
       await poll(inspect, value => value.containment.health.queue?.pending === 1, 10_000);
@@ -377,9 +410,10 @@ export async function runSelfHealInferenceAcceptanceCase(scenario, manifest, opt
         && Number.isSafeInteger(initial.containment.counters.actionsExecuted)
         && state.containment.counters.repairAttempts === initial.containment.counters.repairAttempts
         && state.containment.counters.actionsExecuted === initial.containment.counters.actionsExecuted, 'LATE_WORK_REPAIR_EFFECT');
-      await dependency();
       const absent = await remote('worker', ['fenced-job', 'inspect', 'I03', '1']);
       if (absent.fencedJob?.job !== null) block('LATE_WORK_PENDING_JOB_ALREADY_USED');
+      const initialDependency = await dependency();
+      await armDependency(initialDependency.processInstanceId);
       await remote('worker', ['fenced-job', 'create', 'I03', '1']);
       await dependency(); await poll(inspect, value => value.containment.health.queue?.pending === 1, 10_000);
       await remote('worker', ['provider', 'inference_late_completion_next']);
@@ -460,9 +494,10 @@ export async function runSelfHealInferenceAcceptanceCase(scenario, manifest, opt
         pendingJobRecovered: true, operatorReconciliation: 'REQUIRED_NOT_PERFORMED', automaticReservationDeletion: false };
     } else if (scenario === 'uncertain_restart') {
       await stopped(); await command('containment_predictive_on'); await command('containment_credential_rotate');
-      await dependency();
       const absent = await remote('worker', ['fenced-job', 'inspect', 'I03', '2']);
       if (absent.fencedJob?.job !== null) block('UNCERTAIN_PENDING_JOB_ALREADY_USED');
+      const initialDependency = await dependency();
+      await armDependency(initialDependency.processInstanceId);
       await remote('worker', ['fenced-job', 'create', 'I03', '2']);
       await dependency();
       await poll(inspect, value => value.containment.health.queue?.pending === 1, 10_000);

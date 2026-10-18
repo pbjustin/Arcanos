@@ -23,7 +23,9 @@ function snapshot(evaluations = 0, running = false) {
   return { ready: true, processInstanceId: id(30), receipts: [], coordinator: { loopRunning: true, inFlight: false },
     scheduler: { callbacks: evaluations, intervalMs: 30_000 }, policy: { selfImproveEnabled: false, actuatorMode: 'daemon',
       autonomyLevel: 3, frozen: false, killSwitch: { frozen: false, autonomyLevel: 3 },
-      predictiveEnabled: false, predictiveDryRun: false, predictiveAutoExecute: false }, claimBoundary: { faultRemaining: 0 },
+      predictiveEnabled: false, predictiveDryRun: false, predictiveAutoExecute: false }, claimBoundary: {
+      evidence: 'actual_worker_before_claim_hook', attempts: 0, injectedFailures: 0,
+      lastAttemptAt: null, lastInjectedFailureAt: null, faultUntil: null, faultRemaining: 0 },
     containment: { evidence: 'production_health_telemetry_and_redis', run: null, counters: { complete: true,
       evaluations, healthyEvaluations: evaluations, incidentEvaluations: 0, providerAttempts: 0, repairAttempts: 0, actionsExecuted: 0 },
     health: { unexpectedWorkerCount: 0, queue: { pending: 0, running: running ? 1 : 0, stalledRunning: 0 },
@@ -167,11 +169,27 @@ describe('PR1557 fixed hosted acceptance cases', () => {
     expect(env.calls).toContainEqual(['web', 'command', 'policy_restore']);
   });
 
-  function orchestrationHarness() {
+  function orchestrationHarness(options = {}) {
     let clock = NOW; let serial = 0; let fault = null; let credential = 'original'; let blockedOriginal = false;
     const states = { worker: snapshot(), web: snapshot() }; const fixtures = { worker: fixture([]), web: fixture([]) };
-    const jobs = new Map(); const ledgers = new Map(); const calls = [];
+    const jobs = new Map(); const ledgers = new Map(); const calls = []; let dependencyClaimAt = null;
+    const startJob = job => {
+      job.status = 'running'; states.worker.containment.health.queue.pending = 0;
+      states.worker.containment.health.queue.running = 1; states.worker.containment.health.workers[0].busy = true;
+      const receipt = wire('worker', 'responses', { purpose: 'synthetic-completion', fault: 'hold', outcome: 'in_flight' });
+      fixtures.worker.inFlight = receipt.requestId; fault = null;
+    };
     const advance = () => {
+      const boundary = states.worker.claimBoundary;
+      if (dependencyClaimAt !== null && clock >= dependencyClaimAt && clock < Date.parse(boundary.faultUntil)) {
+        boundary.attempts += 1; boundary.injectedFailures += 1; boundary.faultRemaining -= 1;
+        boundary.lastAttemptAt = new Date(clock).toISOString(); boundary.lastInjectedFailureAt = boundary.lastAttemptAt;
+        states.worker.containment.health.workers[0].claimAcceptance = 'dependency_failure'; dependencyClaimAt = null;
+      }
+      for (const job of jobs.values()) {
+        if (!job.literal && job.status === 'pending' && clock >= job.claimAt) startJob(job);
+        if (job.literal && job.status === 'pending' && Number.isFinite(job.completeAt) && clock >= job.completeAt) completedJob(job);
+      }
       for (const value of Object.values(fixtures)) {
         const active = value.receipts.find(receipt => receipt.requestId === value.inFlight);
         if (active?.fault === 'late_completion' && clock >= active.providerWorkDeadlineAt) {
@@ -183,6 +201,7 @@ describe('PR1557 fixed hosted acceptance cases', () => {
     };
     const key = (scenario, attempt) => `${scenario}:${attempt}`;
     const state = role => {
+      states[role].policy.observedAt = new Date(clock).toISOString();
       states[role].containment.ledgers = [...ledgers.values()].map(value => ({ ...value }));
       return structuredClone(states[role]);
     };
@@ -207,7 +226,7 @@ describe('PR1557 fixed hosted acceptance cases', () => {
         fixtures.worker = fixture([]); credential = 'original'; return { restartRequested: true };
       },
       remote: async (role, argv) => {
-        calls.push([role, ...argv]); clock += 1; advance();
+        calls.push([role, ...argv]); clock += argv[0] === 'inspect' ? (options.inspectLatencyMs ?? 1) : 1; advance();
         if (argv[0] === 'artifact') return { artifact: { compiledSha256: 'c'.repeat(64) } };
         if (argv[0] === 'provider') {
           if (argv[1] === 'set_healthy') fault = null;
@@ -227,13 +246,10 @@ describe('PR1557 fixed hosted acceptance cases', () => {
           const identity = key(argv[2], argv[3]);
           if (argv[1] === 'create') {
             const literal = argv[2] === 'I03';
-            jobs.set(identity, { id: id(40 + jobs.size), literal, status: literal ? 'pending' : 'running', completionVerified: false });
-            if (literal) states.worker.containment.health.queue.pending = 1;
-            else {
-              states.worker.containment.health.queue.running = 1; states.worker.containment.health.workers[0].busy = true;
-              const receipt = wire('worker', 'responses', { purpose: 'synthetic-completion', fault: 'hold', outcome: 'in_flight' });
-              fixtures.worker.inFlight = receipt.requestId; fault = null;
-            }
+            jobs.set(identity, { id: id(40 + jobs.size), literal, status: 'pending', completionVerified: false,
+              claimAt: clock + (options.jobClaimDelayMs ?? 0) });
+            states.worker.containment.health.queue.pending = 1;
+            advance();
           }
           return { fencedJob: { job: structuredClone(jobs.get(identity) ?? null) } };
         }
@@ -257,13 +273,19 @@ describe('PR1557 fixed hosted acceptance cases', () => {
             }
           }
           if (name === 'containment_dependency_failure') {
-            states.worker.containment.health.workers[0].claimAcceptance = 'dependency_failure';
             states.worker.claimBoundary.faultRemaining = 64;
+            states.worker.claimBoundary.faultUntil = new Date(clock + 45_000).toISOString();
+            dependencyClaimAt = clock + (options.dependencyClaimDelayMs ?? 0);
+            advance();
           }
           if (name === 'containment_dependency_restore') {
             states.worker.containment.health.workers[0].claimAcceptance = 'accepting';
-            states.worker.claimBoundary.faultRemaining = 0; states.worker.containment.health.queue.pending = 0;
-            for (const job of jobs.values()) if (job.status === 'pending') completedJob(job);
+            states.worker.claimBoundary.faultRemaining = 0; states.worker.claimBoundary.faultUntil = null;
+            dependencyClaimAt = null; states.worker.containment.health.queue.pending = 0;
+            for (const job of jobs.values()) if (job.status === 'pending') {
+              job.completeAt = clock + (options.literalCompletionDelayMs ?? 0);
+              if (job.completeAt === clock) completedJob(job);
+            }
           }
           if (name === 'containment_tick_batch') {
             current.containment.counters.evaluations += 20; current.containment.counters.healthyEvaluations += 20;
@@ -318,7 +340,7 @@ describe('PR1557 fixed hosted acceptance cases', () => {
         return { observation: state(role) };
       },
     };
-    return { execute: true, allowNetwork: true, transport, now: () => clock, sleep: async ms => { clock += ms; advance(); }, calls, ledgers };
+    return { execute: true, allowNetwork: true, transport, now: () => clock, sleep: async ms => { clock += ms; advance(); }, calls, ledgers, states, fixtures };
   }
   it.each(['running_off', 'running_on', 'diagnosis_once', 'probe_rotation', 'metadata_recovery', 'uncertain_restart'])(
     'executes bounded%s orchestration with injected evidence and labels it synthetic', async scenario => {
@@ -329,6 +351,107 @@ describe('PR1557 fixed hosted acceptance cases', () => {
       if (scenario === 'diagnosis_once') expect(result.proof).toMatchObject({ concurrentReservationDenialProven: true, pendingJobRecovered: true });
       if (scenario === 'probe_rotation' || scenario === 'metadata_recovery') expect(result.proof.hourlyBudgetDeniedAfterCooldown).toBe(true);
       if (scenario === 'uncertain_restart') expect(result.proof).toMatchObject({ operatorReconciliation: 'REQUIRED_NOT_PERFORMED', automaticReservationDeletion: false });
+    });
+  it.each(['diagnosis_once', 'uncertain_restart', 'late_completion'])(
+    'waits through the real thirty-second idle-claim backoff and delayed snapshot for%s', async scenario => {
+      const env = orchestrationHarness({ dependencyClaimDelayMs: 30_000, inspectLatencyMs: 3500 });
+      const result = await runSelfHealInferenceAcceptanceCase(scenario, manifest(), env);
+      expect(result).toMatchObject({ classification: 'SYNTHETIC_ONLY', errorCode: null, restoration: 'SYNTHETIC_ONLY' });
+      expect(env.calls).toContainEqual(['worker', 'command', 'containment_diagnose']);
+    });
+  it.each(['running_off', 'running_on'])(
+    'observes%s job pickup after thirty seconds without extending its provider hold', async scenario => {
+      const env = orchestrationHarness({ jobClaimDelayMs: 30_000, inspectLatencyMs: 3500 });
+      const result = await runSelfHealInferenceAcceptanceCase(scenario, manifest(), env);
+      expect(result).toMatchObject({ classification: 'SYNTHETIC_ONLY', proof: { evaluations: 20,
+        ordinaryJobCompletedOnce: true, inferenceRequests: 0, repairAttempts: 0, degradationIncidents: 0 } });
+      const request = env.fixtures.worker.receipts.find(value => value.endpoint === 'responses');
+      expect(request.startedAt - NOW).toBeGreaterThanOrEqual(30_000);
+      expect(request.endedAt - request.startedAt).toBeLessThan(30_000);
+    });
+  it.each(['diagnosis_once', 'uncertain_restart', 'late_completion'])(
+    'retains the sixty-second%s recovery window for a delayed ordinary literal-job claim', async scenario => {
+      const env = orchestrationHarness({ literalCompletionDelayMs: 30_000 });
+      const result = await runSelfHealInferenceAcceptanceCase(scenario, manifest(), env);
+      expect(result).toMatchObject({ classification: 'SYNTHETIC_ONLY', errorCode: null, restoration: 'SYNTHETIC_ONLY' });
+      expect(env.calls.filter(call => call[1] === 'fenced-job' && call[2] === 'create')).toHaveLength(1);
+      if (scenario !== 'uncertain_restart') expect(result.proof.pendingJobRecovered).toBe(true);
+    });
+  it('renews a proven fault before creating pending work when the initial observation is near expiry', async () => {
+    const env = orchestrationHarness({ dependencyClaimDelayMs: 44_000 }); const events = []; env.onReceipt = value => events.push(value);
+    const result = await runSelfHealInferenceAcceptanceCase('diagnosis_once', manifest(), env);
+    expect(result).toMatchObject({ classification: 'SYNTHETIC_ONLY', proof: { pendingJobRecovered: true } });
+    const created = env.calls.findIndex(call => call[1] === 'fenced-job' && call[2] === 'create');
+    const absent = env.calls.findIndex(call => call[1] === 'fenced-job' && call[2] === 'inspect');
+    const firstArm = env.calls.findIndex(call => call[2] === 'containment_dependency_failure');
+    expect(absent).toBeLessThan(firstArm);
+    expect(env.calls[created - 1]).toEqual(['worker', 'command', 'containment_dependency_failure']);
+    const arms = events.filter(event => event.kind === 'operation' && event.value.argv[1] === 'containment_dependency_failure');
+    expect(Date.parse(arms[1].observedAt) - Date.parse(arms[0].observedAt)).toBeGreaterThanOrEqual(44_000);
+    expect(Date.parse(arms[1].value.receipt.observation.claimBoundary.faultUntil) - Date.parse(arms[1].observedAt)).toBe(45_000);
+  });
+  it('uses a fresh failure already present in the arm acknowledgement without another pre-job poll', async () => {
+    const env = orchestrationHarness();
+    expect((await runSelfHealInferenceAcceptanceCase('diagnosis_once', manifest(), env)).classification).toBe('SYNTHETIC_ONLY');
+    const arm = env.calls.findIndex(call => call[2] === 'containment_dependency_failure');
+    expect(env.calls.slice(arm + 1, arm + 3)).toEqual([
+      ['worker', 'command', 'containment_dependency_failure'], ['worker', 'fenced-job', 'create', 'I03', '1'],
+    ]);
+  });
+  it.each(['rejected', 'lost_acknowledgement', 'missing_arm_receipt', 'expired_at_snapshot'])(
+    'does not create a pending job after a%s pre-job re-arm', async fault => {
+      const env = orchestrationHarness(); const remote = env.transport.remote; let arms = 0;
+      env.transport.remote = async (role, argv) => {
+        const receipt = await remote(role, argv);
+        if (argv[1] === 'containment_dependency_failure' && ++arms === 2) {
+          if (fault === 'rejected') return { observation: { rejected: true } };
+          if (fault === 'lost_acknowledgement') throw new Error('Synthetic lost acknowledgement after bounded arm.');
+          if (fault === 'missing_arm_receipt') receipt.observation.receipts = [];
+          if (fault === 'expired_at_snapshot') receipt.observation.policy.observedAt = receipt.observation.claimBoundary.faultUntil;
+        }
+        return receipt;
+      };
+      const result = await runSelfHealInferenceAcceptanceCase('late_completion', manifest(), env);
+      expect(result).toMatchObject({ classification: 'BLOCKED', restoration: 'SYNTHETIC_ONLY', proof: null });
+      expect(env.calls.some(call => call[1] === 'fenced-job' && call[2] === 'create')).toBe(false);
+      expect(env.calls).not.toContainEqual(['worker', 'command', 'containment_diagnose']);
+      expect(env.fixtures.worker.providerWireRequests).toBe(0);
+      expect(env.ledgers.size).toBe(0);
+    });
+  it('does not spend or create a job when stale worker failure never produces a fresh claim failure', async () => {
+    const env = orchestrationHarness({ dependencyClaimDelayMs: 45_000 });
+    env.states.worker.containment.health.workers[0].claimAcceptance = 'dependency_failure';
+    env.states.worker.claimBoundary.injectedFailures = 1;
+    env.states.worker.claimBoundary.lastInjectedFailureAt = new Date(NOW - 1000).toISOString();
+    const result = await runSelfHealInferenceAcceptanceCase('late_completion', manifest(), env);
+    expect(result).toMatchObject({ classification: 'BLOCKED', restoration: 'SYNTHETIC_ONLY',
+      errorCode: 'SELF_HEAL_ACCEPTANCE_INFERENCE_OBSERVATION_NOT_ESTABLISHED', proof: null });
+    expect(env.calls.filter(call => call[2] === 'containment_dependency_failure')).toHaveLength(1);
+    expect(env.calls.some(call => call[1] === 'fenced-job' && call[2] === 'create')).toBe(false);
+    expect(env.calls).not.toContainEqual(['worker', 'command', 'containment_diagnose']);
+    expect(env.fixtures.worker.providerWireRequests).toBe(0);
+    expect(env.ledgers.size).toBe(0);
+  });
+  it.each(['stale_counter', 'stale_timestamp', 'different_process', 'expired_fault', 'exhausted_fault', 'changed_arm'])(
+    'does not accept%s as evidence of the current dependency arm', async fault => {
+      const env = orchestrationHarness({ dependencyClaimDelayMs: 5000 }); const remote = env.transport.remote;
+      env.transport.remote = async (role, argv) => {
+        const receipt = await remote(role, argv); const value = receipt.observation;
+        if (role === 'worker' && value?.claimBoundary?.faultUntil) {
+          if (fault === 'stale_counter') value.claimBoundary.injectedFailures = 0;
+          if (fault === 'stale_timestamp') value.claimBoundary.lastInjectedFailureAt = new Date(NOW - 1000).toISOString();
+          if (fault === 'different_process') value.processInstanceId = id(31);
+          if (fault === 'expired_fault') value.policy.observedAt = value.claimBoundary.faultUntil;
+          if (fault === 'exhausted_fault') value.claimBoundary.faultRemaining = 0;
+          if (fault === 'changed_arm' && argv[0] === 'inspect') value.claimBoundary.faultUntil = new Date(NOW + 90_000).toISOString();
+        }
+        return receipt;
+      };
+      const result = await runSelfHealInferenceAcceptanceCase('late_completion', manifest(), env);
+      expect(result).toMatchObject({ classification: 'BLOCKED', proof: null });
+      expect(env.calls.some(call => call[1] === 'fenced-job' && call[2] === 'create')).toBe(false);
+      expect(env.calls).not.toContainEqual(['worker', 'command', 'containment_diagnose']);
+      expect(env.fixtures.worker.providerWireRequests).toBe(0);
     });
   it('rejects a cross-process denial outside the independently recorded provider window', async () => {
     const env = orchestrationHarness(); const remote = env.transport.remote;
