@@ -202,7 +202,9 @@ describe('PR1557 fixed hosted acceptance cases', () => {
     const key = (scenario, attempt) => `${scenario}:${attempt}`;
     const state = role => {
       states[role].policy.observedAt = new Date(clock).toISOString();
-      states[role].containment.ledgers = [...ledgers.values()].map(value => ({ ...value }));
+      states[role].containment.ledgers = ['diagnosis', 'provider_probe'].map(purpose => ({ ...(ledgers.get(purpose)
+        ?? { purpose, versionRecognized: true, present: false, ttlMs: -2, stateSha256: null,
+          inFlight: false, attemptCount: 0, lastAttemptMs: null, lastCompletedMs: null, rejectedCredentialCount: 0 }) }));
       return structuredClone(states[role]);
     };
     const wire = (role, endpoint, extra = {}) => {
@@ -292,6 +294,14 @@ describe('PR1557 fixed hosted acceptance cases', () => {
             current.policy.observedAt = new Date(clock).toISOString();
             current.containment.run = { operation: 'tick_batch', status: 'completed', startedAt: new Date(clock).toISOString(), ticksCompleted: 20 };
           }
+          if (name === 'containment_diagnose_no_ai') {
+            current.containment.run = { operation: 'diagnosis', status: 'completed', startedAt: new Date(clock).toISOString(),
+              completedAt: new Date(clock).toISOString(), processInstanceId: current.processInstanceId,
+              inferenceAuthorization: 'disabled', executionAuthorized: false,
+              audit: { source: 'self-heal.preview.measured-runtime', advisor: 'rules_fallback_v1', inferenceReason: 'inference_not_requested',
+                selectedAction: 'heal_worker_runtime', attempted: false, mode: 'recommend_only',
+                featureFlags: { enabled: true, dryRun: false, autoExecute: false } } };
+          }
           if (name === 'containment_diagnose') {
             const existing = ledgers.get('diagnosis');
             current.containment.run = { operation: 'diagnosis', status: 'completed', startedAt: new Date(clock).toISOString(),
@@ -331,6 +341,12 @@ describe('PR1557 fixed hosted acceptance cases', () => {
               else {
                 wire(role, 'responses', { maxOutputTokens: 16 }); current.containment.run.provider.completionHealthy = true;
               }
+              current.containment.providerHealth = { evidence: 'production_merged_provider_health',
+                lastAttemptAt: metadataFailure ? null : new Date(clock).toISOString(), lastSuccessAt: metadataFailure ? null : new Date(clock).toISOString(),
+                lastFailureAt: metadataFailure ? new Date(clock).toISOString() : current.containment.providerHealth.lastFailureAt,
+                lastFailureCategory: metadataFailure ? (fault === 'models_auth_failure_next' ? 'authentication' : 'timeout') : null,
+                lastFailureStatus: fault === 'models_auth_failure_next' ? 401 : null,
+                reachable: !metadataFailure, authenticated: !metadataFailure, completionHealthy: !metadataFailure };
               ledgers.set('provider_probe', { purpose: 'provider_probe', versionRecognized: true, inFlight: false,
                 attemptCount: (prior?.attemptCount ?? 0) + 1, lastCompletedMs: clock,
                 rejectedCredentialCount: blockedOriginal ? 1 : 0 }); fault = null;
@@ -348,9 +364,77 @@ describe('PR1557 fixed hosted acceptance cases', () => {
       const result = await runSelfHealInferenceAcceptanceCase(scenario, manifest(), env);
       expect(result).toMatchObject({ classification: 'SYNTHETIC_ONLY', restoration: 'SYNTHETIC_ONLY', errorCode: null,
         realExternalProviderRecoveryProven: false, productionAcceptanceProven: false });
-      if (scenario === 'diagnosis_once') expect(result.proof).toMatchObject({ concurrentReservationDenialProven: true, pendingJobRecovered: true });
-      if (scenario === 'probe_rotation' || scenario === 'metadata_recovery') expect(result.proof.hourlyBudgetDeniedAfterCooldown).toBe(true);
+      if (scenario === 'diagnosis_once') expect(result.proof).toMatchObject({ concurrentReservationDenialProven: true, pendingJobRecovered: true,
+        explicitDisabledInferenceDenied: true, disabledInferenceProviderRequests: 0, disabledInferenceLedgerUnchanged: true });
+      if (scenario === 'probe_rotation' || scenario === 'metadata_recovery') expect(result.proof).toMatchObject({
+        hourlyBudgetDeniedAfterCooldown: true, staleFailureSupersededByNewerSuccess: true, deniedProbesPreservedRecoveredHealth: true });
       if (scenario === 'uncertain_restart') expect(result.proof).toMatchObject({ operatorReconciliation: 'REQUIRED_NOT_PERFORMED', automaticReservationDeletion: false });
+    });
+  it('denies the no-AI request before arming the paid window and preserves existing probe history', async () => {
+    const env = orchestrationHarness();
+    env.ledgers.set('provider_probe', { purpose: 'provider_probe', versionRecognized: true, present: true,
+      ttlMs: -1, stateSha256: 'a'.repeat(64), attemptCount: 2, inFlight: false });
+    const result = await runSelfHealInferenceAcceptanceCase('diagnosis_once', manifest(), env);
+    expect(result.classification).toBe('SYNTHETIC_ONLY');
+    const denial = env.calls.findIndex(call => call[2] === 'containment_diagnose_no_ai');
+    const hold = env.calls.findIndex(call => call[2] === 'inference_hold_next');
+    expect(denial).toBeGreaterThan(0); expect(hold).toBeGreaterThan(denial);
+    expect(env.fixtures.worker.receipts.filter(receipt => receipt.endpoint === 'responses')).toHaveLength(1);
+    expect(env.ledgers.get('provider_probe').stateSha256).toBe('a'.repeat(64));
+  });
+  it.each(['not_actionable', 'wrong_reason', 'manual', 'dry_run', 'missing_incident', 'incomplete', 'provider_event', 'repair', 'ledger', 'wire'])(
+    'rejects invalid disabled-AI proof before spending the authorized request: %s', async drift => {
+      const env = orchestrationHarness(); const remote = env.transport.remote;
+      env.transport.remote = async (role, argv) => {
+        const result = await remote(role, argv);
+        if (argv[1] === 'containment_diagnose_no_ai') {
+          const value = result.observation.containment;
+          if (drift === 'not_actionable') value.run.audit.selectedAction = 'none';
+          if (drift === 'wrong_reason') value.run.audit.inferenceReason = 'no_actionable_incident';
+          if (drift === 'manual') value.run.inferenceAuthorization = 'manual';
+          if (drift === 'dry_run') value.run.audit.featureFlags.dryRun = true;
+          if (drift === 'missing_incident') value.health.queue.pending = 0;
+          if (drift === 'incomplete') value.counters.complete = false;
+          if (drift === 'provider_event') value.counters.providerAttempts += 1;
+          if (drift === 'repair') value.counters.repairAttempts += 1;
+          if (drift === 'ledger') value.ledgers[0].attemptCount += 1;
+          if (drift === 'wire') env.fixtures.worker.providerWireRequests += 1;
+        }
+        return result;
+      };
+      const result = await runSelfHealInferenceAcceptanceCase('diagnosis_once', manifest(), env);
+      expect(result.classification).toBe('FAILED');
+      expect(result.errorCode).toContain('DISABLED_INFERENCE');
+      expect(env.calls).not.toContainEqual(['worker', 'provider', 'inference_hold_next']);
+      expect(env.calls).not.toContainEqual(['worker', 'command', 'containment_diagnose']);
+    });
+  it.each(['older_success', 'equal_success', 'cleared_history', 'uncleared_category', 'uncleared_status', 'unhealthy',
+    'missing_projection', 'cooldown_rewrite', 'budget_rewrite'])(
+    'rejects invalid recovered provider history or denied-probe mutation: %s', async drift => {
+      const env = orchestrationHarness(); const remote = env.transport.remote; let probes = 0;
+      env.transport.remote = async (role, argv) => {
+        const result = await remote(role, argv);
+        if (role === 'worker' && argv[1] === 'containment_probe') {
+          probes += 1;
+          const health = result.observation.containment.providerHealth;
+          if (probes === 2) {
+            if (drift === 'older_success') health.lastSuccessAt = new Date(Date.parse(health.lastFailureAt) - 1).toISOString();
+            if (drift === 'equal_success') health.lastSuccessAt = health.lastFailureAt;
+            if (drift === 'cleared_history') health.lastFailureAt = null;
+            if (drift === 'uncleared_category') health.lastFailureCategory = 'timeout';
+            if (drift === 'uncleared_status') health.lastFailureStatus = 503;
+            if (drift === 'unhealthy') health.completionHealthy = false;
+            if (drift === 'missing_projection') result.observation.containment.providerHealth = null;
+          }
+          if ((probes === 3 && drift === 'cooldown_rewrite') || (probes === 4 && drift === 'budget_rewrite')) {
+            health.lastAttemptAt = new Date(Date.parse(health.lastAttemptAt) + 1).toISOString();
+          }
+        }
+        return result;
+      };
+      const result = await runSelfHealInferenceAcceptanceCase('metadata_recovery', manifest(), env);
+      expect(result.classification).toBe('FAILED');
+      expect(result.errorCode).toMatch(/RECOVERED_PROVIDER_HISTORY_NOT_PROVEN|DENIED_PROBE_CHANGED_PROVIDER_HEALTH/u);
     });
   it.each(['diagnosis_once', 'uncertain_restart', 'late_completion'])(
     'waits through the real thirty-second idle-claim backoff and delayed snapshot for%s', async scenario => {

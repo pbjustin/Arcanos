@@ -1214,7 +1214,15 @@ proves the initial failure, and explicitly renews the bounded fault. It then
 requires another fresh failure and pending-queue observation before diagnosis.
 These pre-claim bounds do not extend Core's 12-second request deadline, the
 30-second SDK/held-response bounds, or the 40-second late-work fixture.
-`diagnosis_once` holds an authorized bounded Worker Core diagnosis while V2
+`diagnosis_once` first sends the fixed Worker-only `containment_diagnose_no_ai`
+command against that measured pending dependency incident. It calls the production
+decision service with inference explicitly disabled and repair execution forbidden.
+The proof requires an actionable rules recommendation, `inference_not_requested`,
+complete counters with zero provider/repair delta, unchanged shared admission
+ledgers, and zero Worker/V2 provider wire requests. This tests service-level AI
+intent; it does not replace normal HTTP bearer authentication coverage. These
+observations finish before the paid hold is armed. The case then holds an
+authorized bounded Worker Core diagnosis while V2
 attempts diagnosis against the same Redis ledger. It requires a concurrent
 in-flight denial without a V2 provider request, then checks completion and
 the subsequent shared cooldown. A fixed pending job during the bounded claim
@@ -1230,6 +1238,14 @@ independent terminal-request and ownership evidence and is not automated by
 this runner. Local injected transports and clocks produce `SYNTHETIC_ONLY`
 results; only the attested Railway transport can produce hosted `VERIFIED`
 receipts. Neither classification establishes production acceptance.
+The recovery cases also inspect the production merged provider-health snapshot
+through a PR1557-only allowlisted projection. Actual failure and later successful
+probe timestamps must retain the historical failure while clearing its effective
+failure category/status and restoring health. Cooldown and hourly-budget denials
+must leave that recovered snapshot unchanged. No fixture sets timestamps or
+provider-health state; this proves older-failure precedence after recovery, not
+arbitrary clock-skew or stale-cache behavior. Provider URLs, credential identities,
+raw errors, and model configuration are excluded from the projection.
 
 The separate `late_completion` case requires a fresh diagnosis ledger and an
 unused `I03` attempt 1 in another independently owned scope. Its fixed

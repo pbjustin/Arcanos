@@ -22,7 +22,7 @@ const COMMANDS = new Set(['inspect', 'duplicate_start', 'coordinator_stop', 'coo
   'trinity_activate', 'trinity_replace', 'trinity_stale_rollback', 'trinity_rollback', 'trinity_consumer', 'trinity_run', 'predictive_evaluate_live']);
 const PROVIDER = new Set(['inspect', 'set_healthy', 'timeout_next', 'hold_next', 'release']);
 const INFERENCE_COMMANDS = new Set(['containment_predictive_on', 'containment_predictive_off', 'containment_tick_batch',
-  'containment_dependency_failure', 'containment_dependency_restore']);
+  'containment_dependency_failure', 'containment_dependency_restore', 'containment_diagnose_no_ai']);
 const SHARED_INFERENCE_COMMANDS = new Set(['containment_diagnose', 'containment_probe', 'containment_cancel',
   'containment_credential_rotate', 'containment_credential_restore']);
 const INFERENCE_PROVIDER = new Set(['models_timeout_next', 'inference_hold_next', 'inference_cancel_next', 'inference_late_completion_next',

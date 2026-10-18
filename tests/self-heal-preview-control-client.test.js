@@ -94,6 +94,23 @@ function overlapFixture(env, config = {}) {
 }
 
 describe('fixed self-heal preview SSH control client', () => {
+  it('admits only the Worker PR1557 no-AI command without caller-supplied authorization', async () => {
+    const env = { ...environment(), ARCANOS_SELF_HEAL_PREVIEW_PROFILE: 'worker-inference-containment-v1',
+      RAILWAY_PROJECT_NAME: 'arc-pr1557-heavy-client', RAILWAY_ENVIRONMENT_NAME: 'backstage-heavy-pr-1557-e2e',
+      RAILWAY_SERVICE_NAME: 'arcanos-worker-pr1557-heavy' };
+    const fetchImpl = jest.fn(async () => response(inspection(env)));
+    await runSelfHealPreviewControl(['command', 'containment_diagnose_no_ai'], env, { fetchImpl });
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({ command: 'containment_diagnose_no_ai' });
+    fetchImpl.mockClear();
+    for (const [target, args] of [[environment(), ['command', 'containment_diagnose_no_ai']],
+      [{ ...environment('web'), ARCANOS_SELF_HEAL_PREVIEW_PROFILE: env.ARCANOS_SELF_HEAL_PREVIEW_PROFILE,
+        RAILWAY_PROJECT_NAME: env.RAILWAY_PROJECT_NAME, RAILWAY_ENVIRONMENT_NAME: env.RAILWAY_ENVIRONMENT_NAME,
+        RAILWAY_SERVICE_NAME: 'arcanos-web-pr1557-heavy' }, ['command', 'containment_diagnose_no_ai']],
+      [env, ['command', 'containment_diagnose_no_ai', 'manual']]]) {
+      await expect(runSelfHealPreviewControl(args, target, { fetchImpl })).rejects.toThrow('SELF_HEAL_PREVIEW_CONTROL_CLIENT_FAILED');
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
   it.each(['worker', 'web'].flatMap(role => ['inference_auth_failure_next', 'inference_late_completion_next'].map(command => [role, command])))('admits command-only containment provider fault %s/%s and excludes the legacy profile', async (role, command) => {
     const legacy = environment(role); const fetchImpl = jest.fn();
     await expect(runSelfHealPreviewControl(['provider', command], legacy, { fetchImpl })).rejects.toThrow('SELF_HEAL_PREVIEW_CONTROL_CLIENT_FAILED');

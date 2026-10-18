@@ -72,6 +72,11 @@ const getClient = jest.fn(() => sdkClient);
 const providerRuntime = { reloadCount: 1, lastReloadAt: null, lastAttemptAt: null, lastSuccessAt: null,
   lastFailureAt: null, lastFailureCategory: null, consecutiveFailures: 0, backoffMs: 0, nextRetryAt: null,
   configVersion: 'test-unprojected-sensitive-config-fingerprint', lastFailureReason: 'test-unprojected-sensitive-error' };
+const providerHealth = { lastAttemptAt: '2026-10-17T20:01:00.000Z', lastSuccessAt: '2026-10-17T20:01:01.000Z',
+  lastFailureAt: '2026-10-17T20:00:00.000Z', lastFailureCategory: null, lastFailureStatus: null,
+  reachable: true, authenticated: true, completionHealthy: true,
+  baseUrl: 'test-private-provider-url', model: 'test-private-provider-model', lastFailureReason: 'test-private-provider-error',
+  credentialIdentity: 'test-private-provider-identity' };
 const log = { info: jest.fn((_event: string, data: { event: string }) => { events.push(data.event); }), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
 
 jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({ logger: log }));
@@ -132,7 +137,7 @@ jest.unstable_mockModule('@services/runtimeDiagnosticsService.js', () => ({
   runtimeDiagnosticsService: { recordRequestCompletion: recordCompletion, getRequestWindowSince },
 }));
 jest.unstable_mockModule('../src/services/selfImprove/predictiveHealingService.js', () => ({
-  buildPredictiveHealingStatusSnapshot: () => ({ recentAudits: predictiveAudits }),
+  buildPredictiveHealingStatusSnapshot: () => ({ recentAudits: predictiveAudits, aiProvider: providerHealth }),
   runPredictiveHealingDecision: predictiveDecision,
   probePredictiveHealingAIProvider: providerProbe,
 }));
@@ -411,6 +416,54 @@ describe('isolated self-healing preview admission and process-local controls', (
     await new Promise<void>(resolve => setImmediate(resolve));
     await call('containment_probe'); await waitFor(() => providerProbe.mock.calls.length === 1);
     expect(trinity).not.toHaveBeenCalled(); expect(remoteRepair).not.toHaveBeenCalled();
+  });
+
+  it('passes fixed disabled inference intent with measured observations and no repair authority', async () => {
+    useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
+    expect((await call('containment_diagnose_no_ai', { raw: '{"command":"containment_diagnose_no_ai","inferenceAuthorization":"manual"}' })).status).toBe(400);
+    await call('containment_diagnose_no_ai'); await waitFor(() => predictiveDecision.mock.calls.length === 1);
+    expect(predictiveDecision).toHaveBeenCalledWith(expect.objectContaining({ source: 'self-heal.preview.measured-runtime',
+      inferenceAuthorization: 'disabled', execute: false, allowAutoExecute: false }));
+    expect(predictiveDecision.mock.calls[0][0]).not.toHaveProperty('simulate');
+    expect(predictiveDecision.mock.calls[0][0]).not.toHaveProperty('observation');
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect((await call()).body.containment.run).toMatchObject({ operation: 'diagnosis', status: 'completed',
+      inferenceAuthorization: 'disabled', executionAuthorized: false });
+    expect(providerProbe).not.toHaveBeenCalled(); expect(remoteRepair).not.toHaveBeenCalled();
+  });
+
+  it.each(['legacy', 'web'])('rejects disabled-inference fixture outside its Worker containment scope: %s', async scope => {
+    if (scope === 'web') {
+      process.env.ARCANOS_PROCESS_KIND = 'web'; process.env.RAILWAY_SERVICE_ID = uid(6); useContainmentProfile();
+    }
+    handle = await controls.installSelfHealingPreviewControl();
+    expect((await call('containment_diagnose_no_ai')).body).toMatchObject({ rejected: true,
+      reasonCode: scope === 'legacy' ? 'inference_containment_profile_required' : 'worker_role_required' });
+    expect(predictiveDecision).not.toHaveBeenCalled();
+  });
+
+  it('projects merged historical failure and recovered success without provider identities or raw errors', async () => {
+    useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
+    const result = (await call()).body.containment.providerHealth;
+    expect(result).toEqual({ evidence: 'production_merged_provider_health',
+      lastAttemptAt: providerHealth.lastAttemptAt, lastSuccessAt: providerHealth.lastSuccessAt, lastFailureAt: providerHealth.lastFailureAt,
+      lastFailureCategory: null, lastFailureStatus: null, reachable: true, authenticated: true, completionHealthy: true });
+    expect(JSON.stringify(result)).not.toContain('test-private-provider');
+    expect((await call()).body.provider.lastSuccessAt).toBeNull();
+  });
+
+  it('rejects unsafe values in the merged provider-health projection rather than reflecting them', async () => {
+    const original = { ...providerHealth };
+    try {
+      Object.assign(providerHealth, { lastAttemptAt: 'test-private-provider-timestamp', lastSuccessAt: '2026-99-99T99:99:99.000Z',
+        lastFailureCategory: 'test-private-provider-category', lastFailureStatus: 'test-private-provider-status',
+        reachable: 'test-private-provider-reachable' });
+      useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
+      const result = (await call()).body.containment.providerHealth;
+      expect(result).toMatchObject({ lastAttemptAt: null, lastSuccessAt: null, lastFailureCategory: 'unknown',
+        lastFailureStatus: null, reachable: null });
+      expect(JSON.stringify(result)).not.toContain('test-private-provider');
+    } finally { Object.assign(providerHealth, original); }
   });
 
   it('changes only the two server-owned fictional credentials and rejects caller payloads', async () => {

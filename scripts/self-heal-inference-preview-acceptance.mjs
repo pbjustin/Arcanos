@@ -106,6 +106,53 @@ export function attestSelfHealInferenceQuietWindow(before, after, beforeProvider
     busySlots: running ? 1 : 0, idleSlots: running ? 7 : 8 };
 }
 
+/** A genuine incident can still be diagnosed by rules without authorizing a provider attempt. */
+function attestDisabledInference(before, after) {
+  const run = after.containment?.run; const audit = run?.audit;
+  for (const value of [before, after]) {
+    requireProof(value.containment?.health?.queue?.pending === 1
+      && value.containment.health.workers.some(worker => worker.claimAcceptance === 'dependency_failure')
+      && value.containment.counters.complete === true, 'DISABLED_INFERENCE_INCIDENT_NOT_PROVEN');
+    attestQuietPolicy(value, true);
+  }
+  requireProof(before.processInstanceId === after.processInstanceId && run?.processInstanceId === after.processInstanceId
+    && run.status === 'completed' && run.inferenceAuthorization === 'disabled' && run.executionAuthorized === false
+    && audit?.source === 'self-heal.preview.measured-runtime' && audit.advisor === 'rules_fallback_v1'
+    && audit.inferenceReason === 'inference_not_requested' && audit.selectedAction && audit.selectedAction !== 'none'
+    && audit.attempted === false && audit.mode === 'recommend_only'
+    && audit.featureFlags?.enabled === true && audit.featureFlags.dryRun === false && audit.featureFlags.autoExecute === false,
+  'DISABLED_INFERENCE_DENIAL_NOT_PROVEN');
+  for (const field of ['providerAttempts', 'repairAttempts', 'actionsExecuted']) {
+    requireProof(Number.isSafeInteger(before.containment.counters[field])
+      && after.containment.counters[field] === before.containment.counters[field], 'DISABLED_INFERENCE_EFFECT');
+  }
+  for (const purpose of ['diagnosis', 'provider_probe']) {
+    const first = ledger(before, purpose); const last = ledger(after, purpose);
+    requireProof(first?.versionRecognized === true && last?.versionRecognized === true
+      && Number.isSafeInteger(first.attemptCount) && first.attemptCount >= 0
+      && (first.present === false ? first.stateSha256 === null && first.ttlMs === -2
+        : first.present === true && /^[a-f0-9]{64}$/u.test(first.stateSha256) && first.ttlMs === -1)
+      && hash(first) === hash(last), 'DISABLED_INFERENCE_LEDGER_CHANGED');
+  }
+}
+
+/** Retained failure history must not override a strictly newer successful probe. */
+function attestRecoveredProviderHistory(failed, recovered) {
+  const first = failed.containment?.providerHealth; const last = recovered.containment?.providerHealth;
+  requireProof(first?.evidence === 'production_merged_provider_health'
+    && last?.evidence === 'production_merged_provider_health'
+    && Number.isFinite(Date.parse(first.lastFailureAt)) && first.lastFailureCategory !== null
+    && first.completionHealthy === false && last.lastFailureAt === first.lastFailureAt
+    && Date.parse(last.lastSuccessAt) > Date.parse(first.lastFailureAt)
+    && Date.parse(last.lastAttemptAt) > Date.parse(first.lastFailureAt)
+    && (first.lastAttemptAt === null || Date.parse(last.lastAttemptAt) >= Date.parse(first.lastAttemptAt))
+    && Date.parse(last.lastSuccessAt) >= Date.parse(last.lastAttemptAt)
+    && last.lastFailureCategory === null && last.lastFailureStatus === null
+    && last.reachable === true && last.authenticated === true && last.completionHealthy === true,
+  'RECOVERED_PROVIDER_HISTORY_NOT_PROVEN');
+  return last;
+}
+
 /** Prove finite provider work finished after operator cancellation without claiming delivery or billing. */
 export function attestSelfHealInferenceLateCompletion(request, run, cancellationAt, overlappingAt) {
   const runStartedAt = Date.parse(run?.startedAt);
@@ -183,7 +230,8 @@ export async function runSelfHealInferenceAcceptanceCase(scenario, manifest, opt
   };
   const operation = async (name, role = 'worker') => {
     const initial = await command(name, role); const startedAt = initial?.containment?.run?.startedAt;
-    const expected = { containment_diagnose: 'diagnosis', containment_probe: 'provider_probe', containment_tick_batch: 'tick_batch' }[name];
+    const expected = { containment_diagnose: 'diagnosis', containment_diagnose_no_ai: 'diagnosis',
+      containment_probe: 'provider_probe', containment_tick_batch: 'tick_batch' }[name];
     if (!startedAt || !expected || initial.containment.run.operation !== expected) block('OPERATION_NOT_STARTED');
     if (['completed', 'failed'].includes(initial.containment.run.status)) return initial;
     return poll(() => inspect(role), value => value.containment?.run?.startedAt === startedAt
@@ -298,7 +346,12 @@ export async function runSelfHealInferenceAcceptanceCase(scenario, manifest, opt
       await armDependency(initialDependency.processInstanceId);
       await remote('worker', ['fenced-job', 'create', 'I03', '1']);
       await dependency();
-      await poll(inspect, value => value.containment.health.queue?.pending === 1, 10_000);
+      const beforeDisabled = await poll(inspect, value => value.containment.health.queue?.pending === 1, 10_000);
+      const disabled = await operation('containment_diagnose_no_ai');
+      attestDisabledInference(beforeDisabled, disabled);
+      const [afterDisabledProvider, afterDisabledWeb] = await Promise.all([provider(), provider('web')]);
+      requireProof(sameWireCount(beforeProvider, afterDisabledProvider) && sameWireCount(beforeWeb, afterDisabledWeb),
+        'DISABLED_INFERENCE_PROVIDER_REQUEST');
       // Refresh before the paid request starts; leave the twelve-second Core window for overlap and release.
       const refreshed = await command('containment_dependency_failure');
       requireProof(refreshed.containment.health.queue?.pending === 1
@@ -351,6 +404,7 @@ export async function runSelfHealInferenceAcceptanceCase(scenario, manifest, opt
         model: requests[0].model, advisor: audit.advisor, executionAuthorized: false,
         crossProcessDenied: true, crossProcessEvidence: 'overlapping_in_flight_and_sequential_cooldown_denials',
         concurrentReservationDenialProven: true, pendingJobRecovered: true,
+        explicitDisabledInferenceDenied: true, disabledInferenceProviderRequests: 0, disabledInferenceLedgerUnchanged: true,
         faultEvidence: 'bounded_actual_worker_claim_dependency_failure_with_owned_pending_job' };
     } else if (scenario === 'probe_rotation' || scenario === 'metadata_recovery') {
       await stopped();
@@ -373,6 +427,7 @@ export async function runSelfHealInferenceAcceptanceCase(scenario, manifest, opt
       if (scenario === 'probe_rotation') await command('containment_credential_rotate');
       const recovered = await operation('containment_probe');
       if (recovered.containment.run?.provider?.completionHealthy !== true) block('RECOVERY_PROBE_NOT_ADMITTED');
+      const recoveredHealth = attestRecoveredProviderHistory(failed, recovered);
       const afterProvider = await provider(); const requests = paid(afterProvider).slice(paid(beforeProvider).length);
       requireProof(requests.length === 1 && requests[0].maxOutputTokens === 16
         && (scenario !== 'probe_rotation' || requests[0].credential === 'rotated'), 'BOUNDED_RECOVERY_PROBE_NOT_PROVEN');
@@ -380,6 +435,7 @@ export async function runSelfHealInferenceAcceptanceCase(scenario, manifest, opt
       requireProof(probeLedger?.attemptCount === 2 && probeLedger.inFlight === false, 'TWO_PROBE_BUDGET_NOT_PROVEN');
       const immediate = await operation('containment_probe');
       requireProof(['cooldown', 'budget_exhausted'].includes(immediate.containment.run?.provider?.failureReason), 'PROBE_RETRY_NOT_DENIED');
+      requireProof(hash(immediate.containment?.providerHealth ?? null) === hash(recoveredHealth), 'DENIED_PROBE_CHANGED_PROVIDER_HEALTH');
       requireProof(sameWireCount(afterProvider, await provider()), 'RETRY_STORM');
       const budgetCheckAt = probeLedger.lastCompletedMs + 60_001;
       if (budgetCheckAt >= Date.parse(manifest.receipt.expiresAt) - CLEANUP_RESERVE_MS) block('INSUFFICIENT_LEASE_FOR_HOURLY_BUDGET_CHECK');
@@ -387,9 +443,11 @@ export async function runSelfHealInferenceAcceptanceCase(scenario, manifest, opt
       const exhausted = await operation('containment_probe');
       requireProof(exhausted.containment.run?.provider?.failureReason === 'budget_exhausted'
         && sameWireCount(afterProvider, await provider()), 'HOURLY_PROBE_BUDGET_NOT_PROVEN');
+      requireProof(hash(exhausted.containment?.providerHealth ?? null) === hash(recoveredHealth), 'DENIED_PROBE_CHANGED_PROVIDER_HEALTH');
       proof = { unpaidFailureReleasedReservation: true, revokedIdentityRetained: scenario === 'probe_rotation',
         authorizedRecoverySucceeded: true, inferenceRequests: 1, probeAttempts: 2, hourlyBudgetDeniedAfterCooldown: true,
-        maxOutputTokens: 16, crossProcessDenied: true };
+        maxOutputTokens: 16, crossProcessDenied: true, staleFailureSupersededByNewerSuccess: true,
+        deniedProbesPreservedRecoveredHealth: true, providerHealth: recoveredHealth };
     } else if (scenario === 'late_completion') {
       if (Date.parse(manifest.receipt.expiresAt) - now() < CLEANUP_RESERVE_MS + 5 * 60_000) block('INSUFFICIENT_LEASE_FOR_LATE_WORK');
       await stopped(); await command('containment_predictive_on'); await command('containment_credential_rotate');

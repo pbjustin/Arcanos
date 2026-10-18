@@ -159,7 +159,7 @@ const COMMANDS = new Set([
   'predictive_evaluate',
   'predictive_evaluate_live',
   'shutdown_prepare_a06', 'shutdown_prepare_e06', 'shutdown_cancel',
-  'containment_predictive_on', 'containment_predictive_off', 'containment_diagnose', 'containment_probe', 'containment_cancel',
+  'containment_predictive_on', 'containment_predictive_off', 'containment_diagnose', 'containment_diagnose_no_ai', 'containment_probe', 'containment_cancel',
   'containment_credential_rotate', 'containment_credential_restore',
   'containment_tick_batch',
   'containment_dependency_failure', 'containment_dependency_restore',
@@ -183,6 +183,21 @@ function projectPredictiveAudit(entry: PredictiveHealingAuditEntry) {
       avgLatencyMs: entry.observation.avgLatencyMs, p95LatencyMs: entry.observation.p95LatencyMs,
       degradedCount: entry.observation.degradedCount },
   };
+}
+function projectProviderHealth() {
+  const health = buildPredictiveHealingStatusSnapshot().aiProvider;
+  const timestamp = (value: unknown) => typeof value === 'string'
+    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value) && Number.isFinite(Date.parse(value)) ? value : null;
+  const category = health.lastFailureCategory;
+  const status = health.lastFailureStatus;
+  return { evidence: 'production_merged_provider_health',
+    lastAttemptAt: timestamp(health.lastAttemptAt), lastSuccessAt: timestamp(health.lastSuccessAt), lastFailureAt: timestamp(health.lastFailureAt),
+    lastFailureCategory: category === null ? null : ['missing_client', 'circuit_open', 'insufficient_quota', 'rate_limited',
+      'authentication', 'network', 'timeout', 'invalid_request', 'provider_error', 'unknown'].includes(category) ? category : 'unknown',
+    lastFailureStatus: typeof status === 'number' && Number.isInteger(status) && status >= 100 && status <= 599 ? status : null,
+    reachable: typeof health.reachable === 'boolean' ? health.reachable : null,
+    authenticated: typeof health.authenticated === 'boolean' ? health.authenticated : null,
+    completionHealthy: typeof health.completionHealthy === 'boolean' ? health.completionHealthy : null };
 }
 function projectConsumerWindow(window: RequestWindowSnapshot) {
   return { route: SELF_HEAL_PREVIEW_CONSUMER_ROUTE, generatedAt: window.generatedAt, windowMs: window.windowMs,
@@ -374,7 +389,7 @@ export async function installSelfHealingPreviewControl(
     }) : null;
     collectContainmentEvidence();
     return { evidence: 'production_health_telemetry_and_redis', startedAt: containmentStartedAt,
-      counters: { ...containmentEvidence }, run: containmentRun,
+      counters: { ...containmentEvidence }, run: containmentRun, providerHealth: projectProviderHealth(),
       health: health === null ? null : { overallStatus: health.overallStatus, queue: health.queueSummary === null ? null : {
         pending: health.queueSummary.pending, running: health.queueSummary.running,
         stalledRunning: health.queueSummary.stalledRunning, oldestPendingJobAgeMs: health.queueSummary.oldestPendingJobAgeMs },
@@ -631,11 +646,15 @@ export async function installSelfHealingPreviewControl(
         void pending.catch(() => { containmentRun = { ...containmentRun, status: 'failed',
           completedAt: new Date().toISOString(), reasonCode: 'SELF_HEAL_PREVIEW_TICK_BATCH_FAILED' }; })
           .finally(() => { if (containmentRunPromise === pending) containmentRunPromise = null; });
-      } else if (command === 'containment_diagnose' || command === 'containment_probe') {
+      } else if (command === 'containment_diagnose' || command === 'containment_diagnose_no_ai' || command === 'containment_probe') {
+        if (command === 'containment_diagnose_no_ai' && profile.role !== 'worker') {
+          return { rejected: true, reasonCode: 'worker_role_required', inspection: await inspect() };
+        }
         if (containmentRunPromise) return { rejected: true, reasonCode: 'inference_operation_in_flight', inspection: await inspect() };
         const operation = command === 'containment_probe' ? 'provider_probe' : 'diagnosis';
+        const inferenceAuthorization = command === 'containment_diagnose_no_ai' ? 'disabled' : 'manual';
         containmentRun = { operation, status: 'running', startedAt: new Date().toISOString(),
-          processInstanceId, evidence: 'production_service_and_shared_admission', inferenceAuthorization: 'manual', executionAuthorized: false };
+          processInstanceId, evidence: 'production_service_and_shared_admission', inferenceAuthorization, executionAuthorized: false };
         const pending = (async () => {
           const { createLinkedAbortController, runWithRequestAbortContext } = await import('@arcanos/runtime');
           const linked = createLinkedAbortController({ timeoutMs: 35_000, parentSignal: controller.signal });
@@ -654,7 +673,7 @@ export async function installSelfHealingPreviewControl(
                     failureReason: typeof reason === 'string' && /^[a-z_]{1,80}$/u.test(reason) ? reason : reason === null ? null : 'provider_failure' } };
               } else {
                 const result = await runPredictiveHealingDecision({ source: 'self-heal.preview.measured-runtime',
-                  signal: linked.signal, inferenceAuthorization: 'manual', execute: false, allowAutoExecute: false });
+                  signal: linked.signal, inferenceAuthorization, execute: false, allowAutoExecute: false });
                 containmentRun = { ...containmentRun, status: 'completed', completedAt: new Date().toISOString(),
                   audit: projectPredictiveAudit(result.auditEntry) };
               }

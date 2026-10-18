@@ -379,7 +379,7 @@ function cliFixture(prNumber = 1544) {
 
 test('PR 1557 containment transport admits only the exact profile, roles and fixed job cases', async () => {
   const workerOnly = ['containment_predictive_on', 'containment_predictive_off', 'containment_tick_batch',
-    'containment_dependency_failure', 'containment_dependency_restore'];
+    'containment_dependency_failure', 'containment_dependency_restore', 'containment_diagnose_no_ai'];
   const shared = ['containment_diagnose', 'containment_probe', 'containment_cancel',
     'containment_credential_rotate', 'containment_credential_restore'];
   const faults = ['models_timeout_next', 'inference_hold_next', 'inference_cancel_next', 'models_auth_failure_next',
@@ -423,7 +423,7 @@ test('PR 1557 restoration admits only cancel and fixed credential/dependency res
   }
   const beforeRejected = current.calls.length;
   for (const command of ['containment_diagnose', 'containment_probe', 'containment_tick_batch', 'containment_credential_rotate',
-    'containment_dependency_failure']) await assert.rejects(transport.restore(['command', command]), /RESTORATION_INVALID/u);
+    'containment_dependency_failure', 'containment_diagnose_no_ai']) await assert.rejects(transport.restore(['command', command]), /RESTORATION_INVALID/u);
   for (const command of ['coordinator_start', 'trinity_rollback', 'containment_diagnose', 'containment_probe', 'containment_credential_rotate']) {
     await assert.rejects(transport.restore(['command', command], 'web'), /RESTORATION_INVALID/u);
   }
