@@ -12,7 +12,7 @@ export const SELF_HEAL_PREVIEW_JOB_SCENARIOS = Object.freeze([
   'C01', 'C02', 'C03', 'C04', 'C05', 'C06', 'C07', 'C08',
   'D01', 'D02', 'D03', 'D04', 'D05', 'D06', 'D07', 'E01', 'E02', 'E03', 'E04', 'E05', 'E06',
 ]);
-export const SELF_HEAL_INFERENCE_PREVIEW_JOB_SCENARIOS = Object.freeze(['I01', 'I02', 'I03']);
+export const SELF_HEAL_INFERENCE_PREVIEW_JOB_SCENARIOS = Object.freeze(['I01', 'I02', 'I03', 'I04']);
 function fail() { throw new Error('SELF_HEAL_PREVIEW_FENCED_JOB_FAILED'); }
 const SELECT_JOB_FIELDS = `SELECT j.id, j.status, j.claim_generation::text AS claim_generation,
   j.last_worker_id, j.retry_count, (j.lease_expires_at > clock_timestamp()) IS TRUE AS lease_active, j.output,

@@ -15,7 +15,7 @@ import {
 
 export const SELF_HEAL_INFERENCE_ACCEPTANCE_CASES = Object.freeze([
   'idle_off', 'idle_on', 'running_off', 'running_on', 'diagnosis_once',
-  'probe_rotation', 'metadata_recovery', 'uncertain_restart', 'late_completion',
+  'probe_rotation', 'metadata_recovery', 'redis_recovery', 'uncertain_restart', 'late_completion',
 ]);
 const CLEANUP_RESERVE_MS = 10 * 60_000;
 // Ordinary empty-queue polling can sleep thirty seconds; leave fifteen seconds for observation transport.
@@ -39,6 +39,80 @@ const ledger = (state, purpose) => state.containment.ledgers?.find(value => valu
 const idleWorkersAged = state => state?.containment?.health?.workers?.filter(worker => !worker.busy)
   .every(worker => Number.isFinite(worker.inactivityMs) && Number.isFinite(worker.idleThresholdMs)
     && worker.idleThresholdMs > 0 && worker.inactivityMs >= worker.idleThresholdMs) === true;
+
+/** Conservative preflight only: never reserve, prune budgets, or alter credentials to establish eligibility. */
+export function selfHealInferenceEligibilityWaitMs(state) {
+  const containment = state?.containment; const provider = containment?.providerHealth;
+  if (!(state?.redis?.state === 'READY' && state.redis.connected === true && state.redis.configured === true
+    && containment?.credential === 'original' && Number.isSafeInteger(containment.redisNowMs) && containment.redisNowMs >= 0
+    && provider?.configured === true && provider.authenticationBlocked === false && provider.circuitState === 'CLOSED'
+    && provider.reachable === true && provider.authenticated === true && provider.completionHealthy === true
+    && state.policy?.predictiveAiActiveCooldownMs === 30 * 60_000
+    && state.policy.predictiveAiFailureCooldownMs === 6 * 60 * 60_000)) block('DIAGNOSIS_ELIGIBILITY_NOT_PROVEN');
+  for (const purpose of ['diagnosis', 'provider_probe']) {
+    const value = ledger(state, purpose);
+    if (!(value?.versionRecognized === true && value.inFlight === false && value.rejectedCredentialCount === 0
+      && Number.isSafeInteger(value.attemptCount) && value.attemptCount >= 0
+      && ['lastAttemptMs', 'lastFailureMs', 'lastCompletedMs'].every(field => value[field] === null
+        || (Number.isSafeInteger(value[field]) && value[field] >= 0 && value[field] <= containment.redisNowMs))
+      && (value.present === false ? value.stateSha256 === null && value.ttlMs === -2 && value.attemptCount === 0
+        && value.lastAttemptMs === null && value.lastFailureMs === null && value.lastCompletedMs === null
+        : value.present === true && /^[a-f0-9]{64}$/u.test(value.stateSha256) && value.ttlMs === -1))) {
+      block('DIAGNOSIS_ELIGIBILITY_NOT_PROVEN');
+    }
+  }
+  const value = ledger(state, 'diagnosis');
+  // The fixed acceptance budget is two. Retained older attempts are not pruned by this reader.
+  if (!(value.attemptCount < 2 && value.lastFailureMs === null
+    && (value.present === false || (value.attemptCount > 0 && Number.isSafeInteger(value.lastAttemptMs)
+      && value.lastAttemptMs >= 0 && Number.isSafeInteger(value.lastCompletedMs)
+      && value.lastCompletedMs >= value.lastAttemptMs && value.lastCompletedMs <= containment.redisNowMs)))) {
+    block('DIAGNOSIS_ELIGIBILITY_NOT_PROVEN');
+  }
+  return value.lastAttemptMs === null ? 0 : Math.max(0,
+    value.lastAttemptMs + state.policy.predictiveAiActiveCooldownMs + 1 - containment.redisNowMs);
+}
+
+/** Loss, production denial and recovery must describe the same process and untouched admission records. */
+export function attestSelfHealInferenceRedisRecovery(before, after, beforeProvider, afterProvider) {
+  const run = after?.containment?.run; const audit = run?.audit;
+  requireProof(selfHealInferenceEligibilityWaitMs(before) === 0, 'REDIS_BASELINE_COOLDOWN_ACTIVE');
+  const unavailable = run?.redisUnavailable;
+  requireProof(before.processInstanceId === after.processInstanceId && run?.processInstanceId === before.processInstanceId
+    && run.operation === 'diagnosis' && run.status === 'completed' && run.inferenceAuthorization === 'manual'
+    && run.executionAuthorized === false && after.containment.credential === before.containment.credential
+    && run.redisBefore?.state === 'READY' && run.redisBefore.connected === true
+    && run.redisBefore.readyGeneration === before.redis.readyGeneration
+    && unavailable?.configured === true && unavailable.state === 'DEGRADED' && unavailable.connected === false
+    && unavailable.readyGeneration === before.redis.readyGeneration
+    && Date.parse(unavailable.lastTransitionAt) >= Date.parse(run.startedAt)
+    && Date.parse(unavailable.lastTransitionAt) <= Date.parse(run.redisUnavailableObservedAt)
+    && Date.parse(run.redisUnavailableObservedAt) >= Date.parse(run.startedAt)
+    && Date.parse(audit?.timestamp) >= Date.parse(run.redisUnavailableObservedAt)
+    && Date.parse(audit?.timestamp) <= Date.parse(run.completedAt)
+    && audit.source === 'self-heal.preview.measured-runtime' && audit.advisor === 'rules_fallback_v1'
+    && audit.inferenceReason === 'coordination_unavailable' && audit.selectedAction === 'heal_worker_runtime'
+    && audit.attempted === false && audit.mode === 'recommend_only'
+    && after.redis?.state === 'READY' && after.redis.connected === true
+    && after.redis.readyGeneration > before.redis.readyGeneration && after.redis.recoveryCount > before.redis.recoveryCount
+    && Date.parse(after.redis.lastReadyAt) > Date.parse(unavailable.lastTransitionAt), 'REDIS_OUTAGE_DENIAL_NOT_PROVEN');
+  requireProof(before.containment.health?.queue?.pending === 1
+    && before.containment.health.workers.some(worker => worker.claimAcceptance === 'dependency_failure'), 'REDIS_INCIDENT_NOT_PROVEN');
+  for (const purpose of ['diagnosis', 'provider_probe']) {
+    requireProof(hash(ledger(before, purpose)) === hash(ledger(after, purpose)), 'REDIS_RECOVERY_LEDGER_CHANGED');
+  }
+  for (const field of ['providerAttempts', 'repairAttempts', 'actionsExecuted']) {
+    requireProof(before.containment.counters.complete === true && after.containment.counters.complete === true
+      && Number.isSafeInteger(before.containment.counters[field])
+      && before.containment.counters[field] === after.containment.counters[field], 'REDIS_OUTAGE_EFFECT');
+  }
+  requireProof(sameWireCount(beforeProvider, afterProvider) && Number.isSafeInteger(beforeProvider.providerRequests)
+    && beforeProvider.providerRequests === afterProvider.providerRequests && paid(beforeProvider).length === paid(afterProvider).length,
+  'REDIS_OUTAGE_PROVIDER_REQUEST');
+  return { otherwiseEligibleDiagnosisDenied: true, inferenceReason: audit.inferenceReason,
+    deterministicRecommendation: audit.selectedAction, inferenceRequests: 0, repairAttempts: 0,
+    actualRedisRecovery: true, ledgersUnchanged: true, credentialUnchanged: true };
+}
 
 /** Local controller bytes must be the same clean, canonical commit as the hosted source. */
 export async function attestSelfHealInferenceController(manifest, options = {}) {
@@ -320,6 +394,17 @@ export async function runSelfHealInferenceAcceptanceCase(scenario, manifest, opt
   const naturallyAgedIdle = async () => poll(inspect, value => value.containment?.health?.workers?.length === 8
     && value.containment.health.workers.every(worker => !worker.busy) && idleWorkersAged(value)
     && value.containment.health.queue?.pending === 0 && value.containment.health.queue.running === 0, 5 * 60_000, 15_000);
+  const naturallyEligibleDiagnosis = async () => {
+    for (let attempt = 0; attempt < 62; attempt += 1) {
+      const state = await inspect(); const remainingMs = selfHealInferenceEligibilityWaitMs(state);
+      if (remainingMs === 0) return state;
+      if (now() + remainingMs + 5 * 60_000 >= Date.parse(manifest.receipt.expiresAt) - CLEANUP_RESERVE_MS) {
+        block('INSUFFICIENT_LEASE_FOR_DIAGNOSIS_COOLDOWN');
+      }
+      await wait(Math.min(30_000, remainingMs));
+    }
+    block('DIAGNOSIS_COOLDOWN_NOT_ELAPSED');
+  };
   // Refuse an untrusted local controller before entering any restoration path.
   if (real) await emit('controller', await attestSelfHealInferenceController(manifest));
   try {
@@ -618,8 +703,52 @@ export async function runSelfHealInferenceAcceptanceCase(scenario, manifest, opt
         crossProcessDeniedWhileWorkActive: true, reservationSurvivedLateCompletion: true,
         reservationSurvivedRestart: true, reservationTtlMs: -1, duplicateDenied: true, repairAttempts: 0,
         pendingJobRecovered: true, operatorReconciliation: 'REQUIRED_NOT_PERFORMED', automaticReservationDeletion: false };
+    } else if (scenario === 'redis_recovery') {
+      await stopped(); await command('containment_predictive_on');
+      await naturallyEligibleDiagnosis();
+      const absent = await remote('worker', ['fenced-job', 'inspect', 'I04', '1']);
+      if (absent.fencedJob?.job !== null) block('REDIS_PENDING_JOB_ALREADY_USED');
+      const initialDependency = await dependency();
+      await armDependency(initialDependency.processInstanceId);
+      await remote('worker', ['fenced-job', 'create', 'I04', '1']);
+      await dependency(); await poll(inspect, value => value.containment.health.queue?.pending === 1, 10_000);
+      const [beforeProvider, beforeWebProvider, beforeWeb] = await Promise.all([provider(), provider('web'), inspect('web')]);
+      // Re-arm just before the controlled restart; the fault and operation retain their ordinary deadlines.
+      const before = await command('containment_dependency_failure');
+      requireProof(selfHealInferenceEligibilityWaitMs(before) === 0, 'REDIS_BASELINE_COOLDOWN_ACTIVE');
+      const started = await command('containment_diagnose_on_redis_unavailable');
+      const startedAt = started.containment?.run?.startedAt;
+      requireProof(typeof startedAt === 'string' && started.containment.run.operation === 'diagnosis', 'OPERATION_NOT_STARTED');
+      await poll(inspect, value => value.containment?.run?.startedAt === startedAt
+        && value.containment.run.phase === 'waiting_for_redis_unavailable'
+        && value.containment.run.status === 'running', 5_000, 100);
+      await emit('restart', await transport.restart('redis'));
+      const recovered = await poll(inspect, value => value.containment?.run?.startedAt === startedAt
+        && ['completed', 'failed'].includes(value.containment.run.status)
+        && value.redis?.state === 'READY' && value.redis.connected === true
+        && value.redis.readyGeneration > before.redis.readyGeneration, 120_000, 1000, true);
+      proof = attestSelfHealInferenceRedisRecovery(before, recovered, beforeProvider, await provider());
+      const afterWeb = await poll(() => inspect('web'), value => value.redis?.state === 'READY'
+        && value.redis.connected === true && value.redis.readyGeneration > beforeWeb.redis.readyGeneration, 120_000);
+      requireProof(beforeWeb.processInstanceId === afterWeb.processInstanceId
+        && afterWeb.redis.recoveryCount > beforeWeb.redis.recoveryCount
+        && sameWireCount(beforeWebProvider, await provider('web')), 'REDIS_WEB_RECOVERY_NOT_PROVEN');
+      for (const field of ['providerAttempts', 'repairAttempts', 'actionsExecuted']) {
+        requireProof(beforeWeb.containment.counters.complete === true && afterWeb.containment.counters.complete === true
+          && Number.isSafeInteger(beforeWeb.containment.counters[field])
+          && beforeWeb.containment.counters[field] === afterWeb.containment.counters[field], 'REDIS_WEB_OUTAGE_EFFECT');
+      }
+      await command('containment_dependency_restore');
+      const completed = await poll(() => remote('worker', ['fenced-job', 'inspect', 'I04', '1']),
+        value => value.fencedJob?.job?.completionVerified === true, 60_000);
+      requireProof(completed.fencedJob.job.literalObserved === true && completed.fencedJob.job.matchingClaimEvents === 1
+        && completed.fencedJob.job.matchingCompletionEvents === 1 && sameWireCount(beforeProvider, await provider())
+        && sameWireCount(beforeWebProvider, await provider('web')), 'REDIS_PENDING_JOB_RECOVERY_NOT_PROVEN');
+      attestSelfHealInferenceRedisRecovery(before, await inspect(), beforeProvider, await provider());
+      proof.pendingJobRecovered = true;
     } else if (scenario === 'uncertain_restart') {
-      await stopped(); await command('containment_predictive_on'); await command('containment_credential_rotate');
+      await stopped(); await command('containment_predictive_on');
+      await naturallyEligibleDiagnosis();
       const absent = await remote('worker', ['fenced-job', 'inspect', 'I03', '2']);
       if (absent.fencedJob?.job !== null) block('UNCERTAIN_PENDING_JOB_ALREADY_USED');
       const initialDependency = await dependency();
@@ -632,7 +761,8 @@ export async function runSelfHealInferenceAcceptanceCase(scenario, manifest, opt
       const uncertain = await operation('containment_diagnose');
       const requests = paid(await provider()).slice(paid(beforeProvider).length);
       if (requests.length === 0) block('UNCERTAIN_DIAGNOSIS_NOT_ADMITTED');
-      requireProof(requests.length === 1 && requests[0].outcome === 'transport_cancelled', 'PAID_UNCERTAINTY_NOT_PROVEN');
+      requireProof(requests.length === 1 && requests[0].outcome === 'transport_cancelled'
+        && requests[0].credential === 'original', 'PAID_UNCERTAINTY_NOT_PROVEN');
       const state = ledger(uncertain, 'diagnosis');
       requireProof(state?.versionRecognized === true && state.inFlight === true && state.ttlMs === -1, 'DURABLE_RESERVATION_NOT_PROVEN');
       await command('containment_dependency_restore');
@@ -640,14 +770,17 @@ export async function runSelfHealInferenceAcceptanceCase(scenario, manifest, opt
       requireProof(completed.fencedJob.job.literalObserved === true, 'UNCERTAIN_PENDING_JOB_RECOVERY_NOT_PROVEN');
       await emit('restart', await transport.restart('worker'));
       const restarted = await poll(inspect, value => value.ready === true && value.processInstanceId !== uncertain.processInstanceId, 120_000, 2000, true);
-      requireProof(ledger(restarted, 'diagnosis')?.stateSha256 === state.stateSha256, 'RESERVATION_LOST_ON_RESTART');
-      await stopped(); await command('containment_predictive_on'); await command('containment_credential_rotate');
+      requireProof(restarted.containment.credential === 'original' && ledger(restarted, 'diagnosis')?.stateSha256 === state.stateSha256
+        && ledger(restarted, 'diagnosis')?.inFlight === true && ledger(restarted, 'diagnosis')?.ttlMs === -1, 'RESERVATION_LOST_ON_RESTART');
+      await stopped(); await command('containment_predictive_on');
       await dependency(); const restartProvider = await provider();
+      requireProof(paid(restartProvider).length === 0, 'UNCERTAIN_RESTART_PROVIDER_REQUEST');
       const denied = await operation('containment_diagnose');
       requireProof(denied.containment.run?.audit?.inferenceReason === 'in_flight'
-        && sameWireCount(restartProvider, await provider()), 'UNCERTAIN_DUPLICATE_NOT_DENIED');
+        && ledger(denied, 'diagnosis')?.stateSha256 === state.stateSha256
+        && denied.containment.credential === 'original' && sameWireCount(restartProvider, await provider()), 'UNCERTAIN_DUPLICATE_NOT_DENIED');
       proof = { acceptedInferenceRequests: 1, reservationSurvivedRestart: true, reservationTtlMs: -1,
-        duplicateDenied: true, operatorReconciliation: 'REQUIRED_NOT_PERFORMED', automaticReservationDeletion: false };
+        duplicateDenied: true, credentialUnchanged: true, operatorReconciliation: 'REQUIRED_NOT_PERFORMED', automaticReservationDeletion: false };
     }
     classification = real ? 'VERIFIED' : 'SYNTHETIC_ONLY';
     await emit('proof', proof);
@@ -686,7 +819,7 @@ export async function runSelfHealInferenceAcceptanceCase(scenario, manifest, opt
       }
       if (!drained) failures.push(`${role}:drain`);
     }
-    await restore('worker', ['command', 'containment_credential_restore']);
+    if (!['redis_recovery', 'uncertain_restart'].includes(scenario)) await restore('worker', ['command', 'containment_credential_restore']);
     if (scenario === 'late_completion' && webTouched) await restore('web', ['command', 'containment_credential_restore']);
     await restore('worker', ['command', 'coordinator_start']);
     try {

@@ -379,7 +379,7 @@ function cliFixture(prNumber = 1544) {
 
 test('PR 1557 containment transport admits only the exact profile, roles and fixed job cases', async () => {
   const workerOnly = ['containment_predictive_on', 'containment_predictive_off', 'containment_tick_batch',
-    'containment_dependency_failure', 'containment_dependency_restore', 'containment_diagnose_no_ai'];
+    'containment_dependency_failure', 'containment_dependency_restore', 'containment_diagnose_no_ai', 'containment_diagnose_on_redis_unavailable'];
   const shared = ['containment_diagnose', 'containment_probe', 'containment_cancel',
     'containment_credential_rotate', 'containment_credential_restore'];
   const faults = ['models_timeout_next', 'inference_hold_next', 'inference_cancel_next', 'models_auth_failure_next',
@@ -395,7 +395,7 @@ test('PR 1557 containment transport admits only the exact profile, roles and fix
     await assert.rejects(original.transport.remote('worker', ['provider', command]), /OPERATION_INVALID/u);
     await containment.transport.remote('worker', ['provider', command]);
   }
-  for (const scenario of ['I01', 'I02', 'I03']) for (const operation of ['create', 'inspect']) for (const attempt of ['1', '2']) {
+  for (const scenario of ['I01', 'I02', 'I03', 'I04']) for (const operation of ['create', 'inspect']) for (const attempt of ['1', '2']) {
     const args = ['fenced-job', operation, scenario, attempt];
     await assert.rejects(original.transport.remote('worker', args), /OPERATION_INVALID/u);
     await containment.transport.remote('worker', args);
@@ -407,7 +407,7 @@ test('PR 1557 containment transport admits only the exact profile, roles and fix
   for (const command of workerOnly) await assert.rejects(containment.transport.remote('web', ['command', command]), /OPERATION_INVALID/u);
   for (const command of [...faults, 'set_healthy', 'release']) await assert.rejects(containment.transport.remote('web', ['provider', command]), /OPERATION_INVALID/u);
   for (const args of [['command', 'containment_reset'], ['command', 'containment_probe', 'extra'],
-    ['provider', 'inference_delete_next'], ['fenced-job', 'create', 'A01', '1'], ['fenced-job', 'create', 'I04', '1'],
+    ['provider', 'inference_delete_next'], ['fenced-job', 'create', 'A01', '1'], ['fenced-job', 'create', 'I05', '1'],
     ['fenced-job', 'create', 'I01', '3']]) await assert.rejects(containment.transport.remote('worker', args), /OPERATION_INVALID/u);
   assert.equal(containment.current.calls.length, beforeRejected);
 });
@@ -423,7 +423,7 @@ test('PR 1557 restoration admits only cancel and fixed credential/dependency res
   }
   const beforeRejected = current.calls.length;
   for (const command of ['containment_diagnose', 'containment_probe', 'containment_tick_batch', 'containment_credential_rotate',
-    'containment_dependency_failure', 'containment_diagnose_no_ai']) await assert.rejects(transport.restore(['command', command]), /RESTORATION_INVALID/u);
+    'containment_dependency_failure', 'containment_diagnose_no_ai', 'containment_diagnose_on_redis_unavailable']) await assert.rejects(transport.restore(['command', command]), /RESTORATION_INVALID/u);
   for (const command of ['coordinator_start', 'trinity_rollback', 'containment_diagnose', 'containment_probe', 'containment_credential_rotate']) {
     await assert.rejects(transport.restore(['command', command], 'web'), /RESTORATION_INVALID/u);
   }

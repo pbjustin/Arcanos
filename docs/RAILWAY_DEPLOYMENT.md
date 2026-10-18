@@ -1238,6 +1238,33 @@ independent terminal-request and ownership evidence and is not automated by
 this runner. Local injected transports and clocks produce `SYNTHETIC_ONLY`
 results; only the attested Railway transport can produce hosted `VERIFIED`
 receipts. Neither classification establishes production acceptance.
+
+`redis_recovery` uses the existing owned Redis restart to test an otherwise
+eligible Worker diagnosis during an actual dependency outage. It retains the
+original fictional credential and both admission ledgers. Its read-only
+eligibility evidence uses the production ledger parser and Redis time, requires
+a healthy provider, no rejected identity or unresolved reservation, fewer than
+two retained diagnosis attempts, and no diagnosis failure history. A prior
+successful diagnosis must finish its real 30-minute cooldown; insufficient
+lease time blocks the case without changing policy or history. The fixed `I04`
+literal job supplies fresh pending-work evidence without another provider call.
+The stopped Worker arms one bounded subscription to the real Redis lifecycle,
+then invokes the ordinary recommendation-only diagnosis on the first unavailable
+transition. A successful proof requires `coordination_unavailable`, an actionable
+deterministic recommendation, zero Worker/Web provider requests and repairs,
+unchanged ledgers, both roles' Redis recovery, and normal literal-job completion.
+A missed outage, expired incident, unrelated denial, or early recovery blocks
+proof. Cancellation, the existing 35-second operation deadline, and shutdown
+all remove the subscription; the controller never fabricates Redis state.
+
+For same-identity acceptance, run `redis_recovery` after `diagnosis_once` and its
+natural cooldown, then `uncertain_restart` before any credential-rejection case.
+The uncertainty case now keeps the original fictional credential through the
+request, Worker restart, denial and restoration; it neither rotates credentials
+nor resets admission history. `probe_rotation` remains extended rotation evidence
+and cannot substitute for this same-identity sequence. A retained failure,
+uncertain hold, or exhausted budget is a blocked prerequisite, not permission to
+create a fresh ledger or alter its timestamps.
 The recovery cases also inspect the production merged provider-health snapshot
 through a PR1557-only allowlisted projection. Actual failure and later successful
 probe timestamps must retain the historical failure while clearing its effective
@@ -1276,7 +1303,7 @@ The real Core direct-answer stage has a 12-second deadline. The case must
 observe both the operator cancellation and client close before that deadline,
 measured from the diagnosis run start, to distinguish cancellation from timeout.
 
-Keep the original eight cases and their evidence distinct. A supplemental fresh
+Keep the individual cases and their evidence distinct. A supplemental fresh
 scope can perform the fixed 403 metadata probe, wait the real 60-second probe
 cooldown, rotate to the other fictional identity, and perform a 429 completion
 probe before `late_completion`. A subsequent 503 probe must wait until the
@@ -1411,6 +1438,9 @@ Neither port is exposed publicly. Request authentication precedes body reads;
 process controls allow at most 4 KiB per command, 64 KiB per response, 120
 requests/minute and 2,000 requests per process, with one command in flight.
 The client bounds each request to six seconds and checks returned identities.
+The external operator CLI retains its configured `HTTP_PROXY`, `HTTPS_PROXY`
+and `NO_PROXY` transport settings. These operator settings are not passed to
+the application or fixture children; their existing proxy prohibition remains.
 
 Examples executed only inside the admitted instance:
 

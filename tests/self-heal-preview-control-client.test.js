@@ -94,19 +94,20 @@ function overlapFixture(env, config = {}) {
 }
 
 describe('fixed self-heal preview SSH control client', () => {
-  it('admits only the Worker PR1557 no-AI command without caller-supplied authorization', async () => {
+  it.each(['containment_diagnose_no_ai', 'containment_diagnose_on_redis_unavailable'])(
+    'admits only the Worker PR1557 %s command without caller-supplied authorization', async command => {
     const env = { ...environment(), ARCANOS_SELF_HEAL_PREVIEW_PROFILE: 'worker-inference-containment-v1',
       RAILWAY_PROJECT_NAME: 'arc-pr1557-heavy-client', RAILWAY_ENVIRONMENT_NAME: 'backstage-heavy-pr-1557-e2e',
       RAILWAY_SERVICE_NAME: 'arcanos-worker-pr1557-heavy' };
     const fetchImpl = jest.fn(async () => response(inspection(env)));
-    await runSelfHealPreviewControl(['command', 'containment_diagnose_no_ai'], env, { fetchImpl });
-    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({ command: 'containment_diagnose_no_ai' });
+    await runSelfHealPreviewControl(['command', command], env, { fetchImpl });
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({ command });
     fetchImpl.mockClear();
-    for (const [target, args] of [[environment(), ['command', 'containment_diagnose_no_ai']],
+    for (const [target, args] of [[environment(), ['command', command]],
       [{ ...environment('web'), ARCANOS_SELF_HEAL_PREVIEW_PROFILE: env.ARCANOS_SELF_HEAL_PREVIEW_PROFILE,
         RAILWAY_PROJECT_NAME: env.RAILWAY_PROJECT_NAME, RAILWAY_ENVIRONMENT_NAME: env.RAILWAY_ENVIRONMENT_NAME,
-        RAILWAY_SERVICE_NAME: 'arcanos-web-pr1557-heavy' }, ['command', 'containment_diagnose_no_ai']],
-      [env, ['command', 'containment_diagnose_no_ai', 'manual']]]) {
+        RAILWAY_SERVICE_NAME: 'arcanos-web-pr1557-heavy' }, ['command', command]],
+      [env, ['command', command, 'manual']]]) {
       await expect(runSelfHealPreviewControl(args, target, { fetchImpl })).rejects.toThrow('SELF_HEAL_PREVIEW_CONTROL_CLIENT_FAILED');
     }
     expect(fetchImpl).not.toHaveBeenCalled();

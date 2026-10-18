@@ -105,6 +105,9 @@ function parseState(rawState: string | null): InferenceState | null {
   }
 }
 
+// Read-only preview evidence must recognize the same records as admission.
+export { parseState as parseSelfHealingInferenceState };
+
 function deny(
   reason: SelfHealingInferenceDenialReason,
   state?: InferenceState | null,

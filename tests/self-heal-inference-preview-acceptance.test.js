@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
-import { attestSelfHealInferenceController, attestSelfHealInferenceQuietWindow, attestSelfHealInferenceLateCompletion, runSelfHealInferenceAcceptanceCase,
+import { attestSelfHealInferenceController, attestSelfHealInferenceQuietWindow, attestSelfHealInferenceLateCompletion,
+  selfHealInferenceEligibilityWaitMs, runSelfHealInferenceAcceptanceCase,
   SELF_HEAL_INFERENCE_ACCEPTANCE_CASES } from '../scripts/self-heal-inference-preview-acceptance.mjs';
 
 const NOW = Date.parse('2026-10-17T20:00:00.000Z');
@@ -21,12 +22,17 @@ function manifest(prNumber = 1557) {
 }
 function snapshot(evaluations = 0, running = false) {
   return { ready: true, processInstanceId: id(30), receipts: [], coordinator: { loopRunning: true, inFlight: false },
+    redis: { state: 'READY', connected: true, configured: true, readyGeneration: 1, recoveryCount: 0,
+      lastReadyAt: new Date(NOW - 1000).toISOString(), lastTransitionAt: new Date(NOW - 1000).toISOString() },
     scheduler: { callbacks: evaluations, intervalMs: 30_000 }, policy: { selfImproveEnabled: false, actuatorMode: 'daemon',
       autonomyLevel: 3, frozen: false, killSwitch: { frozen: false, autonomyLevel: 3 },
-      predictiveEnabled: false, predictiveDryRun: false, predictiveAutoExecute: false, predictiveStaleAfterMs: 120_000 }, claimBoundary: {
+      predictiveEnabled: false, predictiveDryRun: false, predictiveAutoExecute: false, predictiveStaleAfterMs: 120_000,
+      predictiveAiActiveCooldownMs: 30 * 60_000, predictiveAiFailureCooldownMs: 6 * 60 * 60_000 }, claimBoundary: {
       evidence: 'actual_worker_before_claim_hook', attempts: 0, injectedFailures: 0,
       lastAttemptAt: null, lastInjectedFailureAt: null, faultUntil: null, faultRemaining: 0 },
-    containment: { evidence: 'production_health_telemetry_and_redis', run: null, counters: { complete: true,
+    containment: { evidence: 'production_health_telemetry_and_redis', run: null, credential: 'original', redisNowMs: NOW,
+      providerHealth: { configured: true, authenticationBlocked: false, circuitState: 'CLOSED',
+        reachable: true, authenticated: true, completionHealthy: true }, counters: { complete: true,
       evaluations, healthyEvaluations: evaluations, incidentEvaluations: 0, providerAttempts: 0, repairAttempts: 0, actionsExecuted: 0 },
     health: { unexpectedWorkerCount: 0, queue: { pending: 0, running: running ? 1 : 0, stalledRunning: 0 },
       workers: Array.from({ length: 8 }, (_, index) => ({ slot: index + 1, operationalStatus: 'healthy', stale: false,
@@ -34,8 +40,45 @@ function snapshot(evaluations = 0, running = false) {
         inactivityMs: 180_000, idleThresholdMs: 120_000 })) }, ledgers: [] } };
 }
 const fixture = receipts => ({ providerRequests: receipts.length, providerWireRequests: receipts.length, receipts, inFlight: null, nextFault: null });
+function eligibleSnapshot() {
+  const state = snapshot();
+  state.containment.ledgers = ['diagnosis', 'provider_probe'].map(purpose => ({ purpose,
+    versionRecognized: true, present: false, ttlMs: -2, stateSha256: null, inFlight: false,
+    attemptCount: 0, lastAttemptMs: null, lastFailureMs: null, lastCompletedMs: null, rejectedCredentialCount: 0 }));
+  return state;
+}
 
 describe('PR1557 fixed hosted acceptance cases', () => {
+  it('uses authoritative Redis time to retain an existing active cooldown without changing its history', () => {
+    const state = eligibleSnapshot(); const diagnosis = state.containment.ledgers[0];
+    Object.assign(diagnosis, { present: true, ttlMs: -1, stateSha256: 'a'.repeat(64), attemptCount: 1,
+      lastAttemptMs: NOW - 5000, lastCompletedMs: NOW - 4000 });
+    const before = structuredClone(state);
+    expect(selfHealInferenceEligibilityWaitMs(state)).toBe(30 * 60_000 - 4999);
+    expect(state).toEqual(before);
+    state.containment.redisNowMs += 30 * 60_000;
+    expect(selfHealInferenceEligibilityWaitMs(state)).toBe(0);
+  });
+  it.each([
+    state => { state.containment.credential = 'rotated'; },
+    state => { state.containment.providerHealth.configured = false; },
+    state => { state.containment.providerHealth.authenticationBlocked = true; },
+    state => { state.containment.providerHealth.circuitState = 'OPEN'; },
+    state => { state.containment.providerHealth.completionHealthy = false; },
+    state => { state.containment.redisNowMs = null; },
+    state => { state.redis.connected = false; },
+    state => { state.policy.predictiveAiActiveCooldownMs = 60_000; },
+    state => { state.containment.ledgers[0].versionRecognized = false; },
+    state => { state.containment.ledgers[0].inFlight = true; },
+    state => { state.containment.ledgers[0].attemptCount = 2; },
+    state => { state.containment.ledgers[0].lastFailureMs = NOW - 1; },
+    state => { state.containment.ledgers[1].rejectedCredentialCount = 1; },
+    state => { Object.assign(state.containment.ledgers[1], { present: true, ttlMs: -1, stateSha256: 'b'.repeat(64),
+      attemptCount: 1, lastAttemptMs: NOW + 60_000, lastCompletedMs: NOW + 60_000 }); },
+  ])('refuses ineligible or unproven admission before triggering an outage %#', mutate => {
+    const state = eligibleSnapshot(); mutate(state);
+    expect(() => selfHealInferenceEligibilityWaitMs(state)).toThrow('DIAGNOSIS_ELIGIBILITY_NOT_PROVEN');
+  });
   it.each(['head', 'origin', 'dirty'])('rejects local controller%s drift before hosted effects', async drift => {
     const value = manifest(); value.controllerSha = value.receipt.sourceSha;
     const command = async (_program, argv) => ({ stdout: argv[0] === 'rev-parse' ? (drift === 'head' ? 'b'.repeat(40) : value.controllerSha)
@@ -50,7 +93,7 @@ describe('PR1557 fixed hosted acceptance cases', () => {
     await expect(attestSelfHealInferenceController(value, { command })).resolves.toMatchObject({ clean: true, sourceSha: value.receipt.sourceSha });
   });
   it('does not reuse the32coordinator cases or accept arbitrary scenarios', async () => {
-    expect(SELF_HEAL_INFERENCE_ACCEPTANCE_CASES).toHaveLength(9);
+    expect(SELF_HEAL_INFERENCE_ACCEPTANCE_CASES).toHaveLength(10);
     await expect(runSelfHealInferenceAcceptanceCase('A01', manifest(), { now: () => NOW })).rejects.toThrow('SCENARIO_INVALID');
     await expect(runSelfHealInferenceAcceptanceCase('idle_off', manifest(1544), { now: () => NOW })).rejects.toThrow('PROFILE_MISMATCH');
   });
@@ -268,9 +311,11 @@ describe('PR1557 fixed hosted acceptance cases', () => {
     const key = (scenario, attempt) => `${scenario}:${attempt}`;
     const state = role => {
       states[role].policy.observedAt = new Date(clock).toISOString();
+      states[role].containment.redisNowMs = clock;
+      states[role].containment.credential = role === 'worker' ? credential : 'original';
       states[role].containment.ledgers = ['diagnosis', 'provider_probe'].map(purpose => ({ ...(ledgers.get(purpose)
         ?? { purpose, versionRecognized: true, present: false, ttlMs: -2, stateSha256: null,
-          inFlight: false, attemptCount: 0, lastAttemptMs: null, lastCompletedMs: null, rejectedCredentialCount: 0 }) }));
+          inFlight: false, attemptCount: 0, lastAttemptMs: null, lastFailureMs: null, lastCompletedMs: null, rejectedCredentialCount: 0 }) }));
       return structuredClone(states[role]);
     };
     const wire = (role, endpoint, extra = {}) => {
@@ -285,11 +330,25 @@ describe('PR1557 fixed hosted acceptance cases', () => {
       states.worker.containment.run.status = 'completed';
       states.worker.containment.run.completedAt = new Date(clock).toISOString();
       states.worker.containment.run.audit = { advisor: 'arcanos_core_v1', attempted: false, mode: 'recommend_only' };
-      Object.assign(ledgers.get('diagnosis'), { inFlight: false, stateSha256: 'settled-diagnosis', lastCompletedMs: clock });
+      Object.assign(ledgers.get('diagnosis'), { inFlight: false, stateSha256: 'd'.repeat(64), lastCompletedMs: clock });
     };
     const transport = {
       targets: async () => ({}),
-      restart: async () => {
+      restart: async (role = 'worker') => {
+        if (role === 'redis') {
+          calls.push(['restart', 'redis']); clock += 100;
+          const run = states.worker.containment.run;
+          run.redisUnavailable = { ...states.worker.redis, state: 'DEGRADED', connected: false, lastTransitionAt: new Date(clock).toISOString() };
+          run.redisUnavailableObservedAt = new Date(clock).toISOString();
+          run.status = 'completed'; run.completedAt = new Date(clock).toISOString();
+          run.audit = { source: 'self-heal.preview.measured-runtime', advisor: 'rules_fallback_v1',
+            inferenceReason: 'coordination_unavailable', selectedAction: 'heal_worker_runtime', attempted: false,
+            mode: 'recommend_only', timestamp: new Date(clock).toISOString() };
+          clock += 100;
+          for (const value of Object.values(states)) value.redis = { ...value.redis, readyGeneration: 2,
+            recoveryCount: 1, lastReadyAt: new Date(clock).toISOString(), lastTransitionAt: new Date(clock).toISOString() };
+          return { role: 'redis', restartRequested: true };
+        }
         calls.push(['restart', 'worker']); states.worker = snapshot(); states.worker.processInstanceId = id(31);
         fixtures.worker = fixture([]); credential = 'original'; return { restartRequested: true };
       },
@@ -313,7 +372,7 @@ describe('PR1557 fixed hosted acceptance cases', () => {
         if (argv[0] === 'fenced-job') {
           const identity = key(argv[2], argv[3]);
           if (argv[1] === 'create') {
-            const literal = argv[2] === 'I03';
+            const literal = ['I03', 'I04'].includes(argv[2]);
             jobs.set(identity, { id: id(40 + jobs.size), literal, status: 'pending', completionVerified: false,
               claimAt: clock + (options.jobClaimDelayMs ?? 0) });
             states.worker.containment.health.queue.pending = 1;
@@ -360,6 +419,11 @@ describe('PR1557 fixed hosted acceptance cases', () => {
             current.policy.observedAt = new Date(clock).toISOString();
             current.containment.run = { operation: 'tick_batch', status: 'completed', startedAt: new Date(clock).toISOString(), ticksCompleted: 20 };
           }
+          if (name === 'containment_diagnose_on_redis_unavailable') {
+            current.containment.run = { operation: 'diagnosis', status: 'running', phase: 'waiting_for_redis_unavailable',
+              startedAt: new Date(clock).toISOString(), processInstanceId: current.processInstanceId,
+              inferenceAuthorization: 'manual', executionAuthorized: false, redisBefore: { ...current.redis } };
+          }
           if (name === 'containment_diagnose_no_ai') {
             current.containment.run = { operation: 'diagnosis', status: 'completed', startedAt: new Date(clock).toISOString(),
               completedAt: new Date(clock).toISOString(), processInstanceId: current.processInstanceId,
@@ -378,13 +442,14 @@ describe('PR1557 fixed hosted acceptance cases', () => {
               current.containment.run.audit = { source: 'self-heal.preview.measured-runtime', advisor: 'rules_fallback_v1',
                 attempted: false, mode: 'recommend_only', timestamp: new Date(clock).toISOString(),
                 inferenceReason: 'no_actionable_incident', selectedAction: 'reinitialize_ai_provider' };
-            } else if (existing) {
+            } else if (existing && (existing.inFlight || clock < existing.lastAttemptMs + 30 * 60_000 || existing.attemptCount >= 2)) {
               current.containment.run.audit = { advisor: 'rules_fallback_v1', attempted: false, mode: 'recommend_only',
                 timestamp: new Date(clock).toISOString(),
                 inferenceReason: existing.inFlight ? 'in_flight' : 'active_incident_backoff' };
             } else {
-              ledgers.set('diagnosis', { purpose: 'diagnosis', versionRecognized: true, stateSha256: 'e'.repeat(64),
-                inFlight: true, ttlMs: -1, attemptCount: 1, lastAttemptMs: clock, lastCompletedMs: null });
+              ledgers.set('diagnosis', { purpose: 'diagnosis', versionRecognized: true, present: true, stateSha256: 'e'.repeat(64),
+                inFlight: true, ttlMs: -1, attemptCount: (existing?.attemptCount ?? 0) + 1,
+                lastAttemptMs: clock, lastCompletedMs: null, lastFailureMs: null, rejectedCredentialCount: 0 });
               const receipt = wire(role, 'responses', { purpose: 'predictive-decision', maxOutputTokens: 512,
                 fault: fault === 'inference_cancel_next' ? 'cancel' : fault === 'inference_late_completion_next' ? 'late_completion' : 'hold',
                 outcome: fault === 'inference_cancel_next' ? 'transport_cancelled' : 'in_flight' });
@@ -430,7 +495,7 @@ describe('PR1557 fixed hosted acceptance cases', () => {
     };
     return { execute: true, allowNetwork: true, transport, now: () => clock, sleep: async ms => { clock += ms; advance(); }, calls, ledgers, states, fixtures };
   }
-  it.each(['running_off', 'running_on', 'diagnosis_once', 'probe_rotation', 'metadata_recovery', 'uncertain_restart'])(
+  it.each(['running_off', 'running_on', 'diagnosis_once', 'probe_rotation', 'metadata_recovery', 'redis_recovery', 'uncertain_restart'])(
     'executes bounded%s orchestration with injected evidence and labels it synthetic', async scenario => {
       const env = orchestrationHarness();
       const result = await runSelfHealInferenceAcceptanceCase(scenario, manifest(), env);
@@ -441,6 +506,10 @@ describe('PR1557 fixed hosted acceptance cases', () => {
       if (scenario === 'probe_rotation' || scenario === 'metadata_recovery') expect(result.proof).toMatchObject({
         hourlyBudgetDeniedAfterCooldown: true, staleFailureSupersededByNewerSuccess: true, deniedProbesPreservedRecoveredHealth: true });
       if (scenario === 'uncertain_restart') expect(result.proof).toMatchObject({ operatorReconciliation: 'REQUIRED_NOT_PERFORMED', automaticReservationDeletion: false });
+      if (scenario === 'redis_recovery' || scenario === 'uncertain_restart') {
+        expect(env.calls.some(call => ['containment_credential_rotate', 'containment_credential_restore'].includes(call[2]))).toBe(false);
+        expect(result.proof.credentialUnchanged).toBe(true);
+      }
     });
   it('denies the no-AI request before arming the paid window and preserves existing probe history', async () => {
     const env = orchestrationHarness();
@@ -757,12 +826,49 @@ describe('PR1557 fixed hosted acceptance cases', () => {
   });
   it('blocks a consumed diagnosis budget rather than resetting it for the uncertain case', async () => {
     const env = orchestrationHarness();
-    env.ledgers.set('diagnosis', { purpose: 'diagnosis', versionRecognized: true, inFlight: false, stateSha256: 'retained', attemptCount: 1 });
+    env.ledgers.set('diagnosis', { purpose: 'diagnosis', versionRecognized: true, present: true, ttlMs: -1,
+      inFlight: false, stateSha256: 'b'.repeat(64), attemptCount: 2, lastAttemptMs: NOW - 30 * 60_000,
+      lastCompletedMs: NOW - 30 * 60_000, lastFailureMs: null, rejectedCredentialCount: 0 });
     const result = await runSelfHealInferenceAcceptanceCase('uncertain_restart', manifest(), env);
-    expect(result).toMatchObject({ classification: 'BLOCKED', errorCode: 'SELF_HEAL_ACCEPTANCE_INFERENCE_UNCERTAIN_DIAGNOSIS_NOT_ADMITTED' });
-    expect(env.ledgers.get('diagnosis').stateSha256).toBe('retained');
+    expect(result).toMatchObject({ classification: 'BLOCKED', errorCode: 'SELF_HEAL_ACCEPTANCE_INFERENCE_DIAGNOSIS_ELIGIBILITY_NOT_PROVEN' });
+    expect(env.ledgers.get('diagnosis').stateSha256).toBe('b'.repeat(64));
     expect(env.calls.some(call => call[0] === 'restart')).toBe(false);
   });
+  it.each(['redis_recovery', 'uncertain_restart'])('waits the actual retained diagnosis cooldown before %s without changing identity', async scenario => {
+    const env = orchestrationHarness();
+    const prior = { purpose: 'diagnosis', versionRecognized: true, present: true, ttlMs: -1,
+      stateSha256: 'b'.repeat(64), inFlight: false, attemptCount: 1, lastAttemptMs: NOW,
+      lastCompletedMs: NOW, lastFailureMs: null, rejectedCredentialCount: 0 };
+    env.ledgers.set('diagnosis', { ...prior });
+    const result = await runSelfHealInferenceAcceptanceCase(scenario, manifest(), env);
+    expect(result).toMatchObject({ classification: 'SYNTHETIC_ONLY', proof: { credentialUnchanged: true } });
+    expect(env.now()).toBeGreaterThan(NOW + 30 * 60_000);
+    expect(env.calls.some(call => /credential_(rotate|restore)/u.test(call[2] ?? ''))).toBe(false);
+    if (scenario === 'redis_recovery') expect(env.ledgers.get('diagnosis')).toEqual(prior);
+    else expect(env.ledgers.get('diagnosis')).toMatchObject({ attemptCount: 2, inFlight: true });
+  });
+  it.each(['missed_loss', 'recovered_before_admission', 'no_incident', 'changed_ledger', 'provider_wire', 'repair', 'web_restart'])(
+    'rejects %s during a Redis restart rather than accepting unrelated denial or recovery', async fault => {
+      const env = orchestrationHarness(); const remote = env.transport.remote;
+      env.transport.remote = async (role, argv) => {
+        const receipt = await remote(role, argv); const state = receipt.observation;
+        if (role === 'worker' && state?.containment?.run?.redisUnavailable) {
+          if (fault === 'missed_loss') delete state.containment.run.redisUnavailable;
+          if (fault === 'recovered_before_admission') state.containment.run.audit.inferenceReason = 'active_incident_backoff';
+          if (fault === 'no_incident') state.containment.run.audit.inferenceReason = 'no_actionable_incident';
+          if (fault === 'changed_ledger') state.containment.ledgers[0].stateSha256 = 'a'.repeat(64);
+          if (fault === 'repair') state.containment.counters.repairAttempts += 1;
+        }
+        if (fault === 'provider_wire' && argv[0] === 'provider' && env.calls.some(call => call[0] === 'restart')) state.providerWireRequests += 1;
+        if (fault === 'web_restart' && role === 'web' && state?.redis?.recoveryCount > 0) state.processInstanceId = id(90);
+        return receipt;
+      };
+      const result = await runSelfHealInferenceAcceptanceCase('redis_recovery', manifest(), env);
+      expect(result.classification).toBe('FAILED');
+      expect(env.calls.filter(call => call[0] === 'restart')).toEqual([['restart', 'redis']]);
+      expect(env.calls).toContainEqual(['worker', 'command', 'containment_dependency_restore']);
+      expect(env.calls.some(call => /credential_(rotate|restore)/u.test(call[2] ?? ''))).toBe(false);
+    });
   it.each(['health', 'ledgers'])('rejects unavailable%s telemetry as diagnosis proof even when commands acknowledge effects', async field => {
     const env = orchestrationHarness(); const remote = env.transport.remote;
     env.transport.remote = async (role, argv) => {

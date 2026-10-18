@@ -86,15 +86,15 @@ describe('closed self-heal fenced-job scenarios', () => {
     expect(insert.sql).toContain("'pending'"); expect(insert.sql).toContain("INTERVAL '120 seconds'");
     expect(state.queries.some(item => /UPDATE|DELETE/u.test(item.sql))).toBe(false);
   });
-  it('admits the fixed pending-work I03 case only in the containment profile and retains the literal dispatch path', async () => {
+  it.each(['I03', 'I04'])('admits the fixed pending-work %s case only in the containment profile and retains the literal dispatch path', async scenario => {
     const legacy = environment(); const prior = databaseFixture(legacy);
-    await expect(runSelfHealPreviewFencedJob('create', legacy, { ...prior.options, scenario: 'I03' })).rejects.toThrow('SELF_HEAL_PREVIEW_FENCED_JOB_FAILED');
+    await expect(runSelfHealPreviewFencedJob('create', legacy, { ...prior.options, scenario })).rejects.toThrow('SELF_HEAL_PREVIEW_FENCED_JOB_FAILED');
     expect(prior.state.connections).toHaveLength(0);
     const env = { ...environment(), ARCANOS_SELF_HEAL_PREVIEW_PROFILE: 'worker-inference-containment-v1',
       RAILWAY_PROJECT_NAME: 'arc-pr1557-heavy-job', RAILWAY_ENVIRONMENT_NAME: 'backstage-heavy-pr-1557-e2e',
       RAILWAY_SERVICE_NAME: 'arcanos-worker-pr1557-heavy' };
     const { state, options } = databaseFixture(env);
-    const slot = { ...options, scenario: 'I03' };
+    const slot = { ...options, scenario };
     const created = await runSelfHealPreviewFencedJob('create', env, slot);
     expect(created.allowedWorkerIds).toHaveLength(8);
     expect(created.consumerPath).toBe('ordinary-worker-ask-exact-literal-dispatch');
@@ -106,7 +106,7 @@ describe('closed self-heal fenced-job scenarios', () => {
       answerMode: 'direct', requestedVerbosity: 'minimal', maxWords: 8, endpointName: 'self-heal.preview.fenced' });
     expect(inserts[0].sql).toContain("'pending'"); expect(inserts[0].sql).toContain("INTERVAL '120 seconds'");
     expect(state.queries.some(item => /UPDATE|DELETE/u.test(item.sql))).toBe(false);
-    state.rows.set('self-heal-preview:synthetic-job-run:fenced:I03:1', completedJob(8));
+    state.rows.set(`self-heal-preview:synthetic-job-run:fenced:${scenario}:1`, completedJob(8));
     expect((await runSelfHealPreviewFencedJob('inspect', env, slot)).job).toMatchObject({
       completionVerified: true, literalObserved: true, matchingCompletionEvents: 1,
       lastWorkerId: 'self-heal-preview-synthetic-job-run-slot-8',

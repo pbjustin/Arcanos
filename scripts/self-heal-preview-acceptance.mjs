@@ -22,13 +22,13 @@ const COMMANDS = new Set(['inspect', 'duplicate_start', 'coordinator_stop', 'coo
   'trinity_activate', 'trinity_replace', 'trinity_stale_rollback', 'trinity_rollback', 'trinity_consumer', 'trinity_run', 'predictive_evaluate_live']);
 const PROVIDER = new Set(['inspect', 'set_healthy', 'timeout_next', 'hold_next', 'release']);
 const INFERENCE_COMMANDS = new Set(['containment_predictive_on', 'containment_predictive_off', 'containment_tick_batch',
-  'containment_dependency_failure', 'containment_dependency_restore', 'containment_diagnose_no_ai']);
+  'containment_dependency_failure', 'containment_dependency_restore', 'containment_diagnose_no_ai', 'containment_diagnose_on_redis_unavailable']);
 const SHARED_INFERENCE_COMMANDS = new Set(['containment_diagnose', 'containment_probe', 'containment_cancel',
   'containment_credential_rotate', 'containment_credential_restore']);
 const INFERENCE_PROVIDER = new Set(['models_timeout_next', 'inference_hold_next', 'inference_cancel_next', 'inference_late_completion_next',
   'models_auth_failure_next', 'inference_auth_failure_next', 'models_forbidden_next', 'inference_forbidden_next',
   'inference_rate_limit_next', 'inference_unavailable_next']);
-const INFERENCE_JOB_CASES = new Set(['I01', 'I02', 'I03']);
+const INFERENCE_JOB_CASES = new Set(['I01', 'I02', 'I03', 'I04']);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const SHA = /^[a-f0-9]{40}$/u;
 const DIGEST = /^[a-f0-9]{64}$/u;

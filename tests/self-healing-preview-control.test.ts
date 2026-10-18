@@ -43,6 +43,25 @@ function emitTelemetry(event: Record<string, unknown>, notify = true): void {
 }
 const providerTraces: Array<Record<string, unknown>> = [];
 const readRedisClientId = jest.fn<(...args: unknown[]) => Promise<unknown>>(async () => 41);
+type RedisSnapshot = import('../src/platform/runtime/redisLifecycle.js').RedisLifecycleSnapshot;
+const readyRedisSnapshot = (): RedisSnapshot => ({ state: 'READY', configured: true, connected: true,
+  attemptInFlight: false, readyGeneration: 1, circuitEnabled: true, circuitState: 'CLOSED', circuitFailureThreshold: 1,
+  attempt: 1, recoveryCount: 0, retryScheduled: false, lastTransitionAt: new Date().toISOString(),
+  lastReadyAt: new Date().toISOString(), lastErrorCode: null,
+  operationGate: { inFlight: 0, admittedTotal: 0, rejectedTotal: 0, succeededTotal: 0, failedTotal: 0,
+    timedOutTotal: 0, lastOperation: null, lastOutcome: null, lastDurationMs: null } });
+let redisSnapshot = readyRedisSnapshot();
+const redisListeners = new Set<(snapshot: RedisSnapshot) => void>();
+function emitRedisLifecycle(change: Partial<RedisSnapshot>): void {
+  redisSnapshot = { ...redisSnapshot, ...change };
+  for (const listener of redisListeners) listener(redisSnapshot);
+}
+const subscribeRedis = jest.fn((listener: (snapshot: RedisSnapshot) => void) => {
+  redisListeners.add(listener);
+  listener(redisSnapshot);
+  return () => { redisListeners.delete(listener); };
+});
+const emptyRedisLedger = () => ['', '', -2, -2, String(Math.floor(Date.now() / 1000)), '0'];
 const workerHealth = jest.fn(async () => ({ overallStatus: 'healthy',
   queueSummary: { pending: 0, running: 0, stalledRunning: 0, oldestPendingJobAgeMs: 0 },
   workers: Array.from({ length: 8 }, (_, index) => ({ workerId: `self-heal-preview-${runId}-slot-${index + 1}`,
@@ -97,11 +116,13 @@ jest.unstable_mockModule('@platform/runtime/unifiedConfig.js', () => ({
     selfImproveAutonomyLevel: Number(process.env.SELF_IMPROVE_AUTONOMY_LEVEL ?? '0'), selfImproveFrozen: process.env.SELF_IMPROVE_FREEZE === 'true',
     predictiveHealingEnabled: process.env.PREDICTIVE_HEALING_ENABLED === 'true', predictiveHealingDryRun: process.env.PREDICTIVE_HEALING_DRY_RUN === 'true',
     predictiveHealingStaleAfterMs: 120_000,
+    predictiveHealingAiActiveCooldownMs: 30 * 60_000, predictiveHealingAiFailureCooldownMs: 6 * 60 * 60_000,
     autoExecuteHealing: process.env.PREDICTIVE_AUTO_EXECUTE === 'true',
   }),
 }));
 jest.unstable_mockModule('@platform/runtime/redisLifecycle.js', () => ({
-  getRedisLifecycleSnapshot: () => ({ state: 'READY', connected: true }),
+  getRedisLifecycleSnapshot: () => redisSnapshot,
+  subscribeRedisLifecycle: subscribeRedis,
   executeRedisOperation: readRedisClientId,
 }));
 jest.unstable_mockModule('@services/incidentResponse/killSwitch.js', () => ({
@@ -143,7 +164,8 @@ jest.unstable_mockModule('../src/services/selfImprove/predictiveHealingService.j
   probePredictiveHealingAIProvider: providerProbe,
 }));
 jest.unstable_mockModule('@services/workerControlService.js', () => ({ getWorkerControlHealth: workerHealth }));
-jest.unstable_mockModule('@services/openai/serviceHealth.js', () => ({ getOpenAIServiceHealth: () => ({ providerRuntime }),
+jest.unstable_mockModule('@services/openai/serviceHealth.js', () => ({ getOpenAIServiceHealth: () => ({ providerRuntime,
+  apiKey: { configured: true }, circuitBreaker: { state: 'CLOSED' } }),
   syncOpenAIProviderRuntime: syncProvider }));
 
 const controls = await import('../src/services/selfImprove/selfHealingPreviewControl.js');
@@ -209,9 +231,10 @@ beforeEach(() => {
   predictiveAudits.length = 0;
   coordinatorEvents.length = 0; providerTraces.length = 0;
   emissionSequence = 0; emissionListeners.clear();
+  redisSnapshot = readyRedisSnapshot(); redisListeners.clear();
   readRedisClientId.mockImplementation(async () => 41);
   sdkClient = { synthetic: 1 };
-  status.loopRunning = false; status.coordinatorState = 'UNKNOWN';
+  status.loopRunning = false; status.inFlight = false; status.coordinatorState = 'UNKNOWN';
   status.lastAction = null; status.lastActionAt = null; status.lastDiagnosis = null; status.lastDecision = null; status.policyObservedAt = null;
 });
 afterEach(async () => {
@@ -225,7 +248,7 @@ describe('isolated self-healing preview admission and process-local controls', (
     process.env.RAILWAY_PROJECT_NAME = 'arc-pr1557-heavy-regression';
     process.env.RAILWAY_ENVIRONMENT_NAME = 'backstage-heavy-pr-1557-e2e-test';
     process.env.RAILWAY_SERVICE_NAME = `arcanos-${process.env.ARCANOS_PROCESS_KIND}-pr1557-heavy`;
-    readRedisClientId.mockImplementation(async () => ['', '', -2, -2]);
+    readRedisClientId.mockImplementation(async () => emptyRedisLedger());
   };
 
   it('requires the exact PR1557 profile before admitting containment commands', async () => {
@@ -288,7 +311,7 @@ describe('isolated self-healing preview admission and process-local controls', (
     useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
     readRedisClientId.mockImplementationOnce(async () => {
       emitTelemetry({ kind: 'ACTION_EXECUTED' }, false);
-      return ['', '', -2, -2];
+      return emptyRedisLedger();
     });
     expect(((await call()).body.containment as Record<string, unknown>).counters).toMatchObject({ complete: false });
     emitTelemetry({ kind: 'AI_PROVIDER_CALL_ATTEMPT' });
@@ -331,13 +354,39 @@ describe('isolated self-healing preview admission and process-local controls', (
   it('projects shared ledger ownership evidence without exposing reservation or credential identities', async () => {
     useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
     readRedisClientId.mockImplementation(async () => [JSON.stringify({ version: 1, lastAttemptMs: 1_800_000_000_000,
-      lastCompletedMs: null, inFlight: { token: 'test-reservation-token', credentialIdentity: 'private-identity' },
-      attemptTimestampsMs: [1_800_000_000_000], blockedCredentialIdentities: ['private-identity'] }), '', -1, -2]);
+      lastFailureMs: 1_800_000_000_100, lastCompletedMs: null,
+      inFlight: { token: 'test-reservation-token', credentialIdentity: 'd'.repeat(64) }, blockedCredentialIdentity: null,
+      attemptTimestampsMs: [1_800_000_000_000], blockedCredentialIdentities: ['d'.repeat(64)] }), '', -1, -2, '1800000000', '123456']);
     const result = (await call()).body.containment as Record<string, unknown>;
     expect(result.ledgers).toEqual([expect.objectContaining({ purpose: 'diagnosis', present: true,
-      inFlight: true, ttlMs: -1, attemptCount: 1, rejectedCredentialCount: 1 }), expect.objectContaining({ purpose: 'provider_probe', present: false })]);
+      inFlight: true, ttlMs: -1, attemptCount: 1, lastFailureMs: 1_800_000_000_100,
+      rejectedCredentialCount: 1 }), expect.objectContaining({ purpose: 'provider_probe', present: false })]);
+    expect(result).toMatchObject({ redisNowMs: 1_800_000_000_123, credential: 'original' });
     expect(JSON.stringify(result)).not.toContain('test-reservation-token');
-    expect(JSON.stringify(result)).not.toContain('private-identity');
+    expect(JSON.stringify(result)).not.toContain('d'.repeat(64));
+  });
+
+  it('rejects malformed version-one ledger content using the production admission parser', async () => {
+    useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
+    readRedisClientId.mockImplementation(async () => [JSON.stringify({ version: 1, lastAttemptMs: 1_800_000_000_000,
+      lastFailureMs: null, lastCompletedMs: null, inFlight: { token: 'test-private-invalid-reservation', credentialIdentity: 'invalid' },
+      blockedCredentialIdentity: null, blockedCredentialIdentities: [], attemptTimestampsMs: [1_800_000_000_000] }),
+    '', -1, -2, '1800000000', '0']);
+    const result = (await call()).body.containment;
+    expect(result.ledgers[0]).toEqual({ purpose: 'diagnosis', versionRecognized: false });
+    expect(JSON.stringify(result)).not.toContain('test-private-invalid-reservation');
+  });
+
+  it('retains the legacy single-credential rejection in its bounded projection', async () => {
+    useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
+    readRedisClientId.mockImplementation(async () => [JSON.stringify({ version: 1, lastAttemptMs: 1_800_000_000_000,
+      lastFailureMs: 1_800_000_000_100, lastCompletedMs: 1_800_000_000_100, inFlight: null,
+      blockedCredentialIdentity: 'e'.repeat(64), attemptTimestampsMs: [1_800_000_000_000] }),
+    '', -1, -2, '1800000000', '123456']);
+    const result = (await call()).body.containment;
+    expect(result.ledgers[0]).toMatchObject({ purpose: 'diagnosis', versionRecognized: true,
+      rejectedCredentialCount: 1, lastFailureMs: 1_800_000_000_100 });
+    expect(JSON.stringify(result)).not.toContain('e'.repeat(64));
   });
 
   it.each(['health', 'redis'])('preserves applied policy and restoration receipts when %s inspection is unavailable', async unavailable => {
@@ -419,6 +468,90 @@ describe('isolated self-healing preview admission and process-local controls', (
     expect(trinity).not.toHaveBeenCalled(); expect(remoteRepair).not.toHaveBeenCalled();
   });
 
+  it('waits through the initial READY notification and diagnoses one real Redis loss using live observations', async () => {
+    useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
+    const baseline = redisSnapshot;
+    const armed = await call('containment_diagnose_on_redis_unavailable');
+    await waitFor(() => redisListeners.size === 1);
+    expect(armed.status).toBe(200);
+    expect((await call()).body.containment.run).toMatchObject({ operation: 'diagnosis', status: 'running',
+      phase: 'waiting_for_redis_unavailable', redisBefore: baseline,
+      inferenceAuthorization: 'manual', executionAuthorized: false });
+    expect(subscribeRedis).toHaveBeenCalledTimes(1);
+    expect(predictiveDecision).not.toHaveBeenCalled();
+    for (const command of ['containment_diagnose_on_redis_unavailable', 'containment_diagnose', 'containment_probe']) {
+      expect((await call(command)).body).toMatchObject({ rejected: true, reasonCode: 'inference_operation_in_flight' });
+    }
+    emitRedisLifecycle({ state: 'STARTING', connected: false });
+    emitRedisLifecycle({ state: 'DEGRADED', configured: false, connected: false });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(predictiveDecision).not.toHaveBeenCalled();
+    emitRedisLifecycle({ state: 'DEGRADED', configured: true, connected: false,
+      circuitState: 'OPEN', lastErrorCode: 'REDIS_CONNECTION_LOST' });
+    const unavailable = redisSnapshot;
+    emitRedisLifecycle({ state: 'DEGRADED', retryScheduled: true });
+    await waitFor(() => predictiveDecision.mock.calls.length === 1);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    const completed = (await call()).body.containment.run;
+    expect(completed).toMatchObject({ status: 'completed', redisBefore: baseline, redisUnavailable: unavailable,
+      redisAfterDiagnosis: redisSnapshot, redisUnavailableObservedAt: expect.any(String),
+      inferenceAuthorization: 'manual', executionAuthorized: false });
+    expect(predictiveDecision).toHaveBeenCalledWith(expect.objectContaining({ source: 'self-heal.preview.measured-runtime',
+      inferenceAuthorization: 'manual', execute: false, allowAutoExecute: false, signal: expect.any(AbortSignal) }));
+    expect(predictiveDecision.mock.calls[0][0]).not.toHaveProperty('simulate');
+    expect(predictiveDecision.mock.calls[0][0]).not.toHaveProperty('observation');
+    expect(redisListeners.size).toBe(0);
+    emitRedisLifecycle({ state: 'READY', connected: true, readyGeneration: 2, recoveryCount: 1 });
+    emitRedisLifecycle({ state: 'DEGRADED', connected: false });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(predictiveDecision).toHaveBeenCalledTimes(1);
+    expect(providerProbe).not.toHaveBeenCalled(); expect(remoteRepair).not.toHaveBeenCalled();
+  });
+
+  it.each(['legacy', 'web', 'running', 'in_flight', 'already_unavailable'])(
+    'rejects a Redis-triggered diagnosis outside its idle READY Worker scope: %s', async scope => {
+      if (scope === 'web') {
+        process.env.ARCANOS_PROCESS_KIND = 'web'; process.env.RAILWAY_SERVICE_ID = uid(6);
+      }
+      if (scope !== 'legacy') useContainmentProfile();
+      if (scope === 'running') status.loopRunning = true;
+      if (scope === 'in_flight') status.inFlight = true;
+      if (scope === 'already_unavailable') emitRedisLifecycle({ state: 'DEGRADED', connected: false });
+      handle = await controls.installSelfHealingPreviewControl();
+      expect((await call('containment_diagnose_on_redis_unavailable')).body).toMatchObject({ rejected: true,
+        reasonCode: scope === 'legacy' ? 'inference_containment_profile_required' : 'redis_outage_requires_ready_stopped_worker' });
+      expect(subscribeRedis).not.toHaveBeenCalled(); expect(predictiveDecision).not.toHaveBeenCalled();
+      expect(redisListeners.size).toBe(0);
+    });
+
+  it.each(['cancel', 'shutdown', 'deadline'])('unsubscribes and drains the Redis loss wait after %s', async terminal => {
+    let triggerDeadline: (() => void) | undefined;
+    if (terminal === 'deadline') {
+      const nativeSetTimeout = globalThis.setTimeout;
+      jest.spyOn(globalThis, 'setTimeout').mockImplementation(((callback: (...args: unknown[]) => void,
+        milliseconds?: number, ...args: unknown[]) => {
+        if (milliseconds === 35_000) triggerDeadline = () => callback(...args);
+        return nativeSetTimeout(callback, milliseconds, ...args);
+      }) as typeof setTimeout);
+    }
+    useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
+    await call('containment_diagnose_on_redis_unavailable');
+    await waitFor(() => redisListeners.size === 1);
+    expect(predictiveDecision).not.toHaveBeenCalled();
+    if (terminal === 'shutdown') { await handle?.close(); handle = null; }
+    else if (terminal === 'cancel') await call('containment_cancel');
+    else { expect(triggerDeadline).toBeDefined(); triggerDeadline!(); }
+    await waitFor(() => redisListeners.size === 0);
+    if (terminal !== 'shutdown') {
+      expect((await call()).body.containment.run).toMatchObject({ status: 'failed',
+        reasonCode: 'SELF_HEAL_PREVIEW_CONTAINMENT_OPERATION_FAILED' });
+    } else expect(events).toContain('control_closed');
+    emitRedisLifecycle({ state: 'DEGRADED', connected: false });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(predictiveDecision).not.toHaveBeenCalled(); expect(providerProbe).not.toHaveBeenCalled();
+    expect(remoteRepair).not.toHaveBeenCalled();
+  });
+
   it('passes fixed disabled inference intent with measured observations and no repair authority', async () => {
     useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
     expect((await call('containment_diagnose_no_ai', { raw: '{"command":"containment_diagnose_no_ai","inferenceAuthorization":"manual"}' })).status).toBe(400);
@@ -447,6 +580,7 @@ describe('isolated self-healing preview admission and process-local controls', (
     useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
     const result = (await call()).body.containment.providerHealth;
     expect(result).toEqual({ evidence: 'production_merged_provider_health',
+      configured: true, authenticationBlocked: false, circuitState: 'CLOSED',
       lastAttemptAt: providerHealth.lastAttemptAt, lastSuccessAt: providerHealth.lastSuccessAt, lastFailureAt: providerHealth.lastFailureAt,
       lastFailureCategory: null, lastFailureStatus: null, reachable: true, authenticated: true, completionHealthy: true });
     expect(JSON.stringify(result)).not.toContain('test-private-provider');
@@ -455,7 +589,8 @@ describe('isolated self-healing preview admission and process-local controls', (
 
   it('projects the configured provider freshness window without changing policy or calling a provider', async () => {
     useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
-    expect((await call()).body.policy.predictiveStaleAfterMs).toBe(120_000);
+    expect((await call()).body.policy).toMatchObject({ predictiveStaleAfterMs: 120_000,
+      predictiveAiActiveCooldownMs: 30 * 60_000, predictiveAiFailureCooldownMs: 6 * 60 * 60_000 });
     expect(providerProbe).not.toHaveBeenCalled(); expect(predictiveDecision).not.toHaveBeenCalled();
     expect(process.env.PREDICTIVE_HEALING_STALE_AFTER_MS).toBeUndefined();
   });

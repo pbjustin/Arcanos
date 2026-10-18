@@ -4,7 +4,7 @@ import { logger } from '@platform/logging/structuredLogging.js';
 import { getTelemetrySnapshot } from '@platform/logging/telemetry.js';
 import { getEnv, writeRuntimeEnv, unsetRuntimeEnv } from '@platform/runtime/env.js';
 import { getConfig } from '@platform/runtime/unifiedConfig.js';
-import { executeRedisOperation, getRedisLifecycleSnapshot } from '@platform/runtime/redisLifecycle.js';
+import { executeRedisOperation, getRedisLifecycleSnapshot, subscribeRedisLifecycle } from '@platform/runtime/redisLifecycle.js';
 import {
   freezeSelfImprove, unfreezeSelfImprove, setAutonomyLevel, getKillSwitchStatus,
 } from '@services/incidentResponse/killSwitch.js';
@@ -25,6 +25,7 @@ import { buildPredictiveHealingStatusSnapshot, runPredictiveHealingDecision, pro
   type PredictiveHealingAuditEntry, type PredictiveHealingSimulationInput,
 } from './predictiveHealingService.js';
 import { PreviewShutdownJournal, shutdownChildAuthority, type PreviewShutdownScenario } from './selfHealingPreviewShutdown.js';
+import { parseSelfHealingInferenceState } from './selfHealingInferenceAdmission.js';
 
 export const SELF_HEAL_PREVIEW_PROFILE = 'worker-coordinator-v1';
 export const SELF_HEAL_INFERENCE_PREVIEW_PROFILE = 'worker-inference-containment-v1';
@@ -163,6 +164,7 @@ const COMMANDS = new Set([
   'containment_credential_rotate', 'containment_credential_restore',
   'containment_tick_batch',
   'containment_dependency_failure', 'containment_dependency_restore',
+  'containment_diagnose_on_redis_unavailable',
 ]);
 
 type Receipt = { sequence: number; at: string; event: string };
@@ -186,11 +188,15 @@ function projectPredictiveAudit(entry: PredictiveHealingAuditEntry) {
 }
 function projectProviderHealth() {
   const health = buildPredictiveHealingStatusSnapshot().aiProvider;
+  const service = getOpenAIServiceHealth();
   const timestamp = (value: unknown) => typeof value === 'string'
     && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value) && Number.isFinite(Date.parse(value)) ? value : null;
   const category = health.lastFailureCategory;
   const status = health.lastFailureStatus;
   return { evidence: 'production_merged_provider_health',
+    configured: service.apiKey.configured, authenticationBlocked: service.providerRuntime.authenticationBlocked === true,
+    circuitState: ['CLOSED', 'OPEN', 'HALF_OPEN'].includes(String(service.circuitBreaker.state).toUpperCase())
+      ? String(service.circuitBreaker.state).toUpperCase() : 'unrecognized',
     lastAttemptAt: timestamp(health.lastAttemptAt), lastSuccessAt: timestamp(health.lastSuccessAt), lastFailureAt: timestamp(health.lastFailureAt),
     lastFailureCategory: category === null ? null : ['missing_client', 'circuit_open', 'insufficient_quota', 'rate_limited',
       'authentication', 'network', 'timeout', 'invalid_request', 'provider_error', 'unknown'].includes(category) ? category : 'unknown',
@@ -370,26 +376,29 @@ export async function installSelfHealingPreviewControl(
     const scope = createHash('sha256').update(JSON.stringify([profile.projectId, profile.environmentId])).digest('hex');
     const keys = ['diagnosis', 'provider_probe'].map(purpose => `arcanos:self-heal:inference:v1:${scope}:${purpose}`);
     const ledgerResult = await executeRedisOperation(client => client.eval(
-      "local function bounded(k) if redis.call('STRLEN',k)>16384 then return 'oversized' end return redis.call('GET',k) or '' end; return {bounded(KEYS[1]),bounded(KEYS[2]),redis.call('PTTL',KEYS[1]),redis.call('PTTL',KEYS[2])}",
+      "local function bounded(k) if redis.call('STRLEN',k)>16384 then return 'oversized' end return redis.call('GET',k) or '' end; local now=redis.call('TIME'); return {bounded(KEYS[1]),bounded(KEYS[2]),redis.call('PTTL',KEYS[1]),redis.call('PTTL',KEYS[2]),now[1],now[2]}",
       { keys, arguments: [] }), { operation: 'diagnostics.metrics.read', timeoutMs: 500 }).catch(() => null);
-    const ledgers = Array.isArray(ledgerResult) && ledgerResult.length === 4 ? keys.map((_key, index) => {
+    // Eligibility evidence uses Redis time, the same clock as production admission.
+    const redisNowMs = Array.isArray(ledgerResult) && ledgerResult.length === 6
+      ? Number(ledgerResult[4]) * 1000 + Math.floor(Number(ledgerResult[5]) / 1000) : NaN;
+    const ledgers = Array.isArray(ledgerResult) && ledgerResult.length === 6 ? keys.map((_key, index) => {
       const raw = ledgerResult[index];
       if (typeof raw !== 'string' || Buffer.byteLength(raw) > 16_384) return { purpose: index === 0 ? 'diagnosis' : 'provider_probe', versionRecognized: false };
-      try {
-        const state = raw === '' ? null : JSON.parse(raw) as Record<string, unknown>;
-        return { purpose: index === 0 ? 'diagnosis' : 'provider_probe', versionRecognized: state === null || state.version === 1,
-          present: state !== null, ttlMs: ledgerResult[index + 2],
+      const state = parseSelfHealingInferenceState(raw === '' ? null : raw);
+      if (!state) return { purpose: index === 0 ? 'diagnosis' : 'provider_probe', versionRecognized: false };
+      return { purpose: index === 0 ? 'diagnosis' : 'provider_probe', versionRecognized: true,
+          present: raw !== '', ttlMs: ledgerResult[index + 2],
           stateSha256: raw === '' ? null : createHash('sha256').update(raw).digest('hex'),
-          inFlight: state?.inFlight !== null && state?.inFlight !== undefined,
-          attemptCount: Array.isArray(state?.attemptTimestampsMs) ? state.attemptTimestampsMs.length : 0,
-          lastAttemptMs: typeof state?.lastAttemptMs === 'number' ? state.lastAttemptMs : null,
-          lastCompletedMs: typeof state?.lastCompletedMs === 'number' ? state.lastCompletedMs : null,
-          rejectedCredentialCount: Array.isArray(state?.blockedCredentialIdentities) ? state.blockedCredentialIdentities.length : 0 };
-      } catch { return { purpose: index === 0 ? 'diagnosis' : 'provider_probe', versionRecognized: false }; }
+          inFlight: state.inFlight !== null, attemptCount: state.attemptTimestampsMs.length,
+          lastAttemptMs: state.lastAttemptMs, lastFailureMs: state.lastFailureMs, lastCompletedMs: state.lastCompletedMs,
+          rejectedCredentialCount: state.blockedCredentialIdentities.length };
     }) : null;
     collectContainmentEvidence();
     return { evidence: 'production_health_telemetry_and_redis', startedAt: containmentStartedAt,
       counters: { ...containmentEvidence }, run: containmentRun, providerHealth: projectProviderHealth(),
+      redisNowMs: Number.isSafeInteger(redisNowMs) && redisNowMs >= 0 ? redisNowMs : null,
+      credential: getEnv('OPENAI_API_KEY') === 'sk-arcanos-self-heal-preview-protocol-v1' ? 'original'
+        : getEnv('OPENAI_API_KEY') === 'sk-arcanos-self-heal-preview-rotated-protocol-v1' ? 'rotated' : 'unrecognized',
       health: health === null ? null : { overallStatus: health.overallStatus, queue: health.queueSummary === null ? null : {
         pending: health.queueSummary.pending, running: health.queueSummary.running,
         stalledRunning: health.queueSummary.stalledRunning, oldestPendingJobAgeMs: health.queueSummary.oldestPendingJobAgeMs },
@@ -517,6 +526,8 @@ export async function installSelfHealingPreviewControl(
         autonomyLevel: config.selfImproveAutonomyLevel, frozen: config.selfImproveFrozen,
         predictiveEnabled: config.predictiveHealingEnabled, predictiveDryRun: config.predictiveHealingDryRun,
         predictiveStaleAfterMs: config.predictiveHealingStaleAfterMs,
+        predictiveAiActiveCooldownMs: config.predictiveHealingAiActiveCooldownMs,
+        predictiveAiFailureCooldownMs: config.predictiveHealingAiFailureCooldownMs,
         predictiveAutoExecute: config.autoExecuteHealing, killSwitch: await getKillSwitchStatus(),
       },
       trinity: getTrinitySelfHealingStatus(), promptRoute: getPromptRouteMitigationState(),
@@ -647,7 +658,15 @@ export async function installSelfHealingPreviewControl(
         void pending.catch(() => { containmentRun = { ...containmentRun, status: 'failed',
           completedAt: new Date().toISOString(), reasonCode: 'SELF_HEAL_PREVIEW_TICK_BATCH_FAILED' }; })
           .finally(() => { if (containmentRunPromise === pending) containmentRunPromise = null; });
-      } else if (command === 'containment_diagnose' || command === 'containment_diagnose_no_ai' || command === 'containment_probe') {
+      } else if (command === 'containment_diagnose' || command === 'containment_diagnose_no_ai'
+        || command === 'containment_probe' || command === 'containment_diagnose_on_redis_unavailable') {
+        const waitForRedisLoss = command === 'containment_diagnose_on_redis_unavailable';
+        const redisBefore = getRedisLifecycleSnapshot();
+        const coordinator = getSelfHealingLoopStatus();
+        if (waitForRedisLoss && (profile.role !== 'worker' || coordinator.loopRunning || coordinator.inFlight
+          || lastTick || redisBefore.state !== 'READY' || redisBefore.connected !== true)) {
+          return { rejected: true, reasonCode: 'redis_outage_requires_ready_stopped_worker', inspection: await inspect() };
+        }
         if (command === 'containment_diagnose_no_ai' && profile.role !== 'worker') {
           return { rejected: true, reasonCode: 'worker_role_required', inspection: await inspect() };
         }
@@ -660,10 +679,31 @@ export async function installSelfHealingPreviewControl(
           const { createLinkedAbortController, runWithRequestAbortContext } = await import('@arcanos/runtime');
           const linked = createLinkedAbortController({ timeoutMs: 35_000, parentSignal: controller.signal });
           containmentAbort = linked.controller;
+          let unsubscribeRedis = () => {};
+          let removeRedisAbort = () => {};
           try {
             await runWithRequestAbortContext({ controller: linked.controller, signal: linked.signal,
               deadlineAt: linked.deadlineAt, timeoutMs: 35_000 }, async () => {
               linked.signal.throwIfAborted();
+              if (waitForRedisLoss) {
+                const unavailable = await new Promise<ReturnType<typeof getRedisLifecycleSnapshot>>((resolve, reject) => {
+                  const onAbort = () => reject(new Error('SELF_HEAL_PREVIEW_REDIS_WAIT_CANCELLED'));
+                  linked.signal.addEventListener('abort', onAbort, { once: true });
+                  removeRedisAbort = () => linked.signal.removeEventListener('abort', onAbort);
+                  // Subscription invokes its listener immediately. The READY baseline
+                  // and one-shot promise distinguish a real loss from that first sample.
+                  unsubscribeRedis = subscribeRedisLifecycle(snapshot => {
+                    if (!linked.signal.aborted && snapshot.configured === true
+                      && snapshot.state === 'DEGRADED' && snapshot.connected === false) resolve(snapshot);
+                  });
+                  containmentRun = { ...containmentRun, phase: 'waiting_for_redis_unavailable', redisBefore };
+                  if (linked.signal.aborted) onAbort();
+                });
+                unsubscribeRedis(); removeRedisAbort();
+                linked.signal.throwIfAborted();
+                containmentRun = { ...containmentRun, phase: 'diagnosing', redisUnavailable: unavailable,
+                  redisUnavailableObservedAt: new Date().toISOString() };
+              }
               if (operation === 'provider_probe') {
                 const result = await probePredictiveHealingAIProvider();
                 const reason = result.failureReason;
@@ -676,10 +716,11 @@ export async function installSelfHealingPreviewControl(
                 const result = await runPredictiveHealingDecision({ source: 'self-heal.preview.measured-runtime',
                   signal: linked.signal, inferenceAuthorization, execute: false, allowAutoExecute: false });
                 containmentRun = { ...containmentRun, status: 'completed', completedAt: new Date().toISOString(),
-                  audit: projectPredictiveAudit(result.auditEntry) };
+                  audit: projectPredictiveAudit(result.auditEntry),
+                  ...(waitForRedisLoss ? { redisAfterDiagnosis: getRedisLifecycleSnapshot() } : {}) };
               }
             });
-          } finally { containmentAbort = null; linked.cleanup(); collectContainmentEvidence(); }
+          } finally { unsubscribeRedis(); removeRedisAbort(); containmentAbort = null; linked.cleanup(); collectContainmentEvidence(); }
         })();
         containmentRunPromise = pending;
         void pending.catch(() => { containmentRun = { ...containmentRun, status: 'failed',
