@@ -198,6 +198,19 @@ describe('durable self-healing inference admission (local shared-store fixtures)
     expect(fixture.store.read).not.toHaveBeenCalled();
   });
 
+  describe.each(['cooldownMs', 'failureCooldownMs'] as const)('%s admission boundary', field => {
+    it.each([59_999, 60_000.25, 2_592_000_001, Number.MAX_VALUE, Number.NaN, Number.POSITIVE_INFINITY])(
+      'rejects invalid policy value %s before reading or reserving shared state', async value => {
+        const fixture = sharedStore();
+        const coordinator = createSelfHealingInferenceCoordinator(fixture.store);
+        expect(await coordinator.reserve({ ...policy, [field]: value }))
+          .toMatchObject({ allowed: false, reason: 'invalid_policy' });
+        expect(fixture.store.read).not.toHaveBeenCalled();
+        expect(fixture.store.compareAndSet).not.toHaveBeenCalled();
+      }
+    );
+  });
+
   it('keeps the hourly cap rolling across a clock-hour boundary', async () => {
     const fixture = sharedStore();
     const coordinator = createSelfHealingInferenceCoordinator(fixture.store);

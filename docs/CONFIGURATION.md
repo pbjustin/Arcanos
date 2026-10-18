@@ -1348,6 +1348,15 @@ from queue health and mitigation availability.
 | `PREDICTIVE_HEALING_AI_IDLE_COOLDOWN_MS` | `21600000` (six hours) | Minimum interval without active load; healthy idle itself never qualifies for inference. |
 | `PREDICTIVE_HEALING_AI_FAILURE_COOLDOWN_MS` | `21600000` (six hours) | Failure backoff, independent of generic provider-health probes. |
 
+All three AI diagnosis cooldown settings support 60,000–2,592,000,000 ms
+(60 seconds–30 days). Finite values are rounded **up** to whole milliseconds,
+then clamped to this range; a value above 30 days uses the full 30-day maximum,
+not its shorter default. Missing or non-finite values use the defaults in the
+table. These settings cannot request a cooldown longer than 30 days. The shared
+admission boundary still rejects fractional or out-of-range policies submitted
+directly; normalization does not bypass its hourly budget, credential blocking,
+or durable in-flight reservation.
+
 Other boolean settings in this table recognize `true`, `1`, and `yes`, ignoring
 case and surrounding whitespace; other nonblank inputs resolve to `false`.
 The normal launcher inherits the injected process environment before replacing

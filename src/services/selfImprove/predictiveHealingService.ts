@@ -489,6 +489,7 @@ const DEFAULT_SCALE_UP_STEP = 1;
 const DEFAULT_AI_IDLE_COOLDOWN_MS = 6 * 60 * 60_000;
 const DEFAULT_AI_ACTIVE_COOLDOWN_MS = 30 * 60_000;
 const DEFAULT_AI_FAILURE_COOLDOWN_MS = 6 * 60 * 60_000;
+const MAX_AI_DIAGNOSIS_COOLDOWN_MS = 30 * 24 * 60 * 60_000;
 // Explicit operator probes retain their own short recovery window; the shared
 // rolling budget and durable in-flight reservation still bound every attempt.
 const PROVIDER_PROBE_COOLDOWN_MS = 60_000;
@@ -1705,6 +1706,7 @@ async function resolveAiDecision(params: {
   rulesDecision: PredictiveHealingDecision;
   candidates: Array<Omit<PredictiveHealingCandidate, 'priority'>>;
   minConfidence: number;
+  staleAfterMs: number;
   config: ReturnType<typeof getConfig>;
   inferenceAuthorization?: 'automatic' | 'manual' | 'disabled';
   signal?: AbortSignal;
@@ -1717,13 +1719,23 @@ async function resolveAiDecision(params: {
     ...buildAiProviderStatusSnapshot(preCallHealth, current),
     model: expectedModel
   }));
+  const providerFailureMs = readIsoTimestampMs(providerStatusBeforeAttempt.lastFailureAt);
+  const providerFailureAgeMs = providerFailureMs === null ? null : Date.now() - providerFailureMs;
+  const currentProviderFailure = providerFailureAgeMs !== null && Number.isFinite(providerFailureAgeMs)
+    && Number.isFinite(params.staleAfterMs) && params.staleAfterMs > 0
+    && providerFailureAgeMs >= 0 && providerFailureAgeMs <= params.staleAfterMs;
+  // Retained provider history still supports deterministic recovery advice. A
+  // fresh observation or denied probe cannot renew its paid-diagnosis eligibility.
+  const currentIncident = params.candidates.some(candidate =>
+    candidate.action !== 'reinitialize_ai_provider' || currentProviderFailure
+  );
   const skipReason = params.signal?.aborted
     ? 'coordinator_cancelled'
     : params.inferenceAuthorization === 'disabled'
       ? 'inference_not_requested'
       : params.config.predictiveHealingEnabled !== true && params.inferenceAuthorization !== 'manual'
         ? 'predictive_healing_disabled'
-        : !params.trends.dataFresh || params.candidates.length === 0 || params.rulesDecision.action === 'none'
+        : !params.trends.dataFresh || !currentIncident || params.rulesDecision.action === 'none'
           ? 'no_actionable_incident'
           : !preCallHealth.apiKey.configured || !params.config.openaiApiKey?.trim()
             ? 'missing_credential'
@@ -3362,9 +3374,11 @@ export async function runPredictiveHealingDecision(params: {
   const liveObservation = params.observation ?? (await collectLiveObservation(params.source));
   const observation = applySimulation(liveObservation, params.simulate);
   const history = collectRecentObservations(state, observation);
+  const rulesConfig = getRulesConfig();
   const { decision: rulesDecision, trends, candidates } = evaluatePredictiveHealingRules({
     observation,
-    history
+    history,
+    config: rulesConfig
   });
   const decision = await resolveAiDecision({
     source: params.source,
@@ -3372,7 +3386,8 @@ export async function runPredictiveHealingDecision(params: {
     trends,
     rulesDecision,
     candidates,
-    minConfidence: getRulesConfig().minConfidence,
+    minConfidence: rulesConfig.minConfidence,
+    staleAfterMs: rulesConfig.staleAfterMs,
     config,
     inferenceAuthorization: params.simulate ? 'disabled' : params.inferenceAuthorization,
     signal: params.signal
@@ -3792,7 +3807,11 @@ function resolveDiagnosisCooldownMs(
     : liveLoadSignal ? DEFAULT_AI_ACTIVE_COOLDOWN_MS : DEFAULT_AI_IDLE_COOLDOWN_MS;
   const configured = failure ? config.predictiveHealingAiFailureCooldownMs
     : liveLoadSignal ? config.predictiveHealingAiActiveCooldownMs : config.predictiveHealingAiIdleCooldownMs;
-  return Number.isFinite(configured) ? Math.max(60_000, configured) : fallback;
+  // Admission accepts whole milliseconds within 60 seconds to 30 days. Round
+  // upward so a supported fractional minimum is never shortened.
+  return Number.isFinite(configured)
+    ? Math.min(MAX_AI_DIAGNOSIS_COOLDOWN_MS, Math.max(60_000, Math.ceil(configured)))
+    : fallback;
 }
 export function buildPredictiveHealingCompactSummary(
   snapshot: PredictiveHealingStatusSnapshot

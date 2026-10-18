@@ -148,6 +148,15 @@ the deterministic rules result without making a provider request. Repair
 authorization is independent: dry-run and disabled execution do not themselves
 grant or forbid an otherwise authorized diagnosis, and diagnosis never grants
 permission to execute its recommendation.
+When the provider is the only actionable candidate, its merged `lastFailureAt`
+must be valid, nonfuture, and within the same finite
+`PREDICTIVE_HEALING_STALE_AFTER_MS` window used for rule observations (two minutes
+by default). Retained failure history still supports deterministic provider
+recovery advice, but a new observation or a denied probe does not make that
+history current. A fresh failed probe supplies new failure evidence; a later
+successful probe clears the effective failure. Current worker or queue incidents
+remain independently eligible even alongside older provider history. Manual
+diagnosis follows this same freshness gate.
 An open circuit blocks inference until its existing reset window expires; the
 next admitted call still passes through that circuit's recovery policy.
 

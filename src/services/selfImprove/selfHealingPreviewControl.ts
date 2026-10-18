@@ -516,6 +516,7 @@ export async function installSelfHealingPreviewControl(
         selfImproveEnabled: config.selfImproveEnabled, actuatorMode: config.selfImproveActuatorMode,
         autonomyLevel: config.selfImproveAutonomyLevel, frozen: config.selfImproveFrozen,
         predictiveEnabled: config.predictiveHealingEnabled, predictiveDryRun: config.predictiveHealingDryRun,
+        predictiveStaleAfterMs: config.predictiveHealingStaleAfterMs,
         predictiveAutoExecute: config.autoExecuteHealing, killSwitch: await getKillSwitchStatus(),
       },
       trinity: getTrinitySelfHealingStatus(), promptRoute: getPromptRouteMitigationState(),

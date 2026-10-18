@@ -1246,6 +1246,13 @@ must leave that recovered snapshot unchanged. No fixture sets timestamps or
 provider-health state; this proves older-failure precedence after recovery, not
 arbitrary clock-skew or stale-cache behavior. Provider URLs, credential identities,
 raw errors, and model configuration are excluded from the projection.
+Before recovery, `metadata_recovery` also waits for the actual timeout failure to
+age beyond the runtime-projected, fixed 120-second freshness window. With eight
+healthy idle workers and no queue work, an explicit manual diagnosis must retain
+the deterministic provider recommendation but return `no_actionable_incident`
+without provider requests, repairs, actions, or changes to either Redis ledger.
+The diagnosis ledger must remain absent. Runtime timestamps and the unchanged
+failure snapshot establish age; no fixture advances clocks or rewrites health.
 
 The separate `late_completion` case requires a fresh diagnosis ledger and an
 unused `I03` attempt 1 in another independently owned scope. Its fixed

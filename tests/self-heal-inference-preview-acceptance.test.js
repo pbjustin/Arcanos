@@ -23,7 +23,7 @@ function snapshot(evaluations = 0, running = false) {
   return { ready: true, processInstanceId: id(30), receipts: [], coordinator: { loopRunning: true, inFlight: false },
     scheduler: { callbacks: evaluations, intervalMs: 30_000 }, policy: { selfImproveEnabled: false, actuatorMode: 'daemon',
       autonomyLevel: 3, frozen: false, killSwitch: { frozen: false, autonomyLevel: 3 },
-      predictiveEnabled: false, predictiveDryRun: false, predictiveAutoExecute: false }, claimBoundary: {
+      predictiveEnabled: false, predictiveDryRun: false, predictiveAutoExecute: false, predictiveStaleAfterMs: 120_000 }, claimBoundary: {
       evidence: 'actual_worker_before_claim_hook', attempts: 0, injectedFailures: 0,
       lastAttemptAt: null, lastInjectedFailureAt: null, faultUntil: null, faultRemaining: 0 },
     containment: { evidence: 'production_health_telemetry_and_redis', run: null, counters: { complete: true,
@@ -307,7 +307,12 @@ describe('PR1557 fixed hosted acceptance cases', () => {
             current.containment.run = { operation: 'diagnosis', status: 'completed', startedAt: new Date(clock).toISOString(),
               completedAt: new Date(clock).toISOString(), processInstanceId: current.processInstanceId,
               inferenceAuthorization: 'manual', executionAuthorized: false };
-            if (existing) {
+            if (current.containment.providerHealth?.lastFailureCategory === 'timeout'
+              && clock - Date.parse(current.containment.providerHealth.lastFailureAt) > 120_000) {
+              current.containment.run.audit = { source: 'self-heal.preview.measured-runtime', advisor: 'rules_fallback_v1',
+                attempted: false, mode: 'recommend_only', timestamp: new Date(clock).toISOString(),
+                inferenceReason: 'no_actionable_incident', selectedAction: 'reinitialize_ai_provider' };
+            } else if (existing) {
               current.containment.run.audit = { advisor: 'rules_fallback_v1', attempted: false, mode: 'recommend_only',
                 timestamp: new Date(clock).toISOString(),
                 inferenceReason: existing.inFlight ? 'in_flight' : 'active_incident_backoff' };
@@ -348,6 +353,7 @@ describe('PR1557 fixed hosted acceptance cases', () => {
                 lastFailureStatus: fault === 'models_auth_failure_next' ? 401 : null,
                 reachable: !metadataFailure, authenticated: !metadataFailure, completionHealthy: !metadataFailure };
               ledgers.set('provider_probe', { purpose: 'provider_probe', versionRecognized: true, inFlight: false,
+                present: true, ttlMs: -1, stateSha256: 'f'.repeat(64), lastAttemptMs: clock,
                 attemptCount: (prior?.attemptCount ?? 0) + 1, lastCompletedMs: clock,
                 rejectedCredentialCount: blockedOriginal ? 1 : 0 }); fault = null;
             }
@@ -435,6 +441,72 @@ describe('PR1557 fixed hosted acceptance cases', () => {
       const result = await runSelfHealInferenceAcceptanceCase('metadata_recovery', manifest(), env);
       expect(result.classification).toBe('FAILED');
       expect(result.errorCode).toMatch(/RECOVERED_PROVIDER_HISTORY_NOT_PROVEN|DENIED_PROBE_CHANGED_PROVIDER_HEALTH/u);
+    });
+
+  it('naturally ages a real metadata failure before an effect-free manual diagnosis and preserves recovery', async () => {
+    const env = orchestrationHarness();
+    const result = await runSelfHealInferenceAcceptanceCase('metadata_recovery', manifest(), env);
+    expect(result).toMatchObject({ classification: 'SYNTHETIC_ONLY', errorCode: null, proof: {
+      staleProviderFailureDeniedInference: true, providerFreshnessWindowMs: 120_000,
+      historicalProviderDiagnosisRequests: 0, historicalProviderLedgersUnchanged: true,
+      authorizedRecoverySucceeded: true, inferenceRequests: 1, probeAttempts: 2 } });
+    expect(result.proof.providerFailureAgeMs).toBeGreaterThan(120_000);
+    expect(Date.parse(result.proof.deniedDiagnosisAt) - Date.parse(result.proof.historicalFailureAt)).toBe(result.proof.providerFailureAgeMs);
+    const diagnosis = env.calls.findIndex(call => call[0] === 'worker' && call[2] === 'containment_diagnose');
+    const probes = env.calls.map((call, index) => call[0] === 'worker' && call[2] === 'containment_probe' ? index : -1).filter(index => index >= 0);
+    expect(diagnosis).toBeGreaterThan(probes[0]); expect(diagnosis).toBeLessThan(probes[1]);
+    expect(env.ledgers.has('diagnosis')).toBe(false);
+  });
+
+  it.each(['cooldown', 'wrong_action', 'wrong_advisor', 'automatic', 'execution', 'provider_attempt', 'repair',
+    'incomplete', 'worker_drift', 'failure_changed', 'diagnosis_ledger', 'probe_ledger', 'wire_request'])(
+    'rejects a false historical-provider denial proof: %s', async drift => {
+      const env = orchestrationHarness(); const remote = env.transport.remote;
+      env.transport.remote = async (role, argv) => {
+        const result = await remote(role, argv);
+        if (role === 'worker' && argv[1] === 'containment_diagnose') {
+          const state = result.observation; const run = state.containment.run;
+          if (drift === 'cooldown') run.audit.inferenceReason = 'idle_window_backoff';
+          if (drift === 'wrong_action') run.audit.selectedAction = 'none';
+          if (drift === 'wrong_advisor') run.audit.advisor = 'arcanos_core_v1';
+          if (drift === 'automatic') run.inferenceAuthorization = 'automatic';
+          if (drift === 'execution') run.executionAuthorized = true;
+          if (drift === 'provider_attempt') state.containment.counters.providerAttempts += 1;
+          if (drift === 'repair') state.containment.counters.repairAttempts += 1;
+          if (drift === 'incomplete') state.containment.counters.complete = false;
+          if (drift === 'worker_drift') state.containment.health.workers[0].operationalStatus = 'degraded';
+          if (drift === 'failure_changed') state.containment.providerHealth.lastFailureAt = new Date(env.now()).toISOString();
+          if (drift === 'diagnosis_ledger') state.containment.ledgers[0].attemptCount += 1;
+          if (drift === 'probe_ledger') state.containment.ledgers[1].stateSha256 = 'd'.repeat(64);
+          if (drift === 'wire_request') env.fixtures.worker.providerWireRequests += 1;
+        }
+        return result;
+      };
+      const result = await runSelfHealInferenceAcceptanceCase('metadata_recovery', manifest(), env);
+      expect(result.classification).toBe('FAILED');
+      expect(result.errorCode).toMatch(/HISTORICAL_PROVIDER|HEALTHY_FLEET/u);
+      expect(env.calls.filter(call => call[0] === 'worker' && call[2] === 'containment_probe')).toHaveLength(1);
+    });
+
+  it.each(['missing_policy', 'changed_policy', 'future_failure', 'new_failure', 'unaged_runtime_clock', 'exact_window_boundary'])(
+    'refuses guessed or changed provider freshness before diagnosis: %s', async drift => {
+      const env = orchestrationHarness(); const remote = env.transport.remote;
+      env.transport.remote = async (role, argv) => {
+        const result = await remote(role, argv); const state = result.observation;
+        if (role === 'worker' && state?.containment?.providerHealth?.lastFailureCategory === 'timeout') {
+          if (drift === 'missing_policy') delete state.policy.predictiveStaleAfterMs;
+          if (drift === 'changed_policy') state.policy.predictiveStaleAfterMs = 60_000;
+          if (drift === 'future_failure') state.containment.providerHealth.lastFailureAt = new Date(NOW + 600_000).toISOString();
+          if (argv[0] === 'inspect' && drift === 'new_failure') state.containment.providerHealth.lastFailureAt = new Date(env.now()).toISOString();
+          if (drift === 'unaged_runtime_clock') state.policy.observedAt = state.containment.providerHealth.lastFailureAt;
+          if (drift === 'exact_window_boundary') state.policy.observedAt = new Date(Date.parse(state.containment.providerHealth.lastFailureAt) + 120_000).toISOString();
+        }
+        return result;
+      };
+      const result = await runSelfHealInferenceAcceptanceCase('metadata_recovery', manifest(), env);
+      expect(['FAILED', 'BLOCKED']).toContain(result.classification);
+      expect(env.calls).not.toContainEqual(['worker', 'command', 'containment_diagnose']);
+      expect(env.calls.filter(call => call[0] === 'worker' && call[2] === 'containment_probe')).toHaveLength(1);
     });
   it.each(['diagnosis_once', 'uncertain_restart', 'late_completion'])(
     'waits through the real thirty-second idle-claim backoff and delayed snapshot for%s', async scenario => {

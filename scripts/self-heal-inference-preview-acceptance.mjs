@@ -153,6 +153,45 @@ function attestRecoveredProviderHistory(failed, recovered) {
   return last;
 }
 
+/** A real expired provider failure remains visible but cannot spend a diagnosis request. */
+function attestHistoricalProviderDenial(failed, before, after) {
+  const failure = failed.containment?.providerHealth;
+  const failedAt = Date.parse(failure?.lastFailureAt);
+  const audit = after.containment?.run?.audit;
+  for (const value of [before, after]) {
+    attestFleet(value, false);
+    requireProof(value.policy?.predictiveStaleAfterMs === 120_000
+      && Date.parse(value.policy.observedAt) - failedAt > value.policy.predictiveStaleAfterMs
+      && value.processInstanceId === failed.processInstanceId
+      && hash(value.containment.providerHealth ?? null) === hash(failure ?? null), 'HISTORICAL_PROVIDER_EVIDENCE_CHANGED');
+  }
+  requireProof(failure?.evidence === 'production_merged_provider_health'
+    && Number.isFinite(failedAt) && failure.lastFailureCategory === 'timeout' && failure.completionHealthy === false
+    && after.containment.run?.status === 'completed' && after.containment.run.inferenceAuthorization === 'manual'
+    && after.containment.run.executionAuthorized === false && after.containment.run.processInstanceId === after.processInstanceId
+    && audit?.source === 'self-heal.preview.measured-runtime' && audit.advisor === 'rules_fallback_v1'
+    && audit.inferenceReason === 'no_actionable_incident' && audit.selectedAction === 'reinitialize_ai_provider'
+    && audit.attempted === false && audit.mode === 'recommend_only'
+    && Date.parse(audit.timestamp) >= Date.parse(before.policy.observedAt)
+    && Date.parse(audit.timestamp) <= Date.parse(after.policy.observedAt), 'HISTORICAL_PROVIDER_DENIAL_NOT_PROVEN');
+  for (const field of ['providerAttempts', 'repairAttempts', 'actionsExecuted']) {
+    requireProof(Number.isSafeInteger(before.containment.counters[field])
+      && after.containment.counters[field] === before.containment.counters[field], 'HISTORICAL_PROVIDER_EFFECT');
+  }
+  for (const purpose of ['diagnosis', 'provider_probe']) {
+    const first = ledger(before, purpose); const last = ledger(after, purpose);
+    requireProof(first?.versionRecognized === true && last?.versionRecognized === true
+      && Number.isSafeInteger(first.attemptCount) && first.attemptCount >= 0
+      && (purpose === 'diagnosis' ? first.present === false && first.stateSha256 === null && first.ttlMs === -2 && first.attemptCount === 0
+        : first.present === true && /^[a-f0-9]{64}$/u.test(first.stateSha256) && first.ttlMs === -1 && first.inFlight === false)
+      && hash(first) === hash(last), 'HISTORICAL_PROVIDER_LEDGER_CHANGED');
+  }
+  return { staleProviderFailureDeniedInference: true, providerFreshnessWindowMs: before.policy.predictiveStaleAfterMs,
+    historicalFailureAt: failure.lastFailureAt, deniedDiagnosisAt: audit.timestamp,
+    providerFailureAgeMs: Date.parse(audit.timestamp) - failedAt,
+    historicalProviderDiagnosisRequests: 0, historicalProviderLedgersUnchanged: true };
+}
+
 /** Prove finite provider work finished after operator cancellation without claiming delivery or billing. */
 export function attestSelfHealInferenceLateCompletion(request, run, cancellationAt, overlappingAt) {
   const runStartedAt = Date.parse(run?.startedAt);
@@ -407,6 +446,8 @@ export async function runSelfHealInferenceAcceptanceCase(scenario, manifest, opt
         explicitDisabledInferenceDenied: true, disabledInferenceProviderRequests: 0, disabledInferenceLedgerUnchanged: true,
         faultEvidence: 'bounded_actual_worker_claim_dependency_failure_with_owned_pending_job' };
     } else if (scenario === 'probe_rotation' || scenario === 'metadata_recovery') {
+      if (scenario === 'metadata_recovery'
+        && Date.parse(manifest.receipt.expiresAt) - now() < CLEANUP_RESERVE_MS + 4 * 60_000) block('INSUFFICIENT_LEASE_FOR_PROVIDER_FRESHNESS');
       await stopped();
       const beforeProvider = await provider(); const beforeWeb = await provider('web');
       await remote('worker', ['provider', scenario === 'probe_rotation' ? 'models_auth_failure_next' : 'models_timeout_next']);
@@ -424,6 +465,29 @@ export async function runSelfHealInferenceAcceptanceCase(scenario, manifest, opt
       const retryAt = state.lastCompletedMs + 60_001;
       if (retryAt >= Date.parse(manifest.receipt.expiresAt) - CLEANUP_RESERVE_MS) block('INSUFFICIENT_LEASE_FOR_PROBE_COOLDOWN');
       while (now() < retryAt) await wait(Math.min(30_000, retryAt - now()));
+      let historicalProviderProof = null;
+      if (scenario === 'metadata_recovery') {
+        const failureAt = Date.parse(failed.containment?.providerHealth?.lastFailureAt);
+        requireProof(Number.isFinite(failureAt) && failed.policy?.predictiveStaleAfterMs === 120_000
+          && failureAt <= Date.parse(failed.policy.observedAt),
+          'PROVIDER_FRESHNESS_POLICY_NOT_PROVEN');
+        const historical = await poll(inspect, value => {
+          requireProof(value.policy?.predictiveStaleAfterMs === 120_000
+            && hash(value.containment?.providerHealth ?? null) === hash(failed.containment.providerHealth),
+          'HISTORICAL_PROVIDER_EVIDENCE_CHANGED');
+          return Number.isFinite(Date.parse(value.policy.observedAt))
+            && Date.parse(value.policy.observedAt) - failureAt > value.policy.predictiveStaleAfterMs;
+        }, 150_000, 10_000);
+        attestFleet(historical, false);
+        const beforeDiagnosis = await provider(); const beforeWebDiagnosis = await provider('web');
+        const deniedDiagnosis = await operation('containment_diagnose');
+        historicalProviderProof = attestHistoricalProviderDenial(failed, historical, deniedDiagnosis);
+        const afterDiagnosis = await provider(); const afterWebDiagnosis = await provider('web');
+        for (const [first, last] of [[beforeDiagnosis, afterDiagnosis], [beforeWebDiagnosis, afterWebDiagnosis]]) {
+          requireProof(sameWireCount(first, last) && Number.isSafeInteger(first.providerRequests) && last.providerRequests === first.providerRequests
+            && paid(first).length === paid(last).length, 'HISTORICAL_PROVIDER_REQUEST');
+        }
+      }
       if (scenario === 'probe_rotation') await command('containment_credential_rotate');
       const recovered = await operation('containment_probe');
       if (recovered.containment.run?.provider?.completionHealthy !== true) block('RECOVERY_PROBE_NOT_ADMITTED');
@@ -447,7 +511,8 @@ export async function runSelfHealInferenceAcceptanceCase(scenario, manifest, opt
       proof = { unpaidFailureReleasedReservation: true, revokedIdentityRetained: scenario === 'probe_rotation',
         authorizedRecoverySucceeded: true, inferenceRequests: 1, probeAttempts: 2, hourlyBudgetDeniedAfterCooldown: true,
         maxOutputTokens: 16, crossProcessDenied: true, staleFailureSupersededByNewerSuccess: true,
-        deniedProbesPreservedRecoveredHealth: true, providerHealth: recoveredHealth };
+        deniedProbesPreservedRecoveredHealth: true, providerHealth: recoveredHealth,
+        ...(historicalProviderProof ?? {}) };
     } else if (scenario === 'late_completion') {
       if (Date.parse(manifest.receipt.expiresAt) - now() < CLEANUP_RESERVE_MS + 5 * 60_000) block('INSUFFICIENT_LEASE_FOR_LATE_WORK');
       await stopped(); await command('containment_predictive_on'); await command('containment_credential_rotate');

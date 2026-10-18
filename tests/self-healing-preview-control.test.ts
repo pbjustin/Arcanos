@@ -96,6 +96,7 @@ jest.unstable_mockModule('@platform/runtime/unifiedConfig.js', () => ({
     selfImproveEnabled: process.env.SELF_IMPROVE_ENABLED === 'true', selfImproveActuatorMode: process.env.SELF_IMPROVE_ACTUATOR_MODE,
     selfImproveAutonomyLevel: Number(process.env.SELF_IMPROVE_AUTONOMY_LEVEL ?? '0'), selfImproveFrozen: process.env.SELF_IMPROVE_FREEZE === 'true',
     predictiveHealingEnabled: process.env.PREDICTIVE_HEALING_ENABLED === 'true', predictiveHealingDryRun: process.env.PREDICTIVE_HEALING_DRY_RUN === 'true',
+    predictiveHealingStaleAfterMs: 120_000,
     autoExecuteHealing: process.env.PREDICTIVE_AUTO_EXECUTE === 'true',
   }),
 }));
@@ -450,6 +451,13 @@ describe('isolated self-healing preview admission and process-local controls', (
       lastFailureCategory: null, lastFailureStatus: null, reachable: true, authenticated: true, completionHealthy: true });
     expect(JSON.stringify(result)).not.toContain('test-private-provider');
     expect((await call()).body.provider.lastSuccessAt).toBeNull();
+  });
+
+  it('projects the configured provider freshness window without changing policy or calling a provider', async () => {
+    useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
+    expect((await call()).body.policy.predictiveStaleAfterMs).toBe(120_000);
+    expect(providerProbe).not.toHaveBeenCalled(); expect(predictiveDecision).not.toHaveBeenCalled();
+    expect(process.env.PREDICTIVE_HEALING_STALE_AFTER_MS).toBeUndefined();
   });
 
   it('rejects unsafe values in the merged provider-health projection rather than reflecting them', async () => {
