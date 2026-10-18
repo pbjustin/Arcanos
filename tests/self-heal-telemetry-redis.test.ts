@@ -233,6 +233,38 @@ describe('self-heal telemetry Redis lifecycle integration', () => {
     }
   });
 
+  it.each(['before', 'after'])('keeps emission identity process-local when Redis hydration completes %s subscription', async hydrationTiming => {
+    const harness = await loadTelemetryRedisHarness(lifecycleSnapshot('READY'));
+    loadedModules.push(harness.moduleUnderTest);
+    harness.setReadyClient(harness.client);
+    let finishHydration!: (value: string) => void;
+    harness.client.get.mockImplementationOnce(() => new Promise<string>(resolve => { finishHydration = resolve; }));
+    const history = JSON.parse(persistedStateJson());
+    history.nextSequence = 501;
+    history.recentEvents = Array.from({ length: 100 }, (_, index) => ({
+      ...history.recentEvents[0], id: `self_heal_event_${index + 401}`
+    }));
+    await harness.moduleUnderTest.primeSelfHealTelemetryPersistence();
+    await flushAsyncWork();
+    if (hydrationTiming === 'before') { finishHydration(JSON.stringify(history)); await flushAsyncWork(); }
+    const observed: Array<{ sequence: number; id: string }> = [];
+    const subscription = harness.moduleUnderTest.subscribeSelfHealEventEmissions((event, sequence) => {
+      observed.push({ sequence, id: event.id });
+    });
+    expect(subscription.baselineSequence).toBe(0);
+    const local = harness.moduleUnderTest.recordSelfHealEvent({ kind: 'failure', source: 'test-new-process', reason: 'local emission' });
+    if (hydrationTiming === 'after') { finishHydration(JSON.stringify(history)); await flushAsyncWork(); }
+    const hydrated = harness.moduleUnderTest.buildSelfHealTelemetrySnapshot({ enabled: true, active: false });
+    expect(hydrated.recentEvents).toHaveLength(100);
+    expect(hydrated.recentEvents.at(-1)).toMatchObject({ id: 'self_heal_event_501', reason: 'local emission' });
+    expect(observed).toEqual([{ sequence: 1, id: local.id }]);
+    const next = harness.moduleUnderTest.recordSelfHealEvent({ kind: 'success', source: 'test-new-process' });
+    expect(next.id).toBe('self_heal_event_502');
+    expect(observed).toEqual([{ sequence: 1, id: local.id }, { sequence: 2, id: next.id }]);
+    expect(subscription.getCurrentSequence()).toBe(2);
+    subscription.unsubscribe();
+  });
+
   it('returns immediately while Redis is absent, then merges and flushes local outage events once', async () => {
     const harness = await loadTelemetryRedisHarness();
     loadedModules.push(harness.moduleUnderTest);

@@ -20,7 +20,7 @@ import {
 import { activatePromptRouteDegradedMode, getPromptRouteMitigationState } from '@services/openai/promptRouteMitigation.js';
 import { runtimeDiagnosticsService, type RequestWindowSnapshot } from '@services/runtimeDiagnosticsService.js';
 import { getOpenAIServiceHealth, syncOpenAIProviderRuntime } from '@services/openai/serviceHealth.js';
-import { buildSelfHealTelemetrySnapshot, type SelfHealEvent } from './selfHealTelemetry.js';
+import { buildSelfHealTelemetrySnapshot, subscribeSelfHealEventEmissions, type SelfHealEvent } from './selfHealTelemetry.js';
 import { buildPredictiveHealingStatusSnapshot, runPredictiveHealingDecision, probePredictiveHealingAIProvider,
   type PredictiveHealingAuditEntry, type PredictiveHealingSimulationInput,
 } from './predictiveHealingService.js';
@@ -314,16 +314,11 @@ export async function installSelfHealingPreviewControl(
     lastInjectedFailureAt: null as string | null };
   const controller = new AbortController();
 
-  const collectContainmentEvidence = (baseline = false) => {
-    if (!containmentEnabled) return;
-    const snapshot = buildSelfHealTelemetrySnapshot({ enabled: getConfig().selfImproveEnabled,
-      active: getSelfHealingLoopStatus().loopRunning });
-    const events = snapshot.recentEvents.map(event => ({ event, sequence: Number(/^self_heal_event_(\d+)$/u.exec(event.id)?.[1]) }))
-      .filter(item => Number.isSafeInteger(item.sequence) && item.sequence > containmentEventCursor)
-      .sort((left, right) => left.sequence - right.sequence);
-    if (baseline) { containmentEventCursor = events.at(-1)?.sequence ?? 0; return; }
-    for (const { event, sequence } of events) {
-      if (sequence !== containmentEventCursor + 1) containmentEvidence.complete = false;
+  const containmentSubscription = containmentEnabled ? subscribeSelfHealEventEmissions((event, sequence) => {
+    try {
+      if (!Number.isSafeInteger(sequence) || sequence !== containmentEventCursor + 1) {
+        containmentEvidence.complete = false;
+      }
       containmentEventCursor = sequence;
       containmentEvidence.events += 1;
       if (event.kind === 'AI_PROVIDER_CALL_ATTEMPT') containmentEvidence.providerAttempts += 1;
@@ -339,9 +334,16 @@ export async function installSelfHealingPreviewControl(
         containmentEvidence.lastIncidentKey = typeof event.details.incidentKey === 'string'
           && /^[a-z_]{1,64}$/u.test(event.details.incidentKey) ? event.details.incidentKey : null;
       }
+    } catch { containmentEvidence.complete = false; }
+  }) : null;
+  containmentEventCursor = containmentSubscription?.baselineSequence ?? 0;
+  const collectContainmentEvidence = () => {
+    // Detect a missed final notification too; later events must never repair an
+    // incomplete window. Persisted event IDs/history are intentionally unrelated.
+    if (containmentSubscription && containmentEventCursor !== containmentSubscription.getCurrentSequence()) {
+      containmentEvidence.complete = false;
     }
   };
-  collectContainmentEvidence(true);
 
   const inspectContainment = async () => {
     collectContainmentEvidence();
@@ -370,6 +372,7 @@ export async function installSelfHealingPreviewControl(
           rejectedCredentialCount: Array.isArray(state?.blockedCredentialIdentities) ? state.blockedCredentialIdentities.length : 0 };
       } catch { return { purpose: index === 0 ? 'diagnosis' : 'provider_probe', versionRecognized: false }; }
     }) : null;
+    collectContainmentEvidence();
     return { evidence: 'production_health_telemetry_and_redis', startedAt: containmentStartedAt,
       counters: { ...containmentEvidence }, run: containmentRun,
       health: health === null ? null : { overallStatus: health.overallStatus, queue: health.queueSummary === null ? null : {
@@ -947,12 +950,12 @@ export async function installSelfHealingPreviewControl(
       options.signal?.removeEventListener('abort', onAbort);
       controller.abort();
       releaseHold?.();
-      const drain = stopSelfHealingLoop();
-      server.closeAllConnections();
-      await Promise.all([drain, lastTick?.catch(() => undefined), consumerRunPromise?.catch(() => undefined), predictiveRunPromise?.catch(() => undefined), containmentRunPromise?.catch(() => undefined), activeCommand?.catch(() => undefined), new Promise<void>((resolve, reject) => {
-        server.close(error => error && (error as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING' ? reject(error) : resolve());
-      })]);
       try {
+        const drain = stopSelfHealingLoop();
+        server.closeAllConnections();
+        await Promise.all([drain, lastTick?.catch(() => undefined), consumerRunPromise?.catch(() => undefined), predictiveRunPromise?.catch(() => undefined), containmentRunPromise?.catch(() => undefined), activeCommand?.catch(() => undefined), new Promise<void>((resolve, reject) => {
+          server.close(error => error && (error as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING' ? reject(error) : resolve());
+        })]);
         if (shutdownJournal) {
           const state = getSelfHealingLoopStatus();
           if (state.inFlight || shutdownHolding) throw new Error('SELF_HEAL_PREVIEW_SHUTDOWN_NOT_DRAINED');
@@ -965,7 +968,7 @@ export async function installSelfHealingPreviewControl(
               installationFailures: scheduler.installationFailures, callbacks: scheduler.callbacks },
             coordinator: { state: state.coordinatorState, reasonCode: state.coordinatorReasonCode, inFlight: state.inFlight } });
         }
-      } finally { restorePolicy(); record('control_closed'); }
+      } finally { containmentSubscription?.unsubscribe(); restorePolicy(); record('control_closed'); }
     })();
     return closePromise;
   };

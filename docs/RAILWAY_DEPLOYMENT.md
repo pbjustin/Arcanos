@@ -1193,6 +1193,16 @@ and `running_on` hold one ordinary database-backed job while twenty serial
 production evaluations inspect the other seven idle slots; this is explicitly
 different from twenty scheduler callbacks. The runner checks provider receipts,
 runtime telemetry, slot health, and the real job's claim/completion events.
+Containment counters observe new telemetry emissions in the current process
+from controller installation through shutdown drain. Redis history hydration,
+persisted event-ID renumbering, and eviction from the 100-event history ring do
+not contribute to those counters. Missing, duplicate, out-of-order, or unreadable
+emissions permanently mark that controller's evidence incomplete; inspection
+also checks for a missed final emission after asynchronous diagnostics. A restart
+has a new process identity and counter baseline, while shared admission ledgers
+remain durable. The late-completion case still requires complete evidence on
+both sides of a restart and separately checks the unchanged ledger and provider
+request receipts.
 The ordinary worker can sleep for 30 seconds between empty-queue claims. The
 running-job pickup and dependency-failure observation windows therefore allow
 45 seconds, including transport and health-snapshot margin. The fixed preview

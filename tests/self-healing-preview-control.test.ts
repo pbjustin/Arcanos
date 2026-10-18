@@ -32,6 +32,15 @@ const emptyWindow = (_since: unknown, _windowMs: number, _route: string) => ({
 const getRequestWindowSince = jest.fn(emptyWindow);
 const predictiveAudits: Array<Record<string, unknown>> = [];
 const coordinatorEvents: Array<Record<string, unknown>> = [];
+type EmissionListener = (event: import('../src/services/selfImprove/selfHealTelemetry.js').SelfHealEvent, sequence: number) => void;
+const emissionListeners = new Set<EmissionListener>();
+let emissionSequence = 0;
+function emitTelemetry(event: Record<string, unknown>, notify = true): void {
+  emissionSequence += 1;
+  coordinatorEvents.push(event);
+  if (coordinatorEvents.length > 100) coordinatorEvents.shift();
+  if (notify) for (const listener of emissionListeners) listener(event as Parameters<EmissionListener>[0], emissionSequence);
+}
 const providerTraces: Array<Record<string, unknown>> = [];
 const readRedisClientId = jest.fn<(...args: unknown[]) => Promise<unknown>>(async () => 41);
 const workerHealth = jest.fn(async () => ({ overallStatus: 'healthy',
@@ -69,6 +78,11 @@ jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({ logg
 jest.unstable_mockModule('@platform/logging/telemetry.js', () => ({ getTelemetrySnapshot: () => ({ traces: { recentEvents: providerTraces } }) }));
 jest.unstable_mockModule('../src/services/selfImprove/selfHealTelemetry.js', () => ({
   buildSelfHealTelemetrySnapshot: () => ({ recentEvents: coordinatorEvents }),
+  subscribeSelfHealEventEmissions: (listener: EmissionListener) => {
+    emissionListeners.add(listener);
+    return { baselineSequence: emissionSequence, getCurrentSequence: () => emissionSequence,
+      unsubscribe: () => { emissionListeners.delete(listener); } };
+  },
 }));
 jest.unstable_mockModule('@platform/runtime/unifiedConfig.js', () => ({
   getStableWorkerRuntimeMode: () => ({ processKind: process.env.ARCANOS_PROCESS_KIND }),
@@ -188,6 +202,7 @@ beforeEach(() => {
   sharedOverrides = { freeze: null, autonomy: null };
   predictiveAudits.length = 0;
   coordinatorEvents.length = 0; providerTraces.length = 0;
+  emissionSequence = 0; emissionListeners.clear();
   readRedisClientId.mockImplementation(async () => 41);
   sdkClient = { synthetic: 1 };
   status.loopRunning = false; status.coordinatorState = 'UNKNOWN';
@@ -221,7 +236,7 @@ describe('isolated self-healing preview admission and process-local controls', (
     useContainmentProfile();
     handle = await controls.installSelfHealingPreviewControl();
     for (let index = 1; index <= 20; index += 1) {
-      coordinatorEvents.push({ id: `self_heal_event_${index}`, kind: 'AI_DIAGNOSIS_REQUEST', source: 'self_heal_loop',
+      emitTelemetry({ id: `self_heal_event_${index}`, kind: 'AI_DIAGNOSIS_REQUEST', source: 'self_heal_loop',
         timestamp: new Date().toISOString(), details: { phase: 'eligibility_evaluation', diagnosisType: 'healthy', incidentKey: null } });
       await call();
     }
@@ -235,11 +250,76 @@ describe('isolated self-healing preview admission and process-local controls', (
     expect(providerProbe).not.toHaveBeenCalled(); expect(predictiveDecision).not.toHaveBeenCalled();
   });
 
-  it('marks evidence incomplete when the production telemetry ring has a sequence gap', async () => {
+  it('does not count historical events hydrated after a new process installs its collector', async () => {
     useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
-    coordinatorEvents.push({ id: 'self_heal_event_102', kind: 'AI_PROVIDER_CALL_ATTEMPT', timestamp: new Date().toISOString() });
+    for (let index = 101; index <= 200; index += 1) {
+      coordinatorEvents.push({ id: `self_heal_event_${index}`, kind: 'AI_PROVIDER_CALL_ATTEMPT', timestamp: new Date().toISOString() });
+    }
+    expect(((await call()).body.containment as Record<string, unknown>).counters).toMatchObject({
+      complete: true, events: 0, providerAttempts: 0, repairAttempts: 0, actionsExecuted: 0 });
+  });
+
+  it('marks evidence incomplete when an emitted notification has a sequence gap', async () => {
+    useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
+    emissionSequence = 101;
+    emitTelemetry({ id: 'self_heal_event_102', kind: 'AI_PROVIDER_CALL_ATTEMPT', timestamp: new Date().toISOString() });
     expect(((await call()).body.containment as Record<string, unknown>).counters).toMatchObject({
       complete: false, providerAttempts: 1, healthyEvaluations: 0 });
+  });
+
+  it('counts every new emission when more than 100 events occur between inspections', async () => {
+    useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
+    for (let index = 1; index <= 150; index += 1) {
+      emitTelemetry({ id: `self_heal_event_${index}`, kind: 'AI_DIAGNOSIS_REQUEST', source: 'self_heal_loop',
+        details: { phase: 'eligibility_evaluation', diagnosisType: 'healthy', incidentKey: null } });
+    }
+    expect(coordinatorEvents).toHaveLength(100);
+    expect(((await call()).body.containment as Record<string, unknown>).counters).toMatchObject({
+      complete: true, events: 150, evaluations: 150, healthyEvaluations: 150, providerAttempts: 0, repairAttempts: 0 });
+  });
+
+  it('detects a missing final emission during asynchronous inspection and never restores completeness', async () => {
+    useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
+    readRedisClientId.mockImplementationOnce(async () => {
+      emitTelemetry({ kind: 'ACTION_EXECUTED' }, false);
+      return ['', '', -2, -2, '1800000000', '0'];
+    });
+    expect(((await call()).body.containment as Record<string, unknown>).counters).toMatchObject({ complete: false });
+    emitTelemetry({ kind: 'AI_PROVIDER_CALL_ATTEMPT' });
+    expect(((await call()).body.containment as Record<string, unknown>).counters).toMatchObject({ complete: false, providerAttempts: 1 });
+  });
+
+  it.each(['duplicate', 'out_of_order', 'processing_error'])('fails closed for %s emitted evidence', async fault => {
+    useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
+    emitTelemetry({ kind: 'AI_PROVIDER_CALL_ATTEMPT' });
+    for (const listener of emissionListeners) {
+      const event = fault === 'processing_error' ? { get kind(): string { throw new Error('test-observer-error'); } }
+        : { kind: 'AI_PROVIDER_CALL_ATTEMPT' };
+      listener(event as Parameters<EmissionListener>[0], fault === 'out_of_order' ? 0 : fault === 'processing_error' ? ++emissionSequence : 1);
+    }
+    expect(((await call()).body.containment as Record<string, unknown>).counters).toMatchObject({ complete: false });
+  });
+
+  it('unsubscribes after drain and gives a subsequent controller a fresh emission baseline', async () => {
+    useContainmentProfile();
+    emitTelemetry({ kind: 'ACTION_EXECUTED' });
+    handle = await controls.installSelfHealingPreviewControl();
+    emitTelemetry({ kind: 'AI_PROVIDER_CALL_ATTEMPT' });
+    expect(emissionListeners.size).toBe(1);
+    stop.mockImplementationOnce(async () => { emitTelemetry({ kind: 'ACTION_EXECUTED' }); });
+    await handle?.close(); handle = null;
+    expect(emissionListeners.size).toBe(0);
+    emitTelemetry({ kind: 'ACTION_EXECUTED' });
+    handle = await controls.installSelfHealingPreviewControl();
+    expect(((await call()).body.containment as Record<string, unknown>).counters).toMatchObject({
+      complete: true, events: 0, providerAttempts: 0, repairAttempts: 0, actionsExecuted: 0 });
+  });
+
+  it('unsubscribes even when shutdown draining fails', async () => {
+    useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
+    stop.mockRejectedValueOnce(new Error('test-drain-failed'));
+    await expect(handle?.close()).rejects.toThrow('test-drain-failed'); handle = null;
+    expect(emissionListeners.size).toBe(0);
   });
 
   it('projects shared ledger ownership evidence without exposing reservation or credential identities', async () => {
