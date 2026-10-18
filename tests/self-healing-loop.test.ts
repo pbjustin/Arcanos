@@ -1392,7 +1392,7 @@ describe('selfHealingLoop', () => {
 
     getWorkerControlHealthMock.mockResolvedValueOnce(createWorkerHealth({
       overallStatus: 'degraded',
-      queueSummary: { ...createWorkerHealth().queueSummary, pending: 1, total: 1 },
+      queueSummary: { ...createWorkerHealth().queueSummary, pending: 1, total: 1, oldestPendingJobAgeMs: 120000 },
       alerts: ['No worker receipts or processed jobs observed for 180000ms after startup.'],
       workers: [
         {
@@ -1539,6 +1539,84 @@ describe('selfHealingLoop', () => {
         }
       });
     }
+  });
+
+  it.each([[false, 0], [true, 0], [false, 1000], [true, 1000], [false, 30000], [true, 30000], [false, 120000], [true, 120000]])('requires aged pending work before diagnosing healthy idle slots (predictive enabled: %s, pending age: %s)', async (predictiveHealingEnabled, oldestPendingJobAgeMs) => {
+    getConfigMock.mockReturnValue(createConfig({ predictiveHealingEnabled }));
+    getRollingRequestWindowMock.mockReturnValue(createRequestWindow({ requestCount: 0 }));
+    getWorkerControlHealthMock.mockResolvedValue(createWorkerHealth({
+      queueSummary: { ...createWorkerHealth().queueSummary, pending: 1, total: 1, oldestPendingJobAgeMs },
+      workers: Array.from({ length: 8 }, (_, index) => ({ workerId: `current-slot-${index + 1}`,
+        healthStatus: 'healthy', operationalStatus: 'healthy', stale: false, currentJobId: null,
+        claimAcceptance: 'accepting', lastHeartbeatAt: new Date().toISOString(),
+        lastActivityAt: '2026-03-25T11:00:00.000Z', inactivityMs: 3600000,
+        watchdog: { triggered: false, restartRecommended: false, idleThresholdMs: 120000 } }))
+    }));
+    const fetchSpy = jest.spyOn(globalThis, 'fetch');
+    const result = await runSelfHealingLoop({ trigger: 'interval' });
+    if (oldestPendingJobAgeMs === 120000) {
+      expect(result.diagnosis).toBe('inactive_degraded: no worker activity observed');
+    } else {
+      expect(result.diagnosis).toBe('healthy');
+      expect(result.action).toBeNull();
+      expect(healWorkerRuntimeMock).not.toHaveBeenCalled();
+      expect(recoverStaleJobsMock).not.toHaveBeenCalled();
+      expect(runSelfImproveCycleMock).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(getSelfHealingLoopStatus().attemptsByDiagnosis).toEqual({});
+      const events = buildSelfHealEventsSnapshot(100).events;
+      expect(events.some(event => event.kind === 'ACTION_DISPATCH_ATTEMPT' || event.kind === 'AI_PROVIDER_CALL_ATTEMPT' || event.kind === 'trigger')).toBe(false);
+    }
+  });
+
+  it.each([[false, 0], [true, 0], [false, 1], [true, 1]])('keeps mixed stale history and a healthy current fleet free of false incidents (predictive enabled: %s, pending: %s)', async (predictiveHealingEnabled, pending) => {
+    getConfigMock.mockReturnValue(createConfig({ predictiveHealingEnabled }));
+    getRollingRequestWindowMock.mockReturnValue(createRequestWindow({ requestCount: 0 }));
+    getWorkerControlHealthMock.mockResolvedValue(createWorkerHealth({
+      queueSummary: { ...createWorkerHealth().queueSummary, pending, total: pending },
+      workers: [
+        { workerId: 'retained-dependency', operationalStatus: 'unhealthy', stale: true,
+          currentJobId: null, claimAcceptance: 'dependency_failure', inactivityMs: 7200000,
+          watchdog: { triggered: false, restartRecommended: true, idleThresholdMs: 120000 } },
+        { workerId: 'retained-watchdog', operationalStatus: 'unhealthy', stale: true,
+          currentJobId: null, inactivityMs: 7200000,
+          watchdog: { triggered: true, restartRecommended: true, idleThresholdMs: 120000 } },
+        ...Array.from({ length: 8 }, (_, index) => ({ workerId: `current-slot-${index + 1}`,
+          operationalStatus: 'healthy', stale: false, currentJobId: null, inactivityMs: 0,
+          watchdog: { triggered: false, restartRecommended: false, idleThresholdMs: 120000 } }))
+      ]
+    }));
+    const fetchSpy = jest.spyOn(globalThis, 'fetch');
+    const result = await runSelfHealingLoop({ trigger: 'interval' });
+    expect(result.diagnosis).toBe('healthy');
+    expect(result.action).toBeNull();
+    expect(healWorkerRuntimeMock).not.toHaveBeenCalled();
+    expect(recoverStaleJobsMock).not.toHaveBeenCalled();
+    expect(runSelfImproveCycleMock).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(getSelfHealingLoopStatus().attemptsByDiagnosis).toEqual({});
+    const events = buildSelfHealEventsSnapshot(100).events;
+    expect(events.some(event => event.kind === 'ACTION_DISPATCH_ATTEMPT' || event.kind === 'AI_PROVIDER_CALL_ATTEMPT')).toBe(false);
+  });
+
+  it.each([[false, 'dependency'], [true, 'dependency'], [false, 'watchdog'], [true, 'watchdog']])('retains a fresh failure beside healthy peers (predictive enabled: %s, failure: %s)', async (predictiveHealingEnabled, failure) => {
+    getConfigMock.mockReturnValue(createConfig({ predictiveHealingEnabled }));
+    getRollingRequestWindowMock.mockReturnValue(createRequestWindow({ requestCount: 0 }));
+    getWorkerControlHealthMock.mockResolvedValue(createWorkerHealth({
+      overallStatus: 'unhealthy', queueSummary: { ...createWorkerHealth().queueSummary, pending: 1, total: 1 },
+      workers: [
+        { workerId: 'failed-current-slot', operationalStatus: 'unhealthy', stale: false,
+          claimAcceptance: failure === 'dependency' ? 'dependency_failure' : 'accepting',
+          currentJobId: null, inactivityMs: 0,
+          watchdog: { triggered: failure === 'watchdog', restartRecommended: false, idleThresholdMs: 120000 } },
+        { workerId: 'healthy-current-slot', operationalStatus: 'healthy', stale: false,
+          currentJobId: null, inactivityMs: 0,
+          watchdog: { triggered: false, restartRecommended: false, idleThresholdMs: 120000 } }
+      ]
+    }));
+    const result = await runSelfHealingLoop({ trigger: 'interval' });
+    expect(result.diagnosis).toBe('worker health degraded');
+    expect(getSelfHealingLoopStatus().lastWorkerHealth).toBe('unhealthy');
   });
 
   it.each([false, true])('detects failed heartbeats with pending work and recovery to idle (predictive enabled: %s)', async (predictiveHealingEnabled) => {

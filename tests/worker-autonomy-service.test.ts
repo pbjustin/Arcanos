@@ -2912,6 +2912,57 @@ describe('workerAutonomyService', () => {
     expect(service.getRecommendedWorkerHeartbeatDelayMs()).toBe(5_000);
   });
 
+  it.each([
+    ['new pending work', 0, 0, false, false],
+    ['one-second pending work', 1_000, 0, false, false],
+    ['pending work within normal idle polling', 30_000, 0, false, false],
+    ['pending work just below the threshold', 119_999, 0, false, false],
+    ['pending work at the threshold', 120_000, 0, false, true],
+    ['a stalled running job', 0, 1, false, true],
+    ['a failed heartbeat with new pending work', 0, 0, true, true]
+  ] as const)('distinguishes %s from completed-work inactivity', async (_label, pendingAge, stalledRunning, staleHeartbeat, triggered) => {
+    jest.useFakeTimers();
+    try {
+      jest.setSystemTime(new Date('2026-03-07T12:00:00.000Z'));
+      const service = new WorkerAutonomyService({
+        ...getWorkerAutonomySettings(), workerId: 'async-queue-fresh-backlog',
+        staleAfterMs: 60_000, watchdogIdleMs: 120_000, failureWebhookUrl: null
+      }, null);
+      await service.recordWorkerHeartbeat();
+      jest.advanceTimersByTime(180_000);
+      if (!staleHeartbeat) await service.recordWorkerHeartbeat();
+      upsertWorkerRuntimeSnapshotMock.mockClear();
+      getJobQueueSummaryMock.mockResolvedValue({
+        pending: stalledRunning ? 0 : 1, running: stalledRunning,
+        completed: 0, failed: 0, total: 1, delayed: 0,
+        stalledRunning, oldestPendingJobAgeMs: pendingAge,
+        lastUpdatedAt: new Date().toISOString()
+      });
+      service.recordClaimResult('no_job_available');
+
+      await service.markIdle();
+
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenCalledTimes(1);
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          healthStatus: triggered ? 'degraded' : 'healthy',
+          snapshot: expect.objectContaining({
+            lastActivityAt: '2026-03-07T12:00:00.000Z',
+            watchdog: expect.objectContaining({
+              inactivityMs: 180_000, stale: staleHeartbeat, triggered,
+              restartRecommended: triggered,
+              reason: triggered ? expect.stringContaining('queue work remained pending') : null
+            })
+          })
+        }),
+        { source: 'worker-idle' }
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('marks blocked queue work as degraded when inactivity exceeds the watchdog threshold', async () => {
     jest.useFakeTimers();
 
@@ -2925,7 +2976,7 @@ describe('workerAutonomyService', () => {
         total: 1,
         delayed: 0,
         stalledRunning: 0,
-        oldestPendingJobAgeMs: 60_000,
+        oldestPendingJobAgeMs: 120_000,
         lastUpdatedAt: '2026-03-07T12:00:00.000Z'
       });
 

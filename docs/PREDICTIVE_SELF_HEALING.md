@@ -121,6 +121,24 @@ no worker-repair candidate, no AI request, and no repair attempt. Stalled jobs, 
 unavailable workers with pending work, and explicit dependency failures remain
 incident evidence even when the HTTP request count is zero.
 
+A newly queued job can arrive while healthy consumers are in their normal idle
+polling interval. Inactivity alone becomes repair evidence only when pending
+job age reaches the worker's existing watchdog idle threshold (120 seconds by
+default), or a running job is stalled. The existing pending-age metric measures
+age from `created_at` for currently runnable pending jobs; it does not measure
+continuous time runnable after a delayed retry. The separate 60-second queue-age
+alert is unchanged. Failed heartbeats, unavailable workers and explicit current
+dependency or watchdog failures remain immediate incident evidence.
+
+Persisted worker identities can outlive their processes. When current heartbeat
+snapshots are present, operational fleet health and predictive inactivity use
+those current snapshots; stale rows and their failure fields remain visible in
+worker-control diagnostics. A stale identity alone does not establish a fleet
+outage beside healthy current capacity and a small, non-stalled backlog. This
+does not prove the stale process was retired: an entirely unavailable fleet with
+pending work, durable stalled jobs, and fresh dependency or watchdog failures
+remain actionable, including a fresh failure beside healthy peers.
+
 Automatic diagnosis requires `PREDICTIVE_HEALING_ENABLED=true`, fresh actionable
 rule evidence, a configured credential, an eligible provider circuit retry window,
 and successful shared Redis admission. No actionable candidate returns a

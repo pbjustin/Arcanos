@@ -2491,7 +2491,9 @@ function diagnoseSelfHealingRuntime(
     (queueSummary?.stalledRunning ?? 0) > 0 ||
     ((queueSummary?.pending ?? 0) > 0 && (
       observation.workerHealth?.overallStatus === 'offline' ||
-      observation.workerHealth?.workers.some((worker) => worker.stale || worker.watchdog.triggered)
+      ((observation.workerHealth?.workers.length ?? 0) > 0 && observation.workerHealth?.workers.every(
+        (worker) => worker.stale || worker.operationalStatus === 'offline' || worker.watchdog.triggered
+      ))
     )) ||
     ((queueSummary?.pending ?? 0) > 0 &&
       (queueSummary?.oldestPendingJobAgeMs ?? 0) >= workerAutonomySettings.staleAfterMs &&
@@ -2570,11 +2572,24 @@ function buildInactiveWorkerEvidence(
   idleThresholdMs: number | null;
   workerIds: string[];
 } {
-  const workers = Array.isArray(workerHealth?.workers) ? workerHealth.workers : [];
+  const observedWorkers = Array.isArray(workerHealth?.workers) ? workerHealth.workers : [];
+  const currentWorkers = observedWorkers.filter((worker) => !worker.stale);
+  const workers = currentWorkers.length > 0 ? currentWorkers : observedWorkers;
   const queueHasBacklog =
     (workerHealth?.queueSummary?.pending ?? 0) > 0 ||
     (workerHealth?.queueSummary?.stalledRunning ?? 0) > 0;
-  const idleWorkers = workers
+  // A new job can arrive during normal idle polling. Old activity alone does
+  // not make that fresh pending work evidence of a blocked consumer.
+  const backlogWorkers = workers.filter((worker) => {
+    const thresholdMs = worker.watchdog.idleThresholdMs ?? fallbackIdleThresholdMs;
+    const pendingAgeMs = workerHealth?.queueSummary?.oldestPendingJobAgeMs ?? 0;
+    return (workerHealth?.queueSummary?.stalledRunning ?? 0) > 0 || (
+      (workerHealth?.queueSummary?.pending ?? 0) > 0 &&
+      Number.isFinite(thresholdMs) && thresholdMs > 0 &&
+      Number.isFinite(pendingAgeMs) && pendingAgeMs >= thresholdMs
+    );
+  });
+  const idleWorkers = backlogWorkers
     .filter((worker) => worker.currentJobId === null)
     .filter((worker) => {
       const thresholdMs = worker.watchdog.idleThresholdMs ?? fallbackIdleThresholdMs;
@@ -2582,7 +2597,7 @@ function buildInactiveWorkerEvidence(
     });
   const relevantWorkers = idleWorkers.length > 0
     ? idleWorkers
-    : workers.filter((worker) => worker.watchdog.restartRecommended);
+    : backlogWorkers.filter((worker) => worker.watchdog.restartRecommended);
   const worstWorker = relevantWorkers.reduce<typeof relevantWorkers[number] | null>((selected, worker) => {
     if (!selected) {
       return worker;

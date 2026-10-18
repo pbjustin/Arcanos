@@ -357,6 +357,28 @@ describe('isolated self-healing preview admission and process-local controls', (
     for (const [options] of tick.mock.calls) expect(options).toMatchObject({ trigger: 'interval', signal: expect.any(AbortSignal) });
   });
 
+  it.each([1, 20])('does not count cancelled tick %i when the production loop returns cancellation', async cancelledTick => {
+    useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
+    for (let index = 1; index < cancelledTick; index += 1) {
+      tick.mockImplementationOnce(async () => ({ diagnosis: 'healthy' }));
+    }
+    tick.mockImplementationOnce(async options => {
+      const { signal } = options as { signal: AbortSignal };
+      return new Promise<{ diagnosis: string }>(resolve => signal.addEventListener('abort', () => {
+        // The production loop handles an aborted observation by returning this result.
+        resolve({ diagnosis: 'coordinator_cancelled' });
+      }, { once: true }));
+    });
+    await call('containment_tick_batch'); await waitFor(() => tick.mock.calls.length === cancelledTick);
+    expect(((await call()).body.containment as Record<string, unknown>).run).toMatchObject({
+      status: 'running', ticksCompleted: cancelledTick - 1 });
+    await call('containment_cancel');
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(((await call()).body.containment as Record<string, unknown>).run).toMatchObject({
+      status: 'failed', ticksCompleted: cancelledTick - 1, reasonCode: 'SELF_HEAL_PREVIEW_TICK_BATCH_FAILED' });
+    expect(tick).toHaveBeenCalledTimes(cancelledTick);
+  });
+
   it('bounds real claim-boundary dependency faults and can restore admission without fabricating worker health', async () => {
     useContainmentProfile(); handle = await controls.installSelfHealingPreviewControl();
     status.loopRunning = true;

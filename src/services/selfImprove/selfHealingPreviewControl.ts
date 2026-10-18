@@ -617,6 +617,7 @@ export async function installSelfHealingPreviewControl(
               abort.signal.throwIfAborted();
               await runSelfHealingLoop({ trigger: 'interval', signal: abort.signal,
                 beforeObservation: coordinatorOptions.beforeObservation, previewConsumerRoute: coordinatorOptions.previewConsumerRoute });
+              abort.signal.throwIfAborted();
               collectContainmentEvidence();
               containmentRun = { ...containmentRun, ticksCompleted: index + 1 };
             }

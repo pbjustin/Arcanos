@@ -1954,13 +1954,19 @@ export class WorkerAutonomyService {
         : null;
     const queueHasPendingWork =
       (queueSummary?.pending ?? 0) > 0 || (queueSummary?.stalledRunning ?? 0) > 0;
+    // Completed-work inactivity predates newly enqueued jobs. Give pending work
+    // the existing watchdog window before treating idle consumers as blocked.
+    const queueHasInactivityBacklog =
+      (queueSummary?.stalledRunning ?? 0) > 0 ||
+      ((queueSummary?.pending ?? 0) > 0 &&
+        (queueSummary?.oldestPendingJobAgeMs ?? 0) >= this.settings.watchdogIdleMs);
     const stale = heartbeatAgeMs !== null && heartbeatAgeMs > this.settings.staleAfterMs;
     const triggered =
       queueHasPendingWork &&
       this.state.currentJobId === null &&
       (
         stale ||
-        (inactivityMs !== null && inactivityMs >= this.settings.watchdogIdleMs)
+        (queueHasInactivityBacklog && inactivityMs !== null && inactivityMs >= this.settings.watchdogIdleMs)
       );
     const reason = stale
       ? `Worker heartbeat expired after ${heartbeatAgeMs}ms while queue work remained pending.`

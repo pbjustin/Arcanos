@@ -1097,7 +1097,7 @@ function buildObservationFromSources(params: {
     workerHealthAlerts.push(`worker_health_error:${params.workerHealthError}`);
   }
 
-  const workers = Array.isArray(params.workerHealth?.workers)
+  const observedWorkers = Array.isArray(params.workerHealth?.workers)
     ? params.workerHealth!.workers.map((worker) => ({
         workerId: worker.workerId,
         // Operational health excludes retained terminal failure debt. Raw
@@ -1121,6 +1121,11 @@ function buildObservationFromSources(params: {
       }))
     : [];
 
+  // Control health retains stale identities for inspection. They do not prove
+  // current dependency or inactivity failures while fresh workers are present.
+  const currentWorkers = observedWorkers.filter((worker) => !worker.stale);
+  const workers = currentWorkers.length > 0 ? currentWorkers : observedWorkers;
+
   const degradedWorkerIds = workers
     .filter((worker) => worker.healthStatus === 'degraded')
     .map((worker) => worker.workerId)
@@ -1135,6 +1140,7 @@ function buildObservationFromSources(params: {
     requestCount: params.requestWindow.requestCount,
     pending: params.workerHealth?.queueSummary?.pending ?? 0,
     stalledRunning: params.workerHealth?.queueSummary?.stalledRunning ?? 0,
+    oldestPendingJobAgeMs: params.workerHealth?.queueSummary?.oldestPendingJobAgeMs ?? 0,
     idleThresholdMs: params.workerHealth?.settings?.watchdogIdleMs ?? null
   });
 
@@ -2119,9 +2125,9 @@ function buildCandidates(
   const pendingWithoutHealthyWorker = observation.workerHealth.pending > 0 && (
     observation.workerHealth.overallStatus === 'offline' ||
     (observation.workerHealth.workers.length === 0 && observation.workerRuntime.activeListeners === 0) ||
-    observation.workerHealth.workers.some((worker) =>
+    (observation.workerHealth.workers.length > 0 && observation.workerHealth.workers.every((worker) =>
       worker.stale || worker.healthStatus === 'offline' || worker.watchdog?.triggered
-    )
+    ))
   );
   const dependencyFailure = observation.workerHealth.workers.some(
     (worker) => worker.claimAcceptance === 'dependency_failure'
@@ -2234,7 +2240,7 @@ function buildCandidates(
 
   if (
     observation.inactivity?.inactiveDegraded &&
-    (observation.workerHealth.pending > 0 || observation.workerHealth.stalledRunning > 0)
+    hasInactivityBacklog(observation.workerHealth, observation.inactivity.idleThresholdMs)
   ) {
     candidates.push({
       action: 'heal_worker_runtime',
@@ -3696,15 +3702,31 @@ function pickLatestTimestamp(values: Array<string | null | undefined>): string |
   return latestValue;
 }
 
+/** Require queue-age evidence for inactivity without delaying explicit failures. */
+function hasInactivityBacklog(
+  queue: { pending: number; stalledRunning: number; oldestPendingJobAgeMs: number },
+  idleThresholdMs: number | null
+): boolean {
+  return queue.stalledRunning > 0 || (
+    queue.pending > 0 && typeof idleThresholdMs === 'number' &&
+    Number.isFinite(idleThresholdMs) && idleThresholdMs > 0 &&
+    Number.isFinite(queue.oldestPendingJobAgeMs) && queue.oldestPendingJobAgeMs >= idleThresholdMs
+  );
+}
+
 function buildWorkerInactivityObservation(params: {
   workers: PredictiveHealingObservation['workerHealth']['workers'];
   alerts: string[];
   requestCount: number;
   pending: number;
   stalledRunning: number;
+  oldestPendingJobAgeMs: number;
   idleThresholdMs: number | null;
 }): NonNullable<PredictiveHealingObservation['inactivity']> {
-  const idleWorkers = params.workers
+  const backlogWorkers = params.workers.filter((worker) =>
+    hasInactivityBacklog(params, worker.watchdog?.idleThresholdMs ?? params.idleThresholdMs)
+  );
+  const idleWorkers = backlogWorkers
     .filter((worker) => worker.currentJobId === null)
     .filter((worker) => {
       const inactivityMs = worker.inactivityMs ?? null;
@@ -3713,7 +3735,7 @@ function buildWorkerInactivityObservation(params: {
     });
   const relevantWorkers = idleWorkers.length > 0
     ? idleWorkers
-    : params.workers.filter((worker) => worker.watchdog?.restartRecommended === true);
+    : backlogWorkers.filter((worker) => worker.watchdog?.restartRecommended === true);
   const mostRecentActivityAt = pickLatestTimestamp(
     params.workers.map((worker) => worker.lastActivityAt ?? null),
   );

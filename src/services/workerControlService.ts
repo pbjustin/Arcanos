@@ -628,7 +628,7 @@ function readWatchdogView(
     const inactivityMs =
       inactivitySourceAt === null ? null : Math.max(0, Date.now() - inactivitySourceAt);
     const restartRecommended =
-      hasPendingOrStalledQueueWork(queueSummary) &&
+      hasInactivityBacklog(queueSummary, idleThresholdMs) &&
       workerSnapshot.currentJobId === null &&
       inactivityMs !== null &&
       inactivityMs >= idleThresholdMs;
@@ -680,6 +680,16 @@ function hasActiveQueueWork(queueSummary: JobQueueSummary | null): boolean {
   return hasPendingOrStalledQueueWork(queueSummary) || (queueSummary?.running ?? 0) > 0;
 }
 
+/** Old activity is actionable only with aged pending work or a stalled job. */
+function hasInactivityBacklog(queueSummary: JobQueueSummary | null, idleThresholdMs: number | null): boolean {
+  const pendingAgeMs = queueSummary?.oldestPendingJobAgeMs ?? 0;
+  return (queueSummary?.stalledRunning ?? 0) > 0 || (
+    (queueSummary?.pending ?? 0) > 0 &&
+    typeof idleThresholdMs === 'number' && Number.isFinite(idleThresholdMs) && idleThresholdMs > 0 &&
+    Number.isFinite(pendingAgeMs) && pendingAgeMs >= idleThresholdMs
+  );
+}
+
 function deriveWorkerOperationalStatus(
   workerSnapshot: WorkerRuntimeSnapshotRecord,
   queueSummary: JobQueueSummary | null,
@@ -714,7 +724,7 @@ function deriveWorkerOperationalStatus(
   if (
     (stale && activeQueueWork) ||
     workerSnapshot.healthStatus === 'degraded' ||
-    (watchdog.restartRecommended && hasPendingOrStalledQueueWork(queueSummary))
+    (watchdog.restartRecommended && hasInactivityBacklog(queueSummary, watchdog.idleThresholdMs))
   ) {
     return activeQueueWork ? 'degraded' : 'healthy';
   }
@@ -862,16 +872,20 @@ function buildWorkerOperationalHealth(
   queueSummary: JobQueueSummary | null,
   workers: WorkerControlWorkerSnapshot[],
 ): WorkerOperationalHealthSummary {
-  const alerts = buildWorkerOperationalAlerts(queueSummary, workers);
+  // Persisted identities can outlive their processes. Prefer current heartbeat
+  // evidence for fleet health; keep every raw row and stale ID in diagnostics.
+  const currentWorkers = workers.filter((worker) => !worker.stale);
+  const operationalWorkers = currentWorkers.length > 0 ? currentWorkers : workers;
+  const alerts = buildWorkerOperationalAlerts(queueSummary, operationalWorkers);
   const activeQueueWork = hasActiveQueueWork(queueSummary);
   const recentFailed = queueSummary?.recentFailed ?? 0;
   const staleWorkerIds = workers
     .filter((worker) => worker.stale)
     .map((worker) => worker.workerId);
-  const degradedWorkerIds = workers
+  const degradedWorkerIds = operationalWorkers
     .filter((worker) => worker.operationalStatus === 'degraded')
     .map((worker) => worker.workerId);
-  const unhealthyWorkerIds = workers
+  const unhealthyWorkerIds = operationalWorkers
     .filter((worker) => worker.operationalStatus === 'unhealthy')
     .map((worker) => worker.workerId);
   const recoveryActions = workers.reduce(
@@ -897,7 +911,7 @@ function buildWorkerOperationalHealth(
   } else if (
     (queueSummary?.stalledRunning ?? 0) > 0 ||
     unhealthyWorkerIds.length > 0 ||
-    (activeQueueWork && workers.every((worker) => worker.operationalStatus === 'offline'))
+    (activeQueueWork && operationalWorkers.every((worker) => worker.operationalStatus === 'offline'))
   ) {
     overallStatus = 'unhealthy';
   } else if (alerts.length > 0 || degradedWorkerIds.length > 0) {
