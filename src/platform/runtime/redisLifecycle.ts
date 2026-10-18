@@ -37,6 +37,8 @@ export type RedisOperationName =
   | 'incident.kill_switch.write_relaxing'
   | 'self_heal.telemetry.load'
   | 'self_heal.telemetry.save'
+  | 'self_heal.inference.reserve'
+  | 'self_heal.inference.complete'
   | 'safety.nonce.consume'
   | 'safety.lock.extend'
   | 'safety.key.delete'

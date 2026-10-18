@@ -1158,7 +1158,8 @@ has a separate, explicit `--self-heal-preview-v1` entry for PR #1544's
 `worker-coordinator-v1` acceptance profile. The
 [profile implementation](../scripts/railway-self-heal-preview-profile.mjs)
 retains the normal integrity wrapper, role launcher and compiled Worker entry
-path. The original heavy-proof mode, native passive preview and production
+path. PR #1557 adds the separately admitted `worker-inference-containment-v1`
+profile for eight-slot inference containment. The original heavy-proof mode, native passive preview and production
 startup commands retain their existing contracts. This runbook describes the
 implementation and prerequisites; it is not a deployment or acceptance receipt.
 No deployment is established by adding the profile or passing its local tests.
@@ -1176,6 +1177,147 @@ the project private and provider-native PR deployments disabled. Do not reuse
 canonical or Live PR 1527 resources, copy production variables, or add this
 profile to the native preview base.
 
+For PR #1557, use the same isolation and lifecycle with independently owned
+`arc-pr1557-heavy-<suffix>`, `backstage-heavy-pr-1557-e2e[-suffix]`,
+`arcanos-worker-pr1557-heavy`, and `arcanos-web-pr1557-heavy` identities.
+The cleanup receipt must identify PR 1557. The closed ownership allowlist admits
+only 1544 and 1557 and rejects mixed names. Never reuse PR #1544 resources or
+receipts. The original 32-case coordinator matrix rejects a PR #1557 manifest;
+it cannot stand in for containment acceptance.
+
+The [inference containment runner](../scripts/self-heal-inference-preview-acceptance.mjs)
+executes one named PR #1557 case at a time with the same receipt-bound transport.
+Run `idle_off` and `idle_on` for twenty real scheduler callbacks each, after
+the healthy slots naturally exceed the inactivity threshold. `running_off`
+and `running_on` hold one ordinary database-backed job while twenty serial
+production evaluations inspect the other seven idle slots; this is explicitly
+different from twenty scheduler callbacks. The runner checks provider receipts,
+runtime telemetry, slot health, and the real job's claim/completion events.
+Containment counters observe new telemetry emissions in the current process
+from controller installation through shutdown drain. Redis history hydration,
+persisted event-ID renumbering, and eviction from the 100-event history ring do
+not contribute to those counters. Missing, duplicate, out-of-order, or unreadable
+emissions permanently mark that controller's evidence incomplete; inspection
+also checks for a missed final emission after asynchronous diagnostics. A restart
+has a new process identity and counter baseline, while shared admission ledgers
+remain durable. The late-completion case still requires complete evidence on
+both sides of a restart and separately checks the unchanged ledger and provider
+request receipts.
+The ordinary worker can sleep for 30 seconds between empty-queue claims. The
+running-job pickup and dependency-failure observation windows therefore allow
+45 seconds, including transport and health-snapshot margin. The fixed preview
+claim fault also lasts at most 45 seconds or 64 attempts, and ends sooner at
+lease expiry. Dependency evidence must show a new actual claim failure in the
+same process and arm window; an old persisted failure or an expired arm cannot
+satisfy it. Before creating the fixed pending job, the runner checks absence,
+proves the initial failure, and explicitly renews the bounded fault. It then
+requires another fresh failure and pending-queue observation before diagnosis.
+These pre-claim bounds do not extend Core's 12-second request deadline, the
+30-second SDK/held-response bounds, or the 40-second late-work fixture.
+`diagnosis_once` first sends the fixed Worker-only `containment_diagnose_no_ai`
+command against that measured pending dependency incident. It calls the production
+decision service with inference explicitly disabled and repair execution forbidden.
+The proof requires an actionable rules recommendation, `inference_not_requested`,
+complete counters with zero provider/repair delta, unchanged shared admission
+ledgers, and zero Worker/V2 provider wire requests. This tests service-level AI
+intent; it does not replace normal HTTP bearer authentication coverage. These
+observations finish before the paid hold is armed. The case then holds an
+authorized bounded Worker Core diagnosis while V2
+attempts diagnosis against the same Redis ledger. It requires a concurrent
+in-flight denial without a V2 provider request, then checks completion and
+the subsequent shared cooldown. A fixed pending job during the bounded claim
+failure supplies real backlog evidence; it must complete after fault restoration.
+
+`probe_rotation`, `metadata_recovery`, and `uncertain_restart` exercise the
+fixed fictional credential and contained provider faults. Run only cases that
+fit the immutable lease and actual admission budgets: cases never clear Redis
+ledgers, advance time, reset cooldowns, or release uncertain reservations.
+A denied case is reported as blocked, not successful recovery. An unresolved
+request remains reserved across restart. Operator reconciliation requires
+independent terminal-request and ownership evidence and is not automated by
+this runner. Local injected transports and clocks produce `SYNTHETIC_ONLY`
+results; only the attested Railway transport can produce hosted `VERIFIED`
+receipts. Neither classification establishes production acceptance.
+
+`redis_recovery` uses the existing owned Redis restart to test an otherwise
+eligible Worker diagnosis during an actual dependency outage. It retains the
+original fictional credential and both admission ledgers. Its read-only
+eligibility evidence uses the production ledger parser and Redis time, requires
+a healthy provider, no rejected identity or unresolved reservation, fewer than
+two retained diagnosis attempts, and no diagnosis failure history. A prior
+successful diagnosis must finish its real 30-minute cooldown; insufficient
+lease time blocks the case without changing policy or history. The fixed `I04`
+literal job supplies fresh pending-work evidence without another provider call.
+The stopped Worker arms one bounded subscription to the real Redis lifecycle,
+then invokes the ordinary recommendation-only diagnosis on the first unavailable
+transition. A successful proof requires `coordination_unavailable`, an actionable
+deterministic recommendation, zero Worker/Web provider requests and repairs,
+unchanged ledgers, both roles' Redis recovery, and normal literal-job completion.
+A missed outage, expired incident, unrelated denial, or early recovery blocks
+proof. Cancellation, the existing 35-second operation deadline, and shutdown
+all remove the subscription; the controller never fabricates Redis state.
+
+For same-identity acceptance, run `redis_recovery` after `diagnosis_once` and its
+natural cooldown, then `uncertain_restart` before any credential-rejection case.
+The uncertainty case now keeps the original fictional credential through the
+request, Worker restart, denial and restoration; it neither rotates credentials
+nor resets admission history. `probe_rotation` remains extended rotation evidence
+and cannot substitute for this same-identity sequence. A retained failure,
+uncertain hold, or exhausted budget is a blocked prerequisite, not permission to
+create a fresh ledger or alter its timestamps.
+The recovery cases also inspect the production merged provider-health snapshot
+through a PR1557-only allowlisted projection. Actual failure and later successful
+probe timestamps must retain the historical failure while clearing its effective
+failure category/status and restoring health. Cooldown and hourly-budget denials
+must leave that recovered snapshot unchanged. No fixture sets timestamps or
+provider-health state; this proves older-failure precedence after recovery, not
+arbitrary clock-skew or stale-cache behavior. Provider URLs, credential identities,
+raw errors, and model configuration are excluded from the projection.
+Before recovery, `metadata_recovery` also waits for the actual timeout failure to
+age beyond the runtime-projected, fixed 120-second freshness window. With eight
+healthy idle workers and no queue work, an explicit manual diagnosis must retain
+the deterministic provider recommendation but return `no_actionable_incident`
+without provider requests, repairs, actions, or changes to either Redis ledger.
+The diagnosis ledger must remain absent. Runtime timestamps and the unchanged
+failure snapshot establish age; no fixture advances clocks or rewrites health.
+
+The separate `late_completion` case requires a fresh diagnosis ledger and an
+unused `I03` attempt 1 in another independently owned scope. Its fixed
+`inference_late_completion_next` provider command accepts one validated paid
+request and performs 40 seconds of synthetic server work. Explicit client
+cancellation closes the SDK request without shortening that work. The provider
+receipt records the client-close and work-completion timestamps separately;
+`synthetic_work_completed_after_client_close` with `responseDelivered: false`
+proves synthetic work became terminal after disconnection, not that a response
+reached a closed client or that a real provider completed inference. Release and
+healthy-reset controls cannot accelerate accepted work. Shutdown or lease
+expiry records `synthetic_work_cancelled`, which cannot satisfy this case.
+Arming and accepting work each require more than 45 seconds of lease remaining.
+The production SDK deadlines, retry settings, admission budgets, and durable
+reservation behavior remain unchanged. Core's direct-answer stage retains its
+shorter 12-second deadline; the cancellation proof requires the operator command
+and client close before that deadline. The concurrent-diagnosis verifier refreshes
+the incident before dispatch and reuses terminal command receipts so its control
+round trips do not unnecessarily consume the completion window.
+The real Core direct-answer stage has a 12-second deadline. The case must
+observe both the operator cancellation and client close before that deadline,
+measured from the diagnosis run start, to distinguish cancellation from timeout.
+
+Keep the individual cases and their evidence distinct. A supplemental fresh
+scope can perform the fixed 403 metadata probe, wait the real 60-second probe
+cooldown, rotate to the other fictional identity, and perform a 429 completion
+probe before `late_completion`. A subsequent 503 probe must wait until the
+rolling-hour budget actually admits it. Never reset either ledger to fit a case
+schedule. The late-completion case verifies retained reservation state after
+terminal work and Worker restart; it does not reconcile that reservation. Its
+terminal-work evidence requires a separately reviewed exact-token operator
+procedure rather than the original transport-cancellation receipt reader.
+
+```text
+node scripts/self-heal-inference-preview-acceptance.mjs --manifest <absolute-manifest-path> --evidence-directory <new-absolute-case-directory> --case idle_off
+node scripts/self-heal-inference-preview-acceptance.mjs --manifest <absolute-manifest-path> --evidence-directory <new-absolute-case-directory> --case idle_off --execute --allow-network
+```
+
 Both roles require the existing heavy-proof target, run, exact source and
 private data-identity markers, plus the
 [self-healing profile settings](CONFIGURATION.md#disposable-self-healing-preview-profile).
@@ -1191,9 +1333,10 @@ distinct preview GPT Access token with only `runtime.read` and a loopback
 advertised origin. This is not a platform egress firewall: independently
 attest source, resources and credential isolation before attaching code.
 
-Worker concurrency is two, with the ordinary 5-second heartbeat, 15-second
-lease and 30-second coordinator defaults. Resume recognizes only the exact
-`self-heal-preview-<runId>-slot-1` and `-slot-2` consumer identities.
+Worker concurrency is two for the coordinator profile and eight for PR #1557's
+containment profile, with the ordinary 5-second heartbeat, 15-second lease and
+30-second coordinator defaults. Resume recognizes only the exact
+`self-heal-preview-<runId>-slot-1` through the selected profile's last slot.
 Production service overrides can start the role launcher directly, select
 `/healthz`, or add Notion diagnostic preloads. Record those effective settings
 independently: this preview deliberately retains the maintained integrity
@@ -1295,6 +1438,9 @@ Neither port is exposed publicly. Request authentication precedes body reads;
 process controls allow at most 4 KiB per command, 64 KiB per response, 120
 requests/minute and 2,000 requests per process, with one command in flight.
 The client bounds each request to six seconds and checks returned identities.
+The external operator CLI retains its configured `HTTP_PROXY`, `HTTPS_PROXY`
+and `NO_PROXY` transport settings. These operator settings are not passed to
+the application or fixture children; their existing proxy prohibition remains.
 
 Examples executed only inside the admitted instance:
 
@@ -1399,7 +1545,8 @@ and `expiresAt`. An optional closed `resources` field binds exact services
 safe retries after a service deletion detaches its volume. Populate these bindings
 only from an independently attested owned topology; volume-instance IDs are not
 global volume IDs. Use version 1, owner `pbjustin`, repository
-`pbjustin/Arcanos`, PR 1544, the returned resource IDs and the same fixed lease.
+`pbjustin/Arcanos`, the matching admitted PR number (1544 or 1557), the returned
+resource IDs and the same fixed lease.
 It rejects canonical/Live PR IDs, foreign resources and incomplete inventory;
 an expired receipt retains authority to delete its same owned target.
 
@@ -1432,6 +1579,17 @@ and do not place Railway management credentials in the application. It checks
 ownership before arming, waits only until the original deadline, rechecks the
 complete target, deletes the exact owned services first, verifies their absence,
 then deletes only the attested global volume IDs and verifies resource absence.
+Railway can retain a detached volume for 48 hours after accepting its deletion.
+The cleanup client reads each volume instance's `deletedAt`,
+`isPendingDeletion`, and `state`; `READY` alone does not prove deletion. When
+all remaining volumes are exact receipt-bound, detached, and explicitly queued,
+it returns `VOLUMES_PENDING_DELETION` with their IDs and deletion timestamps.
+This terminal receipt keeps `resourceAbsenceVerified: false`, leaves the project
+undeleted, and does not claim storage charges have ended. A later cleanup or
+watchdog invocation skips already queued volumes instead of restarting their
+retention period. Missing, contradictory, foreign, or still-attached pending
+volume evidence fails closed. After physical volume absence is independently
+observed, the same receipt can authorize the remaining project retirement.
 Only after services, service instances, global volumes, volume instances and
 buckets are empty does it schedule project deletion. Each absence wait is bounded
 to 60 seconds. Railway can retain scheduled project metadata for 48 hours;

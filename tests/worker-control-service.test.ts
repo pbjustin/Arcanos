@@ -58,6 +58,27 @@ const {
   requeueFailedWorkerJob
 } = await import('../src/services/workerControlService.js');
 
+function mixedHeartbeatReport(currentFailure: 'dependency' | 'watchdog' | null = null, allStale = false, stalledRunning = 0, pending = 1) {
+  const now = '2026-10-01T12:00:00.000Z';
+  const old = '2026-10-01T10:00:00.000Z';
+  const worker = (workerId: string, stale: boolean, failure: 'dependency' | 'watchdog' | null) => ({
+    workerId, workerType: 'async_queue', healthStatus: failure ? 'unhealthy' : 'healthy',
+    currentJobId: null, lastError: null, startedAt: old,
+    lastHeartbeatAt: stale ? old : now, updatedAt: stale ? old : now,
+    snapshot: { dispatcherStarted: true, activeListeners: 1,
+      claimAcceptance: failure === 'dependency' ? 'dependency_failure' : 'accepting',
+      lastActivityAt: stale ? old : now,
+      watchdog: { triggered: failure === 'watchdog', restartRecommended: Boolean(failure),
+        reason: failure === 'watchdog' ? 'Worker watchdog triggered.' : null, idleThresholdMs: 120000 } }
+  });
+  return { timestamp: now, overallStatus: 'unhealthy', alerts: ['Retained worker failure.'],
+    queueSummary: { pending, running: 0, stalledRunning, total: pending + stalledRunning,
+      oldestPendingJobAgeMs: 0, failureBreakdown: {}, recentFailureReasons: [] },
+    workers: [worker('retained-dependency', true, 'dependency'), worker('retained-watchdog', true, 'watchdog'),
+      ...Array.from({ length: 8 }, (_, index) => worker(`current-slot-${index + 1}`, allStale, index === 0 ? currentFailure : null))],
+    settings: { staleAfterMs: 60000, watchdogIdleMs: 120000 } };
+}
+
 describe('workerControlService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -83,6 +104,79 @@ describe('workerControlService', () => {
     jest.useRealTimers();
   });
 
+  it.each([0, 1])('keeps stale failure rows observable without degrading a current fleet (pending: %s)', async pending => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-10-01T12:00:00.000Z'));
+    getWorkerAutonomyHealthReportMock.mockResolvedValue(mixedHeartbeatReport(null, false, 0, pending));
+
+    const health = await getWorkerControlHealth();
+
+    expect(health.overallStatus).toBe('healthy');
+    expect(health.alerts).toEqual([]);
+    expect(health.operationalHealth).toMatchObject({ degradedWorkerIds: [], unhealthyWorkerIds: [],
+      staleWorkers: 2, staleWorkerIds: ['retained-dependency', 'retained-watchdog'] });
+    expect(health.workers).toHaveLength(10);
+    expect(health.workers.slice(0, 2)).toEqual([
+      expect.objectContaining({ workerId: 'retained-dependency', stale: true, claimAcceptance: 'dependency_failure' }),
+      expect.objectContaining({ workerId: 'retained-watchdog', stale: true, watchdog: expect.objectContaining({ triggered: true }) })
+    ]);
+    expect(health.diagnosticAlerts).toEqual(['Retained worker failure.']);
+  });
+
+  it.each(['dependency', 'watchdog'] as const)('retains a fresh %s failure beside healthy current peers', async (failure) => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-10-01T12:00:00.000Z'));
+    getWorkerAutonomyHealthReportMock.mockResolvedValue(mixedHeartbeatReport(failure));
+    const health = await getWorkerControlHealth();
+    expect(health.overallStatus).toBe('unhealthy');
+    expect(health.operationalHealth.unhealthyWorkerIds).toEqual(['current-slot-1']);
+  });
+
+  it.each([false, true])('requires aged pending work for idle-slot recommendations (recorded recommendation: %s)', async recordedRecommendation => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-10-01T12:00:00.000Z'));
+    for (const oldestPendingJobAgeMs of [0, 1000, 30000, 119999, 120000]) {
+      const report = mixedHeartbeatReport();
+      report.queueSummary.oldestPendingJobAgeMs = oldestPendingJobAgeMs;
+      report.workers = report.workers.slice(2).map(worker => ({ ...worker,
+        snapshot: { dispatcherStarted: true, activeListeners: 1, claimAcceptance: 'accepting',
+          lastActivityAt: '2026-10-01T11:00:00.000Z',
+          ...(recordedRecommendation ? { watchdog: { triggered: false, restartRecommended: true,
+            reason: 'No recent completed work.', idleThresholdMs: 120000 } } : {}) }
+      })) as typeof report.workers;
+      getWorkerAutonomyHealthReportMock.mockResolvedValue(report);
+
+      const health = await getWorkerControlHealth();
+      const agedBacklog = oldestPendingJobAgeMs >= 120000;
+      expect(health.workers).toHaveLength(8);
+      for (const worker of health.workers) {
+        expect(worker.stale).toBe(false);
+        expect(worker.operationalStatus).toBe(agedBacklog ? 'degraded' : 'healthy');
+        expect(worker.watchdog.restartRecommended).toBe(recordedRecommendation || agedBacklog);
+      }
+      if (oldestPendingJobAgeMs <= 30000) {
+        expect(health.overallStatus).toBe('healthy');
+        expect(health.alerts).toEqual([]);
+      }
+    }
+  });
+
+  it('preserves immediate dispatcher failure with a newly pending job', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-10-01T12:00:00.000Z'));
+    const report = mixedHeartbeatReport();
+    report.workers = report.workers.slice(2);
+    report.workers[0]!.snapshot.dispatcherStarted = false;
+    getWorkerAutonomyHealthReportMock.mockResolvedValue(report);
+    const health = await getWorkerControlHealth();
+    expect(health.queueSummary.oldestPendingJobAgeMs).toBe(0);
+    expect(health.operationalHealth.unhealthyWorkerIds).toEqual(['current-slot-1']);
+  });
+
+  it.each([[true, 0], [false, 1]])('retains unavailable fleets and stalled queues (all stale: %s, stalled: %s)', async (allStale, stalledRunning) => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-10-01T12:00:00.000Z'));
+    getWorkerAutonomyHealthReportMock.mockResolvedValue(mixedHeartbeatReport(null, allStale as boolean, stalledRunning as number));
+    const health = await getWorkerControlHealth();
+    expect(health.overallStatus).not.toBe('healthy');
+    expect(health.alerts.length).toBeGreaterThan(0);
+  });
+
   it('hides local-agent jobs from generic worker detail inspection', async () => {
     getJobByIdMock.mockResolvedValue({
       id: 'local-agent-job',
@@ -94,6 +188,117 @@ describe('workerControlService', () => {
     });
 
     await expect(getWorkerJobDetailById('local-agent-job')).resolves.toBeNull();
+  });
+
+  it.each([
+    ['healthy idle', 0, 0, 'healthy', 'healthy', false, 0],
+    ['inactive with fresh pending work', 1, 0, 'healthy', 'healthy', false, 0],
+    ['inactive with aged pending work', 1, 0, 'healthy', 'degraded', true, 120000],
+    ['inactive with stalled work', 0, 1, 'healthy', 'unhealthy', true, 0],
+    ['offline with fresh pending work', 1, 0, 'offline', 'unhealthy', false, 0]
+  ])('classifies eight workers correctly when %s', async (_label, pending, stalledRunning, healthStatus, expectedStatus, restartRecommended, oldestPendingJobAgeMs) => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-10-17T18:40:00.000Z'));
+    getWorkerAutonomyHealthReportMock.mockResolvedValue({
+      timestamp: new Date().toISOString(),
+      overallStatus: healthStatus,
+      alerts: [],
+      queueSummary: {
+        pending, running: stalledRunning, completed: 0, failed: 0, total: pending + stalledRunning,
+        delayed: 0, stalledRunning, oldestPendingJobAgeMs,
+        failureBreakdown: {}, recentFailureReasons: []
+      },
+      workers: Array.from({ length: 8 }, (_, index) => ({
+        workerId: `async-queue-slot-${index + 1}`,
+        workerType: 'async_queue',
+        healthStatus,
+        currentJobId: null,
+        lastError: null,
+        startedAt: '2026-10-17T18:00:00.000Z',
+        lastHeartbeatAt: '2026-10-17T18:40:00.000Z',
+        lastInspectorRunAt: '2026-10-17T18:40:00.000Z',
+        updatedAt: '2026-10-17T18:40:00.000Z',
+        // Older snapshots may omit the explicit watchdog. The fallback must
+        // distinguish a quiet queue from work which is not being processed.
+        snapshot: {
+          dispatcherStarted: true,
+          activeListeners: 1,
+          claimAcceptance: 'accepting',
+          lastActivityAt: '2026-10-17T18:10:00.000Z',
+          lastProcessedJobAt: null
+        }
+      })),
+      settings: getWorkerAutonomySettingsMock()
+    });
+
+    const health = await getWorkerControlHealth();
+
+    expect(health.overallStatus).toBe(expectedStatus);
+    expect(health.workers).toHaveLength(8);
+    for (const worker of health.workers) {
+      expect(worker.watchdog.restartRecommended).toBe(restartRecommended);
+      expect(worker.stale).toBe(false);
+      expect(worker.inactivityMs).toBe(30 * 60_000);
+    }
+    if (pending === 0 && stalledRunning === 0) {
+      expect(health.alerts).toEqual([]);
+      expect(health.operationalHealth.degradedWorkerIds).toEqual([]);
+      expect(health.workers.every((worker) => worker.operationalStatus === 'healthy')).toBe(true);
+    }
+  });
+
+  it.each([false, true])('keeps seven idle slots healthy while one long job runs (recorded inactivity recommendation: %s)', async (recordedRecommendation) => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-10-17T18:40:00.000Z'));
+    getWorkerAutonomyHealthReportMock.mockResolvedValue({
+      timestamp: new Date().toISOString(),
+      overallStatus: 'healthy',
+      alerts: [],
+      queueSummary: {
+        pending: 0, running: 1, completed: 0, failed: 0, total: 1,
+        delayed: 0, stalledRunning: 0, oldestPendingJobAgeMs: 0,
+        failureBreakdown: {}, recentFailureReasons: []
+      },
+      workers: Array.from({ length: 8 }, (_, index) => ({
+        workerId: `async-queue-slot-${index + 1}`,
+        workerType: 'async_queue',
+        healthStatus: 'healthy',
+        currentJobId: index === 0 ? 'long-running-job' : null,
+        lastError: null,
+        startedAt: '2026-10-17T18:00:00.000Z',
+        lastHeartbeatAt: new Date().toISOString(),
+        lastInspectorRunAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        snapshot: {
+          dispatcherStarted: true,
+          activeListeners: 1,
+          claimAcceptance: 'accepting',
+          lastActivityAt: '2026-10-17T18:10:00.000Z',
+          lastProcessedJobAt: null,
+          ...(recordedRecommendation ? {
+            watchdog: {
+              triggered: false,
+              reason: index === 0 ? null : 'No recent completed work.',
+              restartRecommended: index !== 0,
+              idleThresholdMs: 120000
+            }
+          } : {})
+        }
+      })),
+      settings: getWorkerAutonomySettingsMock()
+    });
+
+    const health = await getWorkerControlHealth();
+
+    expect(health.queueSummary).toMatchObject({ pending: 0, running: 1, stalledRunning: 0 });
+    expect(health.overallStatus).toBe('healthy');
+    expect(health.alerts).toEqual([]);
+    expect(health.operationalHealth.degradedWorkerIds).toEqual([]);
+    expect(health.operationalHealth.unhealthyWorkerIds).toEqual([]);
+    expect(health.workers).toHaveLength(8);
+    expect(health.workers[0]).toMatchObject({ currentJobId: 'long-running-job', operationalStatus: 'healthy' });
+    for (const worker of health.workers.slice(1)) {
+      expect(worker).toMatchObject({ currentJobId: null, operationalStatus: 'healthy', stale: false });
+      expect(worker.watchdog.restartRecommended).toBe(recordedRecommendation);
+    }
   });
 
   it('reports healthy operational status while preserving historical failure debt', async () => {
@@ -219,7 +424,10 @@ describe('workerControlService', () => {
     ]);
   });
 
-  it('marks a worker unhealthy when queue work is active but the dispatcher is inactive', async () => {
+  it.each([
+    ['pending', 1, 0],
+    ['running', 0, 1]
+  ])('marks a worker unhealthy when %s queue work is active but the dispatcher is inactive', async (_label, pending, running) => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date('2026-04-28T20:00:30.000Z'));
 
@@ -228,8 +436,8 @@ describe('workerControlService', () => {
       overallStatus: 'healthy',
       alerts: [],
       queueSummary: {
-        pending: 1,
-        running: 0,
+        pending,
+        running,
         completed: 0,
         failed: 0,
         total: 1,

@@ -43,6 +43,11 @@ import {
 import { resolvePredictiveHealingLoopIntervalMs } from './runtimeConfig.js';
 import { recordSelfHealEvent } from './selfHealTelemetry.js';
 import {
+  reserveSelfHealingInference,
+  completeSelfHealingInference
+} from './selfHealingInferenceAdmission.js';
+import { createSelfHealingInferenceClient } from './selfHealingInferenceClient.js';
+import {
   buildWorkerRepairActuatorStatus,
   executeWorkerRepairActuator,
   type WorkerRepairActuatorStatus
@@ -103,6 +108,9 @@ export interface PredictiveHealingObservation {
       workerId: string;
       healthStatus: string;
       currentJobId: string | null;
+      stale?: boolean;
+      claimAcceptance?: WorkerControlHealthResponse['workers'][number]['claimAcceptance'];
+      lastHeartbeatAt?: string | null;
       lastActivityAt?: string | null;
       lastProcessedJobAt?: string | null;
       inactivityMs?: number | null;
@@ -184,6 +192,9 @@ export interface PredictiveHealingSimulationInput {
       workerId: string;
       healthStatus: string;
       currentJobId: string | null;
+      stale?: boolean;
+      claimAcceptance?: WorkerControlHealthResponse['workers'][number]['claimAcceptance'];
+      lastHeartbeatAt?: string | null;
       lastActivityAt?: string | null;
       lastProcessedJobAt?: string | null;
       inactivityMs?: number | null;
@@ -478,6 +489,10 @@ const DEFAULT_SCALE_UP_STEP = 1;
 const DEFAULT_AI_IDLE_COOLDOWN_MS = 6 * 60 * 60_000;
 const DEFAULT_AI_ACTIVE_COOLDOWN_MS = 30 * 60_000;
 const DEFAULT_AI_FAILURE_COOLDOWN_MS = 6 * 60 * 60_000;
+const MAX_AI_DIAGNOSIS_COOLDOWN_MS = 30 * 24 * 60 * 60_000;
+// Explicit operator probes retain their own short recovery window; the shared
+// rolling budget and durable in-flight reservation still bound every attempt.
+const PROVIDER_PROBE_COOLDOWN_MS = 60_000;
 const REDUCED_LATENCY_MODE_TOKEN_LIMIT = 96;
 const SINGLE_UNHEALTHY_WORKER_CONFIDENCE = 0.86;
 const LATENCY_RISING_BASE_CONFIDENCE = 0.68;
@@ -515,21 +530,8 @@ type PredictiveHealingGlobal = typeof globalThis & {
   [GLOBAL_KEY]?: PredictiveHealingState;
 };
 
-type PredictiveHealingAiCooldownReason =
-  | 'idle_window_backoff'
-  | 'active_incident_backoff'
-  | 'provider_failure_backoff';
-
-type PredictiveHealingAiCooldownWindow = {
-  reason: PredictiveHealingAiCooldownReason;
-  cooldownMs: number;
-  remainingMs: number;
-  cooldownUntil: string;
-  liveLoadSignal: boolean;
-};
-
 function toIsoTimestamp(value: number | null | undefined): string | null {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0 || value > 8_640_000_000_000_000) {
     return null;
   }
 
@@ -559,48 +561,55 @@ function cloneAiProviderStatus(
   };
 }
 
+function providerCircuitBlocksInference(health: ReturnType<typeof getOpenAIServiceHealth>): boolean {
+  if (String(health.circuitBreaker.state).toUpperCase() !== 'OPEN') return false;
+  if (!Number.isFinite(health.circuitBreaker.lastFailureTime) || health.circuitBreaker.lastFailureTime <= 0
+    || !(health.circuitBreaker.constants?.CIRCUIT_BREAKER_RESET_TIMEOUT_MS > 0)) return true;
+  const retryAt = readIsoTimestampMs(resolveCircuitBreakerNextRetryAt(health));
+  // Merely reading a breaker cannot advance it to HALF_OPEN. Once its window
+  // expires, shared admission permits one call through the existing breaker.
+  return retryAt === null || !Number.isFinite(Date.now()) || Date.now() < retryAt;
+}
+
 function buildAiProviderStatusSnapshot(
   health: ReturnType<typeof getOpenAIServiceHealth>,
   previous?: Partial<PredictiveHealingAIProviderStatusSnapshot>
 ): PredictiveHealingAIProviderStatusSnapshot {
   const providerRuntime = health.providerRuntime;
+  const lastSuccessAt = pickLatestTimestamp([providerRuntime.lastSuccessAt, previous?.lastSuccessAt]);
+  const lastFailureAt = pickLatestTimestamp([providerRuntime.lastFailureAt, previous?.lastFailureAt]);
+  const providerFailureMs = readIsoTimestampMs(providerRuntime.lastFailureAt);
+  const previousFailureMs = readIsoTimestampMs(previous?.lastFailureAt);
+  const latestFailure = previous && (
+    providerFailureMs === null || (previousFailureMs !== null && previousFailureMs >= providerFailureMs)
+  ) ? previous : providerRuntime;
+  const failureCategory = latestFailure.lastFailureCategory as PredictiveHealingAIProviderFailureCategory | null;
+  const lastSuccessMs = readIsoTimestampMs(lastSuccessAt);
+  const lastFailureMs = readIsoTimestampMs(lastFailureAt);
+  // A later successful completion/probe is recovery evidence. Retain historical
+  // failure time for audit, but never resurrect its stale failure classification.
+  const recovered = lastSuccessMs !== null && (
+    lastFailureMs !== null ? lastSuccessMs > lastFailureMs : !failureCategory
+  );
   return {
     configured: Boolean(health.apiKey.configured),
     clientInitialized: Boolean(health.client.initialized),
-    reachable:
-      previous?.reachable ??
-      (providerRuntime.lastSuccessAt
-        ? true
-        : providerRuntime.lastFailureCategory === 'network'
-          ? false
-          : providerRuntime.lastFailureCategory === 'authentication'
-            ? true
-            : null),
-    authenticated:
-      previous?.authenticated ??
-      (providerRuntime.lastSuccessAt
-        ? true
-        : providerRuntime.lastFailureCategory === 'authentication'
-          ? false
-          : null),
-    completionHealthy:
-      previous?.completionHealthy ??
-      (providerRuntime.lastSuccessAt
-        ? true
-        : providerRuntime.lastFailureAt
-          ? false
-          : null),
+    reachable: recovered ? true : failureCategory === 'network' ? false
+      : failureCategory === 'authentication' ? true : previous?.reachable ?? null,
+    authenticated: recovered ? true : failureCategory === 'authentication' ? false
+      : previous?.authenticated ?? null,
+    completionHealthy: recovered ? true : lastFailureAt || failureCategory ? false
+      : previous?.completionHealthy ?? null,
     model: previous?.model ?? health.client.model,
     baseUrl: health.client.baseURL ?? previous?.baseUrl ?? null,
-    lastAttemptAt: providerRuntime.lastAttemptAt ?? previous?.lastAttemptAt ?? null,
-    lastSuccessAt: providerRuntime.lastSuccessAt ?? previous?.lastSuccessAt ?? null,
-    lastFailureAt: providerRuntime.lastFailureAt ?? previous?.lastFailureAt ?? null,
-    lastFailureReason: providerRuntime.lastFailureReason ?? previous?.lastFailureReason ?? null,
-    lastFailureCategory:
-      (providerRuntime.lastFailureCategory as PredictiveHealingAIProviderFailureCategory | null) ??
-      previous?.lastFailureCategory ??
-      null,
-    lastFailureStatus: providerRuntime.lastFailureStatus ?? previous?.lastFailureStatus ?? null,
+    // Provider probes describe provider health, not diagnosis admission. Keep
+    // telemetry monotonic too; diagnosis cooldowns live in the shared ledger.
+    lastAttemptAt: pickLatestTimestamp([providerRuntime.lastAttemptAt, previous?.lastAttemptAt]),
+    lastSuccessAt,
+    lastFailureAt,
+    lastFailureReason: recovered ? null : latestFailure.lastFailureReason ?? null,
+    lastFailureCategory: recovered ? null : failureCategory ?? null,
+    lastFailureStatus: recovered ? null : latestFailure.lastFailureStatus ?? null,
     circuitBreakerState: health.circuitBreaker.state,
     circuitBreakerHealthy: Boolean(health.circuitBreaker.healthy),
     circuitBreakerFailures:
@@ -798,11 +807,32 @@ function classifyProviderFailure(error: unknown): {
 
 function updateAiProviderState(
   state: PredictiveHealingState,
+  health: ReturnType<typeof getOpenAIServiceHealth>,
   updater: (current: PredictiveHealingAIProviderStatusSnapshot) => PredictiveHealingAIProviderStatusSnapshot
 ): PredictiveHealingAIProviderStatusSnapshot {
-  const nextSnapshot = updater(buildAiProviderStatusSnapshot(getOpenAIServiceHealth(), state.aiProvider));
+  const nextSnapshot = updater(buildAiProviderStatusSnapshot(health, state.aiProvider));
   state.aiProvider = cloneAiProviderStatus(nextSnapshot);
   return cloneAiProviderStatus(state.aiProvider);
+}
+
+/** A failed transport can have spent tokens even after its local promise settles. */
+function resolveInferenceFailureOutcome(
+  failure: ReturnType<typeof classifyProviderFailure>,
+  bounded: ReturnType<typeof createSelfHealingInferenceClient>
+): 'authentication_failure' | 'uncertain' | 'failure' {
+  // A timed-out Core continuation can still run. Revoke this facade before
+  // releasing an unused reservation so a late dispatch cannot spend its budget.
+  bounded.close();
+  if (!bounded.wasRequested()) {
+    return failure.category === 'authentication' ? 'authentication_failure' : 'failure';
+  }
+  const transportFailure = bounded.getFailure();
+  const status = extractErrorStatus(transportFailure);
+  if (bounded.isPending() || failure.category === 'timeout'
+    || (transportFailure !== null && !(status !== null && status >= 400 && status < 500))) {
+    return 'uncertain';
+  }
+  return failure.category === 'authentication' ? 'authentication_failure' : 'failure';
 }
 
 function recordCircuitBreakerTransitionEvents(params: {
@@ -1069,11 +1099,16 @@ function buildObservationFromSources(params: {
     workerHealthAlerts.push(`worker_health_error:${params.workerHealthError}`);
   }
 
-  const workers = Array.isArray(params.workerHealth?.workers)
+  const observedWorkers = Array.isArray(params.workerHealth?.workers)
     ? params.workerHealth!.workers.map((worker) => ({
         workerId: worker.workerId,
-        healthStatus: worker.healthStatus,
+        // Operational health excludes retained terminal failure debt. Raw
+        // snapshot status alone must not make a healthy idle slot repairable.
+        healthStatus: worker.operationalStatus ?? worker.healthStatus,
         currentJobId: worker.currentJobId ?? null,
+        stale: worker.stale === true,
+        claimAcceptance: worker.claimAcceptance ?? null,
+        lastHeartbeatAt: worker.lastHeartbeatAt ?? null,
         lastActivityAt: worker.lastActivityAt ?? null,
         lastProcessedJobAt: worker.lastProcessedJobAt ?? null,
         inactivityMs: worker.inactivityMs ?? null,
@@ -1087,6 +1122,11 @@ function buildObservationFromSources(params: {
           : undefined
       }))
     : [];
+
+  // Control health retains stale identities for inspection. They do not prove
+  // current dependency or inactivity failures while fresh workers are present.
+  const currentWorkers = observedWorkers.filter((worker) => !worker.stale);
+  const workers = currentWorkers.length > 0 ? currentWorkers : observedWorkers;
 
   const degradedWorkerIds = workers
     .filter((worker) => worker.healthStatus === 'degraded')
@@ -1102,6 +1142,7 @@ function buildObservationFromSources(params: {
     requestCount: params.requestWindow.requestCount,
     pending: params.workerHealth?.queueSummary?.pending ?? 0,
     stalledRunning: params.workerHealth?.queueSummary?.stalledRunning ?? 0,
+    oldestPendingJobAgeMs: params.workerHealth?.queueSummary?.oldestPendingJobAgeMs ?? 0,
     idleThresholdMs: params.workerHealth?.settings?.watchdogIdleMs ?? null
   });
 
@@ -1193,6 +1234,9 @@ function applySimulation(
             workerId: worker.workerId,
             healthStatus: worker.healthStatus,
             currentJobId: worker.currentJobId ?? null,
+            stale: worker.stale === true,
+            claimAcceptance: worker.claimAcceptance ?? null,
+            lastHeartbeatAt: worker.lastHeartbeatAt ?? null,
             lastActivityAt: worker.lastActivityAt ?? null,
             lastProcessedJobAt: worker.lastProcessedJobAt ?? null,
             inactivityMs: worker.inactivityMs ?? null,
@@ -1536,40 +1580,6 @@ function buildFallbackDecision(
   fallbackReason: string,
   metadata: Record<string, unknown> = {}
 ): PredictiveHealingDecision {
-  const failureCategory =
-    typeof metadata.aiProviderFailureCategory === 'string' ? metadata.aiProviderFailureCategory : null;
-  const canPromoteProviderReinit =
-    decision.action === 'none' &&
-    failureCategory === 'authentication' &&
-    (
-      metadata.aiProviderConfigured === true ||
-      typeof metadata.aiProviderLastAttemptAt === 'string' ||
-      typeof metadata.aiProviderLastFailureAt === 'string'
-    );
-
-  if (canPromoteProviderReinit) {
-    return {
-      ...decision,
-      advisor: 'rules_fallback_v1',
-      action: 'reinitialize_ai_provider',
-      target: 'ai_provider',
-      reason: 'AI provider authentication failed during predictive diagnosis; forcing a provider reload so runtime recovery can resume when credentials change.',
-      confidence: Math.max(decision.confidence, 0.94),
-      matchedRule: 'ai_provider_authentication_reinitialize',
-      safeToExecute: true,
-      suggestedMode: 'auto_execute',
-      details: {
-        ...decision.details,
-        aiPath: PREDICTIVE_AI_MODULE,
-        aiSourceEndpoint: PREDICTIVE_AI_SOURCE_ENDPOINT,
-        aiUsed: false,
-        aiFallbackReason: fallbackReason,
-        aiFallbackPromotedAction: 'reinitialize_ai_provider',
-        ...metadata
-      }
-    };
-  }
-
   return {
     ...decision,
     advisor: 'rules_fallback_v1',
@@ -1697,22 +1707,80 @@ async function resolveAiDecision(params: {
   rulesDecision: PredictiveHealingDecision;
   candidates: Array<Omit<PredictiveHealingCandidate, 'priority'>>;
   minConfidence: number;
+  staleAfterMs: number;
   config: ReturnType<typeof getConfig>;
+  inferenceAuthorization?: 'automatic' | 'manual' | 'disabled';
+  signal?: AbortSignal;
 }): Promise<PredictiveHealingDecision> {
   const state = getState();
   const actuator = buildWorkerRepairActuatorStatus();
   const expectedModel = getFallbackModel();
   const preCallHealth = getOpenAIServiceHealth();
-  const providerStatusBeforeAttempt = updateAiProviderState(state, (current) => ({
-    ...buildAiProviderStatusSnapshot(preCallHealth, current),
+  const providerStatusBeforeAttempt = updateAiProviderState(state, preCallHealth, (current) => ({
+    ...current,
     model: expectedModel
   }));
-  const cooldownWindow = resolvePredictiveHealingAiCooldownWindow({
-    observation: params.observation,
-    providerStatus: providerStatusBeforeAttempt,
-    config: params.config
+  const providerFailureMs = readIsoTimestampMs(providerStatusBeforeAttempt.lastFailureAt);
+  const providerFailureAgeMs = providerFailureMs === null ? null : Date.now() - providerFailureMs;
+  const currentProviderFailure = providerFailureAgeMs !== null && Number.isFinite(providerFailureAgeMs)
+    && Number.isFinite(params.staleAfterMs) && params.staleAfterMs > 0
+    && providerFailureAgeMs >= 0 && providerFailureAgeMs <= params.staleAfterMs;
+  // Retained provider history still supports deterministic recovery advice. A
+  // fresh observation or denied probe cannot renew its paid-diagnosis eligibility.
+  const currentIncident = params.candidates.some(candidate =>
+    candidate.action !== 'reinitialize_ai_provider' || currentProviderFailure
+  );
+  const skipReason = params.signal?.aborted
+    ? 'coordinator_cancelled'
+    : params.inferenceAuthorization === 'disabled'
+      ? 'inference_not_requested'
+      : params.config.predictiveHealingEnabled !== true && params.inferenceAuthorization !== 'manual'
+        ? 'predictive_healing_disabled'
+        : !params.trends.dataFresh || !currentIncident || params.rulesDecision.action === 'none'
+          ? 'no_actionable_incident'
+          : !preCallHealth.apiKey.configured || !params.config.openaiApiKey?.trim()
+            ? 'missing_credential'
+            : preCallHealth.providerRuntime.authenticationBlocked === true
+              ? 'provider_authentication_blocked'
+              : providerCircuitBlocksInference(preCallHealth)
+                ? 'provider_circuit_open'
+                : null;
+  if (skipReason) {
+    recordSelfHealEvent({
+      kind: 'fallback', source: params.source, trigger: 'predictive_ai',
+      reason: skipReason, actionTaken: params.rulesDecision.action,
+      healedComponent: params.rulesDecision.target,
+      details: { aiUsed: false, inferenceAuthorization: params.inferenceAuthorization ?? 'automatic' }
+    });
+    logger.info('self_heal.ai_diagnosis.skipped', {
+      module: 'predictive-healing', source: params.source, reason: skipReason,
+      inferenceAuthorization: params.inferenceAuthorization ?? 'automatic'
+    });
+    return buildFallbackDecision(params.rulesDecision, skipReason, {
+      aiEligibilityReason: skipReason,
+      aiProviderFailureCategory: providerStatusBeforeAttempt.lastFailureCategory,
+      aiProviderConfigured: providerStatusBeforeAttempt.configured
+    });
+  }
+  const liveLoadSignal = hasLivePredictiveHealingLoad(params.observation);
+  const cooldownMs = resolveDiagnosisCooldownMs(params.config, liveLoadSignal);
+  const admittedCredential = params.config.openaiApiKey?.trim() ?? '';
+  const admission = await reserveSelfHealingInference({
+    credential: admittedCredential,
+    cooldownMs,
+    failureCooldownMs: resolveDiagnosisCooldownMs(params.config, liveLoadSignal, true)
   });
-  if (cooldownWindow) {
+  if (!admission.allowed) {
+    const cooldownWindow = {
+      reason: admission.reason === 'authentication_blocked' || admission.failureCooldownActive ? 'provider_failure_backoff'
+        : admission.reason === 'cooldown' ? (liveLoadSignal ? 'active_incident_backoff' : 'idle_window_backoff')
+          : admission.reason,
+      cooldownMs: admission.failureCooldownActive
+        ? resolveDiagnosisCooldownMs(params.config, liveLoadSignal, true) : cooldownMs,
+      remainingMs: admission.retryAt ? Math.max(0, Date.parse(admission.retryAt) - Date.now()) : null,
+      cooldownUntil: admission.retryAt,
+      liveLoadSignal
+    };
     const fallbackReason = `AI diagnosis cooldown active (${cooldownWindow.reason}) until ${cooldownWindow.cooldownUntil}.`;
     recordSelfHealEvent({
       kind: 'fallback',
@@ -1763,97 +1831,66 @@ async function resolveAiDecision(params: {
     });
   }
 
-  const attemptAt = recordAiProviderCallAttempt({
-    source: params.source,
-    reason: 'Self-heal requested an AI provider completion for predictive diagnosis.',
-    model: expectedModel,
-    actuator
-  });
-
-  updateAiProviderState(state, (current) => ({
-    ...buildAiProviderStatusSnapshot(preCallHealth, current),
-    model: expectedModel,
-    lastAttemptAt: attemptAt
-  }));
-
-  logger.info('self_heal.ai_diagnosis.requested', {
-    module: 'predictive-healing',
-    source: params.source,
-    aiPath: PREDICTIVE_AI_MODULE,
-    sourceEndpoint: PREDICTIVE_AI_SOURCE_ENDPOINT,
-    candidateCount: params.candidates.length,
-    rulesAction: params.rulesDecision.action,
-    rulesConfidence: params.rulesDecision.confidence,
-    actuatorMode: actuator.mode,
-    actuatorPath: actuator.path,
-    actuatorBaseUrl: actuator.baseUrl
-  });
-
-  const { client } = getOpenAIClientOrAdapter();
+  const attemptAt = admission.reservation.attemptedAt;
+  if ((getConfig().openaiApiKey?.trim() ?? '') !== admittedCredential) {
+    await completeSelfHealingInference(admission.reservation, { outcome: 'failure' });
+    return buildFallbackDecision(params.rulesDecision, 'inference_credential_changed');
+  }
+  let client: ReturnType<typeof getOpenAIClientOrAdapter>['client'];
+  try {
+    ({ client } = getOpenAIClientOrAdapter());
+  } catch {
+    await completeSelfHealingInference(admission.reservation, { outcome: 'failure' });
+    return buildFallbackDecision(params.rulesDecision, 'openai_client_unavailable', {
+      aiEligibilityReason: 'missing_client', aiProviderConfigured: providerStatusBeforeAttempt.configured,
+      aiProviderFailureCategory: 'missing_client'
+    });
+  }
   if (!client) {
-    const fallbackFailure = classifyProviderFailure(new Error('openai_client_unavailable'));
-    const providerStatus = updateAiProviderState(state, (current) => ({
-      ...buildAiProviderStatusSnapshot(getOpenAIServiceHealth(), current),
+    await completeSelfHealingInference(admission.reservation, { outcome: 'failure' });
+    return buildFallbackDecision(params.rulesDecision, 'openai_client_unavailable', {
+      aiEligibilityReason: 'missing_client', aiProviderConfigured: providerStatusBeforeAttempt.configured,
+      aiProviderFailureCategory: 'missing_client'
+    });
+  }
+  const boundedInference = createSelfHealingInferenceClient(client);
+  try {
+    // Shared admission can await Redis; cancellation or a disabled policy must
+    // still prevent a provider request when it returns.
+    if (params.signal?.aborted ||
+      (params.inferenceAuthorization !== 'manual' && getConfig().predictiveHealingEnabled !== true)) {
+      await completeSelfHealingInference(admission.reservation, { outcome: 'failure' });
+      return buildFallbackDecision(params.rulesDecision, 'inference_authorization_changed');
+    }
+    recordAiProviderCallAttempt({
+      source: params.source,
+      reason: 'Self-heal requested an AI provider completion for predictive diagnosis.',
       model: expectedModel,
-      lastAttemptAt: attemptAt,
-      reachable: fallbackFailure.reachable,
-      authenticated: fallbackFailure.authenticated,
-      completionHealthy: fallbackFailure.completionHealthy,
-      lastFailureAt: attemptAt,
-      lastFailureReason: fallbackFailure.reason,
-      lastFailureCategory: fallbackFailure.category,
-      lastFailureStatus: fallbackFailure.status
+      actuator
+    });
+
+    // Admission awaited Redis; include provider changes observed during that wait.
+    updateAiProviderState(state, getOpenAIServiceHealth(), (current) => ({
+      ...current,
+      model: expectedModel,
+      lastAttemptAt: attemptAt
     }));
 
-    const fallbackReason = fallbackFailure.reason;
-    recordAiProviderCallFailure({
-      source: params.source,
-      timestamp: attemptAt,
-      model: expectedModel,
-      classification: fallbackFailure
-    });
-    recordSelfHealEvent({
-      kind: 'fallback',
-      source: params.source,
-      trigger: 'predictive_ai',
-      reason: fallbackReason,
-      actionTaken: params.rulesDecision.action,
-      healedComponent: params.rulesDecision.target
-    });
-    logger.warn('self_heal.ai_diagnosis.fallback', {
+    logger.info('self_heal.ai_diagnosis.requested', {
       module: 'predictive-healing',
       source: params.source,
       aiPath: PREDICTIVE_AI_MODULE,
       sourceEndpoint: PREDICTIVE_AI_SOURCE_ENDPOINT,
-      fallbackReason,
-      fallbackAdvisor: 'rules_fallback_v1',
-      aiProviderConfigured: providerStatus.configured,
-      aiProviderReachable: providerStatus.reachable,
-      aiProviderAuthenticated: providerStatus.authenticated,
-      circuitBreakerState: providerStatus.circuitBreakerState
-    });
-    return buildFallbackDecision(params.rulesDecision, fallbackReason, {
+      candidateCount: params.candidates.length,
+      rulesAction: params.rulesDecision.action,
+      rulesConfidence: params.rulesDecision.confidence,
       actuatorMode: actuator.mode,
       actuatorPath: actuator.path,
-      actuatorBaseUrl: actuator.baseUrl,
-      aiProviderConfigured: providerStatus.configured,
-      aiProviderReachable: providerStatus.reachable,
-      aiProviderAuthenticated: providerStatus.authenticated,
-      aiProviderModel: providerStatus.model,
-      aiProviderLastAttemptAt: providerStatus.lastAttemptAt,
-      aiProviderLastFailureAt: providerStatus.lastFailureAt,
-      aiProviderLastFailureReason: providerStatus.lastFailureReason,
-      aiProviderFailureCategory: providerStatus.lastFailureCategory,
-      aiProviderFailureStatus: providerStatus.lastFailureStatus,
-      aiProviderCircuitBreakerState: providerStatus.circuitBreakerState,
-      aiProviderCircuitBreakerFailures: providerStatus.circuitBreakerFailures,
-      aiProviderCircuitBreakerNextRetryAt: providerStatus.circuitBreakerNextRetryAt
+      actuatorBaseUrl: actuator.baseUrl
     });
-  }
 
-  try {
     const aiResult = await runArcanosCoreQuery({
-      client,
+      client: boundedInference.client,
       prompt: buildAiDecisionPrompt({
         source: params.source,
         observation: params.observation,
@@ -1863,6 +1900,8 @@ async function resolveAiDecision(params: {
         actuator
       }),
       sourceEndpoint: PREDICTIVE_AI_SOURCE_ENDPOINT,
+      allowTimeoutFallback: false,
+      maxOutputTokens: 512,
       runOptions: {
         // A control-plane recommendation uses only the supplied observation.
         disableMemoryAccess: true,
@@ -1870,10 +1909,18 @@ async function resolveAiDecision(params: {
         answerMode: 'direct',
         requestedVerbosity: 'minimal',
         maxWords: PREDICTIVE_AI_MAX_WORDS,
+        directAnswerTokenLimitOverride: 512,
+        directAnswerTokenCapOverride: 512,
         strictUserVisibleOutput: true,
         debugPipeline: false
       }
     });
+
+    boundedInference.close();
+    // Core can convert provider failures into deterministic text. Retain the
+    // transport failure so an authentication error still closes admission.
+    if (boundedInference.getFailure()) throw boundedInference.getFailure();
+    if (boundedInference.isPending()) throw new Error('Self-healing inference timed out before transport settled.');
 
     const parsed = predictiveHealingAiDecisionSchema.parse(parseJsonObjectFromModelOutput(aiResult.result));
     const chosenCandidate =
@@ -1940,8 +1987,8 @@ async function resolveAiDecision(params: {
 
     const successAt = new Date().toISOString();
     const postCallHealth = getOpenAIServiceHealth();
-    const providerStatus = updateAiProviderState(state, (current) => ({
-      ...buildAiProviderStatusSnapshot(postCallHealth, current),
+    const providerStatus = updateAiProviderState(state, postCallHealth, (current) => ({
+      ...current,
       model: aiResult.activeModel || expectedModel,
       lastAttemptAt: attemptAt,
       lastSuccessAt: successAt,
@@ -1988,13 +2035,17 @@ async function resolveAiDecision(params: {
       circuitBreakerState: providerStatus.circuitBreakerState
     });
 
+    await completeSelfHealingInference(admission.reservation, { outcome: 'success' });
     return decision;
   } catch (error) {
     const fallbackFailure = classifyProviderFailure(error);
+    await completeSelfHealingInference(admission.reservation, {
+      outcome: resolveInferenceFailureOutcome(fallbackFailure, boundedInference)
+    });
     const failureAt = new Date().toISOString();
     const postCallHealth = getOpenAIServiceHealth();
-    const providerStatus = updateAiProviderState(state, (current) => ({
-      ...buildAiProviderStatusSnapshot(postCallHealth, current),
+    const providerStatus = updateAiProviderState(state, postCallHealth, (current) => ({
+      ...current,
       model: expectedModel,
       lastAttemptAt: attemptAt,
       lastFailureAt: failureAt,
@@ -2084,6 +2135,17 @@ function buildCandidates(
   const watchdogTriggered = observation.workerHealth.alerts.some(
     (alert) => alert.toLowerCase().includes('watchdog')
   );
+  const stalledJobs = observation.workerHealth.stalledRunning > 0;
+  const pendingWithoutHealthyWorker = observation.workerHealth.pending > 0 && (
+    observation.workerHealth.overallStatus === 'offline' ||
+    (observation.workerHealth.workers.length === 0 && observation.workerRuntime.activeListeners === 0) ||
+    (observation.workerHealth.workers.length > 0 && observation.workerHealth.workers.every((worker) =>
+      worker.stale || worker.healthStatus === 'offline' || worker.watchdog?.triggered
+    ))
+  );
+  const dependencyFailure = observation.workerHealth.workers.some(
+    (worker) => worker.claimAcceptance === 'dependency_failure'
+  );
 
   if (providerFailureActive && (providerStatus.configured || providerStatus.lastAttemptAt !== null)) {
     const authenticationFailure = providerStatus.lastFailureCategory === 'authentication';
@@ -2112,25 +2174,41 @@ function buildCandidates(
   }
 
   if (
-    observation.workerRuntime.enabled &&
-    (watchdogTriggered || observation.workerHealth.overallStatus === 'unhealthy') &&
-    (observation.workerHealth.pending > 0 || observation.workerHealth.stalledRunning > 0)
+    stalledJobs || pendingWithoutHealthyWorker || dependencyFailure || (
+      observation.workerRuntime.enabled &&
+      (watchdogTriggered || observation.workerHealth.overallStatus === 'unhealthy') &&
+      observation.workerHealth.pending > 0
+    )
   ) {
     candidates.push({
       action: 'heal_worker_runtime',
       target: 'worker_runtime',
-      reason: watchdogTriggered
+      reason: dependencyFailure
+        ? 'Worker claim acceptance reports an explicit dependency failure.'
+        : stalledJobs
+        ? 'The durable queue contains stalled running jobs.'
+        : pendingWithoutHealthyWorker
+        ? 'Pending queue work has unavailable workers or failed worker heartbeat evidence.'
+        : watchdogTriggered
         ? 'Worker watchdog detected idle consumers while queue work remained available.'
         : 'Worker health is unhealthy while queued work remains outstanding.',
-      confidence: watchdogTriggered ? 0.92 : 0.85,
-      matchedRule: watchdogTriggered
+      confidence: stalledJobs || dependencyFailure ? 0.96 : pendingWithoutHealthyWorker || watchdogTriggered ? 0.92 : 0.85,
+      matchedRule: dependencyFailure
+        ? 'worker_dependency_failure'
+        : stalledJobs
+        ? 'worker_stalled_jobs'
+        : pendingWithoutHealthyWorker
+        ? 'worker_heartbeat_or_availability_failure'
+        : watchdogTriggered
         ? 'worker_watchdog_reheal_runtime'
         : 'worker_unhealthy_reheal_runtime',
       priority: 12,
       details: {
         alerts: observation.workerHealth.alerts,
         pending: observation.workerHealth.pending,
-        stalledRunning: observation.workerHealth.stalledRunning
+        stalledRunning: observation.workerHealth.stalledRunning,
+        dependencyFailure,
+        staleWorkerIds: observation.workerHealth.workers.filter((worker) => worker.stale).map((worker) => worker.workerId)
       }
     });
   }
@@ -2154,7 +2232,7 @@ function buildCandidates(
     });
   }
 
-  if (hasEnoughHistory && trends.latencyRiseIntervals >= config.latencyConsecutiveIntervals - 1) {
+  if (observation.requestCount > 0 && hasEnoughHistory && trends.latencyRiseIntervals >= config.latencyConsecutiveIntervals - 1) {
     candidates.push({
       action: 'scale_workers_up',
       target: 'worker_runtime',
@@ -2175,7 +2253,8 @@ function buildCandidates(
   }
 
   if (
-    observation.inactivity?.inactiveDegraded
+    observation.inactivity?.inactiveDegraded &&
+    hasInactivityBacklog(observation.workerHealth, observation.inactivity.idleThresholdMs)
   ) {
     candidates.push({
       action: 'heal_worker_runtime',
@@ -2183,10 +2262,7 @@ function buildCandidates(
       reason:
         observation.inactivity.reason ??
         'No worker activity has been observed beyond the watchdog threshold.',
-      confidence:
-        observation.workerHealth.pending > 0 || observation.workerHealth.stalledRunning > 0
-          ? 0.96
-          : 0.84,
+      confidence: 0.96,
       matchedRule: 'inactive_worker_runtime_heal',
       priority: 15,
       details: {
@@ -2313,7 +2389,7 @@ function buildCandidates(
 
   if (
     !observation.promptRoute.active &&
-    (observation.avgLatencyMs >= config.latencyRiseDeltaMs * 3 || observation.degradedCount > 0)
+    ((observation.requestCount > 0 && observation.avgLatencyMs >= config.latencyRiseDeltaMs * 3) || observation.degradedCount > 0)
   ) {
     candidates.push({
       action: 'mark_node_degraded',
@@ -2753,6 +2829,17 @@ async function executeDecision(
     };
   }
 
+  if (request.decision.action === 'reinitialize_ai_provider' && !request.executeRequested
+    && getState().aiProvider.lastFailureCategory === 'authentication') {
+    return {
+      attempted: false, status: 'refused', mode,
+      action: request.decision.action, target: request.decision.target,
+      message: 'provider_authentication_requires_operator', cooldownRemainingMs: null,
+      actuatorResult: null,
+      recoveryOutcome: { status: 'not_executed', summary: 'Provider authentication requires operator intervention.' }
+    };
+  }
+
   // Authorization awaits shared state. Recheck and reserve the action together
   // before dispatch so concurrent operator/loop requests cannot both execute.
   // Keep the reservation until the actuator settles, even beyond its cooldown.
@@ -2783,7 +2870,7 @@ async function executeDecision(
     if (request.decision.action === 'reinitialize_ai_provider') {
       const result = await reinitializeOpenAIProvider({
         forceReload: true,
-        ignoreBackoff: true,
+        suppressUnchangedAuthenticationProbe: true,
         source: request.source
       });
       actuatorResult = {
@@ -3272,6 +3359,8 @@ export async function runPredictiveHealingDecision(params: {
   simulate?: PredictiveHealingSimulationInput;
   observation?: PredictiveHealingObservation;
   signal?: AbortSignal;
+  /** Only authenticated control-plane callers may opt into manual inference. */
+  inferenceAuthorization?: 'automatic' | 'manual' | 'disabled';
 }): Promise<PredictiveHealingDecisionResult> {
   const config = getConfig();
   const state = getState();
@@ -3284,9 +3373,11 @@ export async function runPredictiveHealingDecision(params: {
   const liveObservation = params.observation ?? (await collectLiveObservation(params.source));
   const observation = applySimulation(liveObservation, params.simulate);
   const history = collectRecentObservations(state, observation);
+  const rulesConfig = getRulesConfig();
   const { decision: rulesDecision, trends, candidates } = evaluatePredictiveHealingRules({
     observation,
-    history
+    history,
+    config: rulesConfig
   });
   const decision = await resolveAiDecision({
     source: params.source,
@@ -3294,8 +3385,11 @@ export async function runPredictiveHealingDecision(params: {
     trends,
     rulesDecision,
     candidates,
-    minConfidence: getRulesConfig().minConfidence,
-    config
+    minConfidence: rulesConfig.minConfidence,
+    staleAfterMs: rulesConfig.staleAfterMs,
+    config,
+    inferenceAuthorization: params.simulate ? 'disabled' : params.inferenceAuthorization,
+    signal: params.signal
   });
 
   const executionRequest: PredictiveHealingExecutionRequest = {
@@ -3383,6 +3477,7 @@ export async function runPredictiveHealingFromLoop(params: {
     source: params.source,
     observation: loopObservation,
     allowAutoExecute: true,
+    inferenceAuthorization: 'automatic',
     signal: params.signal
   });
 }
@@ -3396,6 +3491,7 @@ export async function probePredictiveHealingAIProvider(): Promise<PredictiveHeal
   const performedAt = new Date().toISOString();
   const serviceHealth = getOpenAIServiceHealth();
   const model = getFallbackModel();
+  const admittedCredential = getConfig().openaiApiKey?.trim() ?? '';
   const baseSnapshot = buildAiProviderStatusSnapshot(serviceHealth, {
     model,
     lastAttemptAt: performedAt
@@ -3416,75 +3512,134 @@ export async function probePredictiveHealingAIProvider(): Promise<PredictiveHeal
     };
   }
 
-  try {
-    await runWithTimeout(
-      () => instrumentOpenAIOperation({
-        operation: 'models_list',
-        callback: () => client.models.list({ page: 1 } as any),
-      }),
-      4_000,
-      'OpenAI model-list probe timed out after 4000ms'
-    );
-  } catch (error) {
-    const failure = classifyProviderFailure(error);
+  const providerStatus = buildPredictiveHealingAIProviderStatusSnapshot();
+  const blocked = serviceHealth.providerRuntime.authenticationBlocked === true
+    || providerCircuitBlocksInference(serviceHealth);
+  const admission = blocked ? null : await reserveSelfHealingInference({
+    purpose: 'provider_probe', credential: admittedCredential,
+    cooldownMs: PROVIDER_PROBE_COOLDOWN_MS,
+    failureCooldownMs: PROVIDER_PROBE_COOLDOWN_MS,
+    maxAttemptsPerHour: 2
+  });
+  if (!admission?.allowed) {
+    const reason = blocked ? 'provider_authentication_or_circuit_blocked'
+      : admission && !admission.allowed ? admission.reason : 'coordination_unavailable';
+    logger.info('self_heal.provider_probe.skipped', { reason });
     return {
-      performedAt,
-      ...baseSnapshot,
-      reachable: failure.reachable,
-      authenticated: failure.authenticated,
-      completionHealthy: false,
-      failureReason: failure.reason,
-      failureCategory: failure.category,
-      failureStatus: failure.status
+      performedAt, ...baseSnapshot, failureReason: reason,
+      failureCategory: providerStatus.lastFailureCategory ?? 'unknown',
+      failureStatus: providerStatus.lastFailureStatus
     };
   }
-
-  try {
-    await createSingleChatCompletion(client, {
-      model,
-      messages: [{ role: 'user', content: 'Reply with exactly ok.' }],
-      max_completion_tokens: 16,
-      timeoutMs: 6_000
-    });
-
-    const successHealth = getOpenAIServiceHealth();
-    return {
-      performedAt,
-      ...buildAiProviderStatusSnapshot(successHealth, {
-        model,
-        lastAttemptAt: performedAt,
-        lastSuccessAt: performedAt,
-        reachable: true,
-        authenticated: true,
-        completionHealthy: true
-      }),
-      failureReason: null,
-      failureCategory: null,
-      failureStatus: null
-    };
-  } catch (error) {
+  if ((getConfig().openaiApiKey?.trim() ?? '') !== admittedCredential) {
+    await completeSelfHealingInference(admission.reservation, { outcome: 'failure' });
+    return { performedAt, ...baseSnapshot, failureReason: 'inference_credential_changed',
+      failureCategory: 'unknown', failureStatus: null };
+  }
+  const boundedProbe = createSelfHealingInferenceClient(client);
+  let probeOutcome: 'success' | 'failure' | 'authentication_failure' | 'uncertain' = 'uncertain';
+  const recordProbeFailure = (error: unknown, stage: 'models_list' | 'completion') => {
     const failure = classifyProviderFailure(error);
-    const failureHealth = getOpenAIServiceHealth();
-    return {
-      performedAt,
-      ...buildAiProviderStatusSnapshot(failureHealth, {
-        model,
-        lastAttemptAt: performedAt,
-        reachable: true,
-        authenticated: true,
+    // The metadata GET cannot spend inference tokens, and this function exits
+    // before completion when it fails. Only paid-call uncertainty retains a lock.
+    probeOutcome = stage === 'models_list'
+      ? failure.category === 'authentication' ? 'authentication_failure' : 'failure'
+      : resolveInferenceFailureOutcome(failure, boundedProbe);
+    updateAiProviderState(getState(), getOpenAIServiceHealth(), current => ({
+      ...current, lastFailureAt: pickLatestTimestamp([current.lastFailureAt, performedAt]),
+      lastFailureCategory: failure.category, lastFailureReason: failure.reason,
+      lastFailureStatus: failure.status, authenticated: failure.authenticated,
+      reachable: failure.reachable, completionHealthy: failure.completionHealthy
+    }));
+    return failure;
+  };
+
+  logger.info('self_heal.provider_probe.requested', { inferenceAuthorization: 'manual', outputTokenLimit: 16 });
+  try {
+
+    try {
+      await runWithTimeout(
+        () => instrumentOpenAIOperation({
+          operation: 'models_list',
+          callback: () => client.models.list({
+            maxRetries: 0, timeout: 4_000, signal: AbortSignal.timeout(4_000)
+          }),
+        }),
+        4_000,
+        'OpenAI model-list probe timed out after 4000ms'
+      );
+    } catch (error) {
+      const failure = recordProbeFailure(error, 'models_list');
+      return {
+        performedAt,
+        ...baseSnapshot,
+        reachable: failure.reachable,
+        authenticated: failure.authenticated,
         completionHealthy: false,
-        lastFailureAt: performedAt,
-        lastFailureReason: failure.reason,
-        lastFailureCategory: failure.category,
-        lastFailureStatus: failure.status
-      }),
-      reachable: failure.reachable ?? true,
-      authenticated: failure.authenticated ?? true,
-      completionHealthy: false,
-      failureReason: failure.reason,
-      failureCategory: failure.category,
-      failureStatus: failure.status
-    };
+        failureReason: failure.reason,
+        failureCategory: failure.category,
+        failureStatus: failure.status
+      };
+    }
+
+    try {
+      await createSingleChatCompletion(boundedProbe.client, {
+        model,
+        messages: [{ role: 'user', content: 'Reply with exactly ok.' }],
+        max_completion_tokens: 16,
+        timeoutMs: 6_000
+      });
+
+      boundedProbe.close();
+      if (boundedProbe.getFailure()) throw boundedProbe.getFailure();
+      probeOutcome = 'success';
+
+      const successHealth = getOpenAIServiceHealth();
+      const successAt = new Date().toISOString();
+      const recoveredProvider = updateAiProviderState(getState(), successHealth, current =>
+        // Resolve recovery after merging the success time; an equal-time failure
+        // must remain conservative rather than being cleared by the assignment.
+        buildAiProviderStatusSnapshot(successHealth, {
+          ...current, model,
+          lastAttemptAt: pickLatestTimestamp([current.lastAttemptAt, performedAt]),
+          lastSuccessAt: pickLatestTimestamp([current.lastSuccessAt, successAt]),
+          reachable: true, authenticated: true, completionHealthy: true,
+          lastFailureReason: null, lastFailureCategory: null, lastFailureStatus: null
+        })
+      );
+      return {
+        performedAt,
+        ...recoveredProvider,
+        failureReason: null,
+        failureCategory: null,
+        failureStatus: null
+      };
+    } catch (error) {
+      const failure = recordProbeFailure(error, 'completion');
+      const failureHealth = getOpenAIServiceHealth();
+      return {
+        performedAt,
+        ...buildAiProviderStatusSnapshot(failureHealth, {
+          model,
+          lastAttemptAt: performedAt,
+          reachable: true,
+          authenticated: true,
+          completionHealthy: false,
+          lastFailureAt: performedAt,
+          lastFailureReason: failure.reason,
+          lastFailureCategory: failure.category,
+          lastFailureStatus: failure.status
+        }),
+        reachable: failure.reachable ?? true,
+        authenticated: failure.authenticated ?? true,
+        completionHealthy: false,
+        failureReason: failure.reason,
+        failureCategory: failure.category,
+        failureStatus: failure.status
+      };
+    }
+  } finally {
+    await completeSelfHealingInference(admission.reservation, { outcome: probeOutcome });
   }
 }
 
@@ -3563,15 +3718,31 @@ function pickLatestTimestamp(values: Array<string | null | undefined>): string |
   return latestValue;
 }
 
+/** Require queue-age evidence for inactivity without delaying explicit failures. */
+function hasInactivityBacklog(
+  queue: { pending: number; stalledRunning: number; oldestPendingJobAgeMs: number },
+  idleThresholdMs: number | null
+): boolean {
+  return queue.stalledRunning > 0 || (
+    queue.pending > 0 && typeof idleThresholdMs === 'number' &&
+    Number.isFinite(idleThresholdMs) && idleThresholdMs > 0 &&
+    Number.isFinite(queue.oldestPendingJobAgeMs) && queue.oldestPendingJobAgeMs >= idleThresholdMs
+  );
+}
+
 function buildWorkerInactivityObservation(params: {
   workers: PredictiveHealingObservation['workerHealth']['workers'];
   alerts: string[];
   requestCount: number;
   pending: number;
   stalledRunning: number;
+  oldestPendingJobAgeMs: number;
   idleThresholdMs: number | null;
 }): NonNullable<PredictiveHealingObservation['inactivity']> {
-  const idleWorkers = params.workers
+  const backlogWorkers = params.workers.filter((worker) =>
+    hasInactivityBacklog(params, worker.watchdog?.idleThresholdMs ?? params.idleThresholdMs)
+  );
+  const idleWorkers = backlogWorkers
     .filter((worker) => worker.currentJobId === null)
     .filter((worker) => {
       const inactivityMs = worker.inactivityMs ?? null;
@@ -3580,7 +3751,7 @@ function buildWorkerInactivityObservation(params: {
     });
   const relevantWorkers = idleWorkers.length > 0
     ? idleWorkers
-    : params.workers.filter((worker) => worker.watchdog?.restartRecommended === true);
+    : backlogWorkers.filter((worker) => worker.watchdog?.restartRecommended === true);
   const mostRecentActivityAt = pickLatestTimestamp(
     params.workers.map((worker) => worker.lastActivityAt ?? null),
   );
@@ -3608,77 +3779,38 @@ function buildWorkerInactivityObservation(params: {
   const alertReason =
     params.alerts.find((alert) => /no worker activity|no worker receipts|watchdog triggered/i.test(alert)) ?? null;
   const queueBacklogBlocked = params.pending > 0 || params.stalledRunning > 0;
-  const fleetInactive =
-    params.workers.length > 0 &&
-    mostRecentSeenMs !== null &&
-    typeof fleetIdleThresholdMs === 'number' &&
-    fleetInactivityMs >= fleetIdleThresholdMs;
-  const inactiveDegraded = queueBacklogBlocked
-    ? relevantWorkers.length > 0
-    : params.requestCount === 0 && fleetInactive;
+  const inactiveDegraded = queueBacklogBlocked && relevantWorkers.length > 0;
 
   return {
     inactiveDegraded,
     reason: inactiveDegraded
-      ? alertReason ??
-        (queueBacklogBlocked
-          ? `No worker activity for ${maxInactivityMs}ms while queue work remained pending.`
-          : `No worker receipts or processed jobs observed for ${fleetInactivityMs}ms.`)
+      ? alertReason ?? `No worker activity for ${maxInactivityMs}ms while queue work remained pending.`
       : null,
     idleThresholdMs: (queueBacklogBlocked ? idleThresholdMs : fleetIdleThresholdMs) ?? null,
     maxInactivityMs: queueBacklogBlocked ? maxInactivityMs : fleetInactivityMs,
     lastActivityAt: mostRecentActivityAt ?? worstWorker?.lastActivityAt ?? null,
     lastProcessedJobAt: mostRecentProcessedJobAt ?? worstWorker?.lastProcessedJobAt ?? null,
     workerIds: inactiveDegraded
-      ? (queueBacklogBlocked ? relevantWorkers : params.workers).map((worker) => worker.workerId).sort()
+      ? relevantWorkers.map((worker) => worker.workerId).sort()
       : []
   };
 }
 
-function resolvePredictiveHealingAiCooldownWindow(params: {
-  observation: PredictiveHealingObservation;
-  providerStatus: PredictiveHealingAIProviderStatusSnapshot;
-  config: ReturnType<typeof getConfig>;
-  nowMs?: number;
-}): PredictiveHealingAiCooldownWindow | null {
-  const nowMs = params.nowMs ?? Date.now();
-  const liveLoadSignal = hasLivePredictiveHealingLoad(params.observation);
-  const lastAttemptAtMs = Date.parse(params.providerStatus.lastAttemptAt ?? '');
-  if (!Number.isFinite(lastAttemptAtMs)) {
-    return null;
-  }
-
-  const providerFailureBackoffActive =
-    String(params.providerStatus.circuitBreakerState).toUpperCase() === 'OPEN' ||
-    params.providerStatus.lastFailureCategory === 'authentication' ||
-    params.providerStatus.lastFailureCategory === 'insufficient_quota' ||
-    params.providerStatus.lastFailureCategory === 'circuit_open';
-  const failureAnchorMs = Date.parse(params.providerStatus.lastFailureAt ?? '');
-  const cooldownAnchorMs =
-    providerFailureBackoffActive && Number.isFinite(failureAnchorMs) ? failureAnchorMs : lastAttemptAtMs;
-  const cooldownMs = providerFailureBackoffActive
-    ? Math.max(60_000, params.config.predictiveHealingAiFailureCooldownMs ?? DEFAULT_AI_FAILURE_COOLDOWN_MS)
-    : liveLoadSignal
-      ? Math.max(60_000, params.config.predictiveHealingAiActiveCooldownMs ?? DEFAULT_AI_ACTIVE_COOLDOWN_MS)
-      : Math.max(60_000, params.config.predictiveHealingAiIdleCooldownMs ?? DEFAULT_AI_IDLE_COOLDOWN_MS);
-  const cooldownUntilMs = cooldownAnchorMs + cooldownMs;
-  if (cooldownUntilMs <= nowMs) {
-    return null;
-  }
-
-  return {
-    reason: providerFailureBackoffActive
-      ? 'provider_failure_backoff'
-      : liveLoadSignal
-        ? 'active_incident_backoff'
-        : 'idle_window_backoff',
-    cooldownMs,
-    remainingMs: cooldownUntilMs - nowMs,
-    cooldownUntil: new Date(cooldownUntilMs).toISOString(),
-    liveLoadSignal
-  };
+function resolveDiagnosisCooldownMs(
+  config: ReturnType<typeof getConfig>,
+  liveLoadSignal: boolean,
+  failure = false
+): number {
+  const fallback = failure ? DEFAULT_AI_FAILURE_COOLDOWN_MS
+    : liveLoadSignal ? DEFAULT_AI_ACTIVE_COOLDOWN_MS : DEFAULT_AI_IDLE_COOLDOWN_MS;
+  const configured = failure ? config.predictiveHealingAiFailureCooldownMs
+    : liveLoadSignal ? config.predictiveHealingAiActiveCooldownMs : config.predictiveHealingAiIdleCooldownMs;
+  // Admission accepts whole milliseconds within 60 seconds to 30 days. Round
+  // upward so a supported fractional minimum is never shortened.
+  return Number.isFinite(configured)
+    ? Math.min(MAX_AI_DIAGNOSIS_COOLDOWN_MS, Math.max(60_000, Math.ceil(configured)))
+    : fallback;
 }
-
 export function buildPredictiveHealingCompactSummary(
   snapshot: PredictiveHealingStatusSnapshot
 ): PredictiveHealingCompactSummary {

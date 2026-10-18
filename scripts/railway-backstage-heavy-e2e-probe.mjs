@@ -62,7 +62,12 @@ const RAILWAY_CLI_ENV_ALLOWLIST = new Set([
   'APPDATA',
   'COMSPEC',
   'HOME',
+  // Operator CLI traffic must retain the host's configured network path.
+  // Application-role variables are checked separately and still forbid proxies.
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
   'LOCALAPPDATA',
+  'NO_PROXY',
   'PATH',
   'PATHEXT',
   'PROGRAMDATA',

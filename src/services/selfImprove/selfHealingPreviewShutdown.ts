@@ -35,12 +35,15 @@ function validData(data: unknown): data is Row {
 
 /** The child has already passed the exact normal-launcher profile/artifact gate. */
 export function shutdownChildAuthority(env: NodeJS.ProcessEnv) {
+  const profile = env.ARCANOS_SELF_HEAL_PREVIEW_PROFILE;
+  if (profile !== 'worker-coordinator-v1' && profile !== 'worker-inference-containment-v1') fail();
+  if (profile === 'worker-inference-containment-v1' && !/^arc-pr1557-heavy-[a-z0-9][a-z0-9-]{0,13}$/u.test(env.RAILWAY_PROJECT_NAME ?? '')) fail();
   const artifact = JSON.parse(readFileSync(new URL('../../../scripts/self-heal-preview-artifact.json', import.meta.url), 'utf8')) as Row;
   const pem = readFileSync('/app/config/self-heal-preview-database-ca.pem', 'utf8');
   if (artifact.version !== 1 || artifact.sourceSha !== env.ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA
     || !/^[a-f0-9]{64}$/u.test(String(artifact.compiledSha256))) fail();
   const owner: ShutdownOwner = {
-    version: 1, owner: 'pbjustin', repository: 'pbjustin/Arcanos', profile: 'worker-coordinator-v1',
+    version: 1, owner: 'pbjustin', repository: 'pbjustin/Arcanos', profile,
     projectId: env.RAILWAY_PROJECT_ID, projectName: env.RAILWAY_PROJECT_NAME,
     environmentId: env.RAILWAY_ENVIRONMENT_ID, environmentName: env.RAILWAY_ENVIRONMENT_NAME,
     webServiceId: env.ARCANOS_SELF_HEAL_PREVIEW_WEB_SERVICE_ID, workerServiceId: env.ARCANOS_SELF_HEAL_PREVIEW_WORKER_SERVICE_ID,
@@ -75,7 +78,8 @@ export class PreviewShutdownJournal {
     createPgClient: (config: ClientConfig) => ShutdownPgClient = config => new pg.Client(config) as ShutdownPgClient) {
     if (!/^[a-f0-9]{40}$/u.test(String(owner.sourceSha)) || !/^[a-f0-9]{64}$/u.test(String(owner.compiledSha256))
       || !/^[a-z0-9][a-z0-9-]{7,63}$/u.test(String(owner.runId))
-      || owner.profile !== 'worker-coordinator-v1' || owner.repository !== 'pbjustin/Arcanos'
+      || !['worker-coordinator-v1', 'worker-inference-containment-v1'].includes(String(owner.profile)) || owner.repository !== 'pbjustin/Arcanos'
+      || (owner.profile === 'worker-inference-containment-v1' && !/^arc-pr1557-heavy-[a-z0-9][a-z0-9-]{0,13}$/u.test(String(owner.projectName)))
       || !Number.isFinite(Date.parse(String(owner.expiresAt))) || Date.parse(String(owner.expiresAt)) <= Date.now()) fail();
     const client = createPgClient({ ...database, application_name: 'arcanos_self_heal_preview_shutdown_v1',
       connectionTimeoutMillis: 1_000, query_timeout: QUERY_TIMEOUT_MS, options: '-c statement_timeout=250 -c lock_timeout=100' });

@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { startGenerativeModelPolicyProvider } from './fixtures/generative-model-policy-provider.js';
+import type { RedisLifecycleClient } from '../src/platform/runtime/redisLifecycle.js';
 import {
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID, SELF_HEAL_PREVIEW_OPENAI_FIXTURE_SDK_KEY,
   startSelfHealPreviewOpenAIFixture,
@@ -75,9 +76,33 @@ const reserveWorkerAiProviderAttempt = jest.fn(async () => {
 });
 const logAITaskLineage = jest.fn();
 const previewRuntimeEffect = jest.fn(async () => { throw new Error('Preview policy regression forbids worker control effects.'); });
+const inferenceRedisStates = new Map<string, string>();
+const inferenceRedisOperation = jest.fn<typeof import('../src/platform/runtime/redisLifecycle.js').executeRedisOperation>();
+const inferenceRedisEval = jest.fn(async (script: string, options: { keys: string[]; arguments: string[] }) => {
+  const [key, siblingKey] = options.keys;
+  if (!/^arcanos:self-heal:inference:v1:[a-f0-9]{64}:diagnosis$/.test(key)
+    || siblingKey !== key.replace(/:diagnosis$/, ':provider_probe')) {
+    throw new Error('Only synthetic diagnosis coordination is permitted.');
+  }
+  if (script.includes("redis.call('TIME')")) {
+    const now = Date.now();
+    return [inferenceRedisStates.has(key) ? 1 : 0, inferenceRedisStates.get(key) ?? '',
+      inferenceRedisStates.has(siblingKey) ? 1 : 0, inferenceRedisStates.get(siblingKey) ?? '',
+      String(Math.floor(now / 1000)), String((now % 1000) * 1000)];
+  }
+  const [presence, expected, replacement, siblingPresence, siblingExpected] = options.arguments;
+  const current = inferenceRedisStates.get(key);
+  if ((presence === 'absent' && current !== undefined) || (presence === 'present' && current !== expected)) return 0;
+  const sibling = inferenceRedisStates.get(siblingKey);
+  if ((siblingPresence === 'absent' && sibling !== undefined)
+    || (siblingPresence === 'present' && sibling !== siblingExpected)) return 0;
+  inferenceRedisStates.set(key, replacement);
+  return 1;
+});
 
-// Only unrelated persistence, background work and the on-disk audit sink are
-// replaced. The facade, role policy, stage runners, guards, audit/schema
+// Unrelated persistence, background work and the on-disk audit sink are replaced.
+// Predictive admission uses its real coordinator and a synthetic Redis command
+// fixture. The facade, role policy, stage runners, guards, audit/schema
 // validation, adapter, installed SDK and native HTTP transport remain real.
 jest.unstable_mockModule('@services/memoryAware.js', () => ({ getMemoryContext, storePattern }));
 jest.unstable_mockModule('@services/judgedResponseFeedback.js', () => ({ processJudgedResponseFeedback }));
@@ -104,6 +129,11 @@ let consoleErrorSpy: ReturnType<typeof jest.spyOn>;
 
 beforeAll(async () => {
   process.env = isolatedEnvironment();
+  const actualRedisLifecycle = await import('../src/platform/runtime/redisLifecycle.js');
+  inferenceRedisOperation.mockImplementation(actualRedisLifecycle.executeRedisOperation);
+  jest.unstable_mockModule('@platform/runtime/redisLifecycle.js', () => ({
+    ...actualRedisLifecycle, executeRedisOperation: inferenceRedisOperation
+  }));
   const actualAuditSafe = await import('../src/services/auditSafe.js');
   jest.unstable_mockModule('@services/auditSafe.js', () => ({ ...actualAuditSafe, logAITaskLineage }));
   // These imports share one ESM graph; link it once before loading its helpers.
@@ -436,7 +466,7 @@ describe('Trinity model policy through the real SDK and loopback HTTP', () => {
     } finally { await provider.close(); }
   });
 
-  it('reaches actual predictive dry-run and recommendation gates through the sealed provider without actuation', async () => {
+  it('admits one authorized predictive Core request and denies unavailable Redis, cooldown and healthy-idle work', async () => {
     const now = Date.now();
     const provider = await startSelfHealPreviewOpenAIFixture({ port: 0, env: {
       NODE_ENV: 'production', TZ: 'UTC', ARCANOS_BACKSTAGE_HEAVY_OPENAI_FIXTURE_CHILD: 'v1',
@@ -459,29 +489,83 @@ describe('Trinity model policy through the real SDK and loopback HTTP', () => {
         SELF_IMPROVE_AUTONOMY_LEVEL: '3', SELF_IMPROVE_FREEZE: 'false',
         PREDICTIVE_HEALING_ENABLED: 'true', PREDICTIVE_HEALING_DRY_RUN: 'true', PREDICTIVE_AUTO_EXECUTE: 'true' });
       credentials.resetCredentialCache(); adapter.resetOpenAIAdapter();
+      const requests: Array<Record<string, unknown>> = [];
+      const nativeFetch = globalThis.fetch.bind(globalThis);
       adapter.getOpenAIAdapter({ apiKey: SELF_HEAL_PREVIEW_OPENAI_FIXTURE_SDK_KEY,
         baseURL: process.env.OPENAI_BASE_URL, defaultModel: BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID,
-        timeout: 2000, maxRetries: 0 });
+        timeout: 2000, maxRetries: 0, fetch: async (input, init) => {
+          const url = new URL(input instanceof Request ? input.url : String(input));
+          if (url.href !== `http://127.0.0.1:${address.port}/v1/responses`) {
+            throw new Error('Predictive fixture blocked unexpected provider transport.');
+          }
+          requests.push(JSON.parse(String(init?.body)));
+          return nativeFetch(input, init);
+        } });
       for (let index = 0; index < 2; index += 1) selfHealing.recordTrinityStageFailure({
         stage: 'final', error: 'Explicit synthetic predictive preheal observation.',
         requestId: `preview-predictive-regression-${index}`, sourceEndpoint: 'preview-predictive-regression',
       });
       const predictive = await import('../src/services/selfImprove/predictiveHealingService.js');
+      predictive.resetPredictiveHealingStateForTests();
       const diagnostics = await import('../src/services/runtimeDiagnosticsService.js');
       const worker = await import('../src/platform/runtime/workerConfig.js');
       const evaluate = () => predictive.runPredictiveHealingFromLoop({ source: 'self-heal.preview.predictive-regression',
         observation: { requestWindow: diagnostics.runtimeDiagnosticsService.getRollingRequestWindow(300_000),
           workerHealth: null, workerRuntime: worker.getWorkerRuntimeStatus(),
           trinityStatus: selfHealing.getTrinitySelfHealingStatus() } });
-      const dry = await evaluate();
+      // The old fixture never supplied Redis, so the new real admission gate
+      // correctly denied it. Preserve that fail-closed path before enabling the
+      // local atomic command fixture; the coordinator and Core remain real.
+      const unavailable = await evaluate();
+      expect(unavailable.decision).toMatchObject({ advisor: 'rules_fallback_v1',
+        details: { aiCooldownReason: 'coordination_unavailable' } });
+      expect(requests).toHaveLength(0);
+      expect(provider.inspect().receipts).toHaveLength(0);
+      inferenceRedisStates.clear();
+      inferenceRedisOperation.mockImplementation(async (operation, options) => {
+        expect(['self_heal.inference.reserve', 'self_heal.inference.complete']).toContain(options.operation);
+        return operation({ eval: inferenceRedisEval } as unknown as RedisLifecycleClient);
+      });
+      const notRequested = await predictive.runPredictiveHealingDecision({
+        source: 'self-heal.preview.predictive-regression', observation: unavailable.observation,
+        inferenceAuthorization: 'disabled'
+      });
+      expect(notRequested.decision.details).toMatchObject({ aiEligibilityReason: 'inference_not_requested' });
+      expect(requests).toHaveLength(0);
+      const context = execution.createAiExecutionContext({
+        sourceType: 'background', sourceName: 'self-heal.preview.predictive-regression'
+      });
+      const usage = attemptTokens.createAttemptTokenUsage();
+      const dry = await execution.runWithAiExecutionContext(context, () => attemptTokens.runWithAttemptTokenUsage(usage,
+        () => predictive.runPredictiveHealingDecision({
+          source: 'self-heal.preview.predictive-regression', observation: unavailable.observation,
+          inferenceAuthorization: 'manual', execute: true, dryRun: true
+        })));
       expect(dry.decision).toMatchObject({ advisor: 'arcanos_core_v1', action: 'activate_trinity_mitigation', safeToExecute: true });
       expect(dry.execution).toMatchObject({ attempted: false, status: 'dry_run', mode: 'dry_run' });
+      expect(requests).toHaveLength(1);
+      expect(requests[0]).toMatchObject({ model: BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID, max_output_tokens: 512, stream: false });
+      expect(requests[0]).not.toHaveProperty('tools');
+      expect(execution.summarizeAiExecutionContext(context)?.totals).toEqual({
+        calls: 1, promptTokens: 64, completionTokens: 128, totalTokens: 192
+      });
+      expect(usage.totalTokens).toBe(192);
+      expect([...inferenceRedisStates.values()].map(value => JSON.parse(value))).toEqual([
+        expect.objectContaining({ inFlight: null, attemptTimestampsMs: [expect.any(Number)] })
+      ]);
       process.env.PREDICTIVE_HEALING_DRY_RUN = 'false'; process.env.PREDICTIVE_AUTO_EXECUTE = 'false';
       const recommendation = await evaluate();
       expect(recommendation.decision.action).not.toBe('none');
+      expect(recommendation.decision.details).toMatchObject({ aiCooldownReason: 'idle_window_backoff' });
       expect(recommendation.execution).toMatchObject({ attempted: false, status: 'skipped', mode: 'recommend_only' });
       expect(selfHealing.getTrinitySelfHealingSnapshot().final.activeAction).toBeNull();
-      expect(provider.inspect().receipts.some(receipt => receipt.purpose === 'predictive-decision')).toBe(true);
+      selfHealing.resetTrinitySelfHealingStateForTests();
+      predictive.resetPredictiveHealingStateForTests();
+      const healthy = await evaluate();
+      expect(healthy.decision).toMatchObject({ action: 'none', details: { aiEligibilityReason: 'no_actionable_incident' } });
+      expect(healthy.execution.attempted).toBe(false);
+      expect(requests).toHaveLength(1);
+      expect(provider.inspect().receipts.filter(receipt => receipt.purpose === 'predictive-decision')).toHaveLength(1);
     } finally { await provider.close(); }
   });
 });

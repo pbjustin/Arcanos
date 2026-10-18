@@ -1150,16 +1150,17 @@ function recordAndLogAIDiagnosisResult(params: {
     confidence: params.diagnosis.confidence,
     safeToExecute: params.diagnosis.safeToExecute,
     executionStatus: params.diagnosis.executionStatus,
-    fallbackUsed: params.diagnosis.fallbackUsed
+    fallbackUsed: params.diagnosis.fallbackUsed,
+    aiUsedInRuntime: params.diagnosis.aiUsedInRuntime
   };
 
   if (params.isFallback) {
-    logger.warn(AI_DIAGNOSIS_RESULT_EVENT, logPayload);
+    logger.warn('self_heal.diagnosis.evaluation_completed', logPayload);
   } else {
-    logger.info(AI_DIAGNOSIS_RESULT_EVENT, logPayload);
+    logger.info('self_heal.diagnosis.evaluation_completed', logPayload);
   }
 
-  recordTraceEvent(AI_DIAGNOSIS_RESULT_EVENT, {
+  recordTraceEvent('self_heal.diagnosis.evaluation_completed', {
     trigger: params.trigger,
     advisor: params.diagnosis.advisor,
     decision: params.diagnosis.decision,
@@ -1168,7 +1169,8 @@ function recordAndLogAIDiagnosisResult(params: {
     confidence: params.diagnosis.confidence,
     safeToExecute: params.diagnosis.safeToExecute,
     executionStatus: params.diagnosis.executionStatus,
-    fallbackUsed: params.diagnosis.fallbackUsed
+    fallbackUsed: params.diagnosis.fallbackUsed,
+    aiUsedInRuntime: params.diagnosis.aiUsedInRuntime
   });
 
   recordSelfHealEvent({
@@ -1182,7 +1184,7 @@ function recordAndLogAIDiagnosisResult(params: {
     details,
     timestamp: params.diagnosis.completedAt
   });
-  logger.info('self_heal.ai_diagnosis.summary', {
+  logger.info('self_heal.diagnosis.summary', {
     module: 'self_heal.loop',
     source: 'self_heal_loop',
     trigger: params.trigger,
@@ -1202,16 +1204,16 @@ async function aiDiagnoseAndDecide(params: {
   observation: SelfHealingObservation;
   signal?: AbortSignal;
 }): Promise<SelfHealingAIDiagnosisResult> {
-  logger.info('self_heal.ai_path.executed', {
+  logger.info('self_heal.diagnosis.evaluation_started', {
     module: 'self_heal.loop',
     source: 'self_heal_loop',
-    marker: '[SELF-HEAL] AI PATH EXECUTED v2',
+    marker: '[SELF-HEAL] DIAGNOSIS EVALUATION',
     trigger: params.trigger,
     diagnosisType: params.diagnosis.type,
     incidentKey: params.diagnosis.incidentKey
   });
-  recordTraceEvent('self_heal.ai_path.executed', {
-    marker: '[SELF-HEAL] AI PATH EXECUTED v2',
+  recordTraceEvent('self_heal.diagnosis.evaluation_started', {
+    marker: '[SELF-HEAL] DIAGNOSIS EVALUATION',
     trigger: params.trigger,
     diagnosisType: params.diagnosis.type,
     incidentKey: params.diagnosis.incidentKey
@@ -1223,7 +1225,7 @@ async function aiDiagnoseAndDecide(params: {
     ? getSelfHealingActionTarget(params.diagnosis.actionPlan)
     : null;
 
-  logger.info(AI_DIAGNOSIS_REQUEST_EVENT, {
+  logger.info('self_heal.diagnosis.requested', {
     module: 'self_heal.loop',
     source: 'self_heal_loop',
     trigger: params.trigger,
@@ -1231,15 +1233,19 @@ async function aiDiagnoseAndDecide(params: {
     incidentKey: params.diagnosis.incidentKey,
     recommendedAction,
     recommendedTarget,
-    requestCount: params.observation.requestWindow.requestCount
+    requestCount: params.observation.requestWindow.requestCount,
+    phase: 'eligibility_evaluation',
+    providerInvocation: false
   });
-  recordTraceEvent(AI_DIAGNOSIS_REQUEST_EVENT, {
+  recordTraceEvent('self_heal.diagnosis.requested', {
     trigger: params.trigger,
     diagnosisType: params.diagnosis.type,
     incidentKey: params.diagnosis.incidentKey,
     recommendedAction,
     recommendedTarget,
-    requestCount: params.observation.requestWindow.requestCount
+    requestCount: params.observation.requestWindow.requestCount,
+    phase: 'eligibility_evaluation',
+    providerInvocation: false
   });
   recordSelfHealEvent({
     kind: AI_DIAGNOSIS_REQUEST_EVENT,
@@ -1253,7 +1259,11 @@ async function aiDiagnoseAndDecide(params: {
       trigger: params.trigger,
       diagnosisType: params.diagnosis.type,
       incidentKey: params.diagnosis.incidentKey,
-      confidence: params.diagnosis.confidence
+      confidence: params.diagnosis.confidence,
+      // Preserve the legacy event contract, but do not count evaluations as
+      // provider requests. AI_PROVIDER_CALL_* records actual provider work.
+      phase: 'eligibility_evaluation',
+      providerInvocation: false
     },
     timestamp: requestedAt
   });
@@ -2479,12 +2489,16 @@ function diagnoseSelfHealingRuntime(
   const workerStallDetected =
     runtimeInactive ||
     (queueSummary?.stalledRunning ?? 0) > 0 ||
+    ((queueSummary?.pending ?? 0) > 0 && (
+      observation.workerHealth?.overallStatus === 'offline' ||
+      ((observation.workerHealth?.workers.length ?? 0) > 0 && observation.workerHealth?.workers.every(
+        (worker) => worker.stale || worker.operationalStatus === 'offline' || worker.watchdog.triggered
+      ))
+    )) ||
     ((queueSummary?.pending ?? 0) > 0 &&
       (queueSummary?.oldestPendingJobAgeMs ?? 0) >= workerAutonomySettings.staleAfterMs &&
       requestWindow.errorRate >= 0.1);
-  const inactiveWorkerDegraded =
-    inactiveWorkerEvidence.detected &&
-    (requestWindow.requestCount === 0 || (queueSummary?.pending ?? 0) > 0);
+  const inactiveWorkerDegraded = inactiveWorkerEvidence.detected;
 
   let diagnosisType: DiagnosisType = 'healthy';
   if (workerStallDetected) {
@@ -2505,7 +2519,12 @@ function diagnoseSelfHealingRuntime(
     diagnosisType = 'validation_noise';
   } else if (activeTrinityMitigation) {
     diagnosisType = 'trinity_mitigation_active';
-  } else if (inactiveWorkerDegraded || observation.workerHealth?.overallStatus === 'degraded' || observation.workerHealthError) {
+  } else if (
+    inactiveWorkerDegraded ||
+    observation.workerHealth?.overallStatus === 'degraded' ||
+    observation.workerHealth?.overallStatus === 'unhealthy' ||
+    observation.workerHealthError
+  ) {
     diagnosisType = 'worker_degraded';
   } else if (
     requestWindow.requestCount >= minRequestCount &&
@@ -2553,8 +2572,24 @@ function buildInactiveWorkerEvidence(
   idleThresholdMs: number | null;
   workerIds: string[];
 } {
-  const workers = Array.isArray(workerHealth?.workers) ? workerHealth.workers : [];
-  const idleWorkers = workers
+  const observedWorkers = Array.isArray(workerHealth?.workers) ? workerHealth.workers : [];
+  const currentWorkers = observedWorkers.filter((worker) => !worker.stale);
+  const workers = currentWorkers.length > 0 ? currentWorkers : observedWorkers;
+  const queueHasBacklog =
+    (workerHealth?.queueSummary?.pending ?? 0) > 0 ||
+    (workerHealth?.queueSummary?.stalledRunning ?? 0) > 0;
+  // A new job can arrive during normal idle polling. Old activity alone does
+  // not make that fresh pending work evidence of a blocked consumer.
+  const backlogWorkers = workers.filter((worker) => {
+    const thresholdMs = worker.watchdog.idleThresholdMs ?? fallbackIdleThresholdMs;
+    const pendingAgeMs = workerHealth?.queueSummary?.oldestPendingJobAgeMs ?? 0;
+    return (workerHealth?.queueSummary?.stalledRunning ?? 0) > 0 || (
+      (workerHealth?.queueSummary?.pending ?? 0) > 0 &&
+      Number.isFinite(thresholdMs) && thresholdMs > 0 &&
+      Number.isFinite(pendingAgeMs) && pendingAgeMs >= thresholdMs
+    );
+  });
+  const idleWorkers = backlogWorkers
     .filter((worker) => worker.currentJobId === null)
     .filter((worker) => {
       const thresholdMs = worker.watchdog.idleThresholdMs ?? fallbackIdleThresholdMs;
@@ -2562,7 +2597,7 @@ function buildInactiveWorkerEvidence(
     });
   const relevantWorkers = idleWorkers.length > 0
     ? idleWorkers
-    : workers.filter((worker) => worker.watchdog.restartRecommended);
+    : backlogWorkers.filter((worker) => worker.watchdog.restartRecommended);
   const worstWorker = relevantWorkers.reduce<typeof relevantWorkers[number] | null>((selected, worker) => {
     if (!selected) {
       return worker;
@@ -2571,7 +2606,9 @@ function buildInactiveWorkerEvidence(
   }, null);
 
   return {
-    detected: relevantWorkers.length > 0,
+    // Activity measures completed work, not liveness. Idle slots are healthy
+    // while the only outstanding jobs are already being processed.
+    detected: queueHasBacklog && relevantWorkers.length > 0,
     maxInactivityMs: worstWorker?.inactivityMs ?? 0,
     lastActivityAt: worstWorker?.lastActivityAt ?? null,
     lastProcessedJobAt: worstWorker?.lastProcessedJobAt ?? null,
@@ -3684,6 +3721,7 @@ async function executeActionPlan(
       const providerResult = await reinitializeOpenAIProvider({
         forceReload: true,
         ignoreBackoff: cooldownOverrideActive,
+        suppressUnchangedAuthenticationProbe: true,
         source: 'self_heal_loop'
       });
       const action =

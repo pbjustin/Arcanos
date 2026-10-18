@@ -1,12 +1,13 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { afterEach, describe, expect, it } from '@jest/globals';
+import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import {
   buildCompactSelfHealSummary,
   buildSelfHealTelemetrySnapshot,
   recordSelfHealEvent,
-  resetSelfHealTelemetryForTests
+  resetSelfHealTelemetryForTests,
+  subscribeSelfHealEventEmissions
 } from '../src/services/selfImprove/selfHealTelemetry.js';
 
 describe('selfHealTelemetry', () => {
@@ -14,6 +15,57 @@ describe('selfHealTelemetry', () => {
     process.env.NODE_ENV = 'test';
     resetSelfHealTelemetryForTests();
     delete process.env.SELF_HEAL_TELEMETRY_FILE;
+  });
+
+  it('observes all process emissions independently of the bounded persisted ring', () => {
+    resetSelfHealTelemetryForTests();
+    const log = jest.spyOn(console, 'log').mockImplementation(() => undefined);
+    const observed: number[] = [];
+    const subscription = subscribeSelfHealEventEmissions((_event, sequence) => { observed.push(sequence); });
+    try {
+      for (let index = 0; index < 150; index += 1) recordSelfHealEvent({ kind: 'trigger', source: 'test-emission' });
+      expect(subscription.baselineSequence).toBe(0);
+      expect(observed).toEqual(Array.from({ length: 150 }, (_, index) => index + 1));
+      expect(subscription.getCurrentSequence()).toBe(150);
+      expect(buildSelfHealTelemetrySnapshot({ enabled: true, active: false }).recentEvents).toHaveLength(100);
+      subscription.unsubscribe();
+      recordSelfHealEvent({ kind: 'trigger', source: 'test-after-unsubscribe' });
+      expect(observed).toHaveLength(150);
+      expect(subscription.getCurrentSequence()).toBe(151);
+      const subsequent = subscribeSelfHealEventEmissions(() => undefined);
+      expect(subsequent.baselineSequence).toBe(151);
+      subsequent.unsubscribe();
+    } finally { subscription.unsubscribe(); log.mockRestore(); }
+  });
+
+  it('isolates throwing or mutating observers from other observers, history, and the caller', () => {
+    resetSelfHealTelemetryForTests();
+    const throwing = subscribeSelfHealEventEmissions(event => {
+      (event.details?.nested as Record<string, unknown>).value = 'changed';
+      event.kind = 'ACTION_EXECUTED';
+      throw new Error('test-observer-error');
+    });
+    const observed = jest.fn();
+    const healthy = subscribeSelfHealEventEmissions(observed);
+    try {
+      const event = recordSelfHealEvent({ kind: 'trigger', source: 'test-isolation', details: { nested: { value: 'original' } } });
+      expect(event).toMatchObject({ kind: 'trigger', details: { nested: { value: 'original' } } });
+      expect(observed).toHaveBeenCalledWith(event, 1);
+      expect(buildSelfHealTelemetrySnapshot({ enabled: true, active: false }).recentEvents).toEqual([event]);
+      expect(healthy.getCurrentSequence()).toBe(1);
+    } finally { throwing.unsubscribe(); healthy.unsubscribe(); }
+  });
+
+  it('emits an accepted event before a later logging failure', () => {
+    resetSelfHealTelemetryForTests();
+    const observed = jest.fn();
+    const subscription = subscribeSelfHealEventEmissions(observed);
+    const log = jest.spyOn(console, 'log').mockImplementationOnce(() => { throw new Error('test-log-failed'); });
+    try {
+      expect(() => recordSelfHealEvent({ kind: 'attempt', source: 'test-logging' })).toThrow('test-log-failed');
+      expect(observed).toHaveBeenCalledWith(expect.objectContaining({ kind: 'attempt' }), 1);
+      expect(subscription.getCurrentSequence()).toBe(1);
+    } finally { subscription.unsubscribe(); log.mockRestore(); }
   });
 
   it('tracks trigger, attempt, success, failure, and fallback events in one snapshot', () => {

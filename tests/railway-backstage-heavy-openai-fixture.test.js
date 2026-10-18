@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { request as httpRequest } from 'node:http';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +17,7 @@ import {
   startBackstageHeavyOpenAIFixture,
   startSelfHealPreviewOpenAIFixture,
   SELF_HEAL_PREVIEW_OPENAI_FIXTURE_SDK_KEY,
+  SELF_HEAL_INFERENCE_PREVIEW_OPENAI_FIXTURE_ROTATED_SDK_KEY,
   SELF_HEAL_PREVIEW_OPENAI_FIXTURE_CONTROL_PATH,
   SELF_HEAL_PREVIEW_OPENAI_FIXTURE_LIMITS,
   SELF_HEAL_PREVIEW_OPENAI_FIXTURE_CHILD_ARGUMENT,
@@ -336,7 +337,7 @@ describe('bounded self-healing preview provider profile', () => {
     expect(runtime.state.inFlight).not.toBeNull();
   };
 
-  afterEach(async () => { await runtime?.close(); runtime = undefined; });
+  afterEach(async () => { await runtime?.close(); runtime = undefined; jest.restoreAllMocks(); });
 
   it.each([
     { OPENAI_API_KEY: 'forbidden' }, { RAILWAY_TOKEN: 'forbidden' },
@@ -347,9 +348,17 @@ describe('bounded self-healing preview provider profile', () => {
     { ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA: 'invalid' },
     { ARCANOS_SELF_HEAL_PREVIEW_ISSUED_AT: new Date(Date.now() + 600_000).toISOString() },
     { ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT: new Date(0).toISOString() },
-    { ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT: new Date(Date.now() + 7_200_001).toISOString() },
   ])('rejects an invalid or credential-bearing literal child environment %p', async changes => {
     await expect(startSelfHealPreviewOpenAIFixture({ port: 0, env: childEnv(changes) }))
+      .rejects.toThrow('SELF_HEAL_PREVIEW_OPENAI_CHILD_CONTRACT_INVALID');
+  });
+
+  it('rejects a lease exceeding two hours from its own issue time', async () => {
+    const env = childEnv();
+    env.ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT = new Date(
+      Date.parse(env.ARCANOS_SELF_HEAL_PREVIEW_ISSUED_AT) + 7_200_001,
+    ).toISOString();
+    await expect(startSelfHealPreviewOpenAIFixture({ port: 0, env }))
       .rejects.toThrow('SELF_HEAL_PREVIEW_OPENAI_CHILD_CONTRACT_INVALID');
   });
 
@@ -381,6 +390,244 @@ describe('bounded self-healing preview provider profile', () => {
         baseURL: legacyBaseURL, maxRetries: 0 }).getClient();
       await expect(legacyClient.models.list()).resolves.toMatchObject({ object: 'list' });
     } finally { await legacy.close(); }
+  });
+
+  const inferenceEnv = () => childEnv({ ARCANOS_SELF_HEAL_PREVIEW_PROFILE: 'worker-inference-containment-v1',
+    ARCANOS_BACKSTAGE_HEAVY_PROOF_RUN_ID: 'self-heal-run-1557', ARCANOS_SELF_HEAL_PREVIEW_RUN_ID: 'self-heal-run-1557' });
+  it('confines rotated fictional credentials and new fault commands to the inference profile', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: childEnv() });
+    await expect(client({ apiKey: SELF_HEAL_INFERENCE_PREVIEW_OPENAI_FIXTURE_ROTATED_SDK_KEY }).models.list())
+      .rejects.toMatchObject({ status: 401 });
+    expect((await control({ command: 'inference_auth_failure_next' })).status).toBe(422);
+    expect((await control({ command: 'inference_late_completion_next' })).status).toBe(422);
+    expect(runtime.inspect().providerRequests).toBe(0);
+  });
+  it('receipts two fixed fictional identities and bounded inference metadata without prompt or key reflection', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: inferenceEnv() });
+    await client().responses.create(responseBody({ max_output_tokens: 256 }));
+    await client({ apiKey: SELF_HEAL_INFERENCE_PREVIEW_OPENAI_FIXTURE_ROTATED_SDK_KEY })
+      .responses.create(responseBody({ max_output_tokens: 128 }));
+    expect(runtime.inspect()).toMatchObject({ profile: 'worker-inference-containment-v1', providerRequests: 2,
+      receipts: [{ credential: 'original', operation: 'responses', maxOutputTokens: 256, status: 200,
+        inputTokens: 64, outputTokens: 128, totalTokens: 192 },
+      { credential: 'rotated', operation: 'responses', maxOutputTokens: 128, status: 200 }] });
+    const serialized = JSON.stringify(runtime.inspect());
+    for (const sensitive of [promptSentinel, SELF_HEAL_PREVIEW_OPENAI_FIXTURE_SDK_KEY,
+      SELF_HEAL_INFERENCE_PREVIEW_OPENAI_FIXTURE_ROTATED_SDK_KEY, token]) expect(serialized).not.toContain(sensitive);
+  });
+  it('keeps the synthetic wire usage and receipt within a sixteen-token probe cap', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: inferenceEnv() });
+    const result = await client().responses.create(responseBody({ max_output_tokens: 16 }));
+    expect(result.usage).toMatchObject({ input_tokens: 64, output_tokens: 16, total_tokens: 80 });
+    expect(runtime.inspect().receipts).toEqual([expect.objectContaining({ maxOutputTokens: 16,
+      inputTokens: 64, outputTokens: 16, totalTokens: 80 })]);
+  });
+  it('counts rejected and over-budget provider traffic before admission without reading its body', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: inferenceEnv() });
+    await expect(client({ apiKey: 'test-unrecognized-fixture-key' }).models.list()).rejects.toMatchObject({ status: 401 });
+    expect(runtime.inspect()).toMatchObject({ providerRequests: 0, providerWireRequests: 1, rejected: 1 });
+    runtime.state.providerRequests = SELF_HEAL_PREVIEW_OPENAI_FIXTURE_LIMITS.maxProviderRequests;
+    await expect(client().models.list()).rejects.toMatchObject({ status: 429 });
+    expect(runtime.inspect()).toMatchObject({ providerRequests: 128, providerWireRequests: 2, rejected: 1 });
+    expect((await control({ command: 'inspect' })).status).toBe(200);
+    expect(runtime.inspect().providerWireRequests).toBe(2);
+  });
+  it.each([
+    ['models_auth_failure_next', 401, true], ['models_forbidden_next', 403, true],
+    ['inference_auth_failure_next', 401, false], ['inference_forbidden_next', 403, false],
+    ['inference_rate_limit_next', 429, false], ['inference_unavailable_next', 503, false],
+  ])('returns one bounded %s failure only at its selected endpoint', async (command, status, models) => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: inferenceEnv() });
+    expect((await control({ command })).status).toBe(200);
+    if (models) {
+      await expect(client().responses.create(responseBody())).resolves.toMatchObject({ status: 'completed' });
+      await expect(client().models.list()).rejects.toMatchObject({ status });
+      await expect(client().models.list()).resolves.toMatchObject({ object: 'list' });
+    } else {
+      await expect(client().models.list()).resolves.toMatchObject({ object: 'list' });
+      await expect(client().responses.create(responseBody())).rejects.toMatchObject({ status });
+      await expect(client().responses.create(responseBody())).resolves.toMatchObject({ status: 'completed' });
+    }
+    expect(runtime.inspect()).toMatchObject({ providerRequests: 3, nextFault: null, inFlight: null });
+    expect(runtime.inspect().receipts.filter(receipt => receipt.outcome === 'synthetic_failure'))
+      .toEqual([expect.objectContaining({ endpoint: models ? 'models' : 'responses', status })]);
+  });
+  it('keeps unpaid metadata timeout receipts separate from paid inference', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: inferenceEnv() });
+    expect((await control({ command: 'models_timeout_next' })).status).toBe(200);
+    await expect(client().models.list()).rejects.toMatchObject({ status: 504 });
+    expect(runtime.inspect()).toMatchObject({ providerRequests: 1, timedOut: 1,
+      receipts: [{ endpoint: 'models', operation: 'models_list', outcome: 'timeout', status: 504 }] });
+    expect(runtime.inspect().receipts.filter(receipt => receipt.endpoint !== 'models')).toHaveLength(0);
+  }, 10_000);
+  it('holds only dispatched inference and records client cancellation without retaining an active fixture request', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: inferenceEnv() });
+    expect((await control({ command: 'inference_hold_next' })).status).toBe(200);
+    await client().models.list();
+    const controller = new AbortController();
+    const pending = client().responses.create(responseBody(), { signal: controller.signal }).catch(error => error);
+    await waitForActive();
+    expect(runtime.inspect()).toMatchObject({ nextFault: null, receipts: [
+      { endpoint: 'models', outcome: 'completed' }, { endpoint: 'responses', outcome: 'in_flight', fault: 'hold' }] });
+    controller.abort(); await pending;
+    for (let attempt = 0; runtime.state.inFlight && attempt < 100; attempt += 1) await new Promise(resolve => setTimeout(resolve, 5));
+    expect(runtime.inspect()).toMatchObject({ inFlight: null, clientClosed: 1, providerRequests: 2 });
+  });
+  it('drops one accepted inference transport with a sanitized receipt and no fixture retry', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: inferenceEnv() });
+    expect((await control({ command: 'inference_cancel_next' })).status).toBe(200);
+    await expect(client().responses.create(responseBody())).rejects.toThrow();
+    expect(runtime.inspect()).toMatchObject({ providerRequests: 1, inFlight: null, nextFault: null,
+      receipts: [{ endpoint: 'responses', outcome: 'transport_cancelled', fault: 'cancel' }] });
+  });
+  const waitForLateWork = async predicate => {
+    const deadline = Date.now() + 1500;
+    while (!predicate(runtime.inspect().receipts.at(-1)) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    expect(predicate(runtime.inspect().receipts.at(-1))).toBe(true);
+  };
+  it('finishes fixed synthetic work after actual SDK cancellation without delivering a response or retrying', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: inferenceEnv() });
+    expect((await control({ command: 'inference_late_completion_next' })).status).toBe(200);
+    await client().models.list();
+    expect(runtime.inspect().nextFault.kind).toBe('late_completion');
+    const controller = new AbortController();
+    const pending = client({ timeout: 30_000 }).responses.create(responseBody(), { signal: controller.signal }).catch(error => error);
+    await waitForLateWork(receipt => receipt?.providerWorkStartedAt !== undefined);
+    const accepted = runtime.inspect().receipts.at(-1);
+    expect(accepted.providerWorkDeadlineAt - accepted.providerWorkStartedAt).toBe(40_000);
+    controller.abort();
+    expect(await pending).toBeInstanceOf(Error);
+    await waitForLateWork(receipt => Number.isFinite(receipt?.clientClosedAt));
+    for (const command of ['release', 'set_healthy', 'release']) expect((await control({ command })).status).toBe(200);
+    await expect(client().responses.create(responseBody())).rejects.toMatchObject({ status: 429 });
+    expect(runtime.inspect()).toMatchObject({ inFlight: accepted.requestId, clientClosed: 1, completed: 1,
+      providerRequests: 2, providerWireRequests: 3, nextFault: null, limits: { maxDelayMs: 30_000, maxSyntheticWorkMs: 40_000 } });
+    expect(runtime.inspect().receipts.at(-1)).toMatchObject({ endedAt: null, providerWorkCompletedAt: null, responseDelivered: false });
+    await new Promise(resolve => setTimeout(resolve, Math.max(0, accepted.providerWorkDeadlineAt - Date.now()) + 100));
+    const terminal = runtime.inspect().receipts.at(-1);
+    expect(terminal).toMatchObject({ requestId: accepted.requestId, fault: 'late_completion',
+      providerWorkKind: 'bounded_synthetic_completion', outcome: 'synthetic_work_completed_after_client_close',
+      providerWorkCancelledAt: null, responseDelivered: false });
+    expect(terminal.clientClosedAt).toBeLessThan(terminal.providerWorkCompletedAt);
+    expect(terminal.providerWorkCompletedAt).toBeGreaterThanOrEqual(terminal.providerWorkDeadlineAt);
+    expect(terminal.endedAt).toBeGreaterThanOrEqual(terminal.providerWorkCompletedAt);
+    expect(terminal).not.toHaveProperty('status');
+    expect(terminal).not.toHaveProperty('totalTokens');
+    expect(runtime.inspect()).toMatchObject({ inFlight: null, completed: 1, clientClosed: 1, providerRequests: 2, providerWireRequests: 3 });
+  }, 50_000);
+  it('records shutdown as incomplete synthetic work and releases its timer exactly once', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: inferenceEnv() });
+    await control({ command: 'inference_late_completion_next' });
+    const controller = new AbortController();
+    const pending = client().responses.create(responseBody(), { signal: controller.signal }).catch(error => error);
+    await waitForLateWork(receipt => receipt?.providerWorkStartedAt !== undefined);
+    controller.abort(); await pending;
+    await waitForLateWork(receipt => Number.isFinite(receipt?.clientClosedAt));
+    await runtime.close(); await runtime.close();
+    expect(runtime.inspect()).toMatchObject({ ready: false, inFlight: null, completed: 0, clientClosed: 1,
+      receipts: [{ outcome: 'synthetic_work_cancelled', providerWorkCompletedAt: null,
+        providerWorkCancelledAt: expect.any(Number), responseDelivered: false }] });
+  });
+  it.each(['complete', 'shutdown', 'expired'])('retains accepted work after an early timer and preserves its terminal outcome (%s)', async ending => {
+    let clock = Date.now();
+    const env = inferenceEnv();
+    const schedule = globalThis.setTimeout;
+    const timers = [];
+    let capturingRemainder = false;
+    jest.spyOn(globalThis, 'setTimeout').mockImplementation((callback, delay, ...args) => {
+      if (delay === 40_000 || (capturingRemainder && delay === 1)) {
+        const handle = schedule(() => {}, 120_000);
+        timers.push({ callback, delay, handle });
+        return handle;
+      }
+      return schedule(callback, delay, ...args);
+    });
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env, now: () => clock });
+    await control({ command: 'inference_late_completion_next' });
+    const controller = new AbortController();
+    const pending = client({ timeout: 30_000 }).responses.create(responseBody(), { signal: controller.signal }).catch(error => error);
+    await waitForLateWork(receipt => receipt?.providerWorkStartedAt !== undefined);
+    controller.abort(); await pending;
+    await waitForLateWork(receipt => Number.isFinite(receipt?.clientClosedAt));
+    const accepted = runtime.inspect().receipts[0];
+    clock = accepted.providerWorkDeadlineAt - 1;
+    clearTimeout(timers[0].handle);
+    capturingRemainder = true; timers[0].callback(); capturingRemainder = false;
+    expect(timers.map(timer => timer.delay)).toEqual([40_000, 1]);
+    expect(runtime.inspect()).toMatchObject({ inFlight: accepted.requestId, providerRequests: 1, providerWireRequests: 1,
+      completed: 0, receipts: [{ requestId: accepted.requestId, outcome: 'in_flight', endedAt: null,
+        providerWorkCompletedAt: null, providerWorkCancelledAt: null, responseDelivered: false }] });
+    if (ending === 'shutdown') await runtime.close();
+    clock = ending === 'expired' ? Date.parse(env.ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT) : accepted.providerWorkDeadlineAt;
+    timers[1].callback();
+    const terminal = runtime.inspect();
+    expect(terminal).toMatchObject({ inFlight: null, providerRequests: 1, providerWireRequests: 1, completed: 0,
+      receipts: [{ requestId: accepted.requestId, responseDelivered: false,
+        outcome: ending === 'complete' ? 'synthetic_work_completed_after_client_close' : 'synthetic_work_cancelled',
+        providerWorkCompletedAt: ending === 'complete' ? accepted.providerWorkDeadlineAt : null,
+        providerWorkCancelledAt: ending === 'complete' ? null : expect.any(Number) }] });
+    clock += 1000; timers[0].callback(); timers[1].callback(); await runtime.close();
+    expect(runtime.inspect().receipts).toEqual(terminal.receipts);
+  });
+  it('rejects late work near lease expiry both when arming and after a previously valid arm', async () => {
+    let clock = Date.now();
+    const env = inferenceEnv();
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env, now: () => clock });
+    await control({ command: 'inference_late_completion_next' });
+    clock = Date.parse(env.ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT) - 44_000;
+    await expect(client().responses.create(responseBody())).rejects.toMatchObject({ status: 409 });
+    expect((await control({ command: 'inference_late_completion_next' })).status).toBe(409);
+    expect(runtime.inspect()).toMatchObject({ inFlight: null, nextFault: null, completed: 0 });
+    expect(runtime.inspect().receipts[0]).not.toHaveProperty('providerWorkStartedAt');
+  });
+  it.each([false, true])('preserves terminal work versus lease cancellation with a synthetic timer (expired=%s)', async expired => {
+    let clock = Date.now();
+    const env = inferenceEnv();
+    const schedule = globalThis.setTimeout;
+    let completeWork;
+    jest.spyOn(globalThis, 'setTimeout').mockImplementation((callback, delay, ...args) => {
+      if (delay === 40_000) { completeWork = callback; return schedule(() => {}, 120_000); }
+      return schedule(callback, delay, ...args);
+    });
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env, now: () => clock });
+    await control({ command: 'inference_late_completion_next' });
+    const pending = client({ timeout: 30_000 }).responses.create(responseBody()).catch(error => error);
+    await waitForLateWork(receipt => receipt?.providerWorkStartedAt !== undefined);
+    clock = expired ? Date.parse(env.ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT) : clock + 40_000;
+    completeWork();
+    const result = await pending;
+    const receipt = runtime.inspect().receipts[0];
+    if (expired) {
+      expect(result).toMatchObject({ status: 503 });
+      expect(receipt).toMatchObject({ outcome: 'synthetic_work_cancelled', providerWorkCompletedAt: null, responseDelivered: false });
+    } else {
+      expect(result).toMatchObject({ status: 'completed' });
+      expect(receipt).toMatchObject({ outcome: 'completed', clientClosedAt: null, responseDelivered: true, providerWorkCompletedAt: clock });
+    }
+    expect(receipt.outcome).not.toBe('synthetic_work_completed_after_client_close');
+    expect(runtime.inspect().inFlight).toBeNull();
+    const terminal = runtime.inspect();
+    clock += 1000; completeWork(); await runtime.close(); completeWork();
+    expect(runtime.inspect().receipts).toEqual(terminal.receipts);
+  });
+  it('does not accept late work before the provider body contract is validated', async () => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: inferenceEnv() });
+    await control({ command: 'inference_late_completion_next' });
+    await expect(client().responses.create(responseBody({ model: 'unknown' }))).rejects.toMatchObject({ status: 422 });
+    expect(runtime.inspect()).toMatchObject({ inFlight: null, nextFault: { kind: 'late_completion' },
+      receipts: [{ outcome: 'rejected' }] });
+    expect(runtime.inspect().receipts[0]).not.toHaveProperty('providerWorkStartedAt');
+  });
+  it.each([
+    { command: 'inference_hold_next', delayMs: 60_000 }, { command: 'models_auth_failure_next', status: 200 },
+    { command: 'credential', key: 'arbitrary' }, { command: 'inference_cancel_next', count: 100 },
+    { command: 'inference_late_completion_next', delayMs: 1 }, { command: 'inference_late_completion_next', count: 2 },
+  ])('rejects unbounded inference control input %p', async body => {
+    runtime = await startSelfHealPreviewOpenAIFixture({ port: 0, env: inferenceEnv() });
+    expect((await control(body)).status).toBe(422);
+    expect(runtime.inspect()).toMatchObject({ providerRequests: 0, nextFault: null });
   });
 
   it('accepts actual SDK model, Responses, chat, and Trinity structured response decoding', async () => {

@@ -167,6 +167,23 @@ let redisPersistenceDirty = false;
 let redisPersistenceStopping = false;
 let redisPersistenceGeneration = 0;
 let handledRedisReadyAt: string | null = null;
+// Emission identity belongs to this process, never to the persisted/reindexed ring.
+let emissionSequence = 0;
+const emissionListeners = new Set<(event: SelfHealEvent, sequence: number) => void>();
+
+/** Observe newly recorded events only; hydration and ring eviction do not emit. */
+export function subscribeSelfHealEventEmissions(listener: (event: SelfHealEvent, sequence: number) => void): {
+  baselineSequence: number;
+  getCurrentSequence: () => number;
+  unsubscribe: () => void;
+} {
+  emissionListeners.add(listener);
+  return {
+    baselineSequence: emissionSequence,
+    getCurrentSequence: () => emissionSequence,
+    unsubscribe: () => { emissionListeners.delete(listener); }
+  };
+}
 
 function isPathWithin(basePath: string, candidatePath: string): boolean {
   const resolvedBasePath = path.resolve(basePath);
@@ -841,6 +858,13 @@ export function recordSelfHealEvent(input: {
     state.lastFallback = event;
   }
 
+  const sequence = ++emissionSequence;
+  for (const listener of [...emissionListeners]) {
+    // A diagnostic observer cannot mutate durable history or disrupt another
+    // observer, persistence, logging, or the caller's healing operation.
+    try { listener(cloneEvent(event)!, sequence); } catch { /* Consumer detects lost emissions by sequence. */ }
+  }
+
   schedulePersistence(state, {
     immediate: IMMEDIATE_PERSISTENCE_EVENT_KINDS.has(event.kind)
   });
@@ -1104,6 +1128,8 @@ export function resetSelfHealTelemetryForTests(options: { clearPersistence?: boo
   redisPersistenceStopping = false;
   handledRedisReadyAt = null;
 
+  emissionSequence = 0;
+  emissionListeners.clear();
   const runtime = globalThis as SelfHealTelemetryGlobal;
   runtime[GLOBAL_KEY] = createInitialState();
 

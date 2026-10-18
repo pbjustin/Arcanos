@@ -180,7 +180,13 @@ jest.unstable_mockModule('../src/services/selfImprove/selfHealTelemetry.js', () 
   recordSelfHealEvent: jest.fn()
 }));
 
-const { evaluatePredictiveHealingRules } = await import('../src/services/selfImprove/predictiveHealingService.js');
+const {
+  evaluatePredictiveHealingRules,
+  runPredictiveHealingFromLoop,
+  resetPredictiveHealingStateForTests
+} = await import('../src/services/selfImprove/predictiveHealingService.js');
+const { getTrinitySelfHealingStatus } = await import('../src/services/selfImprove/selfHealingV2.js');
+const { runArcanosCoreQuery } = await import('../src/services/arcanos-core.js');
 
 function createObservation(overrides: Record<string, unknown> = {}) {
   return {
@@ -281,6 +287,7 @@ describe('predictive healing rule evaluation', () => {
   beforeEach(() => {
     jest.useFakeTimers().setSystemTime(new Date('2026-03-26T12:00:00.000Z'));
     jest.clearAllMocks();
+    resetPredictiveHealingStateForTests();
     reinitializeOpenAIProviderMock.mockResolvedValue({
       ok: true,
       skipped: false,
@@ -420,7 +427,7 @@ describe('predictive healing rule evaluation', () => {
     }));
   });
 
-  it('heals inactive worker runtime when no operational requests are observed', () => {
+  it('does not repair inactivity alone when no pending or stalled work exists', () => {
     const observation = createObservation({
       requestCount: 0,
       workerHealth: {
@@ -479,9 +486,231 @@ describe('predictive healing rule evaluation', () => {
       }
     });
 
-    expect(result.decision.action).toBe('heal_worker_runtime');
-    expect(result.decision.matchedRule).toBe('inactive_worker_runtime_heal');
-    expect(result.decision.reason).toContain('No worker receipts');
-    expect(result.decision.safeToExecute).toBe(true);
+    expect(result.decision.action).toBe('none');
+    expect(result.decision.safeToExecute).toBe(false);
+    expect(result.candidates).toEqual([]);
+  });
+
+  it.each([0, 1000, 30000, 119999, 120000])('requires aged pending work for a supplied inactivity diagnosis (pending age: %s)', oldestPendingJobAgeMs => {
+    const observation = createObservation({
+      requestCount: 0,
+      workerHealth: {
+        ...createObservation().workerHealth,
+        pending: 1,
+        oldestPendingJobAgeMs,
+        workers: [{ workerId: 'idle-slot', healthStatus: 'healthy', currentJobId: null }]
+      },
+      inactivity: {
+        ...createObservation().inactivity,
+        inactiveDegraded: true,
+        reason: 'No activity while queue work remained pending.',
+        maxInactivityMs: 240000,
+        workerIds: ['idle-slot']
+      }
+    });
+
+    const result = evaluatePredictiveHealingRules({ observation, history: [observation] });
+
+    if (oldestPendingJobAgeMs >= 120000) {
+      expect(result.decision).toMatchObject({
+        action: 'heal_worker_runtime', matchedRule: 'inactive_worker_runtime_heal', safeToExecute: true
+      });
+    } else {
+      expect(result.decision.action).toBe('none');
+      expect(result.candidates).toEqual([]);
+    }
+  });
+
+  it.each([0, 1000, 30000, 119999, 120000])('classifies actual pending age before inference for eight healthy idle workers (age: %s)', async oldestPendingJobAgeMs => {
+    const observation = createObservation({ requestCount: 0 });
+    const result = await runPredictiveHealingFromLoop({
+      source: 'fresh-pending-idle-poll',
+      observation: { requestWindow: observation as never, workerRuntime: observation.workerRuntime,
+        trinityStatus: getTrinitySelfHealingStatus(),
+        workerHealth: { overallStatus: 'healthy', alerts: [], settings: { watchdogIdleMs: 120000 },
+          queueSummary: { pending: 1, running: 0, stalledRunning: 0, oldestPendingJobAgeMs },
+          workers: Array.from({ length: 8 }, (_, index) => ({ workerId: `current-slot-${index + 1}`,
+            healthStatus: 'healthy', operationalStatus: 'healthy', stale: false, currentJobId: null,
+            claimAcceptance: 'accepting', lastHeartbeatAt: '2026-03-26T12:00:00.000Z',
+            lastActivityAt: '2026-03-26T11:00:00.000Z', inactivityMs: 3600000,
+            watchdog: { triggered: false, restartRecommended: false, idleThresholdMs: 120000 } }))
+        } as never }
+    });
+    const agedBacklog = oldestPendingJobAgeMs >= 120000;
+    expect(result.observation.inactivity?.inactiveDegraded).toBe(agedBacklog);
+    if (agedBacklog) {
+      expect(result.decision).toMatchObject({ action: 'heal_worker_runtime', matchedRule: 'inactive_worker_runtime_heal' });
+    } else {
+      expect(result.decision.action).toBe('none');
+      expect(result.decision.details.aiEligibilityReason).toBe('no_actionable_incident');
+    }
+    expect(result.execution.attempted).toBe(false);
+    expect(runArcanosCoreQuery).not.toHaveBeenCalled();
+  });
+
+  it('keeps one legitimate running job and seven healthy idle slots free of inactivity repair candidates', () => {
+    const observation = createObservation({ requestCount: 0 });
+    observation.workerHealth = {
+      ...observation.workerHealth, pending: 0, running: 1, stalledRunning: 0,
+      workers: Array.from({ length: 8 }, (_, index) => ({
+        workerId: `slot-${index + 1}`, healthStatus: 'healthy',
+        currentJobId: index === 0 ? 'legitimate-long-job' : null,
+        stale: false, claimAcceptance: 'accepting', inactivityMs: 3_600_000,
+        watchdog: { triggered: false, restartRecommended: false, idleThresholdMs: 120000 }
+      }))
+    };
+    observation.inactivity = { ...observation.inactivity, inactiveDegraded: true,
+      maxInactivityMs: 3_600_000, workerIds: Array.from({ length: 7 }, (_, index) => `slot-${index + 2}`) };
+
+    const result = evaluatePredictiveHealingRules({ observation, history: [observation] });
+
+    expect(result.decision.action).toBe('none');
+    expect(result.decision.safeToExecute).toBe(false);
+    expect(result.candidates).toEqual([]);
+  });
+
+  it('does not infer an unavailable fleet from one stale row while a healthy worker can claim pending work', () => {
+    const observation = createObservation({ requestCount: 0 });
+    observation.workerHealth = { ...observation.workerHealth, pending: 1, running: 0,
+      workers: [
+        { workerId: 'stale-slot', healthStatus: 'healthy', stale: true, currentJobId: null },
+        { workerId: 'current-slot', healthStatus: 'healthy', stale: false, currentJobId: null }
+      ] };
+    const result = evaluatePredictiveHealingRules({ observation, history: [observation] });
+    expect(result.candidates).toEqual([]);
+    expect(result.decision.action).toBe('none');
+  });
+
+  it.each([0, 1])('does not promote retained stale failures into live predictive inactivity, repairs or inference (pending: %s)', async pending => {
+    const observation = createObservation({ requestCount: 0 });
+    const result = await runPredictiveHealingFromLoop({
+      source: 'mixed-retained-and-current-workers',
+      observation: { requestWindow: observation as never, workerRuntime: observation.workerRuntime,
+        trinityStatus: getTrinitySelfHealingStatus(),
+        workerHealth: { overallStatus: 'healthy', alerts: [], settings: { watchdogIdleMs: 120000 },
+          queueSummary: { pending, running: 0, stalledRunning: 0, oldestPendingJobAgeMs: 0 },
+          workers: [
+            { workerId: 'retained-dependency', healthStatus: 'unhealthy', operationalStatus: 'unhealthy',
+              stale: true, currentJobId: null, claimAcceptance: 'dependency_failure', inactivityMs: 7200000,
+              watchdog: { triggered: false, restartRecommended: true, idleThresholdMs: 120000 } },
+            { workerId: 'retained-watchdog', healthStatus: 'unhealthy', operationalStatus: 'unhealthy',
+              stale: true, currentJobId: null, inactivityMs: 7200000,
+              watchdog: { triggered: true, restartRecommended: true, idleThresholdMs: 120000 } },
+            ...Array.from({ length: 8 }, (_, index) => ({ workerId: `current-slot-${index + 1}`,
+              healthStatus: 'healthy', operationalStatus: 'healthy', stale: false, currentJobId: null,
+              claimAcceptance: 'accepting', lastActivityAt: '2026-03-26T12:00:00.000Z', inactivityMs: 0,
+              watchdog: { triggered: false, restartRecommended: false, idleThresholdMs: 120000 } }))
+          ] } as never }
+    });
+    expect(result.observation.workerHealth.unhealthyWorkerIds).toEqual([]);
+    expect(result.observation.inactivity?.inactiveDegraded).toBe(false);
+    expect(result.decision.action).toBe('none');
+    expect(result.decision.details.aiEligibilityReason).toBe('no_actionable_incident');
+    expect(result.execution.attempted).toBe(false);
+    expect(runArcanosCoreQuery).not.toHaveBeenCalled();
+  });
+
+  it.each(['dependency', 'watchdog'])('retains a fresh %s predictive candidate beside a healthy peer', failure => {
+    const observation = createObservation({ requestCount: 0 });
+    observation.workerHealth = { ...observation.workerHealth, overallStatus: 'unhealthy', pending: 1, running: 0,
+      alerts: failure === 'watchdog' ? ['Worker watchdog triggered.'] : [],
+      workers: [
+        { workerId: 'failed-current-slot', healthStatus: 'unhealthy', stale: false, currentJobId: null,
+          claimAcceptance: failure === 'dependency' ? 'dependency_failure' : 'accepting',
+          watchdog: { triggered: failure === 'watchdog', restartRecommended: false, idleThresholdMs: 120000 } },
+        { workerId: 'healthy-current-slot', healthStatus: 'healthy', stale: false, currentJobId: null }
+      ] };
+    const result = evaluatePredictiveHealingRules({ observation, history: [observation] });
+    expect(result.candidates).toContainEqual(expect.objectContaining({ action: 'heal_worker_runtime',
+      matchedRule: failure === 'dependency' ? 'worker_dependency_failure' : 'worker_watchdog_reheal_runtime' }));
+  });
+
+  it.each([
+    ['stalled jobs', { stalledRunning: 1, running: 1 }, {}, 'worker_stalled_jobs'],
+    ['failed heartbeat', { pending: 1 }, { stale: true }, 'worker_heartbeat_or_availability_failure'],
+    ['offline worker', { pending: 1 }, { healthStatus: 'offline' }, 'worker_heartbeat_or_availability_failure'],
+    ['dependency failure', {}, { claimAcceptance: 'dependency_failure' }, 'worker_dependency_failure']
+  ])('retains %s diagnosis when the separate listener runtime is disabled', (_label, queue, worker, matchedRule) => {
+    const observation = createObservation({
+      requestCount: 0,
+      workerRuntime: { ...createObservation().workerRuntime, enabled: false, started: false, activeListeners: 0 },
+      workerHealth: {
+        ...createObservation().workerHealth,
+        running: 0,
+        ...queue,
+        workers: [{ workerId: 'durable-slot', healthStatus: 'healthy', currentJobId: 'running-job', ...worker }]
+      }
+    });
+
+    const result = evaluatePredictiveHealingRules({ observation, history: [observation] });
+
+    expect(result.decision).toMatchObject({ action: 'heal_worker_runtime', matchedRule, safeToExecute: true });
+  });
+
+  it('uses current operational health instead of retained failure status for eight idle workers', async () => {
+    const observation = createObservation({ requestCount: 0 });
+    const result = await runPredictiveHealingFromLoop({
+      source: 'synthetic-operational-health',
+      observation: {
+        requestWindow: observation as never,
+        workerRuntime: observation.workerRuntime,
+        trinityStatus: getTrinitySelfHealingStatus(),
+        workerHealth: {
+          overallStatus: 'healthy', alerts: [],
+          queueSummary: { pending: 0, running: 0, stalledRunning: 0 },
+          settings: { watchdogIdleMs: 120000 },
+          workers: Array.from({ length: 8 }, (_, index) => ({
+            workerId: `slot-${index + 1}`,
+            healthStatus: index === 0 ? 'unhealthy' : 'healthy',
+            operationalStatus: 'healthy',
+            currentJobId: null,
+            stale: false,
+            claimAcceptance: 'accepting',
+            lastHeartbeatAt: '2026-03-26T12:00:00.000Z',
+            lastActivityAt: '2026-03-26T11:00:00.000Z',
+            inactivityMs: 3600000,
+            watchdog: { triggered: false, restartRecommended: false, idleThresholdMs: 120000 }
+          }))
+        } as never
+      }
+    });
+
+    expect(result.observation.workerHealth.unhealthyWorkerIds).toEqual([]);
+    expect(result.observation.workerHealth.workers).toHaveLength(8);
+    expect(result.observation.inactivity?.inactiveDegraded).toBe(false);
+    expect(result.decision.action).toBe('none');
+    expect(result.execution.attempted).toBe(false);
+    expect(runArcanosCoreQuery).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['heartbeat', 1, true, 'accepting', 'degraded', 'worker_heartbeat_or_availability_failure'],
+    ['dependency', 0, false, 'dependency_failure', 'unhealthy', 'worker_dependency_failure']
+  ])('carries explicit %s evidence from control health into predictive candidates', async (_label, pending, stale, claimAcceptance, operationalStatus, matchedRule) => {
+    const observation = createObservation({ requestCount: 0 });
+    const result = await runPredictiveHealingFromLoop({
+      source: 'synthetic-worker-failure',
+      observation: {
+        requestWindow: observation as never,
+        workerRuntime: { ...observation.workerRuntime, enabled: false, started: false, activeListeners: 0 },
+        trinityStatus: getTrinitySelfHealingStatus(),
+        workerHealth: {
+          overallStatus: operationalStatus, alerts: [],
+          queueSummary: { pending, running: 0, stalledRunning: 0 },
+          settings: { watchdogIdleMs: 120000 },
+          workers: Array.from({ length: 8 }, (_, index) => ({
+            workerId: `slot-${index + 1}`, healthStatus: 'healthy', operationalStatus,
+            currentJobId: null, stale, claimAcceptance,
+            lastHeartbeatAt: '2026-03-26T11:58:00.000Z',
+            lastActivityAt: '2026-03-26T12:00:00.000Z', inactivityMs: 0,
+            watchdog: { triggered: false, restartRecommended: false, idleThresholdMs: 120000 }
+          }))
+        } as never
+      }
+    });
+
+    expect(result.decision).toMatchObject({ action: 'heal_worker_runtime', matchedRule });
+    expect(result.observation.workerHealth.workers[0]).toMatchObject({ stale, claimAcceptance });
+    expect(runArcanosCoreQuery).not.toHaveBeenCalled();
   });
 });

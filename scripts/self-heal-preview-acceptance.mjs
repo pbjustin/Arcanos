@@ -7,7 +7,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 import { isDeepStrictEqual, promisify } from 'node:util';
-import { validateSelfHealPreviewCleanupReceipt } from './self-heal-preview-cleanup.mjs';
+import { resolveSelfHealPreviewResourceNames, validateSelfHealPreviewCleanupReceipt } from './self-heal-preview-cleanup.mjs';
 import { buildBackstageHeavyRailwayCliEnvironment, railwayInvocationForBackstageHeavyProbe } from './railway-backstage-heavy-e2e-probe.mjs';
 
 export const SELF_HEAL_ACCEPTANCE_CASES = Object.freeze([
@@ -21,13 +21,20 @@ const COMMANDS = new Set(['inspect', 'duplicate_start', 'coordinator_stop', 'coo
   'policy_predictive_no_execute', 'policy_allowed', 'policy_restore', 'prompt_worker_rejection', 'remote_mitigation_rejection',
   'trinity_activate', 'trinity_replace', 'trinity_stale_rollback', 'trinity_rollback', 'trinity_consumer', 'trinity_run', 'predictive_evaluate_live']);
 const PROVIDER = new Set(['inspect', 'set_healthy', 'timeout_next', 'hold_next', 'release']);
+const INFERENCE_COMMANDS = new Set(['containment_predictive_on', 'containment_predictive_off', 'containment_tick_batch',
+  'containment_dependency_failure', 'containment_dependency_restore', 'containment_diagnose_no_ai', 'containment_diagnose_on_redis_unavailable']);
+const SHARED_INFERENCE_COMMANDS = new Set(['containment_diagnose', 'containment_probe', 'containment_cancel',
+  'containment_credential_rotate', 'containment_credential_restore']);
+const INFERENCE_PROVIDER = new Set(['models_timeout_next', 'inference_hold_next', 'inference_cancel_next', 'inference_late_completion_next',
+  'models_auth_failure_next', 'inference_auth_failure_next', 'models_forbidden_next', 'inference_forbidden_next',
+  'inference_rate_limit_next', 'inference_unavailable_next']);
+const INFERENCE_JOB_CASES = new Set(['I01', 'I02', 'I03', 'I04']);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const SHA = /^[a-f0-9]{40}$/u;
 const DIGEST = /^[a-f0-9]{64}$/u;
 const REAL_TRANSPORTS = new WeakMap();
 const MAX_BYTES = 2 * 1024 * 1024;
 const CLEANUP_RESERVE_MS = 10 * 60_000;
-const NAMES = { web: 'arcanos-web-pr1544-heavy', worker: 'arcanos-worker-pr1544-heavy', postgres: 'Postgres', redis: 'Redis' };
 const CAPS = { web: { cpu: 1, memoryBytes: 1024 ** 3 }, worker: { cpu: 1, memoryBytes: 2 * 1024 ** 3 },
   postgres: { cpu: 0.5, memoryBytes: 0.5 * 1024 ** 3 }, redis: { cpu: 0.25, memoryBytes: 0.25 * 1024 ** 3 } };
 const INVENTORY_QUERY = `query SelfHealAcceptanceInventory($projectId: String!, $environmentId: String!, $workerId: String!, $postgresId: String!, $redisId: String!) {
@@ -67,14 +74,15 @@ export function validateSelfHealAcceptanceManifest(value, options = {}) {
   if (!exactKeys(value, ['version', 'receipt', 'controllerSha', 'budgetUsd', 'cleanupArmedUntil', 'services'])
     || value.version !== 1 || value.budgetUsd !== 3 || !SHA.test(value.controllerSha ?? '')) block('MANIFEST_INVALID');
   const receipt = validateSelfHealPreviewCleanupReceipt(value.receipt, { now: () => now, allowExpired: false });
+  const names = resolveSelfHealPreviewResourceNames(receipt.prNumber);
   if (!receipt.resources || receipt.resources.services.length !== 4 || receipt.resources.volumes.length !== 2
     || value.cleanupArmedUntil !== receipt.expiresAt || !Array.isArray(value.services) || value.services.length !== 4) block('OWNERSHIP_INVALID');
   const ids = new Set(); const roles = new Set();
   for (const service of value.services) {
     if (!exactKeys(service, ['role', 'serviceId', 'deploymentId', 'imageDigest', 'compiledSha256'])
-      || !Object.hasOwn(NAMES, service.role) || roles.has(service.role) || !UUID.test(service.serviceId ?? '')
+      || !Object.hasOwn(names, service.role) || roles.has(service.role) || !UUID.test(service.serviceId ?? '')
       || !UUID.test(service.deploymentId ?? '') || !/^sha256:[a-f0-9]{64}$/u.test(service.imageDigest ?? '')
-      || !receipt.resources.services.some(bound => bound.id === service.serviceId && bound.name === NAMES[service.role])
+      || !receipt.resources.services.some(bound => bound.id === service.serviceId && bound.name === names[service.role])
       || (['web', 'worker'].includes(service.role) ? !DIGEST.test(service.compiledSha256 ?? '') : service.compiledSha256 !== null)) block('SERVICE_INVALID');
     roles.add(service.role); ids.add(service.serviceId); ids.add(service.deploymentId);
   }
@@ -86,10 +94,11 @@ export function validateSelfHealAcceptanceManifest(value, options = {}) {
 export function attestSelfHealAcceptanceStatus(status, manifest, options = {}) {
   validateSelfHealAcceptanceManifest(manifest, options);
   const receipt = manifest.receipt;
+  const names = resolveSelfHealPreviewResourceNames(receipt.prNumber);
   if (status?.id !== receipt.projectId || status.name !== receipt.projectName || status.workspaceId !== receipt.workspaceId
     || status.deletedAt !== null) block('PROJECT_DRIFT');
   const services = rows(status.services);
-  if (services.length !== 4 || services.some(service => !manifest.services.some(pin => pin.serviceId === service.id && NAMES[pin.role] === service.name))) block('TOPOLOGY_DRIFT');
+  if (services.length !== 4 || services.some(service => !manifest.services.some(pin => pin.serviceId === service.id && names[pin.role] === service.name))) block('TOPOLOGY_DRIFT');
   const environments = rows(status.environments);
   if (environments.length !== 1 || environments[0].id !== receipt.environmentId || environments[0].name !== receipt.environmentName
     || environments[0].deletedAt !== null) block('ENVIRONMENT_DRIFT');
@@ -105,7 +114,7 @@ export function attestSelfHealAcceptanceStatus(status, manifest, options = {}) {
     const active = instance?.activeDeployments?.filter(item => item.deploymentStopped !== true);
     const running = deployment?.instances?.filter(item => item.status === 'RUNNING');
     const transient = options.transientRole === pin.role;
-    if (instance?.serviceName !== NAMES[pin.role] || deployment?.id !== pin.deploymentId
+    if (instance?.serviceName !== names[pin.role] || deployment?.id !== pin.deploymentId
       || (!transient && (deployment.status !== 'SUCCESS' || deployment.deploymentStopped !== false))
       || !Array.isArray(active) || (transient ? active.length > 1 : active.length !== 1)
       || active.some(item => item.id !== pin.deploymentId)
@@ -151,9 +160,13 @@ function safeProjection(value) {
   return projection;
 }
 
+/** Reuse the same bounded, credential-free evidence boundary for the owned containment matrix. */
+export const sanitizeSelfHealAcceptanceEvidence = safeProjection;
+
 /** Transport has a closed vocabulary; SSH executes only the reviewed fixed helper. */
 export function createSelfHealAcceptanceTransport(manifest, options = {}) {
   manifest = validateSelfHealAcceptanceManifest(manifest, options);
+  const inferenceProfile = manifest.receipt.prNumber === 1557;
   const execute = options.execute === true; const allowNetwork = options.allowNetwork === true;
   if (execute !== allowNetwork) block('NETWORK_GATES_REQUIRED');
   const now = options.now ?? Date.now;
@@ -178,7 +191,7 @@ export function createSelfHealAcceptanceTransport(manifest, options = {}) {
     if (Date.parse(manifest.receipt.expiresAt) <= now()) block('LEASE_EXPIRED');
     if (!restoring && Date.parse(manifest.receipt.expiresAt) - now() <= CLEANUP_RESERVE_MS) block('CLEANUP_RESERVE_REACHED');
     const head = restoring ? manifest.receipt.sourceSha : await (options.readHead ?? (async () => {
-      const result = await promisify(execFile)('gh', ['pr', 'view', '1544', '--repo', 'pbjustin/Arcanos', '--json', 'headRefOid', '--jq', '.headRefOid'],
+      const result = await promisify(execFile)('gh', ['pr', 'view', String(manifest.receipt.prNumber), '--repo', 'pbjustin/Arcanos', '--json', 'headRefOid', '--jq', '.headRefOid'],
         { timeout: 15_000, maxBuffer: 4096, windowsHide: true, encoding: 'utf8' }); return result.stdout.trim();
     }))();
     if (head !== manifest.receipt.sourceSha) block('PR_HEAD_CHANGED');
@@ -200,13 +213,20 @@ export function createSelfHealAcceptanceTransport(manifest, options = {}) {
         || (role === 'worker' && argv.length === 1 && ['replacement-race', 'dependency-overlap'].includes(argv[0]))
         || (role === 'web' && argv.length === 2 && argv[0] === 'shutdown-receipt' && ['A06', 'E06'].includes(argv[1]))
         || (argv.length === 2 && argv[0] === 'command' && COMMANDS.has(argv[1]))
+        || (inferenceProfile && argv.length === 2 && argv[0] === 'command'
+          && (SHARED_INFERENCE_COMMANDS.has(argv[1]) || (role === 'worker' && INFERENCE_COMMANDS.has(argv[1]))))
         || (role === 'worker' && argv.length === 2 && argv[0] === 'provider' && PROVIDER.has(argv[1]))
+        || (inferenceProfile && role === 'web' && argv.length === 2 && argv[0] === 'provider' && argv[1] === 'inspect')
+        || (inferenceProfile && role === 'worker' && argv.length === 2 && argv[0] === 'provider' && INFERENCE_PROVIDER.has(argv[1]))
         || (role === 'worker' && argv.length === 4 && argv[0] === 'fenced-job' && ['create', 'inspect'].includes(argv[1])
-          && SELF_HEAL_ACCEPTANCE_CASES.includes(argv[2]) && ['1', '2'].includes(argv[3]))
+          && (inferenceProfile ? INFERENCE_JOB_CASES.has(argv[2]) : SELF_HEAL_ACCEPTANCE_CASES.includes(argv[2])) && ['1', '2'].includes(argv[3]))
         || (role === 'web' && argv.length === 3 && argv[0] === 'web-job' && argv[1] === 'run' && ['1', '2'].includes(argv[2]));
       if (!valid) block('OPERATION_INVALID');
-      if (restoring && !(role === 'worker' && ((argv[0] === 'provider' && ['release', 'set_healthy'].includes(argv[1]))
-        || (argv[0] === 'command' && ['release_observation', 'trinity_rollback', 'policy_restore', 'coordinator_start'].includes(argv[1]))))) block('RESTORATION_INVALID');
+      if (restoring && !((role === 'worker' && ((argv[0] === 'provider' && ['release', 'set_healthy'].includes(argv[1]))
+        || (argv[0] === 'command' && (['release_observation', 'trinity_rollback', 'policy_restore', 'coordinator_start'].includes(argv[1])
+          || (inferenceProfile && ['containment_cancel', 'containment_credential_restore', 'containment_dependency_restore'].includes(argv[1]))))))
+        || (inferenceProfile && role === 'web' && argv[0] === 'command'
+          && ['containment_cancel', 'containment_credential_restore', 'policy_restore'].includes(argv[1])))) block('RESTORATION_INVALID');
       const target = (await targets(restoring))[role];
       if (!target.instanceId) block('TARGET_NOT_RUNNING');
       // Railway SSH adds session-only authority and context absent from the application parent.
@@ -222,7 +242,7 @@ export function createSelfHealAcceptanceTransport(manifest, options = {}) {
   };
   const transport = Object.freeze({
     remote: (role, argv) => remote(role, argv),
-    restore: argv => remote('worker', argv, true),
+    restore: (argv, role = 'worker') => remote(role, argv, true),
     async shutdownHeld(scenario) {
       if (!['A06', 'E06'].includes(scenario)) block('SHUTDOWN_SCENARIO_INVALID');
       if (shutdownRequested) block('SHUTDOWN_BUDGET_EXHAUSTED');
@@ -260,6 +280,13 @@ export function createSelfHealAcceptanceTransport(manifest, options = {}) {
   });
   if (!options.command && !options.readHead && !options.invocation && !options.now && !options.env) REAL_TRANSPORTS.set(transport, manifest);
   return transport;
+}
+
+/** A reused live transport cannot attest a different caller-supplied manifest. */
+export function isRealSelfHealAcceptanceTransport(transport, manifest) {
+  const boundManifest = REAL_TRANSPORTS.get(transport);
+  if (boundManifest && !isDeepStrictEqual(boundManifest, manifest)) block('TRANSPORT_MANIFEST_MISMATCH');
+  return boundManifest !== undefined;
 }
 
 function inspection(receipt) { return receipt?.observation?.inspection ?? receipt?.observation; }
@@ -377,13 +404,13 @@ export function attestSelfHealStartupFailureReceipt(value, failed, recovered, ma
 export async function runSelfHealAcceptanceCase(scenario, manifest, options = {}) {
   if (!SELF_HEAL_ACCEPTANCE_CASES.includes(scenario)) block('SCENARIO_INVALID');
   manifest = validateSelfHealAcceptanceManifest(manifest, options);
+  // This matrix proves the original coordinator profile, not PR 1557 containment.
+  if (manifest.receipt.prNumber !== 1544) block('SCENARIO_PROFILE_MISMATCH');
   if (options.execute !== true && options.allowNetwork !== true) return { scenario, classification: 'NOT_RUN', executed: false, sourceSha: manifest.receipt.sourceSha };
   if (options.execute !== true || options.allowNetwork !== true) block('NETWORK_GATES_REQUIRED');
   const now = options.now ?? Date.now; const wait = options.sleep ?? sleep;
   const transport = options.transport ?? createSelfHealAcceptanceTransport(manifest, options);
-  const boundManifest = REAL_TRANSPORTS.get(transport);
-  if (boundManifest && !isDeepStrictEqual(boundManifest, manifest)) block('TRANSPORT_MANIFEST_MISMATCH');
-  const realTransport = boundManifest !== undefined && !options.now && !options.sleep;
+  const realTransport = isRealSelfHealAcceptanceTransport(transport, manifest) && !options.now && !options.sleep;
   const events = []; let sequence = 0; let baseline; let finalState; let errorCode = null;
   let classification = 'BLOCKED'; let cleanupResult = 'NOT_RUN';
   const emit = async (kind, value) => {

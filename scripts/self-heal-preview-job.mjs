@@ -12,6 +12,7 @@ export const SELF_HEAL_PREVIEW_JOB_SCENARIOS = Object.freeze([
   'C01', 'C02', 'C03', 'C04', 'C05', 'C06', 'C07', 'C08',
   'D01', 'D02', 'D03', 'D04', 'D05', 'D06', 'D07', 'E01', 'E02', 'E03', 'E04', 'E05', 'E06',
 ]);
+export const SELF_HEAL_INFERENCE_PREVIEW_JOB_SCENARIOS = Object.freeze(['I01', 'I02', 'I03', 'I04']);
 function fail() { throw new Error('SELF_HEAL_PREVIEW_FENCED_JOB_FAILED'); }
 const SELECT_JOB_FIELDS = `SELECT j.id, j.status, j.claim_generation::text AS claim_generation,
   j.last_worker_id, j.retry_count, (j.lease_expires_at > clock_timestamp()) IS TRUE AS lease_active, j.output,
@@ -56,8 +57,12 @@ function projectJob(job, profile) {
 
 export async function runSelfHealPreviewFencedJob(command, env, options = {}) {
   if (!['create', 'inspect'].includes(command) || env.ARCANOS_PROCESS_KIND !== 'worker') fail();
-  if (!SELF_HEAL_PREVIEW_JOB_SCENARIOS.includes(options.scenario) || ![1, 2].includes(options.attempt)) fail();
+  if (![...SELF_HEAL_PREVIEW_JOB_SCENARIOS, ...SELF_HEAL_INFERENCE_PREVIEW_JOB_SCENARIOS].includes(options.scenario)
+    || ![1, 2].includes(options.attempt)) fail();
   const unbound = resolveSelfHealPreviewProfile('worker', env, { now: options.now });
+  const containment = SELF_HEAL_INFERENCE_PREVIEW_JOB_SCENARIOS.includes(options.scenario);
+  if (containment && unbound.ownership.profile !== 'worker-inference-containment-v1') fail();
+  const runningOnly = ['I01', 'I02'].includes(options.scenario);
   const artifact = await (options.verifyArtifact ?? verifySelfHealPreviewArtifact)({ sourceSha: unbound.proofTarget.sourceCommit });
   const profile = bindSelfHealPreviewArtifact(unbound, artifact);
   const assertLease = () => { if (profile.expiresAtMs <= (options.now?.() ?? Date.now())) fail(); };
@@ -82,9 +87,11 @@ export async function runSelfHealPreviewFencedJob(command, env, options = {}) {
     if (!Array.isArray(jobs.rows) || jobs.rows.length > 1) fail();
     if (command === 'create' && jobs.rows.length === 0) {
       assertLease();
-      const input = { prompt: `Reply with exactly ${SELF_HEAL_PREVIEW_FENCED_LITERAL}`,
+      const input = { prompt: runningOnly
+          ? 'Write a short fictional description of a blue paper kite above a quiet meadow.'
+          : `Reply with exactly ${SELF_HEAL_PREVIEW_FENCED_LITERAL}`,
         answerMode: 'direct', requestedVerbosity: 'minimal', maxWords: 8,
-        endpointName: 'self-heal.preview.fenced' };
+        endpointName: runningOnly ? 'self-heal.preview.running-only' : 'self-heal.preview.fenced' };
       await client.query(`INSERT INTO public.job_data
         (worker_id, job_type, status, input, max_retries, correlation_id, expires_at, retention_until)
         SELECT $1, 'ask', 'pending', $2::jsonb, 0, $3, NOW() + INTERVAL '120 seconds', NOW() + INTERVAL '1 day'
@@ -99,7 +106,7 @@ export async function runSelfHealPreviewFencedJob(command, env, options = {}) {
     return { sourceSha: profile.proofTarget.sourceCommit, runId: profile.proofTarget.runId,
       serviceId: profile.proofTarget.serviceId, scenario: options.scenario, attempt: options.attempt,
       correlationId: correlation, allowedWorkerIds: resolveSelfHealPreviewWorkerIds(profile), job,
-      consumerPath: 'ordinary-worker-ask-exact-literal-dispatch',
+      consumerPath: runningOnly ? 'ordinary-worker-ask-loopback-provider' : 'ordinary-worker-ask-exact-literal-dispatch',
       providerRecoveryProven: false };
   } catch { fail(); }
   finally {

@@ -905,6 +905,16 @@ describe('Backstage heavy network proof', () => {
     }
   });
 
+  it.each(['HTTP_PROXY', 'https_proxy'])('keeps the operator %s setting forbidden on application roles', name => {
+    const config = resolveBackstageHeavyProbeConfig(configArgs(true));
+    for (const role of ['webVariables', 'workerVariables']) {
+      const payloads = controlPlanePayloads(config);
+      payloads[role][name] = 'http://operator-proxy.invalid:8080';
+      expect(() => attestBackstageHeavyRailwayControlPlane(payloads, config))
+        .toThrow('BACKSTAGE_HEAVY_PROBE_PROVIDER_ENV_FORBIDDEN');
+    }
+  });
+
   it('uses a shell-free Windows CLI invocation, bounded array JSON, and a credential-minimal child env', async () => {
     expect(railwayInvocationForBackstageHeavyProbe(
       'win32',
@@ -924,7 +934,9 @@ describe('Backstage heavy network proof', () => {
       ARCANOS_BACKSTAGE_HEAVY_PROBE_BEARER: 'must-not-cross',
       DATABASE_URL: DATABASE_URL,
       OPENAI_API_KEY: 'test-must-not-cross',
-      HTTP_PROXY: 'must-not-cross',
+      HTTP_PROXY: 'http://operator-proxy.invalid:8080',
+      https_proxy: 'http://operator-proxy.invalid:8080',
+      NO_PROXY: 'localhost,127.0.0.1',
       NODE_OPTIONS: '--import=must-not-cross',
     })).toEqual({
       CI: 'true',
@@ -933,6 +945,9 @@ describe('Backstage heavy network proof', () => {
       APPDATA: 'safe-appdata',
       ProgramData: 'safe-programdata',
       RAILWAY_TOKEN: 'railway-token',
+      HTTP_PROXY: 'http://operator-proxy.invalid:8080',
+      https_proxy: 'http://operator-proxy.invalid:8080',
+      NO_PROXY: 'localhost,127.0.0.1',
     });
 
     const config = resolveBackstageHeavyProbeConfig(configArgs(true));
@@ -951,6 +966,7 @@ describe('Backstage heavy network proof', () => {
         PATH: 'safe-path',
         APPDATA: 'safe-appdata',
         RAILWAY_TOKEN: 'railway-token',
+        HTTPS_PROXY: 'http://operator-proxy.invalid:8080',
         ARCANOS_BACKSTAGE_HEAVY_PROBE_BEARER: 'must-not-cross',
         DATABASE_URL,
       },
@@ -960,6 +976,7 @@ describe('Backstage heavy network proof', () => {
     expect(calls.every(call => call.executable === 'C:\\node.exe')).toBe(true);
     expect(calls.every(call => call.args[0] === 'railway.js')).toBe(true);
     expect(calls.every(call => !('DATABASE_URL' in call.options.env))).toBe(true);
+    expect(calls.every(call => call.options.env.HTTPS_PROXY === 'http://operator-proxy.invalid:8080')).toBe(true);
     expect(calls.map(call => call.args.join(' ')).join('\n')).toContain(
       `tcp-proxy list --project ${ID.project}`
     );

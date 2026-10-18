@@ -176,6 +176,39 @@ jest.unstable_mockModule('../src/services/selfImprove/selfHealTelemetry.js', () 
   recordSelfHealEvent: recordSelfHealEventMock
 }));
 
+// Real admission transitions, isolated local persistence; no Redis or provider I/O.
+const { createSelfHealingInferenceCoordinator } = await import('../src/services/selfImprove/selfHealingInferenceAdmission.js');
+const inferenceStates = new Map<string, string>();
+let afterInferenceReservation: (() => void) | null = null;
+function createPurposeCoordinator(purpose: string) {
+  const relatedPurpose = purpose === 'diagnosis' ? 'provider_probe' : 'diagnosis';
+  return createSelfHealingInferenceCoordinator({
+    async read() { return { rawState: inferenceStates.get(purpose) ?? null,
+      relatedRawState: inferenceStates.get(relatedPurpose) ?? null, nowMs: Date.now() }; },
+    async compareAndSet(expected, replacement, relatedExpected) {
+      if ((inferenceStates.get(purpose) ?? null) !== expected
+        || (inferenceStates.get(relatedPurpose) ?? null) !== relatedExpected) return false;
+      inferenceStates.set(purpose, replacement);
+      return true;
+    }
+  });
+}
+const admissionCoordinators = {
+  diagnosis: createPurposeCoordinator('diagnosis'),
+  provider_probe: createPurposeCoordinator('provider_probe')
+};
+const reserveSelfHealingInferenceMock = jest.fn(async policy => {
+  const purpose = policy.purpose ?? 'diagnosis';
+  const result = await admissionCoordinators[purpose].reserve(policy);
+  afterInferenceReservation?.();
+  return result.allowed ? { ...result, reservation: { ...result.reservation, purpose } } : result;
+});
+jest.unstable_mockModule('../src/services/selfImprove/selfHealingInferenceAdmission.js', () => ({
+  reserveSelfHealingInference: reserveSelfHealingInferenceMock,
+  completeSelfHealingInference: (reservation, result) =>
+    admissionCoordinators[reservation.purpose ?? 'diagnosis'].complete(reservation, result)
+}));
+
 const {
   buildPredictiveHealingAIProviderStatusSnapshot,
   buildPredictiveHealingStatusSnapshot,
@@ -359,6 +392,8 @@ function toLoopObservation(observation = createObservation()) {
 
 describe('predictive healing execution', () => {
   beforeEach(() => {
+    inferenceStates.clear();
+    afterInferenceReservation = null;
     jest.useFakeTimers().setSystemTime(new Date('2026-03-26T12:00:00.000Z'));
     jest.clearAllMocks();
     getKillSwitchStatusMock.mockResolvedValue({ frozen: false, autonomyLevel: 3 });
@@ -461,6 +496,7 @@ describe('predictive healing execution', () => {
       }
     });
     getConfigMock.mockReturnValue({
+      openaiApiKey: 'test-synthetic-offline-credential',
       selfImproveEnabled: true, selfImproveActuatorMode: 'daemon',
       selfImproveAutonomyLevel: 3, selfImproveFrozen: false,
       predictiveHealingEnabled: true,
@@ -748,7 +784,234 @@ describe('predictive healing execution', () => {
     });
   });
 
-  it('backs off predictive AI calls for idle windows after a successful attempt', async () => {
+  describe('provider incident freshness', () => {
+    function idleObservation() {
+      const base = createObservation();
+      return createObservation({
+        collectedAt: new Date().toISOString(), requestCount: 0, errorRate: 0,
+        timeoutRate: 0, avgLatencyMs: 0, p95LatencyMs: 0, maxLatencyMs: 0,
+        workerHealth: {
+          ...base.workerHealth, overallStatus: 'healthy', pending: 0, running: 0,
+          delayed: 0, stalledRunning: 0, oldestPendingJobAgeMs: 0,
+          workers: Array.from({ length: 8 }, (_, index) => ({
+            workerId: `idle-${index}`, healthStatus: 'healthy', currentJobId: null,
+            inactivityMs: 24 * 60 * 60_000, lastActivityAt: '2026-03-25T12:00:00.000Z',
+            watchdog: { triggered: false, restartRecommended: false, reason: null, idleThresholdMs: 120_000 }
+          }))
+        }
+      });
+    }
+
+    function reportProviderFailure(lastFailureAt: string | null) {
+      const health = getOpenAIServiceHealthMock();
+      getOpenAIServiceHealthMock.mockReturnValue({
+        ...health,
+        providerRuntime: {
+          ...health.providerRuntime,
+          // An observed attempt is not evidence that the retained failure is new.
+          lastAttemptAt: new Date().toISOString(), lastSuccessAt: null, lastFailureAt,
+          lastFailureCategory: 'network', lastFailureReason: 'Synthetic connection failure'
+        }
+      });
+      resetPredictiveHealingStateForTests();
+    }
+
+    function mockBoundedDiagnosis() {
+      const create = jest.fn().mockResolvedValue({ output_text: 'synthetic diagnosis' });
+      getOpenAIClientOrAdapterMock.mockReturnValue({ client: { responses: { create } } });
+      runArcanosCoreQueryMock.mockImplementation(async ({ client }) => {
+        await client.responses.create({ model: 'gpt-4.1', input: 'Synthetic provider diagnosis' });
+        return { result: JSON.stringify({ selectedCandidateIndex: 0, reason: 'Synthetic diagnosis',
+          safeToExecute: false, confidence: 0.9 }), activeModel: 'gpt-4.1', fallbackFlag: false,
+          fallbackSummary: { fallbackReasons: [] } };
+      });
+      return create;
+    }
+
+    it.each(['automatic', 'manual'] as const)('retains recovery advice but makes no reservations across twenty idle ticks with old provider history (%s)', async inferenceAuthorization => {
+      const failureAt = '2026-03-25T12:00:00.000Z';
+      reportProviderFailure(failureAt);
+      for (let tick = 0; tick < 20; tick += 1) {
+        const result = await runPredictiveHealingDecision({
+          source: 'historical_provider_idle', execute: false, inferenceAuthorization,
+          observation: idleObservation()
+        });
+        expect(result.decision).toMatchObject({ action: 'reinitialize_ai_provider',
+          advisor: 'rules_fallback_v1', details: { aiEligibilityReason: 'no_actionable_incident' } });
+        expect(result.execution.attempted).toBe(false);
+        expect(buildPredictiveHealingAIProviderStatusSnapshot()).toMatchObject({
+          lastFailureAt: failureAt, lastFailureCategory: 'network', completionHealthy: false
+        });
+        jest.setSystemTime(Date.now() + 30_000);
+      }
+      expect(reserveSelfHealingInferenceMock).not.toHaveBeenCalled();
+      expect(inferenceStates.size).toBe(0);
+      expect(runArcanosCoreQueryMock).not.toHaveBeenCalled();
+      expect(getOpenAIClientOrAdapterMock).not.toHaveBeenCalled();
+      expect(reinitializeOpenAIProviderMock).not.toHaveBeenCalled();
+      expect(healWorkerRuntimeMock).not.toHaveBeenCalled();
+      expect(recycleWorkerMock).not.toHaveBeenCalled();
+    });
+
+    it.each([null, 'not-a-timestamp', '2026-03-26T12:00:00.001Z'])(
+      'denies provider-only diagnosis with missing, malformed or future failure time %s', async lastFailureAt => {
+        reportProviderFailure(lastFailureAt);
+        const result = await runPredictiveHealingDecision({ source: 'invalid_provider_time',
+          inferenceAuthorization: 'manual', observation: idleObservation() });
+        expect(result.decision).toMatchObject({ action: 'reinitialize_ai_provider',
+          details: { aiEligibilityReason: 'no_actionable_incident' } });
+        expect(reserveSelfHealingInferenceMock).not.toHaveBeenCalled();
+        expect(runArcanosCoreQueryMock).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each([Number.POSITIVE_INFINITY, Number.NaN])('fails closed for a nonfinite resolved freshness window %s', async staleAfterMs => {
+      getConfigMock.mockReturnValue({ ...getConfigMock(), predictiveHealingStaleAfterMs: staleAfterMs });
+      reportProviderFailure('2026-03-25T12:00:00.000Z');
+      await runPredictiveHealingDecision({ source: 'invalid_provider_window',
+        inferenceAuthorization: 'manual', observation: idleObservation() });
+      expect(reserveSelfHealingInferenceMock).not.toHaveBeenCalled();
+      expect(runArcanosCoreQueryMock).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { configuredWindow: undefined, ageMs: 120_000, eligible: true },
+      { configuredWindow: undefined, ageMs: 120_001, eligible: false },
+      { configuredWindow: 15_000, ageMs: 15_000, eligible: true },
+      { configuredWindow: 15_000, ageMs: 15_001, eligible: false }
+    ])('uses the existing freshness boundary for provider-only diagnosis: %j', async ({ configuredWindow, ageMs, eligible }) => {
+      getConfigMock.mockReturnValue({ ...getConfigMock(), predictiveHealingStaleAfterMs: configuredWindow });
+      reportProviderFailure(new Date(Date.now() - ageMs).toISOString());
+      const create = mockBoundedDiagnosis();
+      const result = await runPredictiveHealingDecision({ source: 'provider_freshness_boundary',
+        inferenceAuthorization: 'manual', observation: idleObservation() });
+      expect(reserveSelfHealingInferenceMock).toHaveBeenCalledTimes(eligible ? 1 : 0);
+      expect(create).toHaveBeenCalledTimes(eligible ? 1 : 0);
+      expect(result.execution.attempted).toBe(false);
+      if (eligible) {
+        expect(result.decision.advisor).toBe('arcanos_core_v1');
+        expect(create).toHaveBeenCalledWith(expect.objectContaining({ max_output_tokens: 512, stream: false }),
+          expect.objectContaining({ maxRetries: 0, timeout: 30_000 }));
+      } else {
+        expect(result.decision.details.aiEligibilityReason).toBe('no_actionable_incident');
+      }
+    });
+
+    it.each(['dependency failure', 'stalled queue'])('admits a current %s independently of a higher-priority historical provider candidate', async incident => {
+      reportProviderFailure('2026-03-25T12:00:00.000Z');
+      const create = mockBoundedDiagnosis();
+      const observation = idleObservation();
+      const result = await runPredictiveHealingDecision({ source: 'current_worker_old_provider',
+        inferenceAuthorization: 'manual', observation: { ...observation,
+          workerHealth: { ...observation.workerHealth, workers: [
+            { ...observation.workerHealth.workers[0],
+              claimAcceptance: incident === 'dependency failure' ? 'dependency_failure' : 'accepted' },
+            ...observation.workerHealth.workers.slice(1)
+          ], stalledRunning: incident === 'stalled queue' ? 1 : 0 }
+        } });
+      expect(result.decision).toMatchObject({ action: 'reinitialize_ai_provider', advisor: 'arcanos_core_v1' });
+      expect(runArcanosCoreQueryMock.mock.calls[0][0].prompt).toContain(
+        incident === 'dependency failure' ? 'worker_dependency_failure' : 'worker_stalled_jobs'
+      );
+      expect(reserveSelfHealingInferenceMock).toHaveBeenCalledTimes(1);
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(result.execution.attempted).toBe(false);
+    });
+
+    it('admits fresh failed-probe evidence but does not renew it with a denied probe', async () => {
+      const create = mockBoundedDiagnosis();
+      const list = jest.fn().mockRejectedValue(Object.assign(new Error('Synthetic model-list failure'), { status: 504 }));
+      getOpenAIClientOrAdapterMock.mockReturnValue({ client: { models: { list }, responses: { create } } });
+      const probe = await probePredictiveHealingAIProvider();
+      expect(probe.failureCategory).toBe('provider_error');
+      expect(list).toHaveBeenCalledTimes(1);
+      expect(create).not.toHaveBeenCalled();
+      reserveSelfHealingInferenceMock.mockClear();
+      jest.setSystemTime(Date.now() + 1_000);
+      const deniedProbe = await probePredictiveHealingAIProvider();
+      expect(deniedProbe.failureReason).toBe('cooldown');
+      expect(buildPredictiveHealingAIProviderStatusSnapshot().lastFailureAt).toBe(probe.performedAt);
+      reserveSelfHealingInferenceMock.mockClear();
+      const result = await runPredictiveHealingDecision({ source: 'fresh_failed_probe',
+        inferenceAuthorization: 'manual', observation: idleObservation() });
+      expect(result.decision.advisor).toBe('arcanos_core_v1');
+      expect(reserveSelfHealingInferenceMock).toHaveBeenCalledTimes(1);
+      expect(list).toHaveBeenCalledTimes(1);
+      expect(create).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not renew stale failed-probe evidence when a later probe is denied', async () => {
+      getConfigMock.mockReturnValue({ ...getConfigMock(), predictiveHealingStaleAfterMs: 5_000 });
+      const list = jest.fn().mockRejectedValue(Object.assign(new Error('Synthetic metadata failure'), { status: 504 }));
+      getOpenAIClientOrAdapterMock.mockReturnValue({ client: { models: { list } } });
+      const failure = await probePredictiveHealingAIProvider();
+      jest.setSystemTime(Date.now() + 5_001);
+      const deniedProbe = await probePredictiveHealingAIProvider();
+      expect(deniedProbe.failureReason).toBe('cooldown');
+      expect(deniedProbe.performedAt).not.toBe(failure.performedAt);
+      expect(buildPredictiveHealingAIProviderStatusSnapshot().lastFailureAt).toBe(failure.performedAt);
+      reserveSelfHealingInferenceMock.mockClear();
+      const result = await runPredictiveHealingDecision({ source: 'stale_denied_probe',
+        inferenceAuthorization: 'manual', observation: idleObservation() });
+      expect(result.decision).toMatchObject({ action: 'reinitialize_ai_provider',
+        details: { aiEligibilityReason: 'no_actionable_incident' } });
+      expect(reserveSelfHealingInferenceMock).not.toHaveBeenCalled();
+      expect(runArcanosCoreQueryMock).not.toHaveBeenCalled();
+      expect(createSingleChatCompletionMock).not.toHaveBeenCalled();
+      expect(list).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('makes no provider calls or repairs across twenty healthy idle ticks with eight workers', async () => {
+    const base = createObservation();
+    for (let tick = 0; tick < 20; tick += 1) {
+      const observation = createObservation({
+        collectedAt: new Date().toISOString(), requestCount: 0, errorRate: 0,
+        timeoutRate: 0, avgLatencyMs: 0, p95LatencyMs: 0, maxLatencyMs: 0, degradedCount: 0,
+        workerHealth: {
+          ...base.workerHealth, overallStatus: 'healthy', pending: 0, running: 0,
+          delayed: 0, stalledRunning: 0, alerts: [], alertCount: 0,
+          degradedWorkerIds: [], unhealthyWorkerIds: [],
+          workers: Array.from({ length: 8 }, (_, index) => ({
+            workerId: `idle-${index}`, healthStatus: 'healthy', currentJobId: null,
+            inactivityMs: 24 * 60 * 60_000, lastActivityAt: '2026-03-25T12:00:00.000Z',
+            watchdog: { triggered: false, restartRecommended: false, reason: null, idleThresholdMs: 120_000 }
+          }))
+        }
+      });
+      const result = await runPredictiveHealingFromLoop({
+        source: 'predictive_self_heal_loop', observation: toLoopObservation(observation)
+      });
+      expect(result.decision.action).toBe('none');
+      expect(result.execution.attempted).toBe(false);
+      jest.setSystemTime(Date.now() + 30_000);
+    }
+    expect(runArcanosCoreQueryMock).not.toHaveBeenCalled();
+    expect(healWorkerRuntimeMock).not.toHaveBeenCalled();
+    expect(recycleWorkerMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps a recent diagnosis authoritative when provider health still reports yesterday', async () => {
+    const observation = createObservation({ errorRate: 0.8 });
+    await runPredictiveHealingDecision({ source: 'stale_provider_first', observation });
+    jest.setSystemTime(Date.now() + 30_000);
+    const result = await runPredictiveHealingDecision({
+      source: 'stale_provider_second', observation: { ...observation, collectedAt: new Date().toISOString() }
+    });
+    expect(runArcanosCoreQueryMock).toHaveBeenCalledTimes(1);
+    expect(buildPredictiveHealingAIProviderStatusSnapshot().lastAttemptAt).toBe('2026-03-26T12:00:00.000Z');
+    expect(result.decision.details.aiUsed).toBe(false);
+  });
+
+  it('does not automatically diagnose an incident when predictive healing is disabled', async () => {
+    getConfigMock.mockReturnValue({ ...getConfigMock(), predictiveHealingEnabled: false });
+    await runPredictiveHealingDecision({
+      source: 'disabled_predictive', observation: createObservation({ errorRate: 0.8 })
+    });
+    expect(runArcanosCoreQueryMock).not.toHaveBeenCalled();
+  });
+
+  it('does not diagnose an idle window even when provider health reports a recent successful probe', async () => {
     getOpenAIClientOrAdapterMock.mockReturnValue({
       client: {}
     });
@@ -841,17 +1104,17 @@ describe('predictive healing execution', () => {
       source: 'predictive_test_idle_cooldown_second',
       observation: idleObservation
     });
-    expect(runArcanosCoreQueryMock).toHaveBeenCalledTimes(1);
+    expect(runArcanosCoreQueryMock).not.toHaveBeenCalled();
     expect(result.decision.advisor).toBe('rules_fallback_v1');
     expect(result.decision.details).toMatchObject({
       aiUsed: false,
-      aiCooldownReason: 'idle_window_backoff'
+      aiEligibilityReason: 'no_actionable_incident'
     });
     expect(loggerInfoMock).toHaveBeenCalledWith(
-      'self_heal.ai_diagnosis.cooldown',
+      'self_heal.ai_diagnosis.skipped',
       expect.objectContaining({
         source: 'predictive_test_idle_cooldown_second',
-        cooldownReason: 'idle_window_backoff'
+        reason: 'no_actionable_incident'
       })
     );
   });
@@ -1388,7 +1651,7 @@ describe('predictive healing execution', () => {
     expect(recordSelfHealEventMock).toHaveBeenCalledWith(expect.objectContaining({ kind: 'CIRCUIT_BREAKER_OPENED' }));
   });
 
-  it('promotes the first authentication fallback into provider reinitialization', async () => {
+  it('does not manufacture provider reinitialization from a no-incident diagnosis', async () => {
     getOpenAIClientOrAdapterMock.mockReturnValue({
       client: { models: { list: jest.fn() } }
     });
@@ -1485,25 +1748,19 @@ describe('predictive healing execution', () => {
 
     expect(result.decision).toMatchObject({
       advisor: 'rules_fallback_v1',
-      action: 'reinitialize_ai_provider',
-      target: 'ai_provider',
-      matchedRule: 'ai_provider_authentication_reinitialize',
-      safeToExecute: true
+      action: 'none',
+      safeToExecute: false
     });
     expect(result.decision.details).toMatchObject({
-      aiFallbackReason: expect.stringMatching(/Incorrect API key|provider_failure_backoff/i),
-      aiProviderFailureCategory: 'authentication',
-      aiFallbackPromotedAction: 'reinitialize_ai_provider'
+      aiFallbackReason: 'no_actionable_incident',
+      aiProviderFailureCategory: 'authentication'
     });
-    expect(reinitializeOpenAIProviderMock).toHaveBeenCalledWith({
-      forceReload: true,
-      ignoreBackoff: true,
-      source: 'predictive_test_auth_failure'
-    });
-    expect(result.execution.status).toBe('executed');
+    expect(reinitializeOpenAIProviderMock).not.toHaveBeenCalled();
+    expect(runArcanosCoreQueryMock).not.toHaveBeenCalled();
+    expect(result.execution.attempted).toBe(false);
   });
 
-  it('backs off predictive AI calls after provider authentication failures', async () => {
+  it('does not attempt authentication on a quiet observation with no incident', async () => {
     getOpenAIClientOrAdapterMock.mockReturnValue({
       client: {}
     });
@@ -1549,16 +1806,15 @@ describe('predictive healing execution', () => {
       })
     });
 
-    expect(runArcanosCoreQueryMock).toHaveBeenCalledTimes(1);
+    expect(runArcanosCoreQueryMock).not.toHaveBeenCalled();
     expect(result.decision.details).toMatchObject({
-      aiCooldownReason: 'provider_failure_backoff',
-      aiProviderFailureCategory: 'authentication'
+      aiEligibilityReason: 'no_actionable_incident'
     });
     expect(loggerInfoMock).toHaveBeenCalledWith(
-      'self_heal.ai_diagnosis.cooldown',
+      'self_heal.ai_diagnosis.skipped',
       expect.objectContaining({
         source: 'predictive_test_auth_failure_second',
-        cooldownReason: 'provider_failure_backoff'
+        reason: 'no_actionable_incident'
       })
     );
   });
@@ -1585,6 +1841,556 @@ describe('predictive healing execution', () => {
       completionHealthy: false,
       failureCategory: 'insufficient_quota',
       failureStatus: 429
+    });
+  });
+
+  it('latches revoked credentials after one incident diagnosis across twenty retries and local state resets', async () => {
+    runArcanosCoreQueryMock.mockRejectedValue(Object.assign(new Error('Invalid API key'), { status: 401 }));
+    for (let tick = 0; tick < 20; tick += 1) {
+      const result = await runPredictiveHealingDecision({
+        source: 'auth_retry', observation: createObservation({ collectedAt: new Date().toISOString(), errorRate: 0.8 })
+      });
+      expect(result.execution.attempted).toBe(false);
+      jest.setSystemTime(Date.now() + 7 * 60 * 60_000);
+      // Process-local status cannot unlock the shared credential latch.
+      resetPredictiveHealingStateForTests();
+    }
+    expect(runArcanosCoreQueryMock).toHaveBeenCalledTimes(1);
+    expect(reinitializeOpenAIProviderMock).not.toHaveBeenCalled();
+  });
+
+  it('returns deterministic diagnosis without a key and does not record a provider attempt', async () => {
+    getConfigMock.mockReturnValue({ ...getConfigMock(), openaiApiKey: undefined });
+    await runPredictiveHealingDecision({ source: 'missing_key', observation: createObservation({ errorRate: 0.8 }) });
+    expect(runArcanosCoreQueryMock).not.toHaveBeenCalled();
+    expect(recordSelfHealEventMock).not.toHaveBeenCalledWith(expect.objectContaining({ kind: 'AI_PROVIDER_CALL_ATTEMPT' }));
+  });
+
+  it('admits manual diagnosis explicitly while predictive automation and repair execution are disabled', async () => {
+    getConfigMock.mockReturnValue({ ...getConfigMock(), predictiveHealingEnabled: false, selfImproveEnabled: false });
+    const result = await runPredictiveHealingDecision({
+      source: 'authorized_operator', inferenceAuthorization: 'manual',
+      observation: createObservation({ errorRate: 0.8 })
+    });
+    expect(runArcanosCoreQueryMock).toHaveBeenCalledTimes(1);
+    expect(result.execution.attempted).toBe(false);
+  });
+
+  it('admits diagnosis when repair execution is disabled and keeps repair authority independent', async () => {
+    getConfigMock.mockReturnValue({ ...getConfigMock(), selfImproveEnabled: false, autoExecuteHealing: false });
+    const result = await runPredictiveHealingDecision({ source: 'diagnosis_only', observation: createObservation({ errorRate: 0.8 }) });
+    expect(runArcanosCoreQueryMock).toHaveBeenCalledTimes(1);
+    expect(result.execution.attempted).toBe(false);
+  });
+
+  it('denies explicit disabled AI intent for an eligible incident without reserving budget, then admits one manual diagnosis', async () => {
+    const observation = createObservation({ errorRate: 0.8 });
+    const result = await runPredictiveHealingDecision({ source: 'eligible_no_ai', observation,
+      inferenceAuthorization: 'disabled', execute: false, allowAutoExecute: false });
+    expect(result.decision.action).not.toBe('none');
+    expect(result.decision.advisor).toBe('rules_fallback_v1');
+    expect(result.decision.details).toMatchObject({ aiEligibilityReason: 'inference_not_requested' });
+    expect(result.execution).toMatchObject({ attempted: false, mode: 'recommend_only' });
+    expect(inferenceStates.size).toBe(0);
+    expect(runArcanosCoreQueryMock).not.toHaveBeenCalled();
+    expect(getOpenAIClientOrAdapterMock).not.toHaveBeenCalled();
+    expect(healWorkerRuntimeMock).not.toHaveBeenCalled();
+    expect(activateTrinitySelfHealingMitigationMock).not.toHaveBeenCalled();
+    const accepted = await runPredictiveHealingDecision({ source: 'eligible_manual', observation,
+      inferenceAuthorization: 'manual', execute: false, allowAutoExecute: false });
+    expect(accepted.decision.advisor).toBe('arcanos_core_v1');
+    expect(accepted.execution.attempted).toBe(false);
+    expect(runArcanosCoreQueryMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(inferenceStates.get('diagnosis')!).attemptTimestampsMs).toHaveLength(1);
+  });
+
+  it('does not duplicate concurrent inference and permits retry only after the active cooldown', async () => {
+    let finish!: (value: unknown) => void;
+    const response = { result: JSON.stringify({ selectedCandidateIndex: null, chooseNoAction: true, reason: 'Observe.', safeToExecute: false }),
+      activeModel: 'gpt-4.1', fallbackFlag: false, fallbackSummary: { fallbackReasons: [] } };
+    runArcanosCoreQueryMock.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const observation = createObservation({ errorRate: 0.8 });
+    const first = runPredictiveHealingDecision({ source: 'parallel_first', observation });
+    for (let flush = 0; flush < 10 && !finish; flush += 1) await Promise.resolve();
+    const second = await runPredictiveHealingDecision({ source: 'parallel_second', observation });
+    expect(second.decision.details.aiCooldownReason).toBe('in_flight');
+    expect(runArcanosCoreQueryMock).toHaveBeenCalledTimes(1);
+    finish(response);
+    await first;
+    jest.setSystemTime(Date.now() + 1_799_999);
+    await runPredictiveHealingDecision({ source: 'before_expiry', observation: { ...observation, collectedAt: new Date().toISOString() } });
+    expect(runArcanosCoreQueryMock).toHaveBeenCalledTimes(1);
+    jest.setSystemTime(Date.now() + 1);
+    await runPredictiveHealingDecision({ source: 'after_expiry', observation: { ...observation, collectedAt: new Date().toISOString() } });
+    expect(runArcanosCoreQueryMock).toHaveBeenCalledTimes(2);
+  });
+
+  describe.each([
+    { mode: 'active', field: 'predictiveHealingAiActiveCooldownMs', fallback: 1_800_000 },
+    { mode: 'idle', field: 'predictiveHealingAiIdleCooldownMs', fallback: 21_600_000 },
+    { mode: 'failure', field: 'predictiveHealingAiFailureCooldownMs', fallback: 21_600_000 }
+  ])('$mode diagnosis cooldown configuration', ({ mode, field, fallback }) => {
+    it.each([
+      { label: 'fractional milliseconds', configured: 60_000.25, expected: 60_001 },
+      { label: 'fraction below the maximum', configured: 2_591_999_999.75, expected: 2_592_000_000 },
+      { label: 'exact maximum', configured: 2_592_000_000, expected: 2_592_000_000 },
+      { label: 'above maximum', configured: 2_592_000_001, expected: 2_592_000_000 },
+      { label: 'finite numeric overflow risk', configured: Number.MAX_VALUE, expected: 2_592_000_000 },
+      { label: 'exact minimum', configured: 60_000, expected: 60_000 },
+      { label: 'fraction below minimum', configured: 59_999.75, expected: 60_000 },
+      { label: 'zero', configured: 0, expected: 60_000 },
+      { label: 'negative', configured: -1, expected: 60_000 },
+      { label: 'NaN', configured: Number.NaN, expected: null },
+      { label: 'positive infinity', configured: Number.POSITIVE_INFINITY, expected: null },
+      { label: 'negative infinity', configured: Number.NEGATIVE_INFINITY, expected: null },
+      { label: 'missing value', configured: undefined, expected: null }
+    ])('preserves the full supported interval for $label', async ({ configured, expected }) => {
+      const interval = expected ?? fallback;
+      getConfigMock.mockReturnValue({ ...getConfigMock(), predictiveHealingAiActiveCooldownMs: 60_000,
+        [field]: configured });
+      if (mode === 'failure') runArcanosCoreQueryMock.mockRejectedValueOnce(new Error('synthetic provider failure'));
+      const observation = mode === 'idle' ? createObservation({
+        requestCount: 0, errorRate: 0, timeoutRate: 0, degradedCount: 0,
+        workerHealth: { ...createObservation().workerHealth, pending: 0, running: 0, alertCount: 0,
+          workers: [{ workerId: 'test-current-worker', stale: false, healthStatus: 'healthy', claimAcceptance: 'dependency_failure' }] }
+      }) : createObservation({ errorRate: 0.8 });
+      const diagnose = () => runPredictiveHealingDecision({ source: `normalized_${mode}_cooldown`,
+        inferenceAuthorization: 'manual', execute: false, allowAutoExecute: false,
+        observation: { ...observation, collectedAt: new Date().toISOString() } });
+
+      const first = await diagnose();
+      expect(first.execution.attempted).toBe(false);
+      expect(runArcanosCoreQueryMock).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(inferenceStates.get('diagnosis')!).attemptTimestampsMs).toHaveLength(1);
+      jest.setSystemTime(Date.now() + interval - 1);
+      const beforeExpiry = await diagnose();
+      expect(beforeExpiry.decision.details).toMatchObject({ aiCooldownMs: interval,
+        aiCooldownReason: mode === 'failure' ? 'provider_failure_backoff'
+          : mode === 'idle' ? 'idle_window_backoff' : 'active_incident_backoff' });
+      expect(runArcanosCoreQueryMock).toHaveBeenCalledTimes(1);
+      jest.setSystemTime(Date.now() + 1);
+      const atExpiry = await diagnose();
+      expect(atExpiry.execution.attempted).toBe(false);
+      expect(runArcanosCoreQueryMock).toHaveBeenCalledTimes(2);
+      expect(healWorkerRuntimeMock).not.toHaveBeenCalled();
+    });
+  });
+
+  it('applies the failure cooldown to unsuccessful diagnoses independently of old provider health', async () => {
+    runArcanosCoreQueryMock.mockRejectedValueOnce(new Error('provider error'));
+    const observation = createObservation({ errorRate: 0.8 });
+    await runPredictiveHealingDecision({ source: 'failed_provider', observation });
+    jest.setSystemTime(Date.now() + 30 * 60_000);
+    const retry = await runPredictiveHealingDecision({ source: 'failed_provider_retry', observation: { ...observation, collectedAt: new Date().toISOString() } });
+    expect(runArcanosCoreQueryMock).toHaveBeenCalledTimes(1);
+    expect(retry.decision.details).toMatchObject({ aiCooldownReason: 'provider_failure_backoff', aiCooldownMs: 21_600_000 });
+    jest.setSystemTime(Date.now() + 6 * 60 * 60_000);
+    await runPredictiveHealingDecision({ source: 'failure_expired', observation: { ...observation, collectedAt: new Date().toISOString() } });
+    expect(runArcanosCoreQueryMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('retains the circuit breaker and never invokes AI for simulations', async () => {
+    getOpenAIServiceHealthMock.mockReturnValue({ ...getOpenAIServiceHealthMock(), circuitBreaker: {
+      ...getOpenAIServiceHealthMock().circuitBreaker, state: 'OPEN', lastFailureTime: Date.now()
+    } });
+    await runPredictiveHealingDecision({ source: 'circuit', observation: createObservation({ errorRate: 0.8 }) });
+    expect(runArcanosCoreQueryMock).not.toHaveBeenCalled();
+    await runPredictiveHealingDecision({ source: 'simulation', inferenceAuthorization: 'manual', dryRun: true,
+      observation: createObservation({ errorRate: 0.8 }), simulate: { errorRate: 0.9 } });
+    expect(runArcanosCoreQueryMock).not.toHaveBeenCalled();
+  });
+
+  it.each([401, 403])('bounds explicit provider probes and retains model-list authentication status %s without retrying', async status => {
+    const list = jest.fn().mockRejectedValue(Object.assign(new Error('Invalid API key'), { status }));
+    getOpenAIClientOrAdapterMock.mockReturnValue({ client: { models: { list } } });
+    await probePredictiveHealingAIProvider();
+    jest.setSystemTime(Date.now() + 60_000);
+    expect((await probePredictiveHealingAIProvider()).failureReason).toBe('authentication_blocked');
+    expect(list).toHaveBeenCalledTimes(1);
+    expect(createSingleChatCompletionMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['settled SDK timeout', 'unsettled metadata timeout'])('recovers a %s after 60 seconds without losing the two-probe hourly cap', async mode => {
+    let finishMetadata: ((value: unknown) => void) | undefined;
+    const list = jest.fn().mockResolvedValue({ data: [] });
+    if (mode === 'settled SDK timeout') {
+      list.mockRejectedValueOnce(new Error('OpenAI model-list request timed out'));
+    } else {
+      list.mockImplementationOnce(() => new Promise(resolve => { finishMetadata = resolve; }));
+    }
+    const create = jest.fn().mockResolvedValue({ output_text: 'ok' });
+    getOpenAIClientOrAdapterMock.mockReturnValue({ client: { models: { list }, responses: { create } } });
+    createSingleChatCompletionMock.mockImplementation((client, params) => client.responses.create({
+      model: params.model, input: 'synthetic probe', max_output_tokens: params.max_completion_tokens
+    }));
+    const first = probePredictiveHealingAIProvider();
+    await jest.advanceTimersByTimeAsync(4_000);
+    expect((await first).failureCategory).toBe('timeout');
+    expect(create).not.toHaveBeenCalled();
+    expect(createSingleChatCompletionMock).not.toHaveBeenCalled();
+    expect(list).toHaveBeenCalledWith(expect.objectContaining({ maxRetries: 0, timeout: 4_000 }));
+    const state = JSON.parse(inferenceStates.get('provider_probe')!);
+    expect(state.inFlight).toBe(null);
+    expect(state.attemptTimestampsMs).toHaveLength(1);
+    finishMetadata?.({ data: [] });
+    await Promise.resolve();
+    expect(create).not.toHaveBeenCalled();
+    jest.setSystemTime(state.lastFailureMs + 59_999);
+    expect((await probePredictiveHealingAIProvider()).failureReason).toBe('cooldown');
+    expect(list).toHaveBeenCalledTimes(1);
+    jest.setSystemTime(state.lastFailureMs + 60_000);
+    expect((await probePredictiveHealingAIProvider()).completionHealthy).toBe(true);
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(createSingleChatCompletionMock).toHaveBeenCalledTimes(1);
+    jest.setSystemTime(Date.now() + 60_000);
+    expect((await probePredictiveHealingAIProvider()).failureReason).toBe('budget_exhausted');
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['diagnosis', 'provider_probe'])('shares a durable %s authentication rejection with the other purpose without waiting for health telemetry', async firstPurpose => {
+    const list = jest.fn().mockRejectedValue(Object.assign(new Error('Invalid API key'), { status: 401 }));
+    getOpenAIClientOrAdapterMock.mockReturnValue({ client: { models: { list } } });
+    runArcanosCoreQueryMock.mockRejectedValue(Object.assign(new Error('Invalid API key'), { status: 401 }));
+    const observation = createObservation({ errorRate: 0.8 });
+    if (firstPurpose === 'diagnosis') {
+      await runPredictiveHealingDecision({ source: 'cross_purpose_auth', observation });
+      resetPredictiveHealingStateForTests();
+      expect((await probePredictiveHealingAIProvider()).failureReason).toBe('authentication_blocked');
+      expect(list).not.toHaveBeenCalled();
+      expect(runArcanosCoreQueryMock).toHaveBeenCalledTimes(1);
+    } else {
+      await probePredictiveHealingAIProvider();
+      resetPredictiveHealingStateForTests();
+      const denied = await runPredictiveHealingDecision({ source: 'cross_purpose_auth', observation });
+      expect(denied.decision.details.aiCooldownReason).toBe('provider_failure_backoff');
+      expect(runArcanosCoreQueryMock).not.toHaveBeenCalled();
+      expect(list).toHaveBeenCalledTimes(1);
+    }
+    expect(getOpenAIServiceHealthMock().providerRuntime.authenticationBlocked).not.toBe(true);
+    expect(createSingleChatCompletionMock).not.toHaveBeenCalled();
+    expect(inferenceStates.size).toBe(1);
+  });
+
+  it('admits two explicit probes 60 seconds apart independently of diagnosis and keeps the rolling cap', async () => {
+    const list = jest.fn().mockResolvedValue({ data: [] });
+    const create = jest.fn().mockResolvedValue({ output_text: 'ok' });
+    getOpenAIClientOrAdapterMock.mockReturnValue({ client: { models: { list }, responses: { create } } });
+    createSingleChatCompletionMock.mockImplementation((client, params) => client.responses.create({
+      model: params.model, input: 'synthetic probe', max_output_tokens: params.max_completion_tokens
+    }));
+    await runPredictiveHealingDecision({ source: 'diagnosis_before_probe', observation: createObservation({ errorRate: 0.8 }) });
+    expect((await probePredictiveHealingAIProvider()).completionHealthy).toBe(true);
+    jest.setSystemTime(Date.now() + 59_999);
+    expect((await probePredictiveHealingAIProvider()).failureReason).toBe('cooldown');
+    jest.setSystemTime(Date.now() + 1);
+    expect((await probePredictiveHealingAIProvider()).completionHealthy).toBe(true);
+    jest.setSystemTime(Date.now() + 60_000);
+    expect((await probePredictiveHealingAIProvider()).failureReason).toBe('budget_exhausted');
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ max_output_tokens: 16, stream: false }),
+      expect.objectContaining({ maxRetries: 0, timeout: 30_000 }));
+    expect(runArcanosCoreQueryMock).toHaveBeenCalledTimes(1);
+    expect(healWorkerRuntimeMock).not.toHaveBeenCalled();
+  });
+
+  it('allows explicit verification of a rotated synthetic credential after 60 seconds without resetting the probe budget', async () => {
+    const list = jest.fn().mockRejectedValueOnce(Object.assign(new Error('Invalid API key'), { status: 401 }))
+      .mockResolvedValue({ data: [] });
+    getOpenAIClientOrAdapterMock.mockReturnValue({ client: { models: { list } } });
+    createSingleChatCompletionMock.mockResolvedValue({});
+    await probePredictiveHealingAIProvider();
+    getConfigMock.mockReturnValue({ ...getConfigMock(), openaiApiKey: 'test-synthetic-rotated-credential' });
+    jest.setSystemTime(Date.now() + 59_999);
+    expect((await probePredictiveHealingAIProvider()).failureReason).toBe('cooldown');
+    jest.setSystemTime(Date.now() + 1);
+    expect((await probePredictiveHealingAIProvider()).completionHealthy).toBe(true);
+    jest.setSystemTime(Date.now() + 60_000);
+    getConfigMock.mockReturnValue({ ...getConfigMock(), openaiApiKey: 'test-synthetic-another-credential' });
+    expect((await probePredictiveHealingAIProvider()).failureReason).toBe('budget_exhausted');
+    getConfigMock.mockReturnValue({ ...getConfigMock(), openaiApiKey: 'test-synthetic-offline-credential' });
+    expect((await probePredictiveHealingAIProvider()).failureReason).toBe('authentication_blocked');
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(createSingleChatCompletionMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not release an uncertain probe on cooldown expiry, process reset or credential rotation', async () => {
+    const list = jest.fn().mockResolvedValue({ data: [] });
+    const create = jest.fn().mockRejectedValue(new Error('Provider request timed out'));
+    getOpenAIClientOrAdapterMock.mockReturnValue({ client: { models: { list }, responses: { create } } });
+    createSingleChatCompletionMock.mockImplementation(client => client.responses.create({ model: 'gpt-4.1', input: 'synthetic paid timeout' }));
+    await probePredictiveHealingAIProvider();
+    jest.setSystemTime(Date.now() + 7 * 60 * 60_000);
+    resetPredictiveHealingStateForTests();
+    getConfigMock.mockReturnValue({ ...getConfigMock(), openaiApiKey: 'test-synthetic-rotated-credential' });
+    expect((await probePredictiveHealingAIProvider()).failureReason).toBe('in_flight');
+    expect(list).toHaveBeenCalledTimes(1);
+    expect(createSingleChatCompletionMock).toHaveBeenCalledTimes(1);
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['ARCANOS:CORE pipeline timeout after 1000ms', 'runtime_budget_exhausted', 'Request was aborted'])(
+    'releases an unused diagnosis reservation after %s only after closing late dispatch', async message => {
+      const create = jest.fn().mockResolvedValue({});
+      getOpenAIClientOrAdapterMock.mockReturnValue({ client: { responses: { create } } });
+      let lateClient;
+      runArcanosCoreQueryMock.mockImplementationOnce(({ client }) => {
+        lateClient = client;
+        throw new Error(message);
+      });
+      const first = await runPredictiveHealingDecision({ source: 'pre_dispatch_timeout', observation: createObservation({ errorRate: 0.8 }) });
+      expect(first.decision.details.aiFallbackReason).toBe(message);
+      const state = JSON.parse(inferenceStates.get('diagnosis')!);
+      expect(state.inFlight).toBe(null);
+      expect(state.attemptTimestampsMs).toHaveLength(1);
+      expect(state.lastFailureMs).toBe(Date.now());
+      await expect(lateClient.responses.create({ model: 'gpt-4.1', input: 'late timed-out continuation' }))
+        .rejects.toThrow('authorization is closed');
+      expect(create).not.toHaveBeenCalled();
+      jest.setSystemTime(state.lastFailureMs + 21_599_999);
+      const beforeExpiry = await runPredictiveHealingDecision({ source: 'pre_dispatch_before_expiry',
+        observation: createObservation({ collectedAt: new Date().toISOString(), errorRate: 0.8 }) });
+      expect(beforeExpiry.decision.details.aiCooldownReason).toBe('provider_failure_backoff');
+      expect(runArcanosCoreQueryMock).toHaveBeenCalledTimes(1);
+      jest.setSystemTime(Date.now() + 1);
+      await runPredictiveHealingDecision({ source: 'pre_dispatch_recovered',
+        observation: createObservation({ collectedAt: new Date().toISOString(), errorRate: 0.8 }) });
+      expect(runArcanosCoreQueryMock).toHaveBeenCalledTimes(2);
+      expect(create).not.toHaveBeenCalled();
+    }
+  );
+
+  it('releases a probe completion timeout before dispatch, denies its late continuation, and preserves cooldown and budget', async () => {
+    const list = jest.fn().mockResolvedValue({ data: [] });
+    const create = jest.fn().mockResolvedValue({});
+    getOpenAIClientOrAdapterMock.mockReturnValue({ client: { models: { list }, responses: { create } } });
+    let lateClient;
+    createSingleChatCompletionMock.mockImplementationOnce(client => {
+      lateClient = client;
+      throw new Error('runtime_budget_exhausted before completion');
+    });
+    expect((await probePredictiveHealingAIProvider()).failureCategory).toBe('timeout');
+    const state = JSON.parse(inferenceStates.get('provider_probe')!);
+    expect(state.inFlight).toBe(null);
+    expect(state.attemptTimestampsMs).toHaveLength(1);
+    await expect(lateClient.responses.create({ model: 'gpt-4.1', input: 'late probe continuation' }))
+      .rejects.toThrow('authorization is closed');
+    expect(create).not.toHaveBeenCalled();
+    jest.setSystemTime(Date.now() + 59_999);
+    expect((await probePredictiveHealingAIProvider()).failureReason).toBe('cooldown');
+    createSingleChatCompletionMock.mockImplementation(client => client.responses.create({ model: 'gpt-4.1', input: 'new authorized probe' }));
+    jest.setSystemTime(Date.now() + 1);
+    expect((await probePredictiveHealingAIProvider()).completionHealthy).toBe(true);
+    jest.setSystemTime(Date.now() + 60_000);
+    expect((await probePredictiveHealingAIProvider()).failureReason).toBe('budget_exhausted');
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains an already dispatched diagnosis when Core times out before the transport settles', async () => {
+    let finish!: (value: unknown) => void;
+    const create = jest.fn(() => new Promise(resolve => { finish = resolve; }));
+    getOpenAIClientOrAdapterMock.mockReturnValue({ client: { responses: { create } } });
+    runArcanosCoreQueryMock.mockImplementationOnce(({ client }) => {
+      void client.responses.create({ model: 'gpt-4.1', input: 'started paid request' });
+      throw new Error('ARCANOS:CORE pipeline timeout after 1000ms');
+    });
+    await runPredictiveHealingDecision({ source: 'paid_timeout', observation: createObservation({ errorRate: 0.8 }) });
+    expect(JSON.parse(inferenceStates.get('diagnosis')!).inFlight).not.toBe(null);
+    finish({});
+    await Promise.resolve();
+    jest.setSystemTime(Date.now() + 7 * 60 * 60_000);
+    const retry = await runPredictiveHealingDecision({ source: 'paid_timeout_late_retry',
+      observation: createObservation({ collectedAt: new Date().toISOString(), errorRate: 0.8 }) });
+    expect(retry.decision.details.aiCooldownReason).toBe('in_flight');
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(runArcanosCoreQueryMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([new Error('Connection error.'), Object.assign(new Error('Server failed after acceptance'), { status: 500 })])(
+    'retains an ambiguous paid probe transport failure instead of retrying: %s', async failure => {
+      const list = jest.fn().mockResolvedValue({ data: [] });
+      const create = jest.fn().mockRejectedValue(failure);
+      getOpenAIClientOrAdapterMock.mockReturnValue({ client: { models: { list }, responses: { create } } });
+      createSingleChatCompletionMock.mockImplementation(client => client.responses.create({ model: 'gpt-4.1', input: 'synthetic probe' }));
+      await probePredictiveHealingAIProvider();
+      jest.setSystemTime(Date.now() + 7 * 60 * 60_000);
+      expect((await probePredictiveHealingAIProvider()).failureReason).toBe('in_flight');
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(list).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each(['diagnosis', 'provider_probe'])('refuses a credential changed while %s admission was awaiting Redis', async purpose => {
+    const list = jest.fn().mockResolvedValue({ data: [] });
+    getOpenAIClientOrAdapterMock.mockReturnValue({ client: { models: { list } } });
+    afterInferenceReservation = () => getConfigMock.mockReturnValue({
+      ...getConfigMock(), openaiApiKey: 'test-synthetic-rotated-during-admission'
+    });
+    if (purpose === 'diagnosis') {
+      const result = await runPredictiveHealingDecision({ source: 'credential_race', observation: createObservation({ errorRate: 0.8 }) });
+      expect(result.decision.details.aiFallbackReason).toBe('inference_credential_changed');
+    } else {
+      expect((await probePredictiveHealingAIProvider()).failureReason).toBe('inference_credential_changed');
+    }
+    expect(runArcanosCoreQueryMock).not.toHaveBeenCalled();
+    expect(list).not.toHaveBeenCalled();
+    expect(createSingleChatCompletionMock).not.toHaveBeenCalled();
+    const state = JSON.parse(inferenceStates.get(purpose)!);
+    expect(state.inFlight).toBe(null);
+    expect(state.attemptTimestampsMs).toHaveLength(1);
+  });
+
+  it('retains provider failure evidence observed after admission even if the provider later returns stale health', async () => {
+    const earlierHealth = getOpenAIServiceHealthMock();
+    const failureAt = new Date().toISOString();
+    afterInferenceReservation = () => getOpenAIServiceHealthMock.mockReturnValue({
+      ...earlierHealth,
+      providerRuntime: {
+        ...earlierHealth.providerRuntime,
+        lastAttemptAt: failureAt,
+        lastFailureAt: failureAt,
+        lastFailureCategory: 'network',
+        lastFailureReason: 'Synthetic provider failure during admission',
+        lastFailureStatus: null
+      }
+    });
+    let observedProvider: ReturnType<typeof buildPredictiveHealingAIProviderStatusSnapshot> | undefined;
+    runArcanosCoreQueryMock.mockImplementationOnce(async () => {
+      getOpenAIServiceHealthMock.mockReturnValue(earlierHealth);
+      observedProvider = buildPredictiveHealingAIProviderStatusSnapshot();
+      jest.setSystemTime(Date.now() + 1);
+      return {
+        result: JSON.stringify({ selectedCandidateIndex: 0, reason: 'Synthetic bounded diagnosis.',
+          safeToExecute: false, confidence: 0.9 }),
+        activeModel: 'gpt-4.1', fallbackFlag: false, fallbackSummary: { fallbackReasons: [] }
+      };
+    });
+
+    const result = await runPredictiveHealingDecision({
+      source: 'health_during_admission', observation: createObservation({ errorRate: 0.8 })
+    });
+
+    expect(observedProvider).toMatchObject({
+      lastAttemptAt: failureAt, lastFailureAt: failureAt, lastFailureCategory: 'network',
+      reachable: false, completionHealthy: false
+    });
+    expect(result.decision.advisor).toBe('arcanos_core_v1');
+    expect(buildPredictiveHealingAIProviderStatusSnapshot()).toMatchObject({
+      lastFailureAt: failureAt, lastFailureCategory: null, completionHealthy: true
+    });
+  });
+
+  it('completes a reservation when local client initialization throws before transport', async () => {
+    getOpenAIClientOrAdapterMock.mockImplementationOnce(() => { throw new Error('Synthetic strict client unconfigured'); });
+    const result = await runPredictiveHealingDecision({ source: 'client_initialization', observation: createObservation({ errorRate: 0.8 }) });
+    expect(result.decision.details.aiFallbackReason).toBe('openai_client_unavailable');
+    const state = JSON.parse(inferenceStates.get('diagnosis')!);
+    expect(state.inFlight).toBe(null);
+    expect(state.lastFailureMs).toBe(Date.now());
+    expect(runArcanosCoreQueryMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['authentication', 'circuit'])('keeps the %s gate ahead of explicit probe admission', async gate => {
+    const list = jest.fn().mockResolvedValue({ data: [] });
+    getOpenAIClientOrAdapterMock.mockReturnValue({ client: { models: { list } } });
+    const health = getOpenAIServiceHealthMock();
+    getOpenAIServiceHealthMock.mockReturnValue({ ...health,
+      providerRuntime: { ...health.providerRuntime, authenticationBlocked: gate === 'authentication' },
+      circuitBreaker: { ...health.circuitBreaker,
+        state: gate === 'circuit' ? 'OPEN' : 'CLOSED', lastFailureTime: Date.now() }
+    });
+    expect((await probePredictiveHealingAIProvider()).failureReason).toBe('provider_authentication_or_circuit_blocked');
+    expect(list).not.toHaveBeenCalled();
+    expect(createSingleChatCompletionMock).not.toHaveBeenCalled();
+    expect(inferenceStates.size).toBe(0);
+  });
+
+  it('permits the breaker to own a half-open retry after its reset window expires', async () => {
+    getOpenAIServiceHealthMock.mockReturnValue({ ...getOpenAIServiceHealthMock(), circuitBreaker: {
+      ...getOpenAIServiceHealthMock().circuitBreaker, state: 'OPEN', lastFailureTime: Date.now() - 30_000
+    } });
+    await runPredictiveHealingDecision({ source: 'half_open_retry', observation: createObservation({ errorRate: 0.8 }) });
+    expect(runArcanosCoreQueryMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('recovery: a successful diagnosis supersedes an older provider failure before returning to healthy idle', async () => {
+    const priorHealth = getOpenAIServiceHealthMock();
+    getOpenAIServiceHealthMock.mockReturnValue({ ...priorHealth, providerRuntime: {
+      ...priorHealth.providerRuntime,
+      lastFailureAt: '2026-03-26T11:00:00.000Z', lastFailureCategory: 'network',
+      lastFailureReason: 'fetch failed', lastFailureStatus: null
+    } });
+    await runPredictiveHealingDecision({ source: 'recovery_diagnosis', observation: createObservation({ errorRate: 0.8 }) });
+    expect(buildPredictiveHealingAIProviderStatusSnapshot()).toMatchObject({
+      lastFailureAt: '2026-03-26T11:00:00.000Z', lastFailureCategory: null,
+      reachable: true, authenticated: true, completionHealthy: true
+    });
+    jest.setSystemTime(Date.now() + 7 * 60 * 60_000);
+    const observation = createObservation({ collectedAt: new Date().toISOString(), requestCount: 0,
+      errorRate: 0, avgLatencyMs: 0, p95LatencyMs: 0, maxLatencyMs: 0 });
+    observation.workerHealth = { ...observation.workerHealth, overallStatus: 'healthy', pending: 0, running: 0 };
+    const idle = await runPredictiveHealingDecision({ source: 'recovery_idle', observation });
+    expect(idle.decision.action).toBe('none');
+    expect(idle.execution.attempted).toBe(false);
+    expect(runArcanosCoreQueryMock).toHaveBeenCalledTimes(1);
+    expect(reinitializeOpenAIProviderMock).not.toHaveBeenCalled();
+    getOpenAIServiceHealthMock.mockReturnValue({ ...priorHealth, providerRuntime: {
+      ...priorHealth.providerRuntime, lastFailureAt: new Date().toISOString(),
+      lastFailureCategory: 'network', lastFailureReason: 'new fetch failed', lastFailureStatus: null
+    } });
+    expect(buildPredictiveHealingAIProviderStatusSnapshot()).toMatchObject({
+      lastFailureCategory: 'network', reachable: false, completionHealthy: false
+    });
+  });
+
+  it('recovery: a successful manual probe clears its earlier transient failure without an idle diagnosis', async () => {
+    const list = jest.fn().mockRejectedValueOnce(new Error('fetch failed')).mockResolvedValue({});
+    getOpenAIClientOrAdapterMock.mockReturnValue({ client: { models: { list } } });
+    await probePredictiveHealingAIProvider();
+    expect(buildPredictiveHealingAIProviderStatusSnapshot().lastFailureCategory).toBe('network');
+    const failedAt = buildPredictiveHealingAIProviderStatusSnapshot().lastFailureAt;
+    jest.setSystemTime(Date.now() + 59_999);
+    expect((await probePredictiveHealingAIProvider()).failureReason).toBe('cooldown');
+    expect(list).toHaveBeenCalledTimes(1);
+    jest.setSystemTime(Date.now() + 1);
+    createSingleChatCompletionMock.mockResolvedValue({});
+    const probe = await probePredictiveHealingAIProvider();
+    expect(probe.failureCategory).toBe(null);
+    expect(buildPredictiveHealingAIProviderStatusSnapshot()).toMatchObject({
+      lastFailureCategory: null, reachable: true, authenticated: true, completionHealthy: true
+    });
+    const recovered = buildPredictiveHealingAIProviderStatusSnapshot();
+    expect(recovered.lastFailureAt).toBe(failedAt);
+    expect(Date.parse(recovered.lastSuccessAt!)).toBeGreaterThan(Date.parse(failedAt!));
+    expect(recovered.lastFailureStatus).toBeNull();
+    expect((await probePredictiveHealingAIProvider()).failureReason).toBe('cooldown');
+    expect(buildPredictiveHealingAIProviderStatusSnapshot()).toEqual(recovered);
+    jest.setSystemTime(Date.now() + 60_001);
+    expect((await probePredictiveHealingAIProvider()).failureReason).toBe('budget_exhausted');
+    expect(buildPredictiveHealingAIProviderStatusSnapshot()).toEqual(recovered);
+    const observation = createObservation({ collectedAt: new Date().toISOString(), requestCount: 0,
+      errorRate: 0, avgLatencyMs: 0, p95LatencyMs: 0, maxLatencyMs: 0 });
+    observation.workerHealth = { ...observation.workerHealth, overallStatus: 'healthy', pending: 0, running: 0 };
+    const idle = await runPredictiveHealingDecision({ source: 'recovery_probe_idle', observation });
+    expect(idle.decision.action).toBe('none');
+    expect(runArcanosCoreQueryMock).not.toHaveBeenCalled();
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(createSingleChatCompletionMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('recovery: a failure sharing the last success millisecond remains unhealthy', async () => {
+    const health = getOpenAIServiceHealthMock();
+    getOpenAIServiceHealthMock.mockReturnValue({ ...health, providerRuntime: {
+      ...health.providerRuntime, lastSuccessAt: new Date().toISOString(),
+      lastFailureAt: new Date().toISOString(), lastFailureCategory: 'network',
+      lastFailureReason: 'fetch failed', lastFailureStatus: null
+    } });
+    resetPredictiveHealingStateForTests();
+    expect(buildPredictiveHealingAIProviderStatusSnapshot()).toMatchObject({
+      lastFailureCategory: 'network', reachable: false, completionHealthy: false
     });
   });
 });

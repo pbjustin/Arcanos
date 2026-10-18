@@ -94,7 +94,7 @@ outbound call.
 | `ARCANOS_GPT_ACCESS_WORKSPACE_ID` | Yes for GPT Access-only tenant-scoped capabilities | none | Server-controlled workspace paired with the configured principal; missing identity fails closed. |
 | `ARCANOS_PROCESS_KIND` | Yes for Railway launcher | none | Must be `web` or `worker` when using the normal protected-digest startup wrapper and role launcher; omit for direct local `npm start`. |
 | `ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA` | Disposable Backstage durable proof only | none | Exact lowercase 40-hex revision staged on both isolated proof roles. The authorized runner also binds the deploy request and deployed manifests to this SHA. A Railway-provided `RAILWAY_GIT_COMMIT_SHA` is optional but must exactly match when present. Never configure this proof marker on the canonical project or ordinary PR previews. |
-| `ARCANOS_SELF_HEAL_PREVIEW_PROFILE` | Disposable self-healing acceptance only | absent; disabled | Exact `worker-coordinator-v1` opt-in for the dedicated heavy-supervisor profile; requires the full identity, fixed lease and control settings [below](#disposable-self-healing-preview-profile). Never configure on canonical services or native passive previews. |
+| `ARCANOS_SELF_HEAL_PREVIEW_PROFILE` | Disposable self-healing acceptance only | absent; disabled | Exact `worker-coordinator-v1` or PR #1557-only `worker-inference-containment-v1` opt-in for the dedicated heavy-supervisor profile; requires the full identity, fixed lease and control settings [below](#disposable-self-healing-preview-profile). Never configure on canonical services or native passive previews. |
 | `ARCANOS_NATIVE_PR_APPLICATION_PREVIEW` | Launcher-owned native PR child only | none | Exact internal version marker (`v1`) projected by the reviewed launcher. Do not configure or forward it manually. |
 | `ARCANOS_PREVIEW_PR_NUMBER` | Launcher-owned native PR child only | none | Validated positive PR number derived from Railway's native environment name. The launcher, not an operator or request, owns this value. |
 | `ARCANOS_PREVIEW_SOURCE_COMMIT` | Launcher-owned native PR child only | none | Validated lowercase 40-hex source commit projected into the contained preview child. It is identity evidence, not authorization. |
@@ -1344,6 +1344,18 @@ from queue health and mitigation availability.
 | `PREDICTIVE_HEALING_ENABLED` | `false` | Exact environment name. |
 | `PREDICTIVE_HEALING_DRY_RUN` | `true` | First nonblank value from the primary name, `RAILWAY_PREDICTIVE_HEALING_DRY_RUN`, then `PREDICTIVE_DRY_RUN`. Only `false`, `0`, or `no` disables dry-run, ignoring case and surrounding whitespace. Invalid values keep dry-run enabled and do not fall through to an alias. |
 | `PREDICTIVE_AUTO_EXECUTE` | `false` | First nonblank value from the primary name, `RAILWAY_PREDICTIVE_AUTO_EXECUTE`, then `AUTO_EXECUTE_HEALING`. |
+| `PREDICTIVE_HEALING_AI_ACTIVE_COOLDOWN_MS` | `1800000` (30 minutes) | Minimum interval between admitted diagnoses with active incident load. |
+| `PREDICTIVE_HEALING_AI_IDLE_COOLDOWN_MS` | `21600000` (six hours) | Minimum interval without active load; healthy idle itself never qualifies for inference. |
+| `PREDICTIVE_HEALING_AI_FAILURE_COOLDOWN_MS` | `21600000` (six hours) | Failure backoff, independent of generic provider-health probes. |
+
+All three AI diagnosis cooldown settings support 60,000–2,592,000,000 ms
+(60 seconds–30 days). Finite values are rounded **up** to whole milliseconds,
+then clamped to this range; a value above 30 days uses the full 30-day maximum,
+not its shorter default. Missing or non-finite values use the defaults in the
+table. These settings cannot request a cooldown longer than 30 days. The shared
+admission boundary still rejects fractional or out-of-range policies submitted
+directly; normalization does not bypass its hourly budget, credential blocking,
+or durable in-flight reservation.
 
 Other boolean settings in this table recognize `true`, `1`, and `yes`, ignoring
 case and surrounding whitespace; other nonblank inputs resolve to `false`.
@@ -1360,7 +1372,7 @@ mutation; see the [audit snapshot](audits/self-healing/2026-10-14/bootstrap-owne
 | Capability | Required configuration and authorization |
 | --- | --- |
 | Observation | A running coordinator in its owning process and initialized observation dependencies. Disabled self-improvement flags retain observation without granting effects. |
-| Diagnosis | Bounded observations and the existing diagnostic/provider policy. A diagnosis does not authorize its proposed action. |
+| Diagnosis | Automatic inference requires predictive healing enabled, fresh actionable evidence, configured credentials, an eligible circuit retry window, and shared Redis admission. Explicit authenticated `aiDiagnosis: true` may request manual diagnosis while prediction is disabled; simulations never infer. Diagnosis does not authorize an action. |
 | Recommendations | Recommendation-only or dry-run evaluation; no runtime mutation permission follows from a recommendation. The separate patch-proposal controller retains its enabled, freeze, autonomy, and publication gates. |
 | Coordinator local mitigation | `SELF_IMPROVE_ENABLED=true`, `SELF_IMPROVE_ACTUATOR_MODE=daemon`, configured and effective autonomy at least 3, and both configured and effective freeze false. The action must own the actual local consumer, satisfy cooldown/attempt limits, and await fresh verification evidence. |
 | Predictive execution | All local execution gates plus `PREDICTIVE_HEALING_ENABLED=true` and `PREDICTIVE_HEALING_DRY_RUN=false`. Automatic execution additionally requires `PREDICTIVE_AUTO_EXECUTE=true`; manual HTTP execution requires authenticated decision/execution scopes. Request parameters cannot lower the server dry-run guard. |
@@ -1381,6 +1393,29 @@ For HTTP predictive decisions, server feature flags remain authoritative.
 `execute: true`. Live execution returns 409 while predictive healing is
 disabled or server dry-run is enabled; the request body cannot lower either
 server guard.
+
+`aiDiagnosis` defaults to false on `POST /api/self-heal/decide`; requesting it
+does not enable repair execution. Inference admission uses Redis server time
+and separate persistent diagnosis/provider-probe records shared across Worker
+and web instances in the same project/environment. Provider snapshots cannot
+regress diagnosis cooldowns. Each purpose has a fixed default budget of two
+attempts per rolling hour; this repair adds no configuration variable for that
+budget. Explicit operator probes use fixed 60-second attempt and settled-failure
+cooldowns, independent of the three diagnosis cooldown variables above. Rotation
+does not reset the shared probe budget or an unresolved reservation.
+Diagnosis is limited to one Responses request, 512 output tokens, a
+30-second request timeout, and zero SDK retries.
+
+Missing credentials, unavailable coordination, invalid state, clock regression,
+active cooldowns, and in-flight reservations retain deterministic rules without
+provider requests. Authentication rejection retains normalized credential
+identities across rotation and later success; its bounded history fails closed
+when full instead of evicting rejected identities. A rejection recorded by
+either purpose blocks that credential on both diagnosis and probe admission;
+the purposes retain separate cooldowns, attempt budgets and in-flight holds.
+An uncertain reservation has no automatic expiry: preserve the Redis state and
+require reviewed operator reconciliation before recovery, never automatic key
+deletion. See [inference policy](PREDICTIVE_SELF_HEALING.md#inference-eligibility-and-cost-containment).
 
 The background coordinator evaluates prediction on every tick. When
 `PREDICTIVE_HEALING_ENABLED=true`, the predictive disposition owns that tick:
@@ -1515,7 +1550,7 @@ alone does not establish isolation or authorize actuation.
 
 | Setting | Required profile value / source | Meaning |
 | --- | --- | --- |
-| `ARCANOS_SELF_HEAL_PREVIEW_PROFILE` | `worker-coordinator-v1` | Opt-in marker; also a Docker build argument for the compiled artifact receipt. |
+| `ARCANOS_SELF_HEAL_PREVIEW_PROFILE` | `worker-coordinator-v1`, or `worker-inference-containment-v1` for PR #1557 | Opt-in marker; also a Docker build argument for the compiled artifact receipt. The containment profile requires independently owned PR #1557 project, environment and service names. |
 | `ARCANOS_SELF_HEAL_PREVIEW_RUN_ID` | Same value as `ARCANOS_BACKSTAGE_HEAVY_PROOF_RUN_ID` | 8–64 lowercase alphanumeric/hyphen characters, starting alphanumeric; binds all controls, storage receipt and evidence. |
 | `ARCANOS_SELF_HEAL_PREVIEW_ISSUED_AT` | Canonical UTC ISO timestamp, not in the future | Fixed lease start; preserve across controlled restarts. |
 | `ARCANOS_SELF_HEAL_PREVIEW_EXPIRES_AT` | Canonical UTC ISO timestamp after issue, at most 7,200,000 ms later | Fixed two-hour maximum; must still be future at startup. Runtime expiration stops work but does not delete resources. |
@@ -1544,9 +1579,10 @@ and distinct from 8766 and 8791.
 The literal child environment derives self-improvement disabled, autonomy 0,
 freeze false, prediction disabled, predictive dry-run true and role-correct
 `RUN_WORKERS`. It uses the normal 30-second coordinator default and ordinary
-5-second heartbeat/15-second lease defaults. Worker concurrency matches the
-maintained Railway setting of two, with exact consumer IDs
-`self-heal-preview-<runId>-slot-1` and `self-heal-preview-<runId>-slot-2`.
+5-second heartbeat/15-second lease defaults. The coordinator profile has two
+worker slots. The PR #1557 containment profile has exactly eight. Consumer IDs
+are exactly `self-heal-preview-<runId>-slot-1` through the profile's last slot;
+the caller cannot supply a concurrency override.
 It derives the dedicated
 Redis kill-switch key `arcanos:preview:self-heal:<runId>:kill-switch:v1` and
 shared Worker stats identity `self-heal-preview-<runId>`; do not configure these separately.
@@ -1558,12 +1594,20 @@ settings are rejected rather than inherited. Fixed authenticated commands may
 change only the seven reviewed process policy values and this run's
 kill-switch override. Observation permission does not imply actuation;
 `policy_allowed` still depends on normal configured/effective authorization.
+The PR #1557 profile admits the exact Railway-generated names
+`RAILWAY_SERVICE_ARCANOS_WEB_PR1557_HEAVY_URL` and `RAILWAY_STATIC_URL` only as
+inert parent metadata for both roles; neither application nor provider-fixture
+children receive their values. Unknown Railway names, alternate service URL
+names, credentials and proxy variables remain rejected. The PR #1544 profile
+does not admit either variable, and normal production validation is unchanged.
 
 The ownership preflight deliberately creates one preview-only PostgreSQL
 receipt in an empty database and holds a per-role advisory lock. Restart
 requires its exact resource/run/source/compiled-digest/certificate identity and
-no foreign jobs or active leases. Resume admits only the two exact consumer IDs;
-the base ID, a third slot, or a matching prefix does not confer authority.
+no foreign jobs or active leases. Resume admits only the profile's exact consumer
+IDs: two for the coordinator profile and eight for the PR #1557 containment
+profile. The base ID, an out-of-range slot, or a matching prefix does not confer
+authority.
 It is a preview mutation, not read-only validation or a production schema migration.
 The profile-only Docker build materializes the public certificate at the fixed
 root-owned, mode-0444 `/app/config/self-heal-preview-database-ca.pem` path before

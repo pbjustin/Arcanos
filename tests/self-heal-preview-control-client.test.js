@@ -94,6 +94,41 @@ function overlapFixture(env, config = {}) {
 }
 
 describe('fixed self-heal preview SSH control client', () => {
+  it.each(['containment_diagnose_no_ai', 'containment_diagnose_on_redis_unavailable'])(
+    'admits only the Worker PR1557 %s command without caller-supplied authorization', async command => {
+    const env = { ...environment(), ARCANOS_SELF_HEAL_PREVIEW_PROFILE: 'worker-inference-containment-v1',
+      RAILWAY_PROJECT_NAME: 'arc-pr1557-heavy-client', RAILWAY_ENVIRONMENT_NAME: 'backstage-heavy-pr-1557-e2e',
+      RAILWAY_SERVICE_NAME: 'arcanos-worker-pr1557-heavy' };
+    const fetchImpl = jest.fn(async () => response(inspection(env)));
+    await runSelfHealPreviewControl(['command', command], env, { fetchImpl });
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({ command });
+    fetchImpl.mockClear();
+    for (const [target, args] of [[environment(), ['command', command]],
+      [{ ...environment('web'), ARCANOS_SELF_HEAL_PREVIEW_PROFILE: env.ARCANOS_SELF_HEAL_PREVIEW_PROFILE,
+        RAILWAY_PROJECT_NAME: env.RAILWAY_PROJECT_NAME, RAILWAY_ENVIRONMENT_NAME: env.RAILWAY_ENVIRONMENT_NAME,
+        RAILWAY_SERVICE_NAME: 'arcanos-web-pr1557-heavy' }, ['command', command]],
+      [env, ['command', command, 'manual']]]) {
+      await expect(runSelfHealPreviewControl(args, target, { fetchImpl })).rejects.toThrow('SELF_HEAL_PREVIEW_CONTROL_CLIENT_FAILED');
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+  it.each(['worker', 'web'].flatMap(role => ['inference_auth_failure_next', 'inference_late_completion_next'].map(command => [role, command])))('admits command-only containment provider fault %s/%s and excludes the legacy profile', async (role, command) => {
+    const legacy = environment(role); const fetchImpl = jest.fn();
+    await expect(runSelfHealPreviewControl(['provider', command], legacy, { fetchImpl })).rejects.toThrow('SELF_HEAL_PREVIEW_CONTROL_CLIENT_FAILED');
+    expect(fetchImpl).not.toHaveBeenCalled();
+    const env = { ...legacy, ARCANOS_SELF_HEAL_PREVIEW_PROFILE: 'worker-inference-containment-v1',
+      RAILWAY_PROJECT_NAME: 'arc-pr1557-heavy-client', RAILWAY_ENVIRONMENT_NAME: 'backstage-heavy-pr-1557-e2e',
+      RAILWAY_SERVICE_NAME: `arcanos-${role}-pr1557-heavy` };
+    if (role === 'web' && command === 'inference_late_completion_next') {
+      await expect(runSelfHealPreviewControl(['provider', command], env, { fetchImpl })).rejects.toThrow('SELF_HEAL_PREVIEW_CONTROL_CLIENT_FAILED');
+      expect(fetchImpl).not.toHaveBeenCalled(); return;
+    }
+    fetchImpl.mockImplementation(async () => response({ runId: env.ARCANOS_SELF_HEAL_PREVIEW_RUN_ID,
+      sourceSha: env.ARCANOS_BACKSTAGE_HEAVY_PROOF_SOURCE_SHA }));
+    await runSelfHealPreviewControl(['provider', command], env, { fetchImpl });
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({ command });
+    await expect(runSelfHealPreviewControl(['provider', command, 'key'], env, { fetchImpl })).rejects.toThrow('SELF_HEAL_PREVIEW_CONTROL_CLIENT_FAILED');
+  });
   it('allows fixed startup failure readback only through the surviving Web role', async () => {
     const result = await runSelfHealPreviewControl(['startup-failure-receipt'], environment('web'));
     expect(result.startup.completed).toBe(true);

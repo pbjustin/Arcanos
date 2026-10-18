@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-17T00:46:13.082Z",
+  "generatedAt": "2026-10-17T20:39:06.444Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2475,6 +2475,12 @@
         },
         {
           "relativePath": "src/services/selfImprove/runtimeConfig.ts"
+        },
+        {
+          "relativePath": "src/services/selfImprove/selfHealingInferenceAdmission.ts"
+        },
+        {
+          "relativePath": "src/services/selfImprove/selfHealingInferenceClient.ts"
         },
         {
           "relativePath": "src/services/selfImprove/selfHealingLoop.ts"
@@ -5756,6 +5762,15 @@
         },
         {
           "relativePath": "tests/self-healing-coordinator-lifecycle.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/self-healing-inference-admission.test.ts"
+        },
+        {
+          "relativePath": "tests/self-healing-inference-client.test.ts"
+        },
+        {
+          "relativePath": "tests/self-healing-inference-core.integration.test.ts"
         },
         {
           "relativePath": "tests/self-healing-loop.test.ts"

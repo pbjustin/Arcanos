@@ -147,6 +147,7 @@ const simulatedTrinityStageSchema = z.object({
 }).partial();
 
 const decidePredictiveSelfHealSchema = z.object({
+  aiDiagnosis: z.boolean().optional(),
   execute: z.boolean().optional(),
   dryRun: z.boolean().optional(),
   source: z.string().trim().min(1).max(64).optional(),
@@ -257,12 +258,14 @@ router.post(
       req.logger?.info?.('self_heal.http_decision.authorized', {
         principalId: req.controlPlanePrincipal?.principalId,
         executeRequested: parsed.data.execute === true,
+        aiDiagnosisRequested: parsed.data.aiDiagnosis === true,
         sourceLabelPresent: parsed.data.source !== undefined,
       });
       const result = await runPredictiveHealingDecision({
         source: parsed.data.source ?? 'api_self_heal_decide',
         execute: parsed.data.execute,
         dryRun: parsed.data.dryRun,
+        inferenceAuthorization: parsed.data.aiDiagnosis === true ? 'manual' : 'disabled',
         simulate: parsed.data.simulate as PredictiveHealingSimulationInput | undefined
       });
 

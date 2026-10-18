@@ -43,14 +43,22 @@ const CLEANUP_INVENTORY_QUERY = `query SelfHealPreviewCleanupOwnerInventory($aft
       id name deletedAt
       serviceInstances(first: 100) { edges { node { id serviceId serviceName environmentId } } pageInfo { hasNextPage } }
       volumeInstances(first: 100) { edges { node {
-        id volumeId serviceId environmentId mountPath volume { id name projectId }
+        id volumeId serviceId environmentId mountPath deletedAt isPendingDeletion state volume { id name projectId }
       } } pageInfo { hasNextPage } }
     } } pageInfo { hasNextPage } }
   } } pageInfo { hasNextPage endCursor } }
 }`;
-const SERVICES = new Map([
-  ['Postgres', '/var/lib/postgresql/data'], ['Redis', '/data'],
-  ['arcanos-web-pr1544-heavy', null], ['arcanos-worker-pr1544-heavy', null],
+const OWNED_PREVIEWS = new Map([
+  [1544, Object.freeze({
+    projectName: /^arc-pr1544-heavy-[a-z0-9][a-z0-9-]{0,13}$/u,
+    environmentName: /^backstage-heavy-pr-1544-e2e(?:-[a-z0-9]{1,16})?$/u,
+    services: Object.freeze({ web: 'arcanos-web-pr1544-heavy', worker: 'arcanos-worker-pr1544-heavy', postgres: 'Postgres', redis: 'Redis' }),
+  })],
+  [1557, Object.freeze({
+    projectName: /^arc-pr1557-heavy-[a-z0-9][a-z0-9-]{0,13}$/u,
+    environmentName: /^backstage-heavy-pr-1557-e2e(?:-[a-z0-9]{1,16})?$/u,
+    services: Object.freeze({ web: 'arcanos-web-pr1557-heavy', worker: 'arcanos-worker-pr1557-heavy', postgres: 'Postgres', redis: 'Redis' }),
+  })],
 ]);
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const sleep = ms => new Promise(resolveSleep => setTimeout(resolveSleep, ms));
@@ -58,21 +66,33 @@ export class SelfHealPreviewCleanupError extends Error {
   constructor(code) { super(`SELF_HEAL_PREVIEW_CLEANUP_${code}`); this.name = 'SelfHealPreviewCleanupError'; }
 }
 function fail(code) { throw new SelfHealPreviewCleanupError(code); }
+function ownedPreview(prNumber) {
+  const ownership = OWNED_PREVIEWS.get(prNumber);
+  if (!ownership) fail('RECEIPT_INVALID');
+  return ownership;
+}
+/** Resource names belong only to the two explicitly admitted acceptance targets. */
+export function resolveSelfHealPreviewResourceNames(prNumber) { return ownedPreview(prNumber).services; }
+function serviceMounts(prNumber) {
+  const names = resolveSelfHealPreviewResourceNames(prNumber);
+  return new Map([[names.postgres, '/var/lib/postgresql/data'], [names.redis, '/data'], [names.web, null], [names.worker, null]]);
+}
 function validId(value) { return typeof value === 'string' && UUID.test(value) && !FORBIDDEN_IDS.has(value); }
 function iso(value) { const ms = Date.parse(value); return typeof value === 'string' && Number.isFinite(ms) && new Date(ms).toISOString() === value ? ms : NaN; }
 function exact(value, keys) { return record(value) && Object.keys(value).sort().join('\0') === [...keys].sort().join('\0'); }
-function resourceBindings(value) {
+function resourceBindings(value, prNumber) {
+  const servicesByName = serviceMounts(prNumber);
   if (!exact(value, ['services', 'volumes']) || !Array.isArray(value.services) || !Array.isArray(value.volumes)
     || value.services.length > 4 || value.volumes.length > 2) fail('RESOURCE_BINDINGS_INVALID');
   const services = value.services.map(service => {
-    if (!exact(service, ['id', 'name']) || !validId(service.id) || !SERVICES.has(service.name)) fail('RESOURCE_BINDINGS_INVALID');
+    if (!exact(service, ['id', 'name']) || !validId(service.id) || !servicesByName.has(service.name)) fail('RESOURCE_BINDINGS_INVALID');
     return Object.freeze({ ...service });
   });
   const names = new Map(services.map(service => [service.id, service.name]));
   const volumes = value.volumes.map(volume => {
     if (!exact(volume, ['id', 'name', 'serviceId', 'mountPath']) || !validId(volume.id)
       || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u.test(volume.name ?? '') || !names.has(volume.serviceId)
-      || !SERVICES.get(names.get(volume.serviceId)) || volume.mountPath !== SERVICES.get(names.get(volume.serviceId))) fail('RESOURCE_BINDINGS_INVALID');
+      || !servicesByName.get(names.get(volume.serviceId)) || volume.mountPath !== servicesByName.get(names.get(volume.serviceId))) fail('RESOURCE_BINDINGS_INVALID');
     return Object.freeze({ ...volume });
   });
   if (new Set(services.map(service => service.id)).size !== services.length
@@ -86,17 +106,18 @@ function resourceBindings(value) {
 /** An expired receipt remains valid deletion authority for the same owned target. */
 export function validateSelfHealPreviewCleanupReceipt(receipt, options = {}) {
   const now = options.now?.() ?? Date.now();
+  const ownership = ownedPreview(receipt?.prNumber);
   if (!record(receipt) || !exact(receipt, Object.hasOwn(receipt, 'resources') ? [...RECEIPT_KEYS, 'resources'] : RECEIPT_KEYS)
     || receipt.version !== 1 || receipt.owner !== 'pbjustin' || receipt.repository !== 'pbjustin/Arcanos'
-    || receipt.prNumber !== 1544 || !/^[0-9a-f]{40}$/u.test(receipt.sourceSha ?? '')
+    || !/^[0-9a-f]{40}$/u.test(receipt.sourceSha ?? '')
     || !/^[a-z0-9][a-z0-9-]{7,63}$/u.test(receipt.runId ?? '')
     || !validId(receipt.projectId) || !validId(receipt.environmentId) || receipt.projectId === receipt.environmentId
-    || receipt.workspaceId !== WORKSPACE || !/^arc-pr1544-heavy-[a-z0-9][a-z0-9-]{0,13}$/u.test(receipt.projectName ?? '')
-    || receipt.projectName.length > 32 || !/^backstage-heavy-pr-1544-e2e(?:-[a-z0-9]{1,16})?$/u.test(receipt.environmentName ?? '')) fail('RECEIPT_INVALID');
+    || receipt.workspaceId !== WORKSPACE || !ownership.projectName.test(receipt.projectName ?? '')
+    || receipt.projectName.length > 32 || !ownership.environmentName.test(receipt.environmentName ?? '')) fail('RECEIPT_INVALID');
   const issued = iso(receipt.issuedAt); const expires = iso(receipt.expiresAt);
   if (!Number.isFinite(issued) || !Number.isFinite(expires) || issued > now || expires <= issued
     || expires - issued > MAX_LEASE_MS || (options.allowExpired === false && expires <= now)) fail('LEASE_INVALID');
-  return Object.freeze({ ...receipt, ...(Object.hasOwn(receipt, 'resources') ? { resources: resourceBindings(receipt.resources) } : {}) });
+  return Object.freeze({ ...receipt, ...(Object.hasOwn(receipt, 'resources') ? { resources: resourceBindings(receipt.resources, receipt.prNumber) } : {}) });
 }
 
 function connection(value) {
@@ -107,6 +128,7 @@ function connection(value) {
 /** Permit only the exact project, one exact environment, and its partial four-service topology. */
 function cleanupInventory(status, receipt, options = {}) {
   const now = options.now?.() ?? Date.now();
+  const servicesByName = serviceMounts(receipt.prNumber);
   if (!record(status) || status.id !== receipt.projectId || status.name !== receipt.projectName
     || status.workspaceId !== WORKSPACE || !validId(status.id)
     || (status.deletedAt !== null && !Number.isFinite(iso(status.deletedAt)))) fail('PROJECT_MISMATCH');
@@ -121,8 +143,8 @@ function cleanupInventory(status, receipt, options = {}) {
   if (status.deletedAt !== null && iso(status.deletedAt) <= now) {
     if (environments.length !== 0 || connection(status.services).length !== 0
       || connection(status.volumes).length !== 0) fail('DELETED_PROJECT_RESOURCES_RETAINED');
-    return { services: [], instances: [], globalVolumes: [], volumeInstances: [],
-      bindings: options.bindings ?? receipt.resources ?? resourceBindings({ services: [], volumes: [] }),
+    return { services: [], instances: [], globalVolumes: [], volumeInstances: [], pendingVolumes: [],
+      bindings: options.bindings ?? receipt.resources ?? resourceBindings({ services: [], volumes: [] }, receipt.prNumber),
       scheduledDeletionAt: status.deletedAt,
       counts: { serviceCount: 0, serviceInstanceCount: 0, volumeCount: 0, volumeInstanceCount: 0, environmentCount: 0 } };
   }
@@ -133,7 +155,7 @@ function cleanupInventory(status, receipt, options = {}) {
   const services = connection(status.services);
   if (services.length > 4 || new Set(services.map(service => service.id)).size !== services.length
     || new Set(services.map(service => service.name)).size !== services.length
-    || services.some(service => !validId(service.id) || !SERVICES.has(service.name))) fail('FOREIGN_SERVICES');
+    || services.some(service => !validId(service.id) || !servicesByName.has(service.name))) fail('FOREIGN_SERVICES');
   const expected = options.bindings ?? receipt.resources;
   const knownServices = expected?.services ?? services;
   const byId = new Map(knownServices.map(service => [service.id, service.name]));
@@ -145,11 +167,13 @@ function cleanupInventory(status, receipt, options = {}) {
   const volumes = connection(environment.volumeInstances);
   const globalVolumes = connection(status.volumes);
   if (volumes.length > 2 || new Set(volumes.map(volume => volume.id)).size !== volumes.length
+    || new Set(volumes.map(volume => volume.volumeId)).size !== volumes.length
     || globalVolumes.length > 2 || new Set(globalVolumes.map(volume => volume.id)).size !== globalVolumes.length
     || globalVolumes.some(volume => !validId(volume.id) || volume.projectId !== receipt.projectId
       || typeof volume.name !== 'string')) fail('FOREIGN_VOLUMES');
   const globalById = new Map(globalVolumes.map(volume => [volume.id, volume]));
   const expectedVolumes = expected ? new Map(expected.volumes.map(volume => [volume.id, volume])) : null;
+  const pendingVolumes = [];
   for (const volume of volumes) {
     const global = globalById.get(volume.volumeId);
     const binding = expectedVolumes?.get(volume.volumeId);
@@ -157,10 +181,24 @@ function cleanupInventory(status, receipt, options = {}) {
       || volume.id === volume.volumeId || volume.volume.projectId !== receipt.projectId
       || volume.volume.name !== global.name
       || (volume.environmentId !== undefined && volume.environmentId !== receipt.environmentId)) fail('FOREIGN_VOLUMES');
+    // READY still describes retained storage after Railway queues deletion. Only
+    // the explicit flag and timestamp establish that another delete must not run.
+    if (typeof volume.isPendingDeletion !== 'boolean' || typeof volume.state !== 'string'
+      || (volume.isPendingDeletion ? !Number.isFinite(iso(volume.deletedAt))
+        : volume.deletedAt !== null)) fail('VOLUME_DELETION_STATE_INVALID');
+    if (volume.isPendingDeletion) {
+      if (!binding || volume.serviceId !== null || volume.environmentId !== receipt.environmentId
+        || volume.mountPath !== binding.mountPath || volume.state !== 'READY'
+        || iso(volume.deletedAt) < iso(receipt.issuedAt) || services.length !== 0 || instances.length !== 0) {
+        fail('VOLUME_DELETION_STATE_INVALID');
+      }
+      pendingVolumes.push({ volumeId: volume.volumeId, volumeInstanceId: volume.id,
+        deletedAt: volume.deletedAt, isPendingDeletion: true, state: volume.state });
+    }
     if (volume.serviceId === null || volume.serviceId === undefined) {
       if (!binding || services.some(service => service.id === binding.serviceId)) fail('UNBOUND_VOLUME');
-    } else if (!byId.has(volume.serviceId) || !SERVICES.get(byId.get(volume.serviceId))
-      || volume.mountPath !== SERVICES.get(byId.get(volume.serviceId))
+    } else if (!byId.has(volume.serviceId) || !servicesByName.get(byId.get(volume.serviceId))
+      || volume.mountPath !== servicesByName.get(byId.get(volume.serviceId))
       || (binding && binding.serviceId !== volume.serviceId)) fail('FOREIGN_VOLUMES');
   }
   let bindings = expected;
@@ -170,11 +208,11 @@ function cleanupInventory(status, receipt, options = {}) {
       if (!instance || !instance.serviceId) fail('UNBOUND_VOLUME');
       return { id: global.id, name: global.name, serviceId: instance.serviceId, mountPath: instance.mountPath };
     });
-    bindings = resourceBindings({ services, volumes: boundVolumes });
+    bindings = resourceBindings({ services, volumes: boundVolumes }, receipt.prNumber);
   }
   const boundById = new Map(bindings.volumes.map(volume => [volume.id, volume]));
   if (globalVolumes.some(volume => boundById.get(volume.id)?.name !== volume.name)) fail('FOREIGN_VOLUMES');
-  return { services, instances, globalVolumes, volumeInstances: volumes, bindings,
+  return { services, instances, globalVolumes, volumeInstances: volumes, pendingVolumes, bindings,
     scheduledDeletionAt: status.deletedAt,
     counts: { serviceCount: services.length, serviceInstanceCount: instances.length,
       volumeCount: globalVolumes.length, volumeInstanceCount: volumes.length, environmentCount: 1 } };
@@ -442,6 +480,11 @@ async function readOwnedProject(receipt, options, deadline) {
 
 function noServices(inventory) { return inventory.services.length === 0 && inventory.instances.length === 0; }
 function noResources(inventory) { return noServices(inventory) && inventory.globalVolumes.length === 0 && inventory.volumeInstances.length === 0; }
+function onlyPendingVolumes(inventory) {
+  return noServices(inventory) && inventory.globalVolumes.length > 0
+    && inventory.globalVolumes.length === inventory.pendingVolumes.length
+    && inventory.volumeInstances.length === inventory.pendingVolumes.length;
+}
 
 /** No head lookup is needed: cleanup authority remains bound to the receipt's resource identities. */
 export async function runSelfHealPreviewCleanup(config, options = {}) {
@@ -454,10 +497,11 @@ export async function runSelfHealPreviewCleanup(config, options = {}) {
     environmentId: receipt.environmentId, expiresAt: receipt.expiresAt,
     executed: Boolean(config.execute), deletionRequested: false, absenceVerified: false,
     resourceAbsenceVerified: false, projectAbsenceVerified: false, projectMetadataRetained: false,
-    scheduledDeletionAt: null, serviceDeleteRequests: [], volumeDeleteRequests: [] };
+    scheduledDeletionAt: null, serviceDeleteRequests: [], volumeDeleteRequests: [], pendingVolumes: [] };
   const emit = (status, extra = {}) => {
     const event = { ...output, serviceDeleteRequests: [...output.serviceDeleteRequests],
-      volumeDeleteRequests: [...output.volumeDeleteRequests], status, ...extra, observedAt: new Date(now()).toISOString() };
+      volumeDeleteRequests: [...output.volumeDeleteRequests], pendingVolumes: [...output.pendingVolumes],
+      status, ...extra, observedAt: new Date(now()).toISOString() };
     options.onReceipt?.(event); return event;
   };
   if (!config.execute) return emit('DRY_RUN');
@@ -502,13 +546,14 @@ export async function runSelfHealPreviewCleanup(config, options = {}) {
     }
     const bindings = authority.resources ?? inventory.bindings;
     Object.assign(output, inventory.counts, { resources: bindings,
+      pendingVolumes: inventory.pendingVolumes,
       projectMetadataRetained: inventory.scheduledDeletionAt !== null,
       scheduledDeletionAt: inventory.scheduledDeletionAt }); emit('OWNERSHIP_RECHECKED');
     const refresh = async deadline => {
       const latest = await readOwnedProject(receipt, options, deadline);
       const observed = cleanupInventory(latest, receipt, { now, bindings });
       Object.assign(output, observed.counts, { projectMetadataRetained: observed.scheduledDeletionAt !== null,
-        scheduledDeletionAt: observed.scheduledDeletionAt });
+        scheduledDeletionAt: observed.scheduledDeletionAt, pendingVolumes: observed.pendingVolumes });
       if (!noResources(observed)) output.resourceAbsenceVerified = false;
       return observed;
     };
@@ -537,6 +582,8 @@ export async function runSelfHealPreviewCleanup(config, options = {}) {
     for (const volume of bindings.volumes) {
       inventory = await refresh();
       if (!inventory.globalVolumes.some(current => current.id === volume.id)) continue;
+      if (!noServices(inventory)) fail('RESOURCES_REAPPEARED');
+      if (inventory.pendingVolumes.some(current => current.volumeId === volume.id)) continue;
       try {
         await cli(['volume', '--project', receipt.projectId, '--environment', receipt.environmentId,
           'delete', '--volume', volume.id, '--yes', '--json'], options, CLI_MUTATION_TIMEOUT_MS, false);
@@ -546,7 +593,8 @@ export async function runSelfHealPreviewCleanup(config, options = {}) {
       }
       output.volumeDeleteRequests.push(volume.id); emit('VOLUME_DELETE_REQUESTED');
     }
-    inventory = await poll(noResources);
+    inventory = await poll(current => noResources(current) || onlyPendingVolumes(current));
+    if (onlyPendingVolumes(inventory)) return emit('VOLUMES_PENDING_DELETION');
     Object.assign(output, inventory.counts, { resourceAbsenceVerified: true }); emit('RESOURCES_ABSENT');
     // Scheduling a project deletion retains its metadata for 48 hours. It is
     // performed only after independently observing no services or volumes.

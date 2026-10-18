@@ -47,8 +47,10 @@ function status(partial = false) {
       serviceInstances: connection(partial ? [] : [ID.web, ID.worker, ID.postgres, ID.redis].map(serviceId => ({ serviceId }))),
       volumeInstances: connection(partial ? [] : [
         { id: ID.pgVolumeInstance, volumeId: ID.pgVolume, serviceId: ID.postgres, mountPath: '/var/lib/postgresql/data', environmentId: ID.environment,
+          deletedAt: null, isPendingDeletion: false, state: 'READY',
           volume: { id: ID.pgVolume, name: 'self-heal-pr1544-pg-test', projectId: ID.project } },
         { id: ID.redisVolumeInstance, volumeId: ID.redisVolume, serviceId: ID.redis, mountPath: '/data', environmentId: ID.environment,
+          deletedAt: null, isPendingDeletion: false, state: 'READY',
           volume: { id: ID.redisVolume, name: 'self-heal-pr1544-redis-test', projectId: ID.project } },
       ]),
     }]),
@@ -97,7 +99,11 @@ function harness(options = {}) {
     }
     if (commandName === 'volume' && args.includes('delete')) {
       if (options.refuseResourceDelete) throw new Error('Project is deleted.');
-      if (!options.retainVolumes) {
+      if (options.queueVolumeDeletion) {
+        const id = args[args.indexOf('--volume') + 1];
+        const instance = current.environments.edges[0].node.volumeInstances.edges.find(({ node }) => node.volumeId === id).node;
+        instance.isPendingDeletion = true; instance.deletedAt = new Date(clockMs + 48 * 60 * 60 * 1000).toISOString();
+      } else if (!options.retainVolumes) {
         const id = args[args.indexOf('--volume') + 1];
         current.volumes.edges = current.volumes.edges.filter(({ node }) => node.id !== id);
         const env = current.environments.edges[0].node;
@@ -127,6 +133,15 @@ function boundResources() {
     id: node.volumeId, name: node.volume.name, serviceId: node.serviceId, mountPath: node.mountPath,
   })) };
 }
+function pendingVolumeStatus() {
+  const current = status(); current.services.edges = [];
+  const environment = current.environments.edges[0].node; environment.serviceInstances.edges = [];
+  for (const { node } of environment.volumeInstances.edges) Object.assign(node, {
+    serviceId: null, isPendingDeletion: true, deletedAt: new Date(NOW + 48 * 60 * 60 * 1000).toISOString(),
+  });
+  return current;
+}
+function forPr1557(value) { return JSON.parse(JSON.stringify(value).replaceAll('1544', '1557')); }
 const execute = value => ({ receipt: value ?? receipt(), execute: true, allowDeleteOwnedProject: true });
 const tempFiles = [];
 function temporaryReceipt(value) {
@@ -161,6 +176,138 @@ afterEach(() => {
 });
 
 describe('receipt-bound self-heal preview cleanup and fixed-expiry watchdog', () => {
+  it('reports retained queued volumes without claiming absence or scheduling project deletion', async () => {
+    const h = harness({ queueVolumeDeletion: true });
+    const result = await runSelfHealPreviewCleanup(execute(), h);
+    expect(result).toMatchObject({ status: 'VOLUMES_PENDING_DELETION', resourceAbsenceVerified: false,
+      projectAbsenceVerified: false, absenceVerified: false, deletionRequested: false,
+      serviceCount: 0, serviceInstanceCount: 0, volumeCount: 2, volumeInstanceCount: 2, scheduledDeletionAt: null });
+    expect(result.pendingVolumes).toEqual([ID.pgVolume, ID.redisVolume].map((volumeId, index) => ({
+      volumeId, volumeInstanceId: [ID.pgVolumeInstance, ID.redisVolumeInstance][index],
+      deletedAt: new Date(NOW + 48 * 60 * 60 * 1000).toISOString(), isPendingDeletion: true, state: 'READY',
+    })));
+    expect(result.volumeDeleteRequests).toEqual([ID.pgVolume, ID.redisVolume]);
+    expect(h.command.mock.calls.some(([, args]) => args[0] === 'delete')).toBe(false);
+    expect(h.events.some(event => event.resourceAbsenceVerified || event.absenceVerified)).toBe(false);
+    expect(h.sleep).not.toHaveBeenCalled();
+  });
+  it.each([false, true])('does not resubmit already queued volume deletions on rerun/watchdog=%s', async watchdog => {
+    const h = harness({ initialStatus: pendingVolumeStatus() });
+    const result = await runSelfHealPreviewCleanup({ ...execute(receipt({ resources: boundResources() })), watchdog }, h);
+    expect(result).toMatchObject({ status: 'VOLUMES_PENDING_DELETION', resourceAbsenceVerified: false,
+      deletionRequested: false, volumeDeleteRequests: [], serviceDeleteRequests: [] });
+    expect(result.pendingVolumes).toHaveLength(2);
+    expect(h.command.mock.calls.some(([, args]) => isMutation(args))).toBe(false);
+    if (watchdog) expect(h.now()).toBe(Date.parse(receipt().expiresAt));
+  });
+  it('queues only the not-yet-queued exact owned volume after an interrupted deletion', async () => {
+    const current = pendingVolumeStatus();
+    Object.assign(current.environments.edges[0].node.volumeInstances.edges[1].node, { isPendingDeletion: false, deletedAt: null });
+    const h = harness({ initialStatus: current, queueVolumeDeletion: true });
+    const result = await runSelfHealPreviewCleanup(execute(receipt({ resources: boundResources() })), h);
+    expect(result.status).toBe('VOLUMES_PENDING_DELETION');
+    expect(result.volumeDeleteRequests).toEqual([ID.redisVolume]);
+    expect(h.command.mock.calls.filter(([, args]) => isMutation(args)).map(([, args]) => args[0])).toEqual(['volume']);
+  });
+  it('does not treat an elapsed deletion timestamp as physical absence or resubmit it', async () => {
+    const current = pendingVolumeStatus();
+    for (const { node } of current.environments.edges[0].node.volumeInstances.edges) {
+      node.deletedAt = new Date(NOW - 30_000).toISOString();
+    }
+    const h = harness({ initialStatus: current });
+    const result = await runSelfHealPreviewCleanup(execute(receipt({ resources: boundResources() })), h);
+    expect(result).toMatchObject({ status: 'VOLUMES_PENDING_DELETION', resourceAbsenceVerified: false,
+      volumeDeleteRequests: [], deletionRequested: false });
+    expect(h.command.mock.calls.some(([, args]) => isMutation(args))).toBe(false);
+  });
+  it('waits for physical volume absence before scheduling project retirement on a later run', async () => {
+    const current = pendingVolumeStatus(); current.volumes.edges = [];
+    current.environments.edges[0].node.volumeInstances.edges = [];
+    const h = harness({ initialStatus: current });
+    const result = await runSelfHealPreviewCleanup(execute(receipt({ resources: boundResources() })), h);
+    expect(result).toMatchObject({ status: 'RESOURCES_REMOVED_METADATA_RETAINED', resourceAbsenceVerified: true,
+      pendingVolumes: [], volumeDeleteRequests: [], deletionRequested: true });
+    expect(h.command.mock.calls.filter(([, args]) => isMutation(args)).map(([, args]) => args[0])).toEqual(['delete']);
+  });
+  it.each([
+    value => { value.isPendingDeletion = false; }, value => { value.isPendingDeletion = 'true'; },
+    value => { delete value.isPendingDeletion; }, value => { value.deletedAt = null; },
+    value => { value.deletedAt = 'not-a-date'; }, value => { value.deletedAt = '2020-01-01T00:00:00.000Z'; },
+    value => { value.state = 'DELETED'; }, value => { value.state = null; },
+    value => { value.serviceId = ID.postgres; }, value => { value.environmentId = ID.web; },
+    value => { value.mountPath = '/foreign'; },
+  ])('rejects inconsistent pending-volume state before any mutation %#', async change => {
+    const current = pendingVolumeStatus(); change(current.environments.edges[0].node.volumeInstances.edges[0].node);
+    const h = harness({ initialStatus: current });
+    await expect(runSelfHealPreviewCleanup(execute(receipt({ resources: boundResources() })), h)).rejects.toThrow();
+    expect(h.command.mock.calls.some(([, args]) => isMutation(args))).toBe(false);
+    expect(h.events.some(event => event.resourceAbsenceVerified || event.status === 'VOLUMES_PENDING_DELETION')).toBe(false);
+  });
+  it('rejects pending volumes while any service instance remains', async () => {
+    const current = pendingVolumeStatus(); current.environments.edges[0].node.serviceInstances = connection([{ serviceId: ID.worker }]);
+    const h = harness({ initialStatus: current });
+    await expect(runSelfHealPreviewCleanup(execute(receipt({ resources: boundResources() })), h)).rejects.toThrow('VOLUME_DELETION_STATE_INVALID');
+    expect(h.command.mock.calls.some(([, args]) => isMutation(args))).toBe(false);
+  });
+  it('does not adopt an unbound queued volume', async () => {
+    const h = harness({ initialStatus: pendingVolumeStatus() });
+    await expect(runSelfHealPreviewCleanup(execute(), h)).rejects.toThrow('VOLUME_DELETION_STATE_INVALID');
+    expect(h.command.mock.calls.some(([, args]) => isMutation(args))).toBe(false);
+  });
+  it('admits PR 1557 only with its own names and deletes only its bound resources', async () => {
+    const owner = forPr1557({ ...receipt(), resources: boundResources() });
+    const h = harness({ initialStatus: forPr1557(status()) });
+    expect(validateSelfHealPreviewCleanupReceipt(owner, { now: h.now }).prNumber).toBe(1557);
+    const result = await runSelfHealPreviewCleanup(execute(owner), h);
+    expect(result).toMatchObject({ resourceAbsenceVerified: true, projectMetadataRetained: true });
+    expect(h.command.mock.calls.map(call => call[1]).filter(isMutation)).toEqual([
+      ...[ID.web, ID.worker, ID.postgres, ID.redis].map(id => ['service', 'delete', '--project', ID.project, '--environment', ID.environment, '--service', id, '--yes', '--json']),
+      ...[ID.pgVolume, ID.redisVolume].map(id => ['volume', '--project', ID.project, '--environment', ID.environment, 'delete', '--volume', id, '--yes', '--json']),
+      ['delete', '--project', ID.project, '--yes', '--json'],
+    ]);
+  });
+  it.each([
+    value => { value.prNumber = 1558; },
+    value => { value.prNumber = '1557'; },
+    value => { value.projectName = receipt().projectName; },
+    value => { value.environmentName = receipt().environmentName; },
+    value => { value.resources.services[0].name = 'arcanos-web-pr1544-heavy'; },
+    value => { value.resources.services[1].name = 'arcanos-worker-pr1558-heavy'; },
+  ])('rejects mixed or unapproved PR 1557 receipt authority before provider access %#', async mutate => {
+    const owner = forPr1557({ ...receipt(), resources: boundResources() }); mutate(owner);
+    const h = harness({ initialStatus: forPr1557(status()) });
+    await expect(runSelfHealPreviewCleanup(execute(owner), h)).rejects.toThrow(/^SELF_HEAL_PREVIEW_CLEANUP_/u);
+    expect(h.command).not.toHaveBeenCalled();
+  });
+  it('refuses PR 1544 services in a PR 1557 target before any deletion', async () => {
+    const target = forPr1557(status()); target.services.edges[0].node.name = 'arcanos-web-pr1544-heavy';
+    const h = harness({ initialStatus: target });
+    await expect(runSelfHealPreviewCleanup(execute(forPr1557(receipt())), h))
+      .rejects.toThrow('SELF_HEAL_PREVIEW_CLEANUP_FOREIGN_SERVICES');
+    expect(h.command.mock.calls.filter(call => isMutation(call[1]))).toHaveLength(0);
+  });
+  it('keeps PR 1557 partial topology and expired receipt cleanup bound to the original deadline', async () => {
+    const owner = forPr1557(receipt());
+    const h = harness({ initialStatus: forPr1557(status(true)), now: Date.parse(owner.expiresAt) + 1 });
+    expect(attestSelfHealPreviewCleanupTarget(forPr1557(status(true)), owner).serviceCount).toBe(0);
+    const result = await runSelfHealPreviewCleanup(execute(owner), h);
+    expect(result.resourceAbsenceVerified).toBe(true);
+    expect(h.command.mock.calls.filter(call => isMutation(call[1]))).toHaveLength(1);
+  });
+  it('derives PR 1557 cleanup authority after interruption with only the first attached volume allocated', async () => {
+    const target = forPr1557(status());
+    target.volumes.edges = target.volumes.edges.slice(0, 1);
+    target.environments.edges[0].node.volumeInstances.edges = target.environments.edges[0].node.volumeInstances.edges.slice(0, 1);
+    const h = harness({ initialStatus: target });
+    const result = await runSelfHealPreviewCleanup(execute(forPr1557(receipt())), h);
+    expect(result.resourceAbsenceVerified).toBe(true);
+    expect(h.persistResourceReceipt).toHaveBeenCalledWith(expect.objectContaining({
+      prNumber: 1557, resources: expect.objectContaining({ volumes: [expect.objectContaining({
+        id: ID.pgVolume, serviceId: ID.postgres, mountPath: '/var/lib/postgresql/data',
+      })] }),
+    }));
+    expect(h.command.mock.calls.map(call => call[1]).filter(isMutation)).toHaveLength(6);
+  });
   it('dry-runs valid ownership with zero CLI or timer activity', async () => {
     const h = harness();
     await expect(runSelfHealPreviewCleanup({ receipt: receipt(), execute: false, allowDeleteOwnedProject: false }, h))
