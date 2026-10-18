@@ -169,6 +169,72 @@ describe('PR1557 fixed hosted acceptance cases', () => {
     expect(env.calls).toContainEqual(['web', 'command', 'policy_restore']);
   });
 
+  const unknownDrainStates = [
+    ['missing coordinator', value => { delete value.coordinator; }],
+    ['null coordinator', value => { value.coordinator = null; }],
+    ['missing inFlight', value => { delete value.coordinator.inFlight; }],
+    ['null inFlight', value => { value.coordinator.inFlight = null; }],
+    ['numeric inFlight', value => { value.coordinator.inFlight = 0; }],
+    ['string inFlight', value => { value.coordinator.inFlight = ''; }],
+    ['missing containment', value => { delete value.containment; }],
+    ['missing run', value => { delete value.containment.run; }],
+    ['unknown run status', value => { value.containment.run = { status: 'unknown' }; }],
+    ['running operation', value => { value.containment.run = { status: 'running' }; }],
+  ];
+  describe.each(['worker', 'web'])('%s restoration drain', role => {
+    it.each(unknownDrainStates)('continues safe restoration and publishes a blocked receipt for %s', async (_label, mutate) => {
+      const env = orchestrationHarness(); const remote = env.transport.remote;
+      const restores = []; const results = []; let cancelled = 0;
+      env.onResult = result => { results.push(result); };
+      env.transport.restore = async (argv, target) => {
+        restores.push([target, ...argv]);
+        const receipt = await remote(target, argv);
+        if (target === role && argv[1] === 'containment_cancel') {
+          cancelled += 1; mutate(receipt.observation);
+          // Exercise both supported receipt projections through the same restoration path.
+          if (role === 'web') return { observation: { inspection: receipt.observation } };
+        }
+        return receipt;
+      };
+      const result = await runSelfHealInferenceAcceptanceCase('late_completion', manifest(), env);
+      expect(result).toMatchObject({ classification: 'BLOCKED', restoration: 'FAILED',
+        errorCode: 'SELF_HEAL_ACCEPTANCE_INFERENCE_RESTORATION_FAILED', productionAcceptanceProven: false });
+      expect(cancelled).toBe(41); // Initial cancellation, then the unchanged bounded forty drain attempts.
+      expect(restores).toContainEqual(['worker', 'command', 'containment_credential_restore']);
+      expect(restores).toContainEqual(['web', 'command', 'containment_credential_restore']);
+      expect(restores.at(-1)).toEqual(['worker', 'command', 'coordinator_start']);
+      expect(results).toEqual([result]);
+    });
+    it('waits for a later explicit quiescent receipt instead of accepting unknown state', async () => {
+      const env = orchestrationHarness(); const remote = env.transport.remote; let cancelled = 0;
+      env.transport.restore = async (argv, target) => {
+        const receipt = await remote(target, argv);
+        if (target === role && argv[1] === 'containment_cancel' && ++cancelled <= 3) delete receipt.observation.coordinator;
+        return receipt;
+      };
+      const result = await runSelfHealInferenceAcceptanceCase('late_completion', manifest(), env);
+      expect(cancelled).toBe(4);
+      expect(result).toMatchObject({ classification: 'SYNTHETIC_ONLY', restoration: 'SYNTHETIC_ONLY', errorCode: null });
+    });
+  });
+  it.each(['inFlight', 'run'])('rejects unknown final Web %s evidence after a proven drain while publishing the result', async missing => {
+    const env = orchestrationHarness(); const remote = env.transport.remote; const results = [];
+    env.onResult = result => { results.push(result); };
+    env.transport.restore = async (argv, role) => {
+      const receipt = await remote(role, argv);
+      if (role === 'web' && argv[1] === 'containment_credential_restore') {
+        if (missing === 'inFlight') delete receipt.observation.coordinator.inFlight;
+        else delete receipt.observation.containment.run;
+      }
+      return receipt;
+    };
+    const result = await runSelfHealInferenceAcceptanceCase('late_completion', manifest(), env);
+    expect(result).toMatchObject({ classification: 'BLOCKED', restoration: 'FAILED',
+      errorCode: 'SELF_HEAL_ACCEPTANCE_INFERENCE_RESTORATION_FAILED' });
+    expect(env.calls.at(-1)).toEqual(['worker', 'command', 'coordinator_start']);
+    expect(results).toEqual([result]);
+  });
+
   function orchestrationHarness(options = {}) {
     let clock = NOW; let serial = 0; let fault = null; let credential = 'original'; let blockedOriginal = false;
     const states = { worker: snapshot(), web: snapshot() }; const fixtures = { worker: fixture([]), web: fixture([]) };

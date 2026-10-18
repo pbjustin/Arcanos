@@ -26,6 +26,9 @@ const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const sleep = ms => new Promise(done => setTimeout(done, ms));
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const inspection = receipt => receipt?.observation?.inspection ?? receipt?.observation;
+// Missing or malformed drain evidence must not be treated as quiescence.
+const isContainmentQuiescent = state => state?.coordinator?.inFlight === false
+  && (state.containment?.run === null || ['completed', 'failed'].includes(state.containment?.run?.status));
 const fail = (code, classification = 'FAILED') => { throw new SelfHealAcceptanceError(`INFERENCE_${code}`, classification); };
 const requireProof = (condition, code) => { if (!condition) fail(code); };
 const block = code => fail(code, 'BLOCKED');
@@ -678,7 +681,7 @@ export async function runSelfHealInferenceAcceptanceCase(scenario, manifest, opt
       let drained = false;
       for (let attempt = 0; attempt < 40; attempt += 1) {
         const state = await restore(role, ['command', 'containment_cancel']);
-        if (state && state.containment?.run?.status !== 'running' && !state.coordinator.inFlight) { drained = true; break; }
+        if (isContainmentQuiescent(state)) { drained = true; break; }
         await wait(1000);
       }
       if (!drained) failures.push(`${role}:drain`);
@@ -691,7 +694,7 @@ export async function runSelfHealInferenceAcceptanceCase(scenario, manifest, opt
       requireProof(final.policy.selfImproveEnabled === false && final.claimBoundary?.faultRemaining === 0
         && final.containment?.run?.status !== 'running' && failures.length === 0, 'FAULT_RESTORATION_INCOMPLETE');
       if (webTouched) requireProof(restoredWebState?.policy?.selfImproveEnabled === false
-        && restoredWebState.containment?.run?.status !== 'running' && !restoredWebState.coordinator.inFlight, 'WEB_RESTORATION_INCOMPLETE');
+        && isContainmentQuiescent(restoredWebState), 'WEB_RESTORATION_INCOMPLETE');
       restoration = real ? 'VERIFIED' : 'SYNTHETIC_ONLY';
     } catch { restoration = 'FAILED'; classification = 'BLOCKED'; errorCode ??= 'SELF_HEAL_ACCEPTANCE_INFERENCE_RESTORATION_FAILED'; }
   }
