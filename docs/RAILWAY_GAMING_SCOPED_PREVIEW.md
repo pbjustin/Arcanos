@@ -70,6 +70,11 @@ phase receives only the first phase's remaining time; insufficient remaining
 budget fails instead of resetting it. Requests retain no-redirect and
 credential-omission settings, origin restrictions and abort signals. Caller
 limits can tighten these bounds. No timeout or acquisition limit is increased.
+The wrapper races transport settlement against the combined request/aggregate
+abort signal and errors pending response reads when it aborts. It does not
+await cancellation of caller-owned work. A callback or source that ignores
+cancellation can continue its effects after verification fails; those effects
+remain unverified.
 
 ## Offline evidence and its limits
 
@@ -82,8 +87,11 @@ included and omitted descriptors and rejection of missing required proofs.
 The assembled-application regression in
 [native preview application tests](../tests/native-pr-preview-application.test.ts)
 routes all 84 requests through an injected local transport. It makes the
-Notion connectivity seam fail if called and intercepts external `fetch` and
-HTTPS requests, asserting zero outbound requests and zero Notion seam calls.
+Notion connectivity seam fail if called and intercepts application `http.request`,
+`https.request` and `fetch`, asserting zero calls to those seams and the Notion
+seam. The test adapter alone uses a captured HTTP function for fixed loopback
+listeners. Raw sockets, DNS and other HTTP entry points are not instrumented;
+this test is not a general process-level network-egress proof.
 A separate broad-mode regression invokes the retained Notion selector with a
 mocked connectivity seam. No real Notion request is needed for either proof.
 Record actual test outcomes in an exact-SHA validation receipt; this maintained
@@ -92,7 +100,8 @@ guide is not a test receipt.
 Injected execution reports `offlineVerification: NOT_PROVEN`,
 `transport: caller-supplied-unverified`, `hostedExecuted: null` and
 `GAMING_SCOPED_PREVIEW: NOT_RUN`. The assembled test separately proves zero
-outbound requests; the wrapper cannot grant that evidence to arbitrary callers.
+application calls through those four instrumented seams; the wrapper cannot
+grant that evidence to arbitrary callers.
 The fixture
 components use server-owned synthetic data and passive workers. They do not
 prove normal-route bearer authentication, the complete acquisition/provider

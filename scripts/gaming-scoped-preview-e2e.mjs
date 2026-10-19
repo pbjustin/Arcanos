@@ -25,6 +25,105 @@ export const GAMING_SCOPED_PREVIEW_REQUIRED_MCP_CASE_IDS = Object.freeze([
 
 function fail(code) { throw new NativePrPreviewE2eError(code); }
 
+function requestAborted() {
+  return new NativePrPreviewE2eError('GAMING_SCOPED_PREVIEW_REQUEST_ABORTED');
+}
+
+function cancelWithoutWaiting(stream, reason) {
+  try {
+    Promise.resolve(stream?.cancel(reason)).catch(() => {});
+  } catch {
+    // Caller-owned sources can ignore or reject cancellation; their effects remain unverified.
+  }
+}
+
+async function settleTransport(fetchImpl, url, init, signal) {
+  if (signal.aborted) throw requestAborted();
+  let responseClaimed = false;
+  let discarded = false;
+  const discardLateResponse = response => {
+    if (!discarded) {
+      discarded = true;
+      cancelWithoutWaiting(response?.body, requestAborted());
+    }
+  };
+  const transport = Promise.resolve().then(() => {
+    if (signal.aborted) throw requestAborted();
+    return fetchImpl(url, { ...init, signal });
+  });
+  // Observe late success and rejection without awaiting noncooperative work.
+  transport.then(response => {
+    if (signal.aborted && !responseClaimed) discardLateResponse(response);
+  }, () => {}).catch(() => {});
+  let onAbort;
+  try {
+    const aborted = new Promise((_, reject) => {
+      onAbort = () => reject(requestAborted());
+      if (signal.aborted) onAbort();
+      else signal.addEventListener('abort', onAbort, { once: true });
+    });
+    const response = await Promise.race([transport, aborted]);
+    if (signal.aborted) {
+      discardLateResponse(response);
+      throw requestAborted();
+    }
+    responseClaimed = true;
+    return response;
+  } finally {
+    if (onAbort) signal.removeEventListener('abort', onAbort);
+  }
+}
+
+function boundedResponseStream(body, signal, countBytes) {
+  const reader = body.getReader();
+  let settled = false;
+  let onAbort;
+  const cleanup = () => signal.removeEventListener('abort', onAbort);
+  return new ReadableStream({
+    start(controller) {
+      onAbort = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        const error = requestAborted();
+        // Error downstream immediately; neither the read nor cancel promise must settle.
+        controller.error(error);
+        cancelWithoutWaiting(reader, error);
+      };
+      if (signal.aborted) onAbort();
+      else signal.addEventListener('abort', onAbort, { once: true });
+    },
+    async pull(controller) {
+      if (settled) return;
+      try {
+        const { done, value } = await reader.read();
+        if (settled) return;
+        if (done) {
+          settled = true;
+          cleanup();
+          reader.releaseLock();
+          controller.close();
+          return;
+        }
+        countBytes(value.byteLength);
+        controller.enqueue(value);
+      } catch (error) {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        controller.error(error);
+        cancelWithoutWaiting(reader, error);
+      }
+    },
+    cancel(reason) {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      cancelWithoutWaiting(reader, reason);
+    },
+  }, { highWaterMark: 0 });
+}
+
 export function buildGamingScopedPreviewAssertionInventory() {
   const native = buildGamingScopedPreviewRequestPlan().map(item => `native:${item.caseId}`);
   const mcpIds = buildGamingMcpPreviewRequestPlan().map(item => item.id);
@@ -77,19 +176,15 @@ export async function runGamingScopedPreviewE2e({
     if (![options.webBaseUrl, options.workerBaseUrl].includes(parsedUrl.origin)) {
       fail('GAMING_SCOPED_PREVIEW_OUTBOUND_ORIGIN_FORBIDDEN');
     }
-    const response = await fetchImpl(url, { ...init,
-      signal: AbortSignal.any([init.signal, aggregateSignal]) });
+    const requestSignal = AbortSignal.any([init.signal, aggregateSignal]);
+    const response = await settleTransport(fetchImpl, url, init, requestSignal);
     if (!response.body) return response;
-    const stream = response.body.pipeThrough(new TransformStream({
-      transform(chunk, controller) {
-        responseBytes += chunk.byteLength;
-        if (responseBytes > MAX_AGGREGATE_RESPONSE_BYTES) {
-          controller.error(new NativePrPreviewE2eError('GAMING_SCOPED_PREVIEW_RESPONSE_LIMIT_EXCEEDED'));
-          return;
-        }
-        controller.enqueue(chunk);
-      },
-    }));
+    const stream = boundedResponseStream(response.body, requestSignal, bytes => {
+      responseBytes += bytes;
+      if (responseBytes > MAX_AGGREGATE_RESPONSE_BYTES) {
+        fail('GAMING_SCOPED_PREVIEW_RESPONSE_LIMIT_EXCEEDED');
+      }
+    });
     const boundedResponse = new Response(stream, { status: response.status,
       statusText: response.statusText, headers: response.headers });
     Object.defineProperties(boundedResponse, {
