@@ -12,6 +12,13 @@ remain required. Explicit current-patch and live-status requests retain their
 separate reviewed-authority verification. Publisher HTTP 403 responses remain
 access failures and are never retried through an access-control bypass.
 
+Hybrid-v2 and both legacy web-context entry points reject an acquired document
+marked `instructionFiltered`, including documents with no structured records.
+Sanitized remaining prose cannot become a citation, verified CLEAR evidence,
+cached source or URL-payload fallback. Legacy diagnostics report the bounded
+`SOURCE_INSTRUCTIONS_REJECTED` reason separately from publisher access failures;
+benign player instructions use the same classifier as document acquisition.
+
 Source-evaluation rule v2 adds closed identity subject/scope/determination fields
 and a failure class separating security, authority policy, source access, extraction, gameplay
 quality and workflow failures. Rejection retains earlier bounded extraction

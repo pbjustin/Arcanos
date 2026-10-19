@@ -68,6 +68,15 @@ Publisher 403 and transport failures remain separate legitimate rejection paths.
   fields distinguish article subjects, identity scope and corroboration from
   contradiction. Rejections retain bounded extraction counts and failure classes;
   no raw subjects, publisher articles, secrets or credentials are added to logs.
+- `gamingWebContext.ts`: a subsequent consumer audit reproduced a separate legacy
+  gap on both unchanged main and the initial repaired head. A document flagged
+  `instructionFiltered` could lose that flag when it had no structured units;
+  sanitized remaining prose then became citable, CLEAR-accepted evidence and
+  reached the legacy Trinity call. Both legacy entry points now reject the entire
+  acquired document before snippet generation, caching or URL-payload fallback.
+  The legacy snippet scorer also uses the shared instruction classifier instead
+  of rejecting benign player instructions through a duplicate older pattern.
+  Hybrid-v2 already rejected flagged documents independently of unit count.
 
 The existing hybrid-v2, Trinity and CLEAR control flow remains intact. CLEAR
 policy v5 invalidates older approvals; resolver v4 changes extraction/revision
@@ -131,7 +140,8 @@ Trinity stages and final-answer validation run production implementations.
 
 An immutable archive of the baseline source ran the same final fixture tests;
 1,342 runtime and script files were verified against that commit's Git blobs.
-Across the final seven new regression suites, baseline passed **100/227** with
+Across the seven identity/extraction/workflow and honesty regression suites,
+baseline passed **100/227** with
 **127 failures**; the reviewed repair passed **227/227** with no skips. The initial
 pre-review matrix had 173 tests (84 baseline passes and 89 failures); the historical
 [validation record](validation.json) preserves that earlier snapshot and hashes.
@@ -178,6 +188,31 @@ additive unique-test total). The earlier reviewed head separately passed the ful
 repository run: 953 suites and 20,087 tests, with 13 suites/234 tests skipped and
 all coverage thresholds met. Final-head full CI and repeat-review results belong
 to the PR's exact-commit evidence; an earlier pass does not certify later edits.
+
+A later CodeRabbit architecture advisory identified legacy filtered-prose handling.
+Independent reproduction on unchanged main and `b55d1801` confirmed that sanitized
+zero-unit prose could receive a verified CLEAR assessment and reach the mocked
+legacy Trinity call. This established evidence promotion, not malicious model or
+tool execution. The legacy repair adds a shared terminal document-use guard,
+distinct security diagnostics and shared benign-instruction classification.
+Dedicated controls exercise title/body/plaintext/projection cases, both entry
+points, caches, URL-payload fallback and source-access failures. Consult the PR
+for their separate before/after receipt and subsequent final-head validation.
+
+The [legacy follow-up receipt](legacy-validation.json) records 24 additional
+cases: 13 failed and 11 passed on both unchanged main and the pre-hardening source
+runtime; all 24 pass after repair. The repaired focused set passes 469 tests in
+nine suites. Existing sanitation-only tests now require full tainted-document
+rejection and separately preserve their clean-source, provenance and cache
+assertions. These controls extend the earlier 227-case matrix; earlier full-suite
+passes do not certify this subsequent runtime change.
+
+The combined eight-suite matrix was then rerun: unchanged latest main passed
+111 of 251 tests and failed 140; the complete repair passed all 251 with no skips.
+All 3,606 original baseline tracked blobs remained unchanged, and the prior 227
+case outcomes were identical to their earlier run. Prepublication type-check,
+lint, production build, security/import boundaries, Railway static and
+documentation/index/link validation passed on the repaired working tree.
 
 Local dependency drift and a missing PowerShell prerequisite were also corrected:
 clean `npm ci` restored the checked-in versions, and verified PowerShell 7.6.7

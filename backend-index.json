@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-19T00:29:06.873Z",
+  "generatedAt": "2026-10-19T01:02:41.027Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4601,6 +4601,9 @@
         },
         {
           "relativePath": "tests/gaming-large-source-preview.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-legacy-instruction-boundary.test.ts"
         },
         {
           "relativePath": "tests/gaming-live-runtime.test.ts"

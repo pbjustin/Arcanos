@@ -1209,7 +1209,7 @@ describe('gaming RAG snippet quality', () => {
     expect(acquisitionRequests).toEqual(urls);
   });
 
-  it('excludes source instruction-like sentences from public snippets and prompt context', async () => {
+  it('rejects instruction-bearing sources while retaining independent clean guide evidence', async () => {
     const url = 'https://independent.example/article/safe-progression';
     mockFetchAndClean.mockResolvedValue([
       'Factorio progression begins by automating iron and copper plates before expanding research.',
@@ -1225,9 +1225,21 @@ describe('gaming RAG snippet quality', () => {
       guideUrls: []
     });
 
-    expect(result.sources[0]?.snippet).toContain('Factorio progression begins');
-    expect(result.sources[0]?.snippet).not.toMatch(/ignore previous instructions|system prompt/i);
+    expect(result.sources.filter(isCitableGamingWebSource)).toEqual([]);
+    expect(result.sources[0]?.error).toBe('Source instructions were rejected.');
+    expect(result.clearKnowledge?.evidence).toEqual([]);
+    expect(result.sources[0]?.snippet ?? '').not.toMatch(/ignore previous instructions|system prompt/i);
     expect(result.context).not.toMatch(/ignore previous instructions|system prompt/i);
+
+    mockFetchAndClean.mockResolvedValue([
+      'Factorio progression begins by automating iron and copper plates before expanding research.',
+      'Stable power and buffered inputs keep later science production reliable.'
+    ].join(' '));
+    const clean = await buildGamingRagContext({ mode: 'guide', game: 'Factorio',
+      prompt: 'Use this source for Factorio progression.', guideUrl: url, guideUrls: [] });
+    expect(clean.sources[0]?.snippet).toContain('Factorio progression begins');
+    expect(clean.sources[0]?.snippet).not.toMatch(/ignore previous instructions|system prompt/i);
+    expect(clean.context).not.toMatch(/ignore previous instructions|system prompt/i);
   });
 
   it('scores readable evidence above navigation and malformed text', () => {
@@ -1663,6 +1675,22 @@ describe('gaming RAG snippet quality', () => {
       guideUrl: undefined,
       guideUrls: ['https://example.com/palworld-1-0']
     };
+    const rejected = await buildGamingRagContext(input);
+    const rejectedAgain = await buildGamingRagContext(input);
+    expect(rejected.currentEvidenceAvailable).toBe(false);
+    expect(rejected.sources.filter(isCitableGamingWebSource)).toEqual([]);
+    expect(rejected.clearKnowledge?.evidence).toEqual([]);
+    expect(rejectedAgain.cacheHit).toBe(false);
+    expect(mockFetchAndClean).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(rejected)).not.toMatch(/ignore previous|system prompt/i);
+    mockFetchAndClean.mockClear();
+    mockFetchedHtml({
+      title: 'Palworld 1.0 Beginner Guide', date: new Date().toISOString(),
+      text: [
+        'Palworld 1.0 beginner progression explains the first base route, crafting, boss preparation, and safe upgrades.',
+        'Use early resources for storage and reliable equipment before the next encounter.'
+      ].join(' ')
+    });
     const first = await buildGamingRagContext(input);
     const cached = await buildGamingRagContext(input);
 
