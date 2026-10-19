@@ -7,7 +7,7 @@ import { runGamingImageSmoke } from './gaming-preview-image-smoke.mjs';
 import { buildGamingScopedPreviewAssertionInventory } from './gaming-scoped-preview-e2e.mjs';
 import { sha256 } from './stacked-draft-preview-build.mjs';
 
-const uuid = digit => `${digit.repeat(8)}-${digit.repeat(4)}-${digit.repeat(4)}-${digit.repeat(4)}-${digit.repeat(12)}`;
+const uuid = digit => `${digit.repeat(8)}-${digit.repeat(4)}-4${digit.repeat(3)}-8${digit.repeat(3)}-${digit.repeat(12)}`;
 function fixture() {
   const root = mkdtempSync(path.join(tmpdir(), 'gaming-image-smoke-'));
   const auth = { version: 1, controllerSha: 'a'.repeat(40), mainSha: 'a'.repeat(40), baseSha: 'a'.repeat(40),
@@ -38,7 +38,8 @@ function fixture() {
       for (let index = 0; index < args.length; index++) if (args[index] === '--label') {
         const [key, value] = args[++index].split('='); labels[key] = value;
       }
-      containers.set(name, { Id: id, Name: `/${name}`, Image: build.imageId, Config: { Labels: labels } }); return id;
+      containers.set(name, { Id: id, Name: `/${name}`, Image: build.imageId, Config: { Labels: labels },
+        State: { Status: 'running', ExitCode: 0, OOMKilled: false } }); return id;
     }
     if (args[0] === 'port') return args[1].includes('-worker-') ? '127.0.0.1:18081' : '127.0.0.1:18082';
     if (args[0] === 'logs') return 'GAMING_PREVIEW_KERNEL_NETWORK_BOUNDARY=ENFORCED';
@@ -141,4 +142,33 @@ test('local image smoke recovers only exact labeled partial creation and refuses
       assert.equal(removals, substitute ? 0 : 1); assert.equal(f.containers.size, substitute ? 1 : 0);
     } finally { rmSync(f.root, { recursive: true, force: true }); }
   }
+});
+
+test('local image smoke rejects UUID-shaped but launcher-invalid target IDs before Docker execution', async () => {
+  const f = fixture();
+  try {
+    const authorization = JSON.parse(readFileSync(f.files.authorizationFile, 'utf8'));
+    const build = JSON.parse(readFileSync(f.files.buildFile, 'utf8'));
+    authorization.target.projectId = '11111111-1111-1111-1111-111111111111';
+    build.runtimeTarget = authorization.target;
+    writeFileSync(f.files.authorizationFile, JSON.stringify(authorization)); writeFileSync(f.files.buildFile, JSON.stringify(build));
+    await assert.rejects(runGamingImageSmoke(f.options), /RUNTIME_IDENTITY_INVALID/u);
+    assert.equal(f.commands.length, 0);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('local image smoke retains only bounded startup codes and state before verified failure cleanup', async () => {
+  const f = fixture();
+  try {
+    await assert.rejects(runGamingImageSmoke({ ...f.options,
+      verify: async () => { throw new Error('MOCK_STARTUP_FAILURE'); },
+      execute: (program, args, options) => args[1] === 'logs'
+        ? 'GAMING_PREVIEW_KERNEL_NETWORK_BOUNDARY=ENFORCED\nPREVIEW_ISOLATION_PROJECT_INVALID\nmock-private-unstructured-log-payload'
+        : f.options.execute(program, args, options) }), /MOCK_STARTUP_FAILURE/u);
+    const evidence = JSON.parse(readFileSync(f.files.outputFile, 'utf8'));
+    assert.equal(evidence.startupDiagnostics.worker.kernelBoundaryMarker, true);
+    assert.ok(evidence.startupDiagnostics.worker.observedCodes.includes('PREVIEW_ISOLATION_PROJECT_INVALID'));
+    assert.equal(JSON.stringify(evidence).includes('mock-private-unstructured-log-payload'), false);
+    assert.equal(evidence.cleanup.verifiedAbsent, true);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
 });

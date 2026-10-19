@@ -51,7 +51,7 @@ jobs:
           import {GitReadAdapter} from './scripts/stacked-draft-preview-contract.mjs';
           const git=new GitReadAdapter({cwd:process.cwd(),canonicalArchive:true});
           const headSha='1c1e7d0f4c8f4e62fd7117e28efd0d8d7c415262';
-          const id=d=>`${d.repeat(8)}-${d.repeat(4)}-${d.repeat(4)}-${d.repeat(4)}-${d.repeat(12)}`;
+          const id=d=>`${d.repeat(8)}-${d.repeat(4)}-4${d.repeat(3)}-8${d.repeat(3)}-${d.repeat(12)}`;
           writeFileSync('gaming-smoke-authorization.json',JSON.stringify({version:1,
             controllerSha:process.env.GITHUB_SHA,mainSha:process.env.GITHUB_SHA,baseSha:process.env.GITHUB_SHA,
             headSha,treeSha:'89f1eb0b988514d92ef9f82dd2f77bc356735b8b',

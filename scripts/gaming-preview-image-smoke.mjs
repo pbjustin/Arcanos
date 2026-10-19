@@ -6,9 +6,13 @@ import { lstatSync, readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { validateGamingBuildReceipt, verifyImageArchive } from './stacked-draft-preview-build.mjs';
 import { runGamingScopedPreviewE2e } from './gaming-scoped-preview-e2e.mjs';
+import { resolveNativePrPreviewOrThrow } from './start-railway-service.mjs';
 
 const requireCondition = (value, code) => { if (!value) throw new Error(`GAMING_IMAGE_SMOKE_${code}`); };
 const nativeFetch = globalThis.fetch;
+// This is the frozen launcher's accepted UUID contract, including version and
+// variant. Broad UUID-shaped test strings must not reach container startup.
+const NATIVE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 function executeDocker(program, args, options) {
   const result = spawnSync(program, args, options);
   requireCondition(result.status === 0 && !result.error, 'DOCKER_COMMAND_FAILED');
@@ -40,6 +44,7 @@ export async function runGamingImageSmoke({ authorizationFile, buildFile, imageF
     const authorization = readJson(authorizationFile), build = readJson(buildFile);
     validateGamingBuildReceipt(build, authorization);
     verifyImageArchive(imageFile, build, authorization);
+    requireCondition(Object.values(authorization.target).every(value => NATIVE_UUID.test(value)), 'RUNTIME_IDENTITY_INVALID');
     evidence.imageId = build.imageId; evidence.candidateSha = build.candidateSha;
     const origins = {}, loopback = {};
     for (const [index, role] of ['worker', 'web'].entries()) {
@@ -48,17 +53,21 @@ export async function runGamingImageSmoke({ authorizationFile, buildFile, imageF
       requireCondition(docker(['ps', '--all', '--filter', `name=^/${name}$`, '--format', '{{.ID}}']) === '', 'CONTAINER_NAME_COLLISION');
       const labels = { 'io.arcanos.gaming-smoke.owner': owner, 'io.arcanos.gaming-smoke.run': authorization.runId,
         'io.arcanos.gaming-smoke.head': build.candidateSha, 'io.arcanos.gaming-smoke.image': build.imageId };
-      const ownership = { name, labels, imageId: build.imageId, id: null };
+      const ownership = { name, labels, imageId: build.imageId, id: null, role };
       owned.push(ownership);
       const publicDomain = `${role}-${build.runtimeEnvironmentName}.up.railway.app`;
       origins[role] = `https://${publicDomain}`;
       const variables = { NODE_ENV: 'production', PORT: '8080', ARCANOS_PROCESS_KIND: role,
         RAILWAY_PROJECT_ID: authorization.target.projectId,
-        RAILWAY_ENVIRONMENT_ID: '00000005-0000-0000-0000-000000000005',
+        RAILWAY_ENVIRONMENT_ID: '00000005-0000-4000-8000-000000000005',
         RAILWAY_ENVIRONMENT_NAME: build.runtimeEnvironmentName,
         RAILWAY_SERVICE_ID: authorization.target[`${role}ServiceId`],
-        RAILWAY_DEPLOYMENT_ID: `0000000${index + 6}-0000-0000-0000-00000000000${index + 6}`,
+        RAILWAY_DEPLOYMENT_ID: `0000000${index + 6}-0000-4000-8000-00000000000${index + 6}`,
         RAILWAY_PUBLIC_DOMAIN: publicDomain };
+      const preview = resolveNativePrPreviewOrThrow(['--pr-preview-app-safe-v1'],
+        { ...variables, RAILWAY_GIT_COMMIT_SHA: build.candidateSha });
+      requireCondition(preview.enabled === true && preview.prNumber === 1558
+        && preview.processKind === role && preview.sourceCommit === build.candidateSha, 'RUNTIME_IDENTITY_INVALID');
       // Image entrypoint and nonroot USER remain intact. No host mounts or
       // credential environment are passed; kernel seccomp precedes Node startup.
       const id = docker(['run', '--detach', '--pull=never', '--name', name, '--memory=512m', '--cpus=0.5', '--pids-limit=64',
@@ -114,6 +123,23 @@ export async function runGamingImageSmoke({ authorizationFile, buildFile, imageF
   } catch (error) {
     failure = error;
     evidence.errorCode = /^[A-Z0-9_]+$/u.test(error?.code ?? error?.message ?? '') ? error.code ?? error.message : 'GAMING_IMAGE_SMOKE_FAILED';
+    // Retain a small fixed diagnostic projection before removing a failed
+    // runtime. Raw logs, environment and arbitrary container data stay private.
+    evidence.startupDiagnostics = {};
+    for (const owner of owned) {
+      try {
+        const container = JSON.parse(docker(['inspect', '--type', 'container', '--format', '{{json .}}', owner.name]));
+        const logs = docker(['logs', '--tail', '30', owner.name]);
+        const states = ['created', 'running', 'paused', 'restarting', 'removing', 'exited', 'dead'];
+        evidence.startupDiagnostics[owner.role] = {
+          state: states.includes(container.State?.Status) ? container.State.Status : 'unknown',
+          exitCode: Number.isSafeInteger(container.State?.ExitCode) ? container.State.ExitCode : null,
+          oomKilled: container.State?.OOMKilled === true,
+          kernelBoundaryMarker: /GAMING_PREVIEW_KERNEL_NETWORK_BOUNDARY=ENFORCED/u.test(logs),
+          observedCodes: [...new Set(logs.match(/\b(?:PREVIEW_(?:ISOLATION|APPLICATION)_[A-Z0-9_]+|GAMING_PREVIEW_(?:RUNTIME|KERNEL)_[A-Z0-9_]+|EPERM|EACCES|EADDRINUSE|ENOMEM)\b/gu) ?? [])].slice(0, 16),
+        };
+      } catch { evidence.startupDiagnostics[owner.role] = { available: false }; }
+    }
   } finally {
     const failures = [];
     for (const owner of owned.reverse()) {
