@@ -1,0 +1,132 @@
+#!/usr/bin/env node
+// Local disposable image validation only. It has no Railway or publication authority.
+import { spawnSync } from 'node:child_process';
+import { lstatSync, readFileSync, writeFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
+import { validateGamingBuildReceipt, verifyImageArchive } from './stacked-draft-preview-build.mjs';
+import { runGamingScopedPreviewE2e } from './gaming-scoped-preview-e2e.mjs';
+
+const requireCondition = (value, code) => { if (!value) throw new Error(`GAMING_IMAGE_SMOKE_${code}`); };
+const nativeFetch = globalThis.fetch;
+function executeDocker(program, args, options) {
+  const result = spawnSync(program, args, options);
+  requireCondition(result.status === 0 && !result.error, 'DOCKER_COMMAND_FAILED');
+  return `${result.stdout ?? ''}${result.stderr ?? ''}`;
+}
+function readJson(file) {
+  const stat = lstatSync(file);
+  requireCondition(stat.isFile() && !stat.isSymbolicLink() && stat.size <= 128 * 1024, 'INPUT_INVALID');
+  return JSON.parse(readFileSync(file, 'utf8'));
+}
+
+export async function runGamingImageSmoke({ authorizationFile, buildFile, imageFile, outputFile,
+  environment = process.env, execute = executeDocker, fetchLocal = nativeFetch,
+  verify = runGamingScopedPreviewE2e, monotonicNow = () => performance.now(),
+  delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)) }) {
+  const evidence = { kind: 'gaming_local_image_synthetic_smoke', GAMING_SCOPED_PREVIEW: 'NOT_RUN',
+    hostedExecuted: false, status: 'FAIL', executedAssertions: 0, kernelEntrypointVerified: {},
+    cleanup: { verifiedAbsent: false }, realExternalSourceAcceptance: 'NOT_PROVEN', modelGeneratedGameplayAnswers: 'NOT_PROVEN' };
+  const owned = [];
+  const cleanEnvironment = Object.fromEntries(['PATH', 'HOME', 'DOCKER_CONFIG'].filter(key => typeof environment[key] === 'string')
+    .map(key => [key, environment[key]]));
+  const docker = args => execute('docker', ['--host=unix:///var/run/docker.sock', ...args], {
+    env: cleanEnvironment, encoding: 'utf8', timeout: 30_000, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
+  let failure;
+  try {
+    requireCondition(['GITHUB_TOKEN', 'GH_TOKEN', 'GHCR_TOKEN', 'RAILWAY_API_TOKEN', 'RAILWAY_TOKEN',
+      'OPENAI_API_KEY', 'NOTION_API_KEY', 'NOTION_TOKEN', 'DATABASE_URL', 'REDIS_URL'].every(key => !environment[key]), 'CREDENTIALS_FORBIDDEN');
+    const authorization = readJson(authorizationFile), build = readJson(buildFile);
+    validateGamingBuildReceipt(build, authorization);
+    verifyImageArchive(imageFile, build, authorization);
+    evidence.imageId = build.imageId; evidence.candidateSha = build.candidateSha;
+    const origins = {}, loopback = {};
+    for (const [index, role] of ['worker', 'web'].entries()) {
+      const name = `gaming-smoke-${authorization.runId}-${role}-${process.pid}`;
+      owned.push(name);
+      const publicDomain = `${role}-${build.runtimeEnvironmentName}.up.railway.app`;
+      origins[role] = `https://${publicDomain}`;
+      const variables = { NODE_ENV: 'production', PORT: '8080', ARCANOS_PROCESS_KIND: role,
+        RAILWAY_PROJECT_ID: authorization.target.projectId,
+        RAILWAY_ENVIRONMENT_ID: '00000005-0000-0000-0000-000000000005',
+        RAILWAY_ENVIRONMENT_NAME: build.runtimeEnvironmentName,
+        RAILWAY_SERVICE_ID: authorization.target[`${role}ServiceId`],
+        RAILWAY_DEPLOYMENT_ID: `0000000${index + 6}-0000-0000-0000-00000000000${index + 6}`,
+        RAILWAY_PUBLIC_DOMAIN: publicDomain };
+      // Image entrypoint and nonroot USER remain intact. No host mounts or
+      // credential environment are passed; kernel seccomp precedes Node startup.
+      const id = docker(['run', '--detach', '--pull=never', '--name', name, '--memory=512m', '--cpus=0.5', '--pids-limit=64',
+        '--cap-drop=ALL', '--security-opt=no-new-privileges', '--read-only', '--tmpfs', '/tmp:rw,noexec,nosuid,size=16m',
+        '--publish', '127.0.0.1::8080', ...Object.entries(variables).flatMap(([key, value]) => ['--env', `${key}=${value}`]), build.imageId]);
+      requireCondition(/^[0-9a-f]{64}$/u.test(id), 'CONTAINER_ID_INVALID');
+      const port = /^127\.0\.0\.1:([0-9]{1,5})$/u.exec(docker(['port', name, '8080/tcp']));
+      requireCondition(port && Number(port[1]) > 0 && Number(port[1]) <= 65535, 'LOOPBACK_PORT_INVALID');
+      loopback[role] = `http://127.0.0.1:${port[1]}`;
+      const started = monotonicNow(); let ready = false;
+      while (monotonicNow() - started < 30_000) {
+        try {
+          const response = await fetchLocal(`${loopback[role]}/readyz`, {
+            redirect: 'error', credentials: 'omit', signal: AbortSignal.timeout(2000),
+          });
+          try { ready = response.status === 200 && response.redirected === false; }
+          finally { void response.body?.cancel().catch(() => {}); }
+          if (ready) break;
+        } catch { /* Startup is bounded; no retry occurs inside the 84-case verifier. */ }
+        await delay(100);
+      }
+      requireCondition(ready, 'READINESS_DEADLINE');
+      evidence.kernelEntrypointVerified[role] = /GAMING_PREVIEW_KERNEL_NETWORK_BOUNDARY=ENFORCED/u
+        .test(docker(['logs', '--tail', '30', name]));
+      requireCondition(evidence.kernelEntrypointVerified[role], 'KERNEL_ENTRYPOINT_UNVERIFIED');
+    }
+    let requests = 0;
+    const fetchMapped = async (url, init) => {
+      const parsed = new URL(url);
+      const role = ['web', 'worker'].find(value => parsed.origin === origins[value]);
+      requireCondition(role && parsed.protocol === 'https:' && !parsed.username && !parsed.password, 'OUTBOUND_ORIGIN_FORBIDDEN');
+      const local = new URL(`${parsed.pathname}${parsed.search}`, loopback[role]);
+      requireCondition(local.origin === loopback[role] && local.hostname === '127.0.0.1', 'LOOPBACK_TARGET_INVALID');
+      requests++;
+      const response = await fetchLocal(local.href, { ...init, credentials: 'omit', redirect: 'error' });
+      requireCondition(response.redirected === false, 'REDIRECT_FORBIDDEN');
+      const mapped = new Response(response.body, { status: response.status, statusText: response.statusText, headers: response.headers });
+      Object.defineProperties(mapped, { url: { value: parsed.href }, redirected: { value: false } });
+      return mapped;
+    };
+    const report = await verify({ args: ['--pr-number', '1558', '--commit-sha', build.candidateSha,
+      '--web-base-url', origins.web, '--worker-base-url', origins.worker, '--execute', '--allow-network'],
+    localGitState: { repository: 'pbjustin/Arcanos', head: build.candidateSha, clean: true, sourceTreeSha: build.treeSha },
+    fetchImpl: fetchMapped });
+    requireCondition(report.GAMING_SCOPED_PREVIEW === 'NOT_RUN' && report.hostedExecuted !== true
+      && report.summary.requestsMade === 84 && requests === 84
+      && report.assertionInventory.plannedCaseIds.length === 84 && report.assertionInventory.executedCaseIds.length === 84
+      && JSON.stringify(report.assertionInventory.plannedCaseIds) === JSON.stringify(report.assertionInventory.executedCaseIds), 'INVENTORY_INCOMPLETE');
+    evidence.executedAssertions = 84; evidence.status = 'PASS';
+    evidence.assertionInventory = report.assertionInventory;
+  } catch (error) {
+    failure = error;
+    evidence.errorCode = /^[A-Z0-9_]+$/u.test(error?.code ?? error?.message ?? '') ? error.code ?? error.message : 'GAMING_IMAGE_SMOKE_FAILED';
+  } finally {
+    const failures = [];
+    for (const name of owned.reverse()) {
+      try { docker(['rm', '--force', name]); } catch { /* Independently verify actual absence below. */ }
+      try { if (docker(['ps', '--all', '--filter', `name=^/${name}$`, '--format', '{{.ID}}']) !== '') failures.push(name); }
+      catch { failures.push(name); }
+    }
+    evidence.cleanup = { verifiedAbsent: failures.length === 0, ownedContainers: owned.length };
+    if (failures.length > 0) { evidence.status = 'FAIL'; failure = new Error('GAMING_IMAGE_SMOKE_CLEANUP_UNVERIFIED'); }
+    if (outputFile) writeFileSync(outputFile, `${JSON.stringify(evidence, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
+  }
+  if (failure) throw failure;
+  return evidence;
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const [authorizationFile, buildFile, imageFile, outputFile] = process.argv.slice(2);
+  try {
+    requireCondition(process.argv.length === 6, 'ARGUMENT_INVALID');
+    const result = await runGamingImageSmoke({ authorizationFile, buildFile, imageFile, outputFile });
+    console.log(JSON.stringify({ status: result.status, executedAssertions: result.executedAssertions,
+      GAMING_SCOPED_PREVIEW: 'NOT_RUN', hostedExecuted: false, cleanupVerified: result.cleanup.verifiedAbsent }));
+  } catch { console.error('GAMING_IMAGE_SMOKE_FAILED'); process.exitCode = 1; }
+}

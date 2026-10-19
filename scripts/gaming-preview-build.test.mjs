@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { EventEmitter } from 'node:events';
+import { createHash } from 'node:crypto';
+import { PassThrough, Readable } from 'node:stream';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { createGamingCompiledManifest, sha256, validateGamingBuildAuthorization,
-  validateGamingBuildReceipt, verifyImageArchive, previewSourceArchiveArguments } from './stacked-draft-preview-build.mjs';
+  validateGamingBuildReceipt, verifyImageArchive, previewSourceArchiveArguments, materializeGamingSourceArchive } from './stacked-draft-preview-build.mjs';
 import { runGamingPreviewBuild } from './gaming-preview-build.mjs';
 
 const uuid = digit => `${digit.repeat(8)}-${digit.repeat(4)}-${digit.repeat(4)}-${digit.repeat(4)}-${digit.repeat(12)}`;
@@ -83,6 +86,46 @@ test('Gaming source archive fixes autocrlf independently of owner operating syst
     ['-c', 'core.autocrlf=false', 'archive', '--format=tar', authorization.headSha]);
   assert.deepEqual(previewSourceArchiveArguments(authorization.headSha), ['archive', '--format=tar', authorization.headSha]);
   assert.throws(() => previewSourceArchiveArguments(authorization.headSha, '../caller-selected-profile'), /PROFILE_INVALID/u);
+});
+
+function archiveProcess(stream, close = true) {
+  const child = new EventEmitter(); child.stdout = stream; child.stderr = new PassThrough();
+  child.kill = () => { stream.destroy(); setImmediate(() => child.emit('close', 1)); };
+  if (close) setImmediate(() => child.emit('close', 0));
+  return child;
+}
+
+test('Gaming archive streams beyond the historical 128 MiB stdout cliff without truncating source or digest', async () => {
+  const root = fixture();
+  try {
+    const chunk = Buffer.alloc(1024 * 1024, 0x61), expected = createHash('sha256');
+    for (let index = 0; index < 129; index++) expected.update(chunk);
+    const file = path.join(root, 'source.tar');
+    const result = await materializeGamingSourceArchive({ candidate: authorization.headSha, file,
+      spawnArchive: (program, args) => {
+        assert.equal(program, 'git'); assert.deepEqual(args, previewSourceArchiveArguments(authorization.headSha, 'gaming'));
+        return archiveProcess(Readable.from((function* () { for (let index = 0; index < 129; index++) yield chunk; })()));
+      } });
+    assert.equal(result.bytes, 129 * 1024 * 1024); assert.equal(statSync(file).size, result.bytes);
+    assert.equal(result.sha256, expected.digest('hex'));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('Gaming source materialization fails closed on byte cap, deadline and failed Git process', async () => {
+  const root = fixture();
+  try {
+    await assert.rejects(materializeGamingSourceArchive({ candidate: authorization.headSha, file: path.join(root, 'over.tar'),
+      maxBytes: 2, spawnArchive: () => archiveProcess(Readable.from([Buffer.from('over')])) }), /SOURCE_ARCHIVE_LIMIT/u);
+    await assert.rejects(materializeGamingSourceArchive({ candidate: authorization.headSha, file: path.join(root, 'timeout.tar'),
+      timeoutMs: 5, spawnArchive: () => archiveProcess(new PassThrough(), false) }), /SOURCE_ARCHIVE_TIMEOUT/u);
+    await assert.rejects(materializeGamingSourceArchive({ candidate: authorization.headSha, file: path.join(root, 'failed.tar'),
+      spawnArchive: () => {
+        const child = archiveProcess(Readable.from([Buffer.from('partial')]), false);
+        setImmediate(() => child.emit('close', 1)); return child;
+      } }), /SOURCE_ARCHIVE_READ_FAILED/u);
+    await assert.rejects(materializeGamingSourceArchive({ candidate: authorization.headSha, file: path.join(root, 'raised.tar'),
+      maxBytes: 512 * 1024 * 1024 + 1 }), /SOURCE_ARCHIVE_BOUND_INVALID/u);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test('Gaming Docker profile isolates dependency fetching from candidate execution and pins root-owned launch', () => {

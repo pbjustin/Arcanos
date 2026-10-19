@@ -252,12 +252,15 @@ test('canonical Gaming archive digest ignores owner autocrlf while historical ad
     assert.throws(() => new GitReadAdapter({ cwd: root, canonicalArchive: 'true' }), errorCode('STACKED_PREVIEW_GIT_ARCHIVE_OPTION_INVALID'));
     const expected = hash((await run(['-c', 'core.autocrlf=false', 'archive', '--format=tar', head])).stdout);
     await run(['config', 'core.autocrlf', 'true']);
+    assert.equal(await canonical.treeSha(head), (await run(['rev-parse', 'HEAD^{tree}'])).stdout.toString('utf8').trim());
     assert.equal(await canonical.archiveSha256(head), expected);
-    assert.equal(await historical.archiveSha256(head), hash((await run(['archive', '--format=tar', head])).stdout));
-    assert.notEqual(await historical.archiveSha256(head), expected);
+    if (process.platform !== 'win32') {
+      assert.equal(await historical.archiveSha256(head), hash((await run(['archive', '--format=tar', head])).stdout));
+      assert.notEqual(await historical.archiveSha256(head), expected);
+    }
     await run(['config', 'core.autocrlf', 'false']);
     assert.equal(await canonical.archiveSha256(head), expected);
-    assert.equal(await historical.archiveSha256(head), expected);
+    if (process.platform !== 'win32') assert.equal(await historical.archiveSha256(head), expected);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

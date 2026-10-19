@@ -63,3 +63,19 @@ jobs:
         run: node scripts/gaming-preview-build.mjs build gaming-smoke-authorization.json gaming-smoke
       - name: Verify archive and image receipt binding
         run: node scripts/gaming-preview-build.mjs verify gaming-smoke-authorization.json gaming-smoke/build.json gaming-smoke/image.tar
+      - name: Exercise immutable image and all 84 cases through loopback only
+        run: >-
+          node scripts/gaming-preview-image-smoke.mjs gaming-smoke-authorization.json
+          gaming-smoke/build.json gaming-smoke/image.tar gaming-smoke/local-image-smoke.json
+      - name: Retain bounded artifact diagnostics and local evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gaming-infrastructure-local-image-evidence
+          path: |
+            gaming-smoke/build.json
+            gaming-smoke/local-image-smoke.json
+            gaming-smoke/build.log
+            gaming-smoke/builder-create.log
+          if-no-files-found: warn
+          retention-days: 10

@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 // Trusted artifact plumbing. Candidate code runs only inside the secretless
 // Docker build; only independently digest-pinned checkers may be imported.
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, createWriteStream, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import { homedir } from 'node:os';
+import { devNull, homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
+import { Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 
 const SHA = /^[0-9a-f]{40}$/u;
 const DIGEST = /^[0-9a-f]{64}$/u;
@@ -36,6 +38,42 @@ export function previewSourceArchiveArguments(candidate, profile = 'stacked-draf
   buildProfile(profile);
   requireCondition(SHA.test(candidate), 'STACKED_BUILD_IDENTITY_INVALID');
   return [...(profile === 'gaming' ? ['-c', 'core.autocrlf=false'] : []), 'archive', '--format=tar', candidate];
+}
+
+export async function materializeGamingSourceArchive({ candidate, file, spawnArchive = spawn,
+  maxBytes = 512 * 1024 * 1024, timeoutMs = 60_000 }) {
+  requireCondition(Number.isSafeInteger(maxBytes) && maxBytes > 0 && maxBytes <= 512 * 1024 * 1024
+    && Number.isSafeInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= 60_000, 'GAMING_BUILD_SOURCE_ARCHIVE_BOUND_INVALID');
+  const gitEnvironment = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
+  Object.assign(gitEnvironment, { GIT_NO_REPLACE_OBJECTS: '1', GIT_CONFIG_NOSYSTEM: '1',
+    GIT_CONFIG_GLOBAL: process.platform === 'win32' ? 'NUL' : devNull, GIT_TERMINAL_PROMPT: '0' });
+  const child = spawnArchive('git', previewSourceArchiveArguments(candidate, 'gaming'),
+    { env: gitEnvironment, shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
+  const hash = createHash('sha256'); let bytes = 0;
+  const output = createWriteStream(file, { flags: 'wx', mode: 0o600 });
+  const bounded = new Transform({ transform(chunk, _encoding, callback) {
+    bytes += chunk.length;
+    if (bytes > maxBytes) callback(new Error('GAMING_BUILD_SOURCE_ARCHIVE_LIMIT'));
+    else { hash.update(chunk); callback(null, chunk); }
+  } });
+  const exited = new Promise((resolve, reject) => {
+    child.once('error', () => reject(new Error('GAMING_BUILD_SOURCE_ARCHIVE_READ_FAILED')));
+    child.once('close', code => code === 0 ? resolve() : reject(new Error('GAMING_BUILD_SOURCE_ARCHIVE_READ_FAILED')));
+  });
+  child.stderr.resume();
+  const timer = setTimeout(() => {
+    bounded.destroy(new Error('GAMING_BUILD_SOURCE_ARCHIVE_TIMEOUT'));
+    child.kill('SIGKILL');
+  }, timeoutMs);
+  try {
+    await Promise.all([pipeline(child.stdout, bounded, output), exited]);
+    requireCondition(bytes > 0, 'GAMING_BUILD_SOURCE_ARCHIVE_READ_FAILED');
+    return { sha256: hash.digest('hex'), bytes };
+  } catch (error) {
+    child.kill('SIGKILL');
+    throw /^(?:GAMING_BUILD_SOURCE_ARCHIVE_)[A-Z_]+$/u.test(error?.message ?? '')
+      ? error : new Error('GAMING_BUILD_SOURCE_ARCHIVE_READ_FAILED');
+  } finally { clearTimeout(timer); }
 }
 
 function candidateBinding(authorization) {
@@ -200,10 +238,17 @@ export async function buildPreviewArtifact({ authorization, outputDirectory, pro
   const context = path.resolve(outputDirectory, 'context');
   requireCondition(!existsSync(context), 'STACKED_BUILD_CONTEXT_ALREADY_EXISTS');
   mkdirSync(path.join(context, 'candidate'), { recursive: true });
-  const archive = spawnSync('git', previewSourceArchiveArguments(candidate, profile),
-    { encoding: null, maxBuffer: 128 * 1024 * 1024, timeout: 30_000 });
-  requireCondition(archive.status === 0 && sha256(archive.stdout) === authorization.sourceArchiveSha256,
-    'STACKED_BUILD_SOURCE_ARCHIVE_MISMATCH');
+  const sourceFile = profile === 'gaming' ? path.resolve(outputDirectory, 'source.tar') : null;
+  let archive;
+  if (sourceFile) {
+    const materialized = await materializeGamingSourceArchive({ candidate, file: sourceFile });
+    requireCondition(materialized.sha256 === authorization.sourceArchiveSha256, 'GAMING_BUILD_SOURCE_ARCHIVE_MISMATCH');
+  } else {
+    archive = spawnSync('git', previewSourceArchiveArguments(candidate, profile),
+      { encoding: null, maxBuffer: 128 * 1024 * 1024, timeout: 30_000 });
+    requireCondition(archive.status === 0 && sha256(archive.stdout) === authorization.sourceArchiveSha256,
+      'STACKED_BUILD_SOURCE_ARCHIVE_MISMATCH');
+  }
   // Check Git tree entries before extraction: reject symlinks, submodules and
   // path traversal before they can escape the disposable build context.
   const entries = command('git', ['ls-tree', '-r', '-z', candidate]).split('\0').filter(Boolean);
@@ -212,10 +257,10 @@ export async function buildPreviewArtifact({ authorization, outputDirectory, pro
     requireCondition(match && !match[2].split('/').includes('..') && !path.isAbsolute(match[2]),
       'STACKED_BUILD_SOURCE_ENTRY_UNSAFE');
   }
-  // Retain the exact, digest-bound archive; the image is built from these bytes.
-  if (profile === 'gaming') writeFileSync(path.resolve(outputDirectory, 'source.tar'), archive.stdout, { flag: 'wx' });
-  const extracted = spawnSync('tar', ['-xf', '-', '-C', path.join(context, 'candidate')],
-    { input: archive.stdout, timeout: 30_000 });
+  // The Gaming archive is streamed to the retained file, then extracted from
+  // those exact bytes rather than truncated by a child-process stdout buffer.
+  const extracted = spawnSync('tar', ['-xf', sourceFile ?? '-', '-C', path.join(context, 'candidate')],
+    { ...(sourceFile ? {} : { input: archive.stdout }), timeout: sourceFile ? 60_000 : 30_000 });
   requireCondition(extracted.status === 0, 'STACKED_BUILD_SOURCE_EXTRACTION_FAILED');
   writeFileSync(path.join(context, 'authorization.json'), `${JSON.stringify(authorization)}\n`);
   writeFileSync(path.join(context, 'build-tools.mjs'), readFileSync(new URL('./stacked-draft-preview-build.mjs', import.meta.url)));
