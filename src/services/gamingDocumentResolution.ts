@@ -335,8 +335,14 @@ export async function resolveGamingDocument(
     const metadataInstructionFiltered = [effectiveExtraction.documentTitle, effectiveExtraction.headingText]
       .some(value => value !== undefined && filterGamingDocumentInstructions(value)
         !== value.normalize('NFKC').replace(/\s+/gu, ' ').trim());
+    // Specialized resolvers can return selected prose shorter than their fully
+    // acquired raw document. Inspect that accepted body before an omitted tail
+    // can become a clean source merely through the selected-text ceiling.
+    const rawInstructionFiltered = !acquired.structure && rawDocument
+      ? extractGamingDocumentEvidence({ body: rawDocument.body, contentType: rawDocument.contentType,
+          sourceUrl: description.publicUrl, deadlineAt }).instructionFiltered : false;
     const instructionFiltered = projection.instructionFiltered || acquired.structure?.instructionFiltered === true
-      || metadataInstructionFiltered;
+      || metadataInstructionFiltered || rawInstructionFiltered;
     options.onExtraction?.(effectiveExtraction);
     if (boundedRaw) options.onRawDocument?.(boundedRaw);
     const canonicalUrl = resolver.publicUrl(url) ?? acquired.finalUrl ?? description.publicUrl;

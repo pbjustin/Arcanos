@@ -76,7 +76,11 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
     units: [], attempts: [], subreasons: [], truncated: Boolean(input.transportTruncated),
     inputBytes: Buffer.byteLength(input.body, 'utf8'), outputChars: 0
   };
-  if (!['text/html', 'application/xhtml+xml'].includes(input.contentType)) return result;
+  const htmlContent = ['text/html', 'application/xhtml+xml'].includes(input.contentType);
+  // The downstream prose extractor parses accepted plaintext and responses
+  // without a media type as HTML too. Inspect that same DOM interpretation
+  // before selectors can omit a tainted block; retain their prose-only contract.
+  if (!htmlContent && !['text/plain', ''].includes(input.contentType)) return result;
   const limit = GAMING_HTML_EVIDENCE_LIMITS;
   const fail = (reason: string) => { if (!result.subreasons.includes(reason)) result.subreasons.push(reason); };
   const deadlineExpired = () => {
@@ -109,6 +113,7 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
   if ([visibleText, text($('title').first().text())].some(value =>
     filterGamingDocumentInstructions(value) !== value)) fail('source_instruction_filtered');
   if (deadlineExpired()) return result;
+  if (!htmlContent) return result;
   if (visibleText.length <= 300 && /\b(?:verify (?:that )?you are human|checking your browser|enable javascript and cookies to continue|sign in to continue|log in to continue)\b/iu.test(visibleText)) {
     result.proseBody = ''; fail('access_challenge'); return result;
   }

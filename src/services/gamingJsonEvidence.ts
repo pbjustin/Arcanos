@@ -259,7 +259,10 @@ function extractRecords(
       for (const label of ['name', 'description']) {
         if (input[label] === undefined) continue;
         const text = scalar(input[label]);
-        if (!text || !safeText(text)) { addReason('required_context_missing'); return false; }
+        if (!text || !safeText(text)) {
+          addReason(text ? 'instruction_or_sensitive_content_filtered' : 'required_context_missing');
+          return false;
+        }
         context.qualifiers.push(`${label}: ${text}`);
       }
       return true;
