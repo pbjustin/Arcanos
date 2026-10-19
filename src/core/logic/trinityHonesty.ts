@@ -687,6 +687,21 @@ function impliesSystemOwnedSaveClaim(text: string): boolean {
   });
 }
 
+/** Keep commitment forms broad, including "I plan to save", but evaluate each
+ * subject separately so advice cannot conceal a later assistant promise. */
+function impliesFirstPersonSaveClaim(text: string): boolean {
+  const claims = text.matchAll(/\b(?:i|we)(?:['’](?:ll|d)|\b)(?:(?!\b(?:i|we|you|they|he|she|it)\b)[^.!?;:]){0,160}?\bsave\b/gi);
+  return [...claims].some(([claim]) => {
+    // Direct counterfactual resource advice and recommendations do not assert
+    // an executed or promised action. Storage context is checked separately.
+    const counterfactual = /^(?:i|we)(?:['’]d|\s+would)\s+(?:(?:[a-z-]+ly|also|now|just|then)\s+){0,3}save$/i.test(claim);
+    // Require a directly governed recipient/infinitive. "I recommend a plan
+    // and save a copy" still asserts a second assistant-owned action.
+    const recommendation = /^(?:i|we)\s+(?:(?:[a-z-]+ly|also|now|just|then)\s+){0,3}(?:recommend|suggest|advise)\s+(?:(?!(?:and|but|then)\b)[a-z'-]+\s+){1,12}save$/i.test(claim);
+    return !counterfactual && !recommendation;
+  });
+}
+
 /** Bare "save" can mean conserve a resource. Completed actions, assistant-owned
  * promises, storage objects and ambiguous references retain the persistence gate. */
 function impliesPersistenceActionClaim(text: string): boolean {
@@ -694,11 +709,10 @@ function impliesPersistenceActionClaim(text: string): boolean {
   if (impliesSystemOwnedSaveClaim(text)) return true;
   if (!/\bsave\b/i.test(text)) return false;
   return PERSISTENCE_SAVE_CONTEXT_PATTERN.test(text) || PERSISTENCE_CREDENTIAL_TOKEN_PATTERN.test(text)
-    // Adverbs and modal phrases do not transfer an assistant-owned action to
-    // the reader. A new subject does: "I recommend you save ..." is advice.
-    || /\b(?:i|we)(?:['’](?:ll|d)|\b)(?:(?!\b(?:you|they|he|she|it)\b)[^.!?;:]){0,160}\bsave\b/i.test(text)
+    || impliesFirstPersonSaveClaim(text)
     || /\bsave\s+(?:it|this|that|these|those|everything|anything)\b/i.test(text)
-    || /\bsave\s*[.!?]?\s*$/i.test(text);
+    || (/\bsave\s*[.!?]?\s*$/i.test(text)
+      && !/^(?:(?:[-*]|\d+[.)])\s+)?(?:please\s+)?(?:(?:do not|don['’]t)\s+forget|make\s+sure|remember)\s+to\s+save\s*[.!?]?$/i.test(text.trim()));
 }
 
 function isSectionHeading(text: string): boolean {

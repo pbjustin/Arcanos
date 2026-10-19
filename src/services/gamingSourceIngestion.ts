@@ -974,7 +974,8 @@ function classifySourceFailure(error: unknown): GamingSourcePublicError {
     if (['TRANSFER_LIMIT', 'DECODED_LIMIT'].includes(error.acquisition.subreason)) {
       return { code: 'RESPONSE_TOO_LARGE', message: 'The source response exceeds the acquisition limit.', retryable: false };
     }
-    if (['UNSUPPORTED_ENCODING', 'UNSUPPORTED_CONTENT_TYPE', 'DOCUMENT_EXTRACTION_FAILED'].includes(error.acquisition.subreason)) {
+    if (['UNSUPPORTED_ENCODING', 'UNSUPPORTED_CONTENT_TYPE', 'DOCUMENT_EXTRACTION_FAILED',
+      'EXTRACTION_BUDGET_EXHAUSTED'].includes(error.acquisition.subreason)) {
       return { code: 'UNSUPPORTED_CONTENT_TYPE', message: 'The source did not contain supported public document content.', retryable: false };
     }
     if (error.acquisition.subreason === 'CONDITIONAL_CONTENT_UNAVAILABLE') {

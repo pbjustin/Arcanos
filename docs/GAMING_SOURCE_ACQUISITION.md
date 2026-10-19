@@ -30,6 +30,9 @@ openers uses a complete text scan without constructing a redundant DOM.
 Character normalization alone does not mark a document as instruction-bearing:
 plaintext, metadata, JSON-LD envelope text and projection compare the same
 normalized characters while preserving line-sensitive instruction checks.
+Instruction and credential inspection also checks invisible controls removed
+within words, so inserting a joiner cannot hide a directive or credential label;
+actual spaces, tabs and line breaks retain their meaning.
 Credential-like structured text remains conservatively rejected, including
 ambiguous `token:` values; dropping only its envelope cannot make the remaining
 source eligible for fallback evidence. Durable ingestion

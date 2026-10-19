@@ -19,6 +19,60 @@ function review(text: string, preservePresentation = true) {
 
 describe('generic persistence claims distinguish conserving resources from backend actions', () => {
   it.each([
+    "I'd save the Elixir for the final boss.",
+    'I would save supplies for the return journey.',
+    "We'd save tokens for the next activity.",
+    'I recommend players save their potions for phase two.',
+    'I suggest travelers save supplies for the return journey.',
+    'We advise participants to save energy for the final stage.',
+    "Don't forget to save.",
+    'Do not forget to save.',
+    'Make sure to save.',
+    'Remember to save.'
+  ])('preserves counterfactual advice and reader reminders in both stages: %s', text => {
+    const reasoningHonesty = createDefaultTrinityReasoningHonesty();
+    const first = enforceFinalStageHonesty(text, reasoningHonesty, capabilityFlags, 'EXECUTE_TASK', true);
+    expect(first.blocked).toBe(false);
+    expect(first.text).toBe(text);
+    for (const preservePresentation of [true, false]) {
+      const final = enforceFinalStageHonestyAndMinimalism({
+        text, userPrompt: prompt, capabilityFlags, reasoningHonesty,
+        outputControls: deriveTrinityOutputControls(prompt, {}), preservePresentation
+      });
+      expect(final.blockedOrRewrittenClaims).toEqual([]);
+      expect(final.text).toBe(text);
+    }
+  });
+
+  it.each([
+    'I plan to save a copy.',
+    'We intend to save a snapshot.',
+    'I promise to save a backup.',
+    'I will remember to save.',
+    'I will make sure to save.',
+    "I'll save your notes.",
+    "I'd save your notes to disk.",
+    'I recommend players save tokens and I will save a snapshot.',
+    'I recommend a plan and save a copy.',
+    'I recommend players conserve potions and will save a backup.',
+    'We suggest players conserve energy, but will save a snapshot.',
+    'I suggest travelers save energy; I plan to save a copy.',
+    'Remember to save and I will save a backup.',
+    'Make sure to save. This chat saves automatically.'
+  ])('keeps commitments and mixed advice under persistence enforcement: %s', text => {
+    const reasoningHonesty = createDefaultTrinityReasoningHonesty();
+    for (const preservePresentation of [true, false]) {
+      const final = enforceFinalStageHonestyAndMinimalism({
+        text, userPrompt: prompt, capabilityFlags, reasoningHonesty,
+        outputControls: deriveTrinityOutputControls(prompt, {}), preservePresentation
+      });
+      expect(final.blockedOrRewrittenClaims.length).toBeGreaterThan(0);
+      expect(final.text).not.toBe(text);
+    }
+    expect(review(text).final.text).not.toBe(text);
+  });
+
+  it.each([
     'Before exploring, prepare food for healing and save stamina for the return climb. [Source 1]',
     'Save a healing meal for a difficult climb.',
     'Keep moving carefully and save taunts for enemies leaving your control.',

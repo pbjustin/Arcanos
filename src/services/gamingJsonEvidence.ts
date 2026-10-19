@@ -142,7 +142,10 @@ function scalar(value: JsonValue | undefined): string | undefined {
   return typeof value === 'string' ? value.trim() : value instanceof JsonNumber ? value.text : undefined;
 }
 function safeText(value: string): boolean {
-  return !SENSITIVE_VALUE.test(value) && filterGamingDocumentInstructions(value) === normalizeGamingDocumentInstructionCharacters(value).replace(/\s+/gu, ' ').trim();
+  const normalized = normalizeGamingDocumentInstructionCharacters(value).replace(/\s+/gu, ' ').trim();
+  const controlStripped = normalizeGamingDocumentInstructionCharacters(value, '');
+  return !SENSITIVE_VALUE.test(value) && !SENSITIVE_VALUE.test(normalized) && !SENSITIVE_VALUE.test(controlStripped)
+    && filterGamingDocumentInstructions(value) === normalized;
 }
 function typeIs(value: JsonRecord, name: string): boolean {
   const raw = value['@type'];

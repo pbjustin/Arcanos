@@ -99,7 +99,7 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
   // parse; any possible markup or entity still takes the parser-owned path.
   if (!htmlContent && !/[<&]/u.test(input.body)) {
     const visibleText = text(input.body);
-    if (filterGamingDocumentInstructions(visibleText) !== visibleText) fail('source_instruction_filtered');
+    if (filterGamingDocumentInstructions(input.body) !== visibleText) fail('source_instruction_filtered');
     deadlineExpired();
     return result;
   }
@@ -112,15 +112,17 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
   // Match visible block separation before normalization: adjacent paragraphs
   // cannot join "previous" and "instructions" into a different word and evade
   // the full-response security scan after the context ceiling.
-  visibleBody.find('br').replaceWith(' ');
+  visibleBody.find('br').replaceWith('\n');
   visibleBody.find('p,div,section,article,main,header,footer,nav,aside,li,dt,dd,table,tr,td,th,h1,h2,h3,h4,h5,h6')
-    .prepend(' ').append(' ');
-  const visibleText = text(visibleBody.text());
+    .prepend('\n').append('\n');
+  const rawVisibleText = visibleBody.text();
+  const visibleText = text(rawVisibleText);
   // The context projection can omit a long article's tail or its title. Scan the
   // entire bounded visible response before selection so omitted instructions
   // cannot make a partially sanitized document eligible for grounding.
-  if ([visibleText, text($('title').first().text())].some(value =>
-    filterGamingDocumentInstructions(value) !== value)) fail('source_instruction_filtered');
+  const rawTitle = $('title').first().text();
+  if ([[rawVisibleText, visibleText], [rawTitle, text(rawTitle)]].some(([raw, normalized]) =>
+    filterGamingDocumentInstructions(raw) !== normalized)) fail('source_instruction_filtered');
   if (deadlineExpired()) return result;
   if (!htmlContent) return result;
   if (visibleText.length <= 300 && /\b(?:verify (?:that )?you are human|checking your browser|enable javascript and cookies to continue|sign in to continue|log in to continue)\b/iu.test(visibleText)) {

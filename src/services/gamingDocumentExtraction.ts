@@ -155,9 +155,9 @@ export function gamingDocumentFetchOptions(url: string, options: FetchAndCleanOp
   };
 }
 
-/** Source prose is data: remove instruction-like sentences before it can be stored or grounded. */
-export function filterGamingDocumentInstructions(text: string): string {
-  return normalizeGamingDocumentInstructionCharacters(text)
+/** Apply the same line and sentence rules to either normalized inspection view. */
+function filterNormalizedDocumentInstructions(text: string): string {
+  return text
     .replace(/\s*\[LINKS\][\s\S]*$/i, "")
     .replace(/^\s*(?:\[(?:system|developer|assistant|instructions?|mode|request|output)\]|<(?:system|developer|assistant)>|#{1,6}\s*(?:system|developer|assistant|instructions?)\b).*$/gim, "")
     .replace(/\s+/g, " ")
@@ -169,6 +169,21 @@ export function filterGamingDocumentInstructions(text: string): string {
       && !SOURCE_ROLE_ASSIGNMENT_PATTERN.test(sentence))
     .join(" ")
     .trim();
+}
+
+/** Source prose is data: remove instruction-like sentences before it can be stored or grounded. */
+export function filterGamingDocumentInstructions(text: string): string {
+  const normalized = normalizeGamingDocumentInstructionCharacters(text);
+  const filtered = filterNormalizedDocumentInstructions(normalized);
+  // Keep existing sanitization when this view already establishes source taint.
+  if (filtered !== normalized.replace(/\s+/g, ' ').trim()) return filtered;
+  const compact = normalizeGamingDocumentInstructionCharacters(text, '');
+  // Controls can separate words or conceal letters inside a directive. A newly
+  // exposed directive rejects the source; benign Unicode keeps its usual output.
+  if (compact !== normalized && filterNormalizedDocumentInstructions(compact) !== compact.replace(/\s+/g, ' ').trim()) {
+    return '';
+  }
+  return filtered;
 }
 
 export const GAMEPLAY_CONTENT_PATTERN = /\b(?:boss|route|walkthrough|build|patch|weapon|stat|skill|class|quest|location|level|damage|talent|gear|rotation|viable|craft|resource|upgrade|exploration|progress|economy|unit|mission|encounter|ability|loadout|mechanic)\b/i;
