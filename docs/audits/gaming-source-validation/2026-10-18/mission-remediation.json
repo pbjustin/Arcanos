@@ -102,5 +102,13 @@
     "nativePrDeploys": false,
     "scope": "Isolated PR environment only through trusted main workflow"
   },
-  "finalPublicationEvidence": "This receipt records repair evidence before the documentation commit. Final exact-head CI, independent review, hosted preview and cleanup receipts are published on PR1558; this file alone does not certify those gates."
+  "finalPublicationEvidence": "This receipt records repair evidence before the documentation commit. Final exact-head CI, independent review, hosted preview and cleanup receipts are published on PR1558; this file alone does not certify those gates.",
+  "strengthenedExistingRegressionCases": 2,
+  "integrationExpectationFollowup": {
+    "focusedSuites": 2,
+    "reason": "Two legacy integration tests expected sanitized remnants from tainted OCR to persist; assertions now require SOURCE_INSTRUCTIONS_REJECTED, zero SQL/persistence/citations and no sensitive log text, while clean retrieval controls remain",
+    "focusedTests": 22,
+    "runtimeChanges": "NONE in this follow-up",
+    "passed": 22
+  }
 }
