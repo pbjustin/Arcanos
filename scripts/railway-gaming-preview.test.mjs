@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
 import {
-  DEFAULT_GAMING_POLICY, TRUSTED_GAMING_KERNEL_POLICY_SHA256, GamingRailwayApi,
+  DEFAULT_GAMING_POLICY, TRUSTED_GAMING_KERNEL_POLICY_SHA256, GamingGitHubReadAdapter, GamingRailwayApi,
   assertGamingPreviewWorkflowContext, assertTrustedGamingPreviewExecutionReceipt, attestGamingPreview, cleanupGamingPreview,
   deployGamingPreview, gamingPreviewEnvironmentName, gamingPreviewVerifierArguments, restoreGamingExecutionReceipt, validateGamingAuthorization,
   validateGamingEnvironment, validateGamingImageReceipt, verifyGamingCandidate,
@@ -310,4 +310,27 @@ test('independent project inventory rejects tombstones, incomplete results and u
   complete = false; await assert.rejects(railway.environmentAbsent(target, id('6'), gamingPreviewEnvironmentName('42')), /INCOMPLETE_INVENTORY/u);
   complete = true; projectId = id('0');
   await assert.rejects(railway.environmentAbsent(target, id('6'), gamingPreviewEnvironmentName('42')), /ABSENCE_PROJECT_MISMATCH/u);
+});
+test('Gaming CI requires successful official docs context without duplicating GitHub requests', async () => {
+  const officialApp = { id: 15368, slug: 'github-actions', owner: { login: 'github' } };
+  const check = (name, id, app = officialApp, conclusion = 'success') => ({ id, name, app, head_sha: policy.headSha,
+    status: 'completed', conclusion, details_url: `https://github.com/pbjustin/Arcanos/actions/runs/1/job/${id}` });
+  const aggregate = check('All Checks Complete', 1), docs = check('docs:check', 2);
+  for (const [checks, accepted] of [
+    [[aggregate, docs], true], [[aggregate], false],
+    [[aggregate, check('docs:check', 2, { ...officialApp, id: 999 })], false],
+    [[aggregate, check('docs:check', 2, officialApp, 'failure')], false],
+    [[aggregate, check('docs:check', 2, officialApp, 'skipped')], false],
+  ]) {
+    let requests = 0, effects = 0;
+    const github = new GamingGitHubReadAdapter({ token: 'mock-github-read-token-no-authority', fetchImpl: async (url, options) => {
+      requests += 1;
+      assert.equal(url, `https://api.github.com/repos/pbjustin/Arcanos/commits/${policy.headSha}/check-runs?per_page=100&page=1&filter=all`);
+      assert.equal(options.method, 'GET');
+      return new Response(JSON.stringify({ total_count: checks.length, check_runs: checks }), { headers: { 'content-type': 'application/json' } });
+    } });
+    const admittedEffect = async () => { await github.readRequiredCI(policy.headSha); effects += 1; };
+    if (accepted) await admittedEffect(); else await assert.rejects(admittedEffect());
+    assert.equal(effects, accepted ? 1 : 0); assert.equal(requests, 1);
+  }
 });

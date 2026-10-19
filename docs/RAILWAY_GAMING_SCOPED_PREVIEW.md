@@ -47,6 +47,9 @@ ready-for-review events grant no Gaming deployment authority.
 `enabled: false` and `target: null`. Merging this PR cannot provision anything.
 The owner must separately approve the code, provision and audit a dedicated
 target, and review the exact target policy on protected main before dispatch.
+The existing production workflow's coordinated-writer hold remains unchanged;
+an executable regression confirms a main CI completion cannot pass it. Recheck
+that hold and deployment-trigger state before any separately approved merge.
 The [scope policy](../config/railway-gaming-preview.json) permits hosted execution
 only with a trusted controller-issued receipt; JSON and candidate CLI options
 cannot issue that receipt.

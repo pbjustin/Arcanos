@@ -7,6 +7,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { test } from 'node:test';
 import { buildNativePrPreviewRequestPlan } from './native-pr-preview-e2e.mjs';
+import { evaluateCoordinatedRolloutGuard } from './railway-coordinated-rollout-guard.mjs';
 
 const require = createRequire(import.meta.url);
 const { load } = require('js-yaml');
@@ -114,6 +115,17 @@ function assertWorkflowBoundaries(value) {
 
 test('Gaming workflow enforces protected manual admission and separated privilege boundaries', () => {
   assertWorkflowBoundaries(workflow);
+});
+
+test('infrastructure merge cannot pass the existing automatic production rollout hold', () => {
+  const production = load(read('.github/workflows/railway-auto-deploy.yml'));
+  const holdId = production.env.ARCANOS_COORDINATED_WRITER_ROLLOUT_HOLD;
+  assert.equal(holdId, '20260830-job-events-worker-budget-v1');
+  const decision = evaluateCoordinatedRolloutGuard({ eventName: 'workflow_run', holdId });
+  assert.equal(decision.shouldDeploy, false);
+  assert.equal(decision.reason, 'automatic_promotion_blocked');
+  assert.ok(production.jobs['deploy-production'].if.includes("needs.rollout-policy.outputs.should_deploy == 'true'"));
+  assert.throws(() => evaluateCoordinatedRolloutGuard({ eventName: 'workflow_dispatch', holdId }), /CONFIRMATION_REQUIRED/u);
 });
 
 test('workflow policy rejects trigger, checkout, privilege, receipt, execution and cleanup regressions', () => {

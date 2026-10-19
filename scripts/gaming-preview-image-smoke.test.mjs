@@ -25,7 +25,7 @@ function fixture() {
   const files = Object.fromEntries(['authorization', 'build', 'image', 'output'].map(name => [`${name}File`, path.join(root, name)]));
   writeFileSync(files.authorizationFile, JSON.stringify(auth)); writeFileSync(files.buildFile, JSON.stringify(build));
   writeFileSync(files.imageFile, 'mock image');
-  const commands = [], containers = new Set(), requests = [];
+  const commands = [], containers = new Map(), requests = [];
   const execute = (program, all, options) => {
     assert.equal(program, 'docker'); assert.equal(all[0], '--host=unix:///var/run/docker.sock');
     assert.equal(options.env.OPENAI_API_KEY, undefined); assert.equal(options.env.GITHUB_TOKEN, undefined);
@@ -33,13 +33,24 @@ function fixture() {
     if (args[0] === 'run') {
       assert.ok(args.includes('--pull=never') && args.includes('--cap-drop=ALL') && args.includes('--read-only'));
       assert.equal(args.includes('--entrypoint'), false); assert.equal(args.at(-1), build.imageId);
-      assert.ok(args.includes('127.0.0.1::8080')); containers.add(args[args.indexOf('--name') + 1]); return 'a'.repeat(64);
+      assert.ok(args.includes('127.0.0.1::8080'));
+      const name = args[args.indexOf('--name') + 1], id = String(containers.size + 1).repeat(64), labels = {};
+      for (let index = 0; index < args.length; index++) if (args[index] === '--label') {
+        const [key, value] = args[++index].split('='); labels[key] = value;
+      }
+      containers.set(name, { Id: id, Name: `/${name}`, Image: build.imageId, Config: { Labels: labels } }); return id;
     }
     if (args[0] === 'port') return args[1].includes('-worker-') ? '127.0.0.1:18081' : '127.0.0.1:18082';
     if (args[0] === 'logs') return 'GAMING_PREVIEW_KERNEL_NETWORK_BOUNDARY=ENFORCED';
-    if (args[0] === 'rm') { containers.delete(args[2]); return args[2]; }
+    if (args[0] === 'inspect') return JSON.stringify(containers.get(args.at(-1)));
+    if (args[0] === 'rm') {
+      const entry = [...containers.entries()].find(([, value]) => value.Id === args[2]);
+      if (entry) containers.delete(entry[0]); return args[2];
+    }
     if (args[0] === 'ps') {
-      const name = args[args.indexOf('--filter') + 1].replace(/^name=\^\//u, '').replace(/\$$/u, '');
+      const filter = args[args.indexOf('--filter') + 1];
+      if (filter.startsWith('id=')) return [...containers.values()].some(value => value.Id === filter.slice(3)) ? 'container-still-present' : '';
+      const name = filter.replace(/^name=\^\//u, '').replace(/\$$/u, '');
       return containers.has(name) ? 'container-still-present' : '';
     }
     throw new Error('UNEXPECTED_DOCKER_COMMAND');
@@ -96,7 +107,38 @@ test('local image smoke fails when actual container absence cannot be verified',
   const f = fixture();
   try {
     await assert.rejects(runGamingImageSmoke({ ...f.options, execute: (program, args, options) =>
-      args[1] === 'ps' ? 'still-present' : f.options.execute(program, args, options) }), /CLEANUP_UNVERIFIED/u);
+      args[1] === 'ps' && args.some(value => value.startsWith('id=')) ? 'still-present' : f.options.execute(program, args, options) }), /CLEANUP_UNVERIFIED/u);
     assert.equal(JSON.parse(readFileSync(f.files.outputFile, 'utf8')).cleanup.verifiedAbsent, false);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('local image smoke preserves a preexisting name collision without running or removing any container', async () => {
+  const f = fixture(); let removals = 0, runs = 0;
+  try {
+    await assert.rejects(runGamingImageSmoke({ ...f.options, execute: (_program, args) => {
+      if (args[1] === 'run') runs++;
+      if (args[1] === 'rm') removals++;
+      return 'preexisting-container';
+    } }), /CONTAINER_NAME_COLLISION/u);
+    assert.equal(runs, 0); assert.equal(removals, 0);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('local image smoke recovers only exact labeled partial creation and refuses substituted ownership', async () => {
+  for (const substitute of [false, true]) {
+    const f = fixture(); let removals = 0;
+    try {
+      await assert.rejects(runGamingImageSmoke({ ...f.options, execute: (program, args, options) => {
+        if (args[1] === 'rm') removals++;
+        const value = f.options.execute(program, args, options);
+        if (args[1] === 'run') throw new Error('MOCK_RUN_RESPONSE_LOST');
+        if (substitute && args[1] === 'inspect') {
+          const changed = JSON.parse(value); changed.Config.Labels['io.arcanos.gaming-smoke.owner'] = 'mock-other-owner';
+          return JSON.stringify(changed);
+        }
+        return value;
+      } }), substitute ? /CLEANUP_UNVERIFIED/u : /MOCK_RUN_RESPONSE_LOST/u);
+      assert.equal(removals, substitute ? 0 : 1); assert.equal(f.containers.size, substitute ? 1 : 0);
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+  }
 });

@@ -480,6 +480,15 @@ export class GamingGitHubReadAdapter extends GitHubReadAdapter {
     15_000, 1024 * 1024, response => response.ok && !response.redirected);
   }
   async readGamingPullRequest() { return this.request('/pulls/1558'); }
+  async readRequiredCI(headSha) {
+    const evidence = await super.readRequiredCI(headSha);
+    // Gaming admission also requires protected main's documentation context.
+    // The historical aggregate reader remains unchanged for its original lane.
+    const docs = evidence.checks.filter(check => check.name === 'docs:check' && check.appId === 15368);
+    requireCondition(docs.length === 1 && docs[0].status === 'completed' && docs[0].conclusion === 'success',
+      'REQUIRED_DOCS_CI_NOT_VERIFIED');
+    return evidence;
+  }
 }
 export class GamingRailwayApi extends StackedDraftRailwayApi {
   #readFetch; #readinessTimeoutMs;

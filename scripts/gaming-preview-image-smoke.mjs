@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Local disposable image validation only. It has no Railway or publication authority.
 import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { lstatSync, readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { validateGamingBuildReceipt, verifyImageArchive } from './stacked-draft-preview-build.mjs';
@@ -42,8 +43,13 @@ export async function runGamingImageSmoke({ authorizationFile, buildFile, imageF
     evidence.imageId = build.imageId; evidence.candidateSha = build.candidateSha;
     const origins = {}, loopback = {};
     for (const [index, role] of ['worker', 'web'].entries()) {
-      const name = `gaming-smoke-${authorization.runId}-${role}-${process.pid}`;
-      owned.push(name);
+      const owner = randomUUID();
+      const name = `gaming-smoke-${authorization.runId}-${role}-${owner.slice(0, 8)}`;
+      requireCondition(docker(['ps', '--all', '--filter', `name=^/${name}$`, '--format', '{{.ID}}']) === '', 'CONTAINER_NAME_COLLISION');
+      const labels = { 'io.arcanos.gaming-smoke.owner': owner, 'io.arcanos.gaming-smoke.run': authorization.runId,
+        'io.arcanos.gaming-smoke.head': build.candidateSha, 'io.arcanos.gaming-smoke.image': build.imageId };
+      const ownership = { name, labels, imageId: build.imageId, id: null };
+      owned.push(ownership);
       const publicDomain = `${role}-${build.runtimeEnvironmentName}.up.railway.app`;
       origins[role] = `https://${publicDomain}`;
       const variables = { NODE_ENV: 'production', PORT: '8080', ARCANOS_PROCESS_KIND: role,
@@ -57,8 +63,10 @@ export async function runGamingImageSmoke({ authorizationFile, buildFile, imageF
       // credential environment are passed; kernel seccomp precedes Node startup.
       const id = docker(['run', '--detach', '--pull=never', '--name', name, '--memory=512m', '--cpus=0.5', '--pids-limit=64',
         '--cap-drop=ALL', '--security-opt=no-new-privileges', '--read-only', '--tmpfs', '/tmp:rw,noexec,nosuid,size=16m',
-        '--publish', '127.0.0.1::8080', ...Object.entries(variables).flatMap(([key, value]) => ['--env', `${key}=${value}`]), build.imageId]);
+        '--publish', '127.0.0.1::8080', ...Object.entries(labels).flatMap(([key, value]) => ['--label', `${key}=${value}`]),
+        ...Object.entries(variables).flatMap(([key, value]) => ['--env', `${key}=${value}`]), build.imageId]);
       requireCondition(/^[0-9a-f]{64}$/u.test(id), 'CONTAINER_ID_INVALID');
+      ownership.id = id;
       const port = /^127\.0\.0\.1:([0-9]{1,5})$/u.exec(docker(['port', name, '8080/tcp']));
       requireCondition(port && Number(port[1]) > 0 && Number(port[1]) <= 65535, 'LOOPBACK_PORT_INVALID');
       loopback[role] = `http://127.0.0.1:${port[1]}`;
@@ -108,10 +116,22 @@ export async function runGamingImageSmoke({ authorizationFile, buildFile, imageF
     evidence.errorCode = /^[A-Z0-9_]+$/u.test(error?.code ?? error?.message ?? '') ? error.code ?? error.message : 'GAMING_IMAGE_SMOKE_FAILED';
   } finally {
     const failures = [];
-    for (const name of owned.reverse()) {
-      try { docker(['rm', '--force', name]); } catch { /* Independently verify actual absence below. */ }
-      try { if (docker(['ps', '--all', '--filter', `name=^/${name}$`, '--format', '{{.ID}}']) !== '') failures.push(name); }
-      catch { failures.push(name); }
+    for (const owner of owned.reverse()) {
+      try {
+        let container;
+        try { container = JSON.parse(docker(['inspect', '--type', 'container', '--format', '{{json .}}', owner.name])); }
+        catch {
+          requireCondition(docker(['ps', '--all', '--filter', `name=^/${owner.name}$`, '--format', '{{.ID}}']) === '', 'CLEANUP_OWNERSHIP_UNVERIFIED');
+          continue;
+        }
+        requireCondition(/^[0-9a-f]{64}$/u.test(container?.Id ?? '') && container.Name === `/${owner.name}`
+          && container.Image === owner.imageId && (!owner.id || container.Id === owner.id)
+          && Object.entries(owner.labels).every(([key, value]) => container.Config?.Labels?.[key] === value), 'CLEANUP_OWNERSHIP_UNVERIFIED');
+        // Delete by immutable container ID only after independently checking
+        // exact labels and image identity, including partial-create recovery.
+        try { docker(['rm', '--force', container.Id]); } catch { /* Independently verify actual absence below. */ }
+        requireCondition(docker(['ps', '--all', '--filter', `id=${container.Id}`, '--format', '{{.ID}}']) === '', 'CLEANUP_UNVERIFIED');
+      } catch { failures.push(owner.name); }
     }
     evidence.cleanup = { verifiedAbsent: failures.length === 0, ownedContainers: owned.length };
     if (failures.length > 0) { evidence.status = 'FAIL'; failure = new Error('GAMING_IMAGE_SMOKE_CLEANUP_UNVERIFIED'); }
