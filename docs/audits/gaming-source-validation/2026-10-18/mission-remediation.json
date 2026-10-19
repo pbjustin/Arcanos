@@ -1,0 +1,106 @@
+{
+  "kind": "pr1558-remediation-prepublication-evidence",
+  "baselineSha": "0e7a8e607e3f2f3359dc86eabcf611d8dd3fe6b2",
+  "incomingHeadSha": "bd68159c6569b54c94f31ed4ba4289bac55fcf0f",
+  "repairedCodeHeadSha": "c5a0d4ddee9df434ba5589a3f0ca53de8eb94653",
+  "tools": {
+    "platform": "win32",
+    "npm": "11.16.0",
+    "node": "24.18.1"
+  },
+  "newDefectClasses": 12,
+  "regressionCasesAdded": 49,
+  "fixes": [
+    {
+      "commit": "7beb16e7",
+      "regressionCases": 14,
+      "defectClasses": 1,
+      "area": "Explicit source game declarations",
+      "focusedTests": 282,
+      "focusedSuites": 8
+    },
+    {
+      "commit": "6f8b954e",
+      "area": "Plaintext or absent media DOM, JSON-LD envelope taint, Archive omitted tail",
+      "defectClasses": 3
+    },
+    {
+      "commit": "4cece8d4",
+      "defectClasses": 1,
+      "area": "Durable ingestion rejects known document or normalizer taint",
+      "combinedSecurityFocusedTests": 389,
+      "combinedSecurityRegressionCases": 11,
+      "combinedSecurityFocusedSuites": 7
+    },
+    {
+      "commit": "c5a0d4dd",
+      "regressionCases": 24,
+      "defectClasses": 7,
+      "area": "Structured adapter, oversized consumed fields, duplicate records and tables, deadlines, candidate and sibling inspection",
+      "focusedTests": 174,
+      "focusedSuites": 4
+    }
+  ],
+  "countCaveat": "Focused suites overlap. Counts are not additive full-suite coverage.",
+  "safety": {
+    "privateGamingPluginChanges": "NONE",
+    "thresholdChanges": "NONE",
+    "storageConsentPolicyChanges": "NONE",
+    "externalModelCalls": "MOCKED_OR_DISABLED",
+    "livePublisherAcceptance": "NOT_RUN",
+    "productionChanges": "NONE"
+  },
+  "windows": {
+    "inference": "No demonstrated regression; scheduling variance remains a hypothesis, not an established cause",
+    "incomingHeadMs": {
+      "min": 301.0,
+      "median": 305.0,
+      "max": 315.8
+    },
+    "failed": 0,
+    "fixture": "12000 quoted names, 396417 characters",
+    "passed": 10,
+    "historicalFailure": "https://github.com/pbjustin/Arcanos/actions/runs/39187199334/job/117852408504",
+    "method": "Five alternating fresh serial Jest processes on exact base and incoming head; other mission CPU work paused",
+    "baseMs": {
+      "min": 288.1,
+      "median": 295.3,
+      "max": 305.5
+    },
+    "thresholdMs": 1000,
+    "unchangedRetry": "https://github.com/pbjustin/Arcanos/actions/runs/39187199334/job/117858707572",
+    "status": "UNRESOLVED_HISTORICAL_CAUSE"
+  },
+  "dependencies": {
+    "fullAuditAffectedPackageEntries": {
+      "moderate": 7,
+      "critical": 1,
+      "high": 41,
+      "total": 49
+    },
+    "manifestAndLockChanges": "NONE relative to base",
+    "productionAuditVulnerabilities": 0,
+    "independentGate": "CI/CD Security Audit enforces production npm audit, production licenses, Python audit and secret scanning",
+    "disposition": "Pre-existing dev/tooling findings; no dependency migration"
+  },
+  "approvalPolicy": {
+    "maintainerApproval": "not inferred from bot COMMENTED status",
+    "verified": "main branch protection API",
+    "requiredChecks": [
+      "docs:check",
+      "All Checks Complete"
+    ],
+    "strictChecks": true,
+    "resolvedConversationsRequired": true,
+    "requiredPullRequestReviews": "not configured"
+  },
+  "railwayPreflight": {
+    "trustedControllerSha": "0e7a8e607e3f2f3359dc86eabcf611d8dd3fe6b2",
+    "existingPr1558Environments": 0,
+    "status": "READ_ONLY_BASE_CONTRACT_PASS",
+    "acceptance": "PENDING_FINAL_HEAD_HOSTED_RUN",
+    "nativePrDeploys": false,
+    "scope": "Isolated PR environment only through trusted main workflow"
+  },
+  "finalPublicationEvidence": "This receipt records repair evidence before the documentation commit. Final exact-head CI, independent review, hosted preview and cleanup receipts are published on PR1558; this file alone does not certify those gates."
+}

@@ -19,6 +19,15 @@ cached source or URL-payload fallback. Legacy diagnostics report the bounded
 `SOURCE_INSTRUCTIONS_REJECTED` reason separately from publisher access failures;
 benign player instructions use the same classifier as document acquisition.
 
+The scan follows the parser's actual interpretation, including HTML markup in
+accepted plaintext or responses without a media type. JSON-LD envelope names and
+descriptions carry instruction rejection through projection. Specialized Archive
+resolution inspects the already-acquired bounded body before its selected-text
+ceiling can omit a malicious tail. Durable ingestion
+also rejects document or structured-build taint before persistence; sanitized
+remaining prose cannot become a stored fallback. Consent and source-use policy
+remain independently required.
+
 Source-evaluation rule v2 adds closed identity subject/scope/determination fields
 and a failure class separating security, authority policy, source access, extraction, gameplay
 quality and workflow failures. Rejection retains earlier bounded extraction
@@ -71,6 +80,11 @@ intact sibling records remain eligible. Table cells retain their original column
 positions. Unused oversized labels are excluded, while supported source-global
 constraints remain subject to structural admission and cannot be silently dropped
 to make affected records usable.
+
+Adapter success does not replace inspection of the original supported source
+fields. Duplicate table columns cannot overwrite an earlier instruction-bearing
+cell or create an apparently complete row. Repeated supported global definitions
+remain ambiguous and cannot be rescued by another candidate.
 
 Only explicitly recognized analytics parameters are removed: `utm_*`, `fbclid`,
 `gclid`, `dclid`, `msclkid`, `mc_cid`, and `mc_eid`. Generic `source`, `campaign`,
