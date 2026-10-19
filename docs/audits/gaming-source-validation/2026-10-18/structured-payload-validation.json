@@ -1,0 +1,63 @@
+{
+  "kind": "structured-payload-focused-prepublication-evidence",
+  "missionBaselineSha": "0e7a8e607e3f2f3359dc86eabcf611d8dd3fe6b2",
+  "sourceBaseCommitSha": "3807c02e85a909cefaa33f26983ce5af96117717",
+  "sourceBaseTreeSha": "272d8886868c2a2366f3b3dc9b37c519f740e412",
+  "runtimeAndTestOverlaySha256": {
+    "src/services/gamingBuildResourceSchema.ts": "1740bf0019ee15a6d1174c7ca1ab919816233bb3abafb7e33defc1db29cbf8f1",
+    "src/services/gamingBuildResources.ts": "86c6266321e6998f3c2f30bceda53f79ef2def1124bcd54f168794bce033c0a5",
+    "src/services/gamingWebContext.ts": "3ae1a3dea334af55118e51edc12b4f0077d6f658bbcae166d9f09627c511ac68",
+    "tests/gaming-archive-rag.integration.test.ts": "ca6e1e271c97aa98e9e7a2a34171997bc99aedca50383e6e09e5422b51ea84b6",
+    "tests/gaming-structured-instruction-boundary.test.ts": "3a110f24a2b346aa212b5ac1a77f5acae1769a8f59442565cbe8cd30f2fbc20a",
+    "tests/gaming-structured-resources.test.ts": "df8814c2d622f8eba71f5f429df8982088e9f0573cc3d9a2fb4d9b0e21c69d3b"
+  },
+  "overlayScope": "All changed tracked src/tests files relative to sourceBaseCommitSha, plus the new regression file; documentation and generated-index edits do not form part of this focused behavioral receipt.",
+  "newRegressionMatrix": {
+    "tests": 32,
+    "baseline": {
+      "passed": 6,
+      "failed": 26
+    },
+    "repaired": {
+      "passed": 32,
+      "failed": 0
+    },
+    "skipped": 0
+  },
+  "combinedNineSuiteMatrix": {
+    "tests": 283,
+    "baseline": {
+      "passed": 117,
+      "failed": 166
+    },
+    "repaired": {
+      "passed": 283,
+      "failed": 0
+    },
+    "skipped": 0,
+    "prior251OutcomesUnchanged": true,
+    "baselineOriginalTrackedBlobsVerified": 3606,
+    "baselineOriginalRuntimeBlobsVerified": 1342
+  },
+  "focusedValidation": {
+    "passedSuites": 8,
+    "passedTests": 397,
+    "failedTests": 0,
+    "skippedTests": 0,
+    "changedFileLintErrors": 0,
+    "changedFileLintWarnings": 0
+  },
+  "independentReview": {
+    "additionalProbes": 3,
+    "failedBefore": 3,
+    "passedAfter": 3,
+    "includedInNewRegressionMatrix": true,
+    "remainingConcreteBlockers": 0
+  },
+  "reproduction": "Supported decoded build fields were silently stripped, leaving an accepted record that reached citable legacy evidence and final CLEAR through mocked HTTP503 fallback. No malicious model/tool execution was demonstrated.",
+  "invariants": "Terminal consumed-field taint; clean transport fallback retained; no tainted cache or metadata/candidate rescue; unknown JSON fields excluded; source bounds, provenance, authorization and durable-storage policy unchanged.",
+  "publicationStatus": "This receipt records focused source/test evidence, not a complete build or final-head CI claim. Consult PR1558 for subsequent exact committed-head static, full-suite, hosted CI and review results.",
+  "exactHeadRailwayPreview": "NOT_RUN",
+  "livePublisherAcceptance": "NOT_RUN",
+  "productionDeployment": "NOT_RUN"
+}

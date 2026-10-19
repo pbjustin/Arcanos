@@ -60,6 +60,11 @@ Private build payloads stay out of displayed/cached citations even when article
 text supplies the evidence. Self-contained payload fallback requires a proven
 zero-hop transport failure; security, redirect, cancellation, and deadline
 failures cannot revive or cache that payload as evidence.
+Detected instructions in consumed structured-build fields reject the entire
+normalized record, including instructions found before a field is shortened or
+removed. Metadata, another candidate, an adapter or article fallback cannot
+restore that rejected record. Unknown JSON fields remain excluded from evidence;
+clean supported fields and clean transport fallback retain their existing rules.
 
 Only explicitly recognized analytics parameters are removed: `utm_*`, `fbclid`,
 `gclid`, `dclid`, `msclkid`, `mc_cid`, and `mc_eid`. Generic `source`, `campaign`,

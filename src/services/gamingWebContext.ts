@@ -1747,6 +1747,9 @@ async function fetchGamingRagDocument(
 
   let redirected = false;
   try {
+    if (urlStructuredResult?.failureReason === "SOURCE_INSTRUCTIONS_REJECTED") {
+      throw new GamingDocumentAcquisitionError('SOURCE_EXTRACTION_FAILED', 'extraction', 'SOURCE_INSTRUCTIONS_REJECTED');
+    }
     let extraction: FetchAndCleanExtractionMetrics = {
       strategy: "body",
       rawTextLength: 0,
@@ -1838,6 +1841,9 @@ async function fetchGamingRagDocument(
       }
     } catch {
       structuredResult = redirected ? undefined : urlStructuredResult;
+    }
+    if (structuredResult?.failureReason === "SOURCE_INSTRUCTIONS_REJECTED") {
+      throw new GamingDocumentAcquisitionError('SOURCE_EXTRACTION_FAILED', 'extraction', 'SOURCE_INSTRUCTIONS_REJECTED');
     }
     const structuredRelevant = Boolean(
       structuredResult

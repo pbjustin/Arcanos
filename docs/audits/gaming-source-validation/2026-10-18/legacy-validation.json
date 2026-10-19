@@ -1,5 +1,5 @@
 {
-  "kind": "legacy-consumer-prepublication-evidence",
+  "kind": "legacy-consumer-validation-evidence",
   "missionBaselineSha": "0e7a8e607e3f2f3359dc86eabcf611d8dd3fe6b2",
   "preHardeningSha": "b55d18015439b8637de73a7045b56e7fc00edace",
   "missionBaselineTrackedBlobsVerified": 3606,
@@ -43,7 +43,7 @@
     "tests/gaming-legacy-instruction-boundary.test.ts": "14b7add586560366216d81c46ce056a3d70951a3ce6dc1c007c4b342e1c82a68",
     "tests/gaming-web-context-quality.test.ts": "9ac79b2c728c324f2a7b99f6115167d9408abc99be5f5463a8d7d7e47bc7f8d3"
   },
-  "publicationStatus": "Consult PR1558 for subsequent final-head checks and CodeRabbit dispositions. This historical receipt predates that commit.",
+  "publicationStatus": "Behavioral file hashes identify the original legacy patch; committedFollowupStaticChecks identifies its later complete checked tree. Consult PR1558 for subsequent head checks and CodeRabbit dispositions.",
   "exactHeadRailwayPreview": "NOT_RUN",
   "livePublisherAcceptance": "NOT_RUN",
   "productionDeployment": "NOT_RUN",
@@ -57,5 +57,21 @@
     "baselineOriginalTrackedBlobsVerified": 3606,
     "baselineOriginalRuntimeBlobsVerified": 1342
   },
-  "prepublicationStaticChecks": "PASS: type-check, lint, production build, architecture/import/security boundaries, Railway static, docs/index/local links; these ran on the working tree identified by the file hashes before publication."
+  "committedFollowupStaticChecks": {
+    "checkedCommitSha": "3807c02e85a909cefaa33f26983ce5af96117717",
+    "checkedTreeSha": "272d8886868c2a2366f3b3dc9b37c519f740e412",
+    "workingTreeCleanAtStart": true,
+    "workingTreeCleanAtEnd": true,
+    "command": [
+      "bash",
+      "-c",
+      "npm run type-check && npm run lint && npm run build && npm run validate:railway && npm run docs:check && npm run docs:links -- --local-only"
+    ],
+    "startedAt": "2026-10-19T01:19:11.976893+00:00",
+    "finishedAt": "2026-10-19T01:20:25.731874+00:00",
+    "exitCode": 0,
+    "result": "PASS: type-check, lint, production build, architecture/import/security boundaries, Railway static, docs/generated indexes and local links.",
+    "appliesToSubsequentChanges": false,
+    "scope": "This later clean-commit run replaces the earlier working-tree static-check claim. The three file hashes above identify the legacy behavioral patch only, not all inputs to broad static checks."
+  }
 }

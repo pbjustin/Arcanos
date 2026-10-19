@@ -77,6 +77,14 @@ Publisher 403 and transport failures remain separate legitimate rejection paths.
   The legacy snippet scorer also uses the shared instruction classifier instead
   of rejecting benign player instructions through a duplicate older pattern.
   Hybrid-v2 already rejected flagged documents independently of unit count.
+- `gamingBuildResources.ts` / `gamingWebContext.ts`: the follow-up audit also
+  reproduced supported decoded-build fields losing instruction text during
+  normalization while the remaining record stayed accepted. A real normalization
+  result then became citable and CLEAR-accepted through a mocked HTTP 503 fallback.
+  Consumed-field taint now rejects the entire structured result before evidence
+  formatting, metadata/candidate rescue or transport fallback. Unknown JSON keys
+  remain excluded rather than being treated as supported evidence. Clean build
+  payloads retain their independently bounded transport-fallback path.
 
 The existing hybrid-v2, Trinity and CLEAR control flow remains intact. CLEAR
 policy v5 invalidates older approvals; resolver v4 changes extraction/revision
@@ -208,11 +216,36 @@ assertions. These controls extend the earlier 227-case matrix; earlier full-suit
 passes do not certify this subsequent runtime change.
 
 The combined eight-suite matrix was then rerun: unchanged latest main passed
-111 of 251 tests and failed 140; the complete repair passed all 251 with no skips.
+111 of 251 tests and failed 140; the legacy repair passed all 251 with no skips.
 All 3,606 original baseline tracked blobs remained unchanged, and the prior 227
-case outcomes were identical to their earlier run. Prepublication type-check,
-lint, production build, security/import boundaries, Railway static and
-documentation/index/link validation passed on the repaired working tree.
+case outcomes were identical to their earlier run. On the complete clean commit
+`3807c02e85a909cefaa33f26983ce5af96117717` (tree
+`272d8886868c2a2366f3b3dc9b37c519f740e412`), type-check, lint, production build,
+security/import boundaries, Railway static and documentation/index/local-link
+validation passed. The legacy receipt binds those checks to that exact tree; it
+does not certify later changes.
+
+That commit's full local run passed 20,164 tests and failed one existing Archive
+assertion that still expected an injection-bearing derivative to remain citable.
+The corrected test requires rejection and no cache reuse on repeated tainted
+requests, then independently preserves the original clean guide, provenance and
+cache assertions. Hosted integration reproduced the same stale expectation.
+Its Railway Docker check also exited during a compound dependency/build command
+without a specific cause; subsequent isolated and final-head results belong to
+the PR, and the original failed run remains recorded.
+
+`tests/gaming-structured-instruction-boundary.test.ts` adds direct normalization,
+metadata/cache, adapter/candidate fallback and actual legacy retrieval/CLEAR
+controls for consumed build-field taint. This is another independently reproduced
+pre-existing defect, not evidence that a malicious instruction reached a model or
+tool. The separate structured-payload receipt and PR record its baseline results
+and subsequent final-head checks.
+The [structured-payload receipt](structured-payload-validation.json) records the
+32-case suite: baseline 6 passed / 26 failed, repaired 32 passed. The complete
+nine-suite matrix totals 283 cases: unchanged main passed 117 and failed 166;
+the repaired matrix passed all 283 with no skips. All prior 251 outcomes stayed
+unchanged. Focused follow-up validation passed 397 cases across eight suites;
+three independently reproduced review probes are included in the 32-case count.
 
 Local dependency drift and a missing PowerShell prerequisite were also corrected:
 clean `npm ci` restored the checked-in versions, and verified PowerShell 7.6.7
