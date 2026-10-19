@@ -114,7 +114,10 @@ function acquiredBodySubjects(prose: string): { subjects: Array<{ text: string; 
     // Keep the quote's own bounds; a later gameplay predicate cannot rename it.
     const quotedName = quotedNames.find(name => name.start >= subjectStart && name.end <= subjectStart + subjectWindow.length
       && /^\s*$/u.test(unquoted.slice(subjectStart, name.start)));
-    const subject = quotedName ? [unquoted.slice(subjectStart, quotedName.end).trim(),
+    // Only a prepositional scope can continue with a gameplay predicate. A
+    // source-global declaration owns its entire nominal subject, including
+    // sentence-like titles regardless of capitalization.
+    const subject = /^this\b/iu.test(match[0]) ? subjectClause : quotedName ? [unquoted.slice(subjectStart, quotedName.end).trim(),
       gamingAcquiredNominalScope(unquoted.slice(quotedName.end, subjectStart + subjectWindow.length).split(/[,;.!?\n]/u, 1)[0].trim())].filter(Boolean).join(' ')
       : gamingAcquiredNominalScope(subjectClause);
     // Reference qualifiers apply locally, so a later affirmative clause after

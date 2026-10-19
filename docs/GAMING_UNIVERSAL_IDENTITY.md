@@ -73,7 +73,10 @@ subject rather than an established game identity. An acquired definition can
 bind the exact topic to its game, including locations, quests, characters and
 mechanics; a heading or repeated topic alone cannot supply that ownership.
 Missing corroboration remains `GAME_IDENTITY_UNVERIFIED`, while independently
-contradictory primary identities still reject. Source-local alias declarations
+contradictory primary identities still reject. Explicit declarations retain
+complete sentence-like titles in statements such as
+"This guide covers ..."; gameplay-predicate trimming applies only to
+prepositional scope. Source-local alias declarations
 allow full names of up to 120 characters, including subtitle punctuation, and
 still require separate canonical body proof. They cannot establish equivalence
 across sequels, DLC, remakes or editions. Reviewed registry edition relationships
