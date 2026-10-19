@@ -921,7 +921,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['src/shared/gaming/gamingGameDeclaration.ts', '305d3e072b842cba314386db5d95ed6e67beeedc369ed4c761f3890a42eea2f3'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gaming/gamingEvidenceUnits.ts', '6d1d4e90297a1e454202c175bbc75eea45accd446e5417f4715d7a6adf95f33c'],
   ['src/shared/gaming/gamingStructuralEvidence.ts', '585c98b881252f0dce035ea29e76435398d6ce7b52417305d28da5c0d86b00e1'],
-  ['src/shared/gaming/gamingDocumentIngestionPreviewFixture.ts', 'bf530a9fe88a67fdb7a217828d2b68122b2180e9f4fbff2ef6b1c1fb17f81b84'],
+  ['src/shared/gaming/gamingDocumentIngestionPreviewFixture.ts', '23519eaae7d849a2e528d5a3f056940471af122faf314297ffe816554feb13c2'],
   [
     'src/shared/gaming/gamingGuideResponsePreviewFixture.ts',
     'bc69d23a728afd5f1ba863541390a4ad7835a7de55b0785f5045720eed1939a1',

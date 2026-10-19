@@ -143,6 +143,14 @@ passed on both revisions. The compound injection negative failed baseline and
 rejects after repair. See the validation record for final suite inventories and
 exact command results; diagnostic-schema tests are not counted as source acceptance.
 
+The first full-suite sweep also exposed a stale sealed-preview contract: it
+required 99,000 characters of intact actionable guide prose to become metadata-only
+when navigation density was high. The preview now proves both actionable prose
+retention (including partial status when truncated) and rejection of actual
+navigation furniture. Two added mutation controls fail if either distinction is
+lost. The original failing preview test and its dependent served-route checks are
+retained; the reviewed preview semantic digest is updated with the fixture.
+
 ## Security and release boundaries
 
 Existing negative controls cover wrong games, competing primary headings,

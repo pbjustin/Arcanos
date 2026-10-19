@@ -51,6 +51,9 @@ describe('sealed Gaming document and ingestion component proof', () => {
     expect(mockExcerpt).toHaveBeenCalledWith(expect.stringContaining('copper telescope'), 'obsidian observatory', 1_200);
     expect(mockAdmission).toHaveBeenCalledWith('https://guides.example.org/w/index.php?curid=456', expect.anything());
     expect(mockQuality).toHaveBeenCalledWith(expect.objectContaining({ truncated: true }));
+    expect(mockQuality).toHaveBeenCalledWith(expect.objectContaining({
+      cleanedText: expect.stringContaining('Home Menu Search Categories'), navigationDensity: 0.62
+    }));
   });
 
   it('fails closed when document projection silently restores the old 24,000-character cap', async () => {
@@ -110,6 +113,18 @@ describe('sealed Gaming document and ingestion component proof', () => {
 
   it('fails closed when catalog text is promoted to complete document evidence', async () => {
     mockQuality.mockImplementation((input) => input.cleanedText.startsWith('Identifier ')
+      ? 'complete' : actualIngestion.classifyGamingDocumentQuality(input));
+    await expect(runGamingDocumentIngestionPreview()).rejects.toThrow(FAILURE);
+  });
+
+  it('fails closed when navigation vocabulary discards intact gameplay prose', async () => {
+    mockQuality.mockImplementation((input) => (input.navigationDensity ?? 0) >= 0.62
+      ? 'metadata-only' : actualIngestion.classifyGamingDocumentQuality(input));
+    await expect(runGamingDocumentIngestionPreview()).rejects.toThrow(FAILURE);
+  });
+
+  it('fails closed when navigation furniture is promoted to complete document evidence', async () => {
+    mockQuality.mockImplementation((input) => input.cleanedText.startsWith('Home Menu Search Categories')
       ? 'complete' : actualIngestion.classifyGamingDocumentQuality(input));
     await expect(runGamingDocumentIngestionPreview()).rejects.toThrow(FAILURE);
   });
