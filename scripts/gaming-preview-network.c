@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
@@ -91,6 +92,25 @@ int main(int argc, char **argv) {
     errno = 0;
     if (syscall(SYS_io_uring_setup, 0, NULL) != -1 || errno != EPERM) fail();
     fputs("GAMING_PREVIEW_KERNEL_NETWORK_BOUNDARY=ENFORCED linux/amd64 connect+datagram+io_uring denied\n", stderr);
-    execv(argv[1], &argv[1]);
+    /* Exec with a fresh, closed environment before Node itself can process
+     * NODE_OPTIONS or expose ambient values through /proc/<supervisor>/environ.
+     * The exec discards this launcher's original environment memory as well. */
+    const char *keys[] = { "PATH", "PORT", "NODE_ENV", "ARCANOS_PROCESS_KIND",
+        "RAILWAY_PROJECT_ID", "RAILWAY_ENVIRONMENT_ID", "RAILWAY_ENVIRONMENT_NAME",
+        "RAILWAY_SERVICE_ID", "RAILWAY_DEPLOYMENT_ID", "RAILWAY_PUBLIC_DOMAIN" };
+    char *clean[sizeof(keys) / sizeof(keys[0]) + 1];
+    size_t count = 0;
+    extern char **environ;
+    for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
+        const size_t length = strlen(keys[i]);
+        for (char **entry = environ; *entry; entry++) {
+            if (strncmp(*entry, keys[i], length) == 0 && (*entry)[length] == '=') {
+                clean[count++] = *entry;
+                break;
+            }
+        }
+    }
+    clean[count] = NULL;
+    execve(argv[1], &argv[1], clean);
     fail();
 }

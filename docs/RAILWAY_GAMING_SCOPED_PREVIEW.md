@@ -82,6 +82,10 @@ environment. A trusted, root-owned [Linux amd64 launcher](../scripts/gaming-prev
 sets `no_new_privs` and an inherited seccomp filter before any candidate process.
 It denies outbound connect, datagram/raw sockets, sendto/sendmsg/sendmmsg,
 io_uring and process-injection bypass paths, and closes inherited descriptors.
+Its first exec also supplies a fresh environment with only the fixed role and
+Railway identity keys, removing credentials and Node preload options before
+the trusted supervisor starts. The supervisor's original environment cannot
+be recovered from its process environment by a candidate child.
 Local socketpair IPC remains available for child startup. Inbound TCP listeners
 and replies on accepted sockets remain available. Startup performs packet-free
 negative syscall probes; the trusted runtime independently checks the kernel

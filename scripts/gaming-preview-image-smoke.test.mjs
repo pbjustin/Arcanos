@@ -189,3 +189,57 @@ test('kernel entrypoint proof retains the initial marker before a long protected
     assert.equal(result.cleanup.verifiedAbsent, true);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
+
+test('local failure evidence counts attempted requests and preserves only a fixed trusted assertion ID', async () => {
+  for (const caseId of ['gaming-query-guide', 'native:gaming-query-build', 'mcp:query', 'mock-private-untrusted-case']) {
+    const f = fixture();
+    try {
+      await assert.rejects(runGamingImageSmoke({ ...f.options, verify: async ({ fetchImpl, args }) => {
+        const origin = args[args.indexOf('--web-base-url') + 1];
+        for (let index = 0; index < 3; index++) await fetchImpl(`${origin}/readyz`, {});
+        throw Object.assign(new Error('NATIVE_PR_PREVIEW_NETWORK_REQUEST_FAILED'), { caseId });
+      } }), /NETWORK_REQUEST_FAILED/u);
+      const evidence = JSON.parse(readFileSync(f.files.outputFile, 'utf8'));
+      assert.equal(evidence.requestsAttempted, 3); assert.equal(evidence.executedAssertions, 0);
+      if (caseId === 'mock-private-untrusted-case') assert.equal(Object.hasOwn(evidence, 'failedCaseId'), false);
+      else assert.equal(evidence.failedCaseId, caseId.includes(':') ? caseId : `native:${caseId}`);
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+  }
+});
+
+test('local transport failure evidence records bounded cause classification without raw messages or payloads', async () => {
+  for (const causeCode of ['ECONNRESET', 'mock-private-unapproved-code']) {
+    const f = fixture(); let calls = 0;
+    try {
+      await assert.rejects(runGamingImageSmoke({ ...f.options,
+        fetchLocal: async (url, init) => {
+          if (++calls <= 2) return f.options.fetchLocal(url, init);
+          throw new TypeError('mock-private-transport-message', { cause: { code: causeCode, message: 'mock-private-cause-message' } });
+        }, verify: async ({ fetchImpl, args }) => fetchImpl(`${args[args.indexOf('--web-base-url') + 1]}/readyz`, {}) }), /mock-private-transport-message/u);
+      const evidence = JSON.parse(readFileSync(f.files.outputFile, 'utf8'));
+      assert.equal(evidence.requestsAttempted, 1); assert.equal(evidence.transportFailure.role, 'web');
+      assert.equal(evidence.transportFailure.errorName, 'TypeError');
+      assert.equal(evidence.transportFailure.causeCode, causeCode === 'ECONNRESET' ? causeCode : null);
+      assert.ok(evidence.transportFailure.elapsedMs >= 0 && evidence.transportFailure.elapsedMs <= 60_000);
+      assert.equal(JSON.stringify(evidence).includes('mock-private'), false);
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+  }
+});
+
+test('local timeout evidence survives a verifier abort race before an uncooperative fetch settles', async () => {
+  const f = fixture(); let calls = 0;
+  try {
+    await assert.rejects(runGamingImageSmoke({ ...f.options,
+      fetchLocal: (url, init) => ++calls <= 2 ? f.options.fetchLocal(url, init) : new Promise(() => {}),
+      verify: async ({ fetchImpl, args }) => {
+        const controller = new AbortController();
+        void fetchImpl(`${args[args.indexOf('--web-base-url') + 1]}/readyz`, { signal: controller.signal }).catch(() => {});
+        controller.abort();
+        throw Object.assign(new Error('NATIVE_PR_PREVIEW_NETWORK_REQUEST_FAILED'), { caseId: 'web-readiness-initial' });
+      } }), /NETWORK_REQUEST_FAILED/u);
+    const evidence = JSON.parse(readFileSync(f.files.outputFile, 'utf8'));
+    assert.equal(evidence.failedCaseId, 'native:web-readiness-initial'); assert.equal(evidence.requestsAttempted, 1);
+    assert.equal(evidence.transportFailure.errorName, 'AbortError'); assert.equal(evidence.transportFailure.signalAborted, true);
+    assert.equal(evidence.cleanup.verifiedAbsent, true);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});

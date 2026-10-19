@@ -24,6 +24,11 @@ test('inherited Linux kernel boundary denies outbound effects and permits inboun
       import dgram from 'node:dgram';
       import dns from 'node:dns/promises';
       import { spawnSync } from 'node:child_process';
+      import { readFileSync } from 'node:fs';
+      for (const key of ['OPENAI_API_KEY', 'RAILWAY_API_TOKEN', 'NODE_OPTIONS', 'HTTPS_PROXY']) {
+        assert.equal(process.env[key], undefined);
+      }
+      assert.ok(!readFileSync('/proc/self/environ','utf8').includes('mock-supervisor-sensitive-value'));
       const attempt = host => new Promise((resolve, reject) => {
         const socket = net.connect({host, port:9});
         socket.once('connect', () => { socket.destroy(); reject(new Error('OUTBOUND_ALLOWED')); });
@@ -40,9 +45,11 @@ test('inherited Linux kernel boundary denies outbound effects and permits inboun
       });
       await assert.rejects(dns.resolve4('gaming-egress-test.invalid'));
       const inherited = spawnSync(process.execPath, ['--input-type=module', '-e',
-        "import net from 'node:net'; const s=net.connect(9,'192.0.2.1'); s.on('connect',()=>process.exit(7)); s.on('error',e=>process.exit(e.code==='EPERM'?0:8));"], {timeout:2000});
+        "import net from 'node:net'; import fs from 'node:fs'; if(fs.readFileSync('/proc/'+process.ppid+'/environ','utf8').includes('mock-supervisor-sensitive-value'))process.exit(9); const s=net.connect(9,'192.0.2.1'); s.on('connect',()=>process.exit(7)); s.on('error',e=>process.exit(e.code==='EPERM'?0:8));"], {timeout:2000});
       assert.equal(inherited.status, 0);
-    `], { encoding: 'utf8', timeout: 8_000 });
+    `], { encoding: 'utf8', timeout: 8_000, env: { ...process.env,
+      OPENAI_API_KEY: 'mock-supervisor-sensitive-value', RAILWAY_API_TOKEN: 'mock-supervisor-sensitive-value',
+      NODE_OPTIONS: '--import=/must-never-load.mjs', HTTPS_PROXY: 'mock-supervisor-sensitive-value' } });
     assert.equal(probe.status, 0, `${probe.stderr}\n${probe.stdout}`);
     assert.match(probe.stderr, /GAMING_PREVIEW_KERNEL_NETWORK_BOUNDARY=ENFORCED/);
     server = spawn(binary, [process.execPath, '--input-type=module', '-e', `

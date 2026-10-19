@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { lstatSync, readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { validateGamingBuildReceipt, verifyImageArchive } from './stacked-draft-preview-build.mjs';
-import { runGamingScopedPreviewE2e } from './gaming-scoped-preview-e2e.mjs';
+import { buildGamingScopedPreviewAssertionInventory, runGamingScopedPreviewE2e } from './gaming-scoped-preview-e2e.mjs';
 import { resolveNativePrPreviewOrThrow } from './start-railway-service.mjs';
 
 const requireCondition = (value, code) => { if (!value) throw new Error(`GAMING_IMAGE_SMOKE_${code}`); };
@@ -13,6 +13,14 @@ const nativeFetch = globalThis.fetch;
 // This is the frozen launcher's accepted UUID contract, including version and
 // variant. Broad UUID-shaped test strings must not reach container startup.
 const NATIVE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const TRANSPORT_ERROR_NAMES = new Set(['Error', 'TypeError', 'AbortError', 'TimeoutError']);
+const TRANSPORT_ERROR_CODES = new Set(['ECONNREFUSED', 'ECONNRESET', 'EPIPE', 'EACCES', 'EPERM', 'ENETUNREACH',
+  'EHOSTUNREACH', 'ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT',
+  'UND_ERR_SOCKET', 'UND_ERR_ABORTED', 'UND_ERR_CLOSED', 'UND_ERR_DESTROYED', 'UND_ERR_HEADERS_OVERFLOW',
+  'UND_ERR_INVALID_ARG', 'UND_ERR_REQ_CONTENT_LENGTH_MISMATCH', 'UND_ERR_RES_CONTENT_LENGTH_MISMATCH',
+  'HPE_INVALID_HEADER_TOKEN', 'HPE_UNEXPECTED_CONTENT_LENGTH', 'ERR_INVALID_URL', 'ERR_INVALID_ARG_TYPE',
+  'ERR_INVALID_STATE', 'ERR_HTTP_INVALID_HEADER_VALUE', 'ERR_HTTP_INVALID_STATUS_CODE', 'ERR_INVALID_CHAR',
+  'ERR_SOCKET_CLOSED', 'ERR_STREAM_DESTROYED', 'ERR_STREAM_PREMATURE_CLOSE']);
 function executeDocker(program, args, options) {
   const result = spawnSync(program, args, options);
   requireCondition(result.status === 0 && !result.error, 'DOCKER_COMMAND_FAILED');
@@ -29,9 +37,10 @@ export async function runGamingImageSmoke({ authorizationFile, buildFile, imageF
   verify = runGamingScopedPreviewE2e, monotonicNow = () => performance.now(),
   delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)) }) {
   const evidence = { kind: 'gaming_local_image_synthetic_smoke', GAMING_SCOPED_PREVIEW: 'NOT_RUN',
-    hostedExecuted: false, status: 'FAIL', executedAssertions: 0, kernelEntrypointVerified: {},
+    hostedExecuted: false, status: 'FAIL', executedAssertions: 0, requestsAttempted: 0, kernelEntrypointVerified: {},
     cleanup: { verifiedAbsent: false }, realExternalSourceAcceptance: 'NOT_PROVEN', modelGeneratedGameplayAnswers: 'NOT_PROVEN' };
   const owned = [];
+  const trustedInventory = new Set(buildGamingScopedPreviewAssertionInventory());
   const cleanEnvironment = Object.fromEntries(['PATH', 'HOME', 'DOCKER_CONFIG'].filter(key => typeof environment[key] === 'string')
     .map(key => [key, environment[key]]));
   const docker = args => execute('docker', ['--host=unix:///var/run/docker.sock', ...args], {
@@ -107,11 +116,29 @@ export async function runGamingImageSmoke({ authorizationFile, buildFile, imageF
       const local = new URL(`${parsed.pathname}${parsed.search}`, loopback[role]);
       requireCondition(local.origin === loopback[role] && local.hostname === '127.0.0.1', 'LOOPBACK_TARGET_INVALID');
       requests++;
-      const response = await fetchLocal(local.href, { ...init, credentials: 'omit', redirect: 'error' });
-      requireCondition(response.redirected === false, 'REDIRECT_FORBIDDEN');
-      const mapped = new Response(response.body, { status: response.status, statusText: response.statusText, headers: response.headers });
-      Object.defineProperties(mapped, { url: { value: parsed.href }, redirected: { value: false } });
-      return mapped;
+      evidence.requestsAttempted = Math.min(requests, 85);
+      const requestStarted = monotonicNow();
+      const elapsedMs = () => Math.max(0, Math.min(60_000, Math.round(monotonicNow() - requestStarted)));
+      // The trusted wrapper can reject its abort race before an underlying
+      // fetch rejection settles. Record the signal synchronously so cleanup
+      // cannot precede the only useful timeout classification.
+      const onAbort = () => { evidence.transportFailure = { role, elapsedMs: elapsedMs(),
+        errorName: 'AbortError', causeCode: null, signalAborted: true }; };
+      if (init?.signal?.aborted) onAbort();
+      else init?.signal?.addEventListener('abort', onAbort, { once: true });
+      try {
+        const response = await fetchLocal(local.href, { ...init, credentials: 'omit', redirect: 'error' });
+        requireCondition(response.redirected === false, 'REDIRECT_FORBIDDEN');
+        const mapped = new Response(response.body, { status: response.status, statusText: response.statusText, headers: response.headers });
+        Object.defineProperties(mapped, { url: { value: parsed.href }, redirected: { value: false } });
+        return mapped;
+      } catch (error) {
+        evidence.transportFailure = { role, elapsedMs: elapsedMs(),
+          errorName: TRANSPORT_ERROR_NAMES.has(error?.name) ? error.name : 'UnknownError',
+          causeCode: TRANSPORT_ERROR_CODES.has(error?.cause?.code) ? error.cause.code : null,
+          signalAborted: init?.signal?.aborted === true };
+        throw error;
+      } finally { init?.signal?.removeEventListener('abort', onAbort); }
     };
     const report = await verify({ args: ['--pr-number', '1558', '--commit-sha', build.candidateSha,
       '--web-base-url', origins.web, '--worker-base-url', origins.worker, '--execute', '--allow-network'],
@@ -126,6 +153,9 @@ export async function runGamingImageSmoke({ authorizationFile, buildFile, imageF
   } catch (error) {
     failure = error;
     evidence.errorCode = /^[A-Z0-9_]+$/u.test(error?.code ?? error?.message ?? '') ? error.code ?? error.message : 'GAMING_IMAGE_SMOKE_FAILED';
+    const failedCaseId = [error?.caseId, `native:${error?.caseId}`, `mcp:${error?.caseId}`]
+      .find(value => trustedInventory.has(value));
+    if (failedCaseId) evidence.failedCaseId = failedCaseId;
     // Retain a small fixed diagnostic projection before removing a failed
     // runtime. Raw logs, environment and arbitrary container data stay private.
     evidence.startupDiagnostics = {};
