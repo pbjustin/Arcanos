@@ -137,6 +137,13 @@ const SOURCE_ROLE_ASSIGNMENT_PATTERN = new RegExp(
   + String.raw`|in\s+(?:system|developer|assistant)\s+mode\b)`, 'i'
 );
 
+// These nominal documentation labels describe source content, including after
+// projection flattens a heading and its prose. Other role-prefixed headings stay
+// fail-closed regardless of their verb; the full directive scan remains active
+// beneath ordinary headings. Share this distinction with snippet scoring.
+export const GAMING_MARKDOWN_ROLE_HEADING_PATTERN = /#{1,6}[^\S\r\n]*(?:system|developer|assistant)\b(?![^\S\r\n]+(?:requirements?|resources?|settings?)\b)/gi;
+const SOURCE_INSTRUCTION_LINE_PATTERN = new RegExp(String.raw`^\s*(?:\[(?:system|developer|assistant|instructions?|mode|request|output)\]|<(?:system|developer|assistant)>|${GAMING_MARKDOWN_ROLE_HEADING_PATTERN.source}).*$`, 'gim');
+
 /** Shared acquisition profiles: downstream query ranking does not select a different document transport. */
 export function gamingDocumentFetchOptions(url: string, options: FetchAndCleanOptions = {}): FetchAndCleanOptions {
   const domain = new URL(url).hostname.toLowerCase();
@@ -159,7 +166,7 @@ export function gamingDocumentFetchOptions(url: string, options: FetchAndCleanOp
 function filterNormalizedDocumentInstructions(text: string): string {
   return text
     .replace(/\s*\[LINKS\][\s\S]*$/i, "")
-    .replace(/^\s*(?:\[(?:system|developer|assistant|instructions?|mode|request|output)\]|<(?:system|developer|assistant)>|#{1,6}\s*(?:system|developer|assistant|instructions?)\b).*$/gim, "")
+    .replace(SOURCE_INSTRUCTION_LINE_PATTERN, "")
     .replace(/\s+/g, " ")
     .trim()
     .split(/(?<=[.!?])\s+/)

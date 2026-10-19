@@ -1,0 +1,54 @@
+{
+  "kind": "pr1558-game-owned-system-and-heading-prepublication-evidence",
+  "reviewedParentHead": "c5f42d662d9d96a61605fa9a6561f5b203a044e1",
+  "baseSha": "0e7a8e607e3f2f3359dc86eabcf611d8dd3fe6b2",
+  "review": "https://github.com/pbjustin/Arcanos/pull/1558#pullrequestreview-5567530075",
+  "status": "Focused repairs verified; separately published exact-head evidence must establish final validation, review and hosted acceptance",
+  "runtimeDefectClassesRepaired": 2,
+  "addedRegressionCases": 111,
+  "repairs": [
+    {
+      "area": "Game-owned system persistence language",
+      "reviewComment": 4310796995,
+      "reproduction": "Both honesty stages rejected game-owned checkpoint and autosave systems describing gameplay progress",
+      "change": "Recognize bounded immediate game ownership for neutral system actors; retain assistant, chat, explicit backend, storage and credential controls",
+      "addedRegressionCases": 29,
+      "positiveCases": 13,
+      "negativeCases": 16,
+      "focusedSuites": 3,
+      "focusedPassedTests": 401,
+      "crossReview": "PASS, including generic ownership and automatic save forms without named games or mechanics"
+    },
+    {
+      "area": "Ordinary Markdown documentation headings",
+      "reviewComment": 4310797000,
+      "reproduction": "Instructions, System Requirements, Developer Resources and Assistant Settings headings were rejected in plaintext, HTML, unspecified media and flattened snippets",
+      "change": "Share broad role-marker classification between extraction and scoring; distinguish nominal documentation labels while keeping unknown role directives fail-closed",
+      "addedRegressionCases": 82,
+      "componentCases": 78,
+      "acquisitionAndCacheCases": 4,
+      "focusedSuites": 5,
+      "focusedPassedTests": 398,
+      "crossReview": "PASS; finite imperative allowlist draft was rejected before publication",
+      "preserved": "Arbitrary novel role commands, compact obfuscated roles, bracket/XML markers, hostile tails and actual instructions following ordinary headings remain rejected"
+    }
+  ],
+  "preExistingUnrelatedLimitation": {
+    "example": "The game's save system retains your current state.",
+    "reproducedOn": ["0e7a8e607e3f2f3359dc86eabcf611d8dd3fe6b2", "c5f42d662d9d96a61605fa9a6561f5b203a044e1", "repaired working tree"],
+    "cause": "The unchanged external-current-state classifier combines current and state and rejects this sentence independently of persistence enforcement",
+    "disposition": "Document separately; no expansion into the unrelated live-state classifier"
+  },
+  "previewSemanticDigests": {
+    "src/core/logic/trinityHonesty.ts": "9ed50a5ec410381b7902fd01f37cb77a6401873b374708c0768f1719a83ac154",
+    "src/services/gamingDocumentExtraction.ts": "bb24a99609a8d1dad4c905687f78e8d1279b4e7ff7bb83189953dae5b73dd5ef"
+  },
+  "countCaveat": "Focused selections overlap with earlier receipts and are not additive full-suite coverage",
+  "safety": {
+    "thresholdChanges": "NONE",
+    "privatePluginChanges": "NONE",
+    "storageConsentPolicyChanges": "NONE",
+    "externalModelCalls": "MOCKED_OR_DISABLED",
+    "productionChanges": "NONE"
+  }
+}

@@ -147,6 +147,8 @@ const PERSISTENCE_CREDENTIAL_TOKEN_PATTERN =
   /\b(?:access|auth|authentication|authorization|bearer|refresh|api|security|secret|session)\s+tokens?\b/i;
 const SYSTEM_OWNED_SAVE_ACTOR_PATTERN =
   /\b(?:chats?|conversations?|sessions?|assistants?|systems?|applications?|apps?|services?|servers?|browsers?|clients?|software|agents?|bots?)\s+/gi;
+const GAME_OWNED_SYSTEM_PREFIX_PATTERN =
+  /\b(?:game['’]s|in[- ]game)\s+(?:[a-z][a-z-]*\s+){0,3}$/i;
 // Personal state implies retention only as the object of a software-owned
 // predicate. The same nouns remain valid in player instructions and advice.
 const SYSTEM_OWNED_STATE_OBJECT = String.raw`(?:(?:all|both)(?:\s+of)?\s+)?(?:(?:a|an|the|this|that|your|our|my|their|its|some|any)\s+)?(?:(?:current|latest|previous|existing|entire|full|complete|recent)\s+){0,2}(?:progress|work|history|state|everything)\b`;
@@ -710,6 +712,15 @@ function impliesSystemOwnedSaveClaim(text: string): boolean {
     let actorClauseIndex = 0;
     return [...scope.matchAll(SYSTEM_OWNED_SAVE_ACTOR_PATTERN)].some(actor => {
       while (actorClauseIndex + 1 < clauses.length && clauses[actorClauseIndex + 1].start <= actor.index) actorClauseIndex += 1;
+      // A game-owned system describes a gameplay mechanic, not
+      // assistant retention. Require ownership in the immediate noun phrase;
+      // nearby game context cannot exempt a chat, assistant or backend actor.
+      const gameOwner = /^systems?\s+$/i.test(actor[0])
+        ? GAME_OWNED_SYSTEM_PREFIX_PATTERN.exec(scope.slice(Math.max(0, actor.index - 96), actor.index))?.[0]
+        : undefined;
+      const gameOwnedSystem = gameOwner !== undefined
+        && !BACKEND_ACTION_CONTEXT_PATTERN.test(gameOwner)
+        && !gameOwner.match(SYSTEM_OWNED_SAVE_ACTOR_PATTERN);
       const actorClause = clauses[actorClauseIndex].text.slice(actor.index + actor[0].length - clauses[actorClauseIndex].start);
       const directlyGoverned = SYSTEM_OWNED_SAVE_PATTERN.test(actorClause);
       for (let index = actorClauseIndex; index < clauses.length; index += 1) {
@@ -741,14 +752,17 @@ function impliesSystemOwnedSaveClaim(text: string): boolean {
         // the ordinary evidence gate (for example, "time while storing data").
         if (!hasFollowingClause && /^(?:(?:you|us|them|me)\s+)?time(?:\s+(?:when|while)\s+.+)?$/i.test(complement)
           && !/\b(?:sav(?:e[sd]?|ing)|stor(?:e[sd]?|ing)|persist(?:s|ed|ing)?|retain(?:s|ed|ing)?|writ(?:e[sd]?|ing)|wrote|record(?:s|ed|ing)?|log(?:s|ged|ging)?|remember(?:s|ed|ing)?|keep(?:s|ing)?|kept)\b/i.test(complement)) continue;
+        const requiresSoftwareRetentionEvidence = !gameOwnedSystem || BACKEND_ACTION_CONTEXT_PATTERN.test(complement);
         if (PERSISTENCE_SAVE_CONTEXT_PATTERN.test(complement)
           || PERSISTENCE_CREDENTIAL_TOKEN_PATTERN.test(complement)
-          || SYSTEM_OWNED_STATE_OBJECT_PATTERN.test(complement)
-          // A coordinated object is a noun phrase, not a new subject/predicate
-          // such as "and your progress accelerates" after saving stamina.
-          || complement.split(/\s+and\s+/i).slice(1).some(object => SYSTEM_OWNED_STATE_COORDINATED_OBJECT_PATTERN.test(object))
+          || (requiresSoftwareRetentionEvidence
+            && (SYSTEM_OWNED_STATE_OBJECT_PATTERN.test(complement)
+              // A coordinated object is a noun phrase, not a new subject/predicate
+              // such as "and your progress accelerates" after saving stamina.
+              || complement.split(/\s+and\s+/i).slice(1).some(object => SYSTEM_OWNED_STATE_COORDINATED_OBJECT_PATTERN.test(object))))
           || /^(?:(?:a|an|the|this|that|your|our)\s+)?(?:copy|copies|snapshots?|backups?|drafts?|chats?)\b/i.test(complement)
-          || /^(?:(?:[a-z-]+ly|now|again|forever)\b\s*){0,4}(?:$|(?:before|after|when|whenever|for|and|but)\b|(?:on its own|by itself|by default)\b)/i.test(complement)) return true;
+          || (requiresSoftwareRetentionEvidence
+            && /^(?:(?:[a-z-]+ly|now|again|forever)\b\s*){0,4}(?:$|(?:before|after|when|whenever|for|and|but)\b|(?:on its own|by itself|by default)\b)/i.test(complement))) return true;
       }
       return false;
     });

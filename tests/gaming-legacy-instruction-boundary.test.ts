@@ -56,6 +56,24 @@ afterEach(() => {
 });
 
 describe('legacy document-wide instruction rejection', () => {
+  it.each([
+    ['## Instructions', 'text/plain'], ['### System Requirements', 'text/plain'],
+    ['## Instructions', 'text/html'], ['### System Requirements', 'text/html']
+  ])('keeps an ordinary %s heading citable and cacheable after %s acquisition', async (heading, contentType) => {
+    serve(contentType === 'text/html' ? article(`<h2>${heading}</h2><p>${prose}</p>`)
+      : `${heading}\n${prose}`, contentType);
+    const document = await resolveGamingDocument(url, 5000);
+    expect(document.metrics.instructionFiltered).toBe(false);
+    expect(document.text).toContain(heading);
+    const first = await buildGamingRagContext(input);
+    const second = await buildGamingRagContext(input);
+    expect(first.sources.filter(isCitableGamingWebSource)).toHaveLength(1);
+    expect(first.context).toContain('Factorio progression begins');
+    expect(first.clearKnowledge?.sources).toHaveLength(1);
+    expect(second.cacheHit).toBe(true);
+    expect(second.context).toBe(first.context);
+  });
+
   it.each(['ordinary footer', malicious])('rejects an incomplete legacy HTTP raw scan before promoting selected prose: %s', async tail => {
     // This is an inspection-completeness test; separate deadline cases exercise
     // timeout behavior. Keep its result independent of coverage CPU scheduling.

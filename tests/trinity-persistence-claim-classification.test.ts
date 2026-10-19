@@ -19,6 +19,22 @@ function review(text: string, preservePresentation = true) {
 
 describe('generic persistence claims distinguish conserving resources from backend actions', () => {
   it.each([
+    'The game’s checkpoint system saves your progress, but the assistant will save your work.',
+    'The in-game autosave system saves your progress, and this chat will save your notes.',
+    'Near the in-game checkpoint system, this chat will save your progress.',
+    'The in-game assistant will save your progress.',
+    "The game's assistant system will save your progress.",
+    "The game's conversation system will save your progress.",
+    "The game's application system will save your work.",
+    "The game's chat system will save your progress.",
+    "The game's backend system will save your state.",
+    "The game's checkpoint system saves your progress to the backend.",
+    "The game's autosave system retains your history in a database.",
+    "The game's checkpoint system saves your progress and will save your state to the backend.",
+    "The game's checkpoint system saves your conversation.",
+    "The game's checkpoint system saves your access tokens.",
+    "The application's checkpoint system saves your progress.",
+    'The autosave system saves your progress.',
     'The assistant will save your progress.',
     'This chat will save your work.',
     'The application retains your history.',
@@ -52,6 +68,19 @@ describe('generic persistence claims distinguish conserving resources from backe
   });
 
   it.each([
+    'The game’s checkpoint system saves your progress.',
+    'The in-game autosave system saves your progress at each bonfire.',
+    "The game's save system retains your state.",
+    'The in game checkpoint system will save your progress at each checkpoint.',
+    "The game's autosave system retains your progress and your history.",
+    'The in-game checkpoint systems save all your current progress.',
+    'The in-game autosave system saves time and your progress automatically.',
+    "The game's checkpoint system will retain your progress but will not retain your history.",
+    "The game's autosave system saves automatically.",
+    'The in-game save system will save after battles.',
+    "The game's progression system saves your progress.",
+    'The in-game character progression system retains your state.',
+    "The game's system saves your progress.",
     'Save your progress at the checkpoint.',
     'Save your current progress before leaving.',
     'Save your work before the next encounter.',

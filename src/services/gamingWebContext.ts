@@ -1,6 +1,6 @@
 import { splitGamingDocumentIntoChunks as splitIntoChunks } from "@services/gamingDocumentChunks.js";
 import { createHash } from "node:crypto";
-import { GAMEPLAY_CONTENT_PATTERN, filterGamingDocumentInstructions, isGamingCatalogMetadataOnly } from "@services/gamingDocumentExtraction.js";
+import { GAMEPLAY_CONTENT_PATTERN, GAMING_MARKDOWN_ROLE_HEADING_PATTERN, filterGamingDocumentInstructions, isGamingCatalogMetadataOnly } from "@services/gamingDocumentExtraction.js";
 import type { GamingPlayerContext } from '@shared/gaming/gamingPlayerContext.js';
 import type { GamingStoredKnowledgeContext } from '@shared/gaming/gamingStoredEvidenceCore.js';
 import type { GamingEvidenceUnit } from '@shared/gaming/gamingEvidenceUnits.js';
@@ -2019,7 +2019,7 @@ async function fetchGamingRagDocument(
 const NAVIGATION_JUNK_PATTERN = /\b(?:advertisement|cookie settings?|privacy policy|terms of use|sign in|log in|subscribe|newsletter|menu|navigation|footer|share this|edit source|page information|table of contents|all rights reserved|fandom apps|explore properties|category directory|wiki category)\b/i;
 const NAVIGATION_LABEL_PATTERN = /\b(?:home|menu|games?|news|guides?|builds?|weapons?|armor|talismans?|skills?|bosses?|locations?|quests?|walkthrough|classes?|community|forums?|wiki|categories|view all|go back|read next|follow us|related games?|popular games)\b/gi;
 const NAVIGATION_JUNK_MATCH_PATTERN = /\b(?:advertisement|cookie settings?|privacy policy|terms of use|sign in|log in|subscribe|newsletter|menu|navigation|footer|share this|edit source|page information|table of contents|all rights reserved|category directory|wiki category)\b/gi;
-const SOURCE_INSTRUCTION_DELIMITER_PATTERN = /(?:\[(?:system|developer|assistant|instructions?)\]|<(?:system|developer|assistant)>|#{1,6}\s*(?:system|developer|assistant|instructions?)\b)/gi;
+const SOURCE_INSTRUCTION_DELIMITER_PATTERN = new RegExp(String.raw`(?:\[(?:system|developer|assistant|instructions?)\]|<(?:system|developer|assistant)>|${GAMING_MARKDOWN_ROLE_HEADING_PATTERN.source})`, 'gim');
 const MODE_CONTENT_TERMS: Record<GamingMode, readonly string[]> = {
   guide: ["route", "walkthrough", "boss", "location", "beginner", "quest", "tutorial", "progress", "objective", "exploration", "mission", "mechanic"],
   build: ["build", "stats", "weapon", "armor", "skill", "rotation", "talent", "gear", "loadout", "ability", "attribute", "module"],
