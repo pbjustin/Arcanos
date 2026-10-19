@@ -2155,10 +2155,13 @@ export function scoreGamingSnippetQuality(
   const malformedPenalty = malformedTextPenalty(normalized);
   // Normalization and link furniture are not instructions. Reuse the acquisition
   // classifier for prose while retaining explicit role delimiters as a separate signal.
-  const instructionText = normalizeUntrustedEvidenceText(text.replace(/\[LINKS\]/gi, " "));
+  // Retain invisible boundaries for the scanner's compact view before comparing
+  // its output with the ordinary display normalization.
+  const rawInstructionText = text.replace(/\[LINKS\]/gi, " ");
+  const instructionText = normalizeUntrustedEvidenceText(rawInstructionText);
   const instructionPenalty = clampScore(Math.max(
     countPatternMatches(instructionText, SOURCE_INSTRUCTION_DELIMITER_PATTERN) * 0.45,
-    filterGamingDocumentInstructions(instructionText) !== instructionText ? 0.45 : 0
+    filterGamingDocumentInstructions(rawInstructionText) !== instructionText ? 0.45 : 0
   ));
   const labelsPenalty = labelDumpDensity(text);
   const modeSignal = params.mode && MODE_CONTENT_TERMS[params.mode].some((term) => normalized.toLowerCase().includes(term)) ? 0.08 : 0;

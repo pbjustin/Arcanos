@@ -145,8 +145,30 @@ const PERSISTENCE_SAVE_CONTEXT_PATTERN =
   /\b(memory|data|details|preferences|settings|accounts?|profiles?|sessions?|conversations?|transcripts?|files?|documents?|records?|notes?|answers?|results?|credentials?|secrets?|passwords?|storage|disk|logs?)\b/i;
 const PERSISTENCE_CREDENTIAL_TOKEN_PATTERN =
   /\b(?:access|auth|authentication|authorization|bearer|refresh|api|security|secret|session)\s+tokens?\b/i;
-const SYSTEM_OWNED_SAVE_PATTERN =
-  /\b(?:chats?|conversations?|sessions?|assistants?|systems?|applications?|apps?|services?|servers?|browsers?|clients?|software|agents?|bots?)\s+(?:(?:[a-z-]+ly|now|also|still|always)\s+){0,4}(?:(?:will|shall|can|could|may|might|must|would|should|(?:is|are)\s+going\s+to)\s+(?:(?:[a-z-]+ly|now|also|still|always|never|not|only|again)\s+){0,6}(?:(?:be\s+(?:able|going)|fail)\s+to\s+(?:(?:[a-z-]+ly|now|also|still|always|never|not|only|again)\s+){0,4})?)?saves?\b/gi;
+const SYSTEM_OWNED_SAVE_ACTOR_PATTERN =
+  /\b(?:chats?|conversations?|sessions?|assistants?|systems?|applications?|apps?|services?|servers?|browsers?|clients?|software|agents?|bots?)\s+/gi;
+const SYSTEM_SAVE_MODIFIERS = String.raw`(?:(?:[a-z-]+ly|now|also|still|always|never|not|only|again)\s+){0,4}`;
+const SYSTEM_SAVE_TO = SYSTEM_SAVE_MODIFIERS + String.raw`to\s+` + SYSTEM_SAVE_MODIFIERS;
+const SYSTEM_SAVE_STATE = String.raw`(?:able|going|configured|set|ready|guaranteed|scheduled|expected)`;
+// Only directly governed persistence predicates establish software ownership.
+// Mediated help such as "promises to help you save" is outside this grammar.
+const SYSTEM_SAVE_GOVERNOR = String.raw`(?:`
+  + String.raw`(?:promises?|agrees?|undertakes?|plans?|intends?|commits?|remembers?|makes?\s+sure)\s+` + SYSTEM_SAVE_TO
+  + String.raw`|(?:has|have)\s+` + SYSTEM_SAVE_MODIFIERS
+  + String.raw`(?:(?:promised|agreed|undertaken|planned|intended|committed)\s+|been\s+` + SYSTEM_SAVE_MODIFIERS + SYSTEM_SAVE_STATE + String.raw`\s+)` + SYSTEM_SAVE_TO
+  + String.raw`|(?:is|are)\s+` + SYSTEM_SAVE_MODIFIERS + SYSTEM_SAVE_STATE + String.raw`\s+` + SYSTEM_SAVE_TO + ')';
+const SYSTEM_OWNED_SAVE_PATTERN = new RegExp(
+  '^' + SYSTEM_SAVE_MODIFIERS + '(?:'
+  + String.raw`(?:will|shall|can|could|may|might|must|would|should|(?:is|are)\s+going\s+to)\s+` + SYSTEM_SAVE_MODIFIERS
+  + '(?:' + SYSTEM_SAVE_GOVERNOR + String.raw`|be\s+` + SYSTEM_SAVE_MODIFIERS + SYSTEM_SAVE_STATE + String.raw`\s+` + SYSTEM_SAVE_TO + String.raw`|fail\s+` + SYSTEM_SAVE_TO + ')?'
+  + '|' + SYSTEM_SAVE_GOVERNOR + ')?' + SYSTEM_SAVE_MODIFIERS + String.raw`(?:saves?|retains?)\b`, 'i'
+);
+const SYSTEM_SAVE_BARE_CONTINUATION_PATTERN = new RegExp('^' + SYSTEM_SAVE_MODIFIERS + String.raw`(?:save|retain)\b`, 'i');
+const PERSISTENCE_NEGATED_PREDICATE_PATTERN =
+  /\b(?:not|never|cannot|can['’]t|won['’]t|don['’]t|unable\s+to)\s+(?!(?:(?:[a-z-]+ly|also|now|still)\s+){0,4}(?:only|fail)\b)/i;
+const DIRECT_SAVE_DENIAL_PATTERN = new RegExp(
+  String.raw`\b(?:not|never|cannot|can['’]t|won['’]t|don['’]t|unable\s+to)\s+` + SYSTEM_SAVE_MODIFIERS + String.raw`save$`, 'i'
+);
 const LIMITATION_LANGUAGE_PATTERN =
   /\b(can(?:not|'t)|unable to|do not have|don't have|haven't|have not|cannot confirm|can't confirm|cannot verify|can't verify|without live|without browsing|unverified|unconfirmed|inferred|unavailable)\b/i;
 const STATIC_SCOPE_LIMITATION_PATTERN =
@@ -665,40 +687,96 @@ function requestTargetsCurrentExternalState(text: string): boolean {
  * own predicate and complement must imply storage: "this chat can save
  * you time" or "will explain how to save" does not establish retention. */
 function impliesSystemOwnedSaveClaim(text: string): boolean {
-  return [...text.matchAll(SYSTEM_OWNED_SAVE_PATTERN)].some(match => {
-    // A denial of retention is already a limitation. "Not only save" remains
-    // affirmative, as does a negation of another verb such as "never fail to".
-    if (/\b(?:not|never)\s+(?:(?!only\b)[a-z-]+ly\s+){0,4}saves?\b/i.test(match[0])) return false;
-    const remainder = text.slice(match.index + match[0].length);
-    const complement = remainder.split(/[.!?;:]/, 1)[0].trim();
-    const hasFollowingClause = /[.!?;:]\s*\S/.test(remainder.trim());
-    // Fully consumed denials are not retention claims. A coordinated object or
-    // later affirmative clause does not qualify for this narrow denial form.
-    if (!hasFollowingClause && /^(?:nothing|no\s+[a-z]+)(?:\s+at all)?$/i.test(complement)) return false;
-    // Saving someone time is conservation even when a conditional mentions
-    // files. An additional retention verb or coordinated storage object keeps
-    // the ordinary evidence gate (for example, "time while storing data").
-    if (!hasFollowingClause && /^(?:(?:you|us|them|me)\s+)?time(?:\s+(?:when|while)\s+.+)?$/i.test(complement)
-      && !/\b(?:sav(?:e[sd]?|ing)|stor(?:e[sd]?|ing)|persist(?:s|ed|ing)?|retain(?:s|ed|ing)?|writ(?:e[sd]?|ing)|wrote|record(?:s|ed|ing)?|log(?:s|ged|ging)?|remember(?:s|ed|ing)?|keep(?:s|ing)?|kept)\b/i.test(complement)) return false;
-    return PERSISTENCE_SAVE_CONTEXT_PATTERN.test(complement)
-      || PERSISTENCE_CREDENTIAL_TOKEN_PATTERN.test(complement)
-      || /^(?:(?:a|an|the|this|that|your|our)\s+)?(?:copy|copies|snapshots?|backups?|drafts?|chats?)\b/i.test(complement)
-      || /^(?:(?:[a-z-]+ly|now|again|forever)\b\s*){0,4}(?:$|(?:before|after|when|whenever|for|and|but)\b|(?:on its own|by itself|by default)\b)/i.test(complement);
+  // Parse scope boundaries once. Re-splitting the whole remaining text for every
+  // harmless actor word would turn long prose into quadratic work.
+  const lastFollowingClause = [...text.matchAll(/[.!?;:]\s*\S/g)].at(-1)?.index ?? -1;
+  let scopeStart = 0;
+  return text.split(/[.!?;:\n]/).some(scope => {
+    const hasFollowingClause = lastFollowingClause >= scopeStart;
+    scopeStart += scope.length + 1;
+    const clauses: Array<{ text: string; start: number }> = [];
+    let clauseStart = 0;
+    for (const boundary of scope.matchAll(/\s+(?:and|but|yet)\s+/gi)) {
+      clauses.push({ text: scope.slice(clauseStart, boundary.index), start: clauseStart });
+      clauseStart = boundary.index + boundary[0].length;
+    }
+    clauses.push({ text: scope.slice(clauseStart), start: clauseStart });
+    let actorClauseIndex = 0;
+    return [...scope.matchAll(SYSTEM_OWNED_SAVE_ACTOR_PATTERN)].some(actor => {
+      while (actorClauseIndex + 1 < clauses.length && clauses[actorClauseIndex + 1].start <= actor.index) actorClauseIndex += 1;
+      const actorClause = clauses[actorClauseIndex].text.slice(actor.index + actor[0].length - clauses[actorClauseIndex].start);
+      const directlyGoverned = SYSTEM_OWNED_SAVE_PATTERN.test(actorClause);
+      for (let index = actorClauseIndex; index < clauses.length; index += 1) {
+        const clause = index === actorClauseIndex ? actorClause : clauses[index].text;
+        const match = SYSTEM_OWNED_SAVE_PATTERN.exec(clause);
+        // A directly coordinated predicate inherits this software actor. A new
+        // subject or mediated clause ends that inheritance; never search inside it.
+        if (!match) {
+          if (index > actorClauseIndex) break;
+          continue;
+        }
+        // "Recommends players rest and save" coordinates reader advice; a modal
+        // continuation such as "but will save" explicitly resumes the actor.
+        if (!directlyGoverned && SYSTEM_SAVE_BARE_CONTINUATION_PATTERN.test(match[0])) continue;
+        let complement = clause.slice(match[0].length).replace(/,\s*$/, '').trim();
+        // Keep coordinated objects together ("time and your data"), while a new
+        // governed predicate gets its own complement and negation scope.
+        for (let next = index + 1; next < clauses.length && !SYSTEM_OWNED_SAVE_PATTERN.test(clauses[next].text); next += 1) {
+          complement += ' and ' + clauses[next].text;
+        }
+        // A denial of retention is already a limitation. "Not only save" remains
+        // affirmative, as does a negation of another verb such as "never fail to".
+        if (PERSISTENCE_NEGATED_PREDICATE_PATTERN.test(match[0])) continue;
+        // Fully consumed denials are not retention claims. A coordinated object or
+        // later affirmative clause does not qualify for this narrow denial form.
+        if (!hasFollowingClause && /^(?:nothing|no\s+[a-z]+)(?:\s+at all)?$/i.test(complement)) continue;
+        // Saving someone time is conservation even when a conditional mentions
+        // files. An additional retention verb or coordinated storage object keeps
+        // the ordinary evidence gate (for example, "time while storing data").
+        if (!hasFollowingClause && /^(?:(?:you|us|them|me)\s+)?time(?:\s+(?:when|while)\s+.+)?$/i.test(complement)
+          && !/\b(?:sav(?:e[sd]?|ing)|stor(?:e[sd]?|ing)|persist(?:s|ed|ing)?|retain(?:s|ed|ing)?|writ(?:e[sd]?|ing)|wrote|record(?:s|ed|ing)?|log(?:s|ged|ging)?|remember(?:s|ed|ing)?|keep(?:s|ing)?|kept)\b/i.test(complement)) continue;
+        if (PERSISTENCE_SAVE_CONTEXT_PATTERN.test(complement)
+          || PERSISTENCE_CREDENTIAL_TOKEN_PATTERN.test(complement)
+          || /^(?:(?:a|an|the|this|that|your|our)\s+)?(?:copy|copies|snapshots?|backups?|drafts?|chats?)\b/i.test(complement)
+          || /^(?:(?:[a-z-]+ly|now|again|forever)\b\s*){0,4}(?:$|(?:before|after|when|whenever|for|and|but)\b|(?:on its own|by itself|by default)\b)/i.test(complement)) return true;
+      }
+      return false;
+    });
   });
 }
 
 /** Keep commitment forms broad, including "I plan to save", but evaluate each
  * subject separately so advice cannot conceal a later assistant promise. */
 function impliesFirstPersonSaveClaim(text: string): boolean {
-  const claims = text.matchAll(/\b(?:i|we)(?:['’](?:ll|d)|\b)(?:(?!\b(?:i|we|you|they|he|she|it)\b)[^.!?;:]){0,160}?\bsave\b/gi);
-  return [...claims].some(([claim]) => {
+  const claims = [...text.matchAll(/\b(?:i|we)(?:['’](?:ll|d)|\b)(?:(?!\b(?:i|we|you|they|he|she|it)\b)[^.!?;:]){0,160}?\bsave\b/gi)];
+  return claims.some((match, index) => {
+    const claim = match[0];
     // Direct counterfactual resource advice and recommendations do not assert
     // an executed or promised action. Storage context is checked separately.
     const counterfactual = /^(?:i|we)(?:['’]d|\s+would)\s+(?:(?:[a-z-]+ly|also|now|just|then)\s+){0,3}save$/i.test(claim);
     // Require a directly governed recipient/infinitive. "I recommend a plan
     // and save a copy" still asserts a second assistant-owned action.
     const recommendation = /^(?:i|we)\s+(?:(?:[a-z-]+ly|also|now|just|then)\s+){0,3}(?:recommend|suggest|advise)\s+(?:(?!(?:and|but|then)\b)[a-z'-]+\s+){1,12}save$/i.test(claim);
-    return !counterfactual && !recommendation;
+    const predicate = claim.replace(/^(?:i|we)(?:['’](?:ll|d)|\b)\s*/i, '');
+    const governed = SYSTEM_OWNED_SAVE_PATTERN.exec(predicate);
+    // Negation must govern save or a recognized commitment directly. Negating
+    // an unrelated verb ("will not forget to save") still promises the action.
+    const denial = DIRECT_SAVE_DENIAL_PATTERN.exec(claim)?.[0]
+      ?? (governed?.[0] === predicate ? predicate : undefined);
+    const negated = denial !== undefined && PERSISTENCE_NEGATED_PREDICATE_PATTERN.test(denial);
+    if (!counterfactual && !recommendation && !negated) return true;
+    // An exempt recommendation/denial does not discharge a later commitment
+    // with the same subject. Bare coordinated verbs can still describe advice.
+    // Each new first-person claim owns its continuation; bound this scan to it
+    // instead of repeatedly walking the full suffix of a long recommendation.
+    const remainder = text.slice(match.index + claim.length, claims[index + 1]?.index ?? text.length).split(/[.!?;:\n]/, 1)[0];
+    for (const clause of remainder.split(/\s+(?:and|but|yet)\s+/i).slice(1)) {
+      const continuation = SYSTEM_OWNED_SAVE_PATTERN.exec(clause);
+      if (!continuation) break;
+      if (!SYSTEM_SAVE_BARE_CONTINUATION_PATTERN.test(continuation[0])
+        && !PERSISTENCE_NEGATED_PREDICATE_PATTERN.test(continuation[0])) return true;
+    }
+    return false;
   });
 }
 
@@ -708,7 +786,16 @@ function impliesPersistenceActionClaim(text: string): boolean {
   if (/\b(saved|persisted|persist|wrote|write|stored|store|updated|update|inserted|insert)\b/i.test(text)) return true;
   if (impliesSystemOwnedSaveClaim(text)) return true;
   if (!/\bsave\b/i.test(text)) return false;
-  return PERSISTENCE_SAVE_CONTEXT_PATTERN.test(text) || PERSISTENCE_CREDENTIAL_TOKEN_PATTERN.test(text)
+  // A denied/mediated clause cannot lend its storage nouns to a separate save
+  // instruction. Keep coordinated objects intact ("save time and your data").
+  const saveClauses = text.split(/[.!?;:\n]|\s+(?:and|but|yet)\s+(?=(?:i|we|you|they|he|she|it|will|shall|can|could|may|might|must|would|should|save)\b)/i);
+  const hasStorageSaveClause = saveClauses.some(clause => {
+    const saves = clause.match(/\bsave\b/gi);
+    if (!saves) return false;
+    if (saves.length === 1 && /\b(?:not|never)\s+(?:(?!only\b)[a-z-]+ly\s+){0,4}save\b/i.test(clause)) return false;
+    return PERSISTENCE_SAVE_CONTEXT_PATTERN.test(clause) || PERSISTENCE_CREDENTIAL_TOKEN_PATTERN.test(clause);
+  });
+  return hasStorageSaveClause
     || impliesFirstPersonSaveClaim(text)
     || /\bsave\s+(?:it|this|that|these|those|everything|anything)\b/i.test(text)
     // Only an isolated "save" is ambiguous; a sentence ending in it can be
@@ -1894,7 +1981,8 @@ export function enforceFinalStageHonesty(
     const qualifiedCurrentStateLimitation = isQualifiedCurrentStateLimitation(line);
     const allowsProvidedDataVerification = allowsProvidedDataVerificationClaim(line, capabilityFlags);
     const impliesBackendAction = (BACKEND_ACTION_PATTERN.test(line) && BACKEND_ACTION_CONTEXT_PATTERN.test(line))
-      || impliesSystemOwnedSaveClaim(line);
+      || impliesSystemOwnedSaveClaim(line)
+      || impliesFirstPersonSaveClaim(line);
 
     //audit Assumption: in PROMPT_GENERATION, imperative downstream steps like "Verify the API" are not claims that this backend verified anything; failure risk: the general overclaim guard strips the generated prompt itself; expected invariant: only first-person/completed backend self-claims remain subject to claim blocking; handling strategy: allow non-self-claim prompt instructions through this guard.
     if (promptGeneration && !isUnsupportedPromptGenerationSelfClaim(line)) {

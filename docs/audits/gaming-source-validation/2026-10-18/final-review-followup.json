@@ -1,0 +1,63 @@
+{
+  "kind": "pr1558-final-review-followup-prepublication-evidence",
+  "reviewedParentHead": "a895a8ba65401fdef44daedbeaf5bdbf4f7dc722",
+  "baseSha": "0e7a8e607e3f2f3359dc86eabcf611d8dd3fe6b2",
+  "review": "https://github.com/pbjustin/Arcanos/pull/1558#pullrequestreview-5567236960",
+  "status": "Focused repairs verified; final exact-head broad validation, fresh review and hosted acceptance require separately published PR evidence",
+  "runtimeDefectClassesRepaired": 4,
+  "addedRegressionCases": 36,
+  "repairs": [
+    {
+      "area": "Inherited first-person commitment after advice",
+      "reviewComment": 4310560858,
+      "reproduction": "An exempt recommendation could conceal a coordinated will-save commitment without a repeated first-person subject",
+      "change": "Continue narrow ownership classification through finite coordinated commitments while preserving reader advice and denials"
+    },
+    {
+      "area": "First enforcement stage consistency",
+      "reviewComment": 4310560861,
+      "reproduction": "The first stage retained unsupported first-person save commitments that the later stage rejected",
+      "change": "Use the shared first-person ownership predicate alongside software ownership; retain player write/store instructions rather than applying the broader storage-word heuristic to that stage",
+      "combinedTrinityAddedCases": 19,
+      "combinedTrinityFocusedPassedTests": 337,
+      "negationAndScalingControls": "Do not treat not-forget as denial of save; retain complete late commitments after 8000 recommendations without repeated full-tail scanning or a new timing assertion"
+    },
+    {
+      "area": "Structured-resource raw instruction visibility",
+      "reviewComment": 4310560866,
+      "reproduction": "Eight URL-payload and embedded-state negatives were accepted after normalization erased controls, role-line boundaries or literal link-marker separation",
+      "change": "Pass raw consumed fields with literal link furniture removed to the shared scanner; normalize only the comparison baseline",
+      "addedCases": 14,
+      "focusedSuites": 3,
+      "focusedPassedTests": 164
+    },
+    {
+      "area": "Snippet quality instruction penalty consistency",
+      "reproduction": "The scorer assigned no instruction penalty to split directives or obfuscated role markers after early control normalization",
+      "change": "Preserve raw scanner visibility before quality classification",
+      "addedCases": 3,
+      "focusedPassedTests": 121,
+      "scopeCaveat": "The existing whole-source acquisition guard rejected these samples; no acquisition bypass was established for the scorer alone"
+    }
+  ],
+  "previousReviewFinding": {
+    "reviewComment": 4310560852,
+    "coveredBy": "concurrent-bot-review-followup.json"
+  },
+  "existingTestStrengthened": "One older structured-skill integration case now requires whole-source rejection, zero accepted sources/chunks/citations and no raw instruction output",
+  "firstPersonScalingEvidence": {
+    "fixture": "8000 repeated recommendations with complete input retained",
+    "uncommittedRepairBeforeOptimizationRangeMs": [1092, 1333],
+    "optimizedThreeSampleRangeMs": [3.87, 10.42],
+    "change": "Bound each continuation to the next precomputed first-person claim instead of repeatedly scanning the full remaining text",
+    "newWallClockAssertions": 0
+  },
+  "countCaveat": "Focused selections overlap with earlier receipts and are not additive full-suite coverage",
+  "safety": {
+    "thresholdChanges": "NONE",
+    "privatePluginChanges": "NONE",
+    "storageConsentPolicyChanges": "NONE",
+    "externalModelCalls": "MOCKED_OR_DISABLED",
+    "productionChanges": "NONE"
+  }
+}

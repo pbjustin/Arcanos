@@ -1,4 +1,5 @@
 import { filterGamingDocumentInstructions } from "@services/gamingDocumentExtraction.js";
+import { normalizeGamingDocumentInstructionCharacters } from "@shared/gaming/gamingDocumentTextNormalization.js";
 import { createHash } from "node:crypto";
 import { gunzipSync, inflateRawSync, inflateSync } from "node:zlib";
 import { load } from "cheerio";
@@ -134,11 +135,11 @@ function ownEntries(value: PlainRecord): Array<[string, unknown]> {
 /** Classify the complete bounded field before truncation or formatting can hide source instructions. */
 function hasBuildSourceInstructions(value: unknown): boolean {
   if (typeof value !== "string") return false;
-  const normalized = value.normalize("NFKC")
-    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/gu, " ")
-    .replace(/\[LINKS\]/gi, " ")
-    .replace(/\s+/gu, " ").trim();
-  return filterGamingDocumentInstructions(normalized) !== normalized;
+  // Keep every field character and line boundary visible to both inspection
+  // views. A links marker must not suppress the remainder of a consumed field.
+  const withoutLinks = value.replace(/\[LINKS\]/gi, " ");
+  const normalized = normalizeGamingDocumentInstructionCharacters(withoutLinks).replace(/\s+/gu, " ").trim();
+  return filterGamingDocumentInstructions(withoutLinks) !== normalized;
 }
 
 function safeString(value: unknown, maxChars: number = LIMITS.maxStringLength): string | undefined {

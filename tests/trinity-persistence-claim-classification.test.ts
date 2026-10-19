@@ -19,6 +19,99 @@ function review(text: string, preservePresentation = true) {
 
 describe('generic persistence claims distinguish conserving resources from backend actions', () => {
   it.each([
+    'I plan to save.',
+    'We intend to save a snapshot.',
+    'I promise to save a backup.',
+    'I recommend players save and will save a backup.',
+    'We suggest travelers save, but will also save a snapshot.',
+    "I'd save supplies and will save a backup.",
+    'I recommend players save and will not only save a backup.',
+    'I recommend players save and will not save, but will save a backup.',
+    'I will not forget to save.',
+    'I never forget to save.'
+  ])('blocks direct and inherited first-person commitments independently in both stages: %s', text => {
+    const reasoningHonesty = createDefaultTrinityReasoningHonesty();
+    const first = enforceFinalStageHonesty(text, reasoningHonesty, capabilityFlags, 'EXECUTE_TASK', true);
+    expect(first.blocked).toBe(true);
+    expect(first.text).not.toBe(text);
+    for (const preservePresentation of [true, false]) {
+      const final = enforceFinalStageHonestyAndMinimalism({
+        text, userPrompt: prompt, capabilityFlags, reasoningHonesty,
+        outputControls: deriveTrinityOutputControls(prompt, {}), preservePresentation
+      });
+      expect(final.blockedOrRewrittenClaims.length).toBeGreaterThan(0);
+      expect(final.text).not.toBe(text);
+    }
+  });
+
+  it.each([
+    'I recommend players save and rest.',
+    'I recommend players save and you can save tokens.',
+    'I recommend players save and will not save.',
+    'I will not save.',
+    'I never save.'
+  ])('preserves first-person advice and denials in both stages: %s', text => {
+    const reasoningHonesty = createDefaultTrinityReasoningHonesty();
+    const first = enforceFinalStageHonesty(text, reasoningHonesty, capabilityFlags, 'EXECUTE_TASK', true);
+    expect(first.blocked).toBe(false);
+    expect(first.text).toBe(text);
+    for (const preservePresentation of [true, false]) {
+      const final = enforceFinalStageHonestyAndMinimalism({
+        text, userPrompt: prompt, capabilityFlags, reasoningHonesty,
+        outputControls: deriveTrinityOutputControls(prompt, {}), preservePresentation
+      });
+      expect(final.blockedOrRewrittenClaims).toEqual([]);
+      expect(final.text).toBe(text);
+    }
+  });
+
+  it.each(['Write down the clue before exploring.', 'Store supplies near the checkpoint.'])(
+    'does not broaden first-stage persistence detection to ordinary player instructions: %s', text => {
+      const first = enforceFinalStageHonesty(text, createDefaultTrinityReasoningHonesty(), capabilityFlags, 'EXECUTE_TASK', true);
+      expect(first.blocked).toBe(false);
+      expect(first.text).toBe(text);
+    }
+  );
+
+  it.each([
+    { tail: 'and rest.', blocked: false },
+    { tail: 'and will save a backup.', blocked: true }
+  ])('inspects the complete tail after repeated first-person advice: $tail', ({ tail, blocked }) => {
+    const text = `${'I recommend players save '.repeat(8_000)}${tail}`;
+    const reasoningHonesty = createDefaultTrinityReasoningHonesty();
+    const first = enforceFinalStageHonesty(text, reasoningHonesty, capabilityFlags, 'EXECUTE_TASK', true);
+    expect(first.blocked).toBe(blocked);
+    expect(first.text === text).toBe(!blocked);
+    for (const preservePresentation of [true, false]) {
+      const final = enforceFinalStageHonestyAndMinimalism({
+        text, userPrompt: prompt, capabilityFlags, reasoningHonesty,
+        outputControls: deriveTrinityOutputControls(prompt, {}), preservePresentation
+      });
+      expect(final.blockedOrRewrittenClaims.length > 0).toBe(blocked);
+      expect(final.text === text).toBe(!blocked);
+    }
+  });
+
+  it.each([
+    { tail: 'The application can retain heat.', blocked: false },
+    { tail: 'This chat will retain your notes.', blocked: true }
+  ])('inspects the complete tail after a long harmless actor prefix: $tail', ({ tail, blocked }) => {
+    const text = `${'chat '.repeat(8_000)}${tail}`;
+    const reasoningHonesty = createDefaultTrinityReasoningHonesty();
+    const first = enforceFinalStageHonesty(text, reasoningHonesty, capabilityFlags, 'EXECUTE_TASK', true);
+    expect(first.blocked).toBe(blocked);
+    expect(first.text === text).toBe(!blocked);
+    for (const preservePresentation of [true, false]) {
+      const final = enforceFinalStageHonestyAndMinimalism({
+        text, userPrompt: prompt, capabilityFlags, reasoningHonesty,
+        outputControls: deriveTrinityOutputControls(prompt, {}), preservePresentation
+      });
+      expect(final.blockedOrRewrittenClaims.length > 0).toBe(blocked);
+      expect(final.text === text).toBe(!blocked);
+    }
+  });
+
+  it.each([
     "I'd save the Elixir for the final boss.",
     'I would save supplies for the return journey.',
     "We'd save tokens for the next activity.",
@@ -83,6 +176,88 @@ describe('generic persistence claims distinguish conserving resources from backe
       expect(final.text).not.toBe(text);
     }
     expect(review(text).final.text).not.toBe(text);
+  });
+
+  it.each([
+    'The assistant promises to save.',
+    'The assistant has agreed to save.',
+    'The assistant is ready to save.',
+    'This chat has been configured to save.',
+    'The application is configured to save.',
+    'The application is set to save.',
+    'This chat will remember to save.',
+    'This chat is guaranteed to save.',
+    'The assistant undertakes to save.',
+    'The application plans to save.',
+    'The application intends to save.',
+    'The assistant has committed to save.',
+    'This chat is scheduled to save.',
+    'This chat will make sure to save.',
+    'This chat will retain your notes.',
+    'The application retains your preferences.',
+    'This conversation can retain data automatically.',
+    'This chat retains automatically.',
+    'The assistant will promise to save.',
+    'This chat may have agreed to save.',
+    'The application will be configured to retain your notes.',
+    'The assistant promises to always save.',
+    'The application is configured to automatically save.',
+    'This chat will not retain your notes but will retain your preferences.',
+    'This chat will not save your notes but will save your preferences.',
+    'This chat will retain no data but will retain your preferences.',
+    'The assistant promises to help you save, but will save your notes.',
+    'I recommend players save. The assistant promises to save.',
+    'Use the checkpoint to save. This chat will retain your notes.'
+  ])('blocks unsupported software-owned commitments and retention in both stages: %s', text => {
+    const reasoningHonesty = createDefaultTrinityReasoningHonesty();
+    const first = enforceFinalStageHonesty(text, reasoningHonesty, capabilityFlags, 'EXECUTE_TASK', true);
+    expect(first.blocked).toBe(true);
+    expect(first.text).not.toBe(text);
+    for (const preservePresentation of [true, false]) {
+      const final = enforceFinalStageHonestyAndMinimalism({
+        text, userPrompt: prompt, capabilityFlags, reasoningHonesty,
+        outputControls: deriveTrinityOutputControls(prompt, {}), preservePresentation
+      });
+      expect(final.blockedOrRewrittenClaims.length).toBeGreaterThan(0);
+      expect(final.text).not.toBe(text);
+    }
+  });
+
+  it.each([
+    'This chat has been configured to explain how to save.',
+    'The assistant promises to help you save.',
+    'The application is configured to save you time.',
+    'This chat will retain no data.',
+    'This chat will not retain your notes.',
+    'The application can retain heat.',
+    'This chat will not retain your notes but will not retain your preferences.',
+    'This chat will not retain your notes but will explain how to save.',
+    'This chat will not retain your notes but you can retain your notes.',
+    'This chat will not save your notes but will save you time.',
+    'This chat will not retain your notes but will retain heat.',
+    'This chat will retain no data but will retain heat.',
+    'The assistant will never promise to save.',
+    'The assistant promises not to save.',
+    'The application is not configured to retain your notes.',
+    'The assistant promises to help you save, but you can retain your notes.',
+    'The assistant recommends players conserve supplies and save.',
+    'The application reminds you to heal and save.',
+    'The assistant suggests players rest and save.',
+    'The assistant suggests players rest and automatically save.',
+    'The assistant recommends players retain tokens for the final stage.'
+  ])('preserves mediated advice, resource retention and denials in both stages: %s', text => {
+    const reasoningHonesty = createDefaultTrinityReasoningHonesty();
+    const first = enforceFinalStageHonesty(text, reasoningHonesty, capabilityFlags, 'EXECUTE_TASK', true);
+    expect(first.blocked).toBe(false);
+    expect(first.text).toBe(text);
+    for (const preservePresentation of [true, false]) {
+      const final = enforceFinalStageHonestyAndMinimalism({
+        text, userPrompt: prompt, capabilityFlags, reasoningHonesty,
+        outputControls: deriveTrinityOutputControls(prompt, {}), preservePresentation
+      });
+      expect(final.blockedOrRewrittenClaims).toEqual([]);
+      expect(final.text).toBe(text);
+    }
   });
 
   it.each([
@@ -169,6 +344,7 @@ describe('generic persistence claims distinguish conserving resources from backe
     'I inserted the preferences.',
     'Save stamina and I will save your preferences.',
     'Save stamina and persist the result.',
+    'This chat will not retain your notes but you can save your notes to disk.',
     'Save stamina and update the backend record.'
   ])('retains unsupported persistence and mixed-clause controls: %s', text => {
     const { first, final } = review(text);

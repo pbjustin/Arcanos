@@ -1,0 +1,51 @@
+{
+  "kind": "pr1558-concurrent-bot-review-followup-prepublication-evidence",
+  "reviewedParentHead": "a895a8ba65401fdef44daedbeaf5bdbf4f7dc722",
+  "previousValidatedHead": "19573c27b297fa85ccf03568d7b7932b9ee86177",
+  "baseSha": "0e7a8e607e3f2f3359dc86eabcf611d8dd3fe6b2",
+  "status": "Focused repairs verified; final exact-head broad validation, fresh review and hosted acceptance require separately published PR evidence",
+  "runtimeDefectClassesRepaired": 3,
+  "addedRegressionCases": 53,
+  "concurrentBotRegressionCasesRetained": 13,
+  "repairs": [
+    {
+      "area": "Software-owned promises and configured persistence",
+      "reproduction": "The concurrent bot refinement admitted promises and configured-to-save claims that the preceding final-stage fallback rejected",
+      "change": "Recognize directly governed software commitments, including modal and perfect forms, in the shared predicate used by both enforcement stages"
+    },
+    {
+      "area": "Software-owned retention and coordinated denial scope",
+      "reproduction": "Unsupported retain/retains claims escaped both stages; an earlier denial could conceal a later affirmative commitment",
+      "change": "Inspect each governed predicate and its complement while preserving denials, resource retention and mediated reader advice"
+    },
+    {
+      "area": "Storage context leaking between benign clauses",
+      "reproduction": "Exact-parent probes confirmed that denied storage nouns caused unrelated save advice to be rewritten by the final stage",
+      "change": "Associate storage context with its save clause while retaining coordinated storage objects and existing completed-action, first-person and ambiguous-reference gates"
+    }
+  ],
+  "focusedEvidence": {
+    "suites": 3,
+    "passedTests": 318,
+    "independentSemanticProbesPassed": 25,
+    "initialFailingRegressions": 20,
+    "additionalFailingCoordinationRegressions": 11,
+    "countCaveat": "Failure selections and independent probes overlap; they are not additive coverage counts"
+  },
+  "performanceEvidence": {
+    "fixture": "8000 harmless actor words with complete input retained",
+    "uncommittedRepairBeforeOptimizationRangeMs": [252.52, 300.94],
+    "optimizedThreeSampleRangeMs": [1.158, 2.530],
+    "change": "Precompute sentence and clause boundaries once rather than repeatedly splitting the remaining text for each actor",
+    "longPrefixCorrectnessRegressions": 2,
+    "newWallClockAssertions": 0,
+    "caveat": "This bounded helper benchmark is separate from the historical quoted-game-name Windows timing investigation"
+  },
+  "safety": {
+    "thresholdChanges": "NONE",
+    "privatePluginChanges": "NONE",
+    "storageConsentPolicyChanges": "NONE",
+    "externalModelCalls": "MOCKED_OR_DISABLED",
+    "productionChanges": "NONE"
+  }
+}
