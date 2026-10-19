@@ -131,12 +131,24 @@ const SOURCE_UNSCOPED_COMMAND_PATTERN = /\b(?:execute|run)\s+(?:(?:this|the|foll
 // ordinary chat links and game selectors such as @p are not host-file operands.
 const SOURCE_COMMAND_DIRECTIVE_PATTERN = /\b(?:execute|run)\s+(?:(?:this|the|following)\s+){0,2}commands?\b/i;
 const SOURCE_COMMAND_HOST_DATA_PATTERN = /(?:^|[\s"'=<>])(?:@(?=[^\s"']*[./\\])[^\s"']+|[a-z]:[\\/][^\s"']+|\/(?:[^/\s"']+\/)+[^/\s"']+|\/\.[^/\s"']+|(?:~|\.\.?)[\\/][^\s"']+)|\$(?:\{[a-z_]\w*\}|[a-z_]\w*|\()|%[a-z_]\w*%/i;
-const SOURCE_COMMAND_FILE_READ_FLAG_PATTERN = /(?:^|\s)(?:--(?:data(?:-binary)?|source|input-file|upload-file|form)(?:=|\s+)|-[dFT](?:=|\s*))["']?(?:[a-z_][\w.-]*=)?["']?@[^\s"'<>|;&]+/i;
+const SOURCE_COMMAND_FILE_READ_FLAG_PATTERN = /(?:^|\s)(?:--(?:data(?:-binary)?|source|input-file|upload-file|form)(?:=|\s+)|-[dFT](?:=|\s*))["']?(?:[^\s"'=<>|;&]+=)?["']?@[^\s"'<>|;&]+/i;
 // These options take host-file operands directly, including bare filenames;
 // data/form/source options above need separate file-read evidence such as @.
 const SOURCE_COMMAND_INTRINSIC_FILE_FLAG_PATTERN = /(?:^|\s)(?:--(?:input-file|upload-file)(?:=|\s+)|-T(?:=|\s*))["']?[^\s"'<>|;&]+/;
+// A bundle prefix cannot consume an earlier operand-taking d/F/T switch. This
+// keeps suffix inspection linear and preserves digit/punctuation short options.
+const SOURCE_COMMAND_BUNDLED_FILE_FLAG_PATTERN = /(?:^|\s)-[^\s"'=<>|;&@/\\dFT-]+(?:T(?:=|\s*)[^\s"'<>|;&]+|[dF](?:=|\s*)(?:[^\s"'=<>|;&]+=)?@[^\s"'<>|;&]+)/;
 const SOURCE_COMMAND_COMMUNICATION_PATTERN = /^\s+in\s+(?:(?:the|your)\s+)?(?:(?:in[- ]game|game|party|guild)\s+)?chat\s*[:.!?]\s*\/(?:say|tell)\s+/i;
 const SOURCE_COMMAND_CONTINUATION_PATTERN = /\bcommands?\s+in\s+(?:(?:the|your)\s+)?(?:(?:(?:in[- ]game|game|party|guild)\s+)?chat|(?:in[- ]game|game)\s+console)[.!?]$/i;
+
+/** Inspect option identity without letting quoted operand whitespace cross argument boundaries. */
+function sourceCommandFlagText(text: string): string {
+  return text
+    .replace(/\\(.)/g, (_match, character: string) => /\s/.test(character) ? '_' : character)
+    .replace(/"([^"]*)"|'([^']*)'/g, (_match, doubleQuoted: string | undefined, singleQuoted: string | undefined) =>
+      (doubleQuoted ?? singleQuoted ?? '').replace(/[\s<>|;&]/g, '_'))
+    .replace(/["']/g, '');
+}
 
 /** Message targets and quoted chat text are inert; chained shell operations are not. */
 function sourceCommandHasHostData(text: string): boolean {
@@ -152,8 +164,14 @@ function sourceCommandHasHostData(text: string): boolean {
   if (SOURCE_COMMAND_HOST_DATA_PATTERN.test(prefix + payload)) return true;
   const quotedMessage = communication && /\/say\s+$/i.test(communication[0])
     && /^(?:"[^"\\]*"|'[^'\\]*')[.!?]?\s*$/.test(payload);
-  if (!quotedMessage && (SOURCE_COMMAND_FILE_READ_FLAG_PATTERN.test(prefix + payload)
-    || SOURCE_COMMAND_INTRINSIC_FILE_FLAG_PATTERN.test(prefix + payload))) return true;
+  if (!quotedMessage) {
+    // Shell quote fragments do not change option/operand identity. Keep the
+    // original host-data and redirect scans, and only compact quotes for flags.
+    const flagText = sourceCommandFlagText(prefix + payload);
+    if (SOURCE_COMMAND_FILE_READ_FLAG_PATTERN.test(flagText)
+      || SOURCE_COMMAND_INTRINSIC_FILE_FLAG_PATTERN.test(flagText)
+      || SOURCE_COMMAND_BUNDLED_FILE_FLAG_PATTERN.test(flagText)) return true;
+  }
   // Only the exact game target and complete quoted message above are inert.
   // Every external-command redirect retains even extensionless host operands.
   const syntax = quotedMessage ? 'quoted-message' : payload;
