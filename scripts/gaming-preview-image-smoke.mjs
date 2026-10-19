@@ -92,8 +92,11 @@ export async function runGamingImageSmoke({ authorizationFile, buildFile, imageF
         await delay(100);
       }
       requireCondition(ready, 'READINESS_DEADLINE');
+      // The marker precedes the protected gate's multi-line receipt. Retain
+      // the start of the log under the unchanged 1 MiB command output cap;
+      // a last-lines projection can discard the required entrypoint evidence.
       evidence.kernelEntrypointVerified[role] = /GAMING_PREVIEW_KERNEL_NETWORK_BOUNDARY=ENFORCED/u
-        .test(docker(['logs', '--tail', '30', name]));
+        .test(docker(['logs', name]));
       requireCondition(evidence.kernelEntrypointVerified[role], 'KERNEL_ENTRYPOINT_UNVERIFIED');
     }
     let requests = 0;
@@ -129,7 +132,7 @@ export async function runGamingImageSmoke({ authorizationFile, buildFile, imageF
     for (const owner of owned) {
       try {
         const container = JSON.parse(docker(['inspect', '--type', 'container', '--format', '{{json .}}', owner.name]));
-        const logs = docker(['logs', '--tail', '30', owner.name]);
+        const logs = docker(['logs', owner.name]);
         const states = ['created', 'running', 'paused', 'restarting', 'removing', 'exited', 'dead'];
         evidence.startupDiagnostics[owner.role] = {
           state: states.includes(container.State?.Status) ? container.State.Status : 'unknown',

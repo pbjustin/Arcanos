@@ -172,3 +172,20 @@ test('local image smoke retains only bounded startup codes and state before veri
     assert.equal(evidence.cleanup.verifiedAbsent, true);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
+
+test('kernel entrypoint proof retains the initial marker before a long protected-gate receipt under its byte cap', async () => {
+  const f = fixture();
+  try {
+    const receipt = 'mock-protected-gate-receipt-line\n'.repeat(100);
+    const result = await runGamingImageSmoke({ ...f.options, execute: (program, args, options) => {
+      assert.equal(options.maxBuffer, 1024 * 1024);
+      if (args[1] === 'logs') {
+        assert.equal(args.includes('--tail'), false);
+        return `GAMING_PREVIEW_KERNEL_NETWORK_BOUNDARY=ENFORCED\n${receipt}`;
+      }
+      return f.options.execute(program, args, options);
+    } });
+    assert.equal(result.status, 'PASS'); assert.deepEqual(result.kernelEntrypointVerified, { worker: true, web: true });
+    assert.equal(result.cleanup.verifiedAbsent, true);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
