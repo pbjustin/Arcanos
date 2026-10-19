@@ -69,7 +69,7 @@ export function validateWindowsJest(name, summary) {
     || summary.numTotalTestSuites !== selected.length || summary.numPassedTestSuites !== selected.length) {
     errors.push('JEST_COUNTS_MISMATCH');
   }
-  if (name === 'yaml' && assertions.length !== 119) errors.push('YAML_REQUIRED_CASES_MISSING');
+  if (name === 'yaml' && assertions.length !== 123) errors.push('YAML_REQUIRED_CASES_MISSING');
   return errors;
 }
 
