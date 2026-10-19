@@ -132,6 +132,9 @@ const SOURCE_UNSCOPED_COMMAND_PATTERN = /\b(?:execute|run)\s+(?:(?:this|the|foll
 const SOURCE_COMMAND_DIRECTIVE_PATTERN = /\b(?:execute|run)\s+(?:(?:this|the|following)\s+){0,2}commands?\b/i;
 const SOURCE_COMMAND_HOST_DATA_PATTERN = /(?:^|[\s"'=<>])(?:@(?=[^\s"']*[./\\])[^\s"']+|[a-z]:[\\/][^\s"']+|\/(?:[^/\s"']+\/)+[^/\s"']+|\/\.[^/\s"']+|(?:~|\.\.?)[\\/][^\s"']+)|\$(?:\{[a-z_]\w*\}|[a-z_]\w*|\()|%[a-z_]\w*%/i;
 const SOURCE_COMMAND_FILE_READ_FLAG_PATTERN = /(?:^|\s)(?:--(?:data(?:-binary)?|source|input-file|upload-file|form)(?:=|\s+)|-[dFT](?:=|\s*))["']?(?:[a-z_][\w.-]*=)?["']?@[^\s"'<>|;&]+/i;
+// These options take host-file operands directly, including bare filenames;
+// data/form/source options above need separate file-read evidence such as @.
+const SOURCE_COMMAND_INTRINSIC_FILE_FLAG_PATTERN = /(?:^|\s)(?:--(?:input-file|upload-file)(?:=|\s+)|-T(?:=|\s*))["']?[^\s"'<>|;&]+/;
 const SOURCE_COMMAND_COMMUNICATION_PATTERN = /^\s+in\s+(?:(?:the|your)\s+)?(?:(?:in[- ]game|game|party|guild)\s+)?chat\s*[:.!?]\s*\/(?:say|tell)\s+/i;
 const SOURCE_COMMAND_CONTINUATION_PATTERN = /\bcommands?\s+in\s+(?:(?:the|your)\s+)?(?:(?:(?:in[- ]game|game|party|guild)\s+)?chat|(?:in[- ]game|game)\s+console)[.!?]$/i;
 
@@ -149,7 +152,8 @@ function sourceCommandHasHostData(text: string): boolean {
   if (SOURCE_COMMAND_HOST_DATA_PATTERN.test(prefix + payload)) return true;
   const quotedMessage = communication && /\/say\s+$/i.test(communication[0])
     && /^(?:"[^"\\]*"|'[^'\\]*')[.!?]?\s*$/.test(payload);
-  if (!quotedMessage && SOURCE_COMMAND_FILE_READ_FLAG_PATTERN.test(prefix + payload)) return true;
+  if (!quotedMessage && (SOURCE_COMMAND_FILE_READ_FLAG_PATTERN.test(prefix + payload)
+    || SOURCE_COMMAND_INTRINSIC_FILE_FLAG_PATTERN.test(prefix + payload))) return true;
   // Only the exact game target and complete quoted message above are inert.
   // Every external-command redirect retains even extensionless host operands.
   const syntax = quotedMessage ? 'quoted-message' : payload;

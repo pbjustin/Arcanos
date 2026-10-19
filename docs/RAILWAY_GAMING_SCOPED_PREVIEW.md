@@ -83,6 +83,11 @@ remain unverified.
 inventory, scope substitution, disabled activation, failures and bounds.
 [Native verifier tests](../scripts/native-pr-preview-e2e.test.mjs) check the
 included and omitted descriptors and rejection of missing required proofs.
+The scoped production-core proof includes bare filenames passed to intrinsic
+file-input options (`--upload-file`, `--input-file` and `-T`), alongside `@` and
+path operands. An ambiguous bare `--source` selector alone does not establish
+host-file access; ordinary game selectors and complete quoted chat prose retain
+their positive controls.
 
 The assembled-application regression in
 [native preview application tests](../tests/native-pr-preview-application.test.ts)
