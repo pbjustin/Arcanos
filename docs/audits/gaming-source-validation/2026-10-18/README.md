@@ -85,6 +85,13 @@ Publisher 403 and transport failures remain separate legitimate rejection paths.
   formatting, metadata/candidate rescue or transport fallback. Unknown JSON keys
   remain excluded rather than being treated as supported evidence. Clean build
   payloads retain their independently bounded transport-fallback path.
+- `gamingBuildResources.ts`: a CodeRabbit follow-up reproduced an oversized
+  visible field invalidating unrelated intact equipment or skill records. The
+  normalizer's supported-field reader now checks complete consumed values before
+  excluding a whole damaged independent record. Table positions and incomplete
+  row boundaries are preserved; unsupported oversized labels are excluded.
+  Supported source-global constraints still prevent use of affected records,
+  and malicious consumed fields remain terminal even in otherwise omitted rows.
 
 The existing hybrid-v2, Trinity and CLEAR control flow remains intact. CLEAR
 policy v5 invalidates older approvals; resolver v4 changes extraction/revision
@@ -246,6 +253,16 @@ nine-suite matrix totals 283 cases: unchanged main passed 117 and failed 166;
 the repaired matrix passed all 283 with no skips. All prior 251 outcomes stayed
 unchanged. Focused follow-up validation passed 397 cases across eight suites;
 three independently reproduced review probes are included in the 32-case count.
+
+The [visible-record receipt](visible-record-validation.json) adds 15 cases for
+oversized unrelated labels, independent item/skill/table boundaries, malformed
+headers and malicious tails. On both unchanged main and `b6ad585d`, 13 failed
+and 2 passed; the repair passes all 15. The combined ten-suite matrix has 298
+cases: unchanged main passed 119 and failed 179; the repaired matrix passes all
+298 without skips. All prior 283 outcomes and baseline tracked blobs remain
+unchanged. Focused follow-up validation passes 412 cases in nine suites, and ten
+independent review probes pass. This source/test receipt does not certify later
+committed-head checks; consult the PR for complete CI and review results.
 
 Local dependency drift and a missing PowerShell prerequisite were also corrected:
 clean `npm ci` restored the checked-in versions, and verified PowerShell 7.6.7

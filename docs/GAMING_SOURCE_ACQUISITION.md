@@ -65,6 +65,12 @@ normalized record, including instructions found before a field is shortened or
 removed. Metadata, another candidate, an adapter or article fallback cannot
 restore that rejected record. Unknown JSON fields remain excluded from evidence;
 clean supported fields and clean transport fallback retain their existing rules.
+Visible equipment and skill records are inspected independently. An oversized or
+incomplete item is omitted as a whole after consumed-field instruction checks;
+intact sibling records remain eligible. Table cells retain their original column
+positions. Unused oversized labels are excluded, while supported source-global
+constraints remain subject to structural admission and cannot be silently dropped
+to make affected records usable.
 
 Only explicitly recognized analytics parameters are removed: `utm_*`, `fbclid`,
 `gclid`, `dclid`, `msclkid`, `mc_cid`, and `mc_eid`. Generic `source`, `campaign`,

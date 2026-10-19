@@ -1,0 +1,65 @@
+{
+  "kind": "visible-record-focused-prepublication-evidence",
+  "missionBaselineSha": "0e7a8e607e3f2f3359dc86eabcf611d8dd3fe6b2",
+  "sourceBaseCommitSha": "b6ad585d9cd5a93d5c4c1a056f5c200306761f75",
+  "sourceBaseTreeSha": "e4396740d3b108e61f7fe0cb285d520fb5838fdf",
+  "runtimeAndTestOverlaySha256": {
+    "src/services/gamingBuildResources.ts": "64a8d42967f2de8835a0c1bed08113a5c740f3402040dbecc2dcd164ef39d684",
+    "tests/gaming-visible-record-boundaries.test.ts": "4468e841e2ffeb35b389199d357a29e23bb2a652d7719669665f5ed0dcdb36b5"
+  },
+  "overlayScope": "All changed src/tests files relative to sourceBaseCommitSha; documentation and generated indexes are outside this focused behavioral receipt.",
+  "reviewComment": "https://github.com/pbjustin/Arcanos/pull/1558#discussion_r4309659945",
+  "newRegressionMatrix": {
+    "tests": 15,
+    "baseline": {
+      "passed": 2,
+      "failed": 13
+    },
+    "reviewedB6Head": {
+      "passed": 2,
+      "failed": 13
+    },
+    "repaired": {
+      "passed": 15,
+      "failed": 0
+    },
+    "skipped": 0
+  },
+  "combinedTenSuiteMatrix": {
+    "tests": 298,
+    "baseline": {
+      "passed": 119,
+      "failed": 179
+    },
+    "repaired": {
+      "passed": 298,
+      "failed": 0
+    },
+    "skipped": 0,
+    "prior283OutcomesUnchanged": true,
+    "baselineOriginalTrackedBlobsVerified": 3606,
+    "baselineOriginalRuntimeBlobsVerified": 1342
+  },
+  "focusedValidation": {
+    "passedSuites": 9,
+    "passedTests": 412,
+    "failedTests": 0,
+    "skippedTests": 0,
+    "typecheckExitCode": 0,
+    "changedFileLintErrors": 0,
+    "changedFileLintWarnings": 0
+  },
+  "independentReview": {
+    "additionalProbes": 10,
+    "failedBefore": 7,
+    "passedBefore": 3,
+    "passedAfter": 10,
+    "remainingConcreteBlockers": 0
+  },
+  "reproduction": "Oversized unrelated visible fields or independent records could invalidate intact sibling records. Consumed malicious tails and source-global constraints require separate rejection treatment.",
+  "invariants": "Complete consumed-field instruction inspection precedes whole-record omission. Table positions and incomplete-row boundaries retained. Unknown fields stay excluded; supported source-global constraints cannot be dropped to admit affected equipment. Hard limits, timeouts, source provenance, transport, authorization, caches and durable-storage policy unchanged.",
+  "publicationStatus": "Focused source/test evidence only. See PR1558 for exact committed-head static checks, full local/hosted CI and incremental review results.",
+  "exactHeadRailwayPreview": "NOT_RUN",
+  "livePublisherAcceptance": "NOT_RUN",
+  "productionDeployment": "NOT_RUN"
+}

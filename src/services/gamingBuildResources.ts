@@ -758,7 +758,7 @@ function collectEmbeddedCandidates(input: GamingResourceInput, metadata: GamingR
   return output;
 }
 
-function visibleHtmlCandidate(input: GamingResourceInput, deadline = Number.POSITIVE_INFINITY): unknown | undefined {
+function visibleHtmlCandidate(input: GamingResourceInput, deadline = Number.POSITIVE_INFINITY, onInstructions?: () => void): unknown | undefined {
   const html = input.html;
   if (!html || html.length > LIMITS.maxHtmlChars || Date.now() > deadline) return undefined;
   const $ = load(html);
@@ -769,6 +769,7 @@ function visibleHtmlCandidate(input: GamingResourceInput, deadline = Number.POSI
   const record: PlainRecord = Object.create(null) as PlainRecord;
   const equipment: unknown[] = [];
   const skills: unknown[] = [];
+  const incompleteRows = new WeakSet<object>();
   const stats: PlainRecord = Object.create(null) as PlainRecord;
   $("[data-slot], [data-item]").slice(0, LIMITS.maxEquipmentEntries).each((_, element) => {
     const name = rawString($(element).attr("data-item") ?? $(element).find("[data-name], .name, .item-name").first().text() ?? $(element).text());
@@ -790,22 +791,54 @@ function visibleHtmlCandidate(input: GamingResourceInput, deadline = Number.POSI
   });
   $("table").slice(0, 16).each((_, table) => {
     const rows = $(table).find("tr").slice(0, LIMITS.maxTableRows).toArray();
-    const headers = $(rows[0]).find("th").slice(0, LIMITS.maxTableCellsPerRow).map((__, cell) => rawString($(cell).text())?.toLowerCase()).get();
+    const headers = $(rows[0]).find("th").slice(0, LIMITS.maxTableCellsPerRow).toArray()
+      .map(cell => rawString($(cell).text())?.toLowerCase());
+    const incompleteHeaders = headers.some(header => !header || header.length > LIMITS.maxStringLength);
     for (const row of rows.slice(headers.length > 0 ? 1 : 0)) {
-      const cells = $(row).find("th, td").slice(0, LIMITS.maxTableCellsPerRow).map((__, cell) => rawString($(cell).text())).get().filter(Boolean) as string[];
-      if (cells.length === 2 && headers.length === 0) {
-        if (!DANGEROUS_KEYS.has(cells[0].toLowerCase())) stats[cells[0]] = cells[1];
+      const cells = $(row).find("th, td").slice(0, LIMITS.maxTableCellsPerRow).toArray()
+        .map(cell => rawString($(cell).text()));
+      const incomplete = incompleteHeaders || cells.some(cell => cell === undefined)
+        || (headers.length > 0 && cells.length !== headers.length);
+      if (cells.length === 2 && headers.length === 0 && !incomplete) {
+        if (cells[0] && cells[1] && !DANGEROUS_KEYS.has(cells[0].toLowerCase())) stats[cells[0]] = cells[1];
       } else if (headers.length > 0 && cells.length > 0) {
         const rowRecord: PlainRecord = Object.create(null) as PlainRecord;
-        headers.forEach((header, index) => { if (header && cells[index]) rowRecord[header] = cells[index]; });
-        if (headers.some((header) => /skill|talent|ability|spell/u.test(header ?? ""))) skills.push(rowRecord);
-        else if (headers.some((header) => /item|name|weapon|gear|card|unit/u.test(header ?? ""))) equipment.push(rowRecord);
+        headers.forEach((header, index) => { if (header && header.length <= LIMITS.maxStringLength && cells[index]) rowRecord[header] = cells[index]; });
+        if (incomplete) incompleteRows.add(rowRecord);
+        if (headers.some((header) => header && header.length <= LIMITS.maxStringLength && /skill|talent|ability|spell/u.test(header))) skills.push(rowRecord);
+        else if (headers.some((header) => header && header.length <= LIMITS.maxStringLength && /item|name|weapon|gear|card|unit/u.test(header))) equipment.push(rowRecord);
       }
     }
   });
   if (equipment.length > 0) record.equipment = equipment;
   if (skills.length > 0) record.skills = skills;
   if (Object.keys(stats).length > 0) record.stats = stats;
+  // Inspect consumed fields within their own record before any omission. Temporary
+  // normalized values are discarded; retained records still pass structural admission.
+  const inspectFields = (item: PlainRecord): Set<unknown> => {
+    const consumed = new Set<unknown>();
+    normalizeBuildRecord(item, { value: item, metadata: {}, publicUrl: "", resourceType: "build_planner",
+      extractor: "visible-field-inspection", confidence: 0, onInstructions,
+      onFieldRead: value => consumed.add(value) });
+    return consumed;
+  };
+  const omitUnconsumedOversizedFields = (item: PlainRecord, consumed: Set<unknown>): void => {
+    for (const [key, value] of ownEntries(item)) {
+      if (typeof value === "string" && value.length > LIMITS.maxStringLength && !consumed.has(value)) delete item[key];
+    }
+  };
+  const globalFields = { ...record };
+  for (const key of ["equipment", "skills"] as const) {
+    const entries = record[key];
+    if (!Array.isArray(entries)) continue;
+    delete globalFields[key];
+    record[key] = entries.filter(entry => {
+      const consumed = inspectFields({ [key]: [entry] });
+      if (isPlainRecord(entry)) omitUnconsumedOversizedFields(entry, consumed);
+      return !(entry && typeof entry === "object" && incompleteRows.has(entry)) && inspectStructure(entry, deadline).ok;
+    });
+  }
+  omitUnconsumedOversizedFields(record, inspectFields(globalFields));
   return Object.keys(record).length > 0 ? record : undefined;
 }
 
@@ -1000,7 +1033,7 @@ function statEntries(value: unknown, sanitizeString = safeString): Record<string
   return Object.keys(output).length > 0 ? output : undefined;
 }
 
-function normalizeBuildCandidate(params: {
+type BuildNormalizationInput = {
   value: unknown;
   metadata: GamingResourceMetadata;
   publicUrl: string;
@@ -1008,13 +1041,21 @@ function normalizeBuildCandidate(params: {
   extractor: string;
   confidence: number;
   onInstructions?: () => void;
-}): NormalizedGamingBuild | null {
+  onFieldRead?: (value: unknown) => void;
+};
+
+function normalizeBuildCandidate(params: BuildNormalizationInput): NormalizedGamingBuild | null {
+  return normalizeBuildRecord(findBestBuildRecord(params.value), params);
+}
+
+/** Read the supported fields; structural admission remains mandatory for returned evidence. */
+function normalizeBuildRecord(record: PlainRecord | undefined, params: BuildNormalizationInput): NormalizedGamingBuild | null {
   let instructionFiltered = false;
   const sanitizeString = (value: unknown, maxChars?: number): string | undefined => {
+    params.onFieldRead?.(value);
     if (hasBuildSourceInstructions(value)) instructionFiltered = true;
     return safeString(value, maxChars);
   };
-  const record = findBestBuildRecord(params.value);
   const metadataTitle = sanitizeString(params.metadata.title ?? params.metadata.openGraph?.["og:title"], 240);
   const metadataDescription = sanitizeString(params.metadata.description ?? params.metadata.openGraph?.["og:description"]);
   if (!record && !metadataTitle && !metadataDescription) {
@@ -1546,7 +1587,9 @@ function genericExtract(params: {
     state.sawCandidate = true;
     candidates.push({ value, strategy: "embedded_state", confidence: 0.82 });
   }
-  const visible = visibleHtmlCandidate(params.input, params.deadline);
+  const visible = visibleHtmlCandidate(params.input, params.deadline, () => { state.instructionFiltered = true; });
+  if (state.instructionFiltered) return { build: null,
+    validation: rejectedInstructionValidation(), state, classification: params.classification };
   if (visible !== undefined) {
     state.sawCandidate = true;
     candidates.push({ value: visible, strategy: "visible_html", confidence: 0.72 });
