@@ -339,10 +339,13 @@ export async function resolveGamingDocument(
     // Specialized resolvers can return selected prose shorter than their fully
     // acquired raw document. Inspect that accepted body before an omitted tail
     // can become a clean source merely through the selected-text ceiling.
-    const rawEvidence = !acquired.structure && rawDocument
+    // Structured acquisition already scanned the full accepted body; a legacy
+    // raw preview alone cannot attest inspection of its truncated tail.
+    const incompleteRawInspection = !acquired.structure && rawDocument?.truncated === true;
+    const rawEvidence = !acquired.structure && rawDocument && !incompleteRawInspection
       ? extractGamingDocumentEvidence({ body: rawDocument.body, contentType: rawDocument.contentType,
           sourceUrl: description.publicUrl, deadlineAt }) : undefined;
-    if (rawEvidence?.diagnostics.budgetOutcome === 'exhausted') {
+    if (incompleteRawInspection || rawEvidence?.diagnostics.budgetOutcome === 'exhausted') {
       options.signal?.throwIfAborted();
       if (Date.now() >= deadlineAt) throw new GamingDocumentAcquisitionError('SOURCE_TIMEOUT', 'extraction', 'DEADLINE_EXCEEDED');
       // An incomplete security scan cannot attest a clean selected prefix. Do

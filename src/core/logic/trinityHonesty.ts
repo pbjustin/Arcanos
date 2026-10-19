@@ -147,6 +147,12 @@ const PERSISTENCE_CREDENTIAL_TOKEN_PATTERN =
   /\b(?:access|auth|authentication|authorization|bearer|refresh|api|security|secret|session)\s+tokens?\b/i;
 const SYSTEM_OWNED_SAVE_ACTOR_PATTERN =
   /\b(?:chats?|conversations?|sessions?|assistants?|systems?|applications?|apps?|services?|servers?|browsers?|clients?|software|agents?|bots?)\s+/gi;
+// Personal state implies retention only as the object of a software-owned
+// predicate. The same nouns remain valid in player instructions and advice.
+const SYSTEM_OWNED_STATE_OBJECT = String.raw`(?:(?:all|both)(?:\s+of)?\s+)?(?:(?:a|an|the|this|that|your|our|my|their|its|some|any)\s+)?(?:(?:current|latest|previous|existing|entire|full|complete|recent)\s+){0,2}(?:progress|work|history|state|everything)\b`;
+const SYSTEM_OWNED_STATE_OBJECT_PATTERN = new RegExp('^' + SYSTEM_OWNED_STATE_OBJECT, 'i');
+const SYSTEM_OWNED_STATE_COORDINATED_OBJECT_PATTERN = new RegExp('^' + SYSTEM_OWNED_STATE_OBJECT
+  + String.raw`(?:\s+(?:[a-z-]+ly|now|again|forever)){0,4}(?:\s+(?:for\s+(?:later|future use|the future|next time)|until\s+(?:later|next time)))?\s*$`, 'i');
 const SYSTEM_SAVE_MODIFIERS = String.raw`(?:(?:[a-z-]+ly|now|also|still|always|never|not|only|again)\s+){0,4}`;
 const SYSTEM_SAVE_TO = SYSTEM_SAVE_MODIFIERS + String.raw`to\s+` + SYSTEM_SAVE_MODIFIERS;
 const SYSTEM_SAVE_STATE = String.raw`(?:able|going|configured|set|ready|guaranteed|scheduled|expected)`;
@@ -737,6 +743,10 @@ function impliesSystemOwnedSaveClaim(text: string): boolean {
           && !/\b(?:sav(?:e[sd]?|ing)|stor(?:e[sd]?|ing)|persist(?:s|ed|ing)?|retain(?:s|ed|ing)?|writ(?:e[sd]?|ing)|wrote|record(?:s|ed|ing)?|log(?:s|ged|ging)?|remember(?:s|ed|ing)?|keep(?:s|ing)?|kept)\b/i.test(complement)) continue;
         if (PERSISTENCE_SAVE_CONTEXT_PATTERN.test(complement)
           || PERSISTENCE_CREDENTIAL_TOKEN_PATTERN.test(complement)
+          || SYSTEM_OWNED_STATE_OBJECT_PATTERN.test(complement)
+          // A coordinated object is a noun phrase, not a new subject/predicate
+          // such as "and your progress accelerates" after saving stamina.
+          || complement.split(/\s+and\s+/i).slice(1).some(object => SYSTEM_OWNED_STATE_COORDINATED_OBJECT_PATTERN.test(object))
           || /^(?:(?:a|an|the|this|that|your|our)\s+)?(?:copy|copies|snapshots?|backups?|drafts?|chats?)\b/i.test(complement)
           || /^(?:(?:[a-z-]+ly|now|again|forever)\b\s*){0,4}(?:$|(?:before|after|when|whenever|for|and|but)\b|(?:on its own|by itself|by default)\b)/i.test(complement)) return true;
       }

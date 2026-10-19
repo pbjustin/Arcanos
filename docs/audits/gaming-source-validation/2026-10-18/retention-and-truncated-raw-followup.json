@@ -1,0 +1,45 @@
+{
+  "kind": "pr1558-retention-and-truncated-raw-prepublication-evidence",
+  "reviewedParentHead": "0240778b8fcb2541e34405eb791e35f9b256523a",
+  "baseSha": "0e7a8e607e3f2f3359dc86eabcf611d8dd3fe6b2",
+  "review": "https://github.com/pbjustin/Arcanos/pull/1558#pullrequestreview-5567377082",
+  "status": "Focused repairs verified; separately published exact-head evidence must establish final validation, review and hosted acceptance",
+  "runtimeDefectClassesRepaired": 2,
+  "addedRegressionCases": 42,
+  "repairs": [
+    {
+      "area": "Software-owned personal-state retention",
+      "reviewComment": 4310672403,
+      "reproduction": "Both honesty stages preserved unsupported software promises to save progress or work and retain history or state",
+      "change": "Recognize personal-state objects only under software ownership; bound coordinated noun phrases and temporal tails without borrowing a new subject and predicate",
+      "addedRegressionCases": 35,
+      "initialFailingCases": 13,
+      "focusedSuites": 3,
+      "focusedPassedTests": 372,
+      "crossReview": "Three fresh-subject false positives and three temporal-tail misses in intermediate repairs were reproduced and corrected before publication",
+      "preserved": "Player checkpoint/resource advice, direct denials, mediated advice, time conservation and fresh coordinated subjects",
+      "generalGameplayContextPatternChanged": false
+    },
+    {
+      "area": "Incomplete legacy raw-document inspection",
+      "reviewComment": 4310672414,
+      "reproduction": "Selected prose beyond the retained raw-document inspection boundary could be promoted by the legacy resolver even when rawDocument.truncated was true",
+      "change": "Reject incomplete raw inspection before callbacks or evidence promotion when no independently complete structured scan exists; preserve the existing extraction-budget and timeout failure path",
+      "addedRegressionCases": 7,
+      "focusedSuites": 4,
+      "focusedPassedTests": 205,
+      "reachability": "Reproduced through the real mocked DNS-pinned public HTTP resolver and simple web helper with localhost opt-in disabled; the RAG consumer independently rejects public HTTP. Opt-in nonproduction localhost RAG also reproduced citation promotion. Protected HTTPS scans the full structure and remains compatible with truncated diagnostic previews",
+      "preserved": "Complete legacy documents remain usable and cacheable; fully inspected HTTPS documents can retain a short raw diagnostic preview"
+    }
+  ],
+  "previewSemanticDigest": "dfe4857e6300782d724b8ffa67e0b77983d5cb1f82ddc815c169af26f6e01b4b",
+  "previewBoundaryTestsPassed": 419,
+  "countCaveat": "Focused selections overlap with earlier receipts and are not additive full-suite coverage",
+  "safety": {
+    "thresholdChanges": "NONE",
+    "privatePluginChanges": "NONE",
+    "storageConsentPolicyChanges": "NONE",
+    "externalModelCalls": "MOCKED_OR_DISABLED",
+    "productionChanges": "NONE"
+  }
+}

@@ -19,6 +19,73 @@ function review(text: string, preservePresentation = true) {
 
 describe('generic persistence claims distinguish conserving resources from backend actions', () => {
   it.each([
+    'The assistant will save your progress.',
+    'This chat will save your work.',
+    'The application retains your history.',
+    'The system will retain your state.',
+    'This chat retains everything.',
+    'The assistant promises to save all your progress.',
+    'The application will save your current progress.',
+    'This chat will retain all of your current work.',
+    'The software will retain our entire history.',
+    'This chat will save the latest state.',
+    'The application saves you time and your progress.',
+    'The application saves you time and your progress automatically.',
+    'This chat will save time and your work for later.',
+    'The application saves you time and all your current progress automatically.',
+    'This chat will not save your progress but will retain your work.',
+    'This chat will retain your progress and your history.',
+    'The assistant will save some current progress.'
+  ])('blocks software-owned personal-state retention independently in both stages: %s', text => {
+    const reasoningHonesty = createDefaultTrinityReasoningHonesty();
+    const first = enforceFinalStageHonesty(text, reasoningHonesty, capabilityFlags, 'EXECUTE_TASK', true);
+    expect(first.blocked).toBe(true);
+    expect(first.text).not.toBe(text);
+    for (const preservePresentation of [true, false]) {
+      const final = enforceFinalStageHonestyAndMinimalism({
+        text, userPrompt: prompt, capabilityFlags, reasoningHonesty,
+        outputControls: deriveTrinityOutputControls(prompt, {}), preservePresentation
+      });
+      expect(final.blockedOrRewrittenClaims.length).toBeGreaterThan(0);
+      expect(final.text).not.toBe(text);
+    }
+  });
+
+  it.each([
+    'Save your progress at the checkpoint.',
+    'Save your current progress before leaving.',
+    'Save your work before the next encounter.',
+    'The assistant explains how to save your progress.',
+    'The application reminds players to save their current progress.',
+    'This chat will not save your progress.',
+    'This chat will never retain your work.',
+    'The application will retain no history.',
+    'The application saves you time while you make progress.',
+    'The application saves you time and helps you make progress.',
+    'The application can retain heat.',
+    'The application can retain heat and your work benefits.',
+    'The application saves stamina and your progress accelerates.',
+    'The application saves energy and your state improves.',
+    'The application saves stamina and your progress automatically accelerates.',
+    'The application saves energy and your work for later improves.',
+    'Save stamina while you make progress.',
+    'This chat will not save your current progress and will not retain your history.'
+  ])('preserves personal-state player guidance and software denials in both stages: %s', text => {
+    const reasoningHonesty = createDefaultTrinityReasoningHonesty();
+    const first = enforceFinalStageHonesty(text, reasoningHonesty, capabilityFlags, 'EXECUTE_TASK', true);
+    expect(first.blocked).toBe(false);
+    expect(first.text).toBe(text);
+    for (const preservePresentation of [true, false]) {
+      const final = enforceFinalStageHonestyAndMinimalism({
+        text, userPrompt: prompt, capabilityFlags, reasoningHonesty,
+        outputControls: deriveTrinityOutputControls(prompt, {}), preservePresentation
+      });
+      expect(final.blockedOrRewrittenClaims).toEqual([]);
+      expect(final.text).toBe(text);
+    }
+  });
+
+  it.each([
     'I plan to save.',
     'We intend to save a snapshot.',
     'I promise to save a backup.',
