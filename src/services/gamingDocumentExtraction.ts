@@ -166,11 +166,12 @@ function sourceCommandHasHostData(text: string): boolean {
     && /^(?:"[^"\\]*"|'[^'\\]*')[.!?]?\s*$/.test(payload);
   if (!quotedMessage) {
     // Shell quote fragments do not change option/operand identity. Keep the
-    // original host-data and redirect scans, and only compact quotes for flags.
-    const flagText = sourceCommandFlagText(prefix + payload);
-    if (SOURCE_COMMAND_FILE_READ_FLAG_PATTERN.test(flagText)
+    // raw option boundaries too: prose apostrophes can span a real command.
+    const commandText = prefix + payload;
+    if ([commandText, sourceCommandFlagText(commandText)].some(flagText =>
+      SOURCE_COMMAND_FILE_READ_FLAG_PATTERN.test(flagText)
       || SOURCE_COMMAND_INTRINSIC_FILE_FLAG_PATTERN.test(flagText)
-      || SOURCE_COMMAND_BUNDLED_FILE_FLAG_PATTERN.test(flagText)) return true;
+      || SOURCE_COMMAND_BUNDLED_FILE_FLAG_PATTERN.test(flagText))) return true;
   }
   // Only the exact game target and complete quoted message above are inert.
   // Every external-command redirect retains even extensionless host operands.

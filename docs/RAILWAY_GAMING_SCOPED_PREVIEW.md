@@ -94,6 +94,8 @@ path operands, bundled short options and quoted option spelling. Focused
 regressions also cover escaped options and generic form-field labels. An ambiguous
 bare `--source` selector alone does not establish host-file access; ordinary game
 selectors and complete quoted chat prose retain their positive controls.
+Both raw and normalized option boundaries are inspected so apostrophes in ordinary
+narration cannot hide a real file operand during quote normalization.
 
 The assembled-application regression in
 [native preview application tests](../tests/native-pr-preview-application.test.ts)
