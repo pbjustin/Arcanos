@@ -1128,6 +1128,11 @@ async function ingestOneSource(
         recordsCreated: 0, recordsUpdated: 0, completedAt: new Date().toISOString(),
         error: { code: 'APPROVED_CONTENT_CHANGED', message: 'The source changed after approval; evaluate it again before storing.', retryable: false } };
     }
+    if (document.metrics.instructionFiltered) {
+      return { submittedIndex: source.submittedIndex, status: 'rejected', canonicalUrl: source.canonicalUrl,
+        recordsCreated: 0, recordsUpdated: 0, completedAt: new Date().toISOString(),
+        error: { code: 'SOURCE_INSTRUCTIONS_REJECTED', message: 'Source instructions were rejected.', retryable: false } };
+    }
     const approvedAssessment = source.hybridApproval?.gamingClear;
     if (source.hybridApproval && (!approvedAssessment || approvedAssessment.subjectHash !== source.hybridApproval.contentHash
       || approvedAssessment.rubricVersion !== GAMING_CLEAR_VERSION
@@ -1271,6 +1276,13 @@ async function ingestOneSource(
       },
       signal
     }, { useCache: false });
+    // A rejected consumed build field taints the source even when sanitized
+    // article prose remains. Never persist that remainder as a fallback record.
+    if (normalized.failureReason === 'SOURCE_INSTRUCTIONS_REJECTED') {
+      return { submittedIndex: source.submittedIndex, status: 'rejected', canonicalUrl: source.canonicalUrl,
+        recordsCreated: 0, recordsUpdated: 0, completedAt: new Date().toISOString(),
+        error: { code: 'SOURCE_INSTRUCTIONS_REJECTED', message: 'Source instructions were rejected.', retryable: false } };
+    }
     // Discovered artifacts retain the established document/chunk pipeline. Their
     // durable records cannot acquire unseen structured fields after approval.
     const supportsStructuredExtraction = document.resolution.supportsStructuredExtraction && !source.hybridApproval;
