@@ -12,6 +12,7 @@ jest.unstable_mockModule('node:dns/promises', () => ({ Resolver: class {
 const { evaluateGamingHybridCandidates } = await import('../src/services/gamingHybridCandidates.js');
 const { assessGamingClearSourceIdentity } = await import('../src/shared/gaming/gamingClearSource.js');
 const { assessGamingSourcePolicy } = await import('../src/shared/gaming/gamingFreshnessCore.js');
+const { resolveGamingDocument } = await import('../src/services/gamingDocumentResolution.js');
 const url = 'https://community-notebook.example/beginner';
 const actor = { actorKey: 'generic-scope-fixture', workflowId: 'generic-scope-workflow', requestId: 'generic-scope-request' };
 function request(game = 'Elden Ring') {
@@ -25,6 +26,47 @@ async function acquire(extra: string, game = 'Elden Ring', title?: string) {
 }
 
 describe('generic acquired scope grammar through transport, extraction, identity and CLEAR', () => {
+  it.each(['It takes two', 'it takes two', 'IT TAKES TWO', 'It Takes Two',
+    'We Can Be Heroes', 'we can be heroes', 'WE CAN BE HEROES', 'It Can Happen', 'it can happen', 'IT CAN HAPPEN'])
+  ('rejects the independent review toolbox reproducer for the unfamiliar title %s', async foreignGame => {
+    const body = `This guide covers Elden Ring. In the game ${foreignGame}, defeat the giant toolbox boss by striking the exposed lock after dodging the hammer. Preserve enough stamina to dodge the next hammer attack before striking the exposed lock again.`;
+    fetch.mockResolvedValue({ status: 200, headers: { 'content-type': 'text/html' },
+      data: `<html><title>Elden Ring guide</title><body><article><h1>Elden Ring guide</h1><p>${body}</p></article></body></html>` });
+    const input = { ...request(), prompt: 'Explain the giant toolbox boss fight.' };
+    const document = await resolveGamingDocument(url);
+    expect(document.text).toContain(`In the game ${foreignGame},`);
+    expect(assessGamingClearSourceIdentity(document, input, assessGamingSourcePolicy(url, input.game)))
+      .toMatchObject({ status: 'conflict', gameIdentityVerified: false, reasonCodes: ['GAME_MISMATCH'] });
+    const result = await evaluateGamingHybridCandidates(input, actor);
+    expect(result.accepted).toEqual([]);
+    expect(result.decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: ['GAME_MISMATCH'] });
+  });
+
+  it.each(['copper harbor players can inspect equipment', 'Copper Harbor players can inspect equipment',
+    'COPPER HARBOR players can inspect equipment', 'COPPER HARBOR PLAYERS CAN inspect equipment',
+    'copper harbor has fallen players can inspect equipment'])
+  ('retains an unfamiliar nominal prefix before an independent player clause: %s', async scope => {
+    const result = await acquire(`In the game ${scope}.`);
+    expect(result.accepted).toEqual([]);
+    expect(result.decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: ['GAME_MISMATCH'] });
+  });
+
+  it.each(['silver harbor can inspect equipment', 'Silver Harbor can inspect equipment', 'SILVER HARBOR CAN inspect equipment',
+    'it takes two to open the gate', 'It takes two to open the gate',
+    'we can be heroes', 'We Can Be Heroes', 'WE CAN BE HEROES', 'It Can Happen', 'it can happen'])
+  ('keeps an ambiguous title/predicate boundary unverified: %s', async scope => {
+    const result = await acquire(`In the game ${scope}.`);
+    expect(result.accepted).toEqual([]);
+    expect(result.decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] });
+  });
+
+  it.each(['It Takes Two', 'We Were Here', 'They Are Here', 'Copper Harbor Has Fallen', 'We Can Be Heroes', 'It Can Happen'])
+  ('preserves an unfamiliar matching sentence-like title independently of capitalization: %s', async game => {
+    const result = await acquire(`In the game ${game.toLowerCase()}, inspect the starting equipment.`, game);
+    expect(result.accepted).toHaveLength(1);
+    expect(result.accepted[0].sourceAssessment.gates.identity).toBe('verified');
+  });
+
   it.each([
     'In the game you can explore freely.',
     'In the game you explore freely.',
@@ -32,6 +74,7 @@ describe('generic acquired scope grammar through transport, extraction, identity
     'In the game your character starts with a sword.',
     "In the game you'll find supplies.",
     'In the game You can explore freely.',
+    'In the game YOU CAN explore freely.',
     'In the game the world is open.',
     'In the game new players start with basic equipment.',
     'In the game combat rewards patience.',
@@ -65,6 +108,7 @@ describe('generic acquired scope grammar through transport, extraction, identity
   it.each([
     'Unlike in Diablo IV, this route starts with the available equipment.',
     'Unlike combat in Diablo IV, this route starts with the available equipment.',
+    'This route differs from combat unlike in the game we can be heroes.',
     'Compared to equipment progression in Diablo IV, the opening route has fewer upgrades.',
     'The source quotes: "In the game Diablo IV, use another route."',
     'Recommended reading: In the game Diablo IV, inspect another equipment guide.',

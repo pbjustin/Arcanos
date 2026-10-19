@@ -145,8 +145,10 @@ const PERSISTENCE_SAVE_CONTEXT_PATTERN =
   /\b(memory|data|details|preferences|settings|accounts?|profiles?|sessions?|conversations?|transcripts?|files?|documents?|records?|notes?|answers?|results?|credentials?|secrets?|passwords?|storage|disk|logs?)\b/i;
 const PERSISTENCE_CREDENTIAL_TOKEN_PATTERN =
   /\b(?:access|auth|authentication|authorization|bearer|refresh|api|security|secret|session)\s+tokens?\b/i;
+// The assistant's own name and compound chatbot nouns share the software-owned
+// retention rules; their wording does not establish a game-owned save system.
 const SYSTEM_OWNED_SAVE_ACTOR_PATTERN =
-  /\b(?:chats?|conversations?|sessions?|assistants?|systems?|applications?|apps?|services?|servers?|browsers?|clients?|software|agents?|bots?)\s+/gi;
+  /\b(?:arcanos|chats?|conversations?|sessions?|assistants?|systems?|applications?|apps?|services?|servers?|browsers?|clients?|software|agents?|(?:chat[- ]?)?bots?)\s+/gi;
 const GAME_OWNED_SYSTEM_PREFIX_PATTERN =
   /\b(?:game['’]s|in[- ]game)\s+(?:[a-z][a-z-]*\s+){0,3}$/i;
 // Personal state implies retention only as the object of a software-owned

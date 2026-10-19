@@ -17,7 +17,99 @@ function review(text: string, preservePresentation = true) {
   return { first, final };
 }
 
+describe.each([
+  { scope: 'default', capabilities: deriveTrinityCapabilityFlags() },
+  { scope: 'Gaming provided evidence', capabilities: deriveTrinityCapabilityFlags({ verifyProvidedData: true }) }
+])('named assistant persistence claims with $scope capabilities', ({ capabilities }) => {
+  describe.each([true, false])('preservePresentation=%s', preservePresentation => {
+    const unsupportedClaims = [
+      'ARCANOS will save automatically.',
+      'ARCANOS will save your progress for later.',
+      'The chatbot will save your progress.'
+    ];
+
+    it.each(unsupportedClaims)('blocks the claim in the first production guard: %s', text => {
+      const first = enforceFinalStageHonesty(text, createDefaultTrinityReasoningHonesty(), capabilities, 'EXECUTE_TASK', preservePresentation);
+      expect(first.blockedCategories).toContain('backend_action');
+      expect(first.text).not.toBe(text);
+    });
+
+    it.each(unsupportedClaims)('rewrites the claim in the later production guard independently: %s', text => {
+      const final = enforceFinalStageHonestyAndMinimalism({
+        text, userPrompt: prompt, capabilityFlags: capabilities,
+        reasoningHonesty: createDefaultTrinityReasoningHonesty(),
+        outputControls: deriveTrinityOutputControls(prompt, {}), preservePresentation
+      });
+      expect(final.blockedOrRewrittenClaims).toContain(text);
+      expect(final.text).not.toBe(text);
+    });
+
+    it.each(unsupportedClaims)('removes the claim in the production guard sequence: %s', text => {
+      const reasoningHonesty = createDefaultTrinityReasoningHonesty();
+      const first = enforceFinalStageHonesty(text, reasoningHonesty, capabilities, 'EXECUTE_TASK', preservePresentation);
+      const final = enforceFinalStageHonestyAndMinimalism({
+        text: first.text, userPrompt: prompt, capabilityFlags: capabilities, reasoningHonesty,
+        outputControls: deriveTrinityOutputControls(prompt, {}), preservePresentation
+      });
+      expect(first.blocked).toBe(true);
+      expect(final.text).not.toContain(text);
+      expect(final.text).toMatch(/(?:not executed|can't confirm).*backend|haven't saved/i);
+    });
+  });
+});
+
 describe('generic persistence claims distinguish conserving resources from backend actions', () => {
+  it.each([
+    'arcanos saves automatically.',
+    'Arcanos will retain your history.',
+    'These chatbots save automatically.',
+    'The chat-bot will retain your state.',
+    'The chat bot will save your progress.',
+    "The game's checkpoint system saves your progress, but ARCANOS will save your work."
+  ])('applies the existing retention grammar to assistant names and compound actors: %s', text => {
+    const reasoningHonesty = createDefaultTrinityReasoningHonesty();
+    const first = enforceFinalStageHonesty(text, reasoningHonesty, capabilityFlags, 'EXECUTE_TASK', true);
+    expect(first.blockedCategories).toContain('backend_action');
+    for (const preservePresentation of [true, false]) {
+      const final = enforceFinalStageHonestyAndMinimalism({
+        text, userPrompt: prompt, capabilityFlags, reasoningHonesty,
+        outputControls: deriveTrinityOutputControls(prompt, {}), preservePresentation
+      });
+      expect(final.blockedOrRewrittenClaims.length).toBeGreaterThan(0);
+      expect(final.text).not.toBe(text);
+    }
+  });
+
+  it.each([
+    'ARCANOS recommends players save their progress at the checkpoint.',
+    'The chatbot explains how to save your progress.',
+    'ARCANOS saves you time while you make progress.',
+    'The chatbot can save tokens by using shorter replies.',
+    "The game's checkpoint system saves your progress.",
+    "The game's autosave system saves automatically.",
+    'ARCANOS will not save your progress.',
+    'The chatbot will never save automatically.',
+    'ARCANOS retains no history.',
+    'ARCANOS will not retain your notes but will explain how to save.',
+    "The game's chatbot will not save your progress.",
+    'Save your progress before leaving.'
+  ])('preserves player advice, game-owned saves and qualified assistant denials: %s', text => {
+    for (const capabilities of [capabilityFlags, deriveTrinityCapabilityFlags({ verifyProvidedData: true })]) {
+      for (const preservePresentation of [true, false]) {
+        const reasoningHonesty = createDefaultTrinityReasoningHonesty();
+        const first = enforceFinalStageHonesty(text, reasoningHonesty, capabilities, 'EXECUTE_TASK', preservePresentation);
+        expect(first.blocked).toBe(false);
+        expect(first.text).toBe(text);
+        const final = enforceFinalStageHonestyAndMinimalism({
+          text, userPrompt: prompt, capabilityFlags: capabilities, reasoningHonesty,
+          outputControls: deriveTrinityOutputControls(prompt, {}), preservePresentation
+        });
+        expect(final.blockedOrRewrittenClaims).toEqual([]);
+        expect(final.text).toBe(text);
+      }
+    }
+  });
+
   it.each([
     'The game’s checkpoint system saves your progress, but the assistant will save your work.',
     'The in-game autosave system saves your progress, and this chat will save your notes.',

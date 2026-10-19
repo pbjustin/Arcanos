@@ -110,6 +110,12 @@ function acquiredBodySubjects(prose: string): { subjects: Array<{ text: string; 
     const explicitGameScope = /^(?:this|in the game)\b/iu.test(match[0]);
     if (explicitGameScope && subjectStart + subjectWindow.length < unquoted.length && !/[,;.!?\n]/u.test(subjectWindow)) complete = false;
     const subjectClause = subjectWindow.split(/[,;.!?\n]/u, 1)[0].trim();
+    let ambiguousNominalScope = false;
+    const nominalScope = (value: string, commaDelimited = false): string => {
+      const subject = gamingAcquiredNominalScope(value, commaDelimited, /^in the game\b/iu.test(match[0]));
+      if (subject === undefined) ambiguousNominalScope = true;
+      return subject ?? '';
+    };
     // An explicitly quoted title is nominal even when its words form a sentence.
     // Keep the quote's own bounds; a later gameplay predicate cannot rename it.
     const quotedName = quotedNames.find(name => name.start >= subjectStart && name.end <= subjectStart + subjectWindow.length
@@ -118,14 +124,15 @@ function acquiredBodySubjects(prose: string): { subjects: Array<{ text: string; 
     // source-global declaration owns its entire nominal subject, including
     // sentence-like titles regardless of capitalization.
     const subject = /^this\b/iu.test(match[0]) ? subjectClause : quotedName ? [unquoted.slice(subjectStart, quotedName.end).trim(),
-      gamingAcquiredNominalScope(unquoted.slice(quotedName.end, subjectStart + subjectWindow.length).split(/[,;.!?\n]/u, 1)[0].trim())].filter(Boolean).join(' ')
-      : gamingAcquiredNominalScope(subjectClause);
+      nominalScope(unquoted.slice(quotedName.end, subjectStart + subjectWindow.length).split(/[,;.!?\n]/u, 1)[0].trim())].filter(Boolean).join(' ')
+      : nominalScope(subjectClause, subjectWindow.trimStart().slice(subjectClause.length).startsWith(','));
     // Reference qualifiers apply locally, so a later affirmative clause after
     // a comma or sentence boundary is still independently inspected.
     if (/\b(?:unlike|compared(?:\s+to)?|comparison(?:\s+with)?|contrast(?:\s+to)?|similar(?:ly)?|rather\s+than|instead\s+of|as(?:\s+is\s+the\s+case)?|like)\s*$/iu.test(prefix)
       || /^in\b/iu.test(match[0]) && /\b(?:unlike|compared\s+to|comparison\s+with|contrast\s+to|similar\s+to|like)\b(?:\s+(?!but\b|however\b|yet\b|this\b|that\b)[\p{L}'’-]+){1,8}\s*$/iu.test(prefix)
       || /\b(?:not(?:\s+(?:apply|applicable|valid|available|supported|used|found|present|exist|included|be|for)){0,4}|(?:doesn|isn|aren|don|didn)['’]?t(?:\s+(?:apply|exist|work))?|without|except|excluding|unavailable|unsupported)\s*$/iu.test(prefix)
       || /^(?:contrast|comparison|case|addition|particular)\b/iu.test(subject)) continue;
+    if (ambiguousNominalScope) complete = false;
     if (subject) subjects.push({ text: subject, index: match.index, explicitGameScope,
       namedGameScope: /^in the game\b/iu.test(match[0]) });
   }

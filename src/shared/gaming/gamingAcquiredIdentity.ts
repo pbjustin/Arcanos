@@ -9,14 +9,29 @@ export type GamingIdentityResolutionState = 'IDENTITY_VERIFIED' | 'IDENTITY_UNVE
  * Without a nominal prefix, "in the game" refers to the established article game;
  * the following player instructions are not a newly named title. Keep case and
  * complete nominal suffixes so titles such as "Minecraft Has Fallen" stay intact. */
-export function gamingAcquiredNominalScope(value: string): string {
+export function gamingAcquiredNominalScope(value: string, commaDelimited = false, namedGameScope = false): string | undefined {
   // Registry recognition protects a complete leading name regardless of case;
   // lowercasing a wrong game must not turn it into an ordinary sentence subject.
   const known = detectGamingRegistryAlias(value, true);
   const nameEnd = known ? Math.max(0, ...[known.name, ...known.aliases].map(name =>
     new RegExp(`^${gamingRegistryLiteralPattern(name)}(?=$|[^\\p{L}\\p{N}])`, 'iu').exec(value)?.[0].length ?? 0)) : 0;
   const continuationText = value.slice(nameEnd);
-  const personClause = /(?:^|\s)(?:(?:[Yy]ou|[Ww]e|[Tt]hey|[Hh]e|[Ss]he|[Ii]t|(?:new\s+|experienced\s+)?[Pp]layers|[Cc]haracters|[Yy]our\s+character|[Tt]he\s+player)(?:['’](?:re|ve|ll|d|s))?\s+\p{Ll}[\p{L}'’]*\b|[Tt]here\s+(?:are|is)\b)/u.exec(continuationText);
+  // A pronoun-shaped title can also be a complete sentence. A comma closes
+  // the acquired nominal scope regardless of capitalization; without that
+  // boundary, keep its title/predicate ambiguity explicit rather than dropping it.
+  if (!known && namedGameScope && /^(?:it|we|they|he|she)\s+/iu.test(value)
+    && (commaDelimited || !/^\S+\s+(?:must|should)\b/iu.test(value)))
+    return commaDelimited ? value : undefined;
+  const personClause = /(?:^|\s)(?:(?:you|we|they|he|she|it|(?:new\s+|experienced\s+)?players|characters|your\s+character|the\s+player)(?:['’](?:re|ve|ll|d|s))?\s+\p{Ll}[\p{L}'’]*\b|there\s+(?:are|is)\b)/iu.exec(continuationText);
+  // An independent player clause ends the preceding name, even if its words
+  // could also match the broad lowercase gameplay-subject heuristic below.
+  if (personClause && personClause.index > 0)
+    return value.slice(0, nameEnd + personClause.index).trim();
+  if (personClause?.index === 0) return value.slice(0, nameEnd).trim();
+  // Multiword unfamiliar names followed directly by a finite predicate have
+  // no independent subject boundary. Do not infer a different scope from case.
+  if (!known && namedGameScope && /^(?!(?:the|your|our|their)\b)(?:\p{L}[\p{L}'’]*\s+){2,}(?:is|are|has|have|can|could|may|might|must|should|will|would|starts?|begins?|rewards?|requires?|offers?|contains?)\b/iu.test(value))
+    return commaDelimited ? value : undefined;
   // An unfamiliar noun after a recognized family name may be its subtitle.
   // Only an independent person/existential clause can terminate that name.
   // A lowercase interface noun followed by a player-purpose clause belongs to
