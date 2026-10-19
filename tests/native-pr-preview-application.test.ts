@@ -1,9 +1,9 @@
-import { describe, expect, it, jest } from '@jest/globals';
+import { afterAll, afterEach, beforeAll, describe, expect, it, jest } from '@jest/globals';
 import request from 'supertest';
 import http from 'node:http';
 import https from 'node:https';
 import { syncBuiltinESMExports } from 'node:module';
-import { runGamingScopedPreviewE2e } from '../scripts/gaming-scoped-preview-e2e.mjs';
+import { buildGamingScopedPreviewAssertionInventory, runGamingScopedPreviewE2e } from '../scripts/gaming-scoped-preview-e2e.mjs';
 import { createPassivePrPreviewServer } from '../scripts/start-railway-service.mjs';
 
 import { assertDagMetricsRetentionPreviewFixture } from '../src/shared/dag/dagMetricsPreviewFixture.js';
@@ -613,116 +613,198 @@ function expectedMcpBodyCap(fixture: string) {
   };
 }
 
-describe('native PR contained application', () => {
-  it('executes the complete Gaming scope offline with no Notion or provider outbound requests', async () => {
-    const outbound: string[] = [];
-    const notionProbe = jest.fn(async () => { throw new Error('Gaming must not select the Notion canary'); });
-    const app = createNativePrPreviewApplication({ identity,
-      readinessState: { applicationImported: true, fixturesSealed: true, ready: true, draining: false },
-      notionConnectivityProbe: notionProbe });
-    const web = http.createServer(app);
-    const worker = createPassivePrPreviewServer('worker', identity);
-    const agent = new http.Agent({ keepAlive: true, maxSockets: 2 });
-    const loopbackRequest = http.request.bind(http);
-    const httpSpy = jest.spyOn(http, 'request').mockImplementation((...parameters: unknown[]) => {
-      const destination = parameters[0];
-      outbound.push(typeof destination === 'object' && destination !== null && 'hostname' in destination
-        ? String(destination.hostname) : String(destination));
-      throw new Error('Application HTTP forbidden in Gaming scope');
+function gamingCheckpoint() {
+  let resolve!: () => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<void>((complete, fail) => { resolve = complete; reject = fail; });
+  void promise.catch(() => {});
+  return { promise, resolve, reject };
+}
+
+// One assembled verifier run, with a Jest completion boundary after each verified
+// request. The 84 real HTTP/proof cases retain their shared verifier budget.
+async function createGamingOfflineScope() {
+  const planned = buildGamingScopedPreviewAssertionInventory() as readonly string[];
+  const checkpoints = planned.map(() => ({ admit: gamingCheckpoint(), verified: gamingCheckpoint() }));
+  const controller = new AbortController();
+  const responses = new Set<Promise<void>>();
+  const transports = new Set<Promise<Response>>();
+  const outbound: string[] = [];
+  let notionCalls = 0;
+  const app = createNativePrPreviewApplication({ identity,
+    readinessState: { applicationImported: true, fixturesSealed: true, ready: true, draining: false },
+    notionConnectivityProbe: async () => {
+      notionCalls += 1;
+      throw new Error('Gaming must not select the Notion canary');
+    } });
+  const web = http.createServer((incoming, outgoing) => {
+    let complete!: () => void;
+    const response = new Promise<void>(resolve => { complete = resolve; });
+    responses.add(response);
+    void response.then(() => responses.delete(response));
+    const end = outgoing.end;
+    outgoing.end = ((...parameters: Parameters<typeof end>) => {
+      try { return end.apply(outgoing, parameters); } finally { complete(); }
+    }) as typeof end;
+    app(incoming, outgoing);
+  });
+  const worker = createPassivePrPreviewServer('worker', identity);
+  const agent = new http.Agent({ keepAlive: true, maxSockets: 2 });
+  const originalHttp = http.request;
+  const originalHttps = https.request;
+  const originalFetch = globalThis.fetch;
+  const loopbackRequest = http.request.bind(http);
+  const deny = (name: string) => () => {
+    outbound.push(name);
+    throw new Error(`Application ${name} forbidden in Gaming scope`);
+  };
+  // Manual instrumentation remains installed across Jest's per-case mock reset.
+  http.request = deny('http.request') as typeof http.request;
+  https.request = deny('https.request') as typeof https.request;
+  globalThis.fetch = deny('fetch') as typeof globalThis.fetch;
+  syncBuiltinESMExports();
+  const requests: string[] = [];
+  let webPort = 0;
+  let workerPort = 0;
+  let dispatched = 0;
+  let activeCase = -1;
+  let completedCase = -1;
+  const listen = (server: http.Server) => new Promise<number>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject);
+      const address = server.address();
+      if (!address || typeof address === 'string') { reject(new Error('Expected loopback listener')); return; }
+      resolve(address.port);
     });
-    const fetchSpy = jest.spyOn(globalThis, 'fetch').mockImplementation(async input => {
-      outbound.push(new URL(input instanceof Request ? input.url : String(input)).hostname);
-      throw new Error('External fetch forbidden in Gaming scope');
-    });
-    const httpsSpy = jest.spyOn(https, 'request').mockImplementation((...parameters: unknown[]) => {
-      const destination = parameters[0];
-      outbound.push(typeof destination === 'object' && destination !== null && 'hostname' in destination
-        ? String(destination.hostname) : String(destination));
-      throw new Error('External HTTPS forbidden in Gaming scope');
-    });
-    syncBuiltinESMExports();
-    const requests: string[] = [];
-    let webPort = 0;
-    let workerPort = 0;
-    const listen = (server: http.Server) => new Promise<number>((resolve, reject) => {
-      server.once('error', reject);
-      server.listen(0, '127.0.0.1', () => {
-        server.off('error', reject);
-        const address = server.address();
-        if (!address || typeof address === 'string') { reject(new Error('Expected loopback listener')); return; }
-        resolve(address.port);
-      });
-    });
-    const fetchImpl = async (input: string, init: RequestInit) => {
-      const url = new URL(input);
-      expect(['web-pr-1413.up.railway.app', 'worker-pr-1413.up.railway.app']).toContain(url.hostname);
-      requests.push(url.hostname + url.pathname);
-      return new Promise<Response>((resolve, reject) => {
-        const operation = loopbackRequest({ hostname: '127.0.0.1',
-          port: url.hostname.startsWith('worker-') ? workerPort : webPort,
-          method: init.method, path: url.pathname + url.search,
-          headers: Object.fromEntries(new Headers(init.headers)), agent, signal: init.signal ?? undefined }, incoming => {
-          const chunks: Buffer[] = [];
-          incoming.on('data', (chunk: Buffer) => chunks.push(chunk));
-          incoming.once('error', reject);
-          incoming.once('end', () => {
-            try {
-              const headers = new Headers();
-              for (const [name, value] of Object.entries(incoming.headers)) {
-                for (const entry of Array.isArray(value) ? value : value === undefined ? [] : [value]) headers.append(name, entry);
-              }
-              const body = Buffer.concat(chunks);
-              const response = new Response(init.method === 'HEAD' || body.length === 0 ? null : body,
-                { status: incoming.statusCode, headers });
-              Object.defineProperty(response, 'url', { value: input });
-              resolve(response);
-            } catch (error) {
-              reject(error);
+  });
+  const fetchImpl = async (input: string, init: RequestInit) => {
+    controller.signal.throwIfAborted();
+    const index = dispatched++;
+    if (index >= checkpoints.length) throw new Error('Unexpected Gaming preview request');
+    // The next fetch is reached only after the prior response passed every
+    // verifier assertion, not merely after its socket received a response.
+    if (index > 0) checkpoints[index - 1].verified.resolve();
+    await checkpoints[index].admit.promise;
+    controller.signal.throwIfAborted();
+    const url = new URL(input);
+    expect(['web-pr-1413.up.railway.app', 'worker-pr-1413.up.railway.app']).toContain(url.hostname);
+    requests.push(url.hostname + url.pathname);
+    const transport = new Promise<Response>((resolve, reject) => {
+      const operation = loopbackRequest({ hostname: '127.0.0.1',
+        port: url.hostname.startsWith('worker-') ? workerPort : webPort,
+        method: init.method, path: url.pathname + url.search,
+        headers: Object.fromEntries(new Headers(init.headers)), agent,
+        signal: AbortSignal.any([controller.signal, ...(init.signal ? [init.signal] : [])]) }, incoming => {
+        const chunks: Buffer[] = [];
+        incoming.on('data', (chunk: Buffer) => chunks.push(chunk));
+        incoming.once('error', reject);
+        incoming.once('end', () => {
+          try {
+            const headers = new Headers();
+            for (const [name, value] of Object.entries(incoming.headers)) {
+              for (const entry of Array.isArray(value) ? value : value === undefined ? [] : [value]) headers.append(name, entry);
             }
-          });
+            const body = Buffer.concat(chunks);
+            const response = new Response(init.method === 'HEAD' || body.length === 0 ? null : body,
+              { status: incoming.statusCode, headers });
+            Object.defineProperty(response, 'url', { value: input });
+            resolve(response);
+          } catch (error) { reject(error); }
         });
-        operation.once('error', reject);
-        operation.end(init.body === undefined ? undefined : String(init.body));
       });
-    };
+      operation.once('error', reject);
+      operation.end(init.body === undefined ? undefined : String(init.body));
+    });
+    transports.add(transport);
+    void transport.then(() => transports.delete(transport), () => transports.delete(transport));
+    return transport;
+  };
+  let execution: ReturnType<typeof runGamingScopedPreviewE2e> | undefined;
+  let disposal: Promise<void> | undefined;
+  const close = () => disposal ??= (async () => {
+    const error = new Error('Gaming offline scope ended');
+    controller.abort(error);
+    for (const checkpoint of checkpoints) { checkpoint.admit.reject(error); checkpoint.verified.reject(error); }
     try {
-      workerPort = await listen(worker);
-      webPort = await listen(web);
-      const result = await runGamingScopedPreviewE2e({
-        args: ['--pr-number', String(identity.prNumber), '--commit-sha', identity.sourceCommit,
-          '--web-base-url', 'https://web-pr-1413.up.railway.app',
-          '--worker-base-url', 'https://worker-pr-1413.up.railway.app', '--execute', '--allow-network'],
-        localGitState: { clean: true, head: identity.sourceCommit, sourceTreeSha: 'b'.repeat(40), repository: 'pbjustin/Arcanos' }, fetchImpl })
-        .catch((error: { code: string; caseId: string }) => { throw new Error(`${error.code}:${error.caseId}`); });
-      expect(result.summary).toMatchObject({ status: 'PASS', requestsMade: 84 });
-      expect(result.offlineVerification).toBe('NOT_PROVEN');
-      expect(result.transport).toBe('caller-supplied-unverified');
-      expect(result.hostedExecuted).toBeNull();
-      expect(result.GAMING_SCOPED_PREVIEW).toBe('NOT_RUN');
-      expect(result.assertionInventory.executedCaseIds).toEqual(result.assertionInventory.plannedCaseIds);
-      expect(result.assertionInventory.skippedCaseIds).toContain('native:backstage-generation-notion-authority-rag');
-      expect(requests).toHaveLength(84);
-      expect(notionProbe).not.toHaveBeenCalled();
-      expect(outbound).toEqual([]);
-      expect(httpSpy).not.toHaveBeenCalled();
-      expect(httpsSpy).not.toHaveBeenCalled();
-      expect(fetchSpy).not.toHaveBeenCalled();
+      await execution?.catch(() => {});
+      await Promise.allSettled([...transports]);
+      // Closing a client socket does not prove its async application handler ended.
+      await Promise.all([...responses]);
+      agent.destroy();
+      web.closeAllConnections();
+      worker.closeAllConnections();
+      await Promise.all([web, worker].filter(server => server.listening).map(server =>
+        new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))));
     } finally {
-      try {
-        agent.destroy();
-        web.closeAllConnections();
-        worker.closeAllConnections();
-        await Promise.all([web, worker].filter(server => server.listening).map(server =>
-          new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))));
-      } finally {
-        httpSpy.mockRestore();
-        fetchSpy.mockRestore();
-        httpsSpy.mockRestore();
-        syncBuiltinESMExports();
-      }
+      http.request = originalHttp;
+      https.request = originalHttps;
+      globalThis.fetch = originalFetch;
+      syncBuiltinESMExports();
     }
+  })();
+  try {
+    workerPort = await listen(worker);
+    webPort = await listen(web);
+    execution = runGamingScopedPreviewE2e({
+      args: ['--pr-number', String(identity.prNumber), '--commit-sha', identity.sourceCommit,
+        '--web-base-url', 'https://web-pr-1413.up.railway.app',
+        '--worker-base-url', 'https://worker-pr-1413.up.railway.app', '--execute', '--allow-network'],
+      localGitState: { clean: true, head: identity.sourceCommit, sourceTreeSha: 'b'.repeat(40), repository: 'pbjustin/Arcanos' }, fetchImpl });
+    void execution.then(() => checkpoints.at(-1)!.verified.resolve(), error => {
+      for (const checkpoint of checkpoints) checkpoint.verified.reject(error);
+    });
+  } catch (error) { await close(); throw error; }
+  return {
+    close,
+    hasPendingCase: () => activeCase !== completedCase,
+    async runCase(index: number) {
+      activeCase = index;
+      // A selected later case still executes the verifier's required prefix.
+      for (let prefix = 0; prefix <= index; prefix += 1) checkpoints[prefix].admit.resolve();
+      await checkpoints[index].verified.promise;
+      expect(notionCalls).toBe(0);
+      expect(outbound).toEqual([]);
+      if (index === planned.length - 1) {
+        const result = await execution!;
+        expect(result.summary).toMatchObject({ status: 'PASS', requestsMade: 84 });
+        expect(result.offlineVerification).toBe('NOT_PROVEN');
+        expect(result.transport).toBe('caller-supplied-unverified');
+        expect(result.hostedExecuted).toBeNull();
+        expect(result.GAMING_SCOPED_PREVIEW).toBe('NOT_RUN');
+        expect(result.assertionInventory.executedCaseIds).toEqual(result.assertionInventory.plannedCaseIds);
+        expect(result.assertionInventory.executedCaseIds.filter((id: string) => id.startsWith('native:'))).toHaveLength(63);
+        expect(result.assertionInventory.executedCaseIds.filter((id: string) => id.startsWith('mcp:'))).toHaveLength(21);
+        expect(result.assertionInventory.skippedCaseIds).toContain('native:backstage-generation-notion-authority-rag');
+        expect(requests).toHaveLength(84);
+      }
+      completedCase = index;
+    },
+  };
+}
+
+describe('native PR contained application', () => {
+  describe('complete Gaming scope offline with no Notion or provider outbound requests', () => {
+    let scope: Awaited<ReturnType<typeof createGamingOfflineScope>>;
+    beforeAll(async () => { scope = await createGamingOfflineScope(); });
+    afterEach(async () => { if (scope?.hasPendingCase()) await scope.close(); });
+    afterAll(async () => { await scope?.close(); });
+    it.each((buildGamingScopedPreviewAssertionInventory() as readonly string[]).map((id, index) => [id, index] as const))
+    ('verifies %s', async (_id, index) => { await scope.runCase(index); });
   });
 
+  it('aborts and drains a withheld Gaming request before DAG mock accounting', async () => {
+    const scope = await createGamingOfflineScope();
+    await scope.close();
+    await expect(scope.runCase(0)).rejects.toThrow('Gaming offline scope ended');
+    expect(assertDagTokenAccountingFixture).not.toHaveBeenCalled();
+    const app = createNativePrPreviewApplication({ identity,
+      readinessState: { applicationImported: true, fixturesSealed: true, ready: true, draining: false } });
+    for (const method of ['get', 'head', 'get', 'head'] as const) {
+      expect((await request(app)[method]('/readyz')).status).toBe(200);
+    }
+    expect(assertDagTokenAccountingFixture).toHaveBeenCalledTimes(4);
+  });
   it('retains the broad Notion connectivity selector and reports its mocked canary evidence', async () => {
     const notionProbe = jest.fn(async () => ({ apiReached: true as const, authenticationRejected: true as const }));
     const app = createNativePrPreviewApplication({ identity, notionConnectivityProbe: notionProbe });
