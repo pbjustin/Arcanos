@@ -125,12 +125,36 @@ const SOURCE_CONTROL_DIRECTIVE_PATTERN = /(?:^|[:;]\s*)(?:new\s+)?(?:system|deve
 // subject or named shell. This scoped distinction never exempts commands
 // explicitly addressed to an assistant above.
 const SOURCE_UNSCOPED_COMMAND_PATTERN = /\b(?:execute|run)\s+(?:(?:this|the|following)\s+){0,2}commands?\b(?!\s+in\s+(?:(?:the|your)\s+)?(?:(?:(?:in[- ]game|game|party|guild)\s+)?chat|(?:in[- ]game|game)\s+console)\b)/i;
-// A claimed game surface cannot authorize transferring host files or environment
-// data to a URI. Recognize the operand syntax independently of executable names;
+// A claimed game surface cannot authorize commands reading or transferring host
+// files or environment data, including scheme-less/SSH destinations and shell
+// redirects. Recognize operands independently of executable names/destinations;
 // ordinary chat links and game selectors such as @p are not host-file operands.
 const SOURCE_COMMAND_DIRECTIVE_PATTERN = /\b(?:execute|run)\s+(?:(?:this|the|following)\s+){0,2}commands?\b/i;
-const SOURCE_COMMAND_URI_PATTERN = /\b[a-z][a-z0-9+.-]{0,31}:\/\//i;
-const SOURCE_COMMAND_HOST_DATA_PATTERN = /(?:^|[\s"'=])(?:@(?=[^\s"']*[./\\])[^\s"']+|[a-z]:[\\/][^\s"']+|\/(?:[^/\s"']+\/)+[^/\s"']+|\/\.[^/\s"']+|(?:~|\.\.?)[\\/][^\s"']+)|\$(?:\{[a-z_]\w*\}|[a-z_]\w*|\()|%[a-z_]\w*%/i;
+const SOURCE_COMMAND_HOST_DATA_PATTERN = /(?:^|[\s"'=<>])(?:@(?=[^\s"']*[./\\])[^\s"']+|[a-z]:[\\/][^\s"']+|\/(?:[^/\s"']+\/)+[^/\s"']+|\/\.[^/\s"']+|(?:~|\.\.?)[\\/][^\s"']+)|\$(?:\{[a-z_]\w*\}|[a-z_]\w*|\()|%[a-z_]\w*%/i;
+const SOURCE_COMMAND_FILE_READ_FLAG_PATTERN = /(?:^|\s)(?:--(?:data(?:-binary)?|source|input-file|upload-file|form)(?:=|\s+)|-[dFT](?:=|\s*))["']?(?:[a-z_][\w.-]*=)?["']?@[^\s"'<>|;&]+/i;
+const SOURCE_COMMAND_COMMUNICATION_PATTERN = /^\s+in\s+(?:(?:the|your)\s+)?(?:(?:in[- ]game|game|party|guild)\s+)?chat\s*[:.!?]\s*\/(?:say|tell)\s+/i;
+const SOURCE_COMMAND_CONTINUATION_PATTERN = /\bcommands?\s+in\s+(?:(?:the|your)\s+)?(?:(?:(?:in[- ]game|game|party|guild)\s+)?chat|(?:in[- ]game|game)\s+console)[.!?]$/i;
+
+/** Message targets and quoted chat text are inert; chained shell operations are not. */
+function sourceCommandHasHostData(text: string): boolean {
+  const directive = SOURCE_COMMAND_DIRECTIVE_PATTERN.exec(text);
+  const directiveEnd = directive ? directive.index + directive[0].length : 0;
+  const communication = SOURCE_COMMAND_COMMUNICATION_PATTERN.exec(text.slice(directiveEnd));
+  const start = communication ? directiveEnd + communication[0].length : 0;
+  const prefix = text.slice(0, start);
+  let payload = text.slice(start);
+  if (communication && /\/tell\s+$/i.test(communication[0])) {
+    payload = payload.replace(/^(?:@[a-z]\[[a-z0-9_.,:=!+{}#-]*\]|<[a-z][\w.-]*>)(?=\s|$)/i, 'game-target');
+  }
+  if (SOURCE_COMMAND_HOST_DATA_PATTERN.test(prefix + payload)) return true;
+  const quotedMessage = communication && /\/say\s+$/i.test(communication[0])
+    && /^(?:"[^"\\]*"|'[^'\\]*')[.!?]?\s*$/.test(payload);
+  if (!quotedMessage && SOURCE_COMMAND_FILE_READ_FLAG_PATTERN.test(prefix + payload)) return true;
+  // Only the exact game target and complete quoted message above are inert.
+  // Every external-command redirect retains even extensionless host operands.
+  const syntax = quotedMessage ? 'quoted-message' : payload;
+  return /[<>]\s*[^\s<>|;&]/.test(syntax);
+}
 // Bounded modifiers describe a role without an adjective allowlist. An article
 // permits coordinated adjectives inside that noun phrase. Otherwise conjunction
 // and preposition boundaries keep later gameplay subjects out of the role. A
@@ -178,11 +202,11 @@ function filterNormalizedDocumentInstructions(text: string): string {
     .replace(/\s+/g, " ")
     .trim()
     .split(/(?<=[.!?])\s+/)
-    .filter((sentence) => sentence.length > 0 && !SOURCE_INSTRUCTION_PATTERN.test(sentence)
+    .filter((sentence, index, sentences) => sentence.length > 0 && !SOURCE_INSTRUCTION_PATTERN.test(sentence)
       && !SOURCE_CONTROL_DIRECTIVE_PATTERN.test(sentence)
       && !SOURCE_UNSCOPED_COMMAND_PATTERN.test(sentence)
-      && !(SOURCE_COMMAND_DIRECTIVE_PATTERN.test(sentence) && SOURCE_COMMAND_URI_PATTERN.test(sentence)
-        && SOURCE_COMMAND_HOST_DATA_PATTERN.test(sentence))
+      && !(SOURCE_COMMAND_DIRECTIVE_PATTERN.test(sentence) && sourceCommandHasHostData(sentence
+        + (SOURCE_COMMAND_CONTINUATION_PATTERN.test(sentence) ? ` ${sentences[index + 1] ?? ''}` : '')))
       && !SOURCE_ROLE_ASSIGNMENT_PATTERN.test(sentence))
     .join(" ")
     .trim();

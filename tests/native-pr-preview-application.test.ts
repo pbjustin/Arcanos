@@ -1,5 +1,9 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import request from 'supertest';
+import https from 'node:https';
+import { syncBuiltinESMExports } from 'node:module';
+import { runGamingScopedPreviewE2e } from '../scripts/gaming-scoped-preview-e2e.mjs';
+import { createPassivePrPreviewServer } from '../scripts/start-railway-service.mjs';
 
 import { assertDagMetricsRetentionPreviewFixture } from '../src/shared/dag/dagMetricsPreviewFixture.js';
 import { assertDagTokenAccountingPreviewFixture } from '../src/shared/dag/dagTokenAccountingPreviewFixture.js';
@@ -609,6 +613,75 @@ function expectedMcpBodyCap(fixture: string) {
 }
 
 describe('native PR contained application', () => {
+  it('executes the complete Gaming scope offline with no Notion or provider outbound requests', async () => {
+    const outbound: string[] = [];
+    const notionProbe = jest.fn(async () => { throw new Error('Gaming must not select the Notion canary'); });
+    const app = createNativePrPreviewApplication({ identity,
+      readinessState: { applicationImported: true, fixturesSealed: true, ready: true, draining: false },
+      notionConnectivityProbe: notionProbe });
+    const worker = createPassivePrPreviewServer('worker', identity);
+    const fetchSpy = jest.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      outbound.push(new URL(input instanceof Request ? input.url : String(input)).hostname);
+      throw new Error('External fetch forbidden in Gaming scope');
+    });
+    const httpsSpy = jest.spyOn(https, 'request').mockImplementation((...parameters: unknown[]) => {
+      const destination = parameters[0];
+      outbound.push(typeof destination === 'object' && destination !== null && 'hostname' in destination
+        ? String(destination.hostname) : String(destination));
+      throw new Error('External HTTPS forbidden in Gaming scope');
+    });
+    syncBuiltinESMExports();
+    const requests: string[] = [];
+    const fetchImpl = async (input: string, init: RequestInit) => {
+      const url = new URL(input);
+      expect(['web-pr-1413.up.railway.app', 'worker-pr-1413.up.railway.app']).toContain(url.hostname);
+      requests.push(url.hostname + url.pathname);
+      const target = url.hostname.startsWith('worker-') ? worker : app;
+      const verb = init.method?.toLowerCase() as 'get' | 'head' | 'post' | 'options';
+      let operation = request(target)[verb](url.pathname + url.search);
+      for (const [key, value] of Object.entries(init.headers ?? {})) operation = operation.set(key, String(value));
+      const result = init.body === undefined ? await operation : await operation.send(String(init.body));
+      const response = new Response(init.method === 'HEAD' || result.text.length === 0 ? null : result.text,
+        { status: result.status, headers: result.headers });
+      Object.defineProperty(response, 'url', { value: input });
+      return response;
+    };
+    try {
+      const result = await runGamingScopedPreviewE2e({
+        args: ['--pr-number', String(identity.prNumber), '--commit-sha', identity.sourceCommit,
+          '--web-base-url', 'https://web-pr-1413.up.railway.app',
+          '--worker-base-url', 'https://worker-pr-1413.up.railway.app', '--execute', '--allow-network'],
+        localGitState: { clean: true, head: identity.sourceCommit, sourceTreeSha: 'b'.repeat(40), repository: 'pbjustin/Arcanos' }, fetchImpl })
+        .catch((error: { code: string; caseId: string }) => { throw new Error(`${error.code}:${error.caseId}`); });
+      expect(result.summary).toMatchObject({ status: 'PASS', requestsMade: 84 });
+      expect(result.offlineVerification).toBe('PASS');
+      expect(result.GAMING_SCOPED_PREVIEW).toBe('NOT_RUN');
+      expect(result.assertionInventory.executedCaseIds).toEqual(result.assertionInventory.plannedCaseIds);
+      expect(result.assertionInventory.skippedCaseIds).toContain('native:backstage-generation-notion-authority-rag');
+      expect(requests).toHaveLength(84);
+      expect(notionProbe).not.toHaveBeenCalled();
+      expect(outbound).toEqual([]);
+      expect(httpsSpy).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+      httpsSpy.mockRestore();
+      syncBuiltinESMExports();
+      worker.closeAllConnections();
+      if (worker.listening) await new Promise<void>((resolve, reject) => worker.close(error => error ? reject(error) : resolve()));
+    }
+  });
+
+  it('retains the broad Notion connectivity selector and reports its mocked canary evidence', async () => {
+    const notionProbe = jest.fn(async () => ({ apiReached: true as const, authenticationRejected: true as const }));
+    const app = createNativePrPreviewApplication({ identity, notionConnectivityProbe: notionProbe });
+    const contract = NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT;
+    const response = await request(app).post(contract.path).send({ fixture: contract.fixtures.notionAuthorityRag });
+    expect(response.status).toBe(200);
+    expect(notionProbe).toHaveBeenCalledTimes(1);
+    expect(response.body.notionAuthority).toMatchObject({ liveNotionApiReached: true, liveNotionAuthenticationRejected: true });
+  });
+
   it('accepts only the exact credential-empty child environment', () => {
     const childEnvironment = {
       ARCANOS_NATIVE_PR_APPLICATION_PREVIEW: 'v1',

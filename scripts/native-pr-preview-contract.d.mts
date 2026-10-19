@@ -271,6 +271,8 @@ export interface NativePrPreviewE2eContract {
     }>;
   }>;
   readonly gaming: Readonly<{
+    scopedSecurityProofHeader: 'x-arcanos-preview-gaming-scoped-security-version';
+    scopedSecurityProofVersion: 'gaming-scoped-security/v1';
     canaryPath: '/gpt/arcanos-gaming/canary';
     queryPath: '/gpt/arcanos-gaming';
     proofHeader: 'x-arcanos-preview-gaming-archive-grounding-version';

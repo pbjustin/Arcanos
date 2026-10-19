@@ -7,6 +7,12 @@ Owner-authorized stacked draft previews use the separate, disabled-by-default
 [stacked draft preview contract](RAILWAY_STACKED_DRAFT_PREVIEW.md). That lane does
 not change the existing native preview eligibility or production promotion gates.
 
+[Gaming-scoped preview verification](RAILWAY_GAMING_SCOPED_PREVIEW.md) combines
+the existing Gaming and shared-security assertions without the Notion canary.
+It currently supports offline synthetic application tests only; hosted execution
+is disabled and reported as `GAMING_SCOPED_PREVIEW = NOT_RUN`. The full native
+verifier retains its platform-wide coverage, including Notion connectivity.
+
 [Isolated live PR validation](LIVE_VALIDATION.md) uses a dedicated **ARCANOS V2
 Validation** service in `live-validation`, with Railway HTTPS, a validation-only
 provider key and test bearer, exact-SHA source/build/readiness proof, transient

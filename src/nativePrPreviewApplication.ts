@@ -15,7 +15,8 @@ import { GAMING_LIVE_SOURCE_VALIDATION_PREVIEW_CASES, GAMING_LIVE_SOURCE_VALIDAT
   runGamingLiveSourceValidationPreview, validateGamingPreviewCaseReport } from './shared/gaming/gamingLiveSourceValidationPreviewFixture.js';
 import { runGamingHybridKnowledgePreview, GAMING_DISCOVERY_RECOVERY_PROTOCOL_PREVIEW_VERSION,
   GAMING_EDITION_CONTEXT_REGRESSIONS_PREVIEW_VERSION } from './shared/gaming/gamingHybridKnowledgePreviewFixture.js';
-import { runGamingClearPreview, GAMING_DISCOVERY_RECOVERY_EVIDENCE_PREVIEW_VERSION } from './shared/gaming/gamingClearPreviewFixture.js';
+import { runGamingClearPreview, runGamingScopedSecurityPreview, GAMING_SCOPED_SECURITY_PREVIEW_VERSION,
+  GAMING_DISCOVERY_RECOVERY_EVIDENCE_PREVIEW_VERSION } from './shared/gaming/gamingClearPreviewFixture.js';
 import { runGamingSourceAcquisitionPreview } from './shared/gaming/gamingSourceAcquisitionPreviewFixture.js';
 import { runGamingStructuredEvidencePreview } from './shared/gaming/gamingStructuredEvidencePreviewFixture.js';
 import { runGamingCurrentnessPreview, GAMING_ADVISORY_FRESHNESS_PREVIEW_VERSION } from './shared/gaming/gamingCurrentnessPreviewFixture.js';
@@ -10125,6 +10126,9 @@ export function createNativePrPreviewApplication(
           }
           try {
             runGamingClearPreview();
+            if (GAMING_SCOPED_SECURITY_PREVIEW_VERSION !== NATIVE_PR_PREVIEW_GAMING_CONTRACT.scopedSecurityProofVersion)
+              throw new Error('PREVIEW_GAMING_SCOPED_SECURITY_CONTRACT_INVALID');
+            runGamingScopedSecurityPreview();
           } catch {
             sendBoundedJsonResponse(
               request,
@@ -10256,6 +10260,7 @@ export function createNativePrPreviewApplication(
           );
           response.setHeader(NATIVE_PR_PREVIEW_GAMING_CONTRACT.largeSourceReportHeader, largeSourceReportHeader);
           response.setHeader(NATIVE_PR_PREVIEW_GAMING_CONTRACT.liveSourceValidationReportHeader, liveSourceReportHeader);
+          response.setHeader(NATIVE_PR_PREVIEW_GAMING_CONTRACT.scopedSecurityProofHeader, GAMING_SCOPED_SECURITY_PREVIEW_VERSION);
           response.setHeader(
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.largeSourceProofHeader,
             GAMING_LARGE_SOURCE_PREVIEW_VERSION
