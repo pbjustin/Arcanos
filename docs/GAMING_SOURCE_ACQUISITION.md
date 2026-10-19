@@ -28,8 +28,11 @@ ceiling can omit a malicious tail. An exhausted raw inspection fails with
 clean prefix or populate a source cache. Plain text without markup or entity
 openers uses a complete text scan without constructing a redundant DOM.
 Character normalization alone does not mark a document as instruction-bearing:
-plaintext, metadata and projection compare the same normalized characters while
-preserving line-sensitive instruction checks. Durable ingestion
+plaintext, metadata, JSON-LD envelope text and projection compare the same
+normalized characters while preserving line-sensitive instruction checks.
+Credential-like structured text remains conservatively rejected, including
+ambiguous `token:` values; dropping only its envelope cannot make the remaining
+source eligible for fallback evidence. Durable ingestion
 also rejects document or structured-build taint before persistence; sanitized
 remaining prose cannot become a stored fallback. Consent and source-use policy
 remain independently required.

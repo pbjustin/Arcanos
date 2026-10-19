@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { load } from 'cheerio';
 import { countGamingHtmlElements, filterGamingDocumentInstructions, GAMING_DOCUMENT_FURNITURE_SELECTOR } from '@services/gamingDocumentExtraction.js';
+import { normalizeGamingDocumentInstructionCharacters } from '@shared/gaming/gamingDocumentTextNormalization.js';
 import {
   GAMING_EVIDENCE_UNIT_POLICY_VERSION,
   type GamingEvidenceExtractionInput,
@@ -141,7 +142,7 @@ function scalar(value: JsonValue | undefined): string | undefined {
   return typeof value === 'string' ? value.trim() : value instanceof JsonNumber ? value.text : undefined;
 }
 function safeText(value: string): boolean {
-  return !SENSITIVE_VALUE.test(value) && filterGamingDocumentInstructions(value) === value.normalize('NFKC').replace(/\s+/gu, ' ').trim();
+  return !SENSITIVE_VALUE.test(value) && filterGamingDocumentInstructions(value) === normalizeGamingDocumentInstructionCharacters(value).replace(/\s+/gu, ' ').trim();
 }
 function typeIs(value: JsonRecord, name: string): boolean {
   const raw = value['@type'];
