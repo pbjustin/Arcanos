@@ -283,6 +283,8 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
     }),
   }),
   gaming: Object.freeze({
+    scopedSecurityProofHeader: 'x-arcanos-preview-gaming-scoped-security-version',
+    scopedSecurityProofVersion: 'gaming-scoped-security/v1',
     canaryPath: '/gpt/arcanos-gaming/canary',
     queryPath: '/gpt/arcanos-gaming',
     proofHeader: 'x-arcanos-preview-gaming-archive-grounding-version',

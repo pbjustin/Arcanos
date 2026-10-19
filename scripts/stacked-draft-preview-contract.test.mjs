@@ -237,6 +237,30 @@ test('git adapter uses exact object IDs and distinguishes reverse or missing anc
   assert.equal(typeof git.readObject, 'undefined');
 });
 
+test('canonical Gaming archive digest ignores owner autocrlf while historical adapter preserves its default', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'arcanos-canonical-archive-'));
+  const run = args => execute('git', args, { cwd: root, encoding: 'buffer' });
+  const hash = bytes => createHash('sha256').update(bytes).digest('hex');
+  try {
+    await run(['init', '--initial-branch=main']);
+    await writeFile(join(root, 'fixture.txt'), 'canonical fixture\nsecond line\n');
+    await run(['-c', 'core.autocrlf=false', 'add', 'fixture.txt']);
+    await run(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-m', 'canonical fixture']);
+    const head = (await run(['rev-parse', 'HEAD'])).stdout.toString('utf8').trim();
+    const canonical = new GitReadAdapter({ cwd: root, canonicalArchive: true });
+    const historical = new GitReadAdapter({ cwd: root });
+    assert.throws(() => new GitReadAdapter({ cwd: root, canonicalArchive: 'true' }), errorCode('STACKED_PREVIEW_GIT_ARCHIVE_OPTION_INVALID'));
+    const expected = hash((await run(['-c', 'core.autocrlf=false', 'archive', '--format=tar', head])).stdout);
+    await run(['config', 'core.autocrlf', 'true']);
+    assert.equal(await canonical.archiveSha256(head), expected);
+    assert.equal(await historical.archiveSha256(head), hash((await run(['archive', '--format=tar', head])).stdout));
+    assert.notEqual(await historical.archiveSha256(head), expected);
+    await run(['config', 'core.autocrlf', 'false']);
+    assert.equal(await canonical.archiveSha256(head), expected);
+    assert.equal(await historical.archiveSha256(head), expected);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 function github(fetchImpl) {
   return new GitHubReadAdapter({ token: 'mock-synthetic-offline-token-123456', fetchImpl });
 }

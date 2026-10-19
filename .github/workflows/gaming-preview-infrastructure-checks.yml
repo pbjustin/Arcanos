@@ -1,0 +1,65 @@
+name: Gaming Preview Infrastructure Checks
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/*preview*'
+      - 'scripts/*preview*'
+      - 'config/*preview*'
+      - 'tests/railway-pr-preview-lifecycle.test.js'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.18.1'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Offline admission, lifecycle, provenance and kernel network tests
+        run: >-
+          node --test scripts/gaming-preview-*.test.mjs
+          scripts/gaming-scoped-preview-*.test.mjs
+          scripts/railway-gaming-preview.test.mjs
+          scripts/stacked-draft-preview-*.test.mjs
+          scripts/railway-stacked-draft-preview.test.mjs
+          scripts/native-pr-preview-e2e.test.mjs
+  artifact-smoke:
+    # This job builds a disposable local image only: no publication, Railway
+    # authority, environment secret or provider token is available.
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.18.1'
+      - run: git fetch --no-tags origin 1c1e7d0f4c8f4e62fd7117e28efd0d8d7c415262
+      - name: Materialize synthetic build authorization without deployment authority
+        run: |
+          node --input-type=module <<'NODE'
+          import {writeFileSync} from 'node:fs';
+          import {GitReadAdapter} from './scripts/stacked-draft-preview-contract.mjs';
+          const git=new GitReadAdapter({cwd:process.cwd(),canonicalArchive:true});
+          const headSha='1c1e7d0f4c8f4e62fd7117e28efd0d8d7c415262';
+          const id=d=>`${d.repeat(8)}-${d.repeat(4)}-${d.repeat(4)}-${d.repeat(4)}-${d.repeat(12)}`;
+          writeFileSync('gaming-smoke-authorization.json',JSON.stringify({version:1,
+            controllerSha:process.env.GITHUB_SHA,mainSha:process.env.GITHUB_SHA,baseSha:process.env.GITHUB_SHA,
+            headSha,treeSha:'89f1eb0b988514d92ef9f82dd2f77bc356735b8b',
+            sourceArchiveSha256:await git.archiveSha256(headSha),targetSha256:'0'.repeat(64),
+            expiresAt:new Date(Date.now()+7200000).toISOString(),runId:process.env.GITHUB_RUN_ID,
+            target:{projectId:id('1'),baseEnvironmentId:id('2'),workerServiceId:id('3'),webServiceId:id('4')}}));
+          NODE
+      - name: Build and attest exact frozen candidate in contained stages
+        run: node scripts/gaming-preview-build.mjs build gaming-smoke-authorization.json gaming-smoke
+      - name: Verify archive and image receipt binding
+        run: node scripts/gaming-preview-build.mjs verify gaming-smoke-authorization.json gaming-smoke/build.json gaming-smoke/image.tar

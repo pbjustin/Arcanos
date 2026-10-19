@@ -1,0 +1,313 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import test from 'node:test';
+import {
+  DEFAULT_GAMING_POLICY, TRUSTED_GAMING_KERNEL_POLICY_SHA256, GamingRailwayApi,
+  assertGamingPreviewWorkflowContext, assertTrustedGamingPreviewExecutionReceipt, attestGamingPreview, cleanupGamingPreview,
+  deployGamingPreview, gamingPreviewEnvironmentName, gamingPreviewVerifierArguments, restoreGamingExecutionReceipt, validateGamingAuthorization,
+  validateGamingEnvironment, validateGamingImageReceipt, verifyGamingCandidate,
+} from './railway-gaming-preview.mjs';
+import { parseNativePrPreviewE2eArguments } from './native-pr-preview-e2e.mjs';
+
+const hash = value => createHash('sha256').update(value).digest('hex');
+const id = digit => `${digit.repeat(8)}-${digit.repeat(4)}-4${digit.repeat(3)}-8${digit.repeat(3)}-${digit.repeat(12)}`;
+const controllerSha = 'a'.repeat(40), image = `ghcr.io/pbjustin/arcanos-gaming-preview@sha256:${'b'.repeat(64)}`;
+const credentials = { username: 'synthetic-pull-only', password: 'mock-private-image-pull' };
+const target = { workspaceId: id('1'), projectId: id('2'), baseEnvironmentId: id('3'), workerServiceId: id('4'),
+  webServiceId: id('5'), region: 'us-east4-eqdc4a', cpuLimit: 1, memoryLimitGb: 1,
+  imageRepository: 'ghcr.io/pbjustin/arcanos-gaming-preview', registryPullCredentialSha256: hash(JSON.stringify(credentials)) };
+const policy = { ...DEFAULT_GAMING_POLICY, enabled: true, target };
+const now = Date.now();
+const raw = () => ({ version: 1, controllerSha, mainSha: controllerSha, baseSha: controllerSha,
+  headSha: policy.headSha, treeSha: policy.treeSha, sourceArchiveSha256: 'c'.repeat(64),
+  expiresAt: new Date(now + 3600_000).toISOString(), targetSha256: hash(JSON.stringify(target)) });
+const authorize = (changes = {}, other = {}) => validateGamingAuthorization({ authorization: { ...raw(), ...changes },
+  policy, actor: 'pbjustin', repository: 'pbjustin/Arcanos', controllerSha, runId: '42', now, ...other });
+function build(a) {
+  return { schemaVersion: 1, controllerSha, candidateSha: a.headSha, treeSha: a.treeSha, sourceArchiveSha256: a.sourceArchiveSha256,
+    compiledSha256: 'd'.repeat(64), compiledFiles: 1, compiledBytes: 1, runtimeDependencyInventorySha256: 'e'.repeat(64),
+    runtimeDevDependenciesPruned: true, expiresAt: a.expiresAt, imageId: `sha256:${'f'.repeat(64)}`,
+    imageArchiveSha256: '0'.repeat(64), previewLane: 'gaming-synthetic-v1', runtimeEgressPolicy: 'linux-seccomp-no-outbound-v1',
+    targetSha256: a.targetSha256, runId: a.runId, kernelPolicySha256: TRUSTED_GAMING_KERNEL_POLICY_SHA256, kernelLauncherSha256: '2'.repeat(64),
+    runtimeEnvironmentName: gamingPreviewEnvironmentName(a.runId),
+    runtimeTarget: Object.fromEntries(['projectId', 'baseEnvironmentId', 'workerServiceId', 'webServiceId'].map(key => [key, target[key]])) };
+}
+function imageReceipt(a, changes = {}) {
+  const receipt = { ...build(a), ...changes }, bytes = JSON.stringify(receipt);
+  return validateGamingImageReceipt({ authorization: a, buildReceipt: receipt, buildReceiptBytes: bytes,
+    publishedImage: { image, imageId: receipt.imageId, buildReceiptSha256: hash(bytes) } });
+}
+const connection = nodes => ({ edges: nodes.map(node => ({ node })), pageInfo: { hasNextPage: false } });
+function baseEnvironment() {
+  const config = { privateNetworkDisabled: true, sharedVariables: {}, services: {} }, nodes = [];
+  for (const role of ['worker', 'web']) {
+    const serviceId = target[`${role}ServiceId`];
+    config.services[serviceId] = { source: { image }, variables: { ARCANOS_PROCESS_KIND: { value: role } },
+      deploy: { numReplicas: 1, restartPolicyType: 'NEVER', restartPolicyMaxRetries: 0, healthcheckPath: '/readyz', healthcheckTimeout: 300,
+        multiRegionConfig: { [target.region]: { numReplicas: 1 } }, limitOverride: { containers: { cpu: 1, memoryBytes: 1024 ** 3 } },
+        registryCredentials: credentials }, networking: {} };
+    nodes.push({ serviceId, environmentId: target.baseEnvironmentId, deletedAt: null, source: { image, repo: null },
+      numReplicas: 1, restartPolicyType: 'NEVER', restartPolicyMaxRetries: 0, preDeployCommand: null, cronSchedule: null,
+      startCommand: null, healthcheckPath: '/readyz', healthcheckTimeout: 300, region: target.region, activeDeployments: [],
+      domains: { serviceDomains: [], customDomains: [] } });
+  }
+  return { id: target.baseEnvironmentId, name: 'production', projectId: target.projectId, deletedAt: null,
+    config, deploymentTriggers: connection([]), volumeInstances: connection([]), serviceInstances: connection(nodes) };
+}
+function railwayMock({ failRole = null, deletionStuck = false, startupStuck = false, failPhase = null } = {}) {
+  const state = { environments: [baseEnvironment()], patch: null, config: null, calls: [], deleted: false };
+  const read = environmentId => state.environments.find(e => e.id === environmentId);
+  return { state,
+    validateAuthority: async () => {},
+    listEnvironments: async () => structuredClone(state.environments),
+    environmentAbsent: async (_t, environmentId, environmentName) => !state.environments.some(e => e.id === environmentId || e.name === environmentName),
+    readEnvironment: async (_t, environmentId) => structuredClone(read(environmentId)),
+    stagedEmpty: async () => true,
+    createEnvironment: async (_t, name) => {
+      const e = structuredClone(state.environments[0]);
+      Object.assign(e, { id: id('6'), name, isEphemeral: true, sourceEnvironment: { id: target.baseEnvironmentId } });
+      for (const { node } of e.serviceInstances.edges) {
+        node.environmentId = e.id; node.domains.serviceDomains = [{ domain: `${node.serviceId === target.workerServiceId ? 'worker' : 'web'}-${name}.up.railway.app`,
+          environmentId: e.id, serviceId: node.serviceId, deletedAt: null }];
+      }
+      state.environments.push(e); state.calls.push('create');
+      if (failPhase === 'create-lost-response') throw new Error('lost create response');
+      if (failPhase === 'create-invalid-response') return { id: e.id };
+      return structuredClone(e);
+    },
+    stageConfig: async (environmentId, config) => { if (failPhase === 'stage') throw new Error('stage failed'); state.config = config;
+      state.patch = { id: id('7'), environmentId, status: 'STAGED' }; return structuredClone(state.patch); },
+    commitConfig: async (environmentId, message) => {
+      if (failPhase === 'commit') throw new Error('commit failed');
+      read(environmentId).config = state.config;
+      for (const { node } of read(environmentId).serviceInstances.edges) node.source.image = state.config.services[node.serviceId].source.image;
+      Object.assign(state.patch, { status: 'COMMITTED', message, appliedAt: new Date(now).toISOString() }); return state.patch.id;
+    },
+    readPatch: async () => structuredClone(state.patch),
+    deployService: async (environmentId, serviceId) => {
+      const role = serviceId === target.workerServiceId ? 'worker' : 'web'; state.calls.push(role);
+      const deploymentId = role === 'worker' ? id('8') : id('9');
+      read(environmentId).serviceInstances.edges.find(edge => edge.node.serviceId === serviceId).node.activeDeployments = [
+        { id: deploymentId, status: 'SUCCESS', deploymentStopped: false, meta: { serviceManifest: { source: { image } } } }];
+      return deploymentId;
+    },
+    readDeployment: async deploymentId => ({ id: deploymentId, projectId: target.projectId, environmentId: id('6'),
+      serviceId: deploymentId === id('8') ? target.workerServiceId : target.webServiceId,
+      status: failRole === (deploymentId === id('8') ? 'worker' : 'web') ? 'FAILED' : startupStuck ? 'BUILDING' : 'SUCCESS', deploymentStopped: false }),
+    readGamingReadiness: async host => {
+      if (failPhase === 'readiness') throw new Error('readiness failed');
+      if (failPhase === 'worker-drift-during-web' && host.includes('web')) {
+        read(id('6')).serviceInstances.edges.find(edge => edge.node.serviceId === target.workerServiceId).node.activeDeployments = [];
+      }
+      return { ready: true, prNumber: 1558, sourceCommit: policy.headSha,
+      processKind: host.includes('worker') ? 'worker' : 'web', mode: host.includes('worker') ? 'passive-pr-preview' : 'native-pr-application-e2e-v1',
+      applicationImported: true, fixturesSealed: true, protectedEffectsEnabled: false, protectsMaliciousPr: false,
+      requiresPlatformSecretIsolationForUntrustedCode: true }; },
+    deleteEnvironment: async environmentId => { state.deleted = true; state.calls.push('delete');
+      if (!deletionStuck) state.environments = state.environments.filter(e => e.id !== environmentId); },
+    pause: async () => {},
+  };
+}
+
+test('Gaming lane is checked in disabled with no target', () => {
+  assert.equal(DEFAULT_GAMING_POLICY.enabled, false); assert.equal(DEFAULT_GAMING_POLICY.target, null);
+  assert.throws(() => authorize({}, { policy: DEFAULT_GAMING_POLICY }), /SOURCE_OR_TARGET_DRIFT/u);
+});
+test('authorization binds frozen source, base, owner, controller, target, run and expiry', () => {
+  const a = authorize(); assert.equal(a.runId, '42'); assert.equal(Object.isFrozen(a.policy.target), true);
+  for (const changes of [{ headSha: 'f'.repeat(40) }, { treeSha: 'f'.repeat(40) }, { baseSha: 'b'.repeat(40) },
+    { controllerSha: 'b'.repeat(40) }, { targetSha256: '0'.repeat(64) }, { expiresAt: new Date(now - 1).toISOString() },
+    { expiresAt: new Date(now + 7200_001).toISOString() }, { extra: true }]) assert.throws(() => authorize(changes));
+  assert.throws(() => authorize({}, { actor: 'other' }), /OWNER_AUTHORIZATION_REQUIRED/u);
+  assert.throws(() => authorize({}, { runId: '0' }), /OWNER_AUTHORIZATION_REQUIRED/u);
+});
+test('production or ambiguous target cannot be authorized', () => {
+  for (const changes of [{ workspaceId: '1c9265a3-986f-4304-ad3e-5a874caab039' },
+    { projectId: '7faf44e5-519c-4e73-8d7a-da9f389e6187' }, { workerServiceId: target.webServiceId },
+    { extra: 'unknown' }, { registryPullCredentialSha256: 'unproven' }]) {
+    assert.throws(() => authorize({}, { policy: { ...policy, target: { ...target, ...changes } } }), /TARGET_BLOCKED/u);
+  }
+});
+test('exact non-draft PR admission rejects labels, unapproved PRs, forks and source drift', async () => {
+  const authorization = authorize(), main = { protected: true, sha: controllerSha };
+  const pr = { number: 1558, state: 'open', draft: false, head: { sha: policy.headSha, repo: { full_name: 'pbjustin/Arcanos' } },
+    base: { ref: 'main', sha: controllerSha, repo: { full_name: 'pbjustin/Arcanos' } } };
+  const git = { treeSha: async () => policy.treeSha, archiveSha256: async () => authorization.sourceArchiveSha256 };
+  await verifyGamingCandidate({ authorization, main, pullRequest: pr, git });
+  for (const patch of [{ number: 1535 }, { draft: true }, { state: 'closed' }, { head: { ...pr.head, sha: 'b'.repeat(40) } },
+    { head: { ...pr.head, repo: { full_name: 'fork/Arcanos' } } }, { base: { ...pr.base, ref: 'other' } }]) {
+    await assert.rejects(verifyGamingCandidate({ authorization, main, pullRequest: { ...pr, ...patch }, git }));
+  }
+  await assert.rejects(verifyGamingCandidate({ authorization, main: { ...main, protected: false }, pullRequest: pr, git }), /PROTECTED_MAIN_DRIFT/u);
+  await assert.rejects(verifyGamingCandidate({ authorization, main, pullRequest: pr,
+    git: { ...git, treeSha: async () => 'f'.repeat(40) } }), /TREE_DRIFT/u);
+  await assert.rejects(verifyGamingCandidate({ authorization, main, pullRequest: pr,
+    git: { ...git, archiveSha256: async () => 'f'.repeat(64) } }), /ARCHIVE_DRIFT/u);
+});
+test('image receipt rejects wrong artifacts, mutable image, kernel policy, run and target', () => {
+  const a = authorize(); imageReceipt(a);
+  for (const changes of [{ candidateSha: 'f'.repeat(40) }, { runtimeDevDependenciesPruned: false },
+    { runtimeEgressPolicy: 'application-mock-only' }, { kernelLauncherSha256: '' }, { kernelPolicySha256: '1'.repeat(64) }, { runId: '43' },
+    { targetSha256: 'f'.repeat(64) }, { runtimeTarget: { ...build(a).runtimeTarget, projectId: id('0') } }]) {
+    assert.throws(() => imageReceipt(a, changes), /BUILD_RECEIPT_INVALID/u);
+  }
+  const b = build(a), bytes = JSON.stringify(b);
+  assert.throws(() => validateGamingImageReceipt({ authorization: a, buildReceipt: b, buildReceiptBytes: bytes,
+    publishedImage: { image: 'ghcr.io/pbjustin/arcanos-gaming-preview:latest', imageId: b.imageId, buildReceiptSha256: hash(bytes) } }), /PUBLISHED_IMAGE_INVALID/u);
+});
+test('unsafe inherited resources and credentials are rejected before any creation', () => {
+  for (const mutate of [e => { e.config.sharedVariables.OPENAI_API_KEY = { value: 'synthetic' }; },
+    e => { e.config.privateNetworkDisabled = false; }, e => { e.deploymentTriggers = connection([{ id: id('0') }]); },
+    e => { e.volumeInstances = connection([{ id: id('0') }]); }, e => { e.config.services[target.webServiceId].source.repo = 'pbjustin/Arcanos'; },
+    e => { e.config.services[target.webServiceId].deploy.registryCredentials = { username: 'changed', password: 'synthetic' }; },
+    e => { e.serviceInstances.pageInfo.hasNextPage = true; }]) {
+    const environment = baseEnvironment(); mutate(environment);
+    assert.throws(() => validateGamingEnvironment({ environment, target, base: true, idle: true }));
+  }
+});
+test('mocked deployment is worker-first with sole immutable deployments and bounded receipt transfer', async () => {
+  const authorization = authorize(), railway = railwayMock(), imageReceiptValue = imageReceipt(authorization);
+  const { receipt, executionReceipt } = await deployGamingPreview({ authorization, imageReceipt: imageReceiptValue, railway,
+    revalidate: async () => {}, now: () => now });
+  assert.deepEqual(railway.state.calls, ['create', 'worker', 'web']);
+  assert.equal(receipt.status, 'VERIFIED');
+  const expected = { repository: 'pbjustin/Arcanos', prNumber: 1558, commitSha: policy.headSha, sourceTreeSha: policy.treeSha,
+    webBaseUrl: receipt.hosts.web, workerBaseUrl: receipt.hosts.worker };
+  assert.equal(assertTrustedGamingPreviewExecutionReceipt(executionReceipt, expected), executionReceipt);
+  const parsed = parseNativePrPreviewE2eArguments(gamingPreviewVerifierArguments({ authorization, hostedReceipt: executionReceipt,
+    gitEvidenceRoot: process.cwd() }), { includeSourceTree: true, localGitState: { repository: expected.repository,
+      head: expected.commitSha, clean: true, sourceTreeSha: expected.sourceTreeSha } });
+  assert.equal(parsed.commitSha, authorization.headSha); assert.equal(parsed.sourceTreeSha, authorization.treeSha);
+  assert.throws(() => assertTrustedGamingPreviewExecutionReceipt({ ...executionReceipt }, expected), /HOSTED_RECEIPT_REQUIRED/u);
+  const bytes = JSON.stringify(receipt), digest = hash(bytes);
+  const restored = restoreGamingExecutionReceipt({ authorization, imageReceipt: imageReceiptValue,
+    deploymentReceiptBytes: bytes, expectedSha256: digest, now });
+  assert.equal(assertTrustedGamingPreviewExecutionReceipt(restored, expected).deploymentReceiptSha256, digest);
+  assert.throws(() => restoreGamingExecutionReceipt({ authorization, imageReceipt: imageReceiptValue,
+    deploymentReceiptBytes: bytes.replace('VERIFIED', 'UNVERIFIED'), expectedSha256: digest, now }), /DEPLOYMENT_ARTIFACT_UNTRUSTED/u);
+  const cleanup = await cleanupGamingPreview({ policy, railway, receipt, now: () => now });
+  assert.equal(cleanup.status, 'VERIFIED'); assert.equal(cleanup.absenceProof, 'railway-control-plane-complete-root-and-project-inventories');
+});
+test('worker failure and startup timeout always attempt owned control-plane cleanup', async () => {
+  for (const config of [{ failRole: 'worker' }, { startupStuck: true }]) {
+    const railway = railwayMock(config), authorization = authorize(); let last;
+    await assert.rejects(deployGamingPreview({ authorization, imageReceipt: imageReceipt(authorization), railway,
+      revalidate: async () => {}, now: () => now, onReceipt: value => { last = value; } }));
+    assert.equal(railway.state.deleted, true); assert.equal(last.cleanup.status, 'VERIFIED');
+    assert.equal(railway.state.calls.includes('web'), false);
+  }
+});
+test('cleanup requires ownership and actual resource absence, never HTTP 404', async () => {
+  const railway = railwayMock({ deletionStuck: true }), authorization = authorize();
+  const { receipt } = await deployGamingPreview({ authorization, imageReceipt: imageReceipt(authorization), railway,
+    revalidate: async () => {}, now: () => now });
+  await assert.rejects(cleanupGamingPreview({ policy, railway, receipt, now: () => now }), /DELETE_READBACK_FAILED/u);
+  const forged = structuredClone(receipt); forged.ownership.environmentId = target.baseEnvironmentId;
+  await assert.rejects(cleanupGamingPreview({ policy, railway, receipt: forged, now: () => now }), /OWNERSHIP_MISMATCH/u);
+  railway.state.patch.message = 'unowned';
+  await assert.rejects(cleanupGamingPreview({ policy, railway, receipt, now: () => now }), /OWNERSHIP_PATCH_MISMATCH/u);
+});
+test('authorization failure immediately before mutation prevents preview creation', async () => {
+  const railway = railwayMock(), authorization = authorize(); let calls = 0;
+  await assert.rejects(deployGamingPreview({ authorization, imageReceipt: imageReceipt(authorization), railway,
+    revalidate: async () => { if (++calls > 1) throw new Error('authorization drift'); }, now: () => now }));
+  assert.deepEqual(railway.state.calls, []);
+});
+test('missing list entry and soft-deleted control-plane object are not cleanup proof', async () => {
+  const railway = railwayMock(), authorization = authorize();
+  const { receipt } = await deployGamingPreview({ authorization, imageReceipt: imageReceipt(authorization), railway,
+    revalidate: async () => {}, now: () => now });
+  railway.environmentAbsent = async () => false;
+  await assert.rejects(cleanupGamingPreview({ policy, railway, receipt, now: () => now }), /DELETE_READBACK_FAILED/u);
+  await assert.rejects(cleanupGamingPreview({ policy, railway, receipt, now: () => now }), /DELETE_READBACK_FAILED/u);
+});
+test('lost or invalid create response, staging, commit, readiness and worker drift failures clean up', async () => {
+  for (const failPhase of ['create-lost-response', 'create-invalid-response', 'stage', 'commit', 'readiness', 'worker-drift-during-web']) {
+    const railway = railwayMock({ failPhase }), authorization = authorize(); let last;
+    await assert.rejects(deployGamingPreview({ authorization, imageReceipt: imageReceipt(authorization), railway,
+      revalidate: async () => {}, now: () => now, onReceipt: value => { last = value; } }));
+    assert.equal(railway.state.deleted, true, failPhase); assert.equal(last.cleanup.status, 'VERIFIED', failPhase);
+    assert.equal(railway.state.environments.length, 1, failPhase);
+    assert.equal(last.createIntent.runId, '42');
+  }
+});
+test('readiness enforces total fetch/body deadlines, byte budgets and approved targets', async () => {
+  const host = `https://web-${gamingPreviewEnvironmentName('42')}.up.railway.app`;
+  const hang = new GamingRailwayApi({ token: 'mock-token', fetchImpl: async () => new Promise(() => {}), readinessTimeoutMs: 5 });
+  await assert.rejects(hang.readGamingReadiness(host), /REQUEST_TIMEOUT/u);
+  const hangBody = new GamingRailwayApi({ token: 'mock-token', fetchImpl: async () => new Response(new ReadableStream({ start() {} }),
+    { headers: { 'cache-control': 'no-store', 'content-type': 'application/json' } }), readinessTimeoutMs: 5 });
+  await assert.rejects(hangBody.readGamingReadiness(host), /REQUEST_TIMEOUT/u);
+  const tooLarge = new GamingRailwayApi({ token: 'mock-token', fetchImpl: async () => new Response('x'.repeat(65537),
+    { headers: { 'cache-control': 'no-store', 'content-type': 'application/json' } }) });
+  await assert.rejects(tooLarge.readGamingReadiness(host), /RESPONSE_TOO_LARGE/u);
+  for (const url of ['https://api.notion.com', 'https://api.openai.com', `${host}/path`, `${host}?secret=value`, 'http://localhost'])
+    await assert.rejects(hang.readGamingReadiness(url), /HOST_SCOPE_INVALID/u);
+});
+test('post-verification attestation rejects a changed worker and does not strand cleanup', async () => {
+  const railway = railwayMock(), authorization = authorize(), built = imageReceipt(authorization);
+  const { receipt } = await deployGamingPreview({ authorization, imageReceipt: built, railway,
+    revalidate: async () => {}, now: () => now });
+  const bytes = JSON.stringify(receipt);
+  const args = { authorization, imageReceipt: built, deploymentReceiptBytes: bytes, expectedSha256: hash(bytes), railway, revalidate: async () => {} };
+  assert.equal((await attestGamingPreview(args)).status, 'VERIFIED');
+  railway.state.environments[1].serviceInstances.edges[0].node.activeDeployments[0].deploymentStopped = true;
+  await assert.rejects(attestGamingPreview(args), /IMMUTABLE_DEPLOYMENT_UNPROVEN/u);
+  assert.equal((await cleanupGamingPreview({ policy, railway, receipt })).status, 'VERIFIED');
+});
+test('owner may retry cleanup only in the original workflow without replaying deployment', () => {
+  const env = { GITHUB_REPOSITORY: 'pbjustin/Arcanos', GITHUB_ACTOR: 'pbjustin', EVENT_SENDER: 'pbjustin',
+    GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/main',
+    GITHUB_WORKFLOW_REF: 'pbjustin/Arcanos/.github/workflows/railway-gaming-preview.yml@refs/heads/main',
+    GITHUB_SHA: controllerSha, CONTROLLER_SHA: controllerSha, GITHUB_RUN_ATTEMPT: '1' };
+  assertGamingPreviewWorkflowContext('deploy', env); assertGamingPreviewWorkflowContext('cleanup', env);
+  const retry = { ...env, GITHUB_RUN_ATTEMPT: '2', GITHUB_TRIGGERING_ACTOR: 'pbjustin' };
+  assertGamingPreviewWorkflowContext('cleanup', retry);
+  for (const command of ['audit', 'authorize', 'deploy', 'verify', 'attest'])
+    assert.throws(() => assertGamingPreviewWorkflowContext(command, retry), /TRUSTED_WORKFLOW_REQUIRED/u);
+  for (const patch of [{ GITHUB_TRIGGERING_ACTOR: 'other' }, { GITHUB_ACTOR: 'other' }, { EVENT_SENDER: 'other' },
+    { GITHUB_RUN_ATTEMPT: '0' }, { GITHUB_REF: 'refs/heads/other' }, { GITHUB_SHA: 'b'.repeat(40) }])
+    assert.throws(() => assertGamingPreviewWorkflowContext('cleanup', { ...retry, ...patch }), /TRUSTED_WORKFLOW_REQUIRED/u);
+});
+test('cleanup CLI missing ownership receipt reports BLOCKED before any Railway API request', () => {
+  const folder = mkdtempSync(join(tmpdir(), 'gaming-preview-cleanup-test-'));
+  const authorization = join(folder, 'authorization.json'), output = join(folder, 'cleanup.json');
+  try {
+    writeFileSync(authorization, JSON.stringify(raw()));
+    const result = spawnSync(process.execPath, ['scripts/railway-gaming-preview.mjs', 'cleanup', '--authorization', authorization,
+      '--deployment', join(folder, 'missing.json'), '--output', output], { encoding: 'utf8', timeout: 5000,
+      env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, GITHUB_REPOSITORY: 'pbjustin/Arcanos',
+        GITHUB_ACTOR: 'pbjustin', GITHUB_TRIGGERING_ACTOR: 'pbjustin', EVENT_SENDER: 'pbjustin',
+        GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/main',
+        GITHUB_WORKFLOW_REF: 'pbjustin/Arcanos/.github/workflows/railway-gaming-preview.yml@refs/heads/main',
+        GITHUB_SHA: controllerSha, CONTROLLER_SHA: controllerSha, GITHUB_RUN_ID: '42', GITHUB_RUN_ATTEMPT: '2',
+        RAILWAY_API_TOKEN: 'mock-token-no-real-authority' } });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /GAMING_PREVIEW_CLEANUP_OWNERSHIP_RECEIPT_UNAVAILABLE/u);
+    assert.equal(JSON.parse(readFileSync(output, 'utf8')).status, 'BLOCKED');
+  } finally {
+    assert.equal(resolve(dirname(folder)), resolve(tmpdir()));
+    assert.equal(folder.startsWith(join(tmpdir(), 'gaming-preview-cleanup-test-')), true);
+    rmSync(folder, { recursive: true });
+  }
+});
+test('independent project inventory rejects tombstones, incomplete results and uncertain ownership', async () => {
+  let rows = [{ id: id('6'), name: gamingPreviewEnvironmentName('42'), projectId: target.projectId, deletedAt: new Date().toISOString() }];
+  let complete = true, projectId = target.projectId;
+  const railway = new GamingRailwayApi({ token: 'mock-token', fetchImpl: async (_url, init) => {
+    const body = JSON.parse(init.body);
+    assert.match(body.query, /project\(id:\$projectId\)/u);
+    const environments = connection(rows); environments.pageInfo.hasNextPage = !complete;
+    return new Response(JSON.stringify({ data: { project: { id: projectId, workspaceId: target.workspaceId, environments } } }),
+      { headers: { 'content-type': 'application/json' } });
+  } });
+  assert.equal(await railway.environmentAbsent(target, id('6'), gamingPreviewEnvironmentName('42')), false);
+  rows = []; assert.equal(await railway.environmentAbsent(target, id('6'), gamingPreviewEnvironmentName('42')), true);
+  complete = false; await assert.rejects(railway.environmentAbsent(target, id('6'), gamingPreviewEnvironmentName('42')), /INCOMPLETE_INVENTORY/u);
+  complete = true; projectId = id('0');
+  await assert.rejects(railway.environmentAbsent(target, id('6'), gamingPreviewEnvironmentName('42')), /ABSENCE_PROJECT_MISMATCH/u);
+});

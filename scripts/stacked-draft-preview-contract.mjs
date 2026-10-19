@@ -386,9 +386,13 @@ function gitEnvironment() {
 
 // Only built-in object reads run. No shell, hooks, checkout, fetch, package install, PR program or customizable runner.
 export class GitReadAdapter {
-  constructor({ cwd }) {
+  #canonicalArchive;
+
+  constructor({ cwd, canonicalArchive = false }) {
     requireCondition(typeof cwd === 'string' && isAbsolute(cwd), 'STACKED_PREVIEW_GIT_DIRECTORY_INVALID');
+    requireCondition(typeof canonicalArchive === 'boolean', 'STACKED_PREVIEW_GIT_ARCHIVE_OPTION_INVALID');
     this.cwd = cwd;
+    this.#canonicalArchive = canonicalArchive;
   }
 
   async #readObject(args, allowNotAncestor = false) {
@@ -422,7 +426,8 @@ export class GitReadAdapter {
       const hash = createHash('sha256');
       let bytes = 0;
       let failure = null;
-      const child = spawn('git', ['archive', '--format=tar', headSha], {
+      const args = [...(this.#canonicalArchive ? ['-c', 'core.autocrlf=false'] : []), 'archive', '--format=tar', headSha];
+      const child = spawn('git', args, {
         cwd: this.cwd, env: gitEnvironment(), shell: false, stdio: ['ignore', 'pipe', 'pipe'],
       });
       const stop = code => {
