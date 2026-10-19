@@ -137,6 +137,124 @@ describe('structured build instruction ownership', () => {
     expect(result.build).toBeNull();
   });
 
+  it.each(['URL payload', 'embedded state', 'visible record'])('does not let an accepted adapter hide consumed instructions in the %s', async kind => {
+    const tainted = { ...fixture.payload, notes: [injection] };
+    const resource = kind === 'URL payload' ? { url: payloadUrl(tainted) }
+      : kind === 'embedded state' ? { url: fixture.jsonUrl, metadata: { embeddedState: tainted } }
+        : { url: fixture.jsonUrl, html: `<div data-item="${injection}"></div>` };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await ingestGamingBuildResource(resource, { adapters: [{
+        id: 'synthetic-clean-adapter', version: '1', canHandle: async () => 1,
+        extract: async () => ({ ...fixture.payload, source: {
+          url: 'https://players.example.org/build', resourceType: 'build_planner', extractor: 'synthetic', confidence: 1 } })
+      }] });
+      expect(result.validation.accepted).toBe(false);
+      expect(result.failureReason).toBe('SOURCE_INSTRUCTIONS_REJECTED');
+      expect(result.build).toBeNull();
+      expect(result.evidenceText).toBe('');
+      expect(result.cacheHit).toBe(false);
+    }
+  });
+
+  it('does not accept an adapter when its selection exhausts the source-inspection budget', async () => {
+    const startedAt = Date.now();
+    const now = jest.spyOn(Date, 'now').mockReturnValue(startedAt);
+    const extract = jest.fn(async () => ({ ...fixture.payload, source: {
+      url: 'https://players.example.org/build', resourceType: 'build_planner' as const, extractor: 'synthetic', confidence: 1 } }));
+    const result = await ingestGamingBuildResource({ url: payloadUrl({ ...fixture.payload, notes: [injection] }) }, {
+      useCache: false, adapters: [{ id: 'synthetic-delayed-adapter', version: '1',
+        canHandle: async () => { now.mockReturnValue(startedAt + 1001); return 1; }, extract }]
+    });
+    expect(result.validation.accepted).toBe(false);
+    expect(result.failureReason).toBe('STRUCTURED_PAYLOAD_TOO_LARGE');
+    expect(result.build).toBeNull();
+    expect(result.evidenceText).toBe('');
+    expect(extract).not.toHaveBeenCalled();
+  });
+
+  it('does not accept an adapter result that arrives after the shared extraction deadline', async () => {
+    const startedAt = Date.now();
+    const now = jest.spyOn(Date, 'now').mockReturnValue(startedAt);
+    const result = await ingestGamingBuildResource({ url: fixture.jsonUrl }, {
+      useCache: false, adapters: [{ id: 'synthetic-late-adapter', version: '1', canHandle: async () => 1,
+        extract: async () => {
+          now.mockReturnValue(startedAt + 1001);
+          return { ...fixture.payload, source: {
+            url: 'https://players.example.org/build', resourceType: 'build_planner', extractor: 'synthetic', confidence: 1 } };
+        } }]
+    });
+    expect(result.validation.accepted).toBe(false);
+    expect(result.failureReason).toBe('STRUCTURED_PAYLOAD_TOO_LARGE');
+    expect(result.build).toBeNull();
+    expect(result.evidenceText).toBe('');
+  });
+
+  it('does not rescue an oversized adapter field with clean generic evidence', async () => {
+    const result = await ingestGamingBuildResource({ url: fixture.jsonUrl }, { useCache: false, adapters: [{
+      id: 'synthetic-oversized-adapter', version: '1', canHandle: async () => 1,
+      extract: async () => ({ ...fixture.payload, notes: ['x'.repeat(4097) + injection], source: {
+        url: 'https://players.example.org/build', resourceType: 'build_planner', extractor: 'synthetic', confidence: 1 } })
+    }] });
+    expect(result.validation.accepted).toBe(false);
+    expect(result.failureReason).toBe('STRUCTURED_PAYLOAD_TOO_LARGE');
+    expect(result.build).toBeNull();
+    expect(result.evidenceText).toBe('');
+  });
+
+  it('preserves independent bounded evidence beside an unusable candidate with an unconsumed oversized field', async () => {
+    const target = new URL(fixture.jsonUrl);
+    target.searchParams.set('data', JSON.stringify({ telemetry: 'x'.repeat(4097) }));
+    const result = await ingestGamingBuildResource({ url: target.toString() }, { useCache: false });
+    expect(result.validation.accepted).toBe(true);
+    expect(result.build?.equipment).toEqual(fixture.payload.equipment);
+  });
+
+  it.each(['embedded state', 'JSON script', 'URL payload'])('does not rescue a consumed oversized instruction tail in %s', async kind => {
+    const tainted = { equipment: [{ name: 'x'.repeat(4097) + injection }] };
+    const target = new URL(fixture.jsonUrl);
+    if (kind === 'URL payload') target.searchParams.set('data', JSON.stringify(tainted));
+    const result = await ingestGamingBuildResource({ url: target.toString(),
+      ...(kind === 'embedded state' ? { metadata: { embeddedState: tainted } } : {}),
+      ...(kind === 'JSON script' ? { html: `<script type="application/json">${JSON.stringify(tainted)}</script>` } : {})
+    }, { useCache: false });
+    expect(result.validation.accepted).toBe(false);
+    expect(result.failureReason).toBe('SOURCE_INSTRUCTIONS_REJECTED');
+    expect(result.build).toBeNull();
+    expect(result.evidenceText).toBe('');
+  });
+
+  it('does not let a higher-ranked clean record hide oversized instructions in a supported sibling', async () => {
+    const result = await ingestGamingBuildResource({ url: fixture.jsonUrl, metadata: { embeddedState: {
+      clean: { game: 'Lantern Voyage', title: 'Clean', equipment: [{ name: 'Blade' }] },
+      other: { notes: ['x'.repeat(4097) + injection] }
+    } } }, { useCache: false });
+    expect(result.validation.accepted).toBe(false);
+    expect(result.failureReason).toBe('SOURCE_INSTRUCTIONS_REJECTED');
+    expect(result.build).toBeNull();
+    expect(result.evidenceText).toBe('');
+  });
+
+  it('keeps clean sibling evidence when rejected nested data contains only unconsumed oversized telemetry', async () => {
+    const result = await ingestGamingBuildResource({ url: fixture.jsonUrl, metadata: { embeddedState: {
+      clean: { game: fixture.game, title: 'Clean', equipment: [{ name: 'Blade' }] },
+      other: { telemetry: 'x'.repeat(4097) + injection }
+    } } }, { useCache: false });
+    expect(result.validation.accepted).toBe(true);
+    expect(result.build?.equipment).toEqual(fixture.payload.equipment);
+  });
+
+  it('inspects embedded consumed fields even when URL candidates fill the evidence-selection limit', async () => {
+    const target = new URL('https://players.example.org/build-planner');
+    for (let index = 0; index < 16; index += 1) target.searchParams.append('build', JSON.stringify({ equipment: [{ name: `Synthetic item ${index}` }] }));
+    const result = await ingestGamingBuildResource({ url: target.toString(), metadata: {
+      embeddedState: { equipment: [{ name: injection }] }
+    } }, { useCache: false });
+    expect(result.validation.accepted).toBe(false);
+    expect(result.failureReason).toBe('SOURCE_INSTRUCTIONS_REJECTED');
+    expect(result.build).toBeNull();
+    expect(result.evidenceText).toBe('');
+  });
+
   it('ignores unsupported visible labels without sanitizing a consumed record', async () => {
     const result = await ingestGamingBuildResource({ url: fixture.jsonUrl,
       html: `<dl><dt>Unrelated telemetry</dt><dd>${injection}</dd></dl>` }, { useCache: false });

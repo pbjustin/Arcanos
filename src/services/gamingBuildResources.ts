@@ -84,6 +84,7 @@ type DecodedCandidate = {
   value?: unknown;
   decodedSize: number;
   reason?: GamingStructuredFailureReason;
+  terminalFailure?: GamingStructuredFailureReason;
 };
 
 type ExtractionState = {
@@ -92,6 +93,7 @@ type ExtractionState = {
   sawOversized: boolean;
   sawMalformed: boolean;
   instructionFiltered: boolean;
+  terminalFailure?: GamingStructuredFailureReason;
   strategy: GamingExtractionStrategy;
 };
 
@@ -257,7 +259,7 @@ export function prepareGamingResourceUrl(rawUrl: string): GamingPreparedResource
 
 export const sanitizeGamingResourceUrl = prepareGamingResourceUrl;
 
-function inspectStructure(value: unknown, deadline = Number.POSITIVE_INFINITY): StructuralInspection {
+function inspectStructure(value: unknown, deadline = Number.POSITIVE_INFINITY, maxStringLength: number = LIMITS.maxStringLength): StructuralInspection {
   const stack: Array<{ value: unknown; depth: number }> = [{ value, depth: 0 }];
   const seen = new WeakSet<object>();
   let fieldCount = 0;
@@ -270,7 +272,7 @@ function inspectStructure(value: unknown, deadline = Number.POSITIVE_INFINITY): 
       return { ok: false, fieldCount, issue: "too_deep" };
     }
     if (typeof current.value === "string") {
-      if (current.value.length > LIMITS.maxStringLength) {
+      if (current.value.length > maxStringLength) {
         return { ok: false, fieldCount, issue: "too_large" };
       }
       continue;
@@ -568,9 +570,10 @@ function parseJsonCandidate(text: string, deadline: number): DecodedCandidate {
   try {
     const value = JSON.parse(normalized) as unknown;
     const inspection = inspectStructure(value, deadline);
-    return inspection.ok
-      ? { value, decodedSize }
-      : { decodedSize, reason: failureFromInspection(inspection) };
+    if (inspection.ok) return { value, decodedSize };
+    const terminalFailure = inspectRejectedBuildFields(value, deadline);
+    return { decodedSize, reason: terminalFailure ?? failureFromInspection(inspection),
+      ...(terminalFailure ? { terminalFailure } : {}) };
   } catch {
     return { decodedSize, reason: "STRUCTURED_PAYLOAD_MALFORMED" };
   }
@@ -710,12 +713,17 @@ function extractBalancedJson(script: string): string | undefined {
   return undefined;
 }
 
-function collectEmbeddedCandidates(input: GamingResourceInput, metadata: GamingResourceMetadata, deadline: number): unknown[] {
+function collectEmbeddedCandidates(input: GamingResourceInput, metadata: GamingResourceMetadata, deadline: number,
+  onRejected?: (reason: GamingStructuredFailureReason) => void): unknown[] {
   const output: unknown[] = [];
   const addValue = (value: unknown): void => {
     if (value === undefined || output.length >= LIMITS.maxPayloadCandidates) return;
     const inspection = inspectStructure(value, deadline);
     if (inspection.ok) output.push(value);
+    else {
+      const rejection = inspectRejectedBuildFields(value, deadline);
+      if (rejection) onRejected?.(rejection);
+    }
   };
   addValue(metadata.jsonLd);
   addValue(metadata.embeddedState);
@@ -727,12 +735,14 @@ function collectEmbeddedCandidates(input: GamingResourceInput, metadata: GamingR
       : extractBalancedJson(boundedConfiguration);
     if (!jsonText) continue;
     const parsed = parseJsonCandidate(jsonText, deadline);
+    if (parsed.terminalFailure) onRejected?.(parsed.terminalFailure);
     if (parsed.value !== undefined) output.push(parsed.value);
   }
   const html = input.html;
   if (!html || html.length > LIMITS.maxHtmlChars || Date.now() > deadline) return output;
   if (/application\/json/iu.test(input.contentType ?? "")) {
     const parsed = parseJsonCandidate(html, deadline);
+    if (parsed.terminalFailure) onRejected?.(parsed.terminalFailure);
     if (parsed.value !== undefined) output.push(parsed.value);
   }
   const $ = load(html);
@@ -753,12 +763,14 @@ function collectEmbeddedCandidates(input: GamingResourceInput, metadata: GamingR
     }
     if (!jsonText) return;
     const parsed = parseJsonCandidate(jsonText, deadline);
+    if (parsed.terminalFailure) onRejected?.(parsed.terminalFailure);
     if (parsed.value !== undefined) output.push(parsed.value);
   });
   return output;
 }
 
-function visibleHtmlCandidate(input: GamingResourceInput, deadline = Number.POSITIVE_INFINITY, onInstructions?: () => void): unknown | undefined {
+function visibleHtmlCandidate(input: GamingResourceInput, deadline = Number.POSITIVE_INFINITY, onInstructions?: () => void,
+  onInvalid?: (reason: GamingStructuredFailureReason) => void): unknown | undefined {
   const html = input.html;
   if (!html || html.length > LIMITS.maxHtmlChars || Date.now() > deadline) return undefined;
   const $ = load(html);
@@ -771,6 +783,18 @@ function visibleHtmlCandidate(input: GamingResourceInput, deadline = Number.POSI
   const skills: unknown[] = [];
   const incompleteRows = new WeakSet<object>();
   const stats: PlainRecord = Object.create(null) as PlainRecord;
+  // Inspect original fields before duplicate labels or incomplete rows can discard them.
+  const inspectFields = (item: PlainRecord): { consumed: Set<unknown>; fields: string[] } => {
+    const consumed = new Set<unknown>();
+    const normalized = normalizeBuildRecord(item, { value: item, metadata: {}, publicUrl: "", resourceType: "build_planner",
+      extractor: "visible-field-inspection", confidence: 0, onInstructions,
+      onFieldRead: value => consumed.add(value) });
+    const fields = normalized ? Object.keys(normalized).flatMap(key => key === "source" ? []
+      : key === "character" || key === "stats" ? Object.keys(normalized[key] ?? {}).map(field => `${key}.${field}`) : [key]) : [];
+    return { consumed, fields };
+  };
+  const globalDefinitionKeys = new Set<string>();
+  let ambiguousGlobalDefinition = false;
   $("[data-slot], [data-item]").slice(0, LIMITS.maxEquipmentEntries).each((_, element) => {
     const name = rawString($(element).attr("data-item") ?? $(element).find("[data-name], .name, .item-name").first().text() ?? $(element).text());
     if (!name) return;
@@ -787,26 +811,55 @@ function visibleHtmlCandidate(input: GamingResourceInput, deadline = Number.POSI
   $("dt").slice(0, LIMITS.maxTableRows).each((_, element) => {
     const key = rawString($(element).text());
     const value = rawString($(element).next("dd").first().text());
-    if (key && value && !DANGEROUS_KEYS.has(key.toLowerCase())) record[key] = value;
+    if (key && value && !DANGEROUS_KEYS.has(key.toLowerCase())) {
+      for (const field of inspectFields({ [key]: value }).fields) {
+        if (globalDefinitionKeys.has(field)) ambiguousGlobalDefinition = true;
+        globalDefinitionKeys.add(field);
+      }
+      record[key] = value;
+    }
   });
   $("table").slice(0, 16).each((_, table) => {
     const rows = $(table).find("tr").slice(0, LIMITS.maxTableRows).toArray();
-    const headers = $(rows[0]).find("th").slice(0, LIMITS.maxTableCellsPerRow).toArray()
-      .map(cell => rawString($(cell).text())?.toLowerCase());
-    const incompleteHeaders = headers.some(header => !header || header.length > LIMITS.maxStringLength);
+    const headerCells = $(rows[0]).find("th").slice(0, LIMITS.maxTableCellsPerRow).toArray();
+    const headers = headerCells.map(cell => rawString($(cell).text())?.toLowerCase());
+    const normalizedHeaders = headers.map(header => header ? normalizeKey(header) : header);
+    const duplicateHeaders = new Set(normalizedHeaders).size !== normalizedHeaders.length;
+    const spanningHeaders = headerCells.some(cell => ["colspan", "rowspan"].some(attribute => {
+      const span = $(cell).attr(attribute);
+      return span !== undefined && span.trim() !== "1";
+    }));
+    // Rowspans change later rows too; this simple extractor does not reconstruct a grid.
+    const spanningRows = $(table).find("[rowspan]").toArray().some(cell => $(cell).attr("rowspan")?.trim() !== "1");
+    const incompleteHeaders = duplicateHeaders || spanningHeaders || spanningRows
+      || headers.some(header => !header || header.length > LIMITS.maxStringLength);
     for (const row of rows.slice(headers.length > 0 ? 1 : 0)) {
-      const cells = $(row).find("th, td").slice(0, LIMITS.maxTableCellsPerRow).toArray()
-        .map(cell => rawString($(cell).text()));
-      const incomplete = incompleteHeaders || cells.some(cell => cell === undefined)
+      const rowCells = $(row).find("th, td").slice(0, LIMITS.maxTableCellsPerRow).toArray();
+      const cells = rowCells.map(cell => rawString($(cell).text()));
+      const spanningCells = rowCells.some(cell => ["colspan", "rowspan"].some(attribute => {
+        const span = $(cell).attr(attribute);
+        return span !== undefined && span.trim() !== "1";
+      }));
+      const incomplete = incompleteHeaders || spanningCells || cells.some(cell => cell === undefined)
         || (headers.length > 0 && cells.length !== headers.length);
       if (cells.length === 2 && headers.length === 0 && !incomplete) {
         if (cells[0] && cells[1] && !DANGEROUS_KEYS.has(cells[0].toLowerCase())) stats[cells[0]] = cells[1];
       } else if (headers.length > 0 && cells.length > 0) {
         const rowRecord: PlainRecord = Object.create(null) as PlainRecord;
-        headers.forEach((header, index) => { if (header && header.length <= LIMITS.maxStringLength && cells[index]) rowRecord[header] = cells[index]; });
+        const overwrittenFields: Array<[string, unknown]> = [];
+        headers.forEach((header, index) => {
+          if (!header || header.length > LIMITS.maxStringLength || !cells[index]) return;
+          const key = normalizeKey(header);
+          if (Object.hasOwn(rowRecord, key)) overwrittenFields.push([key, rowRecord[key]]);
+          rowRecord[key] = cells[index];
+        });
         if (incomplete) incompleteRows.add(rowRecord);
-        if (headers.some((header) => header && header.length <= LIMITS.maxStringLength && /skill|talent|ability|spell/u.test(header))) skills.push(rowRecord);
-        else if (headers.some((header) => header && header.length <= LIMITS.maxStringLength && /item|name|weapon|gear|card|unit/u.test(header))) equipment.push(rowRecord);
+        const kind = headers.some((header) => header && header.length <= LIMITS.maxStringLength && /skill|talent|ability|spell/u.test(header)) ? "skills"
+          : headers.some((header) => header && header.length <= LIMITS.maxStringLength && /item|name|weapon|gear|card|unit/u.test(header)) ? "equipment" : undefined;
+        if (kind) {
+          for (const [key, value] of overwrittenFields) inspectFields({ [kind]: [{ ...rowRecord, [key]: value }] });
+          (kind === "skills" ? skills : equipment).push(rowRecord);
+        }
       }
     }
   });
@@ -815,13 +868,6 @@ function visibleHtmlCandidate(input: GamingResourceInput, deadline = Number.POSI
   if (Object.keys(stats).length > 0) record.stats = stats;
   // Inspect consumed fields within their own record before any omission. Temporary
   // normalized values are discarded; retained records still pass structural admission.
-  const inspectFields = (item: PlainRecord): Set<unknown> => {
-    const consumed = new Set<unknown>();
-    normalizeBuildRecord(item, { value: item, metadata: {}, publicUrl: "", resourceType: "build_planner",
-      extractor: "visible-field-inspection", confidence: 0, onInstructions,
-      onFieldRead: value => consumed.add(value) });
-    return consumed;
-  };
   const omitUnconsumedOversizedFields = (item: PlainRecord, consumed: Set<unknown>): void => {
     for (const [key, value] of ownEntries(item)) {
       if (typeof value === "string" && value.length > LIMITS.maxStringLength && !consumed.has(value)) delete item[key];
@@ -833,12 +879,19 @@ function visibleHtmlCandidate(input: GamingResourceInput, deadline = Number.POSI
     if (!Array.isArray(entries)) continue;
     delete globalFields[key];
     record[key] = entries.filter(entry => {
-      const consumed = inspectFields({ [key]: [entry] });
+      const { consumed } = inspectFields({ [key]: [entry] });
       if (isPlainRecord(entry)) omitUnconsumedOversizedFields(entry, consumed);
       return !(entry && typeof entry === "object" && incompleteRows.has(entry)) && inspectStructure(entry, deadline).ok;
     });
   }
-  omitUnconsumedOversizedFields(record, inspectFields(globalFields));
+  const { consumed } = inspectFields(globalFields);
+  omitUnconsumedOversizedFields(record, consumed);
+  omitUnconsumedOversizedFields(globalFields, consumed);
+  const globalInspection = inspectStructure(globalFields, deadline);
+  if (ambiguousGlobalDefinition || !globalInspection.ok) {
+    onInvalid?.(ambiguousGlobalDefinition ? "STRUCTURED_PAYLOAD_MALFORMED" : failureFromInspection(globalInspection));
+    return undefined;
+  }
   return Object.keys(record).length > 0 ? record : undefined;
 }
 
@@ -1042,6 +1095,7 @@ type BuildNormalizationInput = {
   confidence: number;
   onInstructions?: () => void;
   onFieldRead?: (value: unknown) => void;
+  maxSourceStringChars?: number;
 };
 
 function normalizeBuildCandidate(params: BuildNormalizationInput): NormalizedGamingBuild | null {
@@ -1053,6 +1107,7 @@ function normalizeBuildRecord(record: PlainRecord | undefined, params: BuildNorm
   let instructionFiltered = false;
   const sanitizeString = (value: unknown, maxChars?: number): string | undefined => {
     params.onFieldRead?.(value);
+    if (typeof value === "string" && value.length > (params.maxSourceStringChars ?? Number.POSITIVE_INFINITY)) return undefined;
     if (hasBuildSourceInstructions(value)) instructionFiltered = true;
     return safeString(value, maxChars);
   };
@@ -1144,6 +1199,35 @@ function normalizeBuildRecord(record: PlainRecord | undefined, params: BuildNorm
       confidence: clampConfidence(params.confidence)
     }
   };
+}
+
+/** Inspect supported fields without admitting an oversized record or scanning unbounded text. */
+function inspectRejectedBuildFields(value: unknown, deadline: number): GamingStructuredFailureReason | undefined {
+  if (!inspectStructure(value, deadline, Number.POSITIVE_INFINITY).ok) return undefined;
+  const pending: unknown[] = [value];
+  let instructions = false;
+  let uninspectable = false;
+  while (pending.length > 0) {
+    if (Date.now() > deadline) return "STRUCTURED_PAYLOAD_TOO_LARGE";
+    const current = pending.pop();
+    if (Array.isArray(current)) {
+      pending.push(...current);
+      continue;
+    }
+    if (!isPlainRecord(current)) continue;
+    // Ranking chooses evidence; it cannot hide a supported sibling from rejection inspection.
+    if (recordScore(current) > 0) {
+      normalizeBuildRecord(current, { value: current, metadata: {}, publicUrl: "", resourceType: "build_planner",
+        extractor: "rejected-field-inspection", confidence: 0, maxSourceStringChars: LIMITS.maxDecodedBytes,
+        onInstructions: () => { instructions = true; },
+        onFieldRead: field => { if (typeof field === "string" && field.length > LIMITS.maxDecodedBytes) uninspectable = true; } });
+      if (instructions) return "SOURCE_INSTRUCTIONS_REJECTED";
+    }
+    for (const [, nested] of ownEntries(current)) {
+      if (nested && typeof nested === "object") pending.push(nested);
+    }
+  }
+  return uninspectable ? "STRUCTURED_PAYLOAD_TOO_LARGE" : undefined;
 }
 
 function canonicalGameKey(value: string): string {
@@ -1582,14 +1666,24 @@ function genericExtract(params: {
     if (decoded.value !== undefined) candidates.push({ value: decoded.value, strategy: "url_payload", confidence: 0.9 });
     else if (decoded.reason === "STRUCTURED_PAYLOAD_TOO_LARGE") state.sawOversized = true;
     else state.sawMalformed = true;
+    if (decoded.terminalFailure === "SOURCE_INSTRUCTIONS_REJECTED") state.instructionFiltered = true;
+    else if (decoded.terminalFailure) state.terminalFailure = decoded.terminalFailure;
   }
-  for (const value of collectEmbeddedCandidates(params.input, params.metadata, params.deadline)) {
+  for (const value of collectEmbeddedCandidates(params.input, params.metadata, params.deadline, reason => {
+    if (reason === "SOURCE_INSTRUCTIONS_REJECTED") state.instructionFiltered = true;
+    else state.terminalFailure = reason;
+  })) {
     state.sawCandidate = true;
     candidates.push({ value, strategy: "embedded_state", confidence: 0.82 });
   }
-  const visible = visibleHtmlCandidate(params.input, params.deadline, () => { state.instructionFiltered = true; });
+  const visible = visibleHtmlCandidate(params.input, params.deadline, () => { state.instructionFiltered = true; },
+    reason => { state.terminalFailure = reason; });
   if (state.instructionFiltered) return { build: null,
     validation: rejectedInstructionValidation(), state, classification: params.classification };
+  if ((params.input.html && params.input.html.length > LIMITS.maxHtmlChars) || Date.now() > params.deadline)
+    state.terminalFailure = "STRUCTURED_PAYLOAD_TOO_LARGE";
+  if (state.terminalFailure) return { build: null,
+    validation: emptyValidation(state.terminalFailure), state, classification: params.classification };
   if (visible !== undefined) {
     state.sawCandidate = true;
     candidates.push({ value: visible, strategy: "visible_html", confidence: 0.72 });
@@ -1598,9 +1692,10 @@ function genericExtract(params: {
   let bestValidation = emptyValidation("STRUCTURED_RESOURCE_UNSUPPORTED");
   let bestStrategy: GamingExtractionStrategy = "none";
   let effectiveClassification = params.classification;
-  for (const candidate of candidates.slice(0, LIMITS.maxPayloadCandidates)) {
+  for (const [candidateIndex, candidate] of candidates.entries()) {
     if (Date.now() > params.deadline) {
       state.sawOversized = true;
+      state.terminalFailure = "STRUCTURED_PAYLOAD_TOO_LARGE";
       break;
     }
     const effectiveType = structuredType(params.classification.type) ? params.classification.type : "build_planner";
@@ -1615,7 +1710,7 @@ function genericExtract(params: {
     });
     if (state.instructionFiltered) return { build: null,
       validation: rejectedInstructionValidation(), state, classification: effectiveClassification };
-    if (!normalized) continue;
+    if (!normalized || candidateIndex >= LIMITS.maxPayloadCandidates) continue;
     const validation = validateNormalizedGamingBuild(normalized, {
       requestedGame: params.input.requestedGame,
       detectedGame: params.classification.gameConfidence >= 0.8 ? params.classification.detectedGame : undefined
@@ -1626,6 +1721,9 @@ function genericExtract(params: {
       bestStrategy = candidate.strategy;
     }
   }
+  if (Date.now() > params.deadline) state.terminalFailure = "STRUCTURED_PAYLOAD_TOO_LARGE";
+  if (state.terminalFailure) return { build: null,
+    validation: emptyValidation(state.terminalFailure), state, classification: effectiveClassification };
   if (!bestBuild && structuredType(params.classification.type)) {
     const metadataBuild = normalizeBuildCandidate({
       value: Object.create(null),
@@ -1706,20 +1804,24 @@ export async function ingestGamingBuildResource(
   let build: NormalizedGamingBuild | null = null;
   let validation = emptyValidation("STRUCTURED_RESOURCE_UNSUPPORTED");
   let extractionStrategy: GamingExtractionStrategy = "none";
-  let decodedSize = 0;
   let adapterElapsedMs = adapterSelection.elapsedMs;
-  let genericState: ExtractionState | undefined;
-  let adapterInstructions = metadataInstructions;
-  if (adapterSelection.adapter && !adapterInstructions) {
+  // Source admission is independent of adapter output: an adapter may omit a tainted
+  // supported field, but that cannot turn the original source into trusted evidence.
+  const generic = metadataInstructions ? undefined : genericExtract({ input, prepared, metadata, classification, deadline });
+  const genericState = generic?.state;
+  const decodedSize = genericState?.decodedSize ?? 0;
+  let adapterInstructions = metadataInstructions || genericState?.instructionFiltered === true;
+  let adapterFailure: GamingStructuredFailureReason | undefined;
+  if (adapterSelection.adapter && !adapterInstructions && !genericState?.terminalFailure) {
     const adapterStartedAt = Date.now();
     const extracted = await withTimeout(
       Promise.resolve().then(() => adapterSelection.adapter!.extract(adapterInput)),
-      LIMITS.maxAdapterExtractMs,
+      Math.max(0, Math.min(LIMITS.maxAdapterExtractMs, deadline - adapterStartedAt)),
       input.signal
     );
     adapterElapsedMs += Date.now() - adapterStartedAt;
     if (extracted) {
-      const inspection = inspectStructure(extracted, Date.now() + LIMITS.maxExtractionMs);
+      const inspection = inspectStructure(extracted, deadline);
       if (inspection.ok) {
         build = normalizeBuildCandidate({
           value: extracted,
@@ -1737,14 +1839,20 @@ export async function ingestGamingBuildResource(
           });
           extractionStrategy = "adapter";
         }
+      } else {
+        adapterFailure = failureFromInspection(inspection);
+        validation = emptyValidation(adapterFailure);
       }
+    }
+    if (Date.now() > deadline) {
+      build = null;
+      adapterFailure = "STRUCTURED_PAYLOAD_TOO_LARGE";
+      validation = emptyValidation(adapterFailure);
     }
   }
   if (adapterInstructions) validation = rejectedInstructionValidation();
-  if (!adapterInstructions && (!build || !validation.accepted)) {
-    const generic = genericExtract({ input, prepared, metadata, classification, deadline });
-    genericState = generic.state;
-    decodedSize = generic.state.decodedSize;
+  else if (genericState?.terminalFailure) validation = generic!.validation;
+  if (!adapterInstructions && !adapterFailure && generic && (!build || !validation.accepted)) {
     if (generic.state.instructionFiltered || !build || qualityRank(generic.validation.quality) >= qualityRank(validation.quality)) {
       build = generic.build;
       validation = generic.validation;

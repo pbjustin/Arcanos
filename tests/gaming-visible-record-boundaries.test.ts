@@ -85,4 +85,55 @@ describe('visible independent record boundaries', () => {
     ]);
   });
 
+  it('rejects consumed instructions in a duplicate table column before overwriting the cell', async () => {
+    const result = await ingest(`${cleanItem}<table><tr><th>Name</th><th>Name</th></tr><tr><td>${injection}</td><td>Incomplete equipment</td></tr></table>`);
+    expect(result.failureReason).toBe('SOURCE_INSTRUCTIONS_REJECTED');
+    expect(result.build).toBeNull();
+  });
+
+  it('drops ambiguous duplicate-header rows while retaining an intact independent item', async () => {
+    const result = await ingest(`${cleanItem}<table><tr><th>Name</th><th>Name</th></tr><tr><td>First equipment</td><td>Incomplete equipment</td></tr></table>`);
+    expect(result.build?.equipment).toEqual([{ name: 'Intact equipment', slot: 'boots' }]);
+  });
+
+  it('rejects consumed instructions in a repeated global definition before replacing it', async () => {
+    const result = await ingest(`${cleanItem}<dl><dt>Constraints</dt><dd>${injection}</dd><dt>Constraints</dt><dd>Requires a shield.</dd></dl>`);
+    expect(result.failureReason).toBe('SOURCE_INSTRUCTIONS_REJECTED');
+    expect(result.build).toBeNull();
+  });
+
+  it.each(['Constraints', 'constraints', 'Requirements'])('does not rescue conflicting global Constraints/%s definitions through metadata or a URL payload', async secondKey => {
+    const html = wrap(`${cleanItem}<dl><dt>Constraints</dt><dd>Requires a shield.</dd><dt>${secondKey}</dt><dd>Requires a bow.</dd></dl>`);
+    for (const query of ['', `?build=${encodeURIComponent(JSON.stringify({ equipment: [{ name: 'Payload equipment' }] }))}`]) {
+      const result = await ingestGamingBuildResource({ url: `https://community.example.org/build-planner${query}`, html }, { useCache: false });
+      expect(result.validation.accepted).toBe(false);
+      expect(result.failureReason).toBe('STRUCTURED_PAYLOAD_MALFORMED');
+      expect(result.build).toBeNull();
+      expect(result.evidenceText).toBe('');
+    }
+  });
+
+  it('keeps independently defined character fields and unconsumed repeated labels', async () => {
+    const result = await ingest(`${cleanItem}<dl><dt>Class</dt><dd>Ranger</dd><dt>Level</dt><dd>30</dd><dt>Telemetry</dt><dd>First label</dd><dt>Telemetry</dt><dd>Second label</dd></dl>`);
+    expect(result.validation.accepted).toBe(true);
+    expect(result.build?.character).toEqual({ class: 'Ranger', level: 30 });
+    expect(result.build?.equipment).toEqual([{ name: 'Intact equipment', slot: 'boots' }]);
+  });
+
+  it.each(['rowspan', 'colspan'])('excludes a row with an unsupported %s instead of mapping physical cells as logical columns', async attribute => {
+    const result = await ingest(`${cleanItem}<table><tr><th>Slot</th><th>Name</th><th>Quantity</th></tr><tr><td ${attribute}="2">helmet</td><td>Incomplete equipment</td><td>1</td></tr></table>`);
+    expect(result.build?.equipment).toEqual([{ name: 'Intact equipment', slot: 'boots' }]);
+  });
+
+  it('excludes rows beneath an ambiguous spanning header', async () => {
+    const result = await ingest(`${cleanItem}<table><tr><th colspan="2">Slot</th><th>Name</th><th>Quantity</th></tr><tr><td>helmet</td><td>Incomplete equipment</td><td>1</td></tr></table>`);
+    expect(result.build?.equipment).toEqual([{ name: 'Intact equipment', slot: 'boots' }]);
+  });
+
+  it('still rejects consumed instructions before omitting an unsupported spanning row', async () => {
+    const result = await ingest(`${cleanItem}<table><tr><th>Slot</th><th>Name</th></tr><tr><td colspan="2">helmet</td><td>${injection}</td></tr></table>`);
+    expect(result.failureReason).toBe('SOURCE_INSTRUCTIONS_REJECTED');
+    expect(result.build).toBeNull();
+  });
+
 });
