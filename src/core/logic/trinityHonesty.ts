@@ -711,8 +711,9 @@ function impliesPersistenceActionClaim(text: string): boolean {
   return PERSISTENCE_SAVE_CONTEXT_PATTERN.test(text) || PERSISTENCE_CREDENTIAL_TOKEN_PATTERN.test(text)
     || impliesFirstPersonSaveClaim(text)
     || /\bsave\s+(?:it|this|that|these|those|everything|anything)\b/i.test(text)
-    || (/\bsave\s*[.!?]?\s*$/i.test(text)
-      && !/^(?:(?:[-*]|\d+[.)])\s+)?(?:please\s+)?(?:(?:do not|don['’]t)\s+forget|make\s+sure|remember)\s+to\s+save\s*[.!?]?$/i.test(text.trim()));
+    // Only an isolated "save" is ambiguous; a sentence ending in it can be
+    // advice. Assistant commitments are checked independently above.
+    || /^(?:(?:[-*]|\d+[.)])\s+)?save\s*[.!?]?\s*$/i.test(text.trim());
 }
 
 function isSectionHeading(text: string): boolean {
