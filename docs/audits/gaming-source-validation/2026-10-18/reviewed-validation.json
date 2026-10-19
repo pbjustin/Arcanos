@@ -67,7 +67,7 @@
     "tests/trinity-persistence-claim-classification.test.ts": "b8fd76b18d1b0bb07d2ee091f6a4563738584c4550d303bc6764fb1936565426",
     "tests/gaming-generic-instruction-boundary-review.test.ts": "ce7984b7b708d787bf2b3bdae4af7d27bca74691189601829205ba4035cd2e09"
   },
-  "publicationStatus": "Final committed-head full checks and follow-up CodeRabbit disposition are recorded on PR1558; this historical receipt predates that commit.",
+  "publicationStatus": "This historical receipt predates the final committed head. Consult PR1558 for subsequent check runs and CodeRabbit review dispositions.",
   "exactHeadRailwayPreview": "NOT_RUN",
   "livePublisherAcceptance": "NOT_RUN",
   "productionDeployment": "NOT_RUN"
