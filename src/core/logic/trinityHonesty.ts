@@ -142,7 +142,11 @@ const BACKEND_ACTION_PATTERN =
 const BACKEND_ACTION_CONTEXT_PATTERN =
   /\b(backend|database|db|table|record|row|service|services|api|endpoint|cache)\b/i;
 const PERSISTENCE_SAVE_CONTEXT_PATTERN =
-  /\b(memory|data|details|preferences|settings|accounts?|profiles?|sessions?|conversations?|transcripts?|files?|documents?|records?|notes?|answers?|results?|credentials?|secrets?|passwords?|tokens?|storage|disk|logs?)\b/i;
+  /\b(memory|data|details|preferences|settings|accounts?|profiles?|sessions?|conversations?|transcripts?|files?|documents?|records?|notes?|answers?|results?|credentials?|secrets?|passwords?|storage|disk|logs?)\b/i;
+const PERSISTENCE_CREDENTIAL_TOKEN_PATTERN =
+  /\b(?:access|auth|authentication|authorization|bearer|refresh|api|security|secret|session)\s+tokens?\b/i;
+const SYSTEM_OWNED_SAVE_PATTERN =
+  /\b(?:chats?|conversations?|sessions?|assistants?|systems?|applications?|apps?|services?|servers?|browsers?|clients?|software|agents?|bots?)\s+(?:(?:[a-z-]+ly|now|also|still|always)\s+){0,4}(?:will|shall|can|could|may|might|must|would|should|(?:is|are)\s+going\s+to)\s+(?:(?:[a-z-]+ly|now|also|still|always|never|not|only|again)\s+){0,6}(?:(?:be\s+(?:able|going)|fail)\s+to\s+(?:(?:[a-z-]+ly|now|also|still|always|never|not|only|again)\s+){0,4})?save\b/gi;
 const LIMITATION_LANGUAGE_PATTERN =
   /\b(can(?:not|'t)|unable to|do not have|don't have|haven't|have not|cannot confirm|can't confirm|cannot verify|can't verify|without live|without browsing|unverified|unconfirmed|inferred|unavailable)\b/i;
 const STATIC_SCOPE_LIMITATION_PATTERN =
@@ -657,12 +661,29 @@ function requestTargetsCurrentExternalState(text: string): boolean {
   );
 }
 
+/** A software actor can promise retention without first-person wording. Its
+ * own modal predicate and complement must imply storage: "this chat can save
+ * you time" or "will explain how to save" does not establish retention. */
+function impliesSystemOwnedSaveClaim(text: string): boolean {
+  return [...text.matchAll(SYSTEM_OWNED_SAVE_PATTERN)].some(match => {
+    // A denial of retention is already a limitation. "Not only save" remains
+    // affirmative, as does a negation of another verb such as "never fail to".
+    if (/\b(?:not|never)\s+(?:(?!only\b)[a-z-]+ly\s+){0,4}save\b/i.test(match[0])) return false;
+    const complement = text.slice(match.index + match[0].length).split(/[.!?;:]/, 1)[0].trim();
+    return PERSISTENCE_SAVE_CONTEXT_PATTERN.test(complement)
+      || PERSISTENCE_CREDENTIAL_TOKEN_PATTERN.test(complement)
+      || /^(?:(?:a|an|the|this|that|your|our)\s+)?(?:copy|copies|snapshots?|backups?|drafts?|chats?)\b/i.test(complement)
+      || /^(?:(?:[a-z-]+ly|now|again|forever)\b\s*){0,4}(?:$|(?:before|after|when|whenever|for|and|but)\b|(?:on its own|by itself|by default)\b)/i.test(complement);
+  });
+}
+
 /** Bare "save" can mean conserve a resource. Completed actions, assistant-owned
  * promises, storage objects and ambiguous references retain the persistence gate. */
 function impliesPersistenceActionClaim(text: string): boolean {
   if (/\b(saved|persisted|persist|wrote|write|stored|store|updated|update|inserted|insert)\b/i.test(text)) return true;
   if (!/\bsave\b/i.test(text)) return false;
-  return PERSISTENCE_SAVE_CONTEXT_PATTERN.test(text)
+  return PERSISTENCE_SAVE_CONTEXT_PATTERN.test(text) || PERSISTENCE_CREDENTIAL_TOKEN_PATTERN.test(text)
+    || impliesSystemOwnedSaveClaim(text)
     // Adverbs and modal phrases do not transfer an assistant-owned action to
     // the reader. A new subject does: "I recommend you save ..." is advice.
     || /\b(?:i|we)(?:['’](?:ll|d)|\b)(?:(?!\b(?:you|they|he|she|it)\b)[^.!?;:]){0,160}\bsave\b/i.test(text)
@@ -1085,7 +1106,8 @@ function rewriteUnsupportedClaims(params: {
       (inUnsupportedExternalStateSection && isLikelyUnsupportedExternalStateSectionBody(segment));
     const qualifiedCurrentStateLimitation = isQualifiedCurrentStateLimitation(segment);
     const allowsProvidedDataVerification = allowsProvidedDataVerificationClaim(segment, params.capabilityFlags);
-    const impliesBackendAction = BACKEND_ACTION_PATTERN.test(segment) && BACKEND_ACTION_CONTEXT_PATTERN.test(segment);
+    const impliesBackendAction = (BACKEND_ACTION_PATTERN.test(segment) && BACKEND_ACTION_CONTEXT_PATTERN.test(segment))
+      || impliesSystemOwnedSaveClaim(segment);
     const impliesPersistenceAction = impliesPersistenceActionClaim(segment);
 
     //audit Assumption: unverifiable current-state claims must be rewritten before the final answer reaches the caller, but explicit limitation caveats like "runtime enforcement remains unverified" must survive intact; failure risk: the guard replaces truthful caveats with a generic refusal and hides the useful static audit; expected invariant: only affirmative unsupported claims are rewritten; handling strategy: exempt qualified current-state limitations before applying the rewrite.
@@ -1846,7 +1868,8 @@ export function enforceFinalStageHonesty(
     const impliesCurrentExternalState = impliesCurrentExternalStateClaim(line);
     const qualifiedCurrentStateLimitation = isQualifiedCurrentStateLimitation(line);
     const allowsProvidedDataVerification = allowsProvidedDataVerificationClaim(line, capabilityFlags);
-    const impliesBackendAction = BACKEND_ACTION_PATTERN.test(line) && BACKEND_ACTION_CONTEXT_PATTERN.test(line);
+    const impliesBackendAction = (BACKEND_ACTION_PATTERN.test(line) && BACKEND_ACTION_CONTEXT_PATTERN.test(line))
+      || impliesSystemOwnedSaveClaim(line);
 
     //audit Assumption: in PROMPT_GENERATION, imperative downstream steps like "Verify the API" are not claims that this backend verified anything; failure risk: the general overclaim guard strips the generated prompt itself; expected invariant: only first-person/completed backend self-claims remain subject to claim blocking; handling strategy: allow non-self-claim prompt instructions through this guard.
     if (promptGeneration && !isUnsupportedPromptGenerationSelfClaim(line)) {

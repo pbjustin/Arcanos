@@ -13,7 +13,7 @@ separate reviewed-authority verification. Publisher HTTP 403 responses remain
 access failures and are never retried through an access-control bypass.
 
 Source-evaluation rule v2 adds closed identity subject/scope/determination fields
-and a failure class separating security, source access, extraction, gameplay
+and a failure class separating security, authority policy, source access, extraction, gameplay
 quality and workflow failures. Rejection retains earlier bounded extraction
 counts. These fields contain no article subjects, raw passages or URLs, and
 cannot grant acceptance, additional acquisition budget or storage permission.

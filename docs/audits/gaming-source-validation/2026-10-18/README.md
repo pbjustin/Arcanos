@@ -131,9 +131,11 @@ Trinity stages and final-answer validation run production implementations.
 
 An immutable archive of the baseline source ran the same final fixture tests;
 1,342 runtime and script files were verified against that commit's Git blobs.
-Across all seven new regression suites, baseline passed **84/173** with **89
-failures**; the repair passed **173/173** with no skips. The historical
-[validation record](validation.json) includes the tested working-tree file hashes.
+Across the final seven new regression suites, baseline passed **100/227** with
+**127 failures**; the reviewed repair passed **227/227** with no skips. The initial
+pre-review matrix had 173 tests (84 baseline passes and 89 failures); the historical
+[validation record](validation.json) preserves that earlier snapshot and hashes.
+The [review follow-up record](reviewed-validation.json) records the final matrix.
 The existing baseline focused set passed **565/565** tests. The full new generic
 workflow suite on baseline passed **12/19**; repaired execution passed **19/19**.
 Within it, ordinary source acquisition through grounded Trinity/final CLEAR
@@ -150,6 +152,38 @@ retention (including partial status when truncated) and rejection of actual
 navigation furniture. Two added mutation controls fail if either distinction is
 lost. The original failing preview test and its dependent served-route checks are
 retained; the reviewed preview semantic digest is updated with the fixture.
+
+## CodeRabbit follow-up
+
+[CodeRabbit's review](https://github.com/pbjustin/Arcanos/pull/1558#pullrequestreview-5565791674)
+of `4bfe047d886dcf7c17566ba1dd40761c29a0bfc4` identified four actionable findings.
+All four were reproduced and repaired:
+
+- Role reassignment phrased as acting/serving/operating/functioning as a protected
+  assistant role escaped filtering. Eight malicious full-candidate cases failed
+  before repair. Bounded role grammar now detects them while retaining benign
+  player roles and distinguishing an AI role from AI modifying a gameplay noun.
+- Currency-token conservation was classified as persistence, while automatic
+  chat/system retention could evade both honesty stages. The final 67-case matrix
+  failed 20 cases on the reviewed head and passes after repair. Credential context,
+  software ownership and bounded direct predicates preserve storage controls
+  without attributing embedded gameplay advice to the assistant.
+- Unreviewed currentness sources were rejected before acquisition but labeled as
+  gameplay-quality failures. Two red controls now pass with a closed authority-policy
+  diagnostic, preserving the stricter currentness admission rule.
+
+Focused follow-up validation passed 328 extraction/security tests, 318 honesty
+tests and 67 diagnostic/currentness tests (overlapping suite inventories, not an
+additive unique-test total). The earlier reviewed head separately passed the full
+repository run: 953 suites and 20,087 tests, with 13 suites/234 tests skipped and
+all coverage thresholds met. Final-head full CI and repeat-review results belong
+to the PR's exact-commit evidence; an earlier pass does not certify later edits.
+
+Local dependency drift and a missing PowerShell prerequisite were also corrected:
+clean `npm ci` restored the checked-in versions, and verified PowerShell 7.6.7
+enabled the projector tests. The three proxy-trust failures reproduced on unchanged
+main before installation and all 45 controls passed afterward. No security
+assertions, dependency manifest or lockfile were changed to resolve them.
 
 ## Security and release boundaries
 

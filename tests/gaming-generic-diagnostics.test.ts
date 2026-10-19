@@ -7,6 +7,7 @@ describe('generic source rejection diagnostics', () => {
     ['SOURCE_INSTRUCTIONS_REJECTED', 'extraction', 'security'],
     ['URL_BLOCKED', 'acquisition', 'security'],
     ['SOURCE_USE_RESTRICTED', 'provenance', 'security'],
+    ['REVIEWED_OFFICIAL_CURRENTNESS_SOURCE_REQUIRED', 'provenance', 'policy'],
     ['SOURCE_INACCESSIBLE', 'acquisition', 'source_access'],
     ['SOURCE_FETCH_FAILED', 'acquisition', 'source_access'],
     ['SOURCE_EXTRACTION_FAILED', 'extraction', 'extraction'],
@@ -24,6 +25,18 @@ describe('generic source rejection diagnostics', () => {
     expect(projectGamingSourceEvaluation(trace).stages.acquisition.diagnostic).toEqual({
       acquisitionStage: 'extraction', failureClass: 'extraction'
     });
+  });
+
+  it('reports an authority-policy rejection before acquiring an unreviewed currentness source', async () => {
+    const { evaluateGamingHybridCandidates } = await import('../src/services/gamingHybridCandidates.js');
+    const resolveDocument = jest.fn(async () => { throw new Error('Acquisition must not run'); });
+    const result = await evaluateGamingHybridCandidates({ game: 'Lantern Voyage', mode: 'guide',
+      prompt: 'Verify the current patch.', protocolVersion: 'gaming-hybrid-v2', discoveryType: 'currentness_verification',
+      candidates: [{ url: 'https://community.example.org/guide' }] }, { actorKey: 'synthetic-diagnostic-actor' }, { resolveDocument });
+    expect(resolveDocument).not.toHaveBeenCalled();
+    expect(result.accepted).toEqual([]);
+    expect(result.evaluations[0].stages.provenance).toEqual({ status: 'rejected',
+      reasonCode: 'REVIEWED_OFFICIAL_CURRENTNESS_SOURCE_REQUIRED', diagnostic: { acquisitionStage: 'admission', failureClass: 'policy' } });
   });
 
   it('retains an acquired extraction failure stage when the overall budget also expires', async () => {

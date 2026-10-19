@@ -27,6 +27,17 @@ describe('generic persistence claims distinguish conserving resources from backe
     'Save money for the return trip.',
     'I recommend you save stamina for the return climb.',
     'I suggest that you save supplies for the return journey.',
+    'Save tokens for the final stage.',
+    'Save at least ten tokens for the final stage.',
+    'Save tokens by waiting until prices fall.',
+    'Use chat to organize your route and save tokens.',
+    'The assistant recommends you save tokens.',
+    'This chat can save you time.',
+    'The assistant can save tokens by using shorter replies.',
+    'This chat will explain how to save automatically.',
+    'The application can recommend ways to save automatically.',
+    'This chat will not save automatically.',
+    'This chat will never save automatically.',
     '1. Save energy for the final stage.\n2. Keep enough food for the return journey.'
   ])('preserves ordinary resource-conservation guidance: %s', text => {
     const { first, final } = review(text);
@@ -36,6 +47,17 @@ describe('generic persistence claims distinguish conserving resources from backe
     const withoutPresentation = review(text, false).final;
     expect(withoutPresentation.blockedOrRewrittenClaims).toEqual([]);
     expect(withoutPresentation.text).toBe(text);
+  });
+
+  it('keeps an explicit cannot-save limitation truthful under presentation normalization', () => {
+    const text = 'This chat cannot save automatically.';
+    const preserved = review(text);
+    expect(preserved.first.blocked).toBe(false);
+    expect(preserved.final.blockedOrRewrittenClaims).toEqual([]);
+    expect(preserved.final.text).toBe(text);
+    const normalized = review(text, false).final;
+    expect(normalized.blockedOrRewrittenClaims).toEqual([]);
+    expect(normalized.text).toBe("I haven't saved or persisted anything here.");
   });
 
   it.each([
@@ -51,6 +73,14 @@ describe('generic persistence claims distinguish conserving resources from backe
     "I'll automatically save a copy.",
     'We will also save the snapshot.',
     'I told you I will save the snapshot.',
+    'I will save tokens for later.',
+    'We always save tokens for later.',
+    'Save access tokens for later.',
+    'Save authentication tokens for later.',
+    'Save refresh tokens securely.',
+    'Save secret tokens for later.',
+    'Save tokens to disk.',
+    'Save tokens in a file.',
     'Save this to memory.',
     'Save the answer to a file.',
     'Save it.',
@@ -66,6 +96,37 @@ describe('generic persistence claims distinguish conserving resources from backe
   ])('retains unsupported persistence and mixed-clause controls: %s', text => {
     const { first, final } = review(text);
     expect(first.blocked || final.blockedOrRewrittenClaims.length > 0).toBe(true);
+    expect(final.text).not.toBe(text);
+  });
+
+  it.each([
+    'This chat will save automatically.',
+    'This chat will automatically save before closing.',
+    'Your chat can now save automatically.',
+    'Your conversation will save automatically.',
+    'The application can now save the snapshot.',
+    'The assistant will silently save a copy.',
+    'The system will always save automatically.',
+    'The system will never fail to save automatically.',
+    'The application will be able to save automatically.',
+    'The browser should automatically save to disk.',
+    'This session may automatically save after closing.',
+    'The software will save a backup.',
+    'This chat will not only save automatically but also retain a copy.',
+    'Chat will quietly save on its own.'
+  ])('guards automatic system-owned retention in each enforcement stage: %s', text => {
+    const reasoningHonesty = createDefaultTrinityReasoningHonesty();
+    const first = enforceFinalStageHonesty(text, reasoningHonesty, capabilityFlags, 'EXECUTE_TASK', true);
+    expect(first.blocked).toBe(true);
+    expect(first.text).not.toBe(text);
+
+    // Exercise the later guard independently: an earlier rewrite must not mask
+    // a gap when callers enter through the final normalization stage directly.
+    const final = enforceFinalStageHonestyAndMinimalism({
+      text, userPrompt: prompt, capabilityFlags, reasoningHonesty,
+      outputControls: deriveTrinityOutputControls(prompt, {}), preservePresentation: true
+    });
+    expect(final.blockedOrRewrittenClaims).toContain(text);
     expect(final.text).not.toBe(text);
   });
 });

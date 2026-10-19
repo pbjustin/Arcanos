@@ -118,8 +118,17 @@ export const GAMING_DOCUMENT_FURNITURE_SELECTOR = COMMON_JUNK_SELECTORS
 const SOURCE_INSTRUCTION_PATTERN = /\b(?:(?:ignore|disregard|override)\s+(?:(?:all|the)\s+)?(?:previous|prior|system|developer|assistant|user)(?:\s+(?:and|or)\s+(?:system|developer|assistant|user))*\s+(?:instructions?|messages?|prompts?)|forget\s+(?:everything|all)\s+(?:above|before)|new\s+(?:system|developer|assistant)\s+(?:message|prompt|instructions?)|(?:system|developer|assistant)\s+(?:message|prompt|instructions?)|(?:reveal|print|show|expose|exfiltrate|disclose|leak)\s+(?:(?:the|your|our|my|all|any|private)\s+)*(?:system|developer|secrets|secret(?=\s*(?:[.!?;,:]|$)|\s+(?:from|in|of|to|with)\b)|credentials?|passwords?|tokens?|api\s+keys?|secret\s+(?:keys?|tokens?|values?))\b|(?:call|invoke)\s+(?:the\s+)?(?:tools?|functions?|[a-z_]\w*(?:\.\w+|__\w+)+)\b|(?:execute|run)\s+(?:this\s+)?(?:command|shell|powershell|bash))\b/i;
 // Bounded modifiers describe a role without an adjective allowlist. An article
 // permits coordinated adjectives inside that noun phrase. Otherwise conjunction
-// and preposition boundaries keep later gameplay subjects out of the role.
-const SOURCE_ROLE_ASSIGNMENT_PATTERN = /\byou\s+are\s+now\s+(?:(?:(?:an?|the)\s+(?:(?!(?:but|to|of|in|on|at|near|with|without|from|for|as|by|that|which|who)\b)[a-z][a-z-]{0,31}\s+){0,4}|(?:(?!(?:and|or|but|to|of|in|on|at|near|with|without|from|for|as|by|that|which|who)\b)[a-z][a-z-]{0,31}\s+){0,4})(?:assistant|ai|chatgpt|(?:language\s+)?model|system|developer)\b|in\s+(?:system|developer|assistant)\s+mode\b)/i;
+// and preposition boundaries keep later gameplay subjects out of the role. A
+// bare AI must end the role noun phrase; AI modifying another noun is not itself
+// an assigned role. Explicit AI agent/assistant/model/system roles stay blocked.
+const SOURCE_ROLE_ASSIGNMENT_PATTERN = new RegExp(
+  String.raw`\byou\s+are\s+now\s+(?:(?:acting|serving|operating|functioning)\s+as\s+)?`
+  + String.raw`(?:(?:(?:an?|the)\s+(?:(?!(?:but|to|of|in|on|at|near|with|without|from|for|as|by|that|which|who)\b)[a-z][a-z-]{0,31}\s+){0,4}`
+  + String.raw`|(?:(?!(?:and|or|but|to|of|in|on|at|near|with|without|from|for|as|by|that|which|who)\b)[a-z][a-z-]{0,31}\s+){0,4})`
+  + String.raw`(?:assistant|chatgpt|(?:language\s+)?model|system|developer|(?:ai|artificial\s+intelligence)`
+  + String.raw`(?:\s+(?:agent|assistant|model|system)|(?=\s*(?:[.!?;,:]|$)|\s+(?:and|or|but|that|which|who|with|without|to|for|in|of|from|as|must|should|can|will)\b)))\b`
+  + String.raw`|in\s+(?:system|developer|assistant)\s+mode\b)`, 'i'
+);
 
 /** Shared acquisition profiles: downstream query ranking does not select a different document transport. */
 export function gamingDocumentFetchOptions(url: string, options: FetchAndCleanOptions = {}): FetchAndCleanOptions {

@@ -47,7 +47,7 @@ export interface GamingSourceEvaluationDiagnostic {
   identitySubjectKind?: 'article_topic' | 'game_identity' | 'unknown';
   identityScope?: 'source_global' | 'local_reference' | 'unknown';
   identityDetermination?: 'corroborated' | 'explicit_contradiction' | 'insufficient_corroboration';
-  failureClass?: 'security' | 'source_access' | 'extraction' | 'gameplay_quality' | 'workflow';
+  failureClass?: 'security' | 'policy' | 'source_access' | 'extraction' | 'gameplay_quality' | 'workflow';
   authority?: 'official' | 'reviewed_secondary' | 'unknown';
   contentHash?: string;
 }
@@ -84,7 +84,7 @@ function safeDiagnostic(value: GamingSourceEvaluationDiagnostic): GamingSourceEv
   if (['article_topic', 'game_identity', 'unknown'].includes(value.identitySubjectKind ?? '')) result.identitySubjectKind = value.identitySubjectKind;
   if (['source_global', 'local_reference', 'unknown'].includes(value.identityScope ?? '')) result.identityScope = value.identityScope;
   if (['corroborated', 'explicit_contradiction', 'insufficient_corroboration'].includes(value.identityDetermination ?? '')) result.identityDetermination = value.identityDetermination;
-  if (['security', 'source_access', 'extraction', 'gameplay_quality', 'workflow'].includes(value.failureClass ?? '')) result.failureClass = value.failureClass;
+  if (['security', 'policy', 'source_access', 'extraction', 'gameplay_quality', 'workflow'].includes(value.failureClass ?? '')) result.failureClass = value.failureClass;
   if (['official', 'reviewed_secondary', 'unknown'].includes(value.authority ?? '')) result.authority = value.authority;
   if (/^[a-f0-9]{64}$/u.test(value.contentHash ?? '')) result.contentHash = value.contentHash;
   return result;
@@ -120,7 +120,7 @@ export function rejectGamingSourceEvaluation(trace: GamingSourceEvaluation, reas
   const failureClass: GamingSourceEvaluationDiagnostic['failureClass'] = [
     'UNTRUSTED_METADATA_INVALID', 'INVALID_URL', 'URL_BLOCKED', 'REDIRECT_NOT_ALLOWED',
     'RESOLVED_SOURCE_IDENTITY_MISMATCH', 'SOURCE_INSTRUCTIONS_REJECTED', 'SOURCE_INTEGRITY_REJECTED', 'SOURCE_USE_RESTRICTED'
-  ].includes(code) ? 'security' : [
+  ].includes(code) ? 'security' : code === 'REVIEWED_OFFICIAL_CURRENTNESS_SOURCE_REQUIRED' ? 'policy' : [
     'SOURCE_TIMEOUT', 'SOURCE_INACCESSIBLE', 'SOURCE_FETCH_FAILED', 'SOURCE_RESPONSE_TOO_LARGE', 'SOURCE_TOO_LARGE'
   ].includes(code) ? code === 'SOURCE_TIMEOUT' && diagnostic.acquisitionStage === 'extraction' ? 'extraction' : 'source_access'
     : ['SOURCE_EXTRACTION_FAILED', 'UNSUPPORTED_SOURCE_FORMAT'].includes(code)
