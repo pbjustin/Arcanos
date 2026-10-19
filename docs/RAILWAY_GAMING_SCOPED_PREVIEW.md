@@ -209,7 +209,14 @@ integration, production readiness or permission to merge. Those remain separate.
 [Infrastructure CI](../.github/workflows/gaming-preview-infrastructure-checks.yml)
 runs mocked admission, provenance, publication, failure/recovery, cleanup,
 inventory, bounds and Linux kernel tests. Its separate secretless artifact smoke
-build has no publication or Railway authority. The frozen candidate's existing
+build has no publication or Railway authority.
+
+Local image-smoke containers use the admitted maximum of one CPU, 512 MiB of
+memory and 64 processes per role. The verifier retains its five-second request,
+60-second aggregate and existing response-size limits; these resource caps do
+not change any assertion or timeout threshold.
+
+The frozen candidate's existing
 assembled-application test executes all 84 cases offline while independently
 checking its HTTP/HTTPS/fetch/Notion seams. Full-platform descriptor regression
 and the historical stack's tests remain separate. Record actual outcomes and

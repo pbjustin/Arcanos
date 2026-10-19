@@ -32,6 +32,8 @@ function fixture() {
     const args = all.slice(1); commands.push(args);
     if (args[0] === 'run') {
       assert.ok(args.includes('--pull=never') && args.includes('--cap-drop=ALL') && args.includes('--read-only'));
+      assert.ok(args.includes('--cpus=1') && args.includes('--memory=512m') && args.includes('--pids-limit=64'));
+      assert.ok(args.includes('--security-opt=no-new-privileges'));
       assert.equal(args.includes('--entrypoint'), false); assert.equal(args.at(-1), build.imageId);
       assert.ok(args.includes('127.0.0.1::8080'));
       const name = args[args.indexOf('--name') + 1], id = String(containers.size + 1).repeat(64), labels = {};
@@ -62,6 +64,9 @@ function fixture() {
     return new Response('{}', { headers: { 'content-type': 'application/json' } });
   };
   const verify = async ({ fetchImpl, args }) => {
+    assert.equal(args.includes('--request-timeout-ms'), false);
+    assert.equal(args.includes('--total-timeout-ms'), false);
+    assert.equal(args.includes('--max-response-bytes'), false);
     const origin = args[args.indexOf('--web-base-url') + 1];
     for (let index = 0; index < 84; index++) await fetchImpl(`${origin}/readyz`, {});
     const plannedCaseIds = buildGamingScopedPreviewAssertionInventory();

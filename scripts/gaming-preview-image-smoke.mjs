@@ -79,7 +79,7 @@ export async function runGamingImageSmoke({ authorizationFile, buildFile, imageF
         && preview.processKind === role && preview.sourceCommit === build.candidateSha, 'RUNTIME_IDENTITY_INVALID');
       // Image entrypoint and nonroot USER remain intact. No host mounts or
       // credential environment are passed; kernel seccomp precedes Node startup.
-      const id = docker(['run', '--detach', '--pull=never', '--name', name, '--memory=512m', '--cpus=0.5', '--pids-limit=64',
+      const id = docker(['run', '--detach', '--pull=never', '--name', name, '--memory=512m', '--cpus=1', '--pids-limit=64',
         '--cap-drop=ALL', '--security-opt=no-new-privileges', '--read-only', '--tmpfs', '/tmp:rw,noexec,nosuid,size=16m',
         '--publish', '127.0.0.1::8080', ...Object.entries(labels).flatMap(([key, value]) => ['--label', `${key}=${value}`]),
         ...Object.entries(variables).flatMap(([key, value]) => ['--env', `${key}=${value}`]), build.imageId]);
