@@ -54,11 +54,26 @@ test('Gaming hosted execution and caller-supplied scope configuration fail close
     error => error.code === 'NATIVE_PR_PREVIEW_ARGUMENT_INVALID');
 });
 
+test('a thin global-fetch wrapper is caller-supplied transport, not evidence of mocked or offline execution', async () => {
+  const wrappedFetch = (url, init) => globalThis.fetch(url, init);
+  const result = await runGamingScopedPreviewE2e({ args, localGitState, fetchImpl: wrappedFetch });
+  assert.equal(result.callerSuppliedTransport, true);
+  assert.equal(Object.hasOwn(result, 'mockedExecution'), false);
+  assert.equal(result.offlineVerification, 'NOT_RUN');
+  assert.equal(result.transport, 'not-used');
+  assert.equal(result.GAMING_SCOPED_PREVIEW, 'NOT_RUN');
+});
+
 test('a selected Gaming or shared-security failure cannot be reported as a passing scoped preview', async () => {
   let requests = 0;
   await assert.rejects(runGamingScopedPreviewE2e({ args: [...args, '--execute', '--allow-network'], localGitState,
-    fetchImpl: async () => { requests += 1; return new Response('{}', { status: 500 }); } }),
-  error => error.code === 'NATIVE_PR_PREVIEW_RESPONSE_BOUNDARY_INVALID');
+    fetchImpl: async url => {
+      requests += 1;
+      const response = new Response('{}', { status: 500 });
+      Object.defineProperty(response, 'url', { value: url });
+      return response;
+    } }),
+  error => error.code === 'NATIVE_PR_PREVIEW_HTTP_STATUS_MISMATCH');
   assert.equal(requests, 1);
 });
 

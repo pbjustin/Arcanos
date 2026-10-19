@@ -1,5 +1,6 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import request from 'supertest';
+import http from 'node:http';
 import https from 'node:https';
 import { syncBuiltinESMExports } from 'node:module';
 import { runGamingScopedPreviewE2e } from '../scripts/gaming-scoped-preview-e2e.mjs';
@@ -619,7 +620,16 @@ describe('native PR contained application', () => {
     const app = createNativePrPreviewApplication({ identity,
       readinessState: { applicationImported: true, fixturesSealed: true, ready: true, draining: false },
       notionConnectivityProbe: notionProbe });
+    const web = http.createServer(app);
     const worker = createPassivePrPreviewServer('worker', identity);
+    const agent = new http.Agent({ keepAlive: true, maxSockets: 2 });
+    const loopbackRequest = http.request.bind(http);
+    const httpSpy = jest.spyOn(http, 'request').mockImplementation((...parameters: unknown[]) => {
+      const destination = parameters[0];
+      outbound.push(typeof destination === 'object' && destination !== null && 'hostname' in destination
+        ? String(destination.hostname) : String(destination));
+      throw new Error('Application HTTP forbidden in Gaming scope');
+    });
     const fetchSpy = jest.spyOn(globalThis, 'fetch').mockImplementation(async input => {
       outbound.push(new URL(input instanceof Request ? input.url : String(input)).hostname);
       throw new Error('External fetch forbidden in Gaming scope');
@@ -632,21 +642,52 @@ describe('native PR contained application', () => {
     });
     syncBuiltinESMExports();
     const requests: string[] = [];
+    let webPort = 0;
+    let workerPort = 0;
+    const listen = (server: http.Server) => new Promise<number>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', () => {
+        server.off('error', reject);
+        const address = server.address();
+        if (!address || typeof address === 'string') { reject(new Error('Expected loopback listener')); return; }
+        resolve(address.port);
+      });
+    });
     const fetchImpl = async (input: string, init: RequestInit) => {
       const url = new URL(input);
       expect(['web-pr-1413.up.railway.app', 'worker-pr-1413.up.railway.app']).toContain(url.hostname);
       requests.push(url.hostname + url.pathname);
-      const target = url.hostname.startsWith('worker-') ? worker : app;
-      const verb = init.method?.toLowerCase() as 'get' | 'head' | 'post' | 'options';
-      let operation = request(target)[verb](url.pathname + url.search);
-      for (const [key, value] of Object.entries(init.headers ?? {})) operation = operation.set(key, String(value));
-      const result = init.body === undefined ? await operation : await operation.send(String(init.body));
-      const response = new Response(init.method === 'HEAD' || result.text.length === 0 ? null : result.text,
-        { status: result.status, headers: result.headers });
-      Object.defineProperty(response, 'url', { value: input });
-      return response;
+      return new Promise<Response>((resolve, reject) => {
+        const operation = loopbackRequest({ hostname: '127.0.0.1',
+          port: url.hostname.startsWith('worker-') ? workerPort : webPort,
+          method: init.method, path: url.pathname + url.search,
+          headers: Object.fromEntries(new Headers(init.headers)), agent, signal: init.signal ?? undefined }, incoming => {
+          const chunks: Buffer[] = [];
+          incoming.on('data', (chunk: Buffer) => chunks.push(chunk));
+          incoming.once('error', reject);
+          incoming.once('end', () => {
+            try {
+              const headers = new Headers();
+              for (const [name, value] of Object.entries(incoming.headers)) {
+                for (const entry of Array.isArray(value) ? value : value === undefined ? [] : [value]) headers.append(name, entry);
+              }
+              const body = Buffer.concat(chunks);
+              const response = new Response(init.method === 'HEAD' || body.length === 0 ? null : body,
+                { status: incoming.statusCode, headers });
+              Object.defineProperty(response, 'url', { value: input });
+              resolve(response);
+            } catch (error) {
+              reject(error);
+            }
+          });
+        });
+        operation.once('error', reject);
+        operation.end(init.body === undefined ? undefined : String(init.body));
+      });
     };
     try {
+      workerPort = await listen(worker);
+      webPort = await listen(web);
       const result = await runGamingScopedPreviewE2e({
         args: ['--pr-number', String(identity.prNumber), '--commit-sha', identity.sourceCommit,
           '--web-base-url', 'https://web-pr-1413.up.railway.app',
@@ -654,21 +695,31 @@ describe('native PR contained application', () => {
         localGitState: { clean: true, head: identity.sourceCommit, sourceTreeSha: 'b'.repeat(40), repository: 'pbjustin/Arcanos' }, fetchImpl })
         .catch((error: { code: string; caseId: string }) => { throw new Error(`${error.code}:${error.caseId}`); });
       expect(result.summary).toMatchObject({ status: 'PASS', requestsMade: 84 });
-      expect(result.offlineVerification).toBe('PASS');
+      expect(result.offlineVerification).toBe('NOT_PROVEN');
+      expect(result.transport).toBe('caller-supplied-unverified');
+      expect(result.hostedExecuted).toBeNull();
       expect(result.GAMING_SCOPED_PREVIEW).toBe('NOT_RUN');
       expect(result.assertionInventory.executedCaseIds).toEqual(result.assertionInventory.plannedCaseIds);
       expect(result.assertionInventory.skippedCaseIds).toContain('native:backstage-generation-notion-authority-rag');
       expect(requests).toHaveLength(84);
       expect(notionProbe).not.toHaveBeenCalled();
       expect(outbound).toEqual([]);
+      expect(httpSpy).not.toHaveBeenCalled();
       expect(httpsSpy).not.toHaveBeenCalled();
       expect(fetchSpy).not.toHaveBeenCalled();
     } finally {
-      fetchSpy.mockRestore();
-      httpsSpy.mockRestore();
-      syncBuiltinESMExports();
-      worker.closeAllConnections();
-      if (worker.listening) await new Promise<void>((resolve, reject) => worker.close(error => error ? reject(error) : resolve()));
+      try {
+        agent.destroy();
+        web.closeAllConnections();
+        worker.closeAllConnections();
+        await Promise.all([web, worker].filter(server => server.listening).map(server =>
+          new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))));
+      } finally {
+        httpSpy.mockRestore();
+        fetchSpy.mockRestore();
+        httpsSpy.mockRestore();
+        syncBuiltinESMExports();
+      }
     }
   });
 

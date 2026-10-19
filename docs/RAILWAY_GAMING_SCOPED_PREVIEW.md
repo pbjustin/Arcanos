@@ -3,8 +3,10 @@
 This companion to [Railway deployment](RAILWAY_DEPLOYMENT.md) describes the
 `gaming-synthetic-v1` verification scope. Its current implementation supports
 offline execution against injected synthetic application transports. Hosted
-execution is disabled: `GAMING_SCOPED_PREVIEW = NOT_RUN`. A passing offline
-result does not attest Railway resources or satisfy hosted acceptance.
+verification is disabled: `GAMING_SCOPED_PREVIEW = NOT_RUN`. Passing assertions
+do not attest Railway resources or satisfy hosted acceptance. Injected
+transports are explicitly reported as unverified; offline evidence comes from
+the test's independent outbound-request assertions.
 
 ## Reused verification and fixed scope
 
@@ -49,8 +51,11 @@ This is preparation for trusted execution, not authority granted to candidate
 files. A future hosted controller must load its own reviewed policy from the
 protected-main checkout, never from the PR evidence checkout or PR-supplied
 environment, dispatch payload or scope label. The current combined verifier
-rejects execution through ambient `globalThis.fetch`; its injected transport
-is reserved for offline tests. It has no Railway management authority.
+consults the policy's disabled hosted flag and rejects execution through
+ambient `globalThis.fetch`. A caller-supplied callback can itself make network
+requests, so callback identity never proves a mock or an offline run. Its
+transport, effects and physical hosted execution remain unverified. The wrapper
+has no Railway management authority.
 
 The shared argument guard checks canonical repository origin, exact local HEAD,
 clean tracked/untracked state, distinct isolated HTTPS preview origins and
@@ -84,8 +89,11 @@ mocked connectivity seam. No real Notion request is needed for either proof.
 Record actual test outcomes in an exact-SHA validation receipt; this maintained
 guide is not a test receipt.
 
-Offline success is `offlineVerification: PASS`, with
-`hostedExecuted: false` and `GAMING_SCOPED_PREVIEW: NOT_RUN`. The fixture
+Injected execution reports `offlineVerification: NOT_PROVEN`,
+`transport: caller-supplied-unverified`, `hostedExecuted: null` and
+`GAMING_SCOPED_PREVIEW: NOT_RUN`. The assembled test separately proves zero
+outbound requests; the wrapper cannot grant that evidence to arbitrary callers.
+The fixture
 components use server-owned synthetic data and passive workers. They do not
 prove normal-route bearer authentication, the complete acquisition/provider
 graph, live publisher retrieval, real Trinity inference, active queue work,

@@ -58,8 +58,8 @@ export async function runGamingScopedPreviewE2e({
   const options = parseNativePrPreviewE2eArguments(args,
     { ...(localGitState === undefined ? {} : { localGitState }), includeSourceTree: true });
   const plannedCaseIds = buildGamingScopedPreviewAssertionInventory();
-  const mockedExecution = fetchImpl !== globalThis.fetch;
-  if (options.execute && !mockedExecution) {
+  const callerSuppliedTransport = fetchImpl !== globalThis.fetch;
+  if (options.execute && (!callerSuppliedTransport || policy.hostedEnabled !== false)) {
     fail('GAMING_SCOPED_PREVIEW_TRUSTED_HOSTED_ACTIVATION_UNAVAILABLE');
   }
   const totalTimeoutMs = Math.min(options.totalTimeoutMs, MAX_TOTAL_TIMEOUT_MS);
@@ -117,8 +117,10 @@ export async function runGamingScopedPreviewE2e({
   return {
     kind: 'gaming_scoped_preview_verification', requestScope: policy.scope,
     GAMING_SCOPED_PREVIEW: 'NOT_RUN',
-    offlineVerification: options.execute ? 'PASS' : 'NOT_RUN',
-    executed: options.execute, mockedExecution, hostedExecuted: false,
+    offlineVerification: options.execute ? 'NOT_PROVEN' : 'NOT_RUN',
+    executed: options.execute, callerSuppliedTransport,
+    transport: options.execute ? 'caller-supplied-unverified' : 'not-used',
+    hostedExecuted: options.execute ? null : false,
     target: native.target,
     limits: { maxRequests: MAX_REQUESTS, maxResponseBytes: Math.min(options.maxResponseBytes, MAX_RESPONSE_BYTES),
       maxAggregateResponseBytes: MAX_AGGREGATE_RESPONSE_BYTES,
@@ -126,8 +128,10 @@ export async function runGamingScopedPreviewE2e({
     assertionInventory: { plannedCaseIds, executedCaseIds,
       skippedCaseIds: native.assertionInventory.skippedCaseIds.map(id => `native:${id}`) },
     boundaries: { controlPlaneProvenanceAsserted: false, hostedEnabled: policy.hostedEnabled,
-      liveNotionConnectivity: false, paidProviderInference: false, durableSourceStorage: false },
-    summary: { status: 'PASS', code: options.execute ? 'GAMING_SCOPED_PREVIEW_OFFLINE_PASS'
+      liveNotionConnectivity: options.execute ? null : false,
+      paidProviderInference: options.execute ? null : false,
+      durableSourceStorage: options.execute ? null : false },
+    summary: { status: 'PASS', code: options.execute ? 'GAMING_SCOPED_PREVIEW_ASSERTIONS_PASS_UNATTESTED_TRANSPORT'
       : 'GAMING_SCOPED_PREVIEW_TARGET_VALIDATED_NO_NETWORK', requestsMade, responseBytes },
     native, mcp,
   };
