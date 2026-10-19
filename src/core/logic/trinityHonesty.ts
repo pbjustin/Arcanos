@@ -146,7 +146,7 @@ const PERSISTENCE_SAVE_CONTEXT_PATTERN =
 const PERSISTENCE_CREDENTIAL_TOKEN_PATTERN =
   /\b(?:access|auth|authentication|authorization|bearer|refresh|api|security|secret|session)\s+tokens?\b/i;
 const SYSTEM_OWNED_SAVE_PATTERN =
-  /\b(?:chats?|conversations?|sessions?|assistants?|systems?|applications?|apps?|services?|servers?|browsers?|clients?|software|agents?|bots?)\s+(?:(?:[a-z-]+ly|now|also|still|always)\s+){0,4}(?:will|shall|can|could|may|might|must|would|should|(?:is|are)\s+going\s+to)\s+(?:(?:[a-z-]+ly|now|also|still|always|never|not|only|again)\s+){0,6}(?:(?:be\s+(?:able|going)|fail)\s+to\s+(?:(?:[a-z-]+ly|now|also|still|always|never|not|only|again)\s+){0,4})?save\b/gi;
+  /\b(?:chats?|conversations?|sessions?|assistants?|systems?|applications?|apps?|services?|servers?|browsers?|clients?|software|agents?|bots?)\s+(?:(?:[a-z-]+ly|now|also|still|always)\s+){0,4}(?:(?:will|shall|can|could|may|might|must|would|should|(?:is|are)\s+going\s+to)\s+(?:(?:[a-z-]+ly|now|also|still|always|never|not|only|again)\s+){0,6}(?:(?:be\s+(?:able|going)|fail)\s+to\s+(?:(?:[a-z-]+ly|now|also|still|always|never|not|only|again)\s+){0,4})?)?saves?\b/gi;
 const LIMITATION_LANGUAGE_PATTERN =
   /\b(can(?:not|'t)|unable to|do not have|don't have|haven't|have not|cannot confirm|can't confirm|cannot verify|can't verify|without live|without browsing|unverified|unconfirmed|inferred|unavailable)\b/i;
 const STATIC_SCOPE_LIMITATION_PATTERN =
@@ -662,14 +662,24 @@ function requestTargetsCurrentExternalState(text: string): boolean {
 }
 
 /** A software actor can promise retention without first-person wording. Its
- * own modal predicate and complement must imply storage: "this chat can save
+ * own predicate and complement must imply storage: "this chat can save
  * you time" or "will explain how to save" does not establish retention. */
 function impliesSystemOwnedSaveClaim(text: string): boolean {
   return [...text.matchAll(SYSTEM_OWNED_SAVE_PATTERN)].some(match => {
     // A denial of retention is already a limitation. "Not only save" remains
     // affirmative, as does a negation of another verb such as "never fail to".
-    if (/\b(?:not|never)\s+(?:(?!only\b)[a-z-]+ly\s+){0,4}save\b/i.test(match[0])) return false;
-    const complement = text.slice(match.index + match[0].length).split(/[.!?;:]/, 1)[0].trim();
+    if (/\b(?:not|never)\s+(?:(?!only\b)[a-z-]+ly\s+){0,4}saves?\b/i.test(match[0])) return false;
+    const remainder = text.slice(match.index + match[0].length);
+    const complement = remainder.split(/[.!?;:]/, 1)[0].trim();
+    const hasFollowingClause = /[.!?;:]\s*\S/.test(remainder.trim());
+    // Fully consumed denials are not retention claims. A coordinated object or
+    // later affirmative clause does not qualify for this narrow denial form.
+    if (!hasFollowingClause && /^(?:nothing|no\s+[a-z]+)(?:\s+at all)?$/i.test(complement)) return false;
+    // Saving someone time is conservation even when a conditional mentions
+    // files. An additional retention verb or coordinated storage object keeps
+    // the ordinary evidence gate (for example, "time while storing data").
+    if (!hasFollowingClause && /^(?:(?:you|us|them|me)\s+)?time(?:\s+(?:when|while)\s+.+)?$/i.test(complement)
+      && !/\b(?:sav(?:e[sd]?|ing)|stor(?:e[sd]?|ing)|persist(?:s|ed|ing)?|retain(?:s|ed|ing)?|writ(?:e[sd]?|ing)|wrote|record(?:s|ed|ing)?|log(?:s|ged|ging)?|remember(?:s|ed|ing)?|keep(?:s|ing)?|kept)\b/i.test(complement)) return false;
     return PERSISTENCE_SAVE_CONTEXT_PATTERN.test(complement)
       || PERSISTENCE_CREDENTIAL_TOKEN_PATTERN.test(complement)
       || /^(?:(?:a|an|the|this|that|your|our)\s+)?(?:copy|copies|snapshots?|backups?|drafts?|chats?)\b/i.test(complement)
@@ -681,9 +691,9 @@ function impliesSystemOwnedSaveClaim(text: string): boolean {
  * promises, storage objects and ambiguous references retain the persistence gate. */
 function impliesPersistenceActionClaim(text: string): boolean {
   if (/\b(saved|persisted|persist|wrote|write|stored|store|updated|update|inserted|insert)\b/i.test(text)) return true;
+  if (impliesSystemOwnedSaveClaim(text)) return true;
   if (!/\bsave\b/i.test(text)) return false;
   return PERSISTENCE_SAVE_CONTEXT_PATTERN.test(text) || PERSISTENCE_CREDENTIAL_TOKEN_PATTERN.test(text)
-    || impliesSystemOwnedSaveClaim(text)
     // Adverbs and modal phrases do not transfer an assistant-owned action to
     // the reader. A new subject does: "I recommend you save ..." is advice.
     || /\b(?:i|we)(?:['’](?:ll|d)|\b)(?:(?!\b(?:you|they|he|she|it)\b)[^.!?;:]){0,160}\bsave\b/i.test(text)

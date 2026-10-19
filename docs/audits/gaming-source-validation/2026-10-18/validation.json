@@ -1,5 +1,5 @@
 {
-  "lifecycle": "historical prepublication local receipt; final exact-head CI/review is recorded on draft PR",
+  "lifecycle": "historical prepublication local receipt; final exact-head CI and independent review remain separate gates requiring published PR evidence",
   "baselineSha": "0e7a8e607e3f2f3359dc86eabcf611d8dd3fe6b2",
   "baselineRuntimeFilesVerified": 1342,
   "toolchain": {

@@ -136,6 +136,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/gaming/gamingStructuredEvidencePreviewFixture.ts',
   'src/shared/gaming/gamingCurrentnessPreviewFixture.ts',
   'src/shared/gaming/gamingDocumentProjectionCore.ts',
+  'src/shared/gaming/gamingDocumentTextNormalization.ts',
   'src/shared/gaming/gamingEvidenceUnits.ts',
   'src/shared/gaming/gamingStructuralEvidence.ts',
   'src/shared/gaming/gamingDocumentIngestionCore.ts',
@@ -855,7 +856,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['scripts/tutor-package-core.mjs', '1aa853e7dcc157d863dfe6f506e6c8779cd4a1defbea70b453d7d2954cfce2d8'], // gitleaks:allow -- public source semantic SHA-256
   ['scripts/tutor-package-core.d.mts', '4b2596dbe443c4f26069252eee614b810977632ac606c6d12d9c273b1db8ccb8'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/chatgpt/pluginMigrationPreviewFixture.ts', 'c723fbc47ff3faf54ada2c46b991ddcddc7b781076100335d3379c9fb9791b92'], // gitleaks:allow -- public source semantic SHA-256
-  ['src/core/logic/trinityHonesty.ts', '0b8edd158f0a122e87673d0b94ebad4694c48e326b86504e03f598ab1eebccb3'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/core/logic/trinityHonesty.ts', '18a3151875db68647db4ac8617e12ff8a23fc14030a4099ffe4ad1a2ac28d12e'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/text/countWords.ts', '5a1ff6743306061b9634f2d0f043c29be6e3ec404bda3569d8da0f031ac68fc9'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/text/intentModeClassifier.ts', '848e9b19da342101f6b9dfb20cf83f18c1dae32e650cfec8a3e928fca0bc5fe2'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/promptGuidance.ts', 'de0d8aff69e7aa5bb5e3e80cc45c8a70fcd9c848d0b5257f8038f6b0a524283a'], // gitleaks:allow -- public source semantic SHA-256
@@ -879,8 +880,8 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['src/shared/security/gptAccessDevicePolicyCore.ts', '82e9adfaba37b14ad163b5f33f75944dc2565e46697d5a89dcdc9c3027724516'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/ios/iosDevicePreviewFixture.ts', '32491af102dc33ef8353eb240dc536088b1d3e3e8e39ae5cf678c78a091c640b'],
   ['src/shared/ios/iosGatewayPreviewFixture.ts', '67babf8ad6b2d7d1e1f7f2131ad3ac4856e27b47c026db525d269e4f07d035f5'],
-  ['src/services/gamingDocumentEvidence.ts', '026a9cd3427ffc3197f29520fca929c21195917b4f9994d801e54d9239447a15'],
-  ['src/services/gamingHtmlEvidence.ts', '35c39483dd8873ea2b6c7462634400a81a01ccc4f1f6cf2748678bd3cb63e071'],
+  ['src/services/gamingDocumentEvidence.ts', '70ecabd95379bf0ed9056f44767dfd83cc4910aabf9e0843f5f3a22247289f37'],
+  ['src/services/gamingHtmlEvidence.ts', '7ab692d38d34b74ba150abcab0b9b34db7f4b1e3be5bc5d9ff17b1ccf92c583c'],
   ['src/services/gamingJsonEvidence.ts', '0e9f968d47a74964b6018904d7e0e2cced78d7e2a556dfdc4a811249f8059596'],
   ['src/shared/gaming/gamingStructuredEvidencePreviewFixture.ts', 'a5ec185667e3771528e29bdf7b2f451f18a8b5b05ff265319134f0c517f9118a'],
   ['src/shared/gaming/gamingSourceAcquisitionCore.ts', 'a2e1951b25ef9d40fabd4f96a233d30129a088d7b4eff99195c438536e49d86f'],
@@ -900,7 +901,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['src/shared/gaming/gamingFreshnessCore.ts', 'e838f431f32fc517790b6f928402a3da096b8d40feabd720054a298b331a675d'],
   ['src/shared/gaming/gamingProgressRecoveryPreviewFixture.ts', '3b62bb34437b2152dd991218ee675b567fbf558c6d9e1f55b8d90d61d97eb5ef'],
   ['src/shared/gaming/gamingGameIdentity.ts', 'c2cd33e4856bb27dc2ae2c47b4a91ea3eab1b80007387ce82ec30bd2f564235d'],
-  ['src/shared/gaming/gamingAcquiredIdentity.ts', 'ec6fc661fcd3d62a361f05e28e20142ec3a8b294d990813c56b2dcfbacfe0622'],
+  ['src/shared/gaming/gamingAcquiredIdentity.ts', '857df27656060af96241b649d4f7e913b52a7bbbe2fc0b272b565d3509c61e0a'],
   ['src/shared/gaming/gamingPlatformIdentity.ts', 'd85e5a648d021e7a8b90ada59122b534ce6fe39ee98d2664f07bb2b2126c4df1'],
   ['src/shared/gaming/gamingRecoveryResponse.ts', '3a0d1e80f92f84dcf88b9ad63522c14f1acb607bb9b343ef0089f4a949ad25ca'],
   ['src/shared/gaming/gamingProgressionPolicy.ts', '91a221a4fa378b8a51bd45a61978fe5d62a386d319659293a05235d81288554b'],
@@ -909,14 +910,15 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['src/shared/gaming/gamingRetrievalPolicy.ts', '08e10205156063f9905b4c106e38f312f3e343fabbd06d451825703a6b67e853'],
   ['src/shared/gaming/gamingPlayerContext.ts', '25f0964d1798c3ba9dfeed720d2ea65083f6fbdc2ef40a761bd21ba57f9046df'],
   ['src/shared/gaming/gamingAnswerPolicy.ts', 'f5f10222ec4f0fdf68ca62652944fc30eaeeb15843eb41a4afc679f13af55f0a'],
-  ['src/services/gamingDocumentExtraction.ts', 'aa759bba511b8641616ebb5cf64a3d8c8b2021eefabd23d1bf4d6642c0a4b73d'],
+  ['src/services/gamingDocumentExtraction.ts', '5c99d2b60f5ce3621b545014b01bbb0e234767ca139edc870ad5f3b95b248d38'],
   ['src/services/gamingDocumentChunks.ts', 'a758af0d49a08a3d81ac6d6191c437d4080ba481c158169a535f091d8e279815'],
   ['src/services/gamingDurableDocumentChunks.ts', '8a6da8f48f8ee94cd61eb4e90fa2ae51b22c83d5041e8c40ea07227b5d8af0f2'],
   ['src/shared/gaming/gamingStoredEvidenceCore.ts', '9d7bb5d89f19fdcd3af64c51e9c0daf2361b8bcb03b6a65fa97b242d435c0d58'],
   ['src/shared/gaming/gamingDurableRagPreviewFixture.ts', '047d6610dd24fd8dfcadf302b4d0c8eb9bce815cecb80410e10af6ac04132fbc'],
   ['src/shared/gaming/gamingLiveSourceValidationPreviewFixture.ts', 'ee48374f834a0b2109244b4677ee86391db2b11a7d7655cabb5c42d199dc8e2e'], // gitleaks:allow -- public source semantic SHA-256
   ['src/services/gamingGameDetection.ts', '6659850800aa7166cb41a855d19e86b7e39482490f70f525924b2faedcb91d80'],
-  ['src/shared/gaming/gamingDocumentProjectionCore.ts', '312667a49d96d392ba1ce25c2a42f8164433e36bccb44ac33f051895b87f64f4'],
+  ['src/shared/gaming/gamingDocumentProjectionCore.ts', 'a9b65b7068631763b479d066eb9f0bced507c9c2eb4d40f4ebe0f79ad4edcc68'],
+  ['src/shared/gaming/gamingDocumentTextNormalization.ts', '3cf5509a864c552cac94c2d3d258c05b8557a67dbf10c25363b0d108f6062c9c'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gaming/gamingDocumentIngestionCore.ts', 'db36697fb59acd772563a6bd22578e225136830726905da51d33bfc42989d8fa'],
   ['src/shared/gaming/gamingGameDeclaration.ts', '305d3e072b842cba314386db5d95ed6e67beeedc369ed4c761f3890a42eea2f3'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gaming/gamingEvidenceUnits.ts', '6d1d4e90297a1e454202c175bbc75eea45accd446e5417f4715d7a6adf95f33c'],

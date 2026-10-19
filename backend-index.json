@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-19T03:17:05.709Z",
+  "generatedAt": "2026-10-19T04:04:43.032Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2792,6 +2792,9 @@
           "relativePath": "src/shared/gaming/gamingDocumentProjectionCore.ts"
         },
         {
+          "relativePath": "src/shared/gaming/gamingDocumentTextNormalization.ts"
+        },
+        {
           "relativePath": "src/shared/gaming/gamingDurableRagPreviewFixture.ts"
         },
         {
@@ -4477,6 +4480,9 @@
           "relativePath": "tests/gaming-game-registry.test.ts"
         },
         {
+          "relativePath": "tests/gaming-game-surface-scope.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-generation-budget-preview-failure.test.ts"
         },
         {
@@ -4588,6 +4594,9 @@
           "relativePath": "tests/gaming-ingress-audit.test.ts"
         },
         {
+          "relativePath": "tests/gaming-instruction-normalization.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-json-evidence-preflight.test.ts"
         },
         {
@@ -4655,6 +4664,9 @@
         },
         {
           "relativePath": "tests/gaming-partial-guide-admission.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-plaintext-inspection.test.ts"
         },
         {
           "relativePath": "tests/gaming-platform-aliases.test.ts"

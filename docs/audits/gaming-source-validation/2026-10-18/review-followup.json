@@ -1,0 +1,78 @@
+{
+  "kind": "pr1558-review-followup-prepublication-evidence",
+  "reviewedParentHead": "16a813596ffa02dcda746d1d8bb8bf98b1722b0c",
+  "baseSha": "0e7a8e607e3f2f3359dc86eabcf611d8dd3fe6b2",
+  "review": "https://github.com/pbjustin/Arcanos/pull/1558#pullrequestreview-5566691428",
+  "status": "Source repairs verified in focused tests; final exact-head broad validation, fresh review and hosted acceptance require separately published PR evidence",
+  "runtimeDefectClassesRepaired": 6,
+  "preExistingClassesIncluded": 1,
+  "addedRegressionCases": 108,
+  "strengthenedExistingCases": 1,
+  "repairs": [
+    {
+      "area": "Present-tense software retention claims",
+      "evidence": "Both Trinity stages reject unsupported automatic retention while retaining savings idioms and explicit denials",
+      "addedCases": 22
+    },
+    {
+      "area": "Consistent Unicode normalization across plaintext, metadata and projection",
+      "evidence": "Harmless control cleanup does not imply taint; obfuscated instructions, line markers and omitted malicious tails remain rejected",
+      "addedCases": 20
+    },
+    {
+      "area": "Gameplay narration and commands versus assistant control instructions",
+      "evidence": "Four CodeRabbit examples reproduced before repair; explicit assistant commands, secret disclosure and control labels remain rejected",
+      "addedCases": 39
+    },
+    {
+      "area": "Game-owned interface purpose clauses",
+      "evidence": "Game-console false ownership reproduced on exact base and incoming head; known, unknown, quoted and explicit foreign-title controls remain rejected",
+      "preExisting": true,
+      "addedCases": 11
+    },
+    {
+      "area": "Redundant large plaintext DOM parsing",
+      "evidence": "Complete text scanning avoids DOM construction only without markup or entity openers; parser, byte and deadline boundaries remain enforced",
+      "addedCases": 9
+    },
+    {
+      "area": "Archive raw inspection budget exhaustion",
+      "evidence": "A roughly 323k-character OCR document with over 30000 tags produced citable legacy evidence before repair; incomplete inspection now rejects before evidence or cache construction",
+      "addedCases": 3
+    }
+  ],
+  "additionalBoundaryCases": 4,
+  "receiptCorrection": "Historical receipts now explicitly leave final publication gates pending rather than asserting unavailable final-head evidence",
+  "focusedEvidence": {
+    "identityAndExtraction": { "suites": 10, "passedTests": 360 },
+    "securityAndTrinity": { "suites": 5, "passedTests": 339 },
+    "plaintextAndDurableIntegration": { "passedTests": 41 },
+    "independentNormalizationAndTrinityCrossReview": { "passedTests": 118 },
+    "countCaveat": "Focused suites overlap; counts are not additive full-suite coverage"
+  },
+  "coveredLargeGuideComparison": {
+    "method": "Unchanged refresh cases and fixture in the large-guide integration suite, with coverage and the unchanged 5000 ms test timeout; compared exact base with working trees before and after the plaintext fast path",
+    "baseRefreshMs": [1693, 1637],
+    "preFastPathWorkingTreeRefreshMs": [3050, 3180],
+    "repairedRefreshMs": [2007, 1933],
+    "passedTestsEachRun": 8,
+    "limits": "Focused coverage exits nonzero because the unrelated project-wide coverage floors cannot be met by one file; floors were not changed. Local runs did not reproduce the hosted 5000 ms timeout, so final hosted confirmation remains required."
+  },
+  "historicalHostedEvidence": {
+    "head": "16a813596ffa02dcda746d1d8bb8bf98b1722b0c",
+    "ci": "https://github.com/pbjustin/Arcanos/actions/runs/39194797116",
+    "ciStatus": "FAILED: two large-guide test timeouts and two ensuing failures; other hosted lanes passed",
+    "sealedPreview": "https://github.com/pbjustin/Arcanos/actions/runs/39194795320",
+    "sealedPreviewChecksPassed": 173,
+    "cleanup": "https://github.com/pbjustin/Arcanos/actions/runs/39196748101",
+    "cleanupObserved": "Owned environment absent from Railway inventory; both former readiness URLs returned 404",
+    "scope": "Historical synthetic hosted component evidence; does not certify the repaired source or live publisher/provider acceptance"
+  },
+  "safety": {
+    "thresholdChanges": "NONE",
+    "privatePluginChanges": "NONE",
+    "storageConsentPolicyChanges": "NONE",
+    "externalModelCalls": "MOCKED_OR_DISABLED",
+    "productionChanges": "NONE"
+  }
+}

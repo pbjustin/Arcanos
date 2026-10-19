@@ -1,5 +1,6 @@
 import { filterGamingDocumentInstructions } from "@services/gamingDocumentExtraction.js";
 import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
+import { normalizeGamingDocumentInstructionCharacters } from './gamingDocumentTextNormalization.js';
 
 /** Project acquired prose under the caller's selected-document character bound. */
 export function projectGamingDocumentText(input: {
@@ -31,6 +32,7 @@ export function projectGamingDocumentText(input: {
     text,
     cleanedTextLength: text.length,
     truncated,
-    instructionFiltered: fullFilteredText.length < input.acquiredText.normalize("NFKC").replace(/\s+/g, " ").trim().length
+    instructionFiltered: fullFilteredText.length < normalizeGamingDocumentInstructionCharacters(input.acquiredText)
+      .replace(/\s+/g, " ").trim().length
   };
 }

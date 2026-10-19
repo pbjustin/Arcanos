@@ -102,7 +102,7 @@
     "nativePrDeploys": false,
     "scope": "Isolated PR environment only through trusted main workflow"
   },
-  "finalPublicationEvidence": "This receipt records repair evidence before the documentation commit. Final exact-head CI, independent review, hosted preview and cleanup receipts are published on PR1558; this file alone does not certify those gates.",
+  "finalPublicationEvidence": "This receipt records repair evidence before the documentation commit. Final exact-head CI, independent review, hosted preview and cleanup remain pending in this receipt and require separately published evidence on PR1558; this file does not certify completion of those gates.",
   "strengthenedExistingRegressionCases": 2,
   "integrationExpectationFollowup": {
     "focusedSuites": 2,

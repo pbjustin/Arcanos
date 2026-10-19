@@ -26,6 +26,7 @@ import {
 } from "@services/gamingArchiveResources.js";
 import { filterGamingDocumentInstructions, gamingDocumentFetchOptions } from "@services/gamingDocumentExtraction.js";
 import { projectGamingDocumentText } from "@shared/gaming/gamingDocumentProjectionCore.js";
+import { normalizeGamingDocumentInstructionCharacters } from '@shared/gaming/gamingDocumentTextNormalization.js';
 import { sanitizeGamingDiscoveryCandidateUrl, sanitizeGamingStructuredDocumentUrl } from "@services/gamingSourceDiscovery.js";
 import type { GamingEvidenceUnit, GamingStructureDiagnostics } from '@shared/gaming/gamingEvidenceUnits.js';
 import { extractGamingDocumentEvidence } from './gamingDocumentEvidence.js';
@@ -334,13 +335,21 @@ export async function resolveGamingDocument(
     };
     const metadataInstructionFiltered = [effectiveExtraction.documentTitle, effectiveExtraction.headingText]
       .some(value => value !== undefined && filterGamingDocumentInstructions(value)
-        !== value.normalize('NFKC').replace(/\s+/gu, ' ').trim());
+        !== normalizeGamingDocumentInstructionCharacters(value).replace(/\s+/gu, ' ').trim());
     // Specialized resolvers can return selected prose shorter than their fully
     // acquired raw document. Inspect that accepted body before an omitted tail
     // can become a clean source merely through the selected-text ceiling.
-    const rawInstructionFiltered = !acquired.structure && rawDocument
+    const rawEvidence = !acquired.structure && rawDocument
       ? extractGamingDocumentEvidence({ body: rawDocument.body, contentType: rawDocument.contentType,
-          sourceUrl: description.publicUrl, deadlineAt }).instructionFiltered : false;
+          sourceUrl: description.publicUrl, deadlineAt }) : undefined;
+    if (rawEvidence?.diagnostics.budgetOutcome === 'exhausted') {
+      options.signal?.throwIfAborted();
+      if (Date.now() >= deadlineAt) throw new GamingDocumentAcquisitionError('SOURCE_TIMEOUT', 'extraction', 'DEADLINE_EXCEEDED');
+      // An incomplete security scan cannot attest a clean selected prefix. Do
+      // not claim that instructions were found when their inspection was cut off.
+      throw new GamingDocumentAcquisitionError('SOURCE_EXTRACTION_FAILED', 'extraction', 'EXTRACTION_BUDGET_EXHAUSTED');
+    }
+    const rawInstructionFiltered = rawEvidence?.instructionFiltered ?? false;
     const instructionFiltered = projection.instructionFiltered || acquired.structure?.instructionFiltered === true
       || metadataInstructionFiltered || rawInstructionFiltered;
     options.onExtraction?.(effectiveExtraction);

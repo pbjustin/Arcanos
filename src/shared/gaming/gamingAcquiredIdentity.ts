@@ -19,7 +19,9 @@ export function gamingAcquiredNominalScope(value: string): string {
   const personClause = /(?:^|\s)(?:(?:[Yy]ou|[Ww]e|[Tt]hey|[Hh]e|[Ss]he|[Ii]t|(?:new\s+|experienced\s+)?[Pp]layers|[Cc]haracters|[Yy]our\s+character|[Tt]he\s+player)(?:['’](?:re|ve|ll|d|s))?\s+\p{Ll}[\p{L}'’]*\b|[Tt]here\s+(?:are|is)\b)/u.exec(continuationText);
   // An unfamiliar noun after a recognized family name may be its subtitle.
   // Only an independent person/existential clause can terminate that name.
-  const nominalClause = !known ? /(?:^|\s)(?:(?:\p{Lu}[\p{L}'’]*\s+){1,3}(?:can|could|may|might|must|should|will|would)\s+\p{Ll}[\p{L}'’]*\b|(?:(?:the|your|our|their)\s+)?(?:\p{Ll}[\p{L}'’]*\s+){1,3}(?:is|are|has|have|can|will|starts?|begins?|rewards?|requires?|offers?|contains?)\b)/u.exec(continuationText) : null;
+  // A lowercase interface noun followed by a player-purpose clause belongs to
+  // the game ("game console to inspect your party"), rather than naming it.
+  const nominalClause = !known ? /(?:^|\s)(?:(?:\p{Lu}[\p{L}'’]*\s+){1,3}(?:can|could|may|might|must|should|will|would)\s+\p{Ll}[\p{L}'’]*\b|(?:(?:the|your|our|their)\s+)?(?:\p{Ll}[\p{L}'’]*\s+){1,3}(?:is|are|has|have|can|will|starts?|begins?|rewards?|requires?|offers?|contains?)\b|(?:console|menu|chat|interface)\s+to\s+\p{Ll}[\p{L}'’]*\s+(?:your|our|their)\b)/u.exec(continuationText) : null;
   const continuation = personClause && nominalClause ? (personClause.index < nominalClause.index ? personClause : nominalClause) : personClause ?? nominalClause;
   return continuation ? value.slice(0, nameEnd + continuation.index).trim() : value;
 }

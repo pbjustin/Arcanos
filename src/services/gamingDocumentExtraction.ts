@@ -1,5 +1,6 @@
 import type { FetchAndCleanOptions } from "@shared/webFetcher.js";
 import { GAMING_PUBLISHER_EXTRACTION_PROFILES } from '@shared/gaming/gamingPublisherExtractionProfileData.js';
+import { normalizeGamingDocumentInstructionCharacters } from '@shared/gaming/gamingDocumentTextNormalization.js';
 
 /** Preserve the existing tag-budget scan, advancing past each complete span without backtracking. */
 export function countGamingHtmlElements(body: string, maxElements: number): number {
@@ -113,9 +114,15 @@ export const GAMING_DOCUMENT_FURNITURE_SELECTOR = COMMON_JUNK_SELECTORS
   .join(',');
 
 // Player instructions and progress narration are normal guide content. Require a
-// control-plane target for role reassignment; the remaining explicit override,
-// secret-disclosure and execution patterns keep their document rejection boundary.
-const SOURCE_INSTRUCTION_PATTERN = /\b(?:(?:ignore|disregard|override)\s+(?:(?:all|the)\s+)?(?:previous|prior|system|developer|assistant|user)(?:\s+(?:and|or)\s+(?:system|developer|assistant|user))*\s+(?:instructions?|messages?|prompts?)|forget\s+(?:everything|all)\s+(?:above|before)|new\s+(?:system|developer|assistant)\s+(?:message|prompt|instructions?)|(?:system|developer|assistant)\s+(?:message|prompt|instructions?)|(?:reveal|print|show|expose|exfiltrate|disclose|leak)\s+(?:(?:the|your|our|my|all|any|private)\s+)*(?:system|developer|secrets|secret(?=\s*(?:[.!?;,:]|$)|\s+(?:from|in|of|to|with)\b)|credentials?|passwords?|tokens?|api\s+keys?|secret\s+(?:keys?|tokens?|values?))\b|(?:call|invoke)\s+(?:the\s+)?(?:tools?|functions?|[a-z_]\w*(?:\.\w+|__\w+)+)\b|(?:execute|run)\s+(?:this\s+)?(?:command|shell|powershell|bash))\b/i;
+// control-plane target for role reassignment, disclosure and execution. Narrated
+// system messages and in-game chat commands do not themselves address the assistant.
+const SOURCE_INSTRUCTION_PATTERN = /\b(?:(?:ignore|disregard|override)\s+(?:(?:all|the)\s+)?(?:previous|prior|system|developer|assistant|user)(?:\s+(?:and|or)\s+(?:system|developer|assistant|user))*\s+(?:instructions?|messages?|prompts?)|forget\s+(?:everything|all)\s+(?:above|before)|(?:system|developer|assistant)\s+(?:prompts?|instructions?)|(?:follow|obey|adopt|prioritize)\s+(?:(?:the|this|these|new|following)\s+)*(?:system|developer|assistant)\s+messages?|(?:reveal|print|show|expose|exfiltrate|disclose|leak)\s+(?:(?:the|your|our|my|all|any|private)\s+)*(?:(?:system|developer|assistant)(?:['’]s)?\s+(?:prompts?|messages?|instructions?)|secrets|secret(?=\s*(?:[.!?;,:]|$)|\s+(?:from|in|of|to|with)\b)|credentials?|passwords?|tokens?|api\s+keys?|secret\s+(?:keys?|tokens?|values?))\b|(?:call|invoke)\s+(?:the\s+)?(?:tools?|functions?|[a-z_]\w*(?:\.\w+|__\w+)+)\b|(?:execute|run)\s+(?:this\s+)?(?:(?:shell|powershell|bash)(?:\s+commands?)?|commands?\s+(?:in|using|with)\s+(?:the\s+)?(?:shell|terminal|powershell|bash|tools?|functions?|[a-z_]\w*(?:\.\w+|__\w+)+)))\b|^(?:new\s+)?(?:system|developer|assistant)\s+message\s*:/i;
+// Explicit role labels and commands addressed to the assistant remain unsafe
+// even when they omit a shell name. Narrated messages have a sentence subject.
+const SOURCE_CONTROL_DIRECTIVE_PATTERN = /(?:^|[:;]\s*)(?:new\s+)?(?:system|developer|assistant)\s+messages?\s*(?:[:.!?]|$)|\b(?:assistant|chatgpt|(?:language\s+)?model)(?:\s*[,;:—-]\s*|\s+)(?:(?:please|now|[a-z-]{2,32}ly)\s+){0,2}(?:you\s+)?(?:(?:must|should|shall|need\s+to|have\s+to)\s+)?(?:(?:please|now|[a-z-]{2,32}ly)\s+){0,2}(?:execute|run)\s+(?:(?:this|the|following)\s+){0,2}commands?\b/i;
+// A mandatory player action can name its in-game command surface. This scoped
+// distinction never exempts commands explicitly addressed to an assistant above.
+const SOURCE_MANDATORY_COMMAND_PATTERN = /\byou\s+(?:must|shall|need\s+to|have\s+to|are\s+to)\s+(?:(?:please|now|[a-z-]{2,32}ly)\s+){0,2}(?:execute|run)\s+(?:(?:this|the|following)\s+){0,2}commands?\b(?!\s+in\s+(?:(?:the|your)\s+)?(?:(?:(?:in[- ]game|game|party|guild)\s+)?chat|(?:in[- ]game|game)\s+console)\b)/i;
 // Bounded modifiers describe a role without an adjective allowlist. An article
 // permits coordinated adjectives inside that noun phrase. Otherwise conjunction
 // and preposition boundaries keep later gameplay subjects out of the role. A
@@ -150,15 +157,15 @@ export function gamingDocumentFetchOptions(url: string, options: FetchAndCleanOp
 
 /** Source prose is data: remove instruction-like sentences before it can be stored or grounded. */
 export function filterGamingDocumentInstructions(text: string): string {
-  return text
-    .normalize("NFKC")
-    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/g, " ")
+  return normalizeGamingDocumentInstructionCharacters(text)
     .replace(/\s*\[LINKS\][\s\S]*$/i, "")
     .replace(/^\s*(?:\[(?:system|developer|assistant|instructions?|mode|request|output)\]|<(?:system|developer|assistant)>|#{1,6}\s*(?:system|developer|assistant|instructions?)\b).*$/gim, "")
     .replace(/\s+/g, " ")
     .trim()
     .split(/(?<=[.!?])\s+/)
     .filter((sentence) => sentence.length > 0 && !SOURCE_INSTRUCTION_PATTERN.test(sentence)
+      && !SOURCE_CONTROL_DIRECTIVE_PATTERN.test(sentence)
+      && !SOURCE_MANDATORY_COMMAND_PATTERN.test(sentence)
       && !SOURCE_ROLE_ASSIGNMENT_PATTERN.test(sentence))
     .join(" ")
     .trim();

@@ -4,9 +4,10 @@ import { filterGamingDocumentInstructions, stripGamingHtmlTags } from './gamingD
 import { extractGamingHtmlEvidence } from './gamingHtmlEvidence.js';
 import { extractGamingJsonEvidence } from './gamingJsonEvidence.js';
 import { markGamingEvidenceUnitConflicts } from '@shared/gaming/gamingStructuralEvidence.js';
+import { normalizeGamingDocumentInstructionCharacters } from '@shared/gaming/gamingDocumentTextNormalization.js';
 
 const SOURCE_USE_RESTRICTION = /\b(?:no (?:automated|machine) (?:access|use)|automated (?:access|use) (?:is )?prohibited|do not (?:store|redistribute) (?:this|our) content)\b/iu;
-const normalize = (value: string) => value.normalize('NFKC').replace(/\s+/gu, ' ').trim();
+const normalize = (value: string) => normalizeGamingDocumentInstructionCharacters(value).replace(/\s+/gu, ' ').trim();
 
 /** One accepted response; no network, query, model or publisher trust enters extraction. */
 export function extractGamingDocumentEvidence(input: GamingEvidenceExtractionInput & {

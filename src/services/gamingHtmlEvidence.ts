@@ -94,6 +94,15 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
     result.truncated = true; result.proseBody = ''; fail('extraction_budget_exhausted'); return result;
   }
   if (deadlineExpired()) return result;
+  // Plain text without tag/entity openers has no DOM-only interpretation to
+  // inspect. Scan the complete accepted body while avoiding a second large OCR
+  // parse; any possible markup or entity still takes the parser-owned path.
+  if (!htmlContent && !/[<&]/u.test(input.body)) {
+    const visibleText = text(input.body);
+    if (filterGamingDocumentInstructions(visibleText) !== visibleText) fail('source_instruction_filtered');
+    deadlineExpired();
+    return result;
+  }
   // Runtime Cheerio uses parse5; the repository's legacy ambient types omit its location option.
   const parseOptions = { sourceCodeLocationInfo: true };
   const $ = load(input.body, parseOptions as Parameters<typeof load>[1]);
