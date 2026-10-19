@@ -128,6 +128,24 @@ test('Gaming source materialization fails closed on byte cap, deadline and faile
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test('archive timeout classification survives Git closing synchronously during the deadline kill', async () => {
+  const root = fixture(); let killed = false;
+  try {
+    await assert.rejects(materializeGamingSourceArchive({ candidate: authorization.headSha,
+      file: path.join(root, 'kill-close-race.tar'), timeoutMs: 5, spawnArchive: () => {
+        const child = archiveProcess(new PassThrough(), false);
+        child.kill = () => {
+          killed = true;
+          // Deterministically settle the process failure before pipeline's
+          // asynchronous error propagation from the destroyed transform.
+          child.emit('close', 1); child.stdout.destroy();
+        };
+        return child;
+      } }), /GAMING_BUILD_SOURCE_ARCHIVE_TIMEOUT/u);
+    assert.equal(killed, true);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test('Gaming Docker profile isolates dependency fetching from candidate execution and pins root-owned launch', () => {
   const dockerfile = readFileSync(new URL('./gaming-preview.Dockerfile', import.meta.url), 'utf8');
   const dependencies = dockerfile.split('AS dependencies')[1].split('FROM dependencies AS build')[0];

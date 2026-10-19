@@ -49,11 +49,14 @@ export async function materializeGamingSourceArchive({ candidate, file, spawnArc
     GIT_CONFIG_GLOBAL: process.platform === 'win32' ? 'NUL' : devNull, GIT_TERMINAL_PROMPT: '0' });
   const child = spawnArchive('git', previewSourceArchiveArguments(candidate, 'gaming'),
     { env: gitEnvironment, shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
-  const hash = createHash('sha256'); let bytes = 0;
+  const hash = createHash('sha256'); let bytes = 0; let boundaryFailure;
   const output = createWriteStream(file, { flags: 'wx', mode: 0o600 });
   const bounded = new Transform({ transform(chunk, _encoding, callback) {
     bytes += chunk.length;
-    if (bytes > maxBytes) callback(new Error('GAMING_BUILD_SOURCE_ARCHIVE_LIMIT'));
+    if (bytes > maxBytes) {
+      boundaryFailure ??= new Error('GAMING_BUILD_SOURCE_ARCHIVE_LIMIT');
+      callback(boundaryFailure);
+    }
     else { hash.update(chunk); callback(null, chunk); }
   } });
   const exited = new Promise((resolve, reject) => {
@@ -62,7 +65,8 @@ export async function materializeGamingSourceArchive({ candidate, file, spawnArc
   });
   child.stderr.resume();
   const timer = setTimeout(() => {
-    bounded.destroy(new Error('GAMING_BUILD_SOURCE_ARCHIVE_TIMEOUT'));
+    boundaryFailure ??= new Error('GAMING_BUILD_SOURCE_ARCHIVE_TIMEOUT');
+    bounded.destroy(boundaryFailure);
     child.kill('SIGKILL');
   }, timeoutMs);
   try {
@@ -71,6 +75,10 @@ export async function materializeGamingSourceArchive({ candidate, file, spawnArc
     return { sha256: hash.digest('hex'), bytes };
   } catch (error) {
     child.kill('SIGKILL');
+    // Killing Git can settle its nonzero close before the stream's original
+    // limit/deadline error reaches pipeline(). Preserve the initiating boundary
+    // failure rather than misclassifying that cleanup consequence as a read error.
+    if (boundaryFailure) throw boundaryFailure;
     throw /^(?:GAMING_BUILD_SOURCE_ARCHIVE_)[A-Z_]+$/u.test(error?.message ?? '')
       ? error : new Error('GAMING_BUILD_SOURCE_ARCHIVE_READ_FAILED');
   } finally { clearTimeout(timer); }
