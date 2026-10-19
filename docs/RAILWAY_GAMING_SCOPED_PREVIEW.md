@@ -8,6 +8,11 @@ do not attest Railway resources or satisfy hosted acceptance. Injected
 transports are explicitly reported as unverified; offline evidence comes from
 the test's independent outbound-request assertions.
 
+PR #1558 is under a feature-scope freeze. Remaining work is limited to demonstrated
+release blockers, their regression tests, necessary test-harness stabilization
+and essential evidence corrections. Complete code freeze still requires green
+final-candidate CI and independent review; merge remains unauthorized.
+
 ## Reused verification and fixed scope
 
 The [combined verifier](../scripts/gaming-scoped-preview-e2e.mjs) reuses the
@@ -85,9 +90,10 @@ inventory, scope substitution, disabled activation, failures and bounds.
 included and omitted descriptors and rejection of missing required proofs.
 The scoped production-core proof includes bare filenames passed to intrinsic
 file-input options (`--upload-file`, `--input-file` and `-T`), alongside `@` and
-path operands. An ambiguous bare `--source` selector alone does not establish
-host-file access; ordinary game selectors and complete quoted chat prose retain
-their positive controls.
+path operands, bundled short options and quoted option spelling. Focused
+regressions also cover escaped options and generic form-field labels. An ambiguous
+bare `--source` selector alone does not establish host-file access; ordinary game
+selectors and complete quoted chat prose retain their positive controls.
 
 The assembled-application regression in
 [native preview application tests](../tests/native-pr-preview-application.test.ts)
@@ -97,6 +103,11 @@ Notion connectivity seam fail if called and intercepts application `http.request
 seam. The test adapter alone uses a captured HTTP function for fixed loopback
 listeners. Raw sockets, DNS and other HTTP entry points are not instrumented;
 this test is not a general process-level network-egress proof.
+One assembled verifier run uses a Jest completion checkpoint after each verified
+request. The default five-second Jest limit, five-second request limit and
+60-second aggregate verifier limit remain unchanged. A failed or timed-out case
+aborts and drains pending transports and application responses before later tests
+can reuse shared mocks. The entire matrix remains in Jest's coverage process.
 A separate broad-mode regression invokes the retained Notion selector with a
 mocked connectivity seam. No real Notion request is needed for either proof.
 Record actual test outcomes in an exact-SHA validation receipt; this maintained
@@ -130,6 +141,11 @@ of the existing artifact components for an ordinary same-repository PR targeting
 `main`. It must remove historical stack identity only through reviewed admission
 policy, retain existing opt-in/non-draft requirements and require owner
 authorization. It must run from protected main before it can attest #1558.
+This is a separable `RELEASE_DEPENDENCY` for hosted Gaming acceptance and belongs
+in a follow-up outside #1558's frozen source-validation scope. Recording that
+dependency neither executes nor satisfies hosted acceptance. The candidate's
+technical freeze can be assessed with this limitation documented; it does not
+authorize a release or merge.
 Required activation evidence includes:
 
 - Fresh exact PR head/base and source-tree binding, expiring owner authorization,
