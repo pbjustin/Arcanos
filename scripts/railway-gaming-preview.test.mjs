@@ -217,6 +217,107 @@ test('authorization failure immediately before mutation prevents preview creatio
     revalidate: async () => { if (++calls > 1) throw new Error('authorization drift'); }, now: () => now }));
   assert.deepEqual(railway.state.calls, []);
 });
+function trackDeploymentMutations(railway) {
+  const mutations = [];
+  for (const [method, label] of [['createEnvironment', 'create'], ['stageConfig', 'stage'], ['commitConfig', 'commit'],
+    ['deployService', (_environmentId, serviceId) => serviceId === target.workerServiceId ? 'worker' : 'web']]) {
+    const original = railway[method];
+    railway[method] = async (...args) => {
+      mutations.push(typeof label === 'function' ? label(...args) : label);
+      return original(...args);
+    };
+  }
+  return mutations;
+}
+
+const mutationOrder = ['create', 'stage', 'commit', 'worker', 'web'];
+for (const boundary of ['revalidate', 'validateAuthority']) {
+  // Revalidation also runs while polling worker readiness before the web effect.
+  const effectReads = boundary === 'revalidate' ? [2, 3, 4, 5, 7] : [2, 3, 4, 5, 6];
+  for (const [index, mutation] of mutationOrder.entries()) {
+    test(`expiry during awaited ${boundary} prevents the ${mutation} mutation`, async () => {
+      const expiresAt = now + 1000, authorization = authorize({ expiresAt: new Date(expiresAt).toISOString() });
+      const railway = railwayMock(), mutations = trackDeploymentMutations(railway);
+      let clock = now, reads = 0, crossedExpiry = false, last;
+      const advanceAfterRead = async () => {
+        await Promise.resolve();
+        if (++reads === effectReads[index]) { clock = expiresAt; crossedExpiry = true; }
+      };
+      if (boundary === 'validateAuthority') railway.validateAuthority = advanceAfterRead;
+      await assert.rejects(deployGamingPreview({ authorization, imageReceipt: imageReceipt(authorization), railway,
+        revalidate: boundary === 'revalidate' ? advanceAfterRead : async () => {}, now: () => clock,
+        onReceipt: value => { last = value; } }), /AUTHORIZATION_EXPIRED/u);
+      assert.equal(crossedExpiry, true);
+      assert.deepEqual(mutations, mutationOrder.slice(0, index));
+      assert.equal(last.cleanup.status, 'VERIFIED');
+      assert.equal(railway.state.environments.length, 1);
+      assert.equal(railway.state.deleted, index > 0);
+    });
+  }
+}
+
+for (const limit of ['authorization', 'startup']) {
+  for (const boundary of ['readEnvironment', 'listEnvironments', 'stagedEmpty']) {
+    test(`${limit} expiry during the creation callback's awaited ${boundary} prevents environment creation`, async () => {
+      const expiresAt = now + (limit === 'authorization' ? 1000 : 3600_000);
+      const authorization = authorize({ expiresAt: new Date(expiresAt).toISOString() });
+      const railway = railwayMock(), mutations = trackDeploymentMutations(railway), original = railway[boundary];
+      let clock = now, reads = 0, crossedExpiry = false, last;
+      railway[boundary] = async (...args) => {
+        const result = await original(...args);
+        // The first read is preflight; the second is inside the create callback.
+        if (++reads === 2) { clock = limit === 'authorization' ? expiresAt : now + 20 * 60_000; crossedExpiry = true; }
+        return result;
+      };
+      await assert.rejects(deployGamingPreview({ authorization, imageReceipt: imageReceipt(authorization), railway,
+        revalidate: async () => {}, now: () => clock, onReceipt: value => { last = value; } }),
+      limit === 'authorization' ? /AUTHORIZATION_EXPIRED/u : /STARTUP_TIMEOUT/u);
+      assert.equal(crossedExpiry, true);
+      assert.deepEqual(mutations, []);
+      assert.equal(last.cleanup.status, 'VERIFIED');
+      assert.equal(last.cleanup.created, false);
+      assert.equal(railway.state.deleted, false);
+      assert.equal(railway.state.environments.length, 1);
+    });
+  }
+}
+
+for (const limit of ['authorization', 'startup']) {
+  for (const boundary of ['readEnvironment', 'stagedEmpty']) {
+    test(`${limit} expiry during final awaited ${boundary} cannot publish a verified deployment`, async () => {
+      const expiresAt = now + (limit === 'authorization' ? 1000 : 3600_000);
+      const authorization = authorize({ expiresAt: new Date(expiresAt).toISOString() }), railway = railwayMock();
+      const original = railway[boundary];
+      let clock = now, revalidations = 0, finalReads = false, crossedExpiry = false, last;
+      railway[boundary] = async (...args) => {
+        const result = await original(...args);
+        if (finalReads) { clock = limit === 'authorization' ? expiresAt : now + 20 * 60_000; crossedExpiry = true; }
+        return result;
+      };
+      await assert.rejects(deployGamingPreview({ authorization, imageReceipt: imageReceipt(authorization), railway,
+        revalidate: async () => { await Promise.resolve(); if (++revalidations === 9) finalReads = true; },
+        now: () => clock, onReceipt: value => { last = value; } }),
+      limit === 'authorization' ? /AUTHORIZATION_EXPIRED/u : /STARTUP_TIMEOUT/u);
+      assert.equal(crossedExpiry, true);
+      assert.equal(last.status, 'NOT VERIFIED');
+      assert.equal(last.cleanup.status, 'VERIFIED');
+      assert.equal(railway.state.deleted, true);
+      assert.equal(railway.state.environments.length, 1);
+    });
+  }
+}
+
+test('owned cleanup remains permitted after deployment authorization expires', async () => {
+  const expiresAt = now + 1000, authorization = authorize({ expiresAt: new Date(expiresAt).toISOString() });
+  const railway = railwayMock();
+  const { receipt } = await deployGamingPreview({ authorization, imageReceipt: imageReceipt(authorization), railway,
+    revalidate: async () => {}, now: () => now });
+  const cleanup = await cleanupGamingPreview({ policy, railway, receipt, now: () => expiresAt });
+  assert.equal(cleanup.status, 'VERIFIED');
+  assert.equal(railway.state.deleted, true);
+  assert.equal(railway.state.environments.length, 1);
+});
+
 test('missing list entry and soft-deleted control-plane object are not cleanup proof', async () => {
   const railway = railwayMock(), authorization = authorize();
   const { receipt } = await deployGamingPreview({ authorization, imageReceipt: imageReceipt(authorization), railway,
@@ -259,6 +360,26 @@ test('post-verification attestation rejects a changed worker and does not strand
   await assert.rejects(attestGamingPreview(args), /IMMUTABLE_DEPLOYMENT_UNPROVEN/u);
   assert.equal((await cleanupGamingPreview({ policy, railway, receipt })).status, 'VERIFIED');
 });
+test('post-verification attestation rejects expiry during its final awaited revalidation', async () => {
+  const expiresAt = now + 1000, authorization = authorize({ expiresAt: new Date(expiresAt).toISOString() });
+  const railway = railwayMock(), built = imageReceipt(authorization);
+  const { receipt } = await deployGamingPreview({ authorization, imageReceipt: built, railway,
+    revalidate: async () => {}, now: () => now });
+  const bytes = JSON.stringify(receipt), originalNow = Date.now;
+  let clock = now, revalidations = 0;
+  try {
+    Date.now = () => clock;
+    await assert.rejects(attestGamingPreview({ authorization, imageReceipt: built, deploymentReceiptBytes: bytes,
+      expectedSha256: hash(bytes), railway,
+      revalidate: async () => { await Promise.resolve(); if (++revalidations === 2) clock = expiresAt; } }),
+    /AUTHORIZATION_EXPIRED/u);
+    assert.equal(revalidations, 2);
+  } finally {
+    Date.now = originalNow;
+  }
+  assert.equal((await cleanupGamingPreview({ policy, railway, receipt, now: () => expiresAt })).status, 'VERIFIED');
+});
+
 test('owner may retry cleanup only in the original workflow without replaying deployment', () => {
   const env = { GITHUB_REPOSITORY: 'pbjustin/Arcanos', GITHUB_ACTOR: 'pbjustin', EVENT_SENDER: 'pbjustin',
     GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/main',

@@ -360,7 +360,7 @@ export async function attestGamingPreview({ authorization, imageReceipt, deploym
         && r.applicationImported === true && r.fixturesSealed === true && r.protectedEffectsEnabled === false
         && r.protectsMaliciousPr === false && r.requiresPlatformSecretIsolationForUntrustedCode === true), 'READINESS_MISMATCH');
   }
-  await revalidate();
+  await revalidate(); requireGamingActivation(authorization);
   return freeze({ schemaVersion: 1, status: 'VERIFIED', observation: 'post-verification-control-plane-and-readiness',
     ...execution, observedAt: new Date().toISOString() });
 }
@@ -374,7 +374,7 @@ export async function deployGamingPreview({ authorization, imageReceipt, railway
   const effect = async action => {
     requireCondition(now() < deadline, 'STARTUP_TIMEOUT'); requireGamingActivation(authorization, now());
     await revalidate(); await railway.validateAuthority(target);
-    requireCondition(now() < deadline, 'STARTUP_TIMEOUT'); return action();
+    requireCondition(now() < deadline, 'STARTUP_TIMEOUT'); requireGamingActivation(authorization, now()); return action();
   };
   try {
     await revalidate(); await railway.validateAuthority(target);
@@ -393,6 +393,7 @@ export async function deployGamingPreview({ authorization, imageReceipt, railway
       const fresh = await railway.listEnvironments(target.projectId);
       requireCondition(fresh.length === 1 && fresh[0].id === target.baseEnvironmentId
         && await railway.stagedEmpty(target.baseEnvironmentId), 'BASE_DRIFT');
+      requireCondition(now() < deadline, 'STARTUP_TIMEOUT'); requireGamingActivation(authorization, now());
       return railway.createEnvironment(target, name);
     });
     requireCondition(UUID.test(created?.id) && created.projectId === target.projectId && created.name === name
@@ -450,6 +451,7 @@ export async function deployGamingPreview({ authorization, imageReceipt, railway
       validateActive(environment, target, role, receipt.deployments[role], imageReceipt.image);
       requireCondition(serviceHost(roleNode(environment, target, role), receipt.ownership) === receipt.hosts[role], 'HOST_SCOPE_INVALID');
     }
+    requireCondition(now() < deadline, 'STARTUP_TIMEOUT'); requireGamingActivation(authorization, now());
     receipt.status = 'VERIFIED'; onReceipt(receipt);
     const executionReceipt = freeze({ repository: REPOSITORY, prNumber: 1558, commitSha: authorization.headSha,
       sourceTreeSha: authorization.treeSha, webBaseUrl: receipt.hosts.web, workerBaseUrl: receipt.hosts.worker,
