@@ -75,6 +75,18 @@ no GitHub write, Railway, production, Notion, AI-provider or data credentials.
 Publication has package/OIDC authority but never starts candidate images.
 Deployment and cleanup have only the dedicated Railway workspace credential.
 
+The publisher reads private-package metadata through the fixed authenticated-owner
+`GET /user/packages/container/arcanos-gaming-preview` endpoint. Its current
+[endpoint-specific REST documentation](https://docs.github.com/en/rest/packages/packages#get-a-package-for-the-authenticated-user)
+supports GitHub App installation tokens, and GitHub identifies
+[`GITHUB_TOKEN`](https://docs.github.com/en/actions/concepts/security/github_token)
+as that token type. The existing ephemeral workflow token remains the only
+publication credential. Exact package name, container type, owner `pbjustin`
+and `visibility: private` must all match before Docker runs. A 401, 403 or 404
+fails closed; there is no PAT fallback or anonymous-401 visibility shortcut.
+Authenticated-owner resolution for the provisioned private package remains
+`NOT_PROVEN` until a separately authorized protected-main preflight succeeds.
+
 Railway's [outbound documentation](https://docs.railway.com/networking/outbound-networking)
 describes outbound connectivity and static IPs; it does not establish a general
 destination-deny firewall. Private networking is disabled in the isolated
@@ -157,7 +169,15 @@ the run and provenance bundles in the owner's evidence archive before expiry.
 
 1. Obtain independent infrastructure/security reviews and explicitly approve
    protected-main deployment. Do not merge or activate as an implicit follow-up.
-2. Provision a new isolated Railway workspace with only a dedicated preview
+2. Separately authorize a trusted bootstrap publication to create the private
+   `ghcr.io/pbjustin/arcanos-gaming-preview` package; this workflow requires it
+   to exist already. Inspect its exact owner, name, container type and private
+   visibility. In the package's **Manage Actions access**, grant
+   `pbjustin/Arcanos` **Write** access, as described in GitHub's
+   [workflow package access guidance](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility#ensuring-workflow-access-to-your-package).
+   Use a separate expiring pull-only identity granted read access only to this
+   package for Railway; never reuse the workflow publication token.
+   Provision a new isolated Railway workspace with only a dedicated preview
    project, idle template and two services. Disable native/bot/focused PR deploys,
    private networking, volumes, triggers, databases and shared variables. Audit
    the workspace-only API token and expiring private-image pull-only credential.

@@ -49,7 +49,8 @@ function fixture() {
   };
   const fetchImpl = async (url, init) => {
     requests.push(url); assert.equal(init.method, 'GET'); assert.equal(init.redirect, 'error');
-    assert.equal(url, 'https://api.github.com/users/pbjustin/packages/container/arcanos-gaming-preview');
+    assert.equal(url, 'https://api.github.com/user/packages/container/arcanos-gaming-preview');
+    assert.equal(init.headers.authorization, 'Bearer test-only-token');
     return new Response(JSON.stringify({ id: 123, name: 'arcanos-gaming-preview', package_type: 'container',
       visibility: 'private', owner: { login: 'pbjustin' } }), { headers: { 'content-type': 'application/json' } });
   };
@@ -94,8 +95,9 @@ test('Gaming publisher refuses unauthorized context, target drift and expired au
   }
 });
 
-test('Gaming publisher requires existing private owner package before loading or logging in', async () => {
-  for (const value of [{ status: 404 }, { visibility: 'public' }, { owner: { login: 'other' } }]) {
+test('Gaming publisher requires existing exact private owner package before loading or logging in', async () => {
+  for (const value of [{ visibility: 'public' }, { owner: { login: 'other' } },
+    { name: 'other-package' }, { package_type: 'npm' }]) {
     const f = fixture();
     try {
       await assert.rejects(publishGamingImage({ ...f.options, fetchImpl: async () => new Response(JSON.stringify({
@@ -104,6 +106,30 @@ test('Gaming publisher requires existing private owner package before loading or
       assert.equal(f.commands.length, 0);
     } finally { rmSync(f.root, { recursive: true, force: true }); }
   }
+});
+
+test('authenticated-owner metadata access denial fails before Docker without a public or anonymous fallback', async () => {
+  for (const status of [401, 403, 404]) {
+    const f = fixture(); const requests = [];
+    try {
+      await assert.rejects(publishGamingImage({ ...f.options, fetchImpl: async (url, init) => {
+        requests.push(url); assert.equal(init.method, 'GET'); assert.equal(init.redirect, 'error');
+        assert.equal(init.headers.authorization, 'Bearer test-only-token');
+        return new Response('{}', { status, headers: { 'content-type': 'application/json' } });
+      } }), /PRIVATE_PACKAGE_REQUIRED/u);
+      assert.deepEqual(requests, ['https://api.github.com/user/packages/container/arcanos-gaming-preview']);
+      assert.equal(f.commands.length, 0); assert.equal(existsSync(f.files.outputFile), false);
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+  }
+});
+
+test('Gaming publisher has no alternate ambient credential fallback for metadata or publication', async () => {
+  const f = fixture();
+  try {
+    await assert.rejects(publishGamingImage({ ...f.options,
+      environment: { ...f.options.environment, GHCR_TOKEN: '', GITHUB_TOKEN: 'mock-alternate-token', GH_TOKEN: 'mock-alternate-token' } }), /TOKEN_REQUIRED/u);
+    assert.equal(f.commands.length, 0); assert.equal(f.requests.length, 0);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
 test('Gaming publisher rejects loaded image substitution before authentication and expires before push with logout', async () => {

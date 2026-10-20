@@ -11,6 +11,7 @@ import { evaluateCoordinatedRolloutGuard } from './railway-coordinated-rollout-g
 
 const require = createRequire(import.meta.url);
 const { load } = require('js-yaml');
+const ts = require('typescript');
 const read = relative => readFileSync(new URL(`../${relative}`, import.meta.url), 'utf8');
 const workflow = load(read('.github/workflows/railway-gaming-preview.yml'));
 const checks = load(read('.github/workflows/gaming-preview-infrastructure-checks.yml'));
@@ -83,6 +84,10 @@ function assertWorkflowBoundaries(value) {
   const publish = value.jobs.publish;
   invariant(!publish.environment && !/\bRAILWAY_API_TOKEN\b|\bsecrets\s*\./u.test(JSON.stringify(publish)), 'NO_PUBLICATION_DEPLOYMENT_CREDENTIAL');
   invariant(commandStep(publish, 'scripts/gaming-preview-publish.mjs')?.env?.GHCR_TOKEN === '${{ github.token }}', 'STATIC_PUBLICATION_ONLY');
+  for (const step of publish.steps) for (const [key, content] of Object.entries(step.env ?? {})) {
+    if (/token|(?:^|_)pat(?:_|$)/iu.test(key)) invariant(['GITHUB_TOKEN', 'GHCR_TOKEN'].includes(key)
+      && content === '${{ github.token }}', 'REPOSITORY_INSTALLATION_TOKEN_ONLY');
+  }
   invariant(publish.steps.some(step => step.uses?.startsWith('actions/attest-build-provenance@')
     && ['source.tar', 'image.tar', 'build.json', 'published.json'].every(file => step.with?.['subject-path']?.includes(file))), 'IMMUTABLE_SOURCE_IMAGE_ATTESTATION');
 
@@ -117,6 +122,66 @@ test('Gaming workflow enforces protected manual admission and separated privileg
   assertWorkflowBoundaries(workflow);
 });
 
+function assertPublisherPackageBoundary(source) {
+  const parsed = ts.createSourceFile('publisher.mjs', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  invariant(parsed.parseDiagnostics.length === 0, 'PUBLISHER_SOURCE_VALID');
+  const functions = parsed.statements.filter(ts.isFunctionDeclaration);
+  const reader = functions.find(item => item.name?.text === 'readPrivatePackage');
+  const publisher = functions.find(item => item.name?.text === 'publishGamingImage');
+  invariant(reader?.body && publisher?.body, 'FIXED_PACKAGE_BOUNDARY_REQUIRED');
+  const descendants = node => {
+    const result = []; const visit = child => { result.push(child); ts.forEachChild(child, visit); };
+    visit(node); return result;
+  };
+  const calls = node => descendants(node).filter(ts.isCallExpression);
+  const namedCall = (node, name) => ts.isCallExpression(node) && ts.isIdentifier(node.expression)
+    && node.expression.text === name;
+  const metadataReads = calls(reader).filter(item => namedCall(item, 'fetchImpl'));
+  invariant(metadataReads.length === 1 && ts.isStringLiteral(metadataReads[0].arguments[0])
+    && metadataReads[0].arguments[0].text === 'https://api.github.com/user/packages/container/arcanos-gaming-preview',
+  'AUTHENTICATED_OWNER_METADATA_ONLY');
+  const variables = publisher.body.statements.filter(ts.isVariableStatement)
+    .flatMap(item => [...item.declarationList.declarations]);
+  const token = variables.find(item => item.name.getText(parsed) === 'token');
+  invariant(token?.initializer?.getText(parsed) === 'environment.GHCR_TOKEN', 'NO_METADATA_PAT_FALLBACK');
+  const pkg = variables.find(item => item.name.getText(parsed) === 'pkg');
+  invariant(pkg?.initializer && ts.isAwaitExpression(pkg.initializer)
+    && namedCall(pkg.initializer.expression, 'readPrivatePackage'), 'AWAIT_PACKAGE_ADMISSION');
+  const gate = publisher.body.statements.filter(ts.isExpressionStatement).map(item => item.expression)
+    .find(item => namedCall(item, 'requireCondition')
+      && item.arguments[0]?.getText(parsed).startsWith('pkg.name'));
+  invariant(gate, 'DIRECT_PRIVATE_PACKAGE_GATE');
+  const conjuncts = node => ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken
+    ? [...conjuncts(node.left), ...conjuncts(node.right)] : [node];
+  const comparisons = conjuncts(gate.arguments[0]).filter(item => ts.isBinaryExpression(item)
+    && item.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken && ts.isStringLiteral(item.right))
+    .map(item => [item.left.getText(parsed), item.right.text]);
+  for (const [field, expected] of [['pkg.name', 'arcanos-gaming-preview'], ['pkg.package_type', 'container'],
+    ['pkg.visibility', 'private'], ['pkg.owner?.login', 'pbjustin']]) invariant(comparisons.some(([name, value]) =>
+      name === field && value === expected), 'EXACT_PRIVATE_OWNER_PACKAGE_REQUIRED');
+  const effects = calls(publisher).filter(item => namedCall(item, 'command')
+    && ts.isArrayLiteralExpression(item.arguments[0]) && ts.isStringLiteral(item.arguments[0].elements[0])
+    && ['load', 'login', 'push'].includes(item.arguments[0].elements[0].text));
+  invariant(effects.length === 3 && effects.every(item => pkg.pos < gate.pos && gate.pos < item.pos), 'PRIVATE_ADMISSION_BEFORE_PUBLICATION_EFFECTS');
+}
+
+test('publication uses only repository installation tokens and authenticated exact private-owner admission before effects', () => {
+  assertWorkflowBoundaries(workflow);
+  const source = read('scripts/gaming-preview-publish.mjs');
+  assertPublisherPackageBoundary(source);
+  const gate = /requireCondition\(pkg\.name[\s\S]*?'PRIVATE_PACKAGE_REQUIRED'\);/u.exec(source)?.[0];
+  assert.ok(gate);
+  for (const [code, changed] of [
+    ['AUTHENTICATED_OWNER_METADATA_ONLY', source.replace('/user/packages/container/', '/users/pbjustin/packages/container/')],
+    ['NO_METADATA_PAT_FALLBACK', source.replace('const token = environment.GHCR_TOKEN;', 'const token = environment.GHCR_TOKEN || environment.METADATA_PAT;')],
+    ['EXACT_PRIVATE_OWNER_PACKAGE_REQUIRED', source.replace("pkg.visibility === 'private'", "pkg.visibility === 'public'")],
+    ['EXACT_PRIVATE_OWNER_PACKAGE_REQUIRED', source.replace("pkg.owner?.login === 'pbjustin'", "pkg.owner?.login === 'other'")],
+    ['EXACT_PRIVATE_OWNER_PACKAGE_REQUIRED', source.replace("&& pkg.owner?.login", "|| pkg.owner?.login")],
+    ['PRIVATE_ADMISSION_BEFORE_PUBLICATION_EFFECTS', source.replace(gate, '')
+      .replace("command(['load', '--input', imageFile]);", "command(['load', '--input', imageFile]);\n" + gate)],
+  ]) assert.throws(() => assertPublisherPackageBoundary(changed), error => error.message.includes(code));
+});
+
 test('infrastructure merge cannot pass the existing automatic production rollout hold', () => {
   const production = load(read('.github/workflows/railway-auto-deploy.yml'));
   const holdId = production.env.ARCANOS_COORDINATED_WRITER_ROLLOUT_HOLD;
@@ -144,6 +209,9 @@ test('workflow policy rejects trigger, checkout, privilege, receipt, execution a
     ['ISOLATED_ENVIRONMENT_ONLY', value => { value.jobs.verify.environment = 'railway-gaming-preview'; }],
     ['ISOLATED_ENVIRONMENT_ONLY', value => { value.jobs.deploy.environment = 'production'; }],
     ['EXACT_SCOPED_SECRET_ONLY', value => { commandStep(value.jobs.deploy, 'scripts/railway-gaming-preview.mjs deploy').env.RAILWAY_API_TOKEN = '${{ secrets.RAILWAY_PRODUCTION_API_TOKEN }}'; }],
+    ['EXACT_SCOPED_SECRET_ONLY', value => { commandStep(value.jobs.publish, 'scripts/gaming-preview-publish.mjs').env.GHCR_TOKEN = '${{ secrets.PACKAGES_PAT }}'; }],
+    ['EXACT_SCOPED_SECRET_ONLY', value => { commandStep(value.jobs.publish, 'scripts/gaming-preview-publish.mjs').env.METADATA_PAT = '${{ secrets.PACKAGES_METADATA_PAT }}'; }],
+    ['REPOSITORY_INSTALLATION_TOKEN_ONLY', value => { commandStep(value.jobs.publish, 'scripts/gaming-preview-publish.mjs').env.METADATA_PAT = 'test-only-unused-token'; }],
     ['INDEPENDENT_DEPLOYMENT_RECEIPT_DIGEST', value => { commandStep(value.jobs.verify, 'scripts/railway-gaming-preview.mjs verify').env.GITHUB_TOKEN = '${{ github.token }}'; }],
     ['INDEPENDENT_DEPLOYMENT_RECEIPT_DIGEST', value => { commandStep(value.jobs.verify, 'scripts/railway-gaming-preview.mjs verify').env.DEPLOYMENT_RECEIPT_SHA256 = '${{ inputs.digest }}'; }],
     ['NO_UNTRUSTED_SHELL_INTERPOLATION', value => { value.jobs.authorize.steps.find(step => step.env?.AUTHORIZATION_JSON).run += '\necho "${{ inputs.authorization_json }}"'; }],

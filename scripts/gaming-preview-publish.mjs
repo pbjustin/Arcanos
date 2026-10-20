@@ -38,7 +38,9 @@ async function readPrivatePackage({ fetchImpl, token, timeoutMs }) {
   const signal = AbortSignal.timeout(timeoutMs);
   const transport = Promise.resolve().then(() => {
     requireCondition(!signal.aborted, 'PACKAGE_DEADLINE');
-    return fetchImpl('https://api.github.com/users/pbjustin/packages/container/arcanos-gaming-preview', {
+    // The user-named endpoint is documented for public package metadata.
+    // Keep this authenticated-owner request and validate its exact owner below.
+    return fetchImpl('https://api.github.com/user/packages/container/arcanos-gaming-preview', {
       method: 'GET', redirect: 'error', signal,
       headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28' },
     });
