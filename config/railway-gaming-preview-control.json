@@ -4,8 +4,8 @@
   "repository": "pbjustin/Arcanos",
   "owner": "pbjustin",
   "prNumber": 1558,
-  "headSha": "1c1e7d0f4c8f4e62fd7117e28efd0d8d7c415262",
-  "treeSha": "89f1eb0b988514d92ef9f82dd2f77bc356735b8b",
+  "headSha": "848d6be5fc7d73936bb7921bd496d3051e30752d",
+  "treeSha": "d78ffd0a423e9755008784b6c244cafc131d1acf",
   "maxAuthorizationSeconds": 7200,
   "imageRepository": "ghcr.io/pbjustin/arcanos-gaming-preview",
   "target": null

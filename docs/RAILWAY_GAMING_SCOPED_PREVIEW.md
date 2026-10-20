@@ -3,9 +3,11 @@
 `GAMING_SCOPED_PREVIEW = NOT_RUN` until the separate owner-dispatched hosted
 workflow completes verification, final deployment attestation and verified
 cleanup. This infrastructure does not change frozen [PR #1558](https://github.com/pbjustin/Arcanos/pull/1558).
-Its approved source is commit `1c1e7d0f4c8f4e62fd7117e28efd0d8d7c415262`, tree
-`89f1eb0b988514d92ef9f82dd2f77bc356735b8b`. No merge, production promotion,
+Its approved source is commit `848d6be5fc7d73936bb7921bd496d3051e30752d`, tree
+`d78ffd0a423e9755008784b6c244cafc131d1acf`. No merge, production promotion,
 provider inference, Notion access or hosted execution is authorized by this document.
+Its canonical Git-archive SHA-256 is
+`5bc4713eb4842f5927354bebc9ae82f43f9c32516dd7f32b61a8c446db684123`.
 
 ## Architecture and reuse
 
@@ -42,6 +44,14 @@ are freshly read. PR #1558 must be open, non-draft, same-repository and target
 main, with the exact frozen head/tree, approved current base and green terminal
 CI. Source changes require a separately reviewed policy update. Labels and
 ready-for-review events grant no Gaming deployment authority.
+
+This identity update belongs only to the trusted infrastructure branch. Do not
+merge it back into the fixed Gaming source merely to copy the new pins; doing so
+changes that source identity again. Infrastructure-first content integration
+preserves these controller pins, but strict up-to-date protection still requires
+a fresh base/head check after the actual main merge. Any later Gaming base update
+creates a different head and requires its own reviewed source/artifact decision;
+hosted evidence for this fixed SHA cannot attest that later head.
 
 [Controller policy](../config/railway-gaming-preview-control.json) ships with
 `enabled: false` and `target: null`. Merging this PR cannot provision anything.
@@ -198,7 +208,7 @@ the run and provenance bundles in the owner's evidence archive before expiry.
    reviewed controller policy. Prepare this exact JSON, replacing placeholders:
 
    ```json
-   {"version":1,"controllerSha":"CURRENT_PROTECTED_MAIN_SHA","mainSha":"CURRENT_PROTECTED_MAIN_SHA","baseSha":"CURRENT_PROTECTED_MAIN_SHA","headSha":"1c1e7d0f4c8f4e62fd7117e28efd0d8d7c415262","treeSha":"89f1eb0b988514d92ef9f82dd2f77bc356735b8b","sourceArchiveSha256":"ARCHIVE_SHA256","targetSha256":"REVIEWED_TARGET_SHA256","expiresAt":"FRESH_UTC_ISO_TIMESTAMP_WITH_MILLISECONDS"}
+   {"version":1,"controllerSha":"CURRENT_PROTECTED_MAIN_SHA","mainSha":"CURRENT_PROTECTED_MAIN_SHA","baseSha":"CURRENT_PROTECTED_MAIN_SHA","headSha":"848d6be5fc7d73936bb7921bd496d3051e30752d","treeSha":"d78ffd0a423e9755008784b6c244cafc131d1acf","sourceArchiveSha256":"ARCHIVE_SHA256","targetSha256":"REVIEWED_TARGET_SHA256","expiresAt":"FRESH_UTC_ISO_TIMESTAMP_WITH_MILLISECONDS"}
    ```
 
 5. Explicitly authorize that SHA and isolated target, then dispatch as `pbjustin`:

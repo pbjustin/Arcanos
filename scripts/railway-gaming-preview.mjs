@@ -54,8 +54,8 @@ export function validateGamingPolicy(policy = DEFAULT_GAMING_POLICY) {
   requireCondition(exact(policy, ['version', 'enabled', 'repository', 'owner', 'prNumber', 'headSha', 'treeSha',
     'maxAuthorizationSeconds', 'imageRepository', 'target']) && policy.version === 1 && typeof policy.enabled === 'boolean'
     && policy.repository === REPOSITORY && policy.owner === 'pbjustin' && policy.prNumber === 1558
-    && policy.headSha === '1c1e7d0f4c8f4e62fd7117e28efd0d8d7c415262'
-    && policy.treeSha === '89f1eb0b988514d92ef9f82dd2f77bc356735b8b'
+    && policy.headSha === '848d6be5fc7d73936bb7921bd496d3051e30752d'
+    && policy.treeSha === 'd78ffd0a423e9755008784b6c244cafc131d1acf'
     && policy.imageRepository === IMAGE_REPOSITORY && Number.isSafeInteger(policy.maxAuthorizationSeconds)
     && policy.maxAuthorizationSeconds > 0 && policy.maxAuthorizationSeconds <= 7200, 'POLICY_INVALID');
   if (policy.target === null) return policy;

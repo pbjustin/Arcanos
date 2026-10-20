@@ -148,6 +148,23 @@ test('exact non-draft PR admission rejects labels, unapproved PRs, forks and sou
   await assert.rejects(verifyGamingCandidate({ authorization, main, pullRequest: pr,
     git: { ...git, archiveSha256: async () => 'f'.repeat(64) } }), /ARCHIVE_DRIFT/u);
 });
+test('refrozen Gaming admission accepts its exact new identity and rejects the historical source', async () => {
+  const headSha = '848d6be5fc7d73936bb7921bd496d3051e30752d', treeSha = 'd78ffd0a423e9755008784b6c244cafc131d1acf';
+  const sourceArchiveSha256 = '5bc4713eb4842f5927354bebc9ae82f43f9c32516dd7f32b61a8c446db684123';
+  assert.equal(DEFAULT_GAMING_POLICY.headSha, headSha); assert.equal(DEFAULT_GAMING_POLICY.treeSha, treeSha);
+  const authorization = authorize({ sourceArchiveSha256 }), main = { protected: true, sha: controllerSha };
+  const pullRequest = { number: 1558, state: 'open', draft: false,
+    head: { sha: headSha, repo: { full_name: 'pbjustin/Arcanos' } },
+    base: { ref: 'main', sha: controllerSha, repo: { full_name: 'pbjustin/Arcanos' } } };
+  const git = { treeSha: async () => treeSha, archiveSha256: async () => sourceArchiveSha256 };
+  assert.equal((await verifyGamingCandidate({ authorization, main, pullRequest, git })).candidateSha, headSha);
+  await assert.rejects(verifyGamingCandidate({ authorization, main, git,
+    pullRequest: { ...pullRequest, head: { ...pullRequest.head, sha: '1c1e7d0f4c8f4e62fd7117e28efd0d8d7c415262' } } }),
+  /PR_IDENTITY_DRIFT/u);
+  assert.throws(() => authorize({ headSha: '1c1e7d0f4c8f4e62fd7117e28efd0d8d7c415262',
+    treeSha: '89f1eb0b988514d92ef9f82dd2f77bc356735b8b' }), /SOURCE_OR_TARGET_DRIFT/u);
+});
+
 test('image receipt rejects wrong artifacts, mutable image, kernel policy, run and target', () => {
   const a = authorize(); imageReceipt(a);
   for (const changes of [{ candidateSha: 'f'.repeat(40) }, { runtimeDevDependenciesPruned: false },
