@@ -9,6 +9,7 @@ import { test } from 'node:test';
 import {
   NativePrPreviewE2eError,
   GAMING_SCOPED_PREVIEW_SCOPE,
+  GAMING_SCOPED_PREVIEW_SECURITY_PROOF,
   GAMING_SCOPED_PREVIEW_REQUIRED_NATIVE_CASE_IDS,
   assertGamingScopedPreviewRequestPlan,
   buildGamingScopedPreviewRequestPlan,
@@ -608,6 +609,18 @@ test('stacked scope preserves rejection assertions and rejects arbitrary scope o
     error => error.code === 'NATIVE_PR_PREVIEW_REQUEST_SCOPE_INVALID');
 });
 
+test('keeps the protected-main Gaming runtime contract unchanged while requiring the separate frozen-candidate proof', () => {
+  // Exact JSON from protected-main 0e7a8e607e3f2f3359dc86eabcf611d8dd3fe6b2.
+  // Runtime consumers enumerate these proof keys; scoped-only additions would
+  // incorrectly require a marker the current-main application does not emit.
+  assert.equal(createHash('sha256').update(JSON.stringify(NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming)).digest('hex'),
+    '27ef182ef3f57518254fbd8e77b29920e47ab220e5d9ef45268aed0289b2940b');
+  assert.deepEqual(GAMING_SCOPED_PREVIEW_SECURITY_PROOF, {
+    header: 'x-arcanos-preview-gaming-scoped-security-version', version: 'gaming-scoped-security/v1',
+  });
+  assert.ok(Object.isFrozen(GAMING_SCOPED_PREVIEW_SECURITY_PROOF));
+});
+
 test('Gaming scope is a closed Gaming and shared-security plan with no Notion selector', () => {
   const plan = buildGamingScopedPreviewRequestPlan();
   const full = buildNativePrPreviewRequestPlan();
@@ -635,8 +648,8 @@ test('Gaming scope is a closed Gaming and shared-security plan with no Notion se
 test('Gaming scope reports executed and intentionally skipped assertions with zero external verifier requests', async () => {
   const plan = buildGamingScopedPreviewRequestPlan();
   const mock = buildMockFetch(plan, undefined, undefined, item => item.caseId === 'gaming-query-guide'
-    ? { [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.scopedSecurityProofHeader]:
-      NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.scopedSecurityProofVersion } : {});
+    ? { [GAMING_SCOPED_PREVIEW_SECURITY_PROOF.header]:
+      GAMING_SCOPED_PREVIEW_SECURITY_PROOF.version } : {});
   const outbound = [];
   const result = await runNativePrPreviewE2e({ args: validArguments('--execute', '--allow-network'),
     requestScope: GAMING_SCOPED_PREVIEW_SCOPE, localGitState: LOCAL_GIT_STATE,
@@ -676,8 +689,8 @@ test('Gaming failures and missing final security proof fail closed without a can
       return response;
     },
       undefined, item => item.caseId === 'gaming-query-guide'
-        ? { [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.scopedSecurityProofHeader]:
-          NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.scopedSecurityProofVersion } : {});
+        ? { [GAMING_SCOPED_PREVIEW_SECURITY_PROOF.header]:
+          GAMING_SCOPED_PREVIEW_SECURITY_PROOF.version } : {});
     await assert.rejects(runNativePrPreviewE2e({ args: validArguments('--execute', '--allow-network'),
       requestScope: GAMING_SCOPED_PREVIEW_SCOPE, localGitState: LOCAL_GIT_STATE, fetchImpl: mock.fetchImpl }),
     error => error.code === 'NATIVE_PR_PREVIEW_HTTP_STATUS_MISMATCH' && error.caseId === failCase);
@@ -688,9 +701,9 @@ test('Gaming failures and missing final security proof fail closed without a can
   error => error.code === 'NATIVE_PR_PREVIEW_GAMING_SCOPED_SECURITY_PROOF_INVALID'
     && error.caseId === 'gaming-query-guide');
   for (const [caseId, proof] of [['gaming-query-guide', 'gaming-scoped-security/v0'],
-    ['gaming-canary-success', NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.scopedSecurityProofVersion]]) {
+    ['gaming-canary-success', GAMING_SCOPED_PREVIEW_SECURITY_PROOF.version]]) {
     const corruptProof = buildMockFetch(plan, undefined, undefined, item => item.caseId === caseId
-      ? { [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.scopedSecurityProofHeader]: proof } : {});
+      ? { [GAMING_SCOPED_PREVIEW_SECURITY_PROOF.header]: proof } : {});
     await assert.rejects(runNativePrPreviewE2e({ args: validArguments('--execute', '--allow-network'),
       requestScope: GAMING_SCOPED_PREVIEW_SCOPE, localGitState: LOCAL_GIT_STATE, fetchImpl: corruptProof.fetchImpl }),
     error => error.code === 'NATIVE_PR_PREVIEW_GAMING_SCOPED_SECURITY_PROOF_INVALID' && error.caseId === caseId);
