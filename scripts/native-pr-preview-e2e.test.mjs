@@ -609,16 +609,57 @@ test('stacked scope preserves rejection assertions and rejects arbitrary scope o
     error => error.code === 'NATIVE_PR_PREVIEW_REQUEST_SCOPE_INVALID');
 });
 
-test('keeps the protected-main Gaming runtime contract unchanged while requiring the separate frozen-candidate proof', () => {
-  // Exact JSON from protected-main 0e7a8e607e3f2f3359dc86eabcf611d8dd3fe6b2.
-  // Runtime consumers enumerate these proof keys; scoped-only additions would
-  // incorrectly require a marker the current-main application does not emit.
-  assert.equal(createHash('sha256').update(JSON.stringify(NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming)).digest('hex'),
-    '27ef182ef3f57518254fbd8e77b29920e47ab220e5d9ef45268aed0289b2940b');
+function assertReviewedGamingRuntimeContract(contract) {
+  const baselineDigest = '27ef182ef3f57518254fbd8e77b29920e47ab220e5d9ef45268aed0289b2940b';
+  const frozenDigest = '64217670250f3a06368f66df58d6c808db2df434d4964ea9a7e13b1beeec147a';
+  const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+  const baseline = { ...contract };
+  const proofKeys = ['scopedSecurityProofHeader', 'scopedSecurityProofVersion'];
+  const includesScopedProof = proofKeys.some(key => Object.hasOwn(contract, key));
+  if (includesScopedProof) {
+    assert.equal(contract.scopedSecurityProofHeader, GAMING_SCOPED_PREVIEW_SECURITY_PROOF.header);
+    assert.equal(contract.scopedSecurityProofVersion, GAMING_SCOPED_PREVIEW_SECURITY_PROOF.version);
+    for (const key of proofKeys) delete baseline[key];
+  }
+  // Protected-main's original fields remain exact in both reviewed states.
+  // Frozen PR1558 adds only its paired security proof after executing that fixture.
+  assert.equal(digest(baseline), baselineDigest);
+  assert.equal(digest(contract), includesScopedProof ? frozenDigest : baselineDigest);
+}
+
+test('accepts only the exact protected-main or frozen Gaming contract with the independent scoped proof', () => {
+  // Protected main 0e7a8e607e3f2f3359dc86eabcf611d8dd3fe6b2 and frozen
+  // Gaming 1c1e7d0f4c8f4e62fd7117e28efd0d8d7c415262 are separate reviewed states.
+  assertReviewedGamingRuntimeContract(NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming);
   assert.deepEqual(GAMING_SCOPED_PREVIEW_SECURITY_PROOF, {
     header: 'x-arcanos-preview-gaming-scoped-security-version', version: 'gaming-scoped-security/v1',
   });
   assert.ok(Object.isFrozen(GAMING_SCOPED_PREVIEW_SECURITY_PROOF));
+});
+
+test('Gaming contract compatibility preserves both exact states and rejects partial proofs or unrelated drift', () => {
+  const baseline = { ...NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming };
+  delete baseline.scopedSecurityProofHeader;
+  delete baseline.scopedSecurityProofVersion;
+  const frozen = {
+    scopedSecurityProofHeader: GAMING_SCOPED_PREVIEW_SECURITY_PROOF.header,
+    scopedSecurityProofVersion: GAMING_SCOPED_PREVIEW_SECURITY_PROOF.version,
+    ...baseline,
+  };
+  assert.doesNotThrow(() => assertReviewedGamingRuntimeContract(baseline));
+  assert.doesNotThrow(() => assertReviewedGamingRuntimeContract(frozen));
+  for (const mutation of [
+    { ...baseline, scopedSecurityProofHeader: GAMING_SCOPED_PREVIEW_SECURITY_PROOF.header },
+    { ...baseline, scopedSecurityProofVersion: GAMING_SCOPED_PREVIEW_SECURITY_PROOF.version },
+    { ...frozen, scopedSecurityProofHeader: 'x-unreviewed-security-proof' },
+    { ...frozen, scopedSecurityProofVersion: 'gaming-scoped-security/v2' },
+    { ...baseline, unexpectedProofHeader: 'x-unreviewed-security-proof' },
+    { ...frozen, unexpectedProofHeader: 'x-unreviewed-security-proof' },
+    { ...baseline, canaryPath: '/unreviewed-gaming-canary' },
+    { ...frozen, canaryPath: '/unreviewed-gaming-canary' },
+  ]) {
+    assert.throws(() => assertReviewedGamingRuntimeContract(mutation), assert.AssertionError);
+  }
 });
 
 test('Gaming scope is a closed Gaming and shared-security plan with no Notion selector', () => {
