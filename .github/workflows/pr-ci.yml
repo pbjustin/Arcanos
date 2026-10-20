@@ -64,6 +64,7 @@ jobs:
     name: Railway PR Preview Exact Head
     if: >-
       github.repository == 'pbjustin/Arcanos'
+      && github.event.pull_request.number != 1558
       && github.event.pull_request.state == 'open'
       && github.event.pull_request.draft == false
       && github.event.pull_request.base.ref == 'main'

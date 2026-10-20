@@ -4,12 +4,14 @@ import { getEventListeners } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
   buildGamingScopedPreviewAssertionInventory,
+  assertGamingScopedPreviewAssertionInventory,
   runGamingScopedPreviewE2e,
 } from './gaming-scoped-preview-e2e.mjs';
 import {
   buildGamingScopedPreviewRequestPlan, expectedNativePrPreviewResponseBody,
   nativePrPreviewCaseCorrelation,
 } from './native-pr-preview-e2e.mjs';
+import { buildGamingMcpPreviewRequestPlan } from './gaming-mcp-preview-e2e.mjs';
 import { NATIVE_PR_PREVIEW_E2E_CONTRACT as contract } from './native-pr-preview-contract.mjs';
 
 const sha = 'a'.repeat(40);
@@ -61,6 +63,40 @@ test('closed Gaming inventory combines maintained native and MCP assertions with
   assert.ok(plan.every(id => !/notion|backstage|research|tutor/iu.test(id)));
 });
 
+test('fixed trusted inventory rejects missing, duplicate or modified native and MCP descriptors', () => {
+  const native = buildGamingScopedPreviewRequestPlan();
+  const mcp = buildGamingMcpPreviewRequestPlan();
+  const changed = (plan, field, value) => plan.map((item, index) => index === 0 ? { ...item, [field]: value } : item);
+  for (const [nativePlan, mcpPlan] of [
+    [native.slice(1), mcp], [native, mcp.slice(1)],
+    [[...native, native[0]], mcp], [native, [...mcp, mcp[0]]],
+    [changed(native, 'expectedStatus', 299), mcp],
+    [changed(native, 'path', 'https://api.notion.com/v1/search'), mcp],
+    [native, changed(mcp, 'status', 299)],
+    [native, changed(mcp, 'body', { method: 'unapproved-provider-inference' })],
+    [native, changed(mcp, 'requestTimeoutMs', 5001)],
+  ]) {
+    assert.throws(() => assertGamingScopedPreviewAssertionInventory(nativePlan, mcpPlan),
+      error => error.code === 'GAMING_SCOPED_PREVIEW_REQUIRED_ASSERTIONS_MODIFIED');
+  }
+});
+
+test('an injected hosted transport cannot convert a caller receipt into hosted evidence', async () => {
+  let requests = 0;
+  await assert.rejects(runGamingScopedPreviewE2e({ args: executeArgs, localGitState,
+    hostedReceipt: Object.freeze({ commitSha: sha }), fetchImpl: async () => { requests += 1; } }),
+  error => error.code === 'GAMING_SCOPED_PREVIEW_HOSTED_TRANSPORT_SUBSTITUTION');
+  assert.equal(requests, 0);
+});
+
+test('caller JSON cannot forge a trusted hosted receipt', async () => {
+  for (const hostedReceipt of [null, {}, Object.freeze({ repository: localGitState.repository,
+    prNumber: 1558, commitSha: sha, sourceTreeSha: localGitState.sourceTreeSha })]) {
+    await assert.rejects(runGamingScopedPreviewE2e({ args: executeArgs, localGitState, hostedReceipt }),
+      error => error.code === 'GAMING_PREVIEW_HOSTED_RECEIPT_REQUIRED');
+  }
+});
+
 test('Gaming dry-run needs no application credentials or network and preserves bounded inventory', async () => {
   let requests = 0;
   const result = await runGamingScopedPreviewE2e({ args: [...args,
@@ -78,7 +114,7 @@ test('Gaming dry-run needs no application credentials or network and preserves b
   assert.equal(result.assertionInventory.plannedCaseIds.length, 84);
   assert.equal(result.assertionInventory.executedCaseIds.length, 0);
   assert.ok(result.assertionInventory.skippedCaseIds.includes('native:backstage-generation-notion-authority-rag'));
-  assert.equal(result.boundaries.hostedEnabled, false);
+  assert.equal(result.boundaries.hostedActivation, 'trusted-controller-receipt-only');
   assert.equal(result.boundaries.liveNotionConnectivity, false);
 });
 
@@ -110,6 +146,20 @@ test('a selected Gaming or shared-security failure cannot be reported as a passi
       return response;
     } }),
   error => error.code === 'NATIVE_PR_PREVIEW_HTTP_STATUS_MISMATCH');
+  assert.equal(requests, 1);
+});
+
+test('requests omit ambient credentials and fail at the unchanged per-response byte budget', async () => {
+  let requests = 0;
+  await assert.rejects(runGamingScopedPreviewE2e({ args: executeArgs, localGitState,
+    fetchImpl: async (url, init) => {
+      requests += 1;
+      assert.equal(init.credentials, 'omit');
+      assert.equal(init.redirect, 'error');
+      const expected = JSON.stringify(expectedNativePrPreviewResponseBody(
+        buildGamingScopedPreviewRequestPlan()[0], { prNumber: 1558, commitSha: sha }));
+      return firstReadinessResponse(url, expected.padEnd(65_537, ' '));
+    } }), error => error.code === 'NATIVE_PR_PREVIEW_RESPONSE_LIMIT_EXCEEDED');
   assert.equal(requests, 1);
 });
 

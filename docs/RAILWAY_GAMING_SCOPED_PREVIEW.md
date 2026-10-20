@@ -1,172 +1,299 @@
-# Gaming-scoped preview verification
+# Trusted Gaming synthetic Railway preview
 
-This companion to [Railway deployment](RAILWAY_DEPLOYMENT.md) describes the
-`gaming-synthetic-v1` verification scope. Its current implementation supports
-offline execution against injected synthetic application transports. Hosted
-verification is disabled: `GAMING_SCOPED_PREVIEW = NOT_RUN`. Passing assertions
-do not attest Railway resources or satisfy hosted acceptance. Injected
-transports are explicitly reported as unverified; offline evidence comes from
-the test's independent outbound-request assertions.
+`GAMING_SCOPED_PREVIEW = NOT_RUN` until the separate owner-dispatched hosted
+workflow completes verification, final deployment attestation and verified
+cleanup. This infrastructure does not change frozen [PR #1558](https://github.com/pbjustin/Arcanos/pull/1558).
+Its approved source is commit `1c1e7d0f4c8f4e62fd7117e28efd0d8d7c415262`, tree
+`89f1eb0b988514d92ef9f82dd2f77bc356735b8b`. No merge, production promotion,
+provider inference, Notion access or hosted execution is authorized by this document.
 
-PR #1558 is under a feature-scope freeze. Remaining work is limited to demonstrated
-release blockers, their regression tests, necessary test-harness stabilization
-and essential evidence corrections. Complete code freeze still requires green
-final-candidate CI and independent review; merge remains unauthorized.
+## Architecture and reuse
 
-## Reused verification and fixed scope
+The [manual workflow](../.github/workflows/railway-gaming-preview.yml) runs the
+[Gaming controller](../scripts/railway-gaming-preview.mjs) from its exact
+protected-main revision. It has separate runners for authorization, secretless
+build, static publication, deployment, credential-free verification, final
+control-plane attestation and always-run cleanup. The final verdict requires
+verification, final attestation and cleanup all to succeed.
 
-The [combined verifier](../scripts/gaming-scoped-preview-e2e.mjs) reuses the
-[native preview verifier](../scripts/native-pr-preview-e2e.mjs) and
-[Gaming MCP verifier](../scripts/gaming-mcp-preview-e2e.mjs). It does not create
-another deployment controller or adopt the historical three-PR stack.
+The lane reuses the bounded Git object adapter, GitHub owner/main/CI readers,
+Railway API transport and isolated-workspace authority checks from the
+[historical stack](RAILWAY_STACKED_DRAFT_PREVIEW.md). Its historical PR allowlist,
+disabled activation, workflow, Dockerfile and runtime remain unchanged. The
+shared artifact implementation now has two fixed module-owned profiles; the
+new [Gaming profile](../scripts/gaming-preview-build.mjs) does not accept a
+candidate Dockerfile, arbitrary tooling path or caller-defined profile.
+
+The existing [native verifier](../scripts/native-pr-preview-e2e.mjs) and
+[MCP verifier](../scripts/gaming-mcp-preview-e2e.mjs) supply the combined
+[Gaming verifier](../scripts/gaming-scoped-preview-e2e.mjs). Its trusted inventory
+fixes all 63 native and 21 MCP request descriptors, including their bodies,
+paths and timeouts. Missing, duplicated, modified or skipped required checks
+fail. The full-platform default retains its 173 descriptors and Notion coverage.
+Gaming never writes success to the full-platform status context.
+
+## Preserved offline verification and evidence limits
 
 | Included assertions | Coverage |
 | --- | --- |
-| Native scope: 63 cases | Initial/final exact-commit readiness, passive worker, health and method/path denials; public Gaming canary and guide/build/meta contracts; source authorization, parser limits, provenance, lifecycle and unsafe-source cases; shared MCP body-cap and status auth-before-parser contracts and worker denials. |
+| Native scope: 63 cases | Exact-commit readiness, passive worker, health and method/path denials; Gaming canary and guide/build/meta contracts; source authorization, parser limits, provenance, lifecycle and unsafe-source cases; shared MCP body-cap and status auth-before-parser contracts and worker denials. |
 | Gaming MCP: 21 cases | Initialization/catalog, fixed query and hybrid results, closed inputs and candidate bounds, denied ingestion/refresh/storage with and without confirmation, credential-carrier rejection, malformed/oversized input, worker and metadata denials. |
-| Nested Gaming production-core proofs | Synthetic extraction and source acquisition, community guide/build acceptance, game/edition identity, source-instruction rejection, CLEAR and Trinity honesty components, and other versioned Gaming proof markers required by the native verifier. |
+| Nested Gaming production-core proofs | Synthetic extraction and acquisition, community guide/build acceptance, game/edition identity, source-instruction rejection, CLEAR, Trinity honesty and the versioned proof markers required by the native verifier. |
 
-The native plan has an explicit required-case inventory. Missing, duplicate,
-changed or newly unaccounted-for Gaming descriptors fail before requests.
-The combined verifier also checks the exact MCP inventory and exact executed
-sequence. A required Gaming or shared-security failure fails the run; excluding
-unrelated cases cannot conceal it. Reports retain `plannedCaseIds`,
-`executedCaseIds` and `skippedCaseIds` rather than reporting skipped assertions
-as executed.
+The frozen Gaming implementation and its assembled-application regression remain
+the authority for these component proofs. The source-security proof includes bare
+filenames passed to intrinsic file-input options (`--upload-file`, `--input-file`
+and `-T`), `@` and path operands, bundled and quoted options, escaped options and
+generic form-field labels. Ordinary game selectors and complete quoted chat prose
+retain their positive controls. An ambiguous bare `--source` selector alone does
+not establish host-file access. Both raw and normalized option boundaries are
+inspected so apostrophes in narration cannot hide a real file operand.
 
-The scope excludes the Backstage Notion connectivity selector, other Backstage
-contracts, Research, Tutor, heartbeat and self-heal cases. It requires no real
-Notion, application-provider or storage credentials, paid inference, production
-database/Redis, durable ingestion or production deployment. The native `full`
-plan and its Notion connectivity selector remain available and retain their
-existing coverage. Gaming results cannot replace a full-platform result or
-write success to the platform's `Railway PR Preview E2E` context.
+The [assembled-application regression](../tests/native-pr-preview-application.test.ts)
+routes all 84 requests through an injected local transport, fails if its Notion
+connectivity seam runs, and intercepts application `http.request`, `https.request`
+and `fetch`. It asserts zero calls to those four seams. Its adapter alone uses a
+captured HTTP function for fixed loopback listeners. Raw sockets, DNS and other
+HTTP entry points are not instrumented; that regression is not process-level
+egress evidence. Linux kernel isolation is a separate infrastructure proof.
 
-## Policy, identity and bounds
+One verifier run uses a Jest completion checkpoint after each verified request.
+The five-second Jest and request limits and 60-second aggregate verifier limit
+remain unchanged. Failed or timed-out cases abort and drain pending transports
+and application responses before later tests reuse shared mocks. The entire
+matrix remains in Jest's coverage process. A separate broad-mode regression
+retains the Notion selector with a mocked seam; neither regression needs a real
+Notion request.
 
-[Scope policy](../config/railway-gaming-preview.json) fixes the scope,
-`Railway Gaming Scoped Preview E2E` context and `hostedEnabled: false`.
-The [policy reader](../scripts/gaming-scoped-preview-policy.mjs) uses a fixed
-module-relative path, a closed schema and module-issued immutable objects.
-Caller-supplied paths, equivalent JSON objects, unknown fields, scope changes
-and self-activation are rejected. There is no candidate-selectable CLI scope
-or hosted-activation flag.
+Without a trusted hosted receipt, injected execution continues to report
+`offlineVerification: NOT_PROVEN`, `transport: caller-supplied-unverified`,
+`hostedExecuted: null` and `GAMING_SCOPED_PREVIEW: NOT_RUN`. A supplied callback
+can make network requests or ignore cancellation, so callback identity does not
+prove an offline transport. The wrapper does not await noncooperative caller
+effects or turn them into verified evidence. It retains bounded transport/body
+settlement, exact origins, credential omission and redirect denial.
 
-This is preparation for trusted execution, not authority granted to candidate
-files. A future hosted controller must load its own reviewed policy from the
-protected-main checkout, never from the PR evidence checkout or PR-supplied
-environment, dispatch payload or scope label. The current combined verifier
-consults the policy's disabled hosted flag and rejects execution through
-ambient `globalThis.fetch`. A caller-supplied callback can itself make network
-requests, so callback identity never proves a mock or an offline run. Its
-transport, effects and physical hosted execution remain unverified. The wrapper
-has no Railway management authority.
+The preview integration's scope-policy schema replaces frozen Gaming's
+`hostedEnabled: false` field with `hostedActivation: trusted-controller-receipt-only`.
+The closed module-relative reader, module-issued immutable configuration and
+caller-substitution denials remain. This describes receipt authority, not current
+activation: the separate controller policy remains `enabled: false`, `target: null`.
+The unchanged frozen PR stays an exact source artifact; the combined trusted
+preview tooling incorporates this separately reviewed infrastructure extension.
 
-The shared argument guard checks canonical repository origin, exact local HEAD,
-clean tracked/untracked state, distinct isolated HTTPS preview origins and
-paired execution opt-ins. Gaming evidence additionally records the Git source
-tree. These checks establish local/served identity; they do not independently
-prove remote base, controller ownership, source archive or deployed image.
+Synthetic component proofs do not establish normal-route bearer authentication,
+the complete acquisition/provider graph, live publisher retrieval, real inference,
+active queue work, SQL atomicity, caching/storage integration or production
+readiness. Focused mocked production-path tests, disposable PostgreSQL CI and
+source/compiled import protections remain separate requirements.
 
-The combined maximum is 84 sequential requests, five seconds per request,
-60 seconds total, 64 KiB per response body and 512 KiB aggregate response
-bodies. The MCP phase retains its stricter 128 KiB aggregate bound. The second
-phase receives only the first phase's remaining time; insufficient remaining
-budget fails instead of resetting it. Requests retain no-redirect and
-credential-omission settings, origin restrictions and abort signals. Caller
-limits can tighten these bounds. No timeout or acquisition limit is increased.
-The wrapper races transport settlement against the combined request/aggregate
-abort signal and errors pending response reads when it aborts. It does not
-await cancellation of caller-owned work. A callback or source that ignores
-cancellation can continue its effects after verification fails; those effects
-remain unverified.
+## Admission and provenance
 
-## Offline evidence and its limits
+The workflow admits only an initial manual dispatch by owner `pbjustin`, with
+the same event sender, repository `pbjustin/Arcanos`, `refs/heads/main` and exact
+workflow reference. Deployment reruns are rejected; owner-only cleanup retries
+retain the original run and ownership receipts. Owner permissions and protected main
+are freshly read. PR #1558 must be open, non-draft, same-repository and target
+main, with the exact frozen head/tree, approved current base and green terminal
+CI. Source changes require a separately reviewed policy update. Labels and
+ready-for-review events grant no Gaming deployment authority.
 
-[Verifier tests](../scripts/gaming-scoped-preview-e2e.test.mjs) and
-[policy tests](../scripts/gaming-scoped-preview-policy.test.mjs) cover fixed
-inventory, scope substitution, disabled activation, failures and bounds.
-[Native verifier tests](../scripts/native-pr-preview-e2e.test.mjs) check the
-included and omitted descriptors and rejection of missing required proofs.
-The scoped production-core proof includes bare filenames passed to intrinsic
-file-input options (`--upload-file`, `--input-file` and `-T`), alongside `@` and
-path operands, bundled short options and quoted option spelling. Focused
-regressions also cover escaped options and generic form-field labels. An ambiguous
-bare `--source` selector alone does not establish host-file access; ordinary game
-selectors and complete quoted chat prose retain their positive controls.
-Both raw and normalized option boundaries are inspected so apostrophes in ordinary
-narration cannot hide a real file operand during quote normalization.
+[Controller policy](../config/railway-gaming-preview-control.json) ships with
+`enabled: false` and `target: null`. Merging this PR cannot provision anything.
+The owner must separately approve the code, provision and audit a dedicated
+target, and review the exact target policy on protected main before dispatch.
+The existing production workflow's coordinated-writer hold remains unchanged;
+an executable regression confirms a main CI completion cannot pass it. Recheck
+that hold and deployment-trigger state before any separately approved merge.
+The [scope policy](../config/railway-gaming-preview.json) permits hosted execution
+only with a trusted controller-issued receipt; JSON and candidate CLI options
+cannot issue that receipt.
 
-The assembled-application regression in
-[native preview application tests](../tests/native-pr-preview-application.test.ts)
-routes all 84 requests through an injected local transport. It makes the
-Notion connectivity seam fail if called and intercepts application `http.request`,
-`https.request` and `fetch`, asserting zero calls to those seams and the Notion
-seam. The test adapter alone uses a captured HTTP function for fixed loopback
-listeners. Raw sockets, DNS and other HTTP entry points are not instrumented;
-this test is not a general process-level network-egress proof.
-One assembled verifier run uses a Jest completion checkpoint after each verified
-request. The default five-second Jest limit, five-second request limit and
-60-second aggregate verifier limit remain unchanged. A failed or timed-out case
-aborts and drains pending transports and application responses before later tests
-can reuse shared mocks. The entire matrix remains in Jest's coverage process.
-A separate broad-mode regression invokes the retained Notion selector with a
-mocked connectivity seam. No real Notion request is needed for either proof.
-Record actual test outcomes in an exact-SHA validation receipt; this maintained
-guide is not a test receipt.
+Every dispatch authorizes exact controller/main/base, head, tree, source archive
+SHA-256, target-policy SHA-256 and expiry (maximum two hours). Before each effect,
+the controller refreshes admission and authority. The image binds the source
+archive, six compiled output trees, pruned runtime dependency inventory, run,
+target, lease and kernel launcher. The source archive and image tar are immutable
+same-run artifacts. Publication verifies both again, loads the image as data,
+requires an existing private owner GHCR package, and records the immutable
+registry digest. GitHub OIDC provenance attestations cover the archive, image
+tar and binding receipts. Deployment never uses a tag or Git-source build.
 
-Injected execution reports `offlineVerification: NOT_PROVEN`,
-`transport: caller-supplied-unverified`, `hostedExecuted: null` and
-`GAMING_SCOPED_PREVIEW: NOT_RUN`. The assembled test separately proves zero
-application calls through those four instrumented seams; the wrapper cannot
-grant that evidence to arbitrary callers.
-The fixture
-components use server-owned synthetic data and passive workers. They do not
-prove normal-route bearer authentication, the complete acquisition/provider
-graph, live publisher retrieval, real Trinity inference, active queue work,
-SQL atomicity, caching/storage integration or production readiness. Focused
-mocked production-path tests and disposable PostgreSQL CI remain separate
-evidence. Existing source/compiled import and semantic protections still apply.
+## Credentials and network boundaries
 
-## Hosted dependency and admission requirements
+Candidate code executes only inside resource-limited build containers and the
+isolated runtime. Online dependency fetching uses manifests and a lockfile with
+scripts disabled. Candidate hooks, compilation and pruning run with BuildKit
+`--network=none`. Fresh trusted tooling checks reviewed source and compiled
+import graphs independently of candidate build tools. Candidate code receives
+no GitHub write, Railway, production, Notion, AI-provider or data credentials.
+Publication has package/OIDC authority but never starts candidate images.
+Deployment and cleanup have only the dedicated Railway workspace credential.
 
-The current trusted native workflow always executes its default full verifier,
-including the Notion canary. Its Railway controller attests Git commit and
-deployment manifests, but uses Git-source Railway builds rather than an
-independently bound source archive and immutable OCI image. The stronger
-[stacked-draft lane](RAILWAY_STACKED_DRAFT_PREVIEW.md) has secretless artifact
-controls but admits only its historical fixed stack and remains disabled.
-Neither path can be silently substituted for ordinary-PR Gaming acceptance.
+The publisher reads private-package metadata through the fixed authenticated-owner
+`GET /user/packages/container/arcanos-gaming-preview` endpoint. Its current
+[endpoint-specific REST documentation](https://docs.github.com/en/rest/packages/packages#get-a-package-for-the-authenticated-user)
+supports GitHub App installation tokens, and GitHub identifies
+[`GITHUB_TOKEN`](https://docs.github.com/en/actions/concepts/security/github_token)
+as that token type. The existing ephemeral workflow token remains the only
+publication credential. Exact package name, container type, owner `pbjustin`
+and `visibility: private` must all match before Docker runs. A 401, 403 or 404
+fails closed; there is no PAT fallback or anonymous-401 visibility shortcut.
+Authenticated-owner resolution for the provisioned private package remains
+`NOT_PROVEN` until a separately authorized protected-main preflight succeeds.
 
-The smallest safe infrastructure dependency is a separately reviewed extension
-of the existing artifact components for an ordinary same-repository PR targeting
-`main`. It must remove historical stack identity only through reviewed admission
-policy, retain existing opt-in/non-draft requirements and require owner
-authorization. It must run from protected main before it can attest #1558.
-This is a separable `RELEASE_DEPENDENCY` for hosted Gaming acceptance and belongs
-in a follow-up outside #1558's frozen source-validation scope. Recording that
-dependency neither executes nor satisfies hosted acceptance. The candidate's
-technical freeze can be assessed with this limitation documented; it does not
-authorize a release or merge.
-Required activation evidence includes:
+Railway's [outbound documentation](https://docs.railway.com/networking/outbound-networking)
+describes outbound connectivity and static IPs; it does not establish a general
+destination-deny firewall. Private networking is disabled in the isolated
+environment. A trusted, root-owned [Linux amd64 launcher](../scripts/gaming-preview-network.c)
+sets `no_new_privs` and an inherited seccomp filter before any candidate process.
+It denies outbound connect, datagram/raw sockets, sendto/sendmsg/sendmmsg,
+io_uring and process-injection bypass paths, and closes inherited descriptors.
+Its first exec also supplies a fresh environment with only the fixed role and
+Railway identity keys, removing credentials and Node preload options before
+the trusted supervisor starts. The supervisor's original environment cannot
+be recovered from its process environment by a candidate child.
+Local socketpair IPC remains available for child startup. Inbound TCP listeners
+and replies on accepted sockets remain available. Startup performs packet-free
+negative syscall probes; the trusted runtime independently checks the kernel
+state and launcher digest. Unsupported kernels or blocked filter installation
+fail startup. Expiry terminates the child, with bounded forced termination.
 
-- Fresh exact PR head/base and source-tree binding, expiring owner authorization,
-  trusted controller revision and unchanged admission before each effect.
-- Secretless contained builds, independently pinned source/compiled checks,
-  source-archive digest and immutable OCI image provenance; separate publication,
-  deployment and credential-free verification authority.
-- A dedicated approved isolated target, no application/provider/data credentials,
-  databases, Redis, volumes or inherited triggers, and verified runtime/resource
-  and network boundaries before candidate code runs.
-- Controller-owned exact environment/services/deployments, worker-first sole-active
-  success, passive-worker readiness, the fixed Gaming scope and unchanged request
-  bounds; no Notion or paid provider request.
-- Bounded failure diagnostics and always-run cleanup using the independently
-  bound ownership receipt, exact-resource deletion and control-plane absence
-  verification; former-host checks only supplement that absence evidence.
+This is an inherited process/kernel egress boundary, not proof of a Railway
+provider firewall or a general defense against kernel/container escapes.
+Independent Linux tests exercise TCP/UDP/DNS denial, child inheritance and
+inbound HTTP. Hosted compatibility remains unproven until an authorized run.
+Application mocks alone are not claimed as network-isolation proof.
 
-Until those controls are reviewed, present on protected main, provisioned and
-owner-authorized, hosted Gaming acceptance remains `NOT_RUN`. Do not dispatch
-the broad workflow under a no-Notion restriction, enable the historical stack,
-or declare a local synthetic run hosted proof. Full required CI and renewed
-independent review remain separate PR-readiness gates.
+Controller egress legitimately reaches fixed GitHub/Railway APIs and attested
+preview readiness endpoints. Publication reaches GitHub/GHCR. The verifier
+has no management credentials and sends only the fixed requests to two
+control-plane-bound preview origins, with redirects forbidden and credentials
+omitted. Git checkouts in that runner are evidence only. A digest passed directly
+from the trusted deploy job authenticates the downloaded deployment receipt;
+the verifier does not trust a digest inside its own input artifact.
+
+The runtime still contains the frozen sealed application's broad route surface.
+The Gaming inventory never selects its Notion canary. Outbound kernel denial
+prevents provider connectivity even if a public caller requests an excluded
+fixture. No actual Notion connectivity test is used to establish this boundary.
+No production database, Redis, durable ingestion, volumes, shared variables,
+deployment triggers or arbitrary start/predeploy commands are admitted.
+Private registry pull credentials must match an owner-audited fingerprint;
+their pull-only privileges and expiry require separate owner verification.
+
+## Execution, failure and cleanup
+
+The isolated workspace must contain only the reviewed preview project, two
+service definitions and one idle template environment. Existing production
+workspace/project IDs are forbidden. The worker deploys first; web cannot
+start until the worker's sole immutable deployment is successful and passive.
+Both roles must report exact-SHA readiness, expected hosts and bounded health.
+The controller rechecks both sole-active deployments before emitting its receipt
+and independently reattests them after all 84 verification requests.
+
+Request limits remain five seconds each, 60 seconds combined, 64 KiB per body,
+512 KiB combined, with the MCP phase's stricter 128 KiB aggregate limit. The
+second phase receives only remaining time. Abort and response reads are bounded.
+No Notion selector, live source retrieval, real inference or durable storage
+mutation is in the inventory. Nested proofs cover synthetic guide/build
+acceptance, acquisition/extraction, identity/editions, CLEAR, Trinity honesty,
+injection, provenance, citations, auth denials and request/cancellation bounds.
+
+The controller persists creation intent before provisioning and journals exact
+ownership before further effects. Lost create responses recover only a unique,
+idle environment matching the exact run-derived name, source template and
+project. Committed ownership patches bind image, source and controller. Failures
+attempt immediate cleanup; the separate cleanup job runs even after failed
+verification/attestation and may delete owned resources after lease expiry.
+Ambiguous ownership fails closed. Forced runner loss or unavailable control
+plane can require owner recovery; no workflow can guarantee deletion during an
+external outage. Such a run cannot pass.
+
+Cleanup requires absence by exact UUID and name across complete, unfiltered
+root and project Railway control-plane inventories. The pinned official CLI
+[schema](https://github.com/railwayapp/cli/blob/dc804165e0cc976036d0f4f328cd564033bdc3b5/src/gql/schema.json)
+defines `Query.environment` as non-null, so a fabricated null-resource
+contract is not used. Soft-deletion tombstones, queued deletion still exposed
+in either inventory, incomplete pagination and API errors cannot pass. A former URL returning 404 is supplementary,
+never deletion proof. Bounded receipts retain codes/identities rather than raw
+logs or sensitive values; Actions v4 artifacts are retained for 30 days. Preserve
+the run and provenance bundles in the owner's evidence archive before expiry.
+
+## Owner activation procedure
+
+1. Obtain independent infrastructure/security reviews and explicitly approve
+   protected-main deployment. Do not merge or activate as an implicit follow-up.
+2. Separately authorize a trusted bootstrap publication to create the private
+   `ghcr.io/pbjustin/arcanos-gaming-preview` package; this workflow requires it
+   to exist already. Inspect its exact owner, name, container type and private
+   visibility. In the package's **Manage Actions access**, grant
+   `pbjustin/Arcanos` **Write** access, as described in GitHub's
+   [workflow package access guidance](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility#ensuring-workflow-access-to-your-package).
+   Use a separate expiring pull-only identity granted read access only to this
+   package for Railway; never reuse the workflow publication token.
+   Provision a new isolated Railway workspace with only a dedicated preview
+   project, idle template and two services. Disable native/bot/focused PR deploys,
+   private networking, volumes, triggers, databases and shared variables. Audit
+   the workspace-only API token and expiring private-image pull-only credential.
+   Review exact target IDs, region, CPU/memory limits and credential fingerprint
+   in the controller policy. Enable that reviewed policy on protected main only
+   with separate owner approval. Configure the dedicated GitHub environment
+   `railway-gaming-preview` and `RAILWAY_GAMING_PREVIEW_API_TOKEN`. Its deployment
+   branch policy must allow main only; any approval must cover teardown too.
+3. Freshly read PR #1558, protected main and required CI. Confirm the intended
+   frozen head/tree again; keep the PR non-draft and without `railway-preview`.
+   The broad lifecycle now refuses #1558 even if accidentally labeled or marked
+   ready. Retain the exact current main/base/controller SHA from this refresh.
+4. From a clean protected-main checkout, fetch the frozen SHA as data. Compute
+   `sourceArchiveSha256` with
+   `new GitReadAdapter({cwd:process.cwd(),canonicalArchive:true}).archiveSha256(headSha)`
+   (Git archive with `core.autocrlf=false`, independent of Windows checkout settings) and
+   `targetSha256` with SHA-256 of `JSON.stringify(policy.target)` using the
+   reviewed controller policy. Prepare this exact JSON, replacing placeholders:
+
+   ```json
+   {"version":1,"controllerSha":"CURRENT_PROTECTED_MAIN_SHA","mainSha":"CURRENT_PROTECTED_MAIN_SHA","baseSha":"CURRENT_PROTECTED_MAIN_SHA","headSha":"1c1e7d0f4c8f4e62fd7117e28efd0d8d7c415262","treeSha":"89f1eb0b988514d92ef9f82dd2f77bc356735b8b","sourceArchiveSha256":"ARCHIVE_SHA256","targetSha256":"REVIEWED_TARGET_SHA256","expiresAt":"FRESH_UTC_ISO_TIMESTAMP_WITH_MILLISECONDS"}
+   ```
+
+5. Explicitly authorize that SHA and isolated target, then dispatch as `pbjustin`:
+
+   ```powershell
+   gh workflow run railway-gaming-preview.yml --repo pbjustin/Arcanos --ref main --raw-field "authorization_json=$(Get-Content -Raw ./gaming-owner-authorization.json)"
+   ```
+
+6. Inspect authorization, build/source/image provenance, worker-first deployment,
+   all 84 executed IDs, final identity attestation and control-plane cleanup
+   artifacts from that one run. Do not rerun an old dispatch; refresh authorization.
+   The final result is `PASS` only when verification, reattestation and cleanup
+   succeed; denied admission is `NOT_RUN`, and any admitted-run failure is `FAIL`.
+7. If teardown fails, retain ownership/creation receipts, inspect exact resources
+   and use the trusted cleanup command in the same reviewed owner context. Do
+   not delete ambiguous or unrelated resources. Require inventory and exact-ID
+   absence before closing the incident. The owner may retry only the cleanup job
+   with `gh api -X POST repos/pbjustin/Arcanos/actions/jobs/FAILED_CLEANUP_JOB_ID/rerun`.
+   It retains the original run/controller/receipts; replaying deployment remains
+   prohibited. A missing ownership receipt requires manual owner investigation.
+
+Hosted synthetic component proof does not establish live external-source
+acceptance, actual model-generated gameplay answers, normal-route full provider
+integration, production readiness or permission to merge. Those remain separate.
+
+## Validation
+
+[Infrastructure CI](../.github/workflows/gaming-preview-infrastructure-checks.yml)
+runs mocked admission, provenance, publication, failure/recovery, cleanup,
+inventory, bounds and Linux kernel tests. Its separate secretless artifact smoke
+build has no publication or Railway authority.
+
+Local image-smoke containers use the admitted maximum of one CPU, 512 MiB of
+memory and 64 processes per role. The verifier retains its five-second request,
+60-second aggregate and existing response-size limits; these resource caps do
+not change any assertion or timeout threshold.
+
+The frozen candidate's existing
+assembled-application test executes all 84 cases offline while independently
+checking its HTTP/HTTPS/fetch/Notion seams. Full-platform descriptor regression
+and the historical stack's tests remain separate. Record actual outcomes and
+review verdicts against the final infrastructure SHA; this guide is not a run
+receipt.

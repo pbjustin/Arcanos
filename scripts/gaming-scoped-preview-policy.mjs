@@ -2,7 +2,7 @@ import { readFileSync, statSync } from 'node:fs';
 
 const POLICY_URL = new URL('../config/railway-gaming-preview.json', import.meta.url);
 const issuedConfigurations = new WeakSet();
-const POLICY_KEYS = ['hostedEnabled', 'scope', 'statusContext', 'version'];
+const POLICY_KEYS = ['hostedActivation', 'scope', 'statusContext', 'version'];
 
 function requirePolicy(condition) {
   if (!condition) throw new Error('GAMING_PREVIEW_TRUSTED_POLICY_INVALID');
@@ -14,9 +14,7 @@ export function validateGamingPreviewPolicy(value) {
     && Object.keys(value).sort().join('|') === POLICY_KEYS.join('|')
     && value.version === 1 && value.scope === 'gaming-synthetic-v1'
     && value.statusContext === 'Railway Gaming Scoped Preview E2E'
-    // Enabling hosted execution requires a separately reviewed protected-main
-    // secretless artifact controller, not an edit to candidate configuration.
-    && value.hostedEnabled === false);
+    && value.hostedActivation === 'trusted-controller-receipt-only');
 }
 
 /** The caller cannot supply a candidate path, environment override or scope. */

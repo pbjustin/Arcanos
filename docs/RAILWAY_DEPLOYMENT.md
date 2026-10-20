@@ -9,9 +9,11 @@ not change the existing native preview eligibility or production promotion gates
 
 [Gaming-scoped preview verification](RAILWAY_GAMING_SCOPED_PREVIEW.md) combines
 the existing Gaming and shared-security assertions without the Notion canary.
-It currently supports offline synthetic application tests only; hosted execution
-is disabled and reported as `GAMING_SCOPED_PREVIEW = NOT_RUN`. The full native
-verifier retains its platform-wide coverage, including Notion connectivity.
+Offline synthetic application tests remain available. The separate owner-gated
+hosted controller is checked in disabled with no target; hosted acceptance remains
+`GAMING_SCOPED_PREVIEW = NOT_RUN` until a separately authorized run completes
+verification, final attestation and verified cleanup. The full native verifier
+retains its platform-wide coverage, including Notion connectivity.
 
 [Isolated live PR validation](LIVE_VALIDATION.md) uses a dedicated **ARCANOS V2
 Validation** service in `live-validation`, with Railway HTTPS, a validation-only
@@ -2498,6 +2500,7 @@ Rollback:
 - Custom GPT cannot import or calls the wrong host: verify the public web-service origin. Changing `ARCANOS_GPT_ACCESS_BASE_URL` or redeploying requires operational approval.
 
 ## References
+- [Trusted Gaming synthetic preview](RAILWAY_GAMING_SCOPED_PREVIEW.md): separately authorized manual lane; frozen Gaming never uses the broad Notion-containing preview as substitute acceptance.
 - `../railway.json`
 - `CONFIGURATION.md`
 - `CI_CD.md`

@@ -68,6 +68,12 @@ const BOOLEAN_ARGUMENTS = new Set(['--allow-network', '--execute']);
 
 // This scope is selected by the reviewed caller, never by candidate CLI input.
 export const GAMING_SCOPED_PREVIEW_SCOPE = 'gaming-synthetic-v1';
+// This frozen-candidate-only proof belongs to trusted scoped verification. The
+// shared full-platform contract also drives current-main application consumers.
+export const GAMING_SCOPED_PREVIEW_SECURITY_PROOF = Object.freeze({
+  header: 'x-arcanos-preview-gaming-scoped-security-version',
+  version: 'gaming-scoped-security/v1',
+});
 export const GAMING_SCOPED_PREVIEW_REQUIRED_NATIVE_CASE_IDS = Object.freeze([
   'web-readiness-initial', 'worker-readiness-initial',
   'web-health-get', 'web-health-head', 'web-healthz-get', 'web-readiness-head',
@@ -4886,10 +4892,9 @@ async function executeRequestCase(
     }
   }
   if (options.gamingSecurityProofRequired) {
-    const gamingContract = NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming;
-    const actualProof = response.headers.get(gamingContract.scopedSecurityProofHeader);
+    const actualProof = response.headers.get(GAMING_SCOPED_PREVIEW_SECURITY_PROOF.header);
     if (requestCase.caseId === 'gaming-query-guide'
-      ? actualProof !== gamingContract.scopedSecurityProofVersion
+      ? actualProof !== GAMING_SCOPED_PREVIEW_SECURITY_PROOF.version
       : actualProof !== null) {
       fail('NATIVE_PR_PREVIEW_GAMING_SCOPED_SECURITY_PROOF_INVALID', requestCase.caseId);
     }
@@ -5289,7 +5294,7 @@ async function executeRequestCase(
           ...(options.gamingSecurityProofRequired ? {
             gamingScopedSecurityVerified: true,
             gamingScopedSecurityProofVersion:
-              NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.scopedSecurityProofVersion,
+              GAMING_SCOPED_PREVIEW_SECURITY_PROOF.version,
           } : {}),
           gamingSourceAcquisitionVerified: true,
           gamingStructuredEvidenceVerified: true,
@@ -5520,7 +5525,8 @@ export async function runNativePrPreviewE2e({
       },
       limits,
       checks: [],
-      assertionInventory: assertionInventory(requestScope, requestPlan, []),
+      ...(requestScope === GAMING_SCOPED_PREVIEW_SCOPE
+        ? { assertionInventory: assertionInventory(requestScope, requestPlan, []) } : {}),
       summary: {
         status: 'PASS',
         code: 'EXPLICIT_NATIVE_PR_TARGET_VALIDATED_NO_NETWORK',
@@ -5579,7 +5585,8 @@ export async function runNativePrPreviewE2e({
     },
     limits,
     checks,
-    assertionInventory: assertionInventory(requestScope, requestPlan, checks),
+    ...(requestScope === GAMING_SCOPED_PREVIEW_SCOPE
+      ? { assertionInventory: assertionInventory(requestScope, requestPlan, checks) } : {}),
     summary: {
       status: 'PASS',
       code: requestScope === 'full' ? 'NATIVE_PR_PREVIEW_APPLICATION_E2E_PASS'
