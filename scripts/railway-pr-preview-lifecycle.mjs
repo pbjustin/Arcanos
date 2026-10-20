@@ -494,6 +494,8 @@ export function decideLifecycleAction({
   const eligible = pullRequest.state === 'open'
     && !pullRequest.draft
     && pullRequest.baseRef === CONTRACT.baseBranch
+    // Frozen Gaming has a separate owner-dispatched, provider-free lane.
+    && pullRequest.number !== 1558
     && optedIn;
 
   requireCondition([
@@ -511,7 +513,8 @@ export function decideLifecycleAction({
   if (eligible) {
     return 'reconcile';
   }
-  const canOwnAControllerPreview = eventAction === 'closed'
+  const canOwnAControllerPreview = pullRequest.number === 1558
+    || eventAction === 'closed'
     || eventAction === 'converted_to_draft'
     || eventAction === 'manual'
     || (eventAction === 'edited' && pullRequest.baseRef !== CONTRACT.baseBranch)
@@ -1080,6 +1083,7 @@ async function requireCurrentPullRequest({
   const current = await verifyCurrentPullRequest();
   requireCondition(
     current.number === expected.number
+      && current.number !== 1558
       && current.state === 'open'
       && current.draft === false
       && expected.baseRef === CONTRACT.baseBranch

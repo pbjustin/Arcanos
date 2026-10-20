@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -7,6 +8,11 @@ import { test } from 'node:test';
 
 import {
   NativePrPreviewE2eError,
+  GAMING_SCOPED_PREVIEW_SCOPE,
+  GAMING_SCOPED_PREVIEW_SECURITY_PROOF,
+  GAMING_SCOPED_PREVIEW_REQUIRED_NATIVE_CASE_IDS,
+  assertGamingScopedPreviewRequestPlan,
+  buildGamingScopedPreviewRequestPlan,
   buildNativePrPreviewRequestPlan,
   buildStackedDraftGamingRequestPlan,
   expectedNativePrPreviewContentType,
@@ -36,6 +42,7 @@ const WORKER_BASE_URL =
 const LOCAL_GIT_STATE = Object.freeze({
   clean: true,
   head: COMMIT_SHA,
+  sourceTreeSha: 'b'.repeat(40),
   repository: 'pbjustin/Arcanos',
 });
 const EXPECTED_BACKSTAGE_BOOKER_OPENAPI_DOCUMENT =
@@ -557,6 +564,7 @@ test('validates an exact native PR target without network access by default', as
 
   assert.equal(networkAttempted, false);
   assert.equal(result.executed, false);
+  assert.equal(Object.hasOwn(result, 'assertionInventory'), false);
   assert.equal(result.networkAttempted, false);
   assert.equal(result.summary.status, 'PASS');
   assert.equal(result.limits.requestTimeoutMs, 5_000);
@@ -599,6 +607,163 @@ test('stacked scope preserves rejection assertions and rejects arbitrary scope o
   error => error instanceof NativePrPreviewE2eError);
   await assert.rejects(runNativePrPreviewE2e({ requestScope: 'skip-security' }),
     error => error.code === 'NATIVE_PR_PREVIEW_REQUEST_SCOPE_INVALID');
+});
+
+function assertReviewedGamingRuntimeContract(contract) {
+  const baselineDigest = '27ef182ef3f57518254fbd8e77b29920e47ab220e5d9ef45268aed0289b2940b';
+  const frozenDigest = '64217670250f3a06368f66df58d6c808db2df434d4964ea9a7e13b1beeec147a';
+  const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+  const baseline = { ...contract };
+  const proofKeys = ['scopedSecurityProofHeader', 'scopedSecurityProofVersion'];
+  const includesScopedProof = proofKeys.some(key => Object.hasOwn(contract, key));
+  if (includesScopedProof) {
+    assert.equal(contract.scopedSecurityProofHeader, GAMING_SCOPED_PREVIEW_SECURITY_PROOF.header);
+    assert.equal(contract.scopedSecurityProofVersion, GAMING_SCOPED_PREVIEW_SECURITY_PROOF.version);
+    for (const key of proofKeys) delete baseline[key];
+  }
+  // Protected-main's original fields remain exact in both reviewed states.
+  // Frozen PR1558 adds only its paired security proof after executing that fixture.
+  assert.equal(digest(baseline), baselineDigest);
+  assert.equal(digest(contract), includesScopedProof ? frozenDigest : baselineDigest);
+}
+
+test('accepts only the exact protected-main or frozen Gaming contract with the independent scoped proof', () => {
+  // Protected main 0e7a8e607e3f2f3359dc86eabcf611d8dd3fe6b2 and frozen
+  // Gaming 1c1e7d0f4c8f4e62fd7117e28efd0d8d7c415262 are separate reviewed states.
+  assertReviewedGamingRuntimeContract(NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming);
+  assert.deepEqual(GAMING_SCOPED_PREVIEW_SECURITY_PROOF, {
+    header: 'x-arcanos-preview-gaming-scoped-security-version', version: 'gaming-scoped-security/v1',
+  });
+  assert.ok(Object.isFrozen(GAMING_SCOPED_PREVIEW_SECURITY_PROOF));
+});
+
+test('Gaming contract compatibility preserves both exact states and rejects partial proofs or unrelated drift', () => {
+  const baseline = { ...NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming };
+  delete baseline.scopedSecurityProofHeader;
+  delete baseline.scopedSecurityProofVersion;
+  const frozen = {
+    scopedSecurityProofHeader: GAMING_SCOPED_PREVIEW_SECURITY_PROOF.header,
+    scopedSecurityProofVersion: GAMING_SCOPED_PREVIEW_SECURITY_PROOF.version,
+    ...baseline,
+  };
+  assert.doesNotThrow(() => assertReviewedGamingRuntimeContract(baseline));
+  assert.doesNotThrow(() => assertReviewedGamingRuntimeContract(frozen));
+  for (const mutation of [
+    { ...baseline, scopedSecurityProofHeader: GAMING_SCOPED_PREVIEW_SECURITY_PROOF.header },
+    { ...baseline, scopedSecurityProofVersion: GAMING_SCOPED_PREVIEW_SECURITY_PROOF.version },
+    { ...frozen, scopedSecurityProofHeader: 'x-unreviewed-security-proof' },
+    { ...frozen, scopedSecurityProofVersion: 'gaming-scoped-security/v2' },
+    { ...baseline, unexpectedProofHeader: 'x-unreviewed-security-proof' },
+    { ...frozen, unexpectedProofHeader: 'x-unreviewed-security-proof' },
+    { ...baseline, canaryPath: '/unreviewed-gaming-canary' },
+    { ...frozen, canaryPath: '/unreviewed-gaming-canary' },
+  ]) {
+    assert.throws(() => assertReviewedGamingRuntimeContract(mutation), assert.AssertionError);
+  }
+});
+
+test('Gaming scope is a closed Gaming and shared-security plan with no Notion selector', () => {
+  const plan = buildGamingScopedPreviewRequestPlan();
+  const full = buildNativePrPreviewRequestPlan();
+  assert.equal(createHash('sha256').update(JSON.stringify(full)).digest('hex'),
+    'e9c3a2c7953541598877f282ca0ff378ff4cb360db7ba5f382b00902caea22ed');
+  assert.equal(plan.length, 63);
+  assert.ok(Object.isFrozen(plan));
+  assert.deepEqual(new Set(plan.map(item => item.caseId)),
+    new Set(GAMING_SCOPED_PREVIEW_REQUIRED_NATIVE_CASE_IDS));
+  assert.ok(full.filter(item => item.caseId.includes('gaming'))
+    .every(item => plan.some(selected => selected.caseId === item.caseId)));
+  assert.ok(plan.some(item => item.caseId === 'mcp-body-cap-effective-limits'));
+  assert.ok(plan.some(item => item.caseId === 'status-auth-before-parser'));
+  assert.ok(plan.every(item => !/notion|backstage|research|tutor/iu.test(JSON.stringify(item))));
+  assert.ok(full.some(item => item.caseId === 'backstage-generation-notion-authority-rag'
+    && item.fixtureName === 'notionAuthorityRag'));
+  for (const altered of [plan.slice(1), [...plan, full.find(item => item.fixtureName === 'notionAuthorityRag')],
+    plan.map(item => item.caseId === 'gaming-source-ingestion-unsafe'
+      ? { ...item, expectedStatus: 200 } : item)]) {
+    assert.throws(() => assertGamingScopedPreviewRequestPlan(altered),
+      error => error.code === 'NATIVE_PR_PREVIEW_GAMING_REQUIRED_ASSERTIONS_MISSING');
+  }
+});
+
+test('Gaming scope reports executed and intentionally skipped assertions with zero external verifier requests', async () => {
+  const plan = buildGamingScopedPreviewRequestPlan();
+  const mock = buildMockFetch(plan, undefined, undefined, item => item.caseId === 'gaming-query-guide'
+    ? { [GAMING_SCOPED_PREVIEW_SECURITY_PROOF.header]:
+      GAMING_SCOPED_PREVIEW_SECURITY_PROOF.version } : {});
+  const outbound = [];
+  const result = await runNativePrPreviewE2e({ args: validArguments('--execute', '--allow-network'),
+    requestScope: GAMING_SCOPED_PREVIEW_SCOPE, localGitState: LOCAL_GIT_STATE,
+    fetchImpl: async (url, init) => {
+      const host = new URL(url).hostname;
+      outbound.push(host);
+      assert.ok([new URL(WEB_BASE_URL).hostname, new URL(WORKER_BASE_URL).hostname].includes(host));
+      assert.notEqual(host, 'api.notion.com');
+      return mock.fetchImpl(url, init);
+    } });
+  assert.equal(result.kind, 'native_pr_gaming_scoped_preview_e2e');
+  assert.equal(result.target.sourceTreeSha, LOCAL_GIT_STATE.sourceTreeSha);
+  assert.equal(result.summary.requestsMade, 63);
+  assert.deepEqual(result.assertionInventory.executedCaseIds, plan.map(item => item.caseId));
+  assert.deepEqual(result.assertionInventory.plannedCaseIds, plan.map(item => item.caseId));
+  assert.ok(result.assertionInventory.skippedCaseIds.includes('backstage-generation-notion-authority-rag'));
+  assert.equal(result.assertionInventory.skippedCaseIds.length, 110);
+  assert.equal(outbound.length, 63);
+  assert.equal(result.limits.requestTimeoutMs, 5_000);
+  assert.equal(result.limits.totalTimeoutMs, 60_000);
+  assert.equal(result.checks.find(item => item.caseId === 'gaming-query-guide').gamingScopedSecurityVerified, true);
+  const dry = await runNativePrPreviewE2e({ args: validArguments(), requestScope: GAMING_SCOPED_PREVIEW_SCOPE,
+    localGitState: LOCAL_GIT_STATE, fetchImpl: () => { throw new Error('Dry-run network forbidden'); } });
+  assert.equal(dry.executed, false);
+  assert.deepEqual(dry.assertionInventory.executedCaseIds, []);
+  assert.deepEqual(dry.assertionInventory.plannedCaseIds, result.assertionInventory.plannedCaseIds);
+  assert.equal(dry.assertionInventory.skippedCaseIds.length, 110);
+});
+
+test('Gaming failures and missing final security proof fail closed without a candidate CLI scope override', async () => {
+  const plan = buildGamingScopedPreviewRequestPlan();
+  for (const failCase of ['gaming-canary-success', 'gaming-source-ingestion-unsafe', 'status-auth-before-parser']) {
+    const mock = buildMockFetch(plan, item => {
+      if (item.caseId !== failCase) return undefined;
+      const response = new Response('{}', { status: 500 });
+      Object.defineProperty(response, 'url', { value: (item.role === 'web' ? WEB_BASE_URL : WORKER_BASE_URL) + item.path });
+      return response;
+    },
+      undefined, item => item.caseId === 'gaming-query-guide'
+        ? { [GAMING_SCOPED_PREVIEW_SECURITY_PROOF.header]:
+          GAMING_SCOPED_PREVIEW_SECURITY_PROOF.version } : {});
+    await assert.rejects(runNativePrPreviewE2e({ args: validArguments('--execute', '--allow-network'),
+      requestScope: GAMING_SCOPED_PREVIEW_SCOPE, localGitState: LOCAL_GIT_STATE, fetchImpl: mock.fetchImpl }),
+    error => error.code === 'NATIVE_PR_PREVIEW_HTTP_STATUS_MISMATCH' && error.caseId === failCase);
+  }
+  const missingProof = buildMockFetch(plan);
+  await assert.rejects(runNativePrPreviewE2e({ args: validArguments('--execute', '--allow-network'),
+    requestScope: GAMING_SCOPED_PREVIEW_SCOPE, localGitState: LOCAL_GIT_STATE, fetchImpl: missingProof.fetchImpl }),
+  error => error.code === 'NATIVE_PR_PREVIEW_GAMING_SCOPED_SECURITY_PROOF_INVALID'
+    && error.caseId === 'gaming-query-guide');
+  for (const [caseId, proof] of [['gaming-query-guide', 'gaming-scoped-security/v0'],
+    ['gaming-canary-success', GAMING_SCOPED_PREVIEW_SECURITY_PROOF.version]]) {
+    const corruptProof = buildMockFetch(plan, undefined, undefined, item => item.caseId === caseId
+      ? { [GAMING_SCOPED_PREVIEW_SECURITY_PROOF.header]: proof } : {});
+    await assert.rejects(runNativePrPreviewE2e({ args: validArguments('--execute', '--allow-network'),
+      requestScope: GAMING_SCOPED_PREVIEW_SCOPE, localGitState: LOCAL_GIT_STATE, fetchImpl: corruptProof.fetchImpl }),
+    error => error.code === 'NATIVE_PR_PREVIEW_GAMING_SCOPED_SECURITY_PROOF_INVALID' && error.caseId === caseId);
+  }
+  assert.throws(() => parseNativePrPreviewE2eArguments(validArguments('--request-scope', GAMING_SCOPED_PREVIEW_SCOPE),
+    { localGitState: LOCAL_GIT_STATE }), error => error.code === 'NATIVE_PR_PREVIEW_ARGUMENT_INVALID');
+});
+
+test('Gaming scope requires an exact source-tree identity while ordinary scopes retain their existing evidence shape', async () => {
+  for (const sourceTreeSha of [undefined, 'not-a-tree', 'b'.repeat(39)]) {
+    await assert.rejects(runNativePrPreviewE2e({ args: validArguments(), requestScope: GAMING_SCOPED_PREVIEW_SCOPE,
+      localGitState: { ...LOCAL_GIT_STATE, sourceTreeSha } }),
+    error => error.code === 'NATIVE_PR_PREVIEW_SOURCE_TREE_UNVERIFIED');
+  }
+  await assert.rejects(runNativePrPreviewE2e({ args: validArguments(), requestScope: GAMING_SCOPED_PREVIEW_SCOPE,
+    localGitState: { ...LOCAL_GIT_STATE, head: 'b'.repeat(40) } }),
+  error => error.code === 'NATIVE_PR_PREVIEW_LOCAL_HEAD_MISMATCH');
+  assert.equal(Object.hasOwn(parseNativePrPreviewE2eArguments(validArguments(),
+    { localGitState: LOCAL_GIT_STATE }), 'sourceTreeSha'), false);
 });
 
 test('requires paired execution and network opt-ins', () => {
@@ -728,6 +893,8 @@ test('reads exact candidate Git evidence without executing candidate files', asy
     evidenceArguments[evidenceArguments.indexOf('--commit-sha') + 1] = head;
     const parsed = parseNativePrPreviewE2eArguments(evidenceArguments);
     assert.equal(parsed.commitSha, head);
+    const gamingParsed = parseNativePrPreviewE2eArguments(evidenceArguments, { includeSourceTree: true });
+    assert.equal(gamingParsed.sourceTreeSha, runGit('rev-parse', 'HEAD^{tree}').toLowerCase());
     assert.deepEqual(
       readExpectedBackstageBookerOpenApiDocument(repositoryRoot, head),
       evidenceDocument

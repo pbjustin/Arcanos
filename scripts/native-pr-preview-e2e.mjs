@@ -66,6 +66,45 @@ const VALUE_ARGUMENTS = new Set([
 ]);
 const BOOLEAN_ARGUMENTS = new Set(['--allow-network', '--execute']);
 
+// This scope is selected by the reviewed caller, never by candidate CLI input.
+export const GAMING_SCOPED_PREVIEW_SCOPE = 'gaming-synthetic-v1';
+// This frozen-candidate-only proof belongs to trusted scoped verification. The
+// shared full-platform contract also drives current-main application consumers.
+export const GAMING_SCOPED_PREVIEW_SECURITY_PROOF = Object.freeze({
+  header: 'x-arcanos-preview-gaming-scoped-security-version',
+  version: 'gaming-scoped-security/v1',
+});
+export const GAMING_SCOPED_PREVIEW_REQUIRED_NATIVE_CASE_IDS = Object.freeze([
+  'web-readiness-initial', 'worker-readiness-initial',
+  'web-health-get', 'web-health-head', 'web-healthz-get', 'web-readiness-head',
+  'worker-health-get', 'worker-health-head', 'worker-healthz-get', 'worker-readiness-head',
+  'web-gpt-access-denied', 'web-unlisted-job-denied', 'web-job-stream-denied',
+  'web-health-post-denied', 'web-readiness-query-denied', 'worker-job-denied',
+  'worker-health-post-denied', 'worker-readiness-query-denied',
+  'mcp-body-cap-effective-limits', 'status-auth-before-parser',
+  'gaming-canary-success', 'gaming-canary-closed-schema',
+  'gaming-query-guide', 'gaming-query-build', 'gaming-query-meta',
+  'gaming-query-closed-schema', 'gaming-query-unsupported-action',
+  'gaming-query-mode-required', 'gaming-query-operational-guard',
+  'gaming-source-ingestion-unauthorized', 'gaming-source-ingestion-malformed-unauthorized',
+  'gaming-source-ingestion-oversized-unauthorized', 'gaming-source-refresh-unauthorized',
+  'gaming-source-status-unauthorized', 'gaming-source-status-encoded-unauthorized',
+  'gaming-source-status-noncanonical-unauthorized', 'gaming-source-ingestion-validation',
+  'gaming-source-ingestion-parser-oversized', 'gaming-source-ingestion-parser-media-type',
+  'gaming-source-ingestion-unsafe', 'gaming-source-ingestion-outage',
+  'gaming-source-ingestion-created', 'gaming-source-ingestion-replay',
+  'gaming-source-ingestion-conflict', 'gaming-source-refresh-validation',
+  'gaming-source-refresh-unsafe', 'gaming-source-refresh-outage',
+  'gaming-source-refresh-created', 'gaming-source-status-validation',
+  'gaming-source-status-encoded-queued', 'gaming-source-status-noncanonical-validation',
+  'gaming-source-status-queued', 'gaming-source-status-running',
+  'gaming-source-status-completed', 'gaming-source-status-missing',
+  'gaming-source-status-outage', 'gaming-source-options-unauthorized',
+  'worker-gaming-canary-denied', 'worker-gaming-source-denied',
+  'worker-mcp-body-cap-denied', 'worker-status-auth-boundary-denied',
+  'web-readiness-final', 'worker-readiness-final',
+]);
+
 export class NativePrPreviewE2eError extends Error {
   constructor(code, caseId = undefined) {
     super(code);
@@ -260,7 +299,7 @@ export function readExpectedBackstageBookerOpenApiDocument(
 
 export function parseNativePrPreviewE2eArguments(
   args,
-  { localGitState = undefined } = {}
+  { localGitState = undefined, includeSourceTree = false } = {}
 ) {
   const values = new Map();
   const booleans = new Set();
@@ -328,6 +367,14 @@ export function parseNativePrPreviewE2eArguments(
   if (commitSha !== observedLocalGitState.head) {
     fail('NATIVE_PR_PREVIEW_LOCAL_HEAD_MISMATCH');
   }
+  const sourceTreeSha = includeSourceTree
+    ? localGitState === undefined
+      ? runLocalGit(['rev-parse', 'HEAD^{tree}'], gitEvidenceRoot).toLowerCase()
+      : observedLocalGitState.sourceTreeSha
+    : undefined;
+  if (includeSourceTree && !COMMIT_PATTERN.test(sourceTreeSha ?? '')) {
+    fail('NATIVE_PR_PREVIEW_SOURCE_TREE_UNVERIFIED');
+  }
 
   const webBaseUrl = validatePreviewOrigin(
     values.get('--web-base-url'),
@@ -356,6 +403,7 @@ export function parseNativePrPreviewE2eArguments(
     ),
     prNumber,
     repository: observedLocalGitState.repository,
+    ...(includeSourceTree ? { sourceTreeSha } : {}),
     requestTimeoutMs: readInteger(
       values.get('--request-timeout-ms') ?? String(DEFAULT_REQUEST_TIMEOUT_MS),
       1_000,
@@ -4843,6 +4891,14 @@ async function executeRequestCase(
       fail(proofCode, requestCase.caseId);
     }
   }
+  if (options.gamingSecurityProofRequired) {
+    const actualProof = response.headers.get(GAMING_SCOPED_PREVIEW_SECURITY_PROOF.header);
+    if (requestCase.caseId === 'gaming-query-guide'
+      ? actualProof !== GAMING_SCOPED_PREVIEW_SECURITY_PROOF.version
+      : actualProof !== null) {
+      fail('NATIVE_PR_PREVIEW_GAMING_SCOPED_SECURITY_PROOF_INVALID', requestCase.caseId);
+    }
+  }
   const gamingLargeSourceReport = readGamingCaseReport(response, requestCase, options, 'largeSource');
   const gamingLiveSourceValidationReport = readGamingCaseReport(response, requestCase, options, 'liveSourceValidation');
   if (requestCase.caseId === 'gaming-query-guide'
@@ -5235,6 +5291,11 @@ async function executeRequestCase(
           gamingDiscoveryRecoveryEvidenceProofVersion: NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.discoveryRecoveryEvidenceProofVersion,
           gamingDiscoveryRecoveryEvidenceProofScope: 'pure-v2-requirement-structural-evidence',
           gamingClearVerified: true,
+          ...(options.gamingSecurityProofRequired ? {
+            gamingScopedSecurityVerified: true,
+            gamingScopedSecurityProofVersion:
+              GAMING_SCOPED_PREVIEW_SECURITY_PROOF.version,
+          } : {}),
           gamingSourceAcquisitionVerified: true,
           gamingStructuredEvidenceVerified: true,
           gamingBaseGameScopeVerified: true,
@@ -5358,6 +5419,39 @@ export function buildStackedDraftGamingRequestPlan() {
   );
 }
 
+export function assertGamingScopedPreviewRequestPlan(requestPlan) {
+  const fullPlan = buildNativePrPreviewRequestPlan();
+  const required = new Set(GAMING_SCOPED_PREVIEW_REQUIRED_NATIVE_CASE_IDS);
+  const expected = fullPlan.filter(item => required.has(item.caseId));
+  if (!Array.isArray(requestPlan)
+    || required.size !== GAMING_SCOPED_PREVIEW_REQUIRED_NATIVE_CASE_IDS.length
+    || expected.length !== required.size
+    || fullPlan.some(item => item.caseId.includes('gaming') && !required.has(item.caseId))
+    || !isDeepStrictEqual(requestPlan, expected)) {
+    fail('NATIVE_PR_PREVIEW_GAMING_REQUIRED_ASSERTIONS_MISSING');
+  }
+  return requestPlan;
+}
+
+export function buildGamingScopedPreviewRequestPlan() {
+  const required = new Set(GAMING_SCOPED_PREVIEW_REQUIRED_NATIVE_CASE_IDS);
+  return Object.freeze(assertGamingScopedPreviewRequestPlan(
+    buildNativePrPreviewRequestPlan().filter(item => required.has(item.caseId))
+  ));
+}
+
+function assertionInventory(requestScope, requestPlan, checks) {
+  const plannedCaseIds = requestPlan.map(item => item.caseId);
+  const selected = new Set(plannedCaseIds);
+  return {
+    requestScope,
+    plannedCaseIds,
+    executedCaseIds: checks.map(item => item.caseId),
+    skippedCaseIds: buildNativePrPreviewRequestPlan()
+      .filter(item => !selected.has(item.caseId)).map(item => item.caseId),
+  };
+}
+
 export async function runNativePrPreviewE2e({
   args,
   expectedBackstageBookerOpenApiDocument = undefined,
@@ -5366,29 +5460,37 @@ export async function runNativePrPreviewE2e({
   monotonicNow = () => performance.now(),
   requestScope = 'full',
 } = {}) {
-  if (!['full', 'stacked-draft-gaming-synthetic'].includes(requestScope)) {
+  if (!['full', 'stacked-draft-gaming-synthetic', GAMING_SCOPED_PREVIEW_SCOPE].includes(requestScope)) {
     fail('NATIVE_PR_PREVIEW_REQUEST_SCOPE_INVALID');
   }
   const parsedOptions = parseNativePrPreviewE2eArguments(
     args ?? [],
-    localGitState === undefined ? {} : { localGitState }
+    { ...(localGitState === undefined ? {} : { localGitState }),
+      includeSourceTree: requestScope === GAMING_SCOPED_PREVIEW_SCOPE }
   );
   const options = {
     ...parsedOptions,
+    gamingSecurityProofRequired: requestScope === GAMING_SCOPED_PREVIEW_SCOPE,
     expectedBackstageBookerOpenApiDocument:
       expectedBackstageBookerOpenApiDocument
-      ?? readExpectedBackstageBookerOpenApiDocument(
+      ?? (requestScope === GAMING_SCOPED_PREVIEW_SCOPE ? undefined : readExpectedBackstageBookerOpenApiDocument(
           parsedOptions.gitEvidenceRoot,
           parsedOptions.commitSha
-        ),
+        )),
   };
   const requestPlan = requestScope === 'full'
     ? buildNativePrPreviewRequestPlan()
-    : buildStackedDraftGamingRequestPlan();
+    : requestScope === GAMING_SCOPED_PREVIEW_SCOPE
+      ? buildGamingScopedPreviewRequestPlan()
+      : buildStackedDraftGamingRequestPlan();
+  const kind = requestScope === 'full' ? 'native_pr_preview_application_e2e'
+    : requestScope === GAMING_SCOPED_PREVIEW_SCOPE ? 'native_pr_gaming_scoped_preview_e2e'
+      : 'stacked_draft_gaming_synthetic_e2e';
   const target = {
     repository: options.repository,
     prNumber: options.prNumber,
     commitSha: options.commitSha,
+    ...(requestScope === GAMING_SCOPED_PREVIEW_SCOPE ? { sourceTreeSha: options.sourceTreeSha } : {}),
     webHost: new URL(options.webBaseUrl).hostname,
     workerHost: new URL(options.workerBaseUrl).hostname,
   };
@@ -5409,7 +5511,7 @@ export async function runNativePrPreviewE2e({
   if (!options.execute) {
     return {
       schemaVersion: 1,
-      kind: requestScope === 'full' ? 'native_pr_preview_application_e2e' : 'stacked_draft_gaming_synthetic_e2e',
+      kind,
       mode: 'DRY_RUN',
       executed: false,
       networkAttempted: false,
@@ -5423,6 +5525,8 @@ export async function runNativePrPreviewE2e({
       },
       limits,
       checks: [],
+      ...(requestScope === GAMING_SCOPED_PREVIEW_SCOPE
+        ? { assertionInventory: assertionInventory(requestScope, requestPlan, []) } : {}),
       summary: {
         status: 'PASS',
         code: 'EXPLICIT_NATIVE_PR_TARGET_VALIDATED_NO_NETWORK',
@@ -5467,7 +5571,7 @@ export async function runNativePrPreviewE2e({
 
   return {
     schemaVersion: 1,
-    kind: requestScope === 'full' ? 'native_pr_preview_application_e2e' : 'stacked_draft_gaming_synthetic_e2e',
+    kind,
     mode: 'EXECUTE',
     executed: true,
     networkAttempted: true,
@@ -5481,9 +5585,13 @@ export async function runNativePrPreviewE2e({
     },
     limits,
     checks,
+    ...(requestScope === GAMING_SCOPED_PREVIEW_SCOPE
+      ? { assertionInventory: assertionInventory(requestScope, requestPlan, checks) } : {}),
     summary: {
       status: 'PASS',
-      code: requestScope === 'full' ? 'NATIVE_PR_PREVIEW_APPLICATION_E2E_PASS' : 'STACKED_DRAFT_GAMING_SYNTHETIC_E2E_PASS',
+      code: requestScope === 'full' ? 'NATIVE_PR_PREVIEW_APPLICATION_E2E_PASS'
+        : requestScope === GAMING_SCOPED_PREVIEW_SCOPE ? 'NATIVE_PR_GAMING_SCOPED_PREVIEW_E2E_PASS'
+          : 'STACKED_DRAFT_GAMING_SYNTHETIC_E2E_PASS',
       checksPassed: checks.length,
       plannedRequests: requestPlan.length,
       requestsMade: checks.length,

@@ -378,22 +378,27 @@ export class GitHubReadAdapter {
   }
 }
 
-function gitEnvironment() {
+function gitEnvironment(canonicalArchive = false) {
   const environment = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
   return { ...environment, GIT_NO_REPLACE_OBJECTS: '1', GIT_CONFIG_NOSYSTEM: '1',
-    GIT_CONFIG_GLOBAL: devNull, GIT_TERMINAL_PROMPT: '0' };
+    GIT_CONFIG_GLOBAL: canonicalArchive && process.platform === 'win32' ? 'NUL' : devNull,
+    GIT_TERMINAL_PROMPT: '0' };
 }
 
 // Only built-in object reads run. No shell, hooks, checkout, fetch, package install, PR program or customizable runner.
 export class GitReadAdapter {
-  constructor({ cwd }) {
+  #canonicalArchive;
+
+  constructor({ cwd, canonicalArchive = false }) {
     requireCondition(typeof cwd === 'string' && isAbsolute(cwd), 'STACKED_PREVIEW_GIT_DIRECTORY_INVALID');
+    requireCondition(typeof canonicalArchive === 'boolean', 'STACKED_PREVIEW_GIT_ARCHIVE_OPTION_INVALID');
     this.cwd = cwd;
+    this.#canonicalArchive = canonicalArchive;
   }
 
   async #readObject(args, allowNotAncestor = false) {
     return new Promise((resolve, reject) => {
-      execFile('git', args, { cwd: this.cwd, env: gitEnvironment(), shell: false,
+      execFile('git', args, { cwd: this.cwd, env: gitEnvironment(this.#canonicalArchive), shell: false,
         timeout: GIT_TIMEOUT_MS, maxBuffer: 65_536, encoding: 'utf8' }, (error, stdout) => {
         if (allowNotAncestor && error?.code === 1) return resolve(false);
         if (error) return reject(new StackedDraftPreviewContractError('STACKED_PREVIEW_GIT_READ_FAILED'));
@@ -422,8 +427,9 @@ export class GitReadAdapter {
       const hash = createHash('sha256');
       let bytes = 0;
       let failure = null;
-      const child = spawn('git', ['archive', '--format=tar', headSha], {
-        cwd: this.cwd, env: gitEnvironment(), shell: false, stdio: ['ignore', 'pipe', 'pipe'],
+      const args = [...(this.#canonicalArchive ? ['-c', 'core.autocrlf=false'] : []), 'archive', '--format=tar', headSha];
+      const child = spawn('git', args, {
+        cwd: this.cwd, env: gitEnvironment(this.#canonicalArchive), shell: false, stdio: ['ignore', 'pipe', 'pipe'],
       });
       const stop = code => {
         failure ??= new StackedDraftPreviewContractError(code);

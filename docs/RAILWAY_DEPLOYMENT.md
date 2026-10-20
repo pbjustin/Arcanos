@@ -2492,6 +2492,7 @@ Rollback:
 - Custom GPT cannot import or calls the wrong host: verify the public web-service origin. Changing `ARCANOS_GPT_ACCESS_BASE_URL` or redeploying requires operational approval.
 
 ## References
+- [Trusted Gaming synthetic preview](RAILWAY_GAMING_SCOPED_PREVIEW.md): separately authorized manual lane; frozen Gaming never uses the broad Notion-containing preview as substitute acceptance.
 - `../railway.json`
 - `CONFIGURATION.md`
 - `CI_CD.md`

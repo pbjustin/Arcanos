@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "scope": "gaming-synthetic-v1",
+  "hostedActivation": "trusted-controller-receipt-only",
+  "statusContext": "Railway Gaming Scoped Preview E2E"
+}

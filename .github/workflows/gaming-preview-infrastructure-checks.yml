@@ -1,0 +1,83 @@
+name: Gaming Preview Infrastructure Checks
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/*preview*'
+      - 'scripts/*preview*'
+      - 'config/*preview*'
+      - 'tests/railway-pr-preview-lifecycle.test.js'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.18.1'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Offline admission, lifecycle, provenance and kernel network tests
+        run: >-
+          node --test scripts/gaming-preview-*.test.mjs
+          scripts/gaming-scoped-preview-*.test.mjs
+          scripts/railway-gaming-preview.test.mjs
+          scripts/stacked-draft-preview-*.test.mjs
+          scripts/railway-stacked-draft-preview.test.mjs
+          scripts/native-pr-preview-e2e.test.mjs
+  artifact-smoke:
+    # This job builds a disposable local image only: no publication, Railway
+    # authority, environment secret or provider token is available.
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.18.1'
+      - run: git fetch --no-tags origin 848d6be5fc7d73936bb7921bd496d3051e30752d
+      - name: Materialize synthetic build authorization without deployment authority
+        run: |
+          node --input-type=module <<'NODE'
+          import {writeFileSync} from 'node:fs';
+          import {GitReadAdapter} from './scripts/stacked-draft-preview-contract.mjs';
+          const git=new GitReadAdapter({cwd:process.cwd(),canonicalArchive:true});
+          const headSha='848d6be5fc7d73936bb7921bd496d3051e30752d';
+          const sourceArchiveSha256=await git.archiveSha256(headSha);
+          if(sourceArchiveSha256!=='5bc4713eb4842f5927354bebc9ae82f43f9c32516dd7f32b61a8c446db684123')throw new Error('GAMING_SOURCE_ARCHIVE_DRIFT');
+          const id=d=>`${d.repeat(8)}-${d.repeat(4)}-4${d.repeat(3)}-8${d.repeat(3)}-${d.repeat(12)}`;
+          writeFileSync('gaming-smoke-authorization.json',JSON.stringify({version:1,
+            controllerSha:process.env.GITHUB_SHA,mainSha:process.env.GITHUB_SHA,baseSha:process.env.GITHUB_SHA,
+            headSha,treeSha:'d78ffd0a423e9755008784b6c244cafc131d1acf',
+            sourceArchiveSha256,targetSha256:'0'.repeat(64),
+            expiresAt:new Date(Date.now()+7200000).toISOString(),runId:process.env.GITHUB_RUN_ID,
+            target:{projectId:id('1'),baseEnvironmentId:id('2'),workerServiceId:id('3'),webServiceId:id('4')}}));
+          NODE
+      - name: Build and attest exact frozen candidate in contained stages
+        run: node scripts/gaming-preview-build.mjs build gaming-smoke-authorization.json gaming-smoke
+      - name: Verify archive and image receipt binding
+        run: node scripts/gaming-preview-build.mjs verify gaming-smoke-authorization.json gaming-smoke/build.json gaming-smoke/image.tar
+      - name: Exercise immutable image and all 84 cases through loopback only
+        run: >-
+          node scripts/gaming-preview-image-smoke.mjs gaming-smoke-authorization.json
+          gaming-smoke/build.json gaming-smoke/image.tar gaming-smoke/local-image-smoke.json
+      - name: Retain bounded artifact diagnostics and local evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gaming-infrastructure-local-image-evidence
+          path: |
+            gaming-smoke/build.json
+            gaming-smoke/local-image-smoke.json
+            gaming-smoke/build.log
+            gaming-smoke/builder-create.log
+          if-no-files-found: warn
+          retention-days: 10

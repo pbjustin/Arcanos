@@ -1,0 +1,436 @@
+name: Railway Gaming Scoped Preview
+run-name: Owner-authorized frozen Gaming synthetic acceptance
+# No PR event, label, schedule or merge can deploy this lane.
+on:
+  workflow_dispatch:
+    inputs:
+      authorization_json:
+        description: Expiring exact-controller/base/head/tree/archive/isolated-target owner authorization
+        required: true
+        type: string
+permissions: {}
+concurrency:
+  group: railway-gaming-scoped-preview-1558
+  cancel-in-progress: false
+env:
+  CONTROLLER_SHA: ${{ github.workflow_sha }}
+  EVENT_SENDER: ${{ github.event.sender.login }}
+jobs:
+  authorize:
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      && github.repository == 'pbjustin/Arcanos'
+      && github.actor == 'pbjustin'
+      && github.event.sender.login == 'pbjustin'
+      && github.ref == 'refs/heads/main'
+      && github.workflow_ref == 'pbjustin/Arcanos/.github/workflows/railway-gaming-preview.yml@refs/heads/main'
+      && github.run_attempt == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.18.1'
+      - name: Materialize bounded owner input
+        env:
+          AUTHORIZATION_JSON: ${{ inputs.authorization_json }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { mkdirSync, writeFileSync } from 'node:fs';
+          const value = process.env.AUTHORIZATION_JSON;
+          if (typeof value !== 'string' || Buffer.byteLength(value) > 16384) throw new Error('GAMING_PREVIEW_INPUT_INVALID');
+          mkdirSync('.gaming-preview');
+          writeFileSync('.gaming-preview/authorization.json', JSON.stringify(JSON.parse(value)) + '\n', {mode:0o600, flag:'wx'});
+          NODE
+      - name: Fetch fixed frozen commit as data
+        run: git fetch --no-tags origin 848d6be5fc7d73936bb7921bd496d3051e30752d
+      - name: Revalidate exact owner admission
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          node scripts/railway-gaming-preview.mjs authorize
+          --authorization .gaming-preview/authorization.json
+          --output .gaming-preview/authorized.json
+      - name: Materialize attested build identity
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const value = JSON.parse(readFileSync('.gaming-preview/authorized.json','utf8'));
+          if (value.status !== 'VERIFIED' || value.deploymentActivation !== 'VERIFIED') throw new Error('GAMING_PREVIEW_ACTIVATION_BLOCKED');
+          writeFileSync('.gaming-preview/build-authorization.json', JSON.stringify(value.buildAuthorization)+'\n', {mode:0o600,flag:'wx'});
+          NODE
+      - name: Retain authorization evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: gaming-preview-authorization
+          path: |
+            .gaming-preview/authorization.json
+            .gaming-preview/authorized.json
+            .gaming-preview/build-authorization.json
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
+
+  build:
+    needs: authorize
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.18.1'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: gaming-preview-authorization
+          path: .gaming-preview
+      - name: Fetch exact source objects only
+        run: git fetch --no-tags origin 848d6be5fc7d73936bb7921bd496d3051e30752d
+      - name: Build secretless immutable image
+        env:
+          GITHUB_TOKEN: ''
+        run: node scripts/gaming-preview-build.mjs build .gaming-preview/build-authorization.json .gaming-preview/build
+      - name: Verify inherited kernel boundary independently
+        run: node --test scripts/gaming-preview-network.test.mjs
+      - name: Retain build evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: gaming-preview-build
+          path: |
+            .gaming-preview/build/build.json
+            .gaming-preview/build/image.tar
+            .gaming-preview/build/source.tar
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
+
+  publish:
+    needs: [authorize, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.18.1'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: gaming-preview-authorization
+          path: .gaming-preview
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: gaming-preview-build
+          path: .gaming-preview
+      - name: Fetch frozen identity as data
+        run: git fetch --no-tags origin 848d6be5fc7d73936bb7921bd496d3051e30752d
+      - name: Revalidate exact owner admission
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          node scripts/railway-gaming-preview.mjs authorize
+          --authorization .gaming-preview/authorization.json
+          --output .gaming-preview/pre-publication.json
+      - name: Verify and publish static image to preexisting private registry
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: >-
+          node scripts/gaming-preview-publish.mjs
+          .gaming-preview/build-authorization.json .gaming-preview/build.json
+          .gaming-preview/image.tar .gaming-preview/source.tar .gaming-preview/published.json
+      - name: Attest exact archive, image bytes and source binding
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: |
+            .gaming-preview/source.tar
+            .gaming-preview/image.tar
+            .gaming-preview/build.json
+            .gaming-preview/published.json
+      - name: Retain publication evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: gaming-preview-publication
+          path: |
+            .gaming-preview/build.json
+            .gaming-preview/published.json
+            .gaming-preview/pre-publication.json
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
+
+  deploy:
+    needs: [authorize, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: railway-gaming-preview
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
+    outputs:
+      receipt_sha256: ${{ steps.receipt.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.18.1'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: gaming-preview-authorization
+          path: .gaming-preview
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: gaming-preview-publication
+          path: .gaming-preview
+      - name: Fetch frozen identity as data
+        run: git fetch --no-tags origin 848d6be5fc7d73936bb7921bd496d3051e30752d
+      - name: Deploy worker first through trusted controller
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_GAMING_PREVIEW_API_TOKEN }}
+        run: >-
+          node scripts/railway-gaming-preview.mjs deploy
+          --authorization .gaming-preview/authorization.json
+          --build-receipt .gaming-preview/build.json --image .gaming-preview/published.json
+          --output .gaming-preview/deployment.json
+      - name: Bind deployment receipt to trusted job output
+        id: receipt
+        run: |
+          node --input-type=module <<'NODE'
+          import {createHash} from 'node:crypto';
+          import {appendFileSync,readFileSync} from 'node:fs';
+          const digest=createHash('sha256').update(readFileSync('.gaming-preview/deployment.json')).digest('hex');
+          appendFileSync(process.env.GITHUB_OUTPUT,'sha256='+digest+'\n');
+          NODE
+      - name: Retain deployment evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: gaming-preview-deployment
+          path: |
+            .gaming-preview/deployment.json
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
+
+  verify:
+    needs: [authorize, deploy]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.18.1'
+      - name: Check out frozen head as Git evidence only
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: 848d6be5fc7d73936bb7921bd496d3051e30752d
+          path: head-evidence
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: gaming-preview-authorization
+          path: .gaming-preview
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: gaming-preview-publication
+          path: .gaming-preview
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: gaming-preview-deployment
+          path: .gaming-preview
+      - name: Fetch frozen identity before fresh admission
+        run: git fetch --no-tags origin 848d6be5fc7d73936bb7921bd496d3051e30752d
+      - name: Revalidate exact owner admission
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          node scripts/railway-gaming-preview.mjs authorize
+          --authorization .gaming-preview/authorization.json
+          --output .gaming-preview/pre-verification.json
+      - name: Run fixed 84 cases without management or provider credentials
+        env:
+          GITHUB_TOKEN: ''
+          DEPLOYMENT_RECEIPT_SHA256: ${{ needs.deploy.outputs.receipt_sha256 }}
+        run: >-
+          node scripts/railway-gaming-preview.mjs verify
+          --authorization .gaming-preview/authorization.json
+          --build-receipt .gaming-preview/build.json --image .gaming-preview/published.json
+          --deployment .gaming-preview/deployment.json
+          --git-evidence-root "$GITHUB_WORKSPACE/head-evidence"
+          --output .gaming-preview/verification.json
+      - name: Retain verification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: gaming-preview-verification
+          path: |
+            .gaming-preview/verification.json
+            .gaming-preview/pre-verification.json
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
+
+  attest:
+    needs: [authorize, deploy, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: railway-gaming-preview
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.18.1'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: gaming-preview-authorization
+          path: .gaming-preview
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: gaming-preview-publication
+          path: .gaming-preview
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: gaming-preview-deployment
+          path: .gaming-preview
+      - name: Fetch frozen identity as data
+        run: git fetch --no-tags origin 848d6be5fc7d73936bb7921bd496d3051e30752d
+      - name: Independently reattest identities after all synthetic requests
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_GAMING_PREVIEW_API_TOKEN }}
+          DEPLOYMENT_RECEIPT_SHA256: ${{ needs.deploy.outputs.receipt_sha256 }}
+        run: >-
+          node scripts/railway-gaming-preview.mjs attest
+          --authorization .gaming-preview/authorization.json
+          --build-receipt .gaming-preview/build.json --image .gaming-preview/published.json
+          --deployment .gaming-preview/deployment.json
+          --output .gaming-preview/post-verification-attestation.json
+      - name: Retain final identity proof
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gaming-preview-final-identity
+          path: .gaming-preview/post-verification-attestation.json
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
+  cleanup:
+    needs: [authorize, publish, deploy, verify, attest]
+    if: always() && needs.authorize.result == 'success' && needs.deploy.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    environment: railway-gaming-preview
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.18.1'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: gaming-preview-authorization
+          path: .gaming-preview
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: gaming-preview-publication
+          path: .gaming-preview
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: gaming-preview-deployment
+          path: .gaming-preview
+      - name: Remove only exact owned resources and verify control-plane absence
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_GAMING_PREVIEW_API_TOKEN }}
+        run: >-
+          node scripts/railway-gaming-preview.mjs cleanup
+          --authorization .gaming-preview/authorization.json
+          --deployment .gaming-preview/deployment.json
+          --output .gaming-preview/cleanup.json
+      - name: Retain cleanup evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: gaming-preview-cleanup-${{ github.run_attempt }}
+          path: |
+            .gaming-preview/cleanup.json
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
+
+  verdict:
+    needs: [authorize, build, publish, deploy, verify, attest, cleanup]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Report acceptance only with verified teardown
+        env:
+          AUTHORIZED: ${{ needs.authorize.result }}
+          VERIFIED: ${{ needs.verify.result }}
+          ATTESTED: ${{ needs.attest.result }}
+          CLEANED: ${{ needs.cleanup.result }}
+        run: |
+          node --input-type=module <<'NODE'
+          import {appendFileSync} from 'node:fs';
+          const e=process.env;
+          const verdict=e.AUTHORIZED!=='success'?'NOT_RUN':e.VERIFIED==='success'&&e.ATTESTED==='success'&&e.CLEANED==='success'?'PASS':'FAIL';
+          appendFileSync(e.GITHUB_STEP_SUMMARY,'GAMING_SCOPED_PREVIEW = '+verdict+'\n\nHosted synthetic component proof only. External sources and actual model-generated gameplay answers remain NOT_PROVEN.\n');
+          if(verdict!=='PASS') process.exitCode=1;
+          NODE

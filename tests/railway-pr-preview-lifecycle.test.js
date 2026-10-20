@@ -468,6 +468,13 @@ describe('GitHub PR preview status API', () => {
 });
 
 describe('Railway PR preview lifecycle policy', () => {
+  it.each(['opened', 'reopened', 'ready_for_review', 'synchronize', 'labeled', 'manual'])(
+    'keeps frozen Gaming out of broad Notion acceptance on %s even with the broad label', eventAction => {
+      const pr = validateLifecyclePullRequest(pullRequest({ number: 1558 }), 1558);
+      expect(decideLifecycleAction({ eventAction, eventLabelName: CONTRACT.optInLabel, pullRequest: pr })).toBe('cleanup');
+    }
+  );
+
   it('reconciles only an open, ready, same-repository main PR with the opt-in label', () => {
     const pr = validateLifecyclePullRequest(pullRequest(), PR_NUMBER);
     expect(decideLifecycleAction({ eventAction: 'synchronize', pullRequest: pr })).toBe('reconcile');
