@@ -1,7 +1,8 @@
 import { spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { createServer } from 'node:http';
+import { createServer, type ClientRequest, type IncomingHttpHeaders, type IncomingMessage, type RequestOptions } from 'node:http';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -625,4 +626,98 @@ describe('npm audit policy', () => {
       expect(workflow).not.toContain('--ignore-vuln');
     },
   );
+});
+
+const { http } = createRequire(import.meta.url)('follow-redirects') as {
+  http: {
+    request(options: RequestOptions & { sensitiveHeaders?: string[] }, callback: (response: IncomingMessage) => void): ClientRequest;
+  };
+};
+type Echo = { headers: IncomingHttpHeaders; method: string; body: string };
+
+describe('installed follow-redirects credential boundaries (loopback only)', () => {
+  const received: IncomingHttpHeaders[] = [];
+  const echo = (request: IncomingMessage, response: import('node:http').ServerResponse) => {
+    const chunks: Buffer[] = [];
+    request.on('data', chunk => chunks.push(Buffer.from(chunk)));
+    request.on('end', () => {
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ headers: request.headers, method: request.method, body: Buffer.concat(chunks).toString() }));
+    });
+  };
+  const destination = createServer(echo);
+  const source = createServer((request, response) => {
+    if (request.url === '/echo') { echo(request, response); return; }
+    received.push(request.headers);
+    request.resume();
+    response.writeHead(307, { Location: request.url === '/cross-origin'
+      ? `http://127.0.0.1:${destinationPort}/echo` : '/echo' });
+    response.end();
+  });
+  let sourcePort: number;
+  let destinationPort: number;
+
+  beforeAll(async () => {
+    destination.listen(0, '127.0.0.1');
+    await once(destination, 'listening');
+    destinationPort = (destination.address() as { port: number }).port;
+    source.listen(0, '127.0.0.1');
+    await once(source, 'listening');
+    sourcePort = (source.address() as { port: number }).port;
+  });
+  afterAll(async () => {
+    await Promise.all([source, destination].map(server => {
+      server.closeAllConnections();
+      return new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }));
+  });
+
+  const send = (options: RequestOptions & { sensitiveHeaders?: string[] }, body = ''): Promise<Echo> => new Promise((resolve, reject) => {
+    const request = http.request({ hostname: '127.0.0.1', port: sourcePort, ...options }, response => {
+      const chunks: Buffer[] = [];
+      response.on('data', chunk => chunks.push(Buffer.from(chunk)));
+      response.on('error', reject);
+      response.on('end', () => {
+        try { resolve(JSON.parse(Buffer.concat(chunks).toString()) as Echo); }
+        catch (error) { reject(error); }
+      });
+    });
+    request.setTimeout(2_000, () => request.destroy(new Error('Loopback redirect fixture timed out')));
+    request.on('error', reject);
+    request.end(body);
+  });
+
+  it('strips array-form credentials and declared sensitive headers across origins (GHSA-q3jh-wrc6-jgq8)', async () => {
+    const result = await send({ path: '/cross-origin', headers: [
+      'Host', `127.0.0.1:${sourcePort}`,
+      'Authorization', 'test-synthetic-authorization', 'Proxy-Authorization', 'test-synthetic-proxy',
+      'Cookie', 'fixture=test-synthetic-cookie', 'X-Private', 'test-synthetic-private', 'X-Public', 'ordinary-value',
+    ], sensitiveHeaders: ['X-Private'] });
+    expect(received.at(-1)).toMatchObject({ authorization: 'test-synthetic-authorization',
+      'proxy-authorization': 'test-synthetic-proxy', cookie: 'fixture=test-synthetic-cookie', 'x-private': 'test-synthetic-private' });
+    for (const header of ['authorization', 'proxy-authorization', 'cookie', 'x-private']) expect(result.headers[header]).toBeUndefined();
+    expect(result.headers['x-public']).toBe('ordinary-value');
+    expect(result.headers.host).toBe(`127.0.0.1:${destinationPort}`);
+  });
+
+  it('matches literal regex characters in sensitive names without stripping unrelated headers (GHSA-8r9p-f939-6h3c)', async () => {
+    const result = await send({ path: '/cross-origin', headers: {
+      Authorization: 'test-synthetic-authorization', 'X-Api^Key': 'test-synthetic-caret', 'X-Token|Secret': 'test-synthetic-pipe',
+      'X-Token': 'ordinary-token-name', Secret: 'test-ordinary-secret-name',
+    }, sensitiveHeaders: ['X-Api^Key', 'X-Token|Secret'] });
+    expect(received.at(-1)).toMatchObject({ 'x-api^key': 'test-synthetic-caret', 'x-token|secret': 'test-synthetic-pipe' });
+    for (const header of ['authorization', 'x-api^key', 'x-token|secret']) expect(result.headers[header]).toBeUndefined();
+    expect(result.headers['x-token']).toBe('ordinary-token-name');
+    expect(result.headers.secret).toBe('test-ordinary-secret-name');
+  });
+
+  it.each(['/echo', '/same-origin'])('preserves ordinary POST bodies and same-origin credentials through %s', async path => {
+    const body = 'ordinary Unicode body: snowman \u2603';
+    const result = await send({ path, method: 'POST', headers: {
+      Authorization: 'test-synthetic-same-origin', 'Content-Type': 'text/plain', 'Content-Length': Buffer.byteLength(body),
+    } }, body);
+    expect(result).toMatchObject({ method: 'POST', body, headers: {
+      authorization: 'test-synthetic-same-origin', 'content-type': 'text/plain', 'content-length': String(Buffer.byteLength(body)),
+    } });
+  });
 });
