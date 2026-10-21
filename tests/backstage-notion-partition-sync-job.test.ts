@@ -483,7 +483,7 @@ describe('partition synchronization job-runner dispatch boundary', () => {
       .readFileSync(path.resolve('src/workers/jobRunner.ts'), 'utf8')
       .replace(/\r\n/gu, '\n');
     const dedicatedDispatchIndex = source.indexOf(
-      'if (job.job_type === BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE) {'
+      'if (!dedicatedPartitionSyncOutcome && job.job_type === BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE) {'
     );
     const dedicatedExecutorIndex = source.indexOf(
       'partitionSyncExecutor({',

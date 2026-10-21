@@ -30,8 +30,11 @@ import type {
 } from '../src/services/backstageNotionPartitionRetrieval.js';
 import { DEFAULT_OPENAI_EMBEDDING_MODEL } from
   '../src/services/openai/embeddings.js';
+import type { BackstageNotionMonolithAuthorityStatusResolution } from
+  '../src/services/backstageNotionAuthorityStatus.js';
 import {
   runWithBackstageProtectedQueuedExecution,
+  runWithBackstageAuthorityDeferralTracking,
 } from '../src/services/backstageNotionEnrichmentAuthorization.js';
 
 const UNIVERSE_ID = 'my-universe-2k26';
@@ -321,6 +324,91 @@ describe('Backstage Notion partition cutover facade', () => {
       latestSyncFailurePhase: null,
       latestSyncFailureReason: null,
     }),
+  });
+
+  const refreshingAuthorityStatus: BackstageNotionMonolithAuthorityStatusResolution = {
+    status: 'ready' as const,
+    data: {
+      ...currentAuthorityStatus.data,
+      status: 'syncing' as const,
+      snapshotStatus: 'last_known_good' as const,
+      syncInProgress: true,
+      latestSyncOutcome: 'running' as const,
+    },
+  };
+
+  it.each(['monolith', 'shadow', 'partitioned'])(
+    'defers a refresh race before embedding in %s (including closed-gate fallback)',
+    async mode => {
+      const deferred = jest.fn();
+      const embedQuery = jest.fn(async () => [1]);
+      const resolveMonolithAuthorityStatus = jest.fn(async () => refreshingAuthorityStatus)
+        .mockResolvedValueOnce(currentAuthorityStatus);
+      const retrieveBookingMonolith = jest.fn(async (
+        _universe: string, query: string,
+        dependencies?: { embedQuery?: (text: string) => Promise<number[]> }
+      ) => {
+        await dependencies!.embedQuery!(query);
+        return monolithRetrieval;
+      });
+      await expect(runWithBackstageAuthorityDeferralTracking(
+        () => runWithBackstageProtectedQueuedExecution(true, () => (
+          retrieveBackstageNotionAuthorityBookingRagContext(UNIVERSE_ID, 'Book RAW 2026', {
+            readEnvironment: createEnvironment(mode),
+            resolveMonolithAuthorityStatus,
+            resolveCutoverEvidence: async () => null,
+            retrieveBookingMonolith,
+            embedQuery,
+          })
+        )), deferred
+      )).rejects.toBeInstanceOf(BackstageNotionIndexUnavailableError);
+      expect(retrieveBookingMonolith).toHaveBeenCalledTimes(1);
+      expect(embedQuery).not.toHaveBeenCalled();
+      expect(deferred).toHaveBeenCalled();
+    }
+  );
+
+  it('marks only a confirmed running refresh when RAG rejects after queue admission', async () => {
+    const deferred = jest.fn();
+    const embedQuery = jest.fn(async () => [1]);
+    const resolveMonolithAuthorityStatus = jest.fn(async () => refreshingAuthorityStatus)
+      .mockResolvedValueOnce(currentAuthorityStatus);
+    await expect(runWithBackstageAuthorityDeferralTracking(
+      () => runWithBackstageProtectedQueuedExecution(true, () => (
+        retrieveBackstageNotionAuthorityBookingRagContext(UNIVERSE_ID, 'Book RAW', {
+          readEnvironment: createEnvironment('monolith'),
+          resolveMonolithAuthorityStatus,
+          retrieveBookingMonolith: async (_id, _query, dependencies) => {
+            await dependencies!.onBookingRefreshInProgress!();
+            throw new BackstageNotionIndexUnavailableError();
+          },
+          embedQuery,
+        })
+      )), deferred
+    )).rejects.toBeInstanceOf(BackstageNotionIndexUnavailableError);
+    expect(embedQuery).not.toHaveBeenCalled();
+    expect(deferred).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not mark retrieval failures for deferral after embedding has begun', async () => {
+    const deferred = jest.fn();
+    const embedQuery = jest.fn(async () => [1]);
+    const resolveMonolithAuthorityStatus = jest.fn(async () => currentAuthorityStatus);
+    await expect(runWithBackstageAuthorityDeferralTracking(
+      () => runWithBackstageProtectedQueuedExecution(true, () => (
+        retrieveBackstageNotionAuthorityBookingRagContext(UNIVERSE_ID, 'Book RAW', {
+          readEnvironment: createEnvironment('monolith'),
+          resolveMonolithAuthorityStatus,
+          retrieveBookingMonolith: async (_id, query, dependencies) => {
+            await dependencies!.embedQuery!(query);
+            throw new BackstageNotionIndexUnavailableError();
+          },
+          embedQuery,
+        })
+      )), deferred
+    )).rejects.toBeInstanceOf(BackstageNotionIndexUnavailableError);
+    expect(embedQuery).toHaveBeenCalledTimes(1);
+    expect(deferred).not.toHaveBeenCalled();
   });
 
   it('admits a protected literal from current monolith authority without provider or corpus work', async () => {
@@ -838,6 +926,7 @@ describe('Backstage Notion partition cutover facade', () => {
       authorizedDependencies({
         isProtectedQueuedExecution: () => true,
         readEnvironment,
+        resolveMonolithAuthorityStatus: async () => currentAuthorityStatus,
         retrievePartition,
       })
     )).resolves.toBe(partitionRetrieval);

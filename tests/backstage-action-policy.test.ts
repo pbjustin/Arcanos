@@ -119,7 +119,7 @@ describe('Backstage action policy', () => {
       });
     });
 
-    it('keeps exact no-provider generation synchronous', () => {
+    it('keeps exact no-provider generation without Notion authority synchronous', () => {
       expect(classifyBackstageBookerWorkload({
         ...BASE_WORKLOAD_INPUT,
         requestedExecutionMode: 'async',
@@ -132,6 +132,24 @@ describe('Backstage action policy', () => {
         reason: 'provider_not_required',
       });
     });
+
+    it.each(['sync', 'async', null] as const)(
+      'queues exact Notion-authoritative generation for durable admission with %s preference',
+      requestedExecutionMode => {
+        expect(classifyBackstageBookerWorkload({
+          ...BASE_WORKLOAD_INPUT,
+          requestedExecutionMode,
+          providerInvocationRequired: false,
+          notionAuthorityContext: true,
+        })).toMatchObject({
+          workloadClass: 'production_generation',
+          queueRequired: true,
+          forceSynchronous: false,
+          reason: 'notion_authority_context',
+          providerInvocationRequired: false,
+        });
+      }
+    );
 
     it.each([
       ['prompt', 'promptCodeUnits', BACKSTAGE_BOOKING_HEAVY_PROMPT_CODE_UNITS],

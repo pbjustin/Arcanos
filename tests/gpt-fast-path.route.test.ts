@@ -13,6 +13,15 @@ const planAutonomousWorkerJobMock = jest.fn();
 const waitForQueuedGptJobCompletionMock = jest.fn();
 const resolveAsyncGptPollIntervalMsMock = jest.fn(() => 250);
 const resolveAsyncGptWaitForResultMsMock = jest.fn((requested?: number) => requested ?? 3500);
+const isBackstageNotionAuthorityEnforcedMock = jest.fn(async (_universeId: string) => false);
+const actualBackstageNotionAuthority = await import(
+  '../src/services/backstageNotionAuthority.js'
+);
+
+jest.unstable_mockModule('../src/services/backstageNotionAuthority.js', () => ({
+  ...actualBackstageNotionAuthority,
+  isBackstageNotionAuthorityEnforced: isBackstageNotionAuthorityEnforcedMock,
+}));
 
 class MockIdempotencyKeyConflictError extends Error {}
 class MockJobRepositoryUnavailableError extends Error {}
@@ -466,6 +475,7 @@ const originalRouteTestEnv = captureEnv(GPT_ROUTE_TEST_ENV_KEYS);
 describe('GPT fast-path route branching', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    isBackstageNotionAuthorityEnforcedMock.mockReset().mockResolvedValue(false);
     resetAppMetricsForTests();
     for (const key of GPT_ROUTE_TEST_ENV_KEYS) {
       delete process.env[key];
@@ -2162,6 +2172,78 @@ describe('GPT fast-path route branching', () => {
     expect(mockRouteGptRequest).toHaveBeenCalledTimes(1);
     expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['generateBooking', 'generateBookingWithHRC'] as const)(
+    'queues an authenticated exact %s with a persisted Notion authority latch',
+    async action => {
+      const accessToken = configureManagedBackstageGeneration({
+        jobBacked: true,
+        payloadKeyByte: 0x51,
+      });
+      isBackstageNotionAuthorityEnforcedMock.mockResolvedValueOnce(true);
+      mockResolveGptRouting.mockReset().mockResolvedValueOnce(buildBackstageRouting(action));
+      const universeId = 'durable-notion-literal-universe';
+      const literalPrompt = 'Write exactly this token and nothing else: AUTHORITY-LITERAL';
+
+      const response = await request(buildApp())
+        .post('/gpt/backstage-booker')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ action, executionMode: 'sync', payload: { universeId, prompt: literalPrompt } });
+
+      expect(response.status).toBe(202);
+      expect(isBackstageNotionAuthorityEnforcedMock).toHaveBeenCalledTimes(1);
+      expect(isBackstageNotionAuthorityEnforcedMock).toHaveBeenCalledWith(universeId);
+      expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+      expect(mockRouteGptRequest).not.toHaveBeenCalled();
+      expect(executeFastGptPromptMock).not.toHaveBeenCalled();
+      const queuedInput = findOrCreateGptJobMock.mock.calls[0]?.[0]?.input;
+      expect(parseQueuedGptJobInput(queuedInput)).toMatchObject({
+        ok: true,
+        value: { protectedBackstage: { action, universeId, notionEnrichmentAuthorized: true } },
+      });
+      expect(JSON.stringify(queuedInput)).not.toContain(literalPrompt);
+    }
+  );
+
+  it('fails authority lookup closed before literal dispatch or queue admission', async () => {
+    const accessToken = configureManagedBackstageGeneration({ jobBacked: true });
+    const { BackstageNotionAuthorityUnavailableError } = await import(
+      '../src/services/backstageBookerContracts.js'
+    );
+    isBackstageNotionAuthorityEnforcedMock.mockRejectedValueOnce(
+      new BackstageNotionAuthorityUnavailableError('unknown-authority-universe')
+    );
+    const response = await request(buildApp())
+      .post('/gpt/backstage-booker')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({ action: 'generateBooking', payload: {
+        universeId: 'unknown-authority-universe',
+        prompt: 'Write exactly this token and nothing else: PRIVATE-LITERAL',
+      } });
+
+    expect(response.status).toBe(500);
+    expectProtectedBookerFailureState(response.body);
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(JSON.stringify(response.body)).not.toContain('PRIVATE-LITERAL');
+  });
+
+  it('checks the effective default universe authority before an exact-literal shortcut', async () => {
+    const accessToken = configureManagedBackstageGeneration({ jobBacked: true });
+    isBackstageNotionAuthorityEnforcedMock.mockResolvedValueOnce(true);
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage-booker')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({ action: 'generateBooking', payload: {
+        prompt: 'Write exactly this token and nothing else: DEFAULT-AUTHORITY-LITERAL',
+      } });
+
+    expect(response.status).toBe(202);
+    expect(isBackstageNotionAuthorityEnforcedMock).toHaveBeenCalledWith('legacy');
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
   });
 
   it('fails protected async generation closed when job-read authentication is unavailable', async () => {

@@ -10,6 +10,8 @@ import { query } from '@core/db/query.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { safeJSONStringify } from '@shared/jsonHelpers.js';
 import { isQueuedGptJobCancellationPrivacySensitive } from '@shared/gpt/gptJobLifecycle.js';
+import { resolveProtectedBackstageQueuedGptJobAction } from '@shared/gpt/asyncGptJob.js';
+import { readBackstageAuthorityWaitState } from '@shared/backstage/backstageAuthorityWait.js';
 import {
   computeGptJobLifecycleDeadlines,
   isGptJobResultReusable,
@@ -195,6 +197,8 @@ export interface DeferJobForProviderRecoveryOptions {
   delayMs: number;
   errorMessage: string;
   autonomyState?: Record<string, unknown>;
+  /** Queue admission before any AI work; waiting must not consume generation time. */
+  deferralKind?: 'backstage_notion_authority';
 }
 
 export type ClaimedJobTerminalStatus = 'completed' | 'failed' | 'cancelled';
@@ -2538,11 +2542,33 @@ export async function scheduleJobRetry(
 }
 
 /**
- * Defer a claimed job until provider recovery without consuming retry budget.
- * Purpose: keep the queue claim loop alive when an upstream provider/circuit is unavailable while avoiding retry exhaustion before recovery.
- * Inputs/outputs: accepts a running job id, delay, and provider context; returns the re-pending job row.
- * Edge case behavior: clears the lease like a retry, but intentionally leaves retry_count unchanged.
+ * Begin one waited generation with a fresh operation clock and durable claim marker.
+ * A later claim cannot replay this execution, even after a worker crash.
  */
+export async function beginBackstageAuthorityGeneration(
+  jobId: string,
+  options: { fence: ClaimedJobFence },
+): Promise<JobData | null> {
+  assertDatabaseReady();
+  const fence = createClaimedJobFence(options.fence.workerId, options.fence.claimGeneration);
+  const result = await query(
+    `UPDATE job_data /* backstage_authority_execution */
+     SET started_at = NOW(), updated_at = NOW(),
+       autonomy_state = jsonb_set(autonomy_state, '{backstageAuthorityWait,executionClaimGeneration}', to_jsonb($3::text))
+     WHERE id = $1 AND status = 'running'
+       AND last_worker_id = $2::text AND claim_generation = $3::bigint
+       AND lease_expires_at IS NOT NULL AND lease_expires_at >= NOW()
+       AND cancel_requested_at IS NULL
+       AND jsonb_typeof(autonomy_state->'backstageAuthorityWait') = 'object'
+       AND NOT (autonomy_state->'backstageAuthorityWait' ? 'executionClaimGeneration')
+       AND (autonomy_state#>>'{backstageAuthorityWait,deadlineAt}')::bigint > EXTRACT(EPOCH FROM NOW()) * 1000
+     RETURNING *`,
+    [jobId, fence.workerId, fence.claimGeneration],
+  );
+  return normalizeClaimedJob(result.rows[0] as JobData | undefined, 'Backstage execution claim_generation');
+}
+
+/** Re-pend a live fenced claim without consuming retries; authority waits reset execution time. */
 export async function deferJobForProviderRecovery(
   jobId: string,
   options: DeferJobForProviderRecoveryOptions
@@ -2561,6 +2587,7 @@ export async function deferJobForProviderRecovery(
        next_run_at = NOW() + ($2::bigint * INTERVAL '1 millisecond'),
        updated_at = NOW(),
        completed_at = NULL,
+       ${options.deferralKind === 'backstage_notion_authority' ? 'started_at = NULL,' : ''}
        last_heartbeat_at = NULL,
        lease_expires_at = NULL,
        autonomy_state = COALESCE(autonomy_state, '{}'::jsonb) || $3::jsonb
@@ -2592,7 +2619,9 @@ export async function deferJobForProviderRecovery(
   emitJobEvent(deferredJob, 'job.retry.scheduled', {
     delayMs: Math.max(0, options.delayMs),
     hasError: normalizeNullableString(options.errorMessage) !== null,
-    providerDeferral: true,
+    providerDeferral: options.deferralKind !== 'backstage_notion_authority',
+    ...(options.deferralKind === 'backstage_notion_authority'
+      ? { backstageAuthorityDeferral: true } : {}),
     retryBudgetConsumed: false
   });
   return deferredJob;
@@ -2736,8 +2765,9 @@ export async function recoverStaleJobs(
         continue;
       }
 
-      //audit Assumption: stale running jobs should be retried only while within retry budget; failure risk: infinite stale-recovery loops; expected invariant: exhausted jobs become terminal failures; handling strategy: branch on retry budget before resetting state.
-      if (retryCount >= maxRetries) {
+      const authorityWaitRecoverable = isPreModelBackstageAuthorityWait(row);
+      // A pre-model authority poll is queue admission, not an attempted generation.
+      if (!authorityWaitRecoverable && retryCount >= maxRetries) {
         const lifecycleDeadlines =
           row.job_type === 'gpt'
             ? computeGptJobLifecycleDeadlines('failed')
@@ -2792,7 +2822,8 @@ export async function recoverStaleJobs(
          SET
            status = 'pending',
            error_message = 'Job recovered after stale worker lease.',
-           retry_count = retry_count + 1,
+           retry_count = retry_count + ${authorityWaitRecoverable ? '0' : '1'},
+           ${authorityWaitRecoverable ? 'started_at = NULL,' : ''}
            next_run_at = NOW(),
            updated_at = NOW(),
            last_heartbeat_at = NULL,
@@ -3019,8 +3050,9 @@ export async function recoverStalledJobsForWorkers(
         continue;
       }
 
+      const authorityWaitRecoverable = isPreModelBackstageAuthorityWait(row);
       const shouldDeadLetter =
-        stalledJobAction === 'dead_letter' || retryCount >= maxRetries;
+        stalledJobAction === 'dead_letter' || (!authorityWaitRecoverable && retryCount >= maxRetries);
 
       if (shouldDeadLetter) {
         const lifecycleDeadlines =
@@ -3080,7 +3112,8 @@ export async function recoverStalledJobsForWorkers(
          SET
            status = 'pending',
            error_message = $1,
-           retry_count = retry_count + 1,
+           retry_count = retry_count + ${authorityWaitRecoverable ? '0' : '1'},
+           ${authorityWaitRecoverable ? 'started_at = NULL,' : ''}
            next_run_at = NOW(),
            updated_at = NOW(),
            completed_at = NULL,
@@ -3966,6 +3999,12 @@ function normalizeNullableDate(value: Date | string | null | undefined): string 
   }
 
   return value;
+}
+
+function isPreModelBackstageAuthorityWait(row: { job_type: string; input: unknown; autonomy_state: unknown }): boolean {
+  if (row.job_type !== 'gpt' || !resolveProtectedBackstageQueuedGptJobAction(row.input)) return false;
+  const wait = readBackstageAuthorityWaitState(row.autonomy_state);
+  return wait !== null && wait !== 'invalid' && wait.executionClaimGeneration === undefined;
 }
 
 function buildRecoveredAutonomyState(

@@ -8,6 +8,7 @@ const runWorkerTrinityPromptMock = jest.fn();
 const runDagNodeJobMock = jest.fn();
 const classifyWorkerAiBudgetErrorMock = jest.fn((_error: unknown): unknown => null);
 const routeGptRequestMock = jest.fn();
+const resolveAuthorityAdmissionMock = jest.fn(async () => 'not_applicable');
 const classifyWorkerExecutionErrorMock = jest.fn((error: unknown) => ({
   message: error instanceof Error ? error.message : String(error),
   retryable: true,
@@ -156,11 +157,18 @@ jest.unstable_mockModule('@shared/sleep.js', () => ({
   sleep: sleepMock
 }));
 
+const actualPartitionCutover = await import('../src/services/backstageNotionPartitionCutover.js');
+jest.unstable_mockModule('@services/backstageNotionPartitionCutover.js', () => ({
+  ...actualPartitionCutover,
+  resolveBackstageNotionProtectedBookingAdmission: resolveAuthorityAdmissionMock,
+}));
+
 const {
   classifyWorkerProviderRuntimeFailure,
   createWorkerProviderDependencyState,
   recoverSharedWorkerProviderDependency,
   runWorkerConsumerSlot,
+  resolveQueuedBackstageAuthorityAdmission,
 } = await import('../src/workers/jobRunner.js');
 const { getAiExecutionContext } = await import(
   '../src/services/openai/aiExecutionContext.js'
@@ -2303,4 +2311,245 @@ describe('DAG attempt accounting at claimed worker terminal persistence', () => 
       }
     },
   );
+});
+
+describe('protected Booker durable Notion authority admission', () => {
+  function createAuthorityJob(action: 'generateBooking' | 'generateBookingWithHRC' = 'generateBooking') {
+    process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY = Buffer.alloc(32, 0x6a).toString('base64');
+    return {
+      id: '11111111-1111-4111-8111-111111111111', worker_id: 'queue', job_type: 'gpt',
+      status: 'running', claim_generation: '9', last_worker_id: 'worker-test-slot-1',
+      lease_expires_at: new Date(Date.now() + 60_000), started_at: new Date(),
+      cancel_requested_at: null as Date | null, cancel_reason: null,
+      created_at: new Date(), updated_at: new Date(), autonomy_state: {} as Record<string, unknown>,
+      input: buildProtectedBackstageQueuedGptJobInput({
+        action, universeId: 'my-universe-2k26', notionEnrichmentAuthorized: true,
+        body: { action, payload: { universeId: 'my-universe-2k26', prompt: 'Plan the next show.' } },
+        prompt: 'Plan the next show.', requestId: 'request-authority', traceId: 'trace-authority',
+      }),
+    };
+  }
+
+  function createAuthorityAutonomy(job: ReturnType<typeof createAuthorityJob>) {
+    return {
+      markDispatcherStarted: jest.fn(async () => undefined), getHeartbeatIntervalMs: () => 30_000,
+      getRecommendedWorkerHeartbeatDelayMs: () => 30_000, recordWorkerHeartbeat: jest.fn(async () => undefined),
+      evaluateBudgetsBeforeClaim: jest.fn(async () => ({ allowed: true })),
+      getWorkerAiCallBudget: () => ({ statsWorkerId: 'worker-test', workerId: 'worker-test-slot-1', maxCallsPerHour: 120 }),
+      setClaimAcceptanceState: jest.fn(async () => undefined), recordClaimAttempt: jest.fn(),
+      getClaimOptions: () => ({ workerId: 'worker-test-slot-1', leaseMs: 30_000 }), recordClaimResult: jest.fn(),
+      markJobStarted: jest.fn(async () => undefined), markIdle: jest.fn(async () => undefined),
+      recordHeartbeat: jest.fn(async () => job), recordProviderCircuitBreakerReset: jest.fn(async () => undefined),
+      markJobLeaseLost: jest.fn(async () => undefined), markJobCompleted: jest.fn(async () => undefined),
+      markJobCancelled: jest.fn(async () => undefined), handleJobFailure: jest.fn(async () => ({ action: 'failed' })),
+      deferJobForProviderRecovery: jest.fn(async () => ({ action: 'deferred' })),
+      deferJobForBackstageAuthority: jest.fn(async (_job: unknown, plan: { state: unknown }) => {
+        job.autonomy_state = { backstageAuthorityWait: JSON.parse(JSON.stringify(plan.state)) };
+        return { action: 'deferred' };
+      }),
+      flushSnapshotPipeline: jest.fn(async () => undefined),
+    };
+  }
+
+  async function runAuthorityClaim(job: ReturnType<typeof createAuthorityJob>, service: ReturnType<typeof createAuthorityAutonomy>) {
+    claimNextMock.mockReset().mockResolvedValueOnce({ job }).mockResolvedValue({ job: null });
+    queryMock.mockImplementation(async (sql: unknown, params: unknown[] = []) => String(sql).startsWith('SELECT')
+      ? { rows: [job] } : String(sql).includes('backstage_authority_execution')
+        ? { rows: [{ ...job, started_at: new Date() }] }
+        : { rows: [{ ...job, status: params[0] }] });
+    await expect(runWorkerConsumerSlot(
+      { slotIndex: 0, slotNumber: 1, workerId: 'worker-test-slot-1', statsWorkerId: 'worker-test-stats', isInspectorSlot: true },
+      { pollMs: 1, idleBackoffMs: 1, concurrency: 1, baseWorkerId: 'worker-test', statsWorkerId: 'worker-test-stats' },
+      service as never,
+    )).rejects.toBe(stopAfterOneIteration);
+  }
+
+  it.each(['generateBooking', 'generateBookingWithHRC'] as const)(
+    '%s waits through an eight minute refresh and worker restart without provider admission', async action => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-10-20T12:00:00Z'));
+      resolveAuthorityAdmissionMock.mockReset().mockResolvedValue('waiting');
+      routeGptRequestMock.mockReset();
+      getOpenAIAdapterMock.mockClear();
+      probeOpenAIProviderHealthMock.mockClear();
+      const job = createAuthorityJob(action);
+      const initial = createAuthorityAutonomy(job);
+      try {
+        await runAuthorityClaim(job, initial);
+        expect(initial.deferJobForBackstageAuthority).toHaveBeenCalledWith(job, expect.objectContaining({ delayMs: 15_000 }));
+        const deadline = (job.autonomy_state.backstageAuthorityWait as { deadlineAt: number }).deadlineAt;
+        expect(routeGptRequestMock).not.toHaveBeenCalled();
+        expect(probeOpenAIProviderHealthMock).not.toHaveBeenCalled();
+        expect(getOpenAIAdapterMock).not.toHaveBeenCalled();
+        expect(initial.handleJobFailure).not.toHaveBeenCalled();
+        // A fresh slot/service represents a worker restart; its only continuity is the persisted job state.
+        jest.setSystemTime(new Date('2026-10-20T12:04:00Z'));
+        const restarted = createAuthorityAutonomy(job);
+        job.started_at = new Date();
+        await runAuthorityClaim(job, restarted);
+        expect((job.autonomy_state.backstageAuthorityWait as { deadlineAt: number }).deadlineAt).toBe(deadline);
+        expect(restarted.deferJobForBackstageAuthority).toHaveBeenCalledWith(job, expect.objectContaining({ delayMs: 30_000 }));
+        expect(routeGptRequestMock).not.toHaveBeenCalled();
+        expect(probeOpenAIProviderHealthMock).not.toHaveBeenCalled();
+        jest.setSystemTime(new Date('2026-10-20T12:08:00Z'));
+        // A reclaimed row may retain an old started_at; the fenced execution
+        // transition must give generation its complete independent window.
+        job.started_at = new Date('2026-10-20T12:00:00Z');
+        resolveAuthorityAdmissionMock.mockResolvedValue('ready');
+        routeGptRequestMock.mockResolvedValueOnce({
+          ok: true, result: { storyline: 'Synthetic completed booking.', protectedGeneration: {
+            version: 1, protected: true, protectedGenerationCompleted: true, official: true,
+            continuityVerified: true, authority: 'notion', snapshotStatus: 'current_complete', fallbackUsed: false, fallbackPermitted: false,
+          } }, _route: { gptId: 'backstage-booker', module: 'BACKSTAGE:BOOKER', action, route: 'backstage-booker' },
+        });
+        const completed = createAuthorityAutonomy(job);
+        await runAuthorityClaim(job, completed);
+        expect(routeGptRequestMock).toHaveBeenCalledTimes(1);
+        expect(completed.markJobCompleted).toHaveBeenCalledWith(job.id);
+        expect(completed.deferJobForBackstageAuthority).not.toHaveBeenCalled();
+        expect(job.started_at.toISOString()).toBe('2026-10-20T12:08:00.000Z');
+      } finally {
+        resolveAuthorityAdmissionMock.mockReset().mockResolvedValue('not_applicable');
+        jest.useRealTimers();
+      }
+    },
+  );
+
+  it('fails closed at the persisted wait deadline even if readiness arrives too late', async () => {
+    const job = createAuthorityJob();
+    const now = Date.now();
+    job.autonomy_state = { backstageAuthorityWait: { version: 1, startedAt: now - 720_000, deadlineAt: now, pollCount: 25 } };
+    resolveAuthorityAdmissionMock.mockClear();
+    const outcome = await resolveQueuedBackstageAuthorityAdmission(job);
+    expect(outcome).toMatchObject({ status: 'failed', retryable: false });
+    expect(outcome?.authorityDeferred).toBeUndefined();
+    expect(resolveAuthorityAdmissionMock).not.toHaveBeenCalled();
+    expect(unprotectBackstageQueuedGptJobOutput({ jobId: job.id, rawInput: job.input, output: outcome?.output })).toMatchObject({
+      ok: false, error: { code: 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE' },
+    });
+  });
+
+  it('terminates failed synchronization with a sealed failure and no provider work', async () => {
+    resolveAuthorityAdmissionMock.mockReset().mockResolvedValueOnce('unavailable');
+    routeGptRequestMock.mockReset();
+    getOpenAIAdapterMock.mockClear();
+    const job = createAuthorityJob();
+    const service = createAuthorityAutonomy(job);
+    await runAuthorityClaim(job, service);
+    expect(service.handleJobFailure).toHaveBeenCalledWith(job, expect.stringContaining('BACKSTAGE_NOTION_INDEX_UNAVAILABLE'), false, expect.any(Object));
+    expect(routeGptRequestMock).not.toHaveBeenCalled();
+    expect(getOpenAIAdapterMock).not.toHaveBeenCalled();
+    expect(service.deferJobForBackstageAuthority).not.toHaveBeenCalled();
+    resolveAuthorityAdmissionMock.mockReset().mockResolvedValue('not_applicable');
+  });
+
+  it('never replays an execution admitted by a previous claim generation', async () => {
+    const job = createAuthorityJob();
+    const now = Date.now();
+    job.autonomy_state = { backstageAuthorityWait: {
+      version: 1, startedAt: now - 120_000, deadlineAt: now + 600_000, pollCount: 4,
+      executionClaimGeneration: '8',
+    } };
+    resolveAuthorityAdmissionMock.mockClear();
+    const outcome = await resolveQueuedBackstageAuthorityAdmission(job);
+    expect(outcome).toMatchObject({ status: 'failed', retryable: false });
+    expect(outcome?.authorityDeferred).toBeUndefined();
+    expect(resolveAuthorityAdmissionMock).not.toHaveBeenCalled();
+  });
+
+  it('cancels a pending authority wait without late generation', async () => {
+    const job = createAuthorityJob();
+    job.cancel_requested_at = new Date();
+    routeGptRequestMock.mockReset();
+    resolveAuthorityAdmissionMock.mockClear();
+    const service = createAuthorityAutonomy(job);
+    await runAuthorityClaim(job, service);
+    expect(service.markJobCancelled).toHaveBeenCalledWith(job.id);
+    expect(service.deferJobForBackstageAuthority).not.toHaveBeenCalled();
+    expect(resolveAuthorityAdmissionMock).not.toHaveBeenCalled();
+    expect(routeGptRequestMock).not.toHaveBeenCalled();
+  });
+
+  it('leaves unrelated jobs outside authority admission', async () => {
+    const job = createAuthorityJob();
+    resolveAuthorityAdmissionMock.mockClear();
+    await expect(resolveQueuedBackstageAuthorityAdmission({ ...job, job_type: 'ask' })).resolves.toBeNull();
+    await expect(resolveQueuedBackstageAuthorityAdmission({ ...job, input: { gptId: 'arcanos-core', body: {} } })).resolves.toBeNull();
+    expect(resolveAuthorityAdmissionMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['returned failure', 'thrown failure', 'already started AI'])(
+    'handles a refresh that starts after preliminary admission: %s', async scenario => {
+      const { markBackstageAuthorityDeferralRequested } = await import('../src/services/backstageNotionEnrichmentAuthorization.js');
+      resolveAuthorityAdmissionMock.mockReset().mockResolvedValueOnce('ready');
+      routeGptRequestMock.mockReset().mockImplementationOnce(async () => {
+        if (scenario === 'already started AI') getAiExecutionContext()!.totals.calls += 1;
+        markBackstageAuthorityDeferralRequested();
+        if (scenario === 'thrown failure') throw new Error('Synthetic pre-model authority race');
+        return { ok: false, error: { code: 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE', message: 'Unavailable.' },
+          _route: { gptId: 'backstage-booker', module: 'BACKSTAGE:BOOKER', action: 'generateBooking', route: 'backstage-booker' } };
+      });
+      const job = createAuthorityJob();
+      const service = createAuthorityAutonomy(job);
+      await runAuthorityClaim(job, service);
+      expect(routeGptRequestMock).toHaveBeenCalledTimes(1);
+      if (scenario === 'already started AI') {
+        expect(service.deferJobForBackstageAuthority).not.toHaveBeenCalled();
+        expect(service.handleJobFailure).toHaveBeenCalledWith(job, expect.stringContaining('BACKSTAGE_NOTION_INDEX_UNAVAILABLE'), false, expect.any(Object));
+      } else {
+        expect(service.deferJobForBackstageAuthority).toHaveBeenCalledTimes(1);
+        expect(service.handleJobFailure).not.toHaveBeenCalled();
+      }
+      resolveAuthorityAdmissionMock.mockReset().mockResolvedValue('not_applicable');
+    },
+  );
+
+  it('releases the slot for another protected job with its own persisted deadline', async () => {
+    resolveAuthorityAdmissionMock.mockReset().mockResolvedValue('waiting');
+    routeGptRequestMock.mockReset();
+    getOpenAIAdapterMock.mockClear();
+    const first = createAuthorityJob();
+    const second = { ...createAuthorityJob(), id: '22222222-2222-4222-8222-222222222222' };
+    const start = Date.now();
+    first.autonomy_state = { backstageAuthorityWait: {
+      version: 1, startedAt: start - 30_000, deadlineAt: start + 690_000, pollCount: 1,
+    } };
+    const service = createAuthorityAutonomy(first);
+    const persisted = new Map<string, { deadlineAt: number }>();
+    service.recordHeartbeat.mockImplementation(async job => job as typeof first);
+    service.deferJobForBackstageAuthority.mockImplementation(async (raw, plan) => {
+      persisted.set((raw as typeof first).id, plan.state as { deadlineAt: number });
+      return { action: 'deferred' };
+    });
+    claimNextMock.mockReset().mockResolvedValueOnce({ job: first }).mockResolvedValueOnce({ job: second }).mockResolvedValue({ job: null });
+    await expect(runWorkerConsumerSlot(
+      { slotIndex: 0, slotNumber: 1, workerId: 'worker-test-slot-1', statsWorkerId: 'worker-test-stats', isInspectorSlot: true },
+      { pollMs: 1, idleBackoffMs: 1, concurrency: 1, baseWorkerId: 'worker-test', statsWorkerId: 'worker-test-stats' },
+      service as never,
+    )).rejects.toBe(stopAfterOneIteration);
+    expect(service.deferJobForBackstageAuthority).toHaveBeenCalledTimes(2);
+    expect(persisted.get(first.id)?.deadlineAt).toBe(start + 690_000);
+    expect(persisted.get(second.id)?.deadlineAt).toBeGreaterThanOrEqual(start + 720_000);
+    expect(claimNextMock).toHaveBeenCalledTimes(3);
+    expect(routeGptRequestMock).not.toHaveBeenCalled();
+    expect(getOpenAIAdapterMock).not.toHaveBeenCalled();
+    resolveAuthorityAdmissionMock.mockReset().mockResolvedValue('not_applicable');
+  });
+
+  it('lets a durable cancellation win the authority-deferral compare-and-set race', async () => {
+    resolveAuthorityAdmissionMock.mockReset().mockResolvedValueOnce('waiting');
+    routeGptRequestMock.mockReset();
+    const job = createAuthorityJob();
+    const service = createAuthorityAutonomy(job);
+    service.deferJobForBackstageAuthority.mockImplementationOnce(async () => {
+      job.cancel_requested_at = new Date();
+      return { action: 'lease_lost' };
+    });
+    await runAuthorityClaim(job, service);
+    expect(service.markJobCancelled).toHaveBeenCalledTimes(1);
+    expect(service.markJobCompleted).not.toHaveBeenCalled();
+    expect(service.handleJobFailure).not.toHaveBeenCalled();
+    expect(routeGptRequestMock).not.toHaveBeenCalled();
+    resolveAuthorityAdmissionMock.mockReset().mockResolvedValue('not_applicable');
+  });
 });

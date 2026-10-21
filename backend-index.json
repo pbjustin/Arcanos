@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-19T19:01:30.277Z",
+  "generatedAt": "2026-10-21T03:35:59.999Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2588,6 +2588,9 @@
           "relativePath": "src/shared/backstage/backstageActionPolicy.ts"
         },
         {
+          "relativePath": "src/shared/backstage/backstageAuthorityWait.ts"
+        },
+        {
           "relativePath": "src/shared/backstage/backstageBookerAccessAuthCore.ts"
         },
         {
@@ -3785,6 +3788,12 @@
         },
         {
           "relativePath": "tests/backstage-action-policy.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-authority-admission.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-authority-wait.test.ts"
         },
         {
           "relativePath": "tests/backstage-booker-async-continuation.test.ts"

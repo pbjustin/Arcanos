@@ -24,6 +24,7 @@ const mockLoadBackstageNotionPromptContext = jest.fn();
 const mockIsBackstageNotionAuthoritativeUniverse = jest.fn();
 const mockRetrieveBackstageNotionRagContext = jest.fn();
 const mockAssertBackstageNotionProtectedLiteralAuthorityCurrent = jest.fn();
+const mockAssertBackstageNotionProtectedBookingAdmission = jest.fn();
 
 function buildPersistenceNumberedRetryOutput(itemCount: number): string {
   return Array.from(
@@ -207,6 +208,8 @@ jest.unstable_mockModule('@services/backstageNotionRag.js', () => ({
 }));
 
 jest.unstable_mockModule('@services/backstageNotionPartitionCutover.js', () => ({
+  assertBackstageNotionProtectedBookingAdmission:
+    mockAssertBackstageNotionProtectedBookingAdmission,
   assertBackstageNotionProtectedLiteralAuthorityCurrent:
     mockAssertBackstageNotionProtectedLiteralAuthorityCurrent,
   retrieveBackstageNotionAuthorityBookingRagContext:
@@ -347,6 +350,7 @@ describe('Backstage Booker service persistence outcomes', () => {
     mockIsBackstageNotionAuthoritativeUniverse.mockReset();
     mockRetrieveBackstageNotionRagContext.mockReset();
     mockAssertBackstageNotionProtectedLiteralAuthorityCurrent.mockReset();
+    mockAssertBackstageNotionProtectedBookingAdmission.mockReset().mockResolvedValue(undefined);
     for (const method of Object.values(mockRepository)) {
       method.mockReset();
     }
@@ -3142,6 +3146,29 @@ describe('Backstage Booker service persistence outcomes', () => {
     expect(systemPolicy).toContain(BACKSTAGE_BOOKER_CLEAR_GENERATION_POLICY_MARKER);
     expect(systemPolicy).not.toContain('Rhea Ripley is the current champion.');
   });
+
+  it.each(['generateBooking', 'generateBookingWithHRC'] as const)(
+    'revalidates authority immediately before %s generation with no provider on loss', async action => {
+      const universeId = 'notion-pre-generation-race';
+      const prompt = 'Book a Raw title match.';
+      mockIsBackstageNotionAuthoritativeUniverse.mockReturnValue(true);
+      mockRetrieveBackstageNotionRagContext.mockResolvedValueOnce({
+        universeId, prompt: 'Synthetic validated Notion context.',
+        chunkCount: 1, truncated: false, citations: [],
+      });
+      mockAssertBackstageNotionProtectedBookingAdmission.mockRejectedValueOnce(
+        new MockBackstageNotionIndexUnavailableError()
+      );
+      await expect(runWithBackstageProtectedQueuedExecution(true, () => (
+        generateBooking(prompt, universeId, action)
+      ))).rejects.toMatchObject({ code: 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE' });
+      expect(mockRetrieveBackstageNotionRagContext).toHaveBeenCalledTimes(1);
+      expect(mockAssertBackstageNotionProtectedBookingAdmission).toHaveBeenCalledWith(universeId, prompt);
+      expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
+      expect(mockGetOpenAIClientOrAdapter).not.toHaveBeenCalled();
+      expect(mockEvaluateWithHRC).not.toHaveBeenCalled();
+    }
+  );
 
   it('keeps a short queued Notion-authoritative complete card on the structured worker budget', async () => {
     const universeId = 'notion-authoritative-production-card';

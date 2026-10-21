@@ -783,6 +783,8 @@ describe('Backstage Notion authority RAG retrieval', () => {
     const state = harness(active, {
       latestSyncAttempt: latestSyncAttempt('running'),
     });
+    const onBookingRefreshInProgress = jest.fn(async () => undefined);
+    state.dependencies.onBookingRefreshInProgress = onBookingRefreshInProgress;
 
     await expect(retrieveBookingAuthorized(
       state.dependencies,
@@ -795,7 +797,25 @@ describe('Backstage Notion authority RAG retrieval', () => {
 
     expect(state.embedQuery).not.toHaveBeenCalled();
     expect(state.rankSnapshotCandidates).not.toHaveBeenCalled();
+    expect(onBookingRefreshInProgress).toHaveBeenCalledTimes(1);
   });
+
+  it.each(['failed', 'stale', 'incompatible'])(
+    'does not request waiting for %s authority even during a refresh', async scenario => {
+      const active = activeSnapshot();
+      active.verifiedAt = new Date(NOW.getTime() - (scenario === 'stale' ? 120 : 3) * 60_000);
+      if (scenario === 'incompatible') active.snapshot.embeddingModel = 'unsupported-model';
+      const state = harness(active, {
+        latestSyncAttempt: latestSyncAttempt(scenario === 'failed' ? 'failed' : 'running'),
+      });
+      const onBookingRefreshInProgress = jest.fn(async () => undefined);
+      state.dependencies.onBookingRefreshInProgress = onBookingRefreshInProgress;
+      await expect(retrieveBookingAuthorized(state.dependencies, 'Book RAW')).rejects
+        .toMatchObject({ code: BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE });
+      expect(onBookingRefreshInProgress).not.toHaveBeenCalled();
+      expect(state.embedQuery).not.toHaveBeenCalled();
+    }
+  );
 
   it('returns explicit last_known_good metadata for continuity reads after a newer failed refresh', async () => {
     const active = activeSnapshot();

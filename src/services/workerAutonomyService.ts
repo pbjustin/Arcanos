@@ -24,6 +24,10 @@ import type { SchedulerClaimOptions } from '@core/scheduler/types.js';
 import { computeGptJobLifecycleDeadlines } from '@shared/gpt/gptJobLifecycle.js';
 import { normalizeJobLeaseMs } from '@shared/jobs/jobLeaseTiming.js';
 import {
+  BACKSTAGE_AUTHORITY_WAIT_STATE_KEY,
+  type BackstageAuthorityWaitState,
+} from '@shared/backstage/backstageAuthorityWait.js';
+import {
   PRIORITY_GPT_JOB_PRIORITY,
   isPriorityGpt,
   isPriorityQueueEnabled,
@@ -1506,9 +1510,37 @@ export class WorkerAutonomyService {
   }
 
   /**
-   * Re-pend a claimed job while the provider circuit/backoff is open without consuming retry budget.
-   * Purpose: keep claim polling visible and fair while preventing transient provider outages from exhausting job retries.
+   * Release a pre-model claim while a bounded Notion authority refresh is running.
+   * Its durable deadline is independent of protected generation and retry budgets.
    */
+  async deferJobForBackstageAuthority(
+    job: JobData,
+    options: { delayMs: number; state: BackstageAuthorityWaitState },
+  ): Promise<{ action: 'deferred' | 'lease_lost'; delayMs: number }> {
+    const delayMs = Math.max(1, Math.trunc(options.delayMs));
+    const deferredJob = await deferJobForProviderRecoveryInRepository(job.id, {
+      fence: createClaimedJobFence(this.settings.workerId, job.claim_generation),
+      delayMs,
+      errorMessage: 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE: Waiting for authoritative Notion synchronization.',
+      deferralKind: 'backstage_notion_authority',
+      autonomyState: { [BACKSTAGE_AUTHORITY_WAIT_STATE_KEY]: options.state },
+    });
+    if (!deferredJob) {
+      await this.markJobLeaseLost(job.id, 'Backstage authority deferral claim fence was lost.');
+      return { action: 'lease_lost', delayMs };
+    }
+    this.state.currentJobId = null;
+    this.state.lastActivityAt = new Date().toISOString();
+    this.state.lastError = null;
+    logger.info('worker.backstage_authority.defer_scheduled', {
+      module: 'worker-autonomy', workerId: this.settings.workerId,
+      jobId: job.id, delayMs, deadlineAt: options.state.deadlineAt,
+      pollCount: options.state.pollCount, retryBudgetConsumed: false,
+    });
+    return { action: 'deferred', delayMs };
+  }
+
+  /** Re-pend a job while the provider circuit is open without consuming retries. */
   async deferJobForProviderRecovery(
     job: JobData,
     options: {

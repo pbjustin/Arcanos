@@ -986,3 +986,50 @@ describe('jobRepository lifecycle recovery', () => {
     );
   });
 });
+
+describe('protected authority wait lease recovery', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    isDatabaseConnectedMock.mockReturnValue(true);
+    poolConnectMock.mockResolvedValue({ query: clientQueryMock, release: clientReleaseMock });
+    getPoolMock.mockReturnValue({ connect: poolConnectMock });
+  });
+
+  function protectedWaitingRow(executionStarted: boolean) {
+    const now = Date.now();
+    return {
+      id: 'authority-wait-lease', job_type: 'gpt', worker_id: 'queue', last_worker_id: 'authority-slot',
+      status: 'running', retry_count: 0, max_retries: 0, claim_generation: '4',
+      cancel_requested_at: null, cancel_reason: null,
+      input: { gptId: 'backstage-booker', protectedBackstage: {
+        version: 1, source: 'backstage-booker-http', envelopeId: '11111111-1111-4111-8111-111111111111',
+        action: 'generateBooking', universeId: 'my-universe-2k26', sealedPayload: {},
+      } },
+      autonomy_state: { backstageAuthorityWait: { version: 1, startedAt: now - 120_000,
+        deadlineAt: now + 600_000, pollCount: 4, ...(executionStarted ? { executionClaimGeneration: '4' } : {}) } },
+    };
+  }
+
+  it.each(['lease', 'watchdog'])('recovers an interrupted pre-model %s poll without consuming retries or resetting its deadline', async kind => {
+    const row = protectedWaitingRow(false);
+    mockStaleRows([row]);
+    if (kind === 'lease') await recoverStaleJobs({ staleAfterMs: 60_000, maxRetries: 0 });
+    else await recoverStalledJobsForWorkers({ workerIds: ['authority-slot'], staleAfterMs: 60_000, maxRetries: 0 });
+    const sql = getJobUpdateSql();
+    expect(sql).toContain("status = 'pending'");
+    expect(sql).toContain('retry_count = retry_count + 0');
+    expect(sql).toContain('started_at = NULL');
+    expect(sql).not.toMatch(/claim_generation\s*=/u);
+    const update = clientQueryMock.mock.calls.find(([value]) => String(value).includes('UPDATE job_data'))!;
+    const persisted = JSON.parse(String(update[1][kind === 'lease' ? 0 : 1]));
+    expect(persisted.backstageAuthorityWait).toEqual(row.autonomy_state.backstageAuthorityWait);
+  });
+
+  it.each(['lease', 'watchdog'])('preserves the no-replay fence after an execution started during %s recovery', async kind => {
+    mockStaleRows([protectedWaitingRow(true)]);
+    if (kind === 'lease') await recoverStaleJobs({ staleAfterMs: 60_000, maxRetries: 0 });
+    else await recoverStalledJobsForWorkers({ workerIds: ['authority-slot'], staleAfterMs: 60_000, maxRetries: 0 });
+    expect(getJobUpdateSql()).toContain("status = 'failed'");
+    expect(getJobUpdateSql()).not.toContain('started_at = NULL');
+  });
+});

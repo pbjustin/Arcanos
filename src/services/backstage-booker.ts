@@ -85,6 +85,7 @@ import {
   BackstageNotionIndexUnavailableError,
 } from './backstageNotionRag.js';
 import {
+  assertBackstageNotionProtectedBookingAdmission,
   assertBackstageNotionProtectedLiteralAuthorityCurrent,
   retrieveBackstageNotionAuthorityBookingRagContext,
 } from './backstageNotionPartitionCutover.js';
@@ -2902,6 +2903,9 @@ export async function generateBooking(
         }
       : {}),
   };
+  if (protectedQueuedExecution && structuredPrompt.notionAuthorityContext) {
+    await assertBackstageNotionProtectedBookingAdmission(resolvedUniverseId, input.prompt);
+  }
   try {
     const { client } = getOpenAIClientOrAdapter();
     if (!client) {

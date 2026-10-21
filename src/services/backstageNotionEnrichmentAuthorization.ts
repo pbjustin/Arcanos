@@ -25,6 +25,23 @@ export type BackstageProtectedGenerationAuthority =
 const backstageNotionEnrichmentAuthorizationStorage =
   new AsyncLocalStorage<BackstageNotionEnrichmentAuthorizationContext>();
 
+const authorityDeferralStorage = new AsyncLocalStorage<() => void>();
+
+/** Worker-owned signal; never inferred from a public error or request payload. */
+export function runWithBackstageAuthorityDeferralTracking<T>(
+  operation: () => T,
+  onDeferred: () => void
+): T {
+  return authorityDeferralStorage.run(onDeferred, operation);
+}
+
+/** Only a verified pre-provider authority check may request queue deferral. */
+export function markBackstageAuthorityDeferralRequested(): void {
+  if (isBackstageProtectedQueuedExecution()) {
+    authorityDeferralStorage.getStore()?.();
+  }
+}
+
 /**
  * Return true only inside a canonical Backstage request whose dedicated bearer
  * was verified by the HTTP boundary. Caller-supplied payload fields cannot set

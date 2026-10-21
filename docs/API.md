@@ -786,6 +786,26 @@ stale/missing index, model mismatch, or retrieval failure returns
 `BACKSTAGE_NOTION_INDEX_UNAVAILABLE` without consulting legacy PostgreSQL or
 process memory.
 
+With the existing protected async-generation lane enabled, `generateBooking`,
+`generateBookingWithHRC`, and Notion-controlled exact-literal booking requests
+use durable queue admission. A readable, fresh authority snapshot blocked only
+by an actively running refresh keeps the same job pending for at most twelve
+minutes. Polls start after fifteen seconds and then occur at thirty-second
+intervals, bounded by the persisted deadline. Waiting releases the worker slot
+and lease, performs no embedding or generation, and preserves cancellation and
+idempotency. Admission respects the configured partition cutover gate; it never
+promotes `last_known_good` to booking authority. Failed, stale, incompatible, or
+unreadable authority and waiting expiry produce the protected terminal failure.
+Authority is checked again before retrieval, embedding, and generation. A
+pre-provider refresh race may return the job to pending only with zero recorded
+AI calls. The existing 120–180-second protected execution deadline and
+finalization reserves begin separately from authority waiting.
+
+Continuity failures retain `BACKSTAGE_CONTINUITY_QUERY_FAILED`. Internal
+`backstage.continuity_query.failed` telemetry records an allowlisted failure
+category, phase, attempt, and bounded correlation identifiers without canon,
+prompts, provider messages, or output. It adds no provider retries.
+
 Notion-authoritative booking generation applies an additional booking-only
 scope policy after loading and validating that universe's active snapshot.
 Recognized Raw, SmackDown, and NXT hierarchy metadata (page title, page path,

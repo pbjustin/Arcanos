@@ -36,7 +36,9 @@ import {
 import {
   isBackstageNotionEnrichmentAuthorized,
   isBackstageProtectedQueuedExecution,
+  markBackstageAuthorityDeferralRequested,
 } from './backstageNotionEnrichmentAuthorization.js';
+import { tryExtractExactLiteralPromptShortcut } from './exactLiteralPromptShortcut.js';
 import {
   resolveBackstageNotionMonolithAuthorityStatus,
   type BackstageNotionMonolithAuthorityStatusResolution,
@@ -113,6 +115,7 @@ export interface BackstageNotionPartitionCutoverDependencies {
   readonly retrieveBookingMonolith?: BookingMonolithRetriever;
   readonly retrievePartition?: PartitionRetriever;
   readonly embedQuery?: (query: string) => Promise<number[]>;
+  readonly onBookingRefreshInProgress?: () => Promise<void>;
   readonly logInfo?: LogInfo;
   readonly resolveCutoverEvidence?: (input: Readonly<{
     universeId: string;
@@ -391,6 +394,66 @@ async function resolveCutoverGate(
   });
 }
 
+export type BackstageNotionProtectedBookingAdmission =
+  | 'ready' | 'waiting' | 'unavailable' | 'not_applicable';
+
+/** Cheap authority admission: no corpus retrieval, embedding, or generation. */
+export async function resolveBackstageNotionProtectedBookingAdmission(
+  universeId: string,
+  query: string,
+  dependencies: BackstageNotionPartitionCutoverDependencies = {}
+): Promise<BackstageNotionProtectedBookingAdmission> {
+  const readEnvironment = dependencies.readEnvironment ?? (name => getEnv(name));
+  try {
+    const resolver = dependencies.resolveMonolithAuthorityStatus
+      ?? resolveBackstageNotionMonolithAuthorityStatus;
+    const resolution = await resolver({ universeId, dependencies: { readEnvironment } });
+    // Resolve the durable authority latch before applying Notion-only policy.
+    if (resolution.status === 'not_found') return 'not_applicable';
+    if (resolution.status !== 'ready') return 'unavailable';
+    requireAuthorization(dependencies);
+    const mode = readModeOnce(readEnvironment).mode;
+    if (mode === 'partitioned') {
+      const requestPlan = buildPartitionPlan(query);
+      const activation = requestPlan && resolvePartitionActivation(
+        universeId, readEnvironment,
+        requestPlan.requiresCursorSecret || !resolveProtectedQueuedExecution(dependencies)
+      );
+      if (!activation || !requestPlan) return 'unavailable';
+      requireAuthorization(dependencies);
+      // Preserve the configured selected authority and existing cutover fallback.
+      // Literals retain their stricter, provider-free monolith admission rule.
+      if (!tryExtractExactLiteralPromptShortcut(query)) {
+        const gate = await resolveCutoverGate(universeId, activation, dependencies);
+        if (gate.available) return 'ready';
+      }
+    }
+    const state = resolution.data;
+    if (!state.activeSnapshotReadable || !state.freshnessSatisfied) return 'unavailable';
+    if (state.snapshotStatus === 'current_complete' && state.status === 'current_complete') {
+      return 'ready';
+    }
+    return state.snapshotStatus === 'last_known_good'
+      && state.syncInProgress && state.latestSyncOutcome === 'running'
+      ? 'waiting' : 'unavailable';
+  } catch {
+    return 'unavailable';
+  }
+}
+
+/** Revalidate immediately before retrieval/model work; keep the public error closed. */
+export async function assertBackstageNotionProtectedBookingAdmission(
+  universeId: string,
+  query: string,
+  dependencies: BackstageNotionPartitionCutoverDependencies = {}
+): Promise<void> {
+  const admission = await resolveBackstageNotionProtectedBookingAdmission(
+    universeId, query, dependencies
+  );
+  if (admission === 'waiting') markBackstageAuthorityDeferralRequested();
+  if (admission !== 'ready') throw new BackstageNotionIndexUnavailableError();
+}
+
 /**
  * Establish current Notion authority for an exact-literal booking without
  * generating an embedding or reading corpus content. Partitioned mode still
@@ -444,6 +507,14 @@ export async function assertBackstageNotionProtectedLiteralAuthorityCurrent(
     || resolution.data.snapshotStatus !== 'current_complete'
     || !resolution.data.activeSnapshotReadable
   ) {
+    if (resolution.status === 'ready'
+      && resolution.data.activeSnapshotReadable
+      && resolution.data.freshnessSatisfied
+      && resolution.data.snapshotStatus === 'last_known_good'
+      && resolution.data.syncInProgress
+      && resolution.data.latestSyncOutcome === 'running') {
+      markBackstageAuthorityDeferralRequested();
+    }
     throw new BackstageNotionIndexUnavailableError();
   }
 }
@@ -819,7 +890,11 @@ async function retrieveAuthority(
     return booking
       ? (retrieveMonolith as BookingMonolithRetriever)(
           universeId,
-          query as string
+          query as string,
+          ...(dependencies.embedQuery ? [{
+            embedQuery: dependencies.embedQuery,
+            onBookingRefreshInProgress: dependencies.onBookingRefreshInProgress,
+          }] : [])
         )
       : (retrieveMonolith as MonolithRetriever)(universeId, query);
   }
@@ -848,7 +923,11 @@ async function retrieveAuthority(
     return booking
       ? (retrieveMonolith as BookingMonolithRetriever)(
           universeId,
-          query as string
+          query as string,
+          ...(dependencies.embedQuery ? [{
+            embedQuery: sharedEmbedding,
+            onBookingRefreshInProgress: dependencies.onBookingRefreshInProgress,
+          }] : [])
         )
       : (retrieveMonolith as MonolithRetriever)(universeId, query);
   }
@@ -857,7 +936,11 @@ async function retrieveAuthority(
     ? await (retrieveMonolith as BookingMonolithRetriever)(
         universeId,
         query as string,
-        { embedQuery: sharedEmbedding }
+        {
+          embedQuery: sharedEmbedding,
+          ...(dependencies.onBookingRefreshInProgress
+            ? { onBookingRefreshInProgress: dependencies.onBookingRefreshInProgress } : {}),
+        }
       )
     : await (retrieveMonolith as MonolithRetriever)(
         universeId,
@@ -923,5 +1006,24 @@ export async function retrieveBackstageNotionAuthorityBookingRagContext(
   query: string,
   dependencies: BackstageNotionPartitionCutoverDependencies = {}
 ): Promise<BackstageNotionAuthorityRagRetrieval> {
-  return retrieveAuthority(universeId, query, true, dependencies);
+  if (!resolveProtectedQueuedExecution(dependencies)) {
+    return retrieveAuthority(universeId, query, true, dependencies);
+  }
+  await assertBackstageNotionProtectedBookingAdmission(universeId, query, dependencies);
+  const embed = dependencies.embedQuery ?? createEmbedding;
+  return retrieveAuthority(universeId, query, true, {
+    ...dependencies,
+    embedQuery: async text => {
+      await assertBackstageNotionProtectedBookingAdmission(universeId, query, dependencies);
+      return embed(text);
+    },
+    onBookingRefreshInProgress: async () => {
+      // RAG has independently validated its header and observed a running
+      // refresh. Confirm the durable live synchronization fence before waiting.
+      const admission = await resolveBackstageNotionProtectedBookingAdmission(
+        universeId, query, dependencies
+      );
+      if (admission === 'waiting') markBackstageAuthorityDeferralRequested();
+    },
+  });
 }
