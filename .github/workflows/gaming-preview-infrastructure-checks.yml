@@ -43,19 +43,21 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24.18.1'
-      - run: git fetch --no-tags origin 1c1e7d0f4c8f4e62fd7117e28efd0d8d7c415262
+      - run: git fetch --no-tags origin 848d6be5fc7d73936bb7921bd496d3051e30752d
       - name: Materialize synthetic build authorization without deployment authority
         run: |
           node --input-type=module <<'NODE'
           import {writeFileSync} from 'node:fs';
           import {GitReadAdapter} from './scripts/stacked-draft-preview-contract.mjs';
           const git=new GitReadAdapter({cwd:process.cwd(),canonicalArchive:true});
-          const headSha='1c1e7d0f4c8f4e62fd7117e28efd0d8d7c415262';
+          const headSha='848d6be5fc7d73936bb7921bd496d3051e30752d';
+          const sourceArchiveSha256=await git.archiveSha256(headSha);
+          if(sourceArchiveSha256!=='5bc4713eb4842f5927354bebc9ae82f43f9c32516dd7f32b61a8c446db684123')throw new Error('GAMING_SOURCE_ARCHIVE_DRIFT');
           const id=d=>`${d.repeat(8)}-${d.repeat(4)}-4${d.repeat(3)}-8${d.repeat(3)}-${d.repeat(12)}`;
           writeFileSync('gaming-smoke-authorization.json',JSON.stringify({version:1,
             controllerSha:process.env.GITHUB_SHA,mainSha:process.env.GITHUB_SHA,baseSha:process.env.GITHUB_SHA,
-            headSha,treeSha:'89f1eb0b988514d92ef9f82dd2f77bc356735b8b',
-            sourceArchiveSha256:await git.archiveSha256(headSha),targetSha256:'0'.repeat(64),
+            headSha,treeSha:'d78ffd0a423e9755008784b6c244cafc131d1acf',
+            sourceArchiveSha256,targetSha256:'0'.repeat(64),
             expiresAt:new Date(Date.now()+7200000).toISOString(),runId:process.env.GITHUB_RUN_ID,
             target:{projectId:id('1'),baseEnvironmentId:id('2'),workerServiceId:id('3'),webServiceId:id('4')}}));
           NODE

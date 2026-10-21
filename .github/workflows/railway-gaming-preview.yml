@@ -52,7 +52,7 @@ jobs:
           writeFileSync('.gaming-preview/authorization.json', JSON.stringify(JSON.parse(value)) + '\n', {mode:0o600, flag:'wx'});
           NODE
       - name: Fetch fixed frozen commit as data
-        run: git fetch --no-tags origin 1c1e7d0f4c8f4e62fd7117e28efd0d8d7c415262
+        run: git fetch --no-tags origin 848d6be5fc7d73936bb7921bd496d3051e30752d
       - name: Revalidate exact owner admission
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -101,7 +101,7 @@ jobs:
           name: gaming-preview-authorization
           path: .gaming-preview
       - name: Fetch exact source objects only
-        run: git fetch --no-tags origin 1c1e7d0f4c8f4e62fd7117e28efd0d8d7c415262
+        run: git fetch --no-tags origin 848d6be5fc7d73936bb7921bd496d3051e30752d
       - name: Build secretless immutable image
         env:
           GITHUB_TOKEN: ''
@@ -150,7 +150,7 @@ jobs:
           name: gaming-preview-build
           path: .gaming-preview
       - name: Fetch frozen identity as data
-        run: git fetch --no-tags origin 1c1e7d0f4c8f4e62fd7117e28efd0d8d7c415262
+        run: git fetch --no-tags origin 848d6be5fc7d73936bb7921bd496d3051e30752d
       - name: Revalidate exact owner admission
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -215,7 +215,7 @@ jobs:
           name: gaming-preview-publication
           path: .gaming-preview
       - name: Fetch frozen identity as data
-        run: git fetch --no-tags origin 1c1e7d0f4c8f4e62fd7117e28efd0d8d7c415262
+        run: git fetch --no-tags origin 848d6be5fc7d73936bb7921bd496d3051e30752d
       - name: Deploy worker first through trusted controller
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -265,7 +265,7 @@ jobs:
       - name: Check out frozen head as Git evidence only
         uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
         with:
-          ref: 1c1e7d0f4c8f4e62fd7117e28efd0d8d7c415262
+          ref: 848d6be5fc7d73936bb7921bd496d3051e30752d
           path: head-evidence
           fetch-depth: 0
           persist-credentials: false
@@ -282,7 +282,7 @@ jobs:
           name: gaming-preview-deployment
           path: .gaming-preview
       - name: Fetch frozen identity before fresh admission
-        run: git fetch --no-tags origin 1c1e7d0f4c8f4e62fd7117e28efd0d8d7c415262
+        run: git fetch --no-tags origin 848d6be5fc7d73936bb7921bd496d3051e30752d
       - name: Revalidate exact owner admission
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -344,7 +344,7 @@ jobs:
           name: gaming-preview-deployment
           path: .gaming-preview
       - name: Fetch frozen identity as data
-        run: git fetch --no-tags origin 1c1e7d0f4c8f4e62fd7117e28efd0d8d7c415262
+        run: git fetch --no-tags origin 848d6be5fc7d73936bb7921bd496d3051e30752d
       - name: Independently reattest identities after all synthetic requests
         env:
           GITHUB_TOKEN: ${{ github.token }}

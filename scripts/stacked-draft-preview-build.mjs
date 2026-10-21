@@ -338,8 +338,8 @@ export function validateGamingBuildAuthorization(authorization) {
       'headSha', 'treeSha', 'sourceArchiveSha256', 'expiresAt', 'targetSha256', 'runId', 'target'].sort().join('|')
     && SHA.test(authorization.controllerSha) && authorization.mainSha === authorization.controllerSha
     && authorization.baseSha === authorization.controllerSha
-    && authorization.headSha === '1c1e7d0f4c8f4e62fd7117e28efd0d8d7c415262'
-    && authorization.treeSha === '89f1eb0b988514d92ef9f82dd2f77bc356735b8b'
+    && authorization.headSha === '848d6be5fc7d73936bb7921bd496d3051e30752d'
+    && authorization.treeSha === 'd78ffd0a423e9755008784b6c244cafc131d1acf'
     && DIGEST.test(authorization.sourceArchiveSha256) && DIGEST.test(authorization.targetSha256)
     && /^[1-9][0-9]{0,19}$/u.test(authorization.runId ?? '')
     && Number.isFinite(Date.parse(authorization.expiresAt))

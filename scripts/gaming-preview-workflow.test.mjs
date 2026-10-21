@@ -15,7 +15,9 @@ const ts = require('typescript');
 const read = relative => readFileSync(new URL(`../${relative}`, import.meta.url), 'utf8');
 const workflow = load(read('.github/workflows/railway-gaming-preview.yml'));
 const checks = load(read('.github/workflows/gaming-preview-infrastructure-checks.yml'));
-const frozen = '1c1e7d0f4c8f4e62fd7117e28efd0d8d7c415262';
+const frozen = '848d6be5fc7d73936bb7921bd496d3051e30752d';
+const frozenTree = 'd78ffd0a423e9755008784b6c244cafc131d1acf';
+const frozenArchive = '5bc4713eb4842f5927354bebc9ae82f43f9c32516dd7f32b61a8c446db684123';
 const trustedRef = '${{ github.workflow_sha }}';
 const list = value => Array.isArray(value) ? value : [value];
 const runs = job => job.steps.filter(step => typeof step.run === 'string');
@@ -117,6 +119,32 @@ function assertWorkflowBoundaries(value) {
   for (const [key, name] of [['VERIFIED', 'verify'], ['ATTESTED', 'attest'], ['CLEANED', 'cleanup']])
     invariant(final?.env?.[key] === '${{ needs.' + name + '.result }}', 'ALL_REQUIRED_RESULTS_BOUND');
 }
+
+test('Gaming fixed-source policy, tooling, workflow fetches and artifact smoke use the same refrozen identity', () => {
+  const policy = JSON.parse(read('config/railway-gaming-preview-control.json'));
+  assert.equal(policy.headSha, frozen); assert.equal(policy.treeSha, frozenTree);
+  assert.equal(policy.enabled, false); assert.equal(policy.target, null);
+  const tooling = JSON.parse(read('config/railway-gaming-preview-tools.json'));
+  assert.equal(tooling.reviewedCandidateSha, frozen);
+  assert.deepEqual(tooling.files.map(entry => entry.sha256), [
+    'b0bfd81243125fc49cd832978181caae297879016f8f1a8e6f9e56da357a49a4',
+    '41c8f359d09f34da1a7243e4f2e43c334c71b00127d1251f64b41e4b23892d5e',
+    'f366cb5e2d277a3b451e390ec6b42973b846d05cb25222a42e45522fffe2e0c4',
+    'e5e20bb03fca5f8025f21113a2ffa1dadc224909ac9383265be5157f9b39ee9c',
+  ]);
+  for (const value of [workflow, checks]) {
+    for (const job of Object.values(value.jobs)) for (const step of job.steps) {
+      for (const match of step.run?.matchAll(/git fetch --no-tags origin ([0-9a-f]{40})/gu) ?? []) assert.equal(match[1], frozen);
+      if (step.with?.path === 'head-evidence') assert.equal(step.with.ref, frozen);
+    }
+    assert.ok(!JSON.stringify(value).includes('1c1e7d0f4c8f4e62fd7117e28efd0d8d7c415262'));
+  }
+  const materialize = commandStep(checks.jobs['artifact-smoke'], 'const headSha=');
+  assert.ok(materialize.run.includes(`const headSha='${frozen}'`));
+  assert.ok(materialize.run.includes(`treeSha:'${frozenTree}'`));
+  assert.ok(materialize.run.includes(`sourceArchiveSha256!=='${frozenArchive}'`));
+  assert.ok(materialize.run.includes('sourceArchiveSha256,targetSha256:'));
+});
 
 test('Gaming workflow enforces protected manual admission and separated privilege boundaries', () => {
   assertWorkflowBoundaries(workflow);

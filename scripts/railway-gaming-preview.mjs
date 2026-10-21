@@ -54,8 +54,8 @@ export function validateGamingPolicy(policy = DEFAULT_GAMING_POLICY) {
   requireCondition(exact(policy, ['version', 'enabled', 'repository', 'owner', 'prNumber', 'headSha', 'treeSha',
     'maxAuthorizationSeconds', 'imageRepository', 'target']) && policy.version === 1 && typeof policy.enabled === 'boolean'
     && policy.repository === REPOSITORY && policy.owner === 'pbjustin' && policy.prNumber === 1558
-    && policy.headSha === '1c1e7d0f4c8f4e62fd7117e28efd0d8d7c415262'
-    && policy.treeSha === '89f1eb0b988514d92ef9f82dd2f77bc356735b8b'
+    && policy.headSha === '848d6be5fc7d73936bb7921bd496d3051e30752d'
+    && policy.treeSha === 'd78ffd0a423e9755008784b6c244cafc131d1acf'
     && policy.imageRepository === IMAGE_REPOSITORY && Number.isSafeInteger(policy.maxAuthorizationSeconds)
     && policy.maxAuthorizationSeconds > 0 && policy.maxAuthorizationSeconds <= 7200, 'POLICY_INVALID');
   if (policy.target === null) return policy;
@@ -108,8 +108,13 @@ export async function verifyGamingCandidate({ authorization, main, pullRequest, 
   requireCondition(pullRequest?.number === 1558 && pullRequest.state === 'open' && pullRequest.draft === false,
     'OPEN_NON_DRAFT_REQUIRED');
   requireCondition(pullRequest.head?.repo?.full_name === REPOSITORY && pullRequest.base?.repo?.full_name === REPOSITORY
-    && pullRequest.base.ref === 'main' && pullRequest.base.sha === authorization.baseSha
+    && pullRequest.base.ref === 'main' && typeof pullRequest.base.sha === 'string' && SHA.test(pullRequest.base.sha)
     && pullRequest.head.sha === authorization.headSha, 'PR_IDENTITY_DRIFT');
+  // Authorization stays bound to current main; GitHub may retain an earlier comparison base after a merge.
+  const reportedBaseSha = pullRequest.base.sha;
+  requireCondition(reportedBaseSha === authorization.mainSha
+    || (await git.isAncestor(reportedBaseSha, authorization.mainSha) === true
+      && await git.isAncestor(reportedBaseSha, authorization.headSha) === true), 'PR_IDENTITY_DRIFT');
   requireCondition(await git.treeSha(authorization.headSha) === authorization.treeSha, 'TREE_DRIFT');
   requireCondition(await git.archiveSha256(authorization.headSha) === authorization.sourceArchiveSha256, 'ARCHIVE_DRIFT');
   requireCondition(Date.parse(authorization.expiresAt) > now(), 'AUTHORIZATION_EXPIRED');

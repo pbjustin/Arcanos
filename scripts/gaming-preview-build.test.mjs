@@ -13,8 +13,8 @@ import { runGamingPreviewBuild } from './gaming-preview-build.mjs';
 const uuid = digit => `${digit.repeat(8)}-${digit.repeat(4)}-${digit.repeat(4)}-${digit.repeat(4)}-${digit.repeat(12)}`;
 const authorization = { version: 1, controllerSha: 'a'.repeat(40),
   mainSha: 'a'.repeat(40), baseSha: 'a'.repeat(40),
-  headSha: '1c1e7d0f4c8f4e62fd7117e28efd0d8d7c415262',
-  treeSha: '89f1eb0b988514d92ef9f82dd2f77bc356735b8b', sourceArchiveSha256: 'b'.repeat(64),
+  headSha: '848d6be5fc7d73936bb7921bd496d3051e30752d',
+  treeSha: 'd78ffd0a423e9755008784b6c244cafc131d1acf', sourceArchiveSha256: 'b'.repeat(64),
   targetSha256: 'c'.repeat(64), expiresAt: '2026-10-19T23:00:00.000Z', runId: '1234',
   target: { projectId: uuid('1'), baseEnvironmentId: uuid('2'), workerServiceId: uuid('3'), webServiceId: uuid('4') } };
 function fixture() {
@@ -40,6 +40,16 @@ test('Gaming artifact authorization fixes frozen candidate, target and exact run
     providerKey: 'forbidden' } }), /AUTHORIZATION_INVALID/u);
   assert.throws(() => validateGamingBuildAuthorization({ ...authorization,
     stack: [{ headSha: 'e'.repeat(40), treeSha: 'f'.repeat(40) }] }), /AUTHORIZATION_INVALID/u);
+});
+
+test('Gaming artifact authorization admits the refrozen head and rejects the historical head and tree', () => {
+  const refrozen = { ...authorization, headSha: '848d6be5fc7d73936bb7921bd496d3051e30752d',
+    treeSha: 'd78ffd0a423e9755008784b6c244cafc131d1acf',
+    sourceArchiveSha256: '5bc4713eb4842f5927354bebc9ae82f43f9c32516dd7f32b61a8c446db684123' };
+  assert.equal(validateGamingBuildAuthorization(refrozen), refrozen);
+  assert.throws(() => validateGamingBuildAuthorization({ ...refrozen,
+    headSha: '1c1e7d0f4c8f4e62fd7117e28efd0d8d7c415262', treeSha: '89f1eb0b988514d92ef9f82dd2f77bc356735b8b' }),
+  /AUTHORIZATION_INVALID/u);
 });
 
 test('Gaming compiled manifest binds source, outputs, kernel source, executable, target and lease', () => {
