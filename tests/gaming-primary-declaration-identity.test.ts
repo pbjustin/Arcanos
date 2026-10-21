@@ -39,4 +39,37 @@ describe('primary acquired game declarations preserve complete nominal subjects'
   ('keeps ordinary gameplay and matching source ownership eligible: %s', declaration => {
     expect(inspect(declaration)).toMatchObject({ status: 'verified', gameIdentityVerified: true });
   });
+
+  it.each([
+    'Players like fighting in the game Diablo IV before collecting equipment.',
+    'Players like exploring in the game Copperwind Afterlight before returning to town.',
+    'Players like playing in Diablo IV before collecting equipment.'
+  ])('retains affirmative foreign-game ownership after a preference verb: %s', declaration => {
+    expect(inspect(declaration)).toMatchObject({ status: 'conflict', gameIdentityVerified: false,
+      reasonCodes: ['GAME_MISMATCH'] });
+  });
+
+  it.each([
+    'Like in Diablo IV, this route requires checking equipment.',
+    'Like combat in Diablo IV, this route requires checking equipment.',
+    'Just like fighting in the game Diablo IV, this route requires checking equipment.',
+    'Much like combat in Diablo IV, this route requires checking equipment.',
+    'Unlike combat in Diablo IV, this route starts with the available equipment.',
+    'Compared to equipment progression in Diablo IV, this route has fewer upgrades.',
+    'Players like fighting in the game Lantern Voyage.'
+  ])('preserves local comparisons and affirmative matching game scope: %s', declaration => {
+    expect(inspect(declaration)).toMatchObject({ status: 'verified', gameIdentityVerified: true });
+  });
+
+  it('does not extend a like comparison across a later affirmative foreign-game clause', () => {
+    expect(inspect('Like combat in Lantern Voyage, in the game Diablo IV you can inspect equipment.'))
+      .toMatchObject({ status: 'conflict', gameIdentityVerified: false, reasonCodes: ['GAME_MISMATCH'] });
+  });
+
+  it.each([-1, 0, 1])('does not infer a leading comparison from the bounded prefix at offset %s', offset => {
+    const preference = 'like fighting';
+    const prefix = `Players ${preference}${' '.repeat(512 - preference.length + offset)}`;
+    expect(inspect(`${prefix}in the game Diablo IV.`))
+      .toMatchObject({ status: 'conflict', gameIdentityVerified: false, reasonCodes: ['GAME_MISMATCH'] });
+  });
 });

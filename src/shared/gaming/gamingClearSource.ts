@@ -104,7 +104,9 @@ function acquiredBodySubjects(prose: string): { subjects: Array<{ text: string; 
   for (const match of unquoted.matchAll(new RegExp(`(?:${gamingPrimarySourceDeclarationPattern().source}|\\bin(?: the game)?\\s+)`, 'giu'))) {
     if (++acquiredScopes > IDENTITY_SCOPE_SCAN_LIMITS.assertions) { complete = false; break; }
     const before = unquoted.slice(Math.max(0, match.index - IDENTITY_SCOPE_SCAN_LIMITS.prefixChars), match.index);
-    const prefix = before.slice(Math.max(...['.', '!', '?', ';', ',', '\n'].map(boundary => before.lastIndexOf(boundary))) + 1);
+    const prefixStart = Math.max(...['.', '!', '?', ';', ',', '\n'].map(boundary => before.lastIndexOf(boundary))) + 1;
+    const prefix = before.slice(prefixStart);
+    const prefixComplete = match.index <= IDENTITY_SCOPE_SCAN_LIMITS.prefixChars || prefixStart > 0;
     const subjectStart = match.index + match[0].length;
     const subjectWindow = unquoted.slice(subjectStart, subjectStart + IDENTITY_SCOPE_SCAN_LIMITS.subjectChars);
     const explicitGameScope = /^(?:this|in the game)\b/iu.test(match[0]);
@@ -128,8 +130,11 @@ function acquiredBodySubjects(prose: string): { subjects: Array<{ text: string; 
       : nominalScope(subjectClause, subjectWindow.trimStart().slice(subjectClause.length).startsWith(','));
     // Reference qualifiers apply locally, so a later affirmative clause after
     // a comma or sentence boundary is still independently inspected.
+    // Multiword "like" references must lead the clause; a preference verb
+    // such as "players like fighting" still asserts the following game scope.
     if (/\b(?:unlike|compared(?:\s+to)?|comparison(?:\s+with)?|contrast(?:\s+to)?|similar(?:ly)?|rather\s+than|instead\s+of|as(?:\s+is\s+the\s+case)?|like)\s*$/iu.test(prefix)
-      || /^in\b/iu.test(match[0]) && /\b(?:unlike|compared\s+to|comparison\s+with|contrast\s+to|similar\s+to|like)\b(?:\s+(?!but\b|however\b|yet\b|this\b|that\b)[\p{L}'’-]+){1,8}\s*$/iu.test(prefix)
+      || /^in\b/iu.test(match[0]) && (/\b(?:unlike|compared\s+to|comparison\s+with|contrast\s+to|similar\s+to)\b(?:\s+(?!but\b|however\b|yet\b|this\b|that\b)[\p{L}'’-]+){1,8}\s*$/iu.test(prefix)
+        || prefixComplete && /^\s*(?:(?:just|much)\s+)?like\b(?:\s+(?!but\b|however\b|yet\b|this\b|that\b)[\p{L}'’-]+){1,8}\s*$/iu.test(prefix))
       || /\b(?:not(?:\s+(?:apply|applicable|valid|available|supported|used|found|present|exist|included|be|for)){0,4}|(?:doesn|isn|aren|don|didn)['’]?t(?:\s+(?:apply|exist|work))?|without|except|excluding|unavailable|unsupported)\s*$/iu.test(prefix)
       || /^(?:contrast|comparison|case|addition|particular)\b/iu.test(subject)) continue;
     if (ambiguousNominalScope) complete = false;
