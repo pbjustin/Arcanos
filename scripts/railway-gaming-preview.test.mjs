@@ -12,6 +12,7 @@ import {
   validateGamingEnvironment, validateGamingImageReceipt, verifyGamingCandidate,
 } from './railway-gaming-preview.mjs';
 import { parseNativePrPreviewE2eArguments } from './native-pr-preview-e2e.mjs';
+import { GitReadAdapter } from './stacked-draft-preview-contract.mjs';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const id = digit => `${digit.repeat(8)}-${digit.repeat(4)}-4${digit.repeat(3)}-8${digit.repeat(3)}-${digit.repeat(12)}`;
@@ -163,6 +164,168 @@ test('refrozen Gaming admission accepts its exact new identity and rejects the h
   /PR_IDENTITY_DRIFT/u);
   assert.throws(() => authorize({ headSha: '1c1e7d0f4c8f4e62fd7117e28efd0d8d7c415262',
     treeSha: '89f1eb0b988514d92ef9f82dd2f77bc356735b8b' }), /SOURCE_OR_TARGET_DRIFT/u);
+});
+
+function admissionFixture(baseSha = 'b'.repeat(40)) {
+  const authorization = authorize(), ancestryReads = [], sourceReads = [];
+  return { authorization, ancestryReads, sourceReads, main: { protected: true, sha: controllerSha },
+    pullRequest: { number: 1558, state: 'open', draft: false,
+      head: { sha: policy.headSha, repo: { full_name: 'pbjustin/Arcanos' } },
+      base: { ref: 'main', sha: baseSha, repo: { full_name: 'pbjustin/Arcanos' } } },
+    git: {
+      isAncestor: async (base, head) => { ancestryReads.push([base, head]); return true; },
+      treeSha: async head => { sourceReads.push(['tree', head]); return authorization.treeSha; },
+      archiveSha256: async head => { sourceReads.push(['archive', head]); return authorization.sourceArchiveSha256; },
+    }, now: () => now };
+}
+test('reported PR base equal to protected main needs no ancestry exception', async () => {
+  const fixture = admissionFixture(controllerSha);
+  const evidence = await verifyGamingCandidate(fixture);
+  assert.equal(evidence.baseSha, controllerSha); assert.deepEqual(fixture.ancestryReads, []);
+  assert.deepEqual(fixture.sourceReads, [['tree', policy.headSha], ['archive', policy.headSha]]);
+});
+test('reported PR base independently ancestral to protected main and frozen Gaming is admitted', async () => {
+  const fixture = admissionFixture(), evidence = await verifyGamingCandidate(fixture);
+  assert.equal(evidence.baseSha, controllerSha);
+  assert.equal(evidence.controllerSha, controllerSha); assert.equal(evidence.candidateSha, policy.headSha);
+  assert.deepEqual(fixture.ancestryReads, [[fixture.pullRequest.base.sha, controllerSha],
+    [fixture.pullRequest.base.sha, policy.headSha]]);
+  assert.deepEqual(fixture.sourceReads, [['tree', policy.headSha], ['archive', policy.headSha]]);
+});
+test('both awaited ancestry reads use the same observed PR base identity', async () => {
+  const fixture = admissionFixture(), observedBase = fixture.pullRequest.base.sha;
+  fixture.git.isAncestor = async (base, head) => {
+    fixture.ancestryReads.push([base, head]); await Promise.resolve();
+    fixture.pullRequest.base.sha = 'f'.repeat(40); return true;
+  };
+  assert.equal((await verifyGamingCandidate(fixture)).baseSha, controllerSha);
+  assert.deepEqual(fixture.ancestryReads, [[observedBase, controllerSha], [observedBase, policy.headSha]]);
+});
+test('actual post-merge GitHub REST identities admit the unchanged frozen Gaming source', async () => {
+  // Bounded projections of the refreshed /branches/main and /pulls/1558 REST responses.
+  const protectedMain = 'b7146293ffe156cc3aa0b42c4a3a676e88522746';
+  const reportedBase = '0e7a8e607e3f2f3359dc86eabcf611d8dd3fe6b2';
+  const headSha = '848d6be5fc7d73936bb7921bd496d3051e30752d', treeSha = 'd78ffd0a423e9755008784b6c244cafc131d1acf';
+  const sourceArchiveSha256 = '5bc4713eb4842f5927354bebc9ae82f43f9c32516dd7f32b61a8c446db684123';
+  const mainResponse = { name: 'main', protected: true, commit: { sha: protectedMain } };
+  const prResponse = { number: 1558, state: 'open', draft: false,
+    head: { ref: 'fix/gaming-generic-source-validation-1532', sha: headSha, repo: { full_name: 'pbjustin/Arcanos' } },
+    base: { ref: 'main', sha: reportedBase, repo: { full_name: 'pbjustin/Arcanos' } } };
+  const requests = [], ancestryReads = [], sourceReads = [];
+  const github = new GamingGitHubReadAdapter({ token: 'mock-read-only-no-authority', fetchImpl: async url => {
+    requests.push(url);
+    assert.ok(['https://api.github.com/repos/pbjustin/Arcanos/branches/main',
+      'https://api.github.com/repos/pbjustin/Arcanos/pulls/1558'].includes(url));
+    return new Response(JSON.stringify(url.endsWith('/branches/main') ? mainResponse : prResponse),
+      { headers: { 'content-type': 'application/json' } });
+  } });
+  const authorization = authorize({ controllerSha: protectedMain, mainSha: protectedMain, baseSha: protectedMain,
+    sourceArchiveSha256 }, { controllerSha: protectedMain });
+  const main = await github.readMain(), pullRequest = await github.readGamingPullRequest();
+  const git = { isAncestor: async (base, head) => { ancestryReads.push([base, head]); return true; },
+    treeSha: async head => { sourceReads.push(['tree', head]); return treeSha; },
+    archiveSha256: async head => { sourceReads.push(['archive', head]); return sourceArchiveSha256; } };
+  const evidence = await verifyGamingCandidate({ authorization, main, pullRequest, git, now: () => now });
+  assert.equal(evidence.controllerSha, protectedMain); assert.equal(evidence.baseSha, protectedMain);
+  assert.equal(evidence.candidateSha, headSha); assert.equal(evidence.treeSha, treeSha);
+  assert.equal(evidence.sourceArchiveSha256, sourceArchiveSha256);
+  assert.deepEqual(ancestryReads, [[reportedBase, protectedMain], [reportedBase, headSha]]);
+  assert.deepEqual(sourceReads, [['tree', headSha], ['archive', headSha]]); assert.equal(requests.length, 2);
+});
+for (const [destination, index] of [['protected main', 0], ['frozen Gaming', 1]]) {
+  for (const [label, result] of [['false', false], ['null', null], ['undefined', undefined], ['truthy string', 'true'],
+    ['truthy object', {}], ['numeric success', 1]]) {
+    test(`reported PR base ${destination} ancestry fails closed on ${label}`, async () => {
+      const fixture = admissionFixture(); let reads = 0;
+      fixture.git.isAncestor = async (base, head) => {
+        fixture.ancestryReads.push([base, head]); return reads++ === index ? result : true;
+      };
+      await assert.rejects(verifyGamingCandidate(fixture), /PR_IDENTITY_DRIFT/u);
+      assert.equal(reads, index + 1); assert.deepEqual(fixture.sourceReads, []);
+    });
+  }
+  test(`reported PR base ${destination} ancestry read failure cannot admit the candidate`, async () => {
+    const fixture = admissionFixture(); let reads = 0;
+    fixture.git.isAncestor = async () => { if (reads++ === index) throw new Error('synthetic Git object read failure'); return true; };
+    await assert.rejects(verifyGamingCandidate(fixture));
+    assert.equal(reads, index + 1); assert.deepEqual(fixture.sourceReads, []);
+  });
+  test(`authorization expiring during awaited ${destination} ancestry cannot be admitted`, async () => {
+    const fixture = admissionFixture(); let reads = 0, clock = now;
+    fixture.now = () => clock;
+    fixture.git.isAncestor = async () => { await Promise.resolve(); if (reads++ === index) clock = Date.parse(fixture.authorization.expiresAt); return true; };
+    await assert.rejects(verifyGamingCandidate(fixture), /AUTHORIZATION_EXPIRED/u);
+    assert.ok(reads >= index + 1);
+  });
+}
+for (const [label, baseSha] of [['missing', undefined], ['null', null], ['empty', ''], ['short', 'b'.repeat(39)],
+  ['long', 'b'.repeat(41)], ['uppercase', 'B'.repeat(40)], ['revision expression', 'HEAD'], ['object', {}], ['array', []],
+  ['coercible array', ['b'.repeat(40)]]]) {
+  test(`reported PR base ${label} SHA is rejected before Git reads`, async () => {
+    const fixture = admissionFixture(); fixture.pullRequest.base.sha = baseSha;
+    await assert.rejects(verifyGamingCandidate(fixture), /PR_IDENTITY_DRIFT/u);
+    assert.deepEqual(fixture.ancestryReads, []); assert.deepEqual(fixture.sourceReads, []);
+  });
+}
+test('historical reported PR base cannot excuse another branch, repository or frozen source identity', async () => {
+  for (const mutate of [f => { f.pullRequest.base.ref = 'release'; },
+    f => { f.pullRequest.base.repo.full_name = 'other/Arcanos'; },
+    f => { f.pullRequest.head.repo.full_name = 'other/Arcanos'; },
+    f => { f.pullRequest.head.sha = 'f'.repeat(40); }, f => { f.pullRequest.number = 1559; }]) {
+    const fixture = admissionFixture(); mutate(fixture);
+    await assert.rejects(verifyGamingCandidate(fixture));
+    assert.deepEqual(fixture.ancestryReads, []); assert.deepEqual(fixture.sourceReads, []);
+  }
+  for (const [method, substituted, code] of [['treeSha', 'f'.repeat(40), /TREE_DRIFT/u],
+    ['archiveSha256', 'f'.repeat(64), /ARCHIVE_DRIFT/u]]) {
+    const fixture = admissionFixture(); fixture.git[method] = async () => substituted;
+    await assert.rejects(verifyGamingCandidate(fixture), code);
+    assert.equal(fixture.ancestryReads.length, 2);
+  }
+});
+test('reported PR ancestry never relaxes current protected-main or authorization bindings', async () => {
+  const fixture = admissionFixture();
+  await assert.rejects(verifyGamingCandidate({ ...fixture, main: { protected: true, sha: 'f'.repeat(40) } }), /PROTECTED_MAIN_DRIFT/u);
+  await assert.rejects(verifyGamingCandidate({ ...fixture, main: { protected: false, sha: controllerSha } }), /PROTECTED_MAIN_DRIFT/u);
+  assert.deepEqual(fixture.ancestryReads, []);
+  for (const changes of [{ mainSha: 'f'.repeat(40) }, { baseSha: fixture.pullRequest.base.sha },
+    { controllerSha: 'f'.repeat(40) }]) assert.throws(() => authorize(changes), /CONTROLLER_OR_BASE_DRIFT/u);
+  assert.throws(() => authorize({}, { actor: 'other' }), /OWNER_AUTHORIZATION_REQUIRED/u);
+  assert.throws(() => authorize({}, { repository: 'other/Arcanos' }), /OWNER_AUTHORIZATION_REQUIRED/u);
+  assert.throws(() => authorize({ targetSha256: 'f'.repeat(64) }), /SOURCE_OR_TARGET_DRIFT/u);
+});
+test('reported PR ancestry requires an available Git ancestry capability', async () => {
+  const fixture = admissionFixture(); delete fixture.git.isAncestor;
+  await assert.rejects(verifyGamingCandidate(fixture)); assert.deepEqual(fixture.sourceReads, []);
+});
+test('real bounded Git ancestry distinguishes shared ancestors, unrelated and unknown objects', async () => {
+  const folder = mkdtempSync(join(tmpdir(), 'gaming-preview-ancestry-test-'));
+  const run = (args, input) => {
+    const result = spawnSync('git', args, { cwd: folder, input, encoding: 'utf8', timeout: 5000, maxBuffer: 65_536,
+      env: { ...process.env, GIT_AUTHOR_NAME: 'Fixture', GIT_AUTHOR_EMAIL: 'fixture@example.invalid',
+        GIT_COMMITTER_NAME: 'Fixture', GIT_COMMITTER_EMAIL: 'fixture@example.invalid' } });
+    assert.equal(result.status, 0, result.stderr); return result.stdout.trim();
+  };
+  try {
+    run(['init', '--quiet', '--initial-branch=fixture']);
+    const tree = run(['mktree'], '');
+    const commit = (name, parent) => run(['commit-tree', tree, '-m', name, ...(parent ? ['-p', parent] : [])]);
+    const base = commit('shared base'), main = commit('protected main', base), candidate = commit('frozen candidate', base);
+    const unrelated = commit('unrelated root'), unknown = 'f'.repeat(40), git = new GitReadAdapter({ cwd: folder, canonicalArchive: true });
+    assert.equal(await git.isAncestor(base, main), true); assert.equal(await git.isAncestor(base, candidate), true);
+    assert.equal(await git.isAncestor(main, candidate), false); assert.equal(await git.isAncestor(unrelated, main), false);
+    await assert.rejects(git.isAncestor(unknown, main), /GIT_READ_FAILED/u);
+    await assert.rejects(git.isAncestor(tree, main), /GIT_READ_FAILED/u);
+    const fixture = admissionFixture(unknown);
+    fixture.git.isAncestor = git.isAncestor.bind(git);
+    await assert.rejects(verifyGamingCandidate(fixture)); assert.deepEqual(fixture.sourceReads, []);
+    const unavailable = new GitReadAdapter({ cwd: join(folder, 'missing'), canonicalArchive: true });
+    await assert.rejects(unavailable.isAncestor(base, main), /GIT_READ_FAILED/u);
+  } finally {
+    assert.equal(resolve(dirname(folder)), resolve(tmpdir()));
+    assert.equal(folder.startsWith(join(tmpdir(), 'gaming-preview-ancestry-test-')), true);
+    rmSync(folder, { recursive: true });
+  }
 });
 
 test('image receipt rejects wrong artifacts, mutable image, kernel policy, run and target', () => {
@@ -408,6 +571,8 @@ test('owner may retry cleanup only in the original workflow without replaying de
   for (const command of ['audit', 'authorize', 'deploy', 'verify', 'attest'])
     assert.throws(() => assertGamingPreviewWorkflowContext(command, retry), /TRUSTED_WORKFLOW_REQUIRED/u);
   for (const patch of [{ GITHUB_TRIGGERING_ACTOR: 'other' }, { GITHUB_ACTOR: 'other' }, { EVENT_SENDER: 'other' },
+    { GITHUB_REPOSITORY: 'other/Arcanos' }, { GITHUB_EVENT_NAME: 'pull_request' },
+    { GITHUB_WORKFLOW_REF: 'pbjustin/Arcanos/.github/workflows/other.yml@refs/heads/main' },
     { GITHUB_RUN_ATTEMPT: '0' }, { GITHUB_REF: 'refs/heads/other' }, { GITHUB_SHA: 'b'.repeat(40) }])
     assert.throws(() => assertGamingPreviewWorkflowContext('cleanup', { ...retry, ...patch }), /TRUSTED_WORKFLOW_REQUIRED/u);
 });

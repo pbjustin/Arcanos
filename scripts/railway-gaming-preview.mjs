@@ -108,8 +108,13 @@ export async function verifyGamingCandidate({ authorization, main, pullRequest, 
   requireCondition(pullRequest?.number === 1558 && pullRequest.state === 'open' && pullRequest.draft === false,
     'OPEN_NON_DRAFT_REQUIRED');
   requireCondition(pullRequest.head?.repo?.full_name === REPOSITORY && pullRequest.base?.repo?.full_name === REPOSITORY
-    && pullRequest.base.ref === 'main' && pullRequest.base.sha === authorization.baseSha
+    && pullRequest.base.ref === 'main' && typeof pullRequest.base.sha === 'string' && SHA.test(pullRequest.base.sha)
     && pullRequest.head.sha === authorization.headSha, 'PR_IDENTITY_DRIFT');
+  // Authorization stays bound to current main; GitHub may retain an earlier comparison base after a merge.
+  const reportedBaseSha = pullRequest.base.sha;
+  requireCondition(reportedBaseSha === authorization.mainSha
+    || (await git.isAncestor(reportedBaseSha, authorization.mainSha) === true
+      && await git.isAncestor(reportedBaseSha, authorization.headSha) === true), 'PR_IDENTITY_DRIFT');
   requireCondition(await git.treeSha(authorization.headSha) === authorization.treeSha, 'TREE_DRIFT');
   requireCondition(await git.archiveSha256(authorization.headSha) === authorization.sourceArchiveSha256, 'ARCHIVE_DRIFT');
   requireCondition(Date.parse(authorization.expiresAt) > now(), 'AUTHORIZATION_EXPIRED');
