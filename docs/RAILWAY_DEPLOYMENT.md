@@ -742,6 +742,31 @@ Launcher behavior:
   and readiness checks. A newer failed latest record does not mask the sole
   active success. Ambiguity, pagination truncation, trigger recreation,
   deployment races, or provider-schema drift fails closed.
+- Lifecycle API failures preserve the external
+  `RAILWAY_PR_PREVIEW_API_FAILED` code. Their sanitized diagnostic contains only
+  an allowlisted category, a fixed operation name, and an HTTP status when
+  available. Categories use the `RAILWAY_PREVIEW_` prefix with
+  `NETWORK_FAILURE`, `REQUEST_TIMEOUT`, `AUTHENTICATION_FAILED`,
+  `AUTHORIZATION_FAILED`, `GRAPHQL_VALIDATION_FAILED`, `RESPONSE_INVALID`,
+  `API_UNEXPECTED_FAILURE`, or `RATE_LIMITED`. No provider messages, response
+  bodies, headers, credentials, identifiers, variables, or unrelated account
+  metadata enter this diagnostic. The workspace-token check expects the
+  `me` account query to be denied; that expected GraphQL denial is not itself
+  an authentication failure, and the separate pinned-workspace authority check
+  must still pass.
+  Secret presence in GitHub metadata proves neither validity, expiry, nor
+  Railway scope. On an authentication or authorization failure, the owner must
+  verify that the existing GitHub Environment secret is valid and authorized
+  for the expected pinned workspace without exposing its value. Generic
+  historical `API_FAILED` logs alone leave the exact cause `NOT_VERIFIED`.
+  Existing bounded deployment-read retries admit only network failures,
+  timeouts, HTTP 429, and HTTP 5xx failures. Authentication, authorization,
+  schema, and invalid-response failures are not retried, and mutations gain no
+  automatic retries. A controller repair must merge into trusted `main`
+  through owner-authorized review before an existing opted-in PR's lifecycle
+  retry can use it; changing that PR's head does not replace the trusted
+  controller. Revalidate the PR head and opt-in before recovery, and retain
+  worker-first deployment, isolation, ownership, and exact-SHA attestation.
 - Only the separate credential-free job checks out the opted-in PR head, and it
   uses that checkout solely as clean exact-SHA Git evidence. The executed
   harness and contract come from the trusted default-branch checkout. A PR that
