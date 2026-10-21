@@ -371,10 +371,10 @@ describe('npm audit policy', () => {
 
     const expectedLockIdentities = {
       'node_modules/@modelcontextprotocol/sdk': {
-        version: '1.31.0',
-        resolved: 'https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.31.0.tgz',
+        version: '1.32.0',
+        resolved: 'https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.32.0.tgz',
         integrity:
-          'sha512-UvTMgnNlnIBO/22ob2RcVGDlcvOslQs8T59+FTGdA0L27a39fdGF/EDETNtDVK4DZGpwomlsYpRdA8UXcVL/pw==',
+          'sha512-8BviX/hK4Gd2eL1KdTwm0gfl4d3wdoErW0Jd00h6nomUAtk6IJk5vwQJc6kfWtJTzN5OEV/lgIiJKI8fiDGAlA==',
       },
       'vendor/minimatch-9.0.7/node_modules/brace-expansion': {
         version: '5.0.12',

@@ -365,7 +365,11 @@ function lifecycleMcpFailure(
 export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpServer> {
   const { McpServer } = await getMcpSdk();
 
-  const requestServer = new McpServer({ name: 'arcanos', version: '1.0.0' }, { capabilities: { logging: {} } });
+  const requestServer = new McpServer({ name: 'arcanos', version: '1.0.0' }, {
+    capabilities: { logging: {} },
+    // Bound dense records/arrays before schema validation; the HTTP byte cap is separate.
+    maxToolInputElements: 10_000,
+  });
   const server = createLegacyActionPlanMcpRegistrationBoundary(requestServer);
 
   // -------------------------

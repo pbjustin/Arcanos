@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { z } from 'zod';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { McpServer as SdkMcpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 import {
   BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
@@ -46,7 +49,10 @@ class MockJobRepositoryUnavailableError extends Error {}
 class FakeMcpServer {
   public readonly tools = new Map<string, { config: Record<string, unknown>; handler: (args: unknown) => Promise<unknown> }>();
 
-  constructor(_info: { name: string; version: string }, _options: { capabilities?: Record<string, unknown> }) {}
+  constructor(
+    _info: { name: string; version: string },
+    public readonly options: NonNullable<ConstructorParameters<typeof SdkMcpServer>[1]>,
+  ) {}
 
   registerTool(
     name: string,
@@ -373,6 +379,47 @@ describe('createMcpServer job control tools', () => {
 
     expect(mockRegisterResource).not.toHaveBeenCalled();
     expect(mockRegisterResourceTemplate).not.toHaveBeenCalled();
+  });
+
+  it('bounds dense tool arguments with the production SDK options before invoking a tool', async () => {
+    const productionServer = await createMcpServer(buildContext()) as FakeMcpServer;
+    const tool = productionServer.tools.get('trinity.query')!;
+    const server = new SdkMcpServer({ name: 'arcanos-input-boundary-test', version: '1.0.0' }, productionServer.options);
+    const validate = jest.fn();
+    const inputSchema = (tool.config.inputSchema as z.ZodTypeAny).superRefine(() => { validate(); });
+    const handler = jest.fn(async () => ({ content: [{ type: 'text' as const, text: 'accepted' }] }));
+    server.registerTool('trinity.query', { ...tool.config, inputSchema }, handler);
+    const client = new Client({ name: 'arcanos-input-boundary-client', version: '1.0.0' }, { capabilities: {} });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+
+      // Two outer members, one metadata member and 9,997 array elements reach the inclusive limit.
+      const bounded = await client.callTool({ name: 'trinity.query', arguments: {
+        prompt: 'p'.repeat(20_000), metadata: { entries: Array(9_997).fill('x') },
+      } });
+      expect(bounded.isError).not.toBe(true);
+      expect(validate).toHaveBeenCalledTimes(1);
+      expect(handler).toHaveBeenCalledTimes(1);
+
+      const oversizedInputs = [
+        { prompt: 'bounded', metadata: Object.fromEntries(Array.from({ length: 9_999 }, (_, index) => [`k${index}`, 0])) },
+        { prompt: 'bounded', metadata: { entries: Array(9_998).fill('x') } },
+      ];
+      for (const args of oversizedInputs) {
+        expect(Buffer.byteLength(JSON.stringify(args))).toBeLessThan(1024 * 1024);
+        const rejected = await client.callTool({ name: 'trinity.query', arguments: args });
+        expect(rejected).toMatchObject({ isError: true,
+          content: [{ type: 'text', text: expect.stringContaining('maximum of 10000 elements') }] });
+      }
+      expect(validate).toHaveBeenCalledTimes(1);
+      expect(handler).toHaveBeenCalledTimes(1);
+    } finally {
+      await client.close();
+      await server.close();
+    }
   });
 
   it.each([
