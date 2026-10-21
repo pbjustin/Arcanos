@@ -2552,17 +2552,23 @@ export async function beginBackstageAuthorityGeneration(
   assertDatabaseReady();
   const fence = createClaimedJobFence(options.fence.workerId, options.fence.claimGeneration);
   const result = await query(
-    `UPDATE job_data /* backstage_authority_execution */
-     SET started_at = NOW(), updated_at = NOW(),
+    `WITH locked_claim AS MATERIALIZED (
+       SELECT id FROM job_data WHERE id = $1 FOR UPDATE
+     ), execution_clock AS MATERIALIZED (
+       SELECT id, clock_timestamp() AS admitted_at FROM locked_claim
+     )
+     UPDATE job_data /* backstage_authority_execution */
+     SET started_at = execution_clock.admitted_at, updated_at = execution_clock.admitted_at,
        autonomy_state = jsonb_set(autonomy_state, '{backstageAuthorityWait,executionClaimGeneration}', to_jsonb($3::text))
-     WHERE id = $1 AND status = 'running'
+     FROM execution_clock
+     WHERE job_data.id = execution_clock.id AND status = 'running'
        AND last_worker_id = $2::text AND claim_generation = $3::bigint
-       AND lease_expires_at IS NOT NULL AND lease_expires_at >= NOW()
+       AND lease_expires_at IS NOT NULL AND lease_expires_at >= execution_clock.admitted_at
        AND cancel_requested_at IS NULL
        AND jsonb_typeof(autonomy_state->'backstageAuthorityWait') = 'object'
        AND NOT (autonomy_state->'backstageAuthorityWait' ? 'executionClaimGeneration')
-       AND (autonomy_state#>>'{backstageAuthorityWait,deadlineAt}')::bigint > EXTRACT(EPOCH FROM NOW()) * 1000
-     RETURNING *`,
+       AND (autonomy_state#>>'{backstageAuthorityWait,deadlineAt}')::bigint > EXTRACT(EPOCH FROM execution_clock.admitted_at) * 1000
+     RETURNING job_data.*`,
     [jobId, fence.workerId, fence.claimGeneration],
   );
   return normalizeClaimedJob(result.rows[0] as JobData | undefined, 'Backstage execution claim_generation');
@@ -2579,26 +2585,42 @@ export async function deferJobForProviderRecovery(
     options.fence.workerId,
     options.fence.claimGeneration
   );
+  const authorityDeferral = options.deferralKind === 'backstage_notion_authority';
+  // Sample the clock after acquiring the row lock. NOW() is fixed at statement
+  // start and could admit a wait or generation whose deadline expired on that lock.
+  const deferralClock = authorityDeferral ? 'deferral_clock.admitted_at' : 'NOW()';
   const result = await query(
-    `UPDATE job_data
+    `${authorityDeferral ? `WITH locked_claim AS MATERIALIZED (
+       SELECT id FROM job_data WHERE id = $4 FOR UPDATE
+     ), deferral_clock AS MATERIALIZED (
+       SELECT id, clock_timestamp() AS admitted_at FROM locked_claim
+     )` : ''}
+     UPDATE job_data
      SET
        status = 'pending',
        error_message = $1,
-       next_run_at = NOW() + ($2::bigint * INTERVAL '1 millisecond'),
-       updated_at = NOW(),
+       next_run_at = ${authorityDeferral
+         ? `LEAST(${deferralClock} + ($2::bigint * INTERVAL '1 millisecond'),
+           to_timestamp(($3::jsonb#>>'{backstageAuthorityWait,deadlineAt}')::numeric / 1000))`
+         : "NOW() + ($2::bigint * INTERVAL '1 millisecond')"},
+       updated_at = ${deferralClock},
        completed_at = NULL,
-       ${options.deferralKind === 'backstage_notion_authority' ? 'started_at = NULL,' : ''}
+       ${authorityDeferral ? 'started_at = NULL,' : ''}
        last_heartbeat_at = NULL,
        lease_expires_at = NULL,
        autonomy_state = COALESCE(autonomy_state, '{}'::jsonb) || $3::jsonb
-     WHERE id = $4
+     ${authorityDeferral ? 'FROM deferral_clock' : ''}
+     WHERE job_data.id = $4
+       ${authorityDeferral ? 'AND job_data.id = deferral_clock.id' : ''}
        AND status = 'running'
        AND last_worker_id = $5::text
        AND claim_generation = $6::bigint
        AND lease_expires_at IS NOT NULL
-       AND lease_expires_at >= NOW()
+       AND lease_expires_at >= ${deferralClock}
        AND cancel_requested_at IS NULL
-     RETURNING *`,
+       ${authorityDeferral ? `AND ($3::jsonb#>>'{backstageAuthorityWait,deadlineAt}')::bigint
+         > EXTRACT(EPOCH FROM ${deferralClock}) * 1000` : ''}
+     RETURNING job_data.*`,
     [
       options.errorMessage,
       Math.max(0, options.delayMs),

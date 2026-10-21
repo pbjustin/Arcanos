@@ -125,13 +125,15 @@ describe('jobRepository.deferJobForProviderRecovery', () => {
   it('fences the fresh execution clock and records the one generation allowed to execute', async () => {
     await beginBackstageAuthorityGeneration('job-provider', { fence: { workerId: 'slot-1', claimGeneration: '4' } });
     const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
-    expect(sql).toContain('SET started_at = NOW()');
+    expect(sql).toContain('locked_claim AS MATERIALIZED');
+    expect(sql).toContain('SELECT id, clock_timestamp() AS admitted_at FROM locked_claim');
+    expect(sql).toContain('SET started_at = execution_clock.admitted_at');
     expect(sql).toContain('executionClaimGeneration');
     expect(sql).toContain("AND NOT (autonomy_state->'backstageAuthorityWait' ? 'executionClaimGeneration')");
     expect(sql).toContain('AND claim_generation = $3::bigint');
-    expect(sql).toContain('AND lease_expires_at >= NOW()');
+    expect(sql).toContain('AND lease_expires_at >= execution_clock.admitted_at');
     expect(sql).toContain('AND cancel_requested_at IS NULL');
-    expect(sql).toContain("deadlineAt}')::bigint > EXTRACT(EPOCH FROM NOW())");
+    expect(sql).toContain("deadlineAt}')::bigint > EXTRACT(EPOCH FROM execution_clock.admitted_at)");
     expect(params).toEqual(['job-provider', 'slot-1', '4']);
   });
 });

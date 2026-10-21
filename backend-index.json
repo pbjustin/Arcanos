@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-21T03:35:59.999Z",
+  "generatedAt": "2026-10-21T06:00:59.897Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -3793,6 +3793,9 @@
           "relativePath": "tests/backstage-authority-admission.test.ts"
         },
         {
+          "relativePath": "tests/backstage-authority-provider-timing.test.ts"
+        },
+        {
           "relativePath": "tests/backstage-authority-wait.test.ts"
         },
         {
@@ -5096,6 +5099,9 @@
         },
         {
           "relativePath": "tests/integration/action-plan-execution-migration.pg18.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/integration/backstage-authority-wait.pg18.integration.test.ts"
         },
         {
           "relativePath": "tests/integration/backstage-canon-storyline.pg18.integration.test.ts"
