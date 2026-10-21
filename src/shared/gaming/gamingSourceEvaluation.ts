@@ -1,7 +1,7 @@
 /** Internal diagnostic contract; never grants acquisition, generation, or storage authority. */
 import { GAMING_GAME_REGISTRY } from './gamingGameRegistry.js';
 export const GAMING_SOURCE_EVALUATION_VERSION = 'gaming-source-evaluation/v1';
-export const GAMING_SOURCE_EVALUATION_RULE_VERSION = 'gaming-source-evaluation-rules/v1';
+export const GAMING_SOURCE_EVALUATION_RULE_VERSION = 'gaming-source-evaluation-rules/v2';
 export const GAMING_SOURCE_EVALUATION_STAGES = ['acquisition', 'extraction', 'identity', 'applicability',
   'relevance', 'freshness', 'provenance', 'selection', 'generation'] as const;
 export type GamingSourceEvaluationStage = typeof GAMING_SOURCE_EVALUATION_STAGES[number];
@@ -33,6 +33,7 @@ const STAGE_CODES = new Set(['STAGE_NOT_RUN', 'SOURCE_ACQUIRED', 'EXTRACTION_INT
 
 export interface GamingSourceEvaluationDiagnostic {
   httpStatus?: number;
+  acquisitionStage?: string;
   extractedChars?: number;
   completeRecords?: number;
   partialRecords?: number;
@@ -43,6 +44,10 @@ export interface GamingSourceEvaluationDiagnostic {
   truncated?: boolean;
   identityRuleId?: string;
   identityCategory?: string;
+  identitySubjectKind?: 'article_topic' | 'game_identity' | 'unknown';
+  identityScope?: 'source_global' | 'local_reference' | 'unknown';
+  identityDetermination?: 'corroborated' | 'explicit_contradiction' | 'insufficient_corroboration';
+  failureClass?: 'security' | 'policy' | 'source_access' | 'extraction' | 'gameplay_quality' | 'workflow';
   authority?: 'official' | 'reviewed_secondary' | 'unknown';
   contentHash?: string;
 }
@@ -73,8 +78,13 @@ function safeDiagnostic(value: GamingSourceEvaluationDiagnostic): GamingSourceEv
     if (typeof item === 'number' && Number.isSafeInteger(item) && item >= 0 && item <= (key === 'httpStatus' ? 599 : 1_000_000_000)) result[key] = item;
   }
   if (typeof value.truncated === 'boolean') result.truncated = value.truncated;
+  if (['admission', 'dns', 'transport', 'redirect', 'extraction'].includes(value.acquisitionStage ?? '')) result.acquisitionStage = value.acquisitionStage;
   if (/^gaming\.identity\.[a-z_]{1,80}$/u.test(value.identityRuleId ?? '')) result.identityRuleId = value.identityRuleId;
   if (['structured_field', 'prose_metadata', 'document_title', 'body_heading', 'body_scope', 'edition_scope', 'acquired_anchors'].includes(value.identityCategory ?? '')) result.identityCategory = value.identityCategory;
+  if (['article_topic', 'game_identity', 'unknown'].includes(value.identitySubjectKind ?? '')) result.identitySubjectKind = value.identitySubjectKind;
+  if (['source_global', 'local_reference', 'unknown'].includes(value.identityScope ?? '')) result.identityScope = value.identityScope;
+  if (['corroborated', 'explicit_contradiction', 'insufficient_corroboration'].includes(value.identityDetermination ?? '')) result.identityDetermination = value.identityDetermination;
+  if (['security', 'policy', 'source_access', 'extraction', 'gameplay_quality', 'workflow'].includes(value.failureClass ?? '')) result.failureClass = value.failureClass;
   if (['official', 'reviewed_secondary', 'unknown'].includes(value.authority ?? '')) result.authority = value.authority;
   if (/^[a-f0-9]{64}$/u.test(value.contentHash ?? '')) result.contentHash = value.contentHash;
   return result;
@@ -107,7 +117,19 @@ export function rejectGamingSourceEvaluation(trace: GamingSourceEvaluation, reas
     trace.recovery = { eligible: false, reasonCode: 'CANDIDATE_RECOVERY_DENIED' };
     return;
   }
-  trace.stages[REJECTION_STAGES[code]] = { status: 'rejected', reasonCode: code, diagnostic: safeDiagnostic(diagnostic) };
+  const failureClass: GamingSourceEvaluationDiagnostic['failureClass'] = [
+    'UNTRUSTED_METADATA_INVALID', 'INVALID_URL', 'URL_BLOCKED', 'REDIRECT_NOT_ALLOWED',
+    'RESOLVED_SOURCE_IDENTITY_MISMATCH', 'SOURCE_INSTRUCTIONS_REJECTED', 'SOURCE_INTEGRITY_REJECTED', 'SOURCE_USE_RESTRICTED'
+  ].includes(code) ? 'security' : code === 'REVIEWED_OFFICIAL_CURRENTNESS_SOURCE_REQUIRED' ? 'policy' : [
+    'SOURCE_TIMEOUT', 'SOURCE_INACCESSIBLE', 'SOURCE_FETCH_FAILED', 'SOURCE_RESPONSE_TOO_LARGE', 'SOURCE_TOO_LARGE'
+  ].includes(code) ? code === 'SOURCE_TIMEOUT' && diagnostic.acquisitionStage === 'extraction' ? 'extraction' : 'source_access'
+    : ['SOURCE_EXTRACTION_FAILED', 'UNSUPPORTED_SOURCE_FORMAT'].includes(code)
+    ? 'extraction' : ['FETCH_BUDGET_EXHAUSTED', 'DUPLICATE_URL', 'EVIDENCE_SELECTION_FAILED'].includes(code)
+      ? 'workflow' : 'gameplay_quality';
+  const stage = REJECTION_STAGES[code];
+  // Preserve earlier bounded extraction evidence when a later quality gate rejects.
+  trace.stages[stage] = { status: 'rejected', reasonCode: code,
+    diagnostic: safeDiagnostic({ ...trace.stages[stage].diagnostic, ...diagnostic, failureClass }) };
   trace.outcome = 'rejected';
   trace.rejectionReasons = [code];
   const denied = ['UNTRUSTED_METADATA_INVALID', 'INVALID_URL', 'URL_BLOCKED', 'RESOLVED_SOURCE_IDENTITY_MISMATCH',

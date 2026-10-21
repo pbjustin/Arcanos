@@ -1,0 +1,74 @@
+{
+  "kind": "review-followup-prepublication-evidence",
+  "baselineSha": "0e7a8e607e3f2f3359dc86eabcf611d8dd3fe6b2",
+  "reviewedHeadSha": "4bfe047d886dcf7c17566ba1dd40761c29a0bfc4",
+  "baselineTrackedBlobsVerified": 3606,
+  "runtimeBlobsVerified": 1342,
+  "tools": {
+    "node": "24.18.1",
+    "npm": "11.16.0",
+    "powershell": "7.6.7",
+    "dependencies": "clean npm ci; zero installed package version drift"
+  },
+  "finalMatrix": {
+    "suites": 7,
+    "tests": 227,
+    "baseline": {
+      "passed": 100,
+      "failed": 127
+    },
+    "repaired": {
+      "passed": 227,
+      "failed": 0
+    },
+    "skipped": 0
+  },
+  "reviewFindings": {
+    "reviewUrl": "https://github.com/pbjustin/Arcanos/pull/1558#pullrequestreview-5565791674",
+    "actionable": 4,
+    "roleBefore": {
+      "failed": 8,
+      "passed": 53
+    },
+    "honestyBefore": {
+      "failed": 20,
+      "passed": 47
+    },
+    "diagnosticBefore": {
+      "failed": 2,
+      "passed": 12
+    },
+    "repairedFocusedSuites": {
+      "extractionSecurity": 328,
+      "honesty": 318,
+      "diagnosticCurrentness": 67
+    },
+    "focusedCountsOverlap": true
+  },
+  "preReviewFullRun": {
+    "sha": "4bfe047d886dcf7c17566ba1dd40761c29a0bfc4",
+    "passedSuites": 953,
+    "skippedSuites": 13,
+    "passedTests": 20087,
+    "skippedTests": 234,
+    "failures": 0,
+    "coverageThresholds": "PASS"
+  },
+  "fileSha256": {
+    "src/core/logic/trinityHonesty.ts": "8af1ee97735f992f7620562d98952528833cfc99257089d17784f19592aa944b",
+    "src/services/gamingDocumentExtraction.ts": "090a298d17d4ee2aa9ce976a0684d51c3a503467f8f98c8ae37ef8e661cb1b0f",
+    "src/shared/gaming/gamingSourceEvaluation.ts": "1f4e38b23cb21ffaec2ce562a2d1c9e1a08d2e63badcea6de0fd71e4bd4b4f68",
+    "scripts/check-native-pr-preview-imports.mjs": "446198fa0f7078d5e80f37b21e06d679baaa0b20fd63dca5156df914593bd1ff",
+    "tests/gaming-generic-source-validation.integration.test.ts": "93036daaa64e888ea36d161dbd971c50fe87ad5d5fd74a0a2bb2097d96695b50",
+    "tests/gaming-generic-detection.test.ts": "2b8f89700a56db0aa308c6ed958632af4c3abfbb4a62c0d8b5e98960683ee1f3",
+    "tests/gaming-generic-scope-acquisition.test.ts": "a79b625354197a0e6673d415755d68964e7de935d791cc6bda6817096f2bfe8f",
+    "tests/gaming-generic-extraction.test.ts": "1899c1a35b9a6d98d79eb8f6adde63e7b5b26eca89a34582609017742c3935c1",
+    "tests/gaming-generic-diagnostics.test.ts": "f30e855041b50dfe88f804fb90e8d5d22e68afc320cb95c563143e73b094d318",
+    "tests/trinity-persistence-claim-classification.test.ts": "b8fd76b18d1b0bb07d2ee091f6a4563738584c4550d303bc6764fb1936565426",
+    "tests/gaming-generic-instruction-boundary-review.test.ts": "ce7984b7b708d787bf2b3bdae4af7d27bca74691189601829205ba4035cd2e09"
+  },
+  "publicationStatus": "This historical receipt predates the final committed head. Consult PR1558 for subsequent check runs and CodeRabbit review dispositions.",
+  "exactHeadRailwayPreview": "NOT_RUN",
+  "livePublisherAcceptance": "NOT_RUN",
+  "productionDeployment": "NOT_RUN"
+}

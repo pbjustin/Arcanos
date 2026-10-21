@@ -168,7 +168,10 @@ export async function evaluateGamingHybridCandidates(
     };
     const reject = (reason: string) => {
       rejectGamingSourceEvaluation(evaluation, reason, {
-        ...(identityDiagnostic ? { identityRuleId: identityDiagnostic.ruleId, identityCategory: identityDiagnostic.evidenceCategory } : {}),
+        ...(typeof acquisitionDiagnostic.stage === 'string' ? { acquisitionStage: acquisitionDiagnostic.stage } : {}),
+        ...(identityDiagnostic ? { identityRuleId: identityDiagnostic.ruleId, identityCategory: identityDiagnostic.evidenceCategory,
+          identitySubjectKind: identityDiagnostic.subjectKind, identityScope: identityDiagnostic.scope,
+          identityDetermination: identityDiagnostic.determination } : {}),
         ...(typeof acquisitionDiagnostic.httpStatus === 'number' ? { httpStatus: acquisitionDiagnostic.httpStatus } : {})
       });
       if (!sourceAssessed) logger.info('gaming.clear.source.not_run', { requestId: context.requestId, traceId: context.traceId,
@@ -292,7 +295,9 @@ export async function evaluateGamingHybridCandidates(
       const gameIdentityVerified = acquiredIdentity.status === 'verified' || acquiredIdentity.gameIdentityVerified === true;
       updateGamingSourceEvaluation(evaluation, 'identity', gameIdentityVerified ? 'passed' : 'unknown',
         gameIdentityVerified ? 'ACQUIRED_IDENTITY_VERIFIED' : 'GAME_IDENTITY_UNVERIFIED', {
-        identityRuleId: identityDiagnostic.ruleId, identityCategory: identityDiagnostic.evidenceCategory, contentHash
+        identityRuleId: identityDiagnostic.ruleId, identityCategory: identityDiagnostic.evidenceCategory,
+        identitySubjectKind: identityDiagnostic.subjectKind, identityScope: identityDiagnostic.scope,
+        identityDetermination: identityDiagnostic.determination, contentHash
       });
       if (editionOnlyIdentityOutcome && acquiredIdentity.status === 'conflict') {
         retainOfficialMetadataConflict();
@@ -343,7 +348,9 @@ export async function evaluateGamingHybridCandidates(
         onIdentityAssessment: identity => { identityDiagnostic = identity.diagnostic; }, ...(v2 ? { allowPartialCoverage: true } : {}) });
       sourceAssessed = true;
       if (sourceAssessment.gates.identity === 'verified') updateGamingSourceEvaluation(evaluation, 'identity', 'passed', 'ACQUIRED_IDENTITY_VERIFIED', {
-        identityRuleId: identityDiagnostic?.ruleId, identityCategory: identityDiagnostic?.evidenceCategory, contentHash
+        identityRuleId: identityDiagnostic?.ruleId, identityCategory: identityDiagnostic?.evidenceCategory,
+        identitySubjectKind: identityDiagnostic?.subjectKind, identityScope: identityDiagnostic?.scope,
+        identityDetermination: identityDiagnostic?.determination, contentHash
       });
       updateGamingSourceEvaluation(evaluation, 'applicability', sourceAssessment.gates.compatibility === 'verified' ? 'passed' : 'unknown', 'APPLICABILITY_EVALUATED');
       const freshnessGate = sourceAssessment.gates.freshness;
@@ -427,9 +434,9 @@ export async function evaluateGamingHybridCandidates(
       }
     } catch (error) {
       if (callerSignal?.aborted) throw error;
+      if (error instanceof GamingDocumentAcquisitionError) acquisitionDiagnostic = { ...error.acquisition };
       if (acquisitionSignal?.aborted) { reject('SOURCE_TIMEOUT'); continue; }
       if (error instanceof GamingDocumentAcquisitionError) {
-        acquisitionDiagnostic = { ...error.acquisition };
         // Public acquisition reasons remain bounded. Preserve the internal
         // integrity/security distinction so an unavailable index cannot hide it.
         const unavailable = ['DNS_FAILED', 'FETCH_FAILED', 'CONNECTION_FAILED', 'DEADLINE_EXCEEDED', 'HTTP_RESPONSE_UNUSABLE', 'CONDITIONAL_CONTENT_UNAVAILABLE'];

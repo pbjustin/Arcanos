@@ -1,6 +1,6 @@
 import { splitGamingDocumentIntoChunks as splitIntoChunks } from "@services/gamingDocumentChunks.js";
 import { createHash } from "node:crypto";
-import { GAMEPLAY_CONTENT_PATTERN, filterGamingDocumentInstructions, isGamingCatalogMetadataOnly } from "@services/gamingDocumentExtraction.js";
+import { GAMEPLAY_CONTENT_PATTERN, GAMING_MARKDOWN_ROLE_HEADING_PATTERN, filterGamingDocumentInstructions, isGamingCatalogMetadataOnly } from "@services/gamingDocumentExtraction.js";
 import type { GamingPlayerContext } from '@shared/gaming/gamingPlayerContext.js';
 import type { GamingStoredKnowledgeContext } from '@shared/gaming/gamingStoredEvidenceCore.js';
 import type { GamingEvidenceUnit } from '@shared/gaming/gamingEvidenceUnits.js';
@@ -670,6 +670,8 @@ function readHttpStatus(error: unknown): number | undefined {
 
 function safeGamingSourceError(error: unknown): string {
   if (error instanceof GamingDocumentAcquisitionError) {
+    if (error.acquisition.subreason === 'SOURCE_INSTRUCTIONS_REJECTED') return "Source instructions were rejected.";
+    if (error.acquisition.subreason === 'SOURCE_USE_RESTRICTED') return "Source use is restricted.";
     if (error.code === 'URL_BLOCKED') return "Source URL was blocked or could not be resolved.";
     if (['DEADLINE_EXCEEDED', 'CANCELLED'].includes(error.acquisition.subreason)) return "Source retrieval timed out.";
     if (['TRANSFER_LIMIT', 'DECODED_LIMIT'].includes(error.acquisition.subreason)) return "Source response exceeded the size limit.";
@@ -694,6 +696,22 @@ function safeGamingSourceError(error: unknown): string {
     return "Source URL was blocked or could not be resolved.";
   }
   return "Source could not be retrieved.";
+}
+
+/** Reject a restricted or partially sanitized document before any evidence or cache projection. */
+function assertGamingDocumentUseAllowed(document: ResolvedGamingDocument): void {
+  if (document.sourceUseRestricted)
+    throw new GamingDocumentAcquisitionError('SOURCE_EXTRACTION_FAILED', 'extraction', 'SOURCE_USE_RESTRICTED');
+  if (document.metrics.instructionFiltered)
+    throw new GamingDocumentAcquisitionError('SOURCE_EXTRACTION_FAILED', 'extraction', 'SOURCE_INSTRUCTIONS_REJECTED');
+}
+
+/** Keep document security/policy failures distinct from transport without logging source text. */
+function gamingSourceFailureCode(error: unknown): string {
+  if (error instanceof GamingDocumentAcquisitionError
+    && ['SOURCE_INSTRUCTIONS_REJECTED', 'SOURCE_USE_RESTRICTED'].includes(error.acquisition.subreason))
+    return error.acquisition.subreason;
+  return readErrorString(error, "code") ?? "INTAKE_RETRIEVAL_FAILED";
 }
 
 function sourceUrlForGamingError(sourceUrl: string, error: unknown): string {
@@ -834,6 +852,7 @@ export async function buildGamingWebContext(
             if (!isResolvedGamingDocumentIdentityVerified(document, fetchUrl)) {
               throw new GamingDocumentAcquisitionError('URL_BLOCKED', 'extraction', 'SOURCE_IDENTITY_MISMATCH');
             }
+            assertGamingDocumentUseAllowed(document);
             sourceUrl = document.publicUrl;
             extraction = document.extraction;
             return document.text;
@@ -875,7 +894,7 @@ export async function buildGamingWebContext(
         }
         return { url: sourceUrl, snippet };
       } catch (error) {
-        const errorCode = readErrorString(error, "code") ?? "INTAKE_RETRIEVAL_FAILED";
+        const errorCode = gamingSourceFailureCode(error);
         const timeoutPhase = readErrorString(error, "timeoutPhase");
         if (logContext) {
           logger.warn("gaming.retrieval.source.end", {
@@ -1728,6 +1747,9 @@ async function fetchGamingRagDocument(
 
   let redirected = false;
   try {
+    if (urlStructuredResult?.failureReason === "SOURCE_INSTRUCTIONS_REJECTED") {
+      throw new GamingDocumentAcquisitionError('SOURCE_EXTRACTION_FAILED', 'extraction', 'SOURCE_INSTRUCTIONS_REJECTED');
+    }
     let extraction: FetchAndCleanExtractionMetrics = {
       strategy: "body",
       rawTextLength: 0,
@@ -1753,9 +1775,7 @@ async function fetchGamingRagDocument(
         if (!isResolvedGamingDocumentIdentityVerified(document, fetchUrl)) {
           throw new GamingDocumentAcquisitionError('URL_BLOCKED', 'extraction', 'SOURCE_IDENTITY_MISMATCH');
         }
-        if (document.sourceUseRestricted || document.evidenceUnits?.length && document.metrics.instructionFiltered) {
-          throw new GamingDocumentAcquisitionError('SOURCE_FETCH_FAILED', 'extraction', 'SOURCE_USE_RESTRICTED');
-        }
+        assertGamingDocumentUseAllowed(document);
         evidenceUnits = readGamingEvidenceUnits(document.evidenceUnits, document.publicUrl, document.text);
         if (evidenceUnits.length) resolvedDocument = { ...document, rawDocument: undefined };
         redirected = (document.acquisition?.redirectCount ?? 0) > 0;
@@ -1821,6 +1841,9 @@ async function fetchGamingRagDocument(
       }
     } catch {
       structuredResult = redirected ? undefined : urlStructuredResult;
+    }
+    if (structuredResult?.failureReason === "SOURCE_INSTRUCTIONS_REJECTED") {
+      throw new GamingDocumentAcquisitionError('SOURCE_EXTRACTION_FAILED', 'extraction', 'SOURCE_INSTRUCTIONS_REJECTED');
     }
     const structuredRelevant = Boolean(
       structuredResult
@@ -1971,7 +1994,7 @@ async function fetchGamingRagDocument(
         structured
       };
     }
-    const errorCode = readErrorString(error, "code") ?? "INTAKE_RETRIEVAL_FAILED";
+    const errorCode = gamingSourceFailureCode(error);
     const timeoutPhase = readErrorString(error, "timeoutPhase");
     if (logContext) {
       logger.warn("gaming.retrieval.source.end", {
@@ -1996,7 +2019,7 @@ async function fetchGamingRagDocument(
 const NAVIGATION_JUNK_PATTERN = /\b(?:advertisement|cookie settings?|privacy policy|terms of use|sign in|log in|subscribe|newsletter|menu|navigation|footer|share this|edit source|page information|table of contents|all rights reserved|fandom apps|explore properties|category directory|wiki category)\b/i;
 const NAVIGATION_LABEL_PATTERN = /\b(?:home|menu|games?|news|guides?|builds?|weapons?|armor|talismans?|skills?|bosses?|locations?|quests?|walkthrough|classes?|community|forums?|wiki|categories|view all|go back|read next|follow us|related games?|popular games)\b/gi;
 const NAVIGATION_JUNK_MATCH_PATTERN = /\b(?:advertisement|cookie settings?|privacy policy|terms of use|sign in|log in|subscribe|newsletter|menu|navigation|footer|share this|edit source|page information|table of contents|all rights reserved|category directory|wiki category)\b/gi;
-const SOURCE_INSTRUCTION_MATCH_PATTERN = /(?:\[(?:system|developer|assistant|instructions?)\]|<(?:system|developer|assistant)>|#{1,6}\s*(?:system|developer|assistant|instructions?)\b|\b(?:ignore|disregard|override)\s+(?:all\s+)?(?:previous|prior|system|developer|assistant|user)\s+(?:instructions?|messages?|prompts?)\b|\bforget\s+(?:everything|all)\s+(?:above|before)\b|\byou\s+are\s+now\b|\bnew\s+(?:system|developer|assistant)\s+(?:message|prompt|instructions?)\b|\bfollow\s+(?:these|the\s+following)\s+instructions?\b|\b(?:reveal|print|show|expose|exfiltrate)\s+(?:the\s+)?(?:system|developer|secret|credential|token|api\s+key)\b|\b(?:call|invoke)\s+(?:the\s+)?(?:tool|function)\b|\b(?:execute|run)\s+(?:this\s+)?(?:command|shell|powershell|bash)\b)/gi;
+const SOURCE_INSTRUCTION_DELIMITER_PATTERN = new RegExp(String.raw`(?:\[(?:system|developer|assistant|instructions?)\]|<(?:system|developer|assistant)>|${GAMING_MARKDOWN_ROLE_HEADING_PATTERN.source})`, 'gim');
 const MODE_CONTENT_TERMS: Record<GamingMode, readonly string[]> = {
   guide: ["route", "walkthrough", "boss", "location", "beginner", "quest", "tutorial", "progress", "objective", "exploration", "mission", "mechanic"],
   build: ["build", "stats", "weapon", "armor", "skill", "rotation", "talent", "gear", "loadout", "ability", "attribute", "module"],
@@ -2130,9 +2153,16 @@ export function scoreGamingSnippetQuality(
   const repetitionPenalty = repeatedTextPenalty(normalized);
   const linkDensity = visibleLinkDensity(normalized);
   const malformedPenalty = malformedTextPenalty(normalized);
-  const instructionPenalty = clampScore(
-    countPatternMatches(text, SOURCE_INSTRUCTION_MATCH_PATTERN) * 0.45
-  );
+  // Normalization and link furniture are not instructions. Reuse the acquisition
+  // classifier for prose while retaining explicit role delimiters as a separate signal.
+  // Retain invisible boundaries for the scanner's compact view before comparing
+  // its output with the ordinary display normalization.
+  const rawInstructionText = text.replace(/\[LINKS\]/gi, " ");
+  const instructionText = normalizeUntrustedEvidenceText(rawInstructionText);
+  const instructionPenalty = clampScore(Math.max(
+    countPatternMatches(instructionText, SOURCE_INSTRUCTION_DELIMITER_PATTERN) * 0.45,
+    filterGamingDocumentInstructions(rawInstructionText) !== instructionText ? 0.45 : 0
+  ));
   const labelsPenalty = labelDumpDensity(text);
   const modeSignal = params.mode && MODE_CONTENT_TERMS[params.mode].some((term) => normalized.toLowerCase().includes(term)) ? 0.08 : 0;
   const evidenceSignal = GAMEPLAY_CONTENT_PATTERN.test(normalized) ? 0.08 : 0;

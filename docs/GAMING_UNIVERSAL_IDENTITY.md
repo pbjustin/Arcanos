@@ -68,6 +68,22 @@ acquired game context. A title, URL, request label, comparison or quotation
 cannot supply that context. Positive anchors are bounded to the primary 32K
 characters; contradiction inspection retains the complete bounded document.
 
+Metadata detection labels an unfamiliar guide-title candidate as an article
+subject rather than an established game identity. An acquired definition can
+bind the exact topic to its game, including locations, quests, characters and
+mechanics; a heading or repeated topic alone cannot supply that ownership.
+Missing corroboration remains `GAME_IDENTITY_UNVERIFIED`, while independently
+contradictory primary identities still reject. Explicit declarations retain
+complete sentence-like titles in statements such as
+"This guide covers ..."; gameplay-predicate trimming applies only to
+prepositional scope. Source-local alias declarations
+allow full names of up to 120 characters, including subtitle punctuation, and
+still require separate canonical body proof. They cannot establish equivalence
+across sequels, DLC, remakes or editions. Reviewed registry edition relationships
+recognize colon and dash separators without discarding the edition scope or
+proving compatibility between editions. Unreviewed alternate edition names
+remain distinct and cannot inherit base-game mechanics.
+
 Bare unfamiliar headings can describe any gameplay system when independently
 acquired game scope is established. An unfamiliar guide-framed mechanic heading
 can be owned by a separately acquired explicit named-game scope without a closed
@@ -129,7 +145,7 @@ acquired identities remain bounded negative paths. Additional acquired-document
 tests cover Journey, Silver Harbor, Slate Meridian, localized titles, novel
 guide-framed topics, incomplete statistics and durable consent.
 
-Internal CLEAR policy v4 invalidates prior v1/v2/v3 assessments while preserving
+Internal CLEAR policy v5 invalidates prior v1/v2/v3/v4 assessments while preserving
 the public `gaming-clear/v1` schema. Context fingerprints include the policy
 revision, and approved hybrid ingestion revisions bind that revision. Existing
 extraction caches may reuse bounded acquired bytes; approval decisions require

@@ -1,0 +1,33 @@
+{
+  "kind": "pr1558-json-envelope-review-followup-prepublication-evidence",
+  "reviewedParentHead": "26e6a289c8e68df1868280f4e30c7fca7432c168",
+  "baseSha": "0e7a8e607e3f2f3359dc86eabcf611d8dd3fe6b2",
+  "review": "https://github.com/pbjustin/Arcanos/pull/1558#discussion_r4310308502",
+  "status": "Focused repair verified; final exact-head broad validation, fresh review and hosted acceptance require separately published PR evidence",
+  "repair": {
+    "area": "JSON-LD Unicode normalization false taint",
+    "reproduction": "Four benign Dataset/ItemList name/description cases containing ZWJ or RLM lost all structured evidence before repair",
+    "change": "Compare instruction-filter output against the existing shared character normalizer while preserving original evidence text",
+    "addedRegressionCases": 8,
+    "negativeControls": "Four Unicode-separated assistant-instruction cases remain rejected"
+  },
+  "declinedSuggestion": {
+    "change": "Downgrade sensitive-only JSON-LD envelope rejection to missing context",
+    "reason": "The suggested downgrade removes document-wide taint for credential-shaped token, API key, password and Bearer values while raw JSON-LD remains available to fallback. This demonstrates weakened classification, not a completed citation bypass.",
+    "policy": "Existing conservative sensitive-text rejection remains unchanged, including ambiguous token-colon descriptions. Normal gameplay advice such as conserving tokens is unaffected.",
+    "addedBoundaryCases": 12
+  },
+  "focusedEvidence": {
+    "exactJsonEvidenceSuitePassedTests": 66,
+    "failedTests": 0,
+    "suitesOverlapOtherReceipts": true
+  },
+  "safety": {
+    "thresholdChanges": "NONE",
+    "sensitiveValueGateChanges": "NONE",
+    "privatePluginChanges": "NONE",
+    "storageConsentPolicyChanges": "NONE",
+    "externalModelCalls": "MOCKED_OR_DISABLED",
+    "productionChanges": "NONE"
+  }
+}

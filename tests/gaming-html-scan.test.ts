@@ -34,16 +34,20 @@ describe('linear Gaming HTML budget and source-use scans', () => {
   });
 
   it('bounds five-million-character unclosed and dense closed scans in a disposable Node child', () => {
-    // Native type stripping imports only extraction and its reviewed pure layout data.
-    // Resolve that single emitted dependency without admitting a general app/alias graph.
+    // Native type stripping imports only extraction and its reviewed pure dependencies.
+    // Resolve those exact emitted dependencies without admitting a general app/alias graph.
     // SIGKILL contains a regression even if a synchronous scan blocks JavaScript timers.
     const moduleUrl = new URL('../src/services/gamingDocumentExtraction.ts', import.meta.url).href;
     const profileDataUrl = new URL('../src/shared/gaming/gamingPublisherExtractionProfileData.ts', import.meta.url).href;
+    const normalizationUrl = new URL('../src/shared/gaming/gamingDocumentTextNormalization.ts', import.meta.url).href;
     const script = `import { registerHooks } from 'node:module';
       const extractionUrl = ${JSON.stringify(moduleUrl)};
       registerHooks({ resolve(specifier, context, nextResolve) {
         if (context.parentURL === extractionUrl && specifier === '@shared/gaming/gamingPublisherExtractionProfileData.js') {
           return nextResolve(${JSON.stringify(profileDataUrl)}, context);
+        }
+        if (context.parentURL === extractionUrl && specifier === '@shared/gaming/gamingDocumentTextNormalization.js') {
+          return nextResolve(${JSON.stringify(normalizationUrl)}, context);
         }
         return nextResolve(specifier, context);
       } });

@@ -139,7 +139,7 @@ describe('independent CLEAR review through acquired synthetic documents', () => 
       sources: [{ submittedIndex: 0, canonicalUrl: url, game, gameKey: 'slate-meridian', origin: 'user_supplied' }]
     });
     expect(result.output.sources[0].status).toBe('stored');
-    expect(database.revisions[0].provenance.sourceIdentityPolicyVersion).toBe('gaming-clear-policy/v4');
+    expect(database.revisions[0].provenance.sourceIdentityPolicyVersion).toBe('gaming-clear-policy/v5');
     const knowledge = await buildStoredGamingKnowledgeContext({ ...fixture.input, hybridRetrieval: true, requireRequestCoverage: true });
     expect(knowledge.context).toContain('tidal prism');
     if (proof) {
@@ -382,7 +382,7 @@ describe('independent CLEAR review through acquired synthetic documents', () => 
     expect((await approvedIngestion(reapproved)).output.sources[0].status).toBe('updated');
     const restored = await buildStoredGamingKnowledgeContext(request);
     expect(restored.clearEvidenceAssessment?.decision).toBe('accept');
-    expect(restored.sources[0].clearSourceAssessment?.policyProfile).toContain('gaming-clear-policy/v4:');
+    expect(restored.sources[0].clearSourceAssessment?.policyProfile).toContain('gaming-clear-policy/v5:');
     const activeRevision = database.revisions.find(revision => revision.id === restored.evidence![0].revisionId)!;
     expect(activeRevision.provenance.clearReassessmentRequired).toBeUndefined();
   });

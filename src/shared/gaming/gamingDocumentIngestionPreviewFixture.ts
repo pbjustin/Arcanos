@@ -98,7 +98,12 @@ function requireDocumentQualityPolicy(cleanedText: string): void {
   const input = { cleanedText, truncated: false, minUsefulTextChars: MIN_USEFUL_CHARS };
   requireProof(classifyGamingDocumentQuality(input) === 'complete');
   requireProof(classifyGamingDocumentQuality({ ...input, truncated: true }) === 'partial');
-  requireProof(classifyGamingDocumentQuality({ ...input, navigationDensity: 0.62 }) === 'metadata-only');
+  // Navigation vocabulary also occurs in intact gameplay instructions. Prove
+  // both sides of the quality distinction instead of treating density as proof.
+  requireProof(classifyGamingDocumentQuality({ ...input, navigationDensity: 0.62 }) === 'complete');
+  requireProof(classifyGamingDocumentQuality({ ...input, navigationDensity: 0.62, truncated: true }) === 'partial');
+  const navigation = 'Home Menu Search Categories Previous Related Popular Guides Weapons Healing Mission Contact Account Privacy. '.repeat(4);
+  requireProof(classifyGamingDocumentQuality({ ...input, cleanedText: navigation, navigationDensity: 0.62 }) === 'metadata-only');
   requireProof(classifyGamingDocumentQuality({ ...input, cleanedText: 'Short guide.' }) === 'unusable');
   const catalog = 'Identifier native_preview_document_manual. Addeddate 2026. Publisher Synthetic Catalog. '.repeat(4);
   requireProof(classifyGamingDocumentQuality({ ...input, cleanedText: catalog }) === 'metadata-only');

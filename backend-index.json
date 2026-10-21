@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-17T20:39:06.444Z",
+  "generatedAt": "2026-10-19T19:01:30.277Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2792,6 +2792,9 @@
           "relativePath": "src/shared/gaming/gamingDocumentProjectionCore.ts"
         },
         {
+          "relativePath": "src/shared/gaming/gamingDocumentTextNormalization.ts"
+        },
+        {
           "relativePath": "src/shared/gaming/gamingDurableRagPreviewFixture.ts"
         },
         {
@@ -4309,6 +4312,9 @@
           "relativePath": "tests/fixtures/gaming-currentness/second-publisher.ts"
         },
         {
+          "relativePath": "tests/fixtures/gaming-generic-scope.ts"
+        },
+        {
           "relativePath": "tests/fixtures/gaming-independent-workflow.ts"
         },
         {
@@ -4474,6 +4480,9 @@
           "relativePath": "tests/gaming-game-registry.test.ts"
         },
         {
+          "relativePath": "tests/gaming-game-surface-scope.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-generation-budget-preview-failure.test.ts"
         },
         {
@@ -4486,13 +4495,31 @@
           "relativePath": "tests/gaming-generic-benchmark.test.ts"
         },
         {
+          "relativePath": "tests/gaming-generic-detection.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-generic-diagnostics.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-generic-extraction.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-generic-instruction-boundary-review.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-generic-late-applicability.test.ts"
         },
         {
           "relativePath": "tests/gaming-generic-late-source-scope.test.ts"
         },
         {
+          "relativePath": "tests/gaming-generic-scope-acquisition.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-generic-source-scope.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-generic-source-validation.integration.test.ts"
         },
         {
           "relativePath": "tests/gaming-generic-stored-source-scope.test.ts"
@@ -4567,6 +4594,9 @@
           "relativePath": "tests/gaming-ingress-audit.test.ts"
         },
         {
+          "relativePath": "tests/gaming-instruction-normalization.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-json-evidence-preflight.test.ts"
         },
         {
@@ -4580,6 +4610,9 @@
         },
         {
           "relativePath": "tests/gaming-large-source-preview.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-legacy-instruction-boundary.test.ts"
         },
         {
           "relativePath": "tests/gaming-live-runtime.test.ts"
@@ -4633,6 +4666,9 @@
           "relativePath": "tests/gaming-partial-guide-admission.test.ts"
         },
         {
+          "relativePath": "tests/gaming-plaintext-inspection.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-platform-aliases.test.ts"
         },
         {
@@ -4640,6 +4676,9 @@
         },
         {
           "relativePath": "tests/gaming-player-context.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-primary-declaration-identity.test.ts"
         },
         {
           "relativePath": "tests/gaming-primary-heading-preface.test.ts"
@@ -4688,6 +4727,9 @@
         },
         {
           "relativePath": "tests/gaming-samurai-guide-workflow.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-scoped-security-preview.test.ts"
         },
         {
           "relativePath": "tests/gaming-search-discovery.test.ts"
@@ -4756,6 +4798,9 @@
           "relativePath": "tests/gaming-structured-evidence-preview.test.ts"
         },
         {
+          "relativePath": "tests/gaming-structured-instruction-boundary.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-structured-resources.test.ts"
         },
         {
@@ -4784,6 +4829,9 @@
         },
         {
           "relativePath": "tests/gaming-version.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-visible-record-boundaries.test.ts"
         },
         {
           "relativePath": "tests/gaming-web-context-edition-scope.test.ts"
@@ -5990,6 +6038,9 @@
         },
         {
           "relativePath": "tests/trinity-model-policy.e2e.test.ts"
+        },
+        {
+          "relativePath": "tests/trinity-persistence-claim-classification.test.ts"
         },
         {
           "relativePath": "tests/trinity-pipeline-adapter.test.ts"

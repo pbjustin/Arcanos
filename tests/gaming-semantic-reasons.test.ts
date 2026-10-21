@@ -34,10 +34,12 @@ describe('independent Gaming evidence failure semantics', () => {
   it('separates unproved game identity from explicit wrong-game evidence', () => {
     const unknown = document(prose.replace('In Elden Ring, ', ''), 'Unidentified notebook guide');
     expect(assessGamingClearSourceIdentity(unknown, request, policy)).toEqual({ status: 'unknown', gameIdentityVerified: false, reasonCodes: ['GAME_IDENTITY_UNVERIFIED'],
-      diagnostic: { ruleId: 'gaming.identity.independent_anchor_required', evidenceCategory: 'acquired_anchors' } });
+      diagnostic: { ruleId: 'gaming.identity.independent_anchor_required', evidenceCategory: 'acquired_anchors',
+        subjectKind: 'article_topic', scope: 'unknown', determination: 'insufficient_corroboration' } });
     const wrong = document(prose.replace('Elden Ring', 'Diablo 4'), 'Diablo 4 guide');
     expect(assessGamingClearSourceIdentity(wrong, request, policy)).toEqual({ status: 'conflict', gameIdentityVerified: false, reasonCodes: ['GAME_MISMATCH'],
-      diagnostic: { ruleId: 'gaming.identity.acquired_title_conflict', evidenceCategory: 'document_title' } });
+      diagnostic: { ruleId: 'gaming.identity.acquired_title_conflict', evidenceCategory: 'document_title',
+        subjectKind: 'game_identity', scope: 'source_global', determination: 'explicit_contradiction' } });
   });
   it('uses coupled acquired title and body proof for games outside the alias catalog', () => {
     const wrong = document('Stardew Valley gameplay guide. Plant crops in the spring and water them each morning. This Stardew Valley guide covers copper tools and the first farm upgrade.', 'Stardew Valley guide');

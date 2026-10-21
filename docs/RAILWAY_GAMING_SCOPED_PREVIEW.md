@@ -34,6 +34,61 @@ paths and timeouts. Missing, duplicated, modified or skipped required checks
 fail. The full-platform default retains its 173 descriptors and Notion coverage.
 Gaming never writes success to the full-platform status context.
 
+## Preserved offline verification and evidence limits
+
+| Included assertions | Coverage |
+| --- | --- |
+| Native scope: 63 cases | Exact-commit readiness, passive worker, health and method/path denials; Gaming canary and guide/build/meta contracts; source authorization, parser limits, provenance, lifecycle and unsafe-source cases; shared MCP body-cap and status auth-before-parser contracts and worker denials. |
+| Gaming MCP: 21 cases | Initialization/catalog, fixed query and hybrid results, closed inputs and candidate bounds, denied ingestion/refresh/storage with and without confirmation, credential-carrier rejection, malformed/oversized input, worker and metadata denials. |
+| Nested Gaming production-core proofs | Synthetic extraction and acquisition, community guide/build acceptance, game/edition identity, source-instruction rejection, CLEAR, Trinity honesty and the versioned proof markers required by the native verifier. |
+
+The frozen Gaming implementation and its assembled-application regression remain
+the authority for these component proofs. The source-security proof includes bare
+filenames passed to intrinsic file-input options (`--upload-file`, `--input-file`
+and `-T`), `@` and path operands, bundled and quoted options, escaped options and
+generic form-field labels. Ordinary game selectors and complete quoted chat prose
+retain their positive controls. An ambiguous bare `--source` selector alone does
+not establish host-file access. Both raw and normalized option boundaries are
+inspected so apostrophes in narration cannot hide a real file operand.
+
+The [assembled-application regression](../tests/native-pr-preview-application.test.ts)
+routes all 84 requests through an injected local transport, fails if its Notion
+connectivity seam runs, and intercepts application `http.request`, `https.request`
+and `fetch`. It asserts zero calls to those four seams. Its adapter alone uses a
+captured HTTP function for fixed loopback listeners. Raw sockets, DNS and other
+HTTP entry points are not instrumented; that regression is not process-level
+egress evidence. Linux kernel isolation is a separate infrastructure proof.
+
+One verifier run uses a Jest completion checkpoint after each verified request.
+The five-second Jest and request limits and 60-second aggregate verifier limit
+remain unchanged. Failed or timed-out cases abort and drain pending transports
+and application responses before later tests reuse shared mocks. The entire
+matrix remains in Jest's coverage process. A separate broad-mode regression
+retains the Notion selector with a mocked seam; neither regression needs a real
+Notion request.
+
+Without a trusted hosted receipt, injected execution continues to report
+`offlineVerification: NOT_PROVEN`, `transport: caller-supplied-unverified`,
+`hostedExecuted: null` and `GAMING_SCOPED_PREVIEW: NOT_RUN`. A supplied callback
+can make network requests or ignore cancellation, so callback identity does not
+prove an offline transport. The wrapper does not await noncooperative caller
+effects or turn them into verified evidence. It retains bounded transport/body
+settlement, exact origins, credential omission and redirect denial.
+
+The preview integration's scope-policy schema replaces frozen Gaming's
+`hostedEnabled: false` field with `hostedActivation: trusted-controller-receipt-only`.
+The closed module-relative reader, module-issued immutable configuration and
+caller-substitution denials remain. This describes receipt authority, not current
+activation: the separate controller policy remains `enabled: false`, `target: null`.
+The unchanged frozen PR stays an exact source artifact; the combined trusted
+preview tooling incorporates this separately reviewed infrastructure extension.
+
+Synthetic component proofs do not establish normal-route bearer authentication,
+the complete acquisition/provider graph, live publisher retrieval, real inference,
+active queue work, SQL atomicity, caching/storage integration or production
+readiness. Focused mocked production-path tests, disposable PostgreSQL CI and
+source/compiled import protections remain separate requirements.
+
 ## Admission and provenance
 
 The workflow admits only an initial manual dispatch by owner `pbjustin`, with

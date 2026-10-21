@@ -5,6 +5,47 @@ extracts, and assesses documents before they become evidence. Acquisition succes
 does not establish the game, edition, current patch, requested gameplay fact,
 Gaming CLEAR acceptance, or permission to store a source.
 
+Ordinary gameplay evidence may come from public community wikis, discussions,
+player builds, walkthroughs, or specialist articles without official-publisher
+affiliation. Acquired ownership, intact relevant content, provenance and CLEAR
+remain required. Explicit current-patch and live-status requests retain their
+separate reviewed-authority verification. Publisher HTTP 403 responses remain
+access failures and are never retried through an access-control bypass.
+
+Hybrid-v2 and both legacy web-context entry points reject an acquired document
+marked `instructionFiltered`, including documents with no structured records.
+Sanitized remaining prose cannot become a citation, verified CLEAR evidence,
+cached source or URL-payload fallback. Legacy diagnostics report the bounded
+`SOURCE_INSTRUCTIONS_REJECTED` reason separately from publisher access failures;
+benign player instructions use the same classifier as document acquisition.
+
+The scan follows the parser's actual interpretation, including HTML markup in
+accepted plaintext or responses without a media type. JSON-LD envelope names and
+descriptions carry instruction rejection through projection. Specialized Archive
+resolution inspects the already-acquired bounded body before its selected-text
+ceiling can omit a malicious tail. An exhausted raw inspection fails with
+`SOURCE_EXTRACTION_FAILED` / `EXTRACTION_BUDGET_EXHAUSTED`; it cannot attest a
+clean prefix or populate a source cache. Plain text without markup or entity
+openers uses a complete text scan without constructing a redundant DOM.
+Character normalization alone does not mark a document as instruction-bearing:
+plaintext, metadata, JSON-LD envelope text and projection compare the same
+normalized characters while preserving line-sensitive instruction checks.
+Instruction and credential inspection also checks invisible controls removed
+within words, so inserting a joiner cannot hide a directive or credential label;
+actual spaces, tabs and line breaks retain their meaning.
+Credential-like structured text remains conservatively rejected, including
+ambiguous `token:` values; dropping only its envelope cannot make the remaining
+source eligible for fallback evidence. Durable ingestion
+also rejects document or structured-build taint before persistence; sanitized
+remaining prose cannot become a stored fallback. Consent and source-use policy
+remain independently required.
+
+Source-evaluation rule v2 adds closed identity subject/scope/determination fields
+and a failure class separating security, authority policy, source access, extraction, gameplay
+quality and workflow failures. Rejection retains earlier bounded extraction
+counts. These fields contain no article subjects, raw passages or URLs, and
+cannot grant acceptance, additional acquisition budget or storage permission.
+
 ## Confirmed failure classes
 
 At base `da27d1445dd443adc1f1abc7200b38f28acc10ff`, discovery admission assigned
@@ -40,6 +81,22 @@ Private build payloads stay out of displayed/cached citations even when article
 text supplies the evidence. Self-contained payload fallback requires a proven
 zero-hop transport failure; security, redirect, cancellation, and deadline
 failures cannot revive or cache that payload as evidence.
+Detected instructions in consumed structured-build fields reject the entire
+normalized record, including instructions found before a field is shortened or
+removed. Metadata, another candidate, an adapter or article fallback cannot
+restore that rejected record. Unknown JSON fields remain excluded from evidence;
+clean supported fields and clean transport fallback retain their existing rules.
+Visible equipment and skill records are inspected independently. An oversized or
+incomplete item is omitted as a whole after consumed-field instruction checks;
+intact sibling records remain eligible. Table cells retain their original column
+positions. Unused oversized labels are excluded, while supported source-global
+constraints remain subject to structural admission and cannot be silently dropped
+to make affected records usable.
+
+Adapter success does not replace inspection of the original supported source
+fields. Duplicate table columns cannot overwrite an earlier instruction-bearing
+cell or create an apparently complete row. Repeated supported global definitions
+remain ambiguous and cannot be rescued by another candidate.
 
 Only explicitly recognized analytics parameters are removed: `utm_*`, `fbclid`,
 `gclid`, `dclid`, `msclkid`, `mc_cid`, and `mc_eid`. Generic `source`, `campaign`,

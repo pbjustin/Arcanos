@@ -1,5 +1,6 @@
 import type { FetchAndCleanOptions } from "@shared/webFetcher.js";
 import { GAMING_PUBLISHER_EXTRACTION_PROFILES } from '@shared/gaming/gamingPublisherExtractionProfileData.js';
+import { normalizeGamingDocumentInstructionCharacters } from '@shared/gaming/gamingDocumentTextNormalization.js';
 
 /** Preserve the existing tag-budget scan, advancing past each complete span without backtracking. */
 export function countGamingHtmlElements(body: string, maxElements: number): number {
@@ -112,7 +113,91 @@ export const GAMING_DOCUMENT_FURNITURE_SELECTOR = COMMON_JUNK_SELECTORS
   .filter(selector => !['header', 'aside', '.comments', '#comments', "[class*='comment-list']"].includes(selector))
   .join(',');
 
-const SOURCE_INSTRUCTION_PATTERN = /\b(?:(?:ignore|disregard|override)\s+(?:all\s+)?(?:previous|prior|system|developer|assistant|user)\s+(?:instructions?|messages?|prompts?)|forget\s+(?:everything|all)\s+(?:above|before)|you\s+are\s+now|new\s+(?:system|developer|assistant)\s+(?:message|prompt|instructions?)|follow\s+(?:these|the\s+following)\s+instructions?|(?:system|developer|assistant)\s+(?:message|prompt|instructions?)|(?:reveal|print|show|expose|exfiltrate)\s+(?:the\s+)?(?:system|developer|secret|credential|token|api\s+key)\s*(?:prompt|message|instructions?|value)?|(?:call|invoke)\s+(?:the\s+)?(?:tool|function)|(?:execute|run)\s+(?:this\s+)?(?:command|shell|powershell|bash))\b/i;
+// Player instructions and progress narration are normal guide content. Require a
+// control-plane target for role reassignment and disclosure; execution has the
+// scoped checks below. Narrated system messages and in-game chat commands do not
+// themselves address the assistant.
+const SOURCE_INSTRUCTION_PATTERN = /\b(?:(?:ignore|disregard|override)\s+(?:(?:all|the)\s+)?(?:previous|prior|system|developer|assistant|user)(?:\s+(?:and|or)\s+(?:system|developer|assistant|user))*\s+(?:instructions?|messages?|prompts?)|forget\s+(?:everything|all)\s+(?:above|before)|(?:system|developer|assistant)\s+(?:prompts?|instructions?)|(?:follow|obey|adopt|prioritize)\s+(?:(?:the|this|these|new|following)\s+)*(?:system|developer|assistant)\s+messages?|(?:reveal|print|show|expose|exfiltrate|disclose|leak)\s+(?:(?:the|your|our|my|all|any|private)\s+)*(?:(?:system|developer|assistant)(?:['’]s)?\s+(?:prompts?|messages?|instructions?)|secrets|secret(?=\s*(?:[.!?;,:]|$)|\s+(?:from|in|of|to|with)\b)|credentials?|passwords?|tokens?|api\s+keys?|secret\s+(?:keys?|tokens?|values?))\b|(?:call|invoke)\s+(?:the\s+)?(?:tools?|functions?|[a-z_]\w*(?:\.\w+|__\w+)+)\b|(?:execute|run)\s+(?:this\s+)?(?:(?:shell|powershell|bash)(?:\s+commands?)?|commands?\s+(?:in|using|with)\s+(?:the\s+)?(?:shell|terminal|powershell|bash|tools?|functions?|[a-z_]\w*(?:\.\w+|__\w+)+)))\b|^(?:new\s+)?(?:system|developer|assistant)\s+message\s*:/i;
+// Explicit role labels and commands addressed to the assistant remain unsafe
+// even when they omit a shell name. Narrated messages have a sentence subject.
+const SOURCE_CONTROL_DIRECTIVE_PATTERN = /(?:^|[:;]\s*)(?:new\s+)?(?:system|developer|assistant)\s+messages?\s*(?:[:.!?]|$)|\b(?:assistant|chatgpt|(?:language\s+)?model)(?:\s*[,;:—-]\s*|\s+)(?:(?:please|now|[a-z-]{2,32}ly)\s+){0,2}(?:you\s+)?(?:(?:must|should|shall|need\s+to|have\s+to)\s+)?(?:(?:please|now|[a-z-]{2,32}ly)\s+){0,2}(?:execute|run)\s+(?:(?:this|the|following)\s+){0,2}commands?\b/i;
+// Command execution needs an explicit in-game surface even without a mandatory
+// subject or named shell. This scoped distinction never exempts commands
+// explicitly addressed to an assistant above.
+const SOURCE_UNSCOPED_COMMAND_PATTERN = /\b(?:execute|run)\s+(?:(?:this|the|following)\s+){0,2}commands?\b(?!\s+in\s+(?:(?:the|your)\s+)?(?:(?:(?:in[- ]game|game|party|guild)\s+)?chat|(?:in[- ]game|game)\s+console)\b)/i;
+// A claimed game surface cannot authorize commands reading or transferring host
+// files or environment data, including scheme-less/SSH destinations and shell
+// redirects. Recognize operands independently of executable names/destinations;
+// ordinary chat links and game selectors such as @p are not host-file operands.
+const SOURCE_COMMAND_DIRECTIVE_PATTERN = /\b(?:execute|run)\s+(?:(?:this|the|following)\s+){0,2}commands?\b/i;
+const SOURCE_COMMAND_HOST_DATA_PATTERN = /(?:^|[\s"'=<>])(?:@(?=[^\s"']*[./\\])[^\s"']+|[a-z]:[\\/][^\s"']+|\/(?:[^/\s"']+\/)+[^/\s"']+|\/\.[^/\s"']+|(?:~|\.\.?)[\\/][^\s"']+)|\$(?:\{[a-z_]\w*\}|[a-z_]\w*|\()|%[a-z_]\w*%/i;
+const SOURCE_COMMAND_FILE_READ_FLAG_PATTERN = /(?:^|\s)(?:--(?:data(?:-binary)?|source|input-file|upload-file|form)(?:=|\s+)|-[dFT](?:=|\s*))["']?(?:[^\s"'=<>|;&]+=)?["']?@[^\s"'<>|;&]+/i;
+// These options take host-file operands directly, including bare filenames;
+// data/form/source options above need separate file-read evidence such as @.
+const SOURCE_COMMAND_INTRINSIC_FILE_FLAG_PATTERN = /(?:^|\s)(?:--(?:input-file|upload-file)(?:=|\s+)|-T(?:=|\s*))["']?[^\s"'<>|;&]+/;
+// A bundle prefix cannot consume an earlier operand-taking d/F/T switch. This
+// keeps suffix inspection linear and preserves digit/punctuation short options.
+const SOURCE_COMMAND_BUNDLED_FILE_FLAG_PATTERN = /(?:^|\s)-[^\s"'=<>|;&@/\\dFT-]+(?:T(?:=|\s*)[^\s"'<>|;&]+|[dF](?:=|\s*)(?:[^\s"'=<>|;&]+=)?@[^\s"'<>|;&]+)/;
+const SOURCE_COMMAND_COMMUNICATION_PATTERN = /^\s+in\s+(?:(?:the|your)\s+)?(?:(?:in[- ]game|game|party|guild)\s+)?chat\s*[:.!?]\s*\/(?:say|tell)\s+/i;
+const SOURCE_COMMAND_CONTINUATION_PATTERN = /\bcommands?\s+in\s+(?:(?:the|your)\s+)?(?:(?:(?:in[- ]game|game|party|guild)\s+)?chat|(?:in[- ]game|game)\s+console)[.!?]$/i;
+
+/** Inspect option identity without letting quoted operand whitespace cross argument boundaries. */
+function sourceCommandFlagText(text: string): string {
+  return text
+    .replace(/\\(.)/g, (_match, character: string) => /\s/.test(character) ? '_' : character)
+    .replace(/"([^"]*)"|'([^']*)'/g, (_match, doubleQuoted: string | undefined, singleQuoted: string | undefined) =>
+      (doubleQuoted ?? singleQuoted ?? '').replace(/[\s<>|;&]/g, '_'))
+    .replace(/["']/g, '');
+}
+
+/** Message targets and quoted chat text are inert; chained shell operations are not. */
+function sourceCommandHasHostData(text: string): boolean {
+  const directive = SOURCE_COMMAND_DIRECTIVE_PATTERN.exec(text);
+  const directiveEnd = directive ? directive.index + directive[0].length : 0;
+  const communication = SOURCE_COMMAND_COMMUNICATION_PATTERN.exec(text.slice(directiveEnd));
+  const start = communication ? directiveEnd + communication[0].length : 0;
+  const prefix = text.slice(0, start);
+  let payload = text.slice(start);
+  if (communication && /\/tell\s+$/i.test(communication[0])) {
+    payload = payload.replace(/^(?:@[a-z]\[[a-z0-9_.,:=!+{}#-]*\]|<[a-z][\w.-]*>)(?=\s|$)/i, 'game-target');
+  }
+  if (SOURCE_COMMAND_HOST_DATA_PATTERN.test(prefix + payload)) return true;
+  const quotedMessage = communication && /\/say\s+$/i.test(communication[0])
+    && /^(?:"[^"\\]*"|'[^'\\]*')[.!?]?\s*$/.test(payload);
+  if (!quotedMessage) {
+    // Shell quote fragments do not change option/operand identity. Keep the
+    // raw option boundaries too: prose apostrophes can span a real command.
+    const commandText = prefix + payload;
+    if ([commandText, sourceCommandFlagText(commandText)].some(flagText =>
+      SOURCE_COMMAND_FILE_READ_FLAG_PATTERN.test(flagText)
+      || SOURCE_COMMAND_INTRINSIC_FILE_FLAG_PATTERN.test(flagText)
+      || SOURCE_COMMAND_BUNDLED_FILE_FLAG_PATTERN.test(flagText))) return true;
+  }
+  // Only the exact game target and complete quoted message above are inert.
+  // Every external-command redirect retains even extensionless host operands.
+  const syntax = quotedMessage ? 'quoted-message' : payload;
+  return /[<>]\s*[^\s<>|;&]/.test(syntax);
+}
+// Bounded modifiers describe a role without an adjective allowlist. An article
+// permits coordinated adjectives inside that noun phrase. Otherwise conjunction
+// and preposition boundaries keep later gameplay subjects out of the role. A
+// bare AI must end the role noun phrase; AI modifying another noun is not itself
+// an assigned role. Explicit AI agent/assistant/model/system roles stay blocked.
+const SOURCE_ROLE_ASSIGNMENT_PATTERN = new RegExp(
+  String.raw`\byou\s+are\s+now\s+(?:(?:acting|serving|operating|functioning)\s+as\s+)?`
+  + String.raw`(?:(?:(?:an?|the)\s+(?:(?!(?:but|to|of|in|on|at|near|with|without|from|for|as|by|that|which|who)\b)[a-z][a-z-]{0,31}\s+){0,4}`
+  + String.raw`|(?:(?!(?:and|or|but|to|of|in|on|at|near|with|without|from|for|as|by|that|which|who)\b)[a-z][a-z-]{0,31}\s+){0,4})`
+  + String.raw`(?:assistant|chatgpt|(?:language\s+)?model|system|developer|(?:ai|artificial\s+intelligence)`
+  + String.raw`(?:\s+(?:agent|assistant|model|system)|(?=\s*(?:[.!?;,:]|$)|\s+(?:and|or|but|that|which|who|with|without|to|for|in|of|from|as|must|should|can|will)\b)))\b`
+  + String.raw`|in\s+(?:system|developer|assistant)\s+mode\b)`, 'i'
+);
+
+// These nominal documentation labels describe source content, including after
+// projection flattens a heading and its prose. Other role-prefixed headings stay
+// fail-closed regardless of their verb; the full directive scan remains active
+// beneath ordinary headings. Share this distinction with snippet scoring.
+export const GAMING_MARKDOWN_ROLE_HEADING_PATTERN = /#{1,6}[^\S\r\n]*(?:system|developer|assistant)\b(?![^\S\r\n]+(?:requirements?|resources?|settings?)\b)/gi;
+const SOURCE_INSTRUCTION_LINE_PATTERN = new RegExp(String.raw`^\s*(?:\[(?:system|developer|assistant|instructions?|mode|request|output)\]|<(?:system|developer|assistant)>|${GAMING_MARKDOWN_ROLE_HEADING_PATTERN.source}).*$`, 'gim');
 
 /** Shared acquisition profiles: downstream query ranking does not select a different document transport. */
 export function gamingDocumentFetchOptions(url: string, options: FetchAndCleanOptions = {}): FetchAndCleanOptions {
@@ -132,22 +217,51 @@ export function gamingDocumentFetchOptions(url: string, options: FetchAndCleanOp
   };
 }
 
-/** Source prose is data: remove instruction-like sentences before it can be stored or grounded. */
-export function filterGamingDocumentInstructions(text: string): string {
+/** Apply the same line and sentence rules to either normalized inspection view. */
+function filterNormalizedDocumentInstructions(text: string): string {
   return text
-    .normalize("NFKC")
-    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/g, " ")
     .replace(/\s*\[LINKS\][\s\S]*$/i, "")
-    .replace(/^\s*(?:\[(?:system|developer|assistant|instructions?|mode|request|output)\]|<(?:system|developer|assistant)>|#{1,6}\s*(?:system|developer|assistant|instructions?)\b).*$/gim, "")
+    .replace(SOURCE_INSTRUCTION_LINE_PATTERN, "")
     .replace(/\s+/g, " ")
     .trim()
     .split(/(?<=[.!?])\s+/)
-    .filter((sentence) => sentence.length > 0 && !SOURCE_INSTRUCTION_PATTERN.test(sentence))
+    .filter((sentence, index, sentences) => sentence.length > 0 && !SOURCE_INSTRUCTION_PATTERN.test(sentence)
+      && !SOURCE_CONTROL_DIRECTIVE_PATTERN.test(sentence)
+      && !SOURCE_UNSCOPED_COMMAND_PATTERN.test(sentence)
+      && !(SOURCE_COMMAND_DIRECTIVE_PATTERN.test(sentence) && sourceCommandHasHostData(sentence
+        + (SOURCE_COMMAND_CONTINUATION_PATTERN.test(sentence) ? ` ${sentences[index + 1] ?? ''}` : '')))
+      && !SOURCE_ROLE_ASSIGNMENT_PATTERN.test(sentence))
     .join(" ")
     .trim();
 }
 
+/** Source prose is data: remove instruction-like sentences before it can be stored or grounded. */
+export function filterGamingDocumentInstructions(text: string): string {
+  const normalized = normalizeGamingDocumentInstructionCharacters(text);
+  const filtered = filterNormalizedDocumentInstructions(normalized);
+  // Keep existing sanitization when this view already establishes source taint.
+  if (filtered !== normalized.replace(/\s+/g, ' ').trim()) return filtered;
+  const compact = normalizeGamingDocumentInstructionCharacters(text, '');
+  // Controls can separate words or conceal letters inside a directive. A newly
+  // exposed directive rejects the source; benign Unicode keeps its usual output.
+  if (compact !== normalized && filterNormalizedDocumentInstructions(compact) !== compact.replace(/\s+/g, ' ').trim()) {
+    return '';
+  }
+  return filtered;
+}
+
 export const GAMEPLAY_CONTENT_PATTERN = /\b(?:boss|route|walkthrough|build|patch|weapon|stat|skill|class|quest|location|level|damage|talent|gear|rotation|viable|craft|resource|upgrade|exploration|progress|economy|unit|mission|encounter|ability|loadout|mechanic)\b/i;
+
+/** Complete player actions distinguish authored gameplay prose from link labels.
+ * This establishes text quality only; identity and claim support remain separate. */
+export function hasGamingActionableProse(text: string): boolean {
+  return text.split(/(?<=[.!?])\s+/).some((sentence) =>
+    /[.!?]$/u.test(sentence.trim())
+    && GAMEPLAY_CONTENT_PATTERN.test(sentence)
+    && new Set(sentence.toLowerCase().split(/[^a-z0-9+]+/i).filter((part) => part.length >= 3)).size >= 8
+    && /(?:^(?:(?:first|next|then)[,:]?\s+)?(?:to\s+)?|\b(?:should|must|can|then)\s+)(?:attack|avoid|block|collect|defeat|dodge|equip|explore|follow|gather|heal|jump|move|open|press|restore|save|select|spend|upgrade|use|wait)\b/i.test(sentence.trim())
+  );
+}
 
 export function isGamingCatalogMetadataOnly(text: string): boolean {
   const catalogLabels = text.match(/\b(?:identifier|addeddate|download options|scanner|isbn|publication date|publisher)\b/gi) ?? [];

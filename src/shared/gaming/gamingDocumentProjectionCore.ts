@@ -1,5 +1,6 @@
 import { filterGamingDocumentInstructions } from "@services/gamingDocumentExtraction.js";
 import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
+import { normalizeGamingDocumentInstructionCharacters } from './gamingDocumentTextNormalization.js';
 
 /** Project acquired prose under the caller's selected-document character bound. */
 export function projectGamingDocumentText(input: {
@@ -10,6 +11,10 @@ export function projectGamingDocumentText(input: {
 }): { text: string; cleanedTextLength: number; truncated: boolean; instructionFiltered: boolean } {
   const boundedText = input.acquiredText.slice(0, input.maxChars);
   const filteredText = filterGamingDocumentInstructions(boundedText);
+  // Projection is a context budget, not a security scan budget. An omitted
+  // malicious tail must still reject the acquired document as a whole.
+  const fullFilteredText = input.acquiredText.length > boundedText.length
+    ? filterGamingDocumentInstructions(input.acquiredText) : filteredText;
   let text = filteredText.slice(0, input.maxChars);
   // Raw HTML capture may be shorter than its extracted prose. Only selected
   // prose bounds and normalization expansion indicate partial document text.
@@ -27,6 +32,7 @@ export function projectGamingDocumentText(input: {
     text,
     cleanedTextLength: text.length,
     truncated,
-    instructionFiltered: filteredText.length < boundedText.normalize("NFKC").replace(/\s+/g, " ").trim().length
+    instructionFiltered: fullFilteredText.length < normalizeGamingDocumentInstructionCharacters(input.acquiredText)
+      .replace(/\s+/g, " ").trim().length
   };
 }

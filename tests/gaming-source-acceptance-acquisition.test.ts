@@ -45,7 +45,7 @@ describe('incident acquisition failures through the protected resolver', () => {
     expect(result.decisions.map(item => item.reasonCodes)).toEqual([
       ['SOURCE_INACCESSIBLE'], ['SOURCE_TIMEOUT'], ['FETCH_BUDGET_EXHAUSTED']
     ]);
-    expect(result.evaluations[0].stages.acquisition.diagnostic).toEqual({ httpStatus: 403 });
+    expect(result.evaluations[0].stages.acquisition.diagnostic).toEqual({ httpStatus: 403, acquisitionStage: 'transport', failureClass: 'source_access' });
     expect(result.evaluations.every(item => item.stages.acquisition.status === 'rejected')).toBe(true);
     expect(result.evaluations.every(item => ['extraction', 'identity', 'applicability', 'selection', 'generation']
       .every(stage => item.stages[stage as keyof typeof item.stages].status === 'not_run'))).toBe(true);

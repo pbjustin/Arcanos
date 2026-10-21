@@ -4,9 +4,10 @@ import { filterGamingDocumentInstructions, stripGamingHtmlTags } from './gamingD
 import { extractGamingHtmlEvidence } from './gamingHtmlEvidence.js';
 import { extractGamingJsonEvidence } from './gamingJsonEvidence.js';
 import { markGamingEvidenceUnitConflicts } from '@shared/gaming/gamingStructuralEvidence.js';
+import { normalizeGamingDocumentInstructionCharacters } from '@shared/gaming/gamingDocumentTextNormalization.js';
 
 const SOURCE_USE_RESTRICTION = /\b(?:no (?:automated|machine) (?:access|use)|automated (?:access|use) (?:is )?prohibited|do not (?:store|redistribute) (?:this|our) content)\b/iu;
-const normalize = (value: string) => value.normalize('NFKC').replace(/\s+/gu, ' ').trim();
+const normalize = (value: string) => normalizeGamingDocumentInstructionCharacters(value).replace(/\s+/gu, ' ').trim();
 
 /** One accepted response; no network, query, model or publisher trust enters extraction. */
 export function extractGamingDocumentEvidence(input: GamingEvidenceExtractionInput & {
@@ -24,6 +25,12 @@ export function extractGamingDocumentEvidence(input: GamingEvidenceExtractionInp
   let outputChars = 0;
   let instructionFiltered = subreasons.some(reason => ['source_instruction_filtered', 'source_instructions_rejected',
     'instruction_or_sensitive_content_filtered'].includes(reason));
+  // Plain-text acquisition has the same document-wide security boundary as
+  // HTML. Inspect the accepted response before downstream context truncation.
+  if (input.contentType === 'text/plain' && filterGamingDocumentInstructions(input.body) !== normalize(input.body)) {
+    instructionFiltered = true;
+    subreasons.push('source_instruction_filtered');
+  }
   let capped = false;
   const accessChallenge = subreasons.includes('access_challenge');
   for (const unit of markGamingEvidenceUnitConflicts(accessChallenge ? [] : [...html.units, ...json.units])) {

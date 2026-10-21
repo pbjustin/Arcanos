@@ -1000,6 +1000,7 @@ describe('native PR preview import boundary', () => {
     'src/services/gamingDurableDocumentChunks.ts',
     'src/services/gamingGameDetection.ts',
     'src/shared/gaming/gamingDocumentProjectionCore.ts',
+    'src/shared/gaming/gamingDocumentTextNormalization.ts',
     'src/shared/gaming/gamingDocumentIngestionCore.ts',
     'src/shared/gaming/gamingDocumentIngestionPreviewFixture.ts',
     'src/shared/gaming/gamingStoredEvidenceCore.ts',
@@ -1050,6 +1051,7 @@ describe('native PR preview import boundary', () => {
   });
 
   it.each(['src/shared/gaming/gamingQuestionFreshnessPolicy.ts', 'src/shared/gaming/gamingPlatformIdentity.ts',
+    'src/shared/gaming/gamingDocumentTextNormalization.ts',
     'src/shared/gaming/gamingGameRegistry.ts', 'src/shared/gaming/gamingGameRegistryData.ts',
     'src/shared/gaming/gamingPreferenceData.ts', 'src/shared/gaming/gamingPublisherExtractionProfileData.ts',
     'src/shared/gaming/gamingSourceTransportData.ts']

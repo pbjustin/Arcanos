@@ -1,0 +1,58 @@
+{
+  "kind": "pr1558-unicode-and-review-followup-prepublication-evidence",
+  "reviewedParentHead": "745c5c2e596ff4a0bcdbf519452551a93b40aa87",
+  "baseSha": "0e7a8e607e3f2f3359dc86eabcf611d8dd3fe6b2",
+  "review": "https://github.com/pbjustin/Arcanos/pull/1558#pullrequestreview-5567042663",
+  "status": "Focused repairs verified; final exact-head broad validation, fresh review and hosted acceptance require separately published PR evidence",
+  "runtimeDefectClassesRepaired": 5,
+  "addedRegressionCases": 83,
+  "repairs": [
+    {
+      "area": "Unicode-obfuscated credential labels in structured evidence",
+      "reproduction": "Invisible controls and fullwidth forms could evade raw-only sensitive-value inspection and produce a trusted JSON-LD unit",
+      "change": "Inspect raw, space-normalized and control-stripped forms while retaining actual whitespace and conservative sensitive-value rejection",
+      "addedCases": 28,
+      "caseScope": "Twenty credential negatives, two shared-scanner instruction negatives and six whitespace positives"
+    },
+    {
+      "area": "Invisible controls inside assistant-directive words",
+      "reproduction": "A control inside the word ignore prevented the space-only scanner from detecting a standalone instruction",
+      "change": "Inspect both spaced and control-stripped views; retain existing sanitization when taint was already established and reject newly exposed directives",
+      "addedCases": 15
+    },
+    {
+      "area": "Role-label line boundaries in full-response HTML inspection",
+      "reproduction": "Twelve role-label fixtures escaped inspection after plaintext, block or title line boundaries were collapsed",
+      "change": "Inspect raw plaintext and newline-separated DOM/title text before normalization and evidence selection",
+      "addedCases": 15
+    },
+    {
+      "area": "Deterministic raw-inspection budget failure classification",
+      "reproduction": "A typed extraction-budget failure was reported as retryable FETCH_FAILED",
+      "change": "Classify EXTRACTION_BUDGET_EXHAUSTED as non-retryable unsupported content; retain deadline and transient transport mappings",
+      "addedCases": 1
+    },
+    {
+      "area": "Counterfactual resource advice and reader save reminders",
+      "reproduction": "Ten advice/reminder cases were rewritten as unsupported persistence claims",
+      "change": "Preserve directly governed advice and complete reader reminders while retaining broad assistant commitments and mixed-clause enforcement",
+      "addedCases": 24
+    }
+  ],
+  "focusedEvidence": {
+    "jsonEvidence": { "passedTests": 94 },
+    "sharedScanner": { "suites": 3, "passedTests": 149 },
+    "htmlBudgetAndStructuredResources": { "suites": 3, "passedTests": 185 },
+    "trinityAndApiHonesty": { "suites": 3, "passedTests": 252 },
+    "independentHtmlCrossReview": { "passedProbes": 27 },
+    "countCaveat": "Focused suites overlap; counts are not additive full-suite coverage"
+  },
+  "reviewNit": "Removed three vacuous structured-result assertions while retaining the stronger null-build and empty-evidence assertions",
+  "safety": {
+    "thresholdChanges": "NONE",
+    "privatePluginChanges": "NONE",
+    "storageConsentPolicyChanges": "NONE",
+    "externalModelCalls": "MOCKED_OR_DISABLED",
+    "productionChanges": "NONE"
+  }
+}

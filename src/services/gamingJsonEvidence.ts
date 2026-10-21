@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { load } from 'cheerio';
 import { countGamingHtmlElements, filterGamingDocumentInstructions, GAMING_DOCUMENT_FURNITURE_SELECTOR } from '@services/gamingDocumentExtraction.js';
+import { normalizeGamingDocumentInstructionCharacters } from '@shared/gaming/gamingDocumentTextNormalization.js';
 import {
   GAMING_EVIDENCE_UNIT_POLICY_VERSION,
   type GamingEvidenceExtractionInput,
@@ -141,7 +142,10 @@ function scalar(value: JsonValue | undefined): string | undefined {
   return typeof value === 'string' ? value.trim() : value instanceof JsonNumber ? value.text : undefined;
 }
 function safeText(value: string): boolean {
-  return !SENSITIVE_VALUE.test(value) && filterGamingDocumentInstructions(value) === value.normalize('NFKC').replace(/\s+/gu, ' ').trim();
+  const normalized = normalizeGamingDocumentInstructionCharacters(value).replace(/\s+/gu, ' ').trim();
+  const controlStripped = normalizeGamingDocumentInstructionCharacters(value, '');
+  return !SENSITIVE_VALUE.test(value) && !SENSITIVE_VALUE.test(normalized) && !SENSITIVE_VALUE.test(controlStripped)
+    && filterGamingDocumentInstructions(value) === normalized;
 }
 function typeIs(value: JsonRecord, name: string): boolean {
   const raw = value['@type'];
@@ -259,7 +263,10 @@ function extractRecords(
       for (const label of ['name', 'description']) {
         if (input[label] === undefined) continue;
         const text = scalar(input[label]);
-        if (!text || !safeText(text)) { addReason('required_context_missing'); return false; }
+        if (!text || !safeText(text)) {
+          addReason(text ? 'instruction_or_sensitive_content_filtered' : 'required_context_missing');
+          return false;
+        }
         context.qualifiers.push(`${label}: ${text}`);
       }
       return true;

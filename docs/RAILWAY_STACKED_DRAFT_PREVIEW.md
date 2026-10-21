@@ -7,6 +7,11 @@ target. This document records the architecture and threat model before the
 new implementation; it is not a deployment, test receipt, or permission to
 activate infrastructure. All three Gaming PRs remain drafts.
 
+[Gaming-scoped preview verification](RAILWAY_GAMING_SCOPED_PREVIEW.md) reuses
+the maintained native and Gaming MCP assertions for ordinary-PR offline tests.
+It does not inherit this stack's admission or deployment authority. Its hosted
+status remains `NOT_RUN` pending a reviewed protected-main artifact path.
+
 ## Existing controls and their rationale
 
 The existing [preview lifecycle](../scripts/railway-pr-preview-lifecycle.mjs)
