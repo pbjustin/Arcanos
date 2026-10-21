@@ -60,6 +60,52 @@ describe.each([
 
 describe('generic persistence claims distinguish conserving resources from backend actions', () => {
   it.each([
+    'During phase I, save your potions for the next wave.',
+    'In Final Fantasy I, save at every inn.',
+    'Part I save points are at each town.'
+  ])('preserves Roman numeral I followed by player advice in both stages: %s', text => {
+    for (const capabilities of [capabilityFlags, deriveTrinityCapabilityFlags({ verifyProvidedData: true })]) {
+      for (const preservePresentation of [true, false]) {
+        const reasoningHonesty = createDefaultTrinityReasoningHonesty();
+        const first = enforceFinalStageHonesty(text, reasoningHonesty, capabilities, 'EXECUTE_TASK', preservePresentation);
+        expect(first.blocked).toBe(false);
+        expect(first.text).toBe(text);
+        const final = enforceFinalStageHonestyAndMinimalism({
+          text, userPrompt: prompt, capabilityFlags: capabilities, reasoningHonesty,
+          outputControls: deriveTrinityOutputControls(prompt, {}), preservePresentation
+        });
+        expect(final.blockedOrRewrittenClaims).toEqual([]);
+        expect(final.text).toBe(text);
+      }
+    }
+  });
+
+  it.each([
+    'I, as your assistant, will save tokens for later.',
+    'I, for one, plan to save.',
+    'During phase I will save tokens.',
+    'Part I will save.',
+    'Part I plan to save.',
+    'Part I save tokens.',
+    'During phase I, save your potions and I will save.',
+    'In Final Fantasy I, save at every inn, and we will save.',
+    'Part I save points are at each town, and I will save.'
+  ])('keeps first-person parentheticals and commitments after numeral advice gated: %s', text => {
+    const reasoningHonesty = createDefaultTrinityReasoningHonesty();
+    const first = enforceFinalStageHonesty(text, reasoningHonesty, capabilityFlags, 'EXECUTE_TASK', true);
+    expect(first.blocked).toBe(true);
+    expect(first.text).not.toBe(text);
+    for (const preservePresentation of [true, false]) {
+      const final = enforceFinalStageHonestyAndMinimalism({
+        text, userPrompt: prompt, capabilityFlags, reasoningHonesty,
+        outputControls: deriveTrinityOutputControls(prompt, {}), preservePresentation
+      });
+      expect(final.blockedOrRewrittenClaims.length).toBeGreaterThan(0);
+      expect(final.text).not.toBe(text);
+    }
+  });
+
+  it.each([
     'arcanos saves automatically.',
     'Arcanos will retain your history.',
     'These chatbots save automatically.',

@@ -777,6 +777,14 @@ function impliesFirstPersonSaveClaim(text: string): boolean {
   const claims = [...text.matchAll(/\b(?:i|we)(?:['’](?:ll|d)|\b)(?:(?!\b(?:i|we|you|they|he|she|it)\b)[^.!?;:]){0,160}?\bsave\b/gi)];
   return claims.some((match, index) => {
     const claim = match[0];
+    // A comma immediately followed by the imperative ("phase I, save") leaves
+    // no first-person predicate. Parentheticals and later commitments still match.
+    if (/^i,\s+save$/i.test(claim)) return false;
+    // In "Part I save points are ...", save modifies the location noun. An
+    // ordinal prefix alone cannot exempt "Part I will/plan to save" promises.
+    if (/^i\s+save$/i.test(claim)
+      && /\bpart\s+$/i.test(text.slice(0, match.index))
+      && /^\s+(?:points\s+are|point\s+is)\b/i.test(text.slice(match.index + claim.length))) return false;
     // Direct counterfactual resource advice and recommendations do not assert
     // an executed or promised action. Storage context is checked separately.
     const counterfactual = /^(?:i|we)(?:['’]d|\s+would)\s+(?:(?:[a-z-]+ly|also|now|just|then)\s+){0,3}save$/i.test(claim);
