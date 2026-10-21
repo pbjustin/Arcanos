@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { runWithRequestAbortContext } from '@arcanos/runtime';
 import {
   BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_CODE,
   BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_MESSAGE,
@@ -477,6 +478,15 @@ describe('Backstage Booker queryContinuity', () => {
 
     expect(failure).toMatchObject({ name: 'AbortError' });
     expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
+    expect(mockLoggerError).toHaveBeenCalledWith(
+      'backstage.continuity_query.failed',
+      {
+        universeId: request.universeId,
+        category: 'budget_or_deadline_exhausted',
+        phase: 'request_budget',
+        attempt: 'primary',
+      }
+    );
   });
 
   it('passes an explicit subtree scope through retrieval and returns page coverage', async () => {
@@ -762,7 +772,12 @@ describe('Backstage Booker queryContinuity', () => {
     expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(1);
     expect(mockLoggerError).toHaveBeenCalledWith(
       'backstage.continuity_query.failed',
-      { universeId: 'my-universe-2k26' }
+      {
+        universeId: 'my-universe-2k26',
+        category: 'provider_execution_failed',
+        phase: 'provider_execution',
+        attempt: 'primary',
+      }
     );
     expect(JSON.stringify(mockLoggerError.mock.calls)).not.toContain('PRIVATE PROVIDER DETAIL');
   });
@@ -780,9 +795,130 @@ describe('Backstage Booker queryContinuity', () => {
     });
     expect((failure as Error & { cause?: unknown }).cause).toBeUndefined();
     expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
+    expect(mockLoggerError).toHaveBeenCalledWith(
+      'backstage.continuity_query.failed',
+      {
+        universeId: request.universeId,
+        category: 'provider_unavailable_or_not_configured',
+        phase: 'provider_configuration',
+        attempt: 'primary',
+      }
+    );
     expect(JSON.stringify(mockLoggerError.mock.calls)).not.toContain(
       'OpenAI client unavailable'
     );
+  });
+
+  it.each([
+    ['runtime exhaustion', { name: 'RuntimeBudgetExceededError' }, 'budget_or_deadline_exhausted'],
+    ['provider timeout', { name: 'APIConnectionTimeoutError' }, 'budget_or_deadline_exhausted'],
+    ['worker call budget', { code: 'worker_ai_call_budget_exceeded' }, 'budget_or_deadline_exhausted'],
+    ['missing final authority', { code: 'FINAL_AUTHORITY_UNAVAILABLE' }, 'provider_unavailable_or_not_configured'],
+    ['integrity rejection', { code: 'TRINITY_OUTPUT_INTEGRITY_FAILED' }, 'output_validation_failed'],
+    ['unrecognized provider code', { code: 'PRIVATE_PROVIDER_CODE' }, 'provider_execution_failed'],
+  ])('records a bounded category for %s without retrying', async (
+    _description,
+    attributes,
+    category
+  ) => {
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(
+      new Error('PRIVATE PROVIDER DETAIL WITH CANON AND OUTPUT'),
+      attributes
+    ));
+
+    const failure = await queryBackstageContinuity(request).catch(error => error);
+
+    expect(failure).toBeInstanceOf(BackstageContinuityQueryFailedError);
+    expect(failure.retryable).toBe(false);
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(1);
+    expect(mockLoggerError).toHaveBeenCalledWith(
+      'backstage.continuity_query.failed',
+      {
+        universeId: request.universeId,
+        category,
+        phase: 'provider_execution',
+        attempt: 'primary',
+      }
+    );
+    const diagnostics = JSON.stringify(mockLoggerError.mock.calls);
+    expect(diagnostics).not.toContain('PRIVATE');
+    expect(diagnostics).not.toContain(retrieval.prompt);
+    expect(diagnostics).not.toContain(request.query);
+  });
+
+  it('classifies invalid synthesized output without logging the output', async () => {
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({ result: '   ' });
+
+    await expect(queryBackstageContinuity(request)).rejects.toBeInstanceOf(
+      BackstageContinuityQueryFailedError
+    );
+
+    expect(mockLoggerError).toHaveBeenCalledWith(
+      'backstage.continuity_query.failed',
+      {
+        universeId: request.universeId,
+        category: 'output_validation_failed',
+        phase: 'output_validation',
+        attempt: 'primary',
+      }
+    );
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(mockLoggerError.mock.calls)).not.toContain(retrieval.prompt);
+  });
+
+  it('classifies unexpected local policy failures before dispatch without exposing canon', async () => {
+    mockRetrieveBackstageNotionRagContext.mockResolvedValueOnce({
+      ...retrieval,
+      snapshotStatus: 'last_known_good',
+      activeSnapshotVerifiedAt: new Date(Number.NaN),
+    });
+
+    await expect(queryBackstageContinuity(request)).rejects.toBeInstanceOf(
+      BackstageContinuityQueryFailedError
+    );
+
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
+    expect(mockLoggerError).toHaveBeenCalledWith(
+      'backstage.continuity_query.failed',
+      {
+        universeId: request.universeId,
+        category: 'unexpected_internal_failure',
+        phase: 'prompt_construction',
+        attempt: 'primary',
+      }
+    );
+    expect(JSON.stringify(mockLoggerError.mock.calls)).not.toContain(retrieval.prompt);
+  });
+
+  it.each([
+    ['request_1234:offline', 'request_1234:offline'],
+    ['PRIVATE\nPROVIDER DETAIL', undefined],
+    ['x'.repeat(129), undefined],
+  ])('includes only bounded safe request correlation %s', async (requestId, expectedId) => {
+    const controller = new AbortController();
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(new Error('PRIVATE PROVIDER DETAIL'));
+
+    await expect(runWithRequestAbortContext({
+      requestId,
+      controller,
+      signal: controller.signal,
+      deadlineAt: Date.now() + 60_000,
+      timeoutMs: 60_000,
+    }, () => queryBackstageContinuity(request))).rejects.toBeInstanceOf(
+      BackstageContinuityQueryFailedError
+    );
+
+    expect(mockLoggerError).toHaveBeenCalledWith(
+      'backstage.continuity_query.failed',
+      {
+        universeId: request.universeId,
+        ...(expectedId ? { requestId: expectedId } : {}),
+        category: 'provider_execution_failed',
+        phase: 'provider_execution',
+        attempt: 'primary',
+      }
+    );
+    expect(JSON.stringify(mockLoggerError.mock.calls)).not.toContain('PRIVATE');
   });
 
   it('rejects non-object input before retrieval without widening the cursor contract', async () => {
