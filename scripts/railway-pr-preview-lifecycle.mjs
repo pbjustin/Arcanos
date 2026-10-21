@@ -1802,6 +1802,9 @@ export class RailwayGraphqlApi {
 
   async validateTokenType() {
     const { body, httpStatus } = await this.#requestEnvelope(TOKEN_TYPE_QUERY);
+    if (body.data != null && !isRecord(body.data)) {
+      failApi('RAILWAY_PREVIEW_RESPONSE_INVALID', TOKEN_TYPE_QUERY, httpStatus);
+    }
     // A workspace token is expected to fail the personal `me` query. The
     // subsequent authority query must still prove its workspace/project scope.
     if (!body.data?.me?.id && body.errors !== undefined) {

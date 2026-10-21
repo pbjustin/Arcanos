@@ -361,6 +361,20 @@ describe('Railway preview API sanitized failure diagnostics', () => {
     );
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
+
+  it.each([42, PRIVATE_SENTINEL, [], true])(
+    'rejects malformed token-probe data even with a known denial (%p)', async data => {
+      const fetchImpl = jest.fn(async () => jsonResponse({ data, errors: [
+        providerError('INTERNAL_SERVER_ERROR', 'Not Authorized'),
+      ] }));
+      const api = createApi(fetchImpl);
+      await expectApiFailure(
+        () => api.validateAuthority({ requireNativeDisabled: true }),
+        'RESPONSE_INVALID', 'PreviewLifecycleTokenType', 200
+      );
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    }
+  );
 });
 
 describe('Railway preview deployment observation retry classification', () => {
