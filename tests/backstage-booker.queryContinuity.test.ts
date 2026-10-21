@@ -73,6 +73,15 @@ jest.unstable_mockModule('@services/backstageNotionPartitionCutover.js', () => (
     mockRetrieveBackstageNotionRagContext,
 }));
 
+const backstageBookerContracts = await import('../src/services/backstageBookerContracts.js');
+const mockNormalizeBackstageBookerActionPayload = jest.fn(
+  backstageBookerContracts.normalizeBackstageBookerActionPayload
+);
+jest.unstable_mockModule('@services/backstageBookerContracts.js', () => ({
+  ...backstageBookerContracts,
+  normalizeBackstageBookerActionPayload: mockNormalizeBackstageBookerActionPayload,
+}));
+
 const { queryBackstageContinuity } = await import(
   '../src/services/backstageContinuityQuery.js'
 );
@@ -754,6 +763,84 @@ describe('Backstage Booker queryContinuity', () => {
     expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(1);
   });
 
+  it('classifies an in-flight cancellation at the request deadline without masking or retrying it', async () => {
+    const now = Date.parse('2026-10-21T06:00:00.000Z');
+    const deadlineAt = now + 60_000;
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(now);
+    const controller = new AbortController();
+    const abortError = Object.assign(new Error('PRIVATE PROVIDER ABORT DETAIL'), {
+      name: 'AbortError',
+    });
+    mockRunTrinityWritingPipeline.mockImplementationOnce(async () => {
+      clock.mockReturnValue(deadlineAt);
+      controller.abort(abortError);
+      throw abortError;
+    });
+
+    try {
+      await expect(runWithRequestAbortContext({
+        controller,
+        signal: controller.signal,
+        deadlineAt,
+        timeoutMs: 60_000,
+      }, () => queryBackstageContinuity(request))).rejects.toBe(abortError);
+
+      expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(1);
+      expect(mockRetrieveBackstageNotionRagContext).toHaveBeenCalledTimes(1);
+      expect(mockLoggerError).toHaveBeenCalledWith(
+        'backstage.continuity_query.failed',
+        {
+          universeId: request.universeId,
+          category: 'budget_or_deadline_exhausted',
+          phase: 'provider_execution',
+          attempt: 'primary',
+        }
+      );
+      const diagnostics = JSON.stringify(mockLoggerError.mock.calls);
+      expect(diagnostics).not.toContain('PRIVATE');
+      expect(diagnostics).not.toContain(retrieval.prompt);
+      expect(diagnostics).not.toContain(request.query);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it.each([
+    ['primitive', 'PRIVATE PROVIDER REJECTION'],
+    ['null', null],
+  ])('masks a %s provider rejection with the unchanged public failure and no retry', async (
+    _description,
+    rejection
+  ) => {
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(rejection);
+
+    const failure = await queryBackstageContinuity(request).catch(error => error);
+
+    expect(failure).toBeInstanceOf(BackstageContinuityQueryFailedError);
+    expect(failure).toMatchObject({
+      code: BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_CODE,
+      message: BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_MESSAGE,
+      retryable: false,
+    });
+    expect((failure as Error & { cause?: unknown }).cause).toBeUndefined();
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(1);
+    expect(mockRetrieveBackstageNotionRagContext).toHaveBeenCalledTimes(1);
+    expect(mockLoggerError).toHaveBeenCalledWith(
+      'backstage.continuity_query.failed',
+      {
+        universeId: request.universeId,
+        category: 'provider_execution_failed',
+        phase: 'provider_execution',
+        attempt: 'primary',
+      }
+    );
+    const diagnostics = JSON.stringify(mockLoggerError.mock.calls);
+    expect(diagnostics).not.toContain('PRIVATE');
+    expect(diagnostics).not.toContain(retrieval.prompt);
+    expect(diagnostics).not.toContain(request.query);
+    expect(JSON.stringify(failure)).not.toContain('PRIVATE');
+  });
+
   it('masks non-length provider errors without retrying or logging private detail', async () => {
     mockRunTrinityWritingPipeline.mockRejectedValueOnce(
       new Error('PRIVATE PROVIDER DETAIL')
@@ -919,6 +1006,48 @@ describe('Backstage Booker queryContinuity', () => {
       }
     );
     expect(JSON.stringify(mockLoggerError.mock.calls)).not.toContain('PRIVATE');
+  });
+
+  it('omits an unsafe universe identifier injected after the public normalization boundary', async () => {
+    const unsafeUniverseId = 'PRIVATE\nUNIVERSE DETAIL';
+    const unsafeNormalizedInput = { ...request, universeId: unsafeUniverseId };
+    // Public validation rejects this value before the diagnostic try block.
+    // Inject the internal result only to exercise the defensive log sanitizer.
+    expect(() => backstageBookerContracts.normalizeBackstageBookerActionPayload(
+      'queryContinuity',
+      unsafeNormalizedInput
+    )).toThrow();
+    mockNormalizeBackstageBookerActionPayload.mockReturnValueOnce(unsafeNormalizedInput);
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(new Error('PRIVATE PROVIDER DETAIL'));
+
+    const failure = await queryBackstageContinuity(request).catch(error => error);
+
+    expect(failure).toBeInstanceOf(BackstageContinuityQueryFailedError);
+    expect(failure).toMatchObject({
+      code: BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_CODE,
+      message: BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_MESSAGE,
+      retryable: false,
+    });
+    expect((failure as Error & { cause?: unknown }).cause).toBeUndefined();
+    expect(mockNormalizeBackstageBookerActionPayload).toHaveBeenCalledWith(
+      'queryContinuity',
+      request
+    );
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(1);
+    expect(mockLoggerError).toHaveBeenCalledWith(
+      'backstage.continuity_query.failed',
+      {
+        category: 'provider_execution_failed',
+        phase: 'provider_execution',
+        attempt: 'primary',
+      }
+    );
+    const diagnostics = JSON.stringify(mockLoggerError.mock.calls);
+    expect(diagnostics).not.toContain('PRIVATE');
+    expect(diagnostics).not.toContain(unsafeUniverseId);
+    expect(diagnostics).not.toContain(retrieval.prompt);
+    expect(diagnostics).not.toContain(request.query);
+    expect(JSON.stringify(failure)).not.toContain('PRIVATE');
   });
 
   it('rejects non-object input before retrieval without widening the cursor contract', async () => {
