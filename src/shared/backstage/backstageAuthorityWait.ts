@@ -1,6 +1,7 @@
 /** Durable queue-only waiting policy; it never extends protected model execution. */
 export const BACKSTAGE_AUTHORITY_WAIT_MAX_MS = 12 * 60 * 1_000;
 export const BACKSTAGE_AUTHORITY_WAIT_STATE_KEY = 'backstageAuthorityWait';
+const AUTHORITY_POLL_MAX_MS = 120_000;
 
 export interface BackstageAuthorityWaitState {
   readonly version: 1;
@@ -43,6 +44,7 @@ export function readBackstageAuthorityWaitState(
 export function planBackstageAuthorityWait(
   autonomyState: unknown,
   now = Date.now(),
+  pollKey = '',
 ): BackstageAuthorityWaitDecision {
   const previous = readBackstageAuthorityWaitState(autonomyState);
   if (previous === 'invalid' || !Number.isSafeInteger(now) || now < 0) return { status: 'invalid' };
@@ -51,9 +53,21 @@ export function planBackstageAuthorityWait(
   if (now < startedAt) return { status: 'invalid' };
   if (now >= deadlineAt) return { status: 'expired' };
   const pollCount = (previous?.pollCount ?? 0) + 1;
+  // Every poll consumes the shared ordinary claim budget. Back off to two
+  // minutes instead of spending a claim every thirty seconds for a full crawl.
+  const baseDelayMs = Math.min(15_000 * 2 ** Math.min(pollCount - 1, 3), AUTHORITY_POLL_MAX_MS);
+  // Stable per-job offsets spread the early polls and survive worker restarts.
+  // Additive jitter never increases polling frequency or exceeds the cap.
+  let hash = 0;
+  if (pollKey) {
+    for (const character of `${pollKey}:${pollCount}`) {
+      hash = (Math.imul(hash, 31) + character.charCodeAt(0)) >>> 0;
+    }
+  }
+  const jitterMs = pollKey ? hash % (Math.floor(baseDelayMs / 10) + 1) : 0;
   return {
     status: 'defer',
     state: { version: 1, startedAt, deadlineAt, pollCount },
-    delayMs: Math.min(pollCount === 1 ? 15_000 : 30_000, deadlineAt - now),
+    delayMs: Math.min(baseDelayMs + jitterMs, AUTHORITY_POLL_MAX_MS, deadlineAt - now),
   };
 }

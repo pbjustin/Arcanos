@@ -2382,13 +2382,21 @@ writers; shutdown aborts the old attempt, its partial candidate cannot activate,
 and a replacement may acquire the lease after expiry and perform a complete new
 cycle. Protected booking still requires current-complete authority. In the
 protected async-generation lane, a fresh readable snapshot blocked by an active
-refresh holds the same job pending for at most twelve minutes, releasing the
+refresh holds the same job pending against a twelve-minute deadline, releasing the
 worker lease between bounded polls. Readiness is revalidated before any model
 work; failed synchronization, invalid authority, or expiry returns the fixed
 protected failure. The separate 120–180-second generation window retains its
 finalization reserves. A pre-provider race may defer only with zero AI calls;
 generation that has begun is never replayed by authority waiting. This does not
 change synchronization frequency, capacity, cutover rules, or feature flags.
+
+Authority polls use increasing delays capped at 120 seconds and stable per-job
+offsets for the early polls. Each poll still consumes an ordinary shared hourly
+claim. Eight bookings during an eight-minute refresh require at most 64 claims
+including readiness admission; the default budget remains 120 claims/hour.
+Unrelated traffic must fit in the remaining capacity. Exhausted capacity can
+delay readiness and expiry processing; it never resets the twelve-minute
+deadline or permits generation from an expired wait.
 
 After the worker and web roles report the same combined SHA, observe the
 authenticated, bounded monolith-authority status rather than triggering a

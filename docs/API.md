@@ -789,9 +789,10 @@ process memory.
 With the existing protected async-generation lane enabled, `generateBooking`,
 `generateBookingWithHRC`, and Notion-controlled exact-literal booking requests
 use durable queue admission. A readable, fresh authority snapshot blocked only
-by an actively running refresh keeps the same job pending for at most twelve
-minutes. Polls start after fifteen seconds and then occur at thirty-second
-intervals, bounded by the persisted deadline. Waiting releases the worker slot
+by an actively running refresh keeps the same job pending against one immutable
+twelve-minute authority deadline. Poll delays back off through fifteen, thirty, sixty, and at most 120
+seconds, bounded by the persisted deadline. Small deterministic per-job offsets
+spread the early polls and remain stable across restarts. Waiting releases the worker slot
 and lease, performs no embedding or generation, and preserves cancellation and
 idempotency. Admission respects the configured partition cutover gate; it never
 promotes `last_known_good` to booking authority. Failed, stale, incompatible, or
@@ -800,6 +801,16 @@ Authority is checked again before retrieval, embedding, and generation. A
 pre-provider refresh race may return the job to pending only with zero recorded
 AI calls. The existing 120–180-second protected execution deadline and
 finalization reserves begin separately from authority waiting.
+
+Every poll still consumes an ordinary shared worker claim; there are no refunds
+or accounting exemptions. Eight bookings waiting on an eight-minute refresh use
+at most 64 claims including their readiness admissions, with detection within
+two minutes of completion when claims are available. Against the default
+120-claims/hour limit, a baseline of 24 prior unrelated claims and sixteen more
+unrelated claims during the wait uses at most 104 total claims. This is a bounded
+capacity example, not a starvation guarantee: additional traffic can exhaust the
+hard budget and delay both readiness and expiry processing. The twelve-minute
+deadline never resets; a delayed claim after expiry fails without generation.
 
 Continuity failures retain `BACKSTAGE_CONTINUITY_QUERY_FAILED`. Internal
 `backstage.continuity_query.failed` telemetry records an allowlisted failure

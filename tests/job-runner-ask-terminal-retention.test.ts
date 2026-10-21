@@ -2376,7 +2376,10 @@ describe('protected Booker durable Notion authority admission', () => {
       const initial = createAuthorityAutonomy(job);
       try {
         await runAuthorityClaim(job, initial);
-        expect(initial.deferJobForBackstageAuthority).toHaveBeenCalledWith(job, expect.objectContaining({ delayMs: 15_000 }));
+        expect(initial.deferJobForBackstageAuthority).toHaveBeenCalledWith(job, expect.objectContaining({ delayMs: expect.any(Number) }));
+        const initialDelay = (initial.deferJobForBackstageAuthority.mock.calls[0]?.[1] as { delayMs: number }).delayMs;
+        expect(initialDelay).toBeGreaterThanOrEqual(15_000);
+        expect(initialDelay).toBeLessThanOrEqual(16_500);
         const deadline = (job.autonomy_state.backstageAuthorityWait as { deadlineAt: number }).deadlineAt;
         expect(routeGptRequestMock).not.toHaveBeenCalled();
         expect(probeOpenAIProviderHealthMock).not.toHaveBeenCalled();
@@ -2388,7 +2391,10 @@ describe('protected Booker durable Notion authority admission', () => {
         job.started_at = new Date();
         await runAuthorityClaim(job, restarted);
         expect((job.autonomy_state.backstageAuthorityWait as { deadlineAt: number }).deadlineAt).toBe(deadline);
-        expect(restarted.deferJobForBackstageAuthority).toHaveBeenCalledWith(job, expect.objectContaining({ delayMs: 30_000 }));
+        expect(restarted.deferJobForBackstageAuthority).toHaveBeenCalledWith(job, expect.objectContaining({ delayMs: expect.any(Number) }));
+        const restartedDelay = (restarted.deferJobForBackstageAuthority.mock.calls[0]?.[1] as { delayMs: number }).delayMs;
+        expect(restartedDelay).toBeGreaterThanOrEqual(30_000);
+        expect(restartedDelay).toBeLessThanOrEqual(33_000);
         expect(routeGptRequestMock).not.toHaveBeenCalled();
         expect(probeOpenAIProviderHealthMock).not.toHaveBeenCalled();
         jest.setSystemTime(new Date('2026-10-20T12:08:00Z'));

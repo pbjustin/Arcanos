@@ -2894,7 +2894,7 @@ export async function runWorkerConsumerSlot(
         let protectedBackstageOperationDeadlineAt: number | null = null;
         dedicatedPartitionSyncOutcome = await resolveQueuedBackstageAuthorityAdmission(job);
         if (dedicatedPartitionSyncOutcome?.authorityDeferred) {
-          const plan = planBackstageAuthorityWait(job.autonomy_state);
+          const plan = planBackstageAuthorityWait(job.autonomy_state, Date.now(), job.id);
           if (plan.status === 'defer') {
             const result = await autonomyService.deferJobForBackstageAuthority(job, plan);
             if (result.action === 'lease_lost') {
@@ -3293,7 +3293,7 @@ export async function runWorkerConsumerSlot(
         }
 
         if (outcome.authorityDeferred) {
-          const plan = planBackstageAuthorityWait(job.autonomy_state);
+          const plan = planBackstageAuthorityWait(job.autonomy_state, Date.now(), job.id);
           if (plan.status === 'defer' && !jobCancellationController.signal.aborted) {
             const result = await autonomyService.deferJobForBackstageAuthority(job, plan);
             if (result.action === 'lease_lost') {
