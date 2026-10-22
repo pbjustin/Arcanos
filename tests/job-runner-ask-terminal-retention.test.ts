@@ -2476,6 +2476,39 @@ describe('protected Booker durable Notion authority admission', () => {
     expect(routeGptRequestMock).not.toHaveBeenCalled();
   });
 
+  it.each([true, false])(
+    'records admission fence loss only when cancellation was not finalized: cancelled=%s', async cancelled => {
+      resolveAuthorityAdmissionMock.mockReset().mockResolvedValueOnce('ready');
+      routeGptRequestMock.mockReset();
+      const job = createAuthorityJob();
+      const now = Date.now();
+      job.autonomy_state = { backstageAuthorityWait: {
+        version: 1, startedAt: now - 120_000, deadlineAt: now + 600_000, pollCount: 4,
+      } };
+      const service = createAuthorityAutonomy(job);
+      queryMock.mockImplementationOnce(async (sql: unknown) => {
+        expect(String(sql)).toContain('backstage_authority_execution');
+        if (cancelled) job.cancel_requested_at = new Date();
+        return { rows: [] };
+      });
+      try {
+        await runAuthorityClaim(job, service);
+        if (cancelled) {
+          expect(service.markJobCancelled).toHaveBeenCalledTimes(1);
+          expect(service.markJobLeaseLost).not.toHaveBeenCalled();
+        } else {
+          expect(service.markJobCancelled).not.toHaveBeenCalled();
+          expect(service.markJobLeaseLost).toHaveBeenCalledWith(job.id, 'Backstage execution admission fence was lost.');
+        }
+        expect(service.markJobCompleted).not.toHaveBeenCalled();
+        expect(service.handleJobFailure).not.toHaveBeenCalled();
+        expect(routeGptRequestMock).not.toHaveBeenCalled();
+      } finally {
+        resolveAuthorityAdmissionMock.mockReset().mockResolvedValue('not_applicable');
+      }
+    },
+  );
+
   it('leaves unrelated jobs outside authority admission', async () => {
     const job = createAuthorityJob();
     resolveAuthorityAdmissionMock.mockClear();

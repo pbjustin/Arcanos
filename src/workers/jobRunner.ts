@@ -3109,11 +3109,13 @@ export async function runWorkerConsumerSlot(
             const { beginBackstageAuthorityGeneration } = await import('@core/db/repositories/jobRepository.js');
             const begun = await beginBackstageAuthorityGeneration(job.id, { fence: claimFence });
             if (!begun || !begun.started_at) {
-              await finalizeCancellationAfterTerminalCasMiss({
+              const cancellationFinalized = await finalizeCancellationAfterTerminalCasMiss({
                 job, fence: claimFence, autonomyService, jobStartedAtMs,
                 allowPreExecutionInputFallback: true,
               });
-              await autonomyService.markJobLeaseLost(job.id, 'Backstage execution admission fence was lost.');
+              if (!cancellationFinalized) {
+                await autonomyService.markJobLeaseLost(job.id, 'Backstage execution admission fence was lost.');
+              }
               continue;
             }
             job.started_at = begun.started_at;
