@@ -338,12 +338,82 @@ const DELETE_ENVIRONMENT_MUTATION = `
   }
 `;
 
+// Only controller-owned operation names and categories may enter failure logs.
+// Never derive a diagnostic label from provider text, variables, or request IDs.
+const API_OPERATIONS = new Map([
+  [TOKEN_TYPE_QUERY, 'PreviewLifecycleTokenType'],
+  [AUTHORITY_QUERY, 'PreviewLifecycleAuthority'],
+  [ENVIRONMENTS_QUERY, 'PreviewLifecycleEnvironments'],
+  [ENVIRONMENT_QUERY, 'PreviewLifecycleEnvironment'],
+  [CREATE_ENVIRONMENT_MUTATION, 'CreatePreviewLifecycleEnvironment'],
+  [DELETE_TRIGGER_MUTATION, 'DeletePreviewLifecycleTrigger'],
+  [DEPLOY_SERVICE_MUTATION, 'DeployPreviewLifecycleService'],
+  [DEPLOYMENT_QUERY, 'PreviewLifecycleDeployment'],
+  [DELETE_ENVIRONMENT_MUTATION, 'DeletePreviewLifecycleEnvironment'],
+]);
+const API_FAILURE_CATEGORIES = new Set([
+  'RAILWAY_PREVIEW_NETWORK_FAILURE',
+  'RAILWAY_PREVIEW_REQUEST_TIMEOUT',
+  'RAILWAY_PREVIEW_AUTHENTICATION_FAILED',
+  'RAILWAY_PREVIEW_AUTHORIZATION_FAILED',
+  'RAILWAY_PREVIEW_GRAPHQL_VALIDATION_FAILED',
+  'RAILWAY_PREVIEW_RESPONSE_INVALID',
+  'RAILWAY_PREVIEW_API_UNEXPECTED_FAILURE',
+  'RAILWAY_PREVIEW_RATE_LIMITED',
+]);
+
 export class RailwayPrPreviewLifecycleError extends Error {
-  constructor(code) {
+  constructor(code, diagnostic = undefined) {
     super(code);
     this.name = 'RailwayPrPreviewLifecycleError';
     this.code = code;
+    if (code === 'RAILWAY_PR_PREVIEW_API_FAILED'
+      && API_FAILURE_CATEGORIES.has(diagnostic?.category)) {
+      this.diagnostic = Object.freeze({
+        category: diagnostic.category,
+        operation: [...API_OPERATIONS.values()].includes(diagnostic.operation)
+          ? diagnostic.operation : 'unknown',
+        ...(Number.isInteger(diagnostic.httpStatus)
+          && diagnostic.httpStatus >= 100 && diagnostic.httpStatus <= 599
+          ? { httpStatus: diagnostic.httpStatus } : {}),
+      });
+    }
   }
+}
+
+function failApi(category, query, httpStatus = undefined) {
+  throw new RailwayPrPreviewLifecycleError('RAILWAY_PR_PREVIEW_API_FAILED', {
+    category,
+    operation: API_OPERATIONS.get(query) ?? 'unknown',
+    httpStatus,
+  });
+}
+
+function transportFailureCategory(error, signal) {
+  if (signal.aborted || error?.name === 'TimeoutError' || error?.name === 'AbortError') {
+    return 'RAILWAY_PREVIEW_REQUEST_TIMEOUT';
+  }
+  return error instanceof TypeError
+    ? 'RAILWAY_PREVIEW_NETWORK_FAILURE' : 'RAILWAY_PREVIEW_API_UNEXPECTED_FAILURE';
+}
+
+function graphqlFailureCategory(errors) {
+  if (!Array.isArray(errors) || errors.length === 0
+    || errors.some((error) => !isRecord(error) || typeof error.message !== 'string')) {
+    return 'RAILWAY_PREVIEW_RESPONSE_INVALID';
+  }
+  if (errors.some((error) => error.extensions?.code === 'UNAUTHENTICATED')) {
+    return 'RAILWAY_PREVIEW_AUTHENTICATION_FAILED';
+  }
+  if (errors.some((error) => ['FORBIDDEN', 'UNAUTHORIZED'].includes(error.extensions?.code))) {
+    return 'RAILWAY_PREVIEW_AUTHORIZATION_FAILED';
+  }
+  if (errors.some((error) => [
+    'GRAPHQL_PARSE_FAILED', 'GRAPHQL_VALIDATION_FAILED', 'BAD_USER_INPUT',
+  ].includes(error.extensions?.code))) {
+    return 'RAILWAY_PREVIEW_GRAPHQL_VALIDATION_FAILED';
+  }
+  return 'RAILWAY_PREVIEW_API_UNEXPECTED_FAILURE';
 }
 
 function fail(code) {
@@ -1647,11 +1717,12 @@ export class RailwayGraphqlApi {
 
   async requestRaw(query, variables = {}) {
     let response;
+    const signal = AbortSignal.timeout(API_TIMEOUT_MS);
     try {
       response = await this.fetchImpl(RAILWAY_API_URL, {
         method: 'POST',
         redirect: 'error',
-        signal: AbortSignal.timeout(API_TIMEOUT_MS),
+        signal,
         headers: {
           authorization: `Bearer ${this.token}`,
           'content-type': 'application/json',
@@ -1659,30 +1730,59 @@ export class RailwayGraphqlApi {
         },
         body: JSON.stringify({ query, variables }),
       });
-    } catch {
-      fail('RAILWAY_PR_PREVIEW_API_FAILED');
+    } catch (error) {
+      failApi(transportFailureCategory(error, signal), query);
     }
-    const body = await readBoundedJson(
-      response,
-      API_RESPONSE_LIMIT_BYTES,
-      'RAILWAY_PR_PREVIEW_API_FAILED'
-    );
-    requireCondition(response.ok && isRecord(body), 'RAILWAY_PR_PREVIEW_API_FAILED');
-    return body;
+    if (!response || typeof response.ok !== 'boolean'
+      || !Number.isInteger(response.status) || response.status < 100 || response.status > 599) {
+      failApi('RAILWAY_PREVIEW_RESPONSE_INVALID', query);
+    }
+    // These HTTP statuses are sufficient evidence even when the error body is
+    // absent or malformed. Do not echo or depend on its private contents.
+    const httpCategory = response.status === 401 ? 'RAILWAY_PREVIEW_AUTHENTICATION_FAILED'
+      : response.status === 403 ? 'RAILWAY_PREVIEW_AUTHORIZATION_FAILED'
+        : response.status === 429 ? 'RAILWAY_PREVIEW_RATE_LIMITED'
+          : response.status >= 500 ? 'RAILWAY_PREVIEW_API_UNEXPECTED_FAILURE' : undefined;
+    if (httpCategory) {
+      // Discard unread error content and release its transport without logging it.
+      void response.body?.cancel?.().catch(() => {});
+      failApi(httpCategory, query, response.status);
+    }
+    let body;
+    try {
+      body = await readBoundedJson(
+        response,
+        API_RESPONSE_LIMIT_BYTES,
+        'RAILWAY_PR_PREVIEW_API_FAILED'
+      );
+    } catch (error) {
+      failApi(error instanceof RailwayPrPreviewLifecycleError
+        ? 'RAILWAY_PREVIEW_RESPONSE_INVALID' : transportFailureCategory(error, signal),
+      query, response.status);
+    }
+    if (!isRecord(body)) {
+      failApi('RAILWAY_PREVIEW_RESPONSE_INVALID', query, response.status);
+    }
+    if (!response.ok) {
+      failApi(body.errors === undefined ? 'RAILWAY_PREVIEW_API_UNEXPECTED_FAILURE'
+        : graphqlFailureCategory(body.errors), query, response.status);
+    }
+    return { body, httpStatus: response.status };
   }
 
   async graphql(query, variables = {}) {
-    const body = await this.requestRaw(query, variables);
-    requireCondition(
-      Array.isArray(body.errors) ? body.errors.length === 0 : body.errors === undefined,
-      'RAILWAY_PR_PREVIEW_API_FAILED'
-    );
-    requireCondition(isRecord(body.data), 'RAILWAY_PR_PREVIEW_API_FAILED');
+    const { body, httpStatus } = await this.requestRaw(query, variables);
+    if (body.errors !== undefined && (!Array.isArray(body.errors) || body.errors.length > 0)) {
+      failApi(graphqlFailureCategory(body.errors), query, httpStatus);
+    }
+    if (!isRecord(body.data)) {
+      failApi('RAILWAY_PREVIEW_RESPONSE_INVALID', query, httpStatus);
+    }
     return body.data;
   }
 
   async validateTokenType() {
-    const body = await this.requestRaw(TOKEN_TYPE_QUERY);
+    const { body } = await this.requestRaw(TOKEN_TYPE_QUERY);
     requireCondition(
       body.data?.me == null
         && Array.isArray(body.errors)
@@ -2330,6 +2430,7 @@ async function runCli() {
       summary: {
         status: 'FAIL',
         code: failure.code,
+        ...(failure.diagnostic ? { diagnostic: failure.diagnostic } : {}),
       },
     })}\n`);
     process.exitCode = 1;
