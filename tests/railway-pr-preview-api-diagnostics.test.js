@@ -14,7 +14,6 @@ const TOKEN = `test-workspace-token-${PRIVATE_SENTINEL}`;
 const API_FAILURE = 'RAILWAY_PR_PREVIEW_API_FAILED';
 const CATEGORY_PREFIX = 'RAILWAY_PREVIEW_';
 const ENVIRONMENT_OPERATION = 'PreviewLifecycleEnvironments';
-const DEPLOYMENT_OPERATION = 'PreviewLifecycleDeployment';
 const DEPLOYMENT_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
 const ENVIRONMENT_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2';
 const DEPLOYMENT_INPUT = Object.freeze({
@@ -108,18 +107,6 @@ describe('Railway preview API sanitized failure diagnostics', () => {
     await expectApiFailure(
       () => api.listEnvironments(), category, ENVIRONMENT_OPERATION, 200
     );
-  });
-
-  it('recognizes Railway exact authorization denial without echoing its text', async () => {
-    const api = createApi(async () => jsonResponse({
-      data: null,
-      errors: [providerError('INTERNAL_SERVER_ERROR', 'Not Authorized')],
-    }));
-
-    const failure = await expectApiFailure(
-      () => api.listEnvironments(), 'AUTHORIZATION_FAILED', ENVIRONMENT_OPERATION, 200
-    );
-    expect(JSON.stringify(failure)).not.toContain('Not Authorized');
   });
 
   it.each([null, {}, PRIVATE_SENTINEL, [null], [PRIVATE_SENTINEL]])(
@@ -218,12 +205,6 @@ describe('Railway preview API sanitized failure diagnostics', () => {
     );
   });
 
-  it('preserves the raw client response shape without adding diagnostic metadata', async () => {
-    const body = { data: { safeFixture: true } };
-    const api = createApi(async () => jsonResponse(body));
-    await expect(api.requestRaw('query Fixture { safeFixture }')).resolves.toEqual(body);
-  });
-
   it('prints only the sanitized CLI failure contract from an isolated mocked transport', () => {
     const preload = `globalThis.fetch = async () => new Response(${JSON.stringify(PRIVATE_SENTINEL)}, { status: 401 });`;
     const result = spawnSync(process.execPath, [
@@ -278,7 +259,11 @@ describe('Railway preview API sanitized failure diagnostics', () => {
     await expect(api.listEnvironments()).resolves.toEqual(nodes);
   });
 
-  it('keeps the expected workspace-token me denial and verifies pinned authority next', async () => {
+  it.each([
+    ['INTERNAL_SERVER_ERROR', 'Not Authorized'],
+    ['FORBIDDEN', PRIVATE_SENTINEL],
+    ['PRIVATE_PROVIDER_CODE', PRIVATE_SENTINEL],
+  ])('verifies pinned authority after a workspace-token me denial (%s)', async (code, message) => {
     const operations = [];
     const authority = {
       apiToken: { workspaces: [{ id: CONTRACT.workspaceId }] },
@@ -295,7 +280,7 @@ describe('Railway preview API sanitized failure diagnostics', () => {
       operations.push(query);
       if (query.includes('PreviewLifecycleTokenType')) {
         return jsonResponse({ data: { me: null }, errors: [
-          providerError('INTERNAL_SERVER_ERROR', 'Not Authorized'),
+          providerError(code, message),
         ] });
       }
       expect(variables).toEqual({ projectId: CONTRACT.projectId });
@@ -309,105 +294,41 @@ describe('Railway preview API sanitized failure diagnostics', () => {
     expect(operations[1]).toContain('PreviewLifecycleAuthority');
   });
 
-  it('does not mistake an expired credential denial for proven workspace authority', async () => {
-    const operations = [];
-    const api = createApi(async (_url, options) => {
-      const { query } = JSON.parse(options.body);
-      operations.push(query);
-      return jsonResponse({ data: null, errors: [providerError('UNAUTHENTICATED')] });
-    });
-
-    const failure = await expectApiFailure(
-      () => api.validateAuthority({ requireNativeDisabled: true }),
-      'AUTHENTICATION_FAILED', 'PreviewLifecycleTokenType', 200
-    );
-    expect(operations).toHaveLength(1);
-    expect(Object.keys(failure.diagnostic).sort()).toEqual([
-      'category', 'httpStatus', 'operation',
-    ]);
-  });
-
-  it('does not let a workspace-shaped token probe bypass failed authority validation', async () => {
+  it.each([
+    ['UNAUTHENTICATED', 'AUTHENTICATION_FAILED'],
+    ['FORBIDDEN', 'AUTHORIZATION_FAILED'],
+  ])('rejects failed mandatory authority validation (%s)', async (code, category) => {
     const operations = [];
     const api = createApi(async (_url, options) => {
       const { query } = JSON.parse(options.body);
       operations.push(query);
       if (operations.length === 1) {
         return jsonResponse({ data: { me: null }, errors: [
-          providerError('INTERNAL_SERVER_ERROR', 'Not Authorized'),
+          providerError(code),
         ] });
       }
-      return jsonResponse({ data: null, errors: [providerError('FORBIDDEN')] });
+      return jsonResponse({ data: null, errors: [providerError(code)] });
     });
 
     await expectApiFailure(
       () => api.validateAuthority({ requireNativeDisabled: true }),
-      'AUTHORIZATION_FAILED', 'PreviewLifecycleAuthority', 200
+      category, 'PreviewLifecycleAuthority', 200
     );
     expect(operations).toHaveLength(2);
     expect(operations.every(query => query.trimStart().startsWith('query '))).toBe(true);
   });
-
-  it.each([
-    [[providerError('INTERNAL_SERVER_ERROR')], 'API_UNEXPECTED_FAILURE'],
-    [[providerError('FORBIDDEN'), providerError('INTERNAL_SERVER_ERROR')], 'API_UNEXPECTED_FAILURE'],
-    [[providerError('FORBIDDEN'), providerError('GRAPHQL_VALIDATION_FAILED')], 'GRAPHQL_VALIDATION_FAILED'],
-  ])('does not treat an ambiguous token probe as workspace proof (%#)', async (errors, category) => {
-    const fetchImpl = jest.fn(async () => jsonResponse({ data: { me: null }, errors }));
-    const api = createApi(fetchImpl);
-    await expectApiFailure(
-      () => api.validateAuthority({ requireNativeDisabled: true }),
-      category, 'PreviewLifecycleTokenType', 200
-    );
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
-  });
-
-  it.each([42, PRIVATE_SENTINEL, [], true])(
-    'rejects malformed token-probe data even with a known denial (%p)', async data => {
-      const fetchImpl = jest.fn(async () => jsonResponse({ data, errors: [
-        providerError('INTERNAL_SERVER_ERROR', 'Not Authorized'),
-      ] }));
-      const api = createApi(fetchImpl);
-      await expectApiFailure(
-        () => api.validateAuthority({ requireNativeDisabled: true }),
-        'RESPONSE_INVALID', 'PreviewLifecycleTokenType', 200
-      );
-      expect(fetchImpl).toHaveBeenCalledTimes(1);
-    }
-  );
 });
 
-describe('Railway preview deployment observation retry classification', () => {
-  it.each([
-    ['authentication', () => jsonResponse({ errors: [providerError('UNAUTHENTICATED')] }),
-      'AUTHENTICATION_FAILED', 200],
-    ['authorization', () => jsonResponse({ errors: [providerError('FORBIDDEN')] }),
-      'AUTHORIZATION_FAILED', 200],
-    ['HTTP authentication', () => jsonResponse({}, 401), 'AUTHENTICATION_FAILED', 401],
-    ['HTTP authorization', () => jsonResponse({}, 403), 'AUTHORIZATION_FAILED', 403],
-    ['schema', () => jsonResponse({ errors: [providerError('GRAPHQL_VALIDATION_FAILED')] }),
-      'GRAPHQL_VALIDATION_FAILED', 200],
-    ['response', () => jsonResponse({ data: null }), 'RESPONSE_INVALID', 200],
-    ['unknown provider', () => jsonResponse({ errors: [providerError('INTERNAL_SERVER_ERROR')] }),
-      'API_UNEXPECTED_FAILURE', 200],
-  ])('does not retry permanent %s failures', async (_label, responseFactory, category, status) => {
-    const fetchImpl = jest.fn(async () => responseFactory());
-    const sleepImpl = jest.fn(async () => undefined);
-    const api = createApi(fetchImpl, sleepImpl);
-
-    await expectApiFailure(
-      () => api.waitForDeployment(DEPLOYMENT_INPUT), category, DEPLOYMENT_OPERATION, status
-    );
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
-    expect(sleepImpl).not.toHaveBeenCalled();
-  });
-
+describe('Railway preview deployment observation bounded retries', () => {
   it.each([
     ['network', async () => { throw new TypeError(PRIVATE_SENTINEL); }],
     ['timeout', async () => { throw new DOMException(PRIVATE_SENTINEL, 'TimeoutError'); }],
     ['rate limit', async () => jsonResponse({}, 429)],
     ['server', async () => jsonResponse({}, 503)],
-  ])('retains a bounded retry for a transient %s read', async (_label, failFirst) => {
+    ['authentication', async () => jsonResponse({ errors: [providerError('UNAUTHENTICATED')] })],
+    ['schema', async () => jsonResponse({ errors: [providerError('GRAPHQL_VALIDATION_FAILED')] })],
+    ['invalid response', async () => jsonResponse({ data: null })],
+  ])('retains the existing retry for an API-failed %s read', async (_label, failFirst) => {
     const fetchImpl = jest.fn()
       .mockImplementationOnce(failFirst)
       .mockImplementation(async () => jsonResponse({ data: { deployment: {
@@ -427,7 +348,7 @@ describe('Railway preview deployment observation retry classification', () => {
     expect(sleepImpl).toHaveBeenCalledTimes(1);
   });
 
-  it('stops after the existing five transient observation retries', async () => {
+  it('stops after the existing five consecutive observation retries', async () => {
     const fetchImpl = jest.fn(async () => { throw new TypeError(PRIVATE_SENTINEL); });
     const sleepImpl = jest.fn(async () => undefined);
     const api = createApi(fetchImpl, sleepImpl);

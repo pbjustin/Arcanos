@@ -759,10 +759,9 @@ Launcher behavior:
   verify that the existing GitHub Environment secret is valid and authorized
   for the expected pinned workspace without exposing its value. Generic
   historical `API_FAILED` logs alone leave the exact cause `NOT_VERIFIED`.
-  Existing bounded deployment-read retries admit only network failures,
-  timeouts, HTTP 429, and HTTP 5xx failures. Authentication, authorization,
-  schema, and invalid-response failures are not retried, and mutations gain no
-  automatic retries. A controller repair must merge into trusted `main`
+  Diagnostics do not change token admission or the existing bounded
+  deployment-read retry policy, and mutations gain no automatic retries.
+  A controller repair must merge into trusted `main`
   through owner-authorized review before an existing opted-in PR's lifecycle
   retry can use it; changing that PR's head does not replace the trusted
   controller. Revalidate the PR head and opt-in before recovery, and retain

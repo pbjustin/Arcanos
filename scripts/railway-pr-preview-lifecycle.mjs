@@ -402,13 +402,10 @@ function graphqlFailureCategory(errors) {
     || errors.some((error) => !isRecord(error) || typeof error.message !== 'string')) {
     return 'RAILWAY_PREVIEW_RESPONSE_INVALID';
   }
-  // Railway also reports authorization denials as INTERNAL_SERVER_ERROR.
-  // Compare only this documented literal locally; never retain provider messages.
   if (errors.some((error) => error.extensions?.code === 'UNAUTHENTICATED')) {
     return 'RAILWAY_PREVIEW_AUTHENTICATION_FAILED';
   }
-  if (errors.some((error) => ['FORBIDDEN', 'UNAUTHORIZED'].includes(error.extensions?.code)
-    || error.message === 'Not Authorized')) {
+  if (errors.some((error) => ['FORBIDDEN', 'UNAUTHORIZED'].includes(error.extensions?.code))) {
     return 'RAILWAY_PREVIEW_AUTHORIZATION_FAILED';
   }
   if (errors.some((error) => [
@@ -417,18 +414,6 @@ function graphqlFailureCategory(errors) {
     return 'RAILWAY_PREVIEW_GRAPHQL_VALIDATION_FAILED';
   }
   return 'RAILWAY_PREVIEW_API_UNEXPECTED_FAILURE';
-}
-
-function isTransientApiFailure(error) {
-  if (!(error instanceof RailwayPrPreviewLifecycleError)
-    || error.code !== 'RAILWAY_PR_PREVIEW_API_FAILED') {
-    return false;
-  }
-  const diagnostic = error.diagnostic;
-  return ['RAILWAY_PREVIEW_NETWORK_FAILURE', 'RAILWAY_PREVIEW_REQUEST_TIMEOUT',
-    'RAILWAY_PREVIEW_RATE_LIMITED'].includes(diagnostic?.category)
-    || (diagnostic?.category === 'RAILWAY_PREVIEW_API_UNEXPECTED_FAILURE'
-      && diagnostic.httpStatus >= 500 && diagnostic.httpStatus <= 599);
 }
 
 function fail(code) {
@@ -1731,10 +1716,6 @@ export class RailwayGraphqlApi {
   }
 
   async requestRaw(query, variables = {}) {
-    return (await this.#requestEnvelope(query, variables)).body;
-  }
-
-  async #requestEnvelope(query, variables = {}) {
     let response;
     const signal = AbortSignal.timeout(API_TIMEOUT_MS);
     try {
@@ -1790,7 +1771,7 @@ export class RailwayGraphqlApi {
   }
 
   async graphql(query, variables = {}) {
-    const { body, httpStatus } = await this.#requestEnvelope(query, variables);
+    const { body, httpStatus } = await this.requestRaw(query, variables);
     if (body.errors !== undefined && (!Array.isArray(body.errors) || body.errors.length > 0)) {
       failApi(graphqlFailureCategory(body.errors), query, httpStatus);
     }
@@ -1801,24 +1782,7 @@ export class RailwayGraphqlApi {
   }
 
   async validateTokenType() {
-    const { body, httpStatus } = await this.#requestEnvelope(TOKEN_TYPE_QUERY);
-    if (body.data != null && !isRecord(body.data)) {
-      failApi('RAILWAY_PREVIEW_RESPONSE_INVALID', TOKEN_TYPE_QUERY, httpStatus);
-    }
-    // A workspace token is expected to fail the personal `me` query. The
-    // subsequent authority query must still prove its workspace/project scope.
-    if (!body.data?.me?.id && body.errors !== undefined) {
-      const category = graphqlFailureCategory(body.errors);
-      if (category !== 'RAILWAY_PREVIEW_AUTHORIZATION_FAILED') {
-        failApi(category, TOKEN_TYPE_QUERY, httpStatus);
-      }
-      for (const error of body.errors) {
-        const errorCategory = graphqlFailureCategory([error]);
-        if (errorCategory !== 'RAILWAY_PREVIEW_AUTHORIZATION_FAILED') {
-          failApi(errorCategory, TOKEN_TYPE_QUERY, httpStatus);
-        }
-      }
-    }
+    const { body } = await this.requestRaw(TOKEN_TYPE_QUERY);
     requireCondition(
       body.data?.me == null
         && Array.isArray(body.errors)
@@ -2014,7 +1978,8 @@ export class RailwayGraphqlApi {
       try {
         data = await this.graphql(DEPLOYMENT_QUERY, { id: deploymentId });
       } catch (error) {
-        if (!isTransientApiFailure(error)) {
+        if (!(error instanceof RailwayPrPreviewLifecycleError)
+          || error.code !== 'RAILWAY_PR_PREVIEW_API_FAILED') {
           throw error;
         }
         transientReadFailures += 1;
