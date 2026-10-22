@@ -359,7 +359,7 @@ describe('npm audit policy', () => {
     expect(rootPackage.overrides).toMatchObject({
       'express-rate-limit': '8.3.0',
       'fast-uri': fastUriArtifact.resolved,
-      'ip-address': 'https://registry.npmjs.org/ip-address/-/ip-address-10.7.1.tgz',
+      'ip-address': 'https://registry.npmjs.org/ip-address/-/ip-address-10.7.4.tgz',
       qs: qsArtifact.resolved,
       undici: 'https://registry.npmjs.org/undici/-/undici-7.29.1.tgz',
     });
@@ -392,11 +392,11 @@ describe('npm audit policy', () => {
       },
       'node_modules/fast-uri': fastUriArtifact,
       'node_modules/ip-address': {
-        version: '10.7.1',
+        version: '10.7.4',
         resolved:
-          'https://registry.npmjs.org/ip-address/-/ip-address-10.7.1.tgz',
+          'https://registry.npmjs.org/ip-address/-/ip-address-10.7.4.tgz',
         integrity:
-          'sha512-4OUAqU9Z1i3vCnS05hzGiFnEMDpQ+62pAD/MVQOp83fYyNC8GleCqaS0QikQBmcWCrKFiUs/B8ztRRiYOAXuCA==',
+          'sha512-DWBMKyeM25D70nrIiTkgQth59/G+naKOTep6huF9j+GmeK3DMD60Zvxg5d5qQnz+38AHgou6ean2LECX+lrKDg==',
       },
       'node_modules/undici': {
         version: '7.29.1',
