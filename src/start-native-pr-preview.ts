@@ -7,6 +7,7 @@ const CHILD_ENVIRONMENT_NAMES = new Set([
   'ARCANOS_NATIVE_PR_APPLICATION_PREVIEW',
   'ARCANOS_PREVIEW_PR_NUMBER',
   'ARCANOS_PREVIEW_SOURCE_COMMIT',
+  'ARCANOS_PREVIEW_BOOKER_ORIGIN',
   'ARCANOS_PROCESS_KIND',
   'HOST',
   'NODE_ENV',
@@ -41,7 +42,7 @@ function requireExactEnvironmentValue(
 
 export function resolveNativePrPreviewChildEnvironment(
   env: NodeJS.ProcessEnv
-): NativePrPreviewIdentity & { host: string; port: number } {
+): NativePrPreviewIdentity & { host: string; port: number; bookerOrigin?: string } {
   if (
     Object.keys(env).some((environmentName) =>
       !CHILD_ENVIRONMENT_NAMES.has(environmentName)
@@ -83,11 +84,21 @@ export function resolveNativePrPreviewChildEnvironment(
     throw new Error('PREVIEW_APPLICATION_ENVIRONMENT_INVALID');
   }
 
+  // Only the launcher's already validated Railway origin enters this fixture.
+  // Requests cannot select the OAuth audience through Host/Forwarded headers.
+  const bookerOrigin = env.ARCANOS_PREVIEW_BOOKER_ORIGIN;
+  if (bookerOrigin !== undefined && (prNumber !== 1566
+    || !/^https:\/\/[a-z0-9][a-z0-9-]*pr-676861-1566[a-z0-9-]*\.up\.railway\.app$/u.test(bookerOrigin)
+    || /(?:^|[.-])production(?:[.-]|$)/iu.test(new URL(bookerOrigin).hostname))) {
+    throw new Error('PREVIEW_APPLICATION_ENVIRONMENT_INVALID');
+  }
+
   return {
     host: '0.0.0.0',
     port,
     prNumber,
     sourceCommit,
+    ...(bookerOrigin ? { bookerOrigin } : {}),
   };
 }
 
@@ -117,6 +128,7 @@ async function main(): Promise<void> {
   const readinessState = createNativePrPreviewReadinessState();
   const application = createNativePrPreviewApplication({
     identity,
+    ...(identity.bookerOrigin ? { bookerOrigin: identity.bookerOrigin } : {}),
     readinessState,
   });
   readinessState.applicationImported = true;

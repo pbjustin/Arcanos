@@ -15,12 +15,14 @@ const PREVIEW_IMPORT_TSCONFIG_FILE =
 const PREVIEW_DIST_IMPORT_CHECKER_FILE =
   'scripts/check-native-pr-preview-dist-imports.mjs';
 const PREVIEW_DIST_IMPORT_CHECKER_DIGEST =
-  '41c8f359d09f34da1a7243e4f2e43c334c71b00127d1251f64b41e4b23892d5e';
+  'b6affa79e4b80627bff6f5da008f53454006d581f6e266d94a50f26a3d5c51d0';
 const ROOT_PACKAGE_MANIFEST_FILE = 'package.json';
 const ROOT_TSCONFIG_FILE = 'tsconfig.json';
 const RUNTIME_PACKAGE_MANIFEST_FILE =
   'packages/arcanos-runtime/package.json';
 const PROTOCOL_PACKAGE_MANIFEST_FILE = 'packages/protocol/package.json';
+// Madge resolves this runtime .mjs import to its declaration; inspect the exact script independently.
+const REVIEWED_PREVIEW_SCRIPT_LEAVES = ['scripts/booker-mcp-preview-key.mjs'];
 const PREVIEW_ENTRY_FILES = [
   'packages/arcanos-runtime/src/requestAbort.ts',
   'scripts/native-pr-preview-contract.mjs',
@@ -32,6 +34,20 @@ const PREVIEW_ENTRY_FILES = [
   'src/start-native-pr-preview.ts',
 ];
 export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
+  'packages/protocol/schemas/v1/tools/arcanos-booker/contract.schema.json',
+  'packages/protocol/src/chatgptBooker.ts',
+  'scripts/booker-mcp-preview-key.d.mts',
+  'scripts/booker-mcp-preview-key.mjs',
+  'src/chatgpt/authCore.ts',
+  'src/chatgpt/bookerAuthCore.ts',
+  'src/chatgpt/bookerCore.ts',
+  'src/routes/chatgptBookerMcpCore.ts',
+  'src/shared/backstage/backstageMatchSimulationCore.ts',
+  'src/shared/backstage/backstageNotionScopeIndex.ts',
+  'src/shared/chatgpt/bookerMcpContract.ts',
+  'src/shared/chatgpt/bookerMcpPreviewFixture.ts',
+  'src/shared/http/clientDisconnectAbort.ts',
+
   'contracts/backstage_booker.openapi.v1.json',
   'packages/arcanos-runtime/src/redaction.ts',
   'packages/arcanos-runtime/src/requestAbort.ts',
@@ -260,6 +276,16 @@ const ALLOWED_EXTERNAL_RUNTIME_IMPORTS = new Set([
   'zod',
 ]);
 const FILE_SPECIFIC_EXTERNAL_RUNTIME_IMPORTS = new Map([
+  ['src/chatgpt/authCore.ts', new Set(['jose'])],
+  ['scripts/booker-mcp-preview-key.mjs', new Set(['jose'])],
+  ['src/chatgpt/bookerAuthCore.ts', new Set(['node:crypto'])],
+  ['src/chatgpt/bookerCore.ts', new Set(['@arcanos/runtime/requestAbort'])],
+  ['src/routes/chatgptBookerMcpCore.ts', new Set(['express', 'node:util', '@modelcontextprotocol/sdk/server/index.js', '@modelcontextprotocol/sdk/server/streamableHttp.js', '@modelcontextprotocol/sdk/types.js', '@arcanos/runtime/requestAbort'])],
+  ['src/shared/backstage/backstageNotionScopeIndex.ts', new Set(['node:crypto'])],
+  ['src/shared/chatgpt/bookerMcpContract.ts', new Set(['ajv/dist/2020.js', '@arcanos/protocol/chatgptBooker'])],
+  ['src/shared/chatgpt/bookerMcpPreviewFixture.ts', new Set(['express', 'node:crypto', 'jose', '@arcanos/runtime/requestAbort'])],
+  ['src/shared/http/clientDisconnectAbort.ts', new Set(['@arcanos/runtime/requestAbort'])],
+
   ['src/shared/chatgpt/gamingMcpContract.ts', new Set(['ajv', '@arcanos/protocol/chatgptGaming'])],
   ['src/platform/runtime/sessionContext.ts', new Set(['node:async_hooks'])],
   ['src/services/openai/attemptTokenUsage.ts', new Set(['node:async_hooks'])],
@@ -296,6 +322,43 @@ const FILE_SPECIFIC_EXTERNAL_RUNTIME_IMPORTS = new Map([
   ['src/start-native-pr-preview.ts', new Set(['node:http', 'node:url'])],
 ]);
 const FILE_SPECIFIC_EXTERNAL_IMPORT_BINDINGS = new Map([
+  ['src/chatgpt/authCore.ts', new Map([
+    ['jose', new Set(['createRemoteJWKSet:createRemoteJWKSet', 'jwtVerify:jwtVerify'])],
+  ])],
+  ['scripts/booker-mcp-preview-key.mjs', new Map([
+    ['jose', new Set(['importJWK:importJWK', 'SignJWT:SignJWT'])],
+  ])],
+  ['src/chatgpt/bookerAuthCore.ts', new Map([
+    ['node:crypto', new Set(['createHash:createHash'])],
+  ])],
+  ['src/chatgpt/bookerCore.ts', new Map([
+    ['@arcanos/runtime/requestAbort', new Set(['getRequestAbortSignal:getRequestAbortSignal'])],
+  ])],
+  ['src/routes/chatgptBookerMcpCore.ts', new Map([
+    ['express', new Set(['default:express'])],
+    ['node:util', new Set(['TextDecoder:TextDecoder'])],
+    ['@modelcontextprotocol/sdk/server/index.js', new Set(['Server:Server'])],
+    ['@modelcontextprotocol/sdk/server/streamableHttp.js', new Set(['StreamableHTTPServerTransport:StreamableHTTPServerTransport'])],
+    ['@modelcontextprotocol/sdk/types.js', new Set(['CallToolRequestSchema:CallToolRequestSchema', 'ListToolsRequestSchema:ListToolsRequestSchema'])],
+    ['@arcanos/runtime/requestAbort', new Set(['getRequestAbortSignal:getRequestAbortSignal', 'getRequestRemainingMs:getRequestRemainingMs', 'runWithRequestAbortTimeout:runWithRequestAbortTimeout'])],
+  ])],
+  ['src/shared/backstage/backstageNotionScopeIndex.ts', new Map([
+    ['node:crypto', new Set(['createHash:createHash'])],
+  ])],
+  ['src/shared/chatgpt/bookerMcpContract.ts', new Map([
+    ['ajv/dist/2020.js', new Set(['Ajv2020:Ajv2020'])],
+    ['@arcanos/protocol/chatgptBooker', new Set(['CHATGPT_BOOKER_TOOL_NAMES:CHATGPT_BOOKER_TOOL_NAMES', 'chatGptBookerSchemas:chatGptBookerSchemas'])],
+  ])],
+  ['src/shared/chatgpt/bookerMcpPreviewFixture.ts', new Map([
+    ['express', new Set(['default:express'])],
+    ['node:crypto', new Set(['createHash:createHash'])],
+    ['jose', new Set(['createLocalJWKSet:createLocalJWKSet'])],
+    ['@arcanos/runtime/requestAbort', new Set(['getRequestAbortSignal:getRequestAbortSignal'])],
+  ])],
+  ['src/shared/http/clientDisconnectAbort.ts', new Map([
+    ['@arcanos/runtime/requestAbort', new Set(['createAbortError:createAbortError', 'runWithRequestAbortContext:runWithRequestAbortContext'])],
+  ])],
+
   ['src/shared/chatgpt/gamingMcpContract.ts', new Map([
     ['ajv', new Set(['Ajv:Ajv'])],
     ['@arcanos/protocol/chatgptGaming', new Set(['CHATGPT_GAMING_TOOL_NAMES:CHATGPT_GAMING_TOOL_NAMES', 'chatGptGamingSchemas:chatGptGamingSchemas'])],
@@ -632,6 +695,10 @@ const ALLOWED_MUTABLE_PROCESS_CALL_ARGUMENTS = new Map([
         ],
       ],
       [
+        'normalizeRailwayPublicDomain:0:env:buildNativePrApplicationChildEnvironment',
+        ['18a7a50e02578b4579c37a3133b29877e551412782d7979810f6c70cf1fe01d7'],
+      ],
+      [
         'normalizeRailwayPublicDomain:0:env:assertNativePrApplicationIdentityOrThrow',
         [
           '18a7a50e02578b4579c37a3133b29877e551412782d7979810f6c70cf1fe01d7',
@@ -787,7 +854,7 @@ const LISTENER_FACTORY_NAMES = new Set([
 const CRITICAL_LAUNCHER_FUNCTION_DIGESTS = new Map([
   [
     'buildNativePrApplicationChildEnvironment',
-    '15608712aaec5c154465bef7efb2dc0a83c36cd55ec70f25bcdd8c28988fa017',
+    '4c713c43eaca1564615bc271ac9d8d0a1365ee70009c5926dde091179ef45522',
   ],
   [
     'mirrorAndObserveWorkerOutput',
@@ -827,12 +894,24 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
       ],
       [
         'resolveNativePrPreviewChildEnvironment',
-        'eb41a9a232903e5555f368678cabf1ebf3ae3d5ecb2907db59ef205d8d056367',
+        '6b111e5b4cba6a93da61fb7079bb74b399a1053ff01eaa287b8c8433629e8f80',
       ],
     ]),
   ],
 ]);
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
+  ['packages/protocol/src/chatgptBooker.ts', '3e182b6a26c5946828c2d6fe8dbe1cfec862094969b592457366292f0950fa0e'],
+  ['scripts/booker-mcp-preview-key.d.mts', 'bbcb949f18d05e8d31926e7df305000d89901f52481b417224b77bbba54447d4'],
+  ['scripts/booker-mcp-preview-key.mjs', 'ab3fb44f967c46d18445e908e4e645befc4fbb76cf98d0ab8679dda86e6215e4'],
+  ['src/chatgpt/authCore.ts', 'c7d65335e6fc5080300413d9dcccaa45fdb7a688ae8d54e445796a0bdb66fad9'],
+  ['src/chatgpt/bookerAuthCore.ts', 'f1eb9c4ec1e47cc5cce9d96633d7ee70053155d2c8b1654b67090bbf30c3b14c'],
+  ['src/chatgpt/bookerCore.ts', '51e1c74873f616a266518c7e7075076bb09efc5598586952d41dcb87226f4ad3'],
+  ['src/routes/chatgptBookerMcpCore.ts', 'a9ab27e10b9975d047c6790e72199fe2ea45d667038039bb18140b08b0d39797'],
+  ['src/shared/backstage/backstageMatchSimulationCore.ts', 'd6bce722b24f73a785b3c4c14024ceb44ba644c36d6b8730d6fb72b891e54030'],
+  ['src/shared/backstage/backstageNotionScopeIndex.ts', 'e4ee442fad7cc097b140f9cba63c8db227a8e752dc8f3584e032842723448c78'],
+  ['src/shared/chatgpt/bookerMcpContract.ts', '82eaba1e4579a2b3cc0ab78f423fe1b5c2c47a03bda2db503365b69dbc69e6c4'],
+  ['src/shared/chatgpt/bookerMcpPreviewFixture.ts', '49a4c9655a07e2ef35f0bc65719d818c3fa26caa0ee3e7f480ea8436ea1ee850'],
+  ['src/shared/http/clientDisconnectAbort.ts', '296cca6209bb8c65d3e9934614d7612e664c46ed2efd42cc807e88454f87ec1f'],
   ['src/shared/gaming/gamingSourceTransportData.ts', '09bf2dc7ee4686b70c98c652158d585bb578c36190cdf0fa2b36186c51dad5c1'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gaming/gamingPublisherExtractionProfileData.ts', '196b35964e27ff396bc5bdf10015700b9f668bad0070a153ce09c135b9153177'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gaming/gamingPreferenceData.ts', '4372c4d9278ea6533a4b53bc60974b465bdeb0313203fd169f3f7c532bfc7cd1'], // gitleaks:allow -- public source semantic SHA-256
@@ -982,11 +1061,11 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'scripts/start-railway-service.mjs',
-    '6855253f26ef2814f2c194c615827ddc501cd4d8895b76a88666b4e84457030b',
+    '99b9d960d9600d9576c8b4281522a2cc5bd8c9e2d36641ffbe5bf93f47883fa1',
   ],
   [
     'src/start-native-pr-preview.ts',
-    'eede53e221d3fecdb00d1662205d56d1fe91d40a3a3905477c54a5582c1ec54d',
+    '4ce06436cab29867a0b4493509ceeebea107436d569bff7f19ee8591c6381e75',
   ],
   [
     'src/shared/backstage/backstageStoryline.ts',
@@ -5700,6 +5779,17 @@ export function findGamingMcpProtocolExportViolations(manifest) {
   return [`${PROTOCOL_PACKAGE_MANIFEST_FILE}: chatgptGaming export must match the reviewed ESM leaf surface`];
 }
 
+export function findBookerMcpProtocolExportViolations(manifest) {
+  const leaf = manifest?.exports?.['./chatgptBooker'];
+  const keys = leaf && typeof leaf === 'object' && !Array.isArray(leaf)
+    ? Object.keys(leaf).sort() : [];
+  if (manifest?.name === '@arcanos/protocol' && manifest.type === 'module'
+    && leaf?.types === './dist/src/chatgptBooker.d.ts'
+    && leaf?.import === './dist/src/chatgptBooker.js'
+    && keys.length === 2 && keys[0] === 'import' && keys[1] === 'types') return [];
+  return [`${PROTOCOL_PACKAGE_MANIFEST_FILE}: chatgptBooker export must match the reviewed ESM leaf surface`];
+}
+
 export function findRuntimeRequestAbortExportViolations(manifest) {
   const manifestObject = (
     manifest
@@ -5803,7 +5893,7 @@ export async function findNativePrPreviewImportViolations({
     fileExtensions: ['mjs', 'ts'],
     tsConfig: path.join(repositoryRoot, PREVIEW_IMPORT_TSCONFIG_FILE),
   });
-  const graphFiles = Object.keys(graph.obj()).sort();
+  const graphFiles = [...new Set([...Object.keys(graph.obj()), ...REVIEWED_PREVIEW_SCRIPT_LEAVES])].sort();
   const violations = [];
   const skippedImports = graph.warnings().skipped ?? [];
 
@@ -5812,6 +5902,7 @@ export async function findNativePrPreviewImportViolations({
       path.join(repositoryRoot, PROTOCOL_PACKAGE_MANIFEST_FILE), 'utf8'
     ));
     violations.push(...findGamingMcpProtocolExportViolations(protocolPackageManifest));
+    violations.push(...findBookerMcpProtocolExportViolations(protocolPackageManifest));
   } catch {
     violations.push(`${PROTOCOL_PACKAGE_MANIFEST_FILE}: chatgptGaming export manifest is unreadable`);
   }

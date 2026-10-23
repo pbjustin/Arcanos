@@ -12,6 +12,8 @@ import {
   decideLifecycleAction,
   discoverRailwayPrPreviewNumbers,
   reconcileRailwayPrPreview,
+  runManualDraftPreview,
+  validateManualDraftPreviewAuthorization,
   validateBasePreviewEnvironment,
   validateLifecycleAuthority,
   validateLifecyclePullRequest,
@@ -310,7 +312,7 @@ describe('Railway PR preview lifecycle workflow', () => {
       expect(workflow).toContain(`- ${event}`);
     }
     expect(workflow).toContain('repository_dispatch:');
-    expect(workflow).not.toContain('workflow_dispatch:');
+    expect(parsed.on.workflow_dispatch.inputs.authorization_json.required).toBe(true);
     expect(workflow).toContain('railway_pr_preview_reconcile');
     expect(workflow).toContain("cron: '23 */6 * * *'");
     expect(reusableWorkflow).toContain('railway-preview');
@@ -402,6 +404,177 @@ describe('Railway PR preview lifecycle workflow', () => {
     );
     expect(reporter.steps.some(step =>
       String(step.run ?? '').includes('report-status'))).toBe(true);
+  });
+});
+
+describe('owner-authorized manual Booker draft preview', () => {
+  const clock = Date.UTC(2026, 9, 23);
+  const scriptDigest = 'b'.repeat(64);
+  const identity = { controllerSha: HEAD_SHA, controllerScriptSha256: scriptDigest };
+  const authorization = () => ({ version: 1, repository: CONTRACT.repository, prNumber: 1566,
+    headSha: HEAD_SHA, baseSha: 'c'.repeat(40), controllerSha: HEAD_SHA,
+    controllerScriptSha256: scriptDigest, issuedAt: new Date(clock).toISOString(),
+    expiresAt: new Date(clock + 60_000).toISOString() });
+  const draft = () => pullRequest({ number: 1566, draft: true, labels: [],
+    head: { ref: 'feat/backstage-booker-mcp', sha: HEAD_SHA, repo: { full_name: CONTRACT.repository } },
+    base: { ref: 'main', sha: 'c'.repeat(40), repo: { full_name: CONTRACT.repository } } });
+
+  it('separates the scoped credential, credential-free verifier, and always-run receipt cleanup jobs', () => {
+    const workflow = yaml.load(fs.readFileSync(workflowPath, 'utf8'));
+    const deploy = workflow.jobs['manual-booker-deploy'], verify = workflow.jobs['manual-booker-verify'];
+    const cleanup = workflow.jobs['manual-booker-cleanup'];
+    for (const expected of ["github.event_name == 'workflow_dispatch'", "github.actor == 'pbjustin'",
+      "github.triggering_actor == 'pbjustin'", "github.event.sender.login == 'pbjustin'",
+      "github.ref == 'refs/heads/feat/backstage-booker-mcp'", 'github.run_attempt == 1']) {
+      expect(deploy.if).toContain(expected);
+    }
+    expect(deploy.environment).toBe('railway-pr-preview-lifecycle');
+    expect(deploy.permissions).toEqual({ actions: 'read', contents: 'read', 'pull-requests': 'read' });
+    const credentialSteps = deploy.steps.filter(step => step.env?.RAILWAY_API_TOKEN);
+    expect(credentialSteps).toHaveLength(1);
+    expect(credentialSteps[0].run).toContain('railway-pr-preview-lifecycle.mjs manual-draft');
+    expect(credentialSteps[0].run).not.toMatch(/npm|booker-mcp-preview-e2e/);
+    expect(JSON.stringify(verify)).not.toContain('secrets.');
+    expect(verify.permissions).toEqual({ contents: 'read' });
+    expect(verify.steps.find(step => step.run?.includes('npm ci')).run)
+      .toContain('env -i PATH="$PATH" HOME="$RUNNER_TEMP" LANG=C LC_ALL=C npm ci --ignore-scripts');
+    expect(verify.steps.find(step => step.run?.includes('booker-mcp-preview-e2e')).run)
+      .toContain('--total-timeout-ms 120000 --execute --allow-network');
+    expect(cleanup.if).toContain('always()');
+    expect(cleanup.needs).toEqual(['manual-booker-deploy', 'manual-booker-verify']);
+    expect(cleanup.steps.find(step => step.env?.RAILWAY_API_TOKEN).run).toContain('--deployment');
+    expect(workflow.concurrency.group).toContain("github.event_name == 'workflow_dispatch' && '1566'");
+    expect(workflow.jobs['run-event-preview-lifecycle'].if).not.toContain('workflow_dispatch');
+  });
+
+  it('verifies local owner authentication and admin permission without accepting a bot token', async () => {
+    const requested = [];
+    const api = new GitHubApi({ token: 'test-github-owner-token', fetchImpl: async url => {
+      requested.push(new URL(url).pathname);
+      return jsonResponse(url.endsWith('/user') ? { login: 'pbjustin' }
+        : { user: { login: 'pbjustin' }, permission: 'admin' });
+    } });
+    await api.readManualPreviewOwner();
+    expect(requested).toEqual(['/user', '/repos/pbjustin/Arcanos/collaborators/pbjustin/permission']);
+    const bot = new GitHubApi({ token: 'test-github-owner-token', fetchImpl: async () => jsonResponse({ login: 'github-actions[bot]' }) });
+    await expect(bot.readManualPreviewOwner()).rejects.toThrow('RAILWAY_PR_PREVIEW_MANUAL_OWNER_REQUIRED');
+  });
+
+  it.each([{}, { actor: { login: 'other' } }, { head_sha: 'd'.repeat(40) }, { event: 'pull_request' },
+    { run_attempt: 2 }, { status: 'completed' }, { head_branch: 'main' }, { triggering_actor: { login: 'other' } }])(
+    'uses fresh exact workflow-run authority for Actions bot credentials and rejects drift %j', async patch => {
+      const context = { actor: 'pbjustin', triggeringActor: 'pbjustin', eventName: 'workflow_dispatch', runId: '1234',
+        runAttempt: '1', controllerSha: HEAD_SHA,
+        workflowRef: `${CONTRACT.repository}/.github/workflows/railway-pr-preview-lifecycle.yml@refs/heads/feat/backstage-booker-mcp` };
+      const run = { actor: { login: 'pbjustin' }, triggering_actor: { login: 'pbjustin' }, event: 'workflow_dispatch',
+        run_attempt: 1, status: 'in_progress', head_sha: HEAD_SHA, head_branch: 'feat/backstage-booker-mcp',
+        path: '.github/workflows/railway-pr-preview-lifecycle.yml', repository: { full_name: CONTRACT.repository }, ...patch };
+      const api = new GitHubApi({ token: 'test-github-actions-token', manualOwnerContext: context,
+        fetchImpl: async url => { expect(new URL(url).pathname).toBe('/repos/pbjustin/Arcanos/actions/runs/1234'); return jsonResponse(run); } });
+      if (Object.keys(patch).length) await expect(api.readManualPreviewOwner()).rejects.toThrow('RAILWAY_PR_PREVIEW_MANUAL_OWNER_REQUIRED');
+      else await expect(api.readManualPreviewOwner()).resolves.toBeUndefined();
+    });
+  const fixture = () => {
+    let currentTime = clock, target = null, owner = true, observed = draft();
+    const calls = [], receipts = [];
+    const railway = {
+      async validateAuthority() { calls.push('authority'); },
+      async readBaseEnvironment() { return {}; }, validateBaseEnvironment() {},
+      async listEnvironments() { return target ? [target] : []; },
+      async createEnvironment() {
+        calls.push('create');
+        target = JSON.parse(JSON.stringify(environment()).replaceAll(String(PR_NUMBER), '1566')
+          .replaceAll(HEAD_REF, 'feat/backstage-booker-mcp'));
+        return target;
+      },
+      async readEnvironment() { return target; },
+      async removeAndVerifyTriggers() { calls.push('triggers'); },
+      async deployExact({ serviceId }) {
+        const role = serviceId === CONTRACT.services.worker.id ? 'worker' : 'web';
+        calls.push(`deploy:${role}`);
+        const item = deployment({ id: role === 'worker' ? WORKER_DEPLOYMENT_ID : WEB_DEPLOYMENT_ID, serviceId });
+        const node = target.serviceInstances.edges.find(edge => edge.node.serviceId === serviceId).node;
+        node.latestDeployment = item; node.activeDeployments = [item];
+        return item.id;
+      },
+      async waitForDeployment({ serviceId }) {
+        return target.serviceInstances.edges.find(edge => edge.node.serviceId === serviceId).node.latestDeployment;
+      },
+      async readReadiness({ role }) { return { ready: true, processKind: role, prNumber: 1566,
+        sourceCommit: HEAD_SHA, mode: role === 'worker' ? 'passive-pr-preview' : 'native-pr-application-e2e-v1',
+        applicationImported: true, fixturesSealed: true, protectedEffectsEnabled: false,
+        protectsMaliciousPr: false, requiresPlatformSecretIsolationForUntrustedCode: true }; },
+      async deleteAndVerifyEnvironment(item) { expect(item.id).toBe(PREVIEW_ENVIRONMENT_ID); calls.push('delete'); target = null; },
+    };
+    const github = { async readManualPreviewOwner() {
+      if (!owner) throw new Error('RAILWAY_PR_PREVIEW_MANUAL_OWNER_REQUIRED');
+      calls.push('owner');
+    }, async readPullRequest() { return observed; } };
+    return { railway, github, calls, receipts, now: () => currentTime,
+      expire() { currentTime += 60_001; }, changeOwner() { owner = false; }, changePr(patch) { observed = { ...observed, ...patch }; },
+      onReceipt(item) { receipts.push(item); }, get target() { return target; } };
+  };
+
+  it.each([
+    ['other PR', { prNumber: 1558 }], ['unreviewed controller', { controllerSha: 'd'.repeat(40) }],
+    ['changed candidate', { headSha: 'd'.repeat(40) }], ['changed script', { controllerScriptSha256: 'd'.repeat(64) }],
+    ['extra authority', { allowProduction: true }], ['future issue', { issuedAt: new Date(clock + 1).toISOString() }],
+    ['too long', { expiresAt: new Date(clock + 7_200_001).toISOString() }],
+  ])('rejects %s before provider access', (_name, patch) => {
+    expect(() => validateManualDraftPreviewAuthorization({ ...authorization(), ...patch }, identity, { now: () => clock })).toThrow();
+  });
+
+  it('keeps ordinary manual events ineligible while explicit immutable draft authorization deploys worker first', async () => {
+    expect(decideLifecycleAction({ eventAction: 'manual', pullRequest: validateLifecyclePullRequest(draft(), 1566) })).toBe('cleanup');
+    const f = fixture();
+    const receipt = await runManualDraftPreview({ action: 'reconcile', authorization: authorization(), identity, ...f });
+    expect(receipt).toMatchObject({ status: 'VERIFIED', environmentId: PREVIEW_ENVIRONMENT_ID,
+      headSha: HEAD_SHA, workerDeploymentId: WORKER_DEPLOYMENT_ID, webDeploymentId: WEB_DEPLOYMENT_ID });
+    expect(f.calls.filter(call => call.startsWith('deploy:'))).toEqual(['deploy:worker', 'deploy:web']);
+    expect(f.receipts[0].environmentId).toBe(PREVIEW_ENVIRONMENT_ID);
+    expect(Object.isFrozen(f.receipts[0])).toBe(true);
+    const second = await runManualDraftPreview({ action: 'cleanup', authorization: authorization(), identity, ...f, deploymentReceipt: receipt });
+    expect(second).toMatchObject({ status: 'VERIFIED', deleted: true });
+    expect(f.target).toBeNull();
+  });
+
+  it.each([{ number: 1558 }, { draft: false }, { head: { ...draft().head, sha: 'd'.repeat(40) } },
+    { head: { ...draft().head, ref: 'other' } }, { base: { ...draft().base, sha: 'd'.repeat(40) } }])(
+    'rejects fresh PR drift without mutation: %j', async patch => {
+      const f = fixture(); f.changePr(patch);
+      await expect(runManualDraftPreview({ action: 'reconcile', authorization: authorization(), identity, ...f })).rejects.toThrow();
+      expect(f.calls).not.toContain('create');
+    });
+
+  it('rejects owner loss and expired authorization before creation', async () => {
+    for (const change of ['changeOwner', 'expire']) {
+      const f = fixture(); f[change]();
+      await expect(runManualDraftPreview({ action: 'reconcile', authorization: authorization(), identity, ...f })).rejects.toThrow();
+      expect(f.calls).not.toContain('create');
+    }
+  });
+
+  it('never adopts an existing environment and cleans only its receipt after expiry or source drift', async () => {
+    const f = fixture();
+    const receipt = await runManualDraftPreview({ action: 'reconcile', authorization: authorization(), identity, ...f });
+    await expect(runManualDraftPreview({ action: 'reconcile', authorization: authorization(), identity, ...f }))
+      .rejects.toThrow('RAILWAY_PR_PREVIEW_MANUAL_EXISTING_ENVIRONMENT');
+    f.expire(); f.changePr({ draft: false });
+    await expect(runManualDraftPreview({ action: 'cleanup', authorization: authorization(), identity, ...f,
+      deploymentReceipt: { ...receipt, environmentId: CONTRACT.productionEnvironmentId } }))
+      .rejects.toThrow('RAILWAY_PR_PREVIEW_MANUAL_RECEIPT_INVALID');
+    expect(f.calls).not.toContain('delete');
+    await expect(runManualDraftPreview({ action: 'cleanup', authorization: authorization(), identity, ...f, deploymentReceipt: receipt }))
+      .resolves.toMatchObject({ status: 'VERIFIED', deleted: true });
+  });
+
+  it('retains create ownership when expiry prevents a later deployment', async () => {
+    const f = fixture();
+    await expect(runManualDraftPreview({ action: 'reconcile', authorization: authorization(), identity, ...f,
+      onReceipt(receipt) { f.onReceipt(receipt); f.expire(); } }))
+      .rejects.toThrow('RAILWAY_PR_PREVIEW_MANUAL_AUTHORIZATION_EXPIRED');
+    expect(f.calls).not.toContain('deploy:worker');
+    expect(f.receipts[0]).toMatchObject({ status: 'NOT_VERIFIED', environmentId: PREVIEW_ENVIRONMENT_ID });
   });
 });
 

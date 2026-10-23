@@ -2,8 +2,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { Request } from 'express';
 import { createGptClientRegistry, type AuthenticatedGptClientIdentity } from '@shared/gpt/gptClientRegistry.js';
 import { isBookerMcpInput } from '@shared/chatgpt/bookerMcpContract.js';
-import type { ChatGptPrincipal } from './auth.js';
-import { hasBookerPermission } from './bookerAuth.js';
+import type { ChatGptPrincipal } from './authCore.js';
+import { hasBookerPermission } from './bookerAuthCore.js';
 
 export type BookerGptAction = 'queryContinuity' | 'generateBooking' | 'generateBookingWithHRC' | 'simulateMatch';
 interface BookerMcpRequestAuthentication {

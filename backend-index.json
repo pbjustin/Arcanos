@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-23T14:45:24.547Z",
+  "generatedAt": "2026-10-23T18:51:16.088Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -356,10 +356,19 @@
           "relativePath": "src/chatgpt/auth.ts"
         },
         {
+          "relativePath": "src/chatgpt/authCore.ts"
+        },
+        {
           "relativePath": "src/chatgpt/booker.ts"
         },
         {
           "relativePath": "src/chatgpt/bookerAuth.ts"
+        },
+        {
+          "relativePath": "src/chatgpt/bookerAuthCore.ts"
+        },
+        {
+          "relativePath": "src/chatgpt/bookerCore.ts"
         },
         {
           "relativePath": "src/chatgpt/bookerGptAdapter.ts"
@@ -1332,6 +1341,9 @@
         },
         {
           "relativePath": "src/routes/chatgptBookerMcp.ts"
+        },
+        {
+          "relativePath": "src/routes/chatgptBookerMcpCore.ts"
         },
         {
           "relativePath": "src/routes/chatgptGamingMcp.ts"
@@ -2636,6 +2648,9 @@
           "relativePath": "src/shared/backstage/backstageJobPayloadProtection.ts"
         },
         {
+          "relativePath": "src/shared/backstage/backstageMatchSimulationCore.ts"
+        },
+        {
           "relativePath": "src/shared/backstage/backstageNotionAuthorityCore.ts"
         },
         {
@@ -2706,6 +2721,9 @@
         },
         {
           "relativePath": "src/shared/chatgpt/bookerMcpContract.ts"
+        },
+        {
+          "relativePath": "src/shared/chatgpt/bookerMcpPreviewFixture.ts"
         },
         {
           "relativePath": "src/shared/chatgpt/chatgptTutorPreviewFixture.ts"
@@ -4030,6 +4048,9 @@
           "relativePath": "tests/backstageBookerRouteShortcut.test.ts"
         },
         {
+          "relativePath": "tests/booker-mcp-preview-verifier.test.ts"
+        },
+        {
           "relativePath": "tests/brain.test.ts"
         },
         {
@@ -4064,6 +4085,9 @@
         },
         {
           "relativePath": "tests/chatgpt-booker-mcp.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/chatgpt-booker-preview.integration.test.ts"
         },
         {
           "relativePath": "tests/chatgpt-booker.pipeline.test.ts"

@@ -1,5 +1,11 @@
 # Railway Deployment Guide
 
+Draft Booker PR 1566 has a narrowly owner-dispatched synthetic entry in the
+existing PR lifecycle. It preserves ordinary non-draft admission and uses the
+same isolated base, worker-first deployment and receipt-bound cleanup. See the
+[Booker synthetic acceptance scope](chatgpt-migration/booker/README.md#isolated-synthetic-preview-for-draft-pr-1566)
+for exact authorization, actual MCP transport fixtures and evidence limits.
+
 ## Overview
 This runbook documents the repository-tracked Railway configuration and release safeguards for Arcanos. Tracked files do not prove the current live project linkage, environment state, or service topology.
 

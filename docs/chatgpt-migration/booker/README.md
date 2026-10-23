@@ -53,6 +53,50 @@ transport abort permits one identical retry; changed prompts, keys or requests
 are not result lookup. No protected backend failure permits invented continuity,
 partial official booking or local fallback.
 
+## Isolated synthetic preview for draft PR 1566
+
+The existing [preview lifecycle](../../../.github/workflows/railway-pr-preview-lifecycle.yml)
+has a separate owner-dispatched entry for this exact draft PR. Ordinary preview
+admission and the historical Gaming lanes retain their existing rules. The
+manual authorization binds the repository, PR 1566, exact head and base SHAs,
+controller SHA and script SHA-256, and a maximum two-hour lifetime. The owner,
+workflow run and current draft/head/base are rechecked before effects. It
+refuses to adopt a pre-existing environment. It deploys worker first using the
+existing credential-free synthetic profile and produces ownership/deployment
+receipts; cleanup uses that exact receipt even after authorization expiry.
+The workflow must be dispatchable and its existing scoped Railway credential
+must be available. A rejected dispatch or unavailable credential is a blocker,
+not permission to use production or an account-wide token.
+
+The sealed app mounts the actual shared Booker MCP transport, Auth0-compatible
+signed-token verifier and executor only for PR 1566 with the launcher's validated
+Railway HTTPS origin. The dedicated synthetic key is publicly designated test
+material and never enters normal application composition. The audience remains
+the exact resource URL; subject, client, read/generate scopes and server-owned
+universe membership retain their normal checks. No Auth0 settings or real
+grants are needed. Other preview paths continue rejecting bearer credentials.
+
+The fixture supplies deterministic Notion snapshots, CLEAR/HRC outputs, the
+production match-simulation core and bounded process-local jobs. It reuses
+protected result sealing and continuation policy, with no database, Notion or
+provider adapter. The signed read-only `GET /chatgpt/booker/preview-evidence`
+returns only synthetic counters and job counts. It is unavailable in normal
+production composition. No canon-write or administrative tool is added.
+
+The [bounded supplemental verifier](../../../scripts/booker-mcp-preview-e2e.mjs)
+reuses native exact-head/clean-checkout/HTTPS-target guards. Invoke it first
+without network flags, then with `--execute --allow-network` against the
+controller-attested hosts. Use `--total-timeout-ms 120000`: one bounded limiter
+window rollover preserves the unchanged production 30-per-minute owner limit.
+Receipts contain case IDs, statuses, byte counts and body hashes, never JWTs or
+protected payloads. All accepted fixture jobs must be terminal before cleanup.
+
+These results establish the boundaries actually exercised by deterministic
+services and an inactive worker. They do not establish real Auth0 issuance,
+Notion/SQL behavior, active durable workers, creative quality, production or
+installed ChatGPT acceptance. Keep the PR draft. Mark synthetic acceptance only
+after exact deployment, the full matrix and independent Railway cleanup pass.
+
 ## Live OAuth and private ChatGPT acceptance plan
 
 **Draft plan; no live steps executed by preparing this document.** The source

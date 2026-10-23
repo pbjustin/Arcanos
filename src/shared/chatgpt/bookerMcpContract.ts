@@ -1,9 +1,9 @@
-import { createRequire } from 'node:module';
+import { Ajv2020 } from 'ajv/dist/2020.js';
 import {
   CHATGPT_BOOKER_TOOL_NAMES,
   chatGptBookerSchemas,
   type ChatGptBookerToolName,
-} from '@arcanos/protocol';
+} from '@arcanos/protocol/chatgptBooker';
 
 export const BOOKER_READ_SCOPE = 'arcanos:booker:read';
 export const BOOKER_GENERATE_SCOPE = 'arcanos:booker:generate';
@@ -21,10 +21,8 @@ const descriptions: Record<ChatGptBookerToolName, string> = {
   getBackstageBookerJobResult: 'Continue only the accepted jobId in the same authorized universe and OAuth owner. Use waitForResultMs=30000; pending is not failure. Preserve lifecycle, authority and official-status fields. This reads existing work and never starts replacement inference or supplies local fallback.',
 };
 
-const require = createRequire(import.meta.url);
-const AjvConstructor = require('ajv/dist/2020').default as typeof import('ajv').default;
 // Existing Backstage conditionals refine fields declared by the surrounding schema.
-const ajv = new AjvConstructor({ allErrors: false, strict: false });
+const ajv = new Ajv2020({ allErrors: false, strict: false });
 ajv.addFormat('uuid', /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu);
 ajv.addFormat('date-time', { type: 'string', validate: value => /^\d{4}-\d{2}-\d{2}T/u.test(value) && Number.isFinite(Date.parse(value)) });
 const validators = Object.fromEntries(CHATGPT_BOOKER_TOOL_NAMES.map(name => [name, {

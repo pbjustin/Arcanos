@@ -18,6 +18,10 @@
       "types": "./dist/src/constants.d.ts",
       "import": "./dist/src/constants.js"
     },
+    "./chatgptBooker": {
+      "types": "./dist/src/chatgptBooker.d.ts",
+      "import": "./dist/src/chatgptBooker.js"
+    },
     "./chatgptGaming": {
       "types": "./dist/src/chatgptGaming.d.ts",
       "import": "./dist/src/chatgptGaming.js"
