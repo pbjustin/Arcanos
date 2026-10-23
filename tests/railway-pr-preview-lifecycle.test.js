@@ -554,6 +554,27 @@ describe('owner-authorized manual Booker draft preview', () => {
     }
   });
 
+  it('preserves synchronous base validation failure before creating resources or receipts', async () => {
+    const f = fixture();
+    const unhandled = [];
+    const observeUnhandled = error => unhandled.push(error);
+    process.on('unhandledRejection', observeUnhandled);
+    f.railway.validateBaseEnvironment = function () {
+      expect(this).toBe(f.railway);
+      throw new RailwayPrPreviewLifecycleError('RAILWAY_PR_PREVIEW_BASE_MISMATCH');
+    };
+    try {
+      await expect(runManualDraftPreview({ action: 'reconcile', authorization: authorization(), identity, ...f }))
+        .rejects.toThrow('RAILWAY_PR_PREVIEW_BASE_MISMATCH');
+      await new Promise(resolve => setImmediate(resolve));
+      expect(f.calls.some(call => call === 'create' || call.startsWith('deploy:'))).toBe(false);
+      expect(f.receipts).toEqual([]);
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.removeListener('unhandledRejection', observeUnhandled);
+    }
+  });
+
   it('never adopts an existing environment and cleans only its receipt after expiry or source drift', async () => {
     const f = fixture();
     const receipt = await runManualDraftPreview({ action: 'reconcile', authorization: authorization(), identity, ...f });

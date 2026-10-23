@@ -2343,6 +2343,9 @@ export async function runManualDraftPreview({ action, authorization: raw, identi
   const guarded = new Proxy(railway, { get(target, property) {
     const value = Reflect.get(target, property);
     if (typeof value !== 'function') return value;
+    if (!['createEnvironment', 'removeAndVerifyTriggers', 'deployExact', 'deleteAndVerifyEnvironment'].includes(property)) {
+      return value.bind(target);
+    }
     return async (...args) => {
       if (['createEnvironment', 'removeAndVerifyTriggers', 'deployExact'].includes(property)) await readCurrent();
       // Already-created resources remain removable after expiry or source drift.
