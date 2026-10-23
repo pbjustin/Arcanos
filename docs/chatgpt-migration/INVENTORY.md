@@ -1,5 +1,12 @@
 # Four-GPT migration inventory
 
+Booker Slice A now has a [dedicated source implementation and parity assessment](booker/README.md)
+for Issue #1565. It wraps four run actions, exact universe/storyline reads and
+actor-owned job continuation; canon writes remain blocked. The dated tables
+below retain the original inventory dispositions. Source implementation does
+not establish OAuth provisioning, deployment, installation or saved Builder
+knowledge parity.
+
 For current Tutor-only connection metadata and migration gates, use the
 [standalone Tutor handoff](TUTOR_MIGRATION.md). This dated foundation inventory
 does not update the other GPTs or represent a captured Builder export.

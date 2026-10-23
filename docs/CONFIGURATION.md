@@ -2261,6 +2261,38 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 | `TAVILY_API_KEY` | empty | Optional Tavily provider key. |
 | `SERPAPI_API_KEY` | empty | Optional SerpAPI provider key. |
 | `SEARXNG_BASE_URL` | empty | Optional SearXNG instance URL. |
+## Optional private ChatGPT Booker resource
+
+The [Booker MCP resource](API.md#private-chatgpt-booker-resource) is disabled by
+default. Its independent OAuth registration must issue signed access tokens for
+the exact resource and client. This first slice binds one verified owner to one
+exact universe through server configuration; a universe selector never grants
+membership. It adds no authorization server, account registration, credential,
+deployment or plugin installation.
+
+| Variable | Default and meaning |
+| --- | --- |
+| `CHATGPT_BOOKER_ENABLED` | `false`; only exact `true` enables Booker. |
+| `CHATGPT_BOOKER_ISSUER` | Unset; exact approved HTTPS OAuth issuer. |
+| `CHATGPT_BOOKER_RESOURCE` | Unset; exact HTTPS origin plus `/chatgpt/booker/mcp`, also the token audience. |
+| `CHATGPT_BOOKER_JWKS_URL` | Unset; approved HTTPS signing-key endpoint. |
+| `CHATGPT_BOOKER_OAUTH_CLIENT_ID` | Unset; exact separately registered OAuth client. Signed `client_id` or `azp` must match; conflicting claims fail closed. |
+| `CHATGPT_BOOKER_OWNER_SUBJECT` | Unset; exact permitted verified OAuth subject. Keep identity out of plugin files. |
+| `CHATGPT_BOOKER_UNIVERSE_ID` | Unset; exact universe authorized for that subject. No implicit default, discovery or wildcard. |
+
+Register `arcanos:booker:read` independently from `arcanos:booker:generate`.
+Generation, HRC and simulation need both; continuity, state and owned job reads
+need read permission. No canon-write permission exists in this slice. Use
+authorization-code OAuth with PKCE S256, issuer discovery and resource-bound
+`typ: at+jwt` RS256/ES256 tokens. Legacy Builder, operator, Tutor and Gaming
+credentials do not authorize this resource. Complete enabled configuration is
+required (503 if incomplete, 404 when disabled). Existing protected generation
+configuration and matching web/worker payload protection remain prerequisites;
+this integration does not create or change them. A separately authorized
+rollback can disable the resource; accepted jobs retain their existing lifecycle.
+
+See [Booker migration and acceptance](chatgpt-migration/booker/README.md).
+
 ## Optional private ChatGPT Gaming resource
 
 The [Gaming MCP resource](API.md#private-chatgpt-gaming-resource) requires a

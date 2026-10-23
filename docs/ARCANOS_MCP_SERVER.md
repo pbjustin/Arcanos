@@ -2,6 +2,13 @@
 
 ## Overview
 
+Private ChatGPT Booker has a separate, default-disabled
+[`/chatgpt/booker/mcp` resource](API.md#private-chatgpt-booker-resource).
+It exposes seven Booker tools with independent OAuth and exact-universe
+authorization. It does not inherit the operator catalog described below.
+See [Booker migration](chatgpt-migration/booker/README.md) for parity and
+connection gates.
+
 Arcanos exposes Model Context Protocol (MCP) over two transports:
 
 1. HTTP streamable transport: `POST /mcp` in `src/routes/mcp.ts`

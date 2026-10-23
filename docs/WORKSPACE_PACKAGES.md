@@ -7,6 +7,12 @@ loading unrelated protocol families. The root package also re-exports these
 names and registers all eight tool schemas in `getProtocolSchemaCatalog()`.
 
 ## Overview
+
+The root `@arcanos/protocol` export also provides the dedicated Booker MCP tool
+names, schemas and TypeScript types from `src/chatgptBooker.ts`. They are
+registered in the tool catalog and do not extend the daemon command set or
+change existing module-action schemas. See [Booker migration](chatgpt-migration/booker/README.md).
+
 Arcanos is an npm workspace. The root backend owns deploy/runtime startup, while shared TypeScript packages own protocol, CLI, runtime helpers, and OpenAI adapter utilities.
 
 ## Prerequisites

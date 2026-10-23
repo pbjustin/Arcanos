@@ -28,6 +28,8 @@ export interface ChatGptPrincipal {
   readonly resource: string;
   readonly scopes: readonly string[];
   readonly expiresAt: number;
+  /** Present only after a dedicated resource verifies its configured OAuth client. */
+  readonly oauthClientId?: string;
 }
 
 export type ChatGptAuthenticationResult =
@@ -145,7 +147,7 @@ export function createChatGptTokenVerifier(
 /** Fixed server-side policy shared by dedicated resources; never taken from tool input. */
 export function createScopedChatGptTokenVerifier(
   config: ReadyChatGptAuthConfiguration,
-  policy: { requiredScope: string; allowedScopes: readonly string[]; ownerSubject?: string },
+  policy: { requiredScope: string; allowedScopes: readonly string[]; ownerSubject?: string; oauthClientId?: string; singleAudience?: boolean },
   options: { keyResolver?: JWTVerifyGetKey; readEnvironmentValue?: EnvironmentReader } = {},
 ): ChatGptTokenVerifier {
   const keyResolver = options.keyResolver ?? createRemoteJWKSet(new URL(config.jwksUrl), {
@@ -178,7 +180,8 @@ export function createScopedChatGptTokenVerifier(
       });
       const now = Math.floor(Date.now() / 1_000);
       if (
-        typeof payload.sub !== 'string'
+        (policy.singleAudience === true && payload.aud !== config.resource)
+        || typeof payload.sub !== 'string'
         || payload.sub.length === 0
         || payload.sub.length > 256
         || payload.sub !== payload.sub.trim()
@@ -196,6 +199,11 @@ export function createScopedChatGptTokenVerifier(
       if (scopes.some((scope) => !SCOPE_TOKEN_PATTERN.test(scope))) return INSUFFICIENT_SCOPE;
       if (!scopes.includes(policy.requiredScope)) return INSUFFICIENT_SCOPE;
       if (policy.ownerSubject !== undefined && payload.sub !== policy.ownerSubject) return INVALID_TOKEN;
+      if (policy.oauthClientId !== undefined && (
+        (payload.client_id === undefined && payload.azp === undefined)
+        || (payload.client_id !== undefined && payload.client_id !== policy.oauthClientId)
+        || (payload.azp !== undefined && payload.azp !== policy.oauthClientId)
+      )) return INVALID_TOKEN;
 
       const principal: ChatGptPrincipal = Object.freeze({
         issuer: config.issuer,
@@ -203,6 +211,7 @@ export function createScopedChatGptTokenVerifier(
         resource: config.resource,
         scopes: Object.freeze(policy.allowedScopes.filter(scope => scopes.includes(scope))),
         expiresAt: payload.exp,
+        ...(policy.oauthClientId === undefined ? {} : { oauthClientId: policy.oauthClientId }),
       });
       verifiedPrincipals.add(principal);
       return { ok: true, principal };
