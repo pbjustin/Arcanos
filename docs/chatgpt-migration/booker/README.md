@@ -8,7 +8,7 @@ The implementation base includes merged authority-wait PR #1562.
 ## Architecture and parity assessment
 
 The existing backend remains the execution authority. A dedicated OAuth
-resource authenticates a separately registered client and one configured
+resource authenticates an explicitly configured OAuth client and one configured
 owner/universe pair. Seven closed tools reuse existing run-action routing,
 protected durable jobs, sanitized result continuation and exact read services.
 No new backend, database schema, provider constructor or infrastructure service
@@ -91,7 +91,8 @@ case **NOT VERIFIED**; do not weaken quarantine or disrupt production to pass it
 ### OAuth registration and configuration contract
 
 ChatGPT is the OAuth client, ARCANOS is the resource server, and an approved
-identity provider is the authorization server. This PR supplies token validation
+Auth0 tenant is the authorization server. Reuse the existing issuer, signing
+infrastructure and approved owner identity. This PR supplies token validation
 and protected-resource metadata; it supplies no authorization, token,
 registration, refresh or revocation endpoints. Confirm issuer compatibility
 before enabling the resource. Follow [official OpenAI authentication guidance](https://developers.openai.com/plugins/build/auth).
@@ -102,17 +103,27 @@ owner identity, universe mapping or credentials in a plugin or committed report:
 | Setting | Acceptance requirement |
 | --- | --- |
 | `CHATGPT_BOOKER_ENABLED` | Remains disabled until the approved target is ready; only exact `true` enables it. Disabled returns 404, incomplete enabled configuration returns 503. |
-| `CHATGPT_BOOKER_ISSUER` | Exact approved HTTPS issuer, matching authorization-server discovery and token `iss`. |
+| `CHATGPT_BOOKER_ISSUER` | Existing approved Auth0 issuer, matching discovery and token `iss` exactly. No new tenant. |
 | `CHATGPT_BOOKER_RESOURCE` | Exact HTTPS origin plus `/chatgpt/booker/mcp`, with no trailing slash; OAuth `resource` and the token's scalar `aud` must match it exactly. |
-| `CHATGPT_BOOKER_JWKS_URL` | Approved HTTPS endpoint for access-token signing keys. Verify it belongs to the selected issuer/configuration. |
-| `CHATGPT_BOOKER_OAUTH_CLIENT_ID` | Exact independent Booker client identity, also present in signed `client_id` or `azp`. If both claims occur, both must match. |
-| `CHATGPT_BOOKER_OWNER_SUBJECT` | Exact verified owner `sub`; display name, email, a caller/session string or a universe claim does not grant ownership. |
+| `CHATGPT_BOOKER_JWKS_URL` | Existing issuer's approved HTTPS signing-key endpoint; reuse its keys without copying key material. |
+| `CHATGPT_BOOKER_OAUTH_CLIENT_ID` | Existing compatible OAuth client ID, explicitly configured and present in signed `client_id` or `azp`. Both claims must match if both occur. Reuse does not grant cross-resource access. |
+| `CHATGPT_BOOKER_OWNER_SUBJECT` | Existing approved owner `sub`, verified for Booker; display name, email, a caller/session string or universe claim does not grant ownership. |
 | `CHATGPT_BOOKER_UNIVERSE_ID` | One exact server-authorized universe, never a wildcard or caller-selected membership. |
 
-Prefer an independently predefined Booker OAuth client when the approved issuer
-supports it. CIMD or DCR is an alternative only after verifying compatibility
-and binding the actual resulting client identity to the same configuration;
-do not invent a client ID or assume a shared Tutor/Gaming registration suffices.
+Prefer the existing ARCANOS OAuth client registration. The current verifier
+already supports the same issuer, JWKS, owner and client across resources;
+no runtime change, second authentication system or automatic configuration
+fallback is needed. Explicitly set the Booker variables above using approved
+non-secret identifiers. Keep its resource and two scopes independent. A Tutor
+or Gaming token remains invalid at Booker even when its issuer/client match.
+
+Reuse requires the existing client's actual grant/callback policy to support
+Booker, and independently issued tokens with Booker's exact audience and scopes.
+If an immutable client-type, grant or callback restriction genuinely prevents
+reuse, record the exact restriction before requesting a separate client in the
+same tenant. Missing evidence is not evidence that a new registration is needed.
+CIMD/DCR must not silently create a second client in place of the approved
+existing registration. Do not inspect, reveal, rotate or copy client secrets.
 Use the actual ChatGPT management page's redirect URI, allowlisted exactly.
 Callback mode depends on the issuer's advertised issuer-identification support;
 do not guess a callback URL, allow a wildcard or advertise unsupported features.
@@ -120,6 +131,45 @@ If that management page becomes available only after private candidate creation,
 perform the separately approved creation step, finish callback/client binding,
 then return to OAuth verification before functional calls. Creation alone is
 not a successful connection.
+
+### Auth0 reuse findings and remaining checks
+
+The existing [Tutor safe evidence](../../../integrations/arcanos-tutor/connection.requirements.json)
+records a public PKCE client and a historical Post Login restriction to the
+approved account/client and **Tutor resource**. That policy's current scope,
+client ID, exact callback allowlist and Booker API permissions require read-only
+owner verification; no credential is needed in the report. Gaming's
+[maintained checkpoint](../../../integrations/arcanos-gaming/README.md) is
+historical and cannot establish current client settings.
+
+Anonymous discovery refreshed on 2026-10-23 confirmed the existing issuer
+`https://dev-etfsljoipfurdij6.us.auth0.com/`, its
+`/.well-known/jwks.json` endpoint (RS256 signing keys), authorization-code and
+refresh grants, PKCE S256 and supported token-endpoint authentication methods.
+The deployed Tutor and Gaming protected-resource metadata also returned 200,
+both advertising this issuer with their separate resource URLs and respective
+Tutor/Gaming scopes. These were anonymous metadata reads, not tool invocations.
+Discovery advertises issuer identification, but does not establish its actual
+callback behavior or per-client grants. No tokens, credentials, Auth0 settings
+or owner identity were read. Public discovery does not list Booker API grants.
+
+Verify these genuine compatibility conditions before any authorized activation:
+
+| Condition | Required evidence; no live setting change in this PR |
+| --- | --- |
+| API audience and permissions | Existing tenant has or is separately authorized to configure the Booker API identifier equal to the exact resource, with `arcanos:booker:read` and `arcanos:booker:generate`. Reuse the client; do not reuse the Tutor/Gaming API audience or grant either scope implicitly. |
+| Resource parameter | Confirm Auth0's resource-parameter compatibility profile or the existing approved equivalent maps ChatGPT's `resource` to the Booker API audience. Auth0 documents a userinfo-audience failure when this compatibility is absent. No guessed query parameter, proxy or default-audience override. |
+| Token format | Booker still requires `typ: at+jwt`, RS256/ES256 and exact signed client/owner claims. Auth0's default `JWT` profile is incompatible; verify the API's RFC 9068 profile instead of relaxing verification or changing unrelated APIs/tenant defaults. |
+| OIDC audience shape | Auth0 can issue API-plus-userinfo audience arrays, including with RFC 9068. Booker rejects every array, even if it contains Booker. Verify the real approved grant yields the exact scalar audience; otherwise live acceptance is blocked. A new client alone does not establish a fix. |
+| Owner/Post Login policy | Verify the existing owner remains the same subject and policy can authorize this client for Booker without broadening Tutor/Gaming or allowing other owners. The historical Tutor-only restriction is not current authorization for Booker. |
+| Callback and grants | Compare the actual private Booker's management-page redirect and token-endpoint method with the existing client's allowlist, authorization-code/PKCE and refresh policy. Preserve existing callbacks. Adding a callback/grant or changing policy requires separate live-settings authorization. |
+
+See Auth0's [MCP resource-parameter compatibility guidance](https://support.auth0.com/center/s/article/mcp-audience-error-with-auth0)
+and [access-token profiles](https://auth0.com/docs/secure/tokens/access-tokens/access-token-profiles).
+No separate client has been demonstrated necessary. Current classification is
+**provider reuse supported; existing client live compatibility UNVERIFIED**.
+Signed local fixtures demonstrate reuse and cross-resource rejection; they do
+not establish live Auth0 issuance or installed ChatGPT acceptance.
 
 The authorization server must advertise authorization-code flow, PKCE `S256`,
 authorization/token endpoints and supported token-endpoint authentication.

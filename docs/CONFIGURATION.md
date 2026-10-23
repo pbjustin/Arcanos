@@ -2264,8 +2264,10 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 ## Optional private ChatGPT Booker resource
 
 The [Booker MCP resource](API.md#private-chatgpt-booker-resource) is disabled by
-default. Its independent OAuth registration must issue signed access tokens for
-the exact resource and client. This first slice binds one verified owner to one
+default. Reuse the existing approved Auth0 tenant, issuer, signing infrastructure
+and compatible OAuth client registration. Tokens must be independently issued
+for the exact Booker resource and permissions; sharing a client never accepts
+Tutor/Gaming tokens at Booker. This first slice binds one verified owner to one
 exact universe through server configuration; a universe selector never grants
 membership. It adds no authorization server, account registration, credential,
 deployment or plugin installation.
@@ -2273,10 +2275,10 @@ deployment or plugin installation.
 | Variable | Default and meaning |
 | --- | --- |
 | `CHATGPT_BOOKER_ENABLED` | `false`; only exact `true` enables Booker. |
-| `CHATGPT_BOOKER_ISSUER` | Unset; exact approved HTTPS OAuth issuer. |
+| `CHATGPT_BOOKER_ISSUER` | Unset; reuse the existing approved Auth0 HTTPS issuer explicitly. |
 | `CHATGPT_BOOKER_RESOURCE` | Unset; exact HTTPS origin plus `/chatgpt/booker/mcp`, also the token audience. |
-| `CHATGPT_BOOKER_JWKS_URL` | Unset; approved HTTPS signing-key endpoint. |
-| `CHATGPT_BOOKER_OAUTH_CLIENT_ID` | Unset; exact separately registered OAuth client. Signed `client_id` or `azp` must match; conflicting claims fail closed. |
+| `CHATGPT_BOOKER_JWKS_URL` | Unset; reuse the existing issuer's approved HTTPS signing-key endpoint. |
+| `CHATGPT_BOOKER_OAUTH_CLIENT_ID` | Unset; exact approved existing client when compatible. Signed `client_id` or `azp` must match; conflicting claims fail closed. No new registration is inherently required. |
 | `CHATGPT_BOOKER_OWNER_SUBJECT` | Unset; exact permitted verified OAuth subject. Keep identity out of plugin files. |
 | `CHATGPT_BOOKER_UNIVERSE_ID` | Unset; exact universe authorized for that subject. No implicit default, discovery or wildcard. |
 
@@ -2290,6 +2292,15 @@ required (503 if incomplete, 404 when disabled). Existing protected generation
 configuration and matching web/worker payload protection remain prerequisites;
 this integration does not create or change them. A separately authorized
 rollback can disable the resource; accepted jobs retain their existing lifecycle.
+
+Keep all Booker settings explicit: there is no automatic inheritance of Tutor
+or Gaming configuration, credentials, audiences or grants. Verify the existing
+Auth0 client's callback/grant/Post Login policy, Booker API permissions,
+resource-parameter handling and scalar-audience RFC 9068 issuance using the
+[reuse acceptance checklist](chatgpt-migration/booker/README.md#auth0-reuse-findings-and-remaining-checks).
+The default Auth0 `typ: JWT` profile and API-plus-userinfo audience arrays are
+not accepted. No tenant-wide policy change, new client or live configuration
+mutation is authorized by this documentation.
 
 See [Booker migration and acceptance](chatgpt-migration/booker/README.md).
 
