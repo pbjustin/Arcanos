@@ -786,6 +786,9 @@ export function buildNativePrApplicationChildEnvironment(env = process.env) {
     [APPLICATION_PR_PREVIEW_MARKER_ENV]: 'v1',
     ARCANOS_PREVIEW_PR_NUMBER: String(preview.prNumber),
     ARCANOS_PREVIEW_SOURCE_COMMIT: preview.sourceCommit,
+    ...(preview.prNumber === 1566 ? {
+      ARCANOS_PREVIEW_BOOKER_ORIGIN: `https://${normalizeRailwayPublicDomain(env)}`
+    } : {}),
     [PROCESS_KIND_ENV]: 'web',
     HOST: DEFAULT_HEALTH_HOST,
     NODE_ENV: 'production',

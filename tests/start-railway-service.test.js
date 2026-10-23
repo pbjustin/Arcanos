@@ -128,6 +128,22 @@ describe('start-railway-service launcher helpers', () => {
     )).toThrow(expectedCode);
   });
 
+  it('derives the isolated Booker audience only from validated Railway identity', () => {
+    const environment = {
+      ...nativeApplicationPreviewEnvironment,
+      RAILWAY_ENVIRONMENT_NAME: 'pr-676861-1566',
+      RAILWAY_PUBLIC_DOMAIN: 'arcanos-v2-pr-676861-1566.up.railway.app',
+      ARCANOS_PREVIEW_BOOKER_ORIGIN: 'https://attacker.invalid',
+      CHATGPT_BOOKER_RESOURCE: 'https://production.invalid/chatgpt/booker/mcp',
+    };
+    const child = buildNativePrApplicationChildEnvironment(environment);
+    expect(child.ARCANOS_PREVIEW_BOOKER_ORIGIN).toBe('https://arcanos-v2-pr-676861-1566.up.railway.app');
+    expect(child.CHATGPT_BOOKER_RESOURCE).toBeUndefined();
+    expect(() => buildNativePrApplicationChildEnvironment({
+      ...environment, RAILWAY_PUBLIC_DOMAIN: 'arcanos-v2-production.up.railway.app',
+    })).toThrow('PREVIEW_APPLICATION_DOMAIN_MISMATCH');
+  });
+
   it('constructs an exact child allowlist without inherited credentials or code injection settings', () => {
     const childEnvironment = buildNativePrApplicationChildEnvironment({
       ...nativeApplicationPreviewEnvironment,

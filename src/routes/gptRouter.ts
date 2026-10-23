@@ -18,6 +18,11 @@ import {
   getAuthenticatedGptClientIdentity,
   isBackstageBookerAccessAuthenticated,
 } from '@services/backstageBookerAccessAuth.js';
+import {
+  getBookerMcpGptClientIdentity,
+  hasBookerMcpGenerationAuthentication,
+  hasBookerMcpProviderAdmission,
+} from '../chatgpt/bookerRequestAuth.js';
 import { isBackstageNotionAuthorityEnforced } from '@services/backstageNotionAuthority.js';
 import { tryExtractExactLiteralPromptShortcut } from '@services/exactLiteralPromptShortcut.js';
 import { detectBackstageBookerIntent } from '@services/backstageBookerRouteShortcut.js';
@@ -1203,7 +1208,7 @@ function projectAsyncJobResponseForRequest(
   return typeof jobId === 'string'
     && jobId.length > 0
     && req.params.gptId === BACKSTAGE_MODULE_ROUTE
-    && isBackstageBookerAccessAuthenticated(req)
+    && (isBackstageBookerAccessAuthenticated(req) || hasBookerMcpGenerationAuthentication(req))
     ? projectBackstageBookerManagedPendingResponse({
         ...(payload as Record<string, unknown>),
         jobId,
@@ -1565,7 +1570,7 @@ router.post(
   backstageMutationConfirmationGate,
   optionalBackstageNotionEnrichmentAuth,
   canonicalResearchGptAdmissionBoundary,
-  publicProviderGptAdmission,
+  (req, res, next) => hasBookerMcpProviderAdmission(req) ? next() : publicProviderGptAdmission(req, res, next),
   canonicalResearchGptPreflightBoundary,
   async (req, res, next) => {
   const routeGptId = req.params.gptId;
@@ -2059,7 +2064,7 @@ router.post(
             ? resolvedBackstageAction
             : null;
         const managedProtectedBackstageGenerationAction =
-          isBackstageBookerAccessAuthenticated(req)
+          (isBackstageBookerAccessAuthenticated(req) || hasBookerMcpGenerationAuthentication(req))
             ? protectedBackstageGenerationAction
             : null;
         protectedBackstageRequestAction = managedProtectedBackstageGenerationAction;
@@ -3382,7 +3387,7 @@ router.post(
                   }
                 : plannedJobBase;
               const authenticatedClientIdentity =
-                getAuthenticatedGptClientIdentity(req);
+                getAuthenticatedGptClientIdentity(req) ?? getBookerMcpGptClientIdentity(req);
               plannedJob = authenticatedClientIdentity
                 ? {
                     ...priorityAwarePlannedJob,

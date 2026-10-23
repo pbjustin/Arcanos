@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import type { BackstageProtectedGenerationProvenance } from '@arcanos/protocol';
+import { hasBookerMcpGenerationAuthentication } from '../chatgpt/bookerRequestAuth.js';
 
 import { BACKSTAGE_MODULE_ROUTE } from '@shared/backstage/backstageActionPolicy.js';
 import {
@@ -224,7 +225,7 @@ export const optionalBackstageNotionEnrichmentAuth: RequestHandler = (
     return;
   }
 
-  if (isBackstageBookerAccessAuthenticated(req)) {
+  if (isBackstageBookerAccessAuthenticated(req) || hasBookerMcpGenerationAuthentication(req)) {
     runWithBackstageProtectedGenerationRequest(next);
     return;
   }

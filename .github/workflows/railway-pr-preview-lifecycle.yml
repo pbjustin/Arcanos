@@ -1,6 +1,12 @@
 name: Railway PR Preview Lifecycle
 
 on:
+  workflow_dispatch:
+    inputs:
+      authorization_json:
+        description: Expiring owner authorization for exact PR 1566 Booker synthetic acceptance
+        required: true
+        type: string
   pull_request_target:
     types:
       - opened
@@ -21,10 +27,181 @@ on:
 permissions: {}
 
 concurrency:
-  group: railway-pr-preview-lifecycle-${{ github.event.pull_request.number || github.event.client_payload.pr_number || 'scheduled-scan' }}
+  group: railway-pr-preview-lifecycle-${{ github.event.pull_request.number || github.event.client_payload.pr_number || (github.event_name == 'workflow_dispatch' && '1566') || 'scheduled-scan' }}
   cancel-in-progress: false
 
 jobs:
+  manual-booker-deploy:
+    name: Deploy owner-authorized exact draft Booker preview
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      && github.repository == 'pbjustin/Arcanos'
+      && github.actor == 'pbjustin'
+      && github.triggering_actor == 'pbjustin'
+      && github.event.sender.login == 'pbjustin'
+      && github.ref == 'refs/heads/feat/backstage-booker-mcp'
+      && github.workflow_ref == 'pbjustin/Arcanos/.github/workflows/railway-pr-preview-lifecycle.yml@refs/heads/feat/backstage-booker-mcp'
+      && github.run_attempt == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: railway-pr-preview-lifecycle
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      head_sha: ${{ steps.receipt.outputs.head_sha }}
+      web_base_url: ${{ steps.receipt.outputs.web_base_url }}
+      worker_base_url: ${{ steps.receipt.outputs.worker_base_url }}
+    steps:
+      - name: Validate exact owner input before checkout
+        env:
+          AUTHORIZATION_JSON: ${{ inputs.authorization_json }}
+          CONTROLLER_SHA: ${{ github.workflow_sha }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { mkdirSync, writeFileSync } from 'node:fs';
+          const e = process.env;
+          try {
+            if (Buffer.byteLength(e.AUTHORIZATION_JSON ?? '') > 16384) throw new Error();
+            const input = JSON.parse(e.AUTHORIZATION_JSON);
+            if (input.version !== 1 || input.repository !== 'pbjustin/Arcanos' || input.prNumber !== 1566
+              || input.controllerSha !== e.CONTROLLER_SHA || input.headSha !== e.CONTROLLER_SHA
+              || !/^[0-9a-f]{40}$/.test(e.CONTROLLER_SHA ?? '')
+              || !/^[0-9a-f]{64}$/.test(input.controllerScriptSha256 ?? '')) throw new Error();
+            mkdirSync(`${e.RUNNER_TEMP}/manual-booker-preview`, { recursive: true });
+            writeFileSync(`${e.RUNNER_TEMP}/manual-booker-preview/authorization.json`, JSON.stringify(input) + '\n', { mode: 0o600 });
+          } catch { console.error('RAILWAY_PR_PREVIEW_MANUAL_INPUT_INVALID'); process.exitCode = 1; }
+          NODE
+      - name: Check out the immutable explicitly reviewed controller
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.18.1'
+      - name: Revalidate owner and exact draft then deploy worker first
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_PR_PREVIEW_LIFECYCLE_API_TOKEN }}
+        run: >-
+          node scripts/railway-pr-preview-lifecycle.mjs manual-draft
+          --action reconcile
+          --authorization "$RUNNER_TEMP/manual-booker-preview/authorization.json"
+          --output "$RUNNER_TEMP/manual-booker-preview/deployment.json"
+      - name: Export verified served identities
+        id: receipt
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from 'node:fs';
+          const receipt = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/manual-booker-preview/deployment.json`, 'utf8'));
+          if (receipt.status !== 'VERIFIED' || receipt.prNumber !== 1566) throw new Error('MANUAL_PREVIEW_NOT_VERIFIED');
+          for (const [key, value] of Object.entries({ head_sha: receipt.headSha, web_base_url: receipt.webBaseUrl, worker_base_url: receipt.workerBaseUrl })) {
+            if (typeof value !== 'string' || /[\r\n]/.test(value)) throw new Error('MANUAL_PREVIEW_OUTPUT_INVALID');
+            appendFileSync(process.env.GITHUB_OUTPUT, `${key}=${value}\n`);
+          }
+          NODE
+      - name: Retain immutable authorization and ownership receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: manual-booker-preview-deployment
+          path: ${{ runner.temp }}/manual-booker-preview/*.json
+          if-no-files-found: warn
+          retention-days: 10
+
+  manual-booker-verify:
+    name: Verify exact deployed Booker transport without credentials
+    needs: manual-booker-deploy
+    if: needs.manual-booker-deploy.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check out exact accepted head without stored credentials
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ needs.manual-booker-deploy.outputs.head_sha }}
+          persist-credentials: false
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.18.1'
+      - name: Install verifier dependencies without lifecycle scripts or credentials
+        run: >-
+          env -i PATH="$PATH" HOME="$RUNNER_TEMP" LANG=C LC_ALL=C
+          npm ci --ignore-scripts --include=dev --no-audit --no-fund
+      - name: Exercise the actual deployed route with the bounded credential-free verifier
+        env:
+          ACCEPTED_SHA: ${{ needs.manual-booker-deploy.outputs.head_sha }}
+          WEB_BASE_URL: ${{ needs.manual-booker-deploy.outputs.web_base_url }}
+          WORKER_BASE_URL: ${{ needs.manual-booker-deploy.outputs.worker_base_url }}
+        run: >-
+          env -i PATH="$PATH" HOME="$RUNNER_TEMP" LANG=C LC_ALL=C
+          node scripts/booker-mcp-preview-e2e.mjs
+          --pr-number 1566 --commit-sha "$ACCEPTED_SHA"
+          --web-base-url "$WEB_BASE_URL" --worker-base-url "$WORKER_BASE_URL"
+          --total-timeout-ms 120000
+          --execute --allow-network > "$RUNNER_TEMP/booker-mcp-verification.json"
+      - name: Retain synthetic acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: manual-booker-preview-verification
+          path: ${{ runner.temp }}/booker-mcp-verification.json
+          if-no-files-found: warn
+          retention-days: 10
+
+  manual-booker-cleanup:
+    name: Remove only this manual Booker's owned temporary environment
+    needs: [manual-booker-deploy, manual-booker-verify]
+    if: always() && needs.manual-booker-deploy.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: railway-pr-preview-lifecycle
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check out the same immutable cleanup controller
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.18.1'
+      - name: Download this run's ownership receipts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: manual-booker-preview-deployment
+          path: ${{ runner.temp }}/manual-booker-preview
+      - name: Clean exact owned environment including after expiry or source drift
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_PR_PREVIEW_LIFECYCLE_API_TOKEN }}
+        run: |
+          if [ -f "$RUNNER_TEMP/manual-booker-preview/deployment.json" ]; then
+            node scripts/railway-pr-preview-lifecycle.mjs manual-draft --action cleanup \
+              --authorization "$RUNNER_TEMP/manual-booker-preview/authorization.json" \
+              --deployment "$RUNNER_TEMP/manual-booker-preview/deployment.json" \
+              --output "$RUNNER_TEMP/manual-booker-preview/cleanup.json"
+          else
+            echo 'No controller create receipt was produced; independent inventory remains required.'
+          fi
+      - name: Retain cleanup absence evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: manual-booker-preview-cleanup
+          path: ${{ runner.temp }}/manual-booker-preview/cleanup.json
+          if-no-files-found: warn
+          retention-days: 10
+
   run-event-preview-lifecycle:
     name: Converge event preview lifecycle
     if: >-

@@ -116,6 +116,7 @@ import { optionalBackstageNotionEnrichmentAuth } from '@services/backstageNotion
 import { mcpHttpBodyParser } from './mcp/httpBodyParser.js';
 import { createChatGptMcpRouter } from './routes/chatgptMcp.js';
 import { createChatGptGamingMcpRouter } from './routes/chatgptGamingMcp.js';
+import { createChatGptBookerMcpRouter } from './routes/chatgptBookerMcp.js';
 
 const SERVICE_NAME = 'arcanos-backend';
 const SERVICE_VERSION = '1.0.0';
@@ -328,6 +329,7 @@ export function createApp(): Express {
   app.post('/mcp', mcpHttpBodyParser);
   app.use(createChatGptMcpRouter());
   app.use(createChatGptGamingMcpRouter());
+  app.use(createChatGptBookerMcpRouter());
   app.use(express.json({ limit: config.limits.jsonLimit }));
   app.use(express.urlencoded({ extended: true }));
   app.post(

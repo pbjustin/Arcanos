@@ -3376,8 +3376,14 @@ test('rejects Tutor schema, output, provenance, empty-notification and denial dr
 });
 
 test('pins the emitted preview imports to the built request-abort runtime', () => {
-  const [applicationContract, drainContract] =
-    NATIVE_PR_PREVIEW_DIST_IMPORT_CONTRACT;
+  const applicationContract = NATIVE_PR_PREVIEW_DIST_IMPORT_CONTRACT.find(
+    contract => contract.filePath === 'dist/nativePrPreviewApplication.js'
+  );
+  const drainContract = NATIVE_PR_PREVIEW_DIST_IMPORT_CONTRACT.find(
+    contract => contract.filePath === 'dist/routes/_core/researchAbortDrain.js'
+  );
+  assert.ok(applicationContract);
+  assert.ok(drainContract);
   const applicationSource = [
     'import {',
     '  getRequestAbortContext,',

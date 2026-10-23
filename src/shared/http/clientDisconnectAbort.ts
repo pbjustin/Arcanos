@@ -4,7 +4,7 @@ import {
   createAbortError,
   runWithRequestAbortContext,
   type RequestAbortContext,
-} from '@arcanos/runtime';
+} from '@arcanos/runtime/requestAbort';
 
 const UNBOUNDED_REQUEST_DEADLINE = Number.MAX_SAFE_INTEGER;
 
