@@ -212,6 +212,8 @@ export interface BackstageNotionRagRetrievalDependencies {
     universeId: string
   ) => BackstageNotionAuthorityRoot | null | Promise<BackstageNotionAuthorityRoot | null>;
   embedQuery?: (query: string) => Promise<number[]>;
+  /** Internal worker signal only for a validated fresh snapshot blocked by a running refresh. */
+  onBookingRefreshInProgress?: () => Promise<void>;
   remainingOperationBudgetMs?: () => number | null;
   now?: () => Date;
   maximumStalenessMs?: number;
@@ -1251,6 +1253,12 @@ async function retrieveBackstageNotionRagContextUnsafe(
     && !readableContinuityLastKnownGood
   ) {
     logBackstageNotionSnapshotStatus(snapshotStatus, active, latestSyncAttempt);
+    if (retrievalProfile === 'booking'
+      && snapshotStatus.status === 'last_known_good'
+      && snapshotStatus.fresh && snapshotStatus.newerRefreshIncomplete
+      && latestSyncAttempt?.outcome === 'running') {
+      await dependencies.onBookingRefreshInProgress?.();
+    }
     throw new BackstageNotionIndexUnavailableError();
   }
 

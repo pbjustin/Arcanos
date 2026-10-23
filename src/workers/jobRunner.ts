@@ -70,6 +70,10 @@ import {
   type BackstageExecutionBudgetPolicy,
 } from '@shared/backstage/backstageExecutionBudget.js';
 import {
+  planBackstageAuthorityWait,
+  readBackstageAuthorityWaitState,
+} from '@shared/backstage/backstageAuthorityWait.js';
+import {
   isCooperativeDeadlineExceededError,
   runWithCooperativeAbortDrain,
 } from '@shared/async/cooperativeAbortDrain.js';
@@ -209,6 +213,8 @@ interface JobExecutionOutcome {
   retryable?: boolean;
   completionAutonomyState?: Record<string, unknown>;
   completionWinsLateCancellation?: boolean;
+  /** Trusted pre-model signal only; the worker must also verify zero AI calls. */
+  authorityDeferred?: boolean;
 }
 
 type OpenAIClient = ReturnType<typeof initOpenAIClient>;
@@ -1281,12 +1287,64 @@ async function executeQueuedDagNode(
   };
 }
 
-/**
- * Execute one queued canonical `/gpt/:gptId` request.
- * Purpose: move long-running GPT traffic onto the shared worker queue while preserving the canonical route envelope.
- * Inputs/outputs: accepts raw persisted queue input and returns a structured execution outcome for centralized retry handling.
- * Edge case behavior: malformed payloads are terminal failures, while transient module timeouts remain retryable.
- */
+/** Seal authority-admission failures using the existing protected result contract. */
+function buildQueuedBackstageAuthorityFailure(jobId: string, rawInput: unknown): JobExecutionOutcome {
+  const parsed = parseQueuedGptJobInput(rawInput);
+  if (!parsed.ok || !parsed.value.protectedBackstage) {
+    return { status: 'failed', output: null, retryable: false,
+      errorMessage: 'Protected Backstage generation job payload is required.' };
+  }
+  const code = BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE;
+  try {
+    return {
+      status: 'failed', retryable: false,
+      errorMessage: buildProtectedBackstageFailureMessage(code),
+      output: protectBackstageQueuedGptJobOutput({
+        jobId, rawInput,
+        output: buildProtectedBackstageFailureEnvelope({
+          gptId: parsed.value.gptId, action: parsed.value.protectedBackstage.action, code,
+        }),
+      }),
+    };
+  } catch {
+    return { status: 'failed', output: null, retryable: false,
+      errorMessage: 'BACKSTAGE_ASYNC_RESULT_PROTECTION_FAILED: Protected Backstage generation result could not be sealed.' };
+  }
+}
+
+/** A cheap authoritative read before provider initialization; no retrieval or embedding. */
+export async function resolveQueuedBackstageAuthorityAdmission(job: JobData): Promise<JobExecutionOutcome | null> {
+  if (job.job_type !== 'gpt' || !hasProtectedBackstageQueuedGptMarker(job.input)) return null;
+  const parsed = parseQueuedGptJobInput(job.input);
+  if (!parsed.ok || !parsed.value.protectedBackstage) return null;
+  const wait = readBackstageAuthorityWaitState(job.autonomy_state);
+  if (wait === 'invalid' || (wait && (
+    wait.executionClaimGeneration !== undefined
+    || Date.now() < wait.startedAt || Date.now() >= wait.deadlineAt
+  ))) {
+    return buildQueuedBackstageAuthorityFailure(job.id, job.input);
+  }
+  const { resolveBackstageNotionProtectedBookingAdmission } = await import('@services/backstageNotionPartitionCutover.js');
+  const descriptor = parsed.value.protectedBackstage;
+  let admission: Awaited<ReturnType<typeof resolveBackstageNotionProtectedBookingAdmission>>;
+  try {
+    admission = await runWithBackstageProtectedQueuedExecution(
+      descriptor.notionEnrichmentAuthorized,
+      () => resolveBackstageNotionProtectedBookingAdmission(
+        descriptor.universeId,
+        parsed.value.prompt ?? extractGptDispatchPromptText(parsed.value.body) ?? '',
+      ),
+    );
+  } catch {
+    return buildQueuedBackstageAuthorityFailure(job.id, job.input);
+  }
+  if (admission === 'ready' || admission === 'not_applicable') return null;
+  return admission === 'waiting'
+    ? { status: 'failed', output: null, retryable: false, authorityDeferred: true }
+    : buildQueuedBackstageAuthorityFailure(job.id, job.input);
+}
+
+/** Execute one canonical queued GPT request; protected failures never retry generation. */
 export async function executeQueuedGptRequest(params: {
   jobId: string;
   rawInput: unknown;
@@ -1546,6 +1604,7 @@ export async function executeQueuedGptRequest(params: {
   }
 
   let envelope;
+  let authorityDeferredBeforeModel = false;
   try {
     const dispatch = () => routeGptRequest({
         gptId,
@@ -1568,6 +1627,15 @@ export async function executeQueuedGptRequest(params: {
         : legacyQueueDrainContextCandidate
           ? runWithBackstageLegacyQueuedExecution(dispatch)
           : dispatch();
+    const trackedDispatch = parsedGptJobInput.value.protectedBackstage
+      ? async () => {
+          const { runWithBackstageAuthorityDeferralTracking } = await import('@services/backstageNotionEnrichmentAuthorization.js');
+          return runWithBackstageAuthorityDeferralTracking(
+            dispatchWithQueuedAuthorization,
+            () => { authorityDeferredBeforeModel = true; },
+          );
+        }
+      : dispatchWithQueuedAuthorization;
     envelope = protectedExecutionBudget && protectedOperationDeadlineAt !== null
       ? await runWithCooperativeAbortDrain(
           {
@@ -1586,13 +1654,20 @@ export async function executeQueuedGptRequest(params: {
               });
             },
           },
-          dispatchWithQueuedAuthorization
+          trackedDispatch
         )
-      : await dispatchWithQueuedAuthorization();
+      : await trackedDispatch();
   } catch (error: unknown) {
     const normalizedWorkerBudgetError = normalizeWorkerAiBudgetError(error);
     if (classifyWorkerAiBudgetError(normalizedWorkerBudgetError)) {
       throw normalizedWorkerBudgetError;
+    }
+    if (
+      authorityDeferredBeforeModel && !params.cancellationSignal?.aborted
+      && !isCooperativeDeadlineExceededError(error, 'backstage_worker')
+      && getAiExecutionContext()?.totals.calls === 0
+    ) {
+      return { status: 'failed', output: null, retryable: false, authorityDeferred: true };
     }
     if (params.cancellationSignal?.aborted && isAbortError(error)) {
       if (protectedBackstageQueuedExecution) {
@@ -1672,6 +1747,9 @@ export async function executeQueuedGptRequest(params: {
   const activeAiExecutionContext = getAiExecutionContext();
   if (activeAiExecutionContext) {
     rethrowRecordedWorkerBudgetFailure(activeAiExecutionContext);
+  }
+  if (authorityDeferredBeforeModel && !params.cancellationSignal?.aborted && activeAiExecutionContext?.totals.calls === 0) {
+    return { status: 'failed', output: null, retryable: false, authorityDeferred: true };
   }
 
   const resolvedLegacyBackstageQueuedExecution =
@@ -2814,7 +2892,22 @@ export async function runWorkerConsumerSlot(
 
         let dedicatedPartitionSyncOutcome: JobExecutionOutcome | null = null;
         let protectedBackstageOperationDeadlineAt: number | null = null;
-        if (job.job_type === BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE) {
+        dedicatedPartitionSyncOutcome = await resolveQueuedBackstageAuthorityAdmission(job);
+        if (dedicatedPartitionSyncOutcome?.authorityDeferred) {
+          const plan = planBackstageAuthorityWait(job.autonomy_state, Date.now(), job.id);
+          if (plan.status === 'defer') {
+            const result = await autonomyService.deferJobForBackstageAuthority(job, plan);
+            if (result.action === 'lease_lost') {
+              await finalizeCancellationAfterTerminalCasMiss({
+                job, fence: claimFence, autonomyService, jobStartedAtMs,
+                allowPreExecutionInputFallback: true,
+              });
+            }
+            continue;
+          }
+          dedicatedPartitionSyncOutcome = buildQueuedBackstageAuthorityFailure(job.id, job.input);
+        }
+        if (!dedicatedPartitionSyncOutcome && job.job_type === BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE) {
           jobExecutionStarted = true;
           const partitionSyncAiExecutionContext = createAiExecutionContext({
             sourceType: 'job',
@@ -2866,7 +2959,7 @@ export async function runWorkerConsumerSlot(
               jobType: job.job_type,
             }, { aiUsage: partitionSyncAiUsageSummary });
           }
-        } else {
+        } else if (!dedicatedPartitionSyncOutcome) {
         const ensuredClientState = await ensureOpenAIClientForSlot({
           workerId: slotDefinition.workerId,
           currentClient: openai,
@@ -2889,9 +2982,11 @@ export async function runWorkerConsumerSlot(
         const protectedBackstageBudget = protectedBackstageAction
           ? resolveProtectedBackstageWorkerBudget(protectedBackstageAction)
           : null;
+        const authorityWaitBeforeExecution = readBackstageAuthorityWaitState(job.autonomy_state);
         protectedBackstageOperationDeadlineAt = protectedBackstageBudget
           ? resolveBackstageWorkerOperationDeadlineAt(
-              job.started_at ?? job.created_at,
+              authorityWaitBeforeExecution && authorityWaitBeforeExecution !== 'invalid'
+                ? Date.now() : job.started_at ?? job.created_at,
               protectedBackstageBudget
             )
           : null;
@@ -3005,6 +3100,30 @@ export async function runWorkerConsumerSlot(
             continue;
           }
         }
+        }
+        const authorityWait = readBackstageAuthorityWaitState(job.autonomy_state);
+        if (!dedicatedPartitionSyncOutcome && protectedBackstageOperationDeadlineAt !== null && authorityWait && authorityWait !== 'invalid') {
+          if (Date.now() >= authorityWait.deadlineAt) {
+            dedicatedPartitionSyncOutcome = buildQueuedBackstageAuthorityFailure(job.id, job.input);
+          } else {
+            const { beginBackstageAuthorityGeneration } = await import('@core/db/repositories/jobRepository.js');
+            const begun = await beginBackstageAuthorityGeneration(job.id, { fence: claimFence });
+            if (!begun || !begun.started_at) {
+              const cancellationFinalized = await finalizeCancellationAfterTerminalCasMiss({
+                job, fence: claimFence, autonomyService, jobStartedAtMs,
+                allowPreExecutionInputFallback: true,
+              });
+              if (!cancellationFinalized) {
+                await autonomyService.markJobLeaseLost(job.id, 'Backstage execution admission fence was lost.');
+              }
+              continue;
+            }
+            job.started_at = begun.started_at;
+            const action = resolveProtectedBackstageQueuedGptJobAction(job.input);
+            if (action) protectedBackstageOperationDeadlineAt = resolveBackstageWorkerOperationDeadlineAt(
+              begun.started_at, resolveProtectedBackstageWorkerBudget(action),
+            );
+          }
         }
         const queueWaitMs = Math.max(
           0,
@@ -3173,6 +3292,21 @@ export async function runWorkerConsumerSlot(
                 : 'Queue job cancellation requested.'),
             retryable: false
           };
+        }
+
+        if (outcome.authorityDeferred) {
+          const plan = planBackstageAuthorityWait(job.autonomy_state, Date.now(), job.id);
+          if (plan.status === 'defer' && !jobCancellationController.signal.aborted) {
+            const result = await autonomyService.deferJobForBackstageAuthority(job, plan);
+            if (result.action === 'lease_lost') {
+              await finalizeCancellationAfterTerminalCasMiss({
+                job, fence: claimFence, autonomyService, jobStartedAtMs,
+                allowPreExecutionInputFallback: true,
+              });
+            }
+            continue;
+          }
+          outcome = buildQueuedBackstageAuthorityFailure(job.id, job.input);
         }
 
       if (outcome.status === 'completed') {

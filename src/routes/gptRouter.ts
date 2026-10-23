@@ -18,7 +18,7 @@ import {
   getAuthenticatedGptClientIdentity,
   isBackstageBookerAccessAuthenticated,
 } from '@services/backstageBookerAccessAuth.js';
-import { resolveBackstageNotionAuthorityRoot } from '@services/backstageNotionAuthority.js';
+import { isBackstageNotionAuthorityEnforced } from '@services/backstageNotionAuthority.js';
 import { tryExtractExactLiteralPromptShortcut } from '@services/exactLiteralPromptShortcut.js';
 import { detectBackstageBookerIntent } from '@services/backstageBookerRouteShortcut.js';
 import {
@@ -495,13 +495,13 @@ function readBackstageUniverseId(body: unknown): string | null {
       : null;
 }
 
-function classifyBackstageRouteWorkload(params: {
+async function classifyBackstageRouteWorkload(params: {
   body: unknown;
   moduleName: string;
   action: string | null | undefined;
   promptText: string | null;
   requestedExecutionMode: GptExecutionMode | null;
-}): BackstageBookerWorkloadDecision | null {
+}): Promise<BackstageBookerWorkloadDecision | null> {
   if (params.moduleName !== BACKSTAGE_MODULE_NAME) {
     return null;
   }
@@ -512,11 +512,11 @@ function classifyBackstageRouteWorkload(params: {
     prompt,
     BACKSTAGE_GENERATION_TOKEN_LIMIT_DEFAULT
   );
-  const universeId = readBackstageUniverseId(params.body);
+  const universeId = readBackstageUniverseId(params.body) ?? DEFAULT_BACKSTAGE_UNIVERSE_ID;
   const authorizationEstablished = isBackstageNotionEnrichmentAuthorized();
   const notionAuthorityContext = authorizationEstablished
-    && universeId !== null
-    && resolveBackstageNotionAuthorityRoot(universeId) !== null;
+    && (action === 'generateBooking' || action === 'generateBookingWithHRC')
+    && await isBackstageNotionAuthorityEnforced(universeId);
 
   return classifyBackstageBookerWorkload({
     action,
@@ -2084,7 +2084,7 @@ router.post(
           && bypassIntentRouting !== true
           && resolvedModuleAction === GPT_QUERY_ACTION
           && detectBackstageBookerIntent(modulePromptText) !== null;
-        const backstageWorkloadDecision = classifyBackstageRouteWorkload({
+        const backstageWorkloadDecision = await classifyBackstageRouteWorkload({
           body: effectiveBody,
           moduleName: routingValidation.plan.module,
           action: requestedModuleAction ?? researchAction,

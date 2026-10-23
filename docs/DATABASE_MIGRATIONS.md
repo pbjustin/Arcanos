@@ -475,6 +475,27 @@ already pinned to the prior complete active snapshot. The
 V4 rollback drops only the status table; it leaves the complete active snapshot
 and authority head untouched.
 
+Protected booking authority waiting uses the existing `job_data.autonomy_state`
+JSONB and `next_run_at`; it requires no migration. The versioned
+`backstageAuthorityWait` state preserves the original twelve-minute deadline
+across pending polls and worker recovery. Deferral atomically checks the current
+worker, claim generation, live lease, and absence of cancellation before
+returning the same job to pending. Pre-execution authority waiting consumes no
+retry budget. A separate fenced admission transition starts the generation
+window and records its claim generation so recovery cannot replay uncertain
+generation. Snapshot storage, the 4,096-chunk limit, and synchronization cadence
+remain unchanged.
+
+Authority polling backs off to a maximum two-minute interval with stable early
+per-job offsets. Polls retain ordinary durable claim reservations under the
+shared hourly budget; deferral does not refund or exempt those reservations.
+Capacity exhaustion can delay processing, but cannot extend the persisted
+authority deadline or authorize expired generation.
+Both authority transitions acquire the row lock before sampling the database
+clock, then recheck the live lease, cancellation, claim generation, and deadline.
+This prevents a lock wait from admitting generation after expiry. A deferral's
+next run is also clamped to the persisted deadline.
+
 `migrations/20260902_backstage_notion_rag_candidate_search_v1.sql` adds derived
 native search material for monolithic snapshot candidates. It leaves canonical
 snapshot/page/chunk rows and the active authority pointer unchanged. The new

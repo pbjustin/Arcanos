@@ -14,6 +14,7 @@ const POSTGRES_TEST_DATABASE_ENVIRONMENTS = [
   'DAG_SNAPSHOT_GENERATION_TEST_DATABASE_URL',
   'JOB_WORKER_BUDGET_TEST_DATABASE_URL',
   'JOB_STALE_RECOVERY_TEST_DATABASE_URL',
+  'BACKSTAGE_AUTHORITY_WAIT_TEST_DATABASE_URL',
   'BACKSTAGE_ROSTER_ATOMICITY_TEST_DATABASE_URL',
   'BACKSTAGE_STORYLINE_ATOMICITY_TEST_DATABASE_URL',
   'BACKSTAGE_CANON_STORYLINE_PG18_TEST_DATABASE_URL',
@@ -27,6 +28,7 @@ const POSTGRES_TEST_FILES = [
   'tests/integration/dag-snapshot-generation.pg18.integration.test.ts',
   'tests/integration/job-worker-budget-identity.pg18.integration.test.ts',
   'tests/integration/job-stale-recovery-batching.pg18.integration.test.ts',
+  'tests/integration/backstage-authority-wait.pg18.integration.test.ts',
   'tests/integration/backstage-roster-atomicity.pg18.integration.test.ts',
   'tests/integration/backstage-storyline-atomicity.pg18.integration.test.ts',
   'tests/integration/backstage-canon-storyline.pg18.integration.test.ts',
@@ -54,7 +56,7 @@ function readWorkflowJob(workflow, jobId, nextJobId) {
 }
 
 describe('required PostgreSQL CI truth contract', () => {
-  it('uses one required-database sentinel for all sixteen PostgreSQL suites', () => {
+  it('uses one required-database sentinel for all seventeen PostgreSQL suites', () => {
     const workflow = readNormalized('.github/workflows/ci-cd.yml');
     const postgresJob = readWorkflowJob(
       workflow,

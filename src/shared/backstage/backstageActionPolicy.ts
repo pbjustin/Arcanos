@@ -118,7 +118,8 @@ function normalizeWorkloadCount(value: number): number {
  *
  * Heavy generation is a safety boundary: an explicit synchronous preference
  * cannot move it back under the request timeout. Lightweight continuity and
- * deterministic no-provider shortcuts remain request-local.
+ * deterministic no-provider shortcuts remain request-local unless they need
+ * Notion authority admission, which can wait durably in the queue.
  */
 export function classifyBackstageBookerWorkload(
   input: BackstageBookerWorkloadInput
@@ -199,7 +200,11 @@ export function classifyBackstageBookerWorkload(
                   ? 'expected_output_words'
                   : null;
 
-  if (!input.providerInvocationRequired && input.action === 'generateBooking') {
+  if (
+    !input.providerInvocationRequired
+    && input.action === 'generateBooking'
+    && !input.notionAuthorityContext
+  ) {
     return buildDecision('lightweight', false, true, 'provider_not_required');
   }
 

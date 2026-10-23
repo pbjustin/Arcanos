@@ -4,6 +4,7 @@ import {
 } from '@arcanos/protocol';
 import {
   createAbortError,
+  getRequestAbortContext,
   getRequestRemainingMs,
   isAbortError,
 } from '@arcanos/runtime';
@@ -49,6 +50,64 @@ import {
   retrieveBackstageNotionAuthorityRagContext,
 } from './backstageNotionPartitionCutover.js';
 import { normalizeBackstageBookerActionPayload } from './backstageBookerContracts.js';
+
+type ContinuityExecutionPhase =
+  | 'provider_configuration'
+  | 'output_budget'
+  | 'request_budget'
+  | 'prompt_construction'
+  | 'provider_execution'
+  | 'output_validation';
+
+/** Classify local phases and known codes without exposing provider error text. */
+function classifyContinuityFailure(
+  error: unknown,
+  phase: ContinuityExecutionPhase
+): string {
+  const candidate = error !== null && typeof error === 'object'
+    ? error as { code?: unknown; name?: unknown }
+    : {};
+  if (
+    phase === 'request_budget'
+    || candidate.name === 'RuntimeBudgetExceededError'
+    || candidate.name === 'OpenAIAbortError'
+    || candidate.name === 'APIConnectionTimeoutError'
+    || candidate.name === 'TimeoutError'
+    || candidate.code === 'ETIMEDOUT'
+    || candidate.code === 'worker_ai_call_budget_exceeded'
+  ) {
+    return 'budget_or_deadline_exhausted';
+  }
+  if (isAbortError(error)) {
+    return getRequestRemainingMs() === 0
+      ? 'budget_or_deadline_exhausted'
+      : 'request_aborted';
+  }
+  if (
+    phase === 'output_validation'
+    || isBackstageBookerOutputIncompleteError(error)
+    || candidate.code === 'OPENAI_COMPLETION_INCOMPLETE'
+    || candidate.code === 'TRINITY_OUTPUT_INTEGRITY_FAILED'
+  ) {
+    return 'output_validation_failed';
+  }
+  if (
+    phase === 'provider_configuration'
+    || candidate.code === 'FINAL_AUTHORITY_UNAVAILABLE'
+    || candidate.code === 'worker_ai_call_budget_dependency_unavailable'
+  ) {
+    return 'provider_unavailable_or_not_configured';
+  }
+  return phase === 'provider_execution'
+    ? 'provider_execution_failed'
+    : 'unexpected_internal_failure';
+}
+
+function safeContinuityCorrelationId(value: string | undefined): string | undefined {
+  return value && /^[A-Za-z0-9_.:-]{1,128}$/u.test(value)
+    ? value
+    : undefined;
+}
 
 function resolveContinuityQueryModel(): string {
   return getTrinityFinalModel();
@@ -122,6 +181,8 @@ export async function queryBackstageContinuity(
       ...(input.cursor ? { cursor: input.cursor } : {}),
     },
   );
+  let phase: ContinuityExecutionPhase = 'provider_configuration';
+  let attempt: 'primary' | 'compact_recovery' = 'primary';
   try {
     const { client } = getOpenAIClientOrAdapter();
     if (!client) {
@@ -137,6 +198,7 @@ export async function queryBackstageContinuity(
       recoveryStageTimeoutMs: executionBudget.recoveryStageTimeoutMs,
       finalizationReserveMs: executionBudget.finalizationReserveMs,
     });
+    phase = 'output_budget';
     const outputBudget = resolveBackstageOutputBudget({
       action: 'queryContinuity',
       profile: executionBudget.profile,
@@ -154,6 +216,8 @@ export async function queryBackstageContinuity(
       buildBackstageOutputBudgetTelemetry(outputBudget)
     );
     const runAttempt = (compactRetry: boolean) => {
+      attempt = compactRetry ? 'compact_recovery' : 'primary';
+      phase = 'request_budget';
       const effectiveStageTimeoutMs = resolveContinuityAttemptTimeoutMs({
         executionBudget,
         runtimeBudget,
@@ -164,11 +228,13 @@ export async function queryBackstageContinuity(
         compactRetry,
         modelStageTimeoutMs: effectiveStageTimeoutMs,
       });
+      phase = 'prompt_construction';
       const policyPrompt = buildBackstageContinuityPolicyPrompt(
         input,
         retrieval,
         compactRetry
       );
+      phase = 'provider_execution';
       return runTrinityWritingPipeline({
         input: {
           prompt: policyPrompt,
@@ -238,17 +304,24 @@ export async function queryBackstageContinuity(
       }
     }
 
+    phase = 'output_validation';
     return assertValidBackstageBookerActionData(
       'queryContinuity',
       buildBackstageContinuityResponse(input, retrieval, result.result)
     );
   } catch (error) {
+    const universeId = safeContinuityCorrelationId(input.universeId);
+    const requestId = safeContinuityCorrelationId(getRequestAbortContext()?.requestId);
+    logger.error('backstage.continuity_query.failed', {
+      ...(universeId ? { universeId } : {}),
+      ...(requestId ? { requestId } : {}),
+      category: classifyContinuityFailure(error, phase),
+      phase,
+      attempt,
+    });
     if (isAbortError(error) || isBackstageBookerOutputIncompleteError(error)) {
       throw error;
     }
-    logger.error('backstage.continuity_query.failed', {
-      universeId: input.universeId,
-    });
     throw new BackstageContinuityQueryFailedError();
   }
 }
