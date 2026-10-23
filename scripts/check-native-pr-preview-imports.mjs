@@ -15,7 +15,7 @@ const PREVIEW_IMPORT_TSCONFIG_FILE =
 const PREVIEW_DIST_IMPORT_CHECKER_FILE =
   'scripts/check-native-pr-preview-dist-imports.mjs';
 const PREVIEW_DIST_IMPORT_CHECKER_DIGEST =
-  'b6affa79e4b80627bff6f5da008f53454006d581f6e266d94a50f26a3d5c51d0';
+  '1920e08cafc4009285aabf8420b51eda9ef214f067dd7564ec537d193f6a7259';
 const ROOT_PACKAGE_MANIFEST_FILE = 'package.json';
 const ROOT_TSCONFIG_FILE = 'tsconfig.json';
 const RUNTIME_PACKAGE_MANIFEST_FILE =
@@ -45,7 +45,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/backstage/backstageMatchSimulationCore.ts',
   'src/shared/backstage/backstageNotionScopeIndex.ts',
   'src/shared/chatgpt/bookerMcpContract.ts',
-  'src/shared/chatgpt/bookerMcpPreviewFixture.ts',
+  'src/bookerMcpPreviewFixture.ts',
   'src/shared/http/clientDisconnectAbort.ts',
 
   'contracts/backstage_booker.openapi.v1.json',
@@ -283,7 +283,7 @@ const FILE_SPECIFIC_EXTERNAL_RUNTIME_IMPORTS = new Map([
   ['src/routes/chatgptBookerMcpCore.ts', new Set(['express', 'node:util', '@modelcontextprotocol/sdk/server/index.js', '@modelcontextprotocol/sdk/server/streamableHttp.js', '@modelcontextprotocol/sdk/types.js', '@arcanos/runtime/requestAbort'])],
   ['src/shared/backstage/backstageNotionScopeIndex.ts', new Set(['node:crypto'])],
   ['src/shared/chatgpt/bookerMcpContract.ts', new Set(['ajv/dist/2020.js', '@arcanos/protocol/chatgptBooker'])],
-  ['src/shared/chatgpt/bookerMcpPreviewFixture.ts', new Set(['express', 'node:crypto', 'jose', '@arcanos/runtime/requestAbort'])],
+  ['src/bookerMcpPreviewFixture.ts', new Set(['express', 'node:crypto', 'jose', '@arcanos/runtime/requestAbort'])],
   ['src/shared/http/clientDisconnectAbort.ts', new Set(['@arcanos/runtime/requestAbort'])],
 
   ['src/shared/chatgpt/gamingMcpContract.ts', new Set(['ajv', '@arcanos/protocol/chatgptGaming'])],
@@ -349,7 +349,7 @@ const FILE_SPECIFIC_EXTERNAL_IMPORT_BINDINGS = new Map([
     ['ajv/dist/2020.js', new Set(['Ajv2020:Ajv2020'])],
     ['@arcanos/protocol/chatgptBooker', new Set(['CHATGPT_BOOKER_TOOL_NAMES:CHATGPT_BOOKER_TOOL_NAMES', 'chatGptBookerSchemas:chatGptBookerSchemas'])],
   ])],
-  ['src/shared/chatgpt/bookerMcpPreviewFixture.ts', new Map([
+  ['src/bookerMcpPreviewFixture.ts', new Map([
     ['express', new Set(['default:express'])],
     ['node:crypto', new Set(['createHash:createHash'])],
     ['jose', new Set(['createLocalJWKSet:createLocalJWKSet'])],
@@ -901,16 +901,16 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
 ]);
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['packages/protocol/src/chatgptBooker.ts', '3e182b6a26c5946828c2d6fe8dbe1cfec862094969b592457366292f0950fa0e'],
-  ['scripts/booker-mcp-preview-key.d.mts', 'bbcb949f18d05e8d31926e7df305000d89901f52481b417224b77bbba54447d4'],
-  ['scripts/booker-mcp-preview-key.mjs', 'ab3fb44f967c46d18445e908e4e645befc4fbb76cf98d0ab8679dda86e6215e4'],
-  ['src/chatgpt/authCore.ts', 'c7d65335e6fc5080300413d9dcccaa45fdb7a688ae8d54e445796a0bdb66fad9'],
-  ['src/chatgpt/bookerAuthCore.ts', 'f1eb9c4ec1e47cc5cce9d96633d7ee70053155d2c8b1654b67090bbf30c3b14c'],
+  ['scripts/booker-mcp-preview-key.d.mts', 'bbcb949f18d05e8d31926e7df305000d89901f52481b417224b77bbba54447d4'], // gitleaks:allow -- public source semantic SHA-256
+  ['scripts/booker-mcp-preview-key.mjs', 'ab3fb44f967c46d18445e908e4e645befc4fbb76cf98d0ab8679dda86e6215e4'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/chatgpt/authCore.ts', 'c7d65335e6fc5080300413d9dcccaa45fdb7a688ae8d54e445796a0bdb66fad9'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/chatgpt/bookerAuthCore.ts', 'f1eb9c4ec1e47cc5cce9d96633d7ee70053155d2c8b1654b67090bbf30c3b14c'], // gitleaks:allow -- public source semantic SHA-256
   ['src/chatgpt/bookerCore.ts', '51e1c74873f616a266518c7e7075076bb09efc5598586952d41dcb87226f4ad3'],
   ['src/routes/chatgptBookerMcpCore.ts', 'a9ab27e10b9975d047c6790e72199fe2ea45d667038039bb18140b08b0d39797'],
   ['src/shared/backstage/backstageMatchSimulationCore.ts', 'd6bce722b24f73a785b3c4c14024ceb44ba644c36d6b8730d6fb72b891e54030'],
   ['src/shared/backstage/backstageNotionScopeIndex.ts', 'e4ee442fad7cc097b140f9cba63c8db227a8e752dc8f3584e032842723448c78'],
   ['src/shared/chatgpt/bookerMcpContract.ts', '82eaba1e4579a2b3cc0ab78f423fe1b5c2c47a03bda2db503365b69dbc69e6c4'],
-  ['src/shared/chatgpt/bookerMcpPreviewFixture.ts', '49a4c9655a07e2ef35f0bc65719d818c3fa26caa0ee3e7f480ea8436ea1ee850'],
+  ['src/bookerMcpPreviewFixture.ts', 'd79eeba799864f6d16ab5686c0763bebd06d53357f9c8cb47db249701ded4d37'],
   ['src/shared/http/clientDisconnectAbort.ts', '296cca6209bb8c65d3e9934614d7612e664c46ed2efd42cc807e88454f87ec1f'],
   ['src/shared/gaming/gamingSourceTransportData.ts', '09bf2dc7ee4686b70c98c652158d585bb578c36190cdf0fa2b36186c51dad5c1'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gaming/gamingPublisherExtractionProfileData.ts', '196b35964e27ff396bc5bdf10015700b9f668bad0070a153ce09c135b9153177'], // gitleaks:allow -- public source semantic SHA-256

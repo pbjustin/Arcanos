@@ -760,7 +760,7 @@ describe('native PR preview import boundary', () => {
     'src/chatgpt/bookerCore.ts',
     'src/routes/chatgptBookerMcpCore.ts',
     'src/shared/chatgpt/bookerMcpContract.ts',
-    'src/shared/chatgpt/bookerMcpPreviewFixture.ts',
+    'src/bookerMcpPreviewFixture.ts',
     'src/shared/backstage/backstageMatchSimulationCore.ts',
     'src/shared/backstage/backstageNotionScopeIndex.ts',
     'src/shared/http/clientDisconnectAbort.ts',

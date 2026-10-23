@@ -41,7 +41,7 @@ import {
 import { assertGenerativeModelPolicyPreviewFixture } from './shared/gpt/generativeModelPolicyPreviewFixture.js';
 import { handleChatGptTutorPreviewRequest } from './shared/chatgpt/chatgptTutorPreviewFixture.js';
 import { handleGamingMcpPreviewRequest } from './shared/chatgpt/gamingMcpPreviewFixture.js';
-import { createBookerMcpPreviewFixture, BOOKER_PREVIEW_EVIDENCE_PATH } from './shared/chatgpt/bookerMcpPreviewFixture.js';
+import { createBookerMcpPreviewFixture, BOOKER_PREVIEW_EVIDENCE_PATH } from './bookerMcpPreviewFixture.js';
 import { BOOKER_MCP_PATH, BOOKER_METADATA_PATH } from './shared/chatgpt/bookerMcpContract.js';
 
 import {

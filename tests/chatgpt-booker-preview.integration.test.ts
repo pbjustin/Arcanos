@@ -6,7 +6,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { createNativePrPreviewApplication } from '../src/nativePrPreviewApplication.js';
 import { BOOKER_MCP_PATH, BOOKER_METADATA_PATH, bookerMcpTools } from '../src/shared/chatgpt/bookerMcpContract.js';
-import { BOOKER_PREVIEW_EVIDENCE_PATH, BOOKER_PREVIEW_PROOF_HEADER, BOOKER_PREVIEW_PROOF_VERSION } from '../src/shared/chatgpt/bookerMcpPreviewFixture.js';
+import { BOOKER_PREVIEW_EVIDENCE_PATH, BOOKER_PREVIEW_PROOF_HEADER, BOOKER_PREVIEW_PROOF_VERSION } from '../src/bookerMcpPreviewFixture.js';
 import { simulateBackstageMatchCore } from '../src/shared/backstage/backstageMatchSimulationCore.js';
 import { BOOKER_PREVIEW_UNIVERSE_ID, signBookerPreviewToken } from '../scripts/booker-mcp-preview-key.mjs';
 

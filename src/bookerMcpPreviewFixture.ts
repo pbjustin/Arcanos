@@ -3,27 +3,23 @@ import { createHash } from 'node:crypto';
 import { createLocalJWKSet } from 'jose';
 import type { JobData } from '@core/db/schema.js';
 import { getRequestAbortSignal } from '@arcanos/runtime/requestAbort';
-// eslint-disable-next-line no-restricted-imports -- The contained app reuses the reviewed transport core with explicit inert dependencies.
-import { createChatGptBookerMcpRouterCore } from '../../routes/chatgptBookerMcpCore.js';
-// eslint-disable-next-line no-restricted-imports -- Explicit synthetic services replace every production effect at this pure executor seam.
-import { createBookerMcpExecutorCore, type BookerMcpServices } from '../../chatgpt/bookerCore.js';
-// eslint-disable-next-line no-restricted-imports -- Unchanged verifier core, local public JWKS and no environment authority.
-import { bookerPrincipalActorKey, createBookerTokenVerifierCore, readBookerAuthConfigurationCore } from '../../chatgpt/bookerAuthCore.js';
-// eslint-disable-next-line no-restricted-imports -- Public synthetic key; unavailable to normal runtime composition.
+import { createChatGptBookerMcpRouterCore } from './routes/chatgptBookerMcpCore.js';
+import { createBookerMcpExecutorCore, type BookerMcpServices } from './chatgpt/bookerCore.js';
+import { bookerPrincipalActorKey, createBookerTokenVerifierCore, readBookerAuthConfigurationCore } from './chatgpt/bookerAuthCore.js';
 import { BOOKER_PREVIEW_PUBLIC_JWK, BOOKER_PREVIEW_ISSUER, BOOKER_PREVIEW_SUBJECT,
-  BOOKER_PREVIEW_CLIENT_ID, BOOKER_PREVIEW_UNIVERSE_ID } from '../../../scripts/booker-mcp-preview-key.mjs';
-import { BOOKER_MCP_PATH, BOOKER_METADATA_PATH } from './bookerMcpContract.js';
-import { buildBackstageContinuityResponse, isBackstageContinuityCursorRequestValid } from '../backstage/backstageContinuityQueryCore.js';
-import { normalizeBackstageNotionScopePath } from '../backstage/backstageNotionScopeIndex.js';
-import { resolveBackstageNotionSnapshotStatusObservation } from '../backstage/backstageNotionSnapshotStatus.js';
-import { simulateBackstageMatchCore } from '../backstage/backstageMatchSimulationCore.js';
+  BOOKER_PREVIEW_CLIENT_ID, BOOKER_PREVIEW_UNIVERSE_ID } from '../scripts/booker-mcp-preview-key.mjs';
+import { BOOKER_MCP_PATH, BOOKER_METADATA_PATH } from './shared/chatgpt/bookerMcpContract.js';
+import { buildBackstageContinuityResponse, isBackstageContinuityCursorRequestValid } from './shared/backstage/backstageContinuityQueryCore.js';
+import { normalizeBackstageNotionScopePath } from './shared/backstage/backstageNotionScopeIndex.js';
+import { resolveBackstageNotionSnapshotStatusObservation } from './shared/backstage/backstageNotionSnapshotStatus.js';
+import { simulateBackstageMatchCore } from './shared/backstage/backstageMatchSimulationCore.js';
 import { buildBackstageBookerClearGenerationPolicy, BACKSTAGE_BOOKER_CLEAR_GENERATION_POLICY_MARKER } from '@services/backstageBookerClear.js';
-import { buildBackstageBookerProtectedFailureState } from '../backstage/backstageBookerAsyncContinuation.js';
-import { buildProtectedBackstageFailureEnvelope } from '../backstage/backstageProtectedFailure.js';
-import { readBackstageBookerAsyncResultCore } from '../backstage/backstageBookerAsyncResultCore.js';
-import { protectBackstageQueuedGptJobOutput } from '../backstage/backstageQueuedJobResultProtection.js';
-import { resolveBackstageJobPayloadProtectionConfig, sealBackstageJobPayload } from '../backstage/backstageJobPayloadProtection.js';
-import { buildGptIdempotencyScopeHash } from '../gpt/gptIdempotency.js';
+import { buildBackstageBookerProtectedFailureState } from './shared/backstage/backstageBookerAsyncContinuation.js';
+import { buildProtectedBackstageFailureEnvelope } from './shared/backstage/backstageProtectedFailure.js';
+import { readBackstageBookerAsyncResultCore } from './shared/backstage/backstageBookerAsyncResultCore.js';
+import { protectBackstageQueuedGptJobOutput } from './shared/backstage/backstageQueuedJobResultProtection.js';
+import { resolveBackstageJobPayloadProtectionConfig, sealBackstageJobPayload } from './shared/backstage/backstageJobPayloadProtection.js';
+import { buildGptIdempotencyScopeHash } from './shared/gpt/gptIdempotency.js';
 
 export const BOOKER_PREVIEW_EVIDENCE_PATH = '/chatgpt/booker/preview-evidence';
 export const BOOKER_PREVIEW_PROOF_HEADER = 'x-arcanos-preview-chatgpt-booker-version';

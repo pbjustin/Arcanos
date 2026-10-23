@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-23T18:51:16.088Z",
+  "generatedAt": "2026-10-23T19:02:52.305Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -339,6 +339,9 @@
         },
         {
           "relativePath": "src/app.ts"
+        },
+        {
+          "relativePath": "src/bookerMcpPreviewFixture.ts"
         },
         {
           "relativePath": "src/brain/brainFactory.ts"
@@ -2721,9 +2724,6 @@
         },
         {
           "relativePath": "src/shared/chatgpt/bookerMcpContract.ts"
-        },
-        {
-          "relativePath": "src/shared/chatgpt/bookerMcpPreviewFixture.ts"
         },
         {
           "relativePath": "src/shared/chatgpt/chatgptTutorPreviewFixture.ts"
