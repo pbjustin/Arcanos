@@ -8,6 +8,10 @@ advertises only its OAuth resource and Booker scopes. Authentication, exact
 owner/universe binding and bounded parsing precede execution. No operator
 catalog, universe discovery or canon-write tool is exposed.
 
+Request bodies are limited to 256 KiB and use strict UTF-8 JSON. Malformed
+UTF-8 returns 400; unsupported media types or character sets return 415 before
+provider admission or tool execution. Valid multibyte text is preserved exactly.
+
 | Tool | Permission and backend behavior |
 | --- | --- |
 | `queryContinuity` | `arcanos:booker:read`; original exact-scope Notion retrieval and synthesis, including coverage and snapshot-bound cursors. |

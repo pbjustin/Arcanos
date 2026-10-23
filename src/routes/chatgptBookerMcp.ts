@@ -1,4 +1,5 @@
 import express, { type RequestHandler } from 'express';
+import { TextDecoder } from 'node:util';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, type Tool } from '@modelcontextprotocol/sdk/types.js';
@@ -22,6 +23,9 @@ import { runWithBookerMcpProviderAdmission } from '../chatgpt/bookerRequestAuth.
 
 const providerTools = new Set(['queryContinuity', 'generateBooking', 'generateBookingWithHRC', 'simulateMatch']);
 const BOOKER_OPERATION_TIMEOUT_MS = 60_000;
+const fatalUtf8Decoder = new TextDecoder('utf-8', { fatal: true });
+// Match the existing Booker JSON transport without Unicode token folding.
+const bookerJsonContentTypePattern = /^[\t ]*application\/json(?:[\t ]*;[\t ]*charset[\t ]*=[\t ]*(?:utf-8|"utf-8"))?[\t ]*$/i;
 
 /** Dedicated Booker transport; no generic dispatch or legacy bearer bridge. */
 export function createChatGptBookerMcpRouter(options: {
@@ -70,9 +74,15 @@ export function createChatGptBookerMcpRouter(options: {
     next();
   };
   router.all(BOOKER_MCP_PATH, ipLimit, authenticate, principalLimit);
-  const parse = express.json({ limit: 262_144, strict: true, inflate: false });
+  const parse = express.json({ limit: 262_144, strict: true, inflate: false,
+    verify: (_req, _res, body) => {
+      if (body.length === 0) throw new SyntaxError('Empty Booker JSON body.');
+      fatalUtf8Decoder.decode(body);
+    } });
   const boundedParser: RequestHandler = (req, res, next) => {
-    if (!req.is('application/json')) { res.status(415).json({ error: 'BOOKER_REQUEST_INVALID' }); return; }
+    if (!bookerJsonContentTypePattern.test(req.get('content-type') ?? '')) {
+      res.status(415).json({ error: 'BOOKER_REQUEST_INVALID' }); return;
+    }
     parse(req, res, error => {
       if (!error) { next(); return; }
       res.status(error.status === 413 ? 413 : 400).json({ error: 'BOOKER_REQUEST_INVALID' });

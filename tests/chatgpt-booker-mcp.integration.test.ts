@@ -1,6 +1,6 @@
 import express, { type RequestHandler } from 'express';
 import request from 'supertest';
-import { createServer, type Server } from 'node:http';
+import { createServer, request as rawHttpRequest, type Server } from 'node:http';
 import { once } from 'node:events';
 import { generateKeyPair, exportJWK, createLocalJWKSet, SignJWT, type JWTPayload } from 'jose';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -100,6 +100,26 @@ function app(options: Parameters<typeof createChatGptBookerMcpRouter>[0] = {}, p
   return application;
 }
 const post = (application = app()) => request(application).post(BOOKER_MCP_PATH).set('Accept', 'application/json, text/event-stream');
+async function rawPost(body: Buffer, bearer: string, contentType = 'application/json') {
+  const server = createServer(app()).listen(0, '127.0.0.1');
+  servers.push(server); await once(server, 'listening');
+  const address = server.address() as { port: number };
+  return new Promise<{ status: number | undefined; body: Record<string, unknown> }>((resolve, reject) => {
+    const req = rawHttpRequest({ hostname: '127.0.0.1', port: address.port, path: BOOKER_MCP_PATH, method: 'POST',
+      headers: { Authorization: 'Bearer ' + bearer, Accept: 'application/json, text/event-stream',
+        'Content-Type': contentType, 'Content-Length': body.length } }, res => {
+      const chunks: Buffer[] = [];
+      res.on('data', (chunk: Buffer) => chunks.push(chunk));
+      res.on('error', reject);
+      res.on('end', () => {
+        try { resolve({ status: res.statusCode, body: JSON.parse(Buffer.concat(chunks).toString('utf8')) }); }
+        catch (error) { reject(error); }
+      });
+    });
+    req.on('error', reject);
+    req.end(body);
+  });
+}
 const rpc = (name: string, args: unknown) => ({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } });
 const list = { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} };
 const inputs: Record<ChatGptBookerToolName, Record<string, unknown>> = {
@@ -336,6 +356,46 @@ describe('Booker transport scope, validation, and execution', () => {
     expect((await post().auth(bearer, { type: 'bearer' }).set('Content-Type', 'application/json').send('{invalid')).status).toBe(400);
     expect((await post().auth(bearer, { type: 'bearer' }).send({ payload: 'x'.repeat(262_144) })).status).toBe(413);
     expect(execute).not.toHaveBeenCalled();
+  });
+  it.each([
+    { name: 'queryContinuity' as const, field: 'query', invalidBytes: [0xff] },
+    { name: 'generateBooking' as const, field: 'prompt', invalidBytes: [0xc3] },
+    { name: 'generateBookingWithHRC' as const, field: 'prompt', invalidBytes: [0xc0, 0xaf] },
+    { name: 'getBackstageStoryline' as const, field: 'storylineKey', invalidBytes: [0xed, 0xa0, 0x80] },
+  ])('rejects malformed UTF-8 in $name before provider admission or execution', async ({ name, field, invalidBytes }) => {
+    const serialized = JSON.stringify(rpc(name, { ...inputs[name], [field]: 'raw-byte-sentinel' }));
+    const [prefix, suffix] = serialized.split('raw-byte-sentinel');
+    const response = await rawPost(Buffer.concat([Buffer.from(prefix), Buffer.from(invalidBytes), Buffer.from(suffix)]), await token());
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({ error: 'BOOKER_REQUEST_INVALID' });
+    expect(providerAdmission).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+  it('rejects UTF-16 JSON before provider admission or execution', async () => {
+    const body = Buffer.from(JSON.stringify(rpc('queryContinuity', inputs.queryContinuity)), 'utf16le');
+    const response = await rawPost(body, await token(), 'application/json; charset=utf-16le');
+    expect(response.status).toBe(415);
+    expect(response.body).toEqual({ error: 'BOOKER_REQUEST_INVALID' });
+    expect(providerAdmission).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+  it('rejects an empty raw body before provider admission or execution', async () => {
+    const response = await rawPost(Buffer.alloc(0), await token());
+    expect(response.status).toBe(400);
+    expect(providerAdmission).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+  it.each([
+    { name: 'queryContinuity' as const, field: 'query' },
+    { name: 'getBackstageStoryline' as const, field: 'storylineKey' },
+  ])('preserves valid multibyte UTF-8 exactly in $name', async ({ name, field }) => {
+    const input = { ...inputs[name], [field]: 'Événement / 🎤 – 東京' };
+    const response = await rawPost(Buffer.from(JSON.stringify(rpc(name, input))), await token(),
+      name === 'queryContinuity' ? 'Application/JSON; charset="UTF-8"' : 'application/json');
+    expect(response.status).toBe(200);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute.mock.calls[0][2]).toEqual(input);
+    expect(providerAdmission).toHaveBeenCalledTimes(name === 'queryContinuity' ? 1 : 0);
   });
   it('bounds principal requests across renewed tokens and preserves unrelated legacy routes', async () => {
     const application = app();
