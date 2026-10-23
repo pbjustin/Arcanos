@@ -38,6 +38,8 @@ external-provider recovery or full production equivalence.
 ## Overview
 This repository uses GitHub Actions workflows in `.github/workflows/` for build/test validation, docs checks, release automation, and Railway deployment helpers.
 
+Choose local checks from the canonical [validation matrix](../CONTRIBUTING.md#required-local-validation); this guide documents workflow ownership and evidence boundaries.
+
 ## Prerequisites
 - Exact Node.js 24.18.1 with its bundled npm 11.16.0 for local workflow parity. Every maintained `actions/setup-node` selector resolves to that exact version.
 - GitHub repository write access.
@@ -231,10 +233,10 @@ Release automation boundaries:
   vulnerability as actionable; there is no npm advisory, package, dependency
   path, or platform-profile exception registry. Workflows record npm's raw audit
   exit code while relying on this fail-closed zero-vulnerability policy.
-- The MCP SDK's Hono override uses the official npm `hono-4.13.7.tgz` artifact,
-  with its integrity recorded in `package-lock.json`. Registry version metadata
-  lagged the available security-release tarball; the direct artifact keeps the
-  patched dependency reproducible without weakening the audit policy.
+- The MCP SDK's Hono override uses the official npm artifact selected in
+  `package.json`, with its resolved URL and integrity recorded in
+  `package-lock.json`. Keep those sources consistent; the direct artifact keeps
+  the patched dependency reproducible without weakening the audit policy.
 - Required CI and release validation pin `pip-audit` to `2.10.1` and contain no
   Python vulnerability ignores.
 - Patch mode can only append deterministic validation notes to an existing

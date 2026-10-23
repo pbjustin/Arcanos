@@ -20,7 +20,7 @@ Produce a blocker-focused verdict tied to the current remote PR head and base. A
 3. Where useful, split independent read-only tracks across agents: patch/contracts/tests, CI/review state, and runtime/deployment risks. Give each the same head/base and no mutation authority beyond the current task.
 4. Inspect the exact diff and affected consumers/tests. Check protocol and ActionPlan boundaries against `AGENTS.md`. Focus findings on demonstrated regressions, contract violations, and missing tests that leave a concrete risk unverified. Give file/line and triggering conditions for each blocker.
 5. Trace failed checks to exact run/job logs. Distinguish code failures from environment failures, intentional skips, and approval-gated zero-job runs. For workflow permissions, inspect both scalar and mapped YAML forms. If green visible checks coexist with `UNSTABLE`, inspect check suites and `action_required` runs or explicitly leave the cause unresolved.
-6. Choose local checks from the current validation matrix. Verify the required toolchain and dependencies first; do not describe a focused harness as a canonical build. A stale generated index may call for `npm run reindex` plus `npm run reindex:check` in an authorized repair, not automatic regeneration during a read-only review.
+6. Choose local checks from the canonical [validation matrix](../../../CONTRIBUTING.md#required-local-validation). Verify the required toolchain and dependencies first; do not describe a focused harness as a canonical build. A stale generated index may call for `npm run reindex` plus `npm run reindex:check` in an authorized repair, not automatic regeneration during a read-only review.
 
 ## Evidence boundaries and failures
 
@@ -28,6 +28,17 @@ Produce a blocker-focused verdict tied to the current remote PR head and base. A
 - If a Windows CI-inspector helper fails on encoding or response shape, use bounded `gh pr checks`, `gh run view`, or job-log API reads. Do not classify a helper crash as a PR regression.
 - Authentication or log-access failures do not authorize credential changes. Report the unavailable evidence and continue independent inspection. Keep raw credentials and sensitive logs out of output.
 - Do not restart services, initialize databases, run workers, call memory/dispatch endpoints, or invoke live probes as review validation.
+- Give every blocker its basis: a demonstrated defect, an applicable required check/review, an explicit task acceptance condition, consequential unresolved evidence, or missing authorization for a specific necessary action. Cite the evidence or requirement and its effect on the verdict.
+- Distinguish a failed requirement, an unverified requirement, an optional check not run, and a reported risk/limitation. Optional validation does not create a merge gate; required gates remain binding even when code appears sound. Do not require Codex Cloud, CodeRabbit, full suites, previews, or live acceptance unless current policy or the task requires them.
+
+## Future explicitly authorized merges
+
+This section documents merge mechanics; review or readiness alone never grants merge authorization.
+
+1. Refresh the current remote PR head/base, applicable checks, required reviews, unresolved threads, and lifecycle state. Confirm the evidence covers the head being merged and that the authorized action meets the current gates.
+2. Submit the reviewed PR head as a **server-enforced expected-head condition**: GitHub's [REST merge endpoint](https://docs.github.com/en/rest/pulls/pulls?apiVersion=2022-11-28#merge-a-pull-request) accepts `sha`; the GitHub connector exposes this as `expected_head_sha`. The supported CLI option is `gh pr merge --match-head-commit <reviewed-head-sha>`; preserve the expected-head condition in the actual merge request.
+3. If the head changes or GitHub rejects a mismatch, refresh affected review/check evidence before any authorized retry. Never retry without the expected-head condition or use an administrative bypass to evade the mismatch or required gates.
+4. Record the returned merge commit SHA and refresh the resulting default-branch state. Verify the merge commit is on that branch; if the branch has advanced, verify ancestry rather than assuming its tip still equals the merge commit. Report queued/pending actions as pending until a merge and resulting branch state are confirmed.
 
 ## Deliver the verdict
 
