@@ -1,6 +1,6 @@
 ---
 name: arcanos-validation
-description: Select and run the smallest relevant local checks for an ARCANOS change, verify its toolchain, and report passed, failed, and skipped validation. Use when asked to validate a change or decide which tests cover backend, worker, protocol, Python, database, or Railway configuration work; this does not authorize deployment or live probes.
+description: Select and run the smallest relevant local checks for an ARCANOS change, verify its toolchain, and report passed, failed, and skipped validation. Use for backend, worker, protocol, Python, database, scripts/workflows, dependencies, iOS, or Railway configuration validation; this does not authorize deployment or live probes.
 ---
 
 # ARCANOS validation
@@ -18,24 +18,11 @@ Preserve existing local work and other worktrees. Check-building can create pack
 
 ## Choose the checks
 
-Use the relevant rows together, deduplicate identical commands, and run npm workspace commands from the repository root. Replace `<pattern>` with a focused suite or carefully quoted regex. Inspect the selected test setup before running integration suites that might use configured services.
+Use the canonical [Required Local Validation matrix](../../../CONTRIBUTING.md#required-local-validation). Combine affected rows and deduplicate commands; do not maintain a second matrix here. It covers runner ownership, standalone script families omitted by `validate:all`, dependency policy, Gateway drift, and Apple evidence categories as well as backend checks.
 
-| Changed area | Minimum relevant checks, subject to current `AGENTS.md` |
-| --- | --- |
-| Root TypeScript/backend | `npm run type-check`; `npm run lint`; `node scripts/run-jest.mjs --testPathPatterns=<pattern> --coverage=false` |
-| Broad root behavior | `npm run build`; `npm test` or the split `npm run test:all` |
-| Protocol, CLI, or TypeScript/Python contract | `npm run type-check`; `npm run lint`; `node scripts/run-jest.mjs --testPathPatterns=protocol --coverage=false`; `npm run validate:backend-cli:contract`; `npm run validate:backend-cli:offline`; `npm run sync:check`; add focused changed-contract tests |
-| Separate `workers/` workspace | `npm run build:workers`; `npm run lint`; focused root Jest where applicable |
-| `src/workers/`, including the root job runner | `npm run build`; `npm run lint`; focused root Jest |
-| `arcanos-ai-runtime/` | `npm run test:runtime-integration`; `npm run lint` |
-| `daemon-python/` | `python -m pytest daemon-python/tests/<test_file>.py -q`, or its full test directory for broad changes; add `npm run validate:backend-cli:offline` for contracts |
-| Railway configuration/startup | `npm run build`; local, non-deploying `npm run validate:railway` |
-| Database/schema | `npm run type-check`; focused database or route Jest; `npm run validate:railway`; add lint when backend code changes |
-| Maintained documentation or source layout | `npm run docs:check`, including its generated-index drift check; combine with the relevant code row |
+Select exact Jest files with `node scripts/run-jest.mjs --runTestsByPath <actual-file> --coverage=false`; preserve the wrapper and inspect selected test setup before integration suites that might use configured services. Direct Jest requires current shared-package builds. `type-check` and `build` already build those packages and run boundary gates; do not repeat successful gates without a diagnostic reason.
 
-Run package builds before consumer checks. Currently `type-check` and `build` already build shared packages and run boundary gates, so do not repeat those gates without a focused diagnostic reason. Follow current `AGENTS.md` if it separately requires both commands. Preserve the repository's `scripts/run-jest.mjs` wrapper and its ESM/test-environment setup.
-
-Root Jest excludes `arcanos-ai-runtime/tests/`. `test:all:stacks` covers root Jest and daemon pytest, not runtime tests; `validate:all` does not cover daemon pytest or runtime tests. Use the separate row when those surfaces change. `sync:check` is a drift signal whose findings need source confirmation; `sync:fix` is not a repair mechanism.
+For scripts/workflows, identify the affected runner and regression/static/platform checks rather than assuming root Jest or lint covers them. For dependency changes, follow current executable CI audit/license policy and preserve [network-analysis scope](../../../SECURITY.md#run-locally). For iOS changes, inspect [the current workflow](../../../.github/workflows/ios-client.yml) and [client guidance](../../../clients/ios/README.md); unavailable Apple checks remain unverified.
 
 ## Keep validation within scope
 
@@ -47,4 +34,8 @@ Root Jest excludes `arcanos-ai-runtime/tests/`. `test:all:stacks` covers root Je
 
 ## Report the evidence
 
-State the checkout/commit and whether local changes were included, actual runtime versions, and each relevant check's result. Keep **passed**, **failed**, and **skipped/blocked** distinct; give a concise reason for each non-pass and identify untested behavior. A suite with skipped database cases is not PostgreSQL E2E evidence. Never imply CI, preview, production, or live-provider verification from local mocked tests.
+State the checkout/commit and whether local changes were included, actual runtime versions, and each relevant check's result. Keep **passed**, **failed**, and **skipped/blocked** distinct; give a concise reason for each non-pass and identify untested behavior. Separate required dependency-policy results, broader development-dependency findings, and unavailable audit evidence.
+
+Every blocker needs a stated basis: demonstrated defect, applicable required check/review, explicit task acceptance condition, consequential unresolved evidence, or missing authorization for a specific action. Distinguish failed requirements, unverified requirements, optional checks not run, and reported risks/limitations. Optional validation does not automatically become a merge gate; actual required gates cannot be dismissed because implementation appears sound.
+
+A suite with skipped database cases is not PostgreSQL E2E evidence. Keep iOS contract validation, compilation, Simulator execution, distribution/TestFlight, and physical-device acceptance separate. Never imply CI, preview, production, or live-provider verification from local mocked tests.

@@ -7,6 +7,7 @@ This guide covers contribution workflow for:
 - TypeScript workers in `workers/`
 - Standalone BullMQ/Redis runtime in `arcanos-ai-runtime/`
 - Python daemon in `daemon-python/`
+- iOS client in `clients/ios/` ([client guidance](clients/ios/README.md))
 
 OpenAI integrations are adapter-first and centralized. New runtime code should not instantiate SDK clients outside the canonical constructor modules.
 
@@ -89,28 +90,108 @@ arcanos
 - Keep secrets out of git. Use placeholders in all `*.env.example` files.
 
 ## Required Local Validation
-Choose the smallest check set that covers the change, then expand for cross-cutting or release-sensitive work:
+This is the canonical change-area validation matrix for contributors and repository
+agents. Combine the affected rows, deduplicate commands, and expand for
+cross-cutting or release-sensitive work. Inspect current command definitions,
+selected tests, and their owning workflows before execution.
+
+Run npm workspace commands from the repository root with the pinned Node/npm
+toolchain. TypeScript/Jest needs installed development dependencies. Direct Jest
+also needs current shared-package builds (`npm run build:packages`); unlike
+`npm test`, it does not build them. Select actual files with
+`node scripts/run-jest.mjs --runTestsByPath <actual-file> --coverage=false`.
+Inspect `scripts/test-env.mjs` and selected suites: the wrapper does not make
+every integration test offline.
 
 | Change area | Minimum relevant checks |
 | --- | --- |
-| Documentation only | `npm run docs:check`, `npm run docs:links -- --local-only`, and `git diff --check`; no application startup is needed |
-| Root TypeScript/backend | `npm run type-check`, `npm run lint`, and focused Jest via `node scripts/run-jest.mjs --testPathPatterns=<pattern> --coverage=false` |
+| Documentation only | `npm run docs:check`, `npm run docs:links -- --local-only`, and `git diff --check -- <changed-documentation-paths>`; verify commands, paths, and policy against source |
+| Root TypeScript/backend | `npm run type-check`, `npm run lint`, and focused Jest |
 | Broad root behavior | `npm run build` and `npm test` (or the split `npm run test:all`) |
 | Protocol/CLI or TypeScript-Python boundary | `npm run type-check`, `npm run lint`, protocol-focused Jest, `npm run validate:backend-cli:contract`, `npm run validate:backend-cli:offline`, and `npm run sync:check` |
 | `workers/` | `npm run build:workers`, `npm run lint`, and focused Jest where applicable |
-| Root job runner or `src/workers/` | `npm run build`, `npm run lint`, and focused Jest |
-| `arcanos-ai-runtime/` | `npm run test:runtime-integration` and `npm run lint` |
+| Root job runner or `src/workers/` | `npm run build`, `npm run lint`, and focused Jest; add applicable PostgreSQL tests for storage/concurrency changes |
+| `arcanos-ai-runtime/` | `npm run test:runtime-integration` builds the runtime and runs selected integration/security/lifecycle `node:test` suites; smoke and real-Redis suites are separate. Also run `npm run lint` |
 | Python daemon | Relevant `python -m pytest daemon-python/tests/<test_file>.py -q`; add `npm run validate:backend-cli:offline` for contract changes |
 | Railway configuration/startup | `npm run build` and the local, non-deploying `npm run validate:railway` |
-| Database/schema code | `npm run type-check`, focused database/route Jest, and `npm run validate:railway`; do not apply a migration as routine validation |
+| Database/schema code | `npm run type-check`, focused database/route Jest, and `npm run validate:railway`; add relevant disposable PostgreSQL integration coverage. Do not apply a migration as routine validation |
+| `scripts/` or GitHub workflows | Identify the actual owning runner and affected `node --test` suites or existing npm wrappers, workflow regression tests, syntax/static checks, and platform checks; see below |
+| Dependencies, lockfiles, overrides, or `vendor/` | Verify manifest/lockfile consistency and intentional override/vendor changes; follow the executable CI dependency policy and its maintained documentation below |
+| Gateway/OpenAPI/device-auth contracts | `node clients/ios/scripts/derive-gateway-contract.mjs --check` with installed TypeScript; affected backend Gateway, OpenAPI, credential/auth tests, and applicable guarded PostgreSQL coverage |
+| Swift or iOS client | Applicable Swift tests and unsigned Simulator build from [the iOS workflow](.github/workflows/ios-client.yml); combine with contract checks when relevant and follow [client guidance](clients/ios/README.md) |
 
-Run `npm run guard:commit` before committing. The expensive broad readiness sweep is `npm run validate:all`; it does not include the Python pytest suite or `arcanos-ai-runtime` tests.
+- `type-check` runs source boundary checks and shared-package builds before root
+  `tsc --noEmit`. `check:boundaries` includes CEF layer access and Madge cycles;
+  the separate CEF scan repeats diagnostics. Consult `package.json` for the full
+  build/type-check gate sequence; avoid repeating successful gates without reason.
+- Root Jest owns `tests/` and `packages/cli/__tests__/`; root lint covers `src`,
+  `tests`, `packages`, `workers`, and `arcanos-ai-runtime`. They do not
+  comprehensively cover `scripts/` or workflow YAML. Inspect the affected script,
+  workflow, and test imports to select its runner; for example, workflow tests may
+  use `node --test scripts/stacked-draft-preview-workflow.test.mjs`, while others
+  live under root Jest. Add applicable syntax/static checks (such as `node --check`
+  for JavaScript) and existing Windows/PowerShell or other platform checks when
+  those paths change. Do not run every script suite for every change.
+- `npm run validate:all` runs the commit guard, type-check, lint, build, root Jest,
+  Railway static checks, and backend/CLI contract/offline checks. It writes
+  build/coverage output and omits daemon pytest, standalone runtime tests, and
+  many standalone script-test families. `npm run test:all:stacks` adds daemon
+  pytest to root Jest but still omits the standalone runtime and script families.
+- PostgreSQL/real Redis tests require explicitly disposable targets and can
+  create/drop schemas or clear data. Consult `.github/workflows/ci-cd.yml`,
+  `jest.phase2e-pg18.config.js`, and `tests/postgres-ci-truth-contract.test.js` for
+  suite ownership and execution/skip requirements. `test:postgres-fencing` is not
+  the entire PostgreSQL CI set; inspect its current file list.
+- `sync:check` is a drift signal whose findings need source confirmation;
+  `sync:fix` is not a repair mechanism. The backend/CLI contract validator reads
+  manifests/source; its Python offline counterpart mocks network access but can
+  create local runtime directories.
+- Documentation checks need Node/npm and Git, not application dependencies.
+  `docs:check` includes read-only generated-index drift checks; local-only links
+  checks avoid network. Omit `--json-report` to avoid report writes. Do not install
+  application dependencies, start services, or regenerate indexes for
+  instruction-only edits. There is no root format command; the daemon separately
+  declares Black as a development dependency. `lint:fix` writes changes.
 
-`guard:commit` inspects staged additions only. An empty-index pass does not
-verify unstaged edits. Record actual passed, failed, skipped and unexecuted
-checks with their scope; a fixture does not establish live-provider, database,
-preview, or physical-device behavior. For exact Jest selection, prefer
-`node scripts/run-jest.mjs --runTestsByPath <actual-file> --coverage=false`.
+For dependency material, inspect the affected manifests and lockfiles together;
+keep resolutions, integrity, overrides, and vendored source/build provenance
+intentional. The current [Security Audit job](.github/workflows/ci-cd.yml) and
+[release dependency policy](docs/CI_CD.md#configuration)
+own the required checks. Production npm audit uses
+`npm audit --omit=dev --json` followed by
+`node scripts/check-npm-audit.js <report.json>`: every reported vulnerability is
+actionable, and missing, malformed, incomplete, or inconsistent evidence fails
+closed. Preserve the current production license check and applicable Python
+requirements audit; use their current workflow commands and pins, with no new
+exceptions. Report required policy results separately from broader development
+dependency findings and unavailable audit evidence. Optional advisory analysis
+does not create an additional merge gate. Registry/advisory calls require
+[network dependency analysis to be in scope](SECURITY.md#run-locally); do not run
+them merely for documentation validation or describe unavailable reports as clean.
+
+For iOS, the workflow runs `xcrun swift test` in `clients/ios/ArcanosKit`,
+applicable recovery proofs, and `xcodebuild` with `-sdk iphonesimulator`,
+`-destination 'generic/platform=iOS Simulator'`, and `CODE_SIGNING_ALLOWED=NO`.
+Follow its current toolchain and full command. Keep contract validation,
+compilation, Simulator execution, distribution/TestFlight, and physical-device
+acceptance as separate evidence categories. An unsigned Simulator build does not
+execute the app or prove distribution/device behavior. Report an unavailable
+Apple toolchain as unverified Apple checks. Preserve scoped device credentials
+and backend-owned authorization/execution authority; never substitute operator
+credentials on a device.
+
+Run `npm run guard:commit` against actual staged changes before an authorized
+commit. It inspects staged additions only; an empty-index pass does not verify
+unstaged edits. Record passed, failed, skipped, and unexecuted checks with scope
+and reasons. Separate pre-existing/environmental failures from introduced
+regressions; repair only within scope and never call an inspected or skipped
+check passed. For each blocker state its basis: a demonstrated defect, applicable
+required check/review, explicit acceptance condition, consequential unresolved
+evidence, or missing authorization for a specific action. Distinguish a failed
+requirement, an unverified requirement, an optional check not run, and a reported
+risk/limitation. Optional checks do not automatically become gates, and an actual
+required gate remains required even when source review looks sound. Fixtures do
+not establish live-provider, database, preview, or physical-device behavior.
 
 ## Deploy (Railway)
 Contributors must keep Railway build/start behavior unchanged:
