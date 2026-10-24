@@ -52,6 +52,10 @@ jobs:
         run: npm run build
 
       - name: Tests
+        # Keep real preview deadlines independent of competing Jest file workers.
+        # The wrapper retains its existing worker memory limit and full coverage.
+        env:
+          JEST_MAX_WORKERS: '1'
         run: npm test
 
       - name: Offline live validation security contracts
