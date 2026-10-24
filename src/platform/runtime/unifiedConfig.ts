@@ -42,6 +42,7 @@ export interface AppConfig {
   openaiBaseUrl: string | undefined;
   defaultModel: string;
   fallbackModel: string;
+  legacyAuthorityModel?: string;
   gpt5Model: string;
   gpt51Model: string;
   trinityIntakeModel: string;
@@ -385,6 +386,7 @@ export function getConfig(): AppConfig {
     ]),
     defaultModel: authorityModel,
     fallbackModel: authorityModel,
+    legacyAuthorityModel,
     gpt5Model: APPLICATION_CONSTANTS.MODEL_GPT_6_1_SOL,
     gpt51Model: APPLICATION_CONSTANTS.MODEL_GPT_6_1_SOL,
     trinityIntakeModel: APPLICATION_CONSTANTS.MODEL_GPT_6_LUNA,
