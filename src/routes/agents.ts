@@ -8,6 +8,7 @@
 
 import express, { type Response } from 'express';
 import { z } from 'zod';
+import { utf16MaxLength } from '@shared/validation/zodStringChecks.js';
 import { agentRegistrationSchema } from '@shared/types/actionPlan.js';
 import {
   registerAgent,
@@ -58,11 +59,11 @@ router.use('/agents', (_req, res, next) => {
 }, agentClientRateLimit, agentCredentialRateLimit, actionPlanAuthenticationMiddleware, agentPrincipalRateLimit);
 
 const agentIdSchema = z.object({
-  agentId: z.string().min(1).max(128)
+  agentId: z.string().min(1).max(128).check(utf16MaxLength(128))
 });
 const phase2eAgentRegistrationSchema = agentRegistrationSchema.extend({
-  capabilities: z.array(z.string().min(1).max(128)).min(1).max(128),
-  public_key: z.string().max(16 * 1024).optional(),
+  capabilities: z.array(z.string().min(1).max(128).check(utf16MaxLength(128))).min(1).max(128),
+  public_key: z.string().max(16 * 1024).check(utf16MaxLength(16 * 1024)).optional(),
 }).strict();
 
 function safeThrownClass(error: unknown): string {
@@ -159,7 +160,7 @@ router.post(
   '/agents/:agentId/capabilities/grant',
   requireActionPlanRoles('operator'),
   validateParams(agentIdSchema),
-  validateBody(z.object({ capabilities: z.array(z.string().min(1).max(128)).min(1).max(128) }).strict()),
+  validateBody(z.object({ capabilities: z.array(z.string().min(1).max(128).check(utf16MaxLength(128))).min(1).max(128) }).strict()),
   asyncHandler(async (req, res) => {
     try {
       const agentId = (req.validated!.params as z.infer<typeof agentIdSchema>).agentId;

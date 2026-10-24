@@ -1,5 +1,6 @@
 import type OpenAI from 'openai';
 import { z } from 'zod';
+import { legacyInteger } from '@shared/validation/zodNumberChecks.js';
 
 import { invokeTool } from '@arcanos/cli/client';
 import { buildFunctionToolSet, type FunctionToolDefinition } from '@services/openai/functionTools.js';
@@ -101,29 +102,29 @@ const {
 
 const repoListTreeArgsSchema = z.object({
   path: z.string().trim().min(1).optional(),
-  depth: z.number().int().min(1).max(8).optional(),
-  offset: z.number().int().min(0).optional(),
-  limit: z.number().int().min(1).max(200).optional(),
+  depth: z.number().check(...legacyInteger()).min(1).max(8).optional(),
+  offset: z.number().check(...legacyInteger()).min(0).optional(),
+  limit: z.number().check(...legacyInteger()).min(1).max(200).optional(),
 });
 
 const repoReadFileArgsSchema = z.object({
   path: z.string().trim().min(1),
-  startLine: z.number().int().min(1).optional(),
-  endLine: z.number().int().min(1).optional(),
-  maxBytes: z.number().int().min(1).max(200000).optional(),
+  startLine: z.number().check(...legacyInteger()).min(1).optional(),
+  endLine: z.number().check(...legacyInteger()).min(1).optional(),
+  maxBytes: z.number().check(...legacyInteger()).min(1).max(200000).optional(),
 });
 
 const repoSearchArgsSchema = z.object({
   query: z.string().trim().min(1),
   path: z.string().trim().min(1).optional(),
   type: z.enum(['text', 'symbol']).optional(),
-  offset: z.number().int().min(0).optional(),
-  limit: z.number().int().min(1).max(200).optional(),
+  offset: z.number().check(...legacyInteger()).min(0).optional(),
+  limit: z.number().check(...legacyInteger()).min(1).max(200).optional(),
 });
 
 const repoGetLogArgsSchema = z.object({
-  limit: z.number().int().min(1).max(100).optional(),
-  offset: z.number().int().min(0).optional(),
+  limit: z.number().check(...legacyInteger()).min(1).max(100).optional(),
+  offset: z.number().check(...legacyInteger()).min(0).optional(),
 });
 
 type RepoToolName =

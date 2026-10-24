@@ -1,6 +1,7 @@
 import type OpenAI from 'openai';
 import type { ResponseCreateParamsNonStreaming } from 'openai/resources/responses/responses';
 import { z } from 'zod';
+import { utf16MaxLength } from '@shared/validation/zodStringChecks.js';
 import { getDefaultModel } from "@services/openai.js";
 import { ensureModelMatchesExpectation } from '@services/openai/chatFallbacks.js';
 import { buildFunctionToolSet, type FunctionToolDefinition } from '@services/openai/functionTools.js';
@@ -92,7 +93,7 @@ const DAEMON_TOOL_SYSTEM_PROMPT = [
 ].join(' ');
 
 const runCommandArgsSchema = z.object({
-  command: z.string().trim().min(1).max(8000)
+  command: z.string().trim().min(1).max(8000).check(utf16MaxLength(8000))
 });
 
 const captureScreenArgsSchema = z.object({

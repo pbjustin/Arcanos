@@ -1,5 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { utf16MaxLength } from '@shared/validation/zodStringChecks.js';
 import { z } from 'zod';
+import { legacyInteger } from '@shared/validation/zodNumberChecks.js';
 
 import {
   ArcanosCoreAdvisoryError,
@@ -9,9 +11,9 @@ import {
 export const ARCANOS_CORE_ADVISORY_TOOL_NAME = 'arcanos_core.consult' as const;
 
 const advisoryInputSchema = z.object({
-  task: z.string().trim().min(1).max(8_000),
-  context: z.string().trim().max(12_000).optional(),
-  maxOutputTokens: z.number().int().min(1).max(4_096).optional().default(2_048)
+  task: z.string().trim().min(1).max(8_000).check(utf16MaxLength(8_000)),
+  context: z.string().trim().max(12_000).check(utf16MaxLength(12_000)).optional(),
+  maxOutputTokens: z.number().check(...legacyInteger()).min(1).max(4_096).optional().default(2_048)
 }).strict();
 
 const GENERIC_ERROR = {

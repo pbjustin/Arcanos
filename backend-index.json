@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-24T03:12:00.485Z",
+  "generatedAt": "2026-10-24T04:01:12.423Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -3224,6 +3224,15 @@
           "relativePath": "src/shared/validation.ts"
         },
         {
+          "relativePath": "src/shared/validation/zodIssues.ts"
+        },
+        {
+          "relativePath": "src/shared/validation/zodNumberChecks.ts"
+        },
+        {
+          "relativePath": "src/shared/validation/zodStringChecks.ts"
+        },
+        {
           "relativePath": "src/shared/vectorUtils.ts"
         },
         {
@@ -3650,6 +3659,9 @@
         },
         {
           "relativePath": "tests/api-save-conversation.test.ts"
+        },
+        {
+          "relativePath": "tests/api-session-system.validation.test.ts"
         },
         {
           "relativePath": "tests/api-sessions-auth-composition.test.ts"
@@ -5689,6 +5701,9 @@
           "relativePath": "tests/request-handler.feedback.test.ts"
         },
         {
+          "relativePath": "tests/request-handler.validation.test.ts"
+        },
+        {
           "relativePath": "tests/request-timeout-contract.test.ts"
         },
         {
@@ -6245,6 +6260,18 @@
         },
         {
           "relativePath": "tests/workers-status-projection.test.ts"
+        },
+        {
+          "relativePath": "tests/zod-number-compatibility.test.ts"
+        },
+        {
+          "relativePath": "tests/zod-service-compatibility.test.ts"
+        },
+        {
+          "relativePath": "tests/zod-string-compatibility.test.ts"
+        },
+        {
+          "relativePath": "tests/zod-validation-compatibility.test.ts"
         }
       ]
     },

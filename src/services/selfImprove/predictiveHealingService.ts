@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { legacyInteger } from '@shared/validation/zodNumberChecks.js';
+import { utf16MaxLength } from '@shared/validation/zodStringChecks.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import {
   getWorkerRuntimeStatus,
@@ -517,9 +519,9 @@ const PREDICTIVE_AI_MODULE = 'ARCANOS:CORE' as const;
 const PREDICTIVE_AI_MAX_WORDS = 180;
 
 const predictiveHealingAiDecisionSchema = z.object({
-  selectedCandidateIndex: z.number().int().min(0).nullable(),
+  selectedCandidateIndex: z.number().check(...legacyInteger()).min(0).nullable(),
   chooseNoAction: z.boolean().optional(),
-  reason: z.string().min(1).max(600),
+  reason: z.string().min(1).max(600).check(utf16MaxLength(600)),
   safeToExecute: z.boolean(),
   confidence: z.number().min(0).max(1).optional()
 });

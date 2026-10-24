@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { utf16MaxLength } from '@shared/validation/zodStringChecks.js';
+import { formatZodIssues } from '@shared/validation/zodIssues.js';
 
 import {
   findOrCreateGptJob,
@@ -79,8 +81,8 @@ const BRIDGE_FAILURE_EVENTS: Array<{ source: BridgeErrorSource; timestampMs: num
 const DEFAULT_BRIDGE_FAILURE_COUNTER_WINDOW_MS = 15 * 60 * 1000;
 const BRIDGE_IDEMPOTENCY_FINGERPRINT_VERSION = 3;
 
-const bridgeMetadataSchema = z.record(z.unknown()).default({});
-const bridgeGptIdSchema = z.string().trim().min(1).max(128);
+const bridgeMetadataSchema = z.record(z.string(), z.unknown()).default({});
+const bridgeGptIdSchema = z.string().trim().min(1).max(128).check(utf16MaxLength(128));
 const bridgeActionSchema = z
   .enum([GPT_QUERY_ACTION, GPT_QUERY_AND_WAIT_ACTION, GPT_HEALTH_ECHO_ACTION, GPT_ECHO_ACTION])
   .default(GPT_QUERY_ACTION);
@@ -88,7 +90,7 @@ const bridgeActionSchema = z
 const bridgeRequestSchema = z
   .object({
     gptId: bridgeGptIdSchema.optional(),
-    prompt: z.string().trim().min(1).max(50000).optional(),
+    prompt: z.string().trim().min(1).max(50000).check(utf16MaxLength(50000)).optional(),
     action: bridgeActionSchema,
     metadata: bridgeMetadataSchema,
   })
@@ -337,7 +339,7 @@ function resolveDefaultGptId(): { ok: true; value: string } | { ok: false; reaso
     return {
       ok: false,
       reason: 'invalid',
-      message: `DEFAULT_GPT_ID is invalid: ${parsedDefaultGptId.error.issues
+      message: `DEFAULT_GPT_ID is invalid: ${formatZodIssues(parsedDefaultGptId.error, process.env.DEFAULT_GPT_ID, bridgeGptIdSchema)
         .map((issue) => issue.message)
         .join('; ')}`,
     };
@@ -714,7 +716,7 @@ export function parseCustomGptBridgeRequest(rawBody: unknown): ParseBridgeReques
       body: buildBridgeErrorPayload({
         source: 'routing',
         status: 'invalid_request',
-        message: parsed.error.issues.map((issue) => issue.message).join('; '),
+        message: formatZodIssues(parsed.error, inspection.body, bridgeRequestSchema).map((issue) => issue.message).join('; '),
       }),
     };
   }

@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import type { Request } from 'express';
 import type { ZodError } from 'zod';
+import { formatZodIssues } from '@shared/validation/zodIssues.js';
 
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { redactSensitive } from '@shared/redaction.js';
@@ -13,7 +14,7 @@ import { emitControlPlaneAuditEvent } from './audit.js';
 import { defaultControlPlaneCommandRunner } from './commandRunner.js';
 import { evaluateControlPlaneGptPolicy } from './gptPolicy.js';
 import { verifyControlPlaneRouteMetadata } from './routeVerification.js';
-import { safeParseControlPlaneRequest } from './schema.js';
+import { controlPlaneInvokeRequestSchema, safeParseControlPlaneRequest } from './schema.js';
 import type {
   ControlPlaneApprovalStatus,
   ControlPlaneAuditEvent,
@@ -149,8 +150,8 @@ function resolveRequestForMcp(request: Request | undefined): Request | undefined
   return request && typeof request === 'object' && 'headers' in request ? request : undefined;
 }
 
-function formatSchemaError(error: ZodError): string {
-  return error.issues
+function formatSchemaError(error: ZodError, originalInput: unknown): string {
+  return formatZodIssues(error, originalInput, controlPlaneInvokeRequestSchema)
     .map((issue) => `${issue.path.join('.') || '/'}: ${issue.message}`)
     .join('; ');
 }
@@ -418,7 +419,7 @@ export async function executeControlPlaneOperation(
   const parsed = safeParseControlPlaneRequest(candidate);
   if (!parsed.success) {
     const request = buildUnknownRequest(candidate);
-    const message = `Control-plane request schema validation failed. ${formatSchemaError(parsed.error)}`;
+    const message = `Control-plane request schema validation failed. ${formatSchemaError(parsed.error, candidate)}`;
     emitAudit(request, auditId, 'denied', 'not_required', options, message);
     return buildBaseResponse(
       auditId,

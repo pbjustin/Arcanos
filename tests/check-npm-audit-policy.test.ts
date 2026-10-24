@@ -342,6 +342,12 @@ describe('npm audit policy', () => {
       integrity:
         'sha512-hS/0Wt3Ya043oKXs0sIxrMpKQITXhMLIrVAKKXi4gozGC9v7YRWVnXIZzjNPTO02M9BdxLCWqK1yRXgNziVyJQ==',
     };
+    expect(rootPackage.dependencies.zod).toBe('4.6.7');
+    expect(packageLock.packages[''].dependencies.zod).toBe('4.6.7');
+    expect(packageLock.packages['node_modules/zod']).toMatchObject({
+      version: '4.6.7',
+      resolved: 'https://registry.npmjs.org/zod/-/zod-4.6.7.tgz'
+    });
     const qsArtifact = {
       version: '6.16.0',
       resolved:

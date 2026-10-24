@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { z } from 'zod';
+import { formatZodIssues } from '@shared/validation/zodIssues.js';
 
 export const CANONICAL_INTEGRITY_DIGEST_VERSION = 'arcanos-semantic-json-v1';
 
@@ -48,7 +49,7 @@ export function assertIntegrityPayloadSchema(
   if (!result.success) {
     throw new IntegrityPayloadSchemaError(
       result.error.issues.length,
-      result.error.issues.map(issue => issue.message)
+      formatZodIssues(result.error, payload, schema).map(issue => issue.message)
     );
   }
 }

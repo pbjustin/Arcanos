@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { legacyInteger } from '@shared/validation/zodNumberChecks.js';
+import { utf16MaxLength } from '@shared/validation/zodStringChecks.js';
 
 export const GAMING_BUILD_RESOURCE_SCHEMA_VERSION = "1";
 
@@ -236,10 +238,10 @@ export interface GamingBuildResourceAdapter {
   extract(input: GamingResourceInput): Promise<NormalizedGamingBuild | null>;
 }
 
-const boundedString = z.string().max(GAMING_BUILD_RESOURCE_HARD_LIMITS.maxStringLength);
+const boundedString = z.string().max(GAMING_BUILD_RESOURCE_HARD_LIMITS.maxStringLength).check(utf16MaxLength(GAMING_BUILD_RESOURCE_HARD_LIMITS.maxStringLength));
 const boundedStringArray = z.array(boundedString).max(GAMING_BUILD_RESOURCE_HARD_LIMITS.maxListEntries);
 const boundedInteger = z.number()
-  .int()
+  .check(...legacyInteger())
   .finite()
   .min(0)
   .max(GAMING_BUILD_RESOURCE_HARD_LIMITS.maxNumericValue);
@@ -276,7 +278,7 @@ export const NormalizedGamingBuildSchema: z.ZodType<NormalizedGamingBuild> = z.o
     category: boundedString.optional(),
     modifiers: boundedStringArray.optional()
   }).strict()).max(GAMING_BUILD_RESOURCE_HARD_LIMITS.maxSkillEntries).optional(),
-  stats: z.record(z.union([
+  stats: z.record(z.string(), z.union([
     boundedString,
     z.number().finite()
       .min(-GAMING_BUILD_RESOURCE_HARD_LIMITS.maxNumericValue)
@@ -301,9 +303,9 @@ export const NormalizedGamingBuildSchema: z.ZodType<NormalizedGamingBuild> = z.o
   constraints: boundedStringArray.optional(),
   notes: boundedStringArray.optional(),
   source: z.object({
-    url: z.string().url().max(GAMING_BUILD_RESOURCE_HARD_LIMITS.maxUrlChars),
+    url: z.string().url().max(GAMING_BUILD_RESOURCE_HARD_LIMITS.maxUrlChars).check(utf16MaxLength(GAMING_BUILD_RESOURCE_HARD_LIMITS.maxUrlChars)),
     resourceType: GamingResourceTypeSchema,
-    extractor: z.string().min(1).max(128),
+    extractor: z.string().min(1).max(128).check(utf16MaxLength(128)),
     confidence: z.number().finite().min(0).max(1)
   }).strict()
 }).strict();

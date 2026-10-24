@@ -174,7 +174,51 @@ describe('routes/self-improve', () => {
       .expect(400);
 
     expect(response.body.error).toBe('Invalid self-improve payload');
+    expect(response.body.issues).toEqual([{
+      code: 'too_small',
+      minimum: 0,
+      type: 'number',
+      inclusive: true,
+      exact: false,
+      message: 'Number must be greater than or equal to 0',
+      path: ['selfTestFailureCount']
+    }]);
     expect(runSelfImproveCycleMock).not.toHaveBeenCalled();
+  });
+
+  it('preserves invalid-type issue fields without exposing request values', async () => {
+    const response = await request(createTestApp())
+      .post('/api/self-improve/run')
+      .send({ context: 'private-context-sentinel' })
+      .expect(400);
+
+    expect(response.body).toEqual({
+      error: 'Invalid self-improve payload',
+      issues: [{
+        code: 'invalid_type',
+        expected: 'object',
+        received: 'string',
+        path: ['context'],
+        message: 'Expected object, received string'
+      }]
+    });
+  });
+
+  it('applies the manual default while retaining arbitrary context records', async () => {
+    runSelfImproveCycleMock.mockResolvedValueOnce({ controllerDecision: 'NO_ACTION' });
+
+    await request(createTestApp())
+      .post('/api/self-improve/run')
+      .send({ context: { nested: { values: [1, null, true] }, label: 'offline' } })
+      .expect(200);
+
+    expect(runSelfImproveCycleMock).toHaveBeenCalledWith({
+      trigger: 'manual',
+      requestedCycle: {
+        trigger: 'manual',
+        context: { nested: { values: [1, null, true] }, label: 'offline' }
+      }
+    });
   });
 
   it('rejects unknown mutation fields instead of silently executing defaults', async () => {
@@ -194,6 +238,12 @@ describe('routes/self-improve', () => {
       .expect(400);
 
     expect(runResponse.body.error).toBe('Invalid self-improve payload');
+    expect(runResponse.body.issues).toEqual([{
+      code: 'unrecognized_keys',
+      keys: ['triggr'],
+      path: [],
+      message: "Unrecognized key(s) in object: 'triggr'"
+    }]);
     expect(freezeResponse.body.error).toBe('Invalid self-improve control payload');
     expect(autonomyResponse.body.error).toBe('Missing or invalid level');
     expect(runSelfImproveCycleMock).not.toHaveBeenCalled();

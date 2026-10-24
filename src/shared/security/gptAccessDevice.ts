@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { legacyUuid, utf16MaxLength } from '@shared/validation/zodStringChecks.js';
 
 export const GPT_ACCESS_DEVICE_AUDIENCE = 'gpt-access-device-v1' as const;
 export const GPT_ACCESS_DEVICE_SCOPES = ['jobs.create', 'jobs.result', 'capabilities.read', 'capabilities.run'] as const;
@@ -11,7 +12,7 @@ export const GPT_ACCESS_DEVICE_TOKEN_PATTERN = /^agd1\.[A-Za-z0-9_-]{43}$/u;
 export const GPT_ACCESS_PAIRING_TOKEN_PATTERN = /^agp1\.[A-Za-z0-9_-]{43}$/u;
 
 const contextId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u);
-export const GptAccessDeviceOriginSchema = z.string().max(2048).refine(value => {
+export const GptAccessDeviceOriginSchema = z.string().max(2048).check(utf16MaxLength(2048)).refine(value => {
   try {
     const url = new URL(value);
     return url.protocol === 'https:' && url.origin === value && !url.username && !url.password;
@@ -27,7 +28,7 @@ export const GptAccessDeviceGrantSchema = z.object({
 }).strict();
 export const GptAccessPairingCompleteSchema = z.object({
   pairingToken: z.string().regex(GPT_ACCESS_PAIRING_TOKEN_PATTERN),
-  localIdentity: z.string().uuid()
+  localIdentity: z.string().check(legacyUuid())
 }).strict();
 export type GptAccessDeviceGrant = z.infer<typeof GptAccessDeviceGrantSchema>;
 export type GptAccessDeviceScope = typeof GPT_ACCESS_DEVICE_SCOPES[number];

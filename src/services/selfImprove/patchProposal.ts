@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { utf16MaxLength } from '@shared/validation/zodStringChecks.js';
 import fs from "fs/promises";
 import os from "os";
 import path from "path";
@@ -26,8 +27,8 @@ const WINDOWS_DEVICE_NAME_PATTERN =
 
 export const patchProposalSchema = z.object({
   kind: z.literal("self_improve_patch"),
-  goal: z.string().min(1).max(400),
-  summary: z.string().min(1).max(600),
+  goal: z.string().min(1).max(400).check(utf16MaxLength(400)),
+  summary: z.string().min(1).max(600).check(utf16MaxLength(600)),
   risk: z.enum(["low", "medium", "high"]),
   files: z.array(z.string().min(1)).max(80),
   diff: z.string().min(1),

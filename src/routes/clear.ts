@@ -7,6 +7,7 @@
 
 import express from 'express';
 import { z } from 'zod';
+import { utf16MaxLength } from '@shared/validation/zodStringChecks.js';
 import { clearEvaluateInputSchema } from '@shared/types/actionPlan.js';
 import { buildClear2Summary } from '../services/clear2.js';
 import {
@@ -79,7 +80,7 @@ function sendClearRouteFailure(res: express.Response, failure: ClearPublicError)
 }
 
 const planIdSchema = z.object({
-  planId: z.string().min(1).max(128),
+  planId: z.string().min(1).max(128).check(utf16MaxLength(128)),
 }).strict();
 const storedClearClientRateLimit = createRateLimitMiddleware({
   bucketName: 'action-plan-clear-client',

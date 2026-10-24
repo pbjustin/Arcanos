@@ -13,6 +13,8 @@ import { sendNotFound, sendInternalErrorCode } from '@shared/http/index.js';
 
 import express, { Request, Response } from 'express';
 import { z } from 'zod';
+import { legacyInteger } from '@shared/validation/zodNumberChecks.js';
+import { utf16MaxLength } from '@shared/validation/zodStringChecks.js';
 import {
   PLAN_CREATORS,
   PLAN_STATUSES,
@@ -71,13 +73,13 @@ import {
 } from '@services/actionPlanExecution/errors.js';
 
 const router = express.Router();
-const planIdParamsSchema = z.object({ planId: z.string().min(1).max(128) }).strict();
+const planIdParamsSchema = z.object({ planId: z.string().min(1).max(128).check(utf16MaxLength(128)) }).strict();
 const emptyMutationBodySchema = z.object({}).strict();
 const strictLegacyExecutionResultInputSchema = executionResultInputSchema.strict();
 const listPlansQuerySchema = z.object({
   status: z.enum(PLAN_STATUSES).optional(),
   created_by: z.enum(PLAN_CREATORS).optional(),
-  limit: z.coerce.number().int().min(1).max(200).optional(),
+  limit: z.coerce.number().check(...legacyInteger()).min(1).max(200).optional(),
 }).strict();
 
 function assertBoundaryInput(schema: z.ZodType, value: unknown): void {

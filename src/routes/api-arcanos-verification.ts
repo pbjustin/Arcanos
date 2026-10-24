@@ -1,5 +1,7 @@
 import express from 'express';
 import { z } from 'zod';
+import { legacyInteger } from '@shared/validation/zodNumberChecks.js';
+import { legacyDatetime } from '@shared/validation/zodStringChecks.js';
 import { generateRequestId } from '../shared/idGenerator.js';
 import {
   asyncHandler,
@@ -62,17 +64,17 @@ const dagNodeParamsSchema = z.object({
 const dagRunRequestSchema = z.object({
   sessionId: z.string().trim().min(1),
   template: z.string().trim().min(1),
-  input: z.record(z.unknown()),
+  input: z.record(z.string(), z.unknown()),
   options: z.object({
-    maxConcurrency: z.number().int().positive().optional(),
+    maxConcurrency: z.number().check(...legacyInteger()).positive().optional(),
     allowRecursiveSpawning: z.boolean().optional(),
     debug: z.boolean().optional()
   }).optional()
 });
 
 const dagRunWaitQuerySchema = z.object({
-  updatedAfter: z.string().datetime().optional(),
-  waitForUpdateMs: z.coerce.number().int().min(0).max(DAG_RUN_LONG_POLL_MAX_MS).optional()
+  updatedAfter: z.string().check(legacyDatetime()).optional(),
+  waitForUpdateMs: z.coerce.number().check(...legacyInteger()).min(0).max(DAG_RUN_LONG_POLL_MAX_MS).optional()
 });
 
 const dagRunAdmissionQuerySchema = z.object({
@@ -84,7 +86,7 @@ const dagLatestRunQuerySchema = z.object({
 });
 
 const dagTraceQuerySchema = z.object({
-  maxEvents: z.coerce.number().int().min(1).max(1000).optional()
+  maxEvents: z.coerce.number().check(...legacyInteger()).min(1).max(1000).optional()
 });
 
 function buildDagRateLimitKey(req: express.Request, scope: string): string {

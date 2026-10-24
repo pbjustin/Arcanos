@@ -381,6 +381,41 @@ describe('createMcpServer job control tools', () => {
     expect(mockRegisterResourceTemplate).not.toHaveBeenCalled();
   });
 
+  it('lists the production tool schemas through the real SDK with research URL bounds', async () => {
+    const productionServer = await createMcpServer(buildContext()) as FakeMcpServer;
+    const server = new SdkMcpServer({ name: 'arcanos-schema-test', version: '1.0.0' }, productionServer.options);
+    const handler = jest.fn(async () => ({ content: [{ type: 'text' as const, text: 'unused' }] }));
+    for (const [name, tool] of productionServer.tools) {
+      server.registerTool(name, tool.config, handler);
+    }
+    const client = new Client({ name: 'arcanos-schema-client', version: '1.0.0' }, { capabilities: {} });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const result = await client.listTools();
+
+      expect(result.tools).toHaveLength(productionServer.tools.size);
+      expect(result.tools.find(tool => tool.name === 'research.run')?.inputSchema).toMatchObject({
+        type: 'object',
+        required: ['topic'],
+        properties: {
+          urls: {
+            type: 'array',
+            maxItems: RESEARCH_URL_MAX_ITEMS,
+            items: { type: 'string', maxLength: RESEARCH_URL_MAX_LENGTH, format: 'uri' },
+          },
+        },
+      });
+      expect(handler).not.toHaveBeenCalled();
+      expect(mockRequestResearch).not.toHaveBeenCalled();
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
   it('bounds dense tool arguments with the production SDK options before invoking a tool', async () => {
     const productionServer = await createMcpServer(buildContext()) as FakeMcpServer;
     const tool = productionServer.tools.get('trinity.query')!;

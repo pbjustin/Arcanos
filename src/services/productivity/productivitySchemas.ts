@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { legacyInteger } from '@shared/validation/zodNumberChecks.js';
+import { legacyDatetime, legacyUuid, utf16MaxLength } from '@shared/validation/zodStringChecks.js';
 
 import {
   PRODUCTIVITY_PROJECT_STATUSES,
@@ -6,15 +8,15 @@ import {
   PRODUCTIVITY_TASK_STATUSES
 } from './productivityTypes.js';
 
-const titleSchema = z.string().trim().min(1).max(240);
-const detailsSchema = z.string().trim().min(1).max(20_000);
-const contentSchema = z.string().trim().min(1).max(100_000);
-const referenceSchema = z.string().trim().min(1).max(240);
-const idempotencyKeySchema = z.string().trim().min(1).max(240);
-const versionSchema = z.number().int().positive();
-const prioritySchema = z.number().int().min(0).max(4);
-const limitSchema = z.number().int().min(1).max(100).default(50);
-const timestampSchema = z.string().datetime({ offset: true });
+const titleSchema = z.string().trim().min(1).max(240).check(utf16MaxLength(240));
+const detailsSchema = z.string().trim().min(1).max(20_000).check(utf16MaxLength(20_000));
+const contentSchema = z.string().trim().min(1).max(100_000).check(utf16MaxLength(100_000));
+const referenceSchema = z.string().trim().min(1).max(240).check(utf16MaxLength(240));
+const idempotencyKeySchema = z.string().trim().min(1).max(240).check(utf16MaxLength(240));
+const versionSchema = z.number().check(...legacyInteger()).positive();
+const prioritySchema = z.number().check(...legacyInteger()).min(0).max(4);
+const limitSchema = z.number().check(...legacyInteger()).min(1).max(100);
+const timestampSchema = z.string().check(legacyDatetime({ offset: true }));
 const dateSchema = z.string().date();
 const taskStatusSchema = z.enum(PRODUCTIVITY_TASK_STATUSES);
 const projectStatusSchema = z.enum(PRODUCTIVITY_PROJECT_STATUSES);
@@ -23,7 +25,7 @@ const reviewKindSchema = z.enum(PRODUCTIVITY_REVIEW_KINDS);
 export const emptyProductivityInputSchema = z.object({}).strict();
 
 export const intentResolveInputSchema = z.object({
-  utterance: z.string().trim().min(1).max(1_000)
+  utterance: z.string().trim().min(1).max(1_000).check(utf16MaxLength(1_000))
 }).strict();
 
 export const referenceResolveInputSchema = z.object({
@@ -37,7 +39,7 @@ export const inboxListInputSchema = z.object({
 
 export const taskListInputSchema = z.object({
   status: taskStatusSchema.optional(),
-  projectId: z.string().uuid().optional(),
+  projectId: z.string().check(legacyUuid()).optional(),
   limit: limitSchema.optional()
 }).strict();
 
@@ -51,15 +53,15 @@ export const projectHealthInputSchema = z.object({
 }).strict();
 
 export const knowledgeFindInputSchema = z.object({
-  query: z.string().trim().min(1).max(500).optional(),
-  projectId: z.string().uuid().optional(),
+  query: z.string().trim().min(1).max(500).check(utf16MaxLength(500)).optional(),
+  projectId: z.string().check(legacyUuid()).optional(),
   limit: limitSchema.optional()
 }).strict();
 
 export const captureAddInputSchema = z.object({
   text: titleSchema,
   notes: detailsSchema.optional(),
-  projectId: z.string().uuid().optional(),
+  projectId: z.string().check(legacyUuid()).optional(),
   priority: prioritySchema.default(0),
   dueAt: timestampSchema.optional(),
   idempotencyKey: idempotencyKeySchema.optional()
@@ -68,7 +70,7 @@ export const captureAddInputSchema = z.object({
 export const inboxProcessInputSchema = z.object({
   task: referenceSchema,
   status: z.enum(['next', 'scheduled', 'waiting', 'cancelled']),
-  projectId: z.string().uuid().optional(),
+  projectId: z.string().check(legacyUuid()).optional(),
   priority: prioritySchema.optional(),
   notes: detailsSchema.optional(),
   dueAt: timestampSchema.nullable().optional(),
@@ -81,7 +83,7 @@ export const taskCreateInputSchema = z.object({
   title: titleSchema,
   details: detailsSchema.optional(),
   status: z.enum(['inbox', 'next', 'scheduled', 'waiting']).default('next'),
-  projectId: z.string().uuid().optional(),
+  projectId: z.string().check(legacyUuid()).optional(),
   priority: prioritySchema.default(0),
   dueAt: timestampSchema.optional(),
   deferUntil: timestampSchema.optional(),
@@ -104,7 +106,7 @@ export const taskDeferInputSchema = z.object({
 export const taskTransitionInputSchema = z.object({
   task: referenceSchema,
   status: taskStatusSchema,
-  projectId: z.string().uuid().optional(),
+  projectId: z.string().check(legacyUuid()).optional(),
   priority: prioritySchema.optional(),
   details: detailsSchema.optional(),
   dueAt: timestampSchema.nullable().optional(),
@@ -140,7 +142,7 @@ export const projectTransitionInputSchema = z.object({
 export const knowledgeStoreInputSchema = z.object({
   title: titleSchema.optional(),
   content: contentSchema,
-  projectId: z.string().uuid().optional(),
+  projectId: z.string().check(legacyUuid()).optional(),
   idempotencyKey: idempotencyKeySchema.optional()
 }).strict();
 

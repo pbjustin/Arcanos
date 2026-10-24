@@ -6,10 +6,12 @@
  */
 
 import { z } from 'zod';
+import { legacyInteger } from '@shared/validation/zodNumberChecks.js';
+import { legacyDatetime, legacyUuid } from '@shared/validation/zodStringChecks.js';
 
 export const SessionApiErrorResponseSchema = z.object({
   error: z.string().min(1),
-  code: z.number().int().positive(),
+  code: z.number().check(...legacyInteger()).positive(),
   details: z.array(z.string()).optional()
 });
 
@@ -17,13 +19,13 @@ export const SessionApiHealthResponseSchema = z.object({
   status: z.enum(['live', 'degraded', 'offline']),
   service: z.literal('ARCANOS'),
   buildId: z.string().min(1),
-  routeCount: z.number().int().nonnegative(),
-  timestamp: z.string().datetime()
+  routeCount: z.number().check(...legacyInteger()).nonnegative(),
+  timestamp: z.string().check(legacyDatetime())
 });
 
 export const SessionApiRouteTableResponseSchema = z.object({
   routes: z.array(z.string().min(1)),
-  timestamp: z.string().datetime()
+  timestamp: z.string().check(legacyDatetime())
 });
 
 export const SessionApiSessionSystemDiagnosticsSchema = z.object({
@@ -32,32 +34,32 @@ export const SessionApiSessionSystemDiagnosticsSchema = z.object({
   routes: z.array(z.string().min(1)),
   queueConnected: z.boolean(),
   buildId: z.string().min(1),
-  timestamp: z.string().datetime()
+  timestamp: z.string().check(legacyDatetime())
 });
 
 export const SessionApiQueueDiagnosticsSchema = z.object({
   status: z.enum(['live', 'degraded', 'offline']),
   workerRunning: z.boolean(),
-  queueDepth: z.number().int().nonnegative(),
+  queueDepth: z.number().check(...legacyInteger()).nonnegative(),
   failureRate: z.number().min(0).max(1),
   historicalFailureRate: z.number().min(0).max(1),
-  failureRateWindowMs: z.number().int().nonnegative(),
-  windowCompletedJobs: z.number().int().nonnegative(),
-  windowFailedJobs: z.number().int().nonnegative(),
-  windowTerminalJobs: z.number().int().nonnegative(),
+  failureRateWindowMs: z.number().check(...legacyInteger()).nonnegative(),
+  windowCompletedJobs: z.number().check(...legacyInteger()).nonnegative(),
+  windowFailedJobs: z.number().check(...legacyInteger()).nonnegative(),
+  windowTerminalJobs: z.number().check(...legacyInteger()).nonnegative(),
   failureBreakdown: z.object({
-    retryable: z.number().int().nonnegative(),
-    permanent: z.number().int().nonnegative(),
-    retryScheduled: z.number().int().nonnegative(),
-    retryExhausted: z.number().int().nonnegative(),
-    deadLetter: z.number().int().nonnegative(),
-    authentication: z.number().int().nonnegative(),
-    network: z.number().int().nonnegative(),
-    provider: z.number().int().nonnegative(),
-    rateLimited: z.number().int().nonnegative(),
-    timeout: z.number().int().nonnegative(),
-    validation: z.number().int().nonnegative(),
-    unknown: z.number().int().nonnegative()
+    retryable: z.number().check(...legacyInteger()).nonnegative(),
+    permanent: z.number().check(...legacyInteger()).nonnegative(),
+    retryScheduled: z.number().check(...legacyInteger()).nonnegative(),
+    retryExhausted: z.number().check(...legacyInteger()).nonnegative(),
+    deadLetter: z.number().check(...legacyInteger()).nonnegative(),
+    authentication: z.number().check(...legacyInteger()).nonnegative(),
+    network: z.number().check(...legacyInteger()).nonnegative(),
+    provider: z.number().check(...legacyInteger()).nonnegative(),
+    rateLimited: z.number().check(...legacyInteger()).nonnegative(),
+    timeout: z.number().check(...legacyInteger()).nonnegative(),
+    validation: z.number().check(...legacyInteger()).nonnegative(),
+    unknown: z.number().check(...legacyInteger()).nonnegative()
   }),
   recentFailureReasons: z.array(z.object({
     reason: z.enum([
@@ -79,64 +81,64 @@ export const SessionApiQueueDiagnosticsSchema = z.object({
       'unknown'
     ]),
     retryable: z.boolean().nullable(),
-    count: z.number().int().nonnegative(),
-    lastSeenAt: z.string().datetime()
+    count: z.number().check(...legacyInteger()).nonnegative(),
+    lastSeenAt: z.string().check(legacyDatetime())
   })),
   lastJobStatus: z.string().nullable(),
-  lastJobFinishedAt: z.string().datetime().nullable(),
-  timestamp: z.string().datetime()
+  lastJobFinishedAt: z.string().check(legacyDatetime()).nullable(),
+  timestamp: z.string().check(legacyDatetime())
 });
 
 export const SessionApiStorageDiagnosticsSchema = z.object({
   status: z.enum(['live', 'degraded', 'offline']),
   storage: z.enum(['postgres']),
   databaseConnected: z.boolean(),
-  sessionCount: z.number().int().nonnegative(),
-  sessionVersionCount: z.number().int().nonnegative(),
+  sessionCount: z.number().check(...legacyInteger()).nonnegative(),
+  sessionVersionCount: z.number().check(...legacyInteger()).nonnegative(),
   buildId: z.string().min(1),
-  timestamp: z.string().datetime()
+  timestamp: z.string().check(legacyDatetime())
 });
 
 export const SessionApiCreateResponseSchema = z.object({
-  id: z.string().uuid(),
+  id: z.string().check(legacyUuid()),
   saved: z.literal(true),
   storage: z.enum(['postgres']),
-  createdAt: z.string().datetime()
+  createdAt: z.string().check(legacyDatetime())
 });
 
 export const SessionApiSessionDetailSchema = z.object({
-  id: z.string().uuid(),
+  id: z.string().check(legacyUuid()),
   label: z.string().min(1),
   tag: z.string().nullable(),
   memoryType: z.string().min(1),
-  payload: z.unknown(),
+  payload: z.unknown().optional(),
   transcriptSummary: z.string().nullable(),
   auditTraceId: z.string().nullable(),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime()
+  createdAt: z.string().check(legacyDatetime()),
+  updatedAt: z.string().check(legacyDatetime())
 });
 
 export const SessionApiSessionListItemSchema = z.object({
-  id: z.string().uuid(),
+  id: z.string().check(legacyUuid()),
   label: z.string().min(1),
   tag: z.string().nullable(),
   memoryType: z.string().min(1),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime()
+  createdAt: z.string().check(legacyDatetime()),
+  updatedAt: z.string().check(legacyDatetime())
 });
 
 export const SessionApiSessionListResponseSchema = z.object({
   items: z.array(SessionApiSessionListItemSchema),
-  total: z.number().int().nonnegative()
+  total: z.number().check(...legacyInteger()).nonnegative()
 });
 
 export const SessionApiReplayResponseSchema = z.object({
-  sessionId: z.string().uuid(),
-  replayedVersion: z.number().int().positive(),
+  sessionId: z.string().check(legacyUuid()),
+  replayedVersion: z.number().check(...legacyInteger()).positive(),
   mode: z.literal('readonly'),
-  payload: z.unknown(),
+  payload: z.unknown().optional(),
   auditTraceId: z.string().nullable(),
-  replayedAt: z.string().datetime()
+  replayedAt: z.string().check(legacyDatetime())
 });
 
 /**

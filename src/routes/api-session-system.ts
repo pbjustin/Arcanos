@@ -1,5 +1,8 @@
 import express, { type Request, type Response } from 'express';
 import { z } from 'zod';
+import { legacyInteger } from '@shared/validation/zodNumberChecks.js';
+import { legacyUuid, utf16MaxLength } from '@shared/validation/zodStringChecks.js';
+import { formatZodIssues } from '@shared/validation/zodIssues.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import {
   getSessionStorageBackendType,
@@ -32,21 +35,21 @@ import { auditTrace } from '@transport/http/middleware/auditTrace.js';
 const router = express.Router();
 
 const createSessionSchema = z.object({
-  label: z.string().trim().min(1).max(200),
-  tag: z.string().trim().max(200).optional().nullable(),
-  memoryType: z.string().trim().min(1).max(100),
-  payload: z.unknown(),
-  transcriptSummary: z.string().trim().max(10_000).optional().nullable()
+  label: z.string().trim().min(1).max(200).check(utf16MaxLength(200)),
+  tag: z.string().trim().max(200).check(utf16MaxLength(200)).optional().nullable(),
+  memoryType: z.string().trim().min(1).max(100).check(utf16MaxLength(100)),
+  payload: z.unknown().optional(),
+  transcriptSummary: z.string().trim().max(10_000).check(utf16MaxLength(10_000)).optional().nullable()
 });
 
 const replaySessionSchema = z.object({
-  version_number: z.number().int().positive().optional(),
-  mode: z.string().trim().min(1).max(50).optional()
+  version_number: z.number().check(...legacyInteger()).positive().optional(),
+  mode: z.string().trim().min(1).max(50).check(utf16MaxLength(50)).optional()
 });
 
 const listSessionQuerySchema = z.object({
-  q: z.string().trim().max(200).optional(),
-  limit: z.coerce.number().int().positive().max(100).optional()
+  q: z.string().trim().max(200).check(utf16MaxLength(200)).optional(),
+  limit: z.coerce.number().check(...legacyInteger()).positive().max(100).optional()
 });
 
 const RESERVED_SESSION_ROUTE_SEGMENTS = new Set(['get', 'list', 'replay', 'save']);
@@ -88,7 +91,7 @@ function resolveCanonicalSessionId(rawValue: unknown): string | null {
     return null;
   }
 
-  return z.string().uuid().safeParse(normalized).success ? normalized : null;
+  return z.string().check(legacyUuid()).safeParse(normalized).success ? normalized : null;
 }
 
 function sendStructuredError(
@@ -262,7 +265,7 @@ router.post('/api/sessions', asyncHandler(async (req, res) => {
     sendValidationFailure(
       res,
       'Invalid Session Create Payload',
-      parsedBody.error.issues.map(issue => issue.message)
+      formatZodIssues(parsedBody.error, req.body ?? {}, createSessionSchema).map(issue => issue.message)
     );
     return;
   }
@@ -308,7 +311,7 @@ router.get('/api/sessions', asyncHandler(async (req, res) => {
     sendValidationFailure(
       res,
       'Invalid Session List Query',
-      parsedQuery.error.issues.map(issue => issue.message)
+      formatZodIssues(parsedQuery.error, req.query ?? {}, listSessionQuerySchema).map(issue => issue.message)
     );
     return;
   }
@@ -383,7 +386,7 @@ router.post('/api/sessions/:id/replay', asyncHandler(async (req, res) => {
     sendValidationFailure(
       res,
       'Invalid Session Replay Payload',
-      parsedBody.error.issues.map(issue => issue.message)
+      formatZodIssues(parsedBody.error, req.body ?? {}, replaySessionSchema).map(issue => issue.message)
     );
     return;
   }

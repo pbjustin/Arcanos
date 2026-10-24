@@ -1,5 +1,8 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { z } from "zod";
+import { legacyInteger } from '@shared/validation/zodNumberChecks.js';
+import { utf16MaxLength } from '@shared/validation/zodStringChecks.js';
+import { formatZodIssues } from '@shared/validation/zodIssues.js';
 import { capabilityGate } from "@transport/http/middleware/capabilityGate.js";
 import {
   requireControlPlaneHttpScopes,
@@ -88,19 +91,19 @@ function isRedisDependencyUnavailable(error: unknown): boolean {
 
 const selfImproveRunSchema = z.object({
   trigger: z.enum(['manual', 'self_test', 'clear', 'incident']).default('manual'),
-  component: z.string().min(1).max(260).optional(),
+  component: z.string().min(1).max(260).check(utf16MaxLength(260)).optional(),
   clearOverall: z.number().min(0).max(5).optional(),
   clearMin: z.number().min(0).max(5).optional(),
   selfTestFailed: z.boolean().optional(),
-  selfTestFailureCount: z.number().int().min(0).max(1000).optional(),
-  context: z.record(z.unknown()).optional()
+  selfTestFailureCount: z.number().check(...legacyInteger()).min(0).max(1000).optional(),
+  context: z.record(z.string(), z.unknown()).optional()
 }).strict();
 const selfImproveControlReasonSchema = z.object({
-  reason: z.string().trim().min(1).max(256).optional()
+  reason: z.string().trim().min(1).max(256).check(utf16MaxLength(256)).optional()
 }).strict();
 const selfImproveAutonomySchema = z.object({
-  level: z.number().int().min(0).max(3),
-  reason: z.string().trim().min(1).max(256).optional()
+  level: z.number().check(...legacyInteger()).min(0).max(3),
+  reason: z.string().trim().min(1).max(256).check(utf16MaxLength(256)).optional()
 }).strict();
 
 router.use('/api/self-improve', selfHealingControlHttpBoundary);
@@ -139,7 +142,7 @@ router.post(
       if (!parsed.success) {
         res.status(400).json({
           error: 'Invalid self-improve payload',
-          issues: parsed.error.issues
+          issues: formatZodIssues(parsed.error, req.body ?? {}, selfImproveRunSchema)
         });
         return;
       }
@@ -169,7 +172,7 @@ router.post(
       if (!parsed.success) {
         res.status(400).json({
           error: 'Invalid self-improve control payload',
-          issues: parsed.error.issues
+          issues: formatZodIssues(parsed.error, req.body ?? {}, selfImproveControlReasonSchema)
         });
         return;
       }
@@ -198,7 +201,7 @@ router.post(
       if (!parsed.success) {
         res.status(400).json({
           error: 'Invalid self-improve control payload',
-          issues: parsed.error.issues
+          issues: formatZodIssues(parsed.error, req.body ?? {}, selfImproveControlReasonSchema)
         });
         return;
       }

@@ -72,24 +72,25 @@ const dispatchExemptRouteSchema = z.object({
 });
 
 const promptsSchema = z.object({
-  backstage: z.record(z.string()),
-  arcanos: z.record(z.string()),
-  system: z.record(z.string()),
-  research: z.record(z.string()),
-  reasoning: z.record(z.string()),
-  security: z.record(z.string()),
-  gaming: z.record(z.string()),
-  trinity: z.record(z.string())
+  backstage: z.record(z.string(), z.string()),
+  arcanos: z.record(z.string(), z.string()),
+  system: z.record(z.string(), z.string()),
+  research: z.record(z.string(), z.string()),
+  reasoning: z.record(z.string(), z.string()),
+  security: z.record(z.string(), z.string()),
+  gaming: z.record(z.string(), z.string()),
+  trinity: z.record(z.string(), z.string())
 });
 
 const gptRouterMapSchema = z.record(
+  z.string(),
   z.object({
     route: z.string().min(1),
     module: z.string().min(1)
   })
 );
 
-const daemonTokensSchema = z.record(z.string().min(1));
+const daemonTokensSchema = z.record(z.string(), z.string().min(1));
 
 export const INTEGRITY_MANIFEST: Record<ProtectedConfigId, ProtectedConfigManifestEntry> = {
   dispatch_patterns: {
@@ -137,7 +138,7 @@ export const INTEGRITY_MANIFEST: Record<ProtectedConfigId, ProtectedConfigManife
       resolver: 'fallback_messages',
       bounds: { maxBytes: 262_144, maxDepth: 16, maxNodes: 10_000 }
     },
-    schema: z.record(z.string())
+    schema: z.record(z.string(), z.string())
   },
   gpt_router_config: {
     id: 'gpt_router_config',
