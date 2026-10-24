@@ -9,6 +9,7 @@ import type { EnvironmentSecuritySummary } from "@platform/runtime/environmentSe
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
 import { getEnv } from "@platform/runtime/env.js";
 import { parseEnvBoolean } from "@platform/runtime/envParsers.js";
+import { getGenerativeAuthorityConfigurationError } from "@shared/gpt/generativeModelPolicyCore.js";
 import { getQueryFinetuneAttemptLatencyBudgetDiagnostics } from "@config/queryFinetune.js";
 import {
   JOB_READ_CAPABILITY_PREVIOUS_SECRET_ENV_NAME,
@@ -209,8 +210,13 @@ const environmentChecks: EnvironmentCheck[] = [
   {
     name: 'AI_MODEL',
     required: false,
-    description: 'Service-configured fine-tune authority for generative final answers',
-    validator: (value) => /^ft:[^\s]+$/.test(value.trim())
+    description: 'Service-configured authority for generative final answers',
+    validator: (value) => {
+      const config = getConfig();
+      return config.generativeAuthorityMode === 'gpt61-sol'
+        ? getGenerativeAuthorityConfigurationError(config) === null && value === 'gpt-6.1-sol'
+        : /^ft:[^\s]+$/.test(value.trim());
+    }
   },
   {
     name: 'FINETUNED_MODEL_ID',
@@ -391,6 +397,12 @@ export function validateEnvironment(): ValidationResult {
     warnings: [],
     suggestions: []
   };
+
+  const authorityConfigurationError = getGenerativeAuthorityConfigurationError(getConfig());
+  if (authorityConfigurationError) {
+    result.errors.push(authorityConfigurationError);
+    result.isValid = false;
+  }
 
   logger.info('🔍 Starting environment validation');
 

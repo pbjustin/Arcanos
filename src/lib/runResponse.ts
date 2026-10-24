@@ -4,6 +4,7 @@ import type { OpenAIResponsesRequestOptions } from '@core/adapters/openai.adapte
 import { requireOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
 import { resolveGenerativeModel, type GenerativeModelRole } from '@services/openai/credentialProvider.js';
 import { ensureModelMatchesExpectation } from '@services/openai/chatFallbacks.js';
+import { prepareBehavioralProfileRequest } from '@services/openai/behavioralProfile.js';
 
 type RunResponseOptions = {
   model?: string;
@@ -43,7 +44,7 @@ export async function runResponse({
   const { adapter } = requireOpenAIClientOrAdapter('OpenAI adapter not initialized');
   // Best practice: disable response storage unless explicitly needed.
   (config as any).store = false;
-  const response = await adapter.responses.create(config as any, requestOptions);
+  const response = await adapter.responses.create(prepareBehavioralProfileRequest(config as any), requestOptions);
   ensureModelMatchesExpectation(response, resolvedModel);
   return response;
 

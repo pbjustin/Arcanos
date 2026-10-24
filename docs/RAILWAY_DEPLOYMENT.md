@@ -95,6 +95,18 @@ Railway project setup is an operator-only remote configuration change:
 Apply the operational approval gate below before changing project or repository linkage.
 
 ## Configuration
+
+Backend final authority defaults to each executing service's existing fine-tune.
+The disabled-by-default [GPT-6.1 Sol authority migration](CONFIGURATION.md#gpt-61-sol-authority-migration)
+requires the exact `ARCANOS_GPT61_AUTHORITY_ENABLED=true`,
+`ARCANOS_GPT61_AUTHORITY_MODEL=gpt-6.1-sol`, and
+`ARCANOS_BEHAVIORAL_PROFILE_ID=arcanos-behavior/v1` settings on the chosen service.
+Preserve each service's original fine-tune alias for rollback; web and worker
+settings and deployed revisions must be verified independently. Turning the
+switch back to `false` restores the retained legacy selection on a compatible
+revision. Follow the linked migration gates and existing approved drain and
+activation procedure; implementation and synthetic validation do not authorize
+variable changes, restarts, deployment, or paid-provider evaluation.
 Tracked Railway config (source: `railway.json`):
 - Build: `npm ci --include=dev --no-audit --no-fund && npm run build`
 - Start: `node scripts/start-railway-service-with-integrity.mjs`

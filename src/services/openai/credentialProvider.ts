@@ -81,7 +81,7 @@ export function getFallbackModel(): string {
   return resolveGenerativeModel('final-escalation');
 }
 
-/** Complex final composition retains the configured fine-tune authority. */
+/** Complex final composition retains the executing service's configured authority. */
 export function getComplexModel(): string {
   return resolveGenerativeModel('final-escalation');
 }

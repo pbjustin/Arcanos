@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-21T06:00:59.897Z",
+  "generatedAt": "2026-10-24T03:12:00.485Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2150,6 +2150,9 @@
           "relativePath": "src/services/openai/attemptTokenUsage.ts"
         },
         {
+          "relativePath": "src/services/openai/behavioralProfile.ts"
+        },
+        {
           "relativePath": "src/services/openai/chatFallbacks.ts"
         },
         {
@@ -2922,6 +2925,9 @@
         },
         {
           "relativePath": "src/shared/gaming/liveValidationObservation.ts"
+        },
+        {
+          "relativePath": "src/shared/gpt/arcanosBehavioralProfile.ts"
         },
         {
           "relativePath": "src/shared/gpt/asyncGptJob.ts"
@@ -4973,6 +4979,12 @@
         },
         {
           "relativePath": "tests/gpt-session-queue-contract.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/gpt61-authority-config.test.ts"
+        },
+        {
+          "relativePath": "tests/gpt61-behavioral-profile.test.ts"
         },
         {
           "relativePath": "tests/gptoss-adapter-eval.test.ts"

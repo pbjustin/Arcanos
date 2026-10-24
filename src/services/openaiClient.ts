@@ -9,6 +9,7 @@ import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { getConfig } from '@platform/runtime/unifiedConfig.js';
 import { redactString } from '@shared/redaction.js';
 import { resolveGenerativeModel, type GenerativeModelRole } from '@services/openai/credentialProvider.js';
+import { prepareBehavioralProfileRequest } from '@services/openai/behavioralProfile.js';
 import { ensureModelMatchesExpectation } from '@services/openai/chatFallbacks.js';
 
 export interface NormalizedOpenAIError {
@@ -116,7 +117,7 @@ export async function createResponses(
   const model = resolveGenerativeModel(options.modelRole ?? 'final', payload.model);
   try {
     const adapter = getConfiguredOpenAIAdapter();
-    const response = await adapter.responses.create({ ...payload, model }, {
+    const response = await adapter.responses.create(prepareBehavioralProfileRequest({ ...payload, model }), {
       signal: options.signal,
       headers: options.headers
     });

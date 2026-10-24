@@ -305,6 +305,8 @@ export async function instrumentOpenAIOperation<T>(input: {
   model?: string | null;
   callback: () => Promise<T>;
   extractUsage?: (result: T) => unknown;
+  behavioralProfileId?: string;
+  behavioralProfileService?: string;
   /** Parsing wrappers observe the raw response themselves before parsing can throw. */
   captureAttemptUsage?: false;
 }
@@ -323,6 +325,8 @@ export async function instrumentOpenAIOperation<T>(input: {
         provider: aiExecutionContext.provider,
         operation: input.operation,
         model: input.model ?? null,
+        behavioralProfileId: input.behavioralProfileId,
+        behavioralProfileService: input.behavioralProfileService,
         sourceType: aiExecutionContext.sourceType,
         sourceName: aiExecutionContext.sourceName
       }
@@ -338,6 +342,10 @@ export async function instrumentOpenAIOperation<T>(input: {
       attemptUsageObserved = true;
     }
     const normalizedUsage = normalizeUsage(rawUsage);
+    const providerModel = (result as { model?: unknown } | null)?.model;
+    const actualModel = typeof providerModel === 'string' && providerModel.trim()
+      ? providerModel.trim()
+      : input.model;
     recordDependencyCall({
       dependency: 'openai',
       operation: input.operation,
@@ -346,7 +354,7 @@ export async function instrumentOpenAIOperation<T>(input: {
     });
     recordAiOperationResult({
       operation: input.operation,
-      model: input.model,
+      model: actualModel,
       outcome: 'ok',
       durationMs: Date.now() - startedAtMs,
       usage: {
@@ -364,7 +372,10 @@ export async function instrumentOpenAIOperation<T>(input: {
         metadata: {
           provider: aiExecutionContext.provider,
           operation: input.operation,
-          model: input.model ?? null,
+          model: actualModel ?? null,
+          requestedModel: input.model ?? null,
+          behavioralProfileId: input.behavioralProfileId,
+          behavioralProfileService: input.behavioralProfileService,
           sourceType: aiExecutionContext.sourceType,
           sourceName: aiExecutionContext.sourceName,
           promptTokens: normalizedUsage.promptTokens,
@@ -518,6 +529,18 @@ function normalizeUsage(usage: unknown): { promptTokens: number; completionToken
   return normalizeOpenAIUsage(usage);
 }
 
+function behavioralProfileTelemetry(params: ResponseCreateParamsNonStreaming): {
+  behavioralProfileId?: string;
+  behavioralProfileService?: string;
+} {
+  const metadata = params.metadata;
+  return {
+    behavioralProfileId: typeof metadata?.arcanos_behavioral_profile === 'string'
+      ? metadata.arcanos_behavioral_profile : undefined,
+    behavioralProfileService: typeof metadata?.arcanos_service === 'string'
+      ? metadata.arcanos_service : undefined
+  };
+}
 
 const MIN_RESPONSE_TOKENS = 16;
 
@@ -608,7 +631,10 @@ export function normalizeResponsesCreateParams(
   }
 
   if (typeof normalized.max_output_tokens === 'number') {
-    normalized.max_output_tokens = Math.max(MIN_RESPONSE_TOKENS, Math.floor(normalized.max_output_tokens));
+    normalized.max_output_tokens = Math.min(
+      capabilities.outputTokenPolicy.maximum ?? Infinity,
+      Math.max(MIN_RESPONSE_TOKENS, Math.floor(normalized.max_output_tokens))
+    );
   }
 
   const withMaxCompletionTokens = normalized as { max_completion_tokens?: number };
@@ -822,6 +848,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
     const response = await instrumentOpenAIOperation({
       operation: 'responses_create',
       model: requestedModel,
+      ...behavioralProfileTelemetry(normalizedResponsePayload),
       callback: () => originalResponsesCreate(normalizedResponsePayload, options),
       extractUsage: (result) => (result as { usage?: unknown } | null)?.usage,
     });
@@ -859,6 +886,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
     return instrumentOpenAIOperation({
       operation: 'responses_parse',
       model: requestedModel,
+      ...behavioralProfileTelemetry(normalizedParams),
       captureAttemptUsage: false,
       callback: () => createSafeResponsesParse(
         safeParseClient,
@@ -895,6 +923,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
       const response = await instrumentOpenAIOperation({
         operation: 'responses_create',
         model: requestedModel,
+        ...behavioralProfileTelemetry(normalizedResponsePayload),
         callback: () => originalResponsesCreate(normalizedResponsePayload, options),
         extractUsage: (result) => (result as { usage?: unknown } | null)?.usage,
       });
@@ -910,6 +939,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
     return instrumentOpenAIOperation({
       operation: 'responses_create',
       model: requestedModel,
+      ...behavioralProfileTelemetry(normalizedParams),
       callback: () => originalResponsesCreate(normalizedParams, options),
       extractUsage: (result) => (result as { usage?: unknown } | null)?.usage,
     });

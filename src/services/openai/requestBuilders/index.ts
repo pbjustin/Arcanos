@@ -19,6 +19,7 @@
  */
 
 import type OpenAI from 'openai';
+import { prepareBehavioralProfileRequest } from '../behavioralProfile.js';
 import type {
   ResponseCreateParamsNonStreaming
 } from 'openai/resources/responses/responses';
@@ -78,7 +79,7 @@ export function buildResponsesRequest(params: ChatParams): ResponseCreateParamsN
   const draft = buildResponsesDraft(params);
   const normalized = normalizeResponsesDraft(draft);
   const converted = convertNormalizedResponsesToRequest(normalized);
-  return validateResponsesRequest(converted);
+  return prepareBehavioralProfileRequest(validateResponsesRequest(converted));
 }
 
 /**
@@ -88,7 +89,7 @@ export function buildVisionResponsesRequest(params: VisionParams): ResponseCreat
   const draft = buildVisionResponsesDraft(params);
   const normalized = normalizeVisionResponsesDraft(draft);
   const converted = convertNormalizedVisionResponsesToRequest(normalized);
-  return validateResponsesRequest(converted);
+  return prepareBehavioralProfileRequest(validateResponsesRequest(converted));
 }
 
 /**

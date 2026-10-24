@@ -15,7 +15,7 @@ const PREVIEW_IMPORT_TSCONFIG_FILE =
 const PREVIEW_DIST_IMPORT_CHECKER_FILE =
   'scripts/check-native-pr-preview-dist-imports.mjs';
 const PREVIEW_DIST_IMPORT_CHECKER_DIGEST =
-  '41c8f359d09f34da1a7243e4f2e43c334c71b00127d1251f64b41e4b23892d5e';
+  'cdfece868c546284f4bdd31055a730b1502dd2cd146a72eaf39d50360f1c0c31';
 const ROOT_PACKAGE_MANIFEST_FILE = 'package.json';
 const ROOT_TSCONFIG_FILE = 'tsconfig.json';
 const RUNTIME_PACKAGE_MANIFEST_FILE =
@@ -125,6 +125,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/gpt/gptRequestAction.ts',
   'src/shared/gpt/messageContentText.ts',
   'src/shared/gpt/trinityReasoningPolicy.ts',
+  'src/shared/gpt/arcanosBehavioralProfile.ts',
   'src/shared/gpt/generativeModelPolicyCore.ts',
   'src/shared/gpt/generativeModelPolicyPreviewFixture.ts',
   'src/shared/ios/iosGatewayPreviewFixture.ts',
@@ -849,7 +850,8 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['scripts/skill-composition-core.mjs', '669365ee5906d523ab1f841d4d25a5086ee8669f152eadfe01e466d939147982'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/chatgpt/gamingCompositionPreviewFixture.ts', '5c66dd4fb92143ea053c59663c845252324fd69e1c4709c47484eeb6e7bf7a45'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/chatgpt/gamingMcpPreviewFixture.ts', '5e408e9b0f7853807a101706a5eddcebbf3aba3c102bcfed041da97c7cfb4dc7'],
-  ['src/shared/gpt/generativeModelPolicyCore.ts', 'c1e29caf983333a351e66e6141ef59758ee45a4a158bb28c6290d9d9887ba1d3'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/gpt/arcanosBehavioralProfile.ts', '2ac9faec4f59794867bbbc700a618812e1b9f81752a3f016044d4704ee770c4f'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/gpt/generativeModelPolicyCore.ts', 'a1bf993ad54ac0a2abd5c1e0a744c9b8e6167164a104e1cb64ef2a61b4784107'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gpt/generativeModelPolicyPreviewFixture.ts', '82268c7fd04fb2b6a236f6bac72ccb5d08ed666cf497541634d96cc73f5c0d2c'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/chatgpt/gamingMcpContract.ts', 'b3c48917eceec6c40bc2b6b59aebbc884c500541f18ecd815fcc9635378b153b'],
   ['packages/protocol/src/chatgptGaming.ts', '2e3c0e5476a9d0c7a1a0e582650b3adc041e37ea9012310891a6b2fa67d4bfd0'],
@@ -1118,7 +1120,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/gpt/trinityReasoningPolicy.ts',
-    '85c8bee9ad1e39123e42d221c0ef82617afb65ed37fc0e6e457b7d8a03e506a7',
+    '971092d70db18e85d12cf3b775cb05fd5d8a804e901213d7d85ef16f8de549cf',
   ],
   [
     'src/services/queuedJobCompletionPolling.ts',

@@ -13,6 +13,7 @@ import {
 import {
   TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT,
   PLUGIN_MIGRATION_PREVIEW_DIST_IMPORT_CONTRACT,
+  GENERATIVE_MODEL_POLICY_PREVIEW_DIST_IMPORT_CONTRACT,
   GAMING_MCP_PREVIEW_DIST_IMPORT_CONTRACT,
   GAMING_COMPOSITION_PREVIEW_DIST_IMPORT_CONTRACT,
   findTutorHonestyPreviewDistImportSourceViolations,
@@ -728,6 +729,7 @@ describe('native PR preview import boundary', () => {
     'scripts/tutor-package-core.d.mts',
     'src/shared/chatgpt/pluginMigrationPreviewFixture.ts',
     'src/shared/gpt/generativeModelPolicyCore.ts',
+    'src/shared/gpt/arcanosBehavioralProfile.ts',
     'src/shared/gpt/generativeModelPolicyPreviewFixture.ts',
   ])('pins the shared migration seam and rejects effects in %s', async filePath => {
     const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
@@ -811,6 +813,20 @@ describe('native PR preview import boundary', () => {
       }
     }
   );
+
+  it('keeps behavioral profile configuration and provider adapters outside the contained graph', () => {
+    expect(GENERATIVE_MODEL_POLICY_PREVIEW_DIST_IMPORT_CONTRACT).toEqual(expect.arrayContaining([
+      {
+        filePath: 'dist/shared/gpt/generativeModelPolicyCore.js',
+        imports: { './arcanosBehavioralProfile.js': ['isArcanosBehavioralProfileId:isArcanosBehavioralProfileId'] },
+      },
+      { filePath: 'dist/shared/gpt/arcanosBehavioralProfile.js', imports: {} },
+    ]));
+    for (const filePath of ['src/services/openai/behavioralProfile.ts', 'src/platform/runtime/unifiedConfig.ts',
+      'src/services/openai/credentialProvider.ts', 'src/core/adapters/openai.adapter.ts']) {
+      expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(filePath);
+    }
+  });
 
   it('rejects absent or retargeted Gaming protocol exports outside the reviewed leaf', async () => {
     const manifest = JSON.parse(await readFile(new URL('../packages/protocol/package.json', import.meta.url), 'utf8'));

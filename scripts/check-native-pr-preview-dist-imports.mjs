@@ -108,6 +108,12 @@ export const GENERATIVE_MODEL_POLICY_PREVIEW_DIST_IMPORT_CONTRACT = Object.freez
   }),
   Object.freeze({
     filePath: 'dist/shared/gpt/generativeModelPolicyCore.js',
+    imports: Object.freeze({
+      './arcanosBehavioralProfile.js': Object.freeze(['isArcanosBehavioralProfileId:isArcanosBehavioralProfileId']),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/shared/gpt/arcanosBehavioralProfile.js',
     imports: Object.freeze({}),
   }),
 ]);
