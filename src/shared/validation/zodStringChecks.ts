@@ -6,7 +6,7 @@ export function utf16MinLength(minimum: number, message?: string) {
     if (context.value.length >= minimum) return;
     context.issues.push({
       code: 'too_small', origin: 'string', minimum, inclusive: true,
-      input: context.value,
+      input: context.value, continue: true,
       message: message ?? `String must contain at least ${minimum} character(s)`
     });
   }), z.meta({ minLength: minimum })] as const;
@@ -25,7 +25,7 @@ export function utf16MaxLength(maximum: number, message?: string) {
     }
     context.issues.push({
       code: 'too_big', origin: 'string', maximum, inclusive: true,
-      input: context.value,
+      input: context.value, continue: true,
       message: message ?? `String must contain at most ${maximum} character(s)`
     });
   });

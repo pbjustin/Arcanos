@@ -846,7 +846,7 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['src/shared/validation/zodIssues.ts', '0baaff406fd2ceb2a0f41aec26a1c333c865f496a3bd912799fdf1257c9004ea'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/validation/zodNumberChecks.ts', '95aa7a56141ba5e6b60f315f406a4739110b6ac43e66b1a1c92bb8023d673858'], // gitleaks:allow -- public source semantic SHA-256
-  ['src/shared/validation/zodStringChecks.ts', '926f4e8701290486367f473395828bba56658d98b6a20bca0c25f0369e82014f'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/validation/zodStringChecks.ts', 'c93b2370b49f5a0aecb887ba8e647da9340e4a0bcf6d30653093f6af1c252bd1'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gaming/gamingSourceTransportData.ts', '09bf2dc7ee4686b70c98c652158d585bb578c36190cdf0fa2b36186c51dad5c1'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gaming/gamingPublisherExtractionProfileData.ts', '196b35964e27ff396bc5bdf10015700b9f668bad0070a153ce09c135b9153177'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gaming/gamingPreferenceData.ts', '4372c4d9278ea6533a4b53bc60974b465bdeb0313203fd169f3f7c532bfc7cd1'], // gitleaks:allow -- public source semantic SHA-256

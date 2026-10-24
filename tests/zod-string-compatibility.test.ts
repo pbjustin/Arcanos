@@ -27,6 +27,21 @@ describe('patched Zod preserves established string admission', () => {
     if (!result.success) expect(result.error.issues[0].message).toBe('Existing cap');
   });
 
+  it.each([
+    ['maximum', z.string().max(1).check(utf16MaxLength(1)), 'too_big'],
+    ['minimum', z.string().check(...utf16MinLength(4)), 'too_small'],
+  ] as const)('continues refinements after a UTF-16 %s failure', (_name, bounded, code) => {
+    const schema = bounded.superRefine((_value, context) => {
+      context.addIssue({ code: 'custom', message: 'Existing follow-up issue' });
+    });
+    const result = schema.safeParse('😀');
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.map(issue => issue.code)).toEqual([code, 'custom']);
+      expect(result.error.issues[1].message).toBe('Existing follow-up issue');
+    }
+  });
+
   it.each(['00000000-0000-0000-0000-000000000000', 'ABCDEFAB-CDEF-0000-0000-ABCDEFABCDEF'])(
     'retains previously accepted UUID shape %s', value => {
       const schema = z.string().check(legacyUuid());
