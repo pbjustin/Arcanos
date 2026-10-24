@@ -24,6 +24,7 @@ import {
   recordPromptDebugTrace,
 } from '@services/promptDebugTraceService.js';
 import { extractApiArcanosInput } from '@shared/http/askRequestInput.js';
+import { formatZodIssues } from '@shared/validation/zodIssues.js';
 
 const BUDGET_ABORT_ERROR_MARKERS = [
   'openai_call_aborted_due_to_budget',
@@ -180,7 +181,7 @@ export function validateAIRequest(
   const parsed = aiRequestSchema.safeParse(req.body);
   //audit Assumption: schema failure should return 400; Handling: error response
   if (!parsed.success) {
-    const details = parsed.error.errors.map(err => `${err.path.join('.') || 'body'}: ${err.message}`);
+    const details = formatZodIssues(parsed.error, req.body, aiRequestSchema).map(err => `${err.path.join('.') || 'body'}: ${err.message}`);
     const errorPayload = {
       error: `Invalid request payload for ${endpointName}`,
       details,

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { utf16MaxLength } from '@shared/validation/zodStringChecks.js';
 
 import type { ControlPlaneRequest } from './types.js';
 
@@ -15,28 +16,28 @@ const scalarTargetValueSchema = z.union([z.string(), z.number(), z.boolean(), z.
 
 export const controlPlaneTargetSchema = z
   .object({
-    resource: z.string().trim().min(1).max(160),
-    id: z.string().trim().min(1).max(200).optional(),
-    name: z.string().trim().min(1).max(200).optional(),
-    service: z.string().trim().min(1).max(200).optional(),
+    resource: z.string().trim().min(1).max(160).check(utf16MaxLength(160)),
+    id: z.string().trim().min(1).max(200).check(utf16MaxLength(200)).optional(),
+    name: z.string().trim().min(1).max(200).check(utf16MaxLength(200)).optional(),
+    service: z.string().trim().min(1).max(200).check(utf16MaxLength(200)).optional(),
   })
   .catchall(scalarTargetValueSchema);
 
 export const controlPlaneInvokeRequestSchema = z.object({
-  operation: z.string().trim().min(1).max(120),
+  operation: z.string().trim().min(1).max(120).check(utf16MaxLength(120)),
   provider: z.enum(CONTROL_PLANE_PROVIDER_VALUES),
-  gptId: z.string().trim().min(1).max(200).optional(),
+  gptId: z.string().trim().min(1).max(200).check(utf16MaxLength(200)).optional(),
   target: controlPlaneTargetSchema,
-  environment: z.string().trim().min(1).max(120),
+  environment: z.string().trim().min(1).max(120).check(utf16MaxLength(120)),
   scope: z.union([
-    z.string().trim().min(1).max(120),
-    z.array(z.string().trim().min(1).max(120)).min(1).max(20),
+    z.string().trim().min(1).max(120).check(utf16MaxLength(120)),
+    z.array(z.string().trim().min(1).max(120).check(utf16MaxLength(120))).min(1).max(20),
   ]),
-  params: z.record(z.unknown()),
-  approvalToken: z.string().trim().min(1).max(512).optional(),
+  params: z.record(z.string(), z.unknown()),
+  approvalToken: z.string().trim().min(1).max(512).check(utf16MaxLength(512)).optional(),
   dryRun: z.boolean().default(true),
-  traceId: z.string().trim().min(1).max(200),
-  requestedBy: z.string().trim().min(1).max(200),
+  traceId: z.string().trim().min(1).max(200).check(utf16MaxLength(200)),
+  requestedBy: z.string().trim().min(1).max(200).check(utf16MaxLength(200)),
 });
 
 export function parseControlPlaneRequest(candidate: unknown): ControlPlaneRequest {

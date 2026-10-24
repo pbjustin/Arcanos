@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { legacyInteger } from '@shared/validation/zodNumberChecks.js';
+import { legacyUuid, utf16MaxLength } from '@shared/validation/zodStringChecks.js';
 
 import type { JobData } from '@core/db/schema.js';
 import {
@@ -19,34 +21,34 @@ const FAILURE_CLASSIFICATION_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/u;
 const MAX_LOCAL_AGENT_RESULT_BYTES = 128 * 1024;
 
 export const localAgentClaimInputSchema = z.object({
-  claimKey: z.string().min(1).max(240).regex(OPAQUE_KEY_PATTERN)
+  claimKey: z.string().min(1).max(240).check(utf16MaxLength(240)).regex(OPAQUE_KEY_PATTERN)
 }).strict();
 
 export const localAgentJobParamsSchema = z.object({
-  jobId: z.string().uuid()
+  jobId: z.string().check(legacyUuid())
 }).strict();
 
 const localAgentResultErrorSchema = z.object({
-  code: z.string().min(1).max(64).regex(ERROR_CODE_PATTERN),
-  message: z.string().min(1).max(2_000),
-  classification: z.string().min(1).max(64).regex(FAILURE_CLASSIFICATION_PATTERN),
+  code: z.string().min(1).max(64).check(utf16MaxLength(64)).regex(ERROR_CODE_PATTERN),
+  message: z.string().min(1).max(2_000).check(utf16MaxLength(2_000)),
+  classification: z.string().min(1).max(64).check(utf16MaxLength(64)).regex(FAILURE_CLASSIFICATION_PATTERN),
   retryable: z.boolean()
 }).strict();
 
 export const localAgentResultInputSchema = z.object({
   protocolVersion: z.literal(LOCAL_AGENT_JOB_PROTOCOL_VERSION),
-  resultKey: z.string().min(1).max(240).regex(OPAQUE_KEY_PATTERN),
+  resultKey: z.string().min(1).max(240).check(utf16MaxLength(240)).regex(OPAQUE_KEY_PATTERN),
   outcome: z.enum(['succeeded', 'failed']),
   output: z.unknown().optional(),
   error: localAgentResultErrorSchema.optional(),
   metrics: z.object({
-    durationMs: z.number().int().min(0).max(24 * 60 * 60 * 1_000),
+    durationMs: z.number().check(...legacyInteger()).min(0).max(24 * 60 * 60 * 1_000),
     outputTruncated: z.boolean()
   }).strict(),
   correlation: z.object({
-    traceId: z.string().min(1).max(256).regex(CORRELATION_ID_PATTERN),
-    requestId: z.string().min(1).max(256).regex(CORRELATION_ID_PATTERN),
-    deviceId: z.string().min(1).max(256).regex(CORRELATION_ID_PATTERN)
+    traceId: z.string().min(1).max(256).check(utf16MaxLength(256)).regex(CORRELATION_ID_PATTERN),
+    requestId: z.string().min(1).max(256).check(utf16MaxLength(256)).regex(CORRELATION_ID_PATTERN),
+    deviceId: z.string().min(1).max(256).check(utf16MaxLength(256)).regex(CORRELATION_ID_PATTERN)
   }).strict()
 }).strict().superRefine((value, context) => {
   if (value.outcome === 'succeeded' && value.error !== undefined) {

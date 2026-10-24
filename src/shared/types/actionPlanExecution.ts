@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { legacyInteger } from '@shared/validation/zodNumberChecks.js';
+import { legacyDatetime, utf16MaxLength } from '@shared/validation/zodStringChecks.js';
 
 /** Public wire protocol version. This is intentionally distinct from the persisted schema value. */
 export const ACTION_PLAN_EXECUTION_PROTOCOL_VERSION = 'action-plan-execution-v1' as const;
@@ -165,25 +167,25 @@ export const ACTION_PLAN_EXECUTION_PUBLIC_ERRORS: Readonly<Record<
 
 export const actionPlanExecutionIdentifierSchema = z.string()
   .min(1)
-  .max(ACTION_PLAN_EXECUTION_LIMITS.maxIdCharacters)
+  .max(ACTION_PLAN_EXECUTION_LIMITS.maxIdCharacters).check(utf16MaxLength(ACTION_PLAN_EXECUTION_LIMITS.maxIdCharacters))
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u);
 
 export const actionPlanExecutionRealmSchema = z.string()
   .min(1)
-  .max(ACTION_PLAN_EXECUTION_LIMITS.maxRealmCharacters)
+  .max(ACTION_PLAN_EXECUTION_LIMITS.maxRealmCharacters).check(utf16MaxLength(ACTION_PLAN_EXECUTION_LIMITS.maxRealmCharacters))
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u);
 
 export const actionPlanExecutionIdempotencyKeySchema = z.string()
   .min(1)
-  .max(ACTION_PLAN_EXECUTION_LIMITS.maxIdempotencyKeyCharacters)
+  .max(ACTION_PLAN_EXECUTION_LIMITS.maxIdempotencyKeyCharacters).check(utf16MaxLength(ACTION_PLAN_EXECUTION_LIMITS.maxIdempotencyKeyCharacters))
   .regex(/^[\x21-\x7E]+$/u);
 
 const locationSchema = z.string()
   .min(1)
-  .max(ACTION_PLAN_EXECUTION_LIMITS.maxLocationCharacters)
+  .max(ACTION_PLAN_EXECUTION_LIMITS.maxLocationCharacters).check(utf16MaxLength(ACTION_PLAN_EXECUTION_LIMITS.maxLocationCharacters))
   .regex(/^\/[A-Za-z0-9{}._~:/?#\[\]@!$&'()*+,;=%-]*$/u);
 
-const isoTimestampSchema = z.string().datetime({ offset: true });
+const isoTimestampSchema = z.string().check(legacyDatetime({ offset: true }));
 const runStateSchema = z.enum(ACTION_PLAN_EXECUTION_RUN_STATES);
 const protocolVersionSchema = z.literal(ACTION_PLAN_EXECUTION_PROTOCOL_VERSION);
 
@@ -282,7 +284,7 @@ export const actionPlanExecutionStartInputSchema = emptyOperationBodySchema;
 
 const safeResultCodeSchema = z.string()
   .min(1)
-  .max(ACTION_PLAN_EXECUTION_LIMITS.maxErrorCodeCharacters)
+  .max(ACTION_PLAN_EXECUTION_LIMITS.maxErrorCodeCharacters).check(utf16MaxLength(ACTION_PLAN_EXECUTION_LIMITS.maxErrorCodeCharacters))
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u);
 
 const resultErrorSchema = z.object({
@@ -339,16 +341,16 @@ export const actionPlanExecutionResultInputSchema = z.object({
 
 const rollbackAssignmentSchema = z.object({
   agent_id: actionPlanExecutionIdentifierSchema,
-  capability: z.string().min(1).max(128),
+  capability: z.string().min(1).max(128).check(utf16MaxLength(128)),
   params: boundedJsonSchema(ACTION_PLAN_EXECUTION_LIMITS.maxSnapshotBytes, 'rollback params'),
-  timeout_ms: z.number().int().positive().max(24 * 60 * 60 * 1000),
+  timeout_ms: z.number().check(...legacyInteger()).positive().max(24 * 60 * 60 * 1000),
 }).strict();
 
 export const actionPlanExecutionAssignmentSchema = z.object({
   agent_id: actionPlanExecutionIdentifierSchema,
-  capability: z.string().min(1).max(128),
+  capability: z.string().min(1).max(128).check(utf16MaxLength(128)),
   params: boundedJsonSchema(ACTION_PLAN_EXECUTION_LIMITS.maxSnapshotBytes, 'action params'),
-  timeout_ms: z.number().int().positive().max(24 * 60 * 60 * 1000),
+  timeout_ms: z.number().check(...legacyInteger()).positive().max(24 * 60 * 60 * 1000),
   rollback_action: rollbackAssignmentSchema.optional(),
 }).strict().superRefine((value, context) => {
   const inspected = inspectJsonValue(value, ACTION_PLAN_EXECUTION_LIMITS.maxJsonDepth);
@@ -370,7 +372,7 @@ export const actionPlanExecutionAssignmentSchema = z.object({
 
 const responseBaseSchema = z.object({
   ok: z.literal(true),
-  code: z.string().min(1).max(64),
+  code: z.string().min(1).max(64).check(utf16MaxLength(64)),
   protocol_version: protocolVersionSchema,
 }).strict();
 
@@ -427,7 +429,7 @@ export const actionPlanExecutionClaimResponseSchema = responseBaseSchema.extend(
     'CLAIM_RECOVERY_TERMINAL',
   ]),
   assignment: actionPlanExecutionAssignmentSchema.optional(),
-  plan_execution_generation: z.number().int().positive(),
+  plan_execution_generation: z.number().check(...legacyInteger()).positive(),
   lifecycle: claimLifecycleSchema,
   policy: claimPolicySchema,
   status_location: locationSchema,
@@ -573,7 +575,7 @@ export const actionPlanExecutionErrorResponseSchema = z.object({
   ok: z.literal(false),
   error: z.object({
     code: z.enum(ACTION_PLAN_EXECUTION_ERROR_CODES),
-    message: z.string().min(1).max(160),
+    message: z.string().min(1).max(160).check(utf16MaxLength(160)),
   }).strict(),
   request_id: actionPlanExecutionIdentifierSchema.optional(),
   trace_id: actionPlanExecutionIdentifierSchema.optional(),

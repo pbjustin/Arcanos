@@ -138,6 +138,49 @@ describe('/api/save-conversation', () => {
     expect(mockLoadMemoryRecordById).toHaveBeenCalledWith(18342);
   });
 
+  it.each([
+    [{}, 'Required; Required'],
+    [{ title: 42, contentMode: 'summary' }, 'Expected string, received number'],
+    [{ title: 'Title', contentMode: 'summary', content: 'Text', metadata: [] }, 'Expected object, received array']
+  ])('preserves validation failure receipts for %j', async (body, error) => {
+    const response = await request(app).post('/api/save-conversation').send(body);
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({
+      success: false,
+      record_id: null,
+      storage_type: null,
+      title: null,
+      tags: [],
+      content_mode: null,
+      length_stored: 0,
+      bytes_stored: 0,
+      created_at: null,
+      error
+    });
+    expect(mockSaveMemory).not.toHaveBeenCalled();
+  });
+
+  it('preserves omitted unknown content without adding a new schema rejection', async () => {
+    const storedRow = await mockLoadMemoryRecordById.getMockImplementation()?.();
+    storedRow.value.contentMode = 'summary';
+    delete storedRow.value.content;
+    mockLoadMemoryRecordById.mockResolvedValueOnce(storedRow);
+
+    const response = await request(app).post('/api/save-conversation').send({
+      title: 'Backend diagnostics',
+      contentMode: 'summary'
+    });
+
+    expect(response.status).toBe(201);
+    expect(response.body.success).toBe(true);
+    expect(response.body.length_stored).toBe(0);
+    expect(mockSaveMemory).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      contentMode: 'summary',
+      content: undefined
+    }));
+  });
+
   it('fails closed when read-after-write verification cannot reload the saved row', async () => {
     mockLoadMemoryRecordById.mockResolvedValueOnce(null);
 

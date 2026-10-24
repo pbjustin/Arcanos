@@ -64,7 +64,7 @@ function collectFineTunedAutomationIds(): string[] {
   const candidates = [
     getEnv('FINE_TUNED_AUTOMATION_GPT_ID'),
     getEnv('FINETUNED_AUTOMATION_GPT_ID'),
-    config.defaultModel, // From config (handles FINETUNED_MODEL_ID, etc.)
+    config.legacyAuthorityModel ?? config.defaultModel, // Preserve configured fine-tune trust independently of generation migration.
     getEnv('OPENAI_MODEL'),
     getEnv('RAILWAY_OPENAI_MODEL'),
     getEnv('AI_MODEL')

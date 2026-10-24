@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { utf16MaxLength } from '@shared/validation/zodStringChecks.js';
+import { formatZodIssues } from '@shared/validation/zodIssues.js';
 import {
   getActiveIntentSnapshot,
   getLastRoutingUsed,
@@ -10,13 +12,13 @@ const systemStatePatchSchema = z.object({
   confidence: z.number().min(0).max(1).optional(),
   phase: z.enum(['exploration', 'execution']).optional(),
   status: z.enum(['active', 'paused', 'completed']).optional(),
-  label: z.string().min(1).max(200).optional()
+  label: z.string().min(1).max(200).check(utf16MaxLength(200)).optional()
 });
 export const SYSTEM_STATE_SESSION_ID_MAX_LENGTH = 100;
 const systemStateSessionIdSchema = z.string()
   .trim()
   .min(1)
-  .max(SYSTEM_STATE_SESSION_ID_MAX_LENGTH);
+  .max(SYSTEM_STATE_SESSION_ID_MAX_LENGTH).check(utf16MaxLength(SYSTEM_STATE_SESSION_ID_MAX_LENGTH));
 
 export type SystemStatePatch = z.infer<typeof systemStatePatchSchema>;
 
@@ -134,7 +136,7 @@ export function executeSystemStateRequest(payload: unknown): GovernedSystemState
 
   if (record.patch !== undefined && !parsedPatch?.success) {
     throw new Error(
-      `system_state patch invalid: ${parsedPatch?.error.issues.map((issue) => issue.message).join('; ')}`
+      `system_state patch invalid: ${parsedPatch ? formatZodIssues(parsedPatch.error, record.patch, systemStatePatchSchema).map((issue) => issue.message).join('; ') : undefined}`
     );
   }
 

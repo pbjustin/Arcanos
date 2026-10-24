@@ -237,6 +237,13 @@ Release automation boundaries:
   `package.json`, with its resolved URL and integrity recorded in
   `package-lock.json`. Keep those sources consistent; the direct artifact keeps
   the patched dependency reproducible without weakening the audit policy.
+- Runtime schema validation pins Zod `4.6.7`, which patches
+  [GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5).
+  The shared validation adapters preserve established public error envelopes,
+  UTF-16 string bounds, integer admission, UUID/timestamp inputs, and sparse
+  optional fields. Regression checks also exercise MCP schema discovery.
+  These adapters use the patched runtime; they do not retain a Zod 3 fallback
+  or introduce an advisory exception.
 - Required CI and release validation pin `pip-audit` to `2.10.1` and contain no
   Python vulnerability ignores.
 - Patch mode can only append deterministic validation notes to an existing

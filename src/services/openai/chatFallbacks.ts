@@ -8,6 +8,7 @@ import {
   type OpenAIAdapter
 } from "@core/adapters/openai.adapter.js";
 import { prepareGPT5Request } from './requestTransforms.js';
+import { getBehavioralProfileTelemetry } from './behavioralProfile.js';
 import { resolveGenerativeModel, type GenerativeModelRole } from './credentialProvider.js';
 import { assertGenerativeModelResponseIdentity as ensureModelMatchesExpectation } from '@shared/gpt/generativeModelPolicyCore.js';
 import { RESILIENCE_CONSTANTS } from './resilience.js';
@@ -246,7 +247,9 @@ function readCompletionMetadata(response: ChatCompletionResponse): CompletionMet
 function buildCompletionLogContext(model: string, startedAt: number, response: ChatCompletionResponse) {
   const metadata = readCompletionMetadata(response);
   return {
-    model,
+    model: response.model,
+    requestedModel: model,
+    ...(model === 'gpt-6.1-sol' ? getBehavioralProfileTelemetry() : {}),
     latencyMs: Date.now() - startedAt,
     finishReason: metadata.finishReason,
     responseStatus: metadata.responseStatus,
@@ -443,7 +446,7 @@ async function attemptModelCall(
     throw error;
   }
   aiLogger.info(`${logPrefix} Success with ${model}`, logContext);
-  return { response, model };
+  return { response, model: response.model };
 }
 
 async function attemptGPT5Call(
@@ -481,7 +484,7 @@ async function attemptGPT5Call(
     throw error;
   }
   aiLogger.info(buildGpt5SuccessLog(gpt5Model), logContext);
-  return { response, model: gpt5Model };
+  return { response, model: response.model };
 }
 
 type ModelAttemptResult = { response: ChatCompletionResponse; model: string };

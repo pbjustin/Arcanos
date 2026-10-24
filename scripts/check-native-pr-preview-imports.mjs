@@ -15,7 +15,7 @@ const PREVIEW_IMPORT_TSCONFIG_FILE =
 const PREVIEW_DIST_IMPORT_CHECKER_FILE =
   'scripts/check-native-pr-preview-dist-imports.mjs';
 const PREVIEW_DIST_IMPORT_CHECKER_DIGEST =
-  '41c8f359d09f34da1a7243e4f2e43c334c71b00127d1251f64b41e4b23892d5e';
+  'd2d8b01ce366cde3cfbbba0c4212e6696483bf428e2d47110dfedb1027b0abcc';
 const ROOT_PACKAGE_MANIFEST_FILE = 'package.json';
 const ROOT_TSCONFIG_FILE = 'tsconfig.json';
 const RUNTIME_PACKAGE_MANIFEST_FILE =
@@ -125,6 +125,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/gpt/gptRequestAction.ts',
   'src/shared/gpt/messageContentText.ts',
   'src/shared/gpt/trinityReasoningPolicy.ts',
+  'src/shared/gpt/arcanosBehavioralProfile.ts',
   'src/shared/gpt/generativeModelPolicyCore.ts',
   'src/shared/gpt/generativeModelPolicyPreviewFixture.ts',
   'src/shared/ios/iosGatewayPreviewFixture.ts',
@@ -211,6 +212,9 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/text/countWords.ts',
   'src/shared/text/intentModeClassifier.ts',
   'src/shared/typeGuards.ts',
+  'src/shared/validation/zodIssues.ts',
+  'src/shared/validation/zodNumberChecks.ts',
+  'src/shared/validation/zodStringChecks.ts',
   'src/start-native-pr-preview.ts',
   'src/transport/http/asyncHandler.ts',
   'src/transport/http/payloadNormalization.ts',
@@ -296,6 +300,13 @@ const FILE_SPECIFIC_EXTERNAL_RUNTIME_IMPORTS = new Map([
   ['src/start-native-pr-preview.ts', new Set(['node:http', 'node:url'])],
 ]);
 const FILE_SPECIFIC_EXTERNAL_IMPORT_BINDINGS = new Map([
+  ...[
+    'src/shared/validation/zodIssues.ts',
+    'src/shared/validation/zodNumberChecks.ts',
+    'src/shared/validation/zodStringChecks.ts',
+  ].map(filePath => [filePath, new Map([
+    ['zod', new Set(['z:z'])],
+  ])]),
   ['src/shared/chatgpt/gamingMcpContract.ts', new Map([
     ['ajv', new Set(['Ajv:Ajv'])],
     ['@arcanos/protocol/chatgptGaming', new Set(['CHATGPT_GAMING_TOOL_NAMES:CHATGPT_GAMING_TOOL_NAMES', 'chatGptGamingSchemas:chatGptGamingSchemas'])],
@@ -833,6 +844,9 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
   ],
 ]);
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
+  ['src/shared/validation/zodIssues.ts', '0baaff406fd2ceb2a0f41aec26a1c333c865f496a3bd912799fdf1257c9004ea'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/validation/zodNumberChecks.ts', '95aa7a56141ba5e6b60f315f406a4739110b6ac43e66b1a1c92bb8023d673858'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/validation/zodStringChecks.ts', 'c93b2370b49f5a0aecb887ba8e647da9340e4a0bcf6d30653093f6af1c252bd1'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gaming/gamingSourceTransportData.ts', '09bf2dc7ee4686b70c98c652158d585bb578c36190cdf0fa2b36186c51dad5c1'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gaming/gamingPublisherExtractionProfileData.ts', '196b35964e27ff396bc5bdf10015700b9f668bad0070a153ce09c135b9153177'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gaming/gamingPreferenceData.ts', '4372c4d9278ea6533a4b53bc60974b465bdeb0313203fd169f3f7c532bfc7cd1'], // gitleaks:allow -- public source semantic SHA-256
@@ -849,7 +863,8 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['scripts/skill-composition-core.mjs', '669365ee5906d523ab1f841d4d25a5086ee8669f152eadfe01e466d939147982'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/chatgpt/gamingCompositionPreviewFixture.ts', '5c66dd4fb92143ea053c59663c845252324fd69e1c4709c47484eeb6e7bf7a45'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/chatgpt/gamingMcpPreviewFixture.ts', '5e408e9b0f7853807a101706a5eddcebbf3aba3c102bcfed041da97c7cfb4dc7'],
-  ['src/shared/gpt/generativeModelPolicyCore.ts', 'c1e29caf983333a351e66e6141ef59758ee45a4a158bb28c6290d9d9887ba1d3'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/gpt/arcanosBehavioralProfile.ts', '2ac9faec4f59794867bbbc700a618812e1b9f81752a3f016044d4704ee770c4f'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/gpt/generativeModelPolicyCore.ts', 'a1bf993ad54ac0a2abd5c1e0a744c9b8e6167164a104e1cb64ef2a61b4784107'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gpt/generativeModelPolicyPreviewFixture.ts', '82268c7fd04fb2b6a236f6bac72ccb5d08ed666cf497541634d96cc73f5c0d2c'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/chatgpt/gamingMcpContract.ts', 'b3c48917eceec6c40bc2b6b59aebbc884c500541f18ecd815fcc9635378b153b'],
   ['packages/protocol/src/chatgptGaming.ts', '2e3c0e5476a9d0c7a1a0e582650b3adc041e37ea9012310891a6b2fa67d4bfd0'],
@@ -876,7 +891,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['src/shared/dag/dagMetricsCore.ts', '218990792ca3d3cb72600c48db1f0a61d8321a6fb6c4be5bee895a88a1babffb'],
   ['src/shared/dag/dagMetricsPreviewFixture.ts', 'a95a64a249b14c04fc90840004ce3138f1e60eba614e2c37ddfa99e484d600a7'],
   ['src/services/actionPlanExecution/canonical.ts', 'b0c24aa5b6d3b588c7970008049bdcacccab8e66cbaa26a51eea49e59811c917'],
-  ['src/shared/security/gptAccessDevice.ts', '4f125ee645d846e9a00a6e3ccd92d26dbcbd3710a2f5cfae445bbc1376bcd100'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/security/gptAccessDevice.ts', 'ad6f55bc4dc633da54928f11b83aea59521b6aec6f935b0c5d4b14423a4b3963'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/security/gptAccessDevicePolicyCore.ts', '82e9adfaba37b14ad163b5f33f75944dc2565e46697d5a89dcdc9c3027724516'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/ios/iosDevicePreviewFixture.ts', '32491af102dc33ef8353eb240dc536088b1d3e3e8e39ae5cf678c78a091c640b'],
   ['src/shared/ios/iosGatewayPreviewFixture.ts', '67babf8ad6b2d7d1e1f7f2131ad3ac4856e27b47c026db525d269e4f07d035f5'],
@@ -889,13 +904,13 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['src/shared/gaming/gamingCurrentnessPreviewFixture.ts', '22f516c4b64365222e3bc703d7825e62e33f652af8e668c5797b3e8e922409f8'],
   ['src/shared/gaming/gamingSourceAcquisitionPreviewFixture.ts', '1c943c7e72b7919ca99db84126517518898e414f1117873eb903f56cb52614a4'],
   ['src/shared/gaming/gamingClearPreviewFixture.ts', '95f6c7697b7df699077a272a7582f3fbaeffc8794b041daa7afa2c6939b10958'],
-  ['src/shared/gaming/gamingClearPolicy.ts', '21481ad43111cbb8b616a753c80d9b9bceb71ba3368389b7eaaa5270f62911e6'],
+  ['src/shared/gaming/gamingClearPolicy.ts', 'bed6293982e868545410464af2ac08b57e87b40bdd95d6a048a2aabd350e278f'],
   ['src/shared/gaming/gamingClearSource.ts', '7384fdcfcefbe91c8e6d69283755de90275f8a68956a26537dc35e1d23bf9b04'],
   ['src/shared/gaming/gamingClearEvidence.ts', '892d00203f2b81386713262bfdd5c679c6ca5de84b669dee41c222da3acafd6a'],
   ['src/shared/gaming/gamingClearAnswerBinding.ts', '2f6d1353e2643ae471705f182415521b1a6548ca484c3e684d4920910f3d0f75'],
   ['src/shared/gaming/gamingHybridPolicyCore.ts', '85fd2d15e08f58a55f65e3bbabd53d56deb6d07a42f54e30eecd8c891150bdb5'],
   ['src/shared/gaming/gamingHybridKnowledgePreviewFixture.ts', 'bb6670ef4eccf7d833855add2c3889662b42b6b40d09e15f982746b30af95c56'],
-  ['src/shared/gaming/gamingHybridContract.ts', 'e1329c497c67d7c2d85326c783f37e7271990c7325f35e31da6209d6ffd8f9ef'],
+  ['src/shared/gaming/gamingHybridContract.ts', '18286d24bdc2041e7af036604d88b33224921ff447912e9236ebda5c0b312aa6'],
   ['src/shared/gaming/gamingCurrentnessAdapters.ts', '92dd6dfb8d84ab16f558964dd5ab900d2087fb12018871ecf27dcd740169e77f'],
   ['src/shared/gaming/gamingGuideApplicability.ts', '5e9ac01cba1327446d300818cd1d6cecb697c994af918508fead6df87b9a4361'],
   ['src/shared/gaming/gamingFreshnessCore.ts', 'e838f431f32fc517790b6f928402a3da096b8d40feabd720054a298b331a675d'],
@@ -1118,7 +1133,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/gpt/trinityReasoningPolicy.ts',
-    '85c8bee9ad1e39123e42d221c0ef82617afb65ed37fc0e6e457b7d8a03e506a7',
+    '971092d70db18e85d12cf3b775cb05fd5d8a804e901213d7d85ef16f8de549cf',
   ],
   [
     'src/services/queuedJobCompletionPolling.ts',

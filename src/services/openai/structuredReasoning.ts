@@ -1,4 +1,6 @@
 import type OpenAI from 'openai';
+import type { ResponseCreateParamsNonStreaming } from 'openai/resources/responses/responses';
+import { prepareBehavioralProfileRequest } from './behavioralProfile.js';
 import { resolveGenerativeModel } from '@services/openai/credentialProvider.js';
 import { ensureModelMatchesExpectation } from '@services/openai/chatFallbacks.js';
 import type { RuntimeBudget } from '@arcanos/runtime/runtimeBudget';
@@ -152,7 +154,16 @@ export async function runStructuredReasoning(
     && resolveOpenAIModelCapabilities(model).normalizeReasoningRequests
     ? normalizeOpenAIModelReasoningEffort(model, options.reasoningEffort)
     : options.reasoningEffort;
-  return runStructuredReasoningGeneric(client, {
+  // Keep backend-owned policy outside the shared package's public schema contract.
+  const profiledClient = {
+    responses: {
+      create: (
+        payload: ResponseCreateParamsNonStreaming,
+        requestOptions?: Parameters<OpenAI['responses']['create']>[1]
+      ) => client.responses.create(prepareBehavioralProfileRequest(payload), requestOptions)
+    }
+  } as unknown as OpenAI;
+  return runStructuredReasoningGeneric(profiledClient, {
     model,
     prompt,
     budget,

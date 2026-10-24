@@ -1,14 +1,15 @@
 import express from 'express';
 import { z } from 'zod';
+import { legacyDatetime, utf16MaxLength } from '@shared/validation/zodStringChecks.js';
 import { confirmGate } from "@transport/http/middleware/confirmGate.js";
 import { HEARTBEAT_RESPONSE_TEMPLATE } from "@platform/runtime/serverMessages.js";
 import { logger } from '@platform/logging/structuredLogging.js';
 import { heartbeatHttpBoundary } from '@services/controlPlane/heartbeatHttpBoundary.js';
 import { sendBadRequest } from '@shared/http/index.js';
 
-const boundedText = (maxLength: number) => z.string().min(1).max(maxLength).regex(/^[\x20-\x7E]+$/u);
+const boundedText = (maxLength: number) => z.string().min(1).max(maxLength).check(utf16MaxLength(maxLength)).regex(/^[\x20-\x7E]+$/u);
 const heartbeatSchema = z.object({
-  timestamp: z.string().max(64).datetime({ offset: true }),
+  timestamp: z.string().max(64).check(utf16MaxLength(64)).check(legacyDatetime({ offset: true })),
   mode: boundedText(64),
   payload: z.object({
     write_override: z.boolean(),

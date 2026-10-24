@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { formatZodIssues } from '@shared/validation/zodIssues.js';
 import { emitSafetyAuditEvent } from './auditEvents.js';
 
 export class AiOutputBoundaryError extends Error {
@@ -46,20 +47,21 @@ export function parseModelOutputWithSchema<T>(
   const validated = schema.safeParse(parsedUnknown);
   //audit Assumption: schema validation is mandatory trust boundary; failure risk: unsafe fields reaching execution paths; expected invariant: only schema-valid payload proceeds; handling strategy: fail closed unless explicit fallback enabled.
   if (!validated.success) {
+    const issues = formatZodIssues(validated.error, parsedUnknown, schema);
     if (options.allowFallback && options.fallbackValue !== undefined) {
       emitSafetyAuditEvent({
         event: 'ai_output_fallback_schema',
         severity: 'warn',
         details: {
           source: options.source,
-          issues: validated.error.issues.map(issue => issue.message)
+          issues: issues.map(issue => issue.message)
         }
       });
       return options.fallbackValue;
     }
 
     throw new AiOutputBoundaryError(
-      `AI output failed schema validation: ${validated.error.issues.map(issue => issue.message).join('; ')}`,
+      `AI output failed schema validation: ${issues.map(issue => issue.message).join('; ')}`,
       options.source
     );
   }

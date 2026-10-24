@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { legacyInteger } from '@shared/validation/zodNumberChecks.js';
+import { utf16MaxLength } from '@shared/validation/zodStringChecks.js';
 import type {
   TrinityAnswerMode,
   TrinityRequestedVerbosity,
@@ -29,16 +31,16 @@ const asyncAskAuditFlagSchema = z.object({
 
 const queuedAskJobInputSchema = z.object({
   prompt: z.string().trim().min(1),
-  sessionId: z.string().trim().min(1).max(100).optional(),
-  overrideAuditSafe: z.string().trim().min(1).max(50).optional(),
+  sessionId: z.string().trim().min(1).max(100).check(utf16MaxLength(100)).optional(),
+  overrideAuditSafe: z.string().trim().min(1).max(50).check(utf16MaxLength(50)).optional(),
   cognitiveDomain: cognitiveDomainSchema.optional(),
   requestedVerbosity: z.enum(['minimal', 'normal', 'detailed']).optional(),
-  maxWords: z.number().int().positive().max(2000).nullable().optional(),
+  maxWords: z.number().check(...legacyInteger()).positive().max(2000).nullable().optional(),
   answerMode: z.enum(['direct', 'explained', 'audit', 'debug']).optional(),
   debugPipeline: z.boolean().optional(),
   strictUserVisibleOutput: z.boolean().optional(),
   clientContext: clientContextSchema.nullable().optional(),
-  endpointName: z.string().trim().max(64).optional(),
+  endpointName: z.string().trim().max(64).check(utf16MaxLength(64)).optional(),
   auditFlag: asyncAskAuditFlagSchema.optional(),
   previewChaosHook: previewAskChaosHookSchema.optional()
 }).passthrough();

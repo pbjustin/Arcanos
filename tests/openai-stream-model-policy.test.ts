@@ -5,10 +5,16 @@ import { resetCredentialCache } from '../src/services/openai/credentialProvider.
 import { createCentralizedCompletion } from '../src/services/openai/chatFlow/index.js';
 import { executeSimulationRequest } from '../src/services/arcanos-sim.js';
 import { runtime } from '../src/services/openaiRuntime.js';
+import {
+  createAiExecutionContext,
+  runWithAiExecutionContext,
+} from '../src/services/openai/aiExecutionContext.js';
+import { getTelemetrySnapshot, resetTelemetry } from '../src/platform/logging/telemetry.js';
 
 const authority = 'ft:gpt-4.1:synthetic:stream-Authority';
 const authorityKeys = ['FINETUNED_MODEL_ID', 'RAILWAY_FINETUNED_MODEL_ID', 'FINE_TUNED_MODEL_ID', 'AI_MODEL', 'OPENAI_MODEL', 'RAILWAY_OPENAI_MODEL'];
-const envKeys = [...authorityKeys, 'OPENAI_API_KEY', 'GPT5_MODEL', 'TRINITY_FINAL_MODEL'];
+const envKeys = [...authorityKeys, 'OPENAI_API_KEY', 'GPT5_MODEL', 'TRINITY_FINAL_MODEL',
+  'ARCANOS_GPT61_AUTHORITY_ENABLED', 'ARCANOS_GPT61_AUTHORITY_MODEL', 'ARCANOS_BEHAVIORAL_PROFILE_ID', 'ARCANOS_PROCESS_KIND'];
 const messages = [{ role: 'user' as const, content: 'Synthetic streaming prompt' }];
 let savedEnv: Record<string, string | undefined>;
 let sentPayloads: Array<Record<string, unknown>>;
@@ -65,6 +71,7 @@ beforeEach(() => {
   sentPayloads = [];
   transportSignals = [];
   sessionIds = [];
+  resetTelemetry();
   const createSession = runtime.createSession.bind(runtime);
   jest.spyOn(runtime, 'createSession').mockImplementation(() => {
     const id = createSession();
@@ -90,6 +97,84 @@ afterEach(() => {
 });
 
 describe('centralized final streaming uses the actual policy and synthetic SDK transport', () => {
+  it('preserves migrated provider snapshot identity without charging another call', async () => {
+    Object.assign(process.env, {
+      ARCANOS_GPT61_AUTHORITY_ENABLED: 'true', ARCANOS_GPT61_AUTHORITY_MODEL: 'gpt-6.1-sol',
+      ARCANOS_BEHAVIORAL_PROFILE_ID: 'arcanos-behavior/v1', ARCANOS_PROCESS_KIND: 'web'
+    });
+    const actualModel = 'gpt-6.1-sol-2026-10-01';
+    const events = [metadataEvent('response.created', actualModel), deltaEvent,
+      metadataEvent('response.completed', actualModel)];
+    syntheticFetch.mockImplementation(async (_input, init) => {
+      recordTransport(init);
+      return sseResponse(events);
+    });
+    const context = createAiExecutionContext({
+      sourceType: 'route', sourceName: 'synthetic-stream-snapshot', budget: { maxCalls: 1 }
+    });
+    const opened = await runWithAiExecutionContext(context, async () => {
+      const opened = await stream({ max_tokens: 64 });
+      expect(context.totals.calls).toBe(1);
+      return opened;
+    });
+    // Consumption may occur after the creating request's async context returns.
+    expect(await collect(opened)).toEqual(events);
+    expect(sentPayloads).toHaveLength(1);
+    expect(sentPayloads[0]).toMatchObject({
+      model: 'gpt-6.1-sol', stream: true,
+      metadata: { arcanos_behavioral_profile: 'arcanos-behavior/v1', arcanos_service: 'web' }
+    });
+    expect(context.totals.calls).toBe(1);
+    expect(context.operationCounts).toEqual({ responses_create: 1 });
+    expect(context.models).toEqual({ [actualModel]: 1 });
+    expect(getTelemetrySnapshot().traces.recentEvents.filter(event => event.name === 'openai.stream.model_validated'))
+      .toEqual([expect.objectContaining({ attributes: {
+        model: actualModel, requestedModel: 'gpt-6.1-sol',
+        behavioralProfileId: 'arcanos-behavior/v1', behavioralProfileService: 'web'
+      } })]);
+  });
+
+  it('rejects later metadata without attributing the call to an untrusted model', async () => {
+    Object.assign(process.env, {
+      ARCANOS_GPT61_AUTHORITY_ENABLED: 'true', ARCANOS_GPT61_AUTHORITY_MODEL: 'gpt-6.1-sol',
+      ARCANOS_BEHAVIORAL_PROFILE_ID: 'arcanos-behavior/v1', ARCANOS_PROCESS_KIND: 'web'
+    });
+    const actualModel = 'gpt-6.1-sol-2026-10-01';
+    const firstEvent = metadataEvent('response.created', actualModel);
+    syntheticFetch.mockImplementation(async (_input, init) => {
+      recordTransport(init);
+      return sseResponse([firstEvent, metadataEvent('response.in_progress', 'gpt-6-luna'), deltaEvent]);
+    });
+    const context = createAiExecutionContext({
+      sourceType: 'route', sourceName: 'synthetic-stream-late-substitution', budget: { maxCalls: 1 }
+    });
+    const received: unknown[] = [];
+    await expect(runWithAiExecutionContext(context, async () => collect(await stream(), received)))
+      .rejects.toThrow(/model/);
+    expect(received).toEqual([firstEvent]);
+    expect(context.models).toEqual({ [actualModel]: 1 });
+    expect(context.totals.calls).toBe(1);
+    expect(transportSignals[0].aborted).toBe(true);
+  });
+
+  it('retains the opened call budget when cancelled before the first read', async () => {
+    const context = createAiExecutionContext({
+      sourceType: 'route', sourceName: 'synthetic-unread-stream-budget', budget: { maxCalls: 1 }
+    });
+    await runWithAiExecutionContext(context, async () => {
+      const iterator = (await stream())[Symbol.asyncIterator]();
+      await iterator.return?.();
+      await expect(stream()).rejects.toThrow('AI call budget exceeded');
+    });
+    expect(sentPayloads).toHaveLength(1);
+    expect(context.totals.calls).toBe(1);
+    expect(context.operationCounts).toEqual({ responses_create: 1 });
+    expect(context.models).toEqual({ [authority]: 1 });
+    expect(transportSignals[0].aborted).toBe(true);
+    expect(getTelemetrySnapshot().traces.recentEvents.filter(event => event.name === 'openai.stream.model_validated'))
+      .toEqual([]);
+  });
+
   it('selects configured authority and forwards the existing Responses events unchanged', async () => {
     const events = [metadataEvent(), deltaEvent, metadataEvent('response.completed')];
     expect(await collect(await stream({ max_tokens: 321, model: authority }))).toEqual(events);

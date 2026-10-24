@@ -7,6 +7,8 @@
  */
 
 import { z } from 'zod';
+import { legacyInteger } from '@shared/validation/zodNumberChecks.js';
+import { utf16MaxLength } from '@shared/validation/zodStringChecks.js';
 
 /**
  * Client context captured from frontend hints.
@@ -14,20 +16,20 @@ import { z } from 'zod';
  * render the exact context that was attached to a request.
  */
 export const clientContextSchema = z.object({
-  basePrompt: z.string().trim().max(6000, 'Base prompt exceeds maximum length of 6000 characters').optional(),
+  basePrompt: z.string().trim().max(6000, 'Base prompt exceeds maximum length of 6000 characters').check(utf16MaxLength(6000, 'Base prompt exceeds maximum length of 6000 characters')).optional(),
   normalizedPrompt: z
     .string()
     .trim()
-    .max(8000, 'Normalized prompt exceeds maximum length of 8000 characters')
+    .max(8000, 'Normalized prompt exceeds maximum length of 8000 characters').check(utf16MaxLength(8000, 'Normalized prompt exceeds maximum length of 8000 characters'))
     .optional(),
   routingDirectives: z.array(z.string()).max(50, 'Too many routing directives provided').optional(),
   flags: z
     .object({
-      domain: z.string().trim().max(120, 'Domain hint cannot exceed 120 characters').optional(),
+      domain: z.string().trim().max(120, 'Domain hint cannot exceed 120 characters').check(utf16MaxLength(120, 'Domain hint cannot exceed 120 characters')).optional(),
       useRAG: z.boolean().optional(),
       useHRC: z.boolean().optional(),
       metadataKeys: z.array(z.string().trim()).max(50, 'Too many metadata keys provided').optional(),
-      sourceField: z.string().trim().max(50, 'Source field hint cannot exceed 50 characters').optional(),
+      sourceField: z.string().trim().max(50, 'Source field hint cannot exceed 50 characters').check(utf16MaxLength(50, 'Source field hint cannot exceed 50 characters')).optional(),
       httpMethodIntent: z
         .object({
           method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
@@ -49,7 +51,7 @@ const stringField = z
   .string()
   .trim()
   .min(1, 'Input text must include at least one character')
-  .max(6000, 'Input text exceeds maximum length of 6000 characters');
+  .max(6000, 'Input text exceeds maximum length of 6000 characters').check(utf16MaxLength(6000, 'Input text exceeds maximum length of 6000 characters'));
 
 const requestedVerbositySchema = z.enum(['minimal', 'normal', 'detailed']);
 const answerModeSchema = z.enum(['direct', 'explained', 'audit', 'debug']);
@@ -69,7 +71,7 @@ export const aiRequestSchema = z
     sessionId: z
       .string()
       .trim()
-      .max(100, 'Session identifier cannot exceed 100 characters')
+      .max(100, 'Session identifier cannot exceed 100 characters').check(utf16MaxLength(100, 'Session identifier cannot exceed 100 characters'))
       .optional(),
     universeId: z
       .string()
@@ -82,12 +84,12 @@ export const aiRequestSchema = z
     overrideAuditSafe: z
       .string()
       .trim()
-      .max(50, 'Override token cannot exceed 50 characters')
+      .max(50, 'Override token cannot exceed 50 characters').check(utf16MaxLength(50, 'Override token cannot exceed 50 characters'))
       .optional(),
     requestedVerbosity: requestedVerbositySchema.optional(),
     requested_verbosity: requestedVerbositySchema.optional(),
-    maxWords: z.number().int().positive().max(2000).nullable().optional(),
-    max_words: z.number().int().positive().max(2000).nullable().optional(),
+    maxWords: z.number().check(...legacyInteger()).positive().max(2000).nullable().optional(),
+    max_words: z.number().check(...legacyInteger()).positive().max(2000).nullable().optional(),
     answerMode: answerModeSchema.optional(),
     answer_mode: answerModeSchema.optional(),
     debugPipeline: z.boolean().optional(),
@@ -95,7 +97,7 @@ export const aiRequestSchema = z
     strictUserVisibleOutput: z.boolean().optional(),
     strict_user_visible_output: z.boolean().optional(),
     clientContext: clientContextSchema.optional(),
-    metadata: z.record(z.unknown()).optional()
+    metadata: z.record(z.string(), z.unknown()).optional()
   })
   .refine(
     data =>
@@ -189,7 +191,7 @@ export type ErrorResponseDTO = z.infer<typeof errorResponseSchema>;
  */
 export const daemonPendingActionSchema = z.object({
   daemon: z.string(),
-  payload: z.record(z.unknown()),
+  payload: z.record(z.string(), z.unknown()),
   summary: z.string()
 });
 

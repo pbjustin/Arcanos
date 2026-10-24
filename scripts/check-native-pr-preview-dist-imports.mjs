@@ -34,6 +34,52 @@ export const NATIVE_PR_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
   }),
 ]);
 
+// Validation compatibility reaches only the reviewed pure Zod helpers. Pin the
+// emitted leaves and their direct consumers without admitting runtime adapters.
+export const ZOD_VALIDATION_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
+  ...[
+    'dist/shared/validation/zodIssues.js',
+    'dist/shared/validation/zodNumberChecks.js',
+    'dist/shared/validation/zodStringChecks.js',
+  ].map(filePath => Object.freeze({
+    filePath,
+    imports: Object.freeze({ zod: Object.freeze(['z:z']) }),
+  })),
+  Object.freeze({
+    filePath: 'dist/shared/http/validation.js',
+    imports: Object.freeze({
+      './errors.js': Object.freeze(['sendBadRequest:sendBadRequest', 'sendValidationError:sendValidationError']),
+      '../validation/zodIssues.js': Object.freeze(['formatZodIssues:formatZodIssues']),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/shared/gaming/gamingClearPolicy.js',
+    imports: Object.freeze({
+      'node:crypto': Object.freeze(['createHash:createHash']),
+      zod: Object.freeze(['z:z']),
+      '../validation/zodStringChecks.js': Object.freeze(['legacyDatetime:legacyDatetime', 'utf16MaxLength:utf16MaxLength']),
+      './gamingFreshnessCore.js': Object.freeze(['classifyGamingQuestionFreshness:classifyGamingQuestionFreshness']),
+      './gamingFreshnessDisposition.js': Object.freeze(['resolveGamingFreshnessDisposition:resolveGamingFreshnessDisposition']),
+      './gamingGameRegistry.js': Object.freeze(['GAMING_GAME_REGISTRY:GAMING_GAME_REGISTRY']),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/shared/gaming/gamingHybridContract.js',
+    imports: Object.freeze({
+      zod: Object.freeze(['z:z']),
+      '../validation/zodNumberChecks.js': Object.freeze(['legacyInteger:legacyInteger']),
+      '../validation/zodStringChecks.js': Object.freeze(['legacyUuid:legacyUuid', 'utf16MaxLength:utf16MaxLength']),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/shared/security/gptAccessDevice.js',
+    imports: Object.freeze({
+      zod: Object.freeze(['z:z']),
+      '../validation/zodStringChecks.js': Object.freeze(['legacyUuid:legacyUuid', 'utf16MaxLength:utf16MaxLength']),
+    }),
+  }),
+]);
+
 // This sealed fixture reaches only the production honesty functions and their
 // three pure helpers. Check every emitted edge, including the leaf modules.
 export const TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
@@ -108,6 +154,12 @@ export const GENERATIVE_MODEL_POLICY_PREVIEW_DIST_IMPORT_CONTRACT = Object.freez
   }),
   Object.freeze({
     filePath: 'dist/shared/gpt/generativeModelPolicyCore.js',
+    imports: Object.freeze({
+      './arcanosBehavioralProfile.js': Object.freeze(['isArcanosBehavioralProfileId:isArcanosBehavioralProfileId']),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/shared/gpt/arcanosBehavioralProfile.js',
     imports: Object.freeze({}),
   }),
 ]);
@@ -351,7 +403,8 @@ export async function findNativePrPreviewDistImportViolations({
   for (const contract of [...TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT,
     ...PLUGIN_MIGRATION_PREVIEW_DIST_IMPORT_CONTRACT, ...GAMING_MCP_PREVIEW_DIST_IMPORT_CONTRACT,
     ...GAMING_COMPOSITION_PREVIEW_DIST_IMPORT_CONTRACT,
-    ...GENERATIVE_MODEL_POLICY_PREVIEW_DIST_IMPORT_CONTRACT]) {
+    ...GENERATIVE_MODEL_POLICY_PREVIEW_DIST_IMPORT_CONTRACT,
+    ...ZOD_VALIDATION_PREVIEW_DIST_IMPORT_CONTRACT]) {
     try {
       const sourceText = await fs.readFile(path.join(repositoryRoot, contract.filePath), 'utf8');
       violations.push(...findTutorHonestyPreviewDistImportSourceViolations(contract, sourceText));

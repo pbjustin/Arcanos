@@ -1,18 +1,16 @@
 import type { NextFunction, Request, Response, RequestHandler } from 'express';
+import type { z } from 'zod';
 import { sendBadRequest, sendValidationError } from './errors.js';
+import { formatZodIssues } from '../validation/zodIssues.js';
 
-function formatZodIssues(issues: Array<{ path: (string | number)[]; message: string }>): string[] {
-  return issues.map((issue) => {
-    const path = issue.path.length > 0 ? issue.path.join('.') : 'root';
+function formatValidationDetails(error: Pick<z.ZodError, 'issues'>, input: unknown, schema: ZodSchemaLike<unknown>): string[] {
+  return formatZodIssues(error, input, schema as z.ZodType).map((issue) => {
+    const path = issue.path.length > 0 ? issue.path.map(String).join('.') : 'root';
     return `${path}: ${issue.message}`;
   });
 }
 
-type ZodSchemaLike<T> = {
-  safeParse: (input: unknown) =>
-    | { success: true; data: T }
-    | { success: false; error: { issues: Array<{ path: (string | number)[]; message: string }> } };
-};
+type ZodSchemaLike<T> = Pick<z.ZodType<T>, 'safeParse'>;
 
 
 export interface ValidateOptions {
@@ -35,7 +33,7 @@ export function validateBody<T>(schema: ZodSchemaLike<T>, options: ValidateOptio
   return (req: Request, res: Response, next: NextFunction) => {
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) {
-      const details = formatZodIssues(parsed.error.issues);
+      const details = formatValidationDetails(parsed.error, req.body, schema);
       if (options.errorCode) {
         sendBadRequest(res, options.errorCode, options.includeDetails ? details : undefined);
         return;
@@ -53,7 +51,7 @@ export function validateParams<T>(schema: ZodSchemaLike<T>, options: ValidateOpt
   return (req: Request, res: Response, next: NextFunction) => {
     const parsed = schema.safeParse(req.params);
     if (!parsed.success) {
-      const details = formatZodIssues(parsed.error.issues);
+      const details = formatValidationDetails(parsed.error, req.params, schema);
       if (options.errorCode) {
         sendBadRequest(res, options.errorCode, options.includeDetails ? details : undefined);
         return;
@@ -71,7 +69,7 @@ export function validateQuery<T>(schema: ZodSchemaLike<T>, options: ValidateOpti
   return (req: Request, res: Response, next: NextFunction) => {
     const parsed = schema.safeParse(req.query);
     if (!parsed.success) {
-      const details = formatZodIssues(parsed.error.issues);
+      const details = formatValidationDetails(parsed.error, req.query, schema);
       if (options.errorCode) {
         sendBadRequest(res, options.errorCode, options.includeDetails ? details : undefined);
         return;

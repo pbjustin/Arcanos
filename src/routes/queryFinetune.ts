@@ -1,5 +1,6 @@
 import { Request, Response, Router } from 'express';
 import { z } from 'zod';
+import { formatZodIssues } from '@shared/validation/zodIssues.js';
 
 import { getConfiguredFineTune } from '../config/openai.js';
 import { runTrinity } from '../trinity/trinity.js';
@@ -46,7 +47,7 @@ export async function queryFinetuneHandler(req: Request, res: Response) {
     //audit Assumption: `/query-finetune` should reject invalid payloads before invoking any model path; failure risk: malformed requests consume model budget or throw opaque 500s; expected invariant: invalid schema returns HTTP 400 with deterministic details; handling strategy: validate eagerly with Zod and stop before route execution telemetry begins.
     return res.status(400).json({
       error: 'invalid request schema',
-      details: parsedRequest.error.issues.map(issue => issue.message)
+      details: formatZodIssues(parsedRequest.error, req.body, queryFinetuneRequestSchema).map(issue => issue.message)
     });
   }
 

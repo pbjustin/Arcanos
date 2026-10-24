@@ -9,6 +9,8 @@ import { extractResponseOutputText } from '@arcanos/openai/responseParsing';
 import { getDefaultModel } from '@services/openai.js';
 import { ensureModelMatchesExpectation } from '@services/openai/chatFallbacks.js';
 import { getTokenParameter } from '@shared/tokenParameterHelper.js';
+import { resolveOpenAIModelCapabilities } from '@shared/gpt/trinityReasoningPolicy.js';
+import { prepareBehavioralProfileRequest } from '@services/openai/behavioralProfile.js';
 
 import {
   buildInitialToolLoopTranscript,
@@ -263,6 +265,9 @@ export async function runAskToolMode<TToolName extends string>({
   }
 
   if (!responsesCreate && chatCompletionsCreate) {
+    if (resolveOpenAIModelCapabilities(model).family === 'gpt-6.1-sol') {
+      throw new Error('GPT-6.1 Sol tool requests require the Responses API.');
+    }
     const response = await chatCompletionsCreate({
       model,
       messages: [
@@ -310,7 +315,7 @@ export async function runAskToolMode<TToolName extends string>({
 
   const storeResponses = shouldStoreOpenAIResponses();
   let toolLoopTranscript: ResponseInputItem[] = buildInitialToolLoopTranscript(prompt);
-  let response = await responsesCreate({
+  let response = await responsesCreate(prepareBehavioralProfileRequest({
     model,
     store: storeResponses,
     instructions,
@@ -318,7 +323,7 @@ export async function runAskToolMode<TToolName extends string>({
     tools: responsesTools as unknown as ResponseCreateParamsNonStreaming['tools'],
     tool_choice: 'auto',
     max_output_tokens: maxOutputTokens,
-  });
+  }));
   ensureModelMatchesExpectation(response as { model?: unknown }, model);
   let lastText = extractResponseOutputText(response, '');
   const executionSummaries: string[] = [];
@@ -375,7 +380,7 @@ export async function runAskToolMode<TToolName extends string>({
       functionCallOutputs,
     });
     toolLoopTranscript = continuationRequest.nextTranscript;
-    response = await responsesCreate(continuationRequest.request);
+    response = await responsesCreate(prepareBehavioralProfileRequest(continuationRequest.request));
     ensureModelMatchesExpectation(response as { model?: unknown }, model);
     lastText = extractResponseOutputText(response, lastText);
   }

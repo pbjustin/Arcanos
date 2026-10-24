@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import { z } from 'zod';
+import { legacyDatetime, utf16MaxLength } from '@shared/validation/zodStringChecks.js';
 import { sendBadRequestPayload, sendNotFoundPayload } from '@shared/http/index.js';
 import {
   getActiveQuarantines,
@@ -44,14 +45,15 @@ const requireSafetyQuarantineReleaseScope = requireControlPlaneHttpScopes(
   'safety.quarantine_release_authorization.denied'
 );
 const safetyQuarantineReleaseBodySchema = z.object({
-  confirmation: z.string().max(264).optional(),
-  note: z.string().trim().min(1).max(256).optional(),
+  confirmation: z.string().max(264).check(utf16MaxLength(264)).optional(),
+  note: z.string().trim().min(1).max(256).check(utf16MaxLength(256)).optional(),
 }).strict();
 const safetyQuarantineIdSchema = z.string()
   .min(1)
   .max(256)
+  .check(utf16MaxLength(256))
   .regex(/^[A-Za-z0-9._~-]+$/u);
-const publicSafetyTimestampSchema = z.string().max(40).datetime({ offset: true });
+const publicSafetyTimestampSchema = z.string().max(40).check(utf16MaxLength(40)).check(legacyDatetime({ offset: true }));
 
 function normalizePublicSafetyTimestamp(value: string | null): string | null {
   const parsed = publicSafetyTimestampSchema.safeParse(value);

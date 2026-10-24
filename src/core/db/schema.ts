@@ -6,6 +6,8 @@
  */
 
 import { z } from 'zod';
+import { legacyInteger } from '@shared/validation/zodNumberChecks.js';
+import { legacyUuid } from '@shared/validation/zodStringChecks.js';
 import type { Pool } from 'pg';
 import { redactString } from '@shared/redaction.js';
 import { getPool, isDatabaseConnected } from './client.js';
@@ -44,7 +46,7 @@ export const PostgreSQLBigintDecimalSchema = z
 export const MemoryEntrySchema = z.object({
   id: z.number(),
   key: z.string(),
-  value: z.unknown(),
+  value: z.unknown().optional(),
   expires_at: z.date().nullable().optional(),
   created_at: z.date(),
   updated_at: z.date()
@@ -56,7 +58,7 @@ export const ExecutionLogSchema = z.object({
   timestamp: z.date(),
   level: z.string(),
   message: z.string(),
-  metadata: z.unknown()
+  metadata: z.unknown().optional()
 });
 
 export const JobDataSchema = z.object({
@@ -65,16 +67,16 @@ export const JobDataSchema = z.object({
   job_type: z.string(),
   status: z.string(),
   claim_generation: PostgreSQLBigintDecimalSchema,
-  input: z.unknown(),
+  input: z.unknown().optional(),
   output: z.unknown().optional(),
   error_message: z.string().optional(),
-  retry_count: z.number().int().optional(),
-  max_retries: z.number().int().optional(),
+  retry_count: z.number().check(...legacyInteger()).optional(),
+  max_retries: z.number().check(...legacyInteger()).optional(),
   next_run_at: z.date().optional(),
   started_at: z.date().optional(),
   last_heartbeat_at: z.date().optional(),
   lease_expires_at: z.date().optional(),
-  priority: z.number().int().optional(),
+  priority: z.number().check(...legacyInteger()).optional(),
   last_worker_id: z.string().nullable().optional(),
   stats_worker_id: z.string().nullable().optional(),
   correlation_id: z.string().nullable().optional(),
@@ -98,7 +100,7 @@ export const ReasoningLogSchema = z.object({
   timestamp: z.date(),
   input: z.string(),
   output: z.string(),
-  metadata: z.unknown()
+  metadata: z.unknown().optional()
 });
 
 export const RagDocSchema = z.object({
@@ -106,7 +108,7 @@ export const RagDocSchema = z.object({
   url: z.string(),
   content: z.string(),
   embedding: z.array(z.number()),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   created_at: z.date().optional(),
   updated_at: z.date().optional()
 });
@@ -116,7 +118,7 @@ export const BackstageNotionAuthoritySchema = z.enum(['postgres', 'notion']);
 export const BackstageNotionUniverseHeadSchema = z.object({
   universe_id: z.string(),
   authority: BackstageNotionAuthoritySchema,
-  active_snapshot_id: z.string().uuid().nullable(),
+  active_snapshot_id: z.string().check(legacyUuid()).nullable(),
   activated_at: z.date().nullable(),
   last_verified_at: z.date().nullable(),
   created_at: z.date(),
@@ -124,76 +126,76 @@ export const BackstageNotionUniverseHeadSchema = z.object({
 });
 
 export const BackstageNotionSnapshotSchema = z.object({
-  id: z.string().uuid(),
+  id: z.string().check(legacyUuid()),
   universe_id: z.string(),
-  root_page_id: z.string().uuid(),
+  root_page_id: z.string().check(legacyUuid()),
   manifest_hash: z.string().regex(/^[0-9a-f]{64}$/u),
   embedding_model: z.string(),
-  page_count: z.number().int().positive(),
-  chunk_count: z.number().int().positive(),
+  page_count: z.number().check(...legacyInteger()).positive(),
+  chunk_count: z.number().check(...legacyInteger()).positive(),
   source_max_edited_at: z.date().nullable(),
   sync_holder_id: z.string(),
   created_at: z.date()
 });
 
 export const BackstageNotionSnapshotPageSchema = z.object({
-  snapshot_id: z.string().uuid(),
+  snapshot_id: z.string().check(legacyUuid()),
   universe_id: z.string(),
-  page_id: z.string().uuid(),
-  parent_page_id: z.string().uuid().nullable(),
+  page_id: z.string().check(legacyUuid()),
+  parent_page_id: z.string().check(legacyUuid()).nullable(),
   title: z.string(),
   canonical_url: z.string().nullable(),
   content_hash: z.string().regex(/^[0-9a-f]{64}$/u),
   markdown: z.string(),
   source_last_edited_at: z.date().nullable(),
-  depth: z.number().int().nonnegative(),
+  depth: z.number().check(...legacyInteger()).nonnegative(),
   path: z.array(z.string()),
-  metadata: z.record(z.unknown()),
+  metadata: z.record(z.string(), z.unknown()),
   created_at: z.date()
 });
 
 export const BackstageNotionSnapshotChunkSchema = z.object({
   id: z.string().regex(/^[0-9a-f]{64}$/u),
-  snapshot_id: z.string().uuid(),
+  snapshot_id: z.string().check(legacyUuid()),
   universe_id: z.string(),
-  page_id: z.string().uuid(),
-  ordinal: z.number().int().nonnegative(),
+  page_id: z.string().check(legacyUuid()),
+  ordinal: z.number().check(...legacyInteger()).nonnegative(),
   content_hash: z.string().regex(/^[0-9a-f]{64}$/u),
   content: z.string(),
-  code_points: z.number().int().positive(),
+  code_points: z.number().check(...legacyInteger()).positive(),
   embedding_model: z.string(),
   embedding: z.array(z.number()),
   heading_path: z.array(z.string()),
-  metadata: z.record(z.unknown()),
+  metadata: z.record(z.string(), z.unknown()),
   created_at: z.date()
 });
 
 export const BackstageNotionSyncLeaseSchema = z.object({
   universe_id: z.string(),
   holder_id: z.string(),
-  lease_token: z.string().uuid(),
+  lease_token: z.string().check(legacyUuid()),
   acquired_at: z.date(),
   expires_at: z.date()
 });
 
 export const BackstageNotionLatestSyncAttemptSchema = z.object({
   universe_id: z.string(),
-  attempt_id: z.string().uuid(),
+  attempt_id: z.string().check(legacyUuid()),
   attempt_generation: PostgreSQLBigintDecimalSchema,
   started_at: z.date(),
   completed_at: z.date().nullable(),
   outcome: z.enum(BACKSTAGE_NOTION_SYNC_ATTEMPT_OUTCOMES),
   failure_phase: z.enum(BACKSTAGE_NOTION_SYNC_FAILURE_PHASES).nullable(),
   failure_reason: z.enum(BACKSTAGE_NOTION_SYNC_FAILURE_REASONS).nullable(),
-  pages_discovered: z.number().int().nonnegative().max(1_000_000),
-  pages_fetched: z.number().int().nonnegative().max(1_000_000),
-  blocks_fetched: z.number().int().nonnegative().max(1_000_000),
-  chunks_produced: z.number().int().nonnegative().max(1_000_000),
-  chunks_embedded: z.number().int().nonnegative().max(1_000_000),
+  pages_discovered: z.number().check(...legacyInteger()).nonnegative().max(1_000_000),
+  pages_fetched: z.number().check(...legacyInteger()).nonnegative().max(1_000_000),
+  blocks_fetched: z.number().check(...legacyInteger()).nonnegative().max(1_000_000),
+  chunks_produced: z.number().check(...legacyInteger()).nonnegative().max(1_000_000),
+  chunks_embedded: z.number().check(...legacyInteger()).nonnegative().max(1_000_000),
   candidate_snapshot_created: z.boolean(),
   candidate_snapshot_validated: z.boolean(),
   candidate_snapshot_activated: z.boolean(),
-  activated_snapshot_id: z.string().uuid().nullable(),
+  activated_snapshot_id: z.string().check(legacyUuid()).nullable(),
   updated_at: z.date(),
 });
 
@@ -202,7 +204,7 @@ export const SessionRecordSchema = z.object({
   label: z.string(),
   tag: z.string().nullable().optional(),
   memory_type: z.string(),
-  payload: z.unknown(),
+  payload: z.unknown().optional(),
   transcript_summary: z.string().nullable().optional(),
   audit_trace_id: z.string().nullable().optional(),
   created_at: z.date(),
@@ -212,8 +214,8 @@ export const SessionRecordSchema = z.object({
 export const SessionVersionRecordSchema = z.object({
   id: z.string(),
   session_id: z.string(),
-  version_number: z.number().int(),
-  payload: z.unknown(),
+  version_number: z.number().check(...legacyInteger()),
+  payload: z.unknown().optional(),
   created_at: z.date()
 });
 

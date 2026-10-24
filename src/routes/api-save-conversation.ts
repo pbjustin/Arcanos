@@ -1,5 +1,8 @@
 import express, { type Request, type Response } from 'express';
 import { z } from 'zod';
+import { legacyInteger } from '@shared/validation/zodNumberChecks.js';
+import { legacyDatetime, utf16MaxLength } from '@shared/validation/zodStringChecks.js';
+import { formatZodIssues } from '@shared/validation/zodIssues.js';
 import { asyncHandler } from '@shared/http/index.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import {
@@ -13,47 +16,47 @@ import {
 const router = express.Router();
 
 const saveConversationRequestSchema = z.object({
-  title: z.string().trim().min(1).max(200),
-  tags: z.array(z.string().trim().min(1).max(100)).max(25).optional(),
-  storageType: z.string().trim().min(1).max(100).optional(),
+  title: z.string().trim().min(1).max(200).check(utf16MaxLength(200)),
+  tags: z.array(z.string().trim().min(1).max(100).check(utf16MaxLength(100))).max(25).optional(),
+  storageType: z.string().trim().min(1).max(100).check(utf16MaxLength(100)).optional(),
   contentMode: z.enum(['transcript', 'summary']),
-  content: z.unknown(),
-  sessionId: z.string().trim().min(1).max(100).optional().nullable(),
-  metadata: z.record(z.unknown()).optional().nullable()
+  content: z.unknown().optional(),
+  sessionId: z.string().trim().min(1).max(100).check(utf16MaxLength(100)).optional().nullable(),
+  metadata: z.record(z.string(), z.unknown()).optional().nullable()
 });
 
 const saveConversationSuccessSchema = z.object({
   success: z.literal(true),
-  record_id: z.number().int().positive(),
+  record_id: z.number().check(...legacyInteger()).positive(),
   storage_type: z.string().min(1),
   title: z.string().min(1),
   tags: z.array(z.string()),
   content_mode: z.enum(['transcript', 'summary']),
-  length_stored: z.number().int().nonnegative(),
-  bytes_stored: z.number().int().nonnegative(),
-  created_at: z.string().datetime(),
+  length_stored: z.number().check(...legacyInteger()).nonnegative(),
+  bytes_stored: z.number().check(...legacyInteger()).nonnegative(),
+  created_at: z.string().check(legacyDatetime()),
   error: z.null()
 });
 
 const saveConversationFailureSchema = z.object({
   success: z.literal(false),
-  record_id: z.number().int().positive().nullable(),
+  record_id: z.number().check(...legacyInteger()).positive().nullable(),
   storage_type: z.string().nullable(),
   title: z.string().nullable(),
   tags: z.array(z.string()),
   content_mode: z.enum(['transcript', 'summary']).nullable(),
-  length_stored: z.number().int().nonnegative(),
-  bytes_stored: z.number().int().nonnegative(),
-  created_at: z.string().datetime().nullable(),
+  length_stored: z.number().check(...legacyInteger()).nonnegative(),
+  bytes_stored: z.number().check(...legacyInteger()).nonnegative(),
+  created_at: z.string().check(legacyDatetime()).nullable(),
   error: z.string().min(1)
 });
 
 const saveConversationRecordSchema = saveConversationSuccessSchema.extend({
   key: z.string().min(1),
   session_id: z.string().nullable(),
-  updated_at: z.string().datetime(),
-  content: z.unknown(),
-  metadata: z.record(z.unknown()).nullable()
+  updated_at: z.string().check(legacyDatetime()),
+  content: z.unknown().optional(),
+  metadata: z.record(z.string(), z.unknown()).nullable()
 });
 
 function sendValidatedPayload<T>(
@@ -107,7 +110,7 @@ router.post('/api/save-conversation', asyncHandler(async (req: Request, res: Res
       400,
       saveConversationFailureSchema,
       buildFailurePayload({
-        error: parsedRequest.error.issues.map(issue => issue.message).join('; ')
+        error: formatZodIssues(parsedRequest.error, req.body ?? {}, saveConversationRequestSchema).map(issue => issue.message).join('; ')
       }),
       'SaveConversationFailure'
     );

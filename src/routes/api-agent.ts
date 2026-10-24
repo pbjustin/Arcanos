@@ -1,5 +1,7 @@
 import express, { type Request, type Response } from 'express';
 import { z } from 'zod';
+import { utf16MaxLength } from '@shared/validation/zodStringChecks.js';
+import { formatZodIssues } from '@shared/validation/zodIssues.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { asyncHandler } from '@shared/http/index.js';
 import { agentExecutionService } from '@services/agentExecutionService.js';
@@ -36,12 +38,12 @@ type PreparedAgentExecutionRequest = Request & {
 };
 
 const executeAgentGoalSchema = z.object({
-  goal: z.string().trim().min(1).max(10_000),
+  goal: z.string().trim().min(1).max(10_000).check(utf16MaxLength(10_000)),
   executionMode: z.enum(['auto', 'serial', 'dag']).optional(),
   preferredCapabilities: z.array(z.string().trim().min(1)).max(20).optional(),
-  payload: z.record(z.unknown()).optional(),
-  sharedState: z.record(z.unknown()).optional(),
-  sessionId: z.string().trim().min(1).max(200).optional()
+  payload: z.record(z.string(), z.unknown()).optional(),
+  sharedState: z.record(z.string(), z.unknown()).optional(),
+  sessionId: z.string().trim().min(1).max(200).check(utf16MaxLength(200)).optional()
 });
 
 router.use('/api/agent', cefHttpBoundary);
@@ -100,7 +102,7 @@ router.post('/api/agent/execute', asyncHandler(async (req: Request, res: Respons
       res,
       400,
       'Invalid Agent Execution Payload',
-      parsedBody.error.issues.map(issue => issue.message)
+      formatZodIssues(parsedBody.error, req.body ?? {}, executeAgentGoalSchema).map(issue => issue.message)
     );
     return;
   }

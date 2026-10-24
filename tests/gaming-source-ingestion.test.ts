@@ -518,6 +518,31 @@ describe('gaming source ingestion', () => {
     }));
   });
 
+  it('preserves UTF-16 idempotency key bounds for ingest and refresh', async () => {
+    const sourceId = '019fe3cd-8c01-7f01-8d2d-caa951bc4ba0';
+    getGamingSourceByIdMock.mockResolvedValue({
+      id: sourceId, canonicalUrl: 'https://example.com/guide',
+      game: 'Borderlands 4', gameKey: 'borderlands-4', sourceType: 'wiki', trustScore: 0.8,
+    });
+    const ingest = (idempotencyKey: string) => createGamingSourceIngestion({
+      action: 'ingest', payload: {
+        game: 'Borderlands 4', sourceUrls: ['https://example.com/guide'], idempotencyKey,
+      },
+    }, { actorKey: 'test-actor', idempotencyKey });
+    const refresh = (idempotencyKey: string) => refreshGamingSources({
+      action: 'refresh', payload: { sourceIds: [sourceId], idempotencyKey },
+    }, { actorKey: 'test-actor', idempotencyKey });
+
+    for (const submit of [ingest, refresh]) {
+      expect((await submit('😀'.repeat(4))).statusCode).toBe(202);
+      expect((await submit('😀'.repeat(120))).statusCode).toBe(202);
+      const callsBeforeRejection = findOrCreateGptJobMock.mock.calls.length;
+      expect((await submit('😀'.repeat(3))).statusCode).toBe(400);
+      expect((await submit('😀'.repeat(121))).statusCode).toBe(400);
+      expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(callsBeforeRejection);
+    }
+  });
+
   it('canonicalizes and deduplicates source URLs before creating one durable job', async () => {
     const response = await createGamingSourceIngestion({
       action: 'ingest',

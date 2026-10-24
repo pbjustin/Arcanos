@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { legacyInteger } from '@shared/validation/zodNumberChecks.js';
+import { formatZodIssues } from '@shared/validation/zodIssues.js';
 import type { JobData } from '../core/db/schema.js';
 import type { DAGNode, DAGResult, QueuedDAGNodeDefinition } from '../dag/dagNode.js';
 import { stripDagNodeExecutor } from '../dag/dagNode.js';
@@ -6,13 +8,13 @@ import { DEFAULT_DAG_NODE_TIMEOUT_MS } from '../workers/workerExecutionLimits.js
 import { normalizeAttemptTokenUsage } from '../services/openai/attemptTokenUsage.js';
 
 const dagNodeMetricsSchema = z.object({
-  attemptTokenUsage: z.number().int().nonnegative().safe().optional()
+  attemptTokenUsage: z.number().check(...legacyInteger()).nonnegative().safe().optional()
 }).catchall(z.number().optional()).optional();
 
 const dagResultSchema = z.object({
   nodeId: z.string().trim().min(1),
   status: z.enum(['success', 'failed', 'skipped']),
-  output: z.unknown(),
+  output: z.unknown().optional(),
   errorMessage: z.string().trim().min(1).optional(),
   metrics: dagNodeMetricsSchema,
   artifactRef: z.string().trim().min(1).optional(),
@@ -24,19 +26,19 @@ const queuedDagNodeDefinitionSchema = z.object({
   type: z.enum(['task', 'decision', 'agent']),
   dependencies: z.array(z.string().trim().min(1)).default([]),
   executionKey: z.string().trim().min(1),
-  metadata: z.record(z.unknown()).optional()
+  metadata: z.record(z.string(), z.unknown()).optional()
 });
 
 const dagNodeJobInputSchema = z.object({
   dagId: z.string().trim().min(1),
   node: queuedDagNodeDefinitionSchema,
-  payload: z.record(z.unknown()).default({}),
-  dependencyResults: z.record(dagResultSchema).default({}),
-  sharedState: z.record(z.unknown()).default({}),
-  depth: z.number().int().min(0),
-  attempt: z.number().int().min(0).default(0),
-  maxRetries: z.number().int().min(0).default(2),
-  waitingTimeoutMs: z.number().int().positive().default(DEFAULT_DAG_NODE_TIMEOUT_MS)
+  payload: z.record(z.string(), z.unknown()).default({}),
+  dependencyResults: z.record(z.string(), dagResultSchema).default({}),
+  sharedState: z.record(z.string(), z.unknown()).default({}),
+  depth: z.number().check(...legacyInteger()).min(0),
+  attempt: z.number().check(...legacyInteger()).min(0).default(0),
+  maxRetries: z.number().check(...legacyInteger()).min(0).default(2),
+  waitingTimeoutMs: z.number().check(...legacyInteger()).positive().default(DEFAULT_DAG_NODE_TIMEOUT_MS)
 });
 
 export type DagQueueJobStatus =
@@ -161,7 +163,7 @@ export function parseDagNodeJobInput(rawInput: unknown): ParsedDagNodeJobInput {
   if (!parsedInput.success) {
     return {
       ok: false,
-      error: parsedInput.error.issues
+      error: formatZodIssues(parsedInput.error, rawInput, dagNodeJobInputSchema)
         .map(issue => `${issue.path.join('.') || 'job.input'}: ${issue.message}`)
         .join('; ')
     };

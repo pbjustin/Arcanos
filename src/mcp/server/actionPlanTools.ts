@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { legacyInteger } from '@shared/validation/zodNumberChecks.js';
+import { utf16MaxLength } from '@shared/validation/zodStringChecks.js';
 
 import type { McpRequestContext } from '../context.js';
 import { MCP_FLAGS } from '../registry.js';
@@ -39,9 +41,9 @@ const SAFE_ACTION_PLAN_MCP_TOOLS = new Set([
   'plans.get_execution_result',
 ]);
 
-const planIdSchema = z.string().min(1).max(128);
-const runIdSchema = z.string().min(1).max(128);
-const idempotencyKeySchema = z.string().min(1).max(256).regex(/^[\x21-\x7e]+$/u);
+const planIdSchema = z.string().min(1).max(128).check(utf16MaxLength(128));
+const runIdSchema = z.string().min(1).max(128).check(utf16MaxLength(128));
+const idempotencyKeySchema = z.string().min(1).max(256).check(utf16MaxLength(256)).regex(/^[\x21-\x7e]+$/u);
 
 function safeThrownClass(error: unknown): string {
   if (error instanceof TypeError) return 'TypeError';
@@ -246,14 +248,14 @@ export function registerActionPlanMcpTools(server: AnyMcpServer, ctx: McpRequest
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         status: z.enum(PLAN_STATUSES).optional(),
-        limit: z.number().int().min(1).max(200).optional(),
+        limit: z.number().check(...legacyInteger()).min(1).max(200).optional(),
       }).strict(),
     },
     wrapTool('plans.list', ctx, async (args: unknown) => {
       try {
         const input = z.object({
           status: z.enum(PLAN_STATUSES).optional(),
-          limit: z.number().int().min(1).max(200).optional(),
+          limit: z.number().check(...legacyInteger()).min(1).max(200).optional(),
         }).strict().parse(args);
         const principal = requireRequester(ctx);
         const plans = await actionPlanStore.listAuthoritativePlans({
@@ -300,8 +302,8 @@ export function registerActionPlanMcpTools(server: AnyMcpServer, ctx: McpRequest
       inputSchema: z.object({
         planId: planIdSchema,
         idempotencyKey: idempotencyKeySchema,
-        sessionId: z.string().min(1).max(256).optional(),
-        confirmationNonce: z.string().min(1).max(512).optional(),
+        sessionId: z.string().min(1).max(256).check(utf16MaxLength(256)).optional(),
+        confirmationNonce: z.string().min(1).max(512).check(utf16MaxLength(512)).optional(),
       }).strict(),
     },
     wrapTool('plans.execute', ctx, async (args: unknown) => {
@@ -311,8 +313,8 @@ export function registerActionPlanMcpTools(server: AnyMcpServer, ctx: McpRequest
       const parsed = z.object({
         planId: planIdSchema,
         idempotencyKey: idempotencyKeySchema,
-        sessionId: z.string().min(1).max(256).optional(),
-        confirmationNonce: z.string().min(1).max(512).optional(),
+        sessionId: z.string().min(1).max(256).check(utf16MaxLength(256)).optional(),
+        confirmationNonce: z.string().min(1).max(512).check(utf16MaxLength(512)).optional(),
       }).strict().safeParse(args);
       if (!parsed.success) {
         return executionMcpFailure(ctx, 'plans.execute', new ActionPlanExecutionError(ACTION_PLAN_EXECUTION_ERRORS.requestInvalid));

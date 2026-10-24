@@ -13,8 +13,10 @@ import {
 import {
   TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT,
   PLUGIN_MIGRATION_PREVIEW_DIST_IMPORT_CONTRACT,
+  GENERATIVE_MODEL_POLICY_PREVIEW_DIST_IMPORT_CONTRACT,
   GAMING_MCP_PREVIEW_DIST_IMPORT_CONTRACT,
   GAMING_COMPOSITION_PREVIEW_DIST_IMPORT_CONTRACT,
+  ZOD_VALIDATION_PREVIEW_DIST_IMPORT_CONTRACT,
   findTutorHonestyPreviewDistImportSourceViolations,
 } from '../scripts/check-native-pr-preview-dist-imports.mjs';
 
@@ -624,6 +626,66 @@ describe('native PR preview import boundary', () => {
       ]));
   });
 
+  it.each([
+    'src/shared/validation/zodIssues.ts',
+    'src/shared/validation/zodNumberChecks.ts',
+    'src/shared/validation/zodStringChecks.ts',
+  ])('pins pure Zod compatibility helper semantics and effects in %s', async filePath => {
+    const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toContain(filePath);
+    expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+    for (const addition of [
+      'export const unreviewedValidationPolicy = true;',
+      'fetch("https://unreviewed.invalid");',
+      'process.env.OPENAI_API_KEY;',
+      'z.config({ customError: () => "accept" });',
+      'import { readFile } from "node:fs/promises";',
+      'import { logger } from "../../platform/logging/structuredLogging.js";',
+      'await import("../../services/gptAccessGateway.js");',
+    ]) {
+      expect(findUnsafeRuntimeSyntax(filePath, `${sourceText}\n${addition}\n`)).toEqual(
+        expect.arrayContaining([expect.stringContaining('critical entry file semantic digest')])
+      );
+    }
+    const broadenedZodImport = replaceRequired(sourceText, "import { z } from 'zod';", "import { z, ZodError } from 'zod';");
+    expect(findUnsafeRuntimeSyntax(filePath, broadenedZodImport)).toEqual(expect.arrayContaining([
+      expect.stringContaining('forbidden runtime import binding "ZodError:ZodError"'),
+    ]));
+  });
+
+  it.each(ZOD_VALIDATION_PREVIEW_DIST_IMPORT_CONTRACT)(
+    'keeps emitted Zod validation imports exact in $filePath', contract => {
+      const imports = Object.entries(contract.imports).map(([specifier, bindings]) =>
+        `import { ${bindings.map(binding => binding.split(':')[0]).join(', ')} } from '${specifier}';`
+      ).join('\n');
+      expect(findTutorHonestyPreviewDistImportSourceViolations(contract, imports)).toEqual([]);
+      for (const changed of [
+        '',
+        imports.replace(/\{ /u, '{ unreviewedBinding, '),
+        imports.replace(/ from '[^']+'/u, " from '../../services/gptAccessGateway.js'"),
+        `${imports}\nimport { readFile } from 'node:fs/promises';`,
+        `${imports}\nawait import('../../core/adapters/openai.adapter.js');`,
+        `${imports}\nexport * from '../../platform/logging/structuredLogging.js';`,
+      ]) {
+        expect(findTutorHonestyPreviewDistImportSourceViolations(contract, changed).length).toBeGreaterThan(0);
+      }
+    }
+  );
+
+  it('keeps validation compatibility limited to its three pure helpers', () => {
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES.filter(filePath => filePath.startsWith('src/shared/validation/')))
+      .toEqual([
+        'src/shared/validation/zodIssues.ts',
+        'src/shared/validation/zodNumberChecks.ts',
+        'src/shared/validation/zodStringChecks.ts',
+      ]);
+    expect(ZOD_VALIDATION_PREVIEW_DIST_IMPORT_CONTRACT).toHaveLength(7);
+    for (const filePath of ['src/services/gptAccessGateway.ts', 'src/services/gamingSourceIngestion.ts',
+      'src/core/adapters/openai.adapter.ts', 'src/platform/logging/structuredLogging.ts']) {
+      expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(filePath);
+    }
+  });
+
   it('pins the sealed Tutor peer and admits only reviewed Tutor and Gaming protocol assets', async () => {
     const filePath = 'src/shared/chatgpt/chatgptTutorPreviewFixture.ts';
     const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
@@ -728,6 +790,7 @@ describe('native PR preview import boundary', () => {
     'scripts/tutor-package-core.d.mts',
     'src/shared/chatgpt/pluginMigrationPreviewFixture.ts',
     'src/shared/gpt/generativeModelPolicyCore.ts',
+    'src/shared/gpt/arcanosBehavioralProfile.ts',
     'src/shared/gpt/generativeModelPolicyPreviewFixture.ts',
   ])('pins the shared migration seam and rejects effects in %s', async filePath => {
     const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
@@ -811,6 +874,20 @@ describe('native PR preview import boundary', () => {
       }
     }
   );
+
+  it('keeps behavioral profile configuration and provider adapters outside the contained graph', () => {
+    expect(GENERATIVE_MODEL_POLICY_PREVIEW_DIST_IMPORT_CONTRACT).toEqual(expect.arrayContaining([
+      {
+        filePath: 'dist/shared/gpt/generativeModelPolicyCore.js',
+        imports: { './arcanosBehavioralProfile.js': ['isArcanosBehavioralProfileId:isArcanosBehavioralProfileId'] },
+      },
+      { filePath: 'dist/shared/gpt/arcanosBehavioralProfile.js', imports: {} },
+    ]));
+    for (const filePath of ['src/services/openai/behavioralProfile.ts', 'src/platform/runtime/unifiedConfig.ts',
+      'src/services/openai/credentialProvider.ts', 'src/core/adapters/openai.adapter.ts']) {
+      expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(filePath);
+    }
+  });
 
   it('rejects absent or retargeted Gaming protocol exports outside the reviewed leaf', async () => {
     const manifest = JSON.parse(await readFile(new URL('../packages/protocol/package.json', import.meta.url), 'utf8'));

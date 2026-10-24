@@ -1,5 +1,7 @@
 import type OpenAI from 'openai';
 import { z } from 'zod';
+import { legacyInteger } from '@shared/validation/zodNumberChecks.js';
+import { utf16MaxLength } from '@shared/validation/zodStringChecks.js';
 
 import { buildFunctionToolSet, type FunctionToolDefinition } from '@services/openai/functionTools.js';
 import { parseToolArgumentsWithSchema } from '@services/safety/aiOutputBoundary.js';
@@ -248,7 +250,7 @@ const dagLatestRunArgsSchema = z.object({
 
 const dagTraceArgsSchema = z.object({
   runId: z.string().trim().min(1),
-  maxEvents: z.number().int().min(1).max(1000).optional(),
+  maxEvents: z.number().check(...legacyInteger()).min(1).max(1000).optional(),
 });
 
 const dagNodeArgsSchema = z.object({
@@ -259,8 +261,8 @@ const dagNodeArgsSchema = z.object({
 const createDagRunArgsSchema = z.object({
   goal: z.string().trim().min(1),
   template: z.string().trim().min(1).optional(),
-  sessionId: z.string().trim().min(1).max(100).optional(),
-  maxConcurrency: z.number().int().min(1).max(20).optional(),
+  sessionId: z.string().trim().min(1).max(100).check(utf16MaxLength(100)).optional(),
+  maxConcurrency: z.number().check(...legacyInteger()).min(1).max(20).optional(),
   debug: z.boolean().optional(),
 });
 

@@ -40,7 +40,7 @@ particular, the backend's shared generative policy selects its helper roles
 and service-configured final authority as documented below. Image generation and
 embeddings retain their separate selectors. Vision request builders use the
 central final-authority default; the backend vision route also validates any
-per-call model against that service's configured fine-tune authority.
+per-call model against that service's selected final authority.
 Likewise, the security example's trusted-ID comment must be read with the
 presence-only confirmation limitation documented below, not as caller
 authentication.
@@ -66,7 +66,7 @@ outbound call.
 | `NODE_ENV` | No | `development` | Affects host binding and runtime behavior. |
 | `OPENAI_API_KEY` | No for explicit local/test mock paths; yes by default in production/Railway and for live AI | none | Default production/Railway startup validation rejects a missing or placeholder key. |
 | `OPENAI_BASE_URL` | No | none | Optional OpenAI endpoint override. |
-| `OPENAI_MODEL` | One authority alias is required for authoritative generation | none | Lower-precedence alias for this service's configured fine-tune authority; a missing or non-`ft:` selection fails safely. |
+| `OPENAI_MODEL` | One authority alias is required for legacy authoritative generation | none | Lower-precedence alias for this service's configured fine-tune authority; a missing or non-`ft:` legacy selection fails safely. The explicit Sol migration uses separate settings below. |
 | `DATABASE_URL` | No | none | Primary PostgreSQL connection string; alternatively provide all five `PGUSER`, `PGPASSWORD`, `PGHOST`, `PGPORT`, and `PGDATABASE` fields. |
 | `DATABASE_PRIVATE_URL` / `DATABASE_PUBLIC_URL` | No | none | Additional database candidates, considered only when `DATABASE_URL` or the complete five-field `PG*` set is also present. See the current alias-only limitation below. |
 | `REDIS_URL` | No | none | Preferred `redis://` or TLS `rediss://` connection string; discrete `REDISHOST`/`REDISPORT`/`REDISUSER`/`REDISPASSWORD` are fallback inputs. Without a valid discrete fallback, a malformed non-empty value is treated as configured but unavailable. |
@@ -409,7 +409,7 @@ The default for authoritative final and recovery calls resolves in this order:
 6. `RAILWAY_OPENAI_MODEL`
 
 Whitespace-only values are absent. The first configured value must identify a
-fine-tune (`ft:` with no whitespace); missing or non-fine-tuned authority returns
+fine-tune (`ft:` with no whitespace) in the default legacy mode; missing or non-fine-tuned authority returns
 `FINAL_AUTHORITY_UNAVAILABLE` before provider transport. There is no built-in
 generative model or historical fine-tune fallback. Normal, escalated and recovery
 final calls use the same authority for the executing service. `FALLBACK_MODEL`,
@@ -425,10 +425,12 @@ These are source-defined selectors, not evidence of a deployed model or provider
 availability (`src/platform/runtime/unifiedConfig.ts`, `getConfig`). Web and
 worker can retain different configured fine-tune identities; this policy does
 not hardcode either identity or reconcile production values.
+The opt-in [GPT-6.1 Sol migration](#gpt-61-sol-authority-migration) selects a
+separate replacement authority without overwriting these aliases.
 `GPT_FAST_PATH_MODEL` is ignored and is no longer read by
 `src/shared/gpt/gptFastPath.ts`. Fast-path classification keeps its existing
 eligibility rules; `executeFastGptPrompt` in `src/services/gptFastPath.ts` uses
-the shared policy's configured fine-tune for inline authoritative output.
+the shared policy's selected final authority for inline authoritative output.
 
 ### Trinity and CLEAR model lanes
 
@@ -441,8 +443,8 @@ boundaries. Values in `.env.example` are examples, not deployed Railway values.
 | --- | --- | --- |
 | Intake/classification | `gpt-6-luna` | `getTrinityIntakeModel()` |
 | Structured reasoning | `gpt-6.1-sol` | `getTrinityReasoningModel()`, compatibility `getGPT5Model()` |
-| Normal authoritative final | Configured service fine-tune | `getTrinityFinalModel()`, `getDefaultModel()` |
-| Escalated/recovery authoritative final | Same configured service fine-tune | `getTrinityFinalEscalationModel()`, `getComplexModel()`, `getFallbackModel()` |
+| Normal authoritative final | Configured service fine-tune; `gpt-6.1-sol` in explicitly enabled migration mode | `getTrinityFinalModel()`, `getDefaultModel()` |
+| Escalated/recovery authoritative final | Same executing-service authority | `getTrinityFinalEscalationModel()`, `getComplexModel()`, `getFallbackModel()` |
 | Routine CLEAR/Gaming CLEAR and evaluation audits | `gpt-6-luna` | `getClearAuditModel()` |
 | Explicit internal audit escalation | `gpt-6.1-sol` | `getClearAuditEscalationModel()` |
 
@@ -460,7 +462,8 @@ intake-validation failure fails safely if the central Luna model is unavailable;
 it never selects a legacy model. Complex or critical
 tiers and upstream fallback flags select the final-escalation role, with one
 final call and no new retry. Routine direct answers, direct-answer defaults,
-timeout recovery and approved structural continuation retain fine-tune authority.
+timeout recovery and approved structural continuation retain the executing
+service's selected final authority.
 
 Both audit functions default to the routine lane. Their optional trusted internal
 `modelLane='escalation'` selects the escalation model for the same single call.
@@ -479,12 +482,96 @@ GPT-6 audit requests explicitly use Luna none or Sol low reasoning within the
 existing output caps.
 
 Embeddings, image generation and transcription keep separate model selection.
-Backend vision text answers require the configured fine-tune authority. The
+Backend vision text answers require the configured final authority. The
 standalone `workers/` and `arcanos-ai-runtime/` packages, portable
 `src/runtime/`, and Python transport clients retain their documented transport
 contracts; this backend policy change does not alter their independent model
 configuration. Plugin scopes, credentials, writing/control boundaries and
 production safeguards remain in force.
+
+#### GPT-6.1 Sol authority migration
+
+The backend migration is disabled by default. Configure these variables on each
+executing service independently; web and worker may retain different legacy
+fine-tune IDs, revisions, and rollout state.
+
+| Variable | Default | Migration requirement |
+| --- | --- | --- |
+| `ARCANOS_GPT61_AUTHORITY_ENABLED` | unset / `false` | Only exact `true` enables replacement authority. Malformed values fail closed. |
+| `ARCANOS_GPT61_AUTHORITY_MODEL` | unset | Exact `gpt-6.1-sol` is required when enabled. No helper or arbitrary replacement is accepted. |
+| `ARCANOS_BEHAVIORAL_PROFILE_ID` | unset | Exact `arcanos-behavior/v1` is required when enabled. Unknown or missing profiles fail closed. |
+
+Legacy authority aliases keep their existing precedence and values. Enabling
+the switch selects Sol for final, final escalation, direct answers, and recovery;
+it does not change Luna intake/routine CLEAR, Sol reasoning/escalated CLEAR,
+Trinity stage ordering, authorization, source admission, or inference budgets.
+Caller model values can only confirm the selected server model; conflicts fail
+before provider transport. Invalid replacement configuration never silently
+falls through to a fine-tune or helper.
+
+The immutable versioned behavioral profile is backend prompt configuration in
+`src/shared/gpt/arcanosBehavioralProfile.ts`. It carries ARCANOS identity,
+terminology, honesty and authority boundaries while preserving the existing
+module prompts, formatting instructions, and structured output contracts.
+When migration is enabled, it accompanies backend Sol requests, including
+structured reasoning and explicit audit escalation; Luna requests stay unchanged.
+User requests, retrieved documents, memory, and previous model output remain
+untrusted data and cannot replace this policy. The profile adds no database,
+training pipeline, retrieval store, extra inference stage, or retry loop.
+Provider model identity remains separate from behavioral profile identity in
+telemetry. Outgoing request metadata uses `arcanos_behavioral_profile` and
+`arcanos_service`; local request/completion events record `behavioralProfileId`
+and `behavioralProfileService` separately. Successful completion telemetry keeps
+the actual provider `model` and, where recorded, the requested `requestedModel`.
+For streaming, invocation metrics retain the requested model label; the validated
+stream trace and execution summary record the observed model once metadata arrives.
+Cancelling before the first read retains the consumed call budget without claiming
+a verified provider identity. Terminal SSE token usage aggregation is unchanged.
+Sol response validation accepts the exact ID or a date-shaped snapshot suffix
+and rejects arbitrary family/helper suffixes. Synthetic snapshot fixtures prove
+that validation rule, not provider availability. A profile identifier never
+replaces the provider model identity.
+
+The baseline is the maintained Core prompts in `src/platform/runtime/prompts.json`,
+Tutor guidance in `src/platform/runtime/tutorPrompts.ts`, Gaming prompts and
+evidence policy in `src/shared/gaming/gamingPromptCore.ts` and
+[Gaming guide assistance](GAMING_GUIDE_ASSISTANCE.md), and Backstage prompt and
+Notion authority contracts in `src/services/backstage-booker.ts`. Existing
+domain instructions stay responsible for their own voice and response shape.
+Historical model names or persona prose in protected prompt assets do not prove
+learned fine-tune behavior and do not grant execution or disclosure authority.
+
+No verified production fine-tune training corpus, approved production input/output
+comparison set, or service-specific learned-behavior specification was available
+for this migration. Existing mocked provider and domain fixtures establish
+deterministic contract coverage, not behavioral parity. Model-generated response
+format, instruction adherence, terminology, correctness, and unsupported-claim
+handling still need owner-approved comparative evaluation against each retained
+fine-tune. Synthetic assertions or lexical similarity cannot establish that
+equivalence; paid provider evaluation requires separate authorization.
+
+Before an authorized rollout, record the exact source and deployed revision,
+legacy authority alias and precedence, and migration settings for web and worker
+separately. Confirm model access for each service's provider credentials and
+complete the comparative evaluation. Deploy compatible code before setting the
+switch: an older revision does not implement these settings. Keep ingress and
+queued-work rollout coordinated under the existing Railway procedures; this
+feature does not reconcile mixed revisions or change durable job contracts.
+Backstage's existing fine-tune-specific extended output-budget eligibility is
+unchanged; Sol retains the existing baseline eligibility and finite caps.
+
+For rollback on an authorized target service, set
+`ARCANOS_GPT61_AUTHORITY_ENABLED=false`, preserve that service's original valid
+`ft:` authority alias, and follow the normal approved restart/deployment and
+drain procedure. Replacement model/profile settings may remain dormant or be
+removed; they do not select authority while disabled. If the original alias is
+missing or invalid, restore its recorded value before expecting legacy generation
+to resume. Verify the actual provider model per service after rollback. Do not
+copy the web fine-tune ID to the worker or assume their deployed SHAs match.
+
+Implementation and local synthetic tests do not authorize enabling the switch,
+changing Railway variables, invoking paid models, restarting services, deploying,
+or removing either retained fine-tune. Production approval remains separate.
 
 #### Model capability contract
 
@@ -570,7 +657,7 @@ outcomes require separate approved pipeline comparisons before rollout.
 
 Responses usage is observed before structured parsing, so the session token audit still records billed reasoning tokens when the provider returns incomplete, refused, malformed, or schema-invalid output. Successful pipeline telemetry and the session audit aggregate intake, structured reasoning, and final-stage usage. For response compatibility, `meta.tokens` remains the final user-visible stage's usage rather than the aggregate pipeline total.
 
-Backstage Booker generation, continuity and bounded recovery use the executing service's configured fine-tune authority through the existing Responses adapter path. A trusted model override must match that authority. Compatible requests retain their existing reasoning and visible-output budget handling.
+Backstage Booker generation, continuity and bounded recovery use the executing service's selected final authority through the existing Responses adapter path. A trusted model override must match that authority. Compatible requests retain their existing reasoning and visible-output budget handling.
 
 `BOOKER_TOKEN_LIMIT` defaults to `2400` for ordinary synchronous generation and remains bounded by the standard Backstage `2400`-token cap. Ordinary Trinity callers retain the global `1200`-token cap, while compact direct-answer prompts may use a smaller prompt-derived budget. Explicit full-show, card, or booking-state review/evaluation prompts use a six-bullet synthesis contract and `min(BOOKER_TOKEN_LIMIT, 1600)` so the review can complete before the provider-stage and HRC deadlines. The classifier uses a quote-aware scan of directive-shaped request clauses throughout the prompt; an explicit mixed request to book, rebook, rewrite, draft, or continue vetoes bounded mode and retains the ordinary generation budget. Quoted or attributed dialogue inside supplied show state is inert, while narrow decision analysis or recommendations also stay in ordinary mode. A deployment retaining an explicit historical value such as `512` or `1200` will continue to use that value; remove or update the variable to adopt the `2400` default.
 
@@ -2123,7 +2210,10 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 | `OPENAI_API_KEY` | `your-openai-api-key-here` | OpenAI API key used by server/runtime. |
 | `OPENAI_MODEL` | empty placeholder | Lower-precedence service fine-tune authority alias; no helper-model fallback. Set one valid authority alias before authoritative generation. |
 | `FINETUNED_MODEL_ID` / `FINE_TUNED_MODEL_ID` / `AI_MODEL` | empty (commented) | Existing fine-tune authority aliases in the documented precedence order; retain each service's configured identity. |
-| `TRINITY_*_MODEL` / `CLEAR_AUDIT*_MODEL` / `GPT5_MODEL` / `GPT51_MODEL` | no effective backend override | Legacy values no longer select roles. Intake/routine audit use Luna, reasoning/explicit audit escalation use Sol, and all finals use the configured fine-tune. |
+| `ARCANOS_GPT61_AUTHORITY_ENABLED` | `false` (commented) | Exact `true` enables the independently configured service's Sol authority migration; malformed values fail closed. |
+| `ARCANOS_GPT61_AUTHORITY_MODEL` | unset (commented example `gpt-6.1-sol`) | Exact replacement model required when migration is enabled. |
+| `ARCANOS_BEHAVIORAL_PROFILE_ID` | unset (commented example `arcanos-behavior/v1`) | Exact server-owned behavioral profile required when migration is enabled. |
+| `TRINITY_*_MODEL` / `CLEAR_AUDIT*_MODEL` / `GPT5_MODEL` / `GPT51_MODEL` | no effective backend override | Legacy values no longer select roles. Intake/routine audit use Luna, reasoning/explicit audit escalation use Sol, and all finals use the selected service authority. |
 | `TRINITY_REASONING_MAX_OUTPUT_TOKENS` | `8000` (commented) | Structured Responses ceiling for hidden reasoning plus visible JSON. Strict positive base-10 integers are clamped to `16`-`8000`; invalid or unset values use `8000`. |
 | `TRINITY_REASONING_STAGE_TIMEOUT_MS` | `20000` (commented) | Structured reasoning timeout, further clamped to the remaining request/runtime budget. |
 | `BOOKER_TOKEN_LIMIT` | `2400` (commented) | Standard Backstage Booker output budget, bounded by its `2400`-token cap. Full-show/card review-only prompts use at most `1600`, compact direct-answer prompts can use a smaller derived budget, and ordinary Trinity callers remain capped at `1200`. |

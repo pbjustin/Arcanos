@@ -27,7 +27,7 @@ export interface DailySummaryResult {
 }
 
 const MEMORY_DIR = path.join(process.cwd(), 'memory');
-const dailySummaryOutputSchema = z.record(z.unknown());
+const dailySummaryOutputSchema = z.record(z.string(), z.unknown());
 
 function collectLogsPreview(): string[] {
   const logsDir = path.join(process.cwd(), 'logs');

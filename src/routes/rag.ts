@@ -6,6 +6,7 @@ import {
   type Response,
 } from 'express';
 import { z } from 'zod';
+import { utf16MaxLength } from '@shared/validation/zodStringChecks.js';
 
 import { getRequestAuthenticatedActorKey } from '@platform/runtime/security.js';
 import { answerQuestion, ingestContent, ingestUrl } from '@services/webRag.js';
@@ -128,6 +129,7 @@ function isBoundedJsonMetadata(value: unknown): value is Record<string, unknown>
 
 const ragUrlSchema = z.string()
   .max(RAG_MAX_URL_LENGTH)
+  .check(utf16MaxLength(RAG_MAX_URL_LENGTH))
   .superRefine((value, context) => {
     const trimmed = value.trim();
     if (!trimmed) {
@@ -165,14 +167,17 @@ const ragFetchSchema = z.object({
 const ragSaveSchema = z.object({
   id: z.string()
     .max(RAG_MAX_ID_LENGTH)
+    .check(utf16MaxLength(RAG_MAX_ID_LENGTH))
     .refine((value) => value.trim().length > 0)
     .transform((value) => value.trim())
     .optional(),
   content: z.string()
     .max(RAG_MAX_CONTENT_LENGTH)
+    .check(utf16MaxLength(RAG_MAX_CONTENT_LENGTH))
     .refine((value) => value.trim().length > 0),
   source: z.string()
     .max(RAG_MAX_SOURCE_LENGTH)
+    .check(utf16MaxLength(RAG_MAX_SOURCE_LENGTH))
     .refine((value) => value.trim().length > 0)
     .transform((value) => value.trim())
     .optional(),
@@ -184,6 +189,7 @@ const ragSaveSchema = z.object({
 const ragQuerySchema = z.object({
   question: z.string()
     .max(RAG_MAX_QUESTION_LENGTH)
+    .check(utf16MaxLength(RAG_MAX_QUESTION_LENGTH))
     .refine((value) => value.trim().length > 0)
     .transform((value) => value.trim()),
 }).strict();

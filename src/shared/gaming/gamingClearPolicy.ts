@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { legacyDatetime, utf16MaxLength } from '@shared/validation/zodStringChecks.js';
 import { classifyGamingQuestionFreshness } from './gamingFreshnessCore.js';
 import { resolveGamingFreshnessDisposition } from './gamingFreshnessDisposition.js';
 import { GAMING_GAME_REGISTRY } from './gamingGameRegistry.js';
@@ -43,8 +44,8 @@ export const GAMING_CLEAR_NONBLOCKING_ANSWER_FINDINGS: readonly string[] = Objec
   'STYLE_CONCISION', 'STYLE_REPETITION', 'STYLE_PRESENTATION'
 ]);
 
-const code = z.string().min(1).max(80).regex(/^[A-Z][A-Z0-9_]*$/u);
-const reference = z.string().min(1).max(256);
+const code = z.string().min(1).max(80).check(utf16MaxLength(80)).regex(/^[A-Z][A-Z0-9_]*$/u);
+const reference = z.string().min(1).max(256).check(utf16MaxLength(256));
 const refs = z.array(reference).max(64);
 const dimensionSchema = z.object({
   status: z.enum(['evaluated', 'unknown', 'not_applicable']),
@@ -126,12 +127,12 @@ export function parseGamingClearModelAssessment(value: unknown, allowedEvidenceR
 export function parseGamingClearAssessment(value: unknown): GamingClearAssessment | null {
   const parsed = z.object({
     rubricVersion: z.literal(GAMING_CLEAR_VERSION), profile: z.enum(['source', 'evidence', 'answer']),
-    policyProfile: z.string().max(100), sourceRole: z.enum(['gameplay_guide', 'build_analysis', 'patch_authority', 'currentness_index', 'live_status', 'community_observation', 'corroboration']).optional(),
+    policyProfile: z.string().max(100).check(utf16MaxLength(100)), sourceRole: z.enum(['gameplay_guide', 'build_analysis', 'patch_authority', 'currentness_index', 'live_status', 'community_observation', 'corroboration']).optional(),
     subjectId: reference, subjectHash: z.string().regex(/^[a-f0-9]{64}$/u), contextFingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
     assessmentMethod: z.enum(['deterministic', 'model_assisted', 'mixed']), assessmentStatus: z.enum(['completed', 'unavailable', 'not_run']),
     dimensionScores: dimensionsSchema, gates: gatesSchema, overall: z.number().finite().min(0).max(5).nullable(),
     findings: z.array(findingSchema).max(32), blockingFindings: z.array(findingSchema).max(32),
-    decision: z.enum(['accept', 'partial', 'reject', 'clarify', 'unavailable']), qualityEligible: z.boolean(), evaluatedAt: z.string().datetime()
+    decision: z.enum(['accept', 'partial', 'reject', 'clarify', 'unavailable']), qualityEligible: z.boolean(), evaluatedAt: z.string().check(legacyDatetime())
   }).strict().safeParse(value);
   if (!parsed.success) return null;
   const result = parsed.data;
@@ -173,7 +174,7 @@ export function createGamingClearAssessment(input: GamingClearAssessmentInput): 
     sourceRole: z.enum(['gameplay_guide', 'build_analysis', 'patch_authority', 'currentness_index', 'live_status', 'community_observation', 'corroboration']).optional(),
     subjectId: reference, subjectHash: z.string().regex(/^[a-f0-9]{64}$/u), contextFingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
     assessmentMethod: z.enum(['deterministic', 'model_assisted', 'mixed']).default('deterministic'),
-    assessmentStatus: z.enum(['completed', 'unavailable', 'not_run']).default('completed'), evaluatedAt: z.string().datetime().optional()
+    assessmentStatus: z.enum(['completed', 'unavailable', 'not_run']).default('completed'), evaluatedAt: z.string().check(legacyDatetime()).optional()
   }).parse(input);
   const gates = gatesSchema.parse(input.gates);
   refs.parse(input.evidenceRefs);

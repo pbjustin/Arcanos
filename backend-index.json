@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-21T06:00:59.897Z",
+  "generatedAt": "2026-10-24T04:01:12.423Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2150,6 +2150,9 @@
           "relativePath": "src/services/openai/attemptTokenUsage.ts"
         },
         {
+          "relativePath": "src/services/openai/behavioralProfile.ts"
+        },
+        {
           "relativePath": "src/services/openai/chatFallbacks.ts"
         },
         {
@@ -2924,6 +2927,9 @@
           "relativePath": "src/shared/gaming/liveValidationObservation.ts"
         },
         {
+          "relativePath": "src/shared/gpt/arcanosBehavioralProfile.ts"
+        },
+        {
           "relativePath": "src/shared/gpt/asyncGptJob.ts"
         },
         {
@@ -3216,6 +3222,15 @@
         },
         {
           "relativePath": "src/shared/validation.ts"
+        },
+        {
+          "relativePath": "src/shared/validation/zodIssues.ts"
+        },
+        {
+          "relativePath": "src/shared/validation/zodNumberChecks.ts"
+        },
+        {
+          "relativePath": "src/shared/validation/zodStringChecks.ts"
         },
         {
           "relativePath": "src/shared/vectorUtils.ts"
@@ -3644,6 +3659,9 @@
         },
         {
           "relativePath": "tests/api-save-conversation.test.ts"
+        },
+        {
+          "relativePath": "tests/api-session-system.validation.test.ts"
         },
         {
           "relativePath": "tests/api-sessions-auth-composition.test.ts"
@@ -4975,6 +4993,12 @@
           "relativePath": "tests/gpt-session-queue-contract.integration.test.ts"
         },
         {
+          "relativePath": "tests/gpt61-authority-config.test.ts"
+        },
+        {
+          "relativePath": "tests/gpt61-behavioral-profile.test.ts"
+        },
+        {
           "relativePath": "tests/gptoss-adapter-eval.test.ts"
         },
         {
@@ -5677,6 +5701,9 @@
           "relativePath": "tests/request-handler.feedback.test.ts"
         },
         {
+          "relativePath": "tests/request-handler.validation.test.ts"
+        },
+        {
           "relativePath": "tests/request-timeout-contract.test.ts"
         },
         {
@@ -6233,6 +6260,18 @@
         },
         {
           "relativePath": "tests/workers-status-projection.test.ts"
+        },
+        {
+          "relativePath": "tests/zod-number-compatibility.test.ts"
+        },
+        {
+          "relativePath": "tests/zod-service-compatibility.test.ts"
+        },
+        {
+          "relativePath": "tests/zod-string-compatibility.test.ts"
+        },
+        {
+          "relativePath": "tests/zod-validation-compatibility.test.ts"
         }
       ]
     },

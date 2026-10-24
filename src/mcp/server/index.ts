@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { legacyInteger } from '@shared/validation/zodNumberChecks.js';
+import { utf16MaxLength } from '@shared/validation/zodStringChecks.js';
 import crypto from 'node:crypto';
 
 import type { McpRequestContext } from '../context.js';
@@ -100,19 +102,21 @@ import {
 
 type AnyMcpServer = any;
 
-const researchUrlsInputSchema = z.custom<string[]>((value) => {
+const researchUrlsInputSchema = z.preprocess((value, context) => {
   try {
     assertResearchUrlsPreNormalization(value, { requireArray: true });
-    return Array.isArray(value);
+    return value;
   } catch {
-    return false;
+    context.addIssue({
+      code: 'custom',
+      message: 'Research URLs exceed the supported input limits.',
+    });
+    return z.NEVER;
   }
-}, {
-  message: 'Research URLs exceed the supported input limits.',
-}).pipe(
+},
   z.array(
     z.string()
-      .max(RESEARCH_URL_MAX_LENGTH)
+      .max(RESEARCH_URL_MAX_LENGTH).check(utf16MaxLength(RESEARCH_URL_MAX_LENGTH))
       .url(),
   ).max(RESEARCH_URL_MAX_ITEMS),
 );
@@ -445,8 +449,8 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
           query: z.string().optional(),
           sessionId: z.string().optional(),
           overrideAuditSafe: z.string().optional(),
-          clientContext: z.record(z.any()).optional(),
-          metadata: z.record(z.any()).optional(),
+          clientContext: z.record(z.string(), z.any()).optional(),
+          metadata: z.record(z.string(), z.any()).optional(),
         })
         .passthrough(),
     },
@@ -580,7 +584,7 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
       inputSchema: z
         .object({
           status: z.string().optional(),
-          limit: z.number().int().min(1).max(200).optional(),        })
+          limit: z.number().check(...legacyInteger()).min(1).max(200).optional(),        })
         .passthrough(),
     },
     wrapTool('plans.list', ctx, async (args: any) => {
@@ -1060,7 +1064,7 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
           agentId: z.string(),
           name: z.string().optional(),
           capabilities: z.array(z.string()).optional(),
-          metadata: z.record(z.any()).optional(),
+          metadata: z.record(z.string(), z.any()).optional(),
         })
         .passthrough(),
     },
@@ -1148,7 +1152,7 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
       inputSchema: z.object({
         content: z.string(),
         source: z.string().optional(),
-        metadata: z.record(z.any()).optional(),
+        metadata: z.record(z.string(), z.any()).optional(),
         sessionId: z.string().optional(),
         confirmationNonce: z.string().optional(),
       }),
@@ -1168,7 +1172,7 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
       title: 'RAG Query',
       description: 'Queries ingested knowledge (same as POST /rag/query).',
       annotations: { readOnlyHint: true },
-      inputSchema: z.object({ question: z.string(), topK: z.number().int().min(1).max(50).optional() }).passthrough(),
+      inputSchema: z.object({ question: z.string(), topK: z.number().check(...legacyInteger()).min(1).max(50).optional() }).passthrough(),
     },
     wrapTool('rag.query', ctx, async (args: any) => {
       const out = await answerQuestion(args.question);
@@ -1184,7 +1188,7 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
       annotations: { openWorldHint: true },
       inputSchema: z.object({
         topic: z.string()
-          .max(RESEARCH_TOPIC_MAX_LENGTH)
+          .max(RESEARCH_TOPIC_MAX_LENGTH).check(utf16MaxLength(RESEARCH_TOPIC_MAX_LENGTH))
           .refine((value) => value.trim().length > 0, 'Research topic is required.'),
         urls: researchUrlsInputSchema.optional(),
         sessionId: z.string().optional(),
@@ -1232,8 +1236,8 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         key: z.string(),
-        value: z.any(),
-        ttlSeconds: z.number().int().min(1).optional(),
+        value: z.any().optional(),
+        ttlSeconds: z.number().check(...legacyInteger()).min(1).optional(),
         sessionId: z.string().optional(),
         confirmationNonce: z.string().optional(),
       }),
@@ -1267,7 +1271,7 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
       title: 'Memory List',
       description: 'Lists memory entries (same as GET /api/memory/list).',
       annotations: { readOnlyHint: true },
-      inputSchema: z.object({ limit: z.number().int().min(1).max(200).optional() }).passthrough(),
+      inputSchema: z.object({ limit: z.number().check(...legacyInteger()).min(1).max(200).optional() }).passthrough(),
     },
     wrapTool('memory.list', ctx, async (args: any) => {
       const limit = args.limit ?? 50;
@@ -1476,7 +1480,7 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
           phase: z.enum(['plan', 'execute', 'mutate']),
           adapter: z.enum(['railway-cli', 'arcanos-cli', 'arcanos-mcp']),
           operation: z.string().min(1),
-          input: z.record(z.any()).optional(),
+          input: z.record(z.string(), z.any()).optional(),
           context: z
             .object({
               sessionId: z.string().optional(),

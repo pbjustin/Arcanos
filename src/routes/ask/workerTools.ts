@@ -1,5 +1,7 @@
 import type OpenAI from 'openai';
 import { z } from 'zod';
+import { legacyInteger } from '@shared/validation/zodNumberChecks.js';
+import { utf16MaxLength } from '@shared/validation/zodStringChecks.js';
 import { buildFunctionToolSet, type FunctionToolDefinition } from '@services/openai/functionTools.js';
 import { parseToolArgumentsWithSchema } from '@services/safety/aiOutputBoundary.js';
 import {
@@ -164,20 +166,20 @@ const getWorkerJobArgsSchema = z.object({
 
 const queueWorkerAskArgsSchema = z.object({
   prompt: z.string().trim().min(1),
-  sessionId: z.string().trim().min(1).max(100).optional(),
+  sessionId: z.string().trim().min(1).max(100).check(utf16MaxLength(100)).optional(),
   cognitiveDomain: z.enum(['diagnostic', 'code', 'creative', 'natural', 'execution']).optional(),
-  overrideAuditSafe: z.string().trim().min(1).max(50).optional(),
-  endpointName: z.string().trim().min(1).max(64).optional()
+  overrideAuditSafe: z.string().trim().min(1).max(50).check(utf16MaxLength(50)).optional(),
+  endpointName: z.string().trim().min(1).max(64).check(utf16MaxLength(64)).optional()
 });
 
 const dispatchWorkerTaskArgsSchema = z.object({
   input: z.string().trim().min(1),
-  sessionId: z.string().trim().min(1).max(100).optional(),
+  sessionId: z.string().trim().min(1).max(100).check(utf16MaxLength(100)).optional(),
   cognitiveDomain: z.enum(['diagnostic', 'code', 'creative', 'natural', 'execution']).optional(),
-  overrideAuditSafe: z.string().trim().min(1).max(50).optional(),
-  attempts: z.number().int().min(1).max(10).optional(),
-  backoffMs: z.number().int().min(0).max(60000).optional(),
-  sourceEndpoint: z.string().trim().min(1).max(64).optional()
+  overrideAuditSafe: z.string().trim().min(1).max(50).check(utf16MaxLength(50)).optional(),
+  attempts: z.number().check(...legacyInteger()).min(1).max(10).optional(),
+  backoffMs: z.number().check(...legacyInteger()).min(0).max(60000).optional(),
+  sourceEndpoint: z.string().trim().min(1).max(64).check(utf16MaxLength(64)).optional()
 });
 
 const healWorkerRuntimeArgsSchema = z.object({

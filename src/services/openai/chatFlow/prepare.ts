@@ -6,6 +6,7 @@ import { createCacheKey } from "@shared/hashUtils.js";
 import { DEFAULT_SYSTEM_PROMPT } from "../constants.js";
 import type { CallOpenAIOptions, ChatCompletionMessageParam } from "../types.js";
 import { buildChatMessages } from "../messageBuilder.js";
+import { getBehavioralProfileTelemetry } from '../behavioralProfile.js';
 
 /**
  * prepare stage: build messages, metadata, and (optional) cache key descriptor.
@@ -32,7 +33,8 @@ export function prepareChatFlow(
   const reinforcementMetadata: Record<string, unknown> = {
     ...baseMetadata,
     requestId: reinforcementRequestId,
-    model
+    model,
+    ...(model === 'gpt-6.1-sol' ? getBehavioralProfileTelemetry() : {})
   };
 
   const preparedMessages = buildChatMessages(prompt, systemPrompt, options);
@@ -57,7 +59,8 @@ export function prepareChatFlow(
     frequency_penalty: options.frequency_penalty,
     presence_penalty: options.presence_penalty,
     response_format: options.responseFormat,
-    user: options.user
+    user: options.user,
+    ...(model === 'gpt-6.1-sol' ? getBehavioralProfileTelemetry() : {})
   };
 
   const cacheKey = useCache ? createCacheKey(model, cacheDescriptor) : null;

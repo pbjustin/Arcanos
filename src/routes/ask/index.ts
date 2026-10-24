@@ -1,5 +1,8 @@
 import express, { Request, Response } from 'express';
 import { z } from 'zod';
+import { legacyInteger } from '@shared/validation/zodNumberChecks.js';
+import { legacyDatetime, utf16MaxLength } from '@shared/validation/zodStringChecks.js';
+import { formatZodIssues } from '@shared/validation/zodIssues.js';
 import { createAbortError } from '@arcanos/runtime';
 import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
 import {
@@ -136,7 +139,7 @@ const systemReviewSchema = z.object({
   mode: z.literal('system_review'),
   subject: z.literal('intent_system'),
   verdict: z.enum(['approved', 'approved_with_risks', 'blocked']),
-  summary: z.string().min(1).max(2000),
+  summary: z.string().min(1).max(2000).check(utf16MaxLength(2000)),
   strengths: z.array(z.string()),
   risks: z.array(
     z.object({
@@ -156,7 +159,7 @@ const systemReviewSchema = z.object({
   ),
   assumptions: z.array(z.string()),
   confidence: z.number().min(0).max(1),
-  reviewedAt: z.string().datetime(),
+  reviewedAt: z.string().check(legacyDatetime()),
   reviewVersion: z.literal(1)
 });
 
@@ -168,8 +171,8 @@ const systemStateSchema = z.object({
     status: z.enum(['active', 'paused', 'completed']).nullable(),
     phase: z.enum(['exploration', 'execution']).nullable(),
     confidence: z.number().min(0).max(1),
-    version: z.number().int().min(1),
-    lastTouchedAt: z.string().datetime().nullable()
+    version: z.number().check(...legacyInteger()).min(1),
+    lastTouchedAt: z.string().check(legacyDatetime()).nullable()
   }),
   routing: z.object({
     preferred: z.enum(['local', 'backend']),
@@ -179,31 +182,31 @@ const systemStateSchema = z.object({
   backend: z.object({
     connected: z.literal(true),
     registryAvailable: z.literal(true),
-    lastHeartbeatAt: z.string().datetime()
+    lastHeartbeatAt: z.string().check(legacyDatetime())
   }),
   stateFreshness: z.object({
     intent: z.enum(['fresh', 'stale']),
     backend: z.enum(['fresh', 'degraded']),
-    lastValidatedAt: z.string().datetime()
+    lastValidatedAt: z.string().check(legacyDatetime())
   }),
   limits: z.object({
     rateLimited: z.boolean(),
-    remainingRequests: z.number().int().min(0)
+    remainingRequests: z.number().check(...legacyInteger()).min(0)
   }),
-  generatedAt: z.string().datetime(),
+  generatedAt: z.string().check(legacyDatetime()),
   confidence: z.number().min(0).max(1)
 });
 
 const systemStateUpdateSchema = z
   .object({
     mode: z.literal('system_state'),
-    expectedVersion: z.number().int().min(1).optional(),
+    expectedVersion: z.number().check(...legacyInteger()).min(1).optional(),
     patch: z
       .object({
         confidence: z.number().min(0).max(1).optional(),
         phase: z.enum(['exploration', 'execution']).optional(),
         status: z.enum(['active', 'paused', 'completed']).optional(),
-        label: z.string().min(1).max(200).optional()
+        label: z.string().min(1).max(200).check(utf16MaxLength(200)).optional()
       })
       .optional()
   })
@@ -384,7 +387,7 @@ function validateLenientChatRequest(body: AskRequest): {
       ok: false,
       errorPayload: {
         error: 'Validation failed',
-        details: fallbackStrictResult.error.issues.map(
+        details: formatZodIssues(fallbackStrictResult.error, fallbackBody, aiRequestSchema).map(
           issue => `${issue.path.join('.') || 'body'}: ${issue.message}`
         )
       }
@@ -616,7 +619,7 @@ export const handleAIRequest = async (
     if (!stateRequest.success) {
       return sendGuardedAskResponse(req, res, {
         error: 'SYSTEM_STATE_REQUEST_INVALID',
-        details: stateRequest.error.issues.map(issue => issue.message)
+        details: formatZodIssues(stateRequest.error, req.body, systemStateUpdateSchema).map(issue => issue.message)
       }, `${endpointName}.system_state.invalid`, 400);
     }
 
@@ -648,7 +651,7 @@ export const handleAIRequest = async (
     if (!strictState.success) {
       return sendGuardedAskResponse(req, res, {
         error: 'SYSTEM_STATE_RESPONSE_INVALID',
-        details: strictState.error.issues.map(issue => issue.message)
+        details: formatZodIssues(strictState.error, stateResponse, systemStateSchema).map(issue => issue.message)
       }, `${endpointName}.system_state.response_invalid`, 500);
     }
 
@@ -731,7 +734,7 @@ export const handleAIRequest = async (
       if (!strictReview.success) {
         return sendGuardedAskResponse(req, res, {
           error: 'SYSTEM_REVIEW_RESPONSE_INVALID',
-          details: strictReview.error.issues.map(issue => issue.message)
+          details: formatZodIssues(strictReview.error, normalizedReviewPayload, systemReviewSchema).map(issue => issue.message)
         }, `${endpointName}.system_review.response_invalid`, 500);
       }
 

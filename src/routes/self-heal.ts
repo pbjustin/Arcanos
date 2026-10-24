@@ -1,5 +1,8 @@
 import { Router, Request, Response, type NextFunction } from 'express';
 import { z } from 'zod';
+import { legacyInteger } from '@shared/validation/zodNumberChecks.js';
+import { legacyDatetime, utf16MaxLength } from '@shared/validation/zodStringChecks.js';
+import { formatZodIssues } from '@shared/validation/zodIssues.js';
 import { capabilityGate } from '@transport/http/middleware/capabilityGate.js';
 import { createRateLimitMiddleware } from '@platform/runtime/security.js';
 import { getConfig } from '@platform/runtime/unifiedConfig.js';
@@ -130,17 +133,17 @@ const selfHealProviderProbeRateLimit = createRateLimitMiddleware({
 router.use('/api/self-heal', selfHealingControlHttpBoundary);
 
 const simulatedWorkerSchema = z.object({
-  workerId: z.string().trim().min(1).max(128),
-  healthStatus: z.string().trim().min(1).max(64),
-  currentJobId: z.string().trim().min(1).max(128).nullable().optional()
+  workerId: z.string().trim().min(1).max(128).check(utf16MaxLength(128)),
+  healthStatus: z.string().trim().min(1).max(64).check(utf16MaxLength(64)),
+  currentJobId: z.string().trim().min(1).max(128).check(utf16MaxLength(128)).nullable().optional()
 });
 
 const simulatedTrinityStageSchema = z.object({
-  observationsInWindow: z.number().int().min(0).optional(),
-  attempts: z.number().int().min(0).optional(),
+  observationsInWindow: z.number().check(...legacyInteger()).min(0).optional(),
+  attempts: z.number().check(...legacyInteger()).min(0).optional(),
   activeAction: z.enum(['enable_degraded_mode', 'bypass_final_stage']).nullable().optional(),
   verified: z.boolean().optional(),
-  cooldownUntil: z.string().datetime().nullable().optional(),
+  cooldownUntil: z.string().check(legacyDatetime()).nullable().optional(),
   failedActions: z.array(
     z.enum(['enable_degraded_mode', 'bypass_final_stage'])
   ).max(2).optional()
@@ -150,15 +153,15 @@ const decidePredictiveSelfHealSchema = z.object({
   aiDiagnosis: z.boolean().optional(),
   execute: z.boolean().optional(),
   dryRun: z.boolean().optional(),
-  source: z.string().trim().min(1).max(64).optional(),
+  source: z.string().trim().min(1).max(64).check(utf16MaxLength(64)).optional(),
   simulate: z.object({
-    requestCount: z.number().int().min(0).optional(),
+    requestCount: z.number().check(...legacyInteger()).min(0).optional(),
     errorRate: z.number().min(0).max(1).optional(),
     timeoutRate: z.number().min(0).max(1).optional(),
     avgLatencyMs: z.number().min(0).optional(),
     p95LatencyMs: z.number().min(0).optional(),
     maxLatencyMs: z.number().min(0).optional(),
-    degradedCount: z.number().int().min(0).optional(),
+    degradedCount: z.number().check(...legacyInteger()).min(0).optional(),
     memory: z.object({
       rssMb: z.number().min(0).optional(),
       heapUsedMb: z.number().min(0).optional(),
@@ -168,25 +171,25 @@ const decidePredictiveSelfHealSchema = z.object({
     }).partial().optional(),
     workerHealth: z.object({
       overallStatus: z.enum(['healthy', 'degraded', 'unhealthy', 'offline']).nullable().optional(),
-      alertCount: z.number().int().min(0).optional(),
-      alerts: z.array(z.string().trim().min(1).max(256)).max(50).optional(),
-      pending: z.number().int().min(0).optional(),
-      running: z.number().int().min(0).optional(),
-      delayed: z.number().int().min(0).optional(),
-      stalledRunning: z.number().int().min(0).optional(),
+      alertCount: z.number().check(...legacyInteger()).min(0).optional(),
+      alerts: z.array(z.string().trim().min(1).max(256).check(utf16MaxLength(256))).max(50).optional(),
+      pending: z.number().check(...legacyInteger()).min(0).optional(),
+      running: z.number().check(...legacyInteger()).min(0).optional(),
+      delayed: z.number().check(...legacyInteger()).min(0).optional(),
+      stalledRunning: z.number().check(...legacyInteger()).min(0).optional(),
       oldestPendingJobAgeMs: z.number().min(0).optional(),
-      degradedWorkerIds: z.array(z.string().trim().min(1).max(128)).max(100).optional(),
-      unhealthyWorkerIds: z.array(z.string().trim().min(1).max(128)).max(100).optional(),
+      degradedWorkerIds: z.array(z.string().trim().min(1).max(128).check(utf16MaxLength(128))).max(100).optional(),
+      unhealthyWorkerIds: z.array(z.string().trim().min(1).max(128).check(utf16MaxLength(128))).max(100).optional(),
       workers: z.array(simulatedWorkerSchema).max(100).optional()
     }).partial().optional(),
     workerRuntime: z.object({
       enabled: z.boolean().optional(),
       started: z.boolean().optional(),
-      configuredCount: z.number().int().min(0).optional(),
-      activeListeners: z.number().int().min(0).optional(),
-      maxActiveWorkers: z.number().int().min(0).optional(),
-      surgeWorkerCount: z.number().int().min(0).optional(),
-      workerIds: z.array(z.string().trim().min(1).max(128)).max(100).optional()
+      configuredCount: z.number().check(...legacyInteger()).min(0).optional(),
+      activeListeners: z.number().check(...legacyInteger()).min(0).optional(),
+      maxActiveWorkers: z.number().check(...legacyInteger()).min(0).optional(),
+      surgeWorkerCount: z.number().check(...legacyInteger()).min(0).optional(),
+      workerIds: z.array(z.string().trim().min(1).max(128).check(utf16MaxLength(128))).max(100).optional()
     }).partial().optional(),
     promptRoute: z.object({
       active: z.boolean().optional(),
@@ -199,8 +202,8 @@ const decidePredictiveSelfHealSchema = z.object({
       activeAction: z.enum(['enable_degraded_mode', 'bypass_final_stage']).nullable().optional(),
       verified: z.boolean().optional(),
       config: z.object({
-        triggerThreshold: z.number().int().min(1).optional(),
-        maxAttempts: z.number().int().min(1).optional()
+        triggerThreshold: z.number().check(...legacyInteger()).min(1).optional(),
+        maxAttempts: z.number().check(...legacyInteger()).min(1).optional()
       }).partial().optional(),
       stages: z.object({
         intake: simulatedTrinityStageSchema.optional(),
@@ -233,7 +236,7 @@ router.post(
       if (!parsed.success) {
         res.status(400).json({
           error: 'Invalid predictive self-heal payload',
-          issues: parsed.error.issues
+          issues: formatZodIssues(parsed.error, req.body ?? {}, decidePredictiveSelfHealSchema)
         });
         return;
       }

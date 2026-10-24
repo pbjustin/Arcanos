@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
+import { utf16MaxLength, utf16MinLength } from '@shared/validation/zodStringChecks.js';
 
 import { z } from 'zod';
+import { legacyInteger } from '@shared/validation/zodNumberChecks.js';
+import { formatZodIssues } from '@shared/validation/zodIssues.js';
 
 import {
   findOrCreateGptJob,
@@ -90,12 +93,12 @@ const sourceTypeHintSchema = z.enum(
 );
 
 const ingestPayloadSchema = z.object({
-  game: z.string().trim().min(1).max(120),
-  sourceUrls: z.array(z.string().min(1).max(2_048)).min(1).max(MAX_SOURCE_URLS),
+  game: z.string().trim().min(1).max(120).check(utf16MaxLength(120)),
+  sourceUrls: z.array(z.string().min(1).max(2_048).check(utf16MaxLength(2_048))).min(1).max(MAX_SOURCE_URLS),
   sourceTypeHint: sourceTypeHintSchema.optional(),
-  patchVersion: z.string().trim().min(1).max(64).optional(),
+  patchVersion: z.string().trim().min(1).max(64).check(utf16MaxLength(64)).optional(),
   origin: z.enum(['user_supplied', 'gpt_web_search']).optional().default('user_supplied'),
-  idempotencyKey: z.string().trim().min(8).max(IDEMPOTENCY_KEY_MAX_CHARS).optional()
+  idempotencyKey: z.string().trim().check(...utf16MinLength(8)).max(IDEMPOTENCY_KEY_MAX_CHARS).check(utf16MaxLength(IDEMPOTENCY_KEY_MAX_CHARS)).optional()
 }).strict();
 
 const ingestRequestSchema = z.object({
@@ -105,7 +108,7 @@ const ingestRequestSchema = z.object({
 
 const refreshPayloadSchema = z.object({
   sourceIds: z.array(z.string().trim().regex(SOURCE_ID_PATTERN)).min(1).max(MAX_SOURCE_URLS),
-  idempotencyKey: z.string().trim().min(8).max(IDEMPOTENCY_KEY_MAX_CHARS).optional(),
+  idempotencyKey: z.string().trim().check(...utf16MinLength(8)).max(IDEMPOTENCY_KEY_MAX_CHARS).check(utf16MaxLength(IDEMPOTENCY_KEY_MAX_CHARS)).optional(),
   reason: z.enum(['user_requested', 'stale', 'patch_update']).optional().default('user_requested')
 }).strict();
 
@@ -115,18 +118,18 @@ const refreshRequestSchema = z.object({
 }).strict();
 
 const queuedSourceSchema = z.object({
-  submittedIndex: z.number().int().min(0).max(MAX_SOURCE_URLS - 1),
-  canonicalUrl: z.string().url().max(2_048),
+  submittedIndex: z.number().check(...legacyInteger()).min(0).max(MAX_SOURCE_URLS - 1),
+  canonicalUrl: z.string().url().max(2_048).check(utf16MaxLength(2_048)),
   // Server-owned refresh provenance; still admitted and fetched from scratch by the worker.
-  acquisitionUrl: z.string().url().max(2_048).optional(),
-  policyGame: z.string().trim().min(1).max(120).optional(),
-  game: z.string().trim().min(1).max(120),
-  gameKey: z.string().trim().min(1).max(160),
+  acquisitionUrl: z.string().url().max(2_048).check(utf16MaxLength(2_048)).optional(),
+  policyGame: z.string().trim().min(1).max(120).check(utf16MaxLength(120)).optional(),
+  game: z.string().trim().min(1).max(120).check(utf16MaxLength(120)),
+  gameKey: z.string().trim().min(1).max(160).check(utf16MaxLength(160)),
   sourceId: z.string().regex(SOURCE_ID_PATTERN).optional(),
   sourceTypeHint: sourceTypeHintSchema.optional(),
   sourceTrustType: z.enum(['official', 'patch_notes', 'wiki', 'curated', 'supplied']).optional(),
   trustScore: z.number().min(0).max(1).optional(),
-  patchVersion: z.string().trim().min(1).max(64).optional(),
+  patchVersion: z.string().trim().min(1).max(64).check(utf16MaxLength(64)).optional(),
   origin: z.enum(['user_supplied', 'gpt_web_search', 'refresh']),
   // Generic refresh cannot erase prior quality authority into legacy acceptance.
   // Only a newly approved hybrid artifact may clear this server-owned restriction.
@@ -149,19 +152,19 @@ const queuedSourceSchema = z.object({
       return assessment;
     }).optional(),
     applicabilityContext: z.object({
-      game: z.string().trim().min(1).max(120),
+      game: z.string().trim().min(1).max(120).check(utf16MaxLength(120)),
       mode: z.enum(['guide', 'build', 'meta']),
       classification: z.enum(['stable', 'patch_sensitive', 'seasonal', 'live_status']),
       seasonalPatchRequired: z.boolean(),
       historical: z.boolean(),
-      requestedVersion: z.string().trim().min(1).max(64).optional(),
+      requestedVersion: z.string().trim().min(1).max(64).check(utf16MaxLength(64)).optional(),
       contextFingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
-      edition: z.string().trim().min(1).max(120).optional(),
-      platform: z.string().trim().min(1).max(80).optional(),
-      region: z.string().trim().min(1).max(80).optional()
+      edition: z.string().trim().min(1).max(120).check(utf16MaxLength(120)).optional(),
+      platform: z.string().trim().min(1).max(80).check(utf16MaxLength(80)).optional(),
+      region: z.string().trim().min(1).max(80).check(utf16MaxLength(80)).optional()
     }).strict().optional(),
     applicabilityBinding: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
-    freshness: z.record(z.unknown()).refine(value => JSON.stringify(value).length <= 8_000)
+    freshness: z.record(z.string(), z.unknown()).refine(value => JSON.stringify(value).length <= 8_000)
   }).strict().optional()
 }).strict();
 
@@ -174,12 +177,12 @@ const admissionErrorSchema = z.object({
     'DUPLICATE_URL',
     'SOURCE_NOT_FOUND'
   ]),
-  message: z.string().max(240),
+  message: z.string().max(240).check(utf16MaxLength(240)),
   retryable: z.literal(false)
 }).strict();
 
 const rejectedSourceSchema = z.object({
-  submittedIndex: z.number().int().min(0).max(MAX_SOURCE_URLS - 1),
+  submittedIndex: z.number().check(...legacyInteger()).min(0).max(MAX_SOURCE_URLS - 1),
   status: z.literal('rejected'),
   recordsCreated: z.literal(0),
   recordsUpdated: z.literal(0),
@@ -191,7 +194,7 @@ const queuedGamingIngestionBodySchema = z.object({
   schemaVersion: z.literal('1'),
   sources: z.array(queuedSourceSchema).min(1).max(MAX_SOURCE_URLS),
   rejectedSources: z.array(rejectedSourceSchema).max(MAX_SOURCE_URLS),
-  submittedCount: z.number().int().min(1).max(MAX_SOURCE_URLS),
+  submittedCount: z.number().check(...legacyInteger()).min(1).max(MAX_SOURCE_URLS),
   refreshReason: z.enum(['user_requested', 'stale', 'patch_update']).optional()
 }).strict();
 
@@ -566,7 +569,7 @@ export function parseQueuedGamingSourceIngestionBody(body: unknown):
   if (!parsed.success) {
     return {
       ok: false,
-      error: parsed.error.issues
+      error: formatZodIssues(parsed.error, body, queuedGamingIngestionBodySchema)
         .map((issue) => `${issue.path.join('.') || 'body'}: ${issue.message}`)
         .join('; ')
     };
@@ -738,7 +741,7 @@ export async function createGamingSourceIngestion(
   const parsed = ingestRequestSchema.safeParse(requestBody);
   if (!parsed.success) {
     return buildGatewayValidationError(
-      parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ')
+      formatZodIssues(parsed.error, requestBody, ingestRequestSchema).map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ')
     );
   }
   const idempotency = resolveExplicitIdempotencyKey(parsed.data.payload.idempotencyKey, context.idempotencyKey);
@@ -852,7 +855,7 @@ export async function refreshGamingSources(
   const parsed = refreshRequestSchema.safeParse(requestBody);
   if (!parsed.success) {
     return buildGatewayValidationError(
-      parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ')
+      formatZodIssues(parsed.error, requestBody, refreshRequestSchema).map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ')
     );
   }
   const idempotency = resolveExplicitIdempotencyKey(parsed.data.payload.idempotencyKey, context.idempotencyKey);

@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { legacyInteger } from '@shared/validation/zodNumberChecks.js';
+import { legacyDatetime } from '@shared/validation/zodStringChecks.js';
 
 import type { McpRequestContext } from '../context.js';
 import { mcpError, mcpText } from '../errors.js';
@@ -15,10 +17,10 @@ const DEFAULT_DAG_TRACE_SLOW_MS = 1_500;
 
 const dagCreateInputSchema = z.object({
   goal: z.string().trim().min(1).optional(),
-  input: z.record(z.any()).optional(),
+  input: z.record(z.string(), z.any()).optional(),
   template: z.string().trim().min(1).optional(),
   sessionId: z.string().trim().min(1).optional(),
-  maxConcurrency: z.number().int().min(1).max(20).optional(),
+  maxConcurrency: z.number().check(...legacyInteger()).min(1).max(20).optional(),
   allowRecursiveSpawning: z.boolean().optional(),
   debug: z.boolean().optional(),
   confirmationNonce: z.string().optional(),
@@ -37,12 +39,12 @@ const dagNodeSchema = dagRunIdSchema.extend({
 });
 
 const dagTraceSchema = dagRunIdSchema.extend({
-  maxEvents: z.number().int().min(1).max(1000).optional(),
+  maxEvents: z.number().check(...legacyInteger()).min(1).max(1000).optional(),
 });
 
 const dagWaitSchema = dagRunIdSchema.extend({
-  updatedAfter: z.string().datetime().optional(),
-  waitForUpdateMs: z.number().int().min(0).max(DAG_RUN_WAIT_MAX_MS).optional(),
+  updatedAfter: z.string().check(legacyDatetime()).optional(),
+  waitForUpdateMs: z.number().check(...legacyInteger()).min(0).max(DAG_RUN_WAIT_MAX_MS).optional(),
 });
 
 const dagCancelSchema = dagRunIdSchema.extend({

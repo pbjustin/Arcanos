@@ -189,6 +189,43 @@ describe('api-arcanos-verification routes', () => {
     expect(capabilitiesResponse.body.data.limits.maxAiCallsPerRun).toBe(20);
   });
 
+  it.each([[], null, 'invalid'])('rejects non-record DAG input %j before scheduling', async (input) => {
+    const response = await authorizeDagRequest(request(buildApp()).post('/dag/runs'))
+      .send({ sessionId: 'session-1', template: 'verification-default', input });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe('Validation failed');
+    expect(response.body.details).toEqual([
+      `input: Expected object, received ${Array.isArray(input) ? 'array' : input === null ? 'null' : 'string'}`
+    ]);
+    expect(mockCreateRun).not.toHaveBeenCalled();
+  });
+
+  it('preserves minute-precision timestamps in DAG polling queries', async () => {
+    mockWaitForRunUpdate.mockResolvedValueOnce(null);
+    const response = await authorizeDagRequest(request(buildApp()).get('/dag/runs/run-minute'))
+      .query({ updatedAfter: '2026-10-23T12:34Z', waitForUpdateMs: 0 });
+
+    expect(response.status).toBe(404);
+    expect(response.body).toEqual({ error: 'RUN_NOT_FOUND' });
+    expect(mockWaitForRunUpdate).toHaveBeenCalledWith('run-minute', {
+      updatedAfter: '2026-10-23T12:34Z',
+      waitForUpdateMs: 0
+    });
+  });
+
+  it('preserves the invalid datetime detail before DAG polling', async () => {
+    const response = await authorizeDagRequest(request(buildApp()).get('/dag/runs/run-invalid-time'))
+      .query({ updatedAfter: '2026-02-30T12:34Z' });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({
+      error: 'RUN_STATUS_QUERY_INVALID',
+      details: ['updatedAfter: Invalid datetime']
+    });
+    expect(mockWaitForRunUpdate).not.toHaveBeenCalled();
+  });
+
   it('returns worker status and queue envelopes', async () => {
     const workersResponse = await request(buildApp()).get('/workers/status');
     const queueResponse = await request(buildApp()).get('/workers/queue');
@@ -455,7 +492,7 @@ describe('api-arcanos-verification routes', () => {
     ).send({
         sessionId: 'session-1',
         template: 'verification-default',
-        input: { goal: 'test the DAG' }
+        input: { goal: 'test the DAG', nested: { values: [1, null, true] } }
       });
 
     expect(createResponse.status).toBe(202);
