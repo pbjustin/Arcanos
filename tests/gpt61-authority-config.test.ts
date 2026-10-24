@@ -89,6 +89,19 @@ describe('explicit GPT-6.1 Sol authority configuration', () => {
     expect(getDefaultModel()).toBe('gpt-6.1-sol');
   });
 
+  it.each([undefined, 'arcanos-behavior/v2'])('reports invalid profile %s without blaming a valid AI_MODEL', profile => {
+    enableReplacement();
+    if (profile === undefined) delete process.env.ARCANOS_BEHAVIORAL_PROFILE_ID;
+    else process.env.ARCANOS_BEHAVIORAL_PROFILE_ID = profile;
+
+    const result = validateEnvironment();
+
+    expect(result.isValid).toBe(false);
+    expect(result.errors).toContain('ARCANOS_BEHAVIORAL_PROFILE_ID must select a supported version when replacement authority is enabled');
+    expect(result.errors).not.toEqual(expect.arrayContaining([expect.stringContaining('AI_MODEL')]));
+    expect(() => getDefaultModel()).toThrow(expect.objectContaining({ code: 'FINAL_AUTHORITY_UNAVAILABLE' }));
+  });
+
   it.each(['final', 'final-escalation'] as const)('rejects conflicting caller overrides for %s', role => {
     enableReplacement();
     expect(resolveGenerativeModel(role, 'gpt-6.1-sol')).toBe('gpt-6.1-sol');
@@ -122,23 +135,6 @@ describe('explicit GPT-6.1 Sol authority configuration', () => {
     expect(validateConfig().errors).toContain('ARCANOS_GPT61_AUTHORITY_ENABLED must be exactly true or false');
     expect(validateEnvironment().isValid).toBe(false);
   });
-
-  it.each([undefined, 'arcanos-behavior/v2'])(
-    'reports unavailable profile %s without misidentifying the valid replacement model', profile => {
-      enableReplacement();
-      if (profile === undefined) delete process.env.ARCANOS_BEHAVIORAL_PROFILE_ID;
-      else process.env.ARCANOS_BEHAVIORAL_PROFILE_ID = profile;
-
-      const result = validateEnvironment();
-
-      expect(result.isValid).toBe(false);
-      expect(result.errors).toContain(
-        'ARCANOS_BEHAVIORAL_PROFILE_ID must select a supported version when replacement authority is enabled'
-      );
-      expect(result.errors).not.toContain('❌ Invalid value for AI_MODEL: "gpt-6.1-sol"');
-      expect(() => getDefaultModel()).toThrow(expect.objectContaining({ code: 'FINAL_AUTHORITY_UNAVAILABLE' }));
-    }
-  );
 
   it('keeps the ft restriction for compatibility callers that provide no migration mode', () => {
     const config = { ...getConfig(), generativeAuthorityMode: undefined, trinityFinalModel: 'gpt-6.1-sol' };
