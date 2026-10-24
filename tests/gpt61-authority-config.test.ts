@@ -89,6 +89,18 @@ describe('explicit GPT-6.1 Sol authority configuration', () => {
     expect(getDefaultModel()).toBe('gpt-6.1-sol');
   });
 
+  it.each([undefined, 'arcanos-behavior/v2'])('reports invalid profile %s without blaming a valid AI_MODEL', profile => {
+    enableReplacement();
+    if (profile === undefined) delete process.env.ARCANOS_BEHAVIORAL_PROFILE_ID;
+    else process.env.ARCANOS_BEHAVIORAL_PROFILE_ID = profile;
+
+    const result = validateEnvironment();
+
+    expect(result.isValid).toBe(false);
+    expect(result.errors).toContain('ARCANOS_BEHAVIORAL_PROFILE_ID must select a supported version when replacement authority is enabled');
+    expect(result.errors).not.toEqual(expect.arrayContaining([expect.stringContaining('AI_MODEL')]));
+  });
+
   it.each(['final', 'final-escalation'] as const)('rejects conflicting caller overrides for %s', role => {
     enableReplacement();
     expect(resolveGenerativeModel(role, 'gpt-6.1-sol')).toBe('gpt-6.1-sol');
