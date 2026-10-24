@@ -300,6 +300,16 @@ export function rethrowWorkerAiBudgetError(error: unknown): void {
   }
 }
 
+const streamModelAttributions = new WeakMap<object, (model: string) => void>();
+
+/** Reattribute the opened call only after its facade validates stream metadata. */
+export function recordOpenAIStreamModelIdentity(stream: object, actualModel: string): void {
+  const attributeModel = streamModelAttributions.get(stream);
+  if (!attributeModel || !actualModel.trim()) return;
+  streamModelAttributions.delete(stream);
+  attributeModel(actualModel.trim());
+}
+
 export async function instrumentOpenAIOperation<T>(input: {
   operation: string;
   model?: string | null;
@@ -363,6 +373,19 @@ export async function instrumentOpenAIOperation<T>(input: {
         totalTokens: normalizedUsage.totalTokens,
       }
     });
+    if (aiExecutionContext && actualModel && result && typeof result === 'object'
+      && typeof (result as { [Symbol.asyncIterator]?: unknown })[Symbol.asyncIterator] === 'function') {
+      // Opening the stream already consumed one call. Its first validated model
+      // replaces that attribution without charging another operation or budget unit.
+      streamModelAttributions.set(result, providerModel => {
+        if (providerModel === actualModel) return;
+        const previousCount = aiExecutionContext.models[actualModel] ?? 0;
+        if (previousCount <= 0) return;
+        if (previousCount === 1) delete aiExecutionContext.models[actualModel];
+        else aiExecutionContext.models[actualModel] = previousCount - 1;
+        aiExecutionContext.models[providerModel] = (aiExecutionContext.models[providerModel] ?? 0) + 1;
+      });
+    }
     if (aiExecutionContext?.jobId) {
       void recordJobEvent({
         jobId: aiExecutionContext.jobId,

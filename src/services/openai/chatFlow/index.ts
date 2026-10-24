@@ -17,6 +17,7 @@ import type { ResponseCreateParamsNonStreaming } from 'openai/resources/response
 import {
   assertValidResponsesCreateParams,
   normalizeResponsesCreateParams,
+  recordOpenAIStreamModelIdentity,
   rethrowWorkerAiBudgetError,
   type OpenAIAdapter
 } from "@core/adapters/openai.adapter.js";
@@ -570,7 +571,16 @@ export async function createCentralizedCompletion(
                 ? event as { response?: { model?: unknown } }
                 : undefined;
               if (eventRecord && 'response' in eventRecord) {
-                ensureModelMatchesExpectation(eventRecord.response ?? {}, model);
+                const actualModel = ensureModelMatchesExpectation(eventRecord.response ?? {}, model);
+                if (!modelValidated) {
+                  recordOpenAIStreamModelIdentity(providerStream, actualModel);
+                  recordTraceEvent('openai.stream.model_validated', {
+                    model: actualModel,
+                    requestedModel: model,
+                    behavioralProfileId: responsePayload.metadata?.arcanos_behavioral_profile,
+                    behavioralProfileService: responsePayload.metadata?.arcanos_service
+                  });
+                }
                 modelValidated = true;
               }
               // No event (including output/tool deltas) escapes before authority is proven.

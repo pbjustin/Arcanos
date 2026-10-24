@@ -523,6 +523,10 @@ telemetry. Outgoing request metadata uses `arcanos_behavioral_profile` and
 `arcanos_service`; local request/completion events record `behavioralProfileId`
 and `behavioralProfileService` separately. Successful completion telemetry keeps
 the actual provider `model` and, where recorded, the requested `requestedModel`.
+For streaming, invocation metrics retain the requested model label; the validated
+stream trace and execution summary record the observed model once metadata arrives.
+Cancelling before the first read retains the consumed call budget without claiming
+a verified provider identity. Terminal SSE token usage aggregation is unchanged.
 Sol response validation accepts the exact ID or a date-shaped snapshot suffix
 and rejects arbitrary family/helper suffixes. Synthetic snapshot fixtures prove
 that validation rule, not provider availability. A profile identifier never
