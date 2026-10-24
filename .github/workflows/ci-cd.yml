@@ -153,6 +153,10 @@ jobs:
 
       - name: 🧪 Run unit tests
         if: matrix.test-type == 'unit'
+        # Preserve real preview deadlines without competing Jest file workers.
+        # Keep the shared wrapper's existing memory recycling and coverage gates.
+        env:
+          JEST_MAX_WORKERS: '1'
         run: npm test -- --json --outputFile="$RUNNER_TEMP/jest-result.json"
 
       - name: Offline live validation security contracts
