@@ -214,7 +214,7 @@ const environmentChecks: EnvironmentCheck[] = [
     validator: (value) => {
       const config = getConfig();
       return config.generativeAuthorityMode === 'gpt61-sol'
-        ? getGenerativeAuthorityConfigurationError(config) === null && value === 'gpt-6.1-sol'
+        ? value === 'gpt-6.1-sol'
         : /^ft:[^\s]+$/.test(value.trim());
     }
   },
