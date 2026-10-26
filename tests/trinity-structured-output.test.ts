@@ -69,6 +69,31 @@ describe('Trinity final JSON contract validation', () => {
     expect(() => validateNested(raw, flags, honesty)).toThrow(expect.objectContaining({ reason: 'unsupported_claim' }));
   });
 
+  it.each([
+    ['I ran the tests.', 'I deployed the app.'],
+    ['I ran npm test.', 'I ran npm run build.'],
+    ['I deployed the staging app.', 'I deployed the production app.'],
+    ['I ran the tests.', 'I saved the record in the backend database.'],
+    ['I saved the record in the backend database.', 'I deployed the app.'],
+  ])('rejects a different completed action despite a verified tag: %s -> %s', (evidence, claim) => {
+    const tagged = { ...honesty, evidenceTags: [{
+      claimText: evidence, sourceType: 'tool' as const, verificationStatus: 'verified' as const,
+      confidence: 'high' as const,
+    }] };
+    expect(() => validate(JSON.stringify({ answer: claim }), deriveTrinityCapabilityFlags({ callBackend: true }), tagged))
+      .toThrow(expect.objectContaining({ reason: 'unsupported_claim' }));
+  });
+
+  it('preserves a matching completed command with the existing capability and evidence inputs', () => {
+    const claim = 'I ran npm test.';
+    const tagged = { ...honesty, evidenceTags: [{
+      claimText: claim, sourceType: 'tool' as const, verificationStatus: 'verified' as const,
+      confidence: 'high' as const,
+    }] };
+    const raw = JSON.stringify({ answer: claim });
+    expect(validate(raw, deriveTrinityCapabilityFlags({ callBackend: true }), tagged)).toBe(raw);
+  });
+
   it.each(['I verified the live deployment status', 'I called the backend API', 'verified'])(
     'does not let a property name carry an unsupported claim: %s', key => {
       const validateKeys = createTrinityStructuredOutputValidator({ name: 'claim_keys', schema: { type: 'object' } });

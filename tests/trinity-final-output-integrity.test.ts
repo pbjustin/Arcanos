@@ -41,13 +41,17 @@ const contract = {
 };
 let finalText = raw;
 let incomplete = false;
+let toolClaimText: string | null = null;
+let canCallBackend = false;
 const originalAuthority = process.env.FINETUNED_MODEL_ID;
 
 function response(payload: ResponseCreateParamsNonStreaming) {
   let text = finalText;
   if (payload.text?.format?.type === 'json_schema') {
     text = JSON.stringify({ response_mode: 'answer', achievable_subtasks: ['assess the supplied outline'],
-      blocked_subtasks: [], user_visible_caveats: [], claim_tags: [], final_answer: 'Use the supplied outline.' });
+      blocked_subtasks: [], user_visible_caveats: [], claim_tags: toolClaimText ? [{
+        claim_text: toolClaimText, source_type: 'tool', verification_status: 'verified', confidence: 'high',
+      }] : [], final_answer: 'Use the supplied outline.' });
   } else if (String(payload.model) !== authority) {
     text = JSON.stringify(payload).includes('CLEAR principles')
       ? JSON.stringify({ clarity: 5, leverage: 5, efficiency: 5, alignment: 5, resilience: 5, overall: 5 })
@@ -64,6 +68,7 @@ function run(answerMode: 'direct' | 'explained' = 'explained', finalOutputContra
     input: { prompt, sourceEndpoint: 'trinity-output-integrity.fixture' },
     context: { client, runtimeBudget: createRuntimeBudgetWithLimit(20_000, 0), runOptions: {
       disableMemoryAccess: true, disableOptionalSideEffects: true, answerMode,
+      ...(canCallBackend ? { toolBackedCapabilities: { callBackend: true } } : {}),
       ...(finalOutputContract ? { finalOutputContract } : {}),
     } },
   });
@@ -74,6 +79,8 @@ describe('Trinity caller-declared final JSON integrity at actual provider extrac
     process.env.FINETUNED_MODEL_ID = authority;
     finalText = raw;
     incomplete = false;
+    toolClaimText = null;
+    canCallBackend = false;
     responsesCreate.mockReset().mockImplementation(async (payload: ResponseCreateParamsNonStreaming) => response(payload));
   });
   afterEach(() => {
@@ -152,6 +159,30 @@ describe('Trinity caller-declared final JSON integrity at actual provider extrac
       code: 'TRINITY_STRUCTURED_OUTPUT_INVALID', reason: 'unsupported_claim',
     });
     expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
+  });
+
+  it.each([
+    ['I ran the tests.', 'I deployed the app.'],
+    ['I ran npm test.', 'I ran npm run build.'],
+    ['I deployed the staging app.', 'I deployed the production app.'],
+    ['I ran the tests.', 'I saved the record in the backend database.'],
+  ])('does not promote synthetic reasoning evidence for another completed action: %s -> %s', async (evidence, claim) => {
+    // These are synthetic metadata inputs; the fixture does not execute tools.
+    toolClaimText = evidence;
+    canCallBackend = true;
+    finalText = JSON.stringify({ answer: claim, audit_trace: 'Synthetic example.' });
+    await expect(run()).rejects.toMatchObject({
+      code: 'TRINITY_STRUCTURED_OUTPUT_INVALID', reason: 'unsupported_claim',
+    });
+    expect(responsesCreate).toHaveBeenCalledTimes(4);
+  });
+
+  it('preserves a matching synthetic completed-action claim in the full path', async () => {
+    toolClaimText = 'I ran npm test.';
+    canCallBackend = true;
+    finalText = JSON.stringify({ answer: toolClaimText, audit_trace: 'Synthetic example.' });
+    expect((await run()).result).toBe(finalText);
+    expect(responsesCreate).toHaveBeenCalledTimes(4);
   });
 
   it('retains ordinary direct prose processing when no JSON contract is declared', async () => {

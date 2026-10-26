@@ -151,6 +151,61 @@ describe('Trinity source comment and example honesty', () => {
   );
 
   it.each([
+    ['I ran the tests.', 'I deployed the app.'],
+    ['I ran the tests.', 'I executed the script.'],
+    ['I deployed the app to staging.', 'I deployed the app to production.'],
+    ['I ran npm test.', 'I ran npm run build.'],
+    ['I ran npm run Build.', 'I ran npm run build.'],
+    ['I ran the tests.', 'I saved the backend record.'],
+    ['I ran the tests.', 'I deleted the database row.'],
+    ['I ran the tests.', 'I ran the tests and deployed the app.'],
+    ['I ran the tests.', 'I ran the tests; deployed the app.'],
+    ['I ran the tests.', 'I ran the tests and I deployed the app.']
+  ])('does not let evidence for %s authorize a different action: %s', (evidence, text) => {
+    const reasoningHonesty = { ...createDefaultTrinityReasoningHonesty(), evidenceTags: [{
+      claimText: evidence, sourceType: 'tool' as const, verificationStatus: 'verified' as const,
+      confidence: 'high' as const
+    }] };
+    const allowedFlags = deriveTrinityCapabilityFlags({ callBackend: true });
+    expect(enforceFinalStageHonesty(text, reasoningHonesty, allowedFlags, 'EXECUTE_TASK', true).blocked).toBe(true);
+    expect(enforceFinalStageHonestyAndMinimalism({ text, userPrompt: '', capabilityFlags: allowedFlags,
+      outputControls, reasoningHonesty, preservePresentation: true }).blockedOrRewrittenClaims.length)
+      .toBeGreaterThan(0);
+  });
+
+  it.each([
+    ['I ran the tests.', 'We have executed the tests.'],
+    ['I ran npm test.', '// I ran `npm test`.'],
+    ['I deployed the app to staging.', 'I deployed the app to staging.'],
+    ['I saved the backend record.', 'I saved the backend record.']
+  ])('retains matching action evidence across presentation-only changes: %s', (evidence, text) => {
+    const reasoningHonesty = { ...createDefaultTrinityReasoningHonesty(), evidenceTags: [{
+      claimText: evidence, sourceType: 'tool' as const, verificationStatus: 'verified' as const,
+      confidence: 'high' as const
+    }] };
+    const allowedFlags = deriveTrinityCapabilityFlags({ callBackend: true });
+    expect(enforceFinalStageHonesty(text, reasoningHonesty, allowedFlags, 'EXECUTE_TASK', true))
+      .toMatchObject({ blocked: false, text });
+    expect(enforceFinalStageHonestyAndMinimalism({ text, userPrompt: '', capabilityFlags: allowedFlags,
+      outputControls, reasoningHonesty, preservePresentation: true }))
+      .toMatchObject({ text, blockedOrRewrittenClaims: [] });
+  });
+
+  it('requires matching evidence for every completed action in a shared sentence', () => {
+    const text = 'I ran the tests and I deployed the app.';
+    const reasoningHonesty = { ...createDefaultTrinityReasoningHonesty(), evidenceTags: [
+      'I ran the tests.', 'I deployed the app.'
+    ].map(claimText => ({ claimText, sourceType: 'tool' as const,
+      verificationStatus: 'verified' as const, confidence: 'high' as const })) };
+    const allowedFlags = deriveTrinityCapabilityFlags({ callBackend: true });
+    expect(enforceFinalStageHonesty(text, reasoningHonesty, allowedFlags, 'EXECUTE_TASK', true))
+      .toMatchObject({ blocked: false, text });
+    expect(enforceFinalStageHonestyAndMinimalism({ text, userPrompt: '', capabilityFlags: allowedFlags,
+      outputControls, reasoningHonesty, preservePresentation: true }))
+      .toMatchObject({ text, blockedOrRewrittenClaims: [] });
+  });
+
+  it.each([
     'Check the API response before returning it.',
     '"I verified the current deployment is healthy."'
   ])('retains the existing guard for ordinary prose and unframed quotations: %s', text => {
