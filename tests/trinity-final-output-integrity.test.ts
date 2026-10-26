@@ -146,6 +146,14 @@ describe('Trinity caller-declared final JSON integrity at actual provider extrac
     expect(responsesCreate).toHaveBeenCalledTimes(1);
   });
 
+  it.each(['direct', 'explained'] as const)('rejects an unsupported named-command execution claim in the %s path', async mode => {
+    finalText = JSON.stringify({ answer: 'I ran npm test.', audit_trace: 'Local example.' });
+    await expect(run(mode)).rejects.toMatchObject({
+      code: 'TRINITY_STRUCTURED_OUTPUT_INVALID', reason: 'unsupported_claim',
+    });
+    expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
+  });
+
   it('retains ordinary direct prose processing when no JSON contract is declared', async () => {
     finalText = 'Direct answer: **Use** `value`.';
     expect((await run('direct', null)).result).toBe('Use value.');

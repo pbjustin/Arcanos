@@ -64,6 +64,12 @@ describe('Trinity source comment and example honesty', () => {
     'We have deployed the app.',
     'I ran the verification tool.',
     'I executed the command.',
+    'I ran npm test.',
+    "I've executed npm test.",
+    'We ran npm run build.',
+    '// I ran `npm test`.',
+    'I ran "npm test".',
+    "I executed 'npm run build'.",
     '// I deployed the app.',
     '// I ran the tests.',
     '/* We executed the script. */',
@@ -111,6 +117,19 @@ describe('Trinity source comment and example honesty', () => {
     expect(result.final.text).not.toContain('I verified');
     expect(result.reasoningHonesty.evidenceTags).toEqual([]);
     expect(capabilityFlags.canConfirmExternalState).toBe(false);
+  });
+
+  it.each([
+    'If I ran npm test, I would read its output.',
+    'If we executed npm run build, we would read its output.',
+    'If I ran "npm test", I would read its output.',
+    'Run npm test before submitting the change.',
+    '//audit: Run npm test before release.',
+    'Example: "Run npm test before submitting the change."'
+  ])('preserves hypothetical and instructional command content: %s', text => {
+    const result = inspect(text);
+    expect(result.first).toMatchObject({ blocked: false, text });
+    expect(result.final).toMatchObject({ text, blockedOrRewrittenClaims: [] });
   });
 
   it.each(['I deployed the app.', 'I ran the verification tool.', 'We executed the script.'])(

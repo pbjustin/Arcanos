@@ -45,9 +45,20 @@ describe('Trinity final JSON contract validation', () => {
     'I called the backend API.',
     'I verified the live deployment status.',
     'I deployed the service and confirmed its current status.',
+    'I ran npm test.',
+    'I ran npm run build.',
   ])('preserves honesty blocking inside JSON: %s', claim => {
     expect(() => validate(JSON.stringify({ answer: claim }), flags, honesty))
       .toThrow(expect.objectContaining({ reason: 'unsupported_claim' }));
+  });
+
+  it.each([
+    'If I ran npm test, I would inspect its output.',
+    'Run npm test before changing the configuration.',
+    '//audit: Run npm test before changing the configuration.',
+  ])('does not mistake a named-command hypothetical or instruction for performed work: %s', text => {
+    const raw = JSON.stringify({ answer: text });
+    expect(validate(raw, flags, honesty)).toBe(raw);
   });
 
   it('does not let a safe limitation field excuse a separate fabricated action claim', () => {

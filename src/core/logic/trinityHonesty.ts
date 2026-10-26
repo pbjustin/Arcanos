@@ -142,7 +142,7 @@ const BACKEND_ACTION_PATTERN =
 const BACKEND_ACTION_CONTEXT_PATTERN =
   /\b(backend|database|db|table|record|row|service|services|api|endpoint|cache)\b/i;
 const COMPLETED_EXECUTION_SELF_CLAIM_PATTERN =
-  /\b(?:i|we)(?:['’]ve|\s+have)?\s+(?:deployed\b|(?:ran|executed)\s+(?:(?:the|a|an|your|our|this|that|these|those|all|verification|unit|integration|local|\d+)\s+){0,4}(?:tools?|commands?|scripts?|tests?)\b)/i;
+  /\b(?:i|we)(?:['’]ve|\s+have)?\s+(?:deployed\b|(?:ran|executed)\s+(?:(?:the|a|an|your|our|this|that|these|those|all|verification|unit|integration|local|\d+)\s+){0,4}(?:tools?|commands?|scripts?|tests?)\b)|(?<!\bif\s+)\b(?:i|we)(?:['’]ve|\s+have)?\s+(?:ran|executed)\s+[`"']?npm(?:\.cmd)?\s+(?:test\b|run\s+[a-z0-9:_-]+\b)/i;
 const PERSISTENCE_SAVE_CONTEXT_PATTERN =
   /\b(memory|data|details|preferences|settings|accounts?|profiles?|sessions?|conversations?|transcripts?|files?|documents?|records?|notes?|answers?|results?|credentials?|secrets?|passwords?|storage|disk|logs?)\b/i;
 const PERSISTENCE_CREDENTIAL_TOKEN_PATTERN =
