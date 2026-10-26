@@ -141,8 +141,10 @@ const BACKEND_ACTION_PATTERN =
   /\b(saved|save|persisted|persist|wrote|write|stored|store|pinged|ping|called|call|updated|update|inserted|insert|deleted|delete|committed|commit|queried|query|inspected|inspect)\b/i;
 const BACKEND_ACTION_CONTEXT_PATTERN =
   /\b(backend|database|db|table|record|row|service|services|api|endpoint|cache)\b/i;
+// Bare "run" is habitual; have/'ve makes it completed. Exclude direct if-clauses
+// for every action, and keep the same bounded adverb prefix in evidence matching.
 const COMPLETED_EXECUTION_SELF_CLAIM_PATTERN =
-  /\b(?:i|we)(?:['’]ve|\s+have)?\s+(?:deployed\b|(?:ran|executed)\s+(?:(?:the|a|an|your|our|this|that|these|those|all|verification|unit|integration|local|\d+)\s+){0,4}(?:tools?|commands?|scripts?|tests?)\b)|(?<!\bif\s+)\b(?:i|we)(?:['’]ve|\s+have)?\s+(?:ran|executed)\s+[`"']?npm(?:\.cmd)?\s+(?:test\b|run\s+[a-z0-9:_-]+\b)/i;
+  /(?<!\bif\s+)\b(?:i|we)(?!\s+(?:(?:[a-z-]+ly|just|already|now|also)\s+){0,2}run\b)(?:['’]ve|\s+have)?\s+(?:(?:[a-z-]+ly|just|already|now|also)\s+){0,2}(?:deployed\b|(?:ran|run|executed)\s+(?:(?:(?:the|a|an|your|our|this|that|these|those|all|verification|unit|integration|local|\d+)\s+){0,4}(?:tools?|commands?|scripts?|tests?)\b|[`"']?npm(?:\.cmd)?\s+(?:test\b|run\s+[a-z0-9:_-]+\b)))/i;
 const PERSISTENCE_SAVE_CONTEXT_PATTERN =
   /\b(memory|data|details|preferences|settings|accounts?|profiles?|sessions?|conversations?|transcripts?|files?|documents?|records?|notes?|answers?|results?|credentials?|secrets?|passwords?|storage|disk|logs?)\b/i;
 const PERSISTENCE_CREDENTIAL_TOKEN_PATTERN =
@@ -689,8 +691,8 @@ function completedExecutionClaims(text: string): string[] {
     let claim = text.slice(match.index, matches[index + 1]?.index ?? text.length);
     if (index + 1 < matches.length) claim = claim.replace(/\s+(?:and|but|then)\s*$/i, '');
     claim = claim.trim().replace(/\s*\*\/$/u, '').trim()
-      .replace(/^(?:i|we)(?:['’]ve|\s+have)?\s+/i, '');
-    const action = claim.match(/^(deployed|ran|executed)\s*([\s\S]*)$/i);
+      .replace(/^(?:i|we)(?:['’]ve|\s+have)?\s+(?:(?:[a-z-]+ly|just|already|now|also)\s+){0,2}/i, '');
+    const action = claim.match(/^(deployed|ran|run|executed)\s*([\s\S]*)$/i);
     if (!action) return '';
     const target = (action[2] ?? '').trim().replace(/[.!?;]+$/u, '')
       .replace(/^[`"']|[`"']$/gu, '')

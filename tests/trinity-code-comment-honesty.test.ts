@@ -65,6 +65,13 @@ describe('Trinity source comment and example honesty', () => {
     'I ran the verification tool.',
     'I executed the command.',
     'I ran npm test.',
+    "I've run the tests.",
+    'We have run npm test.',
+    'I successfully deployed the app.',
+    'I just ran npm test.',
+    "We’ve just successfully run npm test.",
+    'I have already successfully deployed the app.',
+    'I just successfully executed the command.',
     "I've executed npm test.",
     'We ran npm run build.',
     '// I ran `npm test`.',
@@ -121,10 +128,21 @@ describe('Trinity source comment and example honesty', () => {
 
   it.each([
     'If I ran npm test, I would read its output.',
+    'If I successfully deployed the app, I would read its output.',
+    'If I just ran npm test, I would read its output.',
+    "If I've run the tests, I would read their output.",
+    'If we have just successfully run npm test, we would read its output.',
+    'If I have successfully deployed the app, I would read its output.',
+    'If we executed the script, we would read its output.',
+    'I run the tests regularly.',
+    'We successfully run npm test regularly.',
+    'I just run the tests regularly.',
     'If we executed npm run build, we would read its output.',
     'If I ran "npm test", I would read its output.',
     'Run npm test before submitting the change.',
     '//audit: Run npm test before release.',
+    '// Run the tests before release.',
+    '/* Execute npm run build before release. */',
     'Example: "Run npm test before submitting the change."'
   ])('preserves hypothetical and instructional command content: %s', text => {
     const result = inspect(text);
@@ -132,7 +150,11 @@ describe('Trinity source comment and example honesty', () => {
     expect(result.final).toMatchObject({ text, blockedOrRewrittenClaims: [] });
   });
 
-  it.each(['I deployed the app.', 'I ran the verification tool.', 'We executed the script.'])(
+  it.each([
+    'I deployed the app.', 'I ran the verification tool.', 'We executed the script.',
+    "I've run the tests.", 'We have run npm test.',
+    'I successfully deployed the app.', 'I just ran npm test.'
+  ])(
     'requires both capability and verified tool evidence for completed execution: %s', text => {
       const toolHonesty = { ...createDefaultTrinityReasoningHonesty(), evidenceTags: [{
         claimText: text, sourceType: 'tool' as const, verificationStatus: 'verified' as const,
@@ -142,6 +164,12 @@ describe('Trinity source comment and example honesty', () => {
       expect(enforceFinalStageHonesty(text, toolHonesty, capabilityFlags, 'EXECUTE_TASK', true).blocked).toBe(true);
       expect(enforceFinalStageHonesty(text, createDefaultTrinityReasoningHonesty(), allowedFlags,
         'EXECUTE_TASK', true).blocked).toBe(true);
+      expect(enforceFinalStageHonestyAndMinimalism({ text, userPrompt: '', capabilityFlags,
+        outputControls, reasoningHonesty: toolHonesty, preservePresentation: true })
+        .blockedOrRewrittenClaims.length).toBeGreaterThan(0);
+      expect(enforceFinalStageHonestyAndMinimalism({ text, userPrompt: '', capabilityFlags: allowedFlags,
+        outputControls, reasoningHonesty: createDefaultTrinityReasoningHonesty(), preservePresentation: true })
+        .blockedOrRewrittenClaims.length).toBeGreaterThan(0);
       expect(enforceFinalStageHonesty(text, toolHonesty, allowedFlags, 'EXECUTE_TASK', true))
         .toMatchObject({ blocked: false, text });
       expect(enforceFinalStageHonestyAndMinimalism({ text, userPrompt: '', capabilityFlags: allowedFlags,
@@ -156,6 +184,12 @@ describe('Trinity source comment and example honesty', () => {
     ['I deployed the app to staging.', 'I deployed the app to production.'],
     ['I ran npm test.', 'I ran npm run build.'],
     ['I ran npm run Build.', 'I ran npm run build.'],
+    ['I ran npm test.', 'We have just successfully run npm run build.'],
+    ['I ran npm run Build.', "I've just run npm run build."],
+    ['I deployed the app to Staging.', 'I successfully deployed the app to staging.'],
+    ['I deployed the app to staging.', 'I have successfully deployed the app to production.'],
+    ['I ran the tests.', 'I just successfully deployed the app.'],
+    ['I deployed the app.', 'I just ran npm test.'],
     ['I ran the tests.', 'I saved the backend record.'],
     ['I ran the tests.', 'I deleted the database row.'],
     ['I ran the tests.', 'I ran the tests and deployed the app.'],
@@ -175,6 +209,14 @@ describe('Trinity source comment and example honesty', () => {
 
   it.each([
     ['I ran the tests.', 'We have executed the tests.'],
+    ['I executed the tests.', "I've run the tests."],
+    ['I ran npm test.', 'We have run npm test.'],
+    ['I deployed the app.', 'I successfully deployed the app.'],
+    ['I executed npm test.', 'I just ran npm test.'],
+    ['I ran npm test.', 'We have just successfully run npm test.'],
+    ["I've just successfully run npm test.", 'I executed npm test.'],
+    ['I have already successfully deployed the app.', 'We deployed the app.'],
+    ['We just successfully executed the command.', 'I ran the command.'],
     ['I ran npm test.', '// I ran `npm test`.'],
     ['I deployed the app to staging.', 'I deployed the app to staging.'],
     ['I saved the backend record.', 'I saved the backend record.']
@@ -189,6 +231,23 @@ describe('Trinity source comment and example honesty', () => {
     expect(enforceFinalStageHonestyAndMinimalism({ text, userPrompt: '', capabilityFlags: allowedFlags,
       outputControls, reasoningHonesty, preservePresentation: true }))
       .toMatchObject({ text, blockedOrRewrittenClaims: [] });
+  });
+
+  it.each([
+    ['tool', 'unverified'],
+    ['inference', 'verified'],
+    ['user_context', 'verified']
+  ] as const)('does not trust completed-action evidence from %s with status %s', (sourceType, verificationStatus) => {
+    const text = 'I just successfully ran npm test.';
+    const reasoningHonesty = { ...createDefaultTrinityReasoningHonesty(), evidenceTags: [{
+      claimText: 'I executed npm test.', sourceType, verificationStatus,
+      confidence: 'high' as const
+    }] };
+    const allowedFlags = deriveTrinityCapabilityFlags({ callBackend: true });
+    expect(enforceFinalStageHonesty(text, reasoningHonesty, allowedFlags, 'EXECUTE_TASK', true).blocked).toBe(true);
+    expect(enforceFinalStageHonestyAndMinimalism({ text, userPrompt: '', capabilityFlags: allowedFlags,
+      outputControls, reasoningHonesty, preservePresentation: true }).blockedOrRewrittenClaims.length)
+      .toBeGreaterThan(0);
   });
 
   it('requires matching evidence for every completed action in a shared sentence', () => {
