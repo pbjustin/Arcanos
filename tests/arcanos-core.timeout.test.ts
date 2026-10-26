@@ -297,6 +297,21 @@ describe('runArcanosCoreQuery timeout clamp', () => {
     );
   });
 
+  it('rethrows structured-output timeouts without replacing JSON with successful fallback prose', async () => {
+    const timeoutError = new Error('ARCANOS:CORE pipeline timeout after 3000ms');
+    timeoutError.name = 'AbortError';
+    runWithRequestAbortTimeoutMock.mockRejectedValueOnce(timeoutError);
+    await expect(runArcanosCoreQuery({
+      client: {} as never,
+      prompt: 'Return a JSON object.',
+      sourceEndpoint: 'test.structured',
+      runOptions: { finalOutputContract: { name: 'test_object', schema: { type: 'object' } } }
+    })).rejects.toBe(timeoutError);
+    expect(runWithRequestAbortTimeoutMock).toHaveBeenCalledTimes(1);
+    expect(recordTraceEventMock).not.toHaveBeenCalledWith('core.pipeline.static_fallback', expect.anything());
+    expect(recordTraceEventMock).not.toHaveBeenCalledWith('core.pipeline.degraded', expect.anything());
+  });
+
   it('recovers when Trinity aborts near the shared pipeline deadline before the wrapper stamps its own timeout message', async () => {
     process.env.ARCANOS_CORE_PIPELINE_TIMEOUT_MS = '5000';
     const timeoutError = new Error('Request was aborted.');

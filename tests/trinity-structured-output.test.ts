@@ -1,0 +1,102 @@
+import { describe, expect, it } from '@jest/globals';
+import { createTrinityStructuredOutputValidator } from '../src/core/logic/trinityStructuredOutput.js';
+import { createDefaultTrinityReasoningHonesty, deriveTrinityCapabilityFlags, deriveTrinityOutputControls } from '../src/core/logic/trinityHonesty.js';
+
+const contract = {
+  name: 'structured_answer', schema: {
+    type: 'object', additionalProperties: false, required: ['answer'],
+    properties: { answer: { type: 'string', minLength: 1 } },
+  },
+};
+const flags = deriveTrinityCapabilityFlags();
+const honesty = createDefaultTrinityReasoningHonesty();
+const validate = createTrinityStructuredOutputValidator(contract);
+
+describe('Trinity final JSON contract validation', () => {
+  it('returns exact emitted bytes, including escaped newlines, quoted examples and Markdown data', () => {
+    const raw = ' \n{"answer":"Keep `value`, **text**, and \\"quotes\\".\\nDo not reshape Unicode café."}\t ';
+    expect(validate(raw, flags, honesty)).toBe(raw);
+  });
+
+  it.each(['', '{"answer":"truncated"', '```json\n{"answer":"ok"}\n```', '{"answer":"ok"} prose'])
+    ('rejects invalid JSON without formatting repair: %p', raw => {
+      expect(() => validate(raw, flags, honesty)).toThrow(expect.objectContaining({
+        code: 'TRINITY_STRUCTURED_OUTPUT_INVALID', reason: 'invalid_json',
+      }));
+    });
+
+  it.each(['{}', '{"answer":42}', '{"answer":"ok","extra":true}', 'null', '["ok"]'])
+    ('rejects a schema violation without coercion: %p', raw => {
+      expect(() => validate(raw, flags, honesty)).toThrow(expect.objectContaining({ reason: 'schema_mismatch' }));
+    });
+
+  it.each([
+    { name: 'missing_schema', schema: undefined },
+    { name: '', schema: contract.schema },
+    { name: 'invalid_schema', schema: { type: 'unknown-type' } },
+    { name: 'async_schema', schema: { ...contract.schema, $async: true } },
+  ])('rejects an invalid caller contract before validating output: %p', invalid => {
+    expect(() => createTrinityStructuredOutputValidator(invalid as typeof contract))
+      .toThrow(expect.objectContaining({ reason: 'invalid_contract' }));
+  });
+
+  it.each([
+    'I saved the record in the backend database.',
+    'I called the backend API.',
+    'I verified the live deployment status.',
+    'I deployed the service and confirmed its current status.',
+  ])('preserves honesty blocking inside JSON: %s', claim => {
+    expect(() => validate(JSON.stringify({ answer: claim }), flags, honesty))
+      .toThrow(expect.objectContaining({ reason: 'unsupported_claim' }));
+  });
+
+  it('does not let a safe limitation field excuse a separate fabricated action claim', () => {
+    const validateNested = createTrinityStructuredOutputValidator({
+      name: 'nested_claim', schema: { type: 'object', additionalProperties: { type: 'array', items: { type: 'string' } } },
+    });
+    const raw = JSON.stringify({ answers: ['The backend state is unverified.', 'I queried the backend record.'] });
+    expect(() => validateNested(raw, flags, honesty)).toThrow(expect.objectContaining({ reason: 'unsupported_claim' }));
+  });
+
+  it.each(['I verified the live deployment status', 'I called the backend API', 'verified'])(
+    'does not let a property name carry an unsupported claim: %s', key => {
+      const validateKeys = createTrinityStructuredOutputValidator({ name: 'claim_keys', schema: { type: 'object' } });
+      expect(() => validateKeys(JSON.stringify({ [key]: true }), flags, honesty))
+        .toThrow(expect.objectContaining({ reason: 'unsupported_claim' }));
+    }
+  );
+
+  it('does not treat keys as a shared assertion subject for unrelated values', () => {
+    const validateRecord = createTrinityStructuredOutputValidator({
+      name: 'record', schema: { type: 'object', additionalProperties: { type: 'string' } },
+    });
+    const raw = JSON.stringify({ status: 'conflict', explanation: 'The supplied records name different current champions.' });
+    expect(validateRecord(raw, flags, honesty)).toBe(raw);
+  });
+
+  it('preserves a legitimate source-code comment while retaining the caller schema', () => {
+    const raw = JSON.stringify({ answer: "function makeId() {\n//audit: Return a unique value from the runtime API.\nreturn 'example';\n}" });
+    expect(validate(raw, flags, honesty)).toBe(raw);
+  });
+
+  it('retains prompt-dependent current-external-state enforcement', () => {
+    const userPrompt = 'What are the latest competitor pricing moves?';
+    expect(() => validate(JSON.stringify({ answer: 'Competitors are lowering prices.' }), flags, honesty, {
+      userPrompt, outputControls: deriveTrinityOutputControls(userPrompt, {}),
+    })).toThrow(expect.objectContaining({ reason: 'unsupported_claim' }));
+  });
+
+  it('rejects omission of a required partial-refusal limitation instead of adding prose to JSON', () => {
+    const partial = { ...honesty, responseMode: 'partial_refusal' as const,
+      blockedSubtasks: ['verify live status'], userVisibleCaveats: ["I can't verify live status here."] };
+    expect(() => validate('{"answer":"The supplied outline has two steps."}', flags, partial))
+      .toThrow(expect.objectContaining({ reason: 'missing_required_limitation' }));
+    const raw = '{"answer":"I cannot verify live status here. The supplied outline has two steps."}';
+    expect(validate(raw, flags, partial)).toBe(raw);
+    const validateFields = createTrinityStructuredOutputValidator({
+      name: 'separate_limitation', schema: { type: 'object', additionalProperties: { type: 'string' } },
+    });
+    const separate = JSON.stringify({ caveat: 'The live status is unverified.', answer: 'The outline has two steps.' });
+    expect(validateFields(separate, flags, partial)).toBe(separate);
+  });
+});

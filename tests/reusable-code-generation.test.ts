@@ -196,4 +196,11 @@ describe('reusable code generation', () => {
     expect(parsed).toHaveLength(1);
     expect(parsed[0]?.name).toBe('idGenerator');
   });
+
+  it('propagates final-output rejection without a repair inference or deterministic success', async () => {
+    const error = new Error('Trinity structured output rejected: invalid_json');
+    runTrinityWritingPipelineMock.mockRejectedValueOnce(error);
+    await expect(generateReusableCodeSnippets({} as any, { target: 'idGenerator' })).rejects.toBe(error);
+    expect(runTrinityWritingPipelineMock).toHaveBeenCalledTimes(1);
+  });
 });

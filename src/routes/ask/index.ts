@@ -130,7 +130,8 @@ Rules:
 - Identify strengths, risks, gaps, and assumptions explicitly.
 - Output deterministic, structured JSON only.
 
-Output must conform exactly to the system_review schema.`;
+Output must conform exactly to the system_review content schema supplied below.
+The server supplies mode, subject, reviewVersion, and reviewedAt; omit those envelope fields.`;
 
 const SYSTEM_STATE_PROMPT = `⚠️ Do not use the model yet.
 Return backend data directly.`;
@@ -162,6 +163,17 @@ const systemReviewSchema = z.object({
   reviewedAt: z.string().check(legacyDatetime()),
   reviewVersion: z.literal(1)
 });
+
+// Reuse the existing response contract, excluding fields assigned by the server.
+const systemReviewFinalOutputContract = {
+  name: 'system_review_content_v1',
+  schema: z.toJSONSchema(systemReviewSchema.omit({
+    mode: true,
+    subject: true,
+    reviewedAt: true,
+    reviewVersion: true
+  }), { target: 'draft-7', io: 'input' })
+};
 
 const systemStateSchema = z.object({
   mode: z.literal('system_state'),
@@ -679,6 +691,7 @@ export const handleAIRequest = async (
     try {
       const reviewPrompt = [
         SYSTEM_REVIEW_PROMPT,
+        JSON.stringify(systemReviewFinalOutputContract.schema),
         '',
         'Subject: intent_system',
         '',
@@ -707,7 +720,8 @@ export const handleAIRequest = async (
             answerMode: 'audit',
             requestedVerbosity: 'minimal',
             maxWords: 600,
-            strictUserVisibleOutput: true
+            strictUserVisibleOutput: true,
+            finalOutputContract: systemReviewFinalOutputContract
           }
         }
       });
