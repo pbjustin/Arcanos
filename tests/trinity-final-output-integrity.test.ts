@@ -94,6 +94,17 @@ describe('Trinity caller-declared final JSON integrity at actual provider extrac
     expect(responsesCreate).toHaveBeenCalledTimes(1);
   });
 
+  it.each(['direct', 'explained'] as const)('preserves non-claim review and code text through the %s caller path', async mode => {
+    finalText = JSON.stringify({
+      answer: 'The migration is not validated.',
+      audit_trace: '//audit Assumption: check that input is a string before use.',
+    });
+    const result = await run(mode);
+    expect(result.result).toBe(finalText);
+    expect(result.auditSafe.processedSafely).toBe(true);
+    expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
+  });
+
   it.each(['direct', 'explained'] as const)('rejects malformed %s output rather than reporting delivery success', async mode => {
     const warn = jest.spyOn(logger, 'warn');
     const info = jest.spyOn(logger, 'info');

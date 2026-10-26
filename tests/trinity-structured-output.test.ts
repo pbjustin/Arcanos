@@ -79,6 +79,38 @@ describe('Trinity final JSON contract validation', () => {
     expect(validate(raw, flags, honesty)).toBe(raw);
   });
 
+  it('preserves review limitations and generated check comments across structured fields', () => {
+    const validateFields = createTrinityStructuredOutputValidator({
+      name: 'review_and_artifact_fields', schema: { type: 'object' },
+    });
+    const raw = JSON.stringify({
+      summary: 'The migration is not validated.',
+      assumptions: ['The migration has not been validated.'],
+      snippets: [{
+        description: 'The migration is not validated.',
+        code: 'function accept(input: unknown) {\n//audit Assumption: check that input is a string before use.\nreturn typeof input === "string";\n}',
+      }],
+    });
+    expect(validateFields(raw, flags, honesty)).toBe(raw);
+  });
+
+  it.each(['summary', 'description', 'assumptions', 'code'])(
+    'still rejects fabricated claims in the %s field alongside legitimate non-claim text', field => {
+      const validateFields = createTrinityStructuredOutputValidator({
+        name: 'artifact_claim_boundary', schema: { type: 'object' },
+      });
+      for (const claim of [
+        'I verified the tests pass.',
+        'I saved the result to the backend database.',
+        'I deployed the app.',
+      ]) {
+        const raw = JSON.stringify({ [field]: `The migration is not validated. ${claim}` });
+        expect(() => validateFields(raw, flags, honesty))
+          .toThrow(expect.objectContaining({ reason: 'unsupported_claim' }));
+      }
+    }
+  );
+
   it('retains prompt-dependent current-external-state enforcement', () => {
     const userPrompt = 'What are the latest competitor pricing moves?';
     expect(() => validate(JSON.stringify({ answer: 'Competitors are lowering prices.' }), flags, honesty, {

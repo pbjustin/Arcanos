@@ -695,15 +695,28 @@ function impliesCurrentExternalStateClaim(text: string): boolean {
 function isArtifactInstruction(text: string): boolean {
   const example = text.match(/^example:\s*(["'`])(.+)\1[.!]?$/i);
   const comment = text.match(/^(?:\/\/(?:audit\s*:?)?|\/\*+)\s*(.+?)(?:\s*\*\/)?$/i);
-  const instruction = (example?.[2] ?? comment?.[1])?.trim();
+  const instruction = (example?.[2] ?? comment?.[1])?.trim().replace(/^assumption:\s*/i, '');
   if (!instruction || !/^(?:return|check|verify|validate|reject|throw)\s+\S/i.test(instruction)) return false;
+  const subordinateTest = /^(?:check|verify|validate)\s+(?:that|whether)\s+/i.test(instruction);
   // A comment delimiter or quote never licenses a completed action, a promise,
   // or an affirmative state claim attached to an otherwise valid instruction.
   return !/[;,:.!?]\s+\S|[—–]/u.test(instruction)
     && !CURRENT_EXTERNAL_STATE_PATTERN.test(instruction)
     && !EXTERNAL_STATE_CONTEXT_PATTERN.test(instruction)
     && !/\b(?:live|production|deployment)\b/i.test(instruction)
-    && !/\b(?:i|we|verified|confirmed|checked|reviewed|validated|saved|persisted|stored|wrote|called|updated|inserted|deleted|committed|queried|inspected|deployed|executed|ran|is|are|was|were|has|have|had|will|shall|can|could|may|might|must|would|should)\b/i.test(instruction);
+    && !impliesSystemOwnedSaveClaim(instruction)
+    && !/\b(?:i|we|verified|confirmed|checked|reviewed|validated|saved|persisted|stored|wrote|called|updated|inserted|deleted|committed|queried|inspected|deployed|executed|ran|was|were|has|have|had|will|shall|can|could|may|might|must|would|should)\b/i.test(instruction)
+    && (subordinateTest || !/\b(?:is|are)\b/i.test(instruction));
+}
+
+/** A fully consumed denial describes missing verification, not performed work.
+ * Never let a denial prefix qualify another clause or a self-claim in its subject. */
+function isExplicitVerificationDenial(text: string): boolean {
+  const denial = text.match(/^([a-z][a-z0-9-]*(?:\s+[a-z][a-z0-9-]*){0,7})\s+(?:(?:is|are|was|were|remains?)\s+not|(?:has|have|had)\s+not\s+been)\s+(?:checked|verified|confirmed|reviewed|validated)(?:\s+(?:yet|here|independently))?[.!]?$/i);
+  const subject = denial?.[1];
+  return Boolean(subject && !/\b(?:i|we|and|but|then|however)\b/i.test(subject)
+    && !/\b(?:is|are|was|were|be|been|being|has|have|had|appears?|looks?|remains?|will|shall|can|could|may|might|must|would|should|deployed|ran|executed|saved|persisted|stored|wrote|called|updated|inserted|deleted|committed|queried|inspected)\b/i.test(subject)
+    && !LIVE_VERIFICATION_PATTERN.test(subject));
 }
 
 function requestTargetsCurrentExternalState(text: string): boolean {
@@ -1271,7 +1284,8 @@ function rewriteUnsupportedClaims(params: {
     const impliesIndirectCurrentExternalState =
       isLikelyCurrentExternalStateFactAssertion(segment, params.userPrompt) ||
       (inUnsupportedExternalStateSection && isLikelyUnsupportedExternalStateSectionBody(segment));
-    const qualifiedCurrentStateLimitation = isQualifiedCurrentStateLimitation(segment);
+    const qualifiedCurrentStateLimitation = isQualifiedCurrentStateLimitation(segment)
+      || isExplicitVerificationDenial(segment);
     const allowsProvidedDataVerification = allowsProvidedDataVerificationClaim(segment, params.capabilityFlags);
     const impliesBackendAction = (BACKEND_ACTION_PATTERN.test(segment) && BACKEND_ACTION_CONTEXT_PATTERN.test(segment))
       || impliesSystemOwnedSaveClaim(segment)
@@ -2039,7 +2053,8 @@ export function enforceFinalStageHonesty(
     if (localInstruction) ruleIds.add('TUTOR_LOCAL_INSTRUCTION_EXEMPT');
     const impliesLiveVerification = LIVE_VERIFICATION_PATTERN.test(line) && !localInstruction;
     const impliesCurrentExternalState = impliesCurrentExternalStateClaim(line);
-    const qualifiedCurrentStateLimitation = isQualifiedCurrentStateLimitation(line);
+    const qualifiedCurrentStateLimitation = isQualifiedCurrentStateLimitation(line)
+      || isExplicitVerificationDenial(line);
     const allowsProvidedDataVerification = allowsProvidedDataVerificationClaim(line, capabilityFlags);
     const impliesBackendAction = (BACKEND_ACTION_PATTERN.test(line) && BACKEND_ACTION_CONTEXT_PATTERN.test(line))
       || impliesSystemOwnedSaveClaim(line)

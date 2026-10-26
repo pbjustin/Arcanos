@@ -27,7 +27,12 @@ describe('Trinity source comment and example honesty', () => {
     '//audit: Return a unique value from the runtime API.',
     '// Verify the runtime input before use.',
     '/* Check the API response before returning it. */',
-    'Example: "Check the API response before returning it."'
+    'Example: "Check the API response before returning it."',
+    '//audit: Check that the input is a string before use.',
+    '//audit: Check whether the expected version is valid before updating the record.',
+    '//audit Assumption: check the input before use.',
+    '//audit: Assumption: check the input before use.',
+    'Example: "Check that the request is valid."'
   ])('preserves a source instruction without treating it as completed work: %s', text => {
     const result = inspect(text);
     expect(result.first.blocked).toBe(false);
@@ -36,6 +41,18 @@ describe('Trinity source comment and example honesty', () => {
     expect(result.final.text).toBe(text);
     expect(result.reasoningHonesty.evidenceTags).toEqual([]);
     expect(capabilityFlags).toEqual(deriveTrinityCapabilityFlags());
+  });
+
+  it.each([
+    'The migration is not validated.',
+    'The supplied implementation is not verified.',
+    'The migration has not been validated.',
+    'The current runtime is not verified.',
+    'The migration is not validated yet.'
+  ])('preserves an explicit denial without claiming performed verification: %s', text => {
+    const result = inspect(text);
+    expect(result.first).toMatchObject({ blocked: false, text });
+    expect(result.final).toMatchObject({ text, blockedOrRewrittenClaims: [] });
   });
 
   it.each([
@@ -56,7 +73,24 @@ describe('Trinity source comment and example honesty', () => {
     '// Return the value and current runtime healthy.',
     'Example: "I verified the current deployment is healthy."',
     '```typescript\n// I verified the live runtime.\n```',
-    '// Verify the runtime input before use.\nI saved your preferences to the database.'
+    '// Verify the runtime input before use.\nI saved your preferences to the database.',
+    'The migration is not validated; I verified the deployment.',
+    'The migration is not validated and I verified the deployment.',
+    'The migration is not validated. I called the backend API.',
+    'The migration I verified is not validated.',
+    'The live runtime is healthy migration is not validated.',
+    'The deployed live service is not validated.',
+    'The migration is not validated but the current runtime is healthy.',
+    'The migration is not validated; this chat will save your progress.',
+    'The live runtime looks healthy migration is not validated.',
+    'The live runtime remains healthy migration is not validated.',
+    'The live runtime appears healthy migration is not validated.',
+    '//audit Assumption: Check the input; I saved the record in the database.',
+    '//audit: Check that the input is valid and I ran the tests.',
+    '//audit: Check that the input is valid and we verified the deployment.',
+    '//audit: Check that the input is valid and this chat will save your progress.',
+    '//audit: Check that the input is valid and this chat saves your progress.',
+    'Example: "Check that the request is valid; I ran the verification tool."'
   ])('keeps unsupported assertions blocked inside or beside source content: %s', text => {
     const result = inspect(text);
     expect(result.first.blocked).toBe(true);
