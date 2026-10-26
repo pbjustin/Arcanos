@@ -271,7 +271,7 @@ const PROMPT_GENERATION_DISCLAIMER_PATTERNS = [
 const PROMPT_GENERATION_ARTIFACT_REMAINDER_PATTERN =
   /\b(?:prompt|system\s+prompt|instructions?|spec(?:ification)?|brief|tasking(?:\s+doc(?:ument)?)?|message|codex|agent|ai|model|tool|assistant|executor)\b|^\s*(?:you are|your task is|objective:|goal:|task:)/i;
 const PROMPT_GENERATION_SELF_CLAIM_PATTERN =
-  /\b(?:i|we)\s+(?:have\s+)?(?:checked|verified|confirmed|reviewed|validated|looked\s+up|updated|saved|persisted|wrote|called|queried|inspected|tested|ran|executed|deployed)\b/i;
+  /\b(?:i|we)\s+(?:have\s+)?(?:checked|verified|confirmed|reviewed|validated|looked\s+up|updated|saved|persisted|wrote|called|queried|inspected|tested)\b|(?<!\bif\s+)\b(?:i|we)\s+(?:have\s+)?(?:ran|executed|deployed)\b/i;
 const PROMPT_GENERATION_ACCESS_TASK_PATTERN = new RegExp(
   PROMPT_GENERATION_ACCESS_ACTION_FRAGMENT +
     String.raw`\b[^.!?\n]{0,120}\b` +
@@ -1227,12 +1227,24 @@ function isUnsupportedPromptGenerationSelfClaim(segment: string): boolean {
   );
 }
 
-function rewritePromptGenerationSelfClaims(text: string): { text: string; blockedOrRewrittenClaims: string[] } {
+function rewritePromptGenerationSelfClaims(
+  text: string,
+  reasoningHonesty: TrinityReasoningHonesty,
+  capabilityFlags: TrinityCapabilityFlags
+): { text: string; blockedOrRewrittenClaims: string[] } {
   const blockedOrRewrittenClaims: string[] = [];
   const keptSegments: string[] = [];
 
   for (const segment of splitIntoSegments(text)) {
-    if (isUnsupportedPromptGenerationSelfClaim(segment)) {
+    const impliesCompletedExecution = COMPLETED_EXECUTION_SELF_CLAIM_PATTERN.test(segment);
+    const supportsCompletedExecution = impliesCompletedExecution
+      && (capabilityFlags.canPersistData || capabilityFlags.canCallBackend)
+      && hasMatchingCompletedExecutionEvidence(segment, reasoningHonesty.evidenceTags);
+    // Inspect other self-claims independently; matching execution evidence cannot
+    // authorize an appended verification claim or an uncovered legacy command.
+    const otherSelfClaims = segment.replace(new RegExp(COMPLETED_EXECUTION_SELF_CLAIM_PATTERN.source, 'gi'), '');
+    if (isUnsupportedPromptGenerationSelfClaim(otherSelfClaims)
+      || (impliesCompletedExecution && !supportsCompletedExecution)) {
       blockedOrRewrittenClaims.push(segment);
       continue;
     }
@@ -2094,7 +2106,7 @@ export function enforceFinalStageHonesty(
       && hasMatchingCompletedExecutionEvidence(line, reasoningHonesty.evidenceTags);
 
     //audit Assumption: in PROMPT_GENERATION, imperative downstream steps like "Verify the API" are not claims that this backend verified anything; failure risk: the general overclaim guard strips the generated prompt itself; expected invariant: only first-person/completed backend self-claims remain subject to claim blocking; handling strategy: allow non-self-claim prompt instructions through this guard.
-    if (promptGeneration && !isUnsupportedPromptGenerationSelfClaim(line)) {
+    if (promptGeneration && !isUnsupportedPromptGenerationSelfClaim(line) && !impliesCompletedExecution) {
       keptLines.push(line);
       continue;
     }
@@ -2366,7 +2378,7 @@ export function enforceFinalStageHonestyAndMinimalism(params: {
     ? stripLeadingPromptGenerationDisclaimers(deInflatedText)
     : deInflatedText;
   const rewrittenClaims = promptGeneration
-    ? rewritePromptGenerationSelfClaims(promptGenerationTrimmedText)
+    ? rewritePromptGenerationSelfClaims(promptGenerationTrimmedText, params.reasoningHonesty, params.capabilityFlags)
     : rewriteUnsupportedClaims({
         text: promptGenerationTrimmedText,
         userPrompt: params.userPrompt,

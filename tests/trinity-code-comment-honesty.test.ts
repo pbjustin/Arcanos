@@ -6,6 +6,7 @@ import {
   enforceFinalStageHonesty,
   enforceFinalStageHonestyAndMinimalism
 } from '../src/core/logic/trinityHonesty.js';
+import type { TrinityEvidenceTag } from '../src/core/logic/trinityHonestyTypes.js';
 
 describe('Trinity source comment and example honesty', () => {
   const capabilityFlags = deriveTrinityCapabilityFlags();
@@ -276,5 +277,94 @@ describe('Trinity source comment and example honesty', () => {
     '"I verified the current deployment is healthy."'
   ])('retains the existing guard for ordinary prose and unframed quotations: %s', text => {
     expect(inspect(text).first.blocked).toBe(true);
+  });
+
+  describe.each(['first', 'final'] as const)('completed execution in generated prompts: %s pass', pass => {
+    const prompt = 'Write a prompt for another executor to inspect the implementation.';
+    const promptControls = deriveTrinityOutputControls(prompt, { requestIntent: 'PROMPT_GENERATION' });
+    const allowedFlags = deriveTrinityCapabilityFlags({ callBackend: true });
+
+    function inspectPrompt(text: string, evidenceTags: TrinityEvidenceTag[] = [], flags = capabilityFlags) {
+      const reasoningHonesty = { ...createDefaultTrinityReasoningHonesty(), evidenceTags };
+      if (pass === 'first') {
+        return enforceFinalStageHonesty(text, reasoningHonesty, flags, 'PROMPT_GENERATION', true);
+      }
+      const result = enforceFinalStageHonestyAndMinimalism({
+        text, userPrompt: prompt, capabilityFlags: flags, outputControls: promptControls, reasoningHonesty
+      });
+      return { text: result.text, blocked: result.blockedOrRewrittenClaims.length > 0 };
+    }
+
+    function toolEvidence(claimText: string): TrinityEvidenceTag[] {
+      return [{ claimText, sourceType: 'tool', verificationStatus: 'verified', confidence: 'high' }];
+    }
+
+    it.each([
+      "I've run the tests.",
+      'We have run npm test.',
+      'I successfully deployed the app.',
+      'I just ran npm test.',
+      'I ran npm install.'
+    ])('blocks unsupported completed execution despite prompt intent: %s', text => {
+      expect(inspectPrompt(text).blocked).toBe(true);
+      expect(inspectPrompt(text, [], allowedFlags).blocked).toBe(true);
+      expect(inspectPrompt(text).text).not.toContain(text);
+    });
+
+    it.each([
+      ['I executed the tests.', "I've run the tests."],
+      ['I ran npm test.', 'We have run npm test.'],
+      ['I deployed the app.', 'I successfully deployed the app.'],
+      ['I executed npm test.', 'I just ran npm test.'],
+      ['I executed npm install.', 'I ran npm install.']
+    ])('accepts an authorized matching action from %s: %s', (evidence, text) => {
+      expect(inspectPrompt(text, toolEvidence(evidence), allowedFlags)).toMatchObject({ text, blocked: false });
+      expect(inspectPrompt(text, toolEvidence(evidence)).blocked).toBe(true);
+    });
+
+    it.each([
+      ['I just ran npm test.', 'I executed npm run build.'],
+      ['I just ran npm run build.', 'I executed npm run Build.'],
+      ['I successfully deployed the app.', 'I ran the tests.'],
+      ['I successfully deployed the app to production.', 'I deployed the app to staging.'],
+      ['I just ran npm install package-b.', 'I executed npm install package-a.']
+    ])('rejects completed action %s with mismatched evidence %s', (text, evidence) => {
+      expect(inspectPrompt(text, toolEvidence(evidence), allowedFlags).blocked).toBe(true);
+    });
+
+    it.each([
+      ['tool', 'unverified'],
+      ['inference', 'verified'],
+      ['user_context', 'verified']
+    ] as const)('requires verified tool evidence instead of %s/%s', (sourceType, verificationStatus) => {
+      const evidenceTags: TrinityEvidenceTag[] = [{ claimText: 'I executed npm test.', sourceType,
+        verificationStatus, confidence: 'high' }];
+      expect(inspectPrompt('I just ran npm test.', evidenceTags, allowedFlags).blocked).toBe(true);
+    });
+
+    it('does not let supported execution authorize a separate verification claim', () => {
+      const text = 'I just ran npm test and I verified the API.';
+      expect(inspectPrompt(text, toolEvidence(text), allowedFlags).blocked).toBe(true);
+    });
+
+    if (pass === 'final') {
+      it.each(['I ran ls.', 'I executed curl https://example.com.'])(
+        'retains the existing prompt rewrite for other command self-claims: %s', text => {
+          expect(inspectPrompt(text).blocked).toBe(true);
+        }
+      );
+    }
+
+    it.each([
+      'If I successfully deployed the app, I would read its output.',
+      'If I ran npm test, I would read its output.',
+      'I run the tests regularly.',
+      'Verify the backend API and inspect the runtime.',
+      'Run npm test before submitting the change.',
+      '// Run npm install before building.',
+      'Example: "Run npm test before submitting the change."'
+    ])('preserves non-claim downstream instructions and ordinary language: %s', text => {
+      expect(inspectPrompt(text)).toMatchObject({ text, blocked: false });
+    });
   });
 });
