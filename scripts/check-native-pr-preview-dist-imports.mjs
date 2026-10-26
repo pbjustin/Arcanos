@@ -142,6 +142,15 @@ export const FINAL_OUTPUT_INTEGRITY_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze
       ]),
     }),
   }),
+  Object.freeze({
+    filePath: 'dist/core/logic/trinityDirectAnswerMode.js',
+    imports: Object.freeze({
+      '../../services/directAnswerMode.js': Object.freeze([
+        'buildDirectAnswerModeSystemInstruction:buildDirectAnswerModeSystemInstruction',
+      ]),
+    }),
+  }),
+  Object.freeze({ filePath: 'dist/services/directAnswerMode.js', imports: Object.freeze({}) }),
 ]);
 
 // The CLI core stays at scripts/ in the image. No filesystem/private-input
