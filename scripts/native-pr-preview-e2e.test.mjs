@@ -3244,10 +3244,47 @@ test('requires model-policy proof and exact bounded report, suppressing proof on
   }
 });
 
-test('requires exact final-output proof and bounded report on existing readiness cases without expanding the plan', async () => {
-  const plan = buildNativePrPreviewRequestPlan();
+test('preserves frozen Gaming images without claiming absent final-output proof while the full scope still requires it', async () => {
   const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.finalOutputIntegrity;
-  assert.equal(plan.length, 173);
+  const frozenHeaders = (plan, requestScope = 'full') => buildMockFetch(plan, requestCase => {
+    if (requestCase.expectedType !== 'web-readiness'
+      && !(requestCase.role === 'web' && requestCase.expectedType === 'head' && requestCase.path === '/readyz')) return undefined;
+    const body = responseBodyForCase(requestCase);
+    const headers = responseHeadersForCase(requestCase, Buffer.byteLength(body ?? ''));
+    // The immutable pre-1568 image never offered either additive proof header.
+    delete headers[contract.proofHeader];
+    delete headers[contract.reportHeader];
+    const response = new Response(body, { status: requestCase.expectedStatus, headers });
+    Object.defineProperty(response, 'url', { value: `${WEB_BASE_URL}${requestCase.path}` });
+    return response;
+  }, undefined, requestCase => requestScope === GAMING_SCOPED_PREVIEW_SCOPE && requestCase.caseId === 'gaming-query-guide'
+    ? { [GAMING_SCOPED_PREVIEW_SECURITY_PROOF.header]: GAMING_SCOPED_PREVIEW_SECURITY_PROOF.version } : undefined);
+  for (const [requestScope, plan] of [
+    [GAMING_SCOPED_PREVIEW_SCOPE, buildGamingScopedPreviewRequestPlan()],
+    ['stacked-draft-gaming-synthetic', buildStackedDraftGamingRequestPlan()],
+  ]) {
+    const mock = frozenHeaders(plan, requestScope);
+    const result = await runNativePrPreviewE2e({ args: validArguments('--execute', '--allow-network'), requestScope,
+      expectedBackstageBookerOpenApiDocument: EXPECTED_BACKSTAGE_BOOKER_OPENAPI_DOCUMENT,
+      fetchImpl: mock.fetchImpl, localGitState: LOCAL_GIT_STATE, monotonicNow: mock.monotonicNow });
+    assert.equal(result.summary.status, 'PASS');
+    assert.equal(result.summary.requestsMade, plan.length);
+    for (const check of result.checks) {
+      for (const field of ['finalOutputIntegrityVerified', 'finalOutputIntegrityProofVersion', 'finalOutputIntegrityReport']) {
+        assert.equal(Object.hasOwn(check, field), false);
+      }
+    }
+  }
+  const full = frozenHeaders(buildNativePrPreviewRequestPlan());
+  await assert.rejects(runNativePrPreviewE2e({ args: validArguments('--execute', '--allow-network'),
+    expectedBackstageBookerOpenApiDocument: EXPECTED_BACKSTAGE_BOOKER_OPENAPI_DOCUMENT,
+    fetchImpl: full.fetchImpl, localGitState: LOCAL_GIT_STATE, monotonicNow: full.monotonicNow }),
+  error => error.code === 'NATIVE_PR_PREVIEW_FINAL_OUTPUT_PROOF_INVALID' && error.caseId === 'web-readiness-initial');
+});
+
+test('requires full-scope final-output proof and validates any scoped offer without expanding the plan', async () => {
+  const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.finalOutputIntegrity;
+  assert.equal(buildNativePrPreviewRequestPlan().length, 173);
   const proofCode = 'NATIVE_PR_PREVIEW_FINAL_OUTPUT_PROOF_INVALID';
   const reportCode = 'NATIVE_PR_PREVIEW_FINAL_OUTPUT_REPORT_INVALID';
   const mutations = [
@@ -3256,7 +3293,8 @@ test('requires exact final-output proof and bounded report on existing readiness
       { caseId, code: proofCode, mutate(headers) { headers[contract.proofHeader] = 'shared-final-output-integrity/v0'; } },
       { caseId, code: reportCode, mutate(headers) { delete headers[contract.reportHeader]; } },
     ]),
-    ...['worker-readiness-initial', 'worker-readiness-final', 'worker-generative-model-policy-denied',
+    ...['web-health-get', 'worker-readiness-initial', 'worker-readiness-final', 'worker-gaming-canary-denied',
+      'worker-generative-model-policy-denied',
       'web-generative-model-policy-query-denied', 'web-generative-model-policy-post-denied'].flatMap(caseId => [
       { caseId, code: proofCode, mutate(headers) { headers[contract.proofHeader] = contract.proofVersion; } },
       { caseId, code: proofCode, mutate(headers) { headers[contract.reportHeader] = '{}'; } },
@@ -3278,21 +3316,29 @@ test('requires exact final-output proof and bounded report on existing readiness
     { caseId: 'web-readiness-initial', code: reportCode, mutate(headers) { headers[contract.reportHeader] = '{'; } },
     { caseId: 'web-readiness-initial', code: reportCode, mutate(headers) { headers[contract.reportHeader] = 'x'.repeat(contract.maxReportChars + 1); } },
   ];
-  for (const mutation of mutations) {
-    const mock = buildMockFetch(plan, requestCase => {
-      if (requestCase.caseId !== mutation.caseId) return undefined;
-      const body = responseBodyForCase(requestCase);
-      const headers = responseHeadersForCase(requestCase, Buffer.byteLength(body ?? ''));
-      mutation.mutate(headers);
-      const response = new Response(body, { status: requestCase.expectedStatus, headers });
-      Object.defineProperty(response, 'url', { value: `${requestCase.role === 'web' ? WEB_BASE_URL : WORKER_BASE_URL}${requestCase.path}` });
-      return response;
-    });
-    await assert.rejects(runNativePrPreviewE2e({ args: validArguments('--execute', '--allow-network'),
-      expectedBackstageBookerOpenApiDocument: EXPECTED_BACKSTAGE_BOOKER_OPENAPI_DOCUMENT,
-      fetchImpl: mock.fetchImpl, localGitState: LOCAL_GIT_STATE, monotonicNow: mock.monotonicNow,
-    }), error => error instanceof NativePrPreviewE2eError && error.code === mutation.code && error.caseId === mutation.caseId,
-    `${mutation.caseId}: ${mutation.code}`);
+  for (const [requestScope, plan] of [
+    ['full', buildNativePrPreviewRequestPlan()],
+    [GAMING_SCOPED_PREVIEW_SCOPE, buildGamingScopedPreviewRequestPlan()],
+    ['stacked-draft-gaming-synthetic', buildStackedDraftGamingRequestPlan()],
+  ]) {
+    const selected = new Set(plan.map(item => item.caseId));
+    for (const mutation of mutations.filter(item => selected.has(item.caseId))) {
+      const mock = buildMockFetch(plan, requestCase => {
+        if (requestCase.caseId !== mutation.caseId) return undefined;
+        const body = responseBodyForCase(requestCase);
+        const headers = responseHeadersForCase(requestCase, Buffer.byteLength(body ?? ''));
+        mutation.mutate(headers);
+        const response = new Response(body, { status: requestCase.expectedStatus, headers });
+        Object.defineProperty(response, 'url', { value: `${requestCase.role === 'web' ? WEB_BASE_URL : WORKER_BASE_URL}${requestCase.path}` });
+        return response;
+      }, undefined, requestCase => requestScope === GAMING_SCOPED_PREVIEW_SCOPE && requestCase.caseId === 'gaming-query-guide'
+        ? { [GAMING_SCOPED_PREVIEW_SECURITY_PROOF.header]: GAMING_SCOPED_PREVIEW_SECURITY_PROOF.version } : undefined);
+      await assert.rejects(runNativePrPreviewE2e({ args: validArguments('--execute', '--allow-network'), requestScope,
+        expectedBackstageBookerOpenApiDocument: EXPECTED_BACKSTAGE_BOOKER_OPENAPI_DOCUMENT,
+        fetchImpl: mock.fetchImpl, localGitState: LOCAL_GIT_STATE, monotonicNow: mock.monotonicNow,
+      }), error => error instanceof NativePrPreviewE2eError && error.code === mutation.code && error.caseId === mutation.caseId,
+      `${requestScope}: ${mutation.caseId}: ${mutation.code}`);
+    }
   }
 });
 

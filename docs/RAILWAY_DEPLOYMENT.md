@@ -141,7 +141,9 @@ Launcher behavior:
   bodies, routes, proof versions, credential isolation, passive-worker behavior,
   and the 173-request ceiling are unchanged. Run the PR-head verifier against
   the same attested hosts as supplemental evidence when the trusted-main
-  verifier predates this additive proof. This proves served shared components;
+  verifier predates this additive proof. The full native verifier requires it;
+  older frozen Gaming-only images do not claim this proof, while any offered
+  final-output proof is still validated. This proves served shared components;
   the real Trinity stages, provider extraction, caller handling and authorization
   remain separate local application-integration evidence. It does not establish
   live-provider or active-worker acceptance.

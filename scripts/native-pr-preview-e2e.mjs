@@ -4671,12 +4671,14 @@ async function executeRequestCase(
     fail('NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_PROOF_INVALID', requestCase.caseId);
   }
   const outputContract = NATIVE_PR_PREVIEW_E2E_CONTRACT.finalOutputIntegrity;
-  const outputExpected = requestCase.expectedType === 'web-readiness'
+  const outputReadiness = requestCase.expectedType === 'web-readiness'
     || (requestCase.role === 'web' && requestCase.expectedType === 'head' && requestCase.path === '/readyz');
   const outputReport = response.headers.get(outputContract.reportHeader);
+  const outputOffered = response.headers.has(outputContract.proofHeader) || outputReport !== null;
+  const outputExpected = outputReadiness && (options.finalOutputIntegrityRequired || outputOffered);
   if (outputExpected
     ? response.headers.get(outputContract.proofHeader) !== outputContract.proofVersion
-    : response.headers.has(outputContract.proofHeader) || outputReport !== null) {
+    : outputOffered) {
     fail('NATIVE_PR_PREVIEW_FINAL_OUTPUT_PROOF_INVALID', requestCase.caseId);
   }
   if (outputExpected) {
@@ -5498,6 +5500,7 @@ export async function runNativePrPreviewE2e({
   );
   const options = {
     ...parsedOptions,
+    finalOutputIntegrityRequired: requestScope === 'full',
     gamingSecurityProofRequired: requestScope === GAMING_SCOPED_PREVIEW_SCOPE,
     expectedBackstageBookerOpenApiDocument:
       expectedBackstageBookerOpenApiDocument
