@@ -69,7 +69,9 @@ export function createTrinityStructuredOutputValidator(contract: TrinityStructur
         }
       } else if (entry !== null && typeof entry === 'object') {
         for (const [key, field] of Object.entries(entry)) {
-          inspect(key, false);
+          // Identifier keys describe fields; true can affirm the named status.
+          // Descriptive keys still receive both honesty checks, even with false values.
+          if (field === true || !/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key)) inspect(key, false);
           inspect(field);
         }
       }

@@ -13,6 +13,29 @@ const honesty = createDefaultTrinityReasoningHonesty();
 const validate = createTrinityStructuredOutputValidator(contract);
 
 describe('Trinity final JSON contract validation', () => {
+  it('preserves a caller-owned false verification flag without asserting completed work', () => {
+    const validateFlag = createTrinityStructuredOutputValidator({
+      name: 'verification_flag', schema: {
+        type: 'object', additionalProperties: false, required: ['verified'],
+        properties: { verified: { type: 'boolean' } },
+      },
+    });
+    const raw = '{"verified": false}';
+    expect(validateFlag(raw, flags, honesty)).toBe(raw);
+    for (const invalid of ['{}', '{"verified":"false"}', '{"verified":false,"extra":true}']) {
+      expect(() => validateFlag(invalid, flags, honesty))
+        .toThrow(expect.objectContaining({ reason: 'schema_mismatch' }));
+    }
+  });
+
+  it.each(['verified', 'checked', 'reviewed', 'validated', 'is_verified', 'verificationStatus'])(
+    'preserves the ordinary metadata key %s and nested values', key => {
+      const validateMetadata = createTrinityStructuredOutputValidator({ name: 'metadata', schema: { type: 'object' } });
+      const raw = JSON.stringify({ [key]: false, metadata: [{ [key]: null }], count: 2 });
+      expect(validateMetadata(raw, flags, honesty)).toBe(raw);
+    }
+  );
+
   it('returns exact emitted bytes, including escaped newlines, quoted examples and Markdown data', () => {
     const raw = ' \n{"answer":"Keep `value`, **text**, and \\"quotes\\".\\nDo not reshape Unicode café."}\t ';
     expect(validate(raw, flags, honesty)).toBe(raw);
@@ -101,6 +124,29 @@ describe('Trinity final JSON contract validation', () => {
         .toThrow(expect.objectContaining({ reason: 'unsupported_claim' }));
     }
   );
+
+  it.each([
+    'I verified the live deployment status', 'I called the backend API',
+    'I ran npm test', 'I deployed the app', 'I saved the record in the backend database',
+    'verified-live-status', 'I:verified',
+  ])('still checks descriptive claim keys even with false values: %s', key => {
+    const validateKeys = createTrinityStructuredOutputValidator({ name: 'descriptive_keys', schema: { type: 'object' } });
+    for (const field of [false, true]) {
+      expect(() => validateKeys(JSON.stringify({ [key]: field }), flags, honesty))
+        .toThrow(expect.objectContaining({ reason: 'unsupported_claim' }));
+    }
+  });
+
+  it.each([
+    'I verified the live deployment status.', 'I ran npm test.',
+    'I deployed the app.', 'I saved the record in the backend database.',
+  ])('still checks string values beneath structural metadata keys: %s', claim => {
+    const validateMetadata = createTrinityStructuredOutputValidator({ name: 'metadata_claim', schema: { type: 'object' } });
+    for (const field of [claim, [{ checked: claim }]]) {
+      expect(() => validateMetadata(JSON.stringify({ verified: field }), flags, honesty))
+        .toThrow(expect.objectContaining({ reason: 'unsupported_claim' }));
+    }
+  });
 
   it('does not treat keys as a shared assertion subject for unrelated values', () => {
     const validateRecord = createTrinityStructuredOutputValidator({

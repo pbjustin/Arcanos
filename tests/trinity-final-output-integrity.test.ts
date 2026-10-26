@@ -13,6 +13,9 @@ jest.unstable_mockModule('../src/core/logic/trinityJudgedFeedback.js', () => ({
 }));
 jest.unstable_mockModule('@services/selfImprove/controller.js', () => ({ runSelfImproveCycle: jest.fn() }));
 jest.unstable_mockModule('@analytics/escalationTracker.js', () => ({ trackEscalation: jest.fn() }));
+jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({
+  getOpenAIClientOrAdapter: () => ({ client }),
+}));
 jest.unstable_mockModule('@services/selfImprove/selfHealingV2.js', () => ({
   getTrinitySelfHealingMitigation: () => ({
     activeAction: null, stage: null, bypassFinalStage: false, forceDirectAnswer: false, verified: false,
@@ -22,6 +25,7 @@ jest.unstable_mockModule('@services/selfImprove/selfHealingV2.js', () => ({
 
 const { runThroughBrain } = await import('../src/core/logic/trinity.js');
 const { runTrinityWritingPipeline } = await import('../src/core/logic/trinityWritingPipeline.js');
+const { runTrinity } = await import('../src/trinity/trinity.js');
 const { logger } = await import('../src/platform/logging/structuredLogging.js');
 const { createRuntimeBudgetWithLimit } = await import('../src/platform/resilience/runtimeBudget.js');
 const responsesCreate = jest.fn();
@@ -99,6 +103,14 @@ describe('Trinity caller-declared final JSON integrity at actual provider extrac
   it('preserves direct-answer JSON including Markdown-like string data', async () => {
     expect((await run('direct')).result).toBe(raw);
     expect(responsesCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves a false verification flag through the structured query-finetune compatibility caller', async () => {
+    finalText = ' \n{"verified": false}\t ';
+    const result = await runTrinity({ prompt, structured: true });
+    expect(result.output).toBe(finalText);
+    expect(result.raw.auditSafe.processedSafely).toBe(true);
+    expect(responsesCreate).toHaveBeenCalledTimes(4);
   });
 
   it.each(['direct', 'explained'] as const)('preserves non-claim review and code text through the %s caller path', async mode => {
