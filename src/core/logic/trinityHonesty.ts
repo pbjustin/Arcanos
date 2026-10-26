@@ -144,7 +144,7 @@ const BACKEND_ACTION_CONTEXT_PATTERN =
 // Bare "run" is habitual; have/'ve makes it completed. Exclude direct if-clauses
 // for every action, and keep the same bounded adverb prefix in evidence matching.
 const COMPLETED_EXECUTION_SELF_CLAIM_PATTERN =
-  /(?<!\bif\s+)\b(?:i|we)(?!\s+(?:(?:[a-z-]+ly|just|already|now|also)\s+){0,2}run\b)(?:['’]ve|\s+have)?\s+(?:(?:[a-z-]+ly|just|already|now|also)\s+){0,2}(?:deployed\b|(?:ran|run|executed)\s+(?:(?:(?:the|a|an|your|our|this|that|these|those|all|verification|unit|integration|local|\d+)\s+){0,4}(?:tools?|commands?|scripts?|tests?)\b|[`"']?npm(?:\.cmd)?\s+(?:test\b|run\s+[a-z0-9:_-]+\b)))/i;
+  /(?<!\bif\s+)\b(?:i|we)(?!\s+(?:(?:[a-z-]+ly|just|already|now|also)\s+){0,2}run\b)(?:['’]ve|\s+have)?\s+(?:(?:[a-z-]+ly|just|already|now|also)\s+){0,2}(?:deployed\b|(?:ran|run|executed)\s+(?:(?:(?:the|a|an|your|our|this|that|these|those|all|verification|unit|integration|local|\d+)\s+){0,4}(?:tools?|commands?|scripts?|tests?)\b|[`"']?npm(?:\.cmd)?\s+(?:test\b|install\b|run\s+[a-z0-9:_-]+\b)))/i;
 const PERSISTENCE_SAVE_CONTEXT_PATTERN =
   /\b(memory|data|details|preferences|settings|accounts?|profiles?|sessions?|conversations?|transcripts?|files?|documents?|records?|notes?|answers?|results?|credentials?|secrets?|passwords?|storage|disk|logs?)\b/i;
 const PERSISTENCE_CREDENTIAL_TOKEN_PATTERN =

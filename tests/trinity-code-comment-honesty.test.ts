@@ -69,6 +69,8 @@ describe('Trinity source comment and example honesty', () => {
     'We have run npm test.',
     'I successfully deployed the app.',
     'I just ran npm test.',
+    'I ran npm install.',
+    "I've just successfully run npm install.",
     "We’ve just successfully run npm test.",
     'I have already successfully deployed the app.',
     'I just successfully executed the command.',
@@ -130,6 +132,7 @@ describe('Trinity source comment and example honesty', () => {
     'If I ran npm test, I would read its output.',
     'If I successfully deployed the app, I would read its output.',
     'If I just ran npm test, I would read its output.',
+    'If I ran npm install, I would read its output.',
     "If I've run the tests, I would read their output.",
     'If we have just successfully run npm test, we would read its output.',
     'If I have successfully deployed the app, I would read its output.',
@@ -141,6 +144,7 @@ describe('Trinity source comment and example honesty', () => {
     'If I ran "npm test", I would read its output.',
     'Run npm test before submitting the change.',
     '//audit: Run npm test before release.',
+    '// Run npm install before building.',
     '// Run the tests before release.',
     '/* Execute npm run build before release. */',
     'Example: "Run npm test before submitting the change."'
@@ -153,7 +157,7 @@ describe('Trinity source comment and example honesty', () => {
   it.each([
     'I deployed the app.', 'I ran the verification tool.', 'We executed the script.',
     "I've run the tests.", 'We have run npm test.',
-    'I successfully deployed the app.', 'I just ran npm test.'
+    'I successfully deployed the app.', 'I just ran npm test.', 'I ran npm install.'
   ])(
     'requires both capability and verified tool evidence for completed execution: %s', text => {
       const toolHonesty = { ...createDefaultTrinityReasoningHonesty(), evidenceTags: [{
@@ -185,6 +189,8 @@ describe('Trinity source comment and example honesty', () => {
     ['I ran npm test.', 'I ran npm run build.'],
     ['I ran npm run Build.', 'I ran npm run build.'],
     ['I ran npm test.', 'We have just successfully run npm run build.'],
+    ['I ran npm test.', 'I ran npm install.'],
+    ['I ran npm install package-a.', 'I ran npm install package-b.'],
     ['I ran npm run Build.', "I've just run npm run build."],
     ['I deployed the app to Staging.', 'I successfully deployed the app to staging.'],
     ['I deployed the app to staging.', 'I have successfully deployed the app to production.'],
@@ -213,6 +219,7 @@ describe('Trinity source comment and example honesty', () => {
     ['I ran npm test.', 'We have run npm test.'],
     ['I deployed the app.', 'I successfully deployed the app.'],
     ['I executed npm test.', 'I just ran npm test.'],
+    ['I executed npm install.', "I've just successfully run npm install."],
     ['I ran npm test.', 'We have just successfully run npm test.'],
     ["I've just successfully run npm test.", 'I executed npm test.'],
     ['I have already successfully deployed the app.', 'We deployed the app.'],
