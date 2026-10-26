@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-26T00:52:28.758Z",
+  "generatedAt": "2026-10-26T20:14:04.841Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2997,6 +2997,9 @@
         },
         {
           "relativePath": "src/shared/gpt/priorityGpt.ts"
+        },
+        {
+          "relativePath": "src/shared/gpt/trinityFinalOutputPreviewFixture.ts"
         },
         {
           "relativePath": "src/shared/gpt/trinityReasoningPolicy.ts"
@@ -6080,6 +6083,9 @@
         },
         {
           "relativePath": "tests/trinity-final-output-integrity.test.ts"
+        },
+        {
+          "relativePath": "tests/trinity-final-output-preview-fixture.test.ts"
         },
         {
           "relativePath": "tests/trinity-gaming-intake.test.ts"

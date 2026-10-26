@@ -17,6 +17,7 @@ import {
 import { assertTutorHonestyPreviewFixture } from '../src/shared/chatgpt/tutorHonestyPreviewFixture.js';
 import { assertPluginMigrationPreviewFixture } from '../src/shared/chatgpt/pluginMigrationPreviewFixture.js';
 import { assertGamingCompositionPreviewFixture } from '../src/shared/chatgpt/gamingCompositionPreviewFixture.js';
+import { assertTrinityFinalOutputPreviewFixture } from '../src/shared/gpt/trinityFinalOutputPreviewFixture.js';
 import * as trinityReasoningPolicy from '../src/shared/gpt/trinityReasoningPolicy.js';
 import * as heartbeatBoundary from '../src/services/controlPlane/heartbeatHttpBoundary.js';
 import * as gamingDurableRagFixture from '../src/shared/gaming/gamingDurableRagPreviewFixture.js';
@@ -32,6 +33,8 @@ import {
   NATIVE_PR_PREVIEW_DAG_METRICS_CONTRACT,
   NATIVE_PR_PREVIEW_DAG_TOKEN_ACCOUNTING_CONTRACT,
   NATIVE_PR_PREVIEW_SESSION_CONTEXT_CONTRACT,
+  NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_CONTRACT,
+  NATIVE_PR_PREVIEW_FINAL_OUTPUT_INTEGRITY_CONTRACT,
   NATIVE_PR_PREVIEW_FIXTURE_IDS,
   NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT,
   NATIVE_PR_PREVIEW_GAMING_CONTRACT,
@@ -72,6 +75,10 @@ jest.unstable_mockModule('../src/shared/chatgpt/pluginMigrationPreviewFixture.js
 const assertGamingCompositionFixture = jest.fn(assertGamingCompositionPreviewFixture);
 jest.unstable_mockModule('../src/shared/chatgpt/gamingCompositionPreviewFixture.js', () => ({
   assertGamingCompositionPreviewFixture: assertGamingCompositionFixture,
+}));
+const assertFinalOutputFixture = jest.fn(assertTrinityFinalOutputPreviewFixture);
+jest.unstable_mockModule('../src/shared/gpt/trinityFinalOutputPreviewFixture.js', () => ({
+  assertTrinityFinalOutputPreviewFixture: assertFinalOutputFixture,
 }));
 const runGamingLargeSourceFixture = jest.fn(gamingDurableRagFixture.runGamingLargeSourcePreview);
 jest.unstable_mockModule('../src/shared/gaming/gamingDurableRagPreviewFixture.js', () => ({
@@ -1201,6 +1208,64 @@ describe('native PR contained application', () => {
       expect(recovered.headers[header]).toBe(NATIVE_PR_PREVIEW_DAG_METRICS_CONTRACT.proofVersion);
     } finally {
       assertFixture.mockImplementation(assertDagMetricsRetentionPreviewFixture);
+    }
+  });
+
+  it('requires final-output component proof before GET/HEAD readiness and withholds all markers on failure', async () => {
+    const readinessState = createNativePrPreviewReadinessState();
+    const app = createNativePrPreviewApplication({ identity, readinessState });
+    const contract = NATIVE_PR_PREVIEW_FINAL_OUTPUT_INTEGRITY_CONTRACT;
+    const proofHeaders = [NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.proofHeader,
+      NATIVE_PR_PREVIEW_DAG_METRICS_CONTRACT.proofHeader, NATIVE_PR_PREVIEW_DAG_TOKEN_ACCOUNTING_CONTRACT.proofHeader,
+      NATIVE_PR_PREVIEW_SESSION_CONTEXT_CONTRACT.proofHeader, NATIVE_PR_PREVIEW_SESSION_CONTEXT_CONTRACT.contractProofHeader,
+      NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_CONTRACT.proofHeader, contract.proofHeader, contract.reportHeader];
+    try {
+      const pending = await request(app).get('/readyz');
+      expect(pending.status).toBe(503);
+      for (const header of proofHeaders) expect(pending.headers[header]).toBeUndefined();
+      expect(assertFinalOutputFixture).not.toHaveBeenCalled();
+      Object.assign(readinessState, { ready: true, applicationImported: true, fixturesSealed: true });
+      const ready = await request(app).get('/readyz');
+      const head = await request(app).head('/readyz');
+      expect(ready.status).toBe(200);
+      expect(head.status).toBe(200);
+      expect(head.text).toBeUndefined();
+      const expected = { ...assertTrinityFinalOutputPreviewFixture(), ...identity };
+      for (const response of [ready, head]) {
+        expect(response.headers[contract.proofHeader]).toBe(contract.proofVersion);
+        expect(JSON.parse(response.headers[contract.reportHeader])).toEqual(expected);
+        expect(response.headers[contract.reportHeader].length).toBeLessThanOrEqual(contract.maxReportChars);
+      }
+      for (const failure of [
+        () => { throw new Error('private fixture failure'); },
+        () => ({ ...assertTrinityFinalOutputPreviewFixture(), delivered: [] }),
+        () => ({ ...assertTrinityFinalOutputPreviewFixture(), privateData: 'must not escape' }),
+      ]) {
+        assertFinalOutputFixture.mockImplementation(failure);
+        for (const method of ['get', 'head'] as const) {
+          const failed = await request(app)[method]('/readyz');
+          expect(failed.status).toBe(503);
+          for (const header of proofHeaders) expect(failed.headers[header]).toBeUndefined();
+          if (method === 'get') expect(failed.body).toEqual({ ...ready.body, ready: false });
+          expect(JSON.stringify(failed.body)).not.toMatch(/private|escape/);
+        }
+      }
+      assertFinalOutputFixture.mockImplementation(assertTrinityFinalOutputPreviewFixture);
+      const recovered = await request(app).get('/readyz');
+      expect(recovered.status).toBe(200);
+      expect(recovered.body).toEqual(ready.body);
+      const calls = assertFinalOutputFixture.mock.calls.length;
+      for (const path of ['/readyz?fixture=final-output', '/query-finetune']) {
+        const denied = await request(app).get(path);
+        expect(denied.status).toBe(404);
+        for (const header of proofHeaders) expect(denied.headers[header]).toBeUndefined();
+      }
+      const credential = await request(app).get('/readyz').set('authorization', 'Bearer test-denied-credential');
+      expect(credential.status).toBe(404);
+      for (const header of proofHeaders) expect(credential.headers[header]).toBeUndefined();
+      expect(assertFinalOutputFixture.mock.calls.length).toBe(calls);
+    } finally {
+      assertFinalOutputFixture.mockImplementation(assertTrinityFinalOutputPreviewFixture);
     }
   });
 

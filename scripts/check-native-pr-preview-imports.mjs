@@ -15,7 +15,7 @@ const PREVIEW_IMPORT_TSCONFIG_FILE =
 const PREVIEW_DIST_IMPORT_CHECKER_FILE =
   'scripts/check-native-pr-preview-dist-imports.mjs';
 const PREVIEW_DIST_IMPORT_CHECKER_DIGEST =
-  'd2d8b01ce366cde3cfbbba0c4212e6696483bf428e2d47110dfedb1027b0abcc';
+  '956f8b2aee005d14fe2b8a8672c602173f31f23c2fa4c38b707227f439138271';
 const ROOT_PACKAGE_MANIFEST_FILE = 'package.json';
 const ROOT_TSCONFIG_FILE = 'tsconfig.json';
 const RUNTIME_PACKAGE_MANIFEST_FILE =
@@ -48,6 +48,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'scripts/start-railway-service.mjs',
   'src/core/logic/trinityDirectAnswerMode.ts',
   'src/core/logic/trinityHonesty.ts',
+  'src/core/logic/trinityStructuredOutput.ts',
   'src/core/db/repositories/backstageStorylineRepository.ts',
   'src/lib/errors/responses.ts',
   'src/mcp/httpBodyParserCore.ts',
@@ -128,6 +129,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/gpt/arcanosBehavioralProfile.ts',
   'src/shared/gpt/generativeModelPolicyCore.ts',
   'src/shared/gpt/generativeModelPolicyPreviewFixture.ts',
+  'src/shared/gpt/trinityFinalOutputPreviewFixture.ts',
   'src/shared/ios/iosGatewayPreviewFixture.ts',
   'src/shared/ios/iosDevicePreviewFixture.ts',
   'src/shared/gaming/gamingArchiveResourceCore.ts',
@@ -264,6 +266,7 @@ const ALLOWED_EXTERNAL_RUNTIME_IMPORTS = new Set([
   'zod',
 ]);
 const FILE_SPECIFIC_EXTERNAL_RUNTIME_IMPORTS = new Map([
+  ['src/core/logic/trinityStructuredOutput.ts', new Set(['ajv'])],
   ['src/shared/chatgpt/gamingMcpContract.ts', new Set(['ajv', '@arcanos/protocol/chatgptGaming'])],
   ['src/platform/runtime/sessionContext.ts', new Set(['node:async_hooks'])],
   ['src/services/openai/attemptTokenUsage.ts', new Set(['node:async_hooks'])],
@@ -300,6 +303,9 @@ const FILE_SPECIFIC_EXTERNAL_RUNTIME_IMPORTS = new Map([
   ['src/start-native-pr-preview.ts', new Set(['node:http', 'node:url'])],
 ]);
 const FILE_SPECIFIC_EXTERNAL_IMPORT_BINDINGS = new Map([
+  ['src/core/logic/trinityStructuredOutput.ts', new Map([
+    ['ajv', new Set(['Ajv:Ajv'])],
+  ])],
   ...[
     'src/shared/validation/zodIssues.ts',
     'src/shared/validation/zodNumberChecks.ts',
@@ -844,6 +850,8 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
   ],
 ]);
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
+  ['src/core/logic/trinityStructuredOutput.ts', '40c2ff4872dee779f9f2deca8a7354db8f467846dc070306c9265663c06896de'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/gpt/trinityFinalOutputPreviewFixture.ts', '7d3f6ffe15d6be161493ba8dac983958579d5fb9af8bc5d0d1080bab096f1feb'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/validation/zodIssues.ts', '0baaff406fd2ceb2a0f41aec26a1c333c865f496a3bd912799fdf1257c9004ea'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/validation/zodNumberChecks.ts', '95aa7a56141ba5e6b60f315f406a4739110b6ac43e66b1a1c92bb8023d673858'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/validation/zodStringChecks.ts', 'c93b2370b49f5a0aecb887ba8e647da9340e4a0bcf6d30653093f6af1c252bd1'], // gitleaks:allow -- public source semantic SHA-256

@@ -4670,6 +4670,29 @@ async function executeRequestCase(
     : response.headers.has(modelPolicyContract.proofHeader)) {
     fail('NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_PROOF_INVALID', requestCase.caseId);
   }
+  const outputContract = NATIVE_PR_PREVIEW_E2E_CONTRACT.finalOutputIntegrity;
+  const outputExpected = requestCase.expectedType === 'web-readiness'
+    || (requestCase.role === 'web' && requestCase.expectedType === 'head' && requestCase.path === '/readyz');
+  const outputReport = response.headers.get(outputContract.reportHeader);
+  if (outputExpected
+    ? response.headers.get(outputContract.proofHeader) !== outputContract.proofVersion
+    : response.headers.has(outputContract.proofHeader) || outputReport !== null) {
+    fail('NATIVE_PR_PREVIEW_FINAL_OUTPUT_PROOF_INVALID', requestCase.caseId);
+  }
+  if (outputExpected) {
+    let report;
+    try {
+      if (!outputReport || outputReport.length > outputContract.maxReportChars) throw new Error('Invalid report');
+      report = JSON.parse(outputReport);
+    } catch {
+      fail('NATIVE_PR_PREVIEW_FINAL_OUTPUT_REPORT_INVALID', requestCase.caseId);
+    }
+    if (!isDeepStrictEqual(report, { proofVersion: outputContract.proofVersion, synthetic: true,
+      delivered: outputContract.delivered, rejected: outputContract.rejected, proseUnchanged: true, listUnchanged: true,
+      prNumber: options.prNumber, sourceCommit: options.commitSha })) {
+      fail('NATIVE_PR_PREVIEW_FINAL_OUTPUT_REPORT_INVALID', requestCase.caseId);
+    }
+  }
   const migrationExpected = requestCase.role === 'web'
     && requestCase.chatGptTutorAdmission === 'admitted'
     && requestCase.fixtureName === 'tools-call';
@@ -5244,6 +5267,11 @@ async function executeRequestCase(
     ...(sessionScopeExpected ? {
       sessionScopeContractVerified: true,
       sessionScopeProofVersion: sessionScopeContract.contractProofVersion,
+    } : {}),
+    ...(outputExpected ? {
+      finalOutputIntegrityVerified: true,
+      finalOutputIntegrityProofVersion: outputContract.proofVersion,
+      finalOutputIntegrityReport: JSON.parse(outputReport),
     } : {}),
     ...(modelPolicyExpected ? {
       generativeModelPolicyVerified: true,

@@ -29,6 +29,7 @@ import {
 import {
   NATIVE_PR_PREVIEW_DIST_IMPORT_CONTRACT,
   GENERATIVE_MODEL_POLICY_PREVIEW_DIST_IMPORT_CONTRACT,
+  FINAL_OUTPUT_INTEGRITY_PREVIEW_DIST_IMPORT_CONTRACT,
   findNativePrPreviewDistImportSourceViolations,
   findTutorHonestyPreviewDistImportSourceViolations,
 } from './check-native-pr-preview-dist-imports.mjs';
@@ -191,6 +192,17 @@ function responseHeadersForCase(
     || requestCase.chatGptTutorAdmission === 'admitted';
   return {
     'cache-control': 'no-store',
+    ...(requestCase.expectedType === 'web-readiness'
+      || (requestCase.role === 'web' && requestCase.expectedType === 'head' && requestCase.path === '/readyz') ? {
+        [NATIVE_PR_PREVIEW_E2E_CONTRACT.finalOutputIntegrity.proofHeader]:
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.finalOutputIntegrity.proofVersion,
+        [NATIVE_PR_PREVIEW_E2E_CONTRACT.finalOutputIntegrity.reportHeader]: JSON.stringify({
+          proofVersion: NATIVE_PR_PREVIEW_E2E_CONTRACT.finalOutputIntegrity.proofVersion, synthetic: true,
+          delivered: NATIVE_PR_PREVIEW_E2E_CONTRACT.finalOutputIntegrity.delivered,
+          rejected: NATIVE_PR_PREVIEW_E2E_CONTRACT.finalOutputIntegrity.rejected,
+          proseUnchanged: true, listUnchanged: true, prNumber: PR_NUMBER, sourceCommit: COMMIT_SHA,
+        }),
+      } : {}),
     ...(requestCase.expectedType === 'web-readiness'
       || (requestCase.role === 'web' && requestCase.expectedType === 'head' && requestCase.path === '/readyz')
       || requestCase.expectedType === 'generative-model-policy-contract' ? {
@@ -523,6 +535,13 @@ function buildMockFetch(
       bodyBytes,
       responseHeaderOverrides?.(requestCase)
     );
+    const outputReportHeader = NATIVE_PR_PREVIEW_E2E_CONTRACT.finalOutputIntegrity.reportHeader;
+    if (headers[outputReportHeader] && expectedResponseOptions?.commitSha) {
+      const report = JSON.parse(headers[outputReportHeader]);
+      report.sourceCommit = expectedResponseOptions.commitSha;
+      report.prNumber = expectedResponseOptions.prNumber ?? PR_NUMBER;
+      headers[outputReportHeader] = JSON.stringify(report);
+    }
     if (requestCase.caseId === 'gaming-query-guide' && expectedResponseOptions?.commitSha) {
       for (const prefix of ['largeSource', 'liveSourceValidation']) {
         const header = NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming[`${prefix}ReportHeader`];
@@ -2518,6 +2537,8 @@ test('executes the bounded synthetic matrix and detects identity stability', asy
   );
   assert.equal(mock.requestCount, 173);
   assert.equal(result.limits.maxRequests, 173);
+  assert.deepEqual(result.checks.filter(check => check.finalOutputIntegrityVerified).map(check => check.caseId),
+    ['web-readiness-initial', 'web-readiness-head', 'web-readiness-final']);
   assert.deepEqual(result.checks.filter(check => check.generativeModelPolicyVerified)
     .map(check => check.caseId), ['web-readiness-initial', 'web-generative-model-policy',
       'web-readiness-head', 'web-readiness-final']);
@@ -3223,8 +3244,61 @@ test('requires model-policy proof and exact bounded report, suppressing proof on
   }
 });
 
-test('compiled model-policy graph rejects SDK, credential and dynamic edges', () => {
-  for (const contract of GENERATIVE_MODEL_POLICY_PREVIEW_DIST_IMPORT_CONTRACT) {
+test('requires exact final-output proof and bounded report on existing readiness cases without expanding the plan', async () => {
+  const plan = buildNativePrPreviewRequestPlan();
+  const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.finalOutputIntegrity;
+  assert.equal(plan.length, 173);
+  const proofCode = 'NATIVE_PR_PREVIEW_FINAL_OUTPUT_PROOF_INVALID';
+  const reportCode = 'NATIVE_PR_PREVIEW_FINAL_OUTPUT_REPORT_INVALID';
+  const mutations = [
+    ...['web-readiness-initial', 'web-readiness-final', 'web-readiness-head'].flatMap(caseId => [
+      { caseId, code: proofCode, mutate(headers) { delete headers[contract.proofHeader]; } },
+      { caseId, code: proofCode, mutate(headers) { headers[contract.proofHeader] = 'shared-final-output-integrity/v0'; } },
+      { caseId, code: reportCode, mutate(headers) { delete headers[contract.reportHeader]; } },
+    ]),
+    ...['worker-readiness-initial', 'worker-readiness-final', 'worker-generative-model-policy-denied',
+      'web-generative-model-policy-query-denied', 'web-generative-model-policy-post-denied'].flatMap(caseId => [
+      { caseId, code: proofCode, mutate(headers) { headers[contract.proofHeader] = contract.proofVersion; } },
+      { caseId, code: proofCode, mutate(headers) { headers[contract.reportHeader] = '{}'; } },
+    ]),
+    ...[
+      report => { report.delivered.pop(); },
+      report => { report.rejected['invalid-json'] = 'accepted'; },
+      report => { report.rejected['affirmative-flag'] = 'accepted'; },
+      report => { report.sourceCommit = 'b'.repeat(40); },
+      report => { report.prNumber += 1; },
+      report => { report.synthetic = false; },
+      report => { report.proseUnchanged = false; },
+      report => { report.listUnchanged = false; },
+      report => { report.unreviewed = true; },
+    ].map(change => ({ caseId: 'web-readiness-initial', code: reportCode, mutate(headers) {
+      const report = JSON.parse(headers[contract.reportHeader]); change(report);
+      headers[contract.reportHeader] = JSON.stringify(report);
+    } })),
+    { caseId: 'web-readiness-initial', code: reportCode, mutate(headers) { headers[contract.reportHeader] = '{'; } },
+    { caseId: 'web-readiness-initial', code: reportCode, mutate(headers) { headers[contract.reportHeader] = 'x'.repeat(contract.maxReportChars + 1); } },
+  ];
+  for (const mutation of mutations) {
+    const mock = buildMockFetch(plan, requestCase => {
+      if (requestCase.caseId !== mutation.caseId) return undefined;
+      const body = responseBodyForCase(requestCase);
+      const headers = responseHeadersForCase(requestCase, Buffer.byteLength(body ?? ''));
+      mutation.mutate(headers);
+      const response = new Response(body, { status: requestCase.expectedStatus, headers });
+      Object.defineProperty(response, 'url', { value: `${requestCase.role === 'web' ? WEB_BASE_URL : WORKER_BASE_URL}${requestCase.path}` });
+      return response;
+    });
+    await assert.rejects(runNativePrPreviewE2e({ args: validArguments('--execute', '--allow-network'),
+      expectedBackstageBookerOpenApiDocument: EXPECTED_BACKSTAGE_BOOKER_OPENAPI_DOCUMENT,
+      fetchImpl: mock.fetchImpl, localGitState: LOCAL_GIT_STATE, monotonicNow: mock.monotonicNow,
+    }), error => error instanceof NativePrPreviewE2eError && error.code === mutation.code && error.caseId === mutation.caseId,
+    `${mutation.caseId}: ${mutation.code}`);
+  }
+});
+
+test('compiled model-policy and final-output graphs reject SDK, credential and dynamic edges', () => {
+  for (const contract of [...GENERATIVE_MODEL_POLICY_PREVIEW_DIST_IMPORT_CONTRACT,
+    ...FINAL_OUTPUT_INTEGRITY_PREVIEW_DIST_IMPORT_CONTRACT]) {
     const source = Object.entries(contract.imports).map(([specifier, bindings]) =>
       `import { ${bindings.map(binding => binding.split(':')[0]).join(', ')} } from ${JSON.stringify(specifier)};`
     ).join('\n');

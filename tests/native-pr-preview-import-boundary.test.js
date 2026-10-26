@@ -14,6 +14,7 @@ import {
   TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT,
   PLUGIN_MIGRATION_PREVIEW_DIST_IMPORT_CONTRACT,
   GENERATIVE_MODEL_POLICY_PREVIEW_DIST_IMPORT_CONTRACT,
+  FINAL_OUTPUT_INTEGRITY_PREVIEW_DIST_IMPORT_CONTRACT,
   GAMING_MCP_PREVIEW_DIST_IMPORT_CONTRACT,
   GAMING_COMPOSITION_PREVIEW_DIST_IMPORT_CONTRACT,
   ZOD_VALIDATION_PREVIEW_DIST_IMPORT_CONTRACT,
@@ -744,9 +745,35 @@ describe('native PR preview import boundary', () => {
     for (const filePath of excluded) expect(violations).toContain(`unreviewed preview import: ${filePath}`);
   }, 30_000);
 
+  it('limits the final-output fixture to shared pure logic and the validator to its exact Ajv binding', async () => {
+    const validatorPath = 'src/core/logic/trinityStructuredOutput.ts';
+    const fixturePath = 'src/shared/gpt/trinityFinalOutputPreviewFixture.ts';
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toEqual(expect.arrayContaining([validatorPath, fixturePath]));
+    const validator = await readFile(new URL(`../${validatorPath}`, import.meta.url), 'utf8');
+    expect(findUnsafeRuntimeSyntax(validatorPath, validator.replace("{ Ajv }", 'Ajv'))).toEqual(
+      expect.arrayContaining([expect.stringContaining('forbidden runtime import binding "default:Ajv"')])
+    );
+    const fixture = await readFile(new URL(`../${fixturePath}`, import.meta.url), 'utf8');
+    expect(findUnsafeRuntimeSyntax(fixturePath, `${fixture}\nimport { Ajv } from 'ajv';`)).toEqual(
+      expect.arrayContaining([expect.stringContaining('external runtime import "ajv"')])
+    );
+    const excluded = ['src/core/logic/trinity.ts', 'src/core/logic/trinityWritingPipeline.ts',
+      'src/services/openai/clientBridge.ts', 'src/core/adapters/openai.adapter.ts', 'src/core/db/index.ts'];
+    for (const filePath of excluded) expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(filePath);
+    const analyzeDependencies = async () => ({
+      obj: () => Object.fromEntries([...NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES, ...excluded]
+        .map(filePath => [filePath, filePath === fixturePath ? excluded : []])),
+      warnings: () => ({ skipped: [] }),
+    });
+    const violations = await findNativePrPreviewImportViolations({ analyzeDependencies });
+    for (const filePath of excluded) expect(violations).toContain(`unreviewed preview import: ${filePath}`);
+  }, 30_000);
+
   it.each([
     'src/shared/chatgpt/tutorHonestyPreviewFixture.ts',
     'src/core/logic/trinityHonesty.ts',
+    'src/core/logic/trinityStructuredOutput.ts',
+    'src/shared/gpt/trinityFinalOutputPreviewFixture.ts',
     'src/shared/text/countWords.ts',
     'src/shared/text/intentModeClassifier.ts',
     'src/shared/promptGuidance.ts',
@@ -765,7 +792,8 @@ describe('native PR preview import boundary', () => {
     }
   });
 
-  it.each([...TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT, ...PLUGIN_MIGRATION_PREVIEW_DIST_IMPORT_CONTRACT])(
+  it.each([...TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT, ...FINAL_OUTPUT_INTEGRITY_PREVIEW_DIST_IMPORT_CONTRACT,
+    ...PLUGIN_MIGRATION_PREVIEW_DIST_IMPORT_CONTRACT])(
     'rejects added runtime edges in emitted sealed module $filePath', contract => {
       const imports = Object.entries(contract.imports).map(([specifier, bindings]) => {
         const names = bindings.map(binding => binding.split(':').join(' as ')).join(', ');
