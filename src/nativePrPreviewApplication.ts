@@ -39,6 +39,7 @@ import {
   runSessionContextPreviewContract,
 } from './shared/memory/sessionContextPreviewFixture.js';
 import { assertGenerativeModelPolicyPreviewFixture } from './shared/gpt/generativeModelPolicyPreviewFixture.js';
+import { assertTrinityFinalOutputPreviewFixture } from './shared/gpt/trinityFinalOutputPreviewFixture.js';
 import { handleChatGptTutorPreviewRequest } from './shared/chatgpt/chatgptTutorPreviewFixture.js';
 import { handleGamingMcpPreviewRequest } from './shared/chatgpt/gamingMcpPreviewFixture.js';
 import { createBookerMcpPreviewFixture, BOOKER_PREVIEW_EVIDENCE_PATH } from './bookerMcpPreviewFixture.js';
@@ -70,6 +71,7 @@ import {
   NATIVE_PR_PREVIEW_DAG_TOKEN_ACCOUNTING_CONTRACT,
   NATIVE_PR_PREVIEW_SESSION_CONTEXT_CONTRACT,
   NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_CONTRACT,
+  NATIVE_PR_PREVIEW_FINAL_OUTPUT_INTEGRITY_CONTRACT,
   NATIVE_PR_PREVIEW_FIXTURE_IDS,
   NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT,
   NATIVE_PR_PREVIEW_GAMING_CONTRACT,
@@ -9785,6 +9787,13 @@ export function createNativePrPreviewApplication(
         await assertDagTokenAccountingPreviewFixture();
         await assertSessionContextPreviewFixture();
         assertGenerativeModelPolicyPreviewFixture();
+        const outputIntegrity = assertTrinityFinalOutputPreviewFixture();
+        const outputContract = NATIVE_PR_PREVIEW_FINAL_OUTPUT_INTEGRITY_CONTRACT;
+        const outputReport = JSON.stringify({ ...outputIntegrity,
+          prNumber: options.identity.prNumber, sourceCommit: options.identity.sourceCommit });
+        if (JSON.stringify(outputIntegrity) !== JSON.stringify({ proofVersion: outputContract.proofVersion, synthetic: true,
+          delivered: outputContract.delivered, rejected: outputContract.rejected, proseUnchanged: true, listUnchanged: true })
+          || outputReport.length > outputContract.maxReportChars) throw new Error('PREVIEW_FINAL_OUTPUT_REPORT_INVALID');
         ready = canReportReady();
         if (ready) {
           response.setHeader(NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.proofHeader,
@@ -9799,6 +9808,8 @@ export function createNativePrPreviewApplication(
             NATIVE_PR_PREVIEW_SESSION_CONTEXT_CONTRACT.contractProofVersion);
           response.setHeader(NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_CONTRACT.proofHeader,
             NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_CONTRACT.proofVersion);
+          response.setHeader(outputContract.proofHeader, outputContract.proofVersion);
+          response.setHeader(outputContract.reportHeader, outputReport);
         }
       } catch {
         ready = false;

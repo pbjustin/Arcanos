@@ -14,9 +14,12 @@ import {
 import {
   TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT,
   PLUGIN_MIGRATION_PREVIEW_DIST_IMPORT_CONTRACT,
+  GENERATIVE_MODEL_POLICY_PREVIEW_DIST_IMPORT_CONTRACT,
+  FINAL_OUTPUT_INTEGRITY_PREVIEW_DIST_IMPORT_CONTRACT,
   GAMING_MCP_PREVIEW_DIST_IMPORT_CONTRACT,
   BOOKER_MCP_PREVIEW_DIST_IMPORT_CONTRACT,
   GAMING_COMPOSITION_PREVIEW_DIST_IMPORT_CONTRACT,
+  ZOD_VALIDATION_PREVIEW_DIST_IMPORT_CONTRACT,
   findTutorHonestyPreviewDistImportSourceViolations,
 } from '../scripts/check-native-pr-preview-dist-imports.mjs';
 
@@ -626,6 +629,66 @@ describe('native PR preview import boundary', () => {
       ]));
   });
 
+  it.each([
+    'src/shared/validation/zodIssues.ts',
+    'src/shared/validation/zodNumberChecks.ts',
+    'src/shared/validation/zodStringChecks.ts',
+  ])('pins pure Zod compatibility helper semantics and effects in %s', async filePath => {
+    const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toContain(filePath);
+    expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+    for (const addition of [
+      'export const unreviewedValidationPolicy = true;',
+      'fetch("https://unreviewed.invalid");',
+      'process.env.OPENAI_API_KEY;',
+      'z.config({ customError: () => "accept" });',
+      'import { readFile } from "node:fs/promises";',
+      'import { logger } from "../../platform/logging/structuredLogging.js";',
+      'await import("../../services/gptAccessGateway.js");',
+    ]) {
+      expect(findUnsafeRuntimeSyntax(filePath, `${sourceText}\n${addition}\n`)).toEqual(
+        expect.arrayContaining([expect.stringContaining('critical entry file semantic digest')])
+      );
+    }
+    const broadenedZodImport = replaceRequired(sourceText, "import { z } from 'zod';", "import { z, ZodError } from 'zod';");
+    expect(findUnsafeRuntimeSyntax(filePath, broadenedZodImport)).toEqual(expect.arrayContaining([
+      expect.stringContaining('forbidden runtime import binding "ZodError:ZodError"'),
+    ]));
+  });
+
+  it.each(ZOD_VALIDATION_PREVIEW_DIST_IMPORT_CONTRACT)(
+    'keeps emitted Zod validation imports exact in $filePath', contract => {
+      const imports = Object.entries(contract.imports).map(([specifier, bindings]) =>
+        `import { ${bindings.map(binding => binding.split(':')[0]).join(', ')} } from '${specifier}';`
+      ).join('\n');
+      expect(findTutorHonestyPreviewDistImportSourceViolations(contract, imports)).toEqual([]);
+      for (const changed of [
+        '',
+        imports.replace(/\{ /u, '{ unreviewedBinding, '),
+        imports.replace(/ from '[^']+'/u, " from '../../services/gptAccessGateway.js'"),
+        `${imports}\nimport { readFile } from 'node:fs/promises';`,
+        `${imports}\nawait import('../../core/adapters/openai.adapter.js');`,
+        `${imports}\nexport * from '../../platform/logging/structuredLogging.js';`,
+      ]) {
+        expect(findTutorHonestyPreviewDistImportSourceViolations(contract, changed).length).toBeGreaterThan(0);
+      }
+    }
+  );
+
+  it('keeps validation compatibility limited to its three pure helpers', () => {
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES.filter(filePath => filePath.startsWith('src/shared/validation/')))
+      .toEqual([
+        'src/shared/validation/zodIssues.ts',
+        'src/shared/validation/zodNumberChecks.ts',
+        'src/shared/validation/zodStringChecks.ts',
+      ]);
+    expect(ZOD_VALIDATION_PREVIEW_DIST_IMPORT_CONTRACT).toHaveLength(7);
+    for (const filePath of ['src/services/gptAccessGateway.ts', 'src/services/gamingSourceIngestion.ts',
+      'src/core/adapters/openai.adapter.ts', 'src/platform/logging/structuredLogging.ts']) {
+      expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(filePath);
+    }
+  });
+
   it('pins the sealed Tutor peer and admits only reviewed Tutor, Gaming and Booker protocol assets', async () => {
     const filePath = 'src/shared/chatgpt/chatgptTutorPreviewFixture.ts';
     const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
@@ -686,9 +749,35 @@ describe('native PR preview import boundary', () => {
     for (const filePath of excluded) expect(violations).toContain(`unreviewed preview import: ${filePath}`);
   }, 30_000);
 
+  it('limits the final-output fixture to shared pure logic and the validator to its exact Ajv binding', async () => {
+    const validatorPath = 'src/core/logic/trinityStructuredOutput.ts';
+    const fixturePath = 'src/shared/gpt/trinityFinalOutputPreviewFixture.ts';
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toEqual(expect.arrayContaining([validatorPath, fixturePath]));
+    const validator = await readFile(new URL(`../${validatorPath}`, import.meta.url), 'utf8');
+    expect(findUnsafeRuntimeSyntax(validatorPath, validator.replace("{ Ajv }", 'Ajv'))).toEqual(
+      expect.arrayContaining([expect.stringContaining('forbidden runtime import binding "default:Ajv"')])
+    );
+    const fixture = await readFile(new URL(`../${fixturePath}`, import.meta.url), 'utf8');
+    expect(findUnsafeRuntimeSyntax(fixturePath, `${fixture}\nimport { Ajv } from 'ajv';`)).toEqual(
+      expect.arrayContaining([expect.stringContaining('external runtime import "ajv"')])
+    );
+    const excluded = ['src/core/logic/trinity.ts', 'src/core/logic/trinityWritingPipeline.ts',
+      'src/services/openai/clientBridge.ts', 'src/core/adapters/openai.adapter.ts', 'src/core/db/index.ts'];
+    for (const filePath of excluded) expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(filePath);
+    const analyzeDependencies = async () => ({
+      obj: () => Object.fromEntries([...NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES, ...excluded]
+        .map(filePath => [filePath, filePath === fixturePath ? excluded : []])),
+      warnings: () => ({ skipped: [] }),
+    });
+    const violations = await findNativePrPreviewImportViolations({ analyzeDependencies });
+    for (const filePath of excluded) expect(violations).toContain(`unreviewed preview import: ${filePath}`);
+  }, 30_000);
+
   it.each([
     'src/shared/chatgpt/tutorHonestyPreviewFixture.ts',
     'src/core/logic/trinityHonesty.ts',
+    'src/core/logic/trinityStructuredOutput.ts',
+    'src/shared/gpt/trinityFinalOutputPreviewFixture.ts',
     'src/shared/text/countWords.ts',
     'src/shared/text/intentModeClassifier.ts',
     'src/shared/promptGuidance.ts',
@@ -707,7 +796,8 @@ describe('native PR preview import boundary', () => {
     }
   });
 
-  it.each([...TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT, ...PLUGIN_MIGRATION_PREVIEW_DIST_IMPORT_CONTRACT])(
+  it.each([...TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT, ...FINAL_OUTPUT_INTEGRITY_PREVIEW_DIST_IMPORT_CONTRACT,
+    ...PLUGIN_MIGRATION_PREVIEW_DIST_IMPORT_CONTRACT])(
     'rejects added runtime edges in emitted sealed module $filePath', contract => {
       const imports = Object.entries(contract.imports).map(([specifier, bindings]) => {
         const names = bindings.map(binding => binding.split(':').join(' as ')).join(', ');
@@ -732,6 +822,7 @@ describe('native PR preview import boundary', () => {
     'scripts/tutor-package-core.d.mts',
     'src/shared/chatgpt/pluginMigrationPreviewFixture.ts',
     'src/shared/gpt/generativeModelPolicyCore.ts',
+    'src/shared/gpt/arcanosBehavioralProfile.ts',
     'src/shared/gpt/generativeModelPolicyPreviewFixture.ts',
   ])('pins the shared migration seam and rejects effects in %s', async filePath => {
     const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
@@ -912,6 +1003,20 @@ describe('native PR preview import boundary', () => {
       }
     }
   );
+
+  it('keeps behavioral profile configuration and provider adapters outside the contained graph', () => {
+    expect(GENERATIVE_MODEL_POLICY_PREVIEW_DIST_IMPORT_CONTRACT).toEqual(expect.arrayContaining([
+      {
+        filePath: 'dist/shared/gpt/generativeModelPolicyCore.js',
+        imports: { './arcanosBehavioralProfile.js': ['isArcanosBehavioralProfileId:isArcanosBehavioralProfileId'] },
+      },
+      { filePath: 'dist/shared/gpt/arcanosBehavioralProfile.js', imports: {} },
+    ]));
+    for (const filePath of ['src/services/openai/behavioralProfile.ts', 'src/platform/runtime/unifiedConfig.ts',
+      'src/services/openai/credentialProvider.ts', 'src/core/adapters/openai.adapter.ts']) {
+      expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(filePath);
+    }
+  });
 
   it('rejects absent or retargeted Gaming protocol exports outside the reviewed leaf', async () => {
     const manifest = JSON.parse(await readFile(new URL('../packages/protocol/package.json', import.meta.url), 'utf8'));

@@ -1,5 +1,8 @@
 import express from 'express';
 import { z } from 'zod';
+import { legacyInteger } from '@shared/validation/zodNumberChecks.js';
+import { utf16MaxLength } from '@shared/validation/zodStringChecks.js';
+import { formatZodIssues } from '@shared/validation/zodIssues.js';
 import { createRateLimitMiddleware, createValidationMiddleware, securityHeaders } from '@platform/runtime/security.js';
 import { asyncHandler } from '@shared/http/index.js';
 import { webSearchAgent } from '@services/webSearchAgent.js';
@@ -27,21 +30,21 @@ const rawBodySchema = {
 };
 
 const requestSchema = z.object({
-  query: z.string().min(1).max(1000),
+  query: z.string().min(1).max(1000).check(utf16MaxLength(1000)),
   provider: z.enum(['auto', 'duckduckgo-lite', 'brave', 'tavily', 'serpapi', 'searxng']).optional(),
-  limit: z.number().int().min(1).max(10).optional(),
-  fetchPages: z.number().int().min(1).max(5).optional(),
-  pageMaxChars: z.number().int().min(1000).max(12000).optional(),
+  limit: z.number().check(...legacyInteger()).min(1).max(10).optional(),
+  fetchPages: z.number().check(...legacyInteger()).min(1).max(5).optional(),
+  pageMaxChars: z.number().check(...legacyInteger()).min(1000).max(12000).optional(),
   includePageContent: z.boolean().optional(),
   synthesize: z.boolean().optional(),
-  synthesisModel: z.string().min(1).max(120).optional(),
-  allowDomains: z.array(z.string().min(1).max(255)).max(50).optional(),
-  denyDomains: z.array(z.string().min(1).max(255)).max(50).optional(),
+  synthesisModel: z.string().min(1).max(120).check(utf16MaxLength(120)).optional(),
+  allowDomains: z.array(z.string().min(1).max(255).check(utf16MaxLength(255))).max(50).optional(),
+  denyDomains: z.array(z.string().min(1).max(255).check(utf16MaxLength(255))).max(50).optional(),
   traverseLinks: z.boolean().optional(),
-  traversalDepth: z.number().int().min(1).max(2).optional(),
-  maxTraversalPages: z.number().int().min(1).max(5).optional(),
+  traversalDepth: z.number().check(...legacyInteger()).min(1).max(2).optional(),
+  maxTraversalPages: z.number().check(...legacyInteger()).min(1).max(5).optional(),
   sameDomainOnly: z.boolean().optional(),
-  traversalLinkLimit: z.number().int().min(1).max(8).optional()
+  traversalLinkLimit: z.number().check(...legacyInteger()).min(1).max(8).optional()
 });
 
 const maxRequests = Math.max(1, Math.floor(getEnvNumber('WEB_SEARCH_RATE_LIMIT_MAX', 30)));
@@ -59,7 +62,7 @@ router.post(
     if (!parsed.success) {
       res.status(400).json({
         error: 'Validation failed',
-        details: parsed.error.issues.map((issue) => `${issue.path.join('.') || 'root'}: ${issue.message}`),
+        details: formatZodIssues(parsed.error, req.body, requestSchema).map((issue) => `${issue.path.join('.') || 'root'}: ${issue.message}`),
         timestamp: new Date().toISOString()
       });
       return;

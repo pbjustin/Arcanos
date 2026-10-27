@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { type z } from 'zod';
+import { formatZodIssues } from '@shared/validation/zodIssues.js';
 
 import {
   captureAddInputSchema,
@@ -123,7 +124,7 @@ function parseInput<TSchema extends z.ZodTypeAny>(
     recoverable: true,
     recommendedAction: 'FIX_INPUT',
     details: {
-      issues: parsed.error.issues.map((issue) => ({
+      issues: formatZodIssues(parsed.error, payload ?? {}, schema).map((issue) => ({
         path: issue.path.join('.'),
         code: issue.code,
         message: issue.message

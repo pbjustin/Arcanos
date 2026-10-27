@@ -94,12 +94,14 @@ import { tryExtractExactLiteralPromptShortcut } from '@services/exactLiteralProm
 import {
   deriveTrinityCapabilityFlags,
   deriveTrinityOutputControls,
+  createDefaultTrinityReasoningHonesty,
   enforceFinalStageHonesty,
   prepareTrinityDirectAnswerHonesty,
   enforceFinalStageHonestyAndMinimalism,
   validateTrinityAnswerIntegrity,
   readIntentMode
 } from './trinityHonesty.js';
+import { createTrinityStructuredOutputValidator, TrinityStructuredOutputError } from './trinityStructuredOutput.js';
 import {
   appendTrinityIntegrityContinuation,
   buildTrinityIntegrityRepairSystemPolicy,
@@ -229,7 +231,8 @@ export type {
   TrinityReasoningHonesty,
   TrinityPipelineDebug,
   TrinityAnswerMode,
-  TrinityRequestedVerbosity
+  TrinityRequestedVerbosity,
+  TrinityStructuredOutputContract
 } from './trinityTypes.js';
 
 function buildDryRunTrinityResult(
@@ -816,6 +819,25 @@ export async function runThroughBrain(
   const maxBudget = getInvocationBudget(tier);
   const budget = new InvocationBudget(maxBudget);
   const capabilityFlags = deriveTrinityCapabilityFlags(options.toolBackedCapabilities);
+  const structuredOutputValidator = options.finalOutputContract
+    ? createTrinityStructuredOutputValidator(options.finalOutputContract) : undefined;
+  const validateStructuredOutput = structuredOutputValidator
+    ? (text: string, honesty: TrinityReasoningHonesty, userPrompt = trustedPolicyPrompt): string => {
+        try {
+          return structuredOutputValidator(text, capabilityFlags, honesty, {
+            userPrompt, outputControls,
+          });
+        } catch (error) {
+          logger.warn('trinity.final_output.integrity_failed', {
+            module: 'trinity', operation: 'final-output-integrity', requestId,
+            sourceEndpoint: options.sourceEndpoint,
+            errorCode: 'TRINITY_STRUCTURED_OUTPUT_INVALID',
+            reason: error instanceof TrinityStructuredOutputError ? error.reason : 'invalid_contract',
+          });
+          throw error;
+        }
+      }
+    : undefined;
 
   const internalMode = options.internalMode ?? isInternalArchitecturalMode(trustedPolicyPrompt);
   const internalDirective = internalMode ? getInternalArchitecturalEvaluationPrompt() : undefined;
@@ -873,6 +895,7 @@ export async function runThroughBrain(
   const exactLiteralShortcut = tryExtractExactLiteralPromptShortcut(trustedPolicyPrompt);
   //audit Assumption: explicit exact-literal prompts should bypass generative model stages to preserve strict caller-visible output contracts; failure risk: queued and direct `/ask` responses add explanatory text or formatting around required literals; expected invariant: recognized exact-literal prompts return the extracted literal verbatim and skip model invocation; handling strategy: short-circuit before concurrency, OpenAI calls, and translation layers.
   if (exactLiteralShortcut) {
+    validateStructuredOutput?.(exactLiteralShortcut.literal, createDefaultTrinityReasoningHonesty());
     const createdAt = Date.now();
     const { auditFlags } = applyAuditSafeConstraints('', prompt, auditConfig);
     routingStages.push(EXACT_LITERAL_DISPATCH_STAGE);
@@ -882,6 +905,7 @@ export async function runThroughBrain(
     }
 
     const finalProcessedSafely = validateAuditSafeOutput(exactLiteralShortcut.literal, auditConfig);
+    if (validateStructuredOutput && !finalProcessedSafely) throw new TrinityStructuredOutputError('unsupported_claim');
     if (!finalProcessedSafely) {
       auditFlags.push('FINAL_OUTPUT_VALIDATION_FAILED');
     }
@@ -1147,6 +1171,23 @@ export async function runThroughBrain(
         getAiExecutionContext()?.traceId
       );
       const prepareDirectAnswerCandidate = (candidateText: string) => {
+        if (validateStructuredOutput) {
+          const providerBlocker = classifyTrinityProviderIntegrityBlocker(directAnswerOutput.provider);
+          if (providerBlocker) throw new TrinityStructuredOutputError(providerBlocker);
+          // Derive request-owned limitations without interpreting JSON keys as
+          // assertions. The validator inspects the actual parsed string values.
+          const { reasoningHonesty } = prepareTrinityDirectAnswerHonesty({
+            candidateText: '', userPrompt: directAnswerUserIntentPrompt, capabilityFlags, outputControls,
+          });
+          const text = validateStructuredOutput(candidateText, reasoningHonesty, directAnswerUserIntentPrompt);
+          return {
+            directAnswerReasoningHonesty: reasoningHonesty,
+            honestyFilteredFinal: { text, blocked: false, blockedCategories: [], ruleIds: ['NO_HONESTY_REWRITE' as const] },
+            enforcedFinalOutput: { text, removedMetaSections: [], blockedOrRewrittenClaims: [] },
+            finalText: text,
+            integrity: { valid: true, issues: [] },
+          };
+        }
         const { reasoningHonesty, honestyFiltered } = prepareTrinityDirectAnswerHonesty({
           candidateText,
           userPrompt: directAnswerUserIntentPrompt,
@@ -1531,6 +1572,7 @@ export async function runThroughBrain(
       }
 
       const finalProcessedSafely = validateAuditSafeOutput(finalText, auditConfig);
+      if (validateStructuredOutput && !finalProcessedSafely) throw new TrinityStructuredOutputError('unsupported_claim');
       if (!finalProcessedSafely) {
         auditFlags.push('FINAL_OUTPUT_VALIDATION_FAILED');
       }
@@ -2089,10 +2131,17 @@ export async function runThroughBrain(
     checkWatchdog();
 
     const userIntent = MidLayerTranslator.detectIntentFromUserMessage(trustedPolicyPrompt);
-    const translatedFinalText = gamingGuideIntakePolicy
+    if (validateStructuredOutput) {
+      const providerBlocker = classifyTrinityProviderIntegrityBlocker(finalOutput.provider);
+      if (providerBlocker) throw new TrinityStructuredOutputError(providerBlocker);
+    }
+    const translatedFinalText = validateStructuredOutput ? finalOutput.output : gamingGuideIntakePolicy
       ? finalOutput.output.trim()
       : MidLayerTranslator.translate({ raw: finalOutput.output }, userIntent);
-    const honestyFilteredFinal = enforceFinalStageHonesty(
+    const honestyFilteredFinal = validateStructuredOutput
+      ? { text: validateStructuredOutput(translatedFinalText, reasoningHonesty),
+          blocked: false, blockedCategories: [], ruleIds: ['NO_HONESTY_REWRITE' as const] }
+      : enforceFinalStageHonesty(
       translatedFinalText,
       reasoningHonesty,
       capabilityFlags,
@@ -2100,7 +2149,9 @@ export async function runThroughBrain(
       Boolean(gamingGuideIntakePolicy),
       outputControls.instructionalVerificationPolicy
     );
-    const enforcedFinalOutput = enforceFinalStageHonestyAndMinimalism({
+    const enforcedFinalOutput = validateStructuredOutput
+      ? { text: honestyFilteredFinal.text, removedMetaSections: [], blockedOrRewrittenClaims: [] }
+      : enforceFinalStageHonestyAndMinimalism({
       text: honestyFilteredFinal.text,
       userPrompt: trustedPolicyPrompt,
       capabilityFlags,
@@ -2133,6 +2184,7 @@ export async function runThroughBrain(
     }
 
     const finalProcessedSafely = validateAuditSafeOutput(finalText, auditConfig);
+    if (validateStructuredOutput && !finalProcessedSafely) throw new TrinityStructuredOutputError('unsupported_claim');
     if (!finalProcessedSafely) {
       auditFlags.push('FINAL_OUTPUT_VALIDATION_FAILED');
     }

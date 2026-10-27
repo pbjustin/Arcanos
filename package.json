@@ -271,7 +271,7 @@
     "uuid": "13.0.1",
     "ws": "8.21.0",
     "yauzl": "https://codeload.github.com/thejoshwolfe/yauzl/tar.gz/refs/tags/3.2.1",
-    "zod": "^3.25.76"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@jest/globals": "^30.1.2",
@@ -304,17 +304,18 @@
     "@modelcontextprotocol/sdk": {
       "@hono/node-server": "2.1.3",
       "express": {
-        "body-parser": "2.3.0"
+        "body-parser": "2.4.0"
       },
       "hono": "https://registry.npmjs.org/hono/-/hono-4.13.11.tgz"
     },
     "express-rate-limit": "8.3.0",
-    "fast-uri": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.8.tgz",
+    "fast-uri": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.9.tgz",
     "ip-address": "https://registry.npmjs.org/ip-address/-/ip-address-10.7.4.tgz",
-    "undici": "https://registry.npmjs.org/undici/-/undici-7.29.1.tgz",
+    "undici": "https://registry.npmjs.org/undici/-/undici-7.30.1.tgz",
     "proxy-from-env": "https://codeload.github.com/Rob--W/proxy-from-env/tar.gz/refs/tags/v2.1.0",
     "qs": "https://codeload.github.com/ljharb/qs/tar.gz/bb9379e01fad04c601478acd6152143cb20c984b",
     "express": {
+      "body-parser": "1.20.9",
       "path-to-regexp": "https://codeload.github.com/pillarjs/path-to-regexp/tar.gz/refs/tags/v.0.1.13"
     },
     "router": {

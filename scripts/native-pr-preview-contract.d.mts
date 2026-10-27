@@ -76,6 +76,14 @@ export interface NativePrPreviewE2eContract {
     proofHeader: 'x-arcanos-preview-generative-model-policy-version';
     proofVersion: 'shared-generative-model-policy/v1';
   }>;
+  readonly finalOutputIntegrity: Readonly<{
+    proofHeader: 'x-arcanos-preview-final-output-version';
+    reportHeader: 'x-arcanos-preview-final-output-report';
+    proofVersion: 'shared-final-output-integrity/v1';
+    maxReportChars: 4096;
+    delivered: readonly string[];
+    rejected: Readonly<Record<string, string>>;
+  }>;
   readonly iosDevicePolicy: Readonly<{
     path: '/ios/device-contract';
     proofHeader: 'x-arcanos-preview-ios-device-version';

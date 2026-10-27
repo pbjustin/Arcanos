@@ -1,5 +1,6 @@
 import express, { type Request, type Response } from 'express';
 import { z } from 'zod';
+import { utf16MaxLength } from '@shared/validation/zodStringChecks.js';
 import {
   actionPlanExecutionClaimInputSchema,
   actionPlanExecutionCommandInputSchema,
@@ -33,8 +34,8 @@ import type { CanonicalJsonValue } from '@services/actionPlanExecution/canonical
 
 const router = express.Router();
 const executionParamsSchema = z.object({
-  planId: z.string().min(1).max(128),
-  runId: z.string().min(1).max(128),
+  planId: z.string().min(1).max(128).check(utf16MaxLength(128)),
+  runId: z.string().min(1).max(128).check(utf16MaxLength(128)),
 }).strict();
 
 const executionClientRateLimit = createRateLimitMiddleware({

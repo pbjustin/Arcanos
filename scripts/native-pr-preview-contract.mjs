@@ -91,6 +91,20 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
     proofHeader: 'x-arcanos-preview-generative-model-policy-version',
     proofVersion: 'shared-generative-model-policy/v1',
   }),
+  finalOutputIntegrity: Object.freeze({
+    proofHeader: 'x-arcanos-preview-final-output-version',
+    reportHeader: 'x-arcanos-preview-final-output-report',
+    proofVersion: 'shared-final-output-integrity/v1',
+    maxReportChars: 4096,
+    delivered: Object.freeze(['json-bytes', 'code-comment', 'verification-denial', 'structural-false-flag', 'structural-metadata']),
+    rejected: Object.freeze({
+      'invalid-json': 'invalid_json', 'schema-mismatch': 'schema_mismatch', 'schema-flag-type': 'schema_mismatch',
+      'affirmative-flag': 'unsupported_claim', 'deployment-claim': 'unsupported_claim', 'backend-write-claim': 'unsupported_claim',
+      'verification-claim': 'unsupported_claim', 'npm-execution-claim': 'unsupported_claim',
+      'descriptive-claim-key': 'unsupported_claim', 'nested-string-claim': 'unsupported_claim',
+      'missing-limitation': 'missing_required_limitation',
+    }),
+  }),
   iosDevicePolicy: Object.freeze({
     path: '/ios/device-contract',
     proofHeader: 'x-arcanos-preview-ios-device-version',

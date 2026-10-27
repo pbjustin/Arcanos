@@ -55,6 +55,52 @@ export const NATIVE_PR_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
   }),
 ]);
 
+// Validation compatibility reaches only the reviewed pure Zod helpers. Pin the
+// emitted leaves and their direct consumers without admitting runtime adapters.
+export const ZOD_VALIDATION_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
+  ...[
+    'dist/shared/validation/zodIssues.js',
+    'dist/shared/validation/zodNumberChecks.js',
+    'dist/shared/validation/zodStringChecks.js',
+  ].map(filePath => Object.freeze({
+    filePath,
+    imports: Object.freeze({ zod: Object.freeze(['z:z']) }),
+  })),
+  Object.freeze({
+    filePath: 'dist/shared/http/validation.js',
+    imports: Object.freeze({
+      './errors.js': Object.freeze(['sendBadRequest:sendBadRequest', 'sendValidationError:sendValidationError']),
+      '../validation/zodIssues.js': Object.freeze(['formatZodIssues:formatZodIssues']),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/shared/gaming/gamingClearPolicy.js',
+    imports: Object.freeze({
+      'node:crypto': Object.freeze(['createHash:createHash']),
+      zod: Object.freeze(['z:z']),
+      '../validation/zodStringChecks.js': Object.freeze(['legacyDatetime:legacyDatetime', 'utf16MaxLength:utf16MaxLength']),
+      './gamingFreshnessCore.js': Object.freeze(['classifyGamingQuestionFreshness:classifyGamingQuestionFreshness']),
+      './gamingFreshnessDisposition.js': Object.freeze(['resolveGamingFreshnessDisposition:resolveGamingFreshnessDisposition']),
+      './gamingGameRegistry.js': Object.freeze(['GAMING_GAME_REGISTRY:GAMING_GAME_REGISTRY']),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/shared/gaming/gamingHybridContract.js',
+    imports: Object.freeze({
+      zod: Object.freeze(['z:z']),
+      '../validation/zodNumberChecks.js': Object.freeze(['legacyInteger:legacyInteger']),
+      '../validation/zodStringChecks.js': Object.freeze(['legacyUuid:legacyUuid', 'utf16MaxLength:utf16MaxLength']),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/shared/security/gptAccessDevice.js',
+    imports: Object.freeze({
+      zod: Object.freeze(['z:z']),
+      '../validation/zodStringChecks.js': Object.freeze(['legacyUuid:legacyUuid', 'utf16MaxLength:utf16MaxLength']),
+    }),
+  }),
+]);
+
 // This sealed fixture reaches only the production honesty functions and their
 // three pure helpers. Check every emitted edge, including the leaf modules.
 export const TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
@@ -83,6 +129,49 @@ export const TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
     'dist/shared/text/intentModeClassifier.js',
     'dist/shared/promptGuidance.js',
   ].map(filePath => Object.freeze({ filePath, imports: Object.freeze({}) })),
+]);
+
+// The structured validator shares only Ajv and the already reviewed pure honesty graph.
+export const FINAL_OUTPUT_INTEGRITY_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
+  Object.freeze({
+    filePath: 'dist/shared/gpt/trinityFinalOutputPreviewFixture.js',
+    imports: Object.freeze({
+      '../../core/logic/trinityStructuredOutput.js': Object.freeze([
+        'createTrinityStructuredOutputValidator:createTrinityStructuredOutputValidator',
+        'TrinityStructuredOutputError:TrinityStructuredOutputError',
+      ]),
+      '../../core/logic/trinityHonesty.js': Object.freeze([
+        'createDefaultTrinityReasoningHonesty:createDefaultTrinityReasoningHonesty',
+        'deriveTrinityCapabilityFlags:deriveTrinityCapabilityFlags',
+        'deriveTrinityOutputControls:deriveTrinityOutputControls',
+        'enforceFinalStageHonestyAndMinimalism:enforceFinalStageHonestyAndMinimalism',
+      ]),
+      '../../core/logic/trinityDirectAnswerMode.js': Object.freeze([
+        'applyTrinityDirectAnswerOutputContract:applyTrinityDirectAnswerOutputContract',
+      ]),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/core/logic/trinityStructuredOutput.js',
+    imports: Object.freeze({
+      ajv: Object.freeze(['Ajv:Ajv']),
+      './trinityHonesty.js': Object.freeze([
+        'deriveTrinityOutputControls:deriveTrinityOutputControls',
+        'enforceFinalStageHonesty:enforceFinalStageHonesty',
+        'enforceFinalStageHonestyAndMinimalism:enforceFinalStageHonestyAndMinimalism',
+        'readIntentMode:readIntentMode',
+      ]),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/core/logic/trinityDirectAnswerMode.js',
+    imports: Object.freeze({
+      '../../services/directAnswerMode.js': Object.freeze([
+        'buildDirectAnswerModeSystemInstruction:buildDirectAnswerModeSystemInstruction',
+      ]),
+    }),
+  }),
+  Object.freeze({ filePath: 'dist/services/directAnswerMode.js', imports: Object.freeze({}) }),
 ]);
 
 // The CLI core stays at scripts/ in the image. No filesystem/private-input
@@ -129,6 +218,12 @@ export const GENERATIVE_MODEL_POLICY_PREVIEW_DIST_IMPORT_CONTRACT = Object.freez
   }),
   Object.freeze({
     filePath: 'dist/shared/gpt/generativeModelPolicyCore.js',
+    imports: Object.freeze({
+      './arcanosBehavioralProfile.js': Object.freeze(['isArcanosBehavioralProfileId:isArcanosBehavioralProfileId']),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/shared/gpt/arcanosBehavioralProfile.js',
     imports: Object.freeze({}),
   }),
 ]);
@@ -594,9 +689,12 @@ export async function findNativePrPreviewDistImportViolations({
     }
   }
   for (const contract of [...TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT,
+    ...FINAL_OUTPUT_INTEGRITY_PREVIEW_DIST_IMPORT_CONTRACT,
     ...PLUGIN_MIGRATION_PREVIEW_DIST_IMPORT_CONTRACT, ...GAMING_MCP_PREVIEW_DIST_IMPORT_CONTRACT,
     ...GAMING_COMPOSITION_PREVIEW_DIST_IMPORT_CONTRACT,
-    ...GENERATIVE_MODEL_POLICY_PREVIEW_DIST_IMPORT_CONTRACT, ...BOOKER_MCP_PREVIEW_DIST_IMPORT_CONTRACT]) {
+    ...GENERATIVE_MODEL_POLICY_PREVIEW_DIST_IMPORT_CONTRACT,
+    ...BOOKER_MCP_PREVIEW_DIST_IMPORT_CONTRACT,
+    ...ZOD_VALIDATION_PREVIEW_DIST_IMPORT_CONTRACT]) {
     try {
       const sourceText = await fs.readFile(path.join(repositoryRoot, contract.filePath), 'utf8');
       violations.push(...findTutorHonestyPreviewDistImportSourceViolations(contract, sourceText));

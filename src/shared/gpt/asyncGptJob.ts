@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { z } from 'zod';
+import { legacyUuid, utf16MaxLength } from '@shared/validation/zodStringChecks.js';
 import type { GptAsyncWriteAction } from './gptJobResult.js';
 import { mapGptJobStatusToClientStatus } from './priorityGpt.js';
 import { buildJobReadCapabilityResponseFields } from '@shared/jobs/jobReadCapability.js';
@@ -44,16 +45,16 @@ const BACKSTAGE_UNIVERSE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const protectedBackstageUniverseIdSchema = z.string()
   .trim()
   .min(1)
-  .max(128)
+  .max(128).check(utf16MaxLength(128))
   .regex(BACKSTAGE_UNIVERSE_ID_PATTERN);
 
 const queuedGptBackstageMutationAdmissionSchema = z.object({
   version: z.literal(QUEUED_GPT_BACKSTAGE_MUTATION_ADMISSION_VERSION),
   source: z.literal(QUEUED_GPT_BACKSTAGE_MUTATION_ADMISSION_SOURCE),
   module: z.literal(BACKSTAGE_MODULE_NAME),
-  action: z.string().trim().min(1).max(128),
+  action: z.string().trim().min(1).max(128).check(utf16MaxLength(128)),
   scope: z.literal(BACKSTAGE_MUTATION_SCOPE),
-  principalId: z.string().trim().min(1).max(128),
+  principalId: z.string().trim().min(1).max(128).check(utf16MaxLength(128)),
 }).strict();
 
 const queuedGptJobProducerContractSchema = z.object({
@@ -68,29 +69,29 @@ const jsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
     z.boolean(),
     z.null(),
     z.array(jsonValueSchema),
-    z.record(jsonValueSchema)
+    z.record(z.string(), jsonValueSchema)
   ])
 );
 
 const gptAccessDeviceOwnerSchema = z.object({
   version: z.literal(1),
-  deviceId: z.string().uuid(),
-  principalId: z.string().min(1).max(128),
-  workspaceId: z.string().min(1).max(128),
+  deviceId: z.string().check(legacyUuid()),
+  principalId: z.string().min(1).max(128).check(utf16MaxLength(128)),
+  workspaceId: z.string().min(1).max(128).check(utf16MaxLength(128)),
 }).strict();
 
 const queuedGptJobInputSchema = z.object({
   gptAccessDeviceOwner: gptAccessDeviceOwnerSchema.optional(),
-  gptId: z.string().trim().min(1).max(128),
-  body: z.record(jsonValueSchema),
+  gptId: z.string().trim().min(1).max(128).check(utf16MaxLength(128)),
+  body: z.record(z.string(), jsonValueSchema),
   prompt: z.string().trim().min(1).optional(),
   bypassIntentRouting: z.boolean().optional(),
-  requestId: z.string().trim().min(1).max(128).optional(),
-  traceId: z.string().trim().min(1).max(128).optional(),
-  correlationId: z.string().trim().min(1).max(128).optional(),
-  routeHint: z.string().trim().min(1).max(64).optional(),
-  requestPath: z.string().trim().min(1).max(256).optional(),
-  executionModeReason: z.string().trim().min(1).max(128).optional(),
+  requestId: z.string().trim().min(1).max(128).check(utf16MaxLength(128)).optional(),
+  traceId: z.string().trim().min(1).max(128).check(utf16MaxLength(128)).optional(),
+  correlationId: z.string().trim().min(1).max(128).check(utf16MaxLength(128)).optional(),
+  routeHint: z.string().trim().min(1).max(64).check(utf16MaxLength(64)).optional(),
+  requestPath: z.string().trim().min(1).max(256).check(utf16MaxLength(256)).optional(),
+  executionModeReason: z.string().trim().min(1).max(128).check(utf16MaxLength(128)).optional(),
   producerContract: queuedGptJobProducerContractSchema.optional(),
   backstageMutationAdmission: queuedGptBackstageMutationAdmissionSchema.optional(),
   bridgeSmoke: z.literal(true).optional(),
@@ -100,21 +101,21 @@ const queuedGptJobInputSchema = z.object({
 const protectedBackstageDescriptorSchema = z.object({
   version: z.literal(PROTECTED_BACKSTAGE_JOB_VERSION),
   source: z.literal(PROTECTED_BACKSTAGE_JOB_SOURCE),
-  envelopeId: z.string().uuid(),
+  envelopeId: z.string().check(legacyUuid()),
   action: z.enum(['generateBooking', 'generateBookingWithHRC']),
   universeId: protectedBackstageUniverseIdSchema,
-  sealedPayload: z.unknown(),
+  sealedPayload: z.unknown().optional(),
 }).strict();
 
 const protectedBackstageQueuedGptJobInputSchema = z.object({
   gptId: z.literal('backstage-booker'),
   protectedBackstage: protectedBackstageDescriptorSchema,
-  requestId: z.string().trim().min(1).max(128).optional(),
-  traceId: z.string().trim().min(1).max(128).optional(),
-  correlationId: z.string().trim().min(1).max(128).optional(),
+  requestId: z.string().trim().min(1).max(128).check(utf16MaxLength(128)).optional(),
+  traceId: z.string().trim().min(1).max(128).check(utf16MaxLength(128)).optional(),
+  correlationId: z.string().trim().min(1).max(128).check(utf16MaxLength(128)).optional(),
   routeHint: z.enum(['generateBooking', 'generateBookingWithHRC']).optional(),
   requestPath: z.literal('/gpt/backstage-booker').optional(),
-  executionModeReason: z.string().trim().min(1).max(128).optional(),
+  executionModeReason: z.string().trim().min(1).max(128).check(utf16MaxLength(128)).optional(),
 }).strict();
 
 const protectedBackstageAuthorizationSchema = z.object({
@@ -126,7 +127,7 @@ const protectedBackstageAuthorizationSchema = z.object({
 }).strict();
 
 const protectedBackstagePlaintextSchema = z.object({
-  body: z.record(jsonValueSchema),
+  body: z.record(z.string(), jsonValueSchema),
   prompt: z.string().trim().min(1).optional(),
   bypassIntentRouting: z.boolean().optional(),
   notionEnrichmentAuthorization: protectedBackstageAuthorizationSchema,

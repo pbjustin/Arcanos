@@ -83,6 +83,7 @@ describe('runTrinity fine-tuned route compatibility facade', () => {
         runOptions: expect.objectContaining({
           answerMode: 'audit',
           strictUserVisibleOutput: true,
+          finalOutputContract: { name: 'query_finetune_json_object', schema: { type: 'object' } },
         }),
       }),
     });
@@ -117,5 +118,12 @@ describe('runTrinity fine-tuned route compatibility facade', () => {
         })
       })
     }));
+  });
+
+  it('keeps ordinary direct-answer requests outside the structured output contract', async () => {
+    await runTrinity({ prompt: 'Give a short answer.', structured: false });
+    const call = runTrinityWritingPipelineMock.mock.calls[0][0] as any;
+    expect(call.context.runOptions).not.toHaveProperty('finalOutputContract');
+    expect(call.context.runOptions.answerMode).toBe('direct');
   });
 });

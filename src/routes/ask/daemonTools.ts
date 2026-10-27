@@ -1,9 +1,13 @@
 import type OpenAI from 'openai';
+import type { ResponseCreateParamsNonStreaming } from 'openai/resources/responses/responses';
 import { z } from 'zod';
+import { utf16MaxLength } from '@shared/validation/zodStringChecks.js';
 import { getDefaultModel } from "@services/openai.js";
 import { ensureModelMatchesExpectation } from '@services/openai/chatFallbacks.js';
 import { buildFunctionToolSet, type FunctionToolDefinition } from '@services/openai/functionTools.js';
 import { getTokenParameter } from "@shared/tokenParameterHelper.js";
+import { resolveOpenAIModelCapabilities } from '@shared/gpt/trinityReasoningPolicy.js';
+import { prepareBehavioralProfileRequest } from '@services/openai/behavioralProfile.js';
 import { shouldStoreOpenAIResponses } from "@config/openaiStore.js";
 import { getEnv } from "@platform/runtime/env.js";
 import {
@@ -89,7 +93,7 @@ const DAEMON_TOOL_SYSTEM_PROMPT = [
 ].join(' ');
 
 const runCommandArgsSchema = z.object({
-  command: z.string().trim().min(1).max(8000)
+  command: z.string().trim().min(1).max(8000).check(utf16MaxLength(8000))
 });
 
 const captureScreenArgsSchema = z.object({
@@ -133,6 +137,9 @@ async function tryDispatchDaemonToolsWithChatCompletions(
   prompt: string,
   instanceId: string
 ): Promise<AskResponse | ConfirmationRequiredResponse | null> {
+  if (resolveOpenAIModelCapabilities(model).family === 'gpt-6.1-sol') {
+    throw new Error('GPT-6.1 Sol tool requests require the Responses API.');
+  }
   const response = await chatCompletionsApi.create({
     model,
     messages: [
@@ -294,15 +301,15 @@ export async function tryDispatchDaemonTools(
   const storeOpenAIResponses = shouldStoreOpenAIResponses();
   let toolLoopTranscript = buildInitialToolLoopTranscript(prompt);
 
-  let response: any = await responsesApi.create({
+  let response: any = await responsesApi.create(prepareBehavioralProfileRequest({
     model,
     store: storeOpenAIResponses,
     instructions: DAEMON_TOOL_SYSTEM_PROMPT,
     input: toolLoopTranscript,
-    tools: daemonResponsesTools,
+    tools: daemonResponsesTools as unknown as ResponseCreateParamsNonStreaming['tools'],
     tool_choice: 'auto',
     max_output_tokens: maxOutputTokens
-  });
+  }));
   ensureModelMatchesExpectation(response, model);
 
   let lastText = extractResponseOutputText(response, '');
@@ -480,7 +487,7 @@ export async function tryDispatchDaemonTools(
       functionCallOutputs
     });
     toolLoopTranscript = continuationRequest.nextTranscript;
-    response = await responsesApi.create(continuationRequest.request);
+    response = await responsesApi.create(prepareBehavioralProfileRequest(continuationRequest.request));
     ensureModelMatchesExpectation(response, model);
 
     lastText = extractResponseOutputText(response, lastText);

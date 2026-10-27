@@ -19,6 +19,10 @@ import { getEnv, getEnvNumber, getEnvBoolean } from "@platform/runtime/env.js";
 import { parseLegacyEnvBoolean } from "@platform/runtime/envParsers.js";
 import { aiLogger } from "@platform/logging/structuredLogging.js";
 import { recordTraceEvent } from "@platform/logging/telemetry.js";
+import {
+  getGenerativeAuthorityConfigurationError,
+  type GenerativeAuthorityMode
+} from "@shared/gpt/generativeModelPolicyCore.js";
 import path from "path";
 
 /**
@@ -38,6 +42,7 @@ export interface AppConfig {
   openaiBaseUrl: string | undefined;
   defaultModel: string;
   fallbackModel: string;
+  legacyAuthorityModel?: string;
   gpt5Model: string;
   gpt51Model: string;
   trinityIntakeModel: string;
@@ -46,6 +51,9 @@ export interface AppConfig {
   trinityFinalEscalationModel: string;
   clearAuditModel: string;
   clearAuditEscalationModel: string;
+  generativeAuthorityMode?: GenerativeAuthorityMode;
+  generativeReplacementModel?: string;
+  behavioralProfileId?: string;
   openaiMaxRetries: number;
 
   // Database Configuration
@@ -344,9 +352,19 @@ export function getConfig(): AppConfig {
   const databaseUrl = getEnvVar('DATABASE_URL');
   //audit Preserve each service's configured authority and its existing alias precedence;
   // missing/invalid authority is rejected at generation, never replaced by a helper model.
-  const authorityModel = getEnvVar('FINETUNED_MODEL_ID', [
+  const legacyAuthorityModel = getEnvVar('FINETUNED_MODEL_ID', [
     'FINE_TUNED_MODEL_ID', 'AI_MODEL', 'OPENAI_MODEL', 'RAILWAY_OPENAI_MODEL'
   ]) || '';
+  const migrationSwitch = getEnv('ARCANOS_GPT61_AUTHORITY_ENABLED');
+  const generativeAuthorityMode: GenerativeAuthorityMode = migrationSwitch === undefined || migrationSwitch.trim() === 'false'
+    ? 'legacy-finetune'
+    : migrationSwitch.trim() === 'true' ? 'gpt61-sol' : 'invalid';
+  const generativeReplacementModel = getEnv('ARCANOS_GPT61_AUTHORITY_MODEL')?.trim() || '';
+  const behavioralProfileId = getEnv('ARCANOS_BEHAVIORAL_PROFILE_ID')?.trim() || '';
+  // Replacement configuration never overwrites or falls back to the service's legacy ID.
+  const authorityModel = generativeAuthorityMode === 'legacy-finetune'
+    ? legacyAuthorityModel
+    : generativeAuthorityMode === 'gpt61-sol' ? generativeReplacementModel : '';
   const config: AppConfig = {
     // Server Configuration
     nodeEnv: getEnv('NODE_ENV', 'development'),
@@ -368,6 +386,7 @@ export function getConfig(): AppConfig {
     ]),
     defaultModel: authorityModel,
     fallbackModel: authorityModel,
+    legacyAuthorityModel,
     gpt5Model: APPLICATION_CONSTANTS.MODEL_GPT_6_1_SOL,
     gpt51Model: APPLICATION_CONSTANTS.MODEL_GPT_6_1_SOL,
     trinityIntakeModel: APPLICATION_CONSTANTS.MODEL_GPT_6_LUNA,
@@ -376,6 +395,9 @@ export function getConfig(): AppConfig {
     trinityFinalEscalationModel: authorityModel,
     clearAuditModel: APPLICATION_CONSTANTS.MODEL_GPT_6_LUNA,
     clearAuditEscalationModel: APPLICATION_CONSTANTS.MODEL_GPT_6_1_SOL,
+    generativeAuthorityMode,
+    generativeReplacementModel,
+    behavioralProfileId,
     openaiMaxRetries: getEnvNumber('OPENAI_MAX_RETRIES', APPLICATION_CONSTANTS.DEFAULT_OPENAI_MAX_RETRIES),
 
     // Database Configuration
@@ -463,6 +485,9 @@ export function validateConfig(): ValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
   const config = getConfig();
+
+  const authorityConfigurationError = getGenerativeAuthorityConfigurationError(config);
+  if (authorityConfigurationError) errors.push(authorityConfigurationError);
 
   // Required configuration checks
   if (!config.openaiApiKey) {

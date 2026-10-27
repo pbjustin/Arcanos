@@ -1,7 +1,9 @@
 import { isRecord } from '@shared/typeGuards.js';
+import { legacyDatetime, utf16MaxLength } from '@shared/validation/zodStringChecks.js';
 import crypto from 'node:crypto';
 import type { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
+import { legacyInteger } from '@shared/validation/zodNumberChecks.js';
 
 import { getPool, isDatabaseConnected, query, transaction } from '@core/db/index.js';
 import {
@@ -229,23 +231,23 @@ const jsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
     z.boolean(),
     z.null(),
     z.array(jsonValueSchema),
-    z.record(jsonValueSchema)
+    z.record(z.string(), jsonValueSchema)
   ])
 );
 
 const createAiJobRequestSchema = z.object({
-  gptId: z.string().trim().min(1).max(128).regex(GPT_ID_PATTERN),
-  task: z.string().trim().min(1).max(MAX_AI_JOB_TASK_LENGTH),
-  input: z.record(jsonValueSchema).optional().default({}),
-  context: z.string().trim().max(MAX_AI_JOB_CONTEXT_LENGTH).optional(),
+  gptId: z.string().trim().min(1).max(128).check(utf16MaxLength(128)).regex(GPT_ID_PATTERN),
+  task: z.string().trim().min(1).max(MAX_AI_JOB_TASK_LENGTH).check(utf16MaxLength(MAX_AI_JOB_TASK_LENGTH)),
+  input: z.record(z.string(), jsonValueSchema).optional().default({}),
+  context: z.string().trim().max(MAX_AI_JOB_CONTEXT_LENGTH).check(utf16MaxLength(MAX_AI_JOB_CONTEXT_LENGTH)).optional(),
   maxOutputTokens: z.coerce
     .number()
-    .int()
+    .check(...legacyInteger())
     .min(1)
     .max(MAX_AI_JOB_OUTPUT_TOKENS)
     .optional()
     .default(DEFAULT_AI_JOB_OUTPUT_TOKENS),
-  idempotencyKey: z.string().trim().min(1).max(256).optional()
+  idempotencyKey: z.string().trim().min(1).max(256).check(utf16MaxLength(256)).optional()
 }).strict().superRefine((value, ctx) => {
   if (getJsonStringLength(value.input) > MAX_AI_JOB_INPUT_JSON_LENGTH) {
     ctx.addIssue({
@@ -332,43 +334,43 @@ function snapshotCreateAiJobPayload(value: unknown): unknown {
 
 const mcpRequestSchema = z.object({
   tool: z.string().trim().min(1),
-  args: z.record(z.unknown()).optional().default({})
+  args: z.record(z.string(), z.unknown()).optional().default({})
 }).strict();
 
 const jobResultRequestSchema = z.object({
   jobId: z.string().trim().regex(UUID_PATTERN),
-  traceId: z.string().trim().min(1).max(128).optional()
+  traceId: z.string().trim().min(1).max(128).check(utf16MaxLength(128)).optional()
 }).strict();
 
 const logsQuerySchema = z.object({
-  service: z.string().trim().min(1).max(128).optional(),
+  service: z.string().trim().min(1).max(128).check(utf16MaxLength(128)).optional(),
   level: z.enum(['error', 'warn', 'info', 'debug']).optional().default('info'),
-  contains: z.string().trim().min(1).max(256).optional(),
-  text: z.string().trim().min(1).max(256).optional(),
-  sinceMinutes: z.coerce.number().int().min(1).max(LOG_SINCE_MINUTES_MAX).optional().default(60),
-  from: z.string().datetime().optional(),
-  to: z.string().datetime().optional(),
-  limit: z.coerce.number().int().min(1).max(LOG_LIMIT_MAX).optional().default(LOG_LIMIT_DEFAULT)
+  contains: z.string().trim().min(1).max(256).check(utf16MaxLength(256)).optional(),
+  text: z.string().trim().min(1).max(256).check(utf16MaxLength(256)).optional(),
+  sinceMinutes: z.coerce.number().check(...legacyInteger()).min(1).max(LOG_SINCE_MINUTES_MAX).optional().default(60),
+  from: z.string().check(legacyDatetime()).optional(),
+  to: z.string().check(legacyDatetime()).optional(),
+  limit: z.coerce.number().check(...legacyInteger()).min(1).max(LOG_LIMIT_MAX).optional().default(LOG_LIMIT_DEFAULT)
 }).strict();
 
 const jobTimelineQuerySchema = z.object({
-  jobId: z.string().trim().min(1).max(128).optional(),
-  job_id: z.string().trim().min(1).max(128).optional(),
-  traceId: z.string().trim().min(1).max(128).optional(),
-  trace_id: z.string().trim().min(1).max(128).optional(),
-  workerId: z.string().trim().min(1).max(128).optional(),
-  worker_id: z.string().trim().min(1).max(128).optional(),
-  eventType: z.string().trim().min(1).max(128).optional(),
-  event_type: z.string().trim().min(1).max(128).optional(),
-  occurredAfter: z.string().datetime().optional(),
-  occurred_after: z.string().datetime().optional(),
-  occurredBefore: z.string().datetime().optional(),
-  occurred_before: z.string().datetime().optional(),
-  limit: z.coerce.number().int().min(1).max(1000).optional()
+  jobId: z.string().trim().min(1).max(128).check(utf16MaxLength(128)).optional(),
+  job_id: z.string().trim().min(1).max(128).check(utf16MaxLength(128)).optional(),
+  traceId: z.string().trim().min(1).max(128).check(utf16MaxLength(128)).optional(),
+  trace_id: z.string().trim().min(1).max(128).check(utf16MaxLength(128)).optional(),
+  workerId: z.string().trim().min(1).max(128).check(utf16MaxLength(128)).optional(),
+  worker_id: z.string().trim().min(1).max(128).check(utf16MaxLength(128)).optional(),
+  eventType: z.string().trim().min(1).max(128).check(utf16MaxLength(128)).optional(),
+  event_type: z.string().trim().min(1).max(128).check(utf16MaxLength(128)).optional(),
+  occurredAfter: z.string().check(legacyDatetime()).optional(),
+  occurred_after: z.string().check(legacyDatetime()).optional(),
+  occurredBefore: z.string().check(legacyDatetime()).optional(),
+  occurred_before: z.string().check(legacyDatetime()).optional(),
+  limit: z.coerce.number().check(...legacyInteger()).min(1).max(1000).optional()
 }).strict();
 
 const deepDiagnosticsSchema = z.object({
-  focus: z.string().trim().min(1).max(256).optional(),
+  focus: z.string().trim().min(1).max(256).check(utf16MaxLength(256)).optional(),
   includeDb: z.boolean().optional().default(true),
   includeWorkers: z.boolean().optional().default(true),
   includeLogs: z.boolean().optional().default(true),
@@ -377,12 +379,12 @@ const deepDiagnosticsSchema = z.object({
 
 const workerRecoverySchema = z.object({
   workerIds: z.array(z.string().trim().regex(/^async-queue-slot-\d+$/u)).max(20).optional(),
-  maxRetries: z.coerce.number().int().min(0).max(10).optional()
+  maxRetries: z.coerce.number().check(...legacyInteger()).min(0).max(10).optional()
 }).strict();
 
 const explainRequestSchema = z.object({
   queryKey: z.string().trim().min(1),
-  params: z.record(z.unknown()).optional().default({})
+  params: z.record(z.string(), z.unknown()).optional().default({})
 }).strict();
 
 function sendGatewayError(

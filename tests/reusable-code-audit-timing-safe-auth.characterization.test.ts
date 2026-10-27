@@ -12,6 +12,11 @@ import {
   jest,
 } from '@jest/globals';
 
+// Reuse the real pure Zod namespace across isolated auth imports: Jest can race
+// while reloading Zod 4's shared ESM graph inside isolateModulesAsync.
+const zodModule = await import('zod');
+jest.unstable_mockModule('zod', () => zodModule);
+
 const workerControlModuleMock = {
   dispatchWorkerInput: jest.fn(),
   getWorkerControlHealth: jest.fn(),

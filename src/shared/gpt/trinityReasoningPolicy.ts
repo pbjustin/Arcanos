@@ -25,6 +25,7 @@ export interface OpenAIModelCapabilities {
     responsesParameter: 'max_output_tokens';
     chatParameter: 'max_completion_tokens' | undefined;
     minimum: number;
+    maximum?: number;
     trinityReasoningMaximum: number;
   };
 }
@@ -58,6 +59,8 @@ const GPT_6_LUNA_CAPABILITIES: OpenAIModelCapabilities = {
 const GPT_61_SOL_CAPABILITIES: OpenAIModelCapabilities = {
   ...GPT_6_LUNA_CAPABILITIES, family: 'gpt-6.1-sol', supportsDisabledReasoning: false,
   allowedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+  // https://developers.openai.com/api/docs/models/gpt-6.1-sol
+  outputTokenPolicy: { ...COMMON_OUTPUT_TOKEN_POLICY, maximum: 128_000 },
 };
 const MODEL_CAPABILITIES: Readonly<Record<string, OpenAIModelCapabilities>> = {
   'gpt-5': GPT_5_CAPABILITIES,

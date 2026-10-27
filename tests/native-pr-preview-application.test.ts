@@ -2,7 +2,9 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, jest } from '@jes
 import request from 'supertest';
 import http from 'node:http';
 import https from 'node:https';
+import { fork } from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
+import { fileURLToPath } from 'node:url';
 import { buildGamingScopedPreviewAssertionInventory, runGamingScopedPreviewE2e } from '../scripts/gaming-scoped-preview-e2e.mjs';
 import { createPassivePrPreviewServer } from '../scripts/start-railway-service.mjs';
 
@@ -15,6 +17,7 @@ import {
 import { assertTutorHonestyPreviewFixture } from '../src/shared/chatgpt/tutorHonestyPreviewFixture.js';
 import { assertPluginMigrationPreviewFixture } from '../src/shared/chatgpt/pluginMigrationPreviewFixture.js';
 import { assertGamingCompositionPreviewFixture } from '../src/shared/chatgpt/gamingCompositionPreviewFixture.js';
+import { assertTrinityFinalOutputPreviewFixture } from '../src/shared/gpt/trinityFinalOutputPreviewFixture.js';
 import * as trinityReasoningPolicy from '../src/shared/gpt/trinityReasoningPolicy.js';
 import * as heartbeatBoundary from '../src/services/controlPlane/heartbeatHttpBoundary.js';
 import * as gamingDurableRagFixture from '../src/shared/gaming/gamingDurableRagPreviewFixture.js';
@@ -30,6 +33,8 @@ import {
   NATIVE_PR_PREVIEW_DAG_METRICS_CONTRACT,
   NATIVE_PR_PREVIEW_DAG_TOKEN_ACCOUNTING_CONTRACT,
   NATIVE_PR_PREVIEW_SESSION_CONTEXT_CONTRACT,
+  NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_CONTRACT,
+  NATIVE_PR_PREVIEW_FINAL_OUTPUT_INTEGRITY_CONTRACT,
   NATIVE_PR_PREVIEW_FIXTURE_IDS,
   NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT,
   NATIVE_PR_PREVIEW_GAMING_CONTRACT,
@@ -70,6 +75,10 @@ jest.unstable_mockModule('../src/shared/chatgpt/pluginMigrationPreviewFixture.js
 const assertGamingCompositionFixture = jest.fn(assertGamingCompositionPreviewFixture);
 jest.unstable_mockModule('../src/shared/chatgpt/gamingCompositionPreviewFixture.js', () => ({
   assertGamingCompositionPreviewFixture: assertGamingCompositionFixture,
+}));
+const assertFinalOutputFixture = jest.fn(assertTrinityFinalOutputPreviewFixture);
+jest.unstable_mockModule('../src/shared/gpt/trinityFinalOutputPreviewFixture.js', () => ({
+  assertTrinityFinalOutputPreviewFixture: assertFinalOutputFixture,
 }));
 const runGamingLargeSourceFixture = jest.fn(gamingDurableRagFixture.runGamingLargeSourcePreview);
 jest.unstable_mockModule('../src/shared/gaming/gamingDurableRagPreviewFixture.js', () => ({
@@ -621,23 +630,126 @@ function gamingCheckpoint() {
   return { promise, resolve, reject };
 }
 
+function gamingChildEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const childEnvironment: NodeJS.ProcessEnv = { NODE_ENV: 'test', TZ: 'UTC' };
+  if (process.platform === 'win32') {
+    for (const [name, value] of Object.entries(environment)) {
+      if (/^(?:HOMEDRIVE|HOMEPATH|LOGONSERVER|PATH|SYSTEMDRIVE|SYSTEMROOT|TEMP|TMP|USERDOMAIN|USERNAME|USERPROFILE|WINDIR)$/iu.test(name)) {
+        childEnvironment[name] = value;
+      }
+    }
+  }
+  return childEnvironment;
+}
+
+async function gamingFixtureDeadline<T>(promise: Promise<T>, milliseconds: number, code: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([promise, new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error(code)), milliseconds);
+    })]);
+  } finally { clearTimeout(timer); }
+}
+
+async function createCompiledGamingServers() {
+  // npm test builds dist first; direct Jest runs need npm run build beforehand.
+  const child = fork(fileURLToPath(new URL('./fixtures/native-pr-preview-application-child.mjs', import.meta.url)), [], {
+    execArgv: [],
+    // An explicit undefined prevents Node's automatic NODE_V8_COVERAGE inheritance;
+    // spawn omits undefined values from the actual child environment.
+    env: { ...gamingChildEnvironment(process.env), NODE_V8_COVERAGE: undefined }, windowsHide: true,
+    stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+  });
+  let failure: Error | undefined;
+  let outbound = 0;
+  let notion = 0;
+  let readyResolved = false;
+  let closed = false;
+  let resolveReady!: (ports: { webPort: number; workerPort: number }) => void;
+  let rejectReady!: (error: Error) => void;
+  const ready = new Promise<{ webPort: number; workerPort: number }>((resolve, reject) => {
+    resolveReady = resolve; rejectReady = reject;
+  });
+  void ready.catch(() => {});
+  const drained = gamingCheckpoint();
+  const fail = (code: string) => {
+    failure ??= new Error(code);
+    rejectReady(failure);
+    drained.reject(failure);
+  };
+  const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(resolve => {
+    child.once('error', () => fail('GAMING_COMPILED_CHILD_PROCESS_ERROR'));
+    child.once('exit', (code, signal) => {
+      if (!closed || code !== 0 || signal !== null) fail('GAMING_COMPILED_CHILD_EXIT_INVALID');
+      resolve({ code, signal });
+    });
+  });
+  child.on('message', (message: unknown) => {
+    if (!message || typeof message !== 'object') { fail('GAMING_COMPILED_CHILD_MESSAGE_INVALID'); return; }
+    const event = message as Record<string, unknown>;
+    if (event.type === 'failure') fail('GAMING_COMPILED_CHILD_FAILED');
+    else if (event.type === 'outbound') { outbound += 1; fail('GAMING_COMPILED_CHILD_OUTBOUND_FORBIDDEN'); }
+    else if (event.type === 'notion') { notion += 1; fail('GAMING_COMPILED_CHILD_NOTION_FORBIDDEN'); }
+    else if (event.type === 'ready' && !readyResolved
+      && Number.isInteger(event.webPort) && Number(event.webPort) > 0 && Number(event.webPort) <= 65_535
+      && Number.isInteger(event.workerPort) && Number(event.workerPort) > 0 && Number(event.workerPort) <= 65_535) {
+      readyResolved = true;
+      resolveReady({ webPort: Number(event.webPort), workerPort: Number(event.workerPort) });
+    } else if (event.type === 'closed' && !closed && event.activeResponses === 0
+      && event.outbound === 0 && event.notion === 0) {
+      closed = true;
+      drained.resolve();
+    } else fail('GAMING_COMPILED_CHILD_MESSAGE_INVALID');
+  });
+  const assertContained = () => {
+    if (failure) throw failure;
+    expect(outbound).toBe(0);
+    expect(notion).toBe(0);
+  };
+  let disposal: Promise<void> | undefined;
+  const close = () => disposal ??= (async () => {
+    try {
+      if (child.connected) child.send({ type: 'stop' });
+      await gamingFixtureDeadline((async () => {
+        await drained.promise;
+        const exit = await exited;
+        expect(exit).toEqual({ code: 0, signal: null });
+      })(), 1500, 'GAMING_COMPILED_CHILD_DRAIN_TIMEOUT');
+      assertContained();
+    } catch (error) {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      await gamingFixtureDeadline(exited, 500, 'GAMING_COMPILED_CHILD_EXIT_TIMEOUT');
+      throw error;
+    }
+  })();
+  try {
+    const ports = await gamingFixtureDeadline(ready, 4000, 'GAMING_COMPILED_CHILD_START_TIMEOUT');
+    assertContained();
+    return { ...ports, assertContained, close };
+  } catch (error) {
+    try { await close(); } catch { /* Preserve startup failure after bounded child cleanup. */ }
+    throw error;
+  }
+}
+
 // One assembled verifier run, with a Jest completion boundary after each verified
 // request. The 84 real HTTP/proof cases retain their shared verifier budget.
-async function createGamingOfflineScope() {
+async function createGamingOfflineScope({ compiledChild = false } = {}) {
   const planned = buildGamingScopedPreviewAssertionInventory() as readonly string[];
   const checkpoints = planned.map(() => ({ admit: gamingCheckpoint(), verified: gamingCheckpoint() }));
   const controller = new AbortController();
   const responses = new Set<Promise<void>>();
   const transports = new Set<Promise<Response>>();
+  const transportFailures: Array<{ caseIndex: number; name: string; code: string; aborted: boolean; elapsedMs: number }> = [];
   const outbound: string[] = [];
   let notionCalls = 0;
-  const app = createNativePrPreviewApplication({ identity,
+  const app = compiledChild ? undefined : createNativePrPreviewApplication({ identity,
     readinessState: { applicationImported: true, fixturesSealed: true, ready: true, draining: false },
     notionConnectivityProbe: async () => {
       notionCalls += 1;
       throw new Error('Gaming must not select the Notion canary');
     } });
-  const web = http.createServer((incoming, outgoing) => {
+  const web = app ? http.createServer((incoming, outgoing) => {
     let complete!: () => void;
     const response = new Promise<void>(resolve => { complete = resolve; });
     responses.add(response);
@@ -647,8 +759,9 @@ async function createGamingOfflineScope() {
       try { return end.apply(outgoing, parameters); } finally { complete(); }
     }) as typeof end;
     app(incoming, outgoing);
-  });
-  const worker = createPassivePrPreviewServer('worker', identity);
+  }) : undefined;
+  const worker = compiledChild ? undefined : createPassivePrPreviewServer('worker', identity);
+  let compiledServers: Awaited<ReturnType<typeof createCompiledGamingServers>> | undefined;
   const agent = new http.Agent({ keepAlive: true, maxSockets: 2 });
   const originalHttp = http.request;
   const originalHttps = https.request;
@@ -690,12 +803,14 @@ async function createGamingOfflineScope() {
     const url = new URL(input);
     expect(['web-pr-1413.up.railway.app', 'worker-pr-1413.up.railway.app']).toContain(url.hostname);
     requests.push(url.hostname + url.pathname);
+    const transportStartedAt = performance.now();
+    const transportSignal = AbortSignal.any([controller.signal, ...(init.signal ? [init.signal] : [])]);
     const transport = new Promise<Response>((resolve, reject) => {
       const operation = loopbackRequest({ hostname: '127.0.0.1',
         port: url.hostname.startsWith('worker-') ? workerPort : webPort,
         method: init.method, path: url.pathname + url.search,
         headers: Object.fromEntries(new Headers(init.headers)), agent,
-        signal: AbortSignal.any([controller.signal, ...(init.signal ? [init.signal] : [])]) }, incoming => {
+        signal: transportSignal }, incoming => {
         const chunks: Buffer[] = [];
         incoming.on('data', (chunk: Buffer) => chunks.push(chunk));
         incoming.once('error', reject);
@@ -713,7 +828,13 @@ async function createGamingOfflineScope() {
           } catch (error) { reject(error); }
         });
       });
-      operation.once('error', reject);
+      operation.once('error', (error: NodeJS.ErrnoException) => {
+        const classification = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9_]{1,64}$/u.test(value)
+          ? value : 'unknown';
+        transportFailures.push({ caseIndex: index, name: classification(error.name), code: classification(error.code),
+          aborted: transportSignal.aborted, elapsedMs: Math.round(performance.now() - transportStartedAt) });
+        reject(error);
+      });
       operation.end(init.body === undefined ? undefined : String(init.body));
     });
     transports.add(transport);
@@ -732,10 +853,13 @@ async function createGamingOfflineScope() {
       // Closing a client socket does not prove its async application handler ended.
       await Promise.all([...responses]);
       agent.destroy();
-      web.closeAllConnections();
-      worker.closeAllConnections();
-      await Promise.all([web, worker].filter(server => server.listening).map(server =>
+      web?.closeAllConnections();
+      worker?.closeAllConnections();
+      await Promise.all([web, worker].filter((server): server is http.Server => Boolean(server?.listening)).map(server =>
         new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))));
+      await compiledServers?.close();
+      expect(notionCalls).toBe(0);
+      expect(outbound).toEqual([]);
     } finally {
       http.request = originalHttp;
       https.request = originalHttps;
@@ -744,8 +868,13 @@ async function createGamingOfflineScope() {
     }
   })();
   try {
-    workerPort = await listen(worker);
-    webPort = await listen(web);
+    if (compiledChild) {
+      compiledServers = await createCompiledGamingServers();
+      ({ workerPort, webPort } = compiledServers);
+    } else {
+      workerPort = await listen(worker!);
+      webPort = await listen(web!);
+    }
     execution = runGamingScopedPreviewE2e({
       args: ['--pr-number', String(identity.prNumber), '--commit-sha', identity.sourceCommit,
         '--web-base-url', 'https://web-pr-1413.up.railway.app',
@@ -762,9 +891,15 @@ async function createGamingOfflineScope() {
       activeCase = index;
       // A selected later case still executes the verifier's required prefix.
       for (let prefix = 0; prefix <= index; prefix += 1) checkpoints[prefix].admit.resolve();
-      await checkpoints[index].verified.promise;
+      try { await checkpoints[index].verified.promise; } catch (error) {
+        if (transportFailures.length > 0) {
+          throw new Error(`Gaming fixture transport failed: ${JSON.stringify(transportFailures)}`, { cause: error });
+        }
+        throw error;
+      }
       expect(notionCalls).toBe(0);
       expect(outbound).toEqual([]);
+      compiledServers?.assertContained();
       if (index === planned.length - 1) {
         const result = await execution!;
         expect(result.summary).toMatchObject({ status: 'PASS', requestsMade: 84 });
@@ -777,6 +912,8 @@ async function createGamingOfflineScope() {
         expect(result.assertionInventory.executedCaseIds.filter((id: string) => id.startsWith('mcp:'))).toHaveLength(21);
         expect(result.assertionInventory.skippedCaseIds).toContain('native:backstage-generation-notion-authority-rag');
         expect(requests).toHaveLength(84);
+        // Await child response drain and natural exit before later source/mock tests.
+        await compiledServers?.close();
       }
       completedCase = index;
     },
@@ -786,7 +923,7 @@ async function createGamingOfflineScope() {
 describe('native PR contained application', () => {
   describe('complete Gaming scope offline with no Notion or provider outbound requests', () => {
     let scope: Awaited<ReturnType<typeof createGamingOfflineScope>>;
-    beforeAll(async () => { scope = await createGamingOfflineScope(); });
+    beforeAll(async () => { scope = await createGamingOfflineScope({ compiledChild: true }); });
     afterEach(async () => { if (scope?.hasPendingCase()) await scope.close(); });
     afterAll(async () => { await scope?.close(); });
     it.each((buildGamingScopedPreviewAssertionInventory() as readonly string[]).map((id, index) => [id, index] as const))
@@ -794,6 +931,9 @@ describe('native PR contained application', () => {
   });
 
   it('aborts and drains a withheld Gaming request before DAG mock accounting', async () => {
+    const compiledScope = await createGamingOfflineScope({ compiledChild: true });
+    await compiledScope.close();
+    await expect(compiledScope.runCase(0)).rejects.toThrow('Gaming offline scope ended');
     const scope = await createGamingOfflineScope();
     await scope.close();
     await expect(scope.runCase(0)).rejects.toThrow('Gaming offline scope ended');
@@ -846,6 +986,14 @@ describe('native PR contained application', () => {
       ...childEnvironment,
       CUSTOM_SECRET: 'sensitive-sentinel',
     })).toThrow('PREVIEW_APPLICATION_ENVIRONMENT_INVALID');
+    const isolatedEnvironment = gamingChildEnvironment({
+      ...process.env, OPENAI_API_KEY: 'mock-openai-environment-isolation-key', DATABASE_URL: 'mock-database-environment-isolation-url',
+      NODE_OPTIONS: '--inspect', NODE_V8_COVERAGE: 'sensitive-sentinel',
+    });
+    expect(isolatedEnvironment).toEqual(expect.objectContaining({ NODE_ENV: 'test', TZ: 'UTC' }));
+    for (const name of ['OPENAI_API_KEY', 'DATABASE_URL', 'NODE_OPTIONS', 'NODE_V8_COVERAGE']) {
+      expect(isolatedEnvironment).not.toHaveProperty(name);
+    }
   });
 
   it('rejects a Booker origin for another PR or a production host before fixture startup', () => {
@@ -1100,6 +1248,64 @@ describe('native PR contained application', () => {
       expect(recovered.headers[header]).toBe(NATIVE_PR_PREVIEW_DAG_METRICS_CONTRACT.proofVersion);
     } finally {
       assertFixture.mockImplementation(assertDagMetricsRetentionPreviewFixture);
+    }
+  });
+
+  it('requires final-output component proof before GET/HEAD readiness and withholds all markers on failure', async () => {
+    const readinessState = createNativePrPreviewReadinessState();
+    const app = createNativePrPreviewApplication({ identity, readinessState });
+    const contract = NATIVE_PR_PREVIEW_FINAL_OUTPUT_INTEGRITY_CONTRACT;
+    const proofHeaders = [NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.proofHeader,
+      NATIVE_PR_PREVIEW_DAG_METRICS_CONTRACT.proofHeader, NATIVE_PR_PREVIEW_DAG_TOKEN_ACCOUNTING_CONTRACT.proofHeader,
+      NATIVE_PR_PREVIEW_SESSION_CONTEXT_CONTRACT.proofHeader, NATIVE_PR_PREVIEW_SESSION_CONTEXT_CONTRACT.contractProofHeader,
+      NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_CONTRACT.proofHeader, contract.proofHeader, contract.reportHeader];
+    try {
+      const pending = await request(app).get('/readyz');
+      expect(pending.status).toBe(503);
+      for (const header of proofHeaders) expect(pending.headers[header]).toBeUndefined();
+      expect(assertFinalOutputFixture).not.toHaveBeenCalled();
+      Object.assign(readinessState, { ready: true, applicationImported: true, fixturesSealed: true });
+      const ready = await request(app).get('/readyz');
+      const head = await request(app).head('/readyz');
+      expect(ready.status).toBe(200);
+      expect(head.status).toBe(200);
+      expect(head.text).toBeUndefined();
+      const expected = { ...assertTrinityFinalOutputPreviewFixture(), ...identity };
+      for (const response of [ready, head]) {
+        expect(response.headers[contract.proofHeader]).toBe(contract.proofVersion);
+        expect(JSON.parse(response.headers[contract.reportHeader])).toEqual(expected);
+        expect(response.headers[contract.reportHeader].length).toBeLessThanOrEqual(contract.maxReportChars);
+      }
+      for (const failure of [
+        () => { throw new Error('private fixture failure'); },
+        () => ({ ...assertTrinityFinalOutputPreviewFixture(), delivered: [] }),
+        () => ({ ...assertTrinityFinalOutputPreviewFixture(), privateData: 'must not escape' }),
+      ]) {
+        assertFinalOutputFixture.mockImplementation(failure);
+        for (const method of ['get', 'head'] as const) {
+          const failed = await request(app)[method]('/readyz');
+          expect(failed.status).toBe(503);
+          for (const header of proofHeaders) expect(failed.headers[header]).toBeUndefined();
+          if (method === 'get') expect(failed.body).toEqual({ ...ready.body, ready: false });
+          expect(JSON.stringify(failed.body)).not.toMatch(/private|escape/);
+        }
+      }
+      assertFinalOutputFixture.mockImplementation(assertTrinityFinalOutputPreviewFixture);
+      const recovered = await request(app).get('/readyz');
+      expect(recovered.status).toBe(200);
+      expect(recovered.body).toEqual(ready.body);
+      const calls = assertFinalOutputFixture.mock.calls.length;
+      for (const path of ['/readyz?fixture=final-output', '/query-finetune']) {
+        const denied = await request(app).get(path);
+        expect(denied.status).toBe(404);
+        for (const header of proofHeaders) expect(denied.headers[header]).toBeUndefined();
+      }
+      const credential = await request(app).get('/readyz').set('authorization', 'Bearer test-denied-credential');
+      expect(credential.status).toBe(404);
+      for (const header of proofHeaders) expect(credential.headers[header]).toBeUndefined();
+      expect(assertFinalOutputFixture.mock.calls.length).toBe(calls);
+    } finally {
+      assertFinalOutputFixture.mockImplementation(assertTrinityFinalOutputPreviewFixture);
     }
   });
 

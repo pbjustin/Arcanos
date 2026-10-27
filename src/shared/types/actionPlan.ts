@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { legacyInteger } from '@shared/validation/zodNumberChecks.js';
+import { legacyDatetime, utf16MaxLength } from '@shared/validation/zodStringChecks.js';
 import { actionPlanExecutionIdentifierSchema } from './actionPlanExecution.js';
 
 // --- Status & Role Enums ---
@@ -153,13 +155,13 @@ export const actionDefinitionSchema = z.object({
   action_id: z.string().optional(),
   agent_id: z.string().min(1),
   capability: z.string().min(1),
-  params: z.record(z.unknown()).default({}),
-  timeout_ms: z.number().int().positive().optional().default(30000),
+  params: z.record(z.string(), z.unknown()).default({}),
+  timeout_ms: z.number().check(...legacyInteger()).positive().optional().default(30000),
   rollback_action: z.object({
     agent_id: z.string().min(1),
     capability: z.string().min(1),
-    params: z.record(z.unknown()).default({}),
-    timeout_ms: z.number().int().positive().optional().default(30000),
+    params: z.record(z.string(), z.unknown()).default({}),
+    timeout_ms: z.number().check(...legacyInteger()).positive().optional().default(30000),
   }).optional(),
 });
 
@@ -169,7 +171,7 @@ export const actionPlanInputSchema = z.object({
   confidence: z.number().min(0).max(1).optional().default(0),
   requires_confirmation: z.boolean().optional().default(true),
   idempotency_key: z.string().min(1),
-  expires_at: z.string().datetime().optional(),
+  expires_at: z.string().check(legacyDatetime()).optional(),
   actions: z.array(actionDefinitionSchema).min(1),
 });
 
@@ -209,26 +211,26 @@ function boundedJsonRecord(maxDepth: number, maxBytes: number) {
 
 const phase2eParamsSchema = boundedJsonRecord(8, 32 * 1024);
 const phase2eRollbackActionSchema = z.object({
-  agent_id: z.string().min(1).max(128),
-  capability: z.string().min(1).max(256),
+  agent_id: z.string().min(1).max(128).check(utf16MaxLength(128)),
+  capability: z.string().min(1).max(256).check(utf16MaxLength(256)),
   params: phase2eParamsSchema.default({}),
-  timeout_ms: z.number().int().positive().max(86_400_000).optional().default(30_000),
+  timeout_ms: z.number().check(...legacyInteger()).positive().max(86_400_000).optional().default(30_000),
 }).strict();
 export const phase2eActionDefinitionSchema = z.object({
   action_id: actionPlanExecutionIdentifierSchema.optional(),
-  agent_id: z.string().min(1).max(128),
-  capability: z.string().min(1).max(256),
+  agent_id: z.string().min(1).max(128).check(utf16MaxLength(128)),
+  capability: z.string().min(1).max(256).check(utf16MaxLength(256)),
   params: phase2eParamsSchema.default({}),
-  timeout_ms: z.number().int().positive().max(86_400_000).optional().default(30_000),
+  timeout_ms: z.number().check(...legacyInteger()).positive().max(86_400_000).optional().default(30_000),
   rollback_action: phase2eRollbackActionSchema.optional(),
 }).strict();
 export const phase2eActionPlanInputSchema = z.object({
   created_by: z.enum(PLAN_CREATORS),
-  origin: z.string().min(1).max(512),
+  origin: z.string().min(1).max(512).check(utf16MaxLength(512)),
   confidence: z.number().min(0).max(1).optional().default(0),
   requires_confirmation: z.boolean().optional().default(true),
-  idempotency_key: z.string().min(1).max(256).regex(/^[\x21-\x7e]+$/u),
-  expires_at: z.string().datetime().optional(),
+  idempotency_key: z.string().min(1).max(256).check(utf16MaxLength(256)).regex(/^[\x21-\x7e]+$/u),
+  expires_at: z.string().check(legacyDatetime()).optional(),
   actions: z.array(phase2eActionDefinitionSchema).min(1).max(100),
 }).strict().superRefine((value, context) => {
   try {

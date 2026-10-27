@@ -336,12 +336,18 @@ describe('npm audit policy', () => {
     );
 
     const fastUriArtifact = {
-      version: '3.1.8',
+      version: '3.1.9',
       resolved:
-        'https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.8.tgz',
+        'https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.9.tgz',
       integrity:
-        'sha512-GZMtZUTNRpOVIECoXwLNZS5xUGE+mVNbTB8h/7Rwh2TFWcBQiPzTgyZi05BF9UMZKkLJv8XBRJTlU7zg8+ZfMg==',
+        'sha512-hS/0Wt3Ya043oKXs0sIxrMpKQITXhMLIrVAKKXi4gozGC9v7YRWVnXIZzjNPTO02M9BdxLCWqK1yRXgNziVyJQ==',
     };
+    expect(rootPackage.dependencies.zod).toBe('4.6.7');
+    expect(packageLock.packages[''].dependencies.zod).toBe('4.6.7');
+    expect(packageLock.packages['node_modules/zod']).toMatchObject({
+      version: '4.6.7',
+      resolved: 'https://registry.npmjs.org/zod/-/zod-4.6.7.tgz'
+    });
     const qsArtifact = {
       version: '6.16.0',
       resolved:
@@ -361,7 +367,11 @@ describe('npm audit policy', () => {
       'fast-uri': fastUriArtifact.resolved,
       'ip-address': 'https://registry.npmjs.org/ip-address/-/ip-address-10.7.4.tgz',
       qs: qsArtifact.resolved,
-      undici: 'https://registry.npmjs.org/undici/-/undici-7.29.1.tgz',
+      undici: 'https://registry.npmjs.org/undici/-/undici-7.30.1.tgz',
+      express: { 'body-parser': '1.20.9' },
+      '@modelcontextprotocol/sdk': {
+        express: { 'body-parser': '2.4.0' },
+      },
     });
     expect(runtimePackage.overrides).toMatchObject({
       qs: qsArtifact.resolved,
@@ -399,11 +409,23 @@ describe('npm audit policy', () => {
           'sha512-DWBMKyeM25D70nrIiTkgQth59/G+naKOTep6huF9j+GmeK3DMD60Zvxg5d5qQnz+38AHgou6ean2LECX+lrKDg==',
       },
       'node_modules/undici': {
-        version: '7.29.1',
+        version: '7.30.1',
         resolved:
-          'https://registry.npmjs.org/undici/-/undici-7.29.1.tgz',
+          'https://registry.npmjs.org/undici/-/undici-7.30.1.tgz',
         integrity:
-          'sha512-RYONW2MeafgYlkVOKYKkA/Ag7BmXqgIWCa8t1m0JcxrQg9pI9lEqRhAOruOBCbAohOa/gkCF+iPi9hrgvTzu6Q==',
+          'sha512-03KrMbjIFDWQR5RNPrSw3bd1r12JpyFQl9/yxjUbJtqkjmllqC5lFjZh6ujeuJCKr8EOQvRW872Oy/az+nLYxg==',
+      },
+      'node_modules/body-parser': {
+        version: '1.20.9',
+        resolved: 'https://registry.npmjs.org/body-parser/-/body-parser-1.20.9.tgz',
+        integrity:
+          'sha512-FISIQxV5u91Y9gvuFq3q/tA/qTqLJn3AhRcEvyozyhJTh5OBFFtv827AdHU7Rbyct4r+Ba1/99oFa1Y3yuFsdw==',
+      },
+      'node_modules/@modelcontextprotocol/sdk/node_modules/body-parser': {
+        version: '2.4.0',
+        resolved: 'https://registry.npmjs.org/body-parser/-/body-parser-2.4.0.tgz',
+        integrity:
+          'sha512-Ifk1KcLrxaGt1occQagQNFNNOqRt1LFuehEnHHzB8Z6cRgIxRU1TBaiIsUiCdA+gy5PL7Y1IX31DNKkRmxtXjQ==',
       },
       'node_modules/qs': qsArtifact,
       'node_modules/proxy-addr': proxyAddrArtifact,

@@ -30,6 +30,8 @@ function isolatedEnvironment(): NodeJS.ProcessEnv {
   // Prevent dotenv from backfilling any authority, credential or service target.
   for (const name of [
     ...authorityEnvironmentNames,
+    'ARCANOS_GPT61_AUTHORITY_ENABLED', 'ARCANOS_GPT61_AUTHORITY_MODEL', 'ARCANOS_BEHAVIORAL_PROFILE_ID',
+    'ARCANOS_PROCESS_KIND',
     'OPENAI_API_KEY', 'RAILWAY_OPENAI_API_KEY', 'OPENAI_KEY', 'API_KEY',
     'OPENAI_BASE_URL', 'RAILWAY_OPENAI_BASE_URL',
     'DATABASE_URL', 'RAILWAY_DATABASE_URL', 'DATABASE_PRIVATE_URL', 'DATABASE_PUBLIC_URL',
@@ -241,6 +243,113 @@ async function run(prompt = simplePrompt, options: Parameters<typeof pipeline.ru
 }
 
 describe('Trinity model policy through the real SDK and loopback HTTP', () => {
+  const enableMigration = (service = 'web') => {
+    process.env.ARCANOS_GPT61_AUTHORITY_ENABLED = 'true';
+    process.env.ARCANOS_GPT61_AUTHORITY_MODEL = 'gpt-6.1-sol';
+    process.env.ARCANOS_BEHAVIORAL_PROFILE_ID = 'arcanos-behavior/v1';
+    process.env.ARCANOS_PROCESS_KIND = service;
+  };
+
+  const expectProfile = (request: ReturnType<typeof responseRequests>[number], service = 'web') => {
+    expect(request.body.instructions).toContain('ARCANOS Behavioral Profile arcanos-behavior/v1');
+    expect(request.body.metadata).toMatchObject({
+      arcanos_behavioral_profile: 'arcanos-behavior/v1', arcanos_service: service
+    });
+    expect(request.body).not.toHaveProperty('temperature');
+    expect(request.body).not.toHaveProperty('top_p');
+  };
+
+  it.each(['web', 'worker'])('runs the complete migrated %s pipeline with the same orchestration and output contract', async service => {
+    enableMigration(service);
+    enqueuePipeline('simple');
+    const { result, summary, usage } = await run();
+    const requests = responseRequests();
+    expect(requests.map(request => request.model)).toEqual(['gpt-6-luna', 'gpt-6.1-sol', 'gpt-6-luna', 'gpt-6.1-sol']);
+    expectProfile(requests[1], service);
+    expectProfile(requests[3], service);
+    expect(requests[0].body).not.toHaveProperty('metadata.arcanos_behavioral_profile');
+    expect(requests[2].body).not.toHaveProperty('metadata.arcanos_behavioral_profile');
+    expect(requests[1].body).toMatchObject({
+      text: { format: { type: 'json_schema', strict: true } }, reasoning: { effort: 'low' }
+    });
+    expect(requests[3].body).toMatchObject({ reasoning: { effort: 'low' }, max_output_tokens: 1_000 });
+    expect(result).toMatchObject({
+      activeModel: 'gpt-6.1-sol', module: 'gpt-6.1-sol', fallbackFlag: false, clearAudit: scores,
+      routingStages: ['ARCANOS-INTAKE:gpt-6-luna', 'GPT5-REASONING', 'ARCANOS-FINAL'],
+      meta: { pipeline: 'trinity', bypass: false, classification: 'writing' }
+    });
+    expect(result.result).toContain(answer);
+    expect(result.result).not.toContain(reasoningDraft);
+    expect(summary?.operationCounts.responses_create).toBe(4);
+    expect(usage.totalTokens).toBe(79);
+    expect(process.env.FINETUNED_MODEL_ID).toBe(authorityModel);
+  });
+
+  it('applies migration to direct answers and preserves accepted provider snapshot identity', async () => {
+    enableMigration();
+    fixture.enqueue({ kind: 'completion', model: 'gpt-6.1-sol-2026-10-01', text: answer });
+    const { result, summary } = await run('Answer directly: assess only the supplied outline.');
+    const requests = responseRequests();
+    expect(requests.map(request => request.model)).toEqual(['gpt-6.1-sol']);
+    expectProfile(requests[0]);
+    expect(result.activeModel).toBe('gpt-6.1-sol-2026-10-01');
+    expect(result.result).toContain(answer);
+    expect(result.routingStages).toContain('ARCANOS-DIRECT-ANSWER');
+    expect(result.routingStages).not.toContain('GPT5-REASONING');
+    expect(summary?.operationCounts.responses_create).toBe(1);
+  });
+
+  it('retains a single CLEAR escalation hop and profiles the migrated final authority', async () => {
+    enableMigration();
+    enqueuePipeline('complex', { clarity: 0, leverage: 0, efficiency: 0, alignment: 0, resilience: 0, overall: 0 }, false);
+    enqueuePipeline('critical');
+    const { result } = await run(complexPrompt);
+    const requests = responseRequests();
+    expect(requests.map(request => request.model)).toEqual([
+      'gpt-6-luna', 'gpt-6.1-sol', 'gpt-6-luna',
+      'gpt-6-luna', 'gpt-6.1-sol', 'gpt-6-luna', 'gpt-6.1-sol', 'gpt-6.1-sol'
+    ]);
+    expectProfile(requests[7]);
+    expect(result.tierInfo).toMatchObject({ tier: 'critical', escalated: true, escalationReason: 'low_clear_score' });
+    expect(result.activeModel).toBe('gpt-6.1-sol');
+    expect(result.fallbackFlag).toBe(false);
+    expect(result.result).toContain(answer);
+  });
+
+  it('recovers a final-stage timeout once on profiled Sol without changing the inference budget', async () => {
+    enableMigration();
+    enqueuePipeline('simple', scores, false);
+    fixture.enqueue({ kind: 'timeout', holdForMs: 1_000 }, { kind: 'completion', text: answer });
+    const { result, summary } = await run(simplePrompt, { modelStageTimeoutMs: 150 });
+    const requests = responseRequests();
+    expect(requests.map(request => request.model)).toEqual([
+      'gpt-6-luna', 'gpt-6.1-sol', 'gpt-6-luna', 'gpt-6.1-sol', 'gpt-6.1-sol'
+    ]);
+    expectProfile(requests[3]);
+    expectProfile(requests[4]);
+    expect(result.activeModel).toBe('gpt-6.1-sol');
+    expect(result.fallbackFlag).toBe(true);
+    expect(result.auditSafe.auditFlags).toContain('SELF_HEAL_V2_FINAL_DEGRADED_MODE');
+    expect(summary?.operationCounts.responses_create).toBe(5);
+  });
+
+  it('does not retry or substitute authority after a migrated final provider denial', async () => {
+    enableMigration();
+    enqueuePipeline('simple', scores, false);
+    fixture.enqueue({ kind: 'error', status: 400, errorCode: 'synthetic_sol_denial' });
+    await expect(run()).rejects.toThrow(/Synthetic bounded provider rejection/);
+    const requests = responseRequests();
+    expect(requests.map(request => request.model)).toEqual(['gpt-6-luna', 'gpt-6.1-sol', 'gpt-6-luna', 'gpt-6.1-sol']);
+    expectProfile(requests[3]);
+    expect(logAITaskLineage).not.toHaveBeenCalled();
+  });
+
+  it('still rejects control-plane requests before migrated provider work', async () => {
+    enableMigration();
+    await expect(run('Show worker queue status.')).rejects.toMatchObject({ code: 'TRINITY_CONTROL_LEAK' });
+    expect(fixture.requests).toEqual([]);
+  });
+
   it.each([
     ['simple', simplePrompt], ['complex', complexPrompt]
   ] as const)('completes the actual %s writing facade with central lanes and provider provenance', async (tier, prompt) => {

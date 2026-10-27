@@ -17,6 +17,7 @@ import type { ResponseCreateParamsNonStreaming } from 'openai/resources/response
 import {
   assertValidResponsesCreateParams,
   normalizeResponsesCreateParams,
+  recordOpenAIStreamModelIdentity,
   rethrowWorkerAiBudgetError,
   type OpenAIAdapter
 } from "@core/adapters/openai.adapter.js";
@@ -442,13 +443,8 @@ export async function call_gpt5_strict(
 
     const response = await invokeResponsesCompletion(client, requestPayload, gpt5Model, options);
 
-    // Validate that the response actually came from GPT-5.1
-    // Response is guaranteed to be ChatCompletion (not Stream) because stream: false
-    if (!response.model || response.model !== gpt5Model) {
-      throw new Error(
-        `GPT-5.1 call failed — no fallback allowed. Expected model '${gpt5Model}' but got '${response.model || 'undefined'}'.`
-      );
-    }
+    // Retain exact fine-tune validation and accepted provider snapshot identity.
+    ensureModelMatchesExpectation(response, gpt5Model);
 
     logOpenAIEvent('info', OPENAI_LOG_MESSAGES.GPT5.STRICT_SUCCESS(response.model));
     return response;
@@ -575,7 +571,16 @@ export async function createCentralizedCompletion(
                 ? event as { response?: { model?: unknown } }
                 : undefined;
               if (eventRecord && 'response' in eventRecord) {
-                ensureModelMatchesExpectation(eventRecord.response ?? {}, model);
+                const actualModel = ensureModelMatchesExpectation(eventRecord.response ?? {}, model);
+                if (!modelValidated) {
+                  recordOpenAIStreamModelIdentity(providerStream, actualModel);
+                  recordTraceEvent('openai.stream.model_validated', {
+                    model: actualModel,
+                    requestedModel: model,
+                    behavioralProfileId: responsePayload.metadata?.arcanos_behavioral_profile,
+                    behavioralProfileService: responsePayload.metadata?.arcanos_service
+                  });
+                }
                 modelValidated = true;
               }
               // No event (including output/tool deltas) escapes before authority is proven.

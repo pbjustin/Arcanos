@@ -53,6 +53,9 @@ export async function runTrinity({
       runOptions: {
         answerMode: structured ? 'audit' : 'direct',
         strictUserVisibleOutput: true,
+        ...(structured ? {
+          finalOutputContract: { name: 'query_finetune_json_object', schema: { type: 'object' } }
+        } : {}),
         ...(typeof latencyBudgetMs === 'number' && Number.isFinite(latencyBudgetMs) && latencyBudgetMs > 0
           ? { watchdogModelTimeoutMs: Math.trunc(latencyBudgetMs) }
           : {})

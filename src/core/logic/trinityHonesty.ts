@@ -141,6 +141,10 @@ const BACKEND_ACTION_PATTERN =
   /\b(saved|save|persisted|persist|wrote|write|stored|store|pinged|ping|called|call|updated|update|inserted|insert|deleted|delete|committed|commit|queried|query|inspected|inspect)\b/i;
 const BACKEND_ACTION_CONTEXT_PATTERN =
   /\b(backend|database|db|table|record|row|service|services|api|endpoint|cache)\b/i;
+// Bare "run" is habitual; have/'ve makes it completed. Exclude direct if-clauses
+// for every action, and keep the same bounded adverb prefix in evidence matching.
+const COMPLETED_EXECUTION_SELF_CLAIM_PATTERN =
+  /(?<!\bif\s+)\b(?:i|we)(?!\s+(?:(?:[a-z-]+ly|just|already|now|also)\s+){0,2}run\b)(?:['’]ve|\s+have)?\s+(?:(?:[a-z-]+ly|just|already|now|also)\s+){0,2}(?:deployed\b|(?:ran|run|executed)\s+(?:(?:(?:the|a|an|your|our|this|that|these|those|all|verification|unit|integration|local|\d+)\s+){0,4}(?:tools?|commands?|scripts?|tests?)\b|[`"']?npm(?:\.cmd)?\s+(?:test\b|install\b|run\s+[a-z0-9:_-]+\b)))/i;
 const PERSISTENCE_SAVE_CONTEXT_PATTERN =
   /\b(memory|data|details|preferences|settings|accounts?|profiles?|sessions?|conversations?|transcripts?|files?|documents?|records?|notes?|answers?|results?|credentials?|secrets?|passwords?|storage|disk|logs?)\b/i;
 const PERSISTENCE_CREDENTIAL_TOKEN_PATTERN =
@@ -267,7 +271,7 @@ const PROMPT_GENERATION_DISCLAIMER_PATTERNS = [
 const PROMPT_GENERATION_ARTIFACT_REMAINDER_PATTERN =
   /\b(?:prompt|system\s+prompt|instructions?|spec(?:ification)?|brief|tasking(?:\s+doc(?:ument)?)?|message|codex|agent|ai|model|tool|assistant|executor)\b|^\s*(?:you are|your task is|objective:|goal:|task:)/i;
 const PROMPT_GENERATION_SELF_CLAIM_PATTERN =
-  /\b(?:i|we)\s+(?:have\s+)?(?:checked|verified|confirmed|reviewed|validated|looked\s+up|updated|saved|persisted|wrote|called|queried|inspected|tested|ran|executed|deployed)\b/i;
+  /\b(?:i|we)\s+(?:have\s+)?(?:checked|verified|confirmed|reviewed|validated|looked\s+up|updated|saved|persisted|wrote|called|queried|inspected|tested)\b|(?<!\bif\s+)\b(?:i|we)\s+(?:have\s+)?(?:ran|executed|deployed)\b/i;
 const PROMPT_GENERATION_ACCESS_TASK_PATTERN = new RegExp(
   PROMPT_GENERATION_ACCESS_ACTION_FRAGMENT +
     String.raw`\b[^.!?\n]{0,120}\b` +
@@ -679,11 +683,66 @@ function hasVerifiedToolEvidence(
   ));
 }
 
+/** Keep the entire claimed command/target and any unbound continuation. Only
+ * presentation and equivalent first-person execution wording are normalized. */
+function completedExecutionClaims(text: string): string[] {
+  const matches = [...text.matchAll(new RegExp(COMPLETED_EXECUTION_SELF_CLAIM_PATTERN.source, 'gi'))];
+  return matches.map((match, index) => {
+    let claim = text.slice(match.index, matches[index + 1]?.index ?? text.length);
+    if (index + 1 < matches.length) claim = claim.replace(/\s+(?:and|but|then)\s*$/i, '');
+    claim = claim.trim().replace(/\s*\*\/$/u, '').trim()
+      .replace(/^(?:i|we)(?:['’]ve|\s+have)?\s+(?:(?:[a-z-]+ly|just|already|now|also)\s+){0,2}/i, '');
+    const action = claim.match(/^(deployed|ran|run|executed)\s*([\s\S]*)$/i);
+    if (!action) return '';
+    const target = (action[2] ?? '').trim().replace(/[.!?;]+$/u, '')
+      .replace(/^[`"']|[`"']$/gu, '')
+      .replace(/^(?:the|a|an)\s+/i, '').replace(/\s+/gu, ' ').trim();
+    return `${action[1]?.toLowerCase() === 'deployed' ? 'deployed' : 'executed'} ${target}`;
+  }).filter(Boolean);
+}
+
+function hasMatchingCompletedExecutionEvidence(text: string, evidenceTags: TrinityEvidenceTag[]): boolean {
+  const claims = completedExecutionClaims(text);
+  const supportedClaims = new Set(evidenceTags.filter(tag => tag.sourceType === 'tool'
+    && tag.verificationStatus === 'verified').flatMap(tag => completedExecutionClaims(tag.claimText)));
+  return claims.length > 0 && claims.every(claim => supportedClaims.has(claim));
+}
+
 function impliesCurrentExternalStateClaim(text: string): boolean {
   return (
     (CURRENT_EXTERNAL_STATE_PATTERN.test(text) && EXTERNAL_STATE_CONTEXT_PATTERN.test(text)) ||
     LIVE_RUNTIME_STATE_PATTERN.test(text)
   );
+}
+
+/** An imperative in a source comment or an explicitly quoted example is task
+ * content, not evidence that this backend performed it. Keep the exception
+ * narrow: assertions, additional clauses, and unframed prose use normal checks. */
+function isArtifactInstruction(text: string): boolean {
+  const example = text.match(/^example:\s*(["'`])(.+)\1[.!]?$/i);
+  const comment = text.match(/^(?:\/\/(?:audit\s*:?)?|\/\*+)\s*(.+?)(?:\s*\*\/)?$/i);
+  const instruction = (example?.[2] ?? comment?.[1])?.trim().replace(/^assumption:\s*/i, '');
+  if (!instruction || !/^(?:return|check|verify|validate|reject|throw)\s+\S/i.test(instruction)) return false;
+  const subordinateTest = /^(?:check|verify|validate)\s+(?:that|whether)\s+/i.test(instruction);
+  // A comment delimiter or quote never licenses a completed action, a promise,
+  // or an affirmative state claim attached to an otherwise valid instruction.
+  return !/[;,:.!?]\s+\S|[—–]/u.test(instruction)
+    && !CURRENT_EXTERNAL_STATE_PATTERN.test(instruction)
+    && !EXTERNAL_STATE_CONTEXT_PATTERN.test(instruction)
+    && !/\b(?:live|production|deployment)\b/i.test(instruction)
+    && !impliesSystemOwnedSaveClaim(instruction)
+    && !/\b(?:i|we|verified|confirmed|checked|reviewed|validated|saved|persisted|stored|wrote|called|updated|inserted|deleted|committed|queried|inspected|deployed|executed|ran|was|were|has|have|had|will|shall|can|could|may|might|must|would|should)\b/i.test(instruction)
+    && (subordinateTest || !/\b(?:is|are)\b/i.test(instruction));
+}
+
+/** A fully consumed denial describes missing verification, not performed work.
+ * Never let a denial prefix qualify another clause or a self-claim in its subject. */
+function isExplicitVerificationDenial(text: string): boolean {
+  const denial = text.match(/^([a-z][a-z0-9-]*(?:\s+[a-z][a-z0-9-]*){0,7})\s+(?:(?:is|are|was|were|remains?)\s+not|(?:has|have|had)\s+not\s+been)\s+(?:checked|verified|confirmed|reviewed|validated)(?:\s+(?:yet|here|independently))?[.!]?$/i);
+  const subject = denial?.[1];
+  return Boolean(subject && !/\b(?:i|we|and|but|then|however)\b/i.test(subject)
+    && !/\b(?:is|are|was|were|be|been|being|has|have|had|appears?|looks?|remains?|will|shall|can|could|may|might|must|would|should|deployed|ran|executed|saved|persisted|stored|wrote|called|updated|inserted|deleted|committed|queried|inspected)\b/i.test(subject)
+    && !LIVE_VERIFICATION_PATTERN.test(subject));
 }
 
 function requestTargetsCurrentExternalState(text: string): boolean {
@@ -1168,12 +1227,24 @@ function isUnsupportedPromptGenerationSelfClaim(segment: string): boolean {
   );
 }
 
-function rewritePromptGenerationSelfClaims(text: string): { text: string; blockedOrRewrittenClaims: string[] } {
+function rewritePromptGenerationSelfClaims(
+  text: string,
+  reasoningHonesty: TrinityReasoningHonesty,
+  capabilityFlags: TrinityCapabilityFlags
+): { text: string; blockedOrRewrittenClaims: string[] } {
   const blockedOrRewrittenClaims: string[] = [];
   const keptSegments: string[] = [];
 
   for (const segment of splitIntoSegments(text)) {
-    if (isUnsupportedPromptGenerationSelfClaim(segment)) {
+    const impliesCompletedExecution = COMPLETED_EXECUTION_SELF_CLAIM_PATTERN.test(segment);
+    const supportsCompletedExecution = impliesCompletedExecution
+      && (capabilityFlags.canPersistData || capabilityFlags.canCallBackend)
+      && hasMatchingCompletedExecutionEvidence(segment, reasoningHonesty.evidenceTags);
+    // Inspect other self-claims independently; matching execution evidence cannot
+    // authorize an appended verification claim or an uncovered legacy command.
+    const otherSelfClaims = segment.replace(new RegExp(COMPLETED_EXECUTION_SELF_CLAIM_PATTERN.source, 'gi'), '');
+    if (isUnsupportedPromptGenerationSelfClaim(otherSelfClaims)
+      || (impliesCompletedExecution && !supportsCompletedExecution)) {
       blockedOrRewrittenClaims.push(segment);
       continue;
     }
@@ -1239,6 +1310,7 @@ function rewriteUnsupportedClaims(params: {
   // Valid list lines and paragraph boundaries are left intact.
   const reviewText = sectionRewrite.text.replace(/^(\s*\d+\.)[ \t]*\r?\n\s*(?=\S)/gm, '$1 ');
   const rewrittenText = transformHonestySegments(reviewText, segment => {
+    if (isArtifactInstruction(segment)) return segment;
     const externalStateSectionHeading = isLikelyCurrentExternalStateSectionHeading(segment, params.userPrompt);
     if (isSectionHeading(segment) && !externalStateSectionHeading) {
       inUnsupportedExternalStateSection = false;
@@ -1250,10 +1322,15 @@ function rewriteUnsupportedClaims(params: {
     const impliesIndirectCurrentExternalState =
       isLikelyCurrentExternalStateFactAssertion(segment, params.userPrompt) ||
       (inUnsupportedExternalStateSection && isLikelyUnsupportedExternalStateSectionBody(segment));
-    const qualifiedCurrentStateLimitation = isQualifiedCurrentStateLimitation(segment);
+    const qualifiedCurrentStateLimitation = isQualifiedCurrentStateLimitation(segment)
+      || isExplicitVerificationDenial(segment);
     const allowsProvidedDataVerification = allowsProvidedDataVerificationClaim(segment, params.capabilityFlags);
     const impliesBackendAction = (BACKEND_ACTION_PATTERN.test(segment) && BACKEND_ACTION_CONTEXT_PATTERN.test(segment))
       || impliesSystemOwnedSaveClaim(segment);
+    const impliesCompletedExecution = COMPLETED_EXECUTION_SELF_CLAIM_PATTERN.test(segment);
+    const supportsCompletedExecution = impliesCompletedExecution
+      && (params.capabilityFlags.canPersistData || params.capabilityFlags.canCallBackend)
+      && hasMatchingCompletedExecutionEvidence(segment, params.reasoningHonesty.evidenceTags);
     const impliesPersistenceAction = impliesPersistenceActionClaim(segment);
 
     //audit Assumption: unverifiable current-state claims must be rewritten before the final answer reaches the caller, but explicit limitation caveats like "runtime enforcement remains unverified" must survive intact; failure risk: the guard replaces truthful caveats with a generic refusal and hides the useful static audit; expected invariant: only affirmative unsupported claims are rewritten; handling strategy: exempt qualified current-state limitations before applying the rewrite.
@@ -1280,7 +1357,7 @@ function rewriteUnsupportedClaims(params: {
     }
 
     //audit Assumption: backend success wording is invalid without executed tool evidence.
-    if (impliesBackendAction && !supportsBackendAction) {
+    if ((impliesBackendAction && !supportsBackendAction) || (impliesCompletedExecution && !supportsCompletedExecution)) {
       blockedOrRewrittenClaims.push(segment);
       if (!backendLimitationAdded) {
         backendLimitationAdded = true;
@@ -2008,18 +2085,28 @@ export function enforceFinalStageHonesty(
       continue;
     }
 
+    if (isArtifactInstruction(line)) {
+      keptLines.push(line);
+      continue;
+    }
+
     const localInstruction = isTutorLocalInstructionReviewUnit(line, instructionalVerificationPolicy);
     if (localInstruction) ruleIds.add('TUTOR_LOCAL_INSTRUCTION_EXEMPT');
     const impliesLiveVerification = LIVE_VERIFICATION_PATTERN.test(line) && !localInstruction;
     const impliesCurrentExternalState = impliesCurrentExternalStateClaim(line);
-    const qualifiedCurrentStateLimitation = isQualifiedCurrentStateLimitation(line);
+    const qualifiedCurrentStateLimitation = isQualifiedCurrentStateLimitation(line)
+      || isExplicitVerificationDenial(line);
     const allowsProvidedDataVerification = allowsProvidedDataVerificationClaim(line, capabilityFlags);
     const impliesBackendAction = (BACKEND_ACTION_PATTERN.test(line) && BACKEND_ACTION_CONTEXT_PATTERN.test(line))
       || impliesSystemOwnedSaveClaim(line)
       || impliesFirstPersonSaveClaim(line);
+    const impliesCompletedExecution = COMPLETED_EXECUTION_SELF_CLAIM_PATTERN.test(line);
+    const supportsCompletedExecution = impliesCompletedExecution
+      && (capabilityFlags.canPersistData || capabilityFlags.canCallBackend)
+      && hasMatchingCompletedExecutionEvidence(line, reasoningHonesty.evidenceTags);
 
     //audit Assumption: in PROMPT_GENERATION, imperative downstream steps like "Verify the API" are not claims that this backend verified anything; failure risk: the general overclaim guard strips the generated prompt itself; expected invariant: only first-person/completed backend self-claims remain subject to claim blocking; handling strategy: allow non-self-claim prompt instructions through this guard.
-    if (promptGeneration && !isUnsupportedPromptGenerationSelfClaim(line)) {
+    if (promptGeneration && !isUnsupportedPromptGenerationSelfClaim(line) && !impliesCompletedExecution) {
       keptLines.push(line);
       continue;
     }
@@ -2039,7 +2126,7 @@ export function enforceFinalStageHonesty(
       }
       continue;
     }
-    if (impliesBackendAction && !supportsBackendAction) {
+    if ((impliesBackendAction && !supportsBackendAction) || (impliesCompletedExecution && !supportsCompletedExecution)) {
       blockedCategories.add('backend_action');
       ruleIds.add('BACKEND_ACTION_CLAIM');
       continue;
@@ -2291,7 +2378,7 @@ export function enforceFinalStageHonestyAndMinimalism(params: {
     ? stripLeadingPromptGenerationDisclaimers(deInflatedText)
     : deInflatedText;
   const rewrittenClaims = promptGeneration
-    ? rewritePromptGenerationSelfClaims(promptGenerationTrimmedText)
+    ? rewritePromptGenerationSelfClaims(promptGenerationTrimmedText, params.reasoningHonesty, params.capabilityFlags)
     : rewriteUnsupportedClaims({
         text: promptGenerationTrimmedText,
         userPrompt: params.userPrompt,

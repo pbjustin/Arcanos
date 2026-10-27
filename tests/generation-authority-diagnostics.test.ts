@@ -22,6 +22,9 @@ beforeEach(async () => {
   process.env = { ...originalEnv };
   // Blank sentinels prevent dotenv from restoring a local authority on import.
   authorityKeys.forEach(key => { process.env[key] = ''; });
+  for (const key of [
+    'ARCANOS_GPT61_AUTHORITY_ENABLED', 'ARCANOS_GPT61_AUTHORITY_MODEL', 'ARCANOS_BEHAVIORAL_PROFILE_ID'
+  ]) process.env[key] = '';
   process.env.OPENAI_API_KEY = 'synthetic-diagnostics-test-key';
   process.env.ALLOW_ALL_GPTS = 'false';
   process.env.TRUSTED_GPT_IDS = 'synthetic-operator';
@@ -95,13 +98,21 @@ describe('generation authority does not gate non-generative diagnostics', () => 
     expect(syntheticFetch).not.toHaveBeenCalled();
   });
 
-  it('retains configured fine-tune trust entries and requires approval for trusted metadata alone', async () => {
-    process.env.FINETUNED_MODEL_ID = authority;
+  it.each([
+    ['false', 'FINETUNED_MODEL_ID'], ['true', 'FINETUNED_MODEL_ID'],
+    ['false', 'FINE_TUNED_MODEL_ID'], ['true', 'FINE_TUNED_MODEL_ID']
+  ])('retains %s-migration %s confirmation behavior without trusting Sol', async (migrationEnabled, authorityKey) => {
+    process.env[authorityKey] = authority;
+    process.env.ARCANOS_GPT61_AUTHORITY_ENABLED = migrationEnabled;
+    process.env.ARCANOS_GPT61_AUTHORITY_MODEL = 'gpt-6.1-sol';
+    process.env.ARCANOS_BEHAVIORAL_PROFILE_ID = 'arcanos-behavior/v1';
     process.env.FINE_TUNED_AUTOMATION_GPT_ID = 'ft:synthetic:automation';
     const { confirmGate, getConfirmGateConfiguration } = await import('../src/transport/http/middleware/confirmGate.js');
+    const { createOneTimeToken, consumeOneTimeToken } = await import('../src/lib/tokenStore.js');
     const trustedIds = getConfirmGateConfiguration().trustedGptIds;
     expect(trustedIds).toEqual(['synthetic-operator', 'ft:synthetic:automation', authority]);
     expect(trustedIds.filter(id => id === authority)).toHaveLength(1);
+    expect(trustedIds).not.toContain('gpt-6.1-sol');
 
     const next = jest.fn();
     const request = {
@@ -119,6 +130,40 @@ describe('generation authority does not gate non-generative diagnostics', () => 
     expect(approvedRequest.confirmationContext).toMatchObject({
       confirmationStatus: 'confirmed', manualConfirmation: true, isTrustedGpt: true
     });
+
+    const trustedToken = createOneTimeToken();
+    const trustedRequest = {
+      ...request, headers: { 'x-arcanos-confirm-token': trustedToken.token }
+    } as Request;
+    confirmGate(trustedRequest, responseRecorder().response, next);
+    expect(next).toHaveBeenCalledTimes(2);
+    expect(trustedRequest.confirmationContext).toMatchObject({
+      confirmationStatus: 'trusted-gpt', usedOneTimeToken: false, isTrustedGpt: true
+    });
+    expect(consumeOneTimeToken(trustedToken.token).ok).toBe(true);
+
+    const solRequest = {
+      ...request, body: { gptId: 'gpt-6.1-sol' },
+      headers: { 'x-arcanos-confirm-token': 'synthetic-invalid-token' }
+    } as Request;
+    const solBlocked = responseRecorder();
+    confirmGate(solRequest, solBlocked.response, next);
+    expect(solBlocked.status).toHaveBeenCalledWith(403);
+    expect(next).toHaveBeenCalledTimes(2);
+
+    const oneTimeToken = createOneTimeToken();
+    const tokenRequest = {
+      ...solRequest, headers: { 'x-arcanos-confirm-token': oneTimeToken.token }
+    } as Request;
+    confirmGate(tokenRequest, responseRecorder().response, next);
+    expect(next).toHaveBeenCalledTimes(3);
+    expect(tokenRequest.confirmationContext).toMatchObject({
+      confirmationStatus: 'one-time-token', usedOneTimeToken: true, isTrustedGpt: false
+    });
+    const replay = responseRecorder();
+    confirmGate(tokenRequest, replay.response, next);
+    expect(replay.status).toHaveBeenCalledWith(403);
+    expect(next).toHaveBeenCalledTimes(3);
     expect(syntheticFetch).not.toHaveBeenCalled();
   });
 

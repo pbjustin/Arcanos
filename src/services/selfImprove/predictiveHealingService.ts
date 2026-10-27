@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { legacyInteger } from '@shared/validation/zodNumberChecks.js';
+import { utf16MaxLength } from '@shared/validation/zodStringChecks.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import {
   getWorkerRuntimeStatus,
@@ -517,12 +519,16 @@ const PREDICTIVE_AI_MODULE = 'ARCANOS:CORE' as const;
 const PREDICTIVE_AI_MAX_WORDS = 180;
 
 const predictiveHealingAiDecisionSchema = z.object({
-  selectedCandidateIndex: z.number().int().min(0).nullable(),
+  selectedCandidateIndex: z.number().check(...legacyInteger()).min(0).nullable(),
   chooseNoAction: z.boolean().optional(),
-  reason: z.string().min(1).max(600),
+  reason: z.string().min(1).max(600).check(utf16MaxLength(600)),
   safeToExecute: z.boolean(),
   confidence: z.number().min(0).max(1).optional()
 });
+const predictiveHealingAiFinalOutputContract = {
+  name: 'predictive_healing_ai_decision',
+  schema: z.toJSONSchema(predictiveHealingAiDecisionSchema, { target: 'draft-7', io: 'input' })
+};
 
 type PredictiveHealingAiDecisionPayload = z.infer<typeof predictiveHealingAiDecisionSchema>;
 
@@ -1904,6 +1910,10 @@ async function resolveAiDecision(params: {
       maxOutputTokens: 512,
       runOptions: {
         // A control-plane recommendation uses only the supplied observation.
+        finalOutputContract: predictiveHealingAiFinalOutputContract,
+        // Snapshot fields such as "verified" and "trends" are evidence, not a
+        // request for independent live verification. Keep honesty scoped to the task.
+        directAnswerUserIntentPrompt: 'Select at most one supplied self-healing candidate using only the supplied observation. Recommend an action; do not execute it or claim independent verification.',
         disableMemoryAccess: true,
         disableOptionalSideEffects: true,
         answerMode: 'direct',

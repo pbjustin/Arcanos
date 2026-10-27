@@ -22,6 +22,8 @@ const reviewedSourceFiles = [
   'src/shared/idGenerator.ts',
   'src/shared/redaction.ts',
   'src/shared/errorUtils.ts',
+  'src/shared/gpt/generativeModelPolicyCore.ts',
+  'src/shared/gpt/arcanosBehavioralProfile.ts',
   'src/shared/security/purposeBoundCredential.ts',
   'src/shared/security/opaqueSecret.ts',
   'packages/arcanos-runtime/src/redaction.ts'

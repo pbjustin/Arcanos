@@ -3,12 +3,14 @@
  */
 
 import { z } from 'zod';
+import { legacyInteger } from '@shared/validation/zodNumberChecks.js';
+import { legacyDatetime } from '@shared/validation/zodStringChecks.js';
 
 export const AgentExecutionTraceEventSchema = z.object({
-  timestamp: z.string().datetime(),
+  timestamp: z.string().check(legacyDatetime()),
   level: z.enum(['info', 'warn', 'error']),
   message: z.string().min(1),
-  metadata: z.record(z.unknown())
+  metadata: z.record(z.string(), z.unknown())
 });
 
 export const AgentExecutionPlannedStepSchema = z.object({
@@ -16,7 +18,7 @@ export const AgentExecutionPlannedStepSchema = z.object({
   capabilityId: z.string().min(1),
   reason: z.string().min(1),
   dependsOnStepIds: z.array(z.string().min(1)),
-  capabilityPayload: z.record(z.unknown())
+  capabilityPayload: z.record(z.string(), z.unknown())
 });
 
 export const AgentCommandStepExecutionResultSchema = z.object({
@@ -26,10 +28,10 @@ export const AgentCommandStepExecutionResultSchema = z.object({
   status: z.enum(['completed', 'failed', 'skipped']),
   success: z.boolean(),
   message: z.string().min(1),
-  output: z.unknown().nullable(),
-  commandMetadata: z.record(z.unknown()).nullable(),
-  startedAt: z.string().datetime(),
-  completedAt: z.string().datetime(),
+  output: z.unknown().nullable().optional(),
+  commandMetadata: z.record(z.string(), z.unknown()).nullable(),
+  startedAt: z.string().check(legacyDatetime()),
+  completedAt: z.string().check(legacyDatetime()),
   error: z.string().nullable()
 });
 
@@ -39,12 +41,12 @@ export const AgentDagExecutionSummarySchema = z.object({
   failedNodeIds: z.array(z.string().min(1)),
   skippedNodeIds: z.array(z.string().min(1)),
   cancelledNodeIds: z.array(z.string().min(1)),
-  tokenBudgetUsed: z.number().int().nonnegative(),
-  totalAiCalls: z.number().int().nonnegative(),
-  totalRetries: z.number().int().nonnegative(),
-  maxParallelNodesObserved: z.number().int().nonnegative(),
-  startedAt: z.string().datetime(),
-  completedAt: z.string().datetime()
+  tokenBudgetUsed: z.number().check(...legacyInteger()).nonnegative(),
+  totalAiCalls: z.number().check(...legacyInteger()).nonnegative(),
+  totalRetries: z.number().check(...legacyInteger()).nonnegative(),
+  maxParallelNodesObserved: z.number().check(...legacyInteger()).nonnegative(),
+  startedAt: z.string().check(legacyDatetime()),
+  completedAt: z.string().check(legacyDatetime())
 });
 
 export const AgentExecutionResponseSchema = z.object({
@@ -59,11 +61,11 @@ export const AgentExecutionResponseSchema = z.object({
   }),
   execution: z.object({
     status: z.enum(['completed', 'failed']),
-    startedAt: z.string().datetime(),
-    completedAt: z.string().datetime(),
+    startedAt: z.string().check(legacyDatetime()),
+    completedAt: z.string().check(legacyDatetime()),
     steps: z.array(AgentCommandStepExecutionResultSchema),
     dagSummary: AgentDagExecutionSummarySchema.nullable(),
-    finalOutput: z.unknown().nullable()
+    finalOutput: z.unknown().nullable().optional()
   }),
   logs: z.array(AgentExecutionTraceEventSchema)
 });

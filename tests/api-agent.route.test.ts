@@ -90,6 +90,46 @@ describe('/api/agent/execute', () => {
     app = createApiAgentTestApp();
   });
 
+  it.each([
+    [{}, ['Required']],
+    [{ goal: 42 }, ['Expected string, received number']],
+    [{ goal: '  ' }, ['String must contain at least 1 character(s)']],
+    [{ goal: 'Inspect status', payload: [] }, ['Expected object, received array']],
+    [{ goal: 'Inspect status', sharedState: null }, ['Expected object, received null']],
+    [{ goal: 'Inspect status', executionMode: 'parallel' }, [
+      "Invalid enum value. Expected 'auto' | 'serial' | 'dag', received 'parallel'"
+    ]]
+  ])('preserves validation details before execution for %j', async (body, details) => {
+    const response = await request(app)
+      .post('/api/agent/execute')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .send(body);
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({
+      error: 'Invalid Agent Execution Payload',
+      code: 400,
+      details
+    });
+    expect(mockExecuteGoal).not.toHaveBeenCalled();
+  });
+
+  it('accepts arbitrary object payload and shared state through the confirmation boundary', async () => {
+    const response = await request(app)
+      .post('/api/agent/execute')
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .send({
+        goal: 'Inspect status',
+        payload: { nested: { values: [1, null, true] }, 'arbitrary-key': 'value' },
+        sharedState: { nested: { label: 'state' }, count: 2 }
+      });
+
+    expect(response.status).toBe(403);
+    expect(response.body.code).toBe('CONFIRMATION_REQUIRED');
+    expect(response.headers['x-confirmation-challenge']).toEqual(expect.any(String));
+    expect(mockExecuteGoal).not.toHaveBeenCalled();
+  });
+
   it('authenticates malformed and oversized anonymous bodies before leaf parsing', async () => {
     const malformedResponse = await request(app)
       .post('/api/agent/execute')
