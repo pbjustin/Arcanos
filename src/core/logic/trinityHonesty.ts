@@ -565,8 +565,10 @@ function hasExplicitLimitationLanguage(text: string, required?: TrinityReasoning
   const categories = new Set(requirements.map(entry => /\bcanon\b/i.test(entry) && !nonCanonScope.test(entry)
     ? 'canon' : classifyLimitationCategory(formatBlockedSubtaskAsLimitation(entry))));
   const assertionText = text.replace(/"[^"]*"|“[^”]*”|`[^`]*`|(?<![\p{L}\p{N}])'(?:[^']|'(?=\p{L}))*'(?![\p{L}\p{N}])|‘(?:[^’]|’(?=\p{L}))*’/gu, '');
-  const clauses = splitIntoSegments(assertionText).flatMap(segment => segment.split(/;\s*/u));
-  const hasCanonLimitation = !/\b(false|incorrect|wrong|untrue|not true|for example|an example|hypothetical(?:ly)?|suppose|assume that|imagine that|if|unless|would|could|might|reject|deny|denied|rebut|dispute)\b/i.test(text)
+  // Separate coordinated limitations here only; claim enforcement keeps its full segments.
+  const clauses = splitIntoSegments(assertionText).flatMap(segment => segment.split(/;\s*|(?:,?\s+(?:and|but)\s+|,\s*)(?=(?:i|we)\s+can(?:not|'t)\s+(?:verify|confirm|check|run|execute|call|save|persist|store|write)\b|(?:(?:the|this|current|supplied|provided|notion(?:-backed)?)\s+){0,5}(?:canon|notion\s+excerpt)\b)/iu));
+  const canonContext = clauses.filter(clause => /\b(canon|notion\s+excerpt|(?:that|this)\s+(?:assertion|statement|claim))\b|^(?:for example|an example|hypothetical(?:ly)?|suppose|assume that|imagine that|if|unless)\b/i.test(clause.trim())).join(' ');
+  const hasCanonLimitation = !/\b(false|incorrect|wrong|untrue|not true|for example|an example|hypothetical(?:ly)?|suppose|assume that|imagine that|if|unless|would|could|might|reject|deny|denied|rebut|dispute)\b/i.test(canonContext)
     && clauses.some(clause =>
       /^(?:(?:the|this|current|supplied|provided|notion(?:-backed)?)\s+){0,5}(?:canon|notion\s+excerpt)\s+(?:does\s+not\s+establish|establishes\s+neither)\s+[^.!?;\n]+[.!?]?$/i.test(clause.trim())
       || /^(?:i|we)\s+can(?:not|'t)\s+(?:establish|determine|identify)\b[^.!?;\n]*\bcanon\b[^.!?;\n]*[.!?]?$/i.test(clause.trim()));

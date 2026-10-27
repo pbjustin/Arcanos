@@ -603,6 +603,44 @@ describe('honesty compatibility at final delivery', () => {
     }
   });
 
+  describe.each(['answer', 'partial_refusal'] as const)('combined caveats in %s mode', responseMode => {
+    const reasoningHonesty = { ...canonRequirement, responseMode,
+      blockedSubtasks: [...canonRequirement.blockedSubtasks, 'verify current external state'],
+      userVisibleCaveats: [...canonRequirement.userVisibleCaveats, "I can't verify current external state here without live access."],
+    };
+    it.each([
+      "The supplied canon does not establish the titleholder; I can't verify current status if live access is unavailable.",
+      "I can't verify current status if live access is unavailable; the supplied canon does not establish the titleholder.",
+      "The supplied canon does not establish the titleholder, and I can't verify current external state here.",
+      "The supplied canon does not establish the titleholder and I can't verify current external state here.",
+      "I can't verify current external state here, and the supplied canon does not establish the titleholder.",
+    ])('recognizes independent canon and live limitations: %s', message => {
+      const raw = JSON.stringify({ message });
+      expect(validate(raw, flags, reasoningHonesty)).toBe(raw);
+      expect(enforceFinalStageHonesty(message, reasoningHonesty, flags).text).toBe(message);
+      for (const preservePresentation of [true, false]) {
+        const final = enforceFinalStageHonestyAndMinimalism({
+          text: message, userPrompt: '', capabilityFlags: flags, outputControls: controls,
+          reasoningHonesty, preservePresentation,
+        });
+        if (preservePresentation) expect(final.text).toBe(message);
+        for (const caveat of reasoningHonesty.userVisibleCaveats) {
+          expect(final.text.split(caveat).length - 1).toBeLessThanOrEqual(1);
+        }
+        expect(final.blockedOrRewrittenClaims).toEqual([]);
+      }
+    });
+    if (responseMode === 'partial_refusal') {
+      it.each([
+        "Canon does not establish the titleholder; that assertion is false; I can't verify current status if live access is unavailable.",
+        "If the archive is incomplete:\nCanon does not establish the titleholder, and I can't verify current external state here.",
+      ])('retains canon context rejection beside a valid live limitation: %s', message => {
+        expect(() => validate(JSON.stringify({ message }), flags, reasoningHonesty))
+          .toThrow(expect.objectContaining({ reason: 'missing_required_limitation' }));
+      });
+    }
+  });
+
   it('selects supplied-canon metadata without treating JSON status as live state', () => {
     expect(bookerHonesty.blockedSubtasks).toEqual(['establish the requested facts from supplied canon']);
     expect(bookerHonesty.userVisibleCaveats).toEqual(["I can't establish the requested facts from supplied canon."]);
