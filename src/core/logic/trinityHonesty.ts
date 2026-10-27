@@ -555,10 +555,10 @@ function rewriteUnsupportedCurrentExternalStateSections(params: {
   };
 }
 
-function hasExplicitLimitationLanguage(text: string): boolean {
-  // Recognize missing canon at the caveat seam without granting a claim exemption.
+function hasExplicitLimitationLanguage(text: string, includeMissingCanon = false): boolean {
+  // Only caveat insertion recognizes missing canon; claim checks retain their prior scope.
   return LIMITATION_LANGUAGE_PATTERN.test(text)
-    || /\bcanon\s+does\s+not\s+establish\b/i.test(text);
+    || (includeMissingCanon && /\bcanon\s+does\s+not\s+establish\b/i.test(text));
 }
 
 function normalizeScopeToken(value: string): string {
@@ -1408,7 +1408,7 @@ function rewriteUnsupportedClaims(params: {
 function ensureRequiredLimitation(text: string, reasoningHonesty: TrinityReasoningHonesty): string {
   if (
     reasoningHonesty.responseMode === 'partial_refusal' &&
-    !hasExplicitLimitationLanguage(text) &&
+    !hasExplicitLimitationLanguage(text, true) &&
     reasoningHonesty.userVisibleCaveats.length > 0
   ) {
     const separator = /^\s*(?:\*\*|__)?\d+[.)]\s/u.test(text)
@@ -2152,7 +2152,7 @@ export function enforceFinalStageHonesty(
   const leadingDisclaimers: string[] = [];
   const partialRefusalLead = buildPartialRefusalLead(reasoningHonesty);
 
-  if (partialRefusalLead && !hasExplicitLimitationLanguage(text)) {
+  if (partialRefusalLead && !hasExplicitLimitationLanguage(text, true)) {
     leadingDisclaimers.push(partialRefusalLead);
   }
   if ((blockedCategories.has('live_verification') || blockedCategories.has('current_external_state')) && !/live or current external information/i.test(text)) {
