@@ -556,7 +556,9 @@ function rewriteUnsupportedCurrentExternalStateSections(params: {
 }
 
 function hasExplicitLimitationLanguage(text: string): boolean {
-  return LIMITATION_LANGUAGE_PATTERN.test(text);
+  // Recognize missing canon at the caveat seam without granting a claim exemption.
+  return LIMITATION_LANGUAGE_PATTERN.test(text)
+    || /\bcanon\s+does\s+not\s+establish\b/i.test(text);
 }
 
 function normalizeScopeToken(value: string): string {
@@ -738,7 +740,16 @@ function isArtifactInstruction(text: string): boolean {
 /** A fully consumed denial describes missing verification, not performed work.
  * Never let a denial prefix qualify another clause or a self-claim in its subject. */
 function isExplicitVerificationDenial(text: string): boolean {
-  const denial = text.match(/^([a-z][a-z0-9-]*(?:\s+[a-z][a-z0-9-]*){0,7})\s+(?:(?:is|are|was|were|remains?)\s+not|(?:has|have|had)\s+not\s+been)\s+(?:checked|verified|confirmed|reviewed|validated)(?:\s+(?:yet|here|independently))?[.!]?$/i);
+  // Keep coordinated execution claims together for exact evidence matching.
+  // A denial may share a review unit with a supplied job's pending state,
+  // never an unrelated assertion or another action hidden beside the denial.
+  const clauses = text.split(/;\s*/u);
+  if (clauses.length > 1) {
+    return clauses.some(isExplicitVerificationDenial) && clauses.every(clause =>
+      isExplicitVerificationDenial(clause)
+      || /^(?:the\s+)?supplied\s+(?:record|ledger|snapshot|data|evidence)\s+(?:shows?|lists?|states?|reports?)\s+(?:the\s+)?job\s+(?:(?:as|is)\s+)?(?:queued|pending|running|incomplete)[.!]?$/i.test(clause));
+  }
+  const denial = text.match(/^([a-z][a-z0-9-]*(?:\s+[a-z][a-z0-9-]*){0,7})\s+(?:(?:is|are|was|were|remains?)\s+not|(?:has|have|had)\s+not\s+been)\s+(?:checked|verified|confirmed|reviewed|validated)(?:\s+(?:yet|here|independently))?[.!;]?$/i);
   const subject = denial?.[1];
   return Boolean(subject && !/\b(?:i|we|and|but|then|however)\b/i.test(subject)
     && !/\b(?:is|are|was|were|be|been|being|has|have|had|appears?|looks?|remains?|will|shall|can|could|may|might|must|would|should|deployed|ran|executed|saved|persisted|stored|wrote|called|updated|inserted|deleted|committed|queried|inspected)\b/i.test(subject)
@@ -1001,8 +1012,11 @@ function allowsProvidedDataVerificationClaim(
   text: string,
   capabilityFlags: TrinityCapabilityFlags
 ): boolean {
+  // A validated input attribute describes software behavior, not work performed
+  // by this backend. Other verification words and action checks remain active.
+  const describesValidatedPrefix = /^(?:(?:this|the)\s+(?:function|utility|snippet)\s+)?(?:generates?|builds?|returns?)\s+(?:uuid(?:-based)?\s+)?(?:identifiers?|ids?|strings?)\s+with\s+an?\s+(?:optional\s+)?validated\s+prefix[.!]?$/i.test(text);
   return (
-    capabilityFlags.canVerifyProvidedData &&
+    (capabilityFlags.canVerifyProvidedData || describesValidatedPrefix) &&
     LIVE_VERIFICATION_PATTERN.test(text) &&
     !impliesCurrentExternalStateClaim(text)
   );
@@ -1394,7 +1408,7 @@ function rewriteUnsupportedClaims(params: {
 function ensureRequiredLimitation(text: string, reasoningHonesty: TrinityReasoningHonesty): string {
   if (
     reasoningHonesty.responseMode === 'partial_refusal' &&
-    !LIMITATION_LANGUAGE_PATTERN.test(text) &&
+    !hasExplicitLimitationLanguage(text) &&
     reasoningHonesty.userVisibleCaveats.length > 0
   ) {
     const separator = /^\s*(?:\*\*|__)?\d+[.)]\s/u.test(text)
