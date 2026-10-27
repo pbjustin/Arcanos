@@ -883,7 +883,7 @@ describe('native PR preview import boundary', () => {
   it.each([
     ['fixed issuer', "issuer: 'https://dev-etfsljoipfurdij6.us.auth0.com/'", "issuer: 'https://unreviewed.invalid/'"],
     ['fixed public JWKS', "jwksUrl: 'https://dev-etfsljoipfurdij6.us.auth0.com/.well-known/jwks.json'", "jwksUrl: 'https://unreviewed.invalid/.well-known/jwks.json'"],
-    ['fixed OAuth client', "oauthClientId: 'tpc_rDnRcT3dA8wyZwEAZ8wLCa'", "oauthClientId: 'unreviewed-client'"],
+    ['fixed OAuth client', "oauthClientId: 'tpc_rDnRcT3dA8wyZwEAZ8wLCa'", "oauthClientId: 'unreviewed-client'"], // gitleaks:allow -- public OAuth client identifier.
     ['remote verifier', 'createBookerTokenVerifierCore(configuration, verification)', 'createBookerTokenVerifierCore(configuration, { ...verification, keyResolver: () => undefined })'],
     ['canonical resource', 'CHATGPT_BOOKER_RESOURCE: origin + BOOKER_MCP_PATH', "CHATGPT_BOOKER_RESOURCE: 'https://unreviewed.invalid/chatgpt/booker/mcp'"],
     ['owner binding', 'CHATGPT_BOOKER_OWNER_SUBJECT: ownerSubject', "CHATGPT_BOOKER_OWNER_SUBJECT: '*'"],

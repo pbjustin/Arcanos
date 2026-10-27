@@ -53,3 +53,6 @@ b37f8ae9cf249fbdeb58cf9e8614214bf5e11ae4:tests/live-validation-gaming-adapter.te
 40adb7b5179b006b8adae51152760654682bc72c:scripts/check-native-pr-preview-imports.mjs:generic-api-key:905
 40adb7b5179b006b8adae51152760654682bc72c:scripts/check-native-pr-preview-imports.mjs:generic-api-key:906
 40adb7b5179b006b8adae51152760654682bc72c:scripts/check-native-pr-preview-imports.mjs:generic-api-key:907
+# Public native OAuth client identifier and its mutation-test fixture; neither is a credential.
+7843242c26475a4830cd26f51b4f2bbd78a4ae7d:src/bookerMcpRealAuthPreview.ts:generic-api-key:9
+7843242c26475a4830cd26f51b4f2bbd78a4ae7d:tests/native-pr-preview-import-boundary.test.js:generic-api-key:795

@@ -6,7 +6,7 @@ import { BOOKER_MCP_PATH, BOOKER_METADATA_PATH } from './shared/chatgpt/bookerMc
 export const BOOKER_REAL_AUTH_PREVIEW_CONFIG = Object.freeze({
   issuer: 'https://dev-etfsljoipfurdij6.us.auth0.com/',
   jwksUrl: 'https://dev-etfsljoipfurdij6.us.auth0.com/.well-known/jwks.json',
-  oauthClientId: 'tpc_rDnRcT3dA8wyZwEAZ8wLCa',
+  oauthClientId: 'tpc_rDnRcT3dA8wyZwEAZ8wLCa', // gitleaks:allow -- public OAuth client identifier.
   universeId: 'booker-auth0-preview-1566',
 });
 export const BOOKER_REAL_AUTH_PREVIEW_EVIDENCE_PATH = '/chatgpt/booker/preview-evidence';
