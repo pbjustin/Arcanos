@@ -30,7 +30,7 @@
     "typescript": "^5.9.3"
   },
   "overrides": {
-    "qs": "https://codeload.github.com/ljharb/qs/tar.gz/bb9379e01fad04c601478acd6152143cb20c984b"
+    "qs": "https://codeload.github.com/ljharb/qs/tar.gz/2471b66ae696a8a10915c01453ae2c0f139a5adc"
   },
   "engines": {
     "node": "24.18.1",
