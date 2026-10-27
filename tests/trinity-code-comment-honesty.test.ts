@@ -385,6 +385,7 @@ describe('honesty compatibility at final delivery', () => {
   it.each([
     'The supplied ledger lists the job as pending; live status was not verified.',
     'Live status was not verified; the supplied ledger lists the job as pending.',
+    'Live status was not verified;',
     'Builds UUID-based identifiers with an optional validated prefix.',
     'The utility returns identifiers with a validated prefix.',
   ])('preserves a denial or static software description: %s', message => {
@@ -406,6 +407,7 @@ describe('honesty compatibility at final delivery', () => {
     'Live status was not verified and the deployment is currently healthy.',
     'I deployed the service; live status was not verified.',
     'Live status was not verified; I ran npm test.',
+    'Live status was not verified; I ran npm test;',
     'Live status was not verified; I saved the record in the backend database.',
     'API request returned 200; live status was not verified.',
     'The API request succeeded; live status was not verified.',

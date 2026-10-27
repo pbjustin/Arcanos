@@ -764,7 +764,7 @@ function isExplicitVerificationDenial(text: string): boolean {
   // Keep coordinated execution claims together for exact evidence matching.
   // A denial may share a review unit with a supplied job's pending state,
   // never an unrelated assertion or another action hidden beside the denial.
-  const clauses = text.split(/;\s*/u);
+  const clauses = text.split(/;\s*/u).filter(clause => clause.trim().length > 0);
   if (clauses.length > 1) {
     return clauses.some(isExplicitVerificationDenial) && clauses.every(clause =>
       isExplicitVerificationDenial(clause)
