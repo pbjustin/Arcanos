@@ -1509,9 +1509,22 @@ function buildPreferredLimitationSegment(
 
 function compressLimitationSegments(text: string, reasoningHonesty: TrinityReasoningHonesty): string {
   const seenCategories = new Set<LimitationCategory>();
+  const canonScopes = [...reasoningHonesty.blockedSubtasks, ...reasoningHonesty.userVisibleCaveats]
+    .filter(scope => /\bcanon\b/i.test(scope));
   return transformHonestySegments(text, segment => {
     const limitationCategory = classifyLimitationCategory(segment);
     if (!limitationCategory) {
+      return segment;
+    }
+    const preferredSegment = buildPreferredLimitationSegment(limitationCategory, reasoningHonesty) ?? ensureSingleSentence(segment);
+    // A compound canon limitation can also carry a live caveat. Keep the canon
+    // scope when the preferred sentence for the primary category would lose it.
+    const losesRequiredCanonScope = canonScopes.some(scope => {
+      const requirement = { ...reasoningHonesty, blockedSubtasks: [], userVisibleCaveats: [scope] };
+      return hasExplicitLimitationLanguage(segment, requirement) && !hasExplicitLimitationLanguage(preferredSegment, requirement);
+    });
+    if (losesRequiredCanonScope) {
+      seenCategories.add(limitationCategory);
       return segment;
     }
     //audit Assumption: the final answer should keep at most one concise limitation per limitation category; failure risk: stacked caveats crowd out the achievable answer; expected invariant: duplicate live/backend/persistence limitations collapse to one preferred sentence; handling strategy: keep the first category instance and replace it with the most specific caveat available from reasoning metadata.
@@ -1519,7 +1532,6 @@ function compressLimitationSegments(text: string, reasoningHonesty: TrinityReaso
       return null;
     }
     seenCategories.add(limitationCategory);
-    const preferredSegment = buildPreferredLimitationSegment(limitationCategory, reasoningHonesty) ?? ensureSingleSentence(segment);
     return preferredSegment;
   });
 }

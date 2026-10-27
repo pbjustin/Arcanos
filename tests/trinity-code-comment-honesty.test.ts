@@ -624,11 +624,29 @@ describe('honesty compatibility at final delivery', () => {
           reasoningHonesty, preservePresentation,
         });
         if (preservePresentation) expect(final.text).toBe(message);
+        expect(final.text).toMatch(/\bcanon\b[^.!?]*\bdoes not establish\b|\bcan't establish\b[^.!?]*\bcanon\b/i);
+        expect(final.text).toMatch(/\bcan(?:not|'t)\s+verify\b[^.!?]*\bcurrent\b/i);
         for (const caveat of reasoningHonesty.userVisibleCaveats) {
           expect(final.text.split(caveat).length - 1).toBeLessThanOrEqual(1);
         }
         expect(final.blockedOrRewrittenClaims).toEqual([]);
       }
+    });
+    it('preserves the canon/live subset when persistence is also required', () => {
+      const allScopes = { ...reasoningHonesty,
+        blockedSubtasks: [...reasoningHonesty.blockedSubtasks, 'save the record in the database'],
+        userVisibleCaveats: [...reasoningHonesty.userVisibleCaveats, 'Database writes are unavailable here.'],
+      };
+      const message = "The supplied canon does not establish the titleholder, and I can't verify current external state here. Database writes are unavailable here.";
+      const final = enforceFinalStageHonestyAndMinimalism({
+        text: message, userPrompt: '', capabilityFlags: flags, outputControls: controls,
+        reasoningHonesty: allScopes,
+      });
+      expect(final.text).toMatch(/\bcanon\b[^.!?]*\bdoes not establish\b|\bcan't establish\b[^.!?]*\bcanon\b/i);
+      expect(final.text).toContain("I can't verify");
+      expect(final.text).toContain('Database writes are unavailable');
+      expect(validate(JSON.stringify({ message: final.text }), flags, { ...allScopes, responseMode: 'partial_refusal' }))
+        .toBe(JSON.stringify({ message: final.text }));
     });
     if (responseMode === 'partial_refusal') {
       it.each([
