@@ -501,4 +501,125 @@ describe('honesty compatibility at final delivery', () => {
     expect(() => validateCanon(raw, bookerFlags, bookerHonesty))
       .toThrow(expect.objectContaining({ reason: 'schema_mismatch' }));
   });
+
+  const canonRequirement = {
+    ...honesty, responseMode: 'partial_refusal' as const,
+    blockedSubtasks: ['establish the requested facts from supplied canon'],
+    userVisibleCaveats: ["I can't establish the requested facts from supplied canon."],
+  };
+  const canonMentions = [
+    'It is false that canon does not establish the titleholder; Lyric is the champion.',
+    'It is not true that canon does not establish the titleholder.',
+    'The claim that canon does not establish the titleholder is incorrect.',
+    'I deny that canon does not establish the titleholder.',
+    '"Canon does not establish the titleholder."',
+    "'Canon does not establish the titleholder.'",
+    '`Canon does not establish the titleholder.`',
+    '> Canon does not establish the titleholder.',
+    'If canon does not establish the titleholder, ask again.',
+    'Suppose canon does not establish the titleholder.',
+    'For example: canon does not establish the titleholder.',
+    'For example:\nCanon does not establish the titleholder.',
+    'Canon does not establish the titleholder; that assertion is false.',
+    'Canon does not establish the titleholder. That statement is incorrect.',
+    'Canon does not establish the titleholder only if the archive is incomplete.',
+    'If the archive is incomplete:\nCanon does not establish the titleholder.',
+    '“Example sentence:\nCanon does not establish the titleholder.\n”',
+    "'Example sentence:\nCanon does not establish the titleholder.\n'",
+    'Canon does not establish the titleholder; I reject that statement.',
+    'Canon does not establish the titleholder is wrong.',
+  ];
+  it.each(canonMentions)('does not count a negated, quoted or hypothetical canon mention: %s', message => {
+    const first = enforceFinalStageHonesty(message, canonRequirement, bookerFlags);
+    expect(first.text).not.toBe(message);
+    for (const preservePresentation of [true, false]) {
+      const final = enforceFinalStageHonestyAndMinimalism({
+        text: message, userPrompt: prompt, capabilityFlags: bookerFlags, outputControls: bookerControls,
+        reasoningHonesty: canonRequirement, preservePresentation,
+      });
+      expect(final.text).toContain(canonRequirement.userVisibleCaveats[0]);
+    }
+    expect(() => validate(JSON.stringify({ message }), bookerFlags, canonRequirement))
+      .toThrow(expect.objectContaining({ reason: 'missing_required_limitation' }));
+    expect(validate(JSON.stringify({ message }), bookerFlags, honesty)).toBe(JSON.stringify({ message }));
+  });
+
+  it.each([
+    'Canon does not establish the titleholder.',
+    'The supplied canon does not establish the titleholder.',
+    'Current Notion-backed canon does not establish the champion or established challenger; the retrieved excerpt identifies neither.',
+    'The supplied Notion excerpt does not establish the current champion or challenger; the spreadsheet is unverified.',
+    'The supplied Notion excerpt establishes neither the current champion nor the established challenger.',
+  ])('accepts an affirmative source-scoped canon limitation: %s', message => {
+    const raw = JSON.stringify({ message });
+    expect(validate(raw, bookerFlags, canonRequirement)).toBe(raw);
+    expect(enforceFinalStageHonesty(message, canonRequirement, bookerFlags, 'EXECUTE_TASK', true).text).toBe(message);
+  });
+
+  const unrelatedRequirements = [
+    { label: 'live verification', blocked: 'verify current external state',
+      caveat: "I can't verify current external state here without live access.", jsonCaveat: "I can't verify current external state here without live access." },
+    { label: 'execution', blocked: 'confirm backend state or run backend actions',
+      caveat: "I can't confirm backend state or run backend actions here.", jsonCaveat: 'Backend execution is unavailable here.' },
+    { label: 'persistence', blocked: 'save the record in the database',
+      caveat: "I can't save the record in the database here.", jsonCaveat: 'Database writes are unavailable here.' },
+  ];
+  it.each(unrelatedRequirements)('requires the selected $label caveat despite missing-canon text', requirement => {
+    const reasoningHonesty = { ...honesty, responseMode: 'partial_refusal' as const,
+      blockedSubtasks: [requirement.blocked], userVisibleCaveats: [requirement.caveat] };
+    const message = 'The supplied canon does not establish the titleholder.';
+    expect(enforceFinalStageHonesty(message, reasoningHonesty, flags).text).not.toBe(message);
+    for (const preservePresentation of [true, false]) {
+      const final = enforceFinalStageHonestyAndMinimalism({
+        text: message, userPrompt: '', capabilityFlags: flags, outputControls: controls,
+        reasoningHonesty, preservePresentation,
+      });
+      expect(final.text).toContain(requirement.caveat);
+    }
+    expect(() => validate(JSON.stringify({ message }), flags, reasoningHonesty))
+      .toThrow(expect.objectContaining({ reason: 'missing_required_limitation' }));
+    const withCaveat = JSON.stringify({ message: `${requirement.jsonCaveat} ${message}` });
+    expect(validate(withCaveat, flags, reasoningHonesty)).toBe(withCaveat);
+  });
+
+  it('requires both canon and live caveats when both scopes are selected', () => {
+    const reasoningHonesty = { ...canonRequirement,
+      blockedSubtasks: [...canonRequirement.blockedSubtasks, 'verify current external state'],
+      userVisibleCaveats: [...canonRequirement.userVisibleCaveats, "I can't verify current external state here without live access."],
+    };
+    const message = 'The supplied canon does not establish the titleholder.';
+    expect(() => validate(JSON.stringify({ message }), flags, reasoningHonesty))
+      .toThrow(expect.objectContaining({ reason: 'missing_required_limitation' }));
+    const raw = JSON.stringify({ message: `${message} I can't verify current external state here without live access.` });
+    expect(validate(raw, flags, reasoningHonesty)).toBe(raw);
+    for (const preservePresentation of [true, false]) {
+      const final = enforceFinalStageHonestyAndMinimalism({
+        text: message, userPrompt: '', capabilityFlags: flags, outputControls: controls,
+        reasoningHonesty, preservePresentation,
+      });
+      expect(final.text).toContain("I can't verify current external state here without live access.");
+    }
+  });
+
+  it('selects supplied-canon metadata without treating JSON status as live state', () => {
+    expect(bookerHonesty.blockedSubtasks).toEqual(['establish the requested facts from supplied canon']);
+    expect(bookerHonesty.userVisibleCaveats).toEqual(["I can't establish the requested facts from supplied canon."]);
+  });
+
+  it.each([
+    'Compare current competitor pricing using the supplied canon.',
+    'Check current service status using supplied Notion canon.',
+    'Check current deployment status using supplied canon.',
+    'Check the current status of the production web server using supplied canon.',
+    'Check the current status of the production web server using supplied canon; do not invent missing canon.',
+  ])('retains live requirements when a real external request also mentions canon: %s', userPrompt => {
+    const outputControls = deriveTrinityOutputControls(userPrompt, { answerMode: 'direct' });
+    const reasoningHonesty = prepareTrinityDirectAnswerHonesty({
+      candidateText: '', userPrompt, capabilityFlags: bookerFlags, outputControls,
+    }).reasoningHonesty;
+    expect(reasoningHonesty.blockedSubtasks).toContain('verify current external state');
+    expect(() => validate(JSON.stringify({ message: 'The supplied canon does not establish the titleholder.' }),
+      bookerFlags, reasoningHonesty, { userPrompt, outputControls }))
+      .toThrow(expect.objectContaining({ reason: 'missing_required_limitation' }));
+  });
 });
