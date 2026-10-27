@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       authorization_json:
-        description: Expiring owner authorization for exact PR 1566 Booker synthetic acceptance
+        description: Expiring owner authorization for exact PR 1566 Booker preview acceptance
         required: true
         type: string
   pull_request_target:
@@ -53,6 +53,10 @@ jobs:
       head_sha: ${{ steps.receipt.outputs.head_sha }}
       web_base_url: ${{ steps.receipt.outputs.web_base_url }}
       worker_base_url: ${{ steps.receipt.outputs.worker_base_url }}
+      profile: ${{ steps.receipt.outputs.profile }}
+      environment_id: ${{ steps.receipt.outputs.environment_id }}
+      environment_name: ${{ steps.receipt.outputs.environment_name }}
+      config_digest: ${{ steps.receipt.outputs.config_digest }}
     steps:
       - name: Validate exact owner input before checkout
         env:
@@ -86,6 +90,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_PR_PREVIEW_LIFECYCLE_API_TOKEN }}
+          ARCANOS_PREVIEW_BOOKER_AUTH0_OWNER_SUBJECT: ${{ secrets.RAILWAY_PREVIEW_BOOKER_AUTH0_OWNER_SUBJECT }}
         run: >-
           node scripts/railway-pr-preview-lifecycle.mjs manual-draft
           --action reconcile
@@ -98,7 +103,9 @@ jobs:
           import { appendFileSync, readFileSync } from 'node:fs';
           const receipt = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/manual-booker-preview/deployment.json`, 'utf8'));
           if (receipt.status !== 'VERIFIED' || receipt.prNumber !== 1566) throw new Error('MANUAL_PREVIEW_NOT_VERIFIED');
-          for (const [key, value] of Object.entries({ head_sha: receipt.headSha, web_base_url: receipt.webBaseUrl, worker_base_url: receipt.workerBaseUrl })) {
+          for (const [key, value] of Object.entries({ head_sha: receipt.headSha, web_base_url: receipt.webBaseUrl, worker_base_url: receipt.workerBaseUrl,
+            profile: receipt.profile ?? 'synthetic', environment_id: receipt.environmentId,
+            environment_name: receipt.environmentName ?? 'pr-676861-1566', config_digest: receipt.configDigest ?? 'none' })) {
             if (typeof value !== 'string' || /[\r\n]/.test(value)) throw new Error('MANUAL_PREVIEW_OUTPUT_INVALID');
             appendFileSync(process.env.GITHUB_OUTPUT, `${key}=${value}\n`);
           }
@@ -113,28 +120,32 @@ jobs:
           retention-days: 10
 
   manual-booker-verify:
-    name: Verify exact deployed Booker transport without credentials
+    name: Verify synthetic transport or hold the exact real-OAuth discovery target
     needs: manual-booker-deploy
     if: needs.manual-booker-deploy.result == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 40
     permissions:
       contents: read
     steps:
       - name: Check out exact accepted head without stored credentials
+        if: needs.manual-booker-deploy.outputs.profile != 'auth0-discovery-v1'
         uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
         with:
           ref: ${{ needs.manual-booker-deploy.outputs.head_sha }}
           persist-credentials: false
       - name: Set up pinned Node.js
+        if: needs.manual-booker-deploy.outputs.profile != 'auth0-discovery-v1'
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24.18.1'
       - name: Install verifier dependencies without lifecycle scripts or credentials
+        if: needs.manual-booker-deploy.outputs.profile != 'auth0-discovery-v1'
         run: >-
           env -i PATH="$PATH" HOME="$RUNNER_TEMP" LANG=C LC_ALL=C
           npm ci --ignore-scripts --include=dev --no-audit --no-fund
       - name: Exercise the actual deployed route with the bounded credential-free verifier
+        if: needs.manual-booker-deploy.outputs.profile != 'auth0-discovery-v1'
         env:
           ACCEPTED_SHA: ${{ needs.manual-booker-deploy.outputs.head_sha }}
           WEB_BASE_URL: ${{ needs.manual-booker-deploy.outputs.web_base_url }}
@@ -146,8 +157,13 @@ jobs:
           --web-base-url "$WEB_BASE_URL" --worker-base-url "$WORKER_BASE_URL"
           --total-timeout-ms 120000
           --execute --allow-network > "$RUNNER_TEMP/booker-mcp-verification.json"
+      - name: Keep the real-OAuth discovery target available for the bounded owner checks
+        if: needs.manual-booker-deploy.outputs.profile == 'auth0-discovery-v1'
+        # Owner PKCE and real bearer requests run locally. No user token enters Actions.
+        # Cleanup below remains mandatory even when the owner cannot finish sign-in.
+        run: sleep 1800
       - name: Retain synthetic acceptance evidence
-        if: always()
+        if: always() && needs.manual-booker-deploy.outputs.profile != 'auth0-discovery-v1'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: manual-booker-preview-verification

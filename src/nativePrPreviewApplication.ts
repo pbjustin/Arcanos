@@ -42,6 +42,7 @@ import { assertGenerativeModelPolicyPreviewFixture } from './shared/gpt/generati
 import { handleChatGptTutorPreviewRequest } from './shared/chatgpt/chatgptTutorPreviewFixture.js';
 import { handleGamingMcpPreviewRequest } from './shared/chatgpt/gamingMcpPreviewFixture.js';
 import { createBookerMcpPreviewFixture, BOOKER_PREVIEW_EVIDENCE_PATH } from './bookerMcpPreviewFixture.js';
+import { createBookerMcpRealAuthPreview } from './bookerMcpRealAuthPreview.js';
 import { BOOKER_MCP_PATH, BOOKER_METADATA_PATH } from './shared/chatgpt/bookerMcpContract.js';
 
 import {
@@ -522,6 +523,8 @@ export interface NativePrPreviewApplicationOptions {
   readinessState: NativePrPreviewReadinessState;
   /** Trusted canonical deployment origin supplied only by the sealed PR1566 launcher. */
   bookerOrigin?: string;
+  /** Explicit owner-authorized Auth0 discovery profile; no tool execution is admitted. */
+  bookerAuth0Discovery?: { ownerSubject: string };
   notionConnectivityProbe?: () => Promise<
     BackstageNotionPreviewConnectivityResult
   >;
@@ -9465,8 +9468,12 @@ export function createNativePrPreviewApplication(
   const fixtureRepository = createSealedFixtureRepository();
   const iosGatewayFixture = createIosGatewayPreviewFixture(options.identity);
   const iosGatewayRawBodies = new WeakMap<express.Request, string>();
-  const bookerFixture = options.identity.prNumber === 1566 && options.bookerOrigin
-    ? createBookerMcpPreviewFixture(options.bookerOrigin) : undefined;
+  if (options.bookerAuth0Discovery !== undefined && (options.identity.prNumber !== 1566 || !options.bookerOrigin)) {
+    throw new Error('BOOKER_REAL_AUTH_PREVIEW_CONFIGURATION_INVALID');
+  }
+  const bookerFixture = options.bookerAuth0Discovery !== undefined
+    ? createBookerMcpRealAuthPreview({ origin: options.bookerOrigin!, ownerSubject: options.bookerAuth0Discovery.ownerSubject })
+    : options.identity.prNumber === 1566 && options.bookerOrigin ? createBookerMcpPreviewFixture(options.bookerOrigin) : undefined;
   const respondIosGatewayFixture = (request: express.Request, response: express.Response) => {
     const result = iosGatewayFixture.handle({
       method: request.method,
@@ -9514,6 +9521,11 @@ export function createNativePrPreviewApplication(
     const chatGptGamingPath = rawPath === NATIVE_PR_PREVIEW_CHATGPT_GAMING_CONTRACT.path;
     const bookerFixturePath = Boolean(bookerFixture) && [BOOKER_MCP_PATH, BOOKER_METADATA_PATH, BOOKER_PREVIEW_EVIDENCE_PATH].includes(rawPath);
     const bookerBearerPath = bookerFixturePath && (rawPath === BOOKER_MCP_PATH || rawPath === BOOKER_PREVIEW_EVIDENCE_PATH);
+    if (options.bookerAuth0Discovery !== undefined && !bookerFixturePath
+      && !['GET /health', 'GET /healthz', 'GET /readyz'].includes(routeKey)) {
+      sendFixedNotFound(request, response);
+      return;
+    }
     const mcpProtocolVersion = request.header('mcp-protocol-version');
     const sourceFixture = request.header(
       NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.fixtureHeader
@@ -9584,7 +9596,7 @@ export function createNativePrPreviewApplication(
       || rawPath === NATIVE_PR_PREVIEW_SESSION_CONTEXT_CONTRACT.contractPath
       || chatGptTutorPath
       || chatGptGamingPath
-      || bookerFixturePath
+      || (bookerFixturePath && options.bookerAuth0Discovery === undefined)
     ) {
       response.setHeader(
         NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.name,

@@ -179,8 +179,17 @@ export const GAMING_COMPOSITION_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
   }),
 ]);
 
-// Exact emitted closure of the shared Booker transport, verifier and inert fixture.
+// Exact emitted closure of the shared Booker transport, verifier and contained profiles.
 export const BOOKER_MCP_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
+  Object.freeze({
+    filePath: 'dist/bookerMcpRealAuthPreview.js',
+    imports: Object.freeze({
+      'express': Object.freeze(['default:express']),
+      './routes/chatgptBookerMcpCore.js': Object.freeze(['createChatGptBookerMcpRouterCore:createChatGptBookerMcpRouterCore']),
+      './chatgpt/bookerAuthCore.js': Object.freeze(['bookerAuthChallenge:bookerAuthChallenge', 'createBookerTokenVerifierCore:createBookerTokenVerifierCore', 'readBookerAuthConfigurationCore:readBookerAuthConfigurationCore']),
+      './shared/chatgpt/bookerMcpContract.js': Object.freeze(['BOOKER_MCP_PATH:BOOKER_MCP_PATH', 'BOOKER_METADATA_PATH:BOOKER_METADATA_PATH']),
+    }),
+  }),
   Object.freeze({
     filePath: 'packages/protocol/dist/src/chatgptBooker.js',
     imports: Object.freeze({

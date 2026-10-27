@@ -46,6 +46,14 @@ fallback or fabricated official output.
 
 See [configuration](CONFIGURATION.md#optional-private-chatgpt-booker-resource)
 and [migration, parity and acceptance gates](chatgpt-migration/booker/README.md).
+
+The owner-authorized isolated preview's `auth0-discovery-v1` mode serves this
+same transport and remote JWT verifier with all execution denied. Its
+authenticated `GET /chatgpt/booker/preview-evidence` exposes only aggregate
+denial/effect counters and the distinct `chatgpt-booker-auth0-discovery/v1`
+proof. It reveals no owner or universe and is absent from normal composition.
+Successful discovery in that mode proves neither functional backend execution
+nor an installed ChatGPT connection.
 Source tests do not prove OAuth provisioning, deployed operation or installation.
 
 ## Gaming hybrid knowledge Actions

@@ -761,6 +761,7 @@ describe('native PR preview import boundary', () => {
     'src/routes/chatgptBookerMcpCore.ts',
     'src/shared/chatgpt/bookerMcpContract.ts',
     'src/bookerMcpPreviewFixture.ts',
+    'src/bookerMcpRealAuthPreview.ts',
     'src/shared/backstage/backstageMatchSimulationCore.ts',
     'src/shared/backstage/backstageNotionScopeIndex.ts',
     'src/shared/http/clientDisconnectAbort.ts',
@@ -786,6 +787,23 @@ describe('native PR preview import boundary', () => {
       'src/core/db/index.ts', 'src/services/openai/clientBridge.ts', 'src/services/backstage-booker.ts']) {
       expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(filePath);
     }
+  });
+
+  it.each([
+    ['fixed issuer', "issuer: 'https://dev-etfsljoipfurdij6.us.auth0.com/'", "issuer: 'https://unreviewed.invalid/'"],
+    ['fixed public JWKS', "jwksUrl: 'https://dev-etfsljoipfurdij6.us.auth0.com/.well-known/jwks.json'", "jwksUrl: 'https://unreviewed.invalid/.well-known/jwks.json'"],
+    ['fixed OAuth client', "oauthClientId: 'tpc_rDnRcT3dA8wyZwEAZ8wLCa'", "oauthClientId: 'unreviewed-client'"],
+    ['remote verifier', 'createBookerTokenVerifierCore(configuration, verification)', 'createBookerTokenVerifierCore(configuration, { ...verification, keyResolver: () => undefined })'],
+    ['canonical resource', 'CHATGPT_BOOKER_RESOURCE: origin + BOOKER_MCP_PATH', "CHATGPT_BOOKER_RESOURCE: 'https://unreviewed.invalid/chatgpt/booker/mcp'"],
+    ['owner binding', 'CHATGPT_BOOKER_OWNER_SUBJECT: ownerSubject', "CHATGPT_BOOKER_OWNER_SUBJECT: '*'"],
+    ['execution denial', "throw new Error('BOOKER_PREVIEW_EXECUTION_DISABLED')", 'return undefined'],
+  ])('pins the real Auth0 profile %s without widening the synthetic graph', async (_name, before, after) => {
+    const filePath = 'src/bookerMcpRealAuthPreview.ts';
+    const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
+    expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+    expect(findUnsafeRuntimeSyntax(filePath, replaceRequired(sourceText, before, after))).toEqual(
+      expect.arrayContaining([expect.stringContaining('critical entry file semantic digest')])
+    );
   });
 
   it.each(BOOKER_MCP_PREVIEW_DIST_IMPORT_CONTRACT)(
@@ -2850,14 +2868,14 @@ describe('native PR preview import boundary', () => {
     async (insertion) => {
       const sourceText = await readNativePreviewChildSource();
       const marker = [
-        '): NativePrPreviewIdentity & { host: string; port: number; bookerOrigin?: string } {',
+        '): NativePrPreviewIdentity & { host: string; port: number; bookerOrigin?: string; bookerAuth0Discovery?: { ownerSubject: string } } {',
         '  if (',
       ].join('\n');
       const mutatedSource = replaceRequired(
         sourceText,
         marker,
         [
-          '): NativePrPreviewIdentity & { host: string; port: number; bookerOrigin?: string } {',
+          '): NativePrPreviewIdentity & { host: string; port: number; bookerOrigin?: string; bookerAuth0Discovery?: { ownerSubject: string } } {',
           `  ${insertion}`,
           '  if (',
         ].join('\n')

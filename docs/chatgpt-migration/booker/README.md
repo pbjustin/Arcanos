@@ -97,6 +97,42 @@ Notion/SQL behavior, active durable workers, creative quality, production or
 installed ChatGPT acceptance. Keep the PR draft. Mark synthetic acceptance only
 after exact deployment, the full matrix and independent Railway cleanup pass.
 
+## Isolated deployed OAuth discovery
+
+The existing manual draft preview also accepts the explicit
+`auth0-discovery-v1` profile. Its closed owner authorization binds the exact
+head/controller, a fresh six-hex `attemptId`, the independent owner's subject
+digest and the configuration digest. It creates `pr-<attemptId>-1566` rather
+than reusing a former preview hostname. The original synthetic profile and
+ordinary PR admission remain unchanged.
+
+Only the new preview web instance receives the version marker and independently
+approved owner subject. The raw subject comes from the temporary protected
+`RAILWAY_PREVIEW_BOOKER_AUTH0_OWNER_SUBJECT` environment secret; dispatch inputs,
+receipts and workflow outputs contain its digest only. The issuer, JWKS URL,
+existing OAuth client and disposable universe are fixed by the reviewed profile.
+The resource is the controller-attested HTTPS origin plus `/chatgpt/booker/mcp`.
+Do not pass bearer tokens through Railway variables, Actions or artifacts.
+
+This mode mounts the same production MCP router and unchanged remote JWKS
+verifier, with execution and provider admission denied. Only process health,
+readiness, Booker metadata, MCP and the authenticated aggregate
+`/chatgpt/booker/preview-evidence` are reachable. It creates no jobs and imports
+no provider, Notion or database adapter. The proof version is
+`chatgpt-booker-auth0-discovery/v1`; it does not emit the synthetic fixture marker.
+The workflow holds the owned target for at most 30 minutes for local owner PKCE
+and bounded MCP checks, then performs the existing receipt-bound cleanup.
+
+Correct discovery needs an Auth0 API identifier equal to that fresh deployed
+resource, its two Booker permissions and existing client/owner grants. The
+local-only `.invalid` audience cannot substitute for the live resource. Auth0
+API identifiers are immutable, so a new temporary audience requires explicit
+approval; never change shared Tutor/Gaming policies or weaken audience checks.
+Keep real-token, synthetic negative, local-only and deployed results separate.
+After the probe, verify Railway absence and former-host failure independently,
+remove only the temporary owner-secret and branch-policy additions made for the
+run, and identify retained Auth0 configuration and consent separately.
+
 ## Live OAuth and private ChatGPT acceptance plan
 
 **Draft plan; no live steps executed by preparing this document.** The source

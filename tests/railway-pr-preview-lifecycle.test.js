@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 import yaml from 'js-yaml';
 
 import {
@@ -13,6 +14,7 @@ import {
   discoverRailwayPrPreviewNumbers,
   reconcileRailwayPrPreview,
   runManualDraftPreview,
+  bookerAuth0PreviewConfigDigest,
   validateManualDraftPreviewAuthorization,
   validateBasePreviewEnvironment,
   validateLifecycleAuthority,
@@ -418,6 +420,12 @@ describe('owner-authorized manual Booker draft preview', () => {
   const draft = () => pullRequest({ number: 1566, draft: true, labels: [],
     head: { ref: 'feat/backstage-booker-mcp', sha: HEAD_SHA, repo: { full_name: CONTRACT.repository } },
     base: { ref: 'main', sha: 'c'.repeat(40), repo: { full_name: CONTRACT.repository } } });
+  const ownerSubject = 'auth0|offline-booker-owner';
+  const auth0Authorization = (patch = {}) => {
+    const binding = { profile: 'auth0-discovery-v1', attemptId: 'a12bc3',
+      ownerSubjectSha256: createHash('sha256').update(ownerSubject).digest('hex') };
+    return { ...authorization(), ...binding, configDigest: bookerAuth0PreviewConfigDigest(binding), ...patch };
+  };
 
   it('separates the scoped credential, credential-free verifier, and always-run receipt cleanup jobs', () => {
     const workflow = yaml.load(fs.readFileSync(workflowPath, 'utf8'));
@@ -445,6 +453,17 @@ describe('owner-authorized manual Booker draft preview', () => {
     expect(cleanup.steps.find(step => step.env?.RAILWAY_API_TOKEN).run).toContain('--deployment');
     expect(workflow.concurrency.group).toContain("github.event_name == 'workflow_dispatch' && '1566'");
     expect(workflow.jobs['run-event-preview-lifecycle'].if).not.toContain('workflow_dispatch');
+    expect(credentialSteps[0].env.ARCANOS_PREVIEW_BOOKER_AUTH0_OWNER_SUBJECT)
+      .toBe('${{ secrets.RAILWAY_PREVIEW_BOOKER_AUTH0_OWNER_SUBJECT }}');
+    expect(JSON.stringify(deploy.outputs)).not.toContain('OWNER_SUBJECT');
+    expect(JSON.stringify(verify)).not.toContain('OWNER_SUBJECT');
+    expect(JSON.stringify(cleanup)).not.toContain('OWNER_SUBJECT');
+    for (const step of verify.steps.filter(step => step.run?.includes('npm ci') || step.run?.includes('booker-mcp-preview-e2e'))) {
+      expect(step.if).toContain("profile != 'auth0-discovery-v1'");
+    }
+    const hold = verify.steps.find(step => step.run?.includes('sleep 1800'));
+    expect(hold.if).toContain("profile == 'auth0-discovery-v1'");
+    expect(verify['timeout-minutes']).toBe(40);
   });
 
   it('verifies local owner authentication and admin permission without accepting a bot token', async () => {
@@ -481,14 +500,27 @@ describe('owner-authorized manual Booker draft preview', () => {
       async validateAuthority() { calls.push('authority'); },
       async readBaseEnvironment() { return {}; }, validateBaseEnvironment() {},
       async listEnvironments() { return target ? [target] : []; },
-      async createEnvironment() {
+      async createEnvironment(input) {
         calls.push('create');
         target = JSON.parse(JSON.stringify(environment()).replaceAll(String(PR_NUMBER), '1566')
           .replaceAll(HEAD_REF, 'feat/backstage-booker-mcp'));
+        const oldName = target.name;
+        target.name = input.name;
+        for (const edge of target.serviceInstances.edges) {
+          for (const domain of edge.node.domains.serviceDomains) domain.domain = domain.domain.replace(oldName, input.name);
+        }
         return target;
       },
       async readEnvironment() { return target; },
       async removeAndVerifyTriggers() { calls.push('triggers'); },
+      configureManualBookerAuth0: RailwayGraphqlApi.prototype.configureManualBookerAuth0,
+      async graphql(_query, { input }) {
+        calls.push(input.name.endsWith('DISCOVERY') ? 'configure:mode' : 'configure:owner');
+        expect(input).toMatchObject({ projectId: CONTRACT.projectId, environmentId: PREVIEW_ENVIRONMENT_ID,
+          serviceId: CONTRACT.services.web.id, skipDeploys: true });
+        target.config.services[input.serviceId].variables[input.name] = { value: input.value };
+        return { variableUpsert: true };
+      },
       async deployExact({ serviceId }) {
         const role = serviceId === CONTRACT.services.worker.id ? 'worker' : 'web';
         calls.push(`deploy:${role}`);
@@ -596,6 +628,174 @@ describe('owner-authorized manual Booker draft preview', () => {
       .rejects.toThrow('RAILWAY_PR_PREVIEW_MANUAL_AUTHORIZATION_EXPIRED');
     expect(f.calls).not.toContain('deploy:worker');
     expect(f.receipts[0]).toMatchObject({ status: 'NOT_VERIFIED', environmentId: PREVIEW_ENVIRONMENT_ID });
+  });
+
+  it('binds the Auth0 profile to fresh attempt domains and configures only the owned web before worker-first deploy', async () => {
+    const f = fixture();
+    const input = auth0Authorization();
+    const receipt = await runManualDraftPreview({ action: 'reconcile', authorization: input, identity, ...f, ownerSubject });
+    expect(receipt).toMatchObject({ status: 'VERIFIED', profile: 'auth0-discovery-v1', attemptId: 'a12bc3',
+      environmentName: 'pr-a12bc3-1566', configDigest: input.configDigest, ownerSubjectSha256: input.ownerSubjectSha256,
+      webBaseUrl: 'https://arcanos-v2-pr-a12bc3-1566.up.railway.app',
+      workerBaseUrl: 'https://arcanos-worker-pr-a12bc3-1566.up.railway.app' });
+    expect(f.calls.filter(call => /^(configure:|deploy:)/u.test(call)))
+      .toEqual(['configure:mode', 'configure:owner', 'deploy:worker', 'deploy:web']);
+    expect(f.target.config.services[CONTRACT.services.worker.id].variables).toEqual({ ARCANOS_PROCESS_KIND: { value: 'worker' } });
+    expect(Object.keys(f.target.config.services[CONTRACT.services.web.id].variables).sort()).toEqual([
+      'ARCANOS_PREVIEW_BOOKER_AUTH0_DISCOVERY', 'ARCANOS_PREVIEW_BOOKER_AUTH0_OWNER_SUBJECT', 'ARCANOS_PROCESS_KIND',
+    ]);
+    expect(JSON.stringify(f.receipts)).not.toContain(ownerSubject);
+    await expect(runManualDraftPreview({ action: 'reconcile', authorization: input, identity, ...f, ownerSubject }))
+      .rejects.toThrow('RAILWAY_PR_PREVIEW_MANUAL_EXISTING_ENVIRONMENT');
+    f.expire(); f.changePr({ draft: false });
+    await expect(runManualDraftPreview({ action: 'cleanup', authorization: input, identity, ...f, deploymentReceipt: receipt }))
+      .resolves.toMatchObject({ deleted: true, status: 'VERIFIED' });
+  });
+
+  it.each([
+    { attemptId: '676861' }, { attemptId: 'abc' }, { attemptId: 'A12BC3' }, { attemptId: 123456 }, { ownerSubjectSha256: 'bad' },
+    { configDigest: 'd'.repeat(64) }, { profile: 'unknown' }, { rawOwner: ownerSubject },
+  ])('rejects an invalid Auth0 binding before platform access: %j', patch => {
+    expect(() => validateManualDraftPreviewAuthorization(auth0Authorization(patch), identity, { now: () => clock })).toThrow();
+  });
+
+  it.each([undefined, '', 'auth0|unapproved-owner', ' padded ', 'bad\nsubject'])(
+    'rejects a missing or unapproved private owner before any platform operation', async value => {
+      const f = fixture();
+      await expect(runManualDraftPreview({ action: 'reconcile', authorization: auth0Authorization(), identity, ...f,
+        ownerSubject: value })).rejects.toThrow('RAILWAY_PR_PREVIEW_MANUAL_AUTH0_CONFIG_INVALID');
+      expect(f.calls).toEqual([]);
+    });
+
+  it('rejects former hosts and profile-less ownership validation of the new profile', async () => {
+    const f = fixture(), input = auth0Authorization();
+    await runManualDraftPreview({ action: 'reconcile', authorization: input, identity, ...f, ownerSubject });
+    const snapshot = validateManualDraftPreviewAuthorization(input, identity, { now: () => clock });
+    expect(() => validateOwnedPreviewEnvironment(f.target, { prNumber: 1566, headRef: 'feat/backstage-booker-mcp' })).toThrow();
+    const domain = f.target.serviceInstances.edges[0].node.domains.serviceDomains[0];
+    domain.domain = 'arcanos-worker-pr-676861-1566.up.railway.app';
+    expect(() => validateOwnedPreviewEnvironment(f.target, { prNumber: 1566, headRef: 'feat/backstage-booker-mcp',
+      manualAuthorization: snapshot, requireAuth0Config: true })).toThrow('RAILWAY_PR_PREVIEW_OWNERSHIP_MISMATCH');
+  });
+
+  it.each(['missing-owner', 'worker-owner', 'wrong-owner', 'provider-secret', 'shared-owner'])(
+    'refuses deployment when Auth0 configuration is incomplete or crosses isolation: %s', async mode => {
+      const f = fixture();
+      f.railway.configureManualBookerAuth0 = async function () {
+        const variables = f.target.config.services[CONTRACT.services.web.id].variables;
+        variables.ARCANOS_PREVIEW_BOOKER_AUTH0_DISCOVERY = { value: 'v1' };
+        if (mode !== 'missing-owner') variables.ARCANOS_PREVIEW_BOOKER_AUTH0_OWNER_SUBJECT = { value: ownerSubject };
+        if (mode === 'worker-owner') f.target.config.services[CONTRACT.services.worker.id].variables
+          .ARCANOS_PREVIEW_BOOKER_AUTH0_OWNER_SUBJECT = { value: ownerSubject };
+        if (mode === 'wrong-owner') variables.ARCANOS_PREVIEW_BOOKER_AUTH0_OWNER_SUBJECT = { value: 'auth0|wrong' };
+        if (mode === 'provider-secret') variables.OPENAI_API_KEY = { value: 'offline-forbidden' };
+        if (mode === 'shared-owner') f.target.config.sharedVariables.owner = { value: ownerSubject };
+      };
+      await expect(runManualDraftPreview({ action: 'reconcile', authorization: auth0Authorization(), identity, ...f, ownerSubject }))
+        .rejects.toThrow('RAILWAY_PR_PREVIEW_OWNERSHIP_MISMATCH');
+      expect(f.calls.filter(call => call.startsWith('deploy:'))).toEqual([]);
+    });
+
+  it.each(['mode', 'owner'])('cleans a receipt-owned strict partial config after the %s write fails', async failure => {
+    const f = fixture(), input = auth0Authorization();
+    const write = f.railway.graphql.bind(f.railway);
+    f.railway.graphql = async (query, variables) => {
+      if (variables.input.name.endsWith(failure === 'mode' ? 'DISCOVERY' : 'OWNER_SUBJECT')) {
+        throw new RailwayPrPreviewLifecycleError('RAILWAY_PR_PREVIEW_MANUAL_AUTH0_CONFIG_FAILED');
+      }
+      return write(query, variables);
+    };
+    await expect(runManualDraftPreview({ action: 'reconcile', authorization: input, identity, ...f, ownerSubject }))
+      .rejects.toThrow('RAILWAY_PR_PREVIEW_MANUAL_AUTH0_CONFIG_FAILED');
+    expect(f.calls.filter(call => call.startsWith('deploy:'))).toEqual([]);
+    const receipt = f.receipts.at(-1);
+    expect(receipt).toMatchObject({ environmentName: 'pr-a12bc3-1566', status: 'NOT_VERIFIED', environmentId: PREVIEW_ENVIRONMENT_ID });
+    await expect(runManualDraftPreview({ action: 'cleanup', authorization: input, identity, ...f, deploymentReceipt: receipt }))
+      .resolves.toMatchObject({ deleted: true });
+  });
+
+  it.each(['profile', 'attemptId', 'configDigest', 'ownerSubjectSha256', 'environmentName', 'issuedAt', 'expiresAt'])(
+    'rejects cleanup with a changed public receipt binding: %s', async field => {
+      const f = fixture(), input = auth0Authorization();
+      const receipt = await runManualDraftPreview({ action: 'reconcile', authorization: input, identity, ...f, ownerSubject });
+      await expect(runManualDraftPreview({ action: 'cleanup', authorization: input, identity, ...f,
+        deploymentReceipt: { ...receipt, [field]: 'changed' } })).rejects.toThrow('RAILWAY_PR_PREVIEW_MANUAL_RECEIPT_INVALID');
+      expect(f.calls).not.toContain('delete');
+    });
+
+  it('requires an unexpired owner authorization before each configuration write and still cleans the partial target', async () => {
+    const f = fixture(), input = auth0Authorization();
+    const write = f.railway.graphql.bind(f.railway);
+    f.railway.graphql = async (...args) => { const result = await write(...args); f.expire(); return result; };
+    await expect(runManualDraftPreview({ action: 'reconcile', authorization: input, identity, ...f, ownerSubject }))
+      .rejects.toThrow('RAILWAY_PR_PREVIEW_MANUAL_AUTHORIZATION_EXPIRED');
+    expect(f.calls.filter(call => call.startsWith('configure:'))).toEqual(['configure:mode']);
+    expect(f.calls.filter(call => call.startsWith('deploy:'))).toEqual([]);
+    await expect(runManualDraftPreview({ action: 'cleanup', authorization: input, identity, ...f,
+      deploymentReceipt: f.receipts.at(-1) })).resolves.toMatchObject({ deleted: true });
+  });
+
+  it('gates fresh-name adapter creation and deletion with the validated profile snapshot', async () => {
+    const f = fixture(), input = auth0Authorization();
+    const snapshot = validateManualDraftPreviewAuthorization(input, identity, { now: () => clock });
+    const target = await f.railway.createEnvironment({ name: 'pr-a12bc3-1566' });
+    const operations = [];
+    const api = new RailwayGraphqlApi({ token: 'workspace-token-for-test-only-000000000000', fetchImpl: async (_url, init) => {
+      const request = JSON.parse(init.body); operations.push(request.query);
+      if (request.query.includes('CreatePreviewLifecycleEnvironment')) return jsonResponse({ data: { environmentCreate: target } });
+      if (request.query.includes('DeletePreviewLifecycleEnvironment')) return jsonResponse({ data: { environmentDelete: true } });
+      throw new Error('Unexpected offline fixture operation.');
+    } });
+    api.listEnvironments = async () => [];
+    const create = { projectId: CONTRACT.projectId, sourceEnvironmentId: CONTRACT.baseEnvironmentId, name: target.name,
+      ephemeral: true, skipInitialDeploys: true, stageInitialChanges: false, applyChangesInBackground: false };
+    await expect(api.createEnvironment(create)).rejects.toThrow('RAILWAY_PR_PREVIEW_CREATE_INPUT_INVALID');
+    await expect(api.deleteAndVerifyEnvironment(target)).rejects.toThrow('RAILWAY_PR_PREVIEW_DELETE_TARGET_INVALID');
+    await expect(api.createEnvironment(create, { ...snapshot })).rejects.toThrow('RAILWAY_PR_PREVIEW_MANUAL_SNAPSHOT_REQUIRED');
+    expect(operations).toHaveLength(0);
+    await expect(api.createEnvironment(create, snapshot)).resolves.toMatchObject({ name: target.name });
+    await expect(api.deleteAndVerifyEnvironment(target, snapshot)).resolves.toBeUndefined();
+    expect(operations).toHaveLength(2);
+  });
+
+  it('refuses a create response that reuses an environment identity from the original inventory', async () => {
+    const f = fixture();
+    f.railway.listEnvironments = async () => f.target ? [f.target]
+      : [{ id: PREVIEW_ENVIRONMENT_ID, name: 'unrelated-existing-environment' }];
+    await expect(runManualDraftPreview({ action: 'reconcile', authorization: auth0Authorization(), identity, ...f, ownerSubject }))
+      .rejects.toThrow('RAILWAY_PR_PREVIEW_CREATE_MISMATCH');
+    expect(f.receipts).toEqual([]);
+    expect(f.calls.some(call => call === 'delete' || call.startsWith('deploy:'))).toBe(false);
+  });
+
+  it.each(['synthetic', 'auth0'])('rejects a %s environment appearing between manual inventory reads without adopting it', async profile => {
+    const f = fixture(), intruder = fixture();
+    const input = profile === 'auth0' ? auth0Authorization() : authorization();
+    const name = profile === 'auth0' ? 'pr-a12bc3-1566' : 'pr-676861-1566';
+    const raced = await intruder.railway.createEnvironment({ name });
+    let inventoryReads = 0;
+    f.railway.listEnvironments = async () => ++inventoryReads === 1 ? [] : [raced];
+    await expect(runManualDraftPreview({ action: 'reconcile', authorization: input, identity, ...f,
+      ...(profile === 'auth0' ? { ownerSubject } : {}) }))
+      .rejects.toThrow('RAILWAY_PR_PREVIEW_MANUAL_EXISTING_ENVIRONMENT');
+    expect(inventoryReads).toBe(2);
+    expect(f.receipts).toEqual([]);
+    expect(f.calls.filter(call => call === 'create' || call === 'triggers' || call === 'delete'
+      || call.startsWith('configure:') || call.startsWith('deploy:'))).toEqual([]);
+  });
+
+  it.each(['synthetic', 'auth0'])('binds %s trigger mutations to the exact newly created receipt identity', async profile => {
+    const f = fixture(), input = profile === 'auth0' ? auth0Authorization() : authorization();
+    f.railway.readEnvironment = async () => JSON.parse(JSON.stringify(f.target)
+      .replaceAll(PREVIEW_ENVIRONMENT_ID, 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'));
+    await expect(runManualDraftPreview({ action: 'reconcile', authorization: input, identity, ...f,
+      ...(profile === 'auth0' ? { ownerSubject } : {}) }))
+      .rejects.toThrow('RAILWAY_PR_PREVIEW_MANUAL_CREATED_SCOPE_REQUIRED');
+    expect(f.receipts).toHaveLength(1);
+    expect(f.receipts[0].environmentId).toBe(PREVIEW_ENVIRONMENT_ID);
+    expect(f.calls.filter(call => call === 'triggers' || call.startsWith('configure:') || call.startsWith('deploy:'))).toEqual([]);
+    expect(f.calls.filter(call => call === 'delete')).toHaveLength(1);
+    expect(f.target).toBeNull();
   });
 });
 

@@ -782,12 +782,25 @@ export function buildNativePrApplicationChildEnvironment(env = process.env) {
   }
 
   const listener = resolveHealthListenerConfig(env);
+  const auth0Mode = env.ARCANOS_PREVIEW_BOOKER_AUTH0_DISCOVERY;
+  const ownerSubject = env.ARCANOS_PREVIEW_BOOKER_AUTH0_OWNER_SUBJECT;
+  const auth0Configured = auth0Mode !== undefined || ownerSubject !== undefined;
+  if (auth0Configured && (preview.prNumber !== 1566 || auth0Mode !== 'v1'
+    || !/^pr-(?!676861)[0-9a-f]{6}-1566$/u.test(env.RAILWAY_ENVIRONMENT_NAME ?? '')
+    || typeof ownerSubject !== 'string' || ownerSubject.length === 0 || ownerSubject.length > 256
+    || ownerSubject !== ownerSubject.trim() || /[\u0000-\u001f\u007f]/u.test(ownerSubject))) {
+    throw new Error('PREVIEW_APPLICATION_BOOKER_AUTH0_CONFIGURATION_INVALID');
+  }
   const childEnvironment = {
     [APPLICATION_PR_PREVIEW_MARKER_ENV]: 'v1',
     ARCANOS_PREVIEW_PR_NUMBER: String(preview.prNumber),
     ARCANOS_PREVIEW_SOURCE_COMMIT: preview.sourceCommit,
     ...(preview.prNumber === 1566 ? {
       ARCANOS_PREVIEW_BOOKER_ORIGIN: `https://${normalizeRailwayPublicDomain(env)}`
+    } : {}),
+    ...(auth0Configured ? {
+      ARCANOS_PREVIEW_BOOKER_AUTH0_DISCOVERY: 'v1',
+      ARCANOS_PREVIEW_BOOKER_AUTH0_OWNER_SUBJECT: ownerSubject
     } : {}),
     [PROCESS_KIND_ENV]: 'web',
     HOST: DEFAULT_HEALTH_HOST,

@@ -1,7 +1,8 @@
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import request from 'supertest';
-import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { exportJWK, generateKeyPair, SignJWT, type JWTPayload } from 'jose';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { createNativePrPreviewApplication } from '../src/nativePrPreviewApplication.js';
@@ -9,6 +10,7 @@ import { BOOKER_MCP_PATH, BOOKER_METADATA_PATH, bookerMcpTools } from '../src/sh
 import { BOOKER_PREVIEW_EVIDENCE_PATH, BOOKER_PREVIEW_PROOF_HEADER, BOOKER_PREVIEW_PROOF_VERSION } from '../src/bookerMcpPreviewFixture.js';
 import { simulateBackstageMatchCore } from '../src/shared/backstage/backstageMatchSimulationCore.js';
 import { BOOKER_PREVIEW_UNIVERSE_ID, signBookerPreviewToken } from '../scripts/booker-mcp-preview-key.mjs';
+import { BOOKER_REAL_AUTH_PREVIEW_CONFIG, BOOKER_REAL_AUTH_PREVIEW_PROOF_VERSION } from '../src/bookerMcpRealAuthPreview.js';
 
 const origin = 'https://arcanos-v2-pr-676861-1566.up.railway.app';
 const resource = origin + BOOKER_MCP_PATH;
@@ -29,6 +31,89 @@ const call = (name: string, input: Record<string, unknown>) => post(rpc('tools/c
 const output = (response: { body: { result: { structuredContent: { statusCode: number; result: Record<string, any> } } } }) => response.body.result.structuredContent;
 const scope = { pageTitle: 'Raw', pagePath: ['Universe', 'Raw'] };
 const roster = [{ name: 'Synthetic A', overall: 90 }, { name: 'Synthetic B', overall: 60 }, { name: 'Synthetic C', overall: 70 }];
+
+describe('contained real Auth0 discovery profile with mocked public JWKS transport', () => {
+  const authOrigin = 'https://arcanos-v2-pr-ab12cd-1566.up.railway.app';
+  const ownerSubject = 'auth0|isolated-preview-owner';
+  const config = BOOKER_REAL_AUTH_PREVIEW_CONFIG;
+  let keys: Awaited<ReturnType<typeof generateKeyPair>>;
+  let jwks: { keys: Awaited<ReturnType<typeof exportJWK>>[] };
+  let jwksRequests: number;
+  let notionProbe: () => Promise<never>;
+  beforeAll(async () => {
+    keys = await generateKeyPair('RS256');
+    jwks = { keys: [{ ...await exportJWK(keys.publicKey), kid: 'auth0-preview-test', alg: 'RS256' }] };
+  });
+  beforeEach(() => {
+    jwksRequests = 0;
+    jest.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      expect(String(input)).toBe(config.jwksUrl); jwksRequests++;
+      return new Response(JSON.stringify(jwks), { headers: { 'Content-Type': 'application/json' } });
+    });
+    notionProbe = jest.fn(async () => { throw new Error('Unexpected Notion request'); });
+    app = createNativePrPreviewApplication({ identity: { prNumber: 1566, sourceCommit: 'a'.repeat(40) }, readinessState,
+      bookerOrigin: authOrigin, bookerAuth0Discovery: { ownerSubject }, notionConnectivityProbe: notionProbe });
+  });
+  const token = async (generate = false, claims: JWTPayload = {}) => {
+    const now = Math.floor(Date.now() / 1_000);
+    return 'Bearer ' + await new SignJWT({ iss: config.issuer, sub: ownerSubject, client_id: config.oauthClientId,
+      aud: authOrigin + BOOKER_MCP_PATH, iat: now, exp: now + 300,
+      scope: 'arcanos:booker:read' + (generate ? ' arcanos:booker:generate' : ''), ...claims })
+      .setProtectedHeader({ alg: 'RS256', typ: 'at+jwt', kid: 'auth0-preview-test' }).sign(keys.privateKey);
+  };
+  it('serves actual metadata, initialization and scope-filtered discovery through unchanged remote JWKS verification', async () => {
+    const metadata = await request(app).get(BOOKER_METADATA_PATH).expect(200);
+    expect(metadata.body).toMatchObject({ resource: authOrigin + BOOKER_MCP_PATH, authorization_servers: [config.issuer] });
+    expect(metadata.headers[BOOKER_PREVIEW_PROOF_HEADER]).toBe(BOOKER_REAL_AUTH_PREVIEW_PROOF_VERSION);
+    expect(metadata.headers['x-arcanos-preview-fixture']).toBeUndefined();
+    await request(app).post(BOOKER_MCP_PATH).set('Content-Type', 'application/json').send('{').expect(401);
+    const reader = await token();
+    const initialized = await post(rpc('initialize', { protocolVersion: '2025-03-26', capabilities: {},
+      clientInfo: { name: 'auth0-profile-test', version: '1' } }), reader);
+    expect(initialized.body.result.serverInfo.name).toBe('arcanos-backstage-booker-private');
+    expect((await post(rpc('tools/list'), reader)).body.result.tools).toHaveLength(4);
+    expect((await post(rpc('tools/list'), await token(true))).body.result.tools).toHaveLength(7);
+    expect(jwksRequests).toBe(1);
+  });
+  it('rejects legacy synthetic JWTs, logical audiences and unauthorized owners without a key fallback', async () => {
+    await post(rpc('tools/list'), authorization).expect(401);
+    await post(rpc('tools/list'), await token(false, { aud: 'https://booker-auth0-pr-1566.invalid/chatgpt/booker/mcp' })).expect(401);
+    await post(rpc('tools/list'), await token(false, { sub: 'auth0|another-owner' })).expect(401);
+  });
+  it('preserves permission and universe rejection before denying all seven tool execution paths', async () => {
+    const reader = await token(); const generator = await token(true); const authUniverse = config.universeId;
+    const denied = await post(rpc('tools/call', { name: 'generateBooking', arguments: { universeId: authUniverse, prompt: 'Denied' } }), reader);
+    expect(denied.body.result.content[0].text).toBe('BOOKER_PERMISSION_DENIED');
+    const cross = await post(rpc('tools/call', { name: 'queryContinuity', arguments: { universeId: 'other-universe', query: 'Denied' } }), generator);
+    expect(cross.body.result.content[0].text).toBe('BOOKER_UNIVERSE_DENIED');
+    const before = await request(app).get(BOOKER_PREVIEW_EVIDENCE_PATH).set('Authorization', reader).expect(200);
+    expect(before.body).toMatchObject({ executorDenials: 0, providerBoundaryDenials: 0 });
+    const inputs = { queryContinuity: { query: 'Denied' }, generateBooking: { prompt: 'Denied' },
+      generateBookingWithHRC: { prompt: 'Denied' }, simulateMatch: { match: { wrestler1: 'A', wrestler2: 'B', matchType: 'Singles' } },
+      getBackstageUniverse: {}, getBackstageStoryline: { storylineKey: 'denied' },
+      getBackstageBookerJobResult: { jobId: '11111111-1111-4111-8111-111111111111', waitForResultMs: 0 } };
+    for (const [name, input] of Object.entries(inputs)) {
+      const response = await post(rpc('tools/call', { name, arguments: { universeId: authUniverse, ...input } }), generator);
+      if (['getBackstageUniverse', 'getBackstageStoryline', 'getBackstageBookerJobResult'].includes(name)) {
+        expect(response.body.result.content[0].text).toBe('BOOKER_UNAVAILABLE');
+      } else expect(response.status).toBe(503);
+    }
+    const evidence = await request(app).get(BOOKER_PREVIEW_EVIDENCE_PATH).set('Authorization', reader).expect(200);
+    expect(evidence.body).toMatchObject({ execution: 'denied', executorDenials: 3, providerBoundaryDenials: 4,
+      providerRequests: 0, notionRequests: 0, databaseRequests: 0, jobOperations: 0, canonWrites: 0 });
+    expect(JSON.stringify(evidence.body)).not.toContain(ownerSubject);
+    await request(app).post('/backstage/generation-contract').send({ fixture: 'notion-authority' }).expect(404);
+    await request(app).post('/chatgpt/mcp').send(rpc('tools/list')).expect(404);
+    expect(notionProbe).not.toHaveBeenCalled();
+  });
+  it('refuses another PR, absent trusted origin or a former synthetic host at composition', () => {
+    for (const changes of [{ identity: { prNumber: 1567, sourceCommit: 'a'.repeat(40) } },
+      { bookerOrigin: undefined }, { bookerOrigin: origin }, { bookerAuth0Discovery: { ownerSubject: ' invalid ' } }]) {
+      expect(() => createNativePrPreviewApplication({ identity: { prNumber: 1566, sourceCommit: 'a'.repeat(40) }, readinessState,
+        bookerOrigin: authOrigin, bookerAuth0Discovery: { ownerSubject }, ...changes })).toThrow('BOOKER_REAL_AUTH_PREVIEW_CONFIGURATION_INVALID');
+    }
+  });
+});
 
 describe('contained Booker actual MCP transport and synthetic OAuth', () => {
   it('publishes exact resource metadata and rejects missing authentication before parsing', async () => {

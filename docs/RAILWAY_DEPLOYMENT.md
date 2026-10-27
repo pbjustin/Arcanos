@@ -6,6 +6,15 @@ same isolated base, worker-first deployment and receipt-bound cleanup. See the
 [Booker synthetic acceptance scope](chatgpt-migration/booker/README.md#isolated-synthetic-preview-for-draft-pr-1566)
 for exact authorization, actual MCP transport fixtures and evidence limits.
 
+Its explicit `auth0-discovery-v1` profile uses the same contained host and
+receipt-bound lifecycle for a fresh `pr-<attemptId>-1566` environment. The web
+role accepts only the approved owner identifier and profile marker; bearer
+tokens remain in local owner PKCE requests. The unchanged production Booker
+transport and remote JWKS verifier serve metadata/initialization/discovery with
+execution denied and a passive worker. The workflow's bounded 30-minute owner
+window always precedes cleanup. See the [deployed OAuth scope](chatgpt-migration/booker/README.md#isolated-deployed-oauth-discovery)
+for the exact-audience prerequisite and temporary configuration cleanup.
+
 ## Overview
 This runbook documents the repository-tracked Railway configuration and release safeguards for Arcanos. Tracked files do not prove the current live project linkage, environment state, or service topology.
 
