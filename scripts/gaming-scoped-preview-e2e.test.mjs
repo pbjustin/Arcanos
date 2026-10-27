@@ -39,8 +39,13 @@ function firstReadinessResponse(url, body = undefined) {
     'x-content-type-options': 'nosniff', 'x-frame-options': 'DENY',
     'x-request-id': correlation.requestId, 'x-trace-id': correlation.traceId,
     [contract.sessionContext.contractProofHeader]: contract.sessionContext.contractProofVersion,
+    [contract.finalOutputIntegrity.reportHeader]: JSON.stringify({
+      proofVersion: contract.finalOutputIntegrity.proofVersion, synthetic: true,
+      delivered: contract.finalOutputIntegrity.delivered, rejected: contract.finalOutputIntegrity.rejected,
+      proseUnchanged: true, listUnchanged: true, prNumber: 1558, sourceCommit: sha,
+    }),
   };
-  for (const key of ['generativeModelPolicy', 'iosDevicePolicy', 'dagMetricsRetention', 'dagTokenAccounting', 'sessionContext']) {
+  for (const key of ['generativeModelPolicy', 'finalOutputIntegrity', 'iosDevicePolicy', 'dagMetricsRetention', 'dagTokenAccounting', 'sessionContext']) {
     headers[contract[key].proofHeader] = contract[key].proofVersion;
   }
   const response = new Response(body ?? JSON.stringify(expectedNativePrPreviewResponseBody(item,

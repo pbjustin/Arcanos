@@ -1415,6 +1415,15 @@ it does not bind caller-controlled `sessionId` values to a tenant.
 - `POST /api/reusables`
 - `GET /api/reusables/health`
 
+The system-review mode on `/brain`, reusable-code generation, predictive-healing
+diagnosis, and structured `/query-finetune` responses declare their final JSON
+contract internally. Trinity validates the emitted JSON without prose or Markdown
+rewrites. Malformed output, schema mismatches, incomplete provider output, and
+unsupported claims fail before successful delivery; no formatting-repair inference
+is added. The system-review prompt includes its existing content schema, while the
+server continues to supply `mode`, `subject`, `reviewVersion`, and `reviewedAt`.
+Ordinary prose and list responses retain their existing processing.
+
 The codebase routes are read-only control-plane inspection, not memory or
 writing-plane traffic. They require the purpose-bound control-plane bearer,
 server-owned operator principal, and `repo:read`; successful responses are

@@ -110,6 +110,49 @@ export const TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
   ].map(filePath => Object.freeze({ filePath, imports: Object.freeze({}) })),
 ]);
 
+// The structured validator shares only Ajv and the already reviewed pure honesty graph.
+export const FINAL_OUTPUT_INTEGRITY_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
+  Object.freeze({
+    filePath: 'dist/shared/gpt/trinityFinalOutputPreviewFixture.js',
+    imports: Object.freeze({
+      '../../core/logic/trinityStructuredOutput.js': Object.freeze([
+        'createTrinityStructuredOutputValidator:createTrinityStructuredOutputValidator',
+        'TrinityStructuredOutputError:TrinityStructuredOutputError',
+      ]),
+      '../../core/logic/trinityHonesty.js': Object.freeze([
+        'createDefaultTrinityReasoningHonesty:createDefaultTrinityReasoningHonesty',
+        'deriveTrinityCapabilityFlags:deriveTrinityCapabilityFlags',
+        'deriveTrinityOutputControls:deriveTrinityOutputControls',
+        'enforceFinalStageHonestyAndMinimalism:enforceFinalStageHonestyAndMinimalism',
+      ]),
+      '../../core/logic/trinityDirectAnswerMode.js': Object.freeze([
+        'applyTrinityDirectAnswerOutputContract:applyTrinityDirectAnswerOutputContract',
+      ]),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/core/logic/trinityStructuredOutput.js',
+    imports: Object.freeze({
+      ajv: Object.freeze(['Ajv:Ajv']),
+      './trinityHonesty.js': Object.freeze([
+        'deriveTrinityOutputControls:deriveTrinityOutputControls',
+        'enforceFinalStageHonesty:enforceFinalStageHonesty',
+        'enforceFinalStageHonestyAndMinimalism:enforceFinalStageHonestyAndMinimalism',
+        'readIntentMode:readIntentMode',
+      ]),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/core/logic/trinityDirectAnswerMode.js',
+    imports: Object.freeze({
+      '../../services/directAnswerMode.js': Object.freeze([
+        'buildDirectAnswerModeSystemInstruction:buildDirectAnswerModeSystemInstruction',
+      ]),
+    }),
+  }),
+  Object.freeze({ filePath: 'dist/services/directAnswerMode.js', imports: Object.freeze({}) }),
+]);
+
 // The CLI core stays at scripts/ in the image. No filesystem/private-input
 // adapters may enter this emitted fixture graph, including through its leaf.
 export const PLUGIN_MIGRATION_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
@@ -401,6 +444,7 @@ export async function findNativePrPreviewDistImportViolations({
     }
   }
   for (const contract of [...TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT,
+    ...FINAL_OUTPUT_INTEGRITY_PREVIEW_DIST_IMPORT_CONTRACT,
     ...PLUGIN_MIGRATION_PREVIEW_DIST_IMPORT_CONTRACT, ...GAMING_MCP_PREVIEW_DIST_IMPORT_CONTRACT,
     ...GAMING_COMPOSITION_PREVIEW_DIST_IMPORT_CONTRACT,
     ...GENERATIVE_MODEL_POLICY_PREVIEW_DIST_IMPORT_CONTRACT,

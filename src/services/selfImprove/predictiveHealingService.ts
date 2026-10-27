@@ -525,6 +525,10 @@ const predictiveHealingAiDecisionSchema = z.object({
   safeToExecute: z.boolean(),
   confidence: z.number().min(0).max(1).optional()
 });
+const predictiveHealingAiFinalOutputContract = {
+  name: 'predictive_healing_ai_decision',
+  schema: z.toJSONSchema(predictiveHealingAiDecisionSchema, { target: 'draft-7', io: 'input' })
+};
 
 type PredictiveHealingAiDecisionPayload = z.infer<typeof predictiveHealingAiDecisionSchema>;
 
@@ -1906,6 +1910,10 @@ async function resolveAiDecision(params: {
       maxOutputTokens: 512,
       runOptions: {
         // A control-plane recommendation uses only the supplied observation.
+        finalOutputContract: predictiveHealingAiFinalOutputContract,
+        // Snapshot fields such as "verified" and "trends" are evidence, not a
+        // request for independent live verification. Keep honesty scoped to the task.
+        directAnswerUserIntentPrompt: 'Select at most one supplied self-healing candidate using only the supplied observation. Recommend an action; do not execute it or claim independent verification.',
         disableMemoryAccess: true,
         disableOptionalSideEffects: true,
         answerMode: 'direct',

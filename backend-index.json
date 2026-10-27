@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-24T04:01:12.423Z",
+  "generatedAt": "2026-10-26T20:14:04.841Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -621,6 +621,9 @@
         },
         {
           "relativePath": "src/core/logic/trinityStages.ts"
+        },
+        {
+          "relativePath": "src/core/logic/trinityStructuredOutput.ts"
         },
         {
           "relativePath": "src/core/logic/trinityTier.ts"
@@ -2994,6 +2997,9 @@
         },
         {
           "relativePath": "src/shared/gpt/priorityGpt.ts"
+        },
+        {
+          "relativePath": "src/shared/gpt/trinityFinalOutputPreviewFixture.ts"
         },
         {
           "relativePath": "src/shared/gpt/trinityReasoningPolicy.ts"
@@ -5983,6 +5989,9 @@
           "relativePath": "tests/system-diagnostics-local-agent-boundary.test.ts"
         },
         {
+          "relativePath": "tests/system-review-output-contract.test.ts"
+        },
+        {
           "relativePath": "tests/system-state-http-boundary.test.ts"
         },
         {
@@ -6064,10 +6073,19 @@
           "relativePath": "tests/trinity-cancellation.test.ts"
         },
         {
+          "relativePath": "tests/trinity-code-comment-honesty.test.ts"
+        },
+        {
           "relativePath": "tests/trinity-direct-answer-mode.test.ts"
         },
         {
           "relativePath": "tests/trinity-direct-answer-stage.test.ts"
+        },
+        {
+          "relativePath": "tests/trinity-final-output-integrity.test.ts"
+        },
+        {
+          "relativePath": "tests/trinity-final-output-preview-fixture.test.ts"
         },
         {
           "relativePath": "tests/trinity-gaming-intake.test.ts"
@@ -6098,6 +6116,9 @@
         },
         {
           "relativePath": "tests/trinity-status-service.test.ts"
+        },
+        {
+          "relativePath": "tests/trinity-structured-output.test.ts"
         },
         {
           "relativePath": "tests/trinity-writing-pipeline.test.ts"

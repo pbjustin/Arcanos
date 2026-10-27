@@ -57,6 +57,10 @@ const reusableCodeResponseSchema = z.object({
     })
   )
 });
+const reusableCodeFinalOutputContract = {
+  name: 'reusable_code_snippets',
+  schema: z.toJSONSchema(reusableCodeResponseSchema, { target: 'draft-7', io: 'input' })
+};
 /**
  * Resolve the requested targets for code generation.
  *
@@ -268,7 +272,8 @@ export async function generateReusableCodeSnippets(
       runtimeBudget: createRuntimeBudget(),
       runOptions: {
         answerMode: 'direct',
-        strictUserVisibleOutput: true
+        strictUserVisibleOutput: true,
+        finalOutputContract: reusableCodeFinalOutputContract
       }
     }
   });
@@ -297,7 +302,8 @@ export async function generateReusableCodeSnippets(
         runtimeBudget: createRuntimeBudget(),
         runOptions: {
           answerMode: 'direct',
-          strictUserVisibleOutput: true
+          strictUserVisibleOutput: true,
+          finalOutputContract: reusableCodeFinalOutputContract
         }
       }
     });

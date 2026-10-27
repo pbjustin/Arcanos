@@ -32,6 +32,12 @@ export interface TrinityMetaTokens {
 
 export type TrinityReasoningEffort = 'none' | 'low' | 'medium';
 
+/** Internal caller-owned final JSON shape; never derived from model output. */
+export interface TrinityStructuredOutputContract {
+  name: string;
+  schema: Record<string, unknown>;
+}
+
 export interface TrinityReasoningConfig {
   effort: TrinityReasoningEffort;
 }
@@ -259,6 +265,8 @@ export interface TrinityStageObservation {
 }
 
 export interface TrinityRunOptions {
+  /** Server-owned final JSON contract, never selected from public request data or evidence. */
+  finalOutputContract?: TrinityStructuredOutputContract;
   /** Optional diagnostic observer for the intake, reasoning and final stages. */
   onStage?: (event: Readonly<TrinityStageObservation>) => void;
   /** Server-owned Gaming audit of the composed final text; never read from request JSON. */

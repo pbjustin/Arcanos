@@ -726,7 +726,7 @@ export async function runArcanosCoreQuery(
     const durationMs = Date.now() - startedAt;
     if (shouldRecoverViaCoreDegradedPath(error, durationMs, pipelinePlan)) {
       const primaryTimeoutPhase = resolveCoreFallbackTimeoutPhase(error);
-      if (params.allowTimeoutFallback === false) {
+      if (params.allowTimeoutFallback === false || params.runOptions?.finalOutputContract) {
         logger.warn('[PIPELINE] timeout fallback suppressed', {
           module: 'ARCANOS:CORE',
           sourceEndpoint: params.sourceEndpoint,
