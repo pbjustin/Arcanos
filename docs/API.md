@@ -1,5 +1,61 @@
 # API Guide
 
+## Private ChatGPT Booker resource
+
+`POST /chatgpt/booker/mcp` is a separate, default-disabled Streamable HTTP
+resource. `GET /.well-known/oauth-protected-resource/chatgpt/booker/mcp`
+advertises only its OAuth resource and Booker scopes. Authentication, exact
+owner/universe binding and bounded parsing precede execution. No operator
+catalog, universe discovery or canon-write tool is exposed.
+
+Request bodies are limited to 256 KiB and use strict UTF-8 JSON. Malformed
+UTF-8 returns 400; unsupported media types or character sets return 415 before
+provider admission or tool execution. Valid multibyte text is preserved exactly.
+
+| Tool | Permission and backend behavior |
+| --- | --- |
+| `queryContinuity` | `arcanos:booker:read`; original exact-scope Notion retrieval and synthesis, including coverage and snapshot-bound cursors. |
+| `generateBooking` | Read plus `arcanos:booker:generate`; original protected generation, CLEAR policy and durable queue admission. |
+| `generateBookingWithHRC` | Both scopes; same protected generation with existing HRC evaluation. |
+| `simulateMatch` | Both scopes; existing randomized match and HRC evaluation. Simulation does not save canon. |
+| `getBackstageUniverse` | Read; bounded exact-universe PostgreSQL projection and existing Notion quarantine. |
+| `getBackstageStoryline` | Read; exact key, Unicode pagination and expected-version fence; existing Notion quarantine. |
+| `getBackstageBookerJobResult` | Read; same-job protected result lookup/long-poll, no generation or queue submission. |
+
+Each closed input requires the exact authorized `universeId`. Run-action
+payloads are flattened; generation accepts an optional stable `idempotencyKey`.
+Job results require `jobId`, accept `waitForResultMs` from 0 through 30000, and
+default to 30000. Outputs preserve backend envelopes inside `{statusCode,
+result}`. Pending is accepted work, not failure. Preserve the same job ID and
+poll; an initial transport abort before receiving any ID permits at most one
+identical recovery request. Never submit another generation during continuation.
+Returned legacy `poll` paths identify the backend continuation contract; OAuth
+clients continue through the named MCP result tool using the same universe/job,
+not through the legacy shared-bearer HTTP endpoint. Successful generation must
+carry verified structured completion provenance for that exact universe.
+
+Signed issuer, audience, client registration, subject, expiry and scope are
+verified independently from legacy Builder/Tutor/Gaming/operator credentials.
+Actor identity binds issuer, subject and exact universe across token renewal.
+MCP session IDs and caller strings do not authorize state or jobs. Result reads
+also check the job's protected universe before waiting or materialization.
+Read/generation permissions grant no canon mutations. Existing persistence,
+Notion current-complete admission, authority waiting and failure behavior remain
+backend-owned. No protected failure permits local/conversation/model-memory
+fallback or fabricated official output.
+
+See [configuration](CONFIGURATION.md#optional-private-chatgpt-booker-resource)
+and [migration, parity and acceptance gates](chatgpt-migration/booker/README.md).
+
+The owner-authorized isolated preview's `auth0-discovery-v1` mode serves this
+same transport and remote JWT verifier with all execution denied. Its
+authenticated `GET /chatgpt/booker/preview-evidence` exposes only aggregate
+denial/effect counters and the distinct `chatgpt-booker-auth0-discovery/v1`
+proof. It reveals no owner or universe and is absent from normal composition.
+Successful discovery in that mode proves neither functional backend execution
+nor an installed ChatGPT connection.
+Source tests do not prove OAuth provisioning, deployed operation or installation.
+
 ## Gaming hybrid knowledge Actions
 
 The released `gaming-hybrid-v2` and legacy-compatible `gaming-hybrid-v1` contracts use the existing dedicated Gaming

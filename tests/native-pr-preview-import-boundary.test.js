@@ -6,6 +6,7 @@ import {
   findNativePrPreviewBuildScriptViolations,
   findPreviewDistImportCheckerDigestViolations,
   findGamingMcpProtocolExportViolations,
+  findBookerMcpProtocolExportViolations,
   findRuntimeRequestAbortExportViolations,
   findRuntimeRequestAbortTypeResolutionViolations,
   findUnsafeRuntimeSyntax,
@@ -16,6 +17,7 @@ import {
   GENERATIVE_MODEL_POLICY_PREVIEW_DIST_IMPORT_CONTRACT,
   FINAL_OUTPUT_INTEGRITY_PREVIEW_DIST_IMPORT_CONTRACT,
   GAMING_MCP_PREVIEW_DIST_IMPORT_CONTRACT,
+  BOOKER_MCP_PREVIEW_DIST_IMPORT_CONTRACT,
   GAMING_COMPOSITION_PREVIEW_DIST_IMPORT_CONTRACT,
   ZOD_VALIDATION_PREVIEW_DIST_IMPORT_CONTRACT,
   findTutorHonestyPreviewDistImportSourceViolations,
@@ -687,12 +689,14 @@ describe('native PR preview import boundary', () => {
     }
   });
 
-  it('pins the sealed Tutor peer and admits only reviewed Tutor and Gaming protocol assets', async () => {
+  it('pins the sealed Tutor peer and admits only reviewed Tutor, Gaming and Booker protocol assets', async () => {
     const filePath = 'src/shared/chatgpt/chatgptTutorPreviewFixture.ts';
     const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
     expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toContain(filePath);
     expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES.filter(file => file.startsWith('packages/protocol/')))
       .toEqual([
+        'packages/protocol/schemas/v1/tools/arcanos-booker/contract.schema.json',
+        'packages/protocol/src/chatgptBooker.ts',
         'packages/protocol/schemas/v1/tools/arcanos-tutor.input.schema.json',
         'packages/protocol/schemas/v1/tools/arcanos-tutor.output.schema.json',
         'packages/protocol/schemas/v1/tools/arcanos-gaming/contract.schema.json',
@@ -839,6 +843,103 @@ describe('native PR preview import boundary', () => {
       'scripts/tutor-skill-revision.mjs', 'scripts/tutor-updated-plugin-release.mjs']) {
       expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(excluded);
     }
+  });
+
+  it.each([
+    'src/chatgpt/authCore.ts',
+    'src/chatgpt/bookerAuthCore.ts',
+    'src/chatgpt/bookerCore.ts',
+    'src/routes/chatgptBookerMcpCore.ts',
+    'src/shared/chatgpt/bookerMcpContract.ts',
+    'src/bookerMcpPreviewFixture.ts',
+    'src/bookerMcpRealAuthPreview.ts',
+    'src/shared/backstage/backstageMatchSimulationCore.ts',
+    'src/shared/backstage/backstageNotionScopeIndex.ts',
+    'src/shared/http/clientDisconnectAbort.ts',
+    'packages/protocol/src/chatgptBooker.ts',
+    'scripts/booker-mcp-preview-key.mjs',
+    'scripts/booker-mcp-preview-key.d.mts',
+  ])('pins the actual Booker transport fixture graph and rejects effects in %s', async filePath => {
+    const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toContain(filePath);
+    expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+    for (const addition of ['fetch("https://unreviewed.invalid");', 'process.env.OPENAI_API_KEY;',
+      'import { readFile } from "node:fs/promises";', 'await import("../../app.js");']) {
+      expect(findUnsafeRuntimeSyntax(filePath, `${sourceText}\n${addition}`)).toEqual(
+        expect.arrayContaining([expect.stringContaining('critical entry file semantic digest')])
+      );
+    }
+  });
+
+  it('keeps normal Booker execution and environment/provider adapters outside the preview graph', () => {
+    for (const filePath of ['src/app.ts', 'src/chatgpt/auth.ts', 'src/chatgpt/booker.ts',
+      'src/chatgpt/bookerAuth.ts', 'src/chatgpt/bookerGptAdapter.ts', 'src/routes/chatgptBookerMcp.ts',
+      'src/routes/gptRouter.ts', 'src/platform/runtime/env.ts', 'src/platform/runtime/config.ts',
+      'src/core/db/index.ts', 'src/services/openai/clientBridge.ts', 'src/services/backstage-booker.ts']) {
+      expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(filePath);
+    }
+  });
+
+  it.each([
+    ['fixed issuer', "issuer: 'https://dev-etfsljoipfurdij6.us.auth0.com/'", "issuer: 'https://unreviewed.invalid/'"],
+    ['fixed public JWKS', "jwksUrl: 'https://dev-etfsljoipfurdij6.us.auth0.com/.well-known/jwks.json'", "jwksUrl: 'https://unreviewed.invalid/.well-known/jwks.json'"],
+    ['fixed OAuth client', "oauthClientId: 'tpc_rDnRcT3dA8wyZwEAZ8wLCa'", "oauthClientId: 'unreviewed-client'"], // gitleaks:allow -- public OAuth client identifier.
+    ['remote verifier', 'createBookerTokenVerifierCore(configuration, verification)', 'createBookerTokenVerifierCore(configuration, { ...verification, keyResolver: () => undefined })'],
+    ['canonical resource', 'CHATGPT_BOOKER_RESOURCE: origin + BOOKER_MCP_PATH', "CHATGPT_BOOKER_RESOURCE: 'https://unreviewed.invalid/chatgpt/booker/mcp'"],
+    ['owner binding', 'CHATGPT_BOOKER_OWNER_SUBJECT: ownerSubject', "CHATGPT_BOOKER_OWNER_SUBJECT: '*'"],
+    ['execution denial', "throw new Error('BOOKER_PREVIEW_EXECUTION_DISABLED')", 'return undefined'],
+  ])('pins the real Auth0 profile %s without widening the synthetic graph', async (_name, before, after) => {
+    const filePath = 'src/bookerMcpRealAuthPreview.ts';
+    const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
+    expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+    expect(findUnsafeRuntimeSyntax(filePath, replaceRequired(sourceText, before, after))).toEqual(
+      expect.arrayContaining([expect.stringContaining('critical entry file semantic digest')])
+    );
+  });
+
+  it.each(BOOKER_MCP_PREVIEW_DIST_IMPORT_CONTRACT)(
+    'keeps every emitted Booker import exact in $filePath', contract => {
+      const imports = Object.entries(contract.imports).map(([specifier, bindings]) => {
+        const defaultBinding = bindings.find(binding => binding.startsWith('default:'))?.split(':')[1];
+        const named = bindings.filter(binding => !binding.startsWith('default:')).map(binding => {
+          const [imported, local] = binding.split(':');
+          return imported === local ? imported : `${imported} as ${local}`;
+        });
+        const clause = [defaultBinding, ...(named.length ? [`{ ${named.join(', ')} }`] : [])].filter(Boolean).join(', ');
+        return `import ${clause} from '${specifier}';`;
+      }).join('\n');
+      expect(findTutorHonestyPreviewDistImportSourceViolations(contract, imports)).toEqual([]);
+      for (const addition of ['import "../../app.js";', 'import { readFile } from "node:fs/promises";',
+        'await import("../../services/openai/clientBridge.js");', 'export * from "../../app.js";']) {
+        expect(findTutorHonestyPreviewDistImportSourceViolations(contract, `${imports}\n${addition}`).length)
+          .toBeGreaterThan(0);
+      }
+      if (Object.keys(contract.imports).length) {
+        expect(findTutorHonestyPreviewDistImportSourceViolations(contract, '').length).toBeGreaterThan(0);
+      }
+    }
+  );
+
+  it('rejects absent or broadened Booker protocol leaf exports', async () => {
+    const manifest = JSON.parse(await readFile(new URL('../packages/protocol/package.json', import.meta.url), 'utf8'));
+    expect(findBookerMcpProtocolExportViolations(manifest)).toEqual([]);
+    for (const leaf of [undefined, './dist/src/index.js',
+      { ...manifest.exports['./chatgptBooker'], import: './dist/src/index.js' },
+      { ...manifest.exports['./chatgptBooker'], default: './dist/src/index.js' }]) {
+      expect(findBookerMcpProtocolExportViolations({ ...manifest, exports: { ...manifest.exports, './chatgptBooker': leaf } }))
+        .toEqual(['packages/protocol/package.json: chatgptBooker export must match the reviewed ESM leaf surface']);
+    }
+  });
+
+  it('permits only the exact reviewed Booker-origin environment read in the sealed child builder', async () => {
+    const sourceText = await readRailwayLauncherSource();
+    expect(findUnsafeRuntimeSyntax('scripts/start-railway-service.mjs', sourceText)).toEqual([]);
+    const duplicated = replaceRequired(sourceText,
+      'ARCANOS_PREVIEW_BOOKER_ORIGIN: `https://${normalizeRailwayPublicDomain(env)}`',
+      'ARCANOS_PREVIEW_BOOKER_ORIGIN: `https://${normalizeRailwayPublicDomain(env)}${normalizeRailwayPublicDomain(env)}`');
+    expect(findUnsafeRuntimeSyntax('scripts/start-railway-service.mjs', duplicated)).toEqual(
+      expect.arrayContaining([expect.stringContaining('reviewed mutable process call contract')])
+    );
   });
 
   it.each([
@@ -2872,14 +2973,14 @@ describe('native PR preview import boundary', () => {
     async (insertion) => {
       const sourceText = await readNativePreviewChildSource();
       const marker = [
-        '): NativePrPreviewIdentity & { host: string; port: number } {',
+        '): NativePrPreviewIdentity & { host: string; port: number; bookerOrigin?: string; bookerAuth0Discovery?: { ownerSubject: string } } {',
         '  if (',
       ].join('\n');
       const mutatedSource = replaceRequired(
         sourceText,
         marker,
         [
-          '): NativePrPreviewIdentity & { host: string; port: number } {',
+          '): NativePrPreviewIdentity & { host: string; port: number; bookerOrigin?: string; bookerAuth0Discovery?: { ownerSubject: string } } {',
           `  ${insertion}`,
           '  if (',
         ].join('\n')

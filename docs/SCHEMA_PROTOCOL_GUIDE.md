@@ -48,6 +48,19 @@ schema-catalog family. Query, transient candidate validation, and consequential
 durable ingestion are separate operations. See [Gaming API](API.md#gaming-hybrid-knowledge-actions).
 
 ## Overview
+
+The dedicated Booker MCP contract is
+[`tools/arcanos-booker/contract.schema.json`](../packages/protocol/schemas/v1/tools/arcanos-booker/contract.schema.json).
+Its seven tools flatten the four existing Booker run actions and expose three
+exact, authorized read/continuation operations. All require `universeId`;
+generation can carry an idempotency key. It preserves the canonical module
+schemas and Builder read/result envelopes. Successful OAuth generation requires
+structured completed provenance; the deprecated bare-string success form is
+not accepted by this new boundary. The existing Custom GPT compatibility
+contract remains unchanged. The protocol catalog registers the
+tools; there are no new command IDs, ActionPlan shapes or daemon privileges.
+See [Booker migration](chatgpt-migration/booker/README.md).
+
 Arcanos is schema-first at its public protocol boundary. TypeScript owns the public protocol surface in `packages/protocol/`; Python daemon code consumes that surface through the protocol runtime and backend clients.
 
 ## Prerequisites

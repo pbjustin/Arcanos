@@ -16,6 +16,27 @@ const RUNTIME_TARGET_SEMANTIC_DIGEST =
 
 export const NATIVE_PR_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
   Object.freeze({
+    filePath: 'dist/chatgpt/bookerCore.js',
+    specifier: '../../packages/arcanos-runtime/dist/requestAbort.js',
+    bindings: Object.freeze(["getRequestAbortSignal:getRequestAbortSignal"]),
+  }),
+  Object.freeze({
+    filePath: 'dist/routes/chatgptBookerMcpCore.js',
+    specifier: '../../packages/arcanos-runtime/dist/requestAbort.js',
+    bindings: Object.freeze(["getRequestAbortSignal:getRequestAbortSignal","getRequestRemainingMs:getRequestRemainingMs","runWithRequestAbortTimeout:runWithRequestAbortTimeout"]),
+  }),
+  Object.freeze({
+    filePath: 'dist/bookerMcpPreviewFixture.js',
+    specifier: '../packages/arcanos-runtime/dist/requestAbort.js',
+    bindings: Object.freeze(["getRequestAbortSignal:getRequestAbortSignal"]),
+  }),
+  Object.freeze({
+    filePath: 'dist/shared/http/clientDisconnectAbort.js',
+    specifier: '../../../packages/arcanos-runtime/dist/requestAbort.js',
+    bindings: Object.freeze(["createAbortError:createAbortError","runWithRequestAbortContext:runWithRequestAbortContext"]),
+  }),
+
+  Object.freeze({
     bindings: Object.freeze([
       'getRequestAbortContext:getRequestAbortContext',
       'runWithRequestAbortTimeout:runWithRequestAbortTimeout',
@@ -253,6 +274,230 @@ export const GAMING_COMPOSITION_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
   }),
 ]);
 
+// Exact emitted closure of the shared Booker transport, verifier and contained profiles.
+export const BOOKER_MCP_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
+  Object.freeze({
+    filePath: 'dist/bookerMcpRealAuthPreview.js',
+    imports: Object.freeze({
+      'express': Object.freeze(['default:express']),
+      './routes/chatgptBookerMcpCore.js': Object.freeze(['createChatGptBookerMcpRouterCore:createChatGptBookerMcpRouterCore']),
+      './chatgpt/bookerAuthCore.js': Object.freeze(['bookerAuthChallenge:bookerAuthChallenge', 'createBookerTokenVerifierCore:createBookerTokenVerifierCore', 'readBookerAuthConfigurationCore:readBookerAuthConfigurationCore']),
+      './shared/chatgpt/bookerMcpContract.js': Object.freeze(['BOOKER_MCP_PATH:BOOKER_MCP_PATH', 'BOOKER_METADATA_PATH:BOOKER_METADATA_PATH']),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'packages/protocol/dist/src/chatgptBooker.js',
+    imports: Object.freeze({
+      '../schemas/v1/tools/arcanos-booker/contract.schema.json': Object.freeze(["default:contract"]),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/chatgpt/authCore.js',
+    imports: Object.freeze({
+      'jose': Object.freeze(["createRemoteJWKSet:createRemoteJWKSet","jwtVerify:jwtVerify"]),
+      '../shared/security/opaqueSecret.js': Object.freeze(["timingSafeEqualOpaqueSecret:timingSafeEqualOpaqueSecret"]),
+      '../shared/security/purposeBoundCredential.js': Object.freeze(["PURPOSE_BOUND_CREDENTIAL_ENV_NAMES:PURPOSE_BOUND_CREDENTIAL_ENV_NAMES"]),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/chatgpt/bookerAuthCore.js',
+    imports: Object.freeze({
+      'node:crypto': Object.freeze(["createHash:createHash"]),
+      '../shared/chatgpt/bookerMcpContract.js': Object.freeze(["BOOKER_GENERATE_SCOPE:BOOKER_GENERATE_SCOPE","BOOKER_MCP_PATH:BOOKER_MCP_PATH","BOOKER_METADATA_PATH:BOOKER_METADATA_PATH","BOOKER_READ_SCOPE:BOOKER_READ_SCOPE"]),
+      './authCore.js': Object.freeze(["createScopedChatGptTokenVerifierCore:createScopedChatGptTokenVerifierCore","hasVerifiedChatGptPermission:hasVerifiedChatGptPermission","readHttpsIdentifier:readHttpsIdentifier"]),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/chatgpt/bookerCore.js',
+    imports: Object.freeze({
+      '../../packages/arcanos-runtime/dist/requestAbort.js': Object.freeze(["getRequestAbortSignal:getRequestAbortSignal"]),
+      '../platform/runtime/sessionContext.js': Object.freeze(["runWithSessionContext:runWithSessionContext"]),
+      '../shared/chatgpt/bookerMcpContract.js': Object.freeze(["isBookerMcpInput:isBookerMcpInput","isBookerMcpOutput:isBookerMcpOutput","requiresBookerGenerationPermission:requiresBookerGenerationPermission"]),
+      '../shared/backstage/backstageBookerAsyncContinuation.js': Object.freeze(["buildBackstageBookerProtectedFailureState:buildBackstageBookerProtectedFailureState"]),
+      '../shared/backstage/backstageProtectedFailure.js': Object.freeze(["readProtectedBackstageCompletionProvenance:readProtectedBackstageCompletionProvenance"]),
+      './bookerAuthCore.js': Object.freeze(["bookerPrincipalActorKey:bookerPrincipalActorKey","hasBookerPermission:hasBookerPermission"]),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/platform/runtime/security.js',
+    imports: Object.freeze({
+      'node:crypto': Object.freeze(["default:crypto"]),
+      '../../shared/security/opaqueSecret.js': Object.freeze(["buildAuthenticatedCredentialActorKey:buildAuthenticatedCredentialActorKey"]),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/platform/runtime/sessionContext.js',
+    imports: Object.freeze({
+      'node:async_hooks': Object.freeze(["AsyncLocalStorage:AsyncLocalStorage"]),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/routes/chatgptBookerMcpCore.js',
+    imports: Object.freeze({
+      'express': Object.freeze(["default:express"]),
+      'node:util': Object.freeze(["TextDecoder:TextDecoder"]),
+      '@modelcontextprotocol/sdk/server/index.js': Object.freeze(["Server:Server"]),
+      '@modelcontextprotocol/sdk/server/streamableHttp.js': Object.freeze(["StreamableHTTPServerTransport:StreamableHTTPServerTransport"]),
+      '@modelcontextprotocol/sdk/types.js': Object.freeze(["CallToolRequestSchema:CallToolRequestSchema","ListToolsRequestSchema:ListToolsRequestSchema"]),
+      '../../packages/arcanos-runtime/dist/requestAbort.js': Object.freeze(["getRequestAbortSignal:getRequestAbortSignal","getRequestRemainingMs:getRequestRemainingMs","runWithRequestAbortTimeout:runWithRequestAbortTimeout"]),
+      '../shared/http/clientDisconnectAbort.js': Object.freeze(["createClientDisconnectAbortScope:createClientDisconnectAbortScope"]),
+      '../platform/runtime/security.js': Object.freeze(["createRateLimitMiddleware:createRateLimitMiddleware"]),
+      '../shared/chatgpt/bookerMcpContract.js': Object.freeze(["BOOKER_MCP_PATH:BOOKER_MCP_PATH","BOOKER_METADATA_PATH:BOOKER_METADATA_PATH","bookerMcpTools:bookerMcpTools","isBookerMcpInput:isBookerMcpInput","isBookerMcpOutput:isBookerMcpOutput","isBookerMcpToolName:isBookerMcpToolName","requiresBookerGenerationPermission:requiresBookerGenerationPermission"]),
+      '../chatgpt/bookerAuthCore.js': Object.freeze(["bookerAuthChallenge:bookerAuthChallenge","bookerPrincipalActorKey:bookerPrincipalActorKey","bookerProtectedResourceMetadata:bookerProtectedResourceMetadata","createBookerTokenVerifierCore:createBookerTokenVerifierCore","hasBookerPermission:hasBookerPermission"]),
+      '../chatgpt/bookerCore.js': Object.freeze(["BookerMcpError:BookerMcpError"]),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/services/backstageBookerClear.js',
+    imports: Object.freeze({
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/shared/backstage/backstageBookerAsyncContinuation.js',
+    imports: Object.freeze({
+      './backstageProtectedFailure.js': Object.freeze(["readProtectedBackstageCompletionProvenance:readProtectedBackstageCompletionProvenance","resolveBackstageProtectedFailureCode:resolveBackstageProtectedFailureCode"]),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/shared/backstage/backstageBookerAsyncResultCore.js',
+    imports: Object.freeze({
+      './backstageQueuedJobResultProtection.js': Object.freeze(["isProtectedBackstageQueuedGptJobEnvelope:isProtectedBackstageQueuedGptJobEnvelope","markProtectedBackstageQueuedGptJobResultMaterialized:markProtectedBackstageQueuedGptJobResultMaterialized","resolveProtectedBackstageQueuedGptJobEnvelopeAction:resolveProtectedBackstageQueuedGptJobEnvelopeAction","unprotectBackstageQueuedGptJobOutput:unprotectBackstageQueuedGptJobOutput"]),
+      './backstageBookerAsyncContinuation.js': Object.freeze(["projectBackstageBookerManagedJobResultPayload:projectBackstageBookerManagedJobResultPayload","projectBackstageBookerManagedProtectedFailurePayload:projectBackstageBookerManagedProtectedFailurePayload"]),
+      './backstageProtectedFailure.js': Object.freeze(["readProtectedBackstageCompletionProvenance:readProtectedBackstageCompletionProvenance","readProtectedBackstageFailureCode:readProtectedBackstageFailureCode"]),
+      '../gpt/gptIdempotency.js': Object.freeze(["buildGptIdempotencyScopeHash:buildGptIdempotencyScopeHash","resolvePublicGptJobCreationSurface:resolvePublicGptJobCreationSurface"]),
+      '../gpt/gptJobLifecycle.js': Object.freeze(["isGptJobTerminalStatus:isGptJobTerminalStatus"]),
+      '../gpt/gptJobResult.js': Object.freeze(["buildGptJobResultLookupPayload:buildGptJobResultLookupPayload"]),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/shared/backstage/backstageContinuityQueryCore.js',
+    imports: Object.freeze({
+      './backstageNotionSnapshotStatus.js': Object.freeze(["BACKSTAGE_NOTION_SYNC_ATTEMPT_OUTCOMES:BACKSTAGE_NOTION_SYNC_ATTEMPT_OUTCOMES","BACKSTAGE_NOTION_SYNC_FAILURE_PHASES:BACKSTAGE_NOTION_SYNC_FAILURE_PHASES","BACKSTAGE_NOTION_SYNC_FAILURE_REASONS:BACKSTAGE_NOTION_SYNC_FAILURE_REASONS"]),
+      './backstageNotionSyncCore.js': Object.freeze(["BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT:BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT"]),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/shared/backstage/backstageJobPayloadProtection.js',
+    imports: Object.freeze({
+      'node:crypto': Object.freeze(["createCipheriv:createCipheriv","createDecipheriv:createDecipheriv","createHash:createHash","randomBytes:randomBytes","timingSafeEqual:timingSafeEqual"]),
+      '../security/purposeBoundCredential.js': Object.freeze(["hasConfiguredPurposeBoundCredentialCollision:hasConfiguredPurposeBoundCredentialCollision","resolveConfiguredPurposeBoundCredential:resolveConfiguredPurposeBoundCredential"]),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/shared/backstage/backstageMatchSimulationCore.js',
+    imports: Object.freeze({
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/shared/backstage/backstageNotionScopeIndex.js',
+    imports: Object.freeze({
+      'node:crypto': Object.freeze(["createHash:createHash"]),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/shared/backstage/backstageNotionSnapshotStatus.js',
+    imports: Object.freeze({
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/shared/backstage/backstageNotionSyncCore.js',
+    imports: Object.freeze({
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/shared/backstage/backstageProtectedFailure.js',
+    imports: Object.freeze({
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/shared/backstage/backstageQueuedJobResultProtection.js',
+    imports: Object.freeze({
+      './backstageJobPayloadProtection.js': Object.freeze(["BACKSTAGE_JOB_PAYLOAD_OUTPUT_PURPOSE:BACKSTAGE_JOB_PAYLOAD_OUTPUT_PURPOSE","sealBackstageJobPayload:sealBackstageJobPayload","unsealBackstageJobPayload:unsealBackstageJobPayload"]),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/shared/chatgpt/bookerMcpContract.js',
+    imports: Object.freeze({
+      'ajv/dist/2020.js': Object.freeze(["Ajv2020:Ajv2020"]),
+      '@arcanos/protocol/chatgptBooker': Object.freeze(["CHATGPT_BOOKER_TOOL_NAMES:CHATGPT_BOOKER_TOOL_NAMES","chatGptBookerSchemas:chatGptBookerSchemas"]),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/bookerMcpPreviewFixture.js',
+    imports: Object.freeze({
+      'express': Object.freeze(["default:express"]),
+      'node:crypto': Object.freeze(["createHash:createHash"]),
+      'jose': Object.freeze(["createLocalJWKSet:createLocalJWKSet"]),
+      '../packages/arcanos-runtime/dist/requestAbort.js': Object.freeze(["getRequestAbortSignal:getRequestAbortSignal"]),
+      './routes/chatgptBookerMcpCore.js': Object.freeze(["createChatGptBookerMcpRouterCore:createChatGptBookerMcpRouterCore"]),
+      './chatgpt/bookerCore.js': Object.freeze(["createBookerMcpExecutorCore:createBookerMcpExecutorCore"]),
+      './chatgpt/bookerAuthCore.js': Object.freeze(["bookerPrincipalActorKey:bookerPrincipalActorKey","createBookerTokenVerifierCore:createBookerTokenVerifierCore","readBookerAuthConfigurationCore:readBookerAuthConfigurationCore"]),
+      '../scripts/booker-mcp-preview-key.mjs': Object.freeze(["BOOKER_PREVIEW_CLIENT_ID:BOOKER_PREVIEW_CLIENT_ID","BOOKER_PREVIEW_ISSUER:BOOKER_PREVIEW_ISSUER","BOOKER_PREVIEW_PUBLIC_JWK:BOOKER_PREVIEW_PUBLIC_JWK","BOOKER_PREVIEW_SUBJECT:BOOKER_PREVIEW_SUBJECT","BOOKER_PREVIEW_UNIVERSE_ID:BOOKER_PREVIEW_UNIVERSE_ID"]),
+      './shared/chatgpt/bookerMcpContract.js': Object.freeze(["BOOKER_MCP_PATH:BOOKER_MCP_PATH","BOOKER_METADATA_PATH:BOOKER_METADATA_PATH"]),
+      './shared/backstage/backstageContinuityQueryCore.js': Object.freeze(["buildBackstageContinuityResponse:buildBackstageContinuityResponse","isBackstageContinuityCursorRequestValid:isBackstageContinuityCursorRequestValid"]),
+      './shared/backstage/backstageNotionScopeIndex.js': Object.freeze(["normalizeBackstageNotionScopePath:normalizeBackstageNotionScopePath"]),
+      './shared/backstage/backstageNotionSnapshotStatus.js': Object.freeze(["resolveBackstageNotionSnapshotStatusObservation:resolveBackstageNotionSnapshotStatusObservation"]),
+      './shared/backstage/backstageMatchSimulationCore.js': Object.freeze(["simulateBackstageMatchCore:simulateBackstageMatchCore"]),
+      './services/backstageBookerClear.js': Object.freeze(["BACKSTAGE_BOOKER_CLEAR_GENERATION_POLICY_MARKER:BACKSTAGE_BOOKER_CLEAR_GENERATION_POLICY_MARKER","buildBackstageBookerClearGenerationPolicy:buildBackstageBookerClearGenerationPolicy"]),
+      './shared/backstage/backstageBookerAsyncContinuation.js': Object.freeze(["buildBackstageBookerProtectedFailureState:buildBackstageBookerProtectedFailureState"]),
+      './shared/backstage/backstageProtectedFailure.js': Object.freeze(["buildProtectedBackstageFailureEnvelope:buildProtectedBackstageFailureEnvelope"]),
+      './shared/backstage/backstageBookerAsyncResultCore.js': Object.freeze(["readBackstageBookerAsyncResultCore:readBackstageBookerAsyncResultCore"]),
+      './shared/backstage/backstageQueuedJobResultProtection.js': Object.freeze(["protectBackstageQueuedGptJobOutput:protectBackstageQueuedGptJobOutput"]),
+      './shared/backstage/backstageJobPayloadProtection.js': Object.freeze(["resolveBackstageJobPayloadProtectionConfig:resolveBackstageJobPayloadProtectionConfig","sealBackstageJobPayload:sealBackstageJobPayload"]),
+      './shared/gpt/gptIdempotency.js': Object.freeze(["buildGptIdempotencyScopeHash:buildGptIdempotencyScopeHash"]),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/shared/gpt/gptIdempotency.js',
+    imports: Object.freeze({
+      'node:crypto': Object.freeze(["default:crypto"]),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/shared/gpt/gptJobLifecycle.js',
+    imports: Object.freeze({
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/shared/gpt/gptJobResult.js',
+    imports: Object.freeze({
+      'zod': Object.freeze(["z:z"]),
+      '../jobs/jobLinks.js': Object.freeze(["buildJobResultPollPath:buildJobResultPollPath"]),
+      './gptJobLifecycle.js': Object.freeze(["resolveGptJobLifecycleStatus:resolveGptJobLifecycleStatus"]),
+      '../backstage/backstageQueuedJobResultProtection.js': Object.freeze(["hasProtectedBackstageQueuedGptJobMarker:hasProtectedBackstageQueuedGptJobMarker","isProtectedBackstageQueuedGptJobResultMaterialized:isProtectedBackstageQueuedGptJobResultMaterialized"]),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/shared/http/clientDisconnectAbort.js',
+    imports: Object.freeze({
+      '../../../packages/arcanos-runtime/dist/requestAbort.js': Object.freeze(["createAbortError:createAbortError","runWithRequestAbortContext:runWithRequestAbortContext"]),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/shared/jobs/jobLinks.js',
+    imports: Object.freeze({
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/shared/security/opaqueSecret.js',
+    imports: Object.freeze({
+      'node:crypto': Object.freeze(["createHash:createHash","timingSafeEqual:timingSafeEqual"]),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/shared/security/purposeBoundCredential.js',
+    imports: Object.freeze({
+      './opaqueSecret.js': Object.freeze(["timingSafeEqualOpaqueSecret:timingSafeEqualOpaqueSecret"]),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'scripts/booker-mcp-preview-key.mjs',
+    imports: Object.freeze({
+      'jose': Object.freeze(["SignJWT:SignJWT","importJWK:importJWK"]),
+    }),
+  }),
+]);
+
 function runtimeImportBindings(node) {
   const importClause = node.importClause;
   if (!importClause || importClause.isTypeOnly) {
@@ -448,6 +693,7 @@ export async function findNativePrPreviewDistImportViolations({
     ...PLUGIN_MIGRATION_PREVIEW_DIST_IMPORT_CONTRACT, ...GAMING_MCP_PREVIEW_DIST_IMPORT_CONTRACT,
     ...GAMING_COMPOSITION_PREVIEW_DIST_IMPORT_CONTRACT,
     ...GENERATIVE_MODEL_POLICY_PREVIEW_DIST_IMPORT_CONTRACT,
+    ...BOOKER_MCP_PREVIEW_DIST_IMPORT_CONTRACT,
     ...ZOD_VALIDATION_PREVIEW_DIST_IMPORT_CONTRACT]) {
     try {
       const sourceText = await fs.readFile(path.join(repositoryRoot, contract.filePath), 'utf8');

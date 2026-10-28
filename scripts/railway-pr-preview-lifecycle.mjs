@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 
 import { Buffer } from 'node:buffer';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 
@@ -66,6 +68,11 @@ export const RAILWAY_PR_PREVIEW_CONTRACT = Object.freeze({
 });
 
 const CONTRACT = RAILWAY_PR_PREVIEW_CONTRACT;
+const manualDraftSnapshots = new WeakMap();
+const manualDraftPullRequests = new WeakMap();
+const BOOKER_AUTH0_PROFILE = 'auth0-discovery-v1';
+const BOOKER_AUTH0_MODE_VARIABLE = 'ARCANOS_PREVIEW_BOOKER_AUTH0_DISCOVERY';
+const BOOKER_AUTH0_OWNER_VARIABLE = 'ARCANOS_PREVIEW_BOOKER_AUTH0_OWNER_SUBJECT';
 const ENVIRONMENT_PREFIX_PATTERN = escapeRegex(CONTRACT.environmentPrefix);
 const PROTECTED_ENVIRONMENT_IDS = new Set([
   CONTRACT.baseEnvironmentId,
@@ -302,6 +309,12 @@ const DELETE_TRIGGER_MUTATION = `
   }
 `;
 
+const CONFIGURE_BOOKER_AUTH0_MUTATION = `
+  mutation ConfigurePreviewBookerAuth0($input: VariableUpsertInput!) {
+    variableUpsert(input: $input)
+  }
+`;
+
 const DEPLOY_SERVICE_MUTATION = `
   mutation DeployPreviewLifecycleService(
     $environmentId: String!
@@ -347,6 +360,7 @@ const API_OPERATIONS = new Map([
   [ENVIRONMENT_QUERY, 'PreviewLifecycleEnvironment'],
   [CREATE_ENVIRONMENT_MUTATION, 'CreatePreviewLifecycleEnvironment'],
   [DELETE_TRIGGER_MUTATION, 'DeletePreviewLifecycleTrigger'],
+  [CONFIGURE_BOOKER_AUTH0_MUTATION, 'ConfigurePreviewBookerAuth0'],
   [DEPLOY_SERVICE_MUTATION, 'DeployPreviewLifecycleService'],
   [DEPLOYMENT_QUERY, 'PreviewLifecycleDeployment'],
   [DELETE_ENVIRONMENT_MUTATION, 'DeletePreviewLifecycleEnvironment'],
@@ -631,6 +645,8 @@ function validateEnvironmentConfig(config, {
   allowAnyBranch = false,
   expectedBranches,
   allowCheckSuites,
+  manualAuthorization,
+  requireAuth0Config = false,
   errorCode = 'RAILWAY_PR_PREVIEW_OWNERSHIP_MISMATCH',
 } = {}) {
   const expectedGroup = {
@@ -661,6 +677,9 @@ function validateEnvironmentConfig(config, {
   );
   for (const [role, service] of Object.entries(CONTRACT.services)) {
     const serviceConfig = config.services[service.id];
+    const auth0Web = manualAuthorization?.profile === BOOKER_AUTH0_PROFILE && role === 'web';
+    const auth0Keys = auth0Web ? [BOOKER_AUTH0_MODE_VARIABLE, BOOKER_AUTH0_OWNER_VARIABLE] : [];
+    const configuredKeys = auth0Keys.filter(key => Object.hasOwn(serviceConfig?.variables ?? {}, key));
     const sourceHasExpectedKeys = hasExactKeys(
       serviceConfig?.source,
       ['branch', 'repo']
@@ -690,7 +709,7 @@ function validateEnvironmentConfig(config, {
         && serviceConfig.source.repo === CONTRACT.repository
         && (serviceConfig.source.checkSuites === undefined
           || serviceConfig.source.checkSuites === false)
-        && hasExactKeys(serviceConfig.variables, ['ARCANOS_PROCESS_KIND'])
+        && hasExactKeys(serviceConfig.variables, ['ARCANOS_PROCESS_KIND', ...configuredKeys])
         && hasExactKeys(
           serviceConfig.variables.ARCANOS_PROCESS_KIND,
           ['value']
@@ -698,6 +717,16 @@ function validateEnvironmentConfig(config, {
         && serviceConfig.variables.ARCANOS_PROCESS_KIND.value === role,
       errorCode
     );
+    if (auth0Web) {
+      // Only receipt-bound cleanup may accept an interrupted strict subset; deployment requires both settings.
+      requireCondition((!requireAuth0Config || configuredKeys.length === 2)
+        && configuredKeys.every(key => hasExactKeys(serviceConfig.variables[key], ['value']))
+        && (!configuredKeys.includes(BOOKER_AUTH0_MODE_VARIABLE)
+          || serviceConfig.variables[BOOKER_AUTH0_MODE_VARIABLE].value === 'v1')
+        && (!configuredKeys.includes(BOOKER_AUTH0_OWNER_VARIABLE)
+          || validBookerOwnerSubject(serviceConfig.variables[BOOKER_AUTH0_OWNER_VARIABLE].value,
+            manualAuthorization.ownerSubjectSha256)), errorCode);
+    }
   }
 }
 
@@ -706,10 +735,11 @@ function validatePreviewDomain(domain, {
   requireActive,
   serviceId,
   prNumber,
+  manualAuthorization,
 }) {
   const hostname = domain?.domain;
   const marker = new RegExp(
-    `(?:^|[.-])${ENVIRONMENT_PREFIX_PATTERN}${prNumber}(?:[.-]|$)`,
+    `(?:^|[.-])${escapeRegex(previewEnvironmentName(prNumber, manualAuthorization))}(?:[.-]|$)`,
     'iu'
   );
   requireCondition(
@@ -736,6 +766,7 @@ function validateServiceNode(node, {
   prNumber,
   requireActiveDomains,
   role,
+  manualAuthorization,
 }) {
   const service = CONTRACT.services[role];
   requireCondition(
@@ -775,6 +806,7 @@ function validateServiceNode(node, {
         requireActive: requireActiveDomains,
         serviceId: service.id,
         prNumber,
+        manualAuthorization,
       })
     : null;
   return { hostname, node };
@@ -785,12 +817,14 @@ export function validateOwnedPreviewEnvironment(environment, {
   headRef = undefined,
   prNumber,
   requireActiveDomains = false,
+  manualAuthorization,
+  requireAuth0Config = false,
 } = {}) {
   requireCondition(
     Number.isSafeInteger(prNumber) && prNumber > 0,
     'RAILWAY_PR_PREVIEW_PR_NUMBER_INVALID'
   );
-  const expectedName = `${CONTRACT.environmentPrefix}${prNumber}`;
+  const expectedName = previewEnvironmentName(prNumber, manualAuthorization);
   requireCondition(
     isRecord(environment)
       && isUuid(environment.id)
@@ -807,6 +841,8 @@ export function validateOwnedPreviewEnvironment(environment, {
     allowAnyBranch: allowAnyHeadRef,
     allowCheckSuites: true,
     expectedBranches: [CONTRACT.baseBranch, headRef],
+    manualAuthorization,
+    requireAuth0Config,
   });
   const serviceNodes = readConnection(
     environment.serviceInstances,
@@ -854,12 +890,14 @@ export function validateOwnedPreviewEnvironment(environment, {
     prNumber,
     requireActiveDomains,
     role: 'worker',
+    manualAuthorization,
   });
   const web = validateServiceNode(byServiceId.get(CONTRACT.services.web.id), {
     environmentId: environment.id,
     prNumber,
     requireActiveDomains,
     role: 'web',
+    manualAuthorization,
   });
   return Object.freeze({
     environmentId: environment.id,
@@ -1151,17 +1189,23 @@ async function requireCurrentPullRequest({
     'RAILWAY_PR_PREVIEW_GITHUB_REVALIDATION_REQUIRED'
   );
   const current = await verifyCurrentPullRequest();
+  const manualAuthorization = manualDraftPullRequests.get(expected);
+  if (manualAuthorization) {
+    requireManualDraftAuthorization(manualAuthorization);
+  }
   requireCondition(
     current.number === expected.number
       && current.number !== 1558
       && current.state === 'open'
-      && current.draft === false
+      && (manualAuthorization
+        ? current.draft === true && manualDraftPullRequests.get(current) === manualAuthorization
+        : current.draft === false)
       && expected.baseRef === CONTRACT.baseBranch
       && current.baseRef === CONTRACT.baseBranch
       && current.repository === CONTRACT.repository
       && current.headRef === expected.headRef
       && current.headSha === expected.headSha
-      && current.labels.includes(CONTRACT.optInLabel),
+      && (manualAuthorization || current.labels.includes(CONTRACT.optInLabel)),
     'RAILWAY_PR_PREVIEW_GITHUB_STATE_CHANGED'
   );
   return current;
@@ -1217,6 +1261,8 @@ async function waitForOwnedEnvironment({
   requireActiveDomains = false,
   expectedDeployments = undefined,
   commitSha = undefined,
+  manualAuthorization,
+  requireAuth0Config = false,
 }) {
   let lastProjectionError;
   for (let attempt = 0; attempt < PROJECTION_POLL_ATTEMPTS; attempt += 1) {
@@ -1226,6 +1272,8 @@ async function waitForOwnedEnvironment({
         headRef,
         prNumber,
         requireActiveDomains,
+        manualAuthorization,
+        requireAuth0Config,
       });
       if (expectedDeployments) {
         for (const [role, deploymentId] of Object.entries(expectedDeployments)) {
@@ -1280,7 +1328,7 @@ async function waitForEnvironmentInventory({
     );
 }
 
-async function quiesceTriggers({ environment, pullRequest, railway }) {
+async function quiesceTriggers({ environment, pullRequest, railway, requireAuth0Config = false }) {
   const before = readObservedDeploymentIds(environment);
   await railway.removeAndVerifyTriggers(environment, pullRequest);
   const { environment: latest } = await waitForOwnedEnvironment({
@@ -1288,6 +1336,8 @@ async function quiesceTriggers({ environment, pullRequest, railway }) {
     headRef: pullRequest.headRef,
     prNumber: pullRequest.number,
     railway,
+    manualAuthorization: manualDraftPullRequests.get(pullRequest),
+    requireAuth0Config,
   });
   const triggers = readConnection(
     latest.deploymentTriggers,
@@ -1430,9 +1480,12 @@ export async function reconcileRailwayPrPreview({
     validateBasePreviewEnvironment(base);
   }
 
-  const expectedName = `${CONTRACT.environmentPrefix}${pullRequest.number}`;
+  const manualAuthorization = manualDraftPullRequests.get(pullRequest);
+  const expectedName = previewEnvironmentName(pullRequest.number, manualAuthorization);
+  let requireAuth0Config = false;
   let matches = previewMatches(await railway.listEnvironments(), expectedName);
   requireCondition(matches.length <= 1, 'RAILWAY_PR_PREVIEW_ENVIRONMENT_AMBIGUOUS');
+  requireCondition(!manualAuthorization || matches.length === 0, 'RAILWAY_PR_PREVIEW_MANUAL_EXISTING_ENVIRONMENT');
   let target;
   if (matches.length === 0) {
     await requireCurrentPullRequest({ expected: pullRequest, verifyCurrentPullRequest });
@@ -1444,7 +1497,7 @@ export async function reconcileRailwayPrPreview({
       skipInitialDeploys: true,
       stageInitialChanges: false,
       applyChangesInBackground: false,
-    });
+    }, manualAuthorization);
     requireCondition(
       isRecord(created)
         && isUuid(created.id)
@@ -1465,13 +1518,14 @@ export async function reconcileRailwayPrPreview({
         headRef: pullRequest.headRef,
         prNumber: pullRequest.number,
         railway,
+        manualAuthorization,
       }));
       assertNoInitialDeploymentRace(target);
       target = await quiesceTriggers({ environment: target, pullRequest, railway });
       assertNoInitialDeploymentRace(target);
     } catch (error) {
       if (typeof railway.deleteAndVerifyEnvironment === 'function') {
-        await railway.deleteAndVerifyEnvironment(created);
+        await railway.deleteAndVerifyEnvironment(created, manualAuthorization);
       }
       throw error;
     }
@@ -1481,10 +1535,16 @@ export async function reconcileRailwayPrPreview({
       headRef: pullRequest.headRef,
       prNumber: pullRequest.number,
       railway,
+      manualAuthorization,
     }));
     target = await quiesceTriggers({ environment: target, pullRequest, railway });
   }
 
+  if (manualAuthorization?.profile === BOOKER_AUTH0_PROFILE) {
+    await requireCurrentPullRequest({ expected: pullRequest, verifyCurrentPullRequest });
+    await railway.configureManualBookerAuth0({ environment: target, authorization: manualAuthorization });
+    requireAuth0Config = true;
+  }
   assertWorkerFirstState(target, pullRequest.headSha);
 
   const workerDeploymentId = await ensureRoleDeployment({
@@ -1501,8 +1561,10 @@ export async function reconcileRailwayPrPreview({
     headRef: pullRequest.headRef,
     prNumber: pullRequest.number,
     railway,
+    manualAuthorization,
+    requireAuth0Config,
   }));
-  target = await quiesceTriggers({ environment: target, pullRequest, railway });
+  target = await quiesceTriggers({ environment: target, pullRequest, railway, requireAuth0Config });
   assertExactActiveRole(target, {
     commitSha: pullRequest.headSha,
     deploymentId: workerDeploymentId,
@@ -1529,11 +1591,14 @@ export async function reconcileRailwayPrPreview({
     prNumber: pullRequest.number,
     railway,
     requireActiveDomains: true,
+    manualAuthorization,
+    requireAuth0Config,
   });
   target = await quiesceTriggers({
     environment: readyProjection.environment,
     pullRequest,
     railway,
+    requireAuth0Config,
   });
   await requireCurrentPullRequest({ expected: pullRequest, verifyCurrentPullRequest });
   readyProjection = await waitForOwnedEnvironment({
@@ -1547,6 +1612,8 @@ export async function reconcileRailwayPrPreview({
     prNumber: pullRequest.number,
     railway,
     requireActiveDomains: true,
+    manualAuthorization,
+    requireAuth0Config,
   });
   const ownership = readyProjection.ownership;
   requireCondition(
@@ -1872,7 +1939,7 @@ export class RailwayGraphqlApi {
     return data.environment;
   }
 
-  async createEnvironment(input) {
+  async createEnvironment(input, manualAuthorization) {
     const expectedNamePattern = new RegExp(
       `^${ENVIRONMENT_PREFIX_PATTERN}[1-9][0-9]*$`,
       'u'
@@ -1895,7 +1962,9 @@ export class RailwayGraphqlApi {
         && input.stageInitialChanges === false
         && input.applyChangesInBackground === false
         && typeof input.name === 'string'
-        && expectedNamePattern.test(input.name),
+        && (manualAuthorization?.profile === BOOKER_AUTH0_PROFILE
+          ? input.name === previewEnvironmentName(1566, manualAuthorization)
+          : expectedNamePattern.test(input.name)),
       'RAILWAY_PR_PREVIEW_CREATE_INPUT_INVALID'
     );
     const data = await this.graphql(CREATE_ENVIRONMENT_MUTATION, { input });
@@ -1936,6 +2005,7 @@ export class RailwayGraphqlApi {
       validateOwnedPreviewEnvironment(latest, {
         headRef: pullRequest.headRef,
         prNumber: pullRequest.number,
+        manualAuthorization: manualDraftPullRequests.get(pullRequest),
       });
       requireCondition(
         readConnection(
@@ -1969,6 +2039,29 @@ export class RailwayGraphqlApi {
       'RAILWAY_PR_PREVIEW_DEPLOYMENT_ID_INVALID'
     );
     return data.serviceInstanceDeployV2;
+  }
+
+  async configureManualBookerAuth0({ environment, authorization }, { ownerSubject, verifyCurrentPullRequest }) {
+    requireCondition(authorization?.profile === BOOKER_AUTH0_PROFILE
+      && validBookerOwnerSubject(ownerSubject, authorization.ownerSubjectSha256),
+    'RAILWAY_PR_PREVIEW_MANUAL_AUTH0_CONFIG_INVALID');
+    validateOwnedPreviewEnvironment(environment, { headRef: 'feat/backstage-booker-mcp', prNumber: 1566,
+      manualAuthorization: authorization });
+    assertNoInitialDeploymentRace(environment);
+    requireCondition(readConnection(environment.deploymentTriggers, 'RAILWAY_PR_PREVIEW_TRIGGER_MISMATCH').length === 0
+      && hasExactKeys(environment.config.services[CONTRACT.services.web.id].variables, ['ARCANOS_PROCESS_KIND'])
+      && typeof verifyCurrentPullRequest === 'function', 'RAILWAY_PR_PREVIEW_MANUAL_AUTH0_CONFIG_INVALID');
+    for (const [name, value] of [[BOOKER_AUTH0_MODE_VARIABLE, 'v1'], [BOOKER_AUTH0_OWNER_VARIABLE, ownerSubject]]) {
+      await verifyCurrentPullRequest();
+      requireManualDraftAuthorization(authorization);
+      const data = await this.graphql(CONFIGURE_BOOKER_AUTH0_MUTATION, { input: {
+        projectId: CONTRACT.projectId, environmentId: environment.id, serviceId: CONTRACT.services.web.id,
+        name, value, skipDeploys: true,
+      } });
+      requireCondition(data.variableUpsert === true, 'RAILWAY_PR_PREVIEW_MANUAL_AUTH0_CONFIG_FAILED');
+    }
+    await waitForOwnedEnvironment({ environmentId: environment.id, headRef: 'feat/backstage-booker-mcp',
+      prNumber: 1566, railway: this, manualAuthorization: authorization, requireAuth0Config: true });
   }
 
   async waitForDeployment({ deploymentId, environmentId, serviceId, commitSha }) {
@@ -2067,7 +2160,7 @@ export class RailwayGraphqlApi {
     );
   }
 
-  async deleteAndVerifyEnvironment(environment) {
+  async deleteAndVerifyEnvironment(environment, manualAuthorization) {
     const ownedNamePattern = new RegExp(
       `^${ENVIRONMENT_PREFIX_PATTERN}[1-9][0-9]*$`,
       'u'
@@ -2077,7 +2170,9 @@ export class RailwayGraphqlApi {
         && isUuid(environment.id)
         && !PROTECTED_ENVIRONMENT_IDS.has(environment.id)
         && typeof environment.name === 'string'
-        && ownedNamePattern.test(environment.name)
+        && (manualAuthorization?.profile === BOOKER_AUTH0_PROFILE
+          ? environment.name === previewEnvironmentName(1566, manualAuthorization)
+          : ownedNamePattern.test(environment.name))
         && environment.projectId === CONTRACT.projectId
         && environment.isEphemeral === true
         && environment.sourceEnvironment?.id === CONTRACT.baseEnvironmentId
@@ -2109,7 +2204,7 @@ export class RailwayGraphqlApi {
 }
 
 export class GitHubApi {
-  constructor({ token, fetchImpl = globalThis.fetch }) {
+  constructor({ token, fetchImpl = globalThis.fetch, manualOwnerContext = undefined }) {
     requireCondition(
       typeof token === 'string'
         && token.length >= 20
@@ -2119,11 +2214,13 @@ export class GitHubApi {
     requireCondition(typeof fetchImpl === 'function', 'RAILWAY_PR_PREVIEW_FETCH_UNAVAILABLE');
     this.token = token;
     this.fetchImpl = fetchImpl;
+    this.manualOwnerContext = manualOwnerContext;
   }
 
   async request(pathname, { method = 'GET', body = undefined } = {}) {
     requireCondition(
-      typeof pathname === 'string' && pathname.startsWith('/repos/pbjustin/Arcanos/'),
+      typeof pathname === 'string' && (pathname.startsWith('/repos/pbjustin/Arcanos/')
+        || pathname === '/user' && method === 'GET' && body === undefined),
       'RAILWAY_PR_PREVIEW_GITHUB_REQUEST_INVALID'
     );
     let response;
@@ -2158,6 +2255,28 @@ export class GitHubApi {
 
   async readPullRequest(prNumber) {
     return this.request(`/repos/${CONTRACT.repository}/pulls/${prNumber}`);
+  }
+
+  async readManualPreviewOwner() {
+    if (this.manualOwnerContext) {
+      const context = this.manualOwnerContext;
+      requireCondition(context.actor === 'pbjustin' && context.triggeringActor === 'pbjustin'
+        && context.eventName === 'workflow_dispatch' && context.runAttempt === '1'
+        && POSITIVE_INTEGER_PATTERN.test(context.runId ?? '')
+        && context.workflowRef === `${CONTRACT.repository}/.github/workflows/railway-pr-preview-lifecycle.yml@refs/heads/feat/backstage-booker-mcp`
+        && COMMIT_PATTERN.test(context.controllerSha ?? ''), 'RAILWAY_PR_PREVIEW_MANUAL_OWNER_REQUIRED');
+      const run = await this.request(`/repos/${CONTRACT.repository}/actions/runs/${context.runId}`);
+      requireCondition(run.actor?.login === 'pbjustin' && run.triggering_actor?.login === 'pbjustin'
+        && run.event === 'workflow_dispatch' && run.run_attempt === 1 && run.status === 'in_progress'
+        && run.head_sha === context.controllerSha && run.head_branch === 'feat/backstage-booker-mcp'
+        && run.path === '.github/workflows/railway-pr-preview-lifecycle.yml'
+        && run.repository?.full_name === CONTRACT.repository, 'RAILWAY_PR_PREVIEW_MANUAL_OWNER_REQUIRED');
+      return;
+    }
+    const user = await this.request('/user');
+    const permission = await this.request(`/repos/${CONTRACT.repository}/collaborators/pbjustin/permission`);
+    requireCondition(user.login === 'pbjustin' && permission.user?.login === 'pbjustin'
+      && permission.permission === 'admin', 'RAILWAY_PR_PREVIEW_MANUAL_OWNER_REQUIRED');
   }
 
   async listOpenPullRequests() {
@@ -2224,6 +2343,206 @@ function readPrNumber(raw) {
   const number = Number.parseInt(raw, 10);
   requireCondition(Number.isSafeInteger(number), 'RAILWAY_PR_PREVIEW_PR_NUMBER_INVALID');
   return number;
+}
+
+function validBookerOwnerSubject(subject, expectedSha256) {
+  return typeof subject === 'string' && subject.length > 0 && subject.length <= 256
+    && subject === subject.trim() && !/[\u0000-\u001f\u007f]/u.test(subject)
+    && createHash('sha256').update(subject).digest('hex') === expectedSha256;
+}
+
+export function bookerAuth0PreviewConfigDigest({ profile, attemptId, ownerSubjectSha256 }) {
+  requireCondition(profile === BOOKER_AUTH0_PROFILE && typeof attemptId === 'string' && /^[0-9a-f]{6}$/u.test(attemptId)
+    && attemptId !== '676861' && typeof ownerSubjectSha256 === 'string' && /^[0-9a-f]{64}$/u.test(ownerSubjectSha256),
+  'RAILWAY_PR_PREVIEW_MANUAL_AUTH0_CONFIG_INVALID');
+  return createHash('sha256').update(JSON.stringify({ profile, attemptId, ownerSubjectSha256 })).digest('hex');
+}
+
+function previewEnvironmentName(prNumber, authorization) {
+  if (authorization !== undefined) {
+    requireCondition(manualDraftSnapshots.has(authorization) && prNumber === 1566,
+      'RAILWAY_PR_PREVIEW_MANUAL_SNAPSHOT_REQUIRED');
+  }
+  return authorization?.profile === BOOKER_AUTH0_PROFILE
+    ? `pr-${authorization.attemptId}-1566` : `${CONTRACT.environmentPrefix}${prNumber}`;
+}
+
+/** A local, explicitly authorized Booker rehearsal does not change PR-event admission. */
+export function validateManualDraftPreviewAuthorization(raw, identity, { now = Date.now, allowExpired = false } = {}) {
+  const keys = ['version', 'repository', 'prNumber', 'headSha', 'baseSha', 'controllerSha',
+    'controllerScriptSha256', 'issuedAt', 'expiresAt'];
+  if (raw?.profile === BOOKER_AUTH0_PROFILE) keys.push('profile', 'attemptId', 'ownerSubjectSha256', 'configDigest');
+  requireCondition(isRecord(raw) && Object.keys(raw).sort().join('|') === keys.sort().join('|')
+    && raw.version === 1 && raw.repository === CONTRACT.repository && raw.prNumber === 1566
+    && [raw.headSha, raw.baseSha, raw.controllerSha].every(value => typeof value === 'string' && COMMIT_PATTERN.test(value))
+    && /^[0-9a-f]{64}$/u.test(raw.controllerScriptSha256 ?? '')
+    && raw.headSha === raw.controllerSha && raw.controllerSha === identity?.controllerSha
+    && raw.controllerScriptSha256 === identity?.controllerScriptSha256,
+  'RAILWAY_PR_PREVIEW_MANUAL_AUTHORIZATION_INVALID');
+  if (raw.profile === BOOKER_AUTH0_PROFILE) {
+    requireCondition(raw.configDigest === bookerAuth0PreviewConfigDigest(raw),
+      'RAILWAY_PR_PREVIEW_MANUAL_AUTH0_CONFIG_INVALID');
+  }
+  const issued = Date.parse(raw.issuedAt), expires = Date.parse(raw.expiresAt), time = now();
+  requireCondition([raw.issuedAt, raw.expiresAt].every(value => typeof value === 'string'
+    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value))
+    && Number.isSafeInteger(time) && Number.isSafeInteger(issued) && Number.isSafeInteger(expires)
+    && new Date(issued).toISOString() === raw.issuedAt && new Date(expires).toISOString() === raw.expiresAt
+    && issued <= time && expires > issued && expires - issued <= 2 * 60 * 60 * 1000,
+  'RAILWAY_PR_PREVIEW_MANUAL_EXPIRY_INVALID');
+  const snapshot = Object.freeze({ ...raw });
+  manualDraftSnapshots.set(snapshot, now);
+  if (!allowExpired) requireManualDraftAuthorization(snapshot);
+  return snapshot;
+}
+
+function requireManualDraftAuthorization(authorization) {
+  const now = manualDraftSnapshots.get(authorization);
+  requireCondition(typeof now === 'function', 'RAILWAY_PR_PREVIEW_MANUAL_SNAPSHOT_REQUIRED');
+  requireCondition(Date.parse(authorization.expiresAt) > now(), 'RAILWAY_PR_PREVIEW_MANUAL_AUTHORIZATION_EXPIRED');
+}
+
+export async function runManualDraftPreview({ action, authorization: raw, identity, github, railway,
+  deploymentReceipt, ownerSubject, now = Date.now, onReceipt = () => {} }) {
+  requireCondition(['reconcile', 'cleanup'].includes(action), 'RAILWAY_PR_PREVIEW_MANUAL_ACTION_INVALID');
+  const authorization = validateManualDraftPreviewAuthorization(raw, identity, { now, allowExpired: action === 'cleanup' });
+  const auth0 = authorization.profile === BOOKER_AUTH0_PROFILE;
+  const environmentName = previewEnvironmentName(1566, authorization);
+  const profileBinding = auth0 ? { profile: authorization.profile, attemptId: authorization.attemptId,
+    ownerSubjectSha256: authorization.ownerSubjectSha256, configDigest: authorization.configDigest, environmentName,
+    issuedAt: authorization.issuedAt, expiresAt: authorization.expiresAt } : {};
+  const receiptKind = auth0 ? 'manual_booker_auth0_discovery_preview' : 'manual_booker_synthetic_preview';
+  if (auth0 && action === 'reconcile') requireCondition(validBookerOwnerSubject(ownerSubject, authorization.ownerSubjectSha256),
+    'RAILWAY_PR_PREVIEW_MANUAL_AUTH0_CONFIG_INVALID');
+  const readCurrent = async () => {
+    await github.readManualPreviewOwner();
+    requireManualDraftAuthorization(authorization);
+    const observed = await github.readPullRequest(1566);
+    const current = validateLifecyclePullRequest(observed, 1566);
+    requireCondition(current.state === 'open' && current.draft === true && current.baseRef === 'main'
+      && current.headRef === 'feat/backstage-booker-mcp'
+      && current.headSha === authorization.headSha && observed.base.sha === authorization.baseSha,
+    'RAILWAY_PR_PREVIEW_MANUAL_PR_DRIFT');
+    manualDraftPullRequests.set(current, authorization);
+    return current;
+  };
+  const authorizationSha256 = createHash('sha256').update(JSON.stringify(authorization)).digest('hex');
+  await github.readManualPreviewOwner();
+  if (action === 'cleanup') {
+    const receipt = deploymentReceipt;
+    requireCondition(isRecord(receipt) && receipt.version === 1 && receipt.kind === receiptKind
+      && receipt.authorizationSha256 === authorizationSha256 && receipt.prNumber === 1566
+      && receipt.headSha === authorization.headSha && receipt.projectId === CONTRACT.projectId
+      && receipt.baseEnvironmentId === CONTRACT.baseEnvironmentId && isUuid(receipt.environmentId)
+      && !PROTECTED_ENVIRONMENT_IDS.has(receipt.environmentId) && isValidGitHubHeadRef(receipt.headRef)
+      && Object.entries(profileBinding).every(([key, value]) => receipt[key] === value),
+    'RAILWAY_PR_PREVIEW_MANUAL_RECEIPT_INVALID');
+    await railway.validateAuthority({ requireNativeDisabled: false });
+    const name = environmentName;
+    const matches = (await railway.listEnvironments()).filter(item => item.id === receipt.environmentId || item.name === name);
+    requireCondition(matches.length <= 1 && (matches.length === 0 || matches[0].id === receipt.environmentId),
+      'RAILWAY_PR_PREVIEW_MANUAL_CLEANUP_TARGET_INVALID');
+    if (matches.length) {
+      const target = await railway.readEnvironment(receipt.environmentId);
+      validateOwnedPreviewEnvironment(target, { headRef: receipt.headRef, prNumber: 1566, manualAuthorization: authorization });
+      await github.readManualPreviewOwner();
+      await railway.deleteAndVerifyEnvironment(target, authorization);
+    }
+    const result = Object.freeze({ ...receipt, action: 'cleanup', status: 'VERIFIED', deleted: matches.length > 0,
+      alreadyAbsent: matches.length === 0 });
+    onReceipt(result);
+    return result;
+  }
+  const pullRequest = await readCurrent();
+  await railway.validateAuthority({ requireNativeDisabled: true });
+  const originalEnvironments = await railway.listEnvironments();
+  requireCondition(previewMatches(originalEnvironments, environmentName).length === 0,
+    'RAILWAY_PR_PREVIEW_MANUAL_EXISTING_ENVIRONMENT');
+  let receipt = { version: 1, kind: receiptKind, status: 'NOT_VERIFIED', ...profileBinding,
+    authorizationSha256, prNumber: 1566, headSha: authorization.headSha, headRef: pullRequest.headRef,
+    controllerSha: authorization.controllerSha, projectId: CONTRACT.projectId,
+    baseEnvironmentId: CONTRACT.baseEnvironmentId, environmentId: null };
+  const guarded = new Proxy(railway, { get(target, property) {
+    const value = Reflect.get(target, property);
+    if (typeof value !== 'function') return value;
+    if (!['createEnvironment', 'removeAndVerifyTriggers', 'deployExact', 'deleteAndVerifyEnvironment', 'configureManualBookerAuth0'].includes(property)) {
+      return value.bind(target);
+    }
+    return async (...args) => {
+      if (['createEnvironment', 'removeAndVerifyTriggers', 'deployExact', 'configureManualBookerAuth0'].includes(property)) await readCurrent();
+      // Already-created resources remain removable after expiry or source drift.
+      if (property === 'deleteAndVerifyEnvironment') await github.readManualPreviewOwner();
+      if (property !== 'createEnvironment') {
+        const environmentId = property === 'deployExact' ? args[0]?.environmentId
+          : property === 'configureManualBookerAuth0' ? args[0]?.environment?.id : args[0]?.id;
+        requireCondition(isUuid(receipt.environmentId) && environmentId === receipt.environmentId,
+          'RAILWAY_PR_PREVIEW_MANUAL_CREATED_SCOPE_REQUIRED');
+      }
+      if (property === 'createEnvironment') {
+        requireCondition(previewMatches(await target.listEnvironments(), environmentName).length === 0,
+          'RAILWAY_PR_PREVIEW_MANUAL_EXISTING_ENVIRONMENT');
+      }
+      if (auth0 && property === 'configureManualBookerAuth0') {
+        requireCondition(args[0]?.environment?.id === receipt.environmentId && args[0]?.authorization === authorization,
+          'RAILWAY_PR_PREVIEW_MANUAL_AUTH0_CONFIG_INVALID');
+        args[1] = { ownerSubject, verifyCurrentPullRequest: readCurrent };
+      }
+      if (auth0 && property === 'deployExact') {
+        requireCondition(args[0]?.environmentId === receipt.environmentId && args[0]?.commitSha === authorization.headSha,
+          'RAILWAY_PR_PREVIEW_MANUAL_AUTH0_CONFIG_INVALID');
+        validateOwnedPreviewEnvironment(await target.readEnvironment(receipt.environmentId), {
+          prNumber: 1566, headRef: pullRequest.headRef, manualAuthorization: authorization, requireAuth0Config: true });
+      }
+      const result = await value.apply(target, args);
+      if (property === 'createEnvironment') {
+        requireCondition(result?.name === environmentName && isUuid(result.id)
+          && (!auth0 || !originalEnvironments.some(item => item.id === result.id))
+          && result.projectId === CONTRACT.projectId && result.sourceEnvironment?.id === CONTRACT.baseEnvironmentId,
+        'RAILWAY_PR_PREVIEW_CREATE_MISMATCH');
+        receipt = { ...receipt, environmentId: result.id };
+        onReceipt(Object.freeze({ ...receipt }));
+      } else if (property === 'deployExact') {
+        receipt = { ...receipt, [args[0].serviceId === CONTRACT.services.worker.id
+          ? 'workerDeploymentId' : 'webDeploymentId']: result };
+        onReceipt(Object.freeze({ ...receipt }));
+      }
+      return result;
+    };
+  } });
+  const result = await reconcileRailwayPrPreview({ pullRequest, railway: guarded, verifyCurrentPullRequest: readCurrent });
+  await readCurrent();
+  receipt = Object.freeze({ ...receipt, ...result, status: 'VERIFIED' });
+  onReceipt(receipt);
+  return receipt;
+}
+
+function runManualDraftCli(args, env) {
+  const options = {};
+  requireCondition(args.length % 2 === 0, 'RAILWAY_PR_PREVIEW_MANUAL_CLI_INVALID');
+  for (let index = 0; index < args.length; index += 2) {
+    requireCondition(['--action', '--authorization', '--output', '--deployment'].includes(args[index])
+      && !Object.hasOwn(options, args[index]), 'RAILWAY_PR_PREVIEW_MANUAL_CLI_INVALID');
+    options[args[index]] = args[index + 1];
+  }
+  requireCondition(options['--authorization'] && options['--output'], 'RAILWAY_PR_PREVIEW_MANUAL_CLI_INVALID');
+  const read = path => {
+    const bytes = readFileSync(path);
+    requireCondition(bytes.length <= 16_384, 'RAILWAY_PR_PREVIEW_MANUAL_INPUT_TOO_LARGE');
+    return JSON.parse(bytes.toString('utf8'));
+  };
+  const identity = { controllerSha: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', timeout: 10_000 }).trim(),
+    // Git checks out CRLF on Windows and LF on Actions; hash the same reviewed source text.
+    controllerScriptSha256: createHash('sha256').update(readFileSync(new URL(import.meta.url), 'utf8').replaceAll('\r\n', '\n')).digest('hex') };
+  return runManualDraftPreview({ action: options['--action'], authorization: read(options['--authorization']), identity,
+    github: new GitHubApi({ token: env.GITHUB_TOKEN, manualOwnerContext: env.GITHUB_ACTIONS === 'true' ? {
+      actor: env.GITHUB_ACTOR, triggeringActor: env.GITHUB_TRIGGERING_ACTOR, eventName: env.GITHUB_EVENT_NAME,
+      runId: env.GITHUB_RUN_ID, runAttempt: env.GITHUB_RUN_ATTEMPT, workflowRef: env.GITHUB_WORKFLOW_REF,
+      controllerSha: identity.controllerSha,
+    } : undefined }), railway: new RailwayGraphqlApi({ token: env.RAILWAY_API_TOKEN }),
+    deploymentReceipt: options['--deployment'] ? read(options['--deployment']) : undefined,
+    ownerSubject: env[BOOKER_AUTH0_OWNER_VARIABLE],
+    onReceipt: receipt => writeFileSync(options['--output'], `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600 }),
+  });
 }
 
 function readEventInput(env) {
@@ -2408,7 +2727,9 @@ async function runCli() {
         ? await runReportStatusCli()
         : command === 'discover'
           ? await runDiscoverCli()
-          : fail('RAILWAY_PR_PREVIEW_COMMAND_INVALID');
+          : command === 'manual-draft'
+            ? await runManualDraftCli(process.argv.slice(3), process.env)
+            : fail('RAILWAY_PR_PREVIEW_COMMAND_INVALID');
     process.stdout.write(`${JSON.stringify({
       schemaVersion: 1,
       kind: 'railway_pr_preview_lifecycle',

@@ -1,0 +1,3088 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/tools/arcanos-booker/contract.schema.json",
+  "title": "Private Backstage Booker MCP contract",
+  "tools": {
+    "queryContinuity": {
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "universeId",
+          "query"
+        ],
+        "properties": {
+          "universeId": {
+            "$ref": "#/$defs/UniverseId"
+          },
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 10000,
+            "pattern": "\\S"
+          },
+          "retrievalScope": {
+            "$ref": "#/$defs/ContinuityRetrievalScope"
+          },
+          "retrievalMode": {
+            "type": "string",
+            "enum": [
+              "relevant",
+              "complete_scope"
+            ],
+            "default": "relevant"
+          },
+          "cursor": {
+            "$ref": "#/$defs/ContinuityCursor"
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "cursor"
+              ]
+            },
+            "then": {
+              "required": [
+                "retrievalMode"
+              ],
+              "properties": {
+                "retrievalMode": {
+                  "const": "complete_scope"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "statusCode",
+          "result"
+        ],
+        "properties": {
+          "statusCode": {
+            "type": "integer"
+          },
+          "result": {
+            "type": "object"
+          }
+        },
+        "oneOf": [
+          {
+            "properties": {
+              "statusCode": {
+                "const": 200
+              },
+              "result": {
+                "$ref": "#/$defs/McpqueryContinuitySuccessResponse"
+              }
+            }
+          },
+          {
+            "properties": {
+              "statusCode": {
+                "type": "integer",
+                "minimum": 400,
+                "maximum": 599
+              },
+              "result": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/BackstagePostErrorResponse"
+                  },
+                  {
+                    "$ref": "#/$defs/BackstageUniverseReadErrorResponse"
+                  },
+                  {
+                    "$ref": "#/$defs/RateLimitResponse"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    "generateBooking": {
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "universeId",
+          "prompt"
+        ],
+        "properties": {
+          "universeId": {
+            "$ref": "#/$defs/UniverseId"
+          },
+          "prompt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 10000,
+            "pattern": "\\S"
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "description": "Stable key for the same generation request. Preserve it across transport retries; after job acceptance continue only the returned jobId."
+          }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "statusCode",
+          "result"
+        ],
+        "properties": {
+          "statusCode": {
+            "type": "integer"
+          },
+          "result": {
+            "type": "object"
+          }
+        },
+        "oneOf": [
+          {
+            "properties": {
+              "statusCode": {
+                "const": 200
+              },
+              "result": {
+                "$ref": "#/$defs/McpgenerateBookingSuccessResponse"
+              }
+            }
+          },
+          {
+            "properties": {
+              "statusCode": {
+                "const": 202
+              },
+              "result": {
+                "$ref": "#/$defs/BackstageAsyncAcceptedResponse"
+              }
+            }
+          },
+          {
+            "properties": {
+              "statusCode": {
+                "type": "integer",
+                "minimum": 400,
+                "maximum": 599
+              },
+              "result": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/BackstagePostErrorResponse"
+                  },
+                  {
+                    "$ref": "#/$defs/BackstageUniverseReadErrorResponse"
+                  },
+                  {
+                    "$ref": "#/$defs/RateLimitResponse"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    "generateBookingWithHRC": {
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "universeId",
+          "prompt"
+        ],
+        "properties": {
+          "universeId": {
+            "$ref": "#/$defs/UniverseId"
+          },
+          "prompt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 10000,
+            "pattern": "\\S"
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "description": "Stable key for the same generation request. Preserve it across transport retries; after job acceptance continue only the returned jobId."
+          }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "statusCode",
+          "result"
+        ],
+        "properties": {
+          "statusCode": {
+            "type": "integer"
+          },
+          "result": {
+            "type": "object"
+          }
+        },
+        "oneOf": [
+          {
+            "properties": {
+              "statusCode": {
+                "const": 200
+              },
+              "result": {
+                "$ref": "#/$defs/McpgenerateBookingWithHRCSuccessResponse"
+              }
+            }
+          },
+          {
+            "properties": {
+              "statusCode": {
+                "const": 202
+              },
+              "result": {
+                "$ref": "#/$defs/BackstageAsyncAcceptedResponse"
+              }
+            }
+          },
+          {
+            "properties": {
+              "statusCode": {
+                "type": "integer",
+                "minimum": 400,
+                "maximum": 599
+              },
+              "result": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/BackstagePostErrorResponse"
+                  },
+                  {
+                    "$ref": "#/$defs/BackstageUniverseReadErrorResponse"
+                  },
+                  {
+                    "$ref": "#/$defs/RateLimitResponse"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    "simulateMatch": {
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "universeId",
+          "match"
+        ],
+        "properties": {
+          "universeId": {
+            "$ref": "#/$defs/UniverseId"
+          },
+          "match": {
+            "$ref": "#/$defs/MatchInput"
+          },
+          "rosters": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/$defs/Wrestler"
+            }
+          },
+          "winProbModifier": {
+            "type": "number",
+            "minimum": -1,
+            "maximum": 1,
+            "default": 0
+          }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "statusCode",
+          "result"
+        ],
+        "properties": {
+          "statusCode": {
+            "type": "integer"
+          },
+          "result": {
+            "type": "object"
+          }
+        },
+        "oneOf": [
+          {
+            "properties": {
+              "statusCode": {
+                "const": 200
+              },
+              "result": {
+                "$ref": "#/$defs/McpsimulateMatchSuccessResponse"
+              }
+            }
+          },
+          {
+            "properties": {
+              "statusCode": {
+                "type": "integer",
+                "minimum": 400,
+                "maximum": 599
+              },
+              "result": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/BackstagePostErrorResponse"
+                  },
+                  {
+                    "$ref": "#/$defs/BackstageUniverseReadErrorResponse"
+                  },
+                  {
+                    "$ref": "#/$defs/RateLimitResponse"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    "getBackstageUniverse": {
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "universeId"
+        ],
+        "properties": {
+          "universeId": {
+            "$ref": "#/$defs/UniverseReadId"
+          }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "statusCode",
+          "result"
+        ],
+        "properties": {
+          "statusCode": {
+            "type": "integer"
+          },
+          "result": {
+            "type": "object"
+          }
+        },
+        "oneOf": [
+          {
+            "properties": {
+              "statusCode": {
+                "const": 200
+              },
+              "result": {
+                "$ref": "#/$defs/BackstageUniverseReadSuccessResponse"
+              }
+            }
+          },
+          {
+            "properties": {
+              "statusCode": {
+                "type": "integer",
+                "minimum": 400,
+                "maximum": 599
+              },
+              "result": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/BackstagePostErrorResponse"
+                  },
+                  {
+                    "$ref": "#/$defs/BackstageUniverseReadErrorResponse"
+                  },
+                  {
+                    "$ref": "#/$defs/RateLimitResponse"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    "getBackstageStoryline": {
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "universeId",
+          "storylineKey"
+        ],
+        "properties": {
+          "universeId": {
+            "$ref": "#/$defs/UniverseReadId"
+          },
+          "storylineKey": {
+            "$ref": "#/$defs/StorylineReadKey"
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000,
+            "default": 0
+          },
+          "expectedVersion": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "offset"
+              ],
+              "properties": {
+                "offset": {
+                  "minimum": 1
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "expectedVersion"
+              ]
+            }
+          }
+        ]
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "statusCode",
+          "result"
+        ],
+        "properties": {
+          "statusCode": {
+            "type": "integer"
+          },
+          "result": {
+            "type": "object"
+          }
+        },
+        "oneOf": [
+          {
+            "properties": {
+              "statusCode": {
+                "const": 200
+              },
+              "result": {
+                "$ref": "#/$defs/BackstageStorylineSummaryReadSuccessResponse"
+              }
+            }
+          },
+          {
+            "properties": {
+              "statusCode": {
+                "type": "integer",
+                "minimum": 400,
+                "maximum": 599
+              },
+              "result": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/BackstagePostErrorResponse"
+                  },
+                  {
+                    "$ref": "#/$defs/BackstageUniverseReadErrorResponse"
+                  },
+                  {
+                    "$ref": "#/$defs/RateLimitResponse"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    "getBackstageBookerJobResult": {
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "universeId",
+          "jobId"
+        ],
+        "properties": {
+          "universeId": {
+            "$ref": "#/$defs/UniverseReadId"
+          },
+          "jobId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "waitForResultMs": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 30000,
+            "default": 30000
+          }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "statusCode",
+          "result"
+        ],
+        "properties": {
+          "statusCode": {
+            "type": "integer"
+          },
+          "result": {
+            "type": "object"
+          }
+        },
+        "oneOf": [
+          {
+            "properties": {
+              "statusCode": {
+                "const": 200
+              },
+              "result": {
+                "$ref": "#/$defs/McpJobResultLookup"
+              }
+            }
+          },
+          {
+            "properties": {
+              "statusCode": {
+                "type": "integer",
+                "minimum": 400,
+                "maximum": 599
+              },
+              "result": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/BackstagePostErrorResponse"
+                  },
+                  {
+                    "$ref": "#/$defs/BackstageUniverseReadErrorResponse"
+                  },
+                  {
+                    "$ref": "#/$defs/RateLimitResponse"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "UniverseId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "default": "legacy"
+    },
+    "ContinuityRetrievalScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pageTitle"
+      ],
+      "properties": {
+        "pageTitle": {
+          "$ref": "#/$defs/ContinuityPathSegment"
+        },
+        "pagePath": {
+          "$ref": "#/$defs/ContinuityPagePath"
+        },
+        "scopeKind": {
+          "$ref": "#/$defs/ContinuityScopeKind"
+        },
+        "sectionPath": {
+          "$ref": "#/$defs/ContinuitySectionPath"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "scopeKind"
+            ],
+            "properties": {
+              "scopeKind": {
+                "const": "subtree"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "sectionPath"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "ContinuityPathSegment": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "pattern": "\\S"
+    },
+    "ContinuityPagePath": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 101,
+      "items": {
+        "$ref": "#/$defs/ContinuityPathSegment"
+      }
+    },
+    "ContinuityScopeKind": {
+      "type": "string",
+      "enum": [
+        "page",
+        "subtree"
+      ],
+      "default": "page"
+    },
+    "ContinuitySectionPath": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": {
+        "$ref": "#/$defs/ContinuityPathSegment"
+      }
+    },
+    "ContinuityCursor": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^[A-Za-z0-9_-]{1,1024}$"
+    },
+    "BackstagePublicSuccessResponse": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "ok",
+        "result",
+        "_route"
+      ],
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "enum": [
+            true
+          ]
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "traceId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "result": {
+          "$ref": "#/$defs/BackstagePublicResult"
+        },
+        "_route": {
+          "$ref": "#/$defs/BackstageRouteMeta"
+        }
+      }
+    },
+    "BackstagePublicResult": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100000,
+          "pattern": "\\S",
+          "deprecated": true
+        },
+        {
+          "$ref": "#/$defs/GeneratedBookingResult"
+        },
+        {
+          "$ref": "#/$defs/GeneratedBookingWithHrcResult"
+        },
+        {
+          "$ref": "#/$defs/QueryContinuityResult"
+        },
+        {
+          "$ref": "#/$defs/SimulatedMatchResult"
+        }
+      ]
+    },
+    "GeneratedBookingResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "universeId",
+        "storyline",
+        "protectedGeneration"
+      ],
+      "properties": {
+        "universeId": {
+          "$ref": "#/$defs/UniverseId"
+        },
+        "storyline": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100000,
+          "pattern": "\\S"
+        },
+        "protectedGeneration": {
+          "$ref": "#/$defs/ProtectedGenerationProvenance"
+        }
+      }
+    },
+    "ProtectedGenerationProvenance": {
+      "description": "Server-owned completed authority state; protected fallback is forbidden.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "protected",
+        "protectedGenerationCompleted",
+        "official",
+        "continuityVerified",
+        "authority",
+        "snapshotStatus",
+        "fallbackUsed",
+        "fallbackPermitted"
+      ],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "protected": {
+          "const": true
+        },
+        "protectedGenerationCompleted": {
+          "const": true
+        },
+        "official": {
+          "const": true
+        },
+        "continuityVerified": {
+          "const": true
+        },
+        "authority": {
+          "enum": [
+            "notion",
+            "legacy_postgresql"
+          ]
+        },
+        "snapshotStatus": {
+          "enum": [
+            "current_complete",
+            "not_applicable"
+          ]
+        },
+        "fallbackUsed": {
+          "const": false
+        },
+        "fallbackPermitted": {
+          "const": false
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "authority": {
+              "const": "notion"
+            },
+            "snapshotStatus": {
+              "const": "current_complete"
+            }
+          }
+        },
+        {
+          "properties": {
+            "authority": {
+              "const": "legacy_postgresql"
+            },
+            "snapshotStatus": {
+              "const": "not_applicable"
+            }
+          }
+        }
+      ]
+    },
+    "GeneratedBookingWithHrcResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "universeId",
+        "storyline",
+        "hrc",
+        "protectedGeneration"
+      ],
+      "properties": {
+        "universeId": {
+          "$ref": "#/$defs/UniverseId"
+        },
+        "storyline": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100000,
+          "pattern": "\\S"
+        },
+        "hrc": {
+          "$ref": "#/$defs/HrcResult"
+        },
+        "protectedGeneration": {
+          "$ref": "#/$defs/ProtectedGenerationProvenance"
+        }
+      }
+    },
+    "HrcResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fidelity",
+        "resilience",
+        "verdict"
+      ],
+      "properties": {
+        "fidelity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "resilience": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "verdict": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        }
+      }
+    },
+    "QueryContinuityResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "universeId",
+        "authority",
+        "answer",
+        "coverage",
+        "sources"
+      ],
+      "properties": {
+        "universeId": {
+          "$ref": "#/$defs/UniverseId"
+        },
+        "authority": {
+          "type": "string",
+          "enum": [
+            "notion"
+          ]
+        },
+        "answer": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100000,
+          "pattern": "\\S"
+        },
+        "resolvedScope": {
+          "$ref": "#/$defs/ContinuityResolvedScope"
+        },
+        "coverage": {
+          "$ref": "#/$defs/ContinuityCoverage"
+        },
+        "sources": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/ContinuitySource"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "resolvedScope"
+            ],
+            "properties": {
+              "resolvedScope": {
+                "required": [
+                  "scopeKind"
+                ],
+                "properties": {
+                  "scopeKind": {
+                    "const": "subtree"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "coverage": {
+                "required": [
+                  "scopePages",
+                  "selectedPages",
+                  "omittedPages"
+                ]
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "coverage": {
+                "not": {
+                  "required": [
+                    "scopePages"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ContinuityResolvedScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pageTitle",
+        "pagePath"
+      ],
+      "properties": {
+        "pageTitle": {
+          "$ref": "#/$defs/ContinuityPathSegment"
+        },
+        "pagePath": {
+          "$ref": "#/$defs/ContinuityPagePath"
+        },
+        "scopeKind": {
+          "const": "subtree"
+        },
+        "sectionPath": {
+          "$ref": "#/$defs/ContinuitySectionPath"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "scopeKind"
+            ],
+            "properties": {
+              "scopeKind": {
+                "const": "subtree"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "sectionPath"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "ContinuityCoverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "scopeChunks",
+        "selectedChunks",
+        "omittedChunks",
+        "promptTruncated",
+        "exhaustive",
+        "hasMore"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "complete",
+            "sampled"
+          ]
+        },
+        "scopeChunks": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "selectedChunks": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "omittedChunks": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "scopePages": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "selectedPages": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "omittedPages": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "promptTruncated": {
+          "type": "boolean"
+        },
+        "exhaustive": {
+          "type": "boolean"
+        },
+        "hasMore": {
+          "type": "boolean"
+        },
+        "nextCursor": {
+          "$ref": "#/$defs/ContinuityCursor"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "hasMore"
+            ],
+            "properties": {
+              "hasMore": {
+                "enum": [
+                  true
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "nextCursor"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "hasMore"
+            ],
+            "properties": {
+              "hasMore": {
+                "enum": [
+                  false
+                ]
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "nextCursor"
+              ]
+            }
+          }
+        }
+      ],
+      "dependentRequired": {
+        "scopePages": [
+          "selectedPages",
+          "omittedPages"
+        ],
+        "selectedPages": [
+          "scopePages",
+          "omittedPages"
+        ],
+        "omittedPages": [
+          "scopePages",
+          "selectedPages"
+        ]
+      }
+    },
+    "ContinuitySource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceId",
+        "pageTitle",
+        "pagePath",
+        "headingPath",
+        "category",
+        "contentHash"
+      ],
+      "properties": {
+        "sourceId": {
+          "$ref": "#/$defs/ContinuitySha256"
+        },
+        "pageTitle": {
+          "$ref": "#/$defs/ContinuityPathSegment"
+        },
+        "pagePath": {
+          "$ref": "#/$defs/ContinuityPagePath"
+        },
+        "headingPath": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/ContinuityPathSegment"
+          }
+        },
+        "category": {
+          "$ref": "#/$defs/ContinuitySourceCategory"
+        },
+        "contentHash": {
+          "$ref": "#/$defs/ContinuitySha256"
+        }
+      }
+    },
+    "ContinuitySha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "ContinuitySourceCategory": {
+      "type": "string",
+      "enum": [
+        "championships",
+        "events",
+        "general",
+        "kayfabe",
+        "nxt",
+        "raw",
+        "roster",
+        "smackdown",
+        "storylines"
+      ]
+    },
+    "SimulatedMatchResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "universeId",
+        "result",
+        "hrc"
+      ],
+      "properties": {
+        "universeId": {
+          "$ref": "#/$defs/UniverseId"
+        },
+        "result": {
+          "$ref": "#/$defs/MatchResult"
+        },
+        "hrc": {
+          "$ref": "#/$defs/HrcResult"
+        }
+      }
+    },
+    "MatchResult": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/KayfabeMatchResult"
+        },
+        {
+          "$ref": "#/$defs/RealMatchResult"
+        }
+      ]
+    },
+    "KayfabeMatchResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "match",
+        "result",
+        "via",
+        "interference",
+        "rating"
+      ],
+      "properties": {
+        "match": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "result": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "via": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "interference": {
+          "$ref": "#/$defs/NullableWrestlerName"
+        },
+        "rating": {
+          "$ref": "#/$defs/MatchRating"
+        }
+      }
+    },
+    "NullableWrestlerName": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/WrestlerName"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "WrestlerName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "pattern": "\\S",
+      "allOf": [
+        {
+          "$ref": "#/$defs/PostgresText"
+        }
+      ]
+    },
+    "PostgresText": {
+      "type": "string",
+      "pattern": "^(?:[^\\u0000\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+    },
+    "MatchRating": {
+      "type": "string",
+      "pattern": "^(?:[1-4]\\.[0-9]|5\\.0)$"
+    },
+    "RealMatchResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "match",
+        "winner",
+        "loser",
+        "probability",
+        "interference",
+        "rating"
+      ],
+      "properties": {
+        "match": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "winner": {
+          "$ref": "#/$defs/WrestlerName"
+        },
+        "loser": {
+          "$ref": "#/$defs/WrestlerName"
+        },
+        "probability": {
+          "type": "object",
+          "minProperties": 2,
+          "maxProperties": 2,
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^(?:0\\.[0-9]{2}|1\\.00)$"
+          }
+        },
+        "interference": {
+          "$ref": "#/$defs/NullableWrestlerName"
+        },
+        "rating": {
+          "$ref": "#/$defs/MatchRating"
+        }
+      }
+    },
+    "BackstageRouteMeta": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "gptId",
+        "module",
+        "route",
+        "action",
+        "timestamp"
+      ],
+      "properties": {
+        "gptId": {
+          "type": "string",
+          "enum": [
+            "backstage-booker"
+          ]
+        },
+        "module": {
+          "type": "string",
+          "enum": [
+            "BACKSTAGE:BOOKER"
+          ]
+        },
+        "route": {
+          "type": "string",
+          "enum": [
+            "backstage-booker"
+          ]
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "generateBooking",
+            "generateBookingWithHRC",
+            "queryContinuity",
+            "simulateMatch"
+          ]
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "BackstagePostErrorResponse": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/BackstageProtectedFailureResponse"
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/BackstagePublicErrorResponse"
+            },
+            {
+              "not": {
+                "required": [
+                  "protectedGenerationCompleted"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "BackstageProtectedFailureResponse": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/BackstageProtectedFailureState"
+        }
+      ],
+      "type": "object",
+      "required": [
+        "ok"
+      ],
+      "properties": {
+        "ok": {
+          "const": false
+        }
+      }
+    },
+    "BackstageProtectedFailureState": {
+      "type": "object",
+      "required": [
+        "result",
+        "error",
+        "protected",
+        "protectedGenerationCompleted",
+        "official",
+        "continuityVerified",
+        "authority",
+        "snapshotStatus",
+        "fallbackUsed",
+        "fallbackPermitted"
+      ],
+      "properties": {
+        "result": {
+          "type": "null"
+        },
+        "error": {
+          "$ref": "#/$defs/BackstageError"
+        },
+        "protected": {
+          "const": true
+        },
+        "protectedGenerationCompleted": {
+          "const": false
+        },
+        "official": {
+          "const": false
+        },
+        "continuityVerified": {
+          "const": false
+        },
+        "authority": {
+          "const": "none"
+        },
+        "snapshotStatus": {
+          "const": "not_applicable"
+        },
+        "fallbackUsed": {
+          "const": false
+        },
+        "fallbackPermitted": {
+          "const": false
+        }
+      },
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "output"
+            ]
+          },
+          {
+            "required": [
+              "storyline"
+            ]
+          },
+          {
+            "required": [
+              "answer"
+            ]
+          },
+          {
+            "required": [
+              "draft"
+            ]
+          },
+          {
+            "required": [
+              "partial"
+            ]
+          },
+          {
+            "required": [
+              "preview"
+            ]
+          }
+        ]
+      }
+    },
+    "BackstageError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "details": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "retryable": {
+              "type": "boolean"
+            },
+            "reason": {
+              "type": "string",
+              "enum": [
+                "not_found",
+                "ambiguous"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "BackstagePublicErrorResponse": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "ok",
+        "error"
+      ],
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "enum": [
+            false
+          ]
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "traceId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "error": {
+          "$ref": "#/$defs/BackstageError"
+        }
+      }
+    },
+    "BackstageUniverseReadErrorResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ok",
+        "error"
+      ],
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": false
+        },
+        "status": {
+          "type": "string",
+          "const": "unavailable"
+        },
+        "service": {
+          "type": "string",
+          "const": "backstage-booker"
+        },
+        "error": {
+          "$ref": "#/$defs/BackstageError"
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "traceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "RateLimitResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "error",
+        "message",
+        "retryAfter"
+      ],
+      "properties": {
+        "error": {
+          "type": "string",
+          "enum": [
+            "Rate limit exceeded"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240,
+          "pattern": "\\S"
+        },
+        "retryAfter": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "BackstageAsyncAcceptedResponse": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "ok",
+        "status",
+        "jobId",
+        "poll"
+      ],
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "queued",
+            "running",
+            "timeout"
+          ]
+        },
+        "jobId": {
+          "type": "string"
+        },
+        "jobStatus": {
+          "type": "string"
+        },
+        "lifecycleStatus": {
+          "type": "string"
+        },
+        "poll": {
+          "type": "string",
+          "description": "getBackstageBookerJobResult managed path."
+        },
+        "timedOut": {
+          "type": "boolean"
+        },
+        "deduped": {
+          "type": "boolean"
+        }
+      }
+    },
+    "MatchInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "wrestler1",
+        "wrestler2",
+        "matchType"
+      ],
+      "properties": {
+        "wrestler1": {
+          "$ref": "#/$defs/WrestlerName"
+        },
+        "wrestler2": {
+          "$ref": "#/$defs/WrestlerName"
+        },
+        "matchType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "pattern": "\\S"
+        },
+        "kayfabeMode": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "Wrestler": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "overall"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/WrestlerName"
+        },
+        "overall": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        }
+      }
+    },
+    "UniverseReadId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "BackstageUniverseReadSuccessResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ok",
+        "result"
+      ],
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        },
+        "result": {
+          "$ref": "#/$defs/BackstageUniverseReadResult"
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "traceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "BackstageUniverseReadResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "universeId",
+        "source",
+        "hasPersistedData",
+        "sourceQueryLimits",
+        "responseLimits",
+        "truncation",
+        "snapshot"
+      ],
+      "properties": {
+        "universeId": {
+          "$ref": "#/$defs/UniverseId"
+        },
+        "source": {
+          "type": "string",
+          "const": "postgresql"
+        },
+        "hasPersistedData": {
+          "type": "boolean",
+          "description": "True when the bounded read observed at least one stored row or a nonzero canon revision. This is not a registry-existence claim."
+        },
+        "sourceQueryLimits": {
+          "$ref": "#/$defs/BackstageUniverseReadSourceLimits"
+        },
+        "responseLimits": {
+          "$ref": "#/$defs/BackstageUniverseReadResponseLimits"
+        },
+        "truncation": {
+          "$ref": "#/$defs/BackstageUniverseReadTruncation"
+        },
+        "snapshot": {
+          "$ref": "#/$defs/BackstageUniverseReadSnapshot"
+        }
+      }
+    },
+    "BackstageUniverseReadSourceLimits": {
+      "type": "object",
+      "description": "Maximum recent rows inspected per storage section. A collection at its source limit can have older rows outside this snapshot; these limits are windows, not total counts.",
+      "additionalProperties": false,
+      "required": [
+        "roster",
+        "recentEvents",
+        "recentStoryBeats",
+        "savedStorylines",
+        "canonStorylines",
+        "activeCanonBeats"
+      ],
+      "properties": {
+        "roster": {
+          "type": "integer",
+          "const": 25
+        },
+        "recentEvents": {
+          "type": "integer",
+          "const": 5
+        },
+        "recentStoryBeats": {
+          "type": "integer",
+          "const": 5
+        },
+        "savedStorylines": {
+          "type": "integer",
+          "const": 5
+        },
+        "canonStorylines": {
+          "type": "integer",
+          "const": 50
+        },
+        "activeCanonBeats": {
+          "type": "integer",
+          "const": 100
+        }
+      }
+    },
+    "BackstageUniverseReadResponseLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "roster",
+        "recentEvents",
+        "recentStoryBeats",
+        "savedStorylines",
+        "canonStorylines",
+        "activeCanonBeats",
+        "participantNamesPerItem",
+        "canonSummaryCodePoints",
+        "legacySummaryCodePoints",
+        "savedStorylineCodePoints",
+        "serializedResultBytes"
+      ],
+      "properties": {
+        "roster": {
+          "type": "integer",
+          "const": 25
+        },
+        "recentEvents": {
+          "type": "integer",
+          "const": 5
+        },
+        "recentStoryBeats": {
+          "type": "integer",
+          "const": 5
+        },
+        "savedStorylines": {
+          "type": "integer",
+          "const": 5
+        },
+        "canonStorylines": {
+          "type": "integer",
+          "const": 8
+        },
+        "activeCanonBeats": {
+          "type": "integer",
+          "const": 12
+        },
+        "participantNamesPerItem": {
+          "type": "integer",
+          "const": 10
+        },
+        "canonSummaryCodePoints": {
+          "type": "integer",
+          "const": 1000
+        },
+        "legacySummaryCodePoints": {
+          "type": "integer",
+          "const": 500
+        },
+        "savedStorylineCodePoints": {
+          "type": "integer",
+          "const": 1500
+        },
+        "serializedResultBytes": {
+          "type": "integer",
+          "const": 61440
+        }
+      }
+    },
+    "BackstageUniverseReadTruncation": {
+      "type": "object",
+      "description": "Reports field trimming and items omitted after the bounded source queries. omittedItems excludes older rows outside sourceQueryLimits.",
+      "additionalProperties": false,
+      "required": [
+        "truncated",
+        "sections",
+        "omittedItems"
+      ],
+      "properties": {
+        "truncated": {
+          "type": "boolean"
+        },
+        "sections": {
+          "type": "array",
+          "maxItems": 20,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "snapshot.roster",
+              "snapshot.roster.name",
+              "snapshot.recentEvents",
+              "snapshot.recentEvents.label",
+              "snapshot.recentEvents.summary",
+              "snapshot.recentStoryBeats",
+              "snapshot.recentStoryBeats.label",
+              "snapshot.recentStoryBeats.summary",
+              "snapshot.savedStorylines",
+              "snapshot.savedStorylines.key",
+              "snapshot.savedStorylines.storylineExcerpt",
+              "snapshot.canon.storylines",
+              "snapshot.canon.storylines.key",
+              "snapshot.canon.storylines.title",
+              "snapshot.canon.storylines.summary",
+              "snapshot.canon.storylines.participantNames",
+              "snapshot.canon.activeBeats",
+              "snapshot.canon.activeBeats.storylineKey",
+              "snapshot.canon.activeBeats.summary",
+              "snapshot.canon.activeBeats.participantNames"
+            ]
+          }
+        },
+        "omittedItems": {
+          "$ref": "#/$defs/BackstageUniverseReadOmittedItems"
+        }
+      }
+    },
+    "BackstageUniverseReadOmittedItems": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "roster",
+        "recentEvents",
+        "recentStoryBeats",
+        "savedStorylines",
+        "canonStorylines",
+        "activeCanonBeats",
+        "participantNames"
+      ],
+      "properties": {
+        "roster": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "recentEvents": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "recentStoryBeats": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "savedStorylines": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "canonStorylines": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "activeCanonBeats": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "participantNames": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "BackstageUniverseReadSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "roster",
+        "recentEvents",
+        "recentStoryBeats",
+        "savedStorylines",
+        "canon"
+      ],
+      "properties": {
+        "roster": {
+          "type": "array",
+          "maxItems": 25,
+          "items": {
+            "$ref": "#/$defs/Wrestler"
+          }
+        },
+        "recentEvents": {
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "$ref": "#/$defs/BackstageUniverseReadLegacyEntry"
+          }
+        },
+        "recentStoryBeats": {
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "$ref": "#/$defs/BackstageUniverseReadLegacyEntry"
+          }
+        },
+        "savedStorylines": {
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "$ref": "#/$defs/BackstageUniverseReadSavedStoryline"
+          }
+        },
+        "canon": {
+          "$ref": "#/$defs/BackstageUniverseReadCanonContext"
+        }
+      }
+    },
+    "BackstageUniverseReadLegacyEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "label",
+        "summary",
+        "createdAt"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "label": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "summary": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "createdAt": {
+          "$ref": "#/$defs/UtcTimestamp"
+        }
+      }
+    },
+    "Uuid": {
+      "type": "string",
+      "format": "uuid",
+      "minLength": 36,
+      "maxLength": 36,
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+    },
+    "UtcTimestamp": {
+      "type": "string",
+      "pattern": "^(?!0000-)(?:(?:[0-9]{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12][0-9]|3[01])|(?:0[469]|11)-(?:0[1-9]|[12][0-9]|30)|02-(?:0[1-9]|1[0-9]|2[0-8])))|(?:(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:0[48]|[2468][048]|[13579][26])00)-02-29))T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]{1,9})?Z$"
+    },
+    "BackstageUniverseReadSavedStoryline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "key",
+        "storylineExcerpt",
+        "createdAt",
+        "updatedAt"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "key": {
+          "$ref": "#/$defs/StorylineKey"
+        },
+        "storylineExcerpt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1500
+        },
+        "createdAt": {
+          "$ref": "#/$defs/UtcTimestamp"
+        },
+        "updatedAt": {
+          "$ref": "#/$defs/UtcTimestamp"
+        }
+      }
+    },
+    "StorylineKey": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "pattern": "\\S",
+      "allOf": [
+        {
+          "$ref": "#/$defs/PostgresText"
+        }
+      ]
+    },
+    "BackstageUniverseReadCanonContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "revision",
+        "storylines",
+        "activeBeats"
+      ],
+      "properties": {
+        "revision": {
+          "$ref": "#/$defs/UniverseRevision"
+        },
+        "storylines": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/BackstageUniverseReadCanonStoryline"
+          }
+        },
+        "activeBeats": {
+          "type": "array",
+          "maxItems": 12,
+          "items": {
+            "$ref": "#/$defs/BackstageUniverseReadCanonBeat"
+          }
+        }
+      }
+    },
+    "UniverseRevision": {
+      "type": "string",
+      "pattern": "^(?:0|[1-9][0-9]{0,19})$"
+    },
+    "BackstageUniverseReadCanonStoryline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "key",
+        "title",
+        "summary",
+        "status",
+        "participantNames",
+        "version",
+        "universeRevision",
+        "createdAt",
+        "updatedAt",
+        "closedAt"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "key": {
+          "$ref": "#/$defs/StorylineKey"
+        },
+        "title": {
+          "$ref": "#/$defs/StorylineTitle"
+        },
+        "summary": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 1000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/StorylineStatus"
+        },
+        "participantNames": {
+          "$ref": "#/$defs/BackstageUniverseReadParticipantNames"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "universeRevision": {
+          "$ref": "#/$defs/UniverseRevision"
+        },
+        "createdAt": {
+          "$ref": "#/$defs/UtcTimestamp"
+        },
+        "updatedAt": {
+          "$ref": "#/$defs/UtcTimestamp"
+        },
+        "closedAt": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UtcTimestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "StorylineTitle": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "pattern": "\\S",
+      "allOf": [
+        {
+          "$ref": "#/$defs/PostgresText"
+        }
+      ]
+    },
+    "StorylineStatus": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "active",
+        "paused",
+        "completed",
+        "cancelled"
+      ]
+    },
+    "BackstageUniverseReadParticipantNames": {
+      "type": "array",
+      "maxItems": 10,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/WrestlerName"
+      }
+    },
+    "BackstageUniverseReadCanonBeat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "storylineId",
+        "storylineKey",
+        "sequence",
+        "kind",
+        "summary",
+        "occurredAt",
+        "participantNames",
+        "eventId",
+        "supersedesBeatId",
+        "universeRevision",
+        "createdAt"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "storylineId": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "storylineKey": {
+          "$ref": "#/$defs/StorylineKey"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "kind": {
+          "$ref": "#/$defs/CanonBeatKind"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "occurredAt": {
+          "$ref": "#/$defs/UtcTimestamp"
+        },
+        "participantNames": {
+          "$ref": "#/$defs/BackstageUniverseReadParticipantNames"
+        },
+        "eventId": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "supersedesBeatId": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "universeRevision": {
+          "$ref": "#/$defs/UniverseRevision"
+        },
+        "createdAt": {
+          "$ref": "#/$defs/UtcTimestamp"
+        }
+      }
+    },
+    "CanonBeatKind": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z][a-z0-9._:-]{0,63}$"
+    },
+    "StorylineReadKey": {
+      "description": "An exact persisted storyline key without leading or trailing whitespace.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/StorylineKey"
+        },
+        {
+          "type": "string",
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+        }
+      ]
+    },
+    "BackstageStorylineSummaryReadSuccessResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ok",
+        "result"
+      ],
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        },
+        "result": {
+          "$ref": "#/$defs/BackstageStorylineSummaryReadResult"
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "traceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "BackstageStorylineSummaryReadResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "universeId",
+        "source",
+        "pageCodePointLimit",
+        "storyline",
+        "summaryPage"
+      ],
+      "properties": {
+        "universeId": {
+          "$ref": "#/$defs/UniverseReadId"
+        },
+        "source": {
+          "type": "string",
+          "const": "postgresql"
+        },
+        "pageCodePointLimit": {
+          "type": "integer",
+          "const": 4000
+        },
+        "storyline": {
+          "$ref": "#/$defs/BackstageStorylineSummaryMetadata"
+        },
+        "summaryPage": {
+          "$ref": "#/$defs/BackstageStorylineSummaryPage"
+        }
+      }
+    },
+    "BackstageStorylineSummaryMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "key",
+        "title",
+        "status",
+        "version",
+        "universeRevision",
+        "updatedAt"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "key": {
+          "$ref": "#/$defs/StorylineKey"
+        },
+        "title": {
+          "$ref": "#/$defs/StorylineTitle"
+        },
+        "status": {
+          "$ref": "#/$defs/StorylineStatus"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "universeRevision": {
+          "$ref": "#/$defs/UniverseRevision"
+        },
+        "updatedAt": {
+          "$ref": "#/$defs/UtcTimestamp"
+        }
+      }
+    },
+    "BackstageStorylineSummaryPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "text",
+        "startCodePoint",
+        "endCodePointExclusive",
+        "totalCodePoints",
+        "hasMore",
+        "nextOffset"
+      ],
+      "properties": {
+        "text": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 4000,
+              "allOf": [
+                {
+                  "$ref": "#/$defs/PostgresText"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "startCodePoint": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "endCodePointExclusive": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "totalCodePoints": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "hasMore": {
+          "type": "boolean"
+        },
+        "nextOffset": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "BackstageJobResultLookup": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "jobId",
+        "status",
+        "jobStatus",
+        "lifecycleStatus",
+        "poll",
+        "result",
+        "error"
+      ],
+      "properties": {
+        "jobId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "completed",
+            "failed",
+            "expired",
+            "not_found"
+          ]
+        },
+        "jobStatus": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lifecycleStatus": {
+          "type": "string"
+        },
+        "poll": {
+          "type": "string",
+          "description": "getBackstageBookerJobResult managed path."
+        },
+        "result": {
+          "oneOf": [
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/BackstagePublicSuccessResponse"
+                },
+                {
+                  "properties": {
+                    "result": {
+                      "oneOf": [
+                        {
+                          "$ref": "#/$defs/GeneratedBookingResult"
+                        },
+                        {
+                          "$ref": "#/$defs/GeneratedBookingWithHrcResult"
+                        }
+                      ]
+                    },
+                    "_route": {
+                      "properties": {
+                        "action": {
+                          "enum": [
+                            "generateBooking",
+                            "generateBookingWithHRC"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BackstageProtectedFailureError"
+            },
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "protected": {
+          "const": true
+        },
+        "protectedGenerationCompleted": {
+          "type": "boolean"
+        },
+        "official": {
+          "type": "boolean"
+        },
+        "continuityVerified": {
+          "type": "boolean"
+        },
+        "authority": {
+          "enum": [
+            "notion",
+            "legacy_postgresql",
+            "none"
+          ]
+        },
+        "snapshotStatus": {
+          "enum": [
+            "current_complete",
+            "not_applicable"
+          ]
+        },
+        "fallbackUsed": {
+          "type": "boolean"
+        },
+        "fallbackPermitted": {
+          "const": false
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "const": "completed"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "error": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "failed",
+                  "expired"
+                ]
+              }
+            }
+          },
+          "then": {
+            "allOf": [
+              {
+                "$ref": "#/$defs/BackstageProtectedFailureState"
+              },
+              {
+                "properties": {
+                  "error": {
+                    "$ref": "#/$defs/BackstageProtectedFailureError"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "BackstageProtectedFailureError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/BackstageProtectedFailureCode"
+        },
+        "message": {
+          "const": "Protected Backstage generation did not complete."
+        }
+      }
+    },
+    "BackstageProtectedFailureCode": {
+      "type": "string",
+      "enum": [
+        "BACKSTAGE_ASYNC_TIMEOUT",
+        "BACKSTAGE_ASYNC_EXECUTION_FAILED",
+        "BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE",
+        "BACKSTAGE_BOOKER_INTEGRITY_FAILED",
+        "BACKSTAGE_NOTION_INDEX_UNAVAILABLE",
+        "BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE",
+        "BACKSTAGE_ASYNC_RESULT_UNAVAILABLE"
+      ]
+    },
+    "McpqueryContinuitySuccessResponse": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "ok",
+        "result",
+        "_route"
+      ],
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "enum": [
+            true
+          ]
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "traceId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "result": {
+          "$ref": "#/$defs/QueryContinuityResult"
+        },
+        "_route": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/BackstageRouteMeta"
+            },
+            {
+              "properties": {
+                "action": {
+                  "const": "queryContinuity"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "McpgenerateBookingSuccessResponse": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "ok",
+        "result",
+        "_route"
+      ],
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "enum": [
+            true
+          ]
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "traceId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "result": {
+          "$ref": "#/$defs/GeneratedBookingResult"
+        },
+        "_route": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/BackstageRouteMeta"
+            },
+            {
+              "properties": {
+                "action": {
+                  "const": "generateBooking"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "McpgenerateBookingWithHRCSuccessResponse": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "ok",
+        "result",
+        "_route"
+      ],
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "enum": [
+            true
+          ]
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "traceId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "result": {
+          "$ref": "#/$defs/GeneratedBookingWithHrcResult"
+        },
+        "_route": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/BackstageRouteMeta"
+            },
+            {
+              "properties": {
+                "action": {
+                  "const": "generateBookingWithHRC"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "McpsimulateMatchSuccessResponse": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "ok",
+        "result",
+        "_route"
+      ],
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "enum": [
+            true
+          ]
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "traceId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "result": {
+          "$ref": "#/$defs/SimulatedMatchResult"
+        },
+        "_route": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/BackstageRouteMeta"
+            },
+            {
+              "properties": {
+                "action": {
+                  "const": "simulateMatch"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "McpQueuedGenerationSuccessResponse": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "ok",
+        "result",
+        "_route"
+      ],
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "enum": [
+            true
+          ]
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "traceId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "result": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/GeneratedBookingResult"
+            },
+            {
+              "$ref": "#/$defs/GeneratedBookingWithHrcResult"
+            }
+          ]
+        },
+        "_route": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/BackstageRouteMeta"
+            },
+            {
+              "properties": {
+                "action": {
+                  "enum": [
+                    "generateBooking",
+                    "generateBookingWithHRC"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "McpJobResultLookup": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "jobId",
+        "status",
+        "jobStatus",
+        "lifecycleStatus",
+        "poll",
+        "result",
+        "error"
+      ],
+      "properties": {
+        "jobId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "completed",
+            "failed",
+            "expired",
+            "not_found"
+          ]
+        },
+        "jobStatus": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lifecycleStatus": {
+          "type": "string"
+        },
+        "poll": {
+          "type": "string",
+          "description": "getBackstageBookerJobResult managed path."
+        },
+        "result": {
+          "oneOf": [
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/McpQueuedGenerationSuccessResponse"
+                },
+                {
+                  "properties": {
+                    "result": {
+                      "oneOf": [
+                        {
+                          "$ref": "#/$defs/GeneratedBookingResult"
+                        },
+                        {
+                          "$ref": "#/$defs/GeneratedBookingWithHrcResult"
+                        }
+                      ]
+                    },
+                    "_route": {
+                      "properties": {
+                        "action": {
+                          "enum": [
+                            "generateBooking",
+                            "generateBookingWithHRC"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BackstageProtectedFailureError"
+            },
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "protected": {
+          "const": true
+        },
+        "protectedGenerationCompleted": {
+          "type": "boolean"
+        },
+        "official": {
+          "type": "boolean"
+        },
+        "continuityVerified": {
+          "type": "boolean"
+        },
+        "authority": {
+          "enum": [
+            "notion",
+            "legacy_postgresql",
+            "none"
+          ]
+        },
+        "snapshotStatus": {
+          "enum": [
+            "current_complete",
+            "not_applicable"
+          ]
+        },
+        "fallbackUsed": {
+          "type": "boolean"
+        },
+        "fallbackPermitted": {
+          "const": false
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "const": "completed"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "error": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "failed",
+                  "expired"
+                ]
+              }
+            }
+          },
+          "then": {
+            "allOf": [
+              {
+                "$ref": "#/$defs/BackstageProtectedFailureState"
+              },
+              {
+                "properties": {
+                  "error": {
+                    "$ref": "#/$defs/BackstageProtectedFailureError"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

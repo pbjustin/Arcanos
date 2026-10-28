@@ -348,7 +348,13 @@ describe('npm audit policy', () => {
       version: '4.6.7',
       resolved: 'https://registry.npmjs.org/zod/-/zod-4.6.7.tgz'
     });
-    const qsArtifact = {
+    const rootQsArtifact = {
+      version: '6.16.1',
+      resolved: 'https://registry.npmjs.org/qs/-/qs-6.16.1.tgz',
+      integrity:
+        'sha512-5Px6J7rfHBAGUhNQ3es4YzcOdBBw0SDcVtThJml4RdnKw4tKs2epA0kPZ+K8X+WiHktT93RHVcQ/3ym5aTCgtg==',
+    };
+    const runtimeQsArtifact = {
       version: '6.16.0',
       resolved:
         'https://codeload.github.com/ljharb/qs/tar.gz/bb9379e01fad04c601478acd6152143cb20c984b',
@@ -366,7 +372,7 @@ describe('npm audit policy', () => {
       'express-rate-limit': '8.3.0',
       'fast-uri': fastUriArtifact.resolved,
       'ip-address': 'https://registry.npmjs.org/ip-address/-/ip-address-10.7.4.tgz',
-      qs: qsArtifact.resolved,
+      qs: rootQsArtifact.resolved,
       undici: 'https://registry.npmjs.org/undici/-/undici-7.30.1.tgz',
       express: { 'body-parser': '1.20.9' },
       '@modelcontextprotocol/sdk': {
@@ -374,7 +380,7 @@ describe('npm audit policy', () => {
       },
     });
     expect(runtimePackage.overrides).toMatchObject({
-      qs: qsArtifact.resolved,
+      qs: runtimeQsArtifact.resolved,
     });
     expect(rootPackage.overrides['brace-expansion']).toBeUndefined();
     expect(vendorPackage.dependencies['brace-expansion']).toBe('5.0.12');
@@ -427,7 +433,7 @@ describe('npm audit policy', () => {
         integrity:
           'sha512-Ifk1KcLrxaGt1occQagQNFNNOqRt1LFuehEnHHzB8Z6cRgIxRU1TBaiIsUiCdA+gy5PL7Y1IX31DNKkRmxtXjQ==',
       },
-      'node_modules/qs': qsArtifact,
+      'node_modules/qs': rootQsArtifact,
       'node_modules/proxy-addr': proxyAddrArtifact,
     };
     for (const [node, identity] of Object.entries(expectedLockIdentities)) {
@@ -437,7 +443,7 @@ describe('npm audit policy', () => {
     expect(packageLock.packages['node_modules/ajv'].version).toBe('8.18.0');
     expect(packageLock.packages['node_modules/cheerio'].version).toBe('1.1.2');
     expect(runtimePackageLock.packages['node_modules/qs']).toMatchObject(
-      qsArtifact,
+      runtimeQsArtifact,
     );
     expect(runtimePackageLock.packages['node_modules/proxy-addr']).toMatchObject(
       proxyAddrArtifact,

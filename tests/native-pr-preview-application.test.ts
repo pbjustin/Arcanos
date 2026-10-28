@@ -996,6 +996,46 @@ describe('native PR contained application', () => {
     }
   });
 
+  it('rejects a Booker origin for another PR or a production host before fixture startup', () => {
+    const environment = {
+      ARCANOS_NATIVE_PR_APPLICATION_PREVIEW: 'v1', ARCANOS_PREVIEW_PR_NUMBER: '1566',
+      ARCANOS_PREVIEW_SOURCE_COMMIT: 'a'.repeat(40), ARCANOS_PROCESS_KIND: 'web',
+      HOST: '0.0.0.0', NODE_ENV: 'production', PORT: '8080', RUN_WORKERS: 'false', TZ: 'UTC',
+      ARCANOS_PREVIEW_BOOKER_ORIGIN: 'https://arcanos-v2-pr-676861-1566.up.railway.app',
+    };
+    expect(resolveNativePrPreviewChildEnvironment(environment)).toMatchObject({
+      prNumber: 1566, bookerOrigin: environment.ARCANOS_PREVIEW_BOOKER_ORIGIN,
+    });
+    for (const change of [
+      { ARCANOS_PREVIEW_PR_NUMBER: '1567' },
+      { ARCANOS_PREVIEW_BOOKER_ORIGIN: 'https://arcanos-v2-production.up.railway.app' },
+      { ARCANOS_PREVIEW_BOOKER_ORIGIN: 'https://arcanos-v2-pr-676861-1566.up.railway.app.evil.invalid' },
+      { ARCANOS_PREVIEW_BOOKER_ORIGIN: 'http://arcanos-v2-pr-676861-1566.up.railway.app' },
+    ]) expect(() => resolveNativePrPreviewChildEnvironment({ ...environment, ...change }))
+      .toThrow('PREVIEW_APPLICATION_ENVIRONMENT_INVALID');
+  });
+
+  it('admits only the complete fresh-attempt Auth0 discovery child configuration', () => {
+    const environment = {
+      ARCANOS_NATIVE_PR_APPLICATION_PREVIEW: 'v1', ARCANOS_PREVIEW_PR_NUMBER: '1566',
+      ARCANOS_PREVIEW_SOURCE_COMMIT: 'a'.repeat(40), ARCANOS_PROCESS_KIND: 'web',
+      HOST: '0.0.0.0', NODE_ENV: 'production', PORT: '8080', RUN_WORKERS: 'false', TZ: 'UTC',
+      ARCANOS_PREVIEW_BOOKER_ORIGIN: 'https://arcanos-v2-pr-ab12cd-1566.up.railway.app',
+      ARCANOS_PREVIEW_BOOKER_AUTH0_DISCOVERY: 'v1', ARCANOS_PREVIEW_BOOKER_AUTH0_OWNER_SUBJECT: 'auth0|preview-owner',
+    };
+    expect(resolveNativePrPreviewChildEnvironment(environment)).toMatchObject({ prNumber: 1566,
+      bookerOrigin: environment.ARCANOS_PREVIEW_BOOKER_ORIGIN, bookerAuth0Discovery: { ownerSubject: 'auth0|preview-owner' } });
+    for (const change of [
+      { ARCANOS_PREVIEW_PR_NUMBER: '1567' }, { ARCANOS_PREVIEW_BOOKER_AUTH0_DISCOVERY: 'true' },
+      { ARCANOS_PREVIEW_BOOKER_AUTH0_DISCOVERY: undefined }, { ARCANOS_PREVIEW_BOOKER_AUTH0_OWNER_SUBJECT: undefined },
+      { ARCANOS_PREVIEW_BOOKER_AUTH0_OWNER_SUBJECT: 'invalid\nowner' }, { ARCANOS_PREVIEW_BOOKER_ORIGIN: undefined },
+      { ARCANOS_PREVIEW_BOOKER_ORIGIN: 'https://arcanos-v2-pr-676861-1566.up.railway.app' },
+      { ARCANOS_PREVIEW_BOOKER_ORIGIN: 'https://production-pr-ab12cd-1566.up.railway.app' },
+      { ARCANOS_PROCESS_KIND: 'worker' }, { CHATGPT_BOOKER_ISSUER: 'https://unapproved.invalid/' },
+    ]) expect(() => resolveNativePrPreviewChildEnvironment({ ...environment, ...change }))
+      .toThrow('PREVIEW_APPLICATION_ENVIRONMENT_INVALID');
+  });
+
   it('advertises an explicit trusted-PR containment scope and exact source identity', async () => {
     const { app } = buildApplication();
 

@@ -7,6 +7,9 @@ const CHILD_ENVIRONMENT_NAMES = new Set([
   'ARCANOS_NATIVE_PR_APPLICATION_PREVIEW',
   'ARCANOS_PREVIEW_PR_NUMBER',
   'ARCANOS_PREVIEW_SOURCE_COMMIT',
+  'ARCANOS_PREVIEW_BOOKER_ORIGIN',
+  'ARCANOS_PREVIEW_BOOKER_AUTH0_DISCOVERY',
+  'ARCANOS_PREVIEW_BOOKER_AUTH0_OWNER_SUBJECT',
   'ARCANOS_PROCESS_KIND',
   'HOST',
   'NODE_ENV',
@@ -41,7 +44,7 @@ function requireExactEnvironmentValue(
 
 export function resolveNativePrPreviewChildEnvironment(
   env: NodeJS.ProcessEnv
-): NativePrPreviewIdentity & { host: string; port: number } {
+): NativePrPreviewIdentity & { host: string; port: number; bookerOrigin?: string; bookerAuth0Discovery?: { ownerSubject: string } } {
   if (
     Object.keys(env).some((environmentName) =>
       !CHILD_ENVIRONMENT_NAMES.has(environmentName)
@@ -83,11 +86,34 @@ export function resolveNativePrPreviewChildEnvironment(
     throw new Error('PREVIEW_APPLICATION_ENVIRONMENT_INVALID');
   }
 
+  // Only the launcher's already validated Railway origin enters this fixture.
+  // Requests cannot select the OAuth audience through Host/Forwarded headers.
+  const bookerOrigin = env.ARCANOS_PREVIEW_BOOKER_ORIGIN;
+  const auth0Mode = env.ARCANOS_PREVIEW_BOOKER_AUTH0_DISCOVERY;
+  const ownerSubject = env.ARCANOS_PREVIEW_BOOKER_AUTH0_OWNER_SUBJECT;
+  const auth0Configured = auth0Mode !== undefined || ownerSubject !== undefined;
+  if (auth0Configured && (prNumber !== 1566 || auth0Mode !== 'v1' || typeof ownerSubject !== 'string'
+    || ownerSubject.length === 0 || ownerSubject.length > 256 || ownerSubject !== ownerSubject.trim()
+    || /[\u0000-\u001f\u007f]/u.test(ownerSubject))) {
+    throw new Error('PREVIEW_APPLICATION_ENVIRONMENT_INVALID');
+  }
+  const originPattern = auth0Configured
+    ? /^https:\/\/[a-z0-9][a-z0-9-]*pr-(?!676861)[0-9a-f]{6}-1566[a-z0-9-]*\.up\.railway\.app$/u
+    : /^https:\/\/[a-z0-9][a-z0-9-]*pr-676861-1566[a-z0-9-]*\.up\.railway\.app$/u;
+  if (auth0Configured && !bookerOrigin) throw new Error('PREVIEW_APPLICATION_ENVIRONMENT_INVALID');
+  if (bookerOrigin !== undefined && (prNumber !== 1566
+    || !originPattern.test(bookerOrigin)
+    || /(?:^|[.-])production(?:[.-]|$)/iu.test(new URL(bookerOrigin).hostname))) {
+    throw new Error('PREVIEW_APPLICATION_ENVIRONMENT_INVALID');
+  }
+
   return {
     host: '0.0.0.0',
     port,
     prNumber,
     sourceCommit,
+    ...(bookerOrigin ? { bookerOrigin } : {}),
+    ...(auth0Configured ? { bookerAuth0Discovery: { ownerSubject: ownerSubject! } } : {}),
   };
 }
 
@@ -117,6 +143,8 @@ async function main(): Promise<void> {
   const readinessState = createNativePrPreviewReadinessState();
   const application = createNativePrPreviewApplication({
     identity,
+    ...(identity.bookerOrigin ? { bookerOrigin: identity.bookerOrigin } : {}),
+    ...(identity.bookerAuth0Discovery ? { bookerAuth0Discovery: identity.bookerAuth0Discovery } : {}),
     readinessState,
   });
   readinessState.applicationImported = true;
