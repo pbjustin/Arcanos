@@ -9,11 +9,14 @@ import {
   BOOKER_GENERATE_SCOPE,
   BOOKER_READ_SCOPE,
   bookerMcpTools,
+  getBookerMcpOutputValidationIssues,
   isBookerMcpInput,
   isBookerMcpOutput,
   isBookerMcpToolName,
   requiresBookerGenerationPermission,
 } from '../src/shared/chatgpt/bookerMcpContract.js';
+import { buildBackstageContinuityResponse } from '../src/shared/backstage/backstageContinuityQueryCore.js';
+import { shapeClientRouteResult } from '../src/shared/http/clientRouteResultShape.js';
 
 const openapi = JSON.parse(readFileSync('contracts/backstage_booker.openapi.v1.json', 'utf8'));
 const contract = JSON.parse(readFileSync('packages/protocol/schemas/v1/tools/arcanos-booker/contract.schema.json', 'utf8'));
@@ -42,6 +45,14 @@ const protectedFailure = { ok: false, result: null,
   protected: true, protectedGenerationCompleted: false, official: false, continuityVerified: false,
   authority: 'none', snapshotStatus: 'not_applicable', fallbackUsed: false, fallbackPermitted: false,
 };
+
+const continuityResponse = () => buildBackstageContinuityResponse({ universeId, query: 'Summarize my universe.' }, {
+  resolvedScope: null,
+  coverage: { status: 'sampled', scopeChunks: 3, selectedChunks: 1, omittedChunks: 2,
+    promptTruncated: true, exhaustive: false, hasMore: false },
+  citations: [{ chunkId: 'a'.repeat(64), contentHash: 'b'.repeat(64), pageTitle: 'Raw',
+    pagePath: ['Universe', 'Raw'], headingPath: ['Championships'], category: 'championships' }],
+}, 'A bounded authoritative summary.');
 
 describe('private Booker MCP contract parity', () => {
   it('exposes exactly seven tools with separately scoped generation permission', () => {
@@ -121,6 +132,7 @@ describe('private Booker MCP contract parity', () => {
   });
 
   it('preserves scoped complete continuity pagination without frontend authority', () => {
+    expect(isBookerMcpInput('queryContinuity', { ...input.queryContinuity, retrievalMode: 'relevant' })).toBe(true);
     const scoped = { ...input.queryContinuity, retrievalMode: 'complete_scope', cursor: 'next-page',
       retrievalScope: { pageTitle: 'Raw', pagePath: ['Universe', 'Raw'], scopeKind: 'subtree' } };
     expect(isBookerMcpInput('queryContinuity', scoped)).toBe(true);
@@ -172,6 +184,61 @@ describe('private Booker MCP contract parity', () => {
     const { coverage: _coverage, ...withoutCoverage } = continuity;
     expect(isBookerMcpOutput('queryContinuity', envelope('queryContinuity', withoutCoverage))).toBe(false);
     expect(isBookerMcpOutput('generateBooking', envelope('queryContinuity', { universeId, storyline: 'Wrong route.' }))).toBe(false);
+  });
+
+  it('validates canonical nonempty provenance and diagnoses the generic response projection mismatch', () => {
+    const continuity = continuityResponse();
+    expect(isBookerMcpOutput('queryContinuity', envelope('queryContinuity', continuity))).toBe(true);
+    expect(getBookerMcpOutputValidationIssues('queryContinuity', envelope('queryContinuity', continuity))).toEqual([]);
+
+    const compacted = envelope('queryContinuity', shapeClientRouteResult(continuity));
+    expect(isBookerMcpOutput('queryContinuity', compacted)).toBe(false);
+    expect(getBookerMcpOutputValidationIssues('queryContinuity', compacted)).toContainEqual({
+      instancePath: '/result/result/sources/0/pagePath', schemaPath: '#/type', keyword: 'type',
+    });
+  });
+
+  it('accepts scoped full responses and rejects malformed coverage or pagination', () => {
+    const continuity = continuityResponse();
+    const paginated = { ...continuity, resolvedScope: { pageTitle: 'Raw', pagePath: ['Universe', 'Raw'], sectionPath: ['Championships'] },
+      coverage: { ...continuity.coverage, hasMore: true, nextCursor: 'snapshot-bound_next-1' } };
+    expect(isBookerMcpOutput('queryContinuity', envelope('queryContinuity', paginated))).toBe(true);
+    const subtree = { ...continuity, resolvedScope: { pageTitle: 'Raw', pagePath: ['Universe', 'Raw'], scopeKind: 'subtree' },
+      coverage: { ...continuity.coverage, status: 'complete', scopePages: 2, selectedPages: 2, omittedPages: 0,
+        scopeChunks: 1, omittedChunks: 0, promptTruncated: false, exhaustive: true } };
+    expect(isBookerMcpOutput('queryContinuity', envelope('queryContinuity', subtree))).toBe(true);
+    for (const coverage of [
+      { ...continuity.coverage, hasMore: true },
+      { ...continuity.coverage, hasMore: true, nextCursor: 'invalid cursor with spaces' },
+      { ...continuity.coverage, nextCursor: 'unexpected-cursor' },
+      { ...continuity.coverage, omittedChunks: -1 },
+      { ...continuity.coverage, exhaustive: 'true' },
+    ]) {
+      expect(isBookerMcpOutput('queryContinuity', envelope('queryContinuity', { ...continuity, coverage }))).toBe(false);
+    }
+    expect(isBookerMcpOutput('queryContinuity', envelope('queryContinuity', { ...subtree, coverage: continuity.coverage }))).toBe(false);
+  });
+
+  it('keeps validation diagnostics bounded and excludes response values and dynamic property names', () => {
+    const privateSentinel = 'private-response-sentinel';
+    for (const dynamicKey of [privateSentinel, '123456789']) {
+      const malformed = envelope('simulateMatch', { universeId, result: { match: 'A vs B', winner: 'A', loser: 'B',
+        probability: { [dynamicKey]: privateSentinel, B: '0.39' }, interference: null, rating: '4.5' }, hrc });
+      const issues = getBookerMcpOutputValidationIssues('simulateMatch', malformed);
+      expect(issues.length).toBeGreaterThan(0);
+      expect(issues.length).toBeLessThanOrEqual(8);
+      expect(issues).toContainEqual(expect.objectContaining({ instancePath: '/result/result/result/probability/*', keyword: 'pattern' }));
+      expect(JSON.stringify(issues)).not.toContain(privateSentinel);
+      expect(JSON.stringify(issues)).not.toContain(dynamicKey);
+      for (const issue of issues) {
+        expect(Object.keys(issue)).toEqual(['instancePath', 'schemaPath', 'keyword']);
+        expect(issue.instancePath.length).toBeLessThanOrEqual(256);
+        expect(issue.schemaPath.length).toBeLessThanOrEqual(256);
+        expect(issue.keyword.length).toBeLessThanOrEqual(64);
+      }
+    }
+    const invalidProperty = { ...envelope('queryContinuity', continuityResponse()), [privateSentinel]: privateSentinel };
+    expect(JSON.stringify(getBookerMcpOutputValidationIssues('queryContinuity', invalidProperty))).not.toContain(privateSentinel);
   });
 
   it('preserves async lifecycle and protected failure without accepting arbitrary success or fallback', () => {

@@ -34,6 +34,15 @@ clients continue through the named MCP result tool using the same universe/job,
 not through the legacy shared-bearer HTTP endpoint. Successful generation must
 carry verified structured completion provenance for that exact universe.
 
+Continuity results retain the complete validated response, including array-valued
+source paths, resolved scope, coverage and snapshot-bound cursors. A broad
+`retrievalMode: "relevant"` query needs no page scope. The public byte limit
+returns a structured `503 BACKSTAGE_CONTINUITY_RESPONSE_TOO_LARGE` failure
+instead of a partial authoritative answer. Backend error status and classification
+remain in the structured MCP result; malformed response capture or output
+contracts return `BOOKER_OUTPUT_INVALID` with sanitized server-side schema
+diagnostics. This response projection repair requires no plugin schema refresh.
+
 Signed issuer, audience, client registration, subject, expiry and scope are
 verified independently from legacy Builder/Tutor/Gaming/operator credentials.
 Actor identity binds issuer, subject and exact universe across token renewal.
