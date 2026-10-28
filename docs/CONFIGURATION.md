@@ -98,6 +98,8 @@ outbound call.
 | `ARCANOS_NATIVE_PR_APPLICATION_PREVIEW` | Launcher-owned native PR child only | none | Exact internal version marker (`v1`) projected by the reviewed launcher. Do not configure or forward it manually. |
 | `ARCANOS_PREVIEW_PR_NUMBER` | Launcher-owned native PR child only | none | Validated positive PR number derived from Railway's native environment name. The launcher, not an operator or request, owns this value. |
 | `ARCANOS_PREVIEW_SOURCE_COMMIT` | Launcher-owned native PR child only | none | Validated lowercase 40-hex source commit projected into the contained preview child. It is identity evidence, not authorization. |
+| `ARCANOS_PREVIEW_BOOKER_AUTH0_DISCOVERY` | Owner-authorized PR 1566 preview web only | absent; disabled | Exact `v1` enables the isolated real-Auth0 discovery profile, only with its independently approved owner and fresh controller-attested Railway identity. It never enables normal application startup or tool execution. |
+| `ARCANOS_PREVIEW_BOOKER_AUTH0_OWNER_SUBJECT` | Same isolated profile only | none | Existing approved owner subject, supplied through a temporary protected workflow secret and bound by its digest. Never put it in dispatch inputs, public receipts, logs or normal/worker configuration. No token, password, client secret or signing key is accepted by this profile. |
 | `RUN_WORKERS` | No | `true` (non-test) | Local/direct in-process worker toggle. The explicit API startup lifecycle boots it when enabled; importing worker configuration never starts execution. Railway role selection remains authoritative when `ARCANOS_PROCESS_KIND` is set. |
 | `WORKER_API_TIMEOUT_MS` | No | `30000` | Unified config default; some worker adapters fallback to `60000` if unset. |
 | `ARC_LOG_PATH` | No | `/tmp/arc/log` | Runtime log path. |
@@ -2351,6 +2353,49 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 | `TAVILY_API_KEY` | empty | Optional Tavily provider key. |
 | `SERPAPI_API_KEY` | empty | Optional SerpAPI provider key. |
 | `SEARXNG_BASE_URL` | empty | Optional SearXNG instance URL. |
+## Optional private ChatGPT Booker resource
+
+The [Booker MCP resource](API.md#private-chatgpt-booker-resource) is disabled by
+default. Reuse the existing approved Auth0 tenant, issuer, signing infrastructure
+and compatible OAuth client registration. Tokens must be independently issued
+for the exact Booker resource and permissions; sharing a client never accepts
+Tutor/Gaming tokens at Booker. This first slice binds one verified owner to one
+exact universe through server configuration; a universe selector never grants
+membership. It adds no authorization server, account registration, credential,
+deployment or plugin installation.
+
+| Variable | Default and meaning |
+| --- | --- |
+| `CHATGPT_BOOKER_ENABLED` | `false`; only exact `true` enables Booker. |
+| `CHATGPT_BOOKER_ISSUER` | Unset; reuse the existing approved Auth0 HTTPS issuer explicitly. |
+| `CHATGPT_BOOKER_RESOURCE` | Unset; exact HTTPS origin plus `/chatgpt/booker/mcp`, also the token audience. |
+| `CHATGPT_BOOKER_JWKS_URL` | Unset; reuse the existing issuer's approved HTTPS signing-key endpoint. |
+| `CHATGPT_BOOKER_OAUTH_CLIENT_ID` | Unset; exact approved existing client when compatible. Signed `client_id` or `azp` must match; conflicting claims fail closed. No new registration is inherently required. |
+| `CHATGPT_BOOKER_OWNER_SUBJECT` | Unset; exact permitted verified OAuth subject. Keep identity out of plugin files. |
+| `CHATGPT_BOOKER_UNIVERSE_ID` | Unset; exact universe authorized for that subject. No implicit default, discovery or wildcard. |
+
+Register `arcanos:booker:read` independently from `arcanos:booker:generate`.
+Generation, HRC and simulation need both; continuity, state and owned job reads
+need read permission. No canon-write permission exists in this slice. Use
+authorization-code OAuth with PKCE S256, issuer discovery and resource-bound
+`typ: at+jwt` RS256/ES256 tokens. Legacy Builder, operator, Tutor and Gaming
+credentials do not authorize this resource. Complete enabled configuration is
+required (503 if incomplete, 404 when disabled). Existing protected generation
+configuration and matching web/worker payload protection remain prerequisites;
+this integration does not create or change them. A separately authorized
+rollback can disable the resource; accepted jobs retain their existing lifecycle.
+
+Keep all Booker settings explicit: there is no automatic inheritance of Tutor
+or Gaming configuration, credentials, audiences or grants. Verify the existing
+Auth0 client's callback/grant/Post Login policy, Booker API permissions,
+resource-parameter handling and scalar-audience RFC 9068 issuance using the
+[reuse acceptance checklist](chatgpt-migration/booker/README.md#auth0-reuse-findings-and-remaining-checks).
+The default Auth0 `typ: JWT` profile and API-plus-userinfo audience arrays are
+not accepted. No tenant-wide policy change, new client or live configuration
+mutation is authorized by this documentation.
+
+See [Booker migration and acceptance](chatgpt-migration/booker/README.md).
+
 ## Optional private ChatGPT Gaming resource
 
 The [Gaming MCP resource](API.md#private-chatgpt-gaming-resource) requires a

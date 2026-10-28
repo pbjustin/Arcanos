@@ -103,10 +103,17 @@ describe('ChatGPT integration in the real application composition', () => {
     expect(setupDiagnosticsMock).toHaveBeenCalledTimes(1);
     const transport = await request(app).post('/chatgpt/mcp').send(initializeRequest);
     const metadata = await request(app).get(CHATGPT_RESOURCE_METADATA_PATH);
+    const booker = await request(app).post('/chatgpt/booker/mcp')
+      .set('Content-Type', 'application/json').send('{invalid-json');
+    const bookerMetadata = await request(app)
+      .get('/.well-known/oauth-protected-resource/chatgpt/booker/mcp');
     expect(transport.status).toBe(404);
     expect(metadata.status).toBe(404);
     expect(transport.body).toEqual({ error: 'CHATGPT_INTEGRATION_UNAVAILABLE' });
     expect(metadata.body).toEqual(transport.body);
+    expect(booker.status).toBe(404);
+    expect(bookerMetadata.status).toBe(404);
+    expect(booker.body).toEqual({ error: 'BOOKER_INTEGRATION_UNAVAILABLE' });
     expect(buildOperatorServerMock).not.toHaveBeenCalled();
     expect(routeGptRequestMock).not.toHaveBeenCalled();
   });

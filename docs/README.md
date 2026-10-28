@@ -206,6 +206,7 @@ Migration-local implementation notes live beside their artifacts under
 - [Railway documentation](https://docs.railway.com/)
 - [Railway CLI documentation](https://docs.railway.com/develop/cli)
 Migration companions: [four-GPT operation inventory](chatgpt-migration/INVENTORY.md),
+[Booker private MCP migration](chatgpt-migration/booker/README.md),
 [connection decision](chatgpt-migration/ARCHITECTURE.md),
 [authentication](chatgpt-migration/AUTHENTICATION.md), and
 [platform/client evidence](chatgpt-migration/PLATFORM.md).

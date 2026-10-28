@@ -313,7 +313,7 @@
     "ip-address": "https://registry.npmjs.org/ip-address/-/ip-address-10.7.4.tgz",
     "undici": "https://registry.npmjs.org/undici/-/undici-7.30.1.tgz",
     "proxy-from-env": "https://codeload.github.com/Rob--W/proxy-from-env/tar.gz/refs/tags/v2.1.0",
-    "qs": "https://codeload.github.com/ljharb/qs/tar.gz/2471b66ae696a8a10915c01453ae2c0f139a5adc",
+    "qs": "https://registry.npmjs.org/qs/-/qs-6.16.1.tgz",
     "express": {
       "body-parser": "1.20.9",
       "path-to-regexp": "https://codeload.github.com/pillarjs/path-to-regexp/tar.gz/refs/tags/v.0.1.13"

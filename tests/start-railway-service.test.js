@@ -128,6 +128,46 @@ describe('start-railway-service launcher helpers', () => {
     )).toThrow(expectedCode);
   });
 
+  it('derives the isolated Booker audience only from validated Railway identity', () => {
+    const environment = {
+      ...nativeApplicationPreviewEnvironment,
+      RAILWAY_ENVIRONMENT_NAME: 'pr-676861-1566',
+      RAILWAY_PUBLIC_DOMAIN: 'arcanos-v2-pr-676861-1566.up.railway.app',
+      ARCANOS_PREVIEW_BOOKER_ORIGIN: 'https://attacker.invalid',
+      CHATGPT_BOOKER_RESOURCE: 'https://production.invalid/chatgpt/booker/mcp',
+    };
+    const child = buildNativePrApplicationChildEnvironment(environment);
+    expect(child.ARCANOS_PREVIEW_BOOKER_ORIGIN).toBe('https://arcanos-v2-pr-676861-1566.up.railway.app');
+    expect(child.CHATGPT_BOOKER_RESOURCE).toBeUndefined();
+    expect(() => buildNativePrApplicationChildEnvironment({
+      ...environment, RAILWAY_PUBLIC_DOMAIN: 'arcanos-v2-production.up.railway.app',
+    })).toThrow('PREVIEW_APPLICATION_DOMAIN_MISMATCH');
+  });
+
+  it('forwards only the explicitly authorized Auth0 owner on a fresh PR1566 attempt', () => {
+    const environment = { ...nativeApplicationPreviewEnvironment,
+      RAILWAY_ENVIRONMENT_NAME: 'pr-ab12cd-1566', RAILWAY_PUBLIC_DOMAIN: 'arcanos-v2-pr-ab12cd-1566.up.railway.app',
+      ARCANOS_PREVIEW_BOOKER_AUTH0_DISCOVERY: 'v1', ARCANOS_PREVIEW_BOOKER_AUTH0_OWNER_SUBJECT: 'auth0|preview-owner',
+      CHATGPT_BOOKER_OWNER_SUBJECT: 'unapproved-owner', OPENAI_API_KEY: 'test-provider-key',
+    };
+    const child = buildNativePrApplicationChildEnvironment(environment);
+    expect(child).toMatchObject({ ARCANOS_PREVIEW_BOOKER_AUTH0_DISCOVERY: 'v1',
+      ARCANOS_PREVIEW_BOOKER_AUTH0_OWNER_SUBJECT: 'auth0|preview-owner',
+      ARCANOS_PREVIEW_BOOKER_ORIGIN: 'https://arcanos-v2-pr-ab12cd-1566.up.railway.app', RUN_WORKERS: 'false' });
+    expect(child.CHATGPT_BOOKER_OWNER_SUBJECT).toBeUndefined(); expect(child.OPENAI_API_KEY).toBeUndefined();
+    for (const change of [
+      { ARCANOS_PREVIEW_BOOKER_AUTH0_DISCOVERY: undefined },
+      { ARCANOS_PREVIEW_BOOKER_AUTH0_DISCOVERY: 'true' },
+      { ARCANOS_PREVIEW_BOOKER_AUTH0_OWNER_SUBJECT: undefined },
+      { ARCANOS_PREVIEW_BOOKER_AUTH0_OWNER_SUBJECT: ' invalid ' },
+      { RAILWAY_ENVIRONMENT_NAME: 'pr-676861-1566', RAILWAY_PUBLIC_DOMAIN: 'arcanos-v2-pr-676861-1566.up.railway.app' },
+    ]) expect(() => buildNativePrApplicationChildEnvironment({ ...environment, ...change }))
+      .toThrow('PREVIEW_APPLICATION_BOOKER_AUTH0_CONFIGURATION_INVALID');
+    expect(() => buildNativePrApplicationChildEnvironment({ ...nativeApplicationPreviewEnvironment,
+      ARCANOS_PREVIEW_BOOKER_AUTH0_DISCOVERY: 'v1', ARCANOS_PREVIEW_BOOKER_AUTH0_OWNER_SUBJECT: 'auth0|preview-owner' }))
+      .toThrow('PREVIEW_APPLICATION_BOOKER_AUTH0_CONFIGURATION_INVALID');
+  });
+
   it('constructs an exact child allowlist without inherited credentials or code injection settings', () => {
     const childEnvironment = buildNativePrApplicationChildEnvironment({
       ...nativeApplicationPreviewEnvironment,
