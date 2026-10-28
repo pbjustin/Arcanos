@@ -11,8 +11,8 @@ const metadataPath = '/.well-known/oauth-protected-resource/chatgpt/booker/mcp';
 const evidencePath = '/chatgpt/booker/preview-evidence';
 const proofHeader = 'x-arcanos-preview-chatgpt-booker-version';
 const proofVersion = 'chatgpt-booker-mcp-core/v1';
-const catalogSha256 = 'b3cd8ade2cd280d2082fb8c2f0e4ff06380ccf6255c7ecfb1161aad46ed074a3'; // gitleaks:allow -- public catalog digest
-const readCatalogSha256 = 'c41736ff3d0e18c348ae85bdca2601050c2de253dc96079b0fac443a448e36f0'; // gitleaks:allow -- public catalog digest
+const catalogSha256 = '318772e35c4d5faa9bd082dc62bb099ab6e65f08c21f576a561427c232e8a6bf'; // gitleaks:allow -- public catalog digest
+const readCatalogSha256 = '64161e9ed2bd9ed38ba01a7ca6d59aeb103b59d131829e452e258d05d85e995b'; // gitleaks:allow -- public catalog digest
 const universeId = BOOKER_PREVIEW_UNIVERSE_ID;
 const tools = ['queryContinuity', 'generateBooking', 'generateBookingWithHRC', 'simulateMatch',
   'getBackstageUniverse', 'getBackstageStoryline', 'getBackstageBookerJobResult'];
