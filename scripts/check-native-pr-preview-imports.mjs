@@ -15,7 +15,7 @@ const PREVIEW_IMPORT_TSCONFIG_FILE =
 const PREVIEW_DIST_IMPORT_CHECKER_FILE =
   'scripts/check-native-pr-preview-dist-imports.mjs';
 const PREVIEW_DIST_IMPORT_CHECKER_DIGEST =
-  'd23c314daa9e9cdab719f2ea82b530f620fd04c8c61c2fdc9c7448689ccbaebc';
+  '115398309502cc4ecb13920e8ccf6d477507ee1c516e623a460d0c801cabc30f';
 const ROOT_PACKAGE_MANIFEST_FILE = 'package.json';
 const ROOT_TSCONFIG_FILE = 'tsconfig.json';
 const RUNTIME_PACKAGE_MANIFEST_FILE =
@@ -926,11 +926,11 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['scripts/booker-mcp-preview-key.mjs', 'ab3fb44f967c46d18445e908e4e645befc4fbb76cf98d0ab8679dda86e6215e4'], // gitleaks:allow -- public source semantic SHA-256
   ['src/chatgpt/authCore.ts', 'c7d65335e6fc5080300413d9dcccaa45fdb7a688ae8d54e445796a0bdb66fad9'], // gitleaks:allow -- public source semantic SHA-256
   ['src/chatgpt/bookerAuthCore.ts', 'f1eb9c4ec1e47cc5cce9d96633d7ee70053155d2c8b1654b67090bbf30c3b14c'], // gitleaks:allow -- public source semantic SHA-256
-  ['src/chatgpt/bookerCore.ts', '51e1c74873f616a266518c7e7075076bb09efc5598586952d41dcb87226f4ad3'],
-  ['src/routes/chatgptBookerMcpCore.ts', 'a9ab27e10b9975d047c6790e72199fe2ea45d667038039bb18140b08b0d39797'],
+  ['src/chatgpt/bookerCore.ts', '03773e4503c98b14a5aa74ec9840e76837f980062c7bc6e1790b0d17b9afb0c6'],
+  ['src/routes/chatgptBookerMcpCore.ts', '32a6fb33b1c6a37aa9f1715842743ac8a57c8672a3af8ec9392d49f02bdaf037'],
   ['src/shared/backstage/backstageMatchSimulationCore.ts', 'd6bce722b24f73a785b3c4c14024ceb44ba644c36d6b8730d6fb72b891e54030'],
   ['src/shared/backstage/backstageNotionScopeIndex.ts', 'e4ee442fad7cc097b140f9cba63c8db227a8e752dc8f3584e032842723448c78'],
-  ['src/shared/chatgpt/bookerMcpContract.ts', '82eaba1e4579a2b3cc0ab78f423fe1b5c2c47a03bda2db503365b69dbc69e6c4'],
+  ['src/shared/chatgpt/bookerMcpContract.ts', 'dd0a43bd15fec52c2c68dd83592b9501b9f222f3c3bc32b4624d992f0c174768'],
   ['src/bookerMcpPreviewFixture.ts', 'd79eeba799864f6d16ab5686c0763bebd06d53357f9c8cb47db249701ded4d37'],
   ['src/bookerMcpRealAuthPreview.ts', '6a9eb5a1c02230f6cb98f7531231ed2c5b119ffa41d4f7b5caf17bcec0ae1bce'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/http/clientDisconnectAbort.ts', '296cca6209bb8c65d3e9934614d7612e664c46ed2efd42cc807e88454f87ec1f'],

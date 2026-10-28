@@ -34,6 +34,44 @@ export const requiresBookerGenerationPermission = (name: ChatGptBookerToolName):
 export const isBookerMcpInput = (name: ChatGptBookerToolName, value: unknown): value is Record<string, unknown> => validators[name].input(value) === true;
 export const isBookerMcpOutput = (name: ChatGptBookerToolName, value: unknown): boolean => validators[name].output(value) === true;
 
+export interface BookerMcpOutputValidationIssue {
+  instancePath: string;
+  schemaPath: string;
+  keyword: string;
+}
+
+function collectSchemaPropertyNames(value: unknown, names = new Set<string>()): Set<string> {
+  if (!value || typeof value !== 'object') return names;
+  for (const [key, child] of Object.entries(value)) {
+    if (key === 'properties' && child && typeof child === 'object') {
+      Object.keys(child).forEach(name => names.add(name));
+    }
+    collectSchemaPropertyNames(child, names);
+  }
+  return names;
+}
+
+const outputPropertyNames = Object.fromEntries(CHATGPT_BOOKER_TOOL_NAMES.map(name => [
+  name, collectSchemaPropertyNames(chatGptBookerSchemas[name].output),
+])) as Record<ChatGptBookerToolName, Set<string>>;
+
+/** Report schema locations only; dynamic keys, validation values and messages stay private. */
+export function getBookerMcpOutputValidationIssues(name: ChatGptBookerToolName, value: unknown): BookerMcpOutputValidationIssue[] {
+  const validate = validators[name].output;
+  if (validate(value) === true) return [];
+  return (validate.errors ?? []).slice(0, 8).map(issue => {
+    let parent = value;
+    const instancePath = issue.instancePath.split('/').map((segment, index) => {
+      if (index === 0) return '';
+      const key = segment.replaceAll('~1', '/').replaceAll('~0', '~');
+      const safe = outputPropertyNames[name].has(key) || (Array.isArray(parent) && /^\d{1,10}$/u.test(key));
+      parent = parent && typeof parent === 'object' ? Object.getOwnPropertyDescriptor(parent, key)?.value : undefined;
+      return safe ? segment : '*';
+    }).join('/').slice(0, 256);
+    return { instancePath, schemaPath: issue.schemaPath.slice(0, 256), keyword: issue.keyword.slice(0, 64) };
+  });
+}
+
 export const bookerMcpTools = CHATGPT_BOOKER_TOOL_NAMES.map(name => {
   const generates = requiresBookerGenerationPermission(name);
   const securitySchemes = [{ type: 'oauth2', scopes: generates ? [BOOKER_READ_SCOPE, BOOKER_GENERATE_SCOPE] : [BOOKER_READ_SCOPE] }];

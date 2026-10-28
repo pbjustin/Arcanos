@@ -8,7 +8,7 @@ import { createClientDisconnectAbortScope } from '@shared/http/clientDisconnectA
 import { createRateLimitMiddleware } from '@platform/runtime/security.js';
 import {
   BOOKER_MCP_PATH, BOOKER_METADATA_PATH, bookerMcpTools, isBookerMcpToolName,
-  isBookerMcpInput, isBookerMcpOutput, requiresBookerGenerationPermission,
+  isBookerMcpInput, getBookerMcpOutputValidationIssues, requiresBookerGenerationPermission,
 } from '@shared/chatgpt/bookerMcpContract.js';
 import {
   createBookerTokenVerifierCore, bookerAuthChallenge, bookerPrincipalActorKey, bookerProtectedResourceMetadata,
@@ -143,7 +143,14 @@ export function createChatGptBookerMcpRouterCore(options: BookerMcpRouterCoreOpt
         const output = await runWithRequestAbortTimeout({ timeoutMs, parentSignal: signal,
           abortMessage: 'Booker request timed out.', onAbort: () => { aborted = true; } },
         () => providerAdmittedRequests.has(req) ? options.runWithProviderAdmission(invoke) : invoke());
-        if (!isBookerMcpOutput(name, output)) throw new BookerMcpError('BOOKER_OUTPUT_INVALID');
+        const validationIssues = getBookerMcpOutputValidationIssues(name, output);
+        if (validationIssues.length) {
+          req.logger?.warn('booker.output.invalid', {
+            toolName: name, statusCode: Number.isInteger(output.statusCode) ? output.statusCode : undefined, validationIssues,
+            requestId: req.requestId, traceId: req.traceId,
+          });
+          throw new BookerMcpError('BOOKER_OUTPUT_INVALID');
+        }
         return { structuredContent: { ...output }, content: [{ type: 'text', text: JSON.stringify(output) }],
           ...(output.statusCode >= 400 ? { isError: true } : {}) };
       } catch (error) {

@@ -312,7 +312,7 @@ export const BOOKER_MCP_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
     imports: Object.freeze({
       '../../packages/arcanos-runtime/dist/requestAbort.js': Object.freeze(["getRequestAbortSignal:getRequestAbortSignal"]),
       '../platform/runtime/sessionContext.js': Object.freeze(["runWithSessionContext:runWithSessionContext"]),
-      '../shared/chatgpt/bookerMcpContract.js': Object.freeze(["isBookerMcpInput:isBookerMcpInput","isBookerMcpOutput:isBookerMcpOutput","requiresBookerGenerationPermission:requiresBookerGenerationPermission"]),
+      '../shared/chatgpt/bookerMcpContract.js': Object.freeze(["isBookerMcpInput:isBookerMcpInput","getBookerMcpOutputValidationIssues:getBookerMcpOutputValidationIssues","requiresBookerGenerationPermission:requiresBookerGenerationPermission"]),
       '../shared/backstage/backstageBookerAsyncContinuation.js': Object.freeze(["buildBackstageBookerProtectedFailureState:buildBackstageBookerProtectedFailureState"]),
       '../shared/backstage/backstageProtectedFailure.js': Object.freeze(["readProtectedBackstageCompletionProvenance:readProtectedBackstageCompletionProvenance"]),
       './bookerAuthCore.js': Object.freeze(["bookerPrincipalActorKey:bookerPrincipalActorKey","hasBookerPermission:hasBookerPermission"]),
@@ -342,7 +342,7 @@ export const BOOKER_MCP_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
       '../../packages/arcanos-runtime/dist/requestAbort.js': Object.freeze(["getRequestAbortSignal:getRequestAbortSignal","getRequestRemainingMs:getRequestRemainingMs","runWithRequestAbortTimeout:runWithRequestAbortTimeout"]),
       '../shared/http/clientDisconnectAbort.js': Object.freeze(["createClientDisconnectAbortScope:createClientDisconnectAbortScope"]),
       '../platform/runtime/security.js': Object.freeze(["createRateLimitMiddleware:createRateLimitMiddleware"]),
-      '../shared/chatgpt/bookerMcpContract.js': Object.freeze(["BOOKER_MCP_PATH:BOOKER_MCP_PATH","BOOKER_METADATA_PATH:BOOKER_METADATA_PATH","bookerMcpTools:bookerMcpTools","isBookerMcpInput:isBookerMcpInput","isBookerMcpOutput:isBookerMcpOutput","isBookerMcpToolName:isBookerMcpToolName","requiresBookerGenerationPermission:requiresBookerGenerationPermission"]),
+      '../shared/chatgpt/bookerMcpContract.js': Object.freeze(["BOOKER_MCP_PATH:BOOKER_MCP_PATH","BOOKER_METADATA_PATH:BOOKER_METADATA_PATH","bookerMcpTools:bookerMcpTools","isBookerMcpInput:isBookerMcpInput","getBookerMcpOutputValidationIssues:getBookerMcpOutputValidationIssues","isBookerMcpToolName:isBookerMcpToolName","requiresBookerGenerationPermission:requiresBookerGenerationPermission"]),
       '../chatgpt/bookerAuthCore.js': Object.freeze(["bookerAuthChallenge:bookerAuthChallenge","bookerPrincipalActorKey:bookerPrincipalActorKey","bookerProtectedResourceMetadata:bookerProtectedResourceMetadata","createBookerTokenVerifierCore:createBookerTokenVerifierCore","hasBookerPermission:hasBookerPermission"]),
       '../chatgpt/bookerCore.js': Object.freeze(["BookerMcpError:BookerMcpError"]),
     }),

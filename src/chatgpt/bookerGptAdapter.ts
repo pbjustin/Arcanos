@@ -16,6 +16,11 @@ export interface BookerGptOptions { requestId?: string; traceId?: string; idempo
 const actions = new Set<BookerGptAction>(['queryContinuity', 'generateBooking', 'generateBookingWithHRC', 'simulateMatch']);
 const RESPONSE_LIMIT_BYTES = 4 * 1024 * 1024;
 
+class BookerGptResponseError extends Error {
+  readonly code = 'BOOKER_OUTPUT_INVALID';
+  constructor() { super('BOOKER_OUTPUT_INVALID'); }
+}
+
 
 /**
  * Reuse the canonical four-action HTTP execution chain in process. No listener,
@@ -63,7 +68,7 @@ export async function invokeBookerGptAction(principal: ChatGptPrincipal, action:
         if (chunk === undefined || chunk === null) return;
         const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), typeof encoding === 'string' ? encoding as BufferEncoding : 'utf8');
         size += bytes.length;
-        if (size > RESPONSE_LIMIT_BYTES) throw new Error('BOOKER_OUTPUT_INVALID');
+        if (size > RESPONSE_LIMIT_BYTES) throw new BookerGptResponseError();
         chunks.push(bytes);
       };
       const abort = () => {
@@ -77,8 +82,10 @@ export async function invokeBookerGptAction(principal: ChatGptPrincipal, action:
       response.end = ((chunk?: unknown, encoding?: unknown, callback?: () => void) => {
         try {
           append(chunk, encoding);
-          const result: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-          if (!result || typeof result !== 'object' || Array.isArray(result)) throw new Error('BOOKER_OUTPUT_INVALID');
+          let result: unknown;
+          try { result = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+          catch { throw new BookerGptResponseError(); }
+          if (!result || typeof result !== 'object' || Array.isArray(result)) throw new BookerGptResponseError();
           response.finished = true;
           response.emit('finish');
           finish(undefined, { statusCode: response.statusCode, result: result as Record<string, unknown> });

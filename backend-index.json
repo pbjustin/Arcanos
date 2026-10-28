@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-27T19:11:39.431Z",
+  "generatedAt": "2026-10-28T16:41:37.923Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4103,6 +4103,9 @@
         },
         {
           "relativePath": "tests/chatgpt-auth.test.ts"
+        },
+        {
+          "relativePath": "tests/chatgpt-booker-adapter.test.ts"
         },
         {
           "relativePath": "tests/chatgpt-booker-auth.test.ts"

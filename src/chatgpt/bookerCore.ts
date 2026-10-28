@@ -4,7 +4,7 @@ import { getRequestAbortSignal } from '@arcanos/runtime/requestAbort';
 import type { JobData } from '@core/db/schema.js';
 import { runWithSessionContext } from '@platform/runtime/sessionContext.js';
 import {
-  isBookerMcpInput, isBookerMcpOutput, requiresBookerGenerationPermission,
+  isBookerMcpInput, getBookerMcpOutputValidationIssues, requiresBookerGenerationPermission,
 } from '@shared/chatgpt/bookerMcpContract.js';
 import { buildBackstageBookerProtectedFailureState } from '@shared/backstage/backstageBookerAsyncContinuation.js';
 import { readProtectedBackstageCompletionProvenance } from '@shared/backstage/backstageProtectedFailure.js';
@@ -117,6 +117,7 @@ export function createBookerMcpExecutorCore(services: BookerMcpServices) {
         }
       } catch (error: unknown) {
         const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+        if (code === 'BOOKER_OUTPUT_INVALID') throw new BookerMcpError(code);
         const statuses: Record<string, number> = {
           BACKSTAGE_NOTION_AUTHORITY_READ_QUARANTINED: 409,
           BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE: 503,
@@ -144,7 +145,14 @@ export function createBookerMcpExecutorCore(services: BookerMcpServices) {
           instruction: `Call getBackstageBookerJobResult with universeId ${universeId} and jobId ${output.result.jobId} using the same OAuth connection. While pending, continue that job only; do not start another generation.`,
         } };
       }
-      if (!isBookerMcpOutput(name, output)) throw new BookerMcpError('BOOKER_OUTPUT_INVALID');
+      const validationIssues = getBookerMcpOutputValidationIssues(name, output);
+      if (validationIssues.length) {
+        options.logger?.warn('booker.output.invalid', {
+          toolName: name, statusCode: Number.isInteger(output.statusCode) ? output.statusCode : undefined,
+          validationIssues, ...correlation,
+        });
+        throw new BookerMcpError('BOOKER_OUTPUT_INVALID');
+      }
       return output;
     });
   };

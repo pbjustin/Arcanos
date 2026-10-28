@@ -4535,14 +4535,24 @@ router.post(
                 }
               }
             : {}),
-          result: managedProtectedBackstageGenerationAction
+          // Continuity is already schema-validated by its service. Generic
+          // previews would replace provenance/scope arrays and truncate answers.
+          result: managedProtectedBackstageGenerationAction || backstageContinuityQuerySyncOnly
             ? envelope.result
             : isBackstageStorylineResponse
             ? envelope.result
             : shapeClientRouteResult(envelope.result),
         };
-        const protectedOverflowPayload =
-          buildBackstageBookerProtectedOverflowFailure(publicPayload);
+        const protectedOverflowPayload = backstageContinuityQuerySyncOnly
+          ? {
+              ok: false,
+              ...buildBackstageBookerProtectedFailureState({
+                code: 'BACKSTAGE_CONTINUITY_RESPONSE_TOO_LARGE',
+                message: 'The continuity response exceeded the public response limit. No authoritative result was delivered.',
+              }),
+              _route: envelope._route,
+            }
+          : buildBackstageBookerProtectedOverflowFailure(publicPayload);
         const publicEnvelope = prepareBoundedClientJsonPayload(publicPayload, {
           logger: req.logger,
           logEvent: 'gpt.response',

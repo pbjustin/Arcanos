@@ -127,6 +127,27 @@ describe('Booker MCP fixed service parity', () => {
     expect(failed).toMatchObject({ statusCode: 503, result: { result: null, official: false, protectedGenerationCompleted: false } });
     expect(JSON.stringify(failed)).not.toContain('private partial draft sentinel'); expect(dependencies.run).toHaveBeenCalledTimes(1);
   });
+  it('keeps invalid response capture distinct from a backend availability failure', async () => {
+    const dependencies = services();
+    dependencies.run = jest.fn(async () => { throw Object.assign(new Error('private capture sentinel'), { code: 'BOOKER_OUTPUT_INVALID' }); });
+    await expect(createBookerMcpExecutor(dependencies)(reader, 'queryContinuity', { universeId, query: 'Summarize my universe.' }))
+      .rejects.toThrow('BOOKER_OUTPUT_INVALID');
+    expect(dependencies.run).toHaveBeenCalledTimes(1);
+  });
+  it('rejects malformed continuity with sanitized schema diagnostics', async () => {
+    const dependencies = services();
+    dependencies.run = jest.fn(async () => ({ statusCode: 200, result: { ok: true, _route: route('queryContinuity'),
+      result: { universeId, authority: 'notion', answer: 'private answer sentinel', sources: [] } } }));
+    const logger = { warn: jest.fn() };
+    await expect(createBookerMcpExecutor(dependencies)(reader, 'queryContinuity', { universeId, query: 'Summarize my universe.' },
+      { logger: logger as unknown as Request['logger'] })).rejects.toThrow('BOOKER_OUTPUT_INVALID');
+    expect(logger.warn).toHaveBeenCalledWith('booker.output.invalid', expect.objectContaining({
+      toolName: 'queryContinuity', statusCode: 200,
+      validationIssues: expect.arrayContaining([expect.objectContaining({ instancePath: '/result/result', keyword: 'required' })]),
+    }));
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('private answer sentinel');
+    expect(dependencies.run).toHaveBeenCalledTimes(1);
+  });
   it('blocks other-universe and other-actor jobs before wait or result unsealing', async () => {
     for (const mismatch of ['universe', 'actor']) {
       const dependencies = services();
