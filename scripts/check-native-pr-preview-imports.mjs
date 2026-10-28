@@ -921,7 +921,7 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
   ],
 ]);
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
-  ['packages/protocol/src/chatgptBooker.ts', '3e182b6a26c5946828c2d6fe8dbe1cfec862094969b592457366292f0950fa0e'],
+  ['packages/protocol/src/chatgptBooker.ts', '5ea9e7f1aeafe7f6b418432f8f5a25b825f1dcf84e122106ad4ec642d6a22fe6'],
   ['scripts/booker-mcp-preview-key.d.mts', 'bbcb949f18d05e8d31926e7df305000d89901f52481b417224b77bbba54447d4'], // gitleaks:allow -- public source semantic SHA-256
   ['scripts/booker-mcp-preview-key.mjs', 'ab3fb44f967c46d18445e908e4e645befc4fbb76cf98d0ab8679dda86e6215e4'], // gitleaks:allow -- public source semantic SHA-256
   ['src/chatgpt/authCore.ts', 'c7d65335e6fc5080300413d9dcccaa45fdb7a688ae8d54e445796a0bdb66fad9'], // gitleaks:allow -- public source semantic SHA-256

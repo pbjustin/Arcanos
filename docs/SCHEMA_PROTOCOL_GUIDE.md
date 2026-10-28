@@ -61,6 +61,15 @@ contract remains unchanged. The protocol catalog registers the
 tools; there are no new command IDs, ActionPlan shapes or daemon privileges.
 See [Booker migration](chatgpt-migration/booker/README.md).
 
+Booker MCP input discovery expands bare non-whitespace search patterns into the
+equivalent multiline-safe whole-string form `^[\s\S]*\S[\s\S]*$`, including
+reachable input definitions. This keeps ordinary queries, names, paths and
+prompts compatible with connector clients that match the complete string.
+Required fields, length bounds, closed objects and existing anchored patterns
+remain intact. Canonical module/OpenAPI schemas and MCP output schemas are
+unchanged. Refresh the existing connection's tool catalog after deployment to
+pick up the advertised input patterns; no new plugin or OAuth flow is needed.
+
 Arcanos is schema-first at its public protocol boundary. TypeScript owns the public protocol surface in `packages/protocol/`; Python daemon code consumes that surface through the protocol runtime and backend clients.
 
 ## Prerequisites

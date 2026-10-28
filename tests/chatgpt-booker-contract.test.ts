@@ -54,6 +54,15 @@ const continuityResponse = () => buildBackstageContinuityResponse({ universeId, 
     pagePath: ['Universe', 'Raw'], headingPath: ['Championships'], category: 'championships' }],
 }, 'A bounded authoritative summary.');
 
+// This is the sole equivalent difference permitted in the advertised input schemas.
+const connectorCompatibleInputSchema = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(connectorCompatibleInputSchema);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([key, child]) => [
+    key, key === 'pattern' && child === '\\S' ? '^[\\s\\S]*\\S[\\s\\S]*$' : connectorCompatibleInputSchema(child),
+  ]));
+};
+
 describe('private Booker MCP contract parity', () => {
   it('exposes exactly seven tools with separately scoped generation permission', () => {
     expect(CHATGPT_BOOKER_TOOL_NAMES).toEqual(['queryContinuity', 'generateBooking', 'generateBookingWithHRC', 'simulateMatch',
@@ -129,6 +138,92 @@ describe('private Booker MCP contract parity', () => {
         expect(isBookerMcpInput(name, { ...input[name], [field]: 'untrusted' })).toBe(false);
       }
     }
+  });
+
+  it.each([
+    ['original request', 'Backstage Booker, summarize my universe.'],
+    ['ordinary continuity question', 'Summarize my WWE 2K26 universe.'],
+    ['surrounding whitespace', '  Summarize my universe.  '],
+    ['multiline question', '\nSummarize my universe.\r\nInclude coverage limitations.\n'],
+    ['Unicode question', 'Résumé de mon univers — 王者 🎤 👩🏽‍💻'],
+    ['single Unicode character', '🎤'],
+    ['ASCII length boundary', 'x'.repeat(10000)],
+    ['Unicode length boundary', '🎤'.repeat(10000)],
+  ])('advertises a continuity query accepted by Ajv and whole-string connector validation: %s', (_label, query) => {
+    const tool = bookerMcpTools.find(candidate => candidate.name === 'queryContinuity')!;
+    const querySchema = (tool.inputSchema.properties as Record<string, { pattern: string; maxLength: number }>).query;
+    // Connected clients may apply a pattern to the entire value rather than search it.
+    const connectorPattern = new RegExp(`^(?:${querySchema.pattern})$`, 'u');
+    expect(connectorPattern.test(query)).toBe(true);
+    expect(isBookerMcpInput('queryContinuity', { universeId, query, retrievalMode: 'relevant' })).toBe(true);
+    expect(querySchema.maxLength).toBe(10000);
+  });
+
+  it.each(['', ' ', '\t\r\n', '\u00a0\u2003\u2028\u2029'])(
+    'rejects blank continuity queries under both advertised pattern interpretations (%#)', query => {
+      const tool = bookerMcpTools.find(candidate => candidate.name === 'queryContinuity')!;
+      const querySchema = (tool.inputSchema.properties as Record<string, { pattern: string }>).query;
+      expect(new RegExp(`^(?:${querySchema.pattern})$`, 'u').test(query)).toBe(false);
+      expect(isBookerMcpInput('queryContinuity', { universeId, query, retrievalMode: 'relevant' })).toBe(false);
+    },
+  );
+
+  it('preserves continuity query length, type and closed-input validation', () => {
+    for (const query of ['x'.repeat(10001), '🎤'.repeat(10001), null, 42, ['Summarize my universe.']]) {
+      expect(isBookerMcpInput('queryContinuity', { universeId, query, retrievalMode: 'relevant' })).toBe(false);
+    }
+    for (const field of ['action', 'module', 'sessionId', 'actorKey', 'scopes', 'bearerToken', 'backendUrl', 'url', 'confirmWrite']) {
+      expect(isBookerMcpInput('queryContinuity', { universeId, query: 'Summarize my universe.', retrievalMode: 'relevant', [field]: 'untrusted' })).toBe(false);
+    }
+  });
+
+  it('preserves canonical patterns while making reachable input text compatible with whole-string matching', () => {
+    const scope = { pageTitle: 'Monday Night Raw 🎤', pagePath: ['My Universe', 'Monday Night Raw 🎤'],
+      sectionPath: ['Current champions', 'Women’s World Championship'] };
+    const scopedInput = { ...input.queryContinuity, retrievalMode: 'relevant', retrievalScope: scope };
+    const queryDefinitions = chatGptBookerSchemas.queryContinuity.input.$defs as Record<string, { pattern: string }>;
+    const scopePattern = new RegExp(`^(?:${queryDefinitions.ContinuityPathSegment.pattern})$`, 'u');
+    for (const text of [scope.pageTitle, ...scope.pagePath, ...scope.sectionPath]) expect(scopePattern.test(text)).toBe(true);
+    expect(isBookerMcpInput('queryContinuity', scopedInput)).toBe(true);
+    for (const retrievalScope of [{ ...scope, pageTitle: ' \n' }, { ...scope, pagePath: [' \n'] },
+      { ...scope, sectionPath: [' \n'] }, { ...scope, pageTitle: 'x'.repeat(501) }]) {
+      expect(isBookerMcpInput('queryContinuity', { ...scopedInput, retrievalScope })).toBe(false);
+    }
+    expect(contract.$defs.ContinuityPathSegment.pattern).toBe('\\S');
+
+    for (const name of ['generateBooking', 'generateBookingWithHRC'] as const) {
+      const properties = chatGptBookerSchemas[name].input.properties as Record<string, { pattern: string }>;
+      const connectorPattern = new RegExp(`^(?:${properties.prompt.pattern})$`, 'u');
+      const prompt = 'Plan Raw 🎤.\nPreserve continuity.';
+      expect(connectorPattern.test(prompt)).toBe(true);
+      expect(isBookerMcpInput(name, { ...input[name], prompt })).toBe(true);
+      expect(isBookerMcpInput(name, { ...input[name], prompt: ' \n' })).toBe(false);
+      expect(isBookerMcpInput(name, { ...input[name], prompt: 'x'.repeat(10001) })).toBe(false);
+      expect(contract.tools[name].input.properties.prompt.pattern).toBe('\\S');
+    }
+
+    const storylineDefinitions = chatGptBookerSchemas.getBackstageStoryline.input.$defs as Record<string, { pattern: string }>;
+    const storylineKey = 'Raw / Women’s title 🎤';
+    expect(new RegExp(`^(?:${storylineDefinitions.StorylineKey.pattern})$`, 'u').test(storylineKey)).toBe(true);
+    expect(isBookerMcpInput('getBackstageStoryline', { universeId, storylineKey })).toBe(true);
+    for (const invalid of [' ', ' Raw ', 'Raw\u0000', 'Raw\ud800', 'x'.repeat(241)]) {
+      expect(isBookerMcpInput('getBackstageStoryline', { universeId, storylineKey: invalid })).toBe(false);
+    }
+    expect(contract.$defs.StorylineKey.pattern).toBe('\\S');
+
+    const matchDefinitions = chatGptBookerSchemas.simulateMatch.input.$defs as Record<string, { pattern: string; properties: Record<string, { pattern: string }> }>;
+    const match = { wrestler1: 'Rhea Ripley 🎤', wrestler2: 'Bianca Belair', matchType: 'Singles match' };
+    const wrestlerPattern = new RegExp(`^(?:${matchDefinitions.WrestlerName.pattern})$`, 'u');
+    expect(wrestlerPattern.test(match.wrestler1)).toBe(true);
+    expect(wrestlerPattern.test(match.wrestler2)).toBe(true);
+    expect(new RegExp(`^(?:${matchDefinitions.MatchInput.properties.matchType.pattern})$`, 'u').test(match.matchType)).toBe(true);
+    expect(isBookerMcpInput('simulateMatch', { universeId, match, rosters: [{ name: match.wrestler1, overall: 96 }] })).toBe(true);
+    for (const field of ['wrestler1', 'wrestler2', 'matchType']) {
+      expect(isBookerMcpInput('simulateMatch', { universeId, match: { ...match, [field]: ' \n' } })).toBe(false);
+    }
+    expect(isBookerMcpInput('simulateMatch', { universeId, match, rosters: [{ name: ' \n', overall: 96 }] })).toBe(false);
+    expect(contract.$defs.WrestlerName.pattern).toBe('\\S');
+    expect(contract.$defs.MatchInput.properties.matchType.pattern).toBe('\\S');
   });
 
   it('preserves scoped complete continuity pagination without frontend authority', () => {
@@ -270,9 +365,12 @@ describe('private Booker MCP contract parity', () => {
     for (const name of CHATGPT_BOOKER_TOOL_NAMES) {
       for (const direction of ['input', 'output'] as const) {
         const { $defs: definitions = {}, ...root } = chatGptBookerSchemas[name][direction];
-        expect(stripDescriptions(root)).toEqual(stripDescriptions(contract.tools[name][direction]));
+        const expectedSchema = direction === 'input'
+          ? connectorCompatibleInputSchema(contract.tools[name][direction]) : contract.tools[name][direction];
+        expect(stripDescriptions(root)).toEqual(stripDescriptions(expectedSchema));
         for (const [key, definition] of Object.entries(definitions as object)) {
-          expect(stripDescriptions(definition)).toEqual(stripDescriptions(contract.$defs[key]));
+          const expectedDefinition = direction === 'input' ? connectorCompatibleInputSchema(contract.$defs[key]) : contract.$defs[key];
+          expect(stripDescriptions(definition)).toEqual(stripDescriptions(expectedDefinition));
         }
       }
     }

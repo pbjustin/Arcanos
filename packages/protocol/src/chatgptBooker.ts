@@ -21,7 +21,7 @@ export interface ChatGptBookerInputMap {
 }
 
 /** Include reachable validation definitions only; keep repeated prose out of discovery. */
-function resolveSchema(schema: JsonSchema): JsonSchema & { type: 'object' } {
+function resolveSchema(schema: JsonSchema, connectorInput = false): JsonSchema & { type: 'object' } {
   const definitions = contract.$defs as Record<string, JsonSchema>;
   const reachable: Record<string, JsonSchema> = {};
   function visit(value: unknown): void {
@@ -36,6 +36,8 @@ function resolveSchema(schema: JsonSchema): JsonSchema & { type: 'object' } {
   }
   visit(schema);
   function compact(value: unknown, field?: string): unknown {
+    // Preserve non-whitespace search semantics for clients that match the whole input string.
+    if (connectorInput && field === 'pattern' && value === '\\S') return '^[\\s\\S]*\\S[\\s\\S]*$';
     if (Array.isArray(value)) return value.map(child => compact(child, field));
     if (!value || typeof value !== 'object') return value;
     return Object.fromEntries(Object.entries(value)
@@ -46,5 +48,5 @@ function resolveSchema(schema: JsonSchema): JsonSchema & { type: 'object' } {
 }
 
 export const chatGptBookerSchemas = Object.fromEntries(CHATGPT_BOOKER_TOOL_NAMES.map(name => [name, {
-  input: resolveSchema(contract.tools[name].input), output: resolveSchema(contract.tools[name].output),
+  input: resolveSchema(contract.tools[name].input, true), output: resolveSchema(contract.tools[name].output),
 }])) as Record<ChatGptBookerToolName, { input: JsonSchema & { type: 'object' }; output: JsonSchema & { type: 'object' } }>;
