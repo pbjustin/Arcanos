@@ -555,8 +555,28 @@ function rewriteUnsupportedCurrentExternalStateSections(params: {
   };
 }
 
-function hasExplicitLimitationLanguage(text: string): boolean {
-  return LIMITATION_LANGUAGE_PATTERN.test(text);
+function hasExplicitLimitationLanguage(text: string, required?: TrinityReasoningHonesty): boolean {
+  // Claim classification retains its original predicate. Required caveats must
+  // match the selected scope; a canon explanation never grants live/effect authority.
+  if (!required) return LIMITATION_LANGUAGE_PATTERN.test(text);
+  const requirements = [...required.blockedSubtasks, ...required.userVisibleCaveats].filter(entry => entry.trim());
+  if (requirements.length === 0) return LIMITATION_LANGUAGE_PATTERN.test(text);
+  const nonCanonScope = /\b(live|runtime|deployment|backend|api|services?|queue|worker|competitors?|market|news|pricing|external|execute|run|save|persist|store|write|database)\b/i;
+  const categories = new Set(requirements.map(entry => /\bcanon\b/i.test(entry) && !nonCanonScope.test(entry)
+    ? 'canon' : classifyLimitationCategory(formatBlockedSubtaskAsLimitation(entry))));
+  const assertionText = text.replace(/"[^"]*"|“[^”]*”|`[^`]*`|(?<![\p{L}\p{N}])'(?:[^']|'(?=\p{L}))*'(?![\p{L}\p{N}])|‘(?:[^’]|’(?=\p{L}))*’/gu, '');
+  // Separate coordinated limitations here only; claim enforcement keeps its full segments.
+  const clauses = splitIntoSegments(assertionText).flatMap(segment => segment.split(/;\s*|(?:,?\s+(?:and|but)\s+|,\s*)(?=(?:i|we)\s+can(?:not|'t)\s+(?:verify|confirm|check|run|execute|call|save|persist|store|write)\b|(?:(?:the|this|current|supplied|provided|notion(?:-backed)?)\s+){0,5}(?:canon|notion\s+excerpt)\b)/iu));
+  const canonContext = clauses.filter(clause => /\b(canon|notion\s+excerpt|(?:that|this)\s+(?:assertion|statement|claim))\b|^(?:for example|an example|hypothetical(?:ly)?|suppose|assume that|imagine that|if|unless)\b/i.test(clause.trim())).join(' ');
+  const hasCanonLimitation = !/\b(false|incorrect|wrong|untrue|not true|for example|an example|hypothetical(?:ly)?|suppose|assume that|imagine that|if|unless|would|could|might|reject|deny|denied|rebut|dispute)\b/i.test(canonContext)
+    && clauses.some(clause =>
+      /^(?:(?:the|this|current|supplied|provided|notion(?:-backed)?)\s+){0,5}(?:canon|notion\s+excerpt)\s+(?:does\s+not\s+establish|establishes\s+neither)\s+[^.!?;\n]+[.!?]?$/i.test(clause.trim())
+      || /^(?:i|we)\s+can(?:not|'t)\s+(?:establish|determine|identify)\b[^.!?;\n]*\bcanon\b[^.!?;\n]*[.!?]?$/i.test(clause.trim()));
+  return [...categories].every(category => category === 'canon' ? hasCanonLimitation : clauses.some(clause => {
+    const canonExplanation = /\b(canon|notion\s+excerpt)\b/i.test(clause)
+      && !/^(?:i|we)\s+can(?:not|'t)\s+(verify|confirm|check|run|execute|call|save|persist|store|write)\b/i.test(clause.trim());
+    return !canonExplanation && classifyLimitationCategory(clause) === category;
+  }));
 }
 
 function normalizeScopeToken(value: string): string {
@@ -644,6 +664,11 @@ function formatBlockedSubtaskAsLimitation(blockedSubtask: string): string {
 function classifyLimitationCategory(segment: string): LimitationCategory | null {
   if (!LIMITATION_LANGUAGE_PATTERN.test(segment)) {
     return null;
+  }
+  // The selected backend fallback contains "confirm", but describes execution,
+  // not live verification. Keep its category through final compression.
+  if (/\bbackend\s+(?:state|actions?)\b/i.test(segment)) {
+    return 'backend_action';
   }
   if (/\b(live|browse|current|latest|competitor|external|market|news|verify|confirm)\b/i.test(segment)) {
     return 'live_verification';
@@ -738,7 +763,16 @@ function isArtifactInstruction(text: string): boolean {
 /** A fully consumed denial describes missing verification, not performed work.
  * Never let a denial prefix qualify another clause or a self-claim in its subject. */
 function isExplicitVerificationDenial(text: string): boolean {
-  const denial = text.match(/^([a-z][a-z0-9-]*(?:\s+[a-z][a-z0-9-]*){0,7})\s+(?:(?:is|are|was|were|remains?)\s+not|(?:has|have|had)\s+not\s+been)\s+(?:checked|verified|confirmed|reviewed|validated)(?:\s+(?:yet|here|independently))?[.!]?$/i);
+  // Keep coordinated execution claims together for exact evidence matching.
+  // A denial may share a review unit with a supplied job's pending state,
+  // never an unrelated assertion or another action hidden beside the denial.
+  const clauses = text.split(/;\s*/u).filter(clause => clause.trim().length > 0);
+  if (clauses.length > 1) {
+    return clauses.some(isExplicitVerificationDenial) && clauses.every(clause =>
+      isExplicitVerificationDenial(clause)
+      || /^(?:the\s+)?supplied\s+(?:record|ledger|snapshot|data|evidence)\s+(?:shows?|lists?|states?|reports?)\s+(?:the\s+)?job\s+(?:(?:as|is)\s+)?(?:queued|pending|running|incomplete)[.!]?$/i.test(clause));
+  }
+  const denial = text.match(/^([a-z][a-z0-9-]*(?:\s+[a-z][a-z0-9-]*){0,7})\s+(?:(?:is|are|was|were|remains?)\s+not|(?:has|have|had)\s+not\s+been)\s+(?:checked|verified|confirmed|reviewed|validated)(?:\s+(?:yet|here|independently))?[.!;]?$/i);
   const subject = denial?.[1];
   return Boolean(subject && !/\b(?:i|we|and|but|then|however)\b/i.test(subject)
     && !/\b(?:is|are|was|were|be|been|being|has|have|had|appears?|looks?|remains?|will|shall|can|could|may|might|must|would|should|deployed|ran|executed|saved|persisted|stored|wrote|called|updated|inserted|deleted|committed|queried|inspected)\b/i.test(subject)
@@ -1001,8 +1035,11 @@ function allowsProvidedDataVerificationClaim(
   text: string,
   capabilityFlags: TrinityCapabilityFlags
 ): boolean {
+  // A validated input attribute describes software behavior, not work performed
+  // by this backend. Other verification words and action checks remain active.
+  const describesValidatedPrefix = /^(?:(?:this|the)\s+(?:function|utility|snippet)\s+)?(?:generates?|builds?|returns?)\s+(?:uuid(?:-based)?\s+)?(?:identifiers?|ids?|strings?)\s+with\s+an?\s+(?:optional\s+)?validated\s+prefix[.!]?$/i.test(text);
   return (
-    capabilityFlags.canVerifyProvidedData &&
+    (capabilityFlags.canVerifyProvidedData || describesValidatedPrefix) &&
     LIVE_VERIFICATION_PATTERN.test(text) &&
     !impliesCurrentExternalStateClaim(text)
   );
@@ -1394,14 +1431,16 @@ function rewriteUnsupportedClaims(params: {
 function ensureRequiredLimitation(text: string, reasoningHonesty: TrinityReasoningHonesty): string {
   if (
     reasoningHonesty.responseMode === 'partial_refusal' &&
-    !LIMITATION_LANGUAGE_PATTERN.test(text) &&
+    !hasExplicitLimitationLanguage(text, reasoningHonesty) &&
     reasoningHonesty.userVisibleCaveats.length > 0
   ) {
+    const missingCaveats = reasoningHonesty.userVisibleCaveats.filter(caveat =>
+      !hasExplicitLimitationLanguage(text, { ...reasoningHonesty, blockedSubtasks: [], userVisibleCaveats: [caveat] }));
     const separator = /^\s*(?:\*\*|__)?\d+[.)]\s/u.test(text)
       ? '\n'
       : ' ';
     return normalizeWhitespace(
-      `${ensureSingleSentence(reasoningHonesty.userVisibleCaveats[0] ?? '')}${separator}${text}`
+      `${missingCaveats.length > 0 ? missingCaveats.map(ensureSingleSentence).join(' ') : buildPartialRefusalLead(reasoningHonesty) ?? ''}${separator}${text}`
     );
   }
   return text;
@@ -1470,9 +1509,22 @@ function buildPreferredLimitationSegment(
 
 function compressLimitationSegments(text: string, reasoningHonesty: TrinityReasoningHonesty): string {
   const seenCategories = new Set<LimitationCategory>();
+  const canonScopes = [...reasoningHonesty.blockedSubtasks, ...reasoningHonesty.userVisibleCaveats]
+    .filter(scope => /\bcanon\b/i.test(scope));
   return transformHonestySegments(text, segment => {
     const limitationCategory = classifyLimitationCategory(segment);
     if (!limitationCategory) {
+      return segment;
+    }
+    const preferredSegment = buildPreferredLimitationSegment(limitationCategory, reasoningHonesty) ?? ensureSingleSentence(segment);
+    // A compound canon limitation can also carry a live caveat. Keep the canon
+    // scope when the preferred sentence for the primary category would lose it.
+    const losesRequiredCanonScope = canonScopes.some(scope => {
+      const requirement = { ...reasoningHonesty, blockedSubtasks: [], userVisibleCaveats: [scope] };
+      return hasExplicitLimitationLanguage(segment, requirement) && !hasExplicitLimitationLanguage(preferredSegment, requirement);
+    });
+    if (losesRequiredCanonScope) {
+      seenCategories.add(limitationCategory);
       return segment;
     }
     //audit Assumption: the final answer should keep at most one concise limitation per limitation category; failure risk: stacked caveats crowd out the achievable answer; expected invariant: duplicate live/backend/persistence limitations collapse to one preferred sentence; handling strategy: keep the first category instance and replace it with the most specific caveat available from reasoning metadata.
@@ -1480,7 +1532,6 @@ function compressLimitationSegments(text: string, reasoningHonesty: TrinityReaso
       return null;
     }
     seenCategories.add(limitationCategory);
-    const preferredSegment = buildPreferredLimitationSegment(limitationCategory, reasoningHonesty) ?? ensureSingleSentence(segment);
     return preferredSegment;
   });
 }
@@ -2024,11 +2075,17 @@ export function prepareTrinityDirectAnswerHonesty(params: {
     (!capabilityFlags.canVerifyLiveData || !capabilityFlags.canConfirmExternalState) &&
     /\b(verify|verified|check|checked|confirm|confirmed|latest|current|recent|today|this week|as of now)\b/i.test(params.userPrompt) &&
     /\b(competitors?|market|news|pricing|release|launch|moves?|external|trends?|compan(?:y|ies)|regulation|stocks?|status|events?)\b/i.test(params.userPrompt);
+  // "Current" canon and a JSON "status" field describe supplied story facts.
+  // Explicit external-state/effect requests retain their normal requirements.
+  const suppliedCanonScope = capabilityFlags.canVerifyProvidedData
+    && /\b(?:supplied|provided|notion(?:-backed)?)\s+canon\b/i.test(params.userPrompt)
+    && /\b(missing|insufficient|does not establish|do not invent)\b/i.test(params.userPrompt)
+    && !/\b(live|runtime|deploy(?:ment|ed)?|production|servers?|web|internet|online|remote|backend|api|services?|queue|worker|competitors?|market|news|pricing|release|launch|external|trends?|compan(?:y|ies)|regulation|stocks?|execute|run|save|persist|store|write|database)\b/i.test(params.userPrompt);
   const reasoningHonesty = createDefaultTrinityReasoningHonesty();
   const honestyFiltered = enforceFinalStageHonesty(params.candidateText, reasoningHonesty, capabilityFlags,
     readIntentMode(outputControls), false, outputControls.instructionalVerificationPolicy);
   const ruleIds = [...honestyFiltered.ruleIds];
-  if (needsCurrentStateLimitation) ruleIds.push('CURRENT_EXTERNAL_USER_REQUEST');
+  if (needsCurrentStateLimitation && !suppliedCanonScope) ruleIds.push('CURRENT_EXTERNAL_USER_REQUEST');
   if (honestyFiltered.blocked || needsCurrentStateLimitation) {
     reasoningHonesty.responseMode = 'partial_refusal';
     const hasExternalClaim = honestyFiltered.ruleIds.includes('LIVE_VERIFICATION_MODEL_CLAIM')
@@ -2037,7 +2094,11 @@ export function prepareTrinityDirectAnswerHonesty(params: {
     // callers retain the original conservative category mapping.
     const hasGenericVerificationBlock = outputControls.instructionalVerificationPolicy !== 'tutor-math-v1'
       && honestyFiltered.blockedCategories.includes('live_verification');
-    if (needsCurrentStateLimitation || hasExternalClaim || hasGenericVerificationBlock) {
+    if (needsCurrentStateLimitation && suppliedCanonScope) {
+      reasoningHonesty.blockedSubtasks.push('establish the requested facts from supplied canon');
+      reasoningHonesty.userVisibleCaveats.push("I can't establish the requested facts from supplied canon.");
+    }
+    if ((needsCurrentStateLimitation && !suppliedCanonScope) || hasExternalClaim || hasGenericVerificationBlock) {
       reasoningHonesty.blockedSubtasks.push('verify current external state');
       reasoningHonesty.userVisibleCaveats.push(LIVE_EXTERNAL_STATE_LIMITATION_FALLBACK + '.');
     }
@@ -2138,7 +2199,7 @@ export function enforceFinalStageHonesty(
   const leadingDisclaimers: string[] = [];
   const partialRefusalLead = buildPartialRefusalLead(reasoningHonesty);
 
-  if (partialRefusalLead && !hasExplicitLimitationLanguage(text)) {
+  if (partialRefusalLead && !hasExplicitLimitationLanguage(text, reasoningHonesty)) {
     leadingDisclaimers.push(partialRefusalLead);
   }
   if ((blockedCategories.has('live_verification') || blockedCategories.has('current_external_state')) && !/live or current external information/i.test(text)) {

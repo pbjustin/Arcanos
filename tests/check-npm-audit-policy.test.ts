@@ -355,11 +355,11 @@ describe('npm audit policy', () => {
         'sha512-5Px6J7rfHBAGUhNQ3es4YzcOdBBw0SDcVtThJml4RdnKw4tKs2epA0kPZ+K8X+WiHktT93RHVcQ/3ym5aTCgtg==',
     };
     const runtimeQsArtifact = {
-      version: '6.16.0',
+      version: '6.16.1',
       resolved:
-        'https://codeload.github.com/ljharb/qs/tar.gz/bb9379e01fad04c601478acd6152143cb20c984b',
+        'https://codeload.github.com/ljharb/qs/tar.gz/2471b66ae696a8a10915c01453ae2c0f139a5adc',
       integrity:
-        'sha512-fkOHat/7xtPQRrpGGvW5ua3EeevYbTiV3GSIhUdL5ocT+sNZu374dFCheYnSzk/EqpYN5SY9my8bSRBGoISxVA==',
+        'sha512-s082mna3dbLUWjaOGT9RX2jm/iJIkC8hGvHNT5m/IcnSfU3+nKvLz6oziAji7SmOOAfYATsUlU5jZ5s49Y4K2A==',
     };
     const proxyAddrArtifact = {
       version: '2.0.8',
@@ -472,6 +472,22 @@ describe('npm audit policy', () => {
     expect(mappedTrust('::ffff:10.0.0.1')).toBe(true);
     expect(mappedTrust('203.0.113.9')).toBe(false);
     expect(mappedTrust('::ffff:203.0.113.9')).toBe(false);
+  });
+
+  it.each([
+    { manifest: 'package.json', encodeValuesOnly: false },
+    { manifest: 'package.json', encodeValuesOnly: true },
+    { manifest: 'arcanos-ai-runtime/package.json', encodeValuesOnly: false },
+    { manifest: 'arcanos-ai-runtime/package.json', encodeValuesOnly: true },
+  ])('contains hostile comma-array coercion in $manifest (encodeValuesOnly=$encodeValuesOnly)', ({ manifest, encodeValuesOnly }) => {
+    const installedQs = createRequire(path.join(repositoryRoot, manifest))('qs') as {
+      stringify: (value: unknown, options: { arrayFormat: 'comma'; encodeValuesOnly: boolean }) => string;
+      parse: (value: string) => unknown;
+    };
+    const options = { arrayFormat: 'comma' as const, encodeValuesOnly };
+    expect(() => installedQs.stringify({ a: [{ toString: 'x' }] }, options)).not.toThrow();
+    expect(installedQs.stringify({ a: ['x', 'y'] }, options)).toBe(encodeValuesOnly ? 'a=x,y' : 'a=x%2Cy');
+    expect(installedQs.parse('a[b]=c&list[]=x&list[]=y')).toEqual({ a: { b: 'c' }, list: ['x', 'y'] });
   });
 
   it('preserves mapped IPv4 identities and IPv6 subnet grouping', () => {
