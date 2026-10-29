@@ -362,7 +362,9 @@ describe('Backstage Booker service persistence outcomes', () => {
     mockEvaluateWithHRC.mockResolvedValue({
       fidelity: 1,
       resilience: 1,
-      verdict: 'PASS'
+      verdict: 'PASS',
+      requirementsSatisfied: true,
+      unmetRequirements: [],
     });
     mockRepository.bookEvent.mockResolvedValue(undefined);
     mockRepository.updateRoster.mockResolvedValue([]);
@@ -630,7 +632,12 @@ describe('Backstage Booker service persistence outcomes', () => {
     }));
     expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(1);
     expect(mockEvaluateWithHRC).toHaveBeenCalledWith(expectedStoryline, {
-      timeoutMs: 10_000
+      timeoutMs: 10_000,
+      sensitiveContext: true,
+      bookingRequirements: {
+        request: 'Review the complete Raw card.',
+        continuityEvidence: expect.any(String),
+      },
     });
     expect(mockRunTrinityWritingPipeline.mock.invocationCallOrder[0]).toBeLessThan(
       mockEvaluateWithHRC.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY
@@ -741,10 +748,11 @@ describe('Backstage Booker service persistence outcomes', () => {
       })
     );
 
-    expect(mockEvaluateWithHRC).toHaveBeenCalledWith('1. Generated booking', {
+    expect(mockEvaluateWithHRC).toHaveBeenCalledWith('1. Generated booking', expect.objectContaining({
       timeoutMs: 10_000,
       sensitiveContext: true,
-    });
+      bookingRequirements: expect.objectContaining({ request: 'Review the complete Raw card.' }),
+    }));
   });
 
   it('uses the non-caching sensitive HRC path for protected queued generation without Notion', async () => {
@@ -756,10 +764,11 @@ describe('Backstage Booker service persistence outcomes', () => {
       })
     );
 
-    expect(mockEvaluateWithHRC).toHaveBeenCalledWith('1. Generated booking', {
+    expect(mockEvaluateWithHRC).toHaveBeenCalledWith('1. Generated booking', expect.objectContaining({
       timeoutMs: 10_000,
       sensitiveContext: true,
-    });
+      bookingRequirements: expect.objectContaining({ request: 'Review the complete Raw card.' }),
+    }));
   });
 
   it('uses the non-caching sensitive HRC path for managed request-local generation', async () => {
@@ -770,10 +779,11 @@ describe('Backstage Booker service persistence outcomes', () => {
       })
     );
 
-    expect(mockEvaluateWithHRC).toHaveBeenCalledWith('1. Generated booking', {
+    expect(mockEvaluateWithHRC).toHaveBeenCalledWith('1. Generated booking', expect.objectContaining({
       timeoutMs: 10_000,
       sensitiveContext: true,
-    });
+      bookingRequirements: expect.objectContaining({ request: 'Review the complete Raw card.' }),
+    }));
   });
 
   it('uses the non-caching sensitive HRC path for legacy queued generation without Notion', async () => {
@@ -788,10 +798,11 @@ describe('Backstage Booker service persistence outcomes', () => {
       })
     );
 
-    expect(mockEvaluateWithHRC).toHaveBeenCalledWith('1. Generated booking', {
+    expect(mockEvaluateWithHRC).toHaveBeenCalledWith('1. Generated booking', expect.objectContaining({
       timeoutMs: 10_000,
       sensitiveContext: true,
-    });
+      bookingRequirements: expect.objectContaining({ request: 'Review the complete Raw card.' }),
+    }));
     expect(mockLoadBackstageNotionPromptContext).toHaveBeenCalledTimes(1);
   });
 
@@ -3145,6 +3156,41 @@ describe('Backstage Booker service persistence outcomes', () => {
       ?.directAnswerSystemPolicyPrompt as string | undefined;
     expect(systemPolicy).toContain(BACKSTAGE_BOOKER_CLEAR_GENERATION_POLICY_MARKER);
     expect(systemPolicy).not.toContain('Rhea Ripley is the current champion.');
+  });
+
+  it('reviews the same authoritative Notion snapshot before publishing HRC completion', async () => {
+    const universeId = 'hrc-notion-snapshot';
+    const prompt = 'Write a short non-canon challenger promo with dialogue and production directions.';
+    const continuityEvidence = '<<UNTRUSTED_NOTION_RAG_BEGIN>>\n> The challenger earned the title match.\n<<UNTRUSTED_NOTION_RAG_END>>';
+    mockIsBackstageNotionAuthoritativeUniverse.mockImplementation(
+      (candidate: string) => candidate === universeId
+    );
+    mockRetrieveBackstageNotionRagContext.mockResolvedValueOnce({
+      universeId,
+      snapshotId: '55555555-5555-4555-8555-555555555555',
+      verifiedAt: new Date('2026-08-19T12:00:00.000Z'),
+      prompt: continuityEvidence, chunkCount: 1, truncated: false, citations: [],
+    });
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce(buildPersistenceTrinityResult(
+      '[Camera closes in.] Challenger: "I earned this opportunity. Now I intend to win." [Fade out.]'
+    ));
+
+    const result = await runWithBackstageProtectedQueuedExecution(true, () =>
+      BackstageBookerModule.actions.generateBookingWithHRC({ universeId, prompt })
+    );
+    expect(result.protectedGeneration).toMatchObject({
+      authority: 'notion', snapshotStatus: 'current_complete',
+      official: true, protectedGenerationCompleted: true,
+    });
+    expect(mockRetrieveBackstageNotionRagContext).toHaveBeenCalledTimes(1);
+    expect(mockEvaluateWithHRC).toHaveBeenCalledWith(result.storyline, {
+      timeoutMs: 10_000, sensitiveContext: true,
+      bookingRequirements: { request: prompt, continuityEvidence },
+    });
+    expect(mockRepository.loadContext).not.toHaveBeenCalled();
+    expect(mockLoadBackstageNotionPromptContext).not.toHaveBeenCalled();
+    expect(mockSaveMemory).not.toHaveBeenCalled();
+    expect(mockSaveWithAuditCheck).not.toHaveBeenCalled();
   });
 
   it.each(['generateBooking', 'generateBookingWithHRC'] as const)(

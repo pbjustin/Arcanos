@@ -12,6 +12,7 @@ import type {
   TrinityToolBackedCapabilities
 } from './trinityHonestyTypes.js';
 import { countWords } from '@shared/text/countWords.js';
+import { hasCreativeDialogue } from '@shared/text/creativeDialogue.js';
 import { classifyIntentMode } from '@shared/text/intentModeClassifier.js';
 import { renderPromptGuidanceSections } from '@shared/promptGuidance.js';
 
@@ -1696,7 +1697,8 @@ export type TrinityAnswerIntegrityIssue =
   | 'abrupt_mid_sentence_ending'
   | 'broken_numbering'
   | 'incomplete_final_section'
-  | 'fallback_spliced_mid_answer';
+  | 'fallback_spliced_mid_answer'
+  | 'missing_requested_dialogue';
 
 export interface TrinityAnswerIntegrityResult {
   valid: boolean;
@@ -1769,7 +1771,8 @@ function hasBrokenNumbering(
 
 function hasIncompleteFinalSection(
   text: string,
-  expectedNumberedItemCount?: number
+  expectedNumberedItemCount?: number,
+  rejectEmptyMarkdownTail = false
 ): boolean {
   const lines = text
     .trimEnd()
@@ -1780,6 +1783,10 @@ function hasIncompleteFinalSection(
   if (
     /^#{1,6}\s+\S.{0,159}$/u.test(finalLine)
     || /^(?:\*\*)?[^\n:]{1,120}:(?:\*\*)?$/u.test(finalLine)
+    || (rejectEmptyMarkdownTail && (
+      /^(?:>\s*)+$/u.test(finalLine)
+      || /^(?:[-*_]\s*){3,}(?:>\s*)+$/u.test(finalLine)
+    ))
   ) {
     return true;
   }
@@ -1810,6 +1817,8 @@ export function validateTrinityAnswerIntegrity(params: {
   text: string;
   reasoningHonesty?: TrinityReasoningHonesty;
   expectedNumberedItemCount?: number;
+  requiresDialogue?: boolean;
+  rejectEmptyMarkdownTail?: boolean;
 }): TrinityAnswerIntegrityResult {
   const issues: TrinityAnswerIntegrityIssue[] = [];
   if (hasAbruptEnding(params.text)) {
@@ -1820,12 +1829,16 @@ export function validateTrinityAnswerIntegrity(params: {
   }
   if (hasIncompleteFinalSection(
     params.text,
-    params.expectedNumberedItemCount
+    params.expectedNumberedItemCount,
+    params.rejectEmptyMarkdownTail
   )) {
     issues.push('incomplete_final_section');
   }
   if (params.reasoningHonesty && hasFallbackSplice(params.text, params.reasoningHonesty)) {
     issues.push('fallback_spliced_mid_answer');
+  }
+  if (params.requiresDialogue && !hasCreativeDialogue(params.text)) {
+    issues.push('missing_requested_dialogue');
   }
 
   return {

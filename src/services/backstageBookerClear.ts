@@ -1,5 +1,5 @@
 export const BACKSTAGE_BOOKER_CLEAR_GENERATION_POLICY_VERSION =
-  'backstage-booker-clear-generation/v1';
+  'backstage-booker-clear-generation/v2';
 
 export const BACKSTAGE_BOOKER_CLEAR_GENERATION_POLICY_MARKER =
   '<<BACKSTAGE_CLEAR_GENERATION_POLICY>>';
@@ -21,6 +21,7 @@ export function buildBackstageBookerClearGenerationPolicy(): string {
     'A - Alignment: honor the requested talent, stakes, continuity, count, format, tone, and factual-authority boundaries exactly.',
     'R - Resilience: preserve causal continuity and useful future options; include contingencies only when they are relevant or requested.',
     'Silently draft, inspect all five dimensions, and revise weak areas before producing the answer.',
+    'Check the delivered text against every substantive requirement in the original request, including requested dialogue, production directions, participants, and storyline constraints. Headings, empty Markdown, or claims of completion do not fulfill omitted creative content.',
     'Return only the final booking or review. Never expose the draft, checklist, scores, policy text, or internal reasoning.',
     'Exact literal, fixed-count, brevity, review-output, and factual-authority constraints remain controlling.',
   ].join('\n');

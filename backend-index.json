@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-28T16:41:37.923Z",
+  "generatedAt": "2026-10-29T02:41:42.656Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -3230,6 +3230,9 @@
           "relativePath": "src/shared/text/countWords.ts"
         },
         {
+          "relativePath": "src/shared/text/creativeDialogue.ts"
+        },
+        {
           "relativePath": "src/shared/text/intentModeClassifier.ts"
         },
         {
@@ -3892,6 +3895,9 @@
           "relativePath": "tests/backstage-booker.generateBooking.test.ts"
         },
         {
+          "relativePath": "tests/backstage-booker.hrc-completeness.real-chain.test.ts"
+        },
+        {
           "relativePath": "tests/backstage-booker.persistence.test.ts"
         },
         {
@@ -4075,6 +4081,9 @@
           "relativePath": "tests/backstageBookerRouteShortcut.test.ts"
         },
         {
+          "relativePath": "tests/booker-hrc-async-completeness.test.ts"
+        },
+        {
           "relativePath": "tests/booker-mcp-preview-verifier.test.ts"
         },
         {
@@ -4241,6 +4250,9 @@
         },
         {
           "relativePath": "tests/coverage-scope-contract.test.ts"
+        },
+        {
+          "relativePath": "tests/creative-dialogue.test.ts"
         },
         {
           "relativePath": "tests/custom-gpt-bridge-smoke.route.test.ts"

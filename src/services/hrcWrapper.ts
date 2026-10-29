@@ -41,7 +41,9 @@ export async function evaluateWithHRC(
   if (!text.trim()) return HRC_FALLBACK;
 
   const { sensitiveContext = false, ...evaluationOptions } = options;
-  if (sensitiveContext) {
+  // Requirement reviews include the original request and possibly private canon;
+  // a candidate-only cache key cannot represent that evaluation scope.
+  if (sensitiveContext || evaluationOptions.bookingRequirements) {
     try {
       return sanitizeSensitiveHrcFailure(
         await hrcCore.evaluate(text, { ...evaluationOptions, store: false })

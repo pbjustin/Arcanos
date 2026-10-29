@@ -2,6 +2,8 @@ export const BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_CODE =
   'BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE';
 export const BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_MESSAGE =
   'Backstage Booker could not produce a complete response within the output limit. Narrow the request and try again.';
+export const BACKSTAGE_BOOKER_REQUIREMENTS_INCOMPLETE_ERROR_MESSAGE =
+  'Backstage Booker did not fulfill the requested creative requirements.';
 export const BACKSTAGE_BOOKER_INTEGRITY_FAILED_ERROR_CODE =
   'BACKSTAGE_BOOKER_INTEGRITY_FAILED';
 export const BACKSTAGE_BOOKER_INTEGRITY_FAILED_ERROR_MESSAGE =
@@ -24,6 +26,7 @@ const BACKSTAGE_SAFE_INTEGRITY_ISSUES = new Set([
   'broken_numbering',
   'incomplete_final_section',
   'fallback_spliced_mid_answer',
+  'missing_requested_dialogue',
 ]);
 
 const BACKSTAGE_SAFE_INTEGRITY_FAILURE_REASONS = new Set([
@@ -92,8 +95,10 @@ export class BackstageBookerOutputIncompleteError extends Error {
   readonly code = BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_CODE;
   readonly retryable = false;
 
-  constructor() {
-    super(BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_MESSAGE);
+  constructor(reason: 'output_limit' | 'requirements' = 'output_limit') {
+    super(reason === 'requirements'
+      ? BACKSTAGE_BOOKER_REQUIREMENTS_INCOMPLETE_ERROR_MESSAGE
+      : BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_MESSAGE);
     this.name = 'BackstageBookerOutputIncompleteError';
   }
 }

@@ -1120,6 +1120,29 @@ describe('Trinity honesty controls', () => {
     });
   });
 
+  it.each([
+    'The camera moves closer.\n---\n>\n>\n>\n>',
+    'The camera moves closer.\n--- > > > >',
+  ])('flags empty final Markdown blockquotes as incomplete', text => {
+    expect(validateTrinityAnswerIntegrity({ text, rejectEmptyMarkdownTail: true }).issues)
+      .toContain('incomplete_final_section');
+  });
+
+  it('preserves generic Markdown syntax demonstrations without the creative-deliverable policy', () => {
+    expect(validateTrinityAnswerIntegrity({ text: 'An empty blockquote uses this marker:\n>' }))
+      .toEqual({ valid: true, issues: [] });
+  });
+
+  it('requires dialogue only when the trusted caller declares that requirement', () => {
+    const text = '[CAMERA moves closer. The champion adjusts the belt.]';
+    expect(validateTrinityAnswerIntegrity({ text })).toEqual({ valid: true, issues: [] });
+    expect(validateTrinityAnswerIntegrity({ text, requiresDialogue: true }).issues)
+      .toContain('missing_requested_dialogue');
+    expect(validateTrinityAnswerIntegrity({
+      text: 'CHAMPION: This opportunity belongs to me.', requiresDialogue: true,
+    })).toEqual({ valid: true, issues: [] });
+  });
+
   it('accepts bounded atomic smoke-test literals as complete direct-answer output', () => {
     const integrity = validateTrinityAnswerIntegrity({
       text: 'OBSERVABILITY_SMOKE_TEST_OK'

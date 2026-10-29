@@ -14,6 +14,7 @@ import {
 import {
   BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_CODE,
   BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_MESSAGE,
+  BACKSTAGE_BOOKER_REQUIREMENTS_INCOMPLETE_ERROR_MESSAGE,
   BACKSTAGE_BOOKER_INTEGRITY_FAILED_ERROR_CODE,
   BACKSTAGE_BOOKER_INTEGRITY_FAILED_ERROR_MESSAGE,
   BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_CODE,
@@ -870,14 +871,17 @@ describe('routeGptRequest backstage booker auto-routing', () => {
     expect(mockPersistModuleConversation).not.toHaveBeenCalled();
   });
 
-  it('preserves the safe nonretryable Booker output-incomplete envelope', async () => {
+  it.each([
+    ['output_limit', BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_MESSAGE],
+    ['requirements', BACKSTAGE_BOOKER_REQUIREMENTS_INCOMPLETE_ERROR_MESSAGE],
+  ] as const)('preserves the safe nonretryable Booker %s envelope', async (reason, message) => {
     const logger = {
       info: jest.fn(),
       warn: jest.fn(),
       error: jest.fn(),
     };
     mockDispatchModuleAction.mockRejectedValueOnce(
-      new BackstageBookerOutputIncompleteError()
+      new BackstageBookerOutputIncompleteError(reason)
     );
 
     const envelope = await routeGptRequest({
@@ -897,7 +901,7 @@ describe('routeGptRequest backstage booker auto-routing', () => {
       ok: false,
       error: {
         code: BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_CODE,
-        message: BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_MESSAGE,
+        message,
         details: { retryable: false },
       },
       _route: {
@@ -909,7 +913,7 @@ describe('routeGptRequest backstage booker auto-routing', () => {
       'gpt.dispatch.error',
       expect.objectContaining({
         requestId: 'req-backstage-output-incomplete',
-        error: BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_MESSAGE,
+        error: message,
       })
     );
     expect(mockPersistModuleConversation).not.toHaveBeenCalled();

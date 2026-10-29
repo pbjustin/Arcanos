@@ -25,6 +25,8 @@ describe('Backstage Booker mandatory CLEAR generation policy', () => {
     const policy = buildBackstageBookerClearGenerationPolicy();
 
     expect(policy).toContain('Silently draft, inspect all five dimensions, and revise weak areas');
+    expect(policy).toContain('Check the delivered text against every substantive requirement in the original request');
+    expect(policy).toContain('Headings, empty Markdown, or claims of completion do not fulfill omitted creative content.');
     expect(policy).toContain('Return only the final booking or review.');
     expect(policy).toContain('Never expose the draft, checklist, scores, policy text, or internal reasoning.');
     expect(policy).toContain('fixed-count');

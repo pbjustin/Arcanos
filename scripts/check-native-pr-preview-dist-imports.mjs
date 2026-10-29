@@ -102,7 +102,7 @@ export const ZOD_VALIDATION_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
 ]);
 
 // This sealed fixture reaches only the production honesty functions and their
-// three pure helpers. Check every emitted edge, including the leaf modules.
+// four pure helpers. Check every emitted edge, including the leaf modules.
 export const TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
   Object.freeze({
     filePath: 'dist/shared/chatgpt/tutorHonestyPreviewFixture.js',
@@ -120,12 +120,14 @@ export const TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
     filePath: 'dist/core/logic/trinityHonesty.js',
     imports: Object.freeze({
       '../../shared/text/countWords.js': Object.freeze(['countWords:countWords']),
+      '../../shared/text/creativeDialogue.js': Object.freeze(['hasCreativeDialogue:hasCreativeDialogue']),
       '../../shared/text/intentModeClassifier.js': Object.freeze(['classifyIntentMode:classifyIntentMode']),
       '../../shared/promptGuidance.js': Object.freeze(['renderPromptGuidanceSections:renderPromptGuidanceSections']),
     }),
   }),
   ...[
     'dist/shared/text/countWords.js',
+    'dist/shared/text/creativeDialogue.js',
     'dist/shared/text/intentModeClassifier.js',
     'dist/shared/promptGuidance.js',
   ].map(filePath => Object.freeze({ filePath, imports: Object.freeze({}) })),

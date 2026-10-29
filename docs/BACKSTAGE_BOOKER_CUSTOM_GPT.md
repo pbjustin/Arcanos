@@ -23,7 +23,7 @@ venues, tickets, or calendar appointments.
 | --- | --- | --- |
 | Ask what is currently true in a Notion-authoritative universe | `runBackstageBooker` with `queryContinuity` | Reads the authoritative Notion snapshot; does not change Backstage universe or canon state. |
 | Plan a show, feud, promo, turn, match finish, or longer arc | `runBackstageBooker` with `generateBooking` | Generates a proposal from one universe snapshot with the mandatory CLEAR-guided draft-review-revise policy; does not make it canon. |
-| Generate a plan and critique it | `runBackstageBooker` with `generateBookingWithHRC` | Uses the same CLEAR-guided generation, then adds HRC fidelity, resilience, and verdict fields; does not make it canon. |
+| Generate a plan and critique it | `runBackstageBooker` with `generateBookingWithHRC` | Uses the same CLEAR-guided generation, then requires HRC fulfillment of the original request against the same continuity evidence before returning fidelity, resilience, and verdict fields; does not make it canon. |
 | Test a matchup | `runBackstageBooker` with `simulateMatch` | Runs a ratings-weighted, randomized simulation; does not record the result in Backstage universe state. |
 | Inspect stored non-Notion state | `getBackstageUniverse` or `getBackstageStoryline` | Reads bounded PostgreSQL state; does not generate or save. |
 | Create or extend durable typed canon in a PostgreSQL-authoritative, non-Notion universe | `writeBackstageCanon` | Writes only after ChatGPT displays its consequential-action Allow/Deny banner. |

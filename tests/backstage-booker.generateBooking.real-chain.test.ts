@@ -12,6 +12,7 @@ const poolConnect = jest.fn();
 const saveMemory = jest.fn();
 const storePattern = jest.fn();
 const recordTrinityJudgedFeedback = jest.fn();
+let notionAuthoritative = false;
 const { AUDITED_TRANSIENT_READ_QUERIES } =
   await import('../src/core/db/transientReadRegistry.js');
 
@@ -71,11 +72,23 @@ jest.unstable_mockModule('@services/selfImprove/controller.js', () => ({
 
 jest.unstable_mockModule('../src/services/backstageNotionAuthority.js', () => ({
   isBackstageNotionAuthorityDatabaseError: jest.fn(() => false),
-  isBackstageNotionAuthorityEnforced: jest.fn(async () => false),
+  isBackstageNotionAuthorityEnforced: jest.fn(async () => notionAuthoritative),
   readBackstageNotionAuthorityConfiguration: jest.fn(() => ({
     status: 'absent',
   })),
   resolveEffectiveBackstageNotionAuthorityRoot: jest.fn(async () => null),
+}));
+
+// Only the already-selected authoritative snapshot is synthetic; generation,
+// provider extraction, output controls, honesty and integrity remain real.
+jest.unstable_mockModule('@services/backstageNotionPartitionCutover.js', () => ({
+  assertBackstageNotionProtectedBookingAdmission: jest.fn(async () => undefined),
+  assertBackstageNotionProtectedLiteralAuthorityCurrent: jest.fn(async () => undefined),
+  retrieveBackstageNotionAuthorityBookingRagContext: jest.fn(async () => ({
+    prompt: 'Raw continuity: Dragon Lee earned the Night of Champions challenge against Logan Paul. This match has not happened.',
+    snapshotStatus: 'current_complete',
+  })),
+  retrieveBackstageNotionAuthorityRagContext: jest.fn(async () => { throw new Error('Unexpected continuity read.'); }),
 }));
 
 const authorityModel = 'ft:gpt-4.1:synthetic:backstage-authority';
@@ -129,6 +142,7 @@ afterAll(() => {
 
 describe('backstage-booker generateBooking real provider chain', () => {
   beforeEach(() => {
+    notionAuthoritative = false;
     jest.clearAllMocks();
     responsesCreate.mockReset();
     query.mockResolvedValue({ rows: [] });
@@ -251,6 +265,67 @@ describe('backstage-booker generateBooking real provider chain', () => {
     expect(options.signal?.aborted).toBe(false);
     expect(options.timeout).toBeUndefined();
     expect(storePattern).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('preserves a complete promo with Notion authority=%s', async authoritative => {
+    notionAuthoritative = authoritative;
+    const promo = [
+      'Creative direction: Kay keeps Logan arrogant, but lets the challenger expose the anxiety underneath his bravado.',
+      '## Backstage promo: a challenger earned',
+      '[CAMERA: Track slowly toward Logan beside the Raw interview backdrop, holding the championship at chest height as crew clear the corridor behind him, then settle into a tight close-up while he turns from the monitor showing Dragon Lee and addresses the lens without an interviewer.]',
+      '---',
+      '> **Logan Paul:** "Dragon Lee earned a ticket to Night of Champions, congratulations, but earning the right to stand across from me does not mean he is ready for the pressure of carrying this championship while the entire world waits for one mistake."',
+      '>',
+      '> "Every highlight he makes buys him another round of applause, every headline I make changes the conversation, and when that bell rings he will discover the difference between chasing a moment and owning the spotlight before the cameras even arrive."',
+      '>',
+      '> "Bring the speed, bring the courage, bring every person who believes this is your night, because when the noise settles I intend to walk away with the title and leave you wondering how your biggest opportunity became my next highlight."',
+      '>',
+      '[Logan taps the faceplate, gives the lens a narrow smile, and walks out of frame. Hold on the empty corridor, then cut to the next segment.]',
+    ].join('\n');
+    responsesCreate.mockResolvedValueOnce({
+      id: 'resp_complete_promo', model: authorityModel, status: 'completed',
+      output_text: promo, output: [],
+      usage: { input_tokens: 200, output_tokens: 350, total_tokens: 550 },
+    });
+
+    const result = await runWithBackstageProtectedQueuedExecution(true, () =>
+      generateBooking(
+        'Generate a 200-word backstage promo featuring Logan Paul responding to Dragon Lee becoming his Night of Champions challenger. Preserve authoritative Raw continuity, include production directions and dialogue, and run protected CLEAR with dedicated HRC. Non-canon.',
+        'promo-output-fixture',
+        'generateBookingWithHRC'
+      )
+    );
+
+    expect(result).toContain('Dragon Lee earned a ticket');
+    expect(result).toContain('owning the spotlight');
+    expect(result).toContain('my next highlight');
+    expect(result).toContain('cut to the next segment');
+    expect(responsesCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects the reported empty blockquote tail through actual generation integrity', async () => {
+    notionAuthoritative = true;
+    responsesCreate
+      .mockResolvedValueOnce({
+        id: 'resp_broken_promo', model: authorityModel, status: 'completed',
+        output_text: 'Creative direction: keep the champion tense.\n## Backstage segment\n[CAMERA: Hold a close-up.]\n--- > > > >',
+        output: [], usage: { input_tokens: 200, output_tokens: 40, total_tokens: 240 },
+      })
+      .mockResolvedValueOnce({
+        id: 'resp_unavailable_continuation', model: authorityModel, status: 'completed',
+        output_text: 'STRUCTURAL_REPAIR_UNAVAILABLE',
+        output: [], usage: { input_tokens: 240, output_tokens: 5, total_tokens: 245 },
+      });
+
+    await expect(runWithBackstageProtectedQueuedExecution(true, () =>
+      generateBooking('Generate a backstage angle with production cues. Non-canon.', 'broken-promo-fixture', 'generateBookingWithHRC')
+    )).rejects.toMatchObject({
+      code: 'BACKSTAGE_BOOKER_INTEGRITY_FAILED',
+      integrityIssues: ['incomplete_final_section'],
+      repairAttempted: true,
+      repairFailureReason: 'invalid_continuation',
+    });
+    expect(responsesCreate).toHaveBeenCalledTimes(2);
   });
 
   it('repairs one abrupt worker response through the real Booker provider chain', async () => {

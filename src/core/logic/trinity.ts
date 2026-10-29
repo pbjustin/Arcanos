@@ -1215,6 +1215,8 @@ export async function runThroughBrain(
             reasoningHonesty,
             expectedNumberedItemCount:
               options.directAnswerIntegrityRepair?.expectedNumberedItemCount,
+            requiresDialogue: options.directAnswerRequiresDialogue,
+            rejectEmptyMarkdownTail: options.directAnswerRejectEmptyMarkdownTail,
           })
         };
       };

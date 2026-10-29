@@ -916,6 +916,20 @@ token and timeout budgets, max-output-only compact retry, and non-persistent
 generation boundary remain unchanged. Exact-literal shortcuts still return
 before model generation and therefore bypass this policy.
 
+Dedicated `generateBookingWithHRC` evaluates the delivered creative text against
+the original request and the same selected continuity evidence used to generate
+it. Dialogue, production directions, participants, storyline constraints,
+continuity consistency, and material completeness are requirements when the
+request calls for them; approximate length and alternative segment formats are
+permitted. The existing HRC fidelity, resilience, and verdict fields remain the
+public response. Internally, explicit requirement fulfillment is required before
+protected completion or official status can be returned. High scores alone do
+not establish fulfillment. An unmet creative requirement fails closed as
+`BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE`; unavailable or invalid requirement review
+fails as `BACKSTAGE_BOOKER_INTEGRITY_FAILED`. Neither failure returns a partial
+draft or creates replacement generation. Requirement reviews bypass the
+candidate-only cache and use Responses `store: false`.
+
 `queryContinuity` is read-only and requires `payload.universeId` plus
 `payload.query`; it never substitutes the compatibility `legacy` universe. An
 optional `payload.retrievalScope` requires an exact `pageTitle` and may add
