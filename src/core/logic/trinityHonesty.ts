@@ -1767,9 +1767,15 @@ function hasBrokenNumbering(
   return markers.some((marker, index) => marker !== index + 1);
 }
 
+/**
+ * Detect an empty final heading or label, or a mismatch with a finite
+ * numbered-item count of at least 1 (truncated to an integer). Also optionally reject
+ * trailing empty blockquotes, including inline rule-and-quote tails.
+ */
 function hasIncompleteFinalSection(
   text: string,
-  expectedNumberedItemCount?: number
+  expectedNumberedItemCount?: number,
+  rejectEmptyMarkdownTail = false
 ): boolean {
   const lines = text
     .trimEnd()
@@ -1780,6 +1786,10 @@ function hasIncompleteFinalSection(
   if (
     /^#{1,6}\s+\S.{0,159}$/u.test(finalLine)
     || /^(?:\*\*)?[^\n:]{1,120}:(?:\*\*)?$/u.test(finalLine)
+    || (rejectEmptyMarkdownTail && (
+      /^(?:>\s*)+$/u.test(finalLine)
+      || /(?:^|\s)(?:[-*_]\s*){3,}(?:>\s*)+$/u.test(finalLine)
+    ))
   ) {
     return true;
   }
@@ -1806,10 +1816,18 @@ function hasFallbackSplice(text: string, reasoningHonesty: TrinityReasoningHones
   return segments.some(segment => isUnrequestedFallbackSplice(segment, reasoningFallbacks, genericFallbacks));
 }
 
+/**
+ * Report heuristic structural defects without modifying the answer.
+ * A finite expectedNumberedItemCount of at least 1 requires its truncated number
+ * of top-level items; rejectEmptyMarkdownTail opts into rejecting empty quote tails. Fallback-splice
+ * checks run only when reasoningHonesty is supplied. An empty issues list means
+ * these checks passed, not that the answer fulfills the user's request.
+ */
 export function validateTrinityAnswerIntegrity(params: {
   text: string;
   reasoningHonesty?: TrinityReasoningHonesty;
   expectedNumberedItemCount?: number;
+  rejectEmptyMarkdownTail?: boolean;
 }): TrinityAnswerIntegrityResult {
   const issues: TrinityAnswerIntegrityIssue[] = [];
   if (hasAbruptEnding(params.text)) {
@@ -1820,7 +1838,8 @@ export function validateTrinityAnswerIntegrity(params: {
   }
   if (hasIncompleteFinalSection(
     params.text,
-    params.expectedNumberedItemCount
+    params.expectedNumberedItemCount,
+    params.rejectEmptyMarkdownTail
   )) {
     issues.push('incomplete_final_section');
   }
@@ -2063,12 +2082,18 @@ function hasExternalVerificationSubject(text: string): boolean {
     || TUTOR_NONLOCAL_CONTEXT.test(text);
 }
 
-/** Internal direct-answer admission seam, shared by execution and deterministic diagnostics. */
+/**
+ * Filter unsupported direct-answer claims and return the associated honesty
+ * evidence and rule IDs, shared by execution and deterministic diagnostics.
+ * preservePresentation retains the trimmed candidate when no claims are blocked
+ * or caveats inserted; unsupported claims still require rewriting.
+ */
 export function prepareTrinityDirectAnswerHonesty(params: {
   candidateText: string;
   userPrompt: string;
   capabilityFlags: TrinityCapabilityFlags;
   outputControls: TrinityOutputControls;
+  preservePresentation?: boolean;
 }): { honestyFiltered: FinalClaimBlockResult; reasoningHonesty: TrinityReasoningHonesty; ruleIds: TrinityHonestyRuleId[] } {
   const { capabilityFlags, outputControls } = params;
   const needsCurrentStateLimitation =
@@ -2083,7 +2108,7 @@ export function prepareTrinityDirectAnswerHonesty(params: {
     && !/\b(live|runtime|deploy(?:ment|ed)?|production|servers?|web|internet|online|remote|backend|api|services?|queue|worker|competitors?|market|news|pricing|release|launch|external|trends?|compan(?:y|ies)|regulation|stocks?|execute|run|save|persist|store|write|database)\b/i.test(params.userPrompt);
   const reasoningHonesty = createDefaultTrinityReasoningHonesty();
   const honestyFiltered = enforceFinalStageHonesty(params.candidateText, reasoningHonesty, capabilityFlags,
-    readIntentMode(outputControls), false, outputControls.instructionalVerificationPolicy);
+    readIntentMode(outputControls), params.preservePresentation, outputControls.instructionalVerificationPolicy);
   const ruleIds = [...honestyFiltered.ruleIds];
   if (needsCurrentStateLimitation && !suppliedCanonScope) ruleIds.push('CURRENT_EXTERNAL_USER_REQUEST');
   if (honestyFiltered.blocked || needsCurrentStateLimitation) {

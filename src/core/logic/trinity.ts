@@ -763,6 +763,9 @@ function buildExactLiteralTrinityResult(params: {
 /**
  * Universal Trinity pipeline - Core AI processing workflow for ARCANOS
  *
+ * directAnswerPreservePresentation is honored only for
+ * `backstage-booker.generateBooking`; honesty and integrity checks still apply.
+ *
  * @param client - OpenAI client instance for API communication
  * @param prompt - User input prompt to process
  * @param sessionId - Optional session identifier for context continuity
@@ -804,6 +807,8 @@ export async function runThroughBrain(
       ? options.trustedPolicyPrompt
       : prompt;
   const outputControls = deriveTrinityOutputControls(trustedPolicyPrompt, options);
+  const preserveDirectAnswerPresentation = options.sourceEndpoint === 'backstage-booker.generateBooking'
+    && options.directAnswerPreservePresentation === true;
   logCoreExecution('start', {
     requestId,
     sourceEndpoint: options.sourceEndpoint,
@@ -1192,19 +1197,20 @@ export async function runThroughBrain(
           candidateText,
           userPrompt: directAnswerUserIntentPrompt,
           capabilityFlags,
-          outputControls
+          outputControls,
+          preservePresentation: preserveDirectAnswerPresentation,
         });
         const enforcedOutput = enforceFinalStageHonestyAndMinimalism({
           text: honestyFiltered.text,
           userPrompt: directAnswerUserIntentPrompt,
           capabilityFlags,
           outputControls,
-          reasoningHonesty
+          reasoningHonesty,
+          preservePresentation: preserveDirectAnswerPresentation,
         });
-        const text = applyTrinityDirectAnswerOutputContract(
-          enforcedOutput.text,
-          trustedPolicyPrompt
-        );
+        const text = preserveDirectAnswerPresentation
+          ? enforcedOutput.text
+          : applyTrinityDirectAnswerOutputContract(enforcedOutput.text, trustedPolicyPrompt);
         return {
           directAnswerReasoningHonesty: reasoningHonesty,
           honestyFilteredFinal: honestyFiltered,
@@ -1215,6 +1221,7 @@ export async function runThroughBrain(
             reasoningHonesty,
             expectedNumberedItemCount:
               options.directAnswerIntegrityRepair?.expectedNumberedItemCount,
+            rejectEmptyMarkdownTail: options.directAnswerRejectEmptyMarkdownTail,
           })
         };
       };

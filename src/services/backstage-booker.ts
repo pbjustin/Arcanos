@@ -25,6 +25,8 @@ import {
   type BackstageUpdateRosterResponse
 } from '@arcanos/protocol';
 import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
+import { deriveTrinityOutputControls, validateTrinityAnswerIntegrity } from '@core/logic/trinityHonesty.js';
+import { countWords } from '@shared/text/countWords.js';
 import { computeTierSoftCap } from '@core/logic/trinityGuards.js';
 import { detectTier } from '@core/logic/trinityTier.js';
 import { getTrinityFinalModel } from "@services/openai/credentialProvider.js";
@@ -75,7 +77,6 @@ import {
   isBackstageProtectedQueuedExecution,
   getBackstageProtectedGenerationProvenance,
   recordBackstageProtectedGenerationAuthority,
-  wasBackstageNotionEnrichmentUsed,
 } from './backstageNotionEnrichmentAuthorization.js';
 import {
   isBackstageNotionAuthorityDatabaseError,
@@ -155,6 +156,8 @@ import {
   type Wrestler
 } from '@shared/backstage/backstageRoster.js';
 import {
+  BackstageBookerIntegrityFailedError,
+  BackstageBookerOutputIncompleteError,
   isBackstageBookerOutputIncompleteError,
   toBackstageBookerIntegrityFailedError,
 } from '@shared/backstage/backstageGenerationError.js';
@@ -2586,6 +2589,25 @@ export async function generateBooking(
   universeId?: string,
   executionAction: BackstageGenerationAction = 'generateBooking'
 ): Promise<string> {
+  return generateBookingWithReview(prompt, universeId, executionAction);
+}
+
+/**
+ * Generate and validate a booking, then await an optional review before returning.
+ * review receives the delivered text and already-selected continuity evidence;
+ * exact literals are reviewed without evidence or model generation.
+ * executionAction selects the generation budget, including any HRC reserve.
+ * Input, authority, and pre-dispatch budget errors propagate. Within generation,
+ * incomplete-output and integrity errors remain typed; other generation or review
+ * errors become "Booking generation failed", omitting causes for private context.
+ * Exact-literal review errors propagate directly.
+ */
+async function generateBookingWithReview(
+  prompt: string,
+  universeId: string | undefined,
+  executionAction: BackstageGenerationAction,
+  review?: (storyline: string, continuityEvidence?: string) => Promise<void>
+): Promise<string> {
   const structuredScope = universeId !== undefined;
   const input = normalizeBackstageBookerActionPayload('generateBooking', {
     universeId: universeId ?? DEFAULT_BACKSTAGE_UNIVERSE_ID,
@@ -2609,10 +2631,12 @@ export async function generateBooking(
         protectedGenerationExecution
       );
     }
-    return assertValidBackstageBookerActionData(
+    const storyline = assertValidBackstageBookerActionData(
       'generateBooking',
       exactLiteralShortcut.literal
     ) as string;
+    await review?.(storyline);
+    return storyline;
   }
 
   const model = resolveBackstageBookerModel();
@@ -2850,6 +2874,7 @@ export async function generateBooking(
     ),
     buildBackstageOutputBudgetCompletionInstruction(outputBudget),
   ].join('\n\n');
+  const requestedMaxWords = deriveTrinityOutputControls(input.prompt, {}).maxWords;
   const trinityRunOptions = {
     ...buildBackstageBookerTrinityRunOptions({
       model,
@@ -2862,6 +2887,9 @@ export async function generateBooking(
         executionBudget.profile === 'queued_generation',
     }),
     directAnswerSystemPolicyPrompt,
+    directAnswerPreservePresentation:
+      responseFormat === 'structured_booking' || requestedMaxWords !== null,
+    directAnswerRejectEmptyMarkdownTail: true,
     directAnswerIntegrityRepair: {
       maxAttempts: 1 as const,
       timeoutMs: executionBudget.recoveryStageTimeoutMs,
@@ -2974,6 +3002,10 @@ export async function generateBooking(
     );
     const output = trinityResult.result;
     const clean = output.replace(/\b(meta|reflection)[:].*$/gi, '').trim();
+    // Reject the intact candidate before compact/review normalization can remove content.
+    if (requestedMaxWords !== null && countWords(clean) > requestedMaxWords) {
+      throw new BackstageBookerOutputIncompleteError('requirements');
+    }
     //audit Assumption: compact direct-answer prompts may still pick up model preambles or overlong list structures despite stricter prompt instructions; failure risk: live responses ignore an explicit compact item count and reopen simulation-style framing; expected invariant: genuine compact output respects the caller's requested list shape while production structured output keeps every requested card element; handling strategy: apply cardinality cleanup only to compact-direct output and use preamble-only cleanup for structured direct style.
     const strictRetryItemCountOverride = usedCompactOutputRetry
       && (
@@ -3007,12 +3039,37 @@ export async function generateBooking(
       'generateBooking',
       normalizedOutput
     ) as string;
+    const finalIntegrity = validateTrinityAnswerIntegrity({
+      text: validatedOutput,
+      rejectEmptyMarkdownTail: true,
+    });
+    if (!finalIntegrity.valid) {
+      throw new BackstageBookerIntegrityFailedError({
+        integrityIssues: finalIntegrity.issues,
+        repairAttempted: false,
+        repairFailureReason: 'revalidation_failed',
+      });
+    }
+    if (requestedMaxWords !== null && countWords(validatedOutput) > requestedMaxWords) {
+      throw new BackstageBookerOutputIncompleteError('requirements');
+    }
+    await review?.(
+      validatedOutput,
+      structuredPrompt.includesNotion && !structuredPrompt.notionAuthorityContext
+        ? [
+            structuredPrompt.instructions,
+            structuredPrompt.directAnswerUntrustedContextPrompt,
+          ].filter((context): context is string => typeof context === 'string').join('\n\n')
+        : structuredPrompt.directAnswerUntrustedContextPrompt
+          ?? (structuredPrompt.includesNotion ? undefined : structuredPrompt.instructions)
+    );
     if (usedCompactOutputRetry) {
       logCompactRetryEvent('compact_retry_succeeded');
     }
     return validatedOutput;
   } catch (error) {
-    if (isBackstageBookerOutputIncompleteError(error)) {
+    if (isBackstageBookerOutputIncompleteError(error)
+      || error instanceof BackstageBookerIntegrityFailedError) {
       throw error;
     }
     const integrityFailure = toBackstageBookerIntegrityFailedError(error);
@@ -3501,30 +3558,58 @@ export const BackstageBookerModule = {
         protectedGeneration,
       });
     },
+    /**
+     * Generate a booking and review its delivered text against the original
+     * request and selected continuity evidence. Return the storyline, public HRC
+     * scores/verdict, and any protected-generation provenance.
+     * Reject unmet requirements with BackstageBookerOutputIncompleteError and
+     * missing or inconsistent acceptance evidence with BackstageBookerIntegrityFailedError,
+     * regardless of numeric scores. Payload and generation errors propagate.
+     */
     async generateBookingWithHRC(payload: unknown) {
       const input = normalizeBackstageBookerModuleActionPayload(
         'generateBookingWithHRC',
         payload
       );
       const universeId = input.universeId ?? DEFAULT_BACKSTAGE_UNIVERSE_ID;
-      const storyline = await BackstageBooker.generateBooking(
+      let hrc: BackstageHrcResult | undefined;
+      const storyline = await generateBookingWithReview(
         input.prompt,
         universeId,
-        'generateBookingWithHRC'
+        'generateBookingWithHRC',
+        async (candidate, continuityEvidence) => {
+          const evaluation = await evaluateWithHRC(candidate, {
+            timeoutMs: BACKSTAGE_HRC_EVALUATION_TIMEOUT_MS,
+            bookingRequirements: { request: input.prompt, continuityEvidence },
+            sensitiveContext: true,
+          });
+          if (evaluation.requirementsSatisfied === false) {
+            throw new BackstageBookerOutputIncompleteError('requirements');
+          }
+          if (evaluation.requirementsSatisfied !== true
+            || !Array.isArray(evaluation.unmetRequirements)
+            || evaluation.unmetRequirements.length !== 0) {
+            throw new BackstageBookerIntegrityFailedError({
+              integrityIssues: [],
+              repairAttempted: false,
+              repairFailureReason: 'provider_failure',
+            });
+          }
+          hrc = normalizeHrcResult(evaluation);
+        }
       );
-      const sensitiveContext =
-        wasBackstageNotionEnrichmentUsed()
-        || isBackstageProtectedGenerationExecution()
-        || isBackstageProtectedQueuedExecution()
-        || isBackstageLegacyQueuedExecution();
+      if (!hrc) {
+        throw new BackstageBookerIntegrityFailedError({
+          integrityIssues: [],
+          repairAttempted: false,
+          repairFailureReason: 'provider_failure',
+        });
+      }
       const protectedGeneration = getBackstageProtectedGenerationProvenance();
       const result: BackstageGenerateBookingWithHrcResponse = {
         universeId,
         storyline,
-        hrc: normalizeHrcResult(await evaluateWithHRC(storyline, {
-          timeoutMs: BACKSTAGE_HRC_EVALUATION_TIMEOUT_MS,
-          ...(sensitiveContext ? { sensitiveContext: true } : {})
-        })),
+        hrc,
         ...(protectedGeneration ? { protectedGeneration } : {})
       };
       return assertValidBackstageBookerActionData('generateBookingWithHRC', result);

@@ -37,6 +37,7 @@ import {
 import {
   BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_CODE,
   BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_MESSAGE,
+  BACKSTAGE_BOOKER_REQUIREMENTS_INCOMPLETE_ERROR_MESSAGE,
   BACKSTAGE_BOOKER_INTEGRITY_FAILED_ERROR_CODE,
   BACKSTAGE_BOOKER_INTEGRITY_FAILED_ERROR_MESSAGE,
   BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_CODE,
@@ -992,6 +993,15 @@ export async function resolveGptRouting(gptId: string, requestId?: string): Prom
     },
   };
 }
+/**
+ * Resolve and execute a GPT writing request, including diagnostics and authorized memory commands.
+ * Returns a result or error envelope with routing metadata. Module failures become error envelopes;
+ * eligible Core query timeouts can return a successful static fallback unless suppressed.
+ * Backstage incomplete-output errors retain the safe message for output limits or missing requirements.
+ * Eligible responses are persisted as conversation turns; persistence failures do not fail the response.
+ *
+ * @throws Propagates registry initialization/resolution errors and worker AI budget errors from module execution.
+ */
 export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskEnvelope> {
   const {
     gptId,
@@ -2166,7 +2176,9 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         : isNotionAuthorityReadOnlyFailure
         ? BACKSTAGE_NOTION_AUTHORITY_READ_ONLY_ERROR_MESSAGE
         : isBackstageOutputIncompleteFailure
-        ? BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_MESSAGE
+        ? err.message === BACKSTAGE_BOOKER_REQUIREMENTS_INCOMPLETE_ERROR_MESSAGE
+          ? BACKSTAGE_BOOKER_REQUIREMENTS_INCOMPLETE_ERROR_MESSAGE
+          : BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_MESSAGE
         : isBackstageIntegrityFailure
         ? BACKSTAGE_BOOKER_INTEGRITY_FAILED_ERROR_MESSAGE
         : isBackstageContinuityQueryFailure

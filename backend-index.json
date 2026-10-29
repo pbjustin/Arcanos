@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-28T16:41:37.923Z",
+  "generatedAt": "2026-10-29T03:41:29.305Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -3892,6 +3892,9 @@
           "relativePath": "tests/backstage-booker.generateBooking.test.ts"
         },
         {
+          "relativePath": "tests/backstage-booker.hrc-completeness.real-chain.test.ts"
+        },
+        {
           "relativePath": "tests/backstage-booker.persistence.test.ts"
         },
         {
@@ -4073,6 +4076,9 @@
         },
         {
           "relativePath": "tests/backstageBookerRouteShortcut.test.ts"
+        },
+        {
+          "relativePath": "tests/booker-hrc-async-completeness.test.ts"
         },
         {
           "relativePath": "tests/booker-mcp-preview-verifier.test.ts"

@@ -761,8 +761,8 @@ describe('backstage-booker generateBooking', () => {
       '5. Fifth match',
       '6. Main event',
       '## Segments',
-      '1. Opening promo',
-      '2. Closing angle',
+      '- Opening promo establishes the challenger.',
+      '- Closing angle leaves the title match unresolved.',
     ].join('\n');
     mockGetGPT5Model.mockReturnValue('gpt-5.1');
     mockRunTrinityWritingPipeline.mockResolvedValueOnce(
@@ -808,7 +808,7 @@ describe('backstage-booker generateBooking', () => {
       'Answer directly.',
       'Give me one complete Raw card with six matches and two segments.',
     ].join(' ');
-    const structuredOutput = '# Raw Card\n## Six Matches\n## Two Segments';
+    const structuredOutput = '# Raw Card\n## Six Matches\nThe opener, qualifiers, tag match, showcase, grudge match, and main event establish the next challengers.\n## Two Segments\nThe opening promo issues the challenge; the closing confrontation accepts it.';
     mockGetGPT5Model.mockReturnValue('gpt-5.1');
     mockRunTrinityWritingPipeline
       .mockRejectedValueOnce(Object.assign(new Error('PRIVATE-CARD-PARTIAL'), {
@@ -852,7 +852,7 @@ describe('backstage-booker generateBooking', () => {
       'Answer directly.',
       'Give me one complete Raw card with six matches and two segments.',
     ].join(' ');
-    const structuredOutput = '# Raw Card\n## Six Matches\n## Two Segments';
+    const structuredOutput = '# Raw Card\n## Six Matches\nThe opener, qualifiers, tag match, showcase, grudge match, and main event establish the next challengers.\n## Two Segments\nThe opening promo issues the challenge; the closing confrontation accepts it.';
     mockGetGPT5Model.mockReturnValue('gpt-5.1');
     mockRunTrinityWritingPipeline.mockResolvedValueOnce(
       buildMockTrinityResult(structuredOutput)
@@ -894,7 +894,7 @@ describe('backstage-booker generateBooking', () => {
       'Give me one complete Raw card with six matches and two segments.',
       'Then give me three booking ideas.',
     ].join(' ');
-    const structuredOutput = '# Complete Raw Card\n## Matches\n## Segments\n## Booking Ideas';
+    const structuredOutput = '# Complete Raw Card\n## Matches\nSix bouts establish the next challengers.\n## Segments\nTwo confrontations advance the title rivalry.\n## Booking Ideas\nUse an earned rematch, a qualifier, or a disputed finish next week.';
     mockGetGPT5Model.mockReturnValue('gpt-5.1');
     mockRunTrinityWritingPipeline.mockResolvedValueOnce(
       buildMockTrinityResult(structuredOutput)
@@ -948,7 +948,7 @@ describe('backstage-booker generateBooking', () => {
     'Give me a complete Raw card with six matches and two segments, ending in three scenarios.',
     'Give me a complete Raw card with six matches and two segments, which can unfold in three scenarios.',
   ])('keeps component-level prose out of the top-level output contract: %s', async prompt => {
-    const structuredOutput = '# Complete Raw Card\n## Matches\n## Segments';
+    const structuredOutput = '# Complete Raw Card\n## Matches\nSix bouts establish the next challengers.\n## Segments\nAn opening promo issues the challenge and a closing confrontation accepts it.';
     mockGetGPT5Model.mockReturnValue('gpt-5.1');
     mockRunTrinityWritingPipeline.mockResolvedValueOnce(
       buildMockTrinityResult(structuredOutput)
@@ -1429,9 +1429,13 @@ describe('backstage-booker generateBooking', () => {
     const structuredOutput = [
       '# Alternative 1',
       '## Matches',
+      'The opener establishes the challenger for this alternative.',
       '## Storyline beats',
+      'The challenger accepts the title match.',
       '# Alternative 2',
+      'A qualifier earns the challenger a future title opportunity.',
       '# Alternative 3',
+      'A disputed finish leaves the title match unresolved.',
     ].join('\n');
     mockGetGPT5Model.mockReturnValue('gpt-5.1');
     mockRunTrinityWritingPipeline.mockResolvedValueOnce(
@@ -2371,8 +2375,11 @@ describe('backstage-booker generateBooking', () => {
       new Error('OpenAI completion ended before a complete answer was available.'),
       { code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length' }
     ));
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce(
+      buildMockTrinityResult('GM: "Give three options to Punk."')
+    );
 
-    await expect(generateBooking(prompt)).resolves.toBe('Rivalry matrix output');
+    await expect(generateBooking(prompt)).resolves.toBe('GM: "Give three options to Punk."');
 
     const retryPrompt = (mockRunTrinityWritingPipeline.mock.calls[1]?.[0] as {
       input: { prompt: string };

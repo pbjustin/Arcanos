@@ -916,6 +916,29 @@ token and timeout budgets, max-output-only compact retry, and non-persistent
 generation boundary remain unchanged. Exact-literal shortcuts still return
 before model generation and therefore bypass this policy.
 
+Dedicated `generateBookingWithHRC` evaluates the delivered creative text against
+the original request and the same selected continuity evidence used to generate
+it. Dialogue, production directions, participants, storyline constraints,
+continuity consistency, and material completeness are requirements when the
+request calls for them; approximate length and alternative segment formats are
+permitted. The existing HRC fidelity, resilience, and verdict fields remain the
+public response. Internally, explicit requirement fulfillment is required before
+protected completion or official status can be returned. High scores alone do
+not establish fulfillment. An unmet creative requirement fails closed as
+`BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE`; unavailable or invalid requirement review
+fails as `BACKSTAGE_BOOKER_INTEGRITY_FAILED`. Neither failure returns a partial
+draft or creates replacement generation. Requirement reviews bypass the
+candidate-only cache and use Responses `store: false`.
+
+Structured creative output preserves generated dialogue and Markdown through
+Trinity's honesty checks. Approximate brevity targets do not invoke the generic
+sentence-selection compressor, which can discard entire spoken passages while
+retaining headings and empty quote markers. The existing compact and bounded
+review contracts retain their enforcement, and finite provider token budgets
+and protected HRC requirement checks still apply. An explicit maximum-word
+constraint is checked against the original request and final text; an oversized
+result fails closed instead of being clipped into an incomplete creative draft.
+
 `queryContinuity` is read-only and requires `payload.universeId` plus
 `payload.query`; it never substitutes the compatibility `legacy` universe. An
 optional `payload.retrievalScope` requires an exact `pageTitle` and may add

@@ -350,6 +350,29 @@ describe('Trinity cancellation and optional side effects', () => {
     expect(mockCreateSingleChatCompletion.mock.calls[0][1]).not.toHaveProperty('reasoning_effort');
   });
 
+  it.each([
+    ['backstage-booker.generateBooking', true, true],
+    ['backstage-booker.generateBooking', false, false],
+    ['tutor.pipeline', true, false],
+    ['arcanos-gaming.guide', true, false],
+    ['generic.fixture', true, false],
+  ] as const)('scopes presentation preservation to Booker: %s, enabled=%s', async (sourceEndpoint, enabled, retained) => {
+    const speech = 'A complete spoken answer carries every requested creative beat and keeps the audience focused on the confrontation that has been building between the champion and the challenger while respecting the established story and leaving the result unresolved until the match can actually happen in front of everyone who has followed this rivalry from its beginning through each difficult interruption and every opportunity that brought these two rivals together for the final confrontation beneath the lights with the championship still firmly at the center of everything they are prepared to risk when the bell rings and the waiting is finally over.';
+    const candidate = `The camera holds a tight shot.\n## Backstage segment\n[CAMERA: Hold the close-up.]\n**Champion:** “${speech}”\n[Cut to black.]`;
+    mockCreateSingleChatCompletion.mockResolvedValueOnce(completion(candidate, authorityModel));
+    const result = await runThroughBrain(client, 'Give a concise backstage promo.', undefined, undefined, {
+      answerMode: 'direct', disableOptionalSideEffects: true, sourceEndpoint,
+      directAnswerPreservePresentation: enabled,
+    }, createRuntimeBudget());
+    if (retained) {
+      expect(result.result).toBe(candidate);
+    } else {
+      expect(result.result).not.toContain(speech);
+      expect(result.result).not.toContain('**Champion:**');
+    }
+    expect(mockCreateSingleChatCompletion).toHaveBeenCalledTimes(1);
+  });
+
   it('derives trusted controls from the caller directive instead of untrusted execution context', async () => {
     const trustedDirective = 'Give a detailed assessment of the wrestling show.';
     const untrustedExecutionPrompt = [

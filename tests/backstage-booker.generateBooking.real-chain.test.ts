@@ -12,6 +12,7 @@ const poolConnect = jest.fn();
 const saveMemory = jest.fn();
 const storePattern = jest.fn();
 const recordTrinityJudgedFeedback = jest.fn();
+let notionAuthoritative = false;
 const { AUDITED_TRANSIENT_READ_QUERIES } =
   await import('../src/core/db/transientReadRegistry.js');
 
@@ -71,11 +72,23 @@ jest.unstable_mockModule('@services/selfImprove/controller.js', () => ({
 
 jest.unstable_mockModule('../src/services/backstageNotionAuthority.js', () => ({
   isBackstageNotionAuthorityDatabaseError: jest.fn(() => false),
-  isBackstageNotionAuthorityEnforced: jest.fn(async () => false),
+  isBackstageNotionAuthorityEnforced: jest.fn(async () => notionAuthoritative),
   readBackstageNotionAuthorityConfiguration: jest.fn(() => ({
     status: 'absent',
   })),
   resolveEffectiveBackstageNotionAuthorityRoot: jest.fn(async () => null),
+}));
+
+// Only the already-selected authoritative snapshot is synthetic; generation,
+// provider extraction, output controls, honesty and integrity remain real.
+jest.unstable_mockModule('@services/backstageNotionPartitionCutover.js', () => ({
+  assertBackstageNotionProtectedBookingAdmission: jest.fn(async () => undefined),
+  assertBackstageNotionProtectedLiteralAuthorityCurrent: jest.fn(async () => undefined),
+  retrieveBackstageNotionAuthorityBookingRagContext: jest.fn(async () => ({
+    prompt: 'Raw continuity: Dragon Lee earned the Night of Champions challenge against Logan Paul. This match has not happened.',
+    snapshotStatus: 'current_complete',
+  })),
+  retrieveBackstageNotionAuthorityRagContext: jest.fn(async () => { throw new Error('Unexpected continuity read.'); }),
 }));
 
 const authorityModel = 'ft:gpt-4.1:synthetic:backstage-authority';
@@ -127,8 +140,23 @@ afterAll(() => {
   globalThis.fetch = originalFetch;
 });
 
+const metadata = [
+  'Creative direction: Kay keeps Logan arrogant while showing the anxiety beneath his carefully rehearsed confidence, framing his answer as private challenge rather than public promise.',
+  '## Backstage promo: the challenger arrives',
+  '[CAMERA: Track slowly toward Logan beside the Raw interview backdrop while crew clear the corridor behind him, settle into a tight close-up as he turns from the monitor showing Dragon Lee, and hold the shot while he adjusts the championship resting across his shoulder.]',
+  '---',
+];
+const dialogue = [
+  'Dragon Lee earned a ticket to Night of Champions, congratulations, but earning the right to stand across from me does not mean he is ready for the pressure of carrying this championship while the entire world waits for one mistake and every camera searches for the smallest sign of doubt.',
+  'Every highlight he makes buys him another round of applause, every headline I make changes the conversation, and when that bell rings he will discover the difference between chasing a moment and owning the spotlight before the cameras even arrive that nobody admits.',
+  'Bring the speed, bring the courage, bring every person who believes this is your night, because when the noise settles I intend to walk away with the title and leave you wondering how your biggest opportunity became my next highlight while the crowd finally understands exactly who controlled this story.',
+  'I see the confidence, I respect the work, and I understand why the audience believes in him, but belief does not carry this championship through that final bell and the opportunity he earned comes with a lesson he will remember after cameras leave tonight.',
+];
+const syntheticLongPromo = [...metadata, ...dialogue.flatMap((line, index) => [`> ${index === 0 ? '**Logan Paul:** ' : ''}"${line}"`, '>']), '[Logan taps the faceplate, gives the lens a narrow smile, and walks away as the camera holds the empty corridor before fading to black.]'].join('\n');
+
 describe('backstage-booker generateBooking real provider chain', () => {
   beforeEach(() => {
+    notionAuthoritative = false;
     jest.clearAllMocks();
     responsesCreate.mockReset();
     query.mockResolvedValue({ rows: [] });
@@ -251,6 +279,188 @@ describe('backstage-booker generateBooking real provider chain', () => {
     expect(options.signal?.aborted).toBe(false);
     expect(options.timeout).toBeUndefined();
     expect(storePattern).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('preserves a complete promo with Notion authority=%s', async authoritative => {
+    notionAuthoritative = authoritative;
+    const promo = [
+      'Creative direction: Kay keeps Logan arrogant, but lets the challenger expose the anxiety underneath his bravado.',
+      '## Backstage promo: a challenger earned',
+      '[CAMERA: Track slowly toward Logan beside the Raw interview backdrop, holding the championship at chest height as crew clear the corridor behind him, then settle into a tight close-up while he turns from the monitor showing Dragon Lee and addresses the lens without an interviewer.]',
+      '---',
+      '> **Logan Paul:** "Dragon Lee earned a ticket to Night of Champions, congratulations, but earning the right to stand across from me does not mean he is ready for the pressure of carrying this championship while the entire world waits for one mistake."',
+      '>',
+      '> "Every highlight he makes buys him another round of applause, every headline I make changes the conversation, and when that bell rings he will discover the difference between chasing a moment and owning the spotlight before the cameras even arrive."',
+      '>',
+      '> "Bring the speed, bring the courage, bring every person who believes this is your night, because when the noise settles I intend to walk away with the title and leave you wondering how your biggest opportunity became my next highlight."',
+      '>',
+      '[Logan taps the faceplate, gives the lens a narrow smile, and walks out of frame. Hold on the empty corridor, then cut to the next segment.]',
+    ].join('\n');
+    responsesCreate.mockResolvedValueOnce({
+      id: 'resp_complete_promo', model: authorityModel, status: 'completed',
+      output_text: promo, output: [],
+      usage: { input_tokens: 200, output_tokens: 350, total_tokens: 550 },
+    });
+
+    const result = await runWithBackstageProtectedQueuedExecution(true, () =>
+      generateBooking(
+        'Generate a 200-word backstage promo featuring Logan Paul responding to Dragon Lee becoming his Night of Champions challenger. Preserve authoritative Raw continuity, include production directions and dialogue, and run protected CLEAR with dedicated HRC. Non-canon.',
+        'promo-output-fixture',
+        'generateBookingWithHRC'
+      )
+    );
+
+    expect(result).toContain('Dragon Lee earned a ticket');
+    expect(result).toContain('owning the spotlight');
+    expect(result).toContain('my next highlight');
+    expect(result).toContain('cut to the next segment');
+    expect(responsesCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    'in about 200 words',
+    'in approximately 200 words',
+    'as a 200-word promo',
+  ].flatMap(length => (['generateBooking', 'generateBookingWithHRC'] as const)
+    .map(action => ({ length, action }))))('retains complete structured dialogue for $action $length', async ({ length, action }) => {
+    notionAuthoritative = true;
+    responsesCreate.mockResolvedValueOnce({
+      id: 'resp_synthetic_long_promo', model: authorityModel, status: 'completed',
+      output_text: syntheticLongPromo, output: [],
+      usage: { input_tokens: 200, output_tokens: 441, total_tokens: 641 },
+    });
+    const result = await runWithBackstageProtectedQueuedExecution(true, () =>
+      generateBooking(`Answer directly. Generate a backstage promo ${length} featuring Logan Paul responding to Dragon Lee becoming his Night of Champions challenger. Include production directions and dialogue. Non-canon.`, 'structured-promo-fixture', action)
+    );
+    expect(result).toBe(syntheticLongPromo);
+    for (const speech of dialogue) expect(result).toContain(speech);
+    expect(result).toContain('[Logan taps the faceplate');
+    expect(responsesCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects an oversized structured answer under an explicit hard word maximum without clipping or another call', async () => {
+    notionAuthoritative = true;
+    responsesCreate.mockResolvedValueOnce({
+      id: 'resp_synthetic_over_hard_max', model: authorityModel, status: 'completed',
+      output_text: syntheticLongPromo, output: [],
+      usage: { input_tokens: 200, output_tokens: 441, total_tokens: 641 },
+    });
+    await expect(runWithBackstageProtectedQueuedExecution(true, () =>
+      generateBooking('Answer directly. Write a backstage promo within 200 words with dialogue and production directions. Non-canon.', 'hard-max-promo-fixture')
+    )).rejects.toMatchObject({ code: 'BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE', retryable: false });
+    expect(responsesCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains a complete structured promo below the explicit hard word maximum', async () => {
+    notionAuthoritative = true;
+    const shortPromo = '[CAMERA: Close on Logan Paul.]\n**Logan Paul:** “Dragon Lee earned his chance. At Night of Champions, I intend to show him why I hold this championship.”\n[Cut to black.]';
+    responsesCreate.mockResolvedValueOnce({
+      id: 'resp_synthetic_within_hard_max', model: authorityModel, status: 'completed',
+      output_text: shortPromo, output: [],
+      usage: { input_tokens: 100, output_tokens: 80, total_tokens: 180 },
+    });
+    await expect(runWithBackstageProtectedQueuedExecution(true, () =>
+      generateBooking('Answer directly. Write a backstage promo within 200 words with dialogue and production directions. Non-canon.', 'hard-max-promo-fixture')
+    )).resolves.toBe(shortPromo);
+    expect(responsesCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    'Answer directly. Generate one rivalry within 40 words.',
+    'Answer directly. Generate one short bullet about a rivalry within 40 words.',
+  ].flatMap(prompt => (['generateBooking', 'generateBookingWithHRC'] as const)
+    .map(action => ({ prompt, action }))))(
+    'rejects over-limit compact $action for $prompt without clipping its ending',
+    async ({ prompt, action }) => {
+      const rivalry = [
+        '1. Aurora Vale confronts Orion Pike after the opening match and demands a chance to settle their rivalry in front of the crowd.',
+        'Orion accepts the challenge but insists that both partners stay backstage so neither side can blame outside interference for the result.',
+        'Aurora agrees, they shake hands, and the camera holds their tense stare before cutting to the next segment.',
+      ].join(' ');
+      responsesCreate.mockResolvedValueOnce({
+        id: 'resp_compact_over_hard_max', model: authorityModel, status: 'completed',
+        output_text: rivalry, output: [],
+        usage: { input_tokens: 100, output_tokens: 100, total_tokens: 200 },
+      });
+
+      await expect(generateBooking(
+        prompt,
+        'compact-hard-max-fixture',
+        action
+      )).rejects.toMatchObject({
+        code: 'BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE',
+        retryable: false,
+      });
+      expect(responsesCreate).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('retains a compact rivalry below the explicit hard word maximum', async () => {
+    const rivalry = '1. Aurora Vale: "You earned this challenge." Orion Pike: "Then face me alone." [They shake hands. Cut to black.]';
+    responsesCreate.mockResolvedValueOnce({
+      id: 'resp_compact_within_hard_max', model: authorityModel, status: 'completed',
+      output_text: rivalry, output: [],
+      usage: { input_tokens: 100, output_tokens: 40, total_tokens: 140 },
+    });
+
+    await expect(generateBooking(
+      'Answer directly. Generate one rivalry within 40 words.',
+      'compact-hard-max-fixture'
+    )).resolves.toBe(rivalry);
+    expect(responsesCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([false, true])('enforces an explicit maximum before bounded review normalization: oversized=%s', async oversized => {
+    const review = Array.from({ length: 6 }, (_, index) => [
+      `${index + 1}. Aurora won the opening match cleanly. The finish advanced the rivalry.`,
+      ...(oversized
+        ? ['The next chapter keeps both competitors involved while their partners wait backstage for a chance to respond.']
+        : []),
+    ].join(' ')).join('\n');
+    responsesCreate.mockResolvedValueOnce({
+      id: 'resp_bounded_review_hard_max', model: authorityModel, status: 'completed',
+      output_text: review, output: [],
+      usage: { input_tokens: 100, output_tokens: 200, total_tokens: 300 },
+    });
+
+    const result = generateBooking('Review this completed Raw card within 120 words.');
+    if (oversized) {
+      await expect(result).rejects.toMatchObject({
+        code: 'BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE',
+        retryable: false,
+      });
+    } else {
+      await expect(result).resolves.toBe(review);
+    }
+    expect(responsesCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    'Creative direction: keep the champion tense.\n## Backstage segment\n[CAMERA: Hold a close-up.]\n--- > > > >',
+    'Creative direction: keep the champion tense. Backstage segment. [CAMERA: Hold a close-up.] --- > > > >',
+  ])('rejects an empty blockquote tail through actual generation integrity', async incomplete => {
+    notionAuthoritative = true;
+    responsesCreate
+      .mockResolvedValueOnce({
+        id: 'resp_broken_promo', model: authorityModel, status: 'completed',
+        output_text: incomplete,
+        output: [], usage: { input_tokens: 200, output_tokens: 40, total_tokens: 240 },
+      })
+      .mockResolvedValueOnce({
+        id: 'resp_unavailable_continuation', model: authorityModel, status: 'completed',
+        output_text: 'STRUCTURAL_REPAIR_UNAVAILABLE',
+        output: [], usage: { input_tokens: 240, output_tokens: 5, total_tokens: 245 },
+      });
+
+    await expect(runWithBackstageProtectedQueuedExecution(true, () =>
+      generateBooking('Generate a backstage angle with production cues. Non-canon.', 'broken-promo-fixture', 'generateBookingWithHRC')
+    )).rejects.toMatchObject({
+      code: 'BACKSTAGE_BOOKER_INTEGRITY_FAILED',
+      integrityIssues: ['incomplete_final_section'],
+      repairAttempted: true,
+      repairFailureReason: 'invalid_continuation',
+    });
+    expect(responsesCreate).toHaveBeenCalledTimes(2);
   });
 
   it('repairs one abrupt worker response through the real Booker provider chain', async () => {

@@ -3,6 +3,7 @@ import { describe, expect, it } from '@jest/globals';
 import {
   BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_CODE,
   BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_MESSAGE,
+  BACKSTAGE_BOOKER_REQUIREMENTS_INCOMPLETE_ERROR_MESSAGE,
   BACKSTAGE_BOOKER_INTEGRITY_FAILED_ERROR_CODE,
   BACKSTAGE_BOOKER_INTEGRITY_FAILED_ERROR_MESSAGE,
   BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_CODE,
@@ -74,6 +75,17 @@ describe('Backstage generation errors', () => {
     });
     expect(isBackstageContinuityQueryFailedError(error)).toBe(true);
     expect(isBackstageContinuityQueryFailedError(new Error('other'))).toBe(false);
+  });
+
+  it('classifies unmet requirements without claiming output-limit exhaustion', () => {
+    const error = new BackstageBookerOutputIncompleteError('requirements');
+    expect(error).toMatchObject({
+      code: BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_CODE,
+      message: BACKSTAGE_BOOKER_REQUIREMENTS_INCOMPLETE_ERROR_MESSAGE,
+      retryable: false,
+    });
+    expect(error).not.toHaveProperty('cause');
+    expect(error.message).not.toContain('output limit');
   });
 
   it('collapses Trinity repair diagnostics to a cause-free safe terminal error', () => {

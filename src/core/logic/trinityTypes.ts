@@ -327,6 +327,10 @@ export interface TrinityRunOptions {
   directAnswerTokenCapOverride?: number;
   /** Original user directive for honesty checks when the execution prompt contains trusted context. */
   directAnswerUserIntentPrompt?: string;
+  /** Internal creative-deliverable guard; syntax demonstrations retain generic behavior. */
+  directAnswerRejectEmptyMarkdownTail?: boolean;
+  /** Server-owned structured Booker delivery policy; other endpoints ignore it. */
+  directAnswerPreservePresentation?: boolean;
   /** Internal caller-owned directive used for policy parsing when the execution prompt contains untrusted context. */
   trustedPolicyPrompt?: string;
   /** Internal caller-owned policy appended to the direct-answer system instruction. */
