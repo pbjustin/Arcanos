@@ -751,8 +751,16 @@ describe('Backstage Booker service persistence outcomes', () => {
     expect(mockEvaluateWithHRC).toHaveBeenCalledWith('1. Generated booking', expect.objectContaining({
       timeoutMs: 10_000,
       sensitiveContext: true,
-      bookingRequirements: expect.objectContaining({ request: 'Review the complete Raw card.' }),
+      bookingRequirements: expect.objectContaining({
+        request: 'Review the complete Raw card.',
+        continuityEvidence: expect.stringContaining('<<CURRENT_ROSTER>>'),
+      }),
     }));
+    const hrcOptions = mockEvaluateWithHRC.mock.calls[0]?.[1] as {
+      bookingRequirements: { continuityEvidence: string };
+    };
+    expect(hrcOptions.bookingRequirements.continuityEvidence).toContain('Private continuity.');
+    expect(mockLoadBackstageNotionPromptContext).toHaveBeenCalledTimes(1);
   });
 
   it('uses the non-caching sensitive HRC path for protected queued generation without Notion', async () => {

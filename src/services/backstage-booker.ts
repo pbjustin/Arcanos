@@ -3035,8 +3035,13 @@ async function generateBookingWithReview(
     }
     await review?.(
       validatedOutput,
-      structuredPrompt.directAnswerUntrustedContextPrompt
-        ?? (structuredPrompt.includesNotion ? undefined : structuredPrompt.instructions)
+      structuredPrompt.includesNotion && !structuredPrompt.notionAuthorityContext
+        ? [
+            structuredPrompt.instructions,
+            structuredPrompt.directAnswerUntrustedContextPrompt,
+          ].filter((context): context is string => typeof context === 'string').join('\n\n')
+        : structuredPrompt.directAnswerUntrustedContextPrompt
+          ?? (structuredPrompt.includesNotion ? undefined : structuredPrompt.instructions)
     );
     if (usedCompactOutputRetry) {
       logCompactRetryEvent('compact_retry_succeeded');
