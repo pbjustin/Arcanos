@@ -2494,6 +2494,10 @@ describe('native PR contained application', () => {
       expect(
         response.headers[contract.proofHeaders.clearPolicyVersion]
       ).toBe(contract.clearPolicyVersion);
+      // Additive CLEAR guidance keeps the existing trusted-verifier contract.
+      expect(
+        response.headers[contract.proofHeaders.clearPolicyVersion]
+      ).toBe('backstage-booker-clear-generation/v1');
       expect(response.headers['x-response-bytes']).toBe(
         String(Buffer.byteLength(response.text, 'utf8'))
       );

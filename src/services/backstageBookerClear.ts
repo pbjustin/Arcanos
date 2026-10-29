@@ -1,5 +1,6 @@
+// Additive guidance preserves the existing CLEAR generation contract.
 export const BACKSTAGE_BOOKER_CLEAR_GENERATION_POLICY_VERSION =
-  'backstage-booker-clear-generation/v2';
+  'backstage-booker-clear-generation/v1';
 
 export const BACKSTAGE_BOOKER_CLEAR_GENERATION_POLICY_MARKER =
   '<<BACKSTAGE_CLEAR_GENERATION_POLICY>>';

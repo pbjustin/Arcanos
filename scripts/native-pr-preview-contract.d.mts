@@ -120,7 +120,7 @@ export interface NativePrPreviewE2eContract {
   readonly backstageGeneration: Readonly<{
     path: '/backstage/generation-contract';
     maxResponseBytes: 4096;
-    clearPolicyVersion: 'backstage-booker-clear-generation/v2';
+    clearPolicyVersion: 'backstage-booker-clear-generation/v1';
     partitionedAuthorityProofVersion:
       'backstage-notion-partitioned-authority/v1';
     partitionCutoverRepairProofVersion:

@@ -1065,7 +1065,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/services/backstageBookerClear.ts',
-    '6f4c67ad447834c2bfb12ccef4c9bfb2298668b275fd495133af9e8386c2c803',
+    '215948fa7a8801424a35575c82d1f61489550b24502fe63948ba356ae73d51dd',
   ],
   [
     'src/services/gamingPublicDispatcher.ts',

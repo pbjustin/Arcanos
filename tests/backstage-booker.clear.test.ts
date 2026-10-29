@@ -7,6 +7,16 @@ import {
 } from '../src/services/backstageBookerClear.js';
 
 describe('Backstage Booker mandatory CLEAR generation policy', () => {
+  it('retains the compatible v1 contract while clarifying completeness requirements', () => {
+    const policy = buildBackstageBookerClearGenerationPolicy();
+
+    expect(BACKSTAGE_BOOKER_CLEAR_GENERATION_POLICY_VERSION).toBe(
+      'backstage-booker-clear-generation/v1'
+    );
+    expect(policy).toContain('Check the delivered text against every substantive requirement in the original request');
+    expect(policy).toContain('Headings, empty Markdown, or claims of completion do not fulfill omitted creative content.');
+  });
+
   it('builds one deterministic server-owned policy covering all five dimensions', () => {
     const first = buildBackstageBookerClearGenerationPolicy();
     const second = buildBackstageBookerClearGenerationPolicy();

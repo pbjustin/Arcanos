@@ -1,6 +1,9 @@
 import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { BACKSTAGE_BOOKER_CLEAR_GENERATION_POLICY_MARKER } from '../src/services/backstageBookerClear.js';
 import { countWords } from '../src/shared/text/countWords.js';
+import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
+import type { JobData } from '../src/core/db/schema.js';
+import type { BookerMcpServices } from '../src/chatgpt/bookerCore.js';
 
 // Keep the actual Booker action, Trinity writing pipeline, CLEAR policy,
 // normalization, HRC wrapper/core, and response validators in this regression.
@@ -61,6 +64,7 @@ const environmentNames = [
   'FINETUNED_MODEL_ID', 'GPT5_MODEL', 'BOOKER_TOKEN_LIMIT',
   'BOOKER_WORKER_TOKEN_LIMIT', 'BOOKER_GENERATION_STAGE_TIMEOUT_MS',
   'ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN', 'ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON',
+  'ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY',
 ] as const;
 const originalEnvironment = Object.fromEntries(environmentNames.map(name => [name, process.env[name]]));
 process.env.FINETUNED_MODEL_ID = authorityModel;
@@ -73,6 +77,31 @@ delete process.env.ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON;
 
 const { default: BackstageBookerModule } = await import('../src/services/backstage-booker.js');
 const { runWithBackstageProtectedQueuedExecution } = await import('../src/services/backstageNotionEnrichmentAuthorization.js');
+const { createBookerMcpExecutorCore } = await import('../src/chatgpt/bookerCore.js');
+const { createBookerTokenVerifierCore, readBookerAuthConfigurationCore, bookerPrincipalActorKey } = await import('../src/chatgpt/bookerAuthCore.js');
+const { BOOKER_MCP_PATH, BOOKER_READ_SCOPE, BOOKER_GENERATE_SCOPE } = await import('../src/shared/chatgpt/bookerMcpContract.js');
+const { buildProtectedBackstageQueuedGptJobInput } = await import('../src/shared/gpt/asyncGptJob.js');
+const { protectBackstageQueuedGptJobOutput } = await import('../src/shared/backstage/backstageQueuedJobResultProtection.js');
+const { readBackstageBookerAsyncResultCore, projectTrustedProtectedBackstageTerminalFailure } = await import('../src/shared/backstage/backstageBookerAsyncResultCore.js');
+const { buildGptIdempotencyScopeHash } = await import('../src/shared/gpt/gptIdempotency.js');
+const { buildProtectedBackstageFailureEnvelope } = await import('../src/shared/backstage/backstageProtectedFailure.js');
+
+const fixtureUniverseId = 'hrc-real-chain-fixture';
+const fixtureContinuity = 'Synthetic Raw: Logan Paul is World Heavyweight Champion. Dragon Lee earned his Night of Champions title challenge. The match has not happened.';
+const fixturePrompt = 'Generate a 200-word non-canon backstage promo featuring World Heavyweight Champion Logan Paul responding to Dragon Lee becoming his Night of Champions challenger. Preserve the supplied Raw continuity, include production directions and dialogue, and run protected CLEAR with dedicated HRC.';
+
+function selectSyntheticContinuity(): void {
+  poolClientQuery.mockImplementation(async (sql: string) => {
+    if (sql.includes('FROM backstage_wrestlers')) {
+      return { rows: ['Logan Paul', 'Dragon Lee'].map(name => ({ name, overall: 90, updated_at: new Date('2026-10-23T00:00:00Z') })) };
+    }
+    if (sql.includes('FROM backstage_story_beats')) {
+      return { rows: [{ id: 'synthetic-raw-continuity', universe_id: fixtureUniverseId,
+        data: { summary: fixtureContinuity }, serialized_data: null, created_at: new Date('2026-10-23T00:00:00Z') }] };
+    }
+    return { rows: [] };
+  });
+}
 
 afterAll(() => {
   for (const name of environmentNames) {
@@ -92,7 +121,7 @@ function providerResponse(outputText: string) {
 function invokeHrcBooking(prompt: string) {
   return runWithBackstageProtectedQueuedExecution(true, () =>
     BackstageBookerModule.actions.generateBookingWithHRC({
-      universeId: 'hrc-real-chain-fixture', prompt,
+      universeId: fixtureUniverseId, prompt,
     })
   );
 }
@@ -106,7 +135,150 @@ describe('Booker HRC completeness through the actual generation and audit chain'
     poolClientRelease.mockReturnValue(undefined);
     poolConnect.mockResolvedValue({ query: poolClientQuery, release: poolClientRelease });
     saveMemory.mockResolvedValue(undefined);
+    process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY = Buffer.alloc(32, 0x6b).toString('base64');
     recordTrinityJudgedFeedback.mockResolvedValue({ enabled: false, attempted: false, source: 'clear_audit', reason: 'fixture' });
+  });
+
+  it('preserves a generated synthetic championship promo through sealed async results and authenticated MCP serialization', async () => {
+    selectSyntheticContinuity();
+    const candidate = [
+      'Creative direction: Kay “Spotlight” Morales keeps the champion composed until the challenger’s name briefly cracks his smile.',
+      '## Backstage promo — non-canon proposal',
+      '[CAMERA: Push toward Logan Paul at the Raw interview backdrop. The World Heavyweight Championship rests on his shoulder. Dragon Lee appears on the monitor beside him.]',
+      '**Logan Paul:** “Dragon Lee, you earned your Night of Champions opportunity. I watched every second, and I understand why everyone is talking about you tonight. Enjoy that noise. When the bell rings, those people cannot carry this championship for you.”',
+      '[PRODUCTION: Tighten the shot as Logan adjusts the title and turns away from the monitor.]',
+      '“I am the World Heavyweight Champion. You bring speed, courage, and a crowd that believes your moment has arrived. I bring the pressure of knowing everybody wants what I have. At Night of Champions, I intend to show you what that pressure feels like.”',
+      '“Keep training. Keep believing. I want you ready, because when we meet, I want every excuse left outside that ring.”',
+      '[Logan taps the faceplate, gives the lens one measured smile, and walks away. Hold the empty corridor for a beat, then fade to black.]',
+    ].join('\n');
+    expect(countWords(candidate)).toBeGreaterThanOrEqual(180);
+    expect(countWords(candidate)).toBeLessThanOrEqual(230);
+    responsesCreate
+      .mockResolvedValueOnce(providerResponse(candidate))
+      .mockResolvedValueOnce(providerResponse(JSON.stringify({
+        fidelity: 0.99, resilience: 0.98, verdict: 'Complete non-canon promo consistent with the supplied synthetic continuity.',
+        requirementsSatisfied: true, unmetRequirements: [],
+      })));
+
+    const configuration = readBookerAuthConfigurationCore(name => ({
+      CHATGPT_BOOKER_ENABLED: 'true', CHATGPT_BOOKER_ISSUER: 'https://booker-fixture.invalid/',
+      CHATGPT_BOOKER_RESOURCE: 'https://booker-resource.invalid' + BOOKER_MCP_PATH,
+      CHATGPT_BOOKER_JWKS_URL: 'https://booker-fixture.invalid/jwks', CHATGPT_BOOKER_OWNER_SUBJECT: 'synthetic-owner',
+      CHATGPT_BOOKER_UNIVERSE_ID: fixtureUniverseId, CHATGPT_BOOKER_OAUTH_CLIENT_ID: 'synthetic-client',
+    })[name]);
+    if (configuration.status !== 'ready') throw new Error('Synthetic Booker configuration rejected.');
+    const keys = await generateKeyPair('RS256');
+    const keyResolver = createLocalJWKSet({ keys: [{ ...await exportJWK(keys.publicKey), kid: 'fixture', alg: 'RS256' }] });
+    const now = Math.floor(Date.now() / 1000);
+    const token = await new SignJWT({ iss: configuration.issuer, aud: configuration.resource, sub: configuration.ownerSubject,
+      iat: now, exp: now + 300, client_id: configuration.oauthClientId, scope: BOOKER_READ_SCOPE + ' ' + BOOKER_GENERATE_SCOPE,
+    }).setProtectedHeader({ alg: 'RS256', typ: 'at+jwt', kid: 'fixture' }).sign(keys.privateKey);
+    const authentication = await createBookerTokenVerifierCore(configuration, { keyResolver, readEnvironmentValue: () => undefined })('Bearer ' + token);
+    if (!authentication.ok) throw new Error('Signed synthetic Booker identity rejected.');
+    const principal = authentication.principal;
+    const jobId = '11111111-1111-4111-8111-111111111111';
+    const idempotencyKey = 'synthetic-promo-acceptance';
+    let storedJob: JobData | null = null;
+    let sealedOutput: unknown;
+    // The durable queue/SQL adapter is process-local here; generation, HRC,
+    // authenticated sealing, ownership, projection and MCP contracts are real.
+    const run = jest.fn<BookerMcpServices['run']>(async (_principal, action, payload, options) => {
+      if (action !== 'generateBookingWithHRC') throw new Error('Unexpected synthetic action.');
+      expect(payload).toEqual({ universeId: fixtureUniverseId, prompt: fixturePrompt });
+      expect(options.idempotencyKey).toBe(idempotencyKey);
+      const result = await invokeHrcBooking(String(payload.prompt));
+      expect(result.storyline).toBe(candidate);
+      const input = buildProtectedBackstageQueuedGptJobInput({
+        action, universeId: fixtureUniverseId, notionEnrichmentAuthorized: true,
+        body: { action, payload },
+      });
+      const envelope = { ok: true, result, _route: { gptId: 'backstage-booker', module: 'BACKSTAGE:BOOKER',
+        action, route: 'backstage-booker', timestamp: '2026-10-23T00:00:00.000Z' } };
+      sealedOutput = protectBackstageQueuedGptJobOutput({ jobId, rawInput: input, output: envelope });
+      storedJob = { id: jobId, job_type: 'gpt', status: 'pending', input, output: null,
+        idempotency_scope_hash: buildGptIdempotencyScopeHash({ surface: 'public-gpt', actorKey: bookerPrincipalActorKey(principal, fixtureUniverseId) }),
+      } as JobData;
+      return { statusCode: 202, result: { ok: true, status: 'queued', jobId,
+        poll: `/gpt-access/capabilities/v1/backstage-booker/jobs/${jobId}/result` } };
+    });
+    const getJobById = jest.fn(async (selectedJobId: string) => selectedJobId === jobId ? storedJob : null);
+    const wait = jest.fn(async () => { throw new Error('Unexpected queue wait.'); });
+    const execute = createBookerMcpExecutorCore({
+      run,
+      universe: async () => { throw new Error('Unexpected universe lookup.'); },
+      storyline: async () => { throw new Error('Unexpected storyline lookup.'); },
+      getJobById,
+      job: async (input, dependencies) => readBackstageBookerAsyncResultCore({ ...input, pollIntervalMs: 1 }, {
+        getJobByIdFn: dependencies.getJobByIdFn!, waitForQueuedGptJobCompletionFn: wait,
+      }),
+    });
+    const accepted = await execute(principal, 'generateBookingWithHRC', { universeId: fixtureUniverseId, prompt: fixturePrompt, idempotencyKey });
+    expect(accepted).toMatchObject({ statusCode: 202, result: { jobId } });
+    expect(accepted.result.instruction).toContain('continue that job only');
+    const read = () => execute(principal, 'getBackstageBookerJobResult', { universeId: fixtureUniverseId, jobId, waitForResultMs: 0 });
+    expect(await read()).toMatchObject({ statusCode: 200, result: { jobId, status: 'pending', result: null } });
+    if (!storedJob) throw new Error('Synthetic job was not accepted.');
+    storedJob = { ...(storedJob as JobData), status: 'completed', output: sealedOutput };
+    expect(JSON.stringify(storedJob.output)).not.toContain('Dragon Lee');
+    for (let index = 0; index < 2; index++) {
+      const serialized = JSON.parse(JSON.stringify(await read()));
+      expect(serialized).toMatchObject({ statusCode: 200, result: { jobId, status: 'completed', result: {
+        result: { storyline: candidate, protectedGeneration: { official: true, protectedGenerationCompleted: true } },
+      } } });
+    }
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(wait).not.toHaveBeenCalled();
+    expect(responsesCreate).toHaveBeenCalledTimes(2);
+    const [generationRequest] = responsesCreate.mock.calls[0] as [{ input: unknown }];
+    const [hrcRequest] = responsesCreate.mock.calls[1] as [{ input: Array<{ content: Array<{ text: string }> }>; store: boolean }];
+    const review = JSON.parse(hrcRequest.input[1].content[0].text);
+    expect(review).toMatchObject({ originalRequest: fixturePrompt, candidate });
+    expect(review.continuityEvidence).toContain(fixtureContinuity);
+    const selectedContinuity = review.continuityEvidence.match(/<<CURRENT_ROSTER>>[\s\S]*?(?=<<RESPONSE_STYLE>>)/u)?.[0];
+    expect(selectedContinuity).toBeDefined();
+    const serializedGeneration = JSON.stringify(generationRequest.input);
+    expect(serializedGeneration).toContain(fixtureContinuity);
+    expect(serializedGeneration).toContain(JSON.stringify(selectedContinuity).slice(1, -1));
+    expect(serializedGeneration).toContain(BACKSTAGE_BOOKER_CLEAR_GENERATION_POLICY_MARKER);
+    expect(hrcRequest.store).toBe(false);
+    expect(saveMemory).not.toHaveBeenCalled();
+    expect(storePattern).not.toHaveBeenCalled();
+    expect(poolClientQuery.mock.calls.some(([sql]) => /\b(?:INSERT|UPDATE|DELETE)\b/iu.test(String(sql)))).toBe(false);
+  });
+
+  it.each([
+    ['production directions', 'Logan Paul says, “Dragon Lee earned his Night of Champions opportunity, but I intend to remain World Heavyweight Champion.”', 'Missing requested camera and production directions.'],
+    ['requested participant', '[CAMERA: Close on the interviewer.] The interviewer says, “Dragon Lee earned the Night of Champions title challenge.” [Fade to black.]', 'Missing requested Logan Paul dialogue and participation.'],
+    ['storyline response', '[CAMERA: Close on Logan Paul.] Logan Paul says, “I am World Heavyweight Champion, and everyone can keep talking about me.” [Fade to black.]', 'Missing the response to Dragon Lee becoming the Night of Champions challenger.'],
+    ['continuity consistency', '[CAMERA: Close on Dragon Lee.] Logan Paul says, “Dragon Lee already defeated me at Night of Champions and took the World Heavyweight Championship.” [Fade to black.]', 'Contradicts supplied continuity: Logan remains champion and the title match has not happened.'],
+  ])('rejects unmet %s despite favorable scores without official completion', async (_requirement, candidate, omission) => {
+    selectSyntheticContinuity();
+    responsesCreate
+      .mockResolvedValueOnce(providerResponse(candidate))
+      .mockResolvedValueOnce(providerResponse(JSON.stringify({
+        fidelity: 0.99, resilience: 0.98, verdict: omission,
+        requirementsSatisfied: false, unmetRequirements: [omission],
+      })));
+    const failure = await invokeHrcBooking(fixturePrompt).catch(error => error);
+    expect(failure).toMatchObject({ code: 'BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE', retryable: false });
+    const action = 'generateBookingWithHRC';
+    const jobId = '11111111-1111-4111-8111-111111111111';
+    const input = buildProtectedBackstageQueuedGptJobInput({ action, universeId: fixtureUniverseId,
+      notionEnrichmentAuthorized: true, body: { action, payload: { universeId: fixtureUniverseId, prompt: fixturePrompt } } });
+    const output = protectBackstageQueuedGptJobOutput({ jobId, rawInput: input,
+      output: buildProtectedBackstageFailureEnvelope({ gptId: 'backstage-booker', action, code: failure.code }) });
+    const projected = projectTrustedProtectedBackstageTerminalFailure({ id: jobId, job_type: 'gpt', status: 'failed', input, output } as JobData);
+    expect(projected).toMatchObject({ result: null, official: false, protectedGenerationCompleted: false, fallbackUsed: false,
+      error: { code: 'BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE' } });
+    expect(JSON.stringify(projected)).not.toContain(candidate);
+    expect(responsesCreate).toHaveBeenCalledTimes(2);
+    const [hrcRequest] = responsesCreate.mock.calls[1] as [{ input: Array<{ content: Array<{ text: string }> }>; store: boolean }];
+    const review = JSON.parse(hrcRequest.input[1].content[0].text);
+    expect(review).toMatchObject({ originalRequest: fixturePrompt, candidate });
+    expect(review.continuityEvidence).toContain(fixtureContinuity);
+    expect(hrcRequest.store).toBe(false);
+    expect(saveMemory).not.toHaveBeenCalled();
+    expect(storePattern).not.toHaveBeenCalled();
   });
 
   it('rejects a material unmet instruction despite HRC fidelity 0.99 and resilience 0.98', async () => {

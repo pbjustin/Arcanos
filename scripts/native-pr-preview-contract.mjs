@@ -141,7 +141,7 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
   backstageGeneration: Object.freeze({
     path: '/backstage/generation-contract',
     maxResponseBytes: 4_096,
-    clearPolicyVersion: 'backstage-booker-clear-generation/v2',
+    clearPolicyVersion: 'backstage-booker-clear-generation/v1',
     partitionedAuthorityProofVersion:
       'backstage-notion-partitioned-authority/v1',
     partitionCutoverRepairProofVersion:
