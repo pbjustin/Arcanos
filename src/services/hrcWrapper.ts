@@ -32,7 +32,11 @@ function cacheKey(text: string): string {
 }
 
 /**
- * Evaluates text through HRC with caching. Returns fallback scores on failure.
+ * Evaluate text through HRC, normally caching by candidate text alone.
+ * sensitiveContext or bookingRequirements bypasses the cache, disables provider
+ * storage, and replaces evaluation-failure details with a fixed verdict.
+ * Blank text and caught evaluation failures return zero-score fallback results;
+ * core failure verdicts are otherwise preserved. Cache-read errors propagate.
  */
 export async function evaluateWithHRC(
   text: string,

@@ -2592,7 +2592,16 @@ export async function generateBooking(
   return generateBookingWithReview(prompt, universeId, executionAction);
 }
 
-/** Review the delivered text against the same selected evidence before publication. */
+/**
+ * Generate and validate a booking, then await an optional review before returning.
+ * review receives the delivered text and already-selected continuity evidence;
+ * exact literals are reviewed without evidence or model generation.
+ * executionAction selects the generation budget, including any HRC reserve.
+ * Input, authority, and pre-dispatch budget errors propagate. Within generation,
+ * incomplete-output and integrity errors remain typed; other generation or review
+ * errors become "Booking generation failed", omitting causes for private context.
+ * Exact-literal review errors propagate directly.
+ */
 async function generateBookingWithReview(
   prompt: string,
   universeId: string | undefined,
@@ -3546,6 +3555,14 @@ export const BackstageBookerModule = {
         protectedGeneration,
       });
     },
+    /**
+     * Generate a booking and review its delivered text against the original
+     * request and selected continuity evidence. Return the storyline, public HRC
+     * scores/verdict, and any protected-generation provenance.
+     * Reject unmet requirements with BackstageBookerOutputIncompleteError and
+     * missing or inconsistent acceptance evidence with BackstageBookerIntegrityFailedError,
+     * regardless of numeric scores. Payload and generation errors propagate.
+     */
     async generateBookingWithHRC(payload: unknown) {
       const input = normalizeBackstageBookerModuleActionPayload(
         'generateBookingWithHRC',

@@ -1767,6 +1767,11 @@ function hasBrokenNumbering(
   return markers.some((marker, index) => marker !== index + 1);
 }
 
+/**
+ * Detect an empty final heading or label, or a mismatch with a finite
+ * numbered-item count of at least 1 (truncated to an integer). Also optionally reject
+ * trailing empty blockquotes, including inline rule-and-quote tails.
+ */
 function hasIncompleteFinalSection(
   text: string,
   expectedNumberedItemCount?: number,
@@ -1811,6 +1816,13 @@ function hasFallbackSplice(text: string, reasoningHonesty: TrinityReasoningHones
   return segments.some(segment => isUnrequestedFallbackSplice(segment, reasoningFallbacks, genericFallbacks));
 }
 
+/**
+ * Report heuristic structural defects without modifying the answer.
+ * A finite expectedNumberedItemCount of at least 1 requires its truncated number
+ * of top-level items; rejectEmptyMarkdownTail opts into rejecting empty quote tails. Fallback-splice
+ * checks run only when reasoningHonesty is supplied. An empty issues list means
+ * these checks passed, not that the answer fulfills the user's request.
+ */
 export function validateTrinityAnswerIntegrity(params: {
   text: string;
   reasoningHonesty?: TrinityReasoningHonesty;
@@ -2070,7 +2082,12 @@ function hasExternalVerificationSubject(text: string): boolean {
     || TUTOR_NONLOCAL_CONTEXT.test(text);
 }
 
-/** Internal direct-answer admission seam, shared by execution and deterministic diagnostics. */
+/**
+ * Filter unsupported direct-answer claims and return the associated honesty
+ * evidence and rule IDs, shared by execution and deterministic diagnostics.
+ * preservePresentation retains the trimmed candidate when no claims are blocked
+ * or caveats inserted; unsupported claims still require rewriting.
+ */
 export function prepareTrinityDirectAnswerHonesty(params: {
   candidateText: string;
   userPrompt: string;

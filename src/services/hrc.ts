@@ -73,6 +73,11 @@ function isHRCResult(value: unknown): value is ParsedHRCPayload {
   );
 }
 
+/**
+ * Accept scores in [0, 1] and a requirement verdict consistent with its omissions:
+ * a pass has none; a failure has 1–16 nonblank explanations of at most 512 characters.
+ * Numeric strings are accepted for scores, as in generic HRC results.
+ */
 function isBookingHRCResult(value: unknown): value is ParsedHRCPayload {
   if (!isHRCResult(value)) {
     return false;
@@ -95,6 +100,15 @@ function isBookingHRCResult(value: unknown): value is ParsedHRCPayload {
  * Uses the central routine-audit lane; a compatible HRC_MODEL override is validated by that policy.
  */
 export class HRCCore {
+  /**
+   * Score a candidate for fidelity and resilience. bookingRequirements adds an
+   * assessment against the original request and supplied continuity evidence,
+   * returns requirement acceptance and omissions, and disables provider storage.
+   * A finite positive timeoutMs sets a millisecond deadline; signal overrides the
+   * ambient request signal. Missing adapters and caught model, provider, payload,
+   * or cancellation failures return zero scores with an explanatory verdict.
+   * Errors acquiring the adapter or setting up cancellation propagate to callers.
+   */
   async evaluate(input: string, options: HRCEvaluationOptions = {}): Promise<HRCResult> {
     const { adapter } = getOpenAIClientOrAdapter();
     if (!adapter) {

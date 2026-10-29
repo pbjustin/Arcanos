@@ -763,6 +763,9 @@ function buildExactLiteralTrinityResult(params: {
 /**
  * Universal Trinity pipeline - Core AI processing workflow for ARCANOS
  *
+ * directAnswerPreservePresentation is honored only for
+ * `backstage-booker.generateBooking`; honesty and integrity checks still apply.
+ *
  * @param client - OpenAI client instance for API communication
  * @param prompt - User input prompt to process
  * @param sessionId - Optional session identifier for context continuity

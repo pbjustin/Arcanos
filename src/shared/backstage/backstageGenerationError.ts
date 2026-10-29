@@ -94,6 +94,10 @@ export class BackstageBookerOutputIncompleteError extends Error {
   readonly code = BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_CODE;
   readonly retryable = false;
 
+  /**
+   * Select an output-budget or unmet-requirements message while keeping the same
+   * non-retryable output-incomplete code. Defaults to the output-budget message.
+   */
   constructor(reason: 'output_limit' | 'requirements' = 'output_limit') {
     super(reason === 'requirements'
       ? BACKSTAGE_BOOKER_REQUIREMENTS_INCOMPLETE_ERROR_MESSAGE
