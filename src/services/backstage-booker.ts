@@ -2874,6 +2874,7 @@ async function generateBookingWithReview(
     ),
     buildBackstageOutputBudgetCompletionInstruction(outputBudget),
   ].join('\n\n');
+  const requestedMaxWords = deriveTrinityOutputControls(input.prompt, {}).maxWords;
   const trinityRunOptions = {
     ...buildBackstageBookerTrinityRunOptions({
       model,
@@ -2886,7 +2887,8 @@ async function generateBookingWithReview(
         executionBudget.profile === 'queued_generation',
     }),
     directAnswerSystemPolicyPrompt,
-    directAnswerPreservePresentation: responseFormat === 'structured_booking',
+    directAnswerPreservePresentation:
+      responseFormat === 'structured_booking' || requestedMaxWords !== null,
     directAnswerRejectEmptyMarkdownTail: true,
     directAnswerIntegrityRepair: {
       maxAttempts: 1 as const,
@@ -3000,6 +3002,10 @@ async function generateBookingWithReview(
     );
     const output = trinityResult.result;
     const clean = output.replace(/\b(meta|reflection)[:].*$/gi, '').trim();
+    // Reject the intact candidate before compact/review normalization can remove content.
+    if (requestedMaxWords !== null && countWords(clean) > requestedMaxWords) {
+      throw new BackstageBookerOutputIncompleteError('requirements');
+    }
     //audit Assumption: compact direct-answer prompts may still pick up model preambles or overlong list structures despite stricter prompt instructions; failure risk: live responses ignore an explicit compact item count and reopen simulation-style framing; expected invariant: genuine compact output respects the caller's requested list shape while production structured output keeps every requested card element; handling strategy: apply cardinality cleanup only to compact-direct output and use preamble-only cleanup for structured direct style.
     const strictRetryItemCountOverride = usedCompactOutputRetry
       && (
@@ -3044,9 +3050,6 @@ async function generateBookingWithReview(
         repairFailureReason: 'revalidation_failed',
       });
     }
-    const requestedMaxWords = responseFormat === 'structured_booking'
-      ? deriveTrinityOutputControls(input.prompt, {}).maxWords
-      : null;
     if (requestedMaxWords !== null && countWords(validatedOutput) > requestedMaxWords) {
       throw new BackstageBookerOutputIncompleteError('requirements');
     }

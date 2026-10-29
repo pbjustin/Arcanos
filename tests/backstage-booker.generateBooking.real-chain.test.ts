@@ -366,6 +366,76 @@ describe('backstage-booker generateBooking real provider chain', () => {
   });
 
   it.each([
+    'Answer directly. Generate one rivalry within 40 words.',
+    'Answer directly. Generate one short bullet about a rivalry within 40 words.',
+  ].flatMap(prompt => (['generateBooking', 'generateBookingWithHRC'] as const)
+    .map(action => ({ prompt, action }))))(
+    'rejects over-limit compact $action for $prompt without clipping its ending',
+    async ({ prompt, action }) => {
+      const rivalry = [
+        '1. Aurora Vale confronts Orion Pike after the opening match and demands a chance to settle their rivalry in front of the crowd.',
+        'Orion accepts the challenge but insists that both partners stay backstage so neither side can blame outside interference for the result.',
+        'Aurora agrees, they shake hands, and the camera holds their tense stare before cutting to the next segment.',
+      ].join(' ');
+      responsesCreate.mockResolvedValueOnce({
+        id: 'resp_compact_over_hard_max', model: authorityModel, status: 'completed',
+        output_text: rivalry, output: [],
+        usage: { input_tokens: 100, output_tokens: 100, total_tokens: 200 },
+      });
+
+      await expect(generateBooking(
+        prompt,
+        'compact-hard-max-fixture',
+        action
+      )).rejects.toMatchObject({
+        code: 'BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE',
+        retryable: false,
+      });
+      expect(responsesCreate).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('retains a compact rivalry below the explicit hard word maximum', async () => {
+    const rivalry = '1. Aurora Vale: "You earned this challenge." Orion Pike: "Then face me alone." [They shake hands. Cut to black.]';
+    responsesCreate.mockResolvedValueOnce({
+      id: 'resp_compact_within_hard_max', model: authorityModel, status: 'completed',
+      output_text: rivalry, output: [],
+      usage: { input_tokens: 100, output_tokens: 40, total_tokens: 140 },
+    });
+
+    await expect(generateBooking(
+      'Answer directly. Generate one rivalry within 40 words.',
+      'compact-hard-max-fixture'
+    )).resolves.toBe(rivalry);
+    expect(responsesCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([false, true])('enforces an explicit maximum before bounded review normalization: oversized=%s', async oversized => {
+    const review = Array.from({ length: 6 }, (_, index) => [
+      `${index + 1}. Aurora won the opening match cleanly. The finish advanced the rivalry.`,
+      ...(oversized
+        ? ['The next chapter keeps both competitors involved while their partners wait backstage for a chance to respond.']
+        : []),
+    ].join(' ')).join('\n');
+    responsesCreate.mockResolvedValueOnce({
+      id: 'resp_bounded_review_hard_max', model: authorityModel, status: 'completed',
+      output_text: review, output: [],
+      usage: { input_tokens: 100, output_tokens: 200, total_tokens: 300 },
+    });
+
+    const result = generateBooking('Review this completed Raw card within 120 words.');
+    if (oversized) {
+      await expect(result).rejects.toMatchObject({
+        code: 'BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE',
+        retryable: false,
+      });
+    } else {
+      await expect(result).resolves.toBe(review);
+    }
+    expect(responsesCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
     'Creative direction: keep the champion tense.\n## Backstage segment\n[CAMERA: Hold a close-up.]\n--- > > > >',
     'Creative direction: keep the champion tense. Backstage segment. [CAMERA: Hold a close-up.] --- > > > >',
   ])('rejects an empty blockquote tail through actual generation integrity', async incomplete => {
