@@ -25,7 +25,8 @@ import {
   type BackstageUpdateRosterResponse
 } from '@arcanos/protocol';
 import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
-import { validateTrinityAnswerIntegrity } from '@core/logic/trinityHonesty.js';
+import { deriveTrinityOutputControls, validateTrinityAnswerIntegrity } from '@core/logic/trinityHonesty.js';
+import { countWords } from '@shared/text/countWords.js';
 import { computeTierSoftCap } from '@core/logic/trinityGuards.js';
 import { detectTier } from '@core/logic/trinityTier.js';
 import { getTrinityFinalModel } from "@services/openai/credentialProvider.js";
@@ -2876,6 +2877,7 @@ async function generateBookingWithReview(
         executionBudget.profile === 'queued_generation',
     }),
     directAnswerSystemPolicyPrompt,
+    directAnswerPreservePresentation: responseFormat === 'structured_booking',
     directAnswerRejectEmptyMarkdownTail: true,
     directAnswerIntegrityRepair: {
       maxAttempts: 1 as const,
@@ -3032,6 +3034,12 @@ async function generateBookingWithReview(
         repairAttempted: false,
         repairFailureReason: 'revalidation_failed',
       });
+    }
+    const requestedMaxWords = responseFormat === 'structured_booking'
+      ? deriveTrinityOutputControls(input.prompt, {}).maxWords
+      : null;
+    if (requestedMaxWords !== null && countWords(validatedOutput) > requestedMaxWords) {
+      throw new BackstageBookerOutputIncompleteError('requirements');
     }
     await review?.(
       validatedOutput,

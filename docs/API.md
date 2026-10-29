@@ -930,6 +930,15 @@ fails as `BACKSTAGE_BOOKER_INTEGRITY_FAILED`. Neither failure returns a partial
 draft or creates replacement generation. Requirement reviews bypass the
 candidate-only cache and use Responses `store: false`.
 
+Structured creative output preserves generated dialogue and Markdown through
+Trinity's honesty checks. Approximate brevity targets do not invoke the generic
+sentence-selection compressor, which can discard entire spoken passages while
+retaining headings and empty quote markers. The existing compact and bounded
+review contracts retain their enforcement, and finite provider token budgets
+and protected HRC requirement checks still apply. An explicit maximum-word
+constraint is checked against the original request and final text; an oversized
+result fails closed instead of being clipped into an incomplete creative draft.
+
 `queryContinuity` is read-only and requires `payload.universeId` plus
 `payload.query`; it never substitutes the compatibility `legacy` universe. An
 optional `payload.retrievalScope` requires an exact `pageTitle` and may add

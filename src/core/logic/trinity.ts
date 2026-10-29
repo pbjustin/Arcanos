@@ -804,6 +804,8 @@ export async function runThroughBrain(
       ? options.trustedPolicyPrompt
       : prompt;
   const outputControls = deriveTrinityOutputControls(trustedPolicyPrompt, options);
+  const preserveDirectAnswerPresentation = options.sourceEndpoint === 'backstage-booker.generateBooking'
+    && options.directAnswerPreservePresentation === true;
   logCoreExecution('start', {
     requestId,
     sourceEndpoint: options.sourceEndpoint,
@@ -1192,19 +1194,20 @@ export async function runThroughBrain(
           candidateText,
           userPrompt: directAnswerUserIntentPrompt,
           capabilityFlags,
-          outputControls
+          outputControls,
+          preservePresentation: preserveDirectAnswerPresentation,
         });
         const enforcedOutput = enforceFinalStageHonestyAndMinimalism({
           text: honestyFiltered.text,
           userPrompt: directAnswerUserIntentPrompt,
           capabilityFlags,
           outputControls,
-          reasoningHonesty
+          reasoningHonesty,
+          preservePresentation: preserveDirectAnswerPresentation,
         });
-        const text = applyTrinityDirectAnswerOutputContract(
-          enforcedOutput.text,
-          trustedPolicyPrompt
-        );
+        const text = preserveDirectAnswerPresentation
+          ? enforcedOutput.text
+          : applyTrinityDirectAnswerOutputContract(enforcedOutput.text, trustedPolicyPrompt);
         return {
           directAnswerReasoningHonesty: reasoningHonesty,
           honestyFilteredFinal: honestyFiltered,

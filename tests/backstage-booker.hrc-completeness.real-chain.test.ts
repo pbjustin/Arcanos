@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { BACKSTAGE_BOOKER_CLEAR_GENERATION_POLICY_MARKER } from '../src/services/backstageBookerClear.js';
+import { countWords } from '../src/shared/text/countWords.js';
 
 // Keep the actual Booker action, Trinity writing pipeline, CLEAR policy,
 // normalization, HRC wrapper/core, and response validators in this regression.
@@ -155,6 +156,48 @@ describe('Booker HRC completeness through the actual generation and audit chain'
     });
     expect(responsesCreate).toHaveBeenCalledTimes(2);
   });
+
+  it.each(['as a 200-word promo', 'in about 200 words', 'in approximately 200 words'])(
+    'preserves all generated dialogue under the direct-answer presentation path: %s', async requestedLength => {
+      const prompt = `Answer directly. Generate a backstage promo ${requestedLength} featuring Logan Paul responding to Dragon Lee becoming his Night of Champions challenger. Preserve authoritative Raw continuity, include production directions and dialogue, and run protected CLEAR with dedicated HRC. Non-canon.`;
+      const dialogue = [
+        'Dragon Lee earned a ticket to Night of Champions, congratulations, but earning the right to stand across from me does not mean he is ready for the pressure of carrying this championship while the entire world waits for one mistake and every camera searches for the smallest sign of doubt.',
+        'Every highlight he makes buys him another round of applause, every headline I make changes the conversation, and when that bell rings he will discover the difference between chasing a moment and owning the spotlight before the cameras even arrive that nobody admits.',
+        'Bring the speed, bring the courage, bring every person who believes this is your night, because when the noise settles I intend to walk away with the title and leave you wondering how your biggest opportunity became my next highlight while the crowd finally understands exactly who controlled this story.',
+        'I see the confidence, I respect the work, and I understand why the audience believes in him, but belief does not carry this championship through that final bell and the opportunity he earned comes with a lesson he will remember after cameras leave tonight.',
+      ];
+      const candidate = [
+        'Creative direction: Kay keeps Logan arrogant while showing the anxiety beneath his carefully rehearsed confidence, framing his answer as private challenge rather than public promise.',
+        '## Backstage promo: the challenger arrives',
+        '[CAMERA: Track slowly toward Logan beside the Raw interview backdrop while crew clear the corridor behind him, settle into a tight close-up as he turns from the monitor showing Dragon Lee, and hold the shot while he adjusts the championship resting across his shoulder.]',
+        '---',
+        ...dialogue.flatMap((line, index) => [`> ${index === 0 ? '**Logan Paul:** ' : ''}"${line}"`, '>']),
+        '[Logan taps the faceplate, gives the lens a narrow smile, and walks away as the camera holds the empty corridor before fading to black.]',
+      ].join('\n');
+      expect(countWords(candidate)).toBe(297);
+      responsesCreate
+        .mockResolvedValueOnce({
+          ...providerResponse(candidate),
+          usage: { input_tokens: 100, output_tokens: 441, total_tokens: 541 },
+        })
+        .mockResolvedValueOnce(providerResponse(JSON.stringify({
+          fidelity: 0.99, resilience: 0.98, verdict: 'Complete non-canon promo with the requested dialogue and production content.',
+          requirementsSatisfied: true, unmetRequirements: [],
+        })));
+
+      const result = await invokeHrcBooking(prompt);
+      expect(result.storyline).toBe(candidate);
+      for (const spokenParagraph of dialogue) expect(result.storyline).toContain(spokenParagraph);
+      expect(result.hrc).toEqual({ fidelity: 0.99, resilience: 0.98, verdict: 'Complete non-canon promo with the requested dialogue and production content.' });
+      expect(result.protectedGeneration).toMatchObject({ official: true, protectedGenerationCompleted: true });
+      expect(responsesCreate).toHaveBeenCalledTimes(2);
+      const [hrcRequest] = responsesCreate.mock.calls[1] as [{ input: Array<{ content: Array<{ text: string }> }>; store: boolean }];
+      expect(JSON.parse(hrcRequest.input[1].content[0].text)).toMatchObject({ originalRequest: prompt, candidate });
+      expect(hrcRequest.store).toBe(false);
+      expect(saveMemory).not.toHaveBeenCalled();
+      expect(storePattern).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     ['screenplay', '[CAMERA: Close on Logan Paul.]\nLOGAN PAUL: “Dragon Lee earned the chance. At Night of Champions, I intend to show him why I hold this championship.”\n[He raises the title. Cut to black.]'],

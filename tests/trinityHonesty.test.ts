@@ -1123,6 +1123,7 @@ describe('Trinity honesty controls', () => {
   it.each([
     'The camera moves closer.\n---\n>\n>\n>\n>',
     'The camera moves closer.\n--- > > > >',
+    'Creative direction. Camera: Hold the close-up. --- > > > >',
   ])('flags empty final Markdown blockquotes as incomplete', text => {
     expect(validateTrinityAnswerIntegrity({ text, rejectEmptyMarkdownTail: true }).issues)
       .toContain('incomplete_final_section');
@@ -1131,6 +1132,21 @@ describe('Trinity honesty controls', () => {
   it('preserves generic Markdown syntax demonstrations without the creative-deliverable policy', () => {
     expect(validateTrinityAnswerIntegrity({ text: 'An empty blockquote uses this marker:\n>' }))
       .toEqual({ valid: true, issues: [] });
+    expect(validateTrinityAnswerIntegrity({ text: 'An empty quote demonstration ends with --- > >' }))
+      .toEqual({ valid: true, issues: [] });
+  });
+
+  it('keeps unsupported backend claims blocked when creative presentation is preserved', () => {
+    const prepared = prepareTrinityDirectAnswerHonesty({
+      candidateText: 'I saved the booking to the backend database.\n[CAMERA: Hold on the champion.]',
+      userPrompt: 'Write a non-canon promo.',
+      capabilityFlags: deriveTrinityCapabilityFlags(),
+      outputControls: deriveTrinityOutputControls('Write a non-canon promo.', { answerMode: 'direct' }),
+      preservePresentation: true,
+    });
+    expect(prepared.honestyFiltered.blockedCategories).toContain('backend_action');
+    expect(prepared.honestyFiltered.text).not.toContain('I saved the booking');
+    expect(prepared.honestyFiltered.text).toContain('CAMERA');
   });
 
   it('accepts bounded atomic smoke-test literals as complete direct-answer output', () => {

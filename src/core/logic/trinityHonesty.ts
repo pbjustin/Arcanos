@@ -1783,7 +1783,7 @@ function hasIncompleteFinalSection(
     || /^(?:\*\*)?[^\n:]{1,120}:(?:\*\*)?$/u.test(finalLine)
     || (rejectEmptyMarkdownTail && (
       /^(?:>\s*)+$/u.test(finalLine)
-      || /^(?:[-*_]\s*){3,}(?:>\s*)+$/u.test(finalLine)
+      || /(?:^|\s)(?:[-*_]\s*){3,}(?:>\s*)+$/u.test(finalLine)
     ))
   ) {
     return true;
@@ -2076,6 +2076,7 @@ export function prepareTrinityDirectAnswerHonesty(params: {
   userPrompt: string;
   capabilityFlags: TrinityCapabilityFlags;
   outputControls: TrinityOutputControls;
+  preservePresentation?: boolean;
 }): { honestyFiltered: FinalClaimBlockResult; reasoningHonesty: TrinityReasoningHonesty; ruleIds: TrinityHonestyRuleId[] } {
   const { capabilityFlags, outputControls } = params;
   const needsCurrentStateLimitation =
@@ -2090,7 +2091,7 @@ export function prepareTrinityDirectAnswerHonesty(params: {
     && !/\b(live|runtime|deploy(?:ment|ed)?|production|servers?|web|internet|online|remote|backend|api|services?|queue|worker|competitors?|market|news|pricing|release|launch|external|trends?|compan(?:y|ies)|regulation|stocks?|execute|run|save|persist|store|write|database)\b/i.test(params.userPrompt);
   const reasoningHonesty = createDefaultTrinityReasoningHonesty();
   const honestyFiltered = enforceFinalStageHonesty(params.candidateText, reasoningHonesty, capabilityFlags,
-    readIntentMode(outputControls), false, outputControls.instructionalVerificationPolicy);
+    readIntentMode(outputControls), params.preservePresentation, outputControls.instructionalVerificationPolicy);
   const ruleIds = [...honestyFiltered.ruleIds];
   if (needsCurrentStateLimitation && !suppliedCanonScope) ruleIds.push('CURRENT_EXTERNAL_USER_REQUEST');
   if (honestyFiltered.blocked || needsCurrentStateLimitation) {
