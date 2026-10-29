@@ -26,7 +26,6 @@ import {
 } from '@arcanos/protocol';
 import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
 import { validateTrinityAnswerIntegrity } from '@core/logic/trinityHonesty.js';
-import { requiresCreativeDialogue } from '@shared/text/creativeDialogue.js';
 import { computeTierSoftCap } from '@core/logic/trinityGuards.js';
 import { detectTier } from '@core/logic/trinityTier.js';
 import { getTrinityFinalModel } from "@services/openai/credentialProvider.js";
@@ -2877,7 +2876,6 @@ async function generateBookingWithReview(
         executionBudget.profile === 'queued_generation',
     }),
     directAnswerSystemPolicyPrompt,
-    directAnswerRequiresDialogue: requiresCreativeDialogue(input.prompt),
     directAnswerRejectEmptyMarkdownTail: true,
     directAnswerIntegrityRepair: {
       maxAttempts: 1 as const,
@@ -3026,7 +3024,6 @@ async function generateBookingWithReview(
     ) as string;
     const finalIntegrity = validateTrinityAnswerIntegrity({
       text: validatedOutput,
-      requiresDialogue: requiresCreativeDialogue(input.prompt),
       rejectEmptyMarkdownTail: true,
     });
     if (!finalIntegrity.valid) {

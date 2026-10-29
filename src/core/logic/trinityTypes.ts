@@ -327,8 +327,6 @@ export interface TrinityRunOptions {
   directAnswerTokenCapOverride?: number;
   /** Original user directive for honesty checks when the execution prompt contains trusted context. */
   directAnswerUserIntentPrompt?: string;
-  /** Server-owned omission guard for creative requests explicitly requiring dialogue. */
-  directAnswerRequiresDialogue?: boolean;
   /** Internal creative-deliverable guard; syntax demonstrations retain generic behavior. */
   directAnswerRejectEmptyMarkdownTail?: boolean;
   /** Internal caller-owned directive used for policy parsing when the execution prompt contains untrusted context. */

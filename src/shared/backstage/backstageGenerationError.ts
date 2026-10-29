@@ -26,7 +26,6 @@ const BACKSTAGE_SAFE_INTEGRITY_ISSUES = new Set([
   'broken_numbering',
   'incomplete_final_section',
   'fallback_spliced_mid_answer',
-  'missing_requested_dialogue',
 ]);
 
 const BACKSTAGE_SAFE_INTEGRITY_FAILURE_REASONS = new Set([

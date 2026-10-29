@@ -138,8 +138,8 @@ describe('Booker HRC completeness through the actual generation and audit chain'
     expect(responsesCreate).toHaveBeenCalledTimes(2);
   });
 
-  it('uses HRC to reject production directions that never deliver the requested spoken promo', async () => {
-    const prompt = 'Generate a 200-word backstage promo featuring Logan Paul responding to Dragon Lee becoming his Night of Champions challenger. Preserve authoritative Raw continuity, include production directions, and run protected CLEAR with dedicated HRC. Non-canon.';
+  it('uses HRC to reject production directions that omit all explicitly requested dialogue', async () => {
+    const prompt = 'Generate a 200-word backstage promo featuring Logan Paul responding to Dragon Lee becoming his Night of Champions challenger. Preserve authoritative Raw continuity, include production directions and dialogue, and run protected CLEAR with dedicated HRC. Non-canon.';
     const candidate = 'Creative direction: Logan Paul studies footage of Dragon Lee earning the Night of Champions match. The camera tracks him at the Raw interview backdrop while he raises his championship and smiles. Hold the close-up, then fade to black.';
     responsesCreate
       .mockResolvedValueOnce(providerResponse(candidate))
@@ -158,6 +158,11 @@ describe('Booker HRC completeness through the actual generation and audit chain'
 
   it.each([
     ['screenplay', '[CAMERA: Close on Logan Paul.]\nLOGAN PAUL: “Dragon Lee earned the chance. At Night of Champions, I intend to show him why I hold this championship.”\n[He raises the title. Cut to black.]'],
+    ['separate-line speaker', '[CAMERA: Close on Logan Paul.]\nLOGAN PAUL\nDragon Lee earned this chance at Night of Champions. That title stays right here.\n[Cut to black.]'],
+    ['em-dash speaker', 'LOGAN PAUL — Dragon Lee earned this chance at Night of Champions. That title stays right here.\n[CAMERA: Fade to black.]'],
+    ['mixed cue and speaker line', 'CAMERA: Tight shot — LOGAN PAUL: Dragon Lee earned this chance at Night of Champions. That title stays right here.'],
+    ['bracketed speech', '[LOGAN PAUL: Dragon Lee earned this chance at Night of Champions. That title stays right here.]\n[CAMERA: Fade to black.]'],
+    ['parenthetical speech', '(LOGAN PAUL: Dragon Lee earned this chance at Night of Champions. That title stays right here.)\n[CAMERA: Fade to black.]'],
     ['prose', 'The camera closes on Logan Paul as he raises his title. “Dragon Lee earned his chance,” he says. “At Night of Champions, I intend to prove that chasing my championship is easier than taking it.” He walks away as the picture fades.'],
     ['200-word Markdown', [
       'Creative direction: Kay keeps Logan arrogant while letting the challenger expose the anxiety underneath his bravado.',

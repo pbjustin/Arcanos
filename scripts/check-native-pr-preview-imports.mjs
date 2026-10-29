@@ -15,7 +15,7 @@ const PREVIEW_IMPORT_TSCONFIG_FILE =
 const PREVIEW_DIST_IMPORT_CHECKER_FILE =
   'scripts/check-native-pr-preview-dist-imports.mjs';
 const PREVIEW_DIST_IMPORT_CHECKER_DIGEST =
-  '6d6ab6f799dd0651c22e2c9c5b99956dff3fc4cecd6d2788a77431f4ccc41f5d';
+  '115398309502cc4ecb13920e8ccf6d477507ee1c516e623a460d0c801cabc30f';
 const ROOT_PACKAGE_MANIFEST_FILE = 'package.json';
 const ROOT_TSCONFIG_FILE = 'tsconfig.json';
 const RUNTIME_PACKAGE_MANIFEST_FILE =
@@ -229,7 +229,6 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/security/sensitiveProviderStorage.ts',
   'src/shared/selfHealPredictiveApproval.ts',
   'src/shared/text/countWords.ts',
-  'src/shared/text/creativeDialogue.ts',
   'src/shared/text/intentModeClassifier.ts',
   'src/shared/typeGuards.ts',
   'src/shared/validation/zodIssues.ts',
@@ -964,9 +963,8 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['scripts/tutor-package-core.mjs', '1aa853e7dcc157d863dfe6f506e6c8779cd4a1defbea70b453d7d2954cfce2d8'], // gitleaks:allow -- public source semantic SHA-256
   ['scripts/tutor-package-core.d.mts', '4b2596dbe443c4f26069252eee614b810977632ac606c6d12d9c273b1db8ccb8'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/chatgpt/pluginMigrationPreviewFixture.ts', 'c723fbc47ff3faf54ada2c46b991ddcddc7b781076100335d3379c9fb9791b92'], // gitleaks:allow -- public source semantic SHA-256
-  ['src/core/logic/trinityHonesty.ts', '97400411f1b01e2535e90ee1e10fef83d3652fd01e76e31f3c3e111596277902'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/core/logic/trinityHonesty.ts', 'e6047f0a5819934041c972edd0621437736cfca442ea20b38e0a9dbae5597189'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/text/countWords.ts', '5a1ff6743306061b9634f2d0f043c29be6e3ec404bda3569d8da0f031ac68fc9'], // gitleaks:allow -- public source semantic SHA-256
-  ['src/shared/text/creativeDialogue.ts', '6acf4492b0c345fc08c159b116a8fc7a32e6791c1a3fa86c21648cbc2d7e1124'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/text/intentModeClassifier.ts', '848e9b19da342101f6b9dfb20cf83f18c1dae32e650cfec8a3e928fca0bc5fe2'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/promptGuidance.ts', 'de0d8aff69e7aa5bb5e3e80cc45c8a70fcd9c848d0b5257f8038f6b0a524283a'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/chatgpt/tutorHonestyPreviewFixture.ts', 'f666ae46d60741f26417e754998e6725dee19d79b3a38f1872637551782b529d'], // gitleaks:allow -- public source semantic SHA-256
@@ -1155,7 +1153,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/backstage/backstageGenerationError.ts',
-    '51285ba43b545f4da96700a5b6b4dd857fa124d0f2e017776fd7931e59d8c9ca',
+    'ee39378d7469c1f2c98397e127e141c58d1a5fed72bbcf18b0184efe3b438cec',
   ],
   [
     'src/shared/backstage/backstageNotionContextCore.ts',

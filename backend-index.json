@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-29T02:41:42.656Z",
+  "generatedAt": "2026-10-29T02:54:40.069Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -3230,9 +3230,6 @@
           "relativePath": "src/shared/text/countWords.ts"
         },
         {
-          "relativePath": "src/shared/text/creativeDialogue.ts"
-        },
-        {
           "relativePath": "src/shared/text/intentModeClassifier.ts"
         },
         {
@@ -4250,9 +4247,6 @@
         },
         {
           "relativePath": "tests/coverage-scope-contract.test.ts"
-        },
-        {
-          "relativePath": "tests/creative-dialogue.test.ts"
         },
         {
           "relativePath": "tests/custom-gpt-bridge-smoke.route.test.ts"

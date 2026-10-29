@@ -724,7 +724,6 @@ describe('native PR preview import boundary', () => {
       fixturePath,
       'src/core/logic/trinityHonesty.ts',
       'src/shared/text/countWords.ts',
-      'src/shared/text/creativeDialogue.ts',
       'src/shared/text/intentModeClassifier.ts',
       'src/shared/promptGuidance.ts',
     ]));
@@ -780,7 +779,6 @@ describe('native PR preview import boundary', () => {
     'src/core/logic/trinityStructuredOutput.ts',
     'src/shared/gpt/trinityFinalOutputPreviewFixture.ts',
     'src/shared/text/countWords.ts',
-    'src/shared/text/creativeDialogue.ts',
     'src/shared/text/intentModeClassifier.ts',
     'src/shared/promptGuidance.ts',
   ])('pins Tutor honesty semantics and rejects introduced effects in %s', async filePath => {
@@ -1051,7 +1049,6 @@ describe('native PR preview import boundary', () => {
       entry.filePath === 'dist/core/logic/trinityHonesty.js');
     const source = [
       "import { countWords } from '../../shared/text/countWords.js';",
-      "import { hasCreativeDialogue } from '../../shared/text/creativeDialogue.js';",
       "import { classifyIntentMode } from '../../shared/text/intentModeClassifier.js';",
       "import { renderPromptGuidanceSections } from '../../shared/promptGuidance.js';",
     ].join('\n');

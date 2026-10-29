@@ -12,7 +12,6 @@ import type {
   TrinityToolBackedCapabilities
 } from './trinityHonestyTypes.js';
 import { countWords } from '@shared/text/countWords.js';
-import { hasCreativeDialogue } from '@shared/text/creativeDialogue.js';
 import { classifyIntentMode } from '@shared/text/intentModeClassifier.js';
 import { renderPromptGuidanceSections } from '@shared/promptGuidance.js';
 
@@ -1697,8 +1696,7 @@ export type TrinityAnswerIntegrityIssue =
   | 'abrupt_mid_sentence_ending'
   | 'broken_numbering'
   | 'incomplete_final_section'
-  | 'fallback_spliced_mid_answer'
-  | 'missing_requested_dialogue';
+  | 'fallback_spliced_mid_answer';
 
 export interface TrinityAnswerIntegrityResult {
   valid: boolean;
@@ -1817,7 +1815,6 @@ export function validateTrinityAnswerIntegrity(params: {
   text: string;
   reasoningHonesty?: TrinityReasoningHonesty;
   expectedNumberedItemCount?: number;
-  requiresDialogue?: boolean;
   rejectEmptyMarkdownTail?: boolean;
 }): TrinityAnswerIntegrityResult {
   const issues: TrinityAnswerIntegrityIssue[] = [];
@@ -1836,9 +1833,6 @@ export function validateTrinityAnswerIntegrity(params: {
   }
   if (params.reasoningHonesty && hasFallbackSplice(params.text, params.reasoningHonesty)) {
     issues.push('fallback_spliced_mid_answer');
-  }
-  if (params.requiresDialogue && !hasCreativeDialogue(params.text)) {
-    issues.push('missing_requested_dialogue');
   }
 
   return {
