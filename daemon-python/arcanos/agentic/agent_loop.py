@@ -89,7 +89,7 @@ def run_agentic_loop(cli: Any, user_message: str, *, domain: Optional[str], from
             return
 
         history.log_message(cli.instance_id, "user", prompt)
-        history.log_message(cli.instance_id, "assistant", response_text)
+        history.log_message(cli.instance_id, "assistant", tr.message if tr.should_show else "")
 
         patches = tr.patches
         commands = tr.commands

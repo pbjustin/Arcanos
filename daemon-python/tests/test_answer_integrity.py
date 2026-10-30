@@ -473,23 +473,39 @@ def test_short_authorization_credentials_stay_private_in_display_and_stored_hist
 
 @pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
 @pytest.mark.parametrize(
-    "answer",
+    "answer,presentation",
     [
-        "Authorization: RFC6750 describes bearer token usage.\n\nThe task failed.",
-        PYTHON_ANSWER,
-        UNICODE_ANSWER,
+        (
+            "Authorization: RFC6750 describes bearer token usage.\n\nThe task failed.",
+            None,
+        ),
+        (PYTHON_ANSWER, None),
+        (UNICODE_ANSWER, None),
+        (STRUCTURED_ANSWER, None),
+        (
+            "## Audit Summary\nRequested public report.\n\n## Failure\nThe task was not completed.",
+            "public-answer-v1",
+        ),
     ],
-    ids=["explanatory-prose", "markdown-code", "unicode-literal"],
+    ids=[
+        "explanatory-prose",
+        "markdown-code",
+        "unicode-literal",
+        "structured",
+        "public-report",
+    ],
 )
 def test_safe_explanations_and_code_remain_exact_in_stored_history(
-    presentation_cli, monkeypatch, tmp_path, agentic, answer
+    presentation_cli, monkeypatch, tmp_path, agentic, answer, presentation
 ):
     """Protecting history cannot rewrite legitimate prose, Markdown or code literals."""
     cli, output = presentation_cli
     history = HistoryDB(tmp_path / "history.sqlite3") if agentic else None
     if history is not None:
         monkeypatch.setattr(agent_loop, "HistoryDB", lambda: history)
-    _deliver(monkeypatch, cli, answer, agentic=agentic, speak=True)
+    _deliver(
+        monkeypatch, cli, answer, agentic=agentic, speak=True, presentation=presentation
+    )
 
     assert answer in output.getvalue()
     assert NO_DISPLAYABLE_NOTICE not in output.getvalue()
@@ -504,6 +520,64 @@ def test_safe_explanations_and_code_remain_exact_in_stored_history(
             answer
         ]
     cli.terminal.execute.assert_not_called()
+
+
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+@pytest.mark.parametrize(
+    "answer",
+    [
+        '<vbl severity="3" />\nPRIVATE_HISTORY_FIXTURE',
+        "audit_trace: PRIVATE_HISTORY_FIXTURE",
+        "UNSAFE_HISTORY_FIXTURE\bPRIVATE_HISTORY_FIXTURE",
+    ],
+    ids=["private-label", "private-record", "unsafe-control"],
+)
+def test_withheld_answers_cannot_reappear_in_conversation_or_audit_history(
+    presentation_cli, monkeypatch, tmp_path, agentic, answer
+):
+    """Both persisted surfaces follow the approved display decision, including replay."""
+    cli, output = presentation_cli
+    history = HistoryDB(tmp_path / "history.sqlite3") if agentic else None
+    if history is not None:
+        monkeypatch.setattr(agent_loop, "HistoryDB", lambda: history)
+    _deliver(monkeypatch, cli, answer, agentic=agentic, speak=True)
+
+    assert output.getvalue().count(NO_DISPLAYABLE_NOTICE) == 1
+    assert "PRIVATE_HISTORY_FIXTURE" not in output.getvalue()
+    assert [call.args[1] for call in cli.memory.add_conversation.call_args_list] == [""]
+    if history is not None:
+        export_path = tmp_path / "audit.json"
+        history.export_audit(export_path, session_id=cli.instance_id)
+        audit = json.loads(export_path.read_text(encoding="utf-8"))
+        assert [row[2] for row in audit["messages"] if row[1] == "assistant"] == [""]
+        assert "PRIVATE_HISTORY_FIXTURE" not in export_path.read_text(encoding="utf-8")
+    cli.handle_speak()
+    assert "Nothing to speak yet." in output.getvalue()
+    cli.audio.speak.assert_not_called()
+    cli.terminal.is_command_safe.assert_not_called()
+    cli.terminal.execute.assert_not_called()
+
+
+def test_programmatic_raw_result_is_preserved_while_its_withheld_text_is_not_stored(
+    presentation_cli, monkeypatch
+):
+    """History filtering must not replace the backend result used by internal callers."""
+    cli, output = presentation_cli
+    raw = '<vbl severity="3" />\nPRIVATE_HISTORY_FIXTURE'
+    result = ConversationResult(raw, 7, 0.0, "backend-fixture", "backend")
+    monkeypatch.setattr(
+        cli_module.backend_ops,
+        "perform_backend_conversation",
+        lambda *args, **kwargs: result,
+    )
+
+    returned = cli.handle_ask("Explain", route_override="backend", return_result=True)
+
+    assert returned is result
+    assert returned.response_text == raw
+    assert [call.args[1] for call in cli.memory.add_conversation.call_args_list] == [""]
+    assert "PRIVATE_HISTORY_FIXTURE" not in output.getvalue()
+    cli.audio.speak.assert_not_called()
 
 
 @pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
@@ -756,14 +830,28 @@ def test_private_agentic_payload_cannot_become_an_action_proposal(
 
 @pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
 def test_legacy_private_tail_does_not_remove_the_public_answer(
-    presentation_cli, monkeypatch, agentic
+    presentation_cli, monkeypatch, tmp_path, agentic
 ):
     cli, output = presentation_cli
+    history = HistoryDB(tmp_path / "history.sqlite3") if agentic else None
+    if history is not None:
+        monkeypatch.setattr(agent_loop, "HistoryDB", lambda: history)
     answer = "### Answer\nThe request failed; no file was changed.\n\n### Audit Summary\nprivate-tail-fixture"
     _deliver(monkeypatch, cli, answer, agentic=agentic)
 
     assert "The request failed; no file was changed." in output.getvalue()
     assert "private-tail-fixture" not in output.getvalue()
+    expected = "The request failed; no file was changed."
+    assert [call.args[1] for call in cli.memory.add_conversation.call_args_list] == [
+        expected
+    ]
+    if history is not None:
+        export_path = tmp_path / "audit.json"
+        history.export_audit(export_path, session_id=cli.instance_id)
+        audit = json.loads(export_path.read_text(encoding="utf-8"))
+        assert [row[2] for row in audit["messages"] if row[1] == "assistant"] == [
+            expected
+        ]
 
 
 def test_shared_vision_presentation_keeps_failure_details(presentation_cli):

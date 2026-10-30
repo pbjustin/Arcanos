@@ -501,14 +501,14 @@ class ArcanosCLI:
             return None
 
         response_for_user: Optional[str] = None
+        translated, show = translate(
+            message,
+            result.response_text,
+            source=result.source,
+            debug=from_debug,
+            presentation=getattr(result, "presentation", None),
+        )
         if not return_result:
-            translated, show = translate(
-                message,
-                result.response_text,
-                source=result.source,
-                debug=from_debug,
-                presentation=getattr(result, "presentation", None),
-            )
             response_for_user = ui_ops.speak_to_user(
                 self,
                 result.response_text,
@@ -528,11 +528,10 @@ class ArcanosCLI:
             "messageLength": len(route_decision.normalized_message),
         }
 
-        conversation_response = (
-            result.response_text
-            if return_result and isinstance(result.response_text, str)
-            else (response_for_user or "")
-        )
+        if return_result:
+            conversation_response = translated if show else ""
+        else:
+            conversation_response = response_for_user or ""
         memory_ops.record_conversation_turn(
             self,
             route_decision.normalized_message,
