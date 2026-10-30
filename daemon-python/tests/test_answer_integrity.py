@@ -15,6 +15,7 @@ from arcanos.cli import cli as cli_module
 from arcanos.cli import ui_ops
 from arcanos.cli.context import ConversationResult
 from arcanos.cli.trust_state import TrustState
+from arcanos.cli_midlayer import translate
 from arcanos.cli_session import SessionContext
 from arcanos.config import Config
 from arcanos.voice_boundary import Persona, apply_voice_boundary
@@ -327,6 +328,80 @@ def test_voice_boundary_redacts_short_alphabetic_credentials(key, value):
     assert apply_voice_boundary(answer, persona=Persona.CALM) == (
         f"{key}: [REDACTED]\n\n{failure}"
     )
+
+
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+@pytest.mark.parametrize(
+    "control",
+    ["\b", "\r", "\x1b[2D", "\x1b[", "\x1b", "\x1b]0;unterminated"],
+    ids=[
+        "backspace",
+        "bare-cr",
+        "cursor-move",
+        "incomplete-csi",
+        "escape",
+        "incomplete-osc",
+    ],
+)
+def test_unsafe_terminal_frame_gets_one_notice_without_partial_answer_or_actions(
+    presentation_cli, monkeypatch, agentic, control
+):
+    """Reject unsafe display controls before rendering, replay, speech or proposals."""
+    cli, output = presentation_cli
+    answer = (
+        f"Failure-prefix-fixture: task incomplete.{control}unsafe-tail\n\n"
+        "```bash\nprintf private-control-fixture\n```"
+    )
+    _deliver(monkeypatch, cli, answer, agentic=agentic, speak=True)
+
+    assert output.getvalue().strip() == NO_DISPLAYABLE_NOTICE
+    assert not cli._last_response
+    cli.audio.speak.assert_not_called()
+    cli.terminal.is_command_safe.assert_not_called()
+    cli.terminal.execute.assert_not_called()
+
+
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+def test_private_tail_cannot_hide_an_unsafe_control_from_the_display_boundary(
+    presentation_cli, monkeypatch, agentic
+):
+    """Removing a private section cannot turn an invalid full frame into an answer."""
+    cli, output = presentation_cli
+    answer = "Public-prefix-fixture.\n\n### Audit Summary\nprivate-tail\bunsafe-tail"
+    _deliver(monkeypatch, cli, answer, agentic=agentic, speak=True)
+
+    assert output.getvalue().strip() == NO_DISPLAYABLE_NOTICE
+    assert not cli._last_response
+    cli.audio.speak.assert_not_called()
+    cli.terminal.execute.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "Public-prefix-fixture.\bunsafe-tail",
+        "Public-prefix-fixture.\n\n### Audit Summary\nprivate-tail\bunsafe-tail",
+    ],
+    ids=["answer", "private-tail"],
+)
+def test_translation_rejects_unsafe_full_frames_before_any_section_is_removed(answer):
+    """A rejected frame cannot become an approved prefix or redaction-only answer."""
+    assert translate("Explain", answer, source="backend") == ("", False)
+
+
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+def test_safe_sgr_decoration_preserves_the_complete_failure_answer(
+    presentation_cli, monkeypatch, agentic
+):
+    """Safe SGR decoration does not withhold or replace a substantive answer."""
+    cli, output = presentation_cli
+    failure = "Backend unavailable; your requested task was not completed."
+    _deliver(monkeypatch, cli, f"\x1b[31m{failure}\x1b[0m", agentic=agentic)
+
+    assert output.getvalue().strip() == failure
+    if not agentic:
+        assert cli._last_response == failure
+    cli.terminal.execute.assert_not_called()
 
 
 @pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])

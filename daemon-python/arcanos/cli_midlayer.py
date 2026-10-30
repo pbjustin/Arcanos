@@ -92,6 +92,9 @@ def translate(
     """
     if not isinstance(response_text, str) or not response_text.strip():
         return "", False
+    # Validate the complete frame before removing any legacy private sections.
+    if not strip_unsafe_output_controls(response_text):
+        return "", False
 
     _, severity = extract_severity(redact_output(response_text, apply_truncation=False))
     if severity in (Severity.SEV_3, Severity.SEV_4):

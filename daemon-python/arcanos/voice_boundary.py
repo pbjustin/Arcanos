@@ -6,7 +6,7 @@ from enum import Enum
 import re
 from typing import Any, Optional, Tuple
 
-from .cli.cli_policy import redact_output
+from .cli.cli_policy import redact_output, strip_unsafe_output_controls
 
 
 class Persona(Enum):
@@ -105,6 +105,10 @@ def apply_voice_boundary(
     grant access to private diagnostics. Speech shortening belongs to the caller.
     """
     if not isinstance(text, str) or not text.strip():
+        return None
+    # A rejected frame has no approved answer; a redaction placeholder cannot
+    # stand in for the backend's complete response.
+    if not strip_unsafe_output_controls(text):
         return None
     # Normalize the inspection copy before recognizing disclosure metadata;
     # ANSI/zero-width decoration must not hide a private label or record key.

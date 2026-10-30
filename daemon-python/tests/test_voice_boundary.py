@@ -138,3 +138,45 @@ def test_credentials_are_redacted_without_shortening_the_answer():
 @pytest.mark.parametrize("text", [None, "", "  \n\t", {}, [], 42])
 def test_unsupported_content_has_no_invented_answer(text):
     assert apply_voice_boundary(text, persona=Persona.CALM) is None
+
+
+@pytest.mark.parametrize(
+    "control",
+    ["\b", "\r", "\x1b[2D", "\x1b[", "\x1b", "\x1b]0;unterminated"],
+    ids=[
+        "backspace",
+        "bare-cr",
+        "cursor-move",
+        "incomplete-csi",
+        "escape",
+        "incomplete-osc",
+    ],
+)
+def test_unsafe_terminal_controls_withhold_the_answer_instead_of_fabricating_one(
+    control,
+):
+    """A rejected terminal frame is no answer, rather than a redaction-only answer."""
+    text = f"Backend task was not completed.{control}unsafe-tail\n\nNo result is available."
+
+    assert apply_voice_boundary(text, persona=Persona.CALM) is None
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        (
+            "\x1b[31mBackend task was not completed.\x1b[0m",
+            "Backend task was not completed.",
+        ),
+        (
+            '```python\r\ndef message():\r\n\treturn "left\tright"\r\n```',
+            '```python\r\ndef message():\r\n\treturn "left\tright"\r\n```',
+        ),
+    ],
+    ids=["safe-sgr", "tabs-crlf"],
+)
+def test_safe_terminal_decoration_and_code_whitespace_keep_the_complete_answer(
+    raw, expected
+):
+    """Safe styling may be removed; significant code whitespace remains exact."""
+    assert apply_voice_boundary(raw, persona=Persona.CALM) == expected
