@@ -13,6 +13,17 @@ from arcanos.cli.cli_policy import (
 )
 
 
+@pytest.mark.parametrize("attributes", [
+    "; HttpOnly; Secure; SameSite=Lax",
+    "; Expires=Wed, 21 Oct 2026 07:28:00 GMT; Secure",
+    "; Partitioned; Path=/",
+])
+def test_set_cookie_credentials_stay_private_with_standard_attributes(attributes) -> None:
+    """Cookie attribute flags must not bypass redaction or remove later failures."""
+    source = f"Set-Cookie: session=fixture-value{attributes}\nThe task failed."
+    assert redact_output(source, apply_truncation=False) == "Set-Cookie: [REDACTED]\nThe task failed."
+
+
 def test_command_policy_allows_configured_prefix(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("ARCANOS_CLI_SANDBOX_ROOT", str(tmp_path))
     decision = evaluate_command_policy("git status --short", cwd=str(tmp_path), timeout_ms=999_999)
@@ -86,6 +97,68 @@ def test_json_and_header_credentials_do_not_expose_opaque_values() -> None:
 def test_non_secret_status_fields_remain_unchanged() -> None:
     source = '{"token_count":12,"token_status":"expired","authorization_status":"failed","status":"pending"}'
     assert redact_output(source, apply_truncation=False) == source
+
+
+@pytest.mark.parametrize("source", [
+    "- **Token:** a short-lived credential",
+    "Password: must be 12 characters",
+    "Authorization: required for every endpoint",
+    "api_key: use your dashboard value",
+    "Cookie: stores a browser preference in this example.",
+    "Secret: a value you should keep private.",
+    "- **Password:** must be 12 characters",
+    "Token: **a short-lived credential**",
+    "- **Authorization:** **required** for every endpoint",
+    "Password: 12-character minimum is enforced.",
+    "Token: SHA-256 identifies the hash algorithm.",
+    "Authorization: RFC6750 describes bearer token usage.",
+    "Cookie: SameSite=Lax prevents some cross-site requests.",
+])
+def test_unquoted_glossary_labels_preserve_the_complete_explanation(source) -> None:
+    """Ordinary labelled explanations and Markdown emphasis are answer content."""
+    assert redact_output(source, apply_truncation=False) == source
+    assert redact_output(source, apply_truncation=False, preserve_literal_unicode=True) == source
+
+
+@pytest.mark.parametrize(("source", "sensitive_value"), [
+    ("Password: P@ssw0rd!", "P@ssw0rd!"),
+    ("Password: 123456", "123456"),
+    ("Token: 123456", "123456"),
+    ("Authorization: Bearer fixture-example-credential", "fixture-example-credential"),
+    ("Authorization: Bearer short", "short"),
+    ("Authorization: Basic Zml4dHVyZTpmaXh0dXJl", "Zml4dHVyZTpmaXh0dXJl"),
+    ("Cookie: session=fixture-value", "fixture-value"),
+    ("ARCANOS_DAEMON_ACCESS_TOKEN: fixture-value", "fixture-value"),
+    ("BACKEND_TOKEN: fixture-value", "fixture-value"),
+    ("OPENAI_API_KEY: fixture-value", "fixture-value"),
+])
+def test_credential_shaped_colon_fields_keep_failures_and_hide_values(source, sensitive_value) -> None:
+    """Narrowing prose detection must retain credential and HTTP-header protection."""
+    failure = "\nThe requested task failed; nothing was completed."
+    redacted = redact_output(source + failure, apply_truncation=False)
+    assert sensitive_value not in redacted
+    assert "[REDACTED]" in redacted
+    assert redacted.endswith(failure)
+    assert redact_output(redacted, apply_truncation=False) == redacted
+
+
+@pytest.mark.parametrize("source", [
+    'password="test fixture value with spaces"',
+    'BACKEND_TOKEN="fixture value with spaces"',
+    '{"password":"fixture value with spaces","status":"failed"}',
+    '{"token":"fixture-value","retryable":true}',
+])
+def test_explicit_credential_assignments_still_redact_after_prose_repair(source) -> None:
+    """Explicit assignments and quoted JSON keys retain their established safeguards."""
+    redacted = redact_output(source, apply_truncation=False)
+    assert "fixture" not in redacted
+    assert "[REDACTED]" in redacted
+    if source.startswith("{"):
+        before = json.loads(source)
+        after = json.loads(redacted)
+        for key in ("status", "retryable"):
+            if key in before:
+                assert after[key] == before[key]
 
 
 @pytest.mark.parametrize("source", [

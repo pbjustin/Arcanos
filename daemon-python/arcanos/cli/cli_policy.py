@@ -240,7 +240,14 @@ def _find_assignment_token_end(value: str, start: int) -> int:
     return len(value)
 
 
-def _redact_named_assignment(value: str, env_name: str, replacement: str) -> str:
+def _redact_named_assignment(
+    value: str,
+    env_name: str,
+    replacement: str,
+    *,
+    preserve_colon_prose: bool = False,
+) -> str:
+    """Redact explicit fields, preserving prose after ambiguous generic labels."""
     pattern = re.compile(
         rf"(?<![A-Za-z0-9_])(?P<prefix>(?P<key_quote>[\"']?)"
         rf"{re.escape(env_name)}(?P=key_quote){_ASSIGNMENT_PADDING_PATTERN}"
@@ -261,6 +268,37 @@ def _redact_named_assignment(value: str, env_name: str, replacement: str) -> str
         replacement_value = replacement
         first_character = value[assignment_start]
         is_field = match["separator"] == ":"
+        if (
+            preserve_colon_prose
+            and is_field
+            and not match["key_quote"]
+            and first_character not in ('"', "'", "{", "[")
+        ):
+            remainder = value[assignment_start:]
+            token_match = re.match(r"[^\s,}\]]+", remainder)
+            token = token_match[0] if token_match else ""
+            field_line = remainder.splitlines()[0]
+            single_value = len(field_line.split()) == 1
+            has_letters = any(character.isalpha() for character in token)
+            credential_value = (
+                single_value
+                and (len(token) >= 16 or any(character.isdigit() for character in token))
+            ) or (
+                has_letters
+                and len(token) >= 6
+                and re.search(r"[!@#$%^&+]", token) is not None
+            )
+            authorization_value = env_name.lower() == "authorization" and re.match(
+                r"(?:Bearer|Basic|Digest)\s+\S+", remainder, re.IGNORECASE
+            )
+            cookie_value = env_name.lower() == "cookie" and re.fullmatch(
+                r"[^;\s=]+=[^;\s]+(?:;\s*(?:[^;\s=]+=[^;]*|HttpOnly|Secure|Partitioned))*\s*",
+                field_line,
+                re.IGNORECASE,
+            )
+            if not credential_value and not authorization_value and not cookie_value:
+                search_from = assignment_start
+                continue
         if is_field and match["key_quote"]:
             replacement_value = f"{match['key_quote']}{replacement}{match['key_quote']}"
         replacement_end = assignment_start + len(replacement)
@@ -341,7 +379,13 @@ def _redact_sanitized_output(
     configured_names = {str(name).lower() for name in env_names}
     for name in sorted(sensitive_names):
         if name.lower() not in configured_names:
-            redacted = _redact_named_assignment(redacted, name, replacement)
+            redacted = _redact_named_assignment(
+                redacted,
+                name,
+                replacement,
+                preserve_colon_prose=name.lower().replace("-", "_")
+                in {"token", "secret", "password", "api_key", "apikey", "authorization", "cookie"},
+            )
     redacted = re.sub(r"BEGIN [A-Z ]*PRIVATE KEY[\s\S]*?END [A-Z ]*PRIVATE KEY", replacement, redacted, flags=re.IGNORECASE)
     return redacted
 

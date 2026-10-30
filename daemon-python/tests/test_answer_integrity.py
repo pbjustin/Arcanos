@@ -30,6 +30,20 @@ TAB_AND_CRLF_ANSWER = '```python\r\ndef message():\r\n\treturn "left\tright"\r\n
 UNICODE_ANSWER = '```python\nmessage = "🛡️ 👨‍👩‍👧 a\u200bb"\n```'
 FAKE_API_KEY = "sk-" + "fixture" * 5
 FAKE_BEARER = "fixture" * 5
+FAKE_PASSWORD = "P@" + "ssw0rd!"
+
+PUBLIC_LABELS = [
+    "- **Token:** a short-lived credential",
+    "Password: must be 12 characters or longer",
+    "Authorization: required for every endpoint",
+    "api_key: use your dashboard value",
+    "Transaction type: a database transaction groups related changes",
+    "Clearance level: least privilege limits access to required operations",
+    "Backend endpoint: POST /api/example accepts the example request",
+    "Included modules: math and json are Python standard-library modules",
+    "Logic trace: compare values before choosing the next branch",
+    "Retrieval context: documents cited in this answer support the explanation",
+]
 
 STRUCTURED_ANSWER = """## Result
 
@@ -185,6 +199,30 @@ def test_complete_answers_reach_real_console_unchanged(
     cli.terminal.execute.assert_not_called()
 
 
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+@pytest.mark.parametrize(
+    "multiparagraph", [False, True], ids=["standalone", "paragraphs"]
+)
+@pytest.mark.parametrize("label", PUBLIC_LABELS)
+def test_glossaries_and_diagnostic_labels_are_complete_public_answers(
+    presentation_cli, monkeypatch, agentic, multiparagraph, label
+):
+    """A public explanation stays intact even when its label also names metadata."""
+    cli, output = presentation_cli
+    answer = (
+        f"Here is the explanation.\n\n{label}\n\nNo operation was executed."
+        if multiparagraph
+        else label
+    )
+    _deliver(monkeypatch, cli, answer, agentic=agentic)
+
+    assert answer in output.getvalue()
+    if not agentic:
+        assert cli._last_response == answer
+    assert cli._last_error is None
+    cli.terminal.execute.assert_not_called()
+
+
 @pytest.mark.parametrize("source", ["backend", "local"])
 def test_full_text_is_retained_separately_from_short_speech(
     presentation_cli, monkeypatch, source
@@ -222,6 +260,10 @@ def test_full_text_is_retained_separately_from_short_speech(
         (
             f"The request failed. Authorization: Bearer {FAKE_BEARER}",
             FAKE_BEARER,
+        ),
+        (
+            f"The request failed. Password: {FAKE_PASSWORD}",
+            FAKE_PASSWORD,
         ),
     ],
 )

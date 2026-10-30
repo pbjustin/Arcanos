@@ -49,9 +49,7 @@ def extract_severity(text: str) -> Tuple[str, Optional[Severity]]:
 # (backend unavailable, session validation failed, no memory saved) as private.
 _PRIVATE_RECORD = re.compile(
     r'^\s*(?:["\']?(?:audit_trace|boot_snapshot|memory_shell_\w+)["\']?\s*[:=]'
-    r"|(?:logic trace|retrieval context|active session id|clearance level|"
-    r"included modules|transaction type|session_boot|logic_engine|goals_processor|"
-    r"kernel rule set|system routing details|modules involved|backend endpoint)\s*[:=]"
+    r"|(?:active session id|session_boot|logic_engine|goals_processor)\s*[:=]"
     r"|\[SYSTEM\b)",
     re.IGNORECASE,
 )
