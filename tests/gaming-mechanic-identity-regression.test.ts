@@ -45,6 +45,62 @@ describe('independently acquired game and mechanic ownership', () => {
       'Lantern Voyage', 'Remake')).toMatchObject({ status: 'verified' });
   });
 
+  const editionTitle = 'Lantern Voyage Remake System Colonisation guide';
+  const editionProse = (early: string, late = 'Remake System Colonisation is a mechanic in Lantern Voyage.') =>
+    `This guide covers Lantern Voyage Remake System Colonisation. ${early} In Lantern Voyage, players deliver construction supplies. ${'The cargo manifest remains available for project planning. '.repeat(600)} ${late}`;
+
+  it('retains early edition-qualified ownership when another matching prefix has only late proof', () => {
+    const prose = editionProse('System Colonisation is a mechanic in Lantern Voyage.');
+    const text = `${editionTitle}\n${prose}`;
+    expect(text.indexOf('System Colonisation is a mechanic')).toBeLessThan(32_000);
+    expect(text.indexOf('Remake System Colonisation is a mechanic')).toBeGreaterThan(32_000);
+    expect(assess(editionTitle, prose, 'Lantern Voyage', 'Remake'))
+      .toMatchObject({ status: 'verified' });
+  });
+
+  it('does not use matching scopes outside the positive proof window as independent ownership', () => {
+    expect(assess(editionTitle, editionProse(''), 'Lantern Voyage', 'Remake'))
+      .toMatchObject({ status: 'unknown', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] });
+  });
+
+  it('retains foreign ownership across matching prefix collections', () => {
+    expect(assess(editionTitle, editionProse('System Colonisation is a mechanic in Fallout 4.'), 'Lantern Voyage', 'Remake'))
+      .toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
+  });
+
+  it.each([
+    'System Colonisation is a mechanic in Lantern Voyage. System Colonisation is a mechanic in Copper Vale.',
+    'System Colonisation is a mechanic in Copper Vale.',
+  ])('inspects contradictory ownership after the proof window across matching scopes: %s', contradiction => {
+    expect(assess(editionTitle, editionProse('System Colonisation is a mechanic in Lantern Voyage.', contradiction), 'Lantern Voyage', 'Remake'))
+      .toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
+  });
+
+  it.each([
+    ['System Colonisation is a mechanic in Lantern Voyage.', 'Remake System Colonisation is a mechanic in Copper Vale.'],
+    ['Remake System Colonisation is a mechanic in Lantern Voyage.', 'System Colonisation is a mechanic in Copper Vale.'],
+  ])('requires matching ownership from every prefix collection: %s / %s', (early, late) => {
+    expect(assess(editionTitle, editionProse(early, late), 'Lantern Voyage', 'Remake'))
+      .toMatchObject({ status: 'unknown', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] });
+  });
+
+  it.each([undefined, 'Deluxe'])('rejects an unrequested or incompatible edition despite early mechanic ownership: %s', edition => {
+    expect(assess(editionTitle, editionProse('System Colonisation is a mechanic in Lantern Voyage.'), 'Lantern Voyage', edition))
+      .toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
+  });
+
+  it('preserves direct full-nominal-scope precedence over valid early suffix ownership', () => {
+    expect(assess(editionTitle, editionProse('System Colonisation is a mechanic in Lantern Voyage.',
+      'Lantern Voyage Remake System Colonisation is a mechanic in Lantern Voyage.'), 'Lantern Voyage', 'Remake'))
+      .toMatchObject({ status: 'unknown', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] });
+  });
+
+  it('does not override foreign full-nominal ownership with a valid suffix', () => {
+    expect(assess(editionTitle, editionProse('System Colonisation is a mechanic in Lantern Voyage.',
+      'Lantern Voyage Remake System Colonisation is a mechanic in Copper Vale.'), 'Lantern Voyage', 'Remake'))
+      .toMatchObject({ status: 'unknown', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] });
+  });
+
   it('does not let an edition-qualified prefix supply absent mechanic ownership', () => {
     expect(assess('Lantern Voyage Remake System Colonisation guide',
       'This guide covers Lantern Voyage Remake System Colonisation. In Lantern Voyage, players deliver construction supplies.',

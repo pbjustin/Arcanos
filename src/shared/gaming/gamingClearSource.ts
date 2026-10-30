@@ -337,8 +337,7 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     // ownership of its suffix. A matching family prefix alone proves nothing.
     const scopes = acquiredTopicScopes.get(identity)
       ?? [...expected].filter(game => identity.startsWith(`${game}-`))
-        .map(game => acquiredTopicScopes.get(identity.slice(game.length + 1)))
-        .find(Boolean);
+        .flatMap(game => acquiredTopicScopes.get(identity.slice(game.length + 1)) ?? []);
     return detected.source !== 'alias' && Boolean(scopes?.some(scope => scope.index < PRIMARY_IDENTITY_SCOPE_CHARS)
       && scopes.every(scope => sourceGameMatches(scope.game)));
   };
