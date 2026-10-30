@@ -247,7 +247,13 @@ def _redact_named_assignment(
     *,
     preserve_colon_prose: bool = False,
 ) -> str:
-    """Redact explicit fields, preserving prose after ambiguous generic labels."""
+    """Redact explicit fields, preserving prose after ambiguous generic labels.
+
+    A standalone token after a sensitive colon label is conservatively treated
+    as a credential, even if it is a short word. One-word explanations share
+    that ambiguous shape; multiword explanations retain the existing checks.
+    Markdown closing delimiters alone are formatting, not a field value.
+    """
     pattern = re.compile(
         rf"(?<![A-Za-z0-9_])(?P<prefix>(?P<key_quote>[\"']?)"
         rf"{re.escape(env_name)}(?P=key_quote){_ASSIGNMENT_PADDING_PATTERN}"
@@ -279,10 +285,12 @@ def _redact_named_assignment(
             token = token_match[0] if token_match else ""
             field_line = remainder.splitlines()[0]
             single_value = len(field_line.split()) == 1
+            label_delimiter = (
+                not token.strip("*_`") and value[:match.start()].endswith(token)
+            )
             has_letters = any(character.isalpha() for character in token)
             credential_value = (
-                single_value
-                and (len(token) >= 16 or any(character.isdigit() for character in token))
+                single_value and not label_delimiter
             ) or (
                 has_letters
                 and len(token) >= 6

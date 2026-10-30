@@ -94,6 +94,42 @@ def test_json_and_header_credentials_do_not_expose_opaque_values() -> None:
     )
 
 
+@pytest.mark.parametrize(("name", "credential"), [
+    ("Password", "sunshine"),
+    ("Token", "orchard"),
+    ("Secret", "maple"),
+    ("api_key", "cedar"),
+    ("Authorization", "birch"),
+    ("Cookie", "elm"),
+    ("Password", "s7"),
+    ("Token", "!?"),
+    ("Password", "***"),
+    ("Secret", "_"),
+])
+def test_single_token_credentials_keep_failures_and_json_valid(name, credential) -> None:
+    """Short credentials stay private without truncation or repeated-redaction drift."""
+    failure = '\nThe operation failed.\n\nKeep "It is exact" and the final qualification.'
+    source = f"{name}: {credential}{failure}"
+    expected = f"{name}: [REDACTED]{failure}"
+    redacted = redact_output(source, apply_truncation=False)
+    assert redacted == expected
+    assert redact_output(redacted, apply_truncation=False) == expected
+    assert redact_output(source, apply_truncation=False, preserve_literal_unicode=True) == expected
+    payload = {name: credential, "status": "failed", "explanation": "It is exact"}
+    safe_json = redact_output(json.dumps(payload), apply_truncation=False)
+    assert json.loads(safe_json) == {**payload, name: "[REDACTED]"}
+
+
+@pytest.mark.parametrize("source", [
+    "- **Token:**\n  a short-lived credential.",
+    "- __Password:__\n  must be 12 characters.",
+    "`Authorization:`\nrequired for every endpoint.",
+])
+def test_markdown_label_delimiters_are_not_credential_values(source) -> None:
+    """An otherwise empty Markdown label must not be mistaken for a short secret."""
+    assert redact_output(source, apply_truncation=False) == source
+
+
 def test_non_secret_status_fields_remain_unchanged() -> None:
     source = '{"token_count":12,"token_status":"expired","authorization_status":"failed","status":"pending"}'
     assert redact_output(source, apply_truncation=False) == source

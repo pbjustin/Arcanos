@@ -17,7 +17,7 @@ from arcanos.cli.context import ConversationResult
 from arcanos.cli.trust_state import TrustState
 from arcanos.cli_session import SessionContext
 from arcanos.config import Config
-from arcanos.voice_boundary import Persona
+from arcanos.voice_boundary import Persona, apply_voice_boundary
 
 PYTHON_ANSWER = """```python
 def message(enabled):
@@ -32,8 +32,20 @@ FAKE_API_KEY = "sk-" + "fixture" * 5
 FAKE_BEARER = "fixture" * 5
 FAKE_PASSWORD = "P@" + "ssw0rd!"
 NO_DISPLAYABLE_NOTICE = "No displayable response was returned."
+SHORT_CREDENTIALS = [
+    ("Password", "sunshine"),
+    ("Token", "orchard"),
+    ("Secret", "maple"),
+    ("api_key", "meadow"),
+    ("Authorization", "willow"),
+    ("Cookie", "cedar"),
+]
 
 PUBLIC_LABELS = [
+    "Password: must be 12 characters.",
+    "Authorization: required for every endpoint.",
+    "Token: a short-lived credential.",
+    "Cookie: stores a browser preference.",
     "- **Token:** a short-lived credential",
     "Password: must be 12 characters or longer",
     "Authorization: required for every endpoint",
@@ -283,6 +295,38 @@ def test_private_content_and_credentials_do_not_reach_console(
         answer.startswith("<vbl")
     )
     cli.terminal.execute.assert_not_called()
+
+
+@pytest.mark.parametrize("key,value", SHORT_CREDENTIALS)
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+def test_short_alphabetic_credentials_are_hidden_but_failures_remain_complete(
+    presentation_cli, monkeypatch, key, value, agentic
+):
+    """Simple credential values stay private without concealing a backend failure."""
+    cli, output = presentation_cli
+    failure = "Backend unavailable; your requested task was not completed."
+    answer = f"{key}: {value}\n\n{failure}"
+    _deliver(monkeypatch, cli, answer, agentic=agentic, speak=True)
+
+    displayed = output.getvalue()
+    assert value not in displayed
+    assert f"{key}: [REDACTED]\n\n{failure}" in displayed
+    assert NO_DISPLAYABLE_NOTICE not in displayed
+    assert "Handled." not in displayed
+    assert "I've got this covered." not in displayed
+    assert all(value not in str(call) for call in cli.audio.speak.call_args_list)
+    cli.terminal.execute.assert_not_called()
+
+
+@pytest.mark.parametrize("key,value", SHORT_CREDENTIALS)
+def test_voice_boundary_redacts_short_alphabetic_credentials(key, value):
+    """The shared voice boundary applies the same protection as actual CLI output."""
+    failure = "Backend unavailable; your requested task was not completed."
+    answer = f"{key}: {value}\n\n{failure}"
+
+    assert apply_voice_boundary(answer, persona=Persona.CALM) == (
+        f"{key}: [REDACTED]\n\n{failure}"
+    )
 
 
 @pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
