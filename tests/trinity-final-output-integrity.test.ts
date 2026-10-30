@@ -237,8 +237,48 @@ describe('Trinity caller-declared final JSON integrity at actual provider extrac
 
   it('retains ordinary direct prose processing when no JSON contract is declared', async () => {
     finalText = 'Direct answer: **Use** `value`.';
-    expect((await run('direct', null)).result).toBe('Use value.');
+    const result = await run('direct', null);
+    expect(result.result).toBe('Use value.');
+    expect(getFinalizedPublicAnswerPresentation(result)).toBe('public-answer-v1');
     expect(responsesCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves healthy standard final output without a caller-declared JSON contract', async () => {
+    finalText = 'Use the supplied outline.';
+    const result = await run('explained', null);
+    expect(result.result).toBe(finalText);
+    expect(buildTrinityUserVisibleResponse({ trinityResult: result }).presentation).toBe('public-answer-v1');
+    expect(responsesCreate).toHaveBeenCalledTimes(4);
+  });
+
+  it.each(['', '   ', '\u200b'])(
+    'rejects an empty visible final answer without a JSON contract before public delivery: %j',
+    async output => {
+      finalText = output;
+      const delivered = jest.fn();
+      await expect(run('explained', null).then(delivered)).rejects.toMatchObject({
+        code: 'TRINITY_STRUCTURED_OUTPUT_INVALID', reason: 'empty_output',
+      });
+      expect(delivered).not.toHaveBeenCalled();
+      expect(responsesCreate).toHaveBeenCalledTimes(4);
+    }
+  );
+
+  it.each([
+    ['incomplete', { status: 'incomplete' }],
+    ['length', { status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' } }],
+    ['content filter', { status: 'incomplete', incomplete_details: { reason: 'content_filter' } }],
+  ])('does not deliver provider %s final output or its public marker without a JSON contract', async (_label, metadata) => {
+    finalText = 'The supplied outline has two steps.';
+    responsesCreate.mockImplementation(async (payload: ResponseCreateParamsNonStreaming) => ({
+      ...response(payload), ...(payload.model === authority ? metadata : {}),
+    }));
+    const delivered = jest.fn();
+    await expect(run('explained', null).then(delivered)).rejects.toMatchObject({
+      code: 'OPENAI_COMPLETION_INCOMPLETE',
+    });
+    expect(delivered).not.toHaveBeenCalled();
+    expect(responsesCreate).toHaveBeenCalledTimes(4);
   });
 
   it('never enters the optional prose repair stage to repair JSON', async () => {

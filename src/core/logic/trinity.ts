@@ -2139,10 +2139,8 @@ export async function runThroughBrain(
     checkWatchdog();
 
     const userIntent = MidLayerTranslator.detectIntentFromUserMessage(trustedPolicyPrompt);
-    if (validateStructuredOutput) {
-      const providerBlocker = classifyTrinityProviderIntegrityBlocker(finalOutput.provider);
-      if (providerBlocker) throw new TrinityStructuredOutputError(providerBlocker);
-    }
+    const providerBlocker = classifyTrinityProviderIntegrityBlocker(finalOutput.provider);
+    if (providerBlocker) throw new TrinityStructuredOutputError(providerBlocker);
     const translatedFinalText = validateStructuredOutput ? finalOutput.output : gamingGuideIntakePolicy
       ? finalOutput.output.trim()
       : MidLayerTranslator.translate({ raw: finalOutput.output }, userIntent);
