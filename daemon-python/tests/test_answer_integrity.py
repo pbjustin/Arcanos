@@ -473,6 +473,62 @@ def test_short_authorization_credentials_stay_private_in_display_and_stored_hist
 
 @pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
 @pytest.mark.parametrize(
+    "credential_text,secrets",
+    [
+        (
+            'Authorization: CustomScheme credential="sunshine", realm="canopy"',
+            ["sunshine"],
+        ),
+        ('Authorization: X+ sunshine', ["sunshine"]),
+        (
+            "Authorization: CustomScheme token=orchard, version=one",
+            ["orchard"],
+        ),
+    ],
+    ids=["quoted-auth-params", "custom-token-scheme", "auth-params"],
+)
+def test_encoded_credentials_are_private_across_presentation_and_both_history_roles(
+    presentation_cli, monkeypatch, tmp_path, agentic, credential_text, secrets
+):
+    """Custom authorization headers cannot bypass actual persisted sinks."""
+    cli, output = presentation_cli
+    history = HistoryDB(tmp_path / "history.sqlite3") if agentic else None
+    if history is not None:
+        monkeypatch.setattr(agent_loop, "HistoryDB", lambda: history)
+    failure = (
+        "The requested task failed; no changes were made.\n\nKeep this qualification."
+    )
+    answer = f"{credential_text}\n\n{failure}"
+    message = f"{credential_text}\n\nExplain the failure."
+    _deliver(monkeypatch, cli, answer, agentic=agentic, speak=True, message=message)
+    cli.handle_speak()
+
+    displayed = output.getvalue()
+    assert failure in displayed
+    assert "[REDACTED]" in displayed
+    assert NO_DISPLAYABLE_NOTICE not in displayed
+    stored = [call.args[:2] for call in cli.memory.add_conversation.call_args_list]
+    assert len(stored) == 1
+    assert stored[0][0].endswith("\n\nExplain the failure.")
+    assert stored[0][1].endswith(f"\n\n{failure}")
+    surfaces = [displayed, cli._last_response or "", *stored[0]]
+    surfaces.extend(str(call) for call in cli.audio.speak.call_args_list)
+    if history is not None:
+        export_path = tmp_path / "audit.json"
+        history.export_audit(export_path, session_id=cli.instance_id)
+        audit_text = export_path.read_text(encoding="utf-8")
+        audit = json.loads(audit_text)
+        assert {row[1]: row[2] for row in audit["messages"]} == {
+            "user": stored[0][0],
+            "assistant": stored[0][1],
+        }
+        surfaces.append(audit_text)
+    assert all(secret not in surface for secret in secrets for surface in surfaces)
+    cli.terminal.execute.assert_not_called()
+
+
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+@pytest.mark.parametrize(
     "answer,presentation",
     [
         (

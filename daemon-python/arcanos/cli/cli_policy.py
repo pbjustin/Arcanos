@@ -48,6 +48,7 @@ _ASSIGNMENT_PADDING_PATTERN = (
     r"\u2028\u2029\u202F\u205F\u3000\uFEFF]*"
 )
 
+_AUTH_TOKEN_PATTERN = r"[!#$%&'*+.^_`|~0-9A-Za-z-]+"
 
 @dataclass(frozen=True)
 class CommandDecision:
@@ -305,7 +306,11 @@ def _redact_named_assignment(
             )
             authorization_value = env_name.lower() == "authorization" and (
                 re.match(r"(?:Bearer|Basic|Digest)\s+\S+", remainder, re.IGNORECASE)
-                or re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]*[ \t]+\S+[ \t]*", field_line)
+                or re.fullmatch(rf"{_AUTH_TOKEN_PATTERN}[ \t]+\S+[ \t]*", field_line)
+                or re.match(
+                    rf"{_AUTH_TOKEN_PATTERN}[ \t]+{_AUTH_TOKEN_PATTERN}[ \t]*=",
+                    field_line,
+                )
                 or re.match(
                     r"[A-Za-z][A-Za-z0-9_-]*[ \t]+(?=\S{8,}(?:\s|$))(?=\S*[0-9])\S+",
                     remainder,

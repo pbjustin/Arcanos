@@ -252,6 +252,8 @@ def test_additional_authorization_schemes_keep_credentials_private_and_failure_c
     ("OAuth", "maple"),
     ("Negotiate", "example"),
     ("Custom.Auth", "a"),
+    ("X+", "sunshine"),
+    ("X!", "orchid"),
     ("X-Custom_v1", "elm"),
     ("Bearer", "pine"),
     ("Basic", "oak"),
@@ -284,6 +286,28 @@ def test_authorization_quoted_json_values_keep_valid_json_and_failure_context() 
         "Authorization": "[REDACTED]", "status": "failed", "warning": "No task completed."
     }
     assert redact_output(redacted, apply_truncation=False) == redacted
+
+
+@pytest.mark.parametrize("header_value", [
+    'Custom realm="example", credential="sunshine"',
+    'Signature keyId="example", signature="orchid"',
+    'X+ realm="example", credential="sunshine"',
+    "X-Custom_v1 realm=example, credential=maple",
+    'Custom realm = "example", credential = "elm"',
+    'Custom realm="example, quoted", credential="birch"',
+    'Custom realm="escaped \\" quote", credential="cedar"',
+])
+def test_parameterized_custom_authorization_headers_redact_alphabetic_credentials(
+    header_value,
+) -> None:
+    """Valid auth-param lists stay private without relying on credential digits."""
+    failure = '\nThe operation failed.\n\nKeep "It is exact" and the final qualification.'
+    source = f"Authorization: {header_value}{failure}"
+    expected = f"Authorization: [REDACTED]{failure}"
+
+    assert redact_output(source, apply_truncation=False) == expected
+    assert redact_output(expected, apply_truncation=False) == expected
+    assert redact_output(source, apply_truncation=False, preserve_literal_unicode=True) == expected
 
 
 @pytest.mark.parametrize("source", [
