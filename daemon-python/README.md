@@ -76,6 +76,9 @@ for every presentation format, including debug display mode. Unsafe terminal
 controls withhold the complete answer and show one neutral notice. Safe styling
 can be removed; significant code whitespace remains intact. The existing CLI
 redaction policy applies without answer-length truncation.
+Structured backend errors are also inspected after JSON decoding so escaped
+fields cannot hide private diagnostics. Unsafe or ambiguous structured error
+bodies are withheld with an explicit notice; the failure summary remains visible.
 Proposal extraction does not remove examples from the answer or grant execution
 permission; existing confirmation and policy checks still apply.
 

@@ -132,6 +132,9 @@ router.post('/api/vision', visionValidation, asyncHandler(async (req: Request<{}
     });
     ensureModelMatchesExpectation(response, visionModel);
     const completion = convertResponseToLegacyChatCompletion(response, visionModel);
+    if (completion.incomplete || completion.truncated || completion.length_truncated || completion.content_filtered) {
+      throw new Error('OpenAI vision response ended before a complete answer was available.');
+    }
 
     const responseText = completion.choices[0]?.message?.content || '';
     const tokens = completion.usage?.total_tokens || 0;

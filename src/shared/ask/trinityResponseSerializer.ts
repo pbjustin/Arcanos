@@ -51,16 +51,20 @@ export interface TrinityUserVisibleResponse {
  *
  * Edge case behavior:
  * - Debug data is omitted unless `debugPipeline=true`, `answerMode=debug`, and `strictUserVisibleOutput=false`.
+ * - Set `includePresentation=false` before persisting output; presentation provenance is in-process only.
  */
 export function buildTrinityUserVisibleResponse(params: {
   trinityResult: TrinityResult;
   endpoint?: string;
   clientContext?: ClientContextDTO;
   auditFlag?: TrinityResponseAuditFlag;
+  includePresentation?: boolean;
 }): TrinityUserVisibleResponse {
   const userVisibleResponse: TrinityUserVisibleResponse = {
     result: params.trinityResult.result,
-    presentation: getFinalizedPublicAnswerPresentation(params.trinityResult),
+    ...(params.includePresentation !== false
+      ? { presentation: getFinalizedPublicAnswerPresentation(params.trinityResult) }
+      : {}),
     module: params.trinityResult.module,
     meta: params.trinityResult.meta,
     activeModel: params.trinityResult.activeModel,

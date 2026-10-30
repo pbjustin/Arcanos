@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -533,6 +534,76 @@ def test_unsupported_answers_never_invent_success(
     cli.audio.speak.assert_not_called()
 
 
+def test_agentic_rate_limit_does_not_add_a_misleading_display_notice(
+    presentation_cli, monkeypatch
+):
+    cli, output = presentation_cli
+    cli.rate_limiter.can_make_request.side_effect = [
+        (True, None),
+        (False, "Fixture request limit reached"),
+    ]
+    monkeypatch.setattr(Config, "AGENTIC_ENABLED", True)
+
+    cli.handle_ask("Explain the result", route_override="backend")
+
+    assert output.getvalue().strip() == "Rate limit: Fixture request limit reached"
+    assert NO_DISPLAYABLE_NOTICE not in output.getvalue()
+    agent_loop.HistoryDB.return_value.log_message.assert_not_called()
+    cli.audio.speak.assert_not_called()
+    cli.terminal.execute.assert_not_called()
+
+
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+@pytest.mark.parametrize(
+    "scheme", ["Token", "ApiKey", "Negotiate", "OAuth", "AWS4-HMAC-SHA256"]
+)
+def test_additional_authorization_schemes_are_safe_at_actual_cli_boundaries(
+    presentation_cli, monkeypatch, agentic, scheme
+):
+    cli, output = presentation_cli
+    credential = "test" + "123456789" * 2
+    failure = "The operation failed; no task was completed."
+    answer = f"Authorization: {scheme} {credential}\n\n{failure}"
+    _deliver(monkeypatch, cli, answer, agentic=agentic, speak=True)
+
+    assert credential not in output.getvalue()
+    assert "Authorization: [REDACTED]" in output.getvalue()
+    assert failure in output.getvalue()
+    assert all(credential not in str(call) for call in cli.audio.speak.call_args_list)
+    cli.terminal.execute.assert_not_called()
+
+
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+def test_balanced_colon_span_keeps_following_content_and_redacts_later_fields(
+    presentation_cli, monkeypatch, agentic
+):
+    cli, output = presentation_cli
+    answer = (
+        "Token: [OAuth's docs](https://example.com) explains this.\n\n"
+        "The operation failed; no task was completed.\n\nSecret: maple"
+    )
+    _deliver(monkeypatch, cli, answer, agentic=agentic)
+
+    assert "Token: [REDACTED](https://example.com) explains this." in output.getvalue()
+    assert "The operation failed; no task was completed." in output.getvalue()
+    assert "Secret: [REDACTED]" in output.getvalue()
+    assert "maple" not in output.getvalue()
+    cli.terminal.execute.assert_not_called()
+
+
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+def test_authorization_standard_explanation_stays_complete(
+    presentation_cli, monkeypatch, agentic
+):
+    cli, output = presentation_cli
+    answer = (
+        "Authorization: RFC6750 describes bearer token usage.\n\nNo task was completed."
+    )
+    _deliver(monkeypatch, cli, answer, agentic=agentic)
+
+    assert answer in output.getvalue()
+
+
 def test_backend_parse_to_cli_preserves_code_and_ignores_private_envelope_fields(
     presentation_cli, monkeypatch
 ):
@@ -774,6 +845,137 @@ def test_backend_error_disclosure_labels_cannot_be_hidden_by_error_prefix(
     assert "internal diagnostic details were withheld" in displayed
     assert "private-error-fixture" not in displayed
     assert "Handled." not in displayed
+
+
+@pytest.mark.parametrize(
+    "details",
+    [
+        json.dumps({"error": '<vbl severity="4" />\nprivate-json-error-fixture'}),
+        json.dumps(
+            {"error": {"message": '<vbl severity="3" />\nprivate-json-error-fixture'}}
+        ),
+        json.dumps(
+            ["Public failure.", {"details": "audit_trace: private-json-error-fixture"}]
+        ),
+        json.dumps(
+            {"error": json.dumps('<vbl severity="4" />\nprivate-json-error-fixture')}
+        ),
+        '{"error":"<vbl severity=\\"4\\" /> private-json-error-fixture"',
+        '{"error":"Credential rejected: sk-\\u0066ixturefixturefixturefixturefixture"}',
+        '{"\\u0054oken":"orchard"}',
+        '{"\\u0061pi_key":"meadow"}',
+        '{"\\u0061udit_trace":{"payload":"private-json-error-fixture"}}',
+        json.dumps('{"\\u0061udit_trace":{"payload":"private-json-error-fixture"}}'),
+        '[{"error":"<vbl severity=\\"4\\" /> private-json-error-fixture"}',
+        json.dumps(
+            {"error": '{"error":"<vbl severity=\\"4\\" /> private-json-error-fixture"'}
+        ),
+        json.dumps({"error": '["<vbl severity=\\"4\\" /> private-json-error-fixture"'}),
+        *[
+            json.dumps({key: "private-json-error-fixture"})
+            for key in [
+                "active session id",
+                "session_boot",
+                "logic_engine",
+                "goals_processor",
+            ]
+        ],
+    ],
+    ids=[
+        "label",
+        "nested-label",
+        "record",
+        "encoded-label",
+        "malformed",
+        "encoded-credential",
+        "encoded-token-key",
+        "encoded-api-key",
+        "encoded-audit-key",
+        "nested-encoded-audit-key",
+        "malformed-array",
+        "nested-malformed-object",
+        "nested-malformed-array",
+        "session-id",
+        "boot-record",
+        "logic-record",
+        "goals-record",
+    ],
+)
+def test_structured_backend_errors_cannot_hide_private_fields_in_json(
+    presentation_cli, details
+):
+    from arcanos.backend_client import BackendRequestError
+
+    cli, output = presentation_cli
+    error = BackendRequestError(
+        kind="http", status_code=503, message="No task was completed.", details=details
+    )
+    cli_module.backend_ops.report_backend_error(cli, "chat", error)
+
+    displayed = output.getvalue()
+    assert "Backend chat failed [503]: No task was completed." in displayed
+    assert "internal diagnostic details were withheld" in displayed
+    assert "private-json-error-fixture" not in displayed
+    assert "fixturefixturefixture" not in displayed
+    cli.audio.speak.assert_not_called()
+
+
+def test_public_structured_backend_error_remains_complete_and_literal(presentation_cli):
+    from arcanos.backend_client import BackendRequestError
+
+    cli, output = presentation_cli
+    details = json.dumps(
+        {
+            "error": {"message": 'The backend failed. Keep "It is exact" and [red].'},
+            "warnings": ["No task was completed.", "Retry only after recovery."],
+            "retryable": False,
+        },
+        indent=2,
+    )
+    cli_module.backend_ops.report_backend_error(
+        cli,
+        "chat",
+        BackendRequestError(kind="http", message="Unavailable", details=details),
+    )
+
+    assert details in output.getvalue()
+    assert "internal diagnostic details were withheld" not in output.getvalue()
+
+
+@pytest.mark.parametrize("structured", [False, True], ids=["plain", "json-field"])
+def test_plain_bracketed_backend_warning_remains_complete(presentation_cli, structured):
+    from arcanos.backend_client import BackendRequestError
+
+    cli, output = presentation_cli
+    details = (
+        "[Warning] Backend unavailable; no task completed.\n\nRetry after recovery."
+    )
+    if structured:
+        details = json.dumps({"error": details})
+    cli_module.backend_ops.report_backend_error(
+        cli,
+        "chat",
+        BackendRequestError(kind="http", message="Unavailable", details=details),
+    )
+    assert details in output.getvalue()
+    assert "internal diagnostic details were withheld" not in output.getvalue()
+
+
+def test_structured_error_redacts_credentials_and_retains_public_failure(
+    presentation_cli,
+):
+    from arcanos.backend_client import BackendRequestError
+
+    cli, output = presentation_cli
+    details = json.dumps({"error": "No task was completed.", "password": "sunshine"})
+    cli_module.backend_ops.report_backend_error(
+        cli,
+        "chat",
+        BackendRequestError(kind="http", message="Unavailable", details=details),
+    )
+
+    assert details.replace("sunshine", "[REDACTED]") in output.getvalue()
+    assert "internal diagnostic details were withheld" not in output.getvalue()
 
 
 def test_backend_error_is_complete_literal_and_credential_safe(presentation_cli):

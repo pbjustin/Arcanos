@@ -297,15 +297,18 @@ export function buildQueuedAskPendingResponse(jobId: string): QueuedAskPendingRe
  *
  * Edge case behavior:
  * - Optional `clientContext` and `auditFlag` are omitted when absent to keep payloads compact.
+ * - Presentation provenance is omitted for persistence; synchronous callers must opt in explicitly.
  */
 export function buildCompletedQueuedAskOutput(
   trinityResult: TrinityResult,
-  jobInput: QueuedAskJobInput
+  jobInput: QueuedAskJobInput,
+  options: { includePresentation?: boolean } = {}
 ): CompletedQueuedAskJobOutput {
   return buildTrinityUserVisibleResponse({
     trinityResult,
     endpoint: jobInput.endpointName,
     clientContext: jobInput.clientContext,
-    auditFlag: jobInput.auditFlag
+    auditFlag: jobInput.auditFlag,
+    includePresentation: options.includePresentation === true
   });
 }

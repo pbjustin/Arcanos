@@ -39,6 +39,61 @@ if TYPE_CHECKING:
     from .cli import ArcanosCLI
 
 
+def _translate_backend_error_text(text: str) -> tuple[str, bool]:
+    """Inspect decoded JSON fields before displaying an untrusted error body.
+
+    Keep safe JSON verbatim. Withhold bodies with private or additionally
+    filtered fields rather than displaying their original escaped payloads.
+    """
+    def starts_json_container(value: str) -> bool:
+        # Plain bracketed warning labels are prose; malformed JSON bodies fail closed.
+        return value.lstrip().startswith("{") or bool(
+            re.match(r'^\s*\[\s*(?:["{\[\]\d-]|true\b|false\b|null\b|$)', value)
+        )
+
+    safe_text, show = translate("", text, source="backend")
+    if not show:
+        return "", False
+    try:
+        parsed = json.loads(safe_text)
+    except (ValueError, RecursionError):
+        return ("", False) if starts_json_container(safe_text) else (safe_text, True)
+
+    pending = [(parsed, True)]
+    while pending:
+        field, document = pending.pop()
+        if document:
+            # Decoded keys and their values must retain their assignment context.
+            try:
+                canonical = json.dumps(field, ensure_ascii=False)
+            except RecursionError:
+                return "", False
+            filtered, allowed = translate("", canonical, source="backend")
+            if not allowed or filtered != canonical:
+                return "", False
+        if isinstance(field, dict):
+            for key in field:
+                if not translate("", f"{key}:", source="backend")[1]:
+                    return "", False
+            pending.extend((value, False) for value in field.values())
+        elif isinstance(field, list):
+            pending.extend((value, False) for value in field)
+        elif isinstance(field, str) and field.strip():
+            filtered, allowed = translate("", field, source="backend")
+            if not allowed or filtered != field:
+                return "", False
+            # Nested encoded error bodies must not hide disclosure labels.
+            if field.lstrip().startswith(("{", "[", '"')):
+                try:
+                    pending.append((json.loads(field), True))
+                except ValueError:
+                    if starts_json_container(field):
+                        return "", False
+                except RecursionError:
+                    return "", False
+    return safe_text, True
+
+
 def report_backend_error(
     cli: "ArcanosCLI",
     action_label: str,
@@ -55,12 +110,8 @@ def report_backend_error(
         return
 
     status_info = f" [{error.status_code}]" if error.status_code else ""
-    safe_message, show_message = translate(
-        "",
-        error.message,
-        source="backend",
-    )
-    safe_details, show_details = translate("", error.details or "", source="backend")
+    safe_message, show_message = _translate_backend_error_text(error.message)
+    safe_details, show_details = _translate_backend_error_text(error.details or "")
     message = f"Backend {action_label} failed{status_info}"
     if show_message:
         message += f": {safe_message}"

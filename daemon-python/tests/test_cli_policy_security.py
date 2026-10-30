@@ -149,6 +149,10 @@ def test_non_secret_status_fields_remain_unchanged() -> None:
     "Token: SHA-256 identifies the hash algorithm.",
     "Authorization: RFC6750 describes bearer token usage.",
     "Cookie: SameSite=Lax prevents some cross-site requests.",
+    "Password: must be 12 characters.",
+    "Authorization: required for every endpoint.",
+    "Token: a short-lived credential.",
+    "Cookie: stores a browser preference.",
 ])
 def test_unquoted_glossary_labels_preserve_the_complete_explanation(source) -> None:
     """Ordinary labelled explanations and Markdown emphasis are answer content."""
@@ -176,6 +180,70 @@ def test_credential_shaped_colon_fields_keep_failures_and_hide_values(source, se
     assert "[REDACTED]" in redacted
     assert redacted.endswith(failure)
     assert redact_output(redacted, apply_truncation=False) == redacted
+
+
+@pytest.mark.parametrize("name", ["Token", "Secret", "api_key", "Password"])
+@pytest.mark.parametrize(("span", "tail"), [
+    ("[OAuth docs]", "(https://example.com) explains this."),
+    ("{placeholder}", " explains this."),
+    ("[alpha, beta]", " are documented here."),
+    ("[OAuth's docs]", "(https://example.com) explains this."),
+    ("{'note':'premature } private-fixture'}", " explains this."),
+    ("['premature ] private-fixture']", " explains this."),
+    ("{'note':'escaped \\' } private-fixture'}", " explains this."),
+    ("[{'note': ['premature ]', {'key': 'private } fixture'}]}]", " explains this."),
+])
+def test_balanced_non_json_colon_values_redact_only_the_bounded_span(name, span, tail) -> None:
+    """Ambiguous bracketed values must not discard later prose or later redaction."""
+    source = f"{name}: {span}{tail}\n\nMore content.\nPassword: sunshine\nThe task failed."
+    expected = f"{name}: [REDACTED]{tail}\n\nMore content.\nPassword: [REDACTED]\nThe task failed."
+    redacted = redact_output(source, apply_truncation=False)
+
+    assert redacted == expected
+    assert redact_output(redacted, apply_truncation=False) == expected
+    assert redact_output(source, apply_truncation=False, preserve_literal_unicode=True) == expected
+
+
+@pytest.mark.parametrize(("assignment", "expected"), [
+    ("Token: [unterminated", "Token: [REDACTED]"),
+    ("Token: {'note':'unclosed }", "Token: [REDACTED]"),
+    ("Token: ['escaped \\' ]", "Token: [REDACTED]"),
+    ("Token=[OAuth docs]", "Token=[REDACTED]"),
+    ('"Token": [OAuth docs]', '"Token": "[REDACTED]"'),
+    ("BACKEND_TOKEN: [OAuth docs]", "BACKEND_TOKEN: [REDACTED]"),
+])
+def test_unterminated_or_explicit_non_json_assignments_keep_fail_closed_tail_handling(
+    assignment, expected
+) -> None:
+    """Only balanced ambiguous colon fields gain a bounded non-JSON interpretation."""
+    source = f"{assignment} trailing-private-fixture\n\nMore content."
+    redacted = redact_output(source, apply_truncation=False)
+
+    assert redacted == expected
+    assert redact_output(redacted, apply_truncation=False) == expected
+
+
+def test_balanced_json_credential_fields_keep_following_status_and_explanation() -> None:
+    """Strict JSON values retain their established bounded redaction contract."""
+    source = '{"Token": {"fixture": ["private-value"]}, "status": "failed"}\n\nMore content.'
+    expected = '{"Token": "[REDACTED]", "status": "failed"}\n\nMore content.'
+    redacted = redact_output(source, apply_truncation=False)
+
+    assert redacted == expected
+    assert redact_output(redacted, apply_truncation=False) == expected
+
+
+@pytest.mark.parametrize("scheme", ["Token", "ApiKey", "Negotiate", "OAuth", "AWS4-HMAC-SHA256"])
+def test_additional_authorization_schemes_keep_credentials_private_and_failure_complete(scheme) -> None:
+    """Credential-bearing header schemes do not become public explanatory prose."""
+    failure = "\n\nBackend unavailable; the requested task was not completed."
+    source = f"Authorization: {scheme} fixture12345{failure}"
+    expected = f"Authorization: [REDACTED]{failure}"
+    redacted = redact_output(source, apply_truncation=False)
+
+    assert redacted == expected
+    assert redact_output(redacted, apply_truncation=False) == expected
+    assert redact_output(source, apply_truncation=False, preserve_literal_unicode=True) == expected
 
 
 @pytest.mark.parametrize("source", [

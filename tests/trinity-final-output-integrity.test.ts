@@ -133,6 +133,16 @@ describe('Trinity caller-declared final JSON integrity at actual provider extrac
     expect(buildTrinityUserVisibleResponse({ trinityResult: result }).presentation).toBeUndefined();
   });
 
+  it('omits presentation for persisted output without changing finalized in-process provenance', async () => {
+    const result = await run('direct');
+    const queued = buildTrinityUserVisibleResponse({ trinityResult: result, includePresentation: false });
+    expect(queued.result).toBe(raw);
+    expect(queued).not.toHaveProperty('presentation');
+    expect(JSON.parse(JSON.stringify(queued))).not.toHaveProperty('presentation');
+    expect(getFinalizedPublicAnswerPresentation(result)).toBe('public-answer-v1');
+    expect(buildTrinityUserVisibleResponse({ trinityResult: result }).presentation).toBe('public-answer-v1');
+  });
+
   it('preserves a false verification flag through the structured query-finetune compatibility caller', async () => {
     finalText = ' \n{"verified": false}\t ';
     const result = await runTrinity({ prompt, structured: true });

@@ -63,6 +63,8 @@ def run_agentic_loop(cli: Any, user_message: str, *, domain: Optional[str], from
             return_result=True,
             from_debug=from_debug,
         )
+        if convo is None:
+            return
         response_text = getattr(convo, "response_text", None)
 
         # Translate and extract proposals.

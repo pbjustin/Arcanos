@@ -164,22 +164,25 @@ def command_to_argv(command: str) -> list[str]:
 def _find_structured_assignment_end(value: str, start: int) -> int | None:
     closing_for = {"{": "}", "[": "]"}
     stack = [value[start]]
-    in_string = False
+    quote: str | None = None
     escaped = False
 
     for index in range(start + 1, len(value)):
         character = value[index]
-        if in_string:
+        if quote is not None:
             if escaped:
                 escaped = False
             elif character == "\\":
                 escaped = True
-            elif character == '"':
-                in_string = False
+            elif character == quote:
+                quote = None
             continue
 
-        if character == '"':
-            in_string = True
+        # Apostrophes within prose words do not open a quoted field value.
+        if character == '"' or (
+            character == "'" and (value[index - 1].isspace() or value[index - 1] in "[{:,")
+        ):
+            quote = character
         elif character in closing_for:
             if len(stack) >= _MAX_STRUCTURED_ASSIGNMENT_DEPTH:
                 return None
@@ -296,8 +299,12 @@ def _redact_named_assignment(
                 and len(token) >= 6
                 and re.search(r"[!@#$%^&+]", token) is not None
             )
-            authorization_value = env_name.lower() == "authorization" and re.match(
-                r"(?:Bearer|Basic|Digest)\s+\S+", remainder, re.IGNORECASE
+            authorization_value = env_name.lower() == "authorization" and (
+                re.match(r"(?:Bearer|Basic|Digest)\s+\S+", remainder, re.IGNORECASE)
+                or re.match(
+                    r"[A-Za-z][A-Za-z0-9_-]*[ \t]+(?=\S{8,}(?:\s|$))(?=\S*[0-9])\S+",
+                    remainder,
+                )
             )
             cookie_value = env_name.lower() == "cookie" and re.fullmatch(
                 r"[^;\s=]+=[^;\s]+(?:;\s*(?:[^;\s=]+=[^;]*|HttpOnly|Secure|Partitioned))*\s*",
@@ -318,10 +325,11 @@ def _redact_named_assignment(
             assignment_end = replacement_end
         elif first_character in ("{", "["):
             assignment_end = _find_structured_assignment_end(value, assignment_start)
-            if assignment_end is None or not _is_strict_json_assignment(
-                value,
-                assignment_start,
-                assignment_end,
+            # A generic colon label can contain balanced Markdown/prose; explicit
+            # assignments still require strict JSON before preserving a tail.
+            if assignment_end is None or (
+                not _is_strict_json_assignment(value, assignment_start, assignment_end)
+                and not (preserve_colon_prose and is_field and not match["key_quote"])
             ):
                 redacted_parts.append(value[cursor : match.start()])
                 redacted_parts.append(f"{match['prefix']}{replacement_value}")

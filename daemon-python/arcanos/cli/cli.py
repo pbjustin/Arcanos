@@ -528,7 +528,11 @@ class ArcanosCLI:
             "messageLength": len(route_decision.normalized_message),
         }
 
-        conversation_response = result.response_text if return_result else (response_for_user or "")
+        conversation_response = (
+            result.response_text
+            if return_result and isinstance(result.response_text, str)
+            else (response_for_user or "")
+        )
         memory_ops.record_conversation_turn(
             self,
             route_decision.normalized_message,
