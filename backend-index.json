@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-29T03:41:29.305Z",
+  "generatedAt": "2026-10-30T03:58:41.512Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4525,6 +4525,12 @@
           "relativePath": "tests/gaming-clear-source.test.ts"
         },
         {
+          "relativePath": "tests/gaming-colonisation-extraction.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-colonisation-workflow.integration.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-composition-preview-fixture.test.ts"
         },
         {
@@ -4748,6 +4754,9 @@
         },
         {
           "relativePath": "tests/gaming-mcp-preview.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-mechanic-identity-regression.test.ts"
         },
         {
           "relativePath": "tests/gaming-minecraft-child-isolation.test.ts"
