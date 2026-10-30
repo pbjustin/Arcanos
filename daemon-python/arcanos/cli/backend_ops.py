@@ -12,6 +12,8 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional, TYPE_CHECKING
 
+from rich.segment import Segment, Segments
+
 from .audit import record as audit_record
 from .trust_state import TrustState
 
@@ -28,6 +30,7 @@ from ..config import Config
 from ..conversation_routing import build_conversation_messages
 from ..credential_bootstrap import CredentialBootstrapError, bootstrap_credentials
 from ..error_handler import logger as error_logger
+from ..cli_midlayer import translate
 from .context import ConversationResult
 from . import state
 from arcanos.debug import log_audit_event
@@ -51,9 +54,21 @@ def report_backend_error(
         cli.console.print(f"[red]Backend {action_label} failed.[/red]")
         return
 
-    details = f" ({error.details})" if error.details else ""
     status_info = f" [{error.status_code}]" if error.status_code else ""
-    cli.console.print(f"[red]Backend {action_label} failed{status_info}: {error.message}{details}[/red]")
+    safe_message, show_message = translate(
+        "",
+        error.message,
+        source="backend",
+    )
+    safe_details, show_details = translate("", error.details or "", source="backend")
+    message = f"Backend {action_label} failed{status_info}"
+    if show_message:
+        message += f": {safe_message}"
+    if show_details:
+        message += f" ({safe_details})"
+    if not show_message or (error.details and not show_details):
+        message += "; internal diagnostic details were withheld."
+    cli.console.print(Segments([Segment(message)]), style="red", soft_wrap=True)
 
     # //audit assumption: network and timeout errors are operator-actionable; risk: unresolved connectivity issue; invariant: remediation hint shown; strategy: print endpoint guidance.
     if error.kind == "network" or error.kind == "timeout":

@@ -4,11 +4,11 @@ from dataclasses import dataclass
 import sys
 from typing import Any, Optional
 
-from rich.markdown import Markdown
-
 from ..config import Config
 from ..assistant.translator import translate_response
 from ..cli.cli_policy import redact_output
+from ..cli import ui_ops
+from ..voice_boundary import Persona
 from .history_db import HistoryDB
 from .patch_orchestrator import PatchOrchestrator
 from .policy_guard import PolicyGuard
@@ -45,7 +45,7 @@ def run_agentic_loop(cli: Any, user_message: str, *, domain: Optional[str], from
 
     Notes:
     - We translate raw backend output for a clean, assistant-like UX.
-    - Patch/command proposals are extracted and (optionally) suppressed from the displayed message.
+    - Complete approved answers remain visible alongside approval-gated proposals.
     """
     history = HistoryDB()
     guard = PolicyGuard(history)
@@ -74,12 +74,20 @@ def run_agentic_loop(cli: Any, user_message: str, *, domain: Optional[str], from
             response_text,
             source="backend",
             debug=from_debug,
-            suppress_proposals_in_display=True,
+            suppress_proposals_in_display=False,
         )
         if tr.should_show and tr.message:
-            cli.console.print()
-            cli.console.print(Markdown(tr.message))
-            cli.console.print()
+            ui_ops.speak_to_user(
+                cli,
+                response_text,
+                persona=Persona.CALM,
+                user_text=root_user_message,
+                memory=cli.memory,
+                debug_voice=from_debug,
+                filtered_text=tr.message,
+            )
+        else:
+            cli.console.print("No displayable response was returned.")
 
         history.log_message(cli.instance_id, "user", prompt)
         history.log_message(cli.instance_id, "assistant", response_text)

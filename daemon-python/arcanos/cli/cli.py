@@ -29,7 +29,6 @@ if sys.platform == "win32":
             except Exception:
                 pass
 
-from rich.markdown import Markdown
 from rich.table import Table
 from rich.console import Console
 
@@ -58,7 +57,7 @@ from ..protocol_runtime.schema_loader import load_protocol_contract
 from ..protocol_runtime.state_store import InMemoryProtocolStateStore
 from ..vision import VisionSystem
 from ..audio import AudioSystem
-from ..voice_boundary import Persona, apply_voice_boundary
+from ..voice_boundary import Persona
 from ..conversation_routing import ConversationRouteDecision, determine_conversation_route
 from ..cli_session import SessionContext
 from ..cli_ui import build_stats_table
@@ -508,21 +507,17 @@ class ArcanosCLI:
                 debug=from_debug,
             )
             if show and translated:
-                persona = resolve_persona(self)
-                sanitized = translated
-                if result.source == "backend":
-                    sanitized = apply_voice_boundary(
-                        translated,
-                        persona=persona,
-                        user_text=message,
-                        memory=self.memory,
-                        debug_voice=from_debug,
-                    )
-                response_for_user = sanitized
-                if not use_streaming:
-                    self.console.print()
-                    self.console.print(Markdown(sanitized))
-                    self.console.print()
+                response_for_user = ui_ops.speak_to_user(
+                    self,
+                    result.response_text,
+                    persona=resolve_persona(self),
+                    user_text=message,
+                    memory=self.memory,
+                    debug_voice=from_debug,
+                    filtered_text=translated,
+                )
+            else:
+                self.console.print("No displayable response was returned.")
 
         update_payload = {
             "eventId": str(uuid.uuid4()),

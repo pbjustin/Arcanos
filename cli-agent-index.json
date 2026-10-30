@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-30T03:58:41.512Z",
+  "generatedAt": "2026-10-30T15:29:10.332Z",
   "scopes": [
     {
       "scope": "clients",
@@ -524,6 +524,9 @@
         },
         {
           "relativePath": "daemon-python/tests/test_action_plan_types.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_answer_integrity.py"
         },
         {
           "relativePath": "daemon-python/tests/test_assistant_translator.py"

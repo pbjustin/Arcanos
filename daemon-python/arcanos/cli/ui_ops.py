@@ -7,13 +7,14 @@ from __future__ import annotations
 import os
 from typing import Any, Mapping, Optional, TYPE_CHECKING
 
-from rich.markdown import Markdown
 from rich.table import Table
+from rich.segment import Segment, Segments
 
 from ..cli_ui import build_help_panel, build_stats_table
 from ..config import Config
 from ..error_handler import logger as error_logger
-from ..voice_boundary import Persona, apply_voice_boundary
+from ..cli_midlayer import translate
+from ..voice_boundary import Persona
 from ..cli_intents import truncate_for_tts
 from .context import _UNSET_FILTER
 from .cli_policy import load_cli_policy, resolve_workspace_root
@@ -33,25 +34,24 @@ def speak_to_user(
     filtered_text: Any = _UNSET_FILTER,
 ) -> Optional[str]:
     """
-    Purpose: Apply voice boundary filtering and render safe markdown to the console.
+    Purpose: Apply presentation safety and render the complete approved text literally.
     Inputs/Outputs: raw response text plus persona/user context; returns filtered response or None.
     Edge cases: Returns None when voice boundary suppresses output.
     """
-    # //audit assumption: prefiltered text is optional optimization; risk: double-decay on repeated filtering; invariant: single boundary decision; strategy: honor caller-provided filtered text.
     filtered = filtered_text
     if filtered is _UNSET_FILTER:
-        filtered = apply_voice_boundary(
+        filtered, should_show = translate(
+            user_text,
             raw_text,
-            persona=persona,
-            user_text=user_text,
-            memory=memory,
-            debug_voice=debug_voice,
+            source="backend",
+            debug=debug_voice,
         )
+        if not should_show:
+            filtered = None
 
-    # //audit assumption: empty/None response should remain silent; risk: leakage via fallback print; invariant: print only safe non-empty text; strategy: guard before render.
-    if filtered:
+    if isinstance(filtered, str) and filtered.strip():
         cli.console.print()
-        cli.console.print(Markdown(filtered))
+        cli.console.print(Segments([Segment(filtered)]), soft_wrap=True)
         cli.console.print()
 
     return filtered

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from arcanos.cli_midlayer import translate
 
 
@@ -72,3 +74,40 @@ System Routing Details
 
     assert should_show is True
     assert translated.strip() == "Hello! How can I assist you today?"
+
+
+@pytest.mark.parametrize("fence", ["```", "~~~~"])
+def test_private_heading_literals_inside_code_are_preserved(fence) -> None:
+    code = f"{fence}text\n### Answer\n### 🛡️ Audit Summary\nSystem Routing Details\n{fence}"
+    raw = f"Warning: nothing was executed.\n\n{code}\n\n### 🛡️ Audit Summary\nprivate payload"
+    text, show = translate("What is this?", raw, source="backend")
+    assert show
+    assert code in text
+    assert text.startswith("Warning: nothing was executed.")
+    assert "private payload" not in text
+
+
+def test_private_section_does_not_discard_later_public_sections() -> None:
+    raw = "### Answer\nFirst paragraph.\n\n### Audit Summary\nprivate\n\n### Warning\nThe task failed."
+    text, show = translate("What is this?", raw, source="backend")
+    assert show
+    assert "First paragraph." in text
+    assert "### Warning\nThe task failed." in text
+    assert "private" not in text
+
+
+@pytest.mark.parametrize("source", ["local", "backend"])
+@pytest.mark.parametrize("debug", [False, True])
+def test_no_content_or_unsupported_input_invents_an_answer(source, debug) -> None:
+    for raw in [None, "", "  \n", {}, [], 123, "### Audit Summary\nprivate"]:
+        assert translate("hello", raw, source=source, debug=debug) == ("", False)
+
+
+def test_nested_disclosure_tags_cannot_bypass_translation() -> None:
+    raw = '<vbl severity="0" />\n<vbl severity="0" />\n<vbl severity="3" />\nprivate'
+    assert translate("explain", raw, source="backend", debug=True) == ("", False)
+
+
+def test_decorated_private_section_is_removed_before_rendering() -> None:
+    raw = "Public answer.\n\x1b[31m### Audit Summary\x1b[0m\nprivate payload"
+    assert translate("explain", raw, source="backend") == ("Public answer.", True)

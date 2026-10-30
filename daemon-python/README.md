@@ -56,6 +56,20 @@ You (terminal)
   -> summarized tool result returned to the backend for the next loop step
 ```
 
+## Answer presentation
+
+The CLI displays the complete approved answer as literal text, preserving
+Markdown source, code fences, indentation, quoted literals, and failure details.
+Ordinary and agentic chat, vision, and push-to-talk use the same disclosure
+boundary. Local response streams are buffered until that boundary can inspect
+the complete answer. Speech may be shortened separately from the textual answer.
+
+Backend disclosure labels and legacy private audit/routing sections remain
+protected, including in debug display mode. Credentials and unsafe terminal
+controls use the existing CLI redaction policy without answer-length truncation.
+Proposal extraction does not remove examples from the answer or grant execution
+permission; existing confirmation and policy checks still apply.
+
 ## Prerequisites
 
 - Python 3.10+

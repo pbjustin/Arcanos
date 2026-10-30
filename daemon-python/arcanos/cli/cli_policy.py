@@ -242,8 +242,9 @@ def _find_assignment_token_end(value: str, start: int) -> int:
 
 def _redact_named_assignment(value: str, env_name: str, replacement: str) -> str:
     pattern = re.compile(
-        rf"(?<![A-Za-z0-9_])({re.escape(env_name)}{_ASSIGNMENT_PADDING_PATTERN}="
-        rf"{_ASSIGNMENT_PADDING_PATTERN})",
+        rf"(?<![A-Za-z0-9_])(?P<prefix>(?P<key_quote>[\"']?)"
+        rf"{re.escape(env_name)}(?P=key_quote){_ASSIGNMENT_PADDING_PATTERN}"
+        rf"(?P<separator>[:=]){_ASSIGNMENT_PADDING_PATTERN})",
         re.IGNORECASE | re.ASCII,
     )
     redacted_parts: list[str] = []
@@ -259,7 +260,17 @@ def _redact_named_assignment(value: str, env_name: str, replacement: str) -> str
         assignment_end: int | None
         replacement_value = replacement
         first_character = value[assignment_start]
-        if first_character in ("{", "["):
+        is_field = match["separator"] == ":"
+        if is_field and match["key_quote"]:
+            replacement_value = f"{match['key_quote']}{replacement}{match['key_quote']}"
+        replacement_end = assignment_start + len(replacement)
+        if value.startswith(replacement, assignment_start) and (
+            replacement_end == len(value)
+            or value[replacement_end].isspace()
+            or (is_field and value[replacement_end] in ",}]")
+        ):
+            assignment_end = replacement_end
+        elif first_character in ("{", "["):
             assignment_end = _find_structured_assignment_end(value, assignment_start)
             if assignment_end is None or not _is_strict_json_assignment(
                 value,
@@ -267,13 +278,28 @@ def _redact_named_assignment(value: str, env_name: str, replacement: str) -> str
                 assignment_end,
             ):
                 redacted_parts.append(value[cursor : match.start()])
-                redacted_parts.append(f"{match.group(1)}{replacement}")
+                redacted_parts.append(f"{match['prefix']}{replacement_value}")
                 cursor = len(value)
                 break
-            assignment_end = _find_assignment_token_end(value, assignment_end)
+            if not is_field:
+                assignment_end = _find_assignment_token_end(value, assignment_end)
         elif first_character in ('"', "'"):
-            assignment_end = _find_assignment_token_end(value, assignment_start)
+            if is_field:
+                quoted_value = re.match(
+                    r'''"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*' ''',
+                    value[assignment_start:],
+                    re.VERBOSE,
+                )
+                assignment_end = (
+                    assignment_start + quoted_value.end() if quoted_value else len(value)
+                )
+            else:
+                assignment_end = _find_assignment_token_end(value, assignment_start)
             replacement_value = f"{first_character}{replacement}{first_character}"
+        elif is_field:
+            delimiter = r"[\r\n]" if not match["key_quote"] and env_name.lower() in ("authorization", "cookie") else r"[\s,}\]]"
+            end_match = re.search(delimiter, value[assignment_start:])
+            assignment_end = assignment_start + end_match.start() if end_match else len(value)
         else:
             assignment_end = _find_assignment_token_end(value, assignment_start)
 
@@ -282,7 +308,7 @@ def _redact_named_assignment(value: str, env_name: str, replacement: str) -> str
             continue
 
         redacted_parts.append(value[cursor : match.start()])
-        redacted_parts.append(f"{match.group(1)}{replacement_value}")
+        redacted_parts.append(f"{match['prefix']}{replacement_value}")
         cursor = assignment_end
         search_from = assignment_end
 
@@ -296,19 +322,26 @@ def _redact_sanitized_output(
     replacement: str,
 ) -> str:
     redacted = value
-    for env_name in policy.get("redactionPolicy", {}).get("envNames") or []:
+    env_names = policy.get("redactionPolicy", {}).get("envNames") or []
+    for env_name in env_names:
         redacted = _redact_named_assignment(redacted, str(env_name), replacement)
     redacted = re.sub(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}", f"Bearer {replacement}", redacted, flags=re.IGNORECASE)
     redacted = re.sub(r"\bsk-[A-Za-z0-9_-]{12,}\b", replacement, redacted)
     redacted = re.sub(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,}\b", replacement, redacted)
     redacted = re.sub(r"\brwy_[A-Za-z0-9_=-]{20,}\b", replacement, redacted, flags=re.IGNORECASE)
     redacted = re.sub(r"\b[A-Za-z][A-Za-z0-9+.-]*://[^\s\"'`]*:[^\s\"'`@]+@[^\s\"'`]+", replacement, redacted)
-    redacted = re.sub(
-        r"\b((?:token|secret|password|api[_-]?key|authorization|cookie)\s*=\s*)([\"']?)[^\s\"'`]+([\"']?)",
-        rf"\1\2{replacement}\3",
-        redacted,
-        flags=re.IGNORECASE,
-    )
+    sensitive_names = {
+        match[1]
+        for match in re.finditer(
+            r'''(?<![A-Za-z0-9_])["']?((?:[A-Za-z][A-Za-z0-9_]*_)?(?:token|secret|password|api[_-]?key|authorization|cookie))["']?\s*[:=]''',
+            redacted,
+            re.IGNORECASE | re.ASCII,
+        )
+    }
+    configured_names = {str(name).lower() for name in env_names}
+    for name in sorted(sensitive_names):
+        if name.lower() not in configured_names:
+            redacted = _redact_named_assignment(redacted, name, replacement)
     redacted = re.sub(r"BEGIN [A-Z ]*PRIVATE KEY[\s\S]*?END [A-Z ]*PRIVATE KEY", replacement, redacted, flags=re.IGNORECASE)
     return redacted
 
@@ -318,6 +351,7 @@ def redact_output(
     *,
     apply_truncation: bool = True,
     preserve_record_separators: bool = False,
+    preserve_literal_unicode: bool = False,
 ) -> str:
     policy = load_cli_policy()
     replacement = policy.get("redactionPolicy", {}).get("replacement") or "[REDACTED]"
@@ -334,6 +368,18 @@ def redact_output(
         + frame.separator
         for frame in frames
     )
+    if preserve_literal_unicode and not preserve_record_separators:
+        # Answer literals may intentionally contain emoji selectors/joiners.
+        # Preserve them only when the canonical security view proves that the
+        # same credentials are redacted. Terminal controls and bidi overrides
+        # still cannot reach the renderer; other output callers keep defaults.
+        literal = _sanitize_terminal_segment(value or "")
+        if literal is not None:
+            literal = _redact_sanitized_output(
+                BIDI_CONTROL_PATTERN.sub("", literal), policy, replacement
+            )
+            if DEFAULT_IGNORABLE_CODE_POINT_PATTERN.sub("", literal) == redacted:
+                redacted = literal
     return truncate_output(redacted) if apply_truncation else redacted
 
 

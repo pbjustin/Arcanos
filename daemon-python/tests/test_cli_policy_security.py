@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from arcanos.cli.cli_policy import (
@@ -47,6 +49,73 @@ def test_redaction_and_truncation_use_shared_policy() -> None:
 
     assert fake_value not in redacted
     assert "[REDACTED]" in redacted
+
+
+@pytest.mark.parametrize("name", [
+    "ARCANOS_DAEMON_ACCESS_TOKEN", "BACKEND_TOKEN", "DEBUG_SERVER_TOKEN",
+    "ARCANOS_CLI_BRIDGE_TOKEN", "password", "api_key", "apiKey", "cookie",
+])
+def test_credential_assignments_preserve_complete_failure_qualifications(name) -> None:
+    source = f'{name}="fixture credential with spaces"\nThe requested task failed.'
+    expected = f'{name}="[REDACTED]"\nThe requested task failed.'
+    assert redact_output(source, apply_truncation=False) == expected
+
+
+@pytest.mark.parametrize("secret_value", [
+    "fixture credential with spaces", 'fixture "quoted" credential',
+    {"nested": ["fixture credential"]}, ["fixture credential"], 12345,
+])
+def test_json_credential_redaction_preserves_structure_and_status(secret_value) -> None:
+    source = json.dumps({"status": "failed", "password": secret_value, "retryable": True})
+    redacted = redact_output(source, apply_truncation=False)
+    assert json.loads(redacted) == {
+        "status": "failed", "password": "[REDACTED]", "retryable": True,
+    }
+
+
+def test_json_and_header_credentials_do_not_expose_opaque_values() -> None:
+    source = '{"BACKEND_TOKEN":"fixture token", "api_key":"fixture key", "status":"failed"}'
+    assert json.loads(redact_output(source, apply_truncation=False)) == {
+        "BACKEND_TOKEN": "[REDACTED]", "api_key": "[REDACTED]", "status": "failed",
+    }
+    assert redact_output("Authorization: Bearer short-fixture\nTask failed.", apply_truncation=False) == (
+        "Authorization: [REDACTED]\nTask failed."
+    )
+
+
+def test_non_secret_status_fields_remain_unchanged() -> None:
+    source = '{"token_count":12,"token_status":"expired","authorization_status":"failed","status":"pending"}'
+    assert redact_output(source, apply_truncation=False) == source
+
+
+@pytest.mark.parametrize("source", [
+    "OPENAI_API_KEY=fixture-value\nImportant qualification.",
+    "BACKEND_TOKEN=fixture-value\nImportant qualification.",
+    '{"api_key":"fixture-value","status":"failed"}',
+])
+def test_credential_redaction_is_idempotent_without_losing_the_answer(source) -> None:
+    redacted = redact_output(source, apply_truncation=False)
+    assert redact_output(redacted, apply_truncation=False) == redacted
+    assert "fixture-value" not in redacted
+    assert "Important qualification." in redacted or '"status":"failed"' in redacted
+
+
+def test_answer_literal_unicode_preservation_cannot_bypass_redaction() -> None:
+    code = '```python\nvalue = "🛡️ 👩‍💻"\n```'
+    assert redact_output(code, apply_truncation=False, preserve_literal_unicode=True) == code
+    sources = [
+        "BACKEND_\u200bTOKEN=fixture-value\nTask failed.",
+        "ARCANOS_DAEMON_ACCESS_TO\ufe0fKEN=fixture-value\nTask failed.",
+        "\x1b[31mBACKEND_TOKEN=fixture-value\x1b[0m\nTask failed.",
+        "sk-\u200b" + "fixture" * 5 + "\nTask failed.",
+        '{"pass\u200bword":"fixture-value","status":"failed"}',
+    ]
+    for source in sources:
+        redacted = redact_output(source, apply_truncation=False, preserve_literal_unicode=True)
+        assert "fixture-value" not in redacted
+        assert "fixturefixture" not in redacted
+        assert "[REDACTED]" in redacted
+        assert "Task failed." in redacted or '"status":"failed"' in redacted
 
 
 def test_redaction_consumes_complete_quoted_named_assignments(monkeypatch) -> None:
