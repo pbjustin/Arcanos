@@ -246,6 +246,46 @@ def test_additional_authorization_schemes_keep_credentials_private_and_failure_c
     assert redact_output(source, apply_truncation=False, preserve_literal_unicode=True) == expected
 
 
+@pytest.mark.parametrize(("scheme", "credential"), [
+    ("Token", "sunshine"),
+    ("ApiKey", "orchid"),
+    ("OAuth", "maple"),
+    ("Negotiate", "example"),
+    ("Custom.Auth", "a"),
+    ("X-Custom_v1", "elm"),
+    ("Bearer", "pine"),
+    ("Basic", "oak"),
+    ("Digest", "ash"),
+    ("Custom-Params", "fixture12345, Signature=fixture-value"),
+])
+def test_authorization_single_token_credentials_have_no_length_or_digit_requirement(
+    scheme, credential
+) -> None:
+    failure = "\nThe operation failed.\n\nNo requested task was completed."
+    source = f"Authorization: {scheme} {credential}{failure}"
+    expected = f"Authorization: [REDACTED]{failure}"
+
+    assert redact_output(source, apply_truncation=False) == expected
+    assert redact_output(expected, apply_truncation=False) == expected
+    assert redact_output(source, apply_truncation=False, preserve_literal_unicode=True) == expected
+
+
+def test_two_word_authorization_explanations_choose_privacy_conservatively() -> None:
+    """A scheme-like two-word explanation cannot reliably be distinguished from a header."""
+    assert redact_output("Authorization: requires authentication", apply_truncation=False) == (
+        "Authorization: [REDACTED]"
+    )
+
+
+def test_authorization_quoted_json_values_keep_valid_json_and_failure_context() -> None:
+    source = '{"Authorization":"Token sunshine","status":"failed","warning":"No task completed."}'
+    redacted = redact_output(source, apply_truncation=False)
+    assert json.loads(redacted) == {
+        "Authorization": "[REDACTED]", "status": "failed", "warning": "No task completed."
+    }
+    assert redact_output(redacted, apply_truncation=False) == redacted
+
+
 @pytest.mark.parametrize("source", [
     'password="test fixture value with spaces"',
     'BACKEND_TOKEN="fixture value with spaces"',

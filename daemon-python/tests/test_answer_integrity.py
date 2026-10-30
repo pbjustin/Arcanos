@@ -11,6 +11,7 @@ import pytest
 from rich.console import Console
 
 from arcanos.agentic import agent_loop
+from arcanos.agentic.history_db import HistoryDB
 from arcanos.backend_client import BackendApiClient, BackendResponse
 from arcanos.cli import cli as cli_module
 from arcanos.cli import ui_ops
@@ -186,6 +187,7 @@ def _deliver(
     source="backend",
     speak=False,
     presentation=None,
+    message="What is the complete answer?",
 ):
     result = ConversationResult(
         answer, 7, 0.0, "backend-fixture", source, presentation=presentation
@@ -201,9 +203,7 @@ def _deliver(
         lambda *args, **kwargs: result,
     )
     monkeypatch.setattr(Config, "AGENTIC_ENABLED", agentic)
-    cli.handle_ask(
-        "What is the complete answer?", route_override=source, speak_response=speak
-    )
+    cli.handle_ask(message, route_override=source, speak_response=speak)
 
 
 @pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
@@ -424,6 +424,123 @@ def test_short_alphabetic_credentials_are_hidden_but_failures_remain_complete(
     assert "Handled." not in displayed
     assert "I've got this covered." not in displayed
     assert all(value not in str(call) for call in cli.audio.speak.call_args_list)
+    cli.terminal.execute.assert_not_called()
+
+
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+@pytest.mark.parametrize(
+    "scheme,credential",
+    [
+        ("Token", "sunshine"),
+        ("ApiKey", "orchid"),
+        ("OAuth", "maple"),
+        ("Negotiate", "example"),
+        ("CustomScheme", "birch"),
+    ],
+)
+def test_short_authorization_credentials_stay_private_in_display_and_stored_history(
+    presentation_cli, monkeypatch, tmp_path, agentic, scheme, credential
+):
+    """The approved failure reaches console and durable history without credentials."""
+    cli, output = presentation_cli
+    history = HistoryDB(tmp_path / "history.sqlite3") if agentic else None
+    if history is not None:
+        monkeypatch.setattr(agent_loop, "HistoryDB", lambda: history)
+    failure = (
+        "The requested task failed; no changes were made.\n\nKeep this qualification."
+    )
+    answer = f"Authorization: {scheme} {credential}\n\n{failure}"
+    expected = f"Authorization: [REDACTED]\n\n{failure}"
+    _deliver(monkeypatch, cli, answer, agentic=agentic, speak=True)
+
+    assert expected in output.getvalue()
+    assert credential not in output.getvalue()
+    assert credential not in (cli._last_response or "")
+    assert all(credential not in str(call) for call in cli.audio.speak.call_args_list)
+    assert "Handled." not in output.getvalue()
+    stored_turns = [call.args[1] for call in cli.memory.add_conversation.call_args_list]
+    assert stored_turns and all(content == expected for content in stored_turns)
+    if history is not None:
+        export_path = tmp_path / "audit.json"
+        history.export_audit(export_path, session_id=cli.instance_id)
+        audit = json.loads(export_path.read_text(encoding="utf-8"))
+        assert [row[2] for row in audit["messages"] if row[1] == "assistant"] == [
+            expected
+        ]
+        assert credential not in export_path.read_text(encoding="utf-8")
+    cli.terminal.execute.assert_not_called()
+
+
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "Authorization: RFC6750 describes bearer token usage.\n\nThe task failed.",
+        PYTHON_ANSWER,
+        UNICODE_ANSWER,
+    ],
+    ids=["explanatory-prose", "markdown-code", "unicode-literal"],
+)
+def test_safe_explanations_and_code_remain_exact_in_stored_history(
+    presentation_cli, monkeypatch, tmp_path, agentic, answer
+):
+    """Protecting history cannot rewrite legitimate prose, Markdown or code literals."""
+    cli, output = presentation_cli
+    history = HistoryDB(tmp_path / "history.sqlite3") if agentic else None
+    if history is not None:
+        monkeypatch.setattr(agent_loop, "HistoryDB", lambda: history)
+    _deliver(monkeypatch, cli, answer, agentic=agentic, speak=True)
+
+    assert answer in output.getvalue()
+    assert NO_DISPLAYABLE_NOTICE not in output.getvalue()
+    assert all(call.args[0] == answer for call in cli.audio.speak.call_args_list)
+    stored_turns = [call.args[1] for call in cli.memory.add_conversation.call_args_list]
+    assert stored_turns and all(content == answer for content in stored_turns)
+    if history is not None:
+        export_path = tmp_path / "audit.json"
+        history.export_audit(export_path, session_id=cli.instance_id)
+        audit = json.loads(export_path.read_text(encoding="utf-8"))
+        assert [row[2] for row in audit["messages"] if row[1] == "assistant"] == [
+            answer
+        ]
+    cli.terminal.execute.assert_not_called()
+
+
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+def test_user_credentials_are_private_and_long_answers_are_complete_in_history(
+    presentation_cli, monkeypatch, tmp_path, agentic
+):
+    """Both history roles are protected without the default output truncation limit."""
+    cli, output = presentation_cli
+    history = HistoryDB(tmp_path / "history.sqlite3") if agentic else None
+    if history is not None:
+        monkeypatch.setattr(agent_loop, "HistoryDB", lambda: history)
+    credential = "rose" + "wood"
+    message = f"Authorization: CustomScheme {credential}\n\nExplain the failure."
+    safe_message = "Authorization: [REDACTED]\n\nExplain the failure."
+    answer = (
+        "Keep every qualification unchanged.\n" * 400 + "\nThe task was not completed."
+    )
+    assert len(answer) > 12_000
+    _deliver(monkeypatch, cli, answer, agentic=agentic, speak=True, message=message)
+
+    assert answer in output.getvalue()
+    assert credential not in output.getvalue()
+    assert credential not in (cli._last_response or "")
+    assert all(credential not in str(call) for call in cli.audio.speak.call_args_list)
+    assert [
+        (call.args[0], call.args[1])
+        for call in cli.memory.add_conversation.call_args_list
+    ] == [(safe_message, answer)]
+    if history is not None:
+        export_path = tmp_path / "audit.json"
+        history.export_audit(export_path, session_id=cli.instance_id)
+        audit = json.loads(export_path.read_text(encoding="utf-8"))
+        assert {row[1]: row[2] for row in audit["messages"]} == {
+            "user": safe_message,
+            "assistant": answer,
+        }
+        assert credential not in export_path.read_text(encoding="utf-8")
     cli.terminal.execute.assert_not_called()
 
 

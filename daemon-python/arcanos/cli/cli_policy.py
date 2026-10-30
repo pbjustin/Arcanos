@@ -256,6 +256,10 @@ def _redact_named_assignment(
     as a credential, even if it is a short word. One-word explanations share
     that ambiguous shape; multiword explanations retain the existing checks.
     Markdown closing delimiters alone are formatting, not a field value.
+    An Authorization scheme identifier followed by exactly one token is also
+    treated as a credential regardless of length. Two-word explanations can
+    share this shape and are conservatively redacted; arbitrary custom schemes
+    cannot be distinguished perfectly from prose.
     """
     pattern = re.compile(
         rf"(?<![A-Za-z0-9_])(?P<prefix>(?P<key_quote>[\"']?)"
@@ -301,6 +305,7 @@ def _redact_named_assignment(
             )
             authorization_value = env_name.lower() == "authorization" and (
                 re.match(r"(?:Bearer|Basic|Digest)\s+\S+", remainder, re.IGNORECASE)
+                or re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]*[ \t]+\S+[ \t]*", field_line)
                 or re.match(
                     r"[A-Za-z][A-Za-z0-9_-]*[ \t]+(?=\S{8,}(?:\s|$))(?=\S*[0-9])\S+",
                     remainder,
