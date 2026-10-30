@@ -108,6 +108,13 @@ def test_control_normalization_cannot_hide_private_metadata(text):
     assert apply_voice_boundary(text, persona=Persona.CALM) is None
 
 
+@pytest.mark.parametrize("prefix", ['He said "hello. ', 'He said "hello.\n'])
+def test_escaped_private_json_after_unmatched_prose_quotes_stays_private(prefix):
+    text = prefix + r'{"a\u0075dit_trace":"private-fixture"}'
+    assert classify(text) == Severity.SEV_3
+    assert apply_voice_boundary(text, persona=Persona.CALM) is None
+
+
 def test_literal_unicode_is_preserved_but_obfuscated_credentials_are_redacted():
     code = '```python\nmessage = "🛡️ family 👨‍👩‍👧; a\u200bb"\n```'
     assert apply_voice_boundary(code, persona=Persona.CALM) == code
@@ -119,8 +126,11 @@ def test_literal_unicode_is_preserved_but_obfuscated_credentials_are_redacted():
     assert result == "Credential rejected: [REDACTED]"
 
 
-def test_fenced_diagnostic_example_is_content():
-    text = "```text\nTraceback (most recent call last):\nValueError: cannot parse\n```\nThis is your error."
+@pytest.mark.parametrize("text", [
+    "```text\nTraceback (most recent call last):\nValueError: cannot parse\n```\nThis is your error.",
+    r'{"example":"{\"\\u0061udit_trace\": \"a quoted field example\"}","status":"failed"}',
+])
+def test_fenced_or_quoted_diagnostic_example_is_content(text):
     assert classify(text) == Severity.SEV_0
     assert apply_voice_boundary(text, persona=Persona.CALM) == text
 

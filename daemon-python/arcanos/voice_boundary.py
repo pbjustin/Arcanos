@@ -6,7 +6,7 @@ from enum import Enum
 import re
 from typing import Any, Optional, Tuple
 
-from .cli.cli_policy import redact_output, strip_unsafe_output_controls
+from .cli.cli_policy import iter_json_fields, redact_output, strip_unsafe_output_controls
 
 
 class Persona(Enum):
@@ -62,6 +62,9 @@ _FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 
 def classify(text: str) -> Severity:
     """Recognize legacy diagnostic records, not isolated diagnostic phrases."""
+    for name, _, _ in iter_json_fields(text):
+        if re.fullmatch(r"audit_trace|boot_snapshot|memory_shell_\w+", name, re.I):
+            return Severity.SEV_3
     fence = ""
     fence_length = 0
     for line in text.splitlines():

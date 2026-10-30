@@ -310,6 +310,105 @@ def test_parameterized_custom_authorization_headers_redact_alphabetic_credential
     assert redact_output(source, apply_truncation=False, preserve_literal_unicode=True) == expected
 
 
+@pytest.mark.parametrize(("source", "escaped_key", "expected"), [
+    (
+        r'{ "\u0070assword" : "sunshine", "status" : "failed" }',
+        r'"\u0070assword"',
+        {"password": "[REDACTED]", "status": "failed"},
+    ),
+    (
+        r'{"items":[{"\u0074oken":["sunshine",{"value":"orchid"}]}],"status":"failed"}',
+        r'"\u0074oken"',
+        {"items": [{"token": "[REDACTED]"}], "status": "failed"},
+    ),
+    (
+        r'{"outer":{"nested":[{"api\u005fkey":{"value":"sunshine"}}]},"status":"failed"}',
+        r'"api\u005fkey"',
+        {"outer": {"nested": [{"api_key": "[REDACTED]"}]}, "status": "failed"},
+    ),
+    (
+        r'{"\u004fPENAI_API_KEY":"sunshine","status":"failed"}',
+        r'"\u004fPENAI_API_KEY"',
+        {"OPENAI_API_KEY": "[REDACTED]", "status": "failed"},
+    ),
+    (
+        r'[{"\u0070assword":"sunshine"},{"status":"failed"}]',
+        r'"\u0070assword"',
+        [{"password": "[REDACTED]"}, {"status": "failed"}],
+    ),
+    (
+        r'{"\u0041uthorization":"Custom realm=\"example\", credential=\"sunshine\"","status":"failed"}',
+        r'"\u0041uthorization"',
+        {"Authorization": "[REDACTED]", "status": "failed"},
+    ),
+])
+def test_escaped_json_credential_keys_redact_values_in_nested_containers(
+    source, escaped_key, expected,
+) -> None:
+    """JSON escapes cannot disguise sensitive field names or break safe fields."""
+    redacted = redact_output(source, apply_truncation=False)
+
+    assert json.loads(redacted) == expected
+    assert escaped_key in redacted
+    assert redact_output(redacted, apply_truncation=False) == redacted
+    assert redact_output(source, apply_truncation=False, preserve_literal_unicode=True) == redacted
+
+
+def test_escaped_json_configured_field_names_use_the_shared_policy(monkeypatch) -> None:
+    monkeypatch.setattr("arcanos.cli.cli_policy.load_cli_policy", lambda: {
+        "redactionPolicy": {"replacement": "[REDACTED]", "envNames": ["CUSTOM_HEADER"]},
+    })
+    source = r'{"nested":[{"\u0043USTOM_HEADER":"sunshine"}],"status":"failed"}'
+    redacted = redact_output(source, apply_truncation=False)
+
+    assert json.loads(redacted) == {
+        "nested": [{"CUSTOM_HEADER": "[REDACTED]"}], "status": "failed",
+    }
+    assert redact_output(redacted, apply_truncation=False) == redacted
+
+
+@pytest.mark.parametrize("source", [
+    '{\n  "message": "🛡️ 👩‍💻",\n  "status": "failed",\n  "count": 1e+02\n}\n',
+    r'{ "note" : "\\u0070assword is a literal escape", "status" : "failed" }',
+    r'{"note":"\\u0061udit_trace and \\u001b are literal text","path":"C:\\fixture\\file"}',
+    r'{"example":"{\"\\u0061udit_trace\": \"a quoted field example\"}","status":"failed"}',
+])
+def test_safe_json_bytes_and_literal_value_escapes_are_preserved(source) -> None:
+    """Decoded field inspection must not rewrite safe JSON or reinterpret its values."""
+    assert json.loads(source)
+    assert redact_output(source, apply_truncation=False, preserve_literal_unicode=True) == source
+
+
+@pytest.mark.parametrize("prefix", ['He said "hello. ', 'He said "hello.\n'])
+def test_escaped_json_credentials_after_unmatched_prose_quotes_stay_private(prefix):
+    source = prefix + r'{"pass\u0077ord":"sunshine","status":"failed"}' + "\nFinal qualification."
+    assert redact_output(source, apply_truncation=False) == source.replace("sunshine", "[REDACTED]")
+
+
+@pytest.mark.parametrize("raw_value", [
+    "123SYNTHETICFIXTURE", "trueSYNTHETICFIXTURE",
+    "{}SYNTHETICFIXTURE", "[]SYNTHETICFIXTURE",
+])
+def test_escaped_json_credentials_do_not_accept_value_prefixes(raw_value):
+    source = r'{"pass\u0077ord":' + raw_value + "}"
+    redacted = redact_output(source, apply_truncation=False)
+    assert "SYNTHETICFIXTURE" not in redacted
+    assert "[REDACTED]" in redacted
+    assert redact_output(redacted, apply_truncation=False) == redacted
+
+
+def test_duplicate_and_overlapping_escaped_json_credentials_stay_private():
+    source = r'{"pass\u0077ord":"sunshine","pass\u0077ord":{"nested":{"\u0074oken":"orchard"}},"status":"failed"}'
+    expected = r'{"pass\u0077ord":"[REDACTED]","pass\u0077ord":"[REDACTED]","status":"failed"}'
+    assert redact_output(source, apply_truncation=False) == expected
+
+
+def test_literal_javascript_credential_fields_retain_following_code_and_qualification():
+    source = 'const cfg = {"token": process.env.TOKEN, "safe": true};\nKeep this qualification.'
+    expected = source.replace("process.env.TOKEN", '"[REDACTED]"')
+    assert redact_output(source, apply_truncation=False) == expected
+
+
 @pytest.mark.parametrize("source", [
     'password="test fixture value with spaces"',
     'BACKEND_TOKEN="fixture value with spaces"',

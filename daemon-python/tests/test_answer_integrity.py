@@ -484,13 +484,15 @@ def test_short_authorization_credentials_stay_private_in_display_and_stored_hist
             "Authorization: CustomScheme token=orchard, version=one",
             ["orchard"],
         ),
+        ('{"\\u0054oken":"orchard"}', ["orchard"]),
+        ('{"\\u0061pi_key":"meadow"}', ["meadow"]),
     ],
-    ids=["quoted-auth-params", "custom-token-scheme", "auth-params"],
+    ids=["quoted-auth-params", "custom-token-scheme", "auth-params", "escaped-token", "escaped-api-key"],
 )
 def test_encoded_credentials_are_private_across_presentation_and_both_history_roles(
     presentation_cli, monkeypatch, tmp_path, agentic, credential_text, secrets
 ):
-    """Custom authorization headers cannot bypass actual persisted sinks."""
+    """Header parameters and JSON escapes cannot bypass actual persisted sinks."""
     cli, output = presentation_cli
     history = HistoryDB(tmp_path / "history.sqlite3") if agentic else None
     if history is not None:
@@ -538,6 +540,7 @@ def test_encoded_credentials_are_private_across_presentation_and_both_history_ro
         (PYTHON_ANSWER, None),
         (UNICODE_ANSWER, None),
         (STRUCTURED_ANSWER, None),
+        ('{"message":"Keep \\u2603 and \\u0061 exactly.","status":"pending"}', None),
         (
             "## Audit Summary\nRequested public report.\n\n## Failure\nThe task was not completed.",
             "public-answer-v1",
@@ -548,6 +551,7 @@ def test_encoded_credentials_are_private_across_presentation_and_both_history_ro
         "markdown-code",
         "unicode-literal",
         "structured",
+        "literal-json-escapes",
         "public-report",
     ],
 )
@@ -580,23 +584,41 @@ def test_safe_explanations_and_code_remain_exact_in_stored_history(
 
 @pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
 @pytest.mark.parametrize(
-    "answer",
+    "answer,presentation",
     [
-        '<vbl severity="3" />\nPRIVATE_HISTORY_FIXTURE',
-        "audit_trace: PRIVATE_HISTORY_FIXTURE",
-        "UNSAFE_HISTORY_FIXTURE\bPRIVATE_HISTORY_FIXTURE",
+        ('<vbl severity="3" />\nPRIVATE_HISTORY_FIXTURE', None),
+        ("audit_trace: PRIVATE_HISTORY_FIXTURE", None),
+        ("UNSAFE_HISTORY_FIXTURE\bPRIVATE_HISTORY_FIXTURE", None),
+        ('{"\\u0061udit_trace":{"payload":"PRIVATE_HISTORY_FIXTURE"}}', None),
+        (
+            '{"outer":[{"\\u0062oot_snapshot":{"payload":"PRIVATE_HISTORY_FIXTURE"}}]}',
+            "public-answer-v1",
+        ),
+        (
+            '```json\n{"\\u0061udit_trace":"PRIVATE_HISTORY_FIXTURE"}\n```\n\n```bash\nprintf PRIVATE_HISTORY_FIXTURE\n```',
+            "public-answer-v1",
+        ),
     ],
-    ids=["private-label", "private-record", "unsafe-control"],
+    ids=[
+        "private-label",
+        "private-record",
+        "unsafe-control",
+        "escaped-private-key",
+        "nested-escaped-private-key",
+        "fenced-escaped-private-proposal",
+    ],
 )
 def test_withheld_answers_cannot_reappear_in_conversation_or_audit_history(
-    presentation_cli, monkeypatch, tmp_path, agentic, answer
+    presentation_cli, monkeypatch, tmp_path, agentic, answer, presentation
 ):
     """Both persisted surfaces follow the approved display decision, including replay."""
     cli, output = presentation_cli
     history = HistoryDB(tmp_path / "history.sqlite3") if agentic else None
     if history is not None:
         monkeypatch.setattr(agent_loop, "HistoryDB", lambda: history)
-    _deliver(monkeypatch, cli, answer, agentic=agentic, speak=True)
+    _deliver(
+        monkeypatch, cli, answer, agentic=agentic, speak=True, presentation=presentation
+    )
 
     assert output.getvalue().count(NO_DISPLAYABLE_NOTICE) == 1
     assert "PRIVATE_HISTORY_FIXTURE" not in output.getvalue()
@@ -1123,8 +1145,6 @@ def test_backend_error_disclosure_labels_cannot_be_hidden_by_error_prefix(
         ),
         '{"error":"<vbl severity=\\"4\\" /> private-json-error-fixture"',
         '{"error":"Credential rejected: sk-\\u0066ixturefixturefixturefixturefixture"}',
-        '{"\\u0054oken":"orchard"}',
-        '{"\\u0061pi_key":"meadow"}',
         '{"\\u0061udit_trace":{"payload":"private-json-error-fixture"}}',
         json.dumps('{"\\u0061udit_trace":{"payload":"private-json-error-fixture"}}'),
         '[{"error":"<vbl severity=\\"4\\" /> private-json-error-fixture"}',
@@ -1149,8 +1169,6 @@ def test_backend_error_disclosure_labels_cannot_be_hidden_by_error_prefix(
         "encoded-label",
         "malformed",
         "encoded-credential",
-        "encoded-token-key",
-        "encoded-api-key",
         "encoded-audit-key",
         "nested-encoded-audit-key",
         "malformed-array",
@@ -1222,13 +1240,14 @@ def test_plain_bracketed_backend_warning_remains_complete(presentation_cli, stru
     assert "internal diagnostic details were withheld" not in output.getvalue()
 
 
+@pytest.mark.parametrize("key", ["password", r"\u0054oken", r"\u0061pi_key"])
 def test_structured_error_redacts_credentials_and_retains_public_failure(
-    presentation_cli,
+    presentation_cli, key,
 ):
     from arcanos.backend_client import BackendRequestError
 
     cli, output = presentation_cli
-    details = json.dumps({"error": "No task was completed.", "password": "sunshine"})
+    details = '{"error": "No task was completed.", "' + key + '": "sunshine"}'
     cli_module.backend_ops.report_backend_error(
         cli,
         "chat",
@@ -1236,6 +1255,7 @@ def test_structured_error_redacts_credentials_and_retains_public_failure(
     )
 
     assert details.replace("sunshine", "[REDACTED]") in output.getvalue()
+    assert "sunshine" not in output.getvalue()
     assert "internal diagnostic details were withheld" not in output.getvalue()
 
 
