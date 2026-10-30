@@ -1,4 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import express from 'express';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
+import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
 import { GAMING_CLEAR_DIMENSIONS } from '../src/shared/gaming/gamingClearPolicy.js';
 import type { GamingHybridResponse } from '../src/shared/gaming/gamingHybridContract.js';
@@ -39,6 +45,10 @@ jest.unstable_mockModule('../src/core/db/index.js', () => ({
 }));
 
 const { createGamingHybridWorkflow } = await import('../src/services/gamingHybridKnowledge.js');
+const { createGamingMcpExecutor } = await import('../src/chatgpt/gaming.js');
+const { createChatGptGamingMcpRouter } = await import('../src/routes/chatgptGamingMcp.js');
+const { readGamingAuthConfiguration } = await import('../src/chatgpt/gamingAuth.js');
+const { GAMING_MCP_PATH, GAMING_QUERY_SCOPE } = await import('../src/shared/chatgpt/gamingMcpContract.js');
 const { logger } = await import('../src/platform/logging/structuredLogging.js');
 const { resetSafetyRuntimeStateForTests } = await import('../src/services/safety/runtimeState.js');
 const { resetTrinitySelfHealingStateForTests } = await import('../src/services/selfImprove/selfHealingV2.js');
@@ -148,10 +158,104 @@ function harness() {
     idempotencyKey: operationKey ?? (recovery ? 'colonisation-recovery' : 'colonisation-submit'),
     candidates: [{ url: recovery ? `${sourceUrl}-replacement` : sourceUrl }]
   }, context);
-  return { start, submit };
+  return { workflow, start, submit };
 }
 
 describe('synthetic system colonisation through acquired evidence and real Trinity', () => {
+  // The existing colonisation cases invoke the workflow directly. This adds
+  // the authenticated MCP composition through real acquisition, selection,
+  // Trinity and CLEAR, with external transports and persistence still mocked.
+  it('returns a source-bound colonisation answer through authenticated MCP discovery and submission', async () => {
+    html = article('Elite Dangerous System Colonisation guide',
+      `This guide covers Elite Dangerous System Colonisation. ${definition} ${gameplay}`);
+    const values: Record<string, string> = {
+      CHATGPT_GAMING_ENABLED: 'true', CHATGPT_GAMING_ISSUER: 'https://colonisation-issuer.invalid/',
+      CHATGPT_GAMING_RESOURCE: 'https://colonisation-resource.invalid/chatgpt/gaming/mcp',
+      CHATGPT_GAMING_JWKS_URL: 'https://colonisation-issuer.invalid/jwks',
+      CHATGPT_GAMING_OWNER_SUBJECT: 'synthetic-colonisation-owner'
+    };
+    const configuration = readGamingAuthConfiguration(name => values[name]);
+    if (configuration.status !== 'ready') throw new Error('Expected synthetic Gaming OAuth configuration.');
+    const keys = await generateKeyPair('RS256');
+    const keyResolver = createLocalJWKSet({ keys: [{ ...await exportJWK(keys.publicKey), kid: 'colonisation', alg: 'RS256' }] });
+    const bearer = await new SignJWT({ scope: GAMING_QUERY_SCOPE }).setProtectedHeader({ alg: 'RS256', typ: 'at+jwt', kid: 'colonisation' })
+      .setIssuer(configuration.issuer).setAudience(configuration.resource).setSubject(configuration.ownerSubject)
+      .setIssuedAt().setExpirationTime('1h').sign(keys.privateKey);
+    const { workflow } = harness();
+    const app = express();
+    app.use(createChatGptGamingMcpRouter({ configuration, verification: { keyResolver, readEnvironmentValue: () => undefined },
+      providerAdmission: (_req, _res, next) => next(),
+      execute: createGamingMcpExecutor({ hybridQuery: workflow.query, candidates: workflow.candidates,
+        ingestCandidates: forbiddenWrite as never, ingestSources: forbiddenWrite as never, refreshSources: forbiddenWrite as never }) }));
+    const server = createServer(app).listen(0, '127.0.0.1');
+    const client = new Client({ name: 'colonisation-mcp-fixture', version: '1.0.0' });
+    try {
+      await once(server, 'listening');
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Expected loopback listener.');
+      const origin = `http://127.0.0.1:${address.port}`;
+      const methods: string[] = [];
+      const transport = new StreamableHTTPClientTransport(new URL(origin + GAMING_MCP_PATH), {
+        requestInit: { headers: { Authorization: `Bearer ${bearer}` } },
+        fetch: (target, init) => {
+          expect(new URL(target instanceof Request ? target.url : String(target)).origin).toBe(origin);
+          if (typeof init?.body === 'string') methods.push(JSON.parse(init.body).method);
+          return fetch(target, { ...init, redirect: 'error' });
+        }
+      });
+      await client.connect(transport);
+      expect((await client.listTools()).tools.map(tool => tool.name))
+        .toEqual(expect.arrayContaining(['arcanos_gaming_hybrid_query', 'arcanos_gaming_submit_candidates']));
+      const queried = await client.callTool({ name: 'arcanos_gaming_hybrid_query', arguments: {
+        contractVersion, game: 'Elite Dangerous', question, mode: 'guide', storagePolicy: 'transient_only', idempotencyKey: 'colonisation-mcp-query'
+      } });
+      expect(queried.isError).not.toBe(true);
+      const initial = (queried.structuredContent as { statusCode: number; result: GamingHybridResponse }).result;
+      expect(initial).toMatchObject({ revision: 0, nextAction: 'search', evidenceSelected: false });
+      expect(http).not.toHaveBeenCalled(); expect(provider).not.toHaveBeenCalled();
+      const submission = { contractVersion, workflowId: initial.workflowId, expectedRevision: initial.revision,
+        discoveryType: 'gameplay_evidence', idempotencyKey: 'colonisation-mcp-submit', candidates: [{ url: sourceUrl }] };
+      const stale = await client.callTool({ name: 'arcanos_gaming_submit_candidates',
+        arguments: { ...submission, expectedRevision: initial.revision! + 1, idempotencyKey: 'colonisation-mcp-stale' } });
+      expect(stale.isError).toBe(true);
+      expect(stale.structuredContent).toMatchObject({ statusCode: 409, result: { reason: 'STALE_WORKFLOW_REVISION', revision: 0 } });
+      expect(http).not.toHaveBeenCalled(); expect(provider).not.toHaveBeenCalled();
+      const completed = await client.callTool({ name: 'arcanos_gaming_submit_candidates', arguments: submission });
+      expect(completed.isError).not.toBe(true);
+      const final = (completed.structuredContent as { statusCode: number; result: GamingHybridResponse }).result;
+      expect(final).toMatchObject({ revision: 1, state: 'answer_ready', nextAction: 'answer', coverageSatisfied: true,
+        evidenceSelected: true, missingCoverage: [], answer: { provenance: 'arcanos-trinity' } });
+      expect(final.selectedCandidateIds).toHaveLength(1);
+      expect(final.selectedEvidenceIds!.length).toBeGreaterThan(0);
+      expect(final.answer!.sources).toEqual([expect.objectContaining({ url: sourceUrl, sourceId: final.selectedCandidateIds![0] })]);
+      expect(final.answer!.response).toBe(`${sentences.join(' ')} [Source 1]`);
+      expect(stages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
+      expect(audits[0].evidence.every((chunk: any) => final.selectedCandidateIds!.includes(chunk.sourceId)
+        && final.selectedEvidenceIds!.includes(chunk.chunkId))).toBe(true);
+      const evaluation = (logger.info as jest.Mock).mock.calls.find(call => call[0] === 'gaming.source.evaluation')![1];
+      expect(evaluation).toMatchObject({ outcome: 'selected', stages: {
+        acquisition: { status: 'passed' }, extraction: { status: 'passed' }, identity: { status: 'passed' },
+        applicability: { status: 'passed' }, provenance: { status: 'passed' }, selection: { status: 'passed' }
+      } });
+      expect((await client.callTool({ name: 'arcanos_gaming_submit_candidates', arguments: submission })).structuredContent)
+        .toEqual(completed.structuredContent);
+      const write = await client.callTool({ name: 'arcanos_gaming_ingest_candidates', arguments: {
+        contractVersion, workflowId: initial.workflowId, candidateIds: final.selectedCandidateIds!,
+        storagePolicy: 'ask_before_store', confirmStore: true, idempotencyKey: 'colonisation-mcp-denied-write'
+      } });
+      expect(write.isError).toBe(true);
+      expect(write.content).toEqual([{ type: 'text', text: 'GAMING_PERMISSION_DENIED' }]);
+      expect(methods).toEqual(expect.arrayContaining(['initialize', 'notifications/initialized', 'tools/list', 'tools/call']));
+      expect(http).toHaveBeenCalledTimes(1); expect(provider).toHaveBeenCalledTimes(4);
+    } finally {
+      try { await client.close(); }
+      finally {
+        server.closeAllConnections();
+        await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+      }
+    }
+  });
+
   it.each([
     ['Elite Dangerous System Colonisation guide', `This guide covers Elite Dangerous System Colonisation. ${definition} ${gameplay}`],
     ['System Colonisation guide', `In the game Elite Dangerous, commanders plan a system colonisation project. ${gameplay}`]
