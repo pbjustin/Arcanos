@@ -36,7 +36,7 @@ def speak_to_user(
     """
     Purpose: Apply presentation safety and render the complete approved text literally.
     Inputs/Outputs: raw response text plus persona/user context; returns filtered response or None.
-    Edge cases: Returns None when voice boundary suppresses output.
+    Edge cases: Reports withheld/blank output once and returns None without speaking it.
     """
     filtered = filtered_text
     if filtered is _UNSET_FILTER:
@@ -53,6 +53,9 @@ def speak_to_user(
         cli.console.print()
         cli.console.print(Segments([Segment(filtered)]), soft_wrap=True)
         cli.console.print()
+    else:
+        cli.console.print("No displayable response was returned.")
+        return None
 
     return filtered
 

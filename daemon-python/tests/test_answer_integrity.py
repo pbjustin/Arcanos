@@ -31,6 +31,7 @@ UNICODE_ANSWER = '```python\nmessage = "🛡️ 👨‍👩‍👧 a\u200bb"\n``
 FAKE_API_KEY = "sk-" + "fixture" * 5
 FAKE_BEARER = "fixture" * 5
 FAKE_PASSWORD = "P@" + "ssw0rd!"
+NO_DISPLAYABLE_NOTICE = "No displayable response was returned."
 
 PUBLIC_LABELS = [
     "- **Token:** a short-lived credential",
@@ -195,6 +196,7 @@ def test_complete_answers_reach_real_console_unchanged(
     _deliver(monkeypatch, cli, answer, agentic=agentic)
 
     assert answer in output.getvalue()
+    assert NO_DISPLAYABLE_NOTICE not in output.getvalue()
     assert cli._last_error is None
     cli.terminal.execute.assert_not_called()
 
@@ -277,6 +279,9 @@ def test_private_content_and_credentials_do_not_reach_console(
     assert "Handled." not in output.getvalue()
     assert secret not in (cli._last_response or "")
     assert all(secret not in str(call) for call in cli.audio.speak.call_args_list)
+    assert output.getvalue().count(NO_DISPLAYABLE_NOTICE) == int(
+        answer.startswith("<vbl")
+    )
     cli.terminal.execute.assert_not_called()
 
 
@@ -291,6 +296,8 @@ def test_unsupported_answers_never_invent_success(
     assert "Handled." not in output.getvalue()
     assert "I've got this covered." not in output.getvalue()
     assert "unsupported" not in output.getvalue()
+    assert output.getvalue().count(NO_DISPLAYABLE_NOTICE) == 1
+    assert "None" not in output.getvalue()
     assert not cli._last_response
     cli.audio.speak.assert_not_called()
 
@@ -355,6 +362,46 @@ def test_shared_vision_presentation_keeps_failure_details(presentation_cli):
 
     assert displayed == answer
     assert answer in output.getvalue()
+    assert NO_DISPLAYABLE_NOTICE not in output.getvalue()
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [None, "", " \n\t", 42, {}, [], '<vbl severity="3" />\nprivate-shared-fixture'],
+    ids=["none", "empty", "whitespace", "number", "object", "array", "private"],
+)
+def test_shared_presentation_reports_withheld_or_invalid_answer_once(
+    presentation_cli, answer
+):
+    """Every shared presentation caller receives one neutral notice after denial."""
+    cli, output = presentation_cli
+    displayed = ui_ops.speak_to_user(
+        cli, answer, persona=Persona.CALM, user_text="Explain", memory=cli.memory
+    )
+
+    assert output.getvalue().strip() == NO_DISPLAYABLE_NOTICE
+    assert not displayed
+    cli.audio.speak.assert_not_called()
+
+
+@pytest.mark.parametrize("filtered", [None, ""], ids=["none", "empty"])
+def test_explicit_suppression_never_falls_back_to_raw_answer(
+    presentation_cli, filtered
+):
+    """A caller's deny result stays denied without reprocessing or leaking raw text."""
+    cli, output = presentation_cli
+    displayed = ui_ops.speak_to_user(
+        cli,
+        "private-raw-answer-must-stay-hidden",
+        persona=Persona.CALM,
+        user_text="Explain",
+        memory=cli.memory,
+        filtered_text=filtered,
+    )
+
+    assert output.getvalue().strip() == NO_DISPLAYABLE_NOTICE
+    assert not displayed
+    cli.audio.speak.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -380,6 +427,7 @@ def test_stream_is_complete_and_filtered_before_any_answer_is_displayed(
 
     if "private-stream-fixture" in answer:
         assert "private-stream-fixture" not in output.getvalue()
+        assert output.getvalue().count(NO_DISPLAYABLE_NOTICE) == 1
         assert not cli._last_response
     else:
         assert output.getvalue().count(answer) == 1
@@ -413,10 +461,13 @@ def test_multimodal_display_uses_the_same_integrity_boundary(
 
     if "private-vision-fixture" in answer:
         assert "private-vision-fixture" not in output.getvalue()
+        assert output.getvalue().count(NO_DISPLAYABLE_NOTICE) == 1
+        assert "None" not in output.getvalue()
         assert not cli._last_response
         cli.audio.speak.assert_not_called()
     else:
         assert answer in output.getvalue()
+        assert NO_DISPLAYABLE_NOTICE not in output.getvalue()
         assert cli._last_response == answer
     assert cli._last_error is None
 

@@ -63,10 +63,7 @@ def run_agentic_loop(cli: Any, user_message: str, *, domain: Optional[str], from
             return_result=True,
             from_debug=from_debug,
         )
-        if convo is None or not getattr(convo, "response_text", None):
-            return
-
-        response_text = convo.response_text
+        response_text = getattr(convo, "response_text", None)
 
         # Translate and extract proposals.
         tr = translate_response(
@@ -76,18 +73,17 @@ def run_agentic_loop(cli: Any, user_message: str, *, domain: Optional[str], from
             debug=from_debug,
             suppress_proposals_in_display=False,
         )
-        if tr.should_show and tr.message:
-            ui_ops.speak_to_user(
-                cli,
-                response_text,
-                persona=Persona.CALM,
-                user_text=root_user_message,
-                memory=cli.memory,
-                debug_voice=from_debug,
-                filtered_text=tr.message,
-            )
-        else:
-            cli.console.print("No displayable response was returned.")
+        ui_ops.speak_to_user(
+            cli,
+            response_text,
+            persona=Persona.CALM,
+            user_text=root_user_message,
+            memory=cli.memory,
+            debug_voice=from_debug,
+            filtered_text=tr.message if tr.should_show else None,
+        )
+        if not isinstance(response_text, str) or not response_text:
+            return
 
         history.log_message(cli.instance_id, "user", prompt)
         history.log_message(cli.instance_id, "assistant", response_text)

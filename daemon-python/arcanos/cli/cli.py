@@ -506,18 +506,15 @@ class ArcanosCLI:
                 source=result.source,
                 debug=from_debug,
             )
-            if show and translated:
-                response_for_user = ui_ops.speak_to_user(
-                    self,
-                    result.response_text,
-                    persona=resolve_persona(self),
-                    user_text=message,
-                    memory=self.memory,
-                    debug_voice=from_debug,
-                    filtered_text=translated,
-                )
-            else:
-                self.console.print("No displayable response was returned.")
+            response_for_user = ui_ops.speak_to_user(
+                self,
+                result.response_text,
+                persona=resolve_persona(self),
+                user_text=message,
+                memory=self.memory,
+                debug_voice=from_debug,
+                filtered_text=translated if show else None,
+            )
 
         update_payload = {
             "eventId": str(uuid.uuid4()),
