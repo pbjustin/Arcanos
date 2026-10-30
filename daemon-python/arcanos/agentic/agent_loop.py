@@ -72,6 +72,7 @@ def run_agentic_loop(cli: Any, user_message: str, *, domain: Optional[str], from
             source="backend",
             debug=from_debug,
             suppress_proposals_in_display=False,
+            presentation=getattr(convo, "presentation", None),
         )
         ui_ops.speak_to_user(
             cli,

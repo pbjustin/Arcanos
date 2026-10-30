@@ -7,8 +7,8 @@ import re
 from .voice_boundary import Persona, Severity, apply_voice_boundary, extract_severity
 from .cli.cli_policy import redact_output, strip_unsafe_output_controls
 
-# Compatibility with legacy backend answer/audit envelopes. Only whole section
-# headings outside code are structural; ordinary mentions are answer content.
+# Compatibility with unmarked legacy backend answer/audit envelopes. A
+# server-owned public-answer marker disables only this ambiguous heading filter.
 _PRIVATE_SECTION = re.compile(
     r"^(?:#{1,6}\s+)?(?:(?:🛡\ufe0f?|🛑|📊)\s*)?"
     r"(?:Audit Summary|System Routing Details|COMPLIANCE STATUS)\s*:?\s*$",
@@ -84,11 +84,14 @@ def translate(
     *,
     source: str = "local",
     debug: bool = False,
+    presentation: str | None = None,
 ) -> tuple[str, bool]:
     """Return complete safe answer text and whether it can be displayed.
 
     Source/debug flags remain compatible with callers; neither bypasses the
     disclosure boundary. The backend owns wording, structure and task outcomes.
+    Only producer metadata can distinguish public headings from legacy private
+    sections. Missing or unknown metadata retains the legacy protection.
     """
     if not isinstance(response_text, str) or not response_text.strip():
         return "", False
@@ -99,6 +102,10 @@ def translate(
     _, severity = extract_severity(redact_output(response_text, apply_truncation=False))
     if severity in (Severity.SEV_3, Severity.SEV_4):
         return "", False
-    text = _strip_private_sections(response_text)
+    text = (
+        response_text
+        if presentation == "public-answer-v1"
+        else _strip_private_sections(response_text)
+    )
     approved = apply_voice_boundary(text, persona=Persona.CALM, user_text=user_message)
     return (approved, True) if approved else ("", False)

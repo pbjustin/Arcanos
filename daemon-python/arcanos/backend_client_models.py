@@ -55,6 +55,7 @@ class BackendChatResult:
     tokens_used: int
     cost_usd: float
     model: str
+    presentation: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,7 @@ class BackendVisionResult:
     tokens_used: int
     cost_usd: float
     model: str
+    presentation: Optional[str] = None
 
 
 @dataclass(frozen=True)

@@ -1875,6 +1875,10 @@
             "const": "completed"
           },
           "result": {},
+          "presentation": {
+            "const": "public-answer-v1",
+            "description": "Optional server-owned format state for finalized in-process answer text. It preserves public answer headings without granting disclosure or execution authority. Missing or unknown state retains legacy private-section protection."
+          },
           "routeDecision": {
             "type": "object",
             "additionalProperties": true
@@ -2125,6 +2129,10 @@
             "const": true
           },
           "result": {},
+          "presentation": {
+            "const": "public-answer-v1",
+            "description": "Optional server-owned format state for finalized in-process answer text. Caller and nested result properties cannot grant this state; unmarked modules and restored durable output omit it."
+          },
           "routeDecision": {
             "$ref": "#/components/schemas/GptRouteDecision"
           },

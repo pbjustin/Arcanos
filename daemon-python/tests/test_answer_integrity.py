@@ -10,7 +10,7 @@ import pytest
 from rich.console import Console
 
 from arcanos.agentic import agent_loop
-from arcanos.backend_client import BackendApiClient
+from arcanos.backend_client import BackendApiClient, BackendResponse
 from arcanos.cli import cli as cli_module
 from arcanos.cli import ui_ops
 from arcanos.cli.context import ConversationResult
@@ -33,6 +33,17 @@ FAKE_API_KEY = "sk-" + "fixture" * 5
 FAKE_BEARER = "fixture" * 5
 FAKE_PASSWORD = "P@" + "ssw0rd!"
 NO_DISPLAYABLE_NOTICE = "No displayable response was returned."
+PUBLIC_ANSWER_HEADINGS = [
+    "Audit Summary",
+    "### Audit Summary",
+    "### 🛡️ Audit Summary",
+    "### 🛑 Audit Summary",
+    "System Routing Details",
+    "### System Routing Details",
+    "COMPLIANCE STATUS",
+    "📊 COMPLIANCE STATUS",
+    "### 📊 COMPLIANCE STATUS",
+]
 SHORT_CREDENTIALS = [
     ("Password", "sunshine"),
     ("Token", "orchard"),
@@ -165,8 +176,19 @@ def presentation_cli(monkeypatch):
     return cli, output
 
 
-def _deliver(monkeypatch, cli, answer, *, agentic=False, source="backend", speak=False):
-    result = ConversationResult(answer, 7, 0.0, "backend-fixture", source)
+def _deliver(
+    monkeypatch,
+    cli,
+    answer,
+    *,
+    agentic=False,
+    source="backend",
+    speak=False,
+    presentation=None,
+):
+    result = ConversationResult(
+        answer, 7, 0.0, "backend-fixture", source, presentation=presentation
+    )
     monkeypatch.setattr(
         cli_module.backend_ops,
         "perform_backend_conversation",
@@ -215,6 +237,85 @@ def test_complete_answers_reach_real_console_unchanged(
 
 
 @pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+@pytest.mark.parametrize("heading", PUBLIC_ANSWER_HEADINGS)
+def test_backend_public_answer_metadata_preserves_headings_failures_and_proposals(
+    presentation_cli, monkeypatch, agentic, heading
+):
+    """Trusted producer metadata makes otherwise ambiguous headings public content."""
+    cli, output = presentation_cli
+    answer = (
+        f"Public preface.\n\n{heading}\nThis is the requested public report.\n\n"
+        "### Failure\nBackend unavailable; the requested task was not completed.\n\n"
+        "```bash\nprintf public-proposal-fixture\n```"
+    )
+    _deliver(monkeypatch, cli, answer, agentic=agentic, presentation="public-answer-v1")
+
+    assert answer in output.getvalue()
+    assert NO_DISPLAYABLE_NOTICE not in output.getvalue()
+    if agentic:
+        cli.terminal.is_command_safe.assert_called_once_with(
+            "printf public-proposal-fixture"
+        )
+    cli.terminal.execute.assert_not_called()
+
+
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+def test_public_metadata_survives_real_backend_parsing_projection_and_cli_display(
+    presentation_cli, monkeypatch, agentic
+):
+    """Only transport is stubbed along the complete backend answer presentation path."""
+    cli, output = presentation_cli
+    answer = "Public preface.\n\n### Audit Summary\nRequested public report.\n\n### Failure\nThe task was not completed."
+    client = BackendApiClient.__new__(BackendApiClient)
+    client._request_json = MagicMock(
+        return_value=BackendResponse(
+            ok=True,
+            value={
+                "ok": True,
+                "result": {"text": answer},
+                "presentation": "public-answer-v1",
+                "model": "backend-fixture",
+            },
+        )
+    )
+    cli.backend_client = client
+    cli.client_id = "fixture-client"
+    cli.memory.get_recent_conversations.return_value = []
+    monkeypatch.setattr(Config, "AGENTIC_ENABLED", agentic)
+    monkeypatch.setattr(Config, "BACKEND_GPT_ID", "arcanos-daemon")
+    monkeypatch.setattr(
+        cli_module.backend_ops, "refresh_registry_cache_if_stale", lambda _: None
+    )
+
+    cli.handle_ask("Give a complete answer.", route_override="backend")
+
+    assert answer in output.getvalue()
+    assert NO_DISPLAYABLE_NOTICE not in output.getvalue()
+    assert cli._last_error is None
+    client._request_json.assert_called_once()
+    assert client._request_json.call_args.args[1] == "/gpt/arcanos-daemon"
+    cli.gpt_client.ask.assert_not_called()
+    cli.terminal.execute.assert_not_called()
+
+
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+@pytest.mark.parametrize(
+    "presentation", [None, "public-answer-v2"], ids=["unmarked", "unknown"]
+)
+def test_unmarked_or_unknown_backend_metadata_keeps_legacy_sections_private(
+    presentation_cli, monkeypatch, agentic, presentation
+):
+    """Only the exact established producer label changes legacy section handling."""
+    cli, output = presentation_cli
+    answer = "### Answer\nPublic answer.\n\n### Audit Summary\nprivate-legacy-fixture"
+    _deliver(monkeypatch, cli, answer, agentic=agentic, presentation=presentation)
+
+    assert "Public answer." in output.getvalue()
+    assert "private-legacy-fixture" not in output.getvalue()
+    cli.terminal.execute.assert_not_called()
+
+
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
 @pytest.mark.parametrize(
     "multiparagraph", [False, True], ids=["standalone", "paragraphs"]
 )
@@ -258,6 +359,9 @@ def test_full_text_is_retained_separately_from_short_speech(
 
 @pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
 @pytest.mark.parametrize(
+    "presentation", [None, "public-answer-v1"], ids=["legacy", "public-answer"]
+)
+@pytest.mark.parametrize(
     "answer,secret",
     [
         (
@@ -268,6 +372,7 @@ def test_full_text_is_retained_separately_from_short_speech(
             '<vbl severity="4" />\nDeveloper-only data: developer-fixture-value',
             "developer-fixture-value",
         ),
+        ("audit_trace: private-machine-fixture", "private-machine-fixture"),
         (
             f"The request failed. API_KEY={FAKE_API_KEY}",
             FAKE_API_KEY,
@@ -283,17 +388,19 @@ def test_full_text_is_retained_separately_from_short_speech(
     ],
 )
 def test_private_content_and_credentials_do_not_reach_console(
-    presentation_cli, monkeypatch, agentic, answer, secret
+    presentation_cli, monkeypatch, agentic, answer, secret, presentation
 ):
     cli, output = presentation_cli
-    _deliver(monkeypatch, cli, answer, agentic=agentic, speak=True)
+    _deliver(
+        monkeypatch, cli, answer, agentic=agentic, speak=True, presentation=presentation
+    )
 
     assert secret not in output.getvalue()
     assert "Handled." not in output.getvalue()
     assert secret not in (cli._last_response or "")
     assert all(secret not in str(call) for call in cli.audio.speak.call_args_list)
     assert output.getvalue().count(NO_DISPLAYABLE_NOTICE) == int(
-        answer.startswith("<vbl")
+        answer.startswith(("<vbl", "audit_trace:"))
     )
     cli.terminal.execute.assert_not_called()
 
@@ -332,6 +439,9 @@ def test_voice_boundary_redacts_short_alphabetic_credentials(key, value):
 
 @pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
 @pytest.mark.parametrize(
+    "presentation", [None, "public-answer-v1"], ids=["legacy", "public-answer"]
+)
+@pytest.mark.parametrize(
     "control",
     ["\b", "\r", "\x1b[2D", "\x1b[", "\x1b", "\x1b]0;unterminated"],
     ids=[
@@ -344,7 +454,7 @@ def test_voice_boundary_redacts_short_alphabetic_credentials(key, value):
     ],
 )
 def test_unsafe_terminal_frame_gets_one_notice_without_partial_answer_or_actions(
-    presentation_cli, monkeypatch, agentic, control
+    presentation_cli, monkeypatch, agentic, control, presentation
 ):
     """Reject unsafe display controls before rendering, replay, speech or proposals."""
     cli, output = presentation_cli
@@ -352,7 +462,9 @@ def test_unsafe_terminal_frame_gets_one_notice_without_partial_answer_or_actions
         f"Failure-prefix-fixture: task incomplete.{control}unsafe-tail\n\n"
         "```bash\nprintf private-control-fixture\n```"
     )
-    _deliver(monkeypatch, cli, answer, agentic=agentic, speak=True)
+    _deliver(
+        monkeypatch, cli, answer, agentic=agentic, speak=True, presentation=presentation
+    )
 
     assert output.getvalue().strip() == NO_DISPLAYABLE_NOTICE
     assert not cli._last_response
@@ -482,6 +594,57 @@ def test_shared_vision_presentation_keeps_failure_details(presentation_cli):
     assert displayed == answer
     assert answer in output.getvalue()
     assert NO_DISPLAYABLE_NOTICE not in output.getvalue()
+
+
+@pytest.mark.parametrize("mode", ["shared", "vision"])
+@pytest.mark.parametrize("presentation", [None, "public-answer-v2", "public-answer-v1"])
+def test_public_presentation_metadata_reaches_shared_and_backend_vision_boundaries(
+    presentation_cli, monkeypatch, mode, presentation
+):
+    """Trusted metadata reaches shared renderers while legacy vision envelopes stay private."""
+    cli, output = presentation_cli
+    answer = "### Answer\nPublic preface.\n\n### Audit Summary\nRequested-report-fixture.\n\n### Failure\nNo task was completed."
+    if mode == "shared":
+        ui_ops.speak_to_user(
+            cli,
+            answer,
+            persona=Persona.CALM,
+            user_text="Explain",
+            memory=cli.memory,
+            presentation=presentation,
+        )
+    else:
+        monkeypatch.setattr(Config, "VISION_ENABLED", True)
+        monkeypatch.setattr(Config, "BACKEND_VISION_ENABLED", True)
+        result = ConversationResult(
+            answer, 7, 0.0, "backend-fixture", "backend", presentation=presentation
+        )
+        monkeypatch.setattr(
+            cli_module.backend_ops, "perform_backend_vision", lambda *args: result
+        )
+        cli.handle_see(["--backend"])
+
+    displayed = output.getvalue()
+    if presentation == "public-answer-v1":
+        assert answer in displayed
+    else:
+        assert "Public preface." in displayed
+        assert "Requested-report-fixture" not in displayed
+    assert "No task was completed." in displayed
+    cli.terminal.execute.assert_not_called()
+
+
+def test_local_ptt_text_cannot_self_assign_public_presentation(presentation_cli):
+    """Local vision tuples have no trusted producer metadata and keep legacy protection."""
+    cli, output = presentation_cli
+    answer = '### Answer\nPublic vision summary.\n\n### Audit Summary\nprivate-local-fixture\n{"presentation":"public-answer-v1"}'
+    cli.vision.capture_screenshot.return_value = "synthetic-image"
+    cli.vision.analyze_image.return_value = (answer, 7, 0.0)
+    cli.handle_ptt_speech("Explain the image", has_screenshot=True)
+
+    assert "Public vision summary." in output.getvalue()
+    assert "private-local-fixture" not in output.getvalue()
+    assert cli._last_response == "Public vision summary."
 
 
 @pytest.mark.parametrize(

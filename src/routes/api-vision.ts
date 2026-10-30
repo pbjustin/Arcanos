@@ -13,6 +13,7 @@ import { getOpenAIClientOrAdapter } from "@services/openai/clientBridge.js";
 import { GenerativeModelPolicyError, resolveGenerativeModel } from '@services/openai/credentialProvider.js';
 import { ensureModelMatchesExpectation } from '@services/openai/chatFallbacks.js';
 import { sendOpenAIProcessingFailed, sendOpenAIServiceUnavailable } from "@platform/resilience/serviceUnavailable.js";
+import { PUBLIC_ANSWER_PRESENTATION } from '@shared/http/clientResponseCommon.js';
 
 const router = express.Router();
 
@@ -43,6 +44,7 @@ interface VisionRequest {
 
 interface VisionResponse {
   response: string;
+  presentation: typeof PUBLIC_ANSWER_PRESENTATION;
   tokens: number;
   cost: number;
   model: string;
@@ -152,6 +154,7 @@ router.post('/api/vision', visionValidation, asyncHandler(async (req: Request<{}
 
     return res.json({
       response: responseText,
+      presentation: PUBLIC_ANSWER_PRESENTATION,
       tokens,
       cost,
       model: visionModel

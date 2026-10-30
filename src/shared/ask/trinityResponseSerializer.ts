@@ -1,6 +1,7 @@
 import type { ClientContextDTO } from '@shared/types/dto.js';
 import type { TrinityPipelineDebug, TrinityResult } from '@core/logic/trinity.js';
 import { shouldExposePipelineDebug } from '@core/logic/trinityHonesty.js';
+import { getFinalizedPublicAnswerPresentation, type PUBLIC_ANSWER_PRESENTATION } from '@shared/http/clientResponseCommon.js';
 
 /**
  * Optional audit metadata carried across async `/ask` queue boundaries.
@@ -22,6 +23,7 @@ export interface TrinityResponseAuditFlag {
  */
 export interface TrinityUserVisibleResponse {
   result: string;
+  presentation?: typeof PUBLIC_ANSWER_PRESENTATION;
   module: string;
   meta: TrinityResult['meta'];
   activeModel: string;
@@ -58,6 +60,7 @@ export function buildTrinityUserVisibleResponse(params: {
 }): TrinityUserVisibleResponse {
   const userVisibleResponse: TrinityUserVisibleResponse = {
     result: params.trinityResult.result,
+    presentation: getFinalizedPublicAnswerPresentation(params.trinityResult),
     module: params.trinityResult.module,
     meta: params.trinityResult.meta,
     activeModel: params.trinityResult.activeModel,

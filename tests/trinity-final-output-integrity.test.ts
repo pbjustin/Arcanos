@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import type OpenAI from 'openai';
 import type { ResponseCreateParamsNonStreaming } from 'openai/resources/responses/responses';
+import { getFinalizedPublicAnswerPresentation } from '../src/shared/http/clientResponseCommon.js';
+import { buildTrinityUserVisibleResponse } from '../src/shared/ask/trinityResponseSerializer.js';
 
 // Keep extraction, stages, routing, honesty and final delivery real. Only the
 // provider and unrelated persistence/background effects are replaced.
@@ -97,12 +99,38 @@ describe('Trinity caller-declared final JSON integrity at actual provider extrac
       expect(result.result).toBe(raw);
       expect(JSON.parse(result.result)).toEqual(JSON.parse(raw));
       expect(result.auditSafe.processedSafely).toBe(true);
+      expect(getFinalizedPublicAnswerPresentation(result)).toBe('public-answer-v1');
+      expect(buildTrinityUserVisibleResponse({ trinityResult: result }).presentation).toBe('public-answer-v1');
       expect(responsesCreate).toHaveBeenCalledTimes(4);
   });
 
   it('preserves direct-answer JSON including Markdown-like string data', async () => {
-    expect((await run('direct')).result).toBe(raw);
+    const result = await run('direct');
+    expect(result.result).toBe(raw);
+    expect(getFinalizedPublicAnswerPresentation(result)).toBe('public-answer-v1');
     expect(responsesCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('marks an approved exact-literal public heading without provider work', async () => {
+    const result = await runTrinityWritingPipeline({
+      input: { prompt: 'Write exactly this text and nothing else: ## Audit Summary', sourceEndpoint: 'presentation.fixture' },
+      context: { client, runtimeBudget: createRuntimeBudgetWithLimit(20_000, 0),
+        runOptions: { disableMemoryAccess: true, disableOptionalSideEffects: true } },
+    });
+    const serialized = buildTrinityUserVisibleResponse({ trinityResult: result });
+    expect(serialized.result).toBe('## Audit Summary');
+    expect(serialized.presentation).toBe('public-answer-v1');
+    expect(JSON.parse(JSON.stringify(result))).not.toHaveProperty('presentation');
+    expect(responsesCreate).not.toHaveBeenCalled();
+  });
+
+  it('does not recreate provenance from serialized or changed output', async () => {
+    const result = await run('direct');
+    const restored = JSON.parse(JSON.stringify(result));
+    restored.presentation = 'public-answer-v1';
+    expect(buildTrinityUserVisibleResponse({ trinityResult: restored }).presentation).toBeUndefined();
+    result.result += '\nchanged after finalization';
+    expect(buildTrinityUserVisibleResponse({ trinityResult: result }).presentation).toBeUndefined();
   });
 
   it('preserves a false verification flag through the structured query-finetune compatibility caller', async () => {

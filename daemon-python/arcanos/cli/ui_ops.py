@@ -32,6 +32,7 @@ def speak_to_user(
     memory: Any,
     debug_voice: bool = False,
     filtered_text: Any = _UNSET_FILTER,
+    presentation: str | None = None,
 ) -> Optional[str]:
     """
     Purpose: Apply presentation safety and render the complete approved text literally.
@@ -45,6 +46,7 @@ def speak_to_user(
             raw_text,
             source="backend",
             debug=debug_voice,
+            presentation=presentation,
         )
         if not should_show:
             filtered = None

@@ -195,6 +195,7 @@ class ArcanosCLI:
         memory: Any,
         debug_voice: bool = False,
         filtered_text: Any = _UNSET_FILTER,
+        presentation: str | None = None,
     ) -> Optional[str]:
         return ui_ops.speak_to_user(
             self,
@@ -204,6 +205,7 @@ class ArcanosCLI:
             memory=memory,
             debug_voice=debug_voice,
             filtered_text=filtered_text,
+            presentation=presentation,
         )
 
     def _get_or_create_instance_id(self) -> str:
@@ -505,6 +507,7 @@ class ArcanosCLI:
                 result.response_text,
                 source=result.source,
                 debug=from_debug,
+                presentation=getattr(result, "presentation", None),
             )
             response_for_user = ui_ops.speak_to_user(
                 self,

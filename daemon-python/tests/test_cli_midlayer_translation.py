@@ -111,3 +111,42 @@ def test_nested_disclosure_tags_cannot_bypass_translation() -> None:
 def test_decorated_private_section_is_removed_before_rendering() -> None:
     raw = "Public answer.\n\x1b[31m### Audit Summary\x1b[0m\nprivate payload"
     assert translate("explain", raw, source="backend") == ("Public answer.", True)
+
+
+@pytest.mark.parametrize(
+    "heading", ["### Audit Summary", "System Routing Details", "📊 COMPLIANCE STATUS"]
+)
+def test_producer_marked_public_answer_preserves_ambiguous_sections(heading) -> None:
+    """The exact public contract preserves complete public report sections."""
+    raw = f"Public preface.\n\n{heading}\nRequested report.\n\n### Warning\nNo task was completed."
+    assert translate(
+        "explain", raw, source="backend", presentation="public-answer-v1"
+    ) == (raw, True)
+
+
+@pytest.mark.parametrize("presentation", [None, "public-answer-v2"])
+def test_unmarked_and_unknown_contracts_keep_legacy_audit_sections_private(
+    presentation,
+) -> None:
+    """Absent or unsupported metadata does not grant public-answer handling."""
+    raw = "### Answer\nPublic answer.\n\n### Audit Summary\nprivate-legacy-fixture"
+    assert translate("explain", raw, source="backend", presentation=presentation) == (
+        "Public answer.",
+        True,
+    )
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '<vbl severity="3" />\nprivate-audit-fixture',
+        '<vbl severity="4" />\nprivate-developer-fixture',
+        "audit_trace: private-machine-fixture",
+        "Public answer.\bunsafe-tail",
+    ],
+)
+def test_public_metadata_does_not_bypass_disclosure_or_terminal_safety(raw) -> None:
+    """Presentation metadata governs headings and cannot overrule safety labels."""
+    assert translate(
+        "explain", raw, source="backend", presentation="public-answer-v1"
+    ) == ("", False)

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-30T15:29:10.332Z",
+  "generatedAt": "2026-10-30T19:26:30.489Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -3725,6 +3725,9 @@
         },
         {
           "relativePath": "tests/api-update.test.ts"
+        },
+        {
+          "relativePath": "tests/api-vision-presentation.test.ts"
         },
         {
           "relativePath": "tests/api-vision.test.ts"

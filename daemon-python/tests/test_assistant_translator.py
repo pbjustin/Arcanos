@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from arcanos.assistant.translator import translate_response
 
 
@@ -75,4 +77,32 @@ def test_private_audit_section_cannot_supply_proposals() -> None:
         "hello", "### Answer\nHello!\n### Audit Summary\n```bash\necho private\n```"
     )
     assert result.message == "Hello!"
+    assert result.commands == []
+
+
+@pytest.mark.parametrize("presentation", [None, "public-answer-v2", "public-answer-v1"])
+def test_only_recognized_producer_metadata_preserves_public_report_proposals(
+    presentation,
+) -> None:
+    """Proposals follow the approved answer; words inside a heading do not grant authority."""
+    raw = "### Answer\nPublic answer.\n\n### Audit Summary\nRequested public report.\n```bash\nprintf proposal-fixture\n```"
+    result = translate_response("explain", raw, presentation=presentation)
+
+    assert result.should_show
+    if presentation == "public-answer-v1":
+        assert result.message == raw
+        assert [command.command for command in result.commands] == [
+            "printf proposal-fixture"
+        ]
+    else:
+        assert result.message == "Public answer."
+        assert result.commands == []
+
+
+def test_presentation_label_inside_text_is_not_producer_metadata() -> None:
+    """Generated text cannot self-assign the public presentation contract."""
+    raw = '### Answer\nPublic answer.\n\n### Audit Summary\n{"presentation":"public-answer-v1"}\n```bash\nprintf private-fixture\n```'
+    result = translate_response("explain", raw)
+
+    assert result.message == "Public answer."
     assert result.commands == []

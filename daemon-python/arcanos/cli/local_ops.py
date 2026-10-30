@@ -150,6 +150,7 @@ def handle_see(cli: "ArcanosCLI", args: list[str], return_result: bool = False) 
             user_text=" ".join(args),
             memory=cli.memory,
             debug_voice=False,
+            presentation=getattr(result, "presentation", None),
         )
 
     cli.rate_limiter.record_request(result.tokens_used, result.cost_usd)

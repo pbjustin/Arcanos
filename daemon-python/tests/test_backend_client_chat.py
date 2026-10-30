@@ -648,6 +648,39 @@ def test_backend_api_client_parses_gpt_envelope_chat_response() -> None:
     assert response.value.model == "ARCANOS:GAMING"
 
 
+@pytest.mark.parametrize("kind", ["chat", "vision"])
+@pytest.mark.parametrize(
+    "presentation", [None, "unknown", True, {}, ["public-answer-v1"], "public-answer-v1"]
+)
+def test_only_recognized_outer_producer_presentation_is_retained(kind, presentation):
+    client = BackendApiClient("https://backend.example.com", lambda: "token")
+    answer = "## Audit Summary\nThe operation failed.\n\nNo task was completed."
+    payload = {"response": answer}
+    if presentation is not None:
+        payload["presentation"] = presentation
+    parser = client._parse_chat_response if kind == "chat" else client._parse_vision_response
+
+    response = parser(payload)
+
+    assert response.ok and response.value is not None
+    assert response.value.response_text == answer
+    assert response.value.presentation == (
+        "public-answer-v1" if presentation == "public-answer-v1" else None
+    )
+
+
+def test_nested_module_content_cannot_supply_producer_presentation():
+    client = BackendApiClient("https://backend.example.com", lambda: "token")
+    answer = "### Audit Summary\nprivate legacy tail"
+    response = client._parse_chat_response(
+        {"ok": True, "result": {"text": answer, "presentation": "public-answer-v1"}}
+    )
+
+    assert response.ok and response.value is not None
+    assert response.value.response_text == answer
+    assert response.value.presentation is None
+
+
 def test_backend_api_client_request_json_prefers_route_gpt_id_for_header_and_logs(monkeypatch) -> None:
     logged_events: list[dict[str, Any]] = []
 

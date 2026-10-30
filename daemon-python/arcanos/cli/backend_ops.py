@@ -782,6 +782,7 @@ def perform_backend_conversation(
             cost_usd=response.value.cost_usd,
             model=response.value.model,
             source="backend",
+            presentation=getattr(response.value, "presentation", None),
         )
 
     if response.error and response.error.kind == "confirmation":
@@ -931,6 +932,7 @@ def perform_backend_vision(cli: "ArcanosCLI", use_camera: bool) -> Optional[Conv
         cost_usd=response.value.cost_usd,
         model=response.value.model,
         source="backend",
+        presentation=getattr(response.value, "presentation", None),
     )
 
 

@@ -32,6 +32,7 @@ def translate_response(
     source: str = "backend",
     debug: bool = False,
     suppress_proposals_in_display: bool = False,
+    presentation: str | None = None,
 ) -> TranslationResult:
     """Filter before proposal extraction, preserving the complete approved answer.
 
@@ -45,6 +46,7 @@ def translate_response(
         response_text=raw,
         source=source,
         debug=debug,
+        presentation=presentation,
     )
     return TranslationResult(
         message=translated,

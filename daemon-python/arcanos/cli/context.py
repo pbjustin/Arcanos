@@ -28,6 +28,7 @@ class ConversationResult:
     cost_usd: float
     model: str
     source: str
+    presentation: str | None = None
 
 
 _UNSET_FILTER: object = object()

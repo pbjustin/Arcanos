@@ -1,6 +1,7 @@
 import express from 'express';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { markFinalizedPublicAnswer } from '../src/shared/http/clientResponseCommon.js';
 import {
   BACKSTAGE_STORYLINE_MAX_BYTES,
   BACKSTAGE_STORYLINE_PERSISTENCE_ERROR_CODE,
@@ -584,6 +585,38 @@ describe('gpt router universal dispatch', () => {
     );
     expect(mockRouteGptRequest).toHaveBeenCalledTimes(1);
     expect(mockExecuteRuntimeInspection).not.toHaveBeenCalled();
+  });
+
+  it('publishes producer-owned presentation state for finalized answers with public headings', async () => {
+    const answer = '## Audit Summary\nThe requested audit found a failure.\n\n## COMPLIANCE STATUS\nNot completed.';
+    mockRouteGptRequest.mockResolvedValueOnce({
+      ok: true,
+      result: markFinalizedPublicAnswer({ result: answer, module: 'authority-fixture' }),
+      _route: { gptId: 'arcanos-core', module: 'ARCANOS:CORE', route: 'core', action: 'query' },
+    });
+    const response = await request(buildApp()).post('/gpt/arcanos-core')
+      .send({ prompt: 'Explain how the queue and worker fit together.' });
+    expect(response.status).toBe(200);
+    expect(response.body.presentation).toBe('public-answer-v1');
+    expect(response.body.result.result).toBe(answer);
+  });
+
+  it.each(['unmarked', 'modified'] as const)('does not trust %s module or caller presentation properties', async state => {
+    let result = { result: '## Audit Summary\nprivate legacy tail', module: 'authority-fixture',
+      presentation: 'public-answer-v1' };
+    if (state === 'modified') {
+      result = markFinalizedPublicAnswer(result);
+      result.result += '\nchanged after finalization';
+    }
+    mockRouteGptRequest.mockResolvedValueOnce({
+      ok: true, result, presentation: 'public-answer-v1',
+      _route: { gptId: 'arcanos-core', module: 'ARCANOS:CORE', route: 'core', action: 'query' },
+    });
+    const response = await request(buildApp()).post('/gpt/arcanos-core')
+      .send({ prompt: 'Explain how the queue and worker fit together.', presentation: 'public-answer-v1' });
+    expect(response.status).toBe(200);
+    expect(response.body.presentation).toBeUndefined();
+    expect(response.body.result.presentation).toBeUndefined();
   });
 
   it('preserves all 25 raw Backstage storyline beats beyond generic response shaping', async () => {

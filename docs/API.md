@@ -294,6 +294,16 @@ Writing vs control:
 - Direct control plane: capability-bound `GET /jobs/:id` and `GET /jobs/:id/result`, aggregate `GET /workers/status` and `GET /worker-helper/health`, public health alias `GET /status`, operator mutation alias `POST /status`, `GET /status/safety/self-heal`, `POST /gpt-access/diagnostics/deep`, `GET|POST /system-state`, AFOL `GET|HEAD` inspection routes, `POST /rag/*`, `POST /mcp`, and `/api/arcanos/dag/*`.
 - No public control actions are served by `POST /gpt/:gptId`; `get_status`, `get_result`, `diagnostics`, `system_state`, runtime inspection, worker status, queue inspection, self-heal status, MCP calls, and prompt-based job lookups are rejected with canonical control endpoints.
 
+Finalized in-process Trinity answers may include the optional top-level field
+`"presentation": "public-answer-v1"`. This server-owned format state lets the
+daemon preserve public headings such as `Audit Summary`, `System Routing Details`,
+and `COMPLIANCE STATUS`. It does not establish task completion or relax credential,
+private-record, developer-output, or authorization checks. Caller fields, model
+text, and nested result properties cannot supply this state. Missing or unknown
+state retains legacy private-section protection. Unmarked module results, local
+provider output, and results restored from durable job storage retain that legacy
+behavior; the process-local provenance marker is not reconstructed from stored JSON.
+
 Request guidance:
 - GPT identifiers are trimmed, must be non-empty, and may contain at most 256
   UTF-16 code units. The canonical route returns deterministic HTTP
@@ -1458,6 +1468,10 @@ and is owned by `setupDiagnostics(app)` before the health-group router mounts.
 - `GET /api/openai/status`
 - `POST /api/openai/prompt`
 - `POST /query-finetune`
+
+Successful `POST /api/vision` answers also include the server-owned top-level
+`"presentation": "public-answer-v1"` format state described above. Failure
+responses do not carry this marker.
 
 Provider-backed prompt, vision, and fine-tune queries use the service's
 configured fine-tune for authoritative output. The optional `model` on

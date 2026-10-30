@@ -1,4 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
+import { readFileSync } from 'node:fs';
 
 import {
   measureJsonBytes,
@@ -6,9 +7,17 @@ import {
   shapeClientRouteResult,
   withJsonResponseBytes,
 } from '../src/shared/http/clientResponseGuards.js';
-import { truncateText } from '../src/shared/http/clientResponseCommon.js';
+import { PUBLIC_ANSWER_PRESENTATION, truncateText } from '../src/shared/http/clientResponseCommon.js';
 
 describe('client response guards', () => {
+  it('keeps optional presentation metadata aligned with the maintained backend/CLI contract', () => {
+    const contract = JSON.parse(readFileSync('contracts/backend_cli_contract.v1.json', 'utf8'));
+    expect(contract.responsePresentation.field).toBe('presentation');
+    expect(contract.responsePresentation.publicAnswerValue).toBe(PUBLIC_ANSWER_PRESENTATION);
+    for (const endpoint of ['/gpt/{gptId}', '/api/vision']) {
+      expect(contract.endpoints[endpoint].optionalResponseFields).toContain('presentation');
+    }
+  });
   it('reduces oversized MCP health results to a compact public shape', () => {
     const rawResult = {
       handledBy: 'mcp-dispatcher',
