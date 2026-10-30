@@ -332,7 +332,12 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
   const acquiredTopicSubject = (value: string): boolean => {
     const detected = detectGamingDocumentGame({ canonicalUrl: '', pageTitle: value });
     const subject = detected.game ?? value.replace(/\s+(?:guide|walkthrough|wiki|tips?)\s*$/iu, '');
-    const scopes = acquiredTopicScopes.get(normalizeGamingGameIdentity(subject));
+    const identity = normalizeGamingGameIdentity(subject);
+    // A game-qualified mechanic still needs exact, independently acquired
+    // ownership of its suffix. A matching family prefix alone proves nothing.
+    const topic = [...expected].find(game => identity.startsWith(`${game}-`));
+    const scopes = acquiredTopicScopes.get(identity)
+      ?? (topic ? acquiredTopicScopes.get(identity.slice(topic.length + 1)) : undefined);
     return detected.source !== 'alias' && Boolean(scopes?.some(scope => scope.index < PRIMARY_IDENTITY_SCOPE_CHARS)
       && scopes.every(scope => sourceGameMatches(scope.game)));
   };
