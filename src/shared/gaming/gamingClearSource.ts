@@ -335,9 +335,10 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     const identity = normalizeGamingGameIdentity(subject);
     // A game-qualified mechanic still needs exact, independently acquired
     // ownership of its suffix. A matching family prefix alone proves nothing.
-    const topic = [...expected].find(game => identity.startsWith(`${game}-`));
     const scopes = acquiredTopicScopes.get(identity)
-      ?? (topic ? acquiredTopicScopes.get(identity.slice(topic.length + 1)) : undefined);
+      ?? [...expected].filter(game => identity.startsWith(`${game}-`))
+        .map(game => acquiredTopicScopes.get(identity.slice(game.length + 1)))
+        .find(Boolean);
     return detected.source !== 'alias' && Boolean(scopes?.some(scope => scope.index < PRIMARY_IDENTITY_SCOPE_CHARS)
       && scopes.every(scope => sourceGameMatches(scope.game)));
   };

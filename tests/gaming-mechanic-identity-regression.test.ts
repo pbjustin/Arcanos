@@ -17,9 +17,9 @@ const url = 'https://guides.example.org/independent-colonisation-guide';
 const input = { game: 'Elite Dangerous', mode: 'guide' as const, prompt: 'Explain system colonisation planning and supply delivery.' };
 // Independently authored structural fixtures, not publisher text or gameplay truth claims.
 const guidance = 'In Elite Dangerous, commanders plan a system colonisation project before delivering construction supplies. Compare the requested supply quantities with cargo capacity, then make delivery trips until the construction manifest is complete.';
-const assess = (title: string, prose: string, game = input.game) => assessGamingClearSourceIdentity({
+const assess = (title: string, prose: string, game = input.game, edition?: string) => assessGamingClearSourceIdentity({
   publicUrl: url, metadata: { title, headings: title }, text: `${title}\n${prose}`
-}, { ...input, game }, assessGamingSourcePolicy(url, game));
+}, { ...input, game, edition }, assessGamingSourcePolicy(url, game));
 
 describe('independently acquired game and mechanic ownership', () => {
   it('accepts ordinary game-qualified mechanic metadata with independent game prose', () => {
@@ -37,6 +37,30 @@ describe('independently acquired game and mechanic ownership', () => {
     const title = 'Copper Vale Orchard Restoration guide';
     const prose = 'This guide covers Copper Vale Orchard Restoration. Orchard Restoration is a mechanic in Copper Vale. In Copper Vale, players restore the orchard by delivering supplies and monitoring the project manifest.';
     expect(assess(title, prose, 'Copper Vale')).toMatchObject({ status: 'verified' });
+  });
+
+  it('checks the edition-qualified prefix when the base prefix has no acquired topic definition', () => {
+    expect(assess('Lantern Voyage Remake System Colonisation guide',
+      'This guide covers Lantern Voyage Remake System Colonisation. System Colonisation is a mechanic in Lantern Voyage. In Lantern Voyage, players deliver construction supplies.',
+      'Lantern Voyage', 'Remake')).toMatchObject({ status: 'verified' });
+  });
+
+  it('does not let an edition-qualified prefix supply absent mechanic ownership', () => {
+    expect(assess('Lantern Voyage Remake System Colonisation guide',
+      'This guide covers Lantern Voyage Remake System Colonisation. In Lantern Voyage, players deliver construction supplies.',
+      'Lantern Voyage', 'Remake')).toMatchObject({ status: 'unknown', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] });
+  });
+
+  it('retains foreign mechanic ownership despite a matching edition-qualified prefix', () => {
+    expect(assess('Lantern Voyage Remake System Colonisation guide',
+      'This guide covers Lantern Voyage Remake System Colonisation. System Colonisation is a mechanic in Fallout 4. In Lantern Voyage, players deliver construction supplies.',
+      'Lantern Voyage', 'Remake')).toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
+  });
+
+  it('does not reinterpret an unrequested remake as the requested edition', () => {
+    expect(assess('Lantern Voyage Remake System Colonisation guide',
+      'This guide covers Lantern Voyage Remake System Colonisation. System Colonisation is a mechanic in Lantern Voyage. In Lantern Voyage, players deliver construction supplies.',
+      'Lantern Voyage', 'Deluxe')).toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
   });
 
   it('accepts a generic mechanic heading with independently named game ownership', () => {
