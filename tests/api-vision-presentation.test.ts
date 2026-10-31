@@ -48,6 +48,47 @@ describe('vision answer presentation at the actual HTTP boundary', () => {
     expect(createResponse).toHaveBeenCalledTimes(1);
   });
 
+  it('preserves meaningful vision text exactly, including surrounding whitespace and Unicode', async () => {
+    const completeAnswer = ' \n  Café warning: ⚠️\n\n    Keep the final qualification.\n\t';
+    createResponse.mockResolvedValue({
+      id: 'literal-vision-fixture', model: authority, status: 'completed',
+      output_text: completeAnswer, output: [],
+      usage: { input_tokens: 5, output_tokens: 5, total_tokens: 10 },
+    });
+
+    const response = await request(app()).post('/api/vision').send({ imageBase64: 'Zml4dHVyZQ==' });
+
+    expect(response.status).toBe(200);
+    expect(response.body.response).toBe(completeAnswer);
+    expect(response.body.presentation).toBe('public-answer-v1');
+    expect(createResponse).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['empty output text', { output_text: '' }],
+    ['whitespace output text', { output_text: ' \t\n ' }],
+    ['missing output text', {}],
+    ['whitespace output content', {
+      output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: ' \t\n ' }] }],
+    }],
+    ['invisible-only output text', { output_text: '\u200b' }],
+  ])('does not publish a completed vision response with %s as a public answer', async (_label, providerText) => {
+    createResponse.mockResolvedValue({
+      id: 'empty-vision-fixture', model: authority, status: 'completed', output: [],
+      usage: { input_tokens: 5, output_tokens: 5, total_tokens: 10 },
+      ...providerText,
+    });
+
+    const response = await request(app()).post('/api/vision').send({ imageBase64: 'Zml4dHVyZQ==' });
+
+    expect(response.status).toBe(500);
+    expect(response.body.error).toBe('Internal Server Error');
+    expect(response.body.details).toBe('Failed to process vision request');
+    expect(response.body.response).toBeUndefined();
+    expect(response.body.presentation).toBeUndefined();
+    expect(createResponse).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     ['incomplete lifecycle', { status: 'incomplete' }],
     ['output token limit', { status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' } }],
