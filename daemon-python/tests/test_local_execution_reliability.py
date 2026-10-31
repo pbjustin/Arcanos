@@ -295,6 +295,68 @@ def test_terminal_whitelist_blocks_unquoted_powershell_grouping(shell, command):
     assert terminal.is_command_safe(command, shell=shell)[0] is False
 
 
+@pytest.mark.parametrize("shell", ["powershell", "pwsh"])
+@pytest.mark.parametrize("command", [
+    "Write-Output @{p=New-Item -Path 'sentinel.txt' -ItemType File}",
+    "Write-Output @{'p'=New-Item -Path 'sentinel.txt' -ItemType File}",
+    "Write-Output 'literal' @{p=New-Item -Path 'sentinel.txt' -ItemType File}",
+])
+def test_terminal_whitelist_blocks_unquoted_powershell_hashtables(shell, command):
+    terminal = TerminalController()
+    terminal.whitelist = ["Write-Output"]
+    assert terminal.is_command_safe(command, shell=shell)[0] is False
+
+
+@pytest.mark.parametrize(("shell", "command"), [
+    ("powershell", "Write-Output '@{p=literal}'"),
+    ("powershell", 'Write-Output "@{p=literal}"'),
+    ("pwsh", "Write-Output '@{p=New-Item -Path sentinel.txt -ItemType File}'"),
+    ("pwsh", 'Write-Output "@{p=New-Item -Path sentinel.txt -ItemType File}"'),
+    ("cmd", "echo @{p=literal}"),
+    ("bash", "echo @{p=literal}"),
+    ("sh", "echo @{p=literal}"),
+])
+def test_terminal_whitelist_preserves_literal_hashtable_text_and_other_shells(shell, command):
+    terminal = TerminalController()
+    terminal.whitelist = ["Write-Output", "echo"]
+    assert terminal.is_command_safe(command, shell=shell)[0] is True
+
+
+def test_powershell_hashtable_guard_is_scoped_to_whitelist():
+    terminal = TerminalController()
+    terminal.whitelist = []
+    terminal.allow_dangerous = True
+    command = "Write-Output @{p=New-Item -Path 'sentinel.txt' -ItemType File}"
+    assert terminal.is_command_safe(command, shell="powershell")[0] is True
+
+
+def test_direct_run_rejects_powershell_hashtable_before_confirmation_or_dispatch(local_cli, monkeypatch, tmp_path):
+    cli, _history, _output = local_cli
+    monkeypatch.chdir(tmp_path)
+    sentinel = tmp_path / "sentinel.txt"
+    assert not sentinel.exists()
+    cli.terminal = TerminalController()
+    cli.terminal.whitelist = ["Write-Output"]
+    monkeypatch.setattr(cli.terminal, "_detect_shell", lambda: "powershell")
+    dispatch = MagicMock(wraps=cli.terminal.execute)
+    monkeypatch.setattr(cli.terminal, "execute", dispatch)
+    native_run = MagicMock(side_effect=AssertionError("Unexpected subprocess launch"))
+    monkeypatch.setattr("arcanos.terminal.subprocess.run", native_run)
+
+    result = run_ops.handle_run(
+        cli, "Write-Output @{p=New-Item -Path 'sentinel.txt' -ItemType File}", return_result=True,
+    )
+
+    assert result["status"] == "blocked"
+    assert result["return_code"] is None
+    assert result["approval_status"] == "unapproved"
+    assert "whitelist" in result["error"]
+    cli._confirm_action.assert_not_called()
+    dispatch.assert_not_called()
+    native_run.assert_not_called()
+    assert not sentinel.exists()
+
+
 @pytest.mark.parametrize(("shell", "command"), [
     ("powershell", 'Write-Output "(Get-Date)"'),
     ("powershell", "Write-Output '(Get-Date)'"),
@@ -469,6 +531,43 @@ def test_agentic_command_uses_local_controls_and_preserves_denial(local_cli, mon
     feedback = cli.handle_ask.call_args_list[1].args[0]
     assert "blocked" in feedback
     assert "denied" in feedback
+
+
+def test_agentic_powershell_hashtable_uses_terminal_whitelist_without_dispatch(local_cli, monkeypatch, tmp_path):
+    cli, history, _output = local_cli
+    monkeypatch.chdir(tmp_path)
+    sentinel = tmp_path / "sentinel.txt"
+    assert not sentinel.exists()
+    command = "Write-Output @{p=New-Item -Path 'sentinel.txt' -ItemType File}"
+    cli.terminal = TerminalController()
+    cli.terminal.whitelist = ["Write-Output"]
+    monkeypatch.setattr(cli.terminal, "_detect_shell", lambda: "powershell")
+    policy = MagicMock(wraps=cli.terminal.is_command_safe)
+    dispatch = MagicMock(wraps=cli.terminal.execute)
+    monkeypatch.setattr(cli.terminal, "is_command_safe", policy)
+    monkeypatch.setattr(cli.terminal, "execute", dispatch)
+    native_run = MagicMock(side_effect=AssertionError("Unexpected subprocess launch"))
+    monkeypatch.setattr("arcanos.terminal.subprocess.run", native_run)
+    monkeypatch.setattr("subprocess.check_output", lambda *_args, **_kwargs: "fixture-head")
+    cli.handle_ask = MagicMock(side_effect=[SimpleNamespace(response_text="fixture"), None])
+    monkeypatch.setattr(agent_loop, "HistoryDB", lambda: history)
+    monkeypatch.setattr(agent_loop, "translate_response", lambda *args, **kwargs: SimpleNamespace(
+        should_show=True, message="fixture", patches=[], commands=[CommandProposal(command)],
+    ))
+    monkeypatch.setattr(agent_loop.ui_ops, "speak_to_user", lambda *args, **kwargs: None)
+    monkeypatch.setattr(Config, "AGENT_MAX_STEPS", 2)
+    monkeypatch.setattr(Config, "REPO_INDEX_ENABLED", False)
+
+    agent_loop.run_agentic_loop(cli, "show proposed command", domain=None, from_debug=False)
+
+    policy.assert_called_once_with(command)
+    cli._confirm_action.assert_not_called()
+    dispatch.assert_not_called()
+    native_run.assert_not_called()
+    feedback = cli.handle_ask.call_args_list[1].args[0]
+    assert '"status": "blocked"' in feedback
+    assert "whitelist" in feedback
+    assert not sentinel.exists()
 
 
 def test_agentic_dry_run_does_not_execute_git_snapshot_or_index(local_cli, monkeypatch):

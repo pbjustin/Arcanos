@@ -111,11 +111,19 @@ def run(case_root: Path, source_root: Path) -> dict:
     definitions = [(name, command, output, True, "powershell", "Write-Output") for name, command, output in safe]
     definitions += [(name, command, None, False, "powershell", "Write-Output") for name, command in unsafe]
     definitions.append(("actual_cmd_ordinary_control", "echo cmd-acceptance", "cmd-acceptance", True, "cmd", "echo"))
+    definitions.extend([
+        ("hashtable_file_creation", "Write-Output @{p=New-Item -Path '{sentinel}' -ItemType File}",
+         None, False, "powershell", "Write-Output"),
+        ("single_quoted_hashtable_literal", "Write-Output '@{p=New-Item}'",
+         "@{p=New-Item}", True, "powershell", "Write-Output"),
+        ("double_quoted_hashtable_literal", 'Write-Output "@{p=New-Item}"',
+         "@{p=New-Item}", True, "powershell", "Write-Output"),
+    ])
     for index, (name, template, expected_output, allowed, shell, whitelist) in enumerate(definitions, 1):
         root = case_root / f"s{index:02d}"
         workspace = root / "workspace"
         workspace.mkdir(parents=True)
-        sentinel = workspace / "must-not-be-created.txt"
+        sentinel = workspace / ("sentinel.txt" if name == "hashtable_file_creation" else "must-not-be-created.txt")
         quoted_path = sentinel.as_posix().replace("'", "''")
         payload = f"New-Item -ItemType File -Path '{quoted_path}' -Force"
         command = template.replace("{payload}", payload).replace("{sentinel}", quoted_path)

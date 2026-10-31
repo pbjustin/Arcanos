@@ -275,6 +275,28 @@ def _receipt(fixture: DaemonFixture):
     }
 
 
+def _hashtable_blocked(fixture: DaemonFixture) -> dict:
+    """Observe policy refusal through real CLI preflight and synthetic trust."""
+    sentinel = fixture.repository / "sentinel.txt"
+    assert not sentinel.exists()
+    trace = fixture.case_root / "logs/network.jsonl"
+    before = sum(item.get("event") == "subprocess.Popen" for item in read_jsonl(trace))
+    output_start = len(fixture.console.raw_transcript)
+    row = _command(
+        fixture, "Write-Output @{p=New-Item -Path 'sentinel.txt' -ItemType File}",
+        action_prompt=False,
+    )
+    after = sum(item.get("event") == "subprocess.Popen" for item in read_jsonl(trace))
+    absent = not sentinel.exists()
+    policy_rejected = _wait(lambda: "command whitelist" in fixture.console.raw_transcript[output_start:])
+    blocked = row["status"] == "blocked" and row["return_code"] is None and policy_rejected
+    return {"status": "PASS" if blocked and absent and after == before else "FAIL",
+            "execution_status": row["status"], "exit_code": row["return_code"],
+            "sentinel_existed_before": False, "sentinel_exists_after": not absent,
+            "whitelist_rejection_observed": policy_rejected,
+            "native_dispatch_count": after - before}
+
+
 def _fault_bootstrap(root: Path, kind: str) -> Path:
     path = root / "bootstrap.py"
     root.mkdir(parents=True, exist_ok=True)
@@ -421,6 +443,9 @@ def run(case_root: Path, source_root: Path) -> dict:
         row = _command(f, "Set-Content denied.txt native-denied", approval="n")
         return {"status": "PASS" if row["status"] == "blocked" and not (f.repository / "denied.txt").exists() else "FAIL", "execution_status": row["status"], "exit_code": row["return_code"]}
     perform("action_denied", denied)
+
+    perform("hashtable_whitelist_blocked", _hashtable_blocked,
+            extra={"COMMAND_WHITELIST": "Write-Output"})
 
     def dry_run(f):
         f.control("/dryrun on")

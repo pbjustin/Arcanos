@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-31T18:12:33.436Z",
+  "generatedAt": "2026-10-31T19:29:22.525Z",
   "scopes": [
     {
       "scope": "clients",
@@ -686,6 +686,9 @@
         },
         {
           "relativePath": "daemon-python/tests/test_voice_boundary.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_windows_hashtable_acceptance.py"
         },
         {
           "relativePath": "daemon-python/validate_backend_cli_offline.py"
