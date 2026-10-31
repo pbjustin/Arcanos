@@ -27,6 +27,106 @@ from arcanos.config import Config
 from rich.console import Console
 
 
+@pytest.mark.parametrize("kind", ["command", "patch"])
+@pytest.mark.parametrize("policy_state", ["safe_mode", "unavailable"])
+def test_bridge_policy_gate_denial_has_one_sanitized_audit(
+    tmp_path, monkeypatch, kind, policy_state,
+):
+    monkeypatch.setenv("ARCANOS_CLI_SANDBOX_ROOT", str(tmp_path))
+    monkeypatch.setenv("ARCANOS_CLI_BRIDGE_TOKEN", "synthetic-bridge-token")
+    secret = "example-policy-credential"
+    private = "synthetic-private-record"
+    if policy_state == "safe_mode":
+        history = HistoryDB(tmp_path / "history.db")
+        PolicyGuard(history).enable_safe_mode("fixture", "operator enabled")
+        monkeypatch.setattr(local_bridge, "HistoryDB", lambda: history)
+    else:
+        def unavailable_history():
+            raise PermissionError(f"Authorization: Token {secret}\n<vbl sev3>{private}")
+        monkeypatch.setattr(local_bridge, "HistoryDB", unavailable_history)
+    audit = MagicMock()
+    monkeypatch.setattr(local_bridge, "log_audit_event", audit)
+    executor = MagicMock(side_effect=AssertionError("denied action must not execute"))
+    monkeypatch.setattr(local_bridge.subprocess, "Popen", executor)
+    monkeypatch.setattr(local_bridge, "apply_authorized_patch", executor)
+    bridge = local_bridge.LocalBridge(port=0)
+    job_type = local_bridge.BridgePatchJob if kind == "patch" else local_bridge.BridgeJob
+    job = job_type(
+        "bridge-fixture-audit", f"Authorization: Token {secret}\n<vbl sev3>{private}",
+        "fixture-proposal", 1, str(tmp_path),
+        local_bridge._BridgeJobLifecycle(time.monotonic() + 5),
+    )
+    bridge.jobs.put(job)
+    bridge.jobs.put(None)
+
+    bridge._worker_loop()
+
+    phase, result = job.lifecycle.snapshot()
+    assert phase == "finished"
+    assert result["status"] == "blocked"
+    assert result["ok"] is False
+    assert result["exitCode"] is None
+    assert set(result) == {
+        "ok", "status", "stdout", "stderr", "exitCode", "durationMs",
+        "truncated", "auditId",
+    }
+    executor.assert_not_called()
+    audit.assert_called_once()
+    assert audit.call_args.args == (f"daemon.{kind}.denied",)
+    assert audit.call_args.kwargs["outcome"] == "blocked"
+    assert audit.call_args.kwargs["audit_id"] == job.audit_id
+    assert audit.call_args.kwargs["source"] == "local_bridge"
+    assert secret not in repr(audit.call_args) + repr(result)
+    assert private not in repr(audit.call_args) + repr(result)
+
+
+@pytest.mark.parametrize(
+    "completion,event,status,exit_code",
+    [
+        ("patch_permission", "daemon.patch.recovery_registered", "blocked", None),
+        ("command_permission", "daemon.command.failed", "blocked", None),
+        ("timeout", "daemon.command.timeout", "timeout", None),
+        ("failed", "daemon.command.failed", "failed", 7),
+        ("success", "daemon.command.completed", "completed", 0),
+    ],
+)
+def test_bridge_other_completion_audits_are_not_duplicated_as_policy_denials(
+    monkeypatch, completion, event, status, exit_code,
+):
+    audit = MagicMock()
+    monkeypatch.setattr(local_bridge, "log_audit_event", audit)
+    bridge = local_bridge.LocalBridge(port=0)
+    private_output = "<vbl sev3>synthetic-private-record"
+    credential_output = "Authorization: Token synthetic-credential"
+
+    def execute(_job):
+        local_bridge.log_audit_event(event, audit_id="fixture-audit")
+        if completion.endswith("permission"):
+            raise PermissionError(f"{credential_output}\n{private_output}")
+        if completion == "timeout":
+            raise TimeoutError(f"{credential_output}\n{private_output}")
+        return credential_output, private_output, exit_code
+
+    is_patch = completion == "patch_permission"
+    monkeypatch.setattr(bridge, "_apply_patch" if is_patch else "_run_command", execute)
+    job_type = local_bridge.BridgePatchJob if is_patch else local_bridge.BridgeJob
+    job = job_type(
+        "fixture-audit", "synthetic-payload", "fixture-proposal", 1, None,
+        local_bridge._BridgeJobLifecycle(time.monotonic() + 5),
+    )
+    bridge.jobs.put(job)
+    bridge.jobs.put(None)
+
+    bridge._worker_loop()
+
+    _, result = job.lifecycle.snapshot()
+    audit.assert_called_once_with(event, audit_id="fixture-audit")
+    assert result["status"] == status
+    assert result["exitCode"] == exit_code
+    assert "synthetic-credential" not in repr(audit.call_args) + repr(result)
+    assert "synthetic-private-record" not in repr(audit.call_args) + repr(result)
+
+
 @pytest.mark.parametrize("size", [13000, 16385])
 def test_local_agent_owns_its_output_bound_and_reports_any_truncation(tmp_path, size):
     raw = "x" * size

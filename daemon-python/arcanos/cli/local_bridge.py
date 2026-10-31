@@ -52,6 +52,10 @@ BRIDGE_TOKEN_ENV = "ARCANOS_CLI_BRIDGE_TOKEN"
 BRIDGE_TOKEN_HEADER = "x-arcanos-cli-bridge-token"
 
 
+class _LocalExecutionPolicyDenied(PermissionError):
+    """Identify a local policy refusal before operation-specific auditing starts."""
+
+
 class _BridgeJobLifecycle:
     """Linearize queue admission, cancellation, and result publication."""
 
@@ -618,7 +622,19 @@ class LocalBridge:
                     duration_ms=_elapsed_ms(start), audit_id=job.audit_id,
                     stderr="Local execution timed out",
                 )
-            except PermissionError:
+            except PermissionError as error:
+                if isinstance(error, _LocalExecutionPolicyDenied):
+                    is_patch = isinstance(job, BridgePatchJob)
+                    payload = job.patch if is_patch else job.command
+                    hash_field = "patch_hash" if is_patch else "command_hash"
+                    log_audit_event(
+                        "daemon.patch.denied" if is_patch else "daemon.command.denied",
+                        audit_id=job.audit_id,
+                        source="local_bridge",
+                        outcome="blocked",
+                        reason="local_execution_policy",
+                        **{hash_field: hashlib.sha256(payload.encode("utf-8")).hexdigest()},
+                    )
                 result = _empty_response(
                     ok=False, status="blocked", exit_code=None,
                     duration_ms=_elapsed_ms(start), audit_id=job.audit_id,
@@ -803,9 +819,9 @@ def _require_local_execution_policy() -> None:
     try:
         safe_mode = PolicyGuard(HistoryDB()).is_safe_mode()
     except Exception as error:
-        raise PermissionError("Local safety policy is unavailable") from error
+        raise _LocalExecutionPolicyDenied("Local safety policy is unavailable") from error
     if safe_mode:
-        raise PermissionError("safe mode is enabled (local execution disabled)")
+        raise _LocalExecutionPolicyDenied("safe mode is enabled (local execution disabled)")
 
 
 def _elapsed_ms(start: float) -> int:
