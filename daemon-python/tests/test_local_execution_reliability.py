@@ -331,6 +331,8 @@ def test_powershell_hashtable_guard_is_scoped_to_whitelist():
 
 
 def test_direct_run_rejects_powershell_hashtable_before_confirmation_or_dispatch(local_cli, monkeypatch, tmp_path):
+    from arcanos.cli_runner import _allow_slash_run_command
+
     cli, _history, _output = local_cli
     monkeypatch.chdir(tmp_path)
     sentinel = tmp_path / "sentinel.txt"
@@ -342,9 +344,14 @@ def test_direct_run_rejects_powershell_hashtable_before_confirmation_or_dispatch
     monkeypatch.setattr(cli.terminal, "execute", dispatch)
     native_run = MagicMock(side_effect=AssertionError("Unexpected subprocess launch"))
     monkeypatch.setattr("arcanos.terminal.subprocess.run", native_run)
+    prompt = MagicMock(side_effect=AssertionError("Unexpected confirmation prompt"))
+    monkeypatch.setattr("builtins.input", prompt)
+    command = "Write-Output @{p=New-Item -Path 'sentinel.txt' -ItemType File}"
+    assert _allow_slash_run_command(cli, command) is False
+    prompt.assert_not_called()
 
     result = run_ops.handle_run(
-        cli, "Write-Output @{p=New-Item -Path 'sentinel.txt' -ItemType File}", return_result=True,
+        cli, command, return_result=True,
     )
 
     assert result["status"] == "blocked"

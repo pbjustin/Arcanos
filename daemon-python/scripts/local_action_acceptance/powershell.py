@@ -28,7 +28,10 @@ def _child(config_path: Path) -> int:
     assert Config.RUN_ELEVATED is False
     assert Config.COMMAND_WHITELIST == [config["whitelist"]]
     controller = TerminalController()
-    executable = shutil.which(config["shell"])
+    # Prefer installed PowerShell 7 for the native fixture; retain the exact
+    # executable in the receipt. Production shell selection is unchanged.
+    executable = ((shutil.which("pwsh") or shutil.which("powershell"))
+                  if config["shell"] == "powershell" else shutil.which(config["shell"]))
     if not executable:
         raise RuntimeError("Required Windows shell is unavailable")
     observed = []

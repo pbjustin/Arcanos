@@ -282,18 +282,22 @@ def _hashtable_blocked(fixture: DaemonFixture) -> dict:
     trace = fixture.case_root / "logs/network.jsonl"
     before = sum(item.get("event") == "subprocess.Popen" for item in read_jsonl(trace))
     output_start = len(fixture.console.raw_transcript)
-    row = _command(
-        fixture, "Write-Output @{p=New-Item -Path 'sentinel.txt' -ItemType File}",
-        action_prompt=False,
-    )
+    history_count = len(_history(fixture.case_root))
+    inputs = fixture.input_count()
+    fixture.send_line("/run Write-Output @{p=New-Item -Path 'sentinel.txt' -ItemType File}")
+    # Slash-run checks terminal policy before its confirmation prompt and before
+    # run_ops creates command history. Observe the denial and next main prompt.
+    fixture.wait_input(inputs + 1)
+    policy_rejected = _wait(lambda: "command whitelist" in fixture.console.raw_transcript[output_start:])
     after = sum(item.get("event") == "subprocess.Popen" for item in read_jsonl(trace))
     absent = not sentinel.exists()
-    policy_rejected = _wait(lambda: "command whitelist" in fixture.console.raw_transcript[output_start:])
-    blocked = row["status"] == "blocked" and row["return_code"] is None and policy_rejected
+    history_unchanged = len(_history(fixture.case_root)) == history_count
+    blocked = policy_rejected and history_unchanged and fixture.input_count() == inputs + 1
     return {"status": "PASS" if blocked and absent and after == before else "FAIL",
-            "execution_status": row["status"], "exit_code": row["return_code"],
+            "execution_status": "blocked" if blocked else "unconfirmed", "exit_code": None,
             "sentinel_existed_before": False, "sentinel_exists_after": not absent,
             "whitelist_rejection_observed": policy_rejected,
+            "command_history_unchanged": history_unchanged,
             "native_dispatch_count": after - before}
 
 

@@ -41,6 +41,7 @@ def test_native_powershell_hashtable_sentinel_and_literal_controls(tmp_path, mon
         print(json.dumps({"native_hashtable_acceptance": "PASS", "cases_passed": receipt["passed"],
                           "sentinel_absent_before_and_after": True, "native_dispatch_count": 0,
                           "quoted_literal_controls": "PASS",
+                          "powershell_executable": denied["result"]["explicit_shell_executable"],
                           "source_terminal_sha256": receipt["source_terminal_sha256"]}))
 
 
@@ -54,6 +55,7 @@ def test_native_cli_hashtable_rejected_before_dispatch(tmp_path, monkeypatch, ca
         result = _hashtable_blocked(fixture)
         assert result["status"] == "PASS", result
         assert result["whitelist_rejection_observed"] is True
+        assert result["command_history_unchanged"] is True
         assert result["execution_status"] == "blocked"
         assert result["exit_code"] is None
         assert result["native_dispatch_count"] == 0
