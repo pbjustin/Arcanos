@@ -339,6 +339,122 @@ def test_governed_nonzero_exit_is_a_failed_audit(monkeypatch):
     assert ("execute_failed", {"command": "run", "trust": "FULL", "return_code": 4}) in events
 
 
+@pytest.mark.parametrize("return_code", [0, 7])
+def test_postcompletion_audit_failure_preserves_observed_tuple(monkeypatch, capsys, return_code):
+    outcome = ("native output", "", return_code)
+    def failing_audit(event, **_fields):
+        if event in {"execute_success", "execute_failed"}:
+            raise OSError("private postcompletion audit details")
+    monkeypatch.setattr(execute, "record", failing_audit)
+    result = execute.execute("run", lambda: outcome, trust_state=TrustState.FULL,
+                             requires_confirmation=True, payload={})
+    assert result is outcome
+    displayed = capsys.readouterr().out
+    assert "audit" in displayed.lower() and "incomplete" in displayed.lower()
+    assert "private postcompletion" not in displayed
+
+
+def test_predispatch_audit_failure_still_prevents_execution(monkeypatch):
+    callback = MagicMock()
+    def failing_audit(*_args, **_kwargs):
+        raise OSError("audit unavailable")
+    monkeypatch.setattr(execute, "record", failing_audit)
+    with pytest.raises(OSError, match="audit unavailable"):
+        execute.execute("run", callback, trust_state=TrustState.FULL,
+                        requires_confirmation=True, payload={})
+    callback.assert_not_called()
+
+
+def test_primary_execution_error_survives_secondary_audit_error(monkeypatch):
+    primary = TimeoutError("primary command failure")
+    def callback():
+        raise primary
+    def audit(event, **_fields):
+        if event == "execute_failed":
+            raise OSError("secondary audit failure")
+    monkeypatch.setattr(execute, "record", audit)
+    with pytest.raises(TimeoutError) as error:
+        execute.execute("run", callback, trust_state=TrustState.FULL,
+                        requires_confirmation=True, payload={})
+    assert error.value is primary
+
+
+@pytest.mark.parametrize("bookkeeping", ["statistics", "policy"])
+def test_postcompletion_bookkeeping_failure_does_not_emit_command_failure(local_cli, monkeypatch, bookkeeping):
+    cli, _history, output = local_cli
+    events = []
+    monkeypatch.setattr(run_ops, "audit_record", lambda event, **_fields: events.append(event))
+    if bookkeeping == "statistics":
+        cli.memory.increment_stat.side_effect = OSError("private bookkeeping details")
+    else:
+        def failed_policy(_self):
+            raise OSError("private bookkeeping details")
+        monkeypatch.setattr(PolicyGuard, "record_success", failed_policy)
+    result = run_ops.handle_run(cli, "echo fixture", return_result=True)
+    assert result["ok"] is True and result["return_code"] == 0
+    assert result["status"] == "succeeded"
+    assert result["bookkeeping_recorded"] is False and result["warning"]
+    assert "command_failed" not in events
+    assert events.count("command_bookkeeping_failed") == 1
+    assert "private bookkeeping" not in repr(result) + output.getvalue()
+
+
+@pytest.mark.parametrize("return_code", [0, 7])
+def test_completed_command_survives_history_and_secondary_audit_failure(local_cli, monkeypatch, return_code):
+    cli, history, _output = local_cli
+    cli.terminal.execute.return_value = ("native output", "", return_code)
+    monkeypatch.setattr(history, "log_command", MagicMock(side_effect=OSError("private history failure")))
+    def audit(event, **_fields):
+        if event == "command_history_failed":
+            raise OSError("private secondary audit failure")
+    monkeypatch.setattr(run_ops, "audit_record", audit)
+    result = run_ops.handle_run(cli, "echo fixture", return_result=True)
+    assert result["return_code"] == return_code
+    assert result["status"] == ("succeeded" if return_code == 0 else "failed")
+    assert result["history_recorded"] is False
+    assert "private history" not in repr(result)
+    assert "private secondary" not in repr(result)
+
+
+@pytest.mark.parametrize("assigned", [False, True])
+def test_primary_timeout_survives_secondary_failure_audit(local_cli, monkeypatch, capsys, assigned):
+    cli, _history, output = local_cli
+    terminal = cli.terminal.execute_action_plan_command if assigned else cli.terminal.execute
+    terminal.side_effect = TimeoutError("private primary timeout details")
+    failure_event = "action_plan_execution_failed" if assigned else "command_failed"
+    def audit(event, **_fields):
+        if event == failure_event:
+            raise OSError("private secondary audit details")
+    monkeypatch.setattr(run_ops, "audit_record", audit)
+    if assigned:
+        result = run_ops.handle_action_plan_run(cli, "echo fixture", execution_identity="run-fixture")
+        assert result == {"ok": False, "return_code": None, "error_category": "timeout"}
+    else:
+        result = run_ops.handle_run(cli, "echo fixture", return_result=True)
+        assert result["status"] == "failed" and result["return_code"] is None
+        assert result["error"] == "command_TimeoutError"
+    terminal.assert_called_once()
+    assert "private primary" not in repr(result) + output.getvalue() + capsys.readouterr().out
+    assert "private secondary" not in repr(result) + output.getvalue()
+
+
+@pytest.mark.parametrize("assigned", [False, True])
+def test_predispatch_retry_audit_failure_never_runs_command(local_cli, monkeypatch, assigned):
+    cli, _history, _output = local_cli
+    def audit(event, **_fields):
+        if event == "retry_check":
+            raise OSError("retry audit unavailable")
+    monkeypatch.setattr(run_ops, "audit_record", audit)
+    if assigned:
+        with pytest.raises(OSError, match="retry audit unavailable"):
+            run_ops.handle_action_plan_run(cli, "echo fixture", execution_identity="run-fixture")
+    else:
+        result = run_ops.handle_run(cli, "echo fixture", return_result=True)
+        assert result["status"] == "blocked" and result["return_code"] is None
+    cli.terminal.execute.assert_not_called()
+    cli.terminal.execute_action_plan_command.assert_not_called()
+
+
 def test_agentic_command_uses_local_controls_and_preserves_denial(local_cli, monkeypatch):
     cli, history, _output = local_cli
     cli._confirm_action.return_value = False

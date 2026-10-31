@@ -11,6 +11,17 @@ from .governance import GovernanceError, assert_allowed
 from .trust_state import TrustState
 
 
+def _record_observation(event: str, **fields: Any) -> None:
+    """Audit an observed outcome without replacing its result or primary error."""
+    try:
+        record(event, **fields)
+    except Exception:
+        try:
+            print("Local execution audit is incomplete.")
+        except Exception:
+            pass
+
+
 def execute(
     command_name: str,
     command_callable: Callable[[], Any],
@@ -29,15 +40,17 @@ def execute(
         assert_allowed(command_name, trust_state, requires_confirmation)
         result = command_callable()
     except GovernanceError:
-        record("execute_blocked", command=command_name, trust=trust_state.name)
+        _record_observation("execute_blocked", command=command_name, trust=trust_state.name)
         raise
     except Exception as exc:
-        record("execute_failed", command=command_name, trust=trust_state.name, error_type=type(exc).__name__)
+        _record_observation("execute_failed", command=command_name, trust=trust_state.name, error_type=type(exc).__name__)
         raise
+    # The pre-dispatch audit above remains fail-closed. Once execution has
+    # returned, an audit outage cannot replace its known result or exit code.
     if isinstance(result, tuple) and len(result) == 3 and type(result[2]) is int:
-        record("execute_success" if result[2] == 0 else "execute_failed",
-               command=command_name, trust=trust_state.name, return_code=result[2])
+        _record_observation("execute_success" if result[2] == 0 else "execute_failed",
+                            command=command_name, trust=trust_state.name, return_code=result[2])
     else:
-        record("execute_unconfirmed", command=command_name, trust=trust_state.name)
+        _record_observation("execute_unconfirmed", command=command_name, trust=trust_state.name)
     return result
 

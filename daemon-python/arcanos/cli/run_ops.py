@@ -62,10 +62,14 @@ def handle_run(
             except Exception:
                 # A persistence failure cannot rewrite an observed exit code.
                 result["history_recorded"] = False
-                audit_record("command_history_failed", action_id=fp)
+                result["warning"] = "The command outcome is retained, but local records are incomplete."
+                try:
+                    audit_record("command_history_failed", action_id=fp)
+                except Exception:
+                    pass
         if return_result:
             return result
-        for key in ("stdout", "stderr", "error"):
+        for key in ("stdout", "stderr", "error", "warning"):
             if result.get(key):
                 cli.console.print(str(result[key]), markup=False)
         cli.console.print(f"Command {result['status']}; exit code: {result['return_code']}", markup=False)
@@ -139,18 +143,29 @@ def handle_run(
         )
         if return_code != 0:
             result["error"] = "command_exited_nonzero"
-        cli.memory.increment_stat("terminal_commands")
-        if return_code == 0:
-            guard.record_success()
-        else:
-            guard.record_failure(cli.instance_id, "command", {"action_id": fp, "return_code": return_code})
+        try:
+            cli.memory.increment_stat("terminal_commands")
+            if return_code == 0:
+                guard.record_success()
+            else:
+                guard.record_failure(cli.instance_id, "command", {"action_id": fp, "return_code": return_code})
+        except Exception as exc:
+            result["bookkeeping_recorded"] = False
+            result["warning"] = "The command outcome is retained, but local records are incomplete."
+            try:
+                audit_record("command_bookkeeping_failed", action_id=fp, error_type=type(exc).__name__)
+            except Exception:
+                pass
     except GovernanceError:
         result["error"] = "governance_denied"
     except Exception as exc:
         # Dependency exceptions can contain commands, credentials, or private
         # output. Keep categorical diagnostics and any already observed exit.
         result["error"] = f"command_{type(exc).__name__}"
-        audit_record("command_failed", action_id=fp, error_type=type(exc).__name__)
+        try:
+            audit_record("command_failed", action_id=fp, error_type=type(exc).__name__)
+        except Exception:
+            pass
         if guard is not None and result["status"] == "failed" and result["return_code"] is None:
             try:
                 guard.record_failure(cli.instance_id, "command", {"action_id": fp, "error_type": type(exc).__name__})
@@ -224,12 +239,15 @@ def handle_action_plan_run(
         category = "validation"
     except Exception:
         category = "execution"
-    audit_record(
-        "action_plan_execution_failed",
-        command="action-plan-execution",
-        run_id=execution_identity,
-        error_category=category,
-    )
+    try:
+        audit_record(
+            "action_plan_execution_failed",
+            command="action-plan-execution",
+            run_id=execution_identity,
+            error_category=category,
+        )
+    except Exception:
+        pass
     return {"ok": False, "return_code": None, "error_category": category}
 
 
