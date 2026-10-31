@@ -1,265 +1,97 @@
-"""
-Voice Boundary Layer (VBL) v3.0.
-
-Purpose:
-- Prevent internal system / audit / backend language from reaching users.
-- Preserve a calm, confident, ChatGPT-like presence.
-- Fail closed (silence > leakage).
-"""
+"""Disclosure boundary for answer text; never infer or rewrite task outcomes."""
 
 from __future__ import annotations
 
 from enum import Enum
-import random
 import re
 from typing import Any, Optional, Tuple
 
-
-# =========================
-# Personas (posture, not style)
-# =========================
+from .cli.cli_policy import iter_json_fields, redact_output, strip_unsafe_output_controls
 
 
 class Persona(Enum):
-    """Conversation posture used for safe user-facing rewrites."""
+    """Retained caller preference; presentation must preserve answer wording."""
 
-    CALM = "calm"  # default
-    DIRECT = "direct"  # minimal
+    CALM = "calm"
+    DIRECT = "direct"
     EXPLORATORY = "exploratory"
-    FOCUSED = "focused"  # precise / analytical
-
-
-# =========================
-# Severity Levels
-# =========================
+    FOCUSED = "focused"
 
 
 class Severity(Enum):
-    """Severity for user-visible response safety filtering."""
+    """Backend disclosure labels; levels three and four are private."""
 
-    SEV_0 = 0  # normal conversation
-    SEV_1 = 1  # light meta-awareness
-    SEV_2 = 2  # system behavior
-    SEV_3 = 3  # internal mechanics / audit
-    SEV_4 = 4  # developer / debug only
+    SEV_0 = 0
+    SEV_1 = 1
+    SEV_2 = 2
+    SEV_3 = 3
+    SEV_4 = 4
 
 
-# =========================
-# Backend Auto-Label Support
-# =========================
-# Backend may prefix:
-#   <vbl severity="3" />
-
-VBL_TAG = re.compile(r'^<vbl severity="(\d)" />\n?', re.MULTILINE)
+VBL_TAG = re.compile(r'^<vbl severity="([0-4])" />\r?\n?')
 
 
 def extract_severity(text: str) -> Tuple[str, Optional[Severity]]:
-    """
-    Purpose: Parse and strip an optional backend-provided VBL severity prefix.
-    Inputs/Outputs: raw text -> (clean text, optional Severity).
-    Edge cases: Unknown severity digits are treated as no explicit severity.
-    """
+    """Consume only the leading disclosure label; malformed labels fail closed."""
     match = VBL_TAG.match(text)
-    # //audit assumption: VBL tag appears only at start; risk: mid-body false match; invariant: start-match only; strategy: use regex match.
-    if not match:
-        return text, None
-
-    try:
-        sev = Severity(int(match.group(1)))
-    except ValueError:
-        # //audit assumption: malformed severity should not crash; risk: leak via exception path; invariant: fail closed via classifier; strategy: drop explicit severity.
-        sev = None
-    clean = VBL_TAG.sub("", text)
-    return clean, sev
+    if match:
+        clean = text[match.end() :]
+        if clean.lstrip().startswith("<vbl"):
+            return "", Severity.SEV_4
+        return clean, Severity(int(match[1]))
+    if text.lstrip().startswith("<vbl"):
+        return "", Severity.SEV_4
+    return text, None
 
 
-# =========================
-# Keyword Classification (fallback)
-# =========================
-
-SEVERITY_RULES = {
-    Severity.SEV_4: [
-        "traceback (most recent call",
-        "stack trace:",
-        "unhandled exception",
-    ],
-    Severity.SEV_3: [
-        "audit_trace",
-        "session validation failed",
-        "memory_shell_",
-        "deduplicated entry",
-        "logic trace:",
-        "retrieval context:",
-        "boot_snapshot",
-        "no memory entry was created",
-    ],
-    Severity.SEV_2: [
-        "rate limit exceeded",
-        "backend unavailable",
-        "fallback handler activated",
-        "session lock fallback",
-    ],
-    Severity.SEV_1: [
-        "as a language model",
-        "i am an ai",
-        "system prompt",
-        "i cannot remember previous",
-    ],
-}
+# Legacy raw diagnostic records remain private. Mentions in explanations and
+# code examples are not disclosure labels. Do not classify ordinary failures
+# (backend unavailable, session validation failed, no memory saved) as private.
+_PRIVATE_RECORD = re.compile(
+    r'^\s*(?:["\']?(?:audit_trace|boot_snapshot|memory_shell_\w+)["\']?\s*[:=]'
+    r"|(?:active session id|session_boot|logic_engine|goals_processor)\s*[:=]"
+    r"|\[SYSTEM\b)",
+    re.IGNORECASE,
+)
+_PRIVATE_JSON_KEY = re.compile(
+    r'"(?:audit_trace|boot_snapshot|memory_shell_\w+)"\s*:', re.I
+)
+_DEBUG_RECORD = re.compile(r"^\s*(?:Traceback \(most recent call|Stack trace:)", re.I)
+_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 
 
 def classify(text: str) -> Severity:
-    """
-    Purpose: Classify response severity using keyword rules when no explicit label exists.
-    Inputs/Outputs: response text -> Severity enum.
-    Edge cases: Defaults to SEV_0 when no markers are present.
-    """
-    lowered = text.lower()
-    for severity, markers in SEVERITY_RULES.items():
-        # //audit assumption: marker match implies severity bucket; risk: false positives; invariant: highest configured bucket wins by order; strategy: return first match.
-        if any(marker in lowered for marker in markers):
-            return severity
+    """Recognize legacy diagnostic records, not isolated diagnostic phrases."""
+    for name, _, _ in iter_json_fields(text):
+        if re.fullmatch(r"audit_trace|boot_snapshot|memory_shell_\w+", name, re.I):
+            return Severity.SEV_3
+    fence = ""
+    fence_length = 0
+    for line in text.splitlines():
+        # A serialized private record stays private when wrapped in a fence.
+        # Quoted mentions in explanations/source strings are not record keys.
+        if line.lstrip().startswith(("{", "[", '"')) and _PRIVATE_JSON_KEY.search(line):
+            return Severity.SEV_3
+        match = _FENCE.match(line)
+        if fence:
+            if (
+                match
+                and match[1][0] == fence
+                and len(match[1]) >= fence_length
+                and not match[2].strip()
+            ):
+                fence = ""
+            continue
+        if match:
+            fence, fence_length = match[1][0], len(match[1])
+            continue
+        if line.startswith(("    ", "\t")):
+            continue
+        if _DEBUG_RECORD.match(line):
+            return Severity.SEV_4
+        if _PRIVATE_RECORD.match(line):
+            return Severity.SEV_3
     return Severity.SEV_0
-
-
-# =========================
-# Persona-Aware Rewrites
-# =========================
-
-PERSONA_REWRITES = {
-    Severity.SEV_2: {
-        Persona.CALM: [
-            "I've got this covered.",
-            "I'll take care of it.",
-        ],
-        Persona.DIRECT: [
-            "Handled.",
-        ],
-        Persona.EXPLORATORY: [
-            "I'll handle this and we can keep going.",
-        ],
-        Persona.FOCUSED: [
-            "Noted. Continuing.",
-            "Already accounted for.",
-        ],
-    },
-    Severity.SEV_1: {
-        Persona.CALM: [
-            "Here's how I'm thinking about it.",
-        ],
-        Persona.DIRECT: [
-            "Here's the reasoning.",
-        ],
-        Persona.EXPLORATORY: [
-            "Let's think through this together.",
-        ],
-        Persona.FOCUSED: [
-            "Here's the analysis.",
-        ],
-    },
-}
-
-
-def persona_rewrite(severity: Severity, persona: Persona) -> Optional[str]:
-    """
-    Purpose: Map severity + persona to a safe user-facing rewrite.
-    Inputs/Outputs: Severity + Persona -> optional replacement text.
-    Edge cases: Returns None when no rewrite exists for the pair.
-    """
-    options = PERSONA_REWRITES.get(severity, {}).get(persona)
-    # //audit assumption: random choice is acceptable UX variation; risk: non-deterministic tests; invariant: options non-empty before choice; strategy: guard and choose.
-    return random.choice(options) if options else None
-
-
-# =========================
-# Meta-Intent Detection
-# =========================
-
-META_INTENT_TRIGGERS = [
-    "why",
-    "explain",
-    "audit",
-    "debug",
-    "clarify",
-    "what happened",
-    "did you save",
-]
-
-
-def user_requested_meta(user_text: str) -> bool:
-    """
-    Purpose: Detect whether the user asked for meta/debug explanation.
-    Inputs/Outputs: user message -> bool.
-    Edge cases: Empty text returns False.
-    """
-    if not user_text:
-        return False
-    lowered = user_text.lower()
-    return any(trigger in lowered for trigger in META_INTENT_TRIGGERS)
-
-
-# =========================
-# Confidence Decay Hook
-# (caller supplies memory)
-# =========================
-
-
-def _read_reassure_counter(memory: Any) -> int:
-    """
-    Purpose: Read VBL reassurance counter from best-available memory API.
-    Inputs/Outputs: memory adapter -> integer count.
-    Edge cases: Non-integer stored values resolve to zero.
-    """
-    count = 0
-    if hasattr(memory, "get_setting"):
-        # //audit assumption: settings are available on memory store; risk: missing key; invariant: integer fallback; strategy: default to zero.
-        raw_count = memory.get_setting("vbl_reassure_count", 0)
-        if isinstance(raw_count, int):
-            return raw_count
-        return 0
-
-    if hasattr(memory, "get_stat"):
-        # //audit assumption: stat access may exist in alternate memory adapters; risk: unsupported key; invariant: integer fallback; strategy: default to zero.
-        raw_count = memory.get_stat("vbl_reassure_count", 0)
-        if isinstance(raw_count, int):
-            return raw_count
-    return count
-
-
-def _write_reassure_counter(memory: Any, next_count: int) -> None:
-    """
-    Purpose: Persist VBL reassurance counter using the available memory API.
-    Inputs/Outputs: memory adapter + next counter value -> None.
-    Edge cases: If no known API is present, counter persistence is skipped.
-    """
-    if hasattr(memory, "set_setting"):
-        # //audit assumption: settings write is durable enough for counter; risk: write failure; invariant: best-effort persistence; strategy: set setting.
-        memory.set_setting("vbl_reassure_count", next_count)
-        return
-
-    if hasattr(memory, "increment_stat"):
-        # //audit assumption: stat increment can emulate counter; risk: missing stat key in implementation; invariant: no crash; strategy: increment as fallback.
-        memory.increment_stat("vbl_reassure_count")
-
-
-def should_reassure(memory: Any, limit: int = 2) -> bool:
-    """
-    Purpose: Gate low-severity reassurance rewrites to avoid repetition.
-    Inputs/Outputs: memory adapter + limit -> bool (allow reassurance).
-    Edge cases: Missing memory adapter APIs defaults to allowing reassurance.
-    """
-    count = _read_reassure_counter(memory)
-    # //audit assumption: reassurance spam should be capped; risk: repetitive responses; invariant: max limit respected; strategy: deny when count >= limit.
-    if count >= limit:
-        return False
-
-    _write_reassure_counter(memory, count + 1)
-    return True
-
-
-# =========================
-# The Voice Boundary (FINAL)
-# =========================
 
 
 def apply_voice_boundary(
@@ -270,33 +102,30 @@ def apply_voice_boundary(
     memory: Any = None,
     debug_voice: bool = False,
 ) -> Optional[str]:
+    """Keep approved content verbatim, redacting credentials without truncation.
+
+    Persona, debug intent and reassurance history cannot change an outcome or
+    grant access to private diagnostics. Speech shortening belongs to the caller.
     """
-    Purpose: Enforce the final user-facing boundary for assistant responses.
-    Inputs/Outputs: raw text + persona/context flags -> safe text or None.
-    Edge cases: Invalid/empty input returns None (fail closed).
-    """
-    # ---- Fail closed immediately ----
-    # //audit assumption: non-string or empty payload is unsafe to render; risk: accidental leakage; invariant: return None; strategy: hard guard.
-    if not text or not isinstance(text, str):
+    if not isinstance(text, str) or not text.strip():
         return None
-
-    # ---- Extract backend-provided severity ----
-    text, explicit_severity = extract_severity(text)
-    severity = explicit_severity or classify(text)
-
-    # ---- Never leak internals ----
-    if severity in (Severity.SEV_4, Severity.SEV_3):
-        # //audit assumption: debug meta intent may require minimal acknowledgement; risk: internals exposure; invariant: bounded static response; strategy: explicit fixed string.
-        if debug_voice and user_requested_meta(user_text):
-            return "I already had the context, so nothing new needed saving."
+    # A rejected frame has no approved answer; a redaction placeholder cannot
+    # stand in for the backend's complete response.
+    if not strip_unsafe_output_controls(text):
         return None
-
-    # ---- System / meta behavior ----
-    if severity in (Severity.SEV_2, Severity.SEV_1):
-        # //audit assumption: reassurance should decay over time; risk: repetitive phrasing; invariant: limit enforced when memory exists; strategy: conditional gate.
-        if memory and not should_reassure(memory):
+    # Normalize the inspection copy before recognizing disclosure metadata;
+    # ANSI/zero-width decoration must not hide a private label or record key.
+    inspection, severity = extract_severity(redact_output(text, apply_truncation=False))
+    if severity in (Severity.SEV_3, Severity.SEV_4) or classify(inspection) in (
+        Severity.SEV_3,
+        Severity.SEV_4,
+    ):
+        return None
+    safe_text = redact_output(
+        text, apply_truncation=False, preserve_literal_unicode=True
+    )
+    if severity is not None:
+        safe_text, literal_severity = extract_severity(safe_text)
+        if literal_severity != severity:
             return None
-        return persona_rewrite(severity, persona)
-
-    # ---- Normal conversation ----
-    return text
+    return safe_text if safe_text.strip() else None

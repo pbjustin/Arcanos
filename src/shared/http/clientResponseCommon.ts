@@ -8,6 +8,23 @@ export const GAMING_RESPONSE_MAX_CHARACTERS = 4_096;
 export const STRING_PREVIEW_MAX_BYTES = 4 * 1024;
 const TRUNCATION_MARKER = '\n...[truncated]';
 
+export const PUBLIC_ANSWER_PRESENTATION = 'public-answer-v1' as const;
+const FINALIZED_PUBLIC_ANSWER = Symbol('finalized-public-answer');
+
+/** Bind presentation provenance to finalized answer text; JSON cannot supply this marker. */
+export function markFinalizedPublicAnswer<T extends { result: string }>(answer: T): T {
+  return { ...answer, [FINALIZED_PUBLIC_ANSWER]: answer.result };
+}
+
+/** Return producer state only while the finalized text still matches its internal marker. */
+export function getFinalizedPublicAnswerPresentation(value: unknown): typeof PUBLIC_ANSWER_PRESENTATION | undefined {
+  if (typeof value !== 'object' || value === null
+    || !Object.prototype.hasOwnProperty.call(value, FINALIZED_PUBLIC_ANSWER)) return undefined;
+  const candidate = value as { result?: unknown; [FINALIZED_PUBLIC_ANSWER]?: unknown };
+  return typeof candidate.result === 'string' && candidate[FINALIZED_PUBLIC_ANSWER] === candidate.result
+    ? PUBLIC_ANSWER_PRESENTATION : undefined;
+}
+
 export const INTERNAL_RESPONSE_KEYS = new Set([
   'auditSafe',
   'content',

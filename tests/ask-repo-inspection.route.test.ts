@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { markFinalizedPublicAnswer } from '../src/shared/http/clientResponseCommon.js';
 
 const validateAIRequestMock = jest.fn();
 const handleAIErrorMock = jest.fn();
@@ -171,5 +172,32 @@ describe('/ask repo inspection routing', () => {
       }
     });
     expect(mockRunThroughBrain).not.toHaveBeenCalled();
+  });
+
+  it('preserves finalized answer presentation on the synchronous compatibility route', async () => {
+    const answer = '## Audit Summary\n\nThe supplied check failed.';
+    validateAIRequestMock.mockReturnValue({
+      client: { responses: { create: jest.fn() } },
+      input: 'Explain the supplied example.',
+      body: {}
+    });
+    mockRunThroughBrain.mockResolvedValueOnce(markFinalizedPublicAnswer({
+      result: answer,
+      module: 'trinity',
+      meta: { id: 'sync-presentation-fixture', created: 0 },
+      activeModel: 'fixture',
+      fallbackFlag: false,
+      dryRun: false
+    }));
+
+    const response = await request(buildApp()).post('/brain').send({
+      prompt: 'Explain the supplied example.'
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.result).toBe(answer);
+    expect(response.body.presentation).toBe('public-answer-v1');
+    expect(mockRunThroughBrain).toHaveBeenCalledTimes(1);
+    expect(handleAIErrorMock).not.toHaveBeenCalled();
   });
 });

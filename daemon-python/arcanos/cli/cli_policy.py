@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shlex
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -46,6 +47,16 @@ _MAX_STRUCTURED_ASSIGNMENT_DEPTH = 64
 _ASSIGNMENT_PADDING_PATTERN = (
     r"[\u0009-\u000D\u001C-\u0020\u0085\u00A0\u1680\u2000-\u200A"
     r"\u2028\u2029\u202F\u205F\u3000\uFEFF]*"
+)
+_JSON_FIELD_TOKEN = re.compile(
+    r'(?:^|[,{])[ \t\r\n]*(?P<key>"(?:\\.|[^"\\\r\n])*")[ \t\r\n]*:',
+    re.MULTILINE,
+)
+_AUTH_TOKEN_PATTERN = r"[!#$%&'*+.^_`|~0-9A-Za-z-]+"
+_SENSITIVE_FIELD_NAME = re.compile(
+    r"(?:[A-Za-z][A-Za-z0-9_]*_)?"
+    r"(?:token|secret|password|api[_-]?key|authorization|cookie)",
+    re.IGNORECASE | re.ASCII,
 )
 
 
@@ -164,22 +175,25 @@ def command_to_argv(command: str) -> list[str]:
 def _find_structured_assignment_end(value: str, start: int) -> int | None:
     closing_for = {"{": "}", "[": "]"}
     stack = [value[start]]
-    in_string = False
+    quote: str | None = None
     escaped = False
 
     for index in range(start + 1, len(value)):
         character = value[index]
-        if in_string:
+        if quote is not None:
             if escaped:
                 escaped = False
             elif character == "\\":
                 escaped = True
-            elif character == '"':
-                in_string = False
+            elif character == quote:
+                quote = None
             continue
 
-        if character == '"':
-            in_string = True
+        # Apostrophes within prose words do not open a quoted field value.
+        if character == '"' or (
+            character == "'" and (value[index - 1].isspace() or value[index - 1] in "[{:,")
+        ):
+            quote = character
         elif character in closing_for:
             if len(stack) >= _MAX_STRUCTURED_ASSIGNMENT_DEPTH:
                 return None
@@ -211,6 +225,66 @@ def _is_strict_json_assignment(value: str, start: int, end: int) -> bool:
     return True
 
 
+def iter_json_fields(value: str) -> Iterator[tuple[str, int, int]]:
+    """Inspect decoded field names while retaining original value offsets.
+
+    Object delimiters distinguish keys from escaped examples inside strings,
+    even after unmatched prose quotes. Only names are decoded; text stays literal.
+    Standalone member fragments retain protection at the start of a line.
+    """
+    for token in _JSON_FIELD_TOKEN.finditer(value):
+        try:
+            name = json.loads(token["key"])
+        except ValueError:
+            continue
+        start = token.end()
+        while start < len(value) and value[start] in " \t\r\n":
+            start += 1
+        yield (
+            DEFAULT_IGNORABLE_CODE_POINT_PATTERN.sub("", name),
+            token.start("key"),
+            start,
+        )
+
+
+def _redact_json_fields(value: str, env_names: list[str], replacement: str) -> str:
+    configured_names = {str(name).lower() for name in env_names}
+    decoder = json.JSONDecoder(
+        parse_constant=_reject_nonstandard_json_constant,
+        parse_float=str,
+        parse_int=str,
+    )
+    parts: list[str] = []
+    cursor = 0
+    for name, key_start, start in iter_json_fields(value):
+        # Literal keys retain the established assignment/prose behavior below.
+        if (
+            start < cursor
+            or "\\" not in value[key_start:start]
+            or (
+                name.lower() not in configured_names
+                and not _SENSITIVE_FIELD_NAME.fullmatch(name)
+            )
+        ):
+            continue
+        try:
+            if start < len(value) and value[start] in "{[":
+                end = _find_structured_assignment_end(value, start)
+                if end is None or not _is_strict_json_assignment(value, start, end):
+                    raise ValueError("invalid structured credential")
+            else:
+                _, end = decoder.raw_decode(value, start)
+            if end < len(value) and value[end] not in " \t\r\n,}]":
+                raise ValueError("invalid credential value boundary")
+        except (ValueError, RecursionError):
+            # An ambiguous secret field cannot expose an unparsed suffix.
+            end = len(value)
+        parts.extend((value[cursor:start], json.dumps(replacement, ensure_ascii=False)))
+        cursor = end
+    parts.append(value[cursor:])
+    return "".join(parts)
+
+
 def _find_assignment_token_end(value: str, start: int) -> int:
     index = start
     quote: str | None = None
@@ -240,10 +314,28 @@ def _find_assignment_token_end(value: str, start: int) -> int:
     return len(value)
 
 
-def _redact_named_assignment(value: str, env_name: str, replacement: str) -> str:
+def _redact_named_assignment(
+    value: str,
+    env_name: str,
+    replacement: str,
+    *,
+    preserve_colon_prose: bool = False,
+) -> str:
+    """Redact explicit fields, preserving prose after ambiguous generic labels.
+
+    A standalone token after a sensitive colon label is conservatively treated
+    as a credential, even if it is a short word. One-word explanations share
+    that ambiguous shape; multiword explanations retain the existing checks.
+    Markdown closing delimiters alone are formatting, not a field value.
+    An Authorization scheme identifier followed by exactly one token is also
+    treated as a credential regardless of length. Two-word explanations can
+    share this shape and are conservatively redacted; arbitrary custom schemes
+    cannot be distinguished perfectly from prose.
+    """
     pattern = re.compile(
-        rf"(?<![A-Za-z0-9_])({re.escape(env_name)}{_ASSIGNMENT_PADDING_PATTERN}="
-        rf"{_ASSIGNMENT_PADDING_PATTERN})",
+        rf"(?<![A-Za-z0-9_])(?P<prefix>(?P<key_quote>[\"']?)"
+        rf"{re.escape(env_name)}(?P=key_quote){_ASSIGNMENT_PADDING_PATTERN}"
+        rf"(?P<separator>[:=]){_ASSIGNMENT_PADDING_PATTERN})",
         re.IGNORECASE | re.ASCII,
     )
     redacted_parts: list[str] = []
@@ -259,21 +351,89 @@ def _redact_named_assignment(value: str, env_name: str, replacement: str) -> str
         assignment_end: int | None
         replacement_value = replacement
         first_character = value[assignment_start]
-        if first_character in ("{", "["):
+        is_field = match["separator"] == ":"
+        if (
+            preserve_colon_prose
+            and is_field
+            and not match["key_quote"]
+            and first_character not in ('"', "'", "{", "[")
+        ):
+            remainder = value[assignment_start:]
+            token_match = re.match(r"[^\s,}\]]+", remainder)
+            token = token_match[0] if token_match else ""
+            field_line = remainder.splitlines()[0]
+            single_value = len(field_line.split()) == 1
+            label_delimiter = (
+                not token.strip("*_`") and value[:match.start()].endswith(token)
+            )
+            has_letters = any(character.isalpha() for character in token)
+            credential_value = (
+                single_value and not label_delimiter
+            ) or (
+                has_letters
+                and len(token) >= 6
+                and re.search(r"[!@#$%^&+]", token) is not None
+            )
+            authorization_value = env_name.lower() == "authorization" and (
+                re.match(r"(?:Bearer|Basic|Digest)\s+\S+", remainder, re.IGNORECASE)
+                or re.fullmatch(rf"{_AUTH_TOKEN_PATTERN}[ \t]+\S+[ \t]*", field_line)
+                or re.match(
+                    rf"{_AUTH_TOKEN_PATTERN}[ \t]+{_AUTH_TOKEN_PATTERN}[ \t]*=",
+                    field_line,
+                )
+                or re.match(
+                    r"[A-Za-z][A-Za-z0-9_-]*[ \t]+(?=\S{8,}(?:\s|$))(?=\S*[0-9])\S+",
+                    remainder,
+                )
+            )
+            cookie_value = env_name.lower() == "cookie" and re.fullmatch(
+                r"[^;\s=]+=[^;\s]+(?:;\s*(?:[^;\s=]+=[^;]*|HttpOnly|Secure|Partitioned))*\s*",
+                field_line,
+                re.IGNORECASE,
+            )
+            if not credential_value and not authorization_value and not cookie_value:
+                search_from = assignment_start
+                continue
+        if is_field and match["key_quote"]:
+            replacement_value = f"{match['key_quote']}{replacement}{match['key_quote']}"
+        replacement_end = assignment_start + len(replacement)
+        if value.startswith(replacement, assignment_start) and (
+            replacement_end == len(value)
+            or value[replacement_end].isspace()
+            or (is_field and value[replacement_end] in ",}]")
+        ):
+            assignment_end = replacement_end
+        elif first_character in ("{", "["):
             assignment_end = _find_structured_assignment_end(value, assignment_start)
-            if assignment_end is None or not _is_strict_json_assignment(
-                value,
-                assignment_start,
-                assignment_end,
+            # A generic colon label can contain balanced Markdown/prose; explicit
+            # assignments still require strict JSON before preserving a tail.
+            if assignment_end is None or (
+                not _is_strict_json_assignment(value, assignment_start, assignment_end)
+                and not (preserve_colon_prose and is_field and not match["key_quote"])
             ):
                 redacted_parts.append(value[cursor : match.start()])
-                redacted_parts.append(f"{match.group(1)}{replacement}")
+                redacted_parts.append(f"{match['prefix']}{replacement_value}")
                 cursor = len(value)
                 break
-            assignment_end = _find_assignment_token_end(value, assignment_end)
+            if not is_field:
+                assignment_end = _find_assignment_token_end(value, assignment_end)
         elif first_character in ('"', "'"):
-            assignment_end = _find_assignment_token_end(value, assignment_start)
+            if is_field:
+                quoted_value = re.match(
+                    r'''"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*' ''',
+                    value[assignment_start:],
+                    re.VERBOSE,
+                )
+                assignment_end = (
+                    assignment_start + quoted_value.end() if quoted_value else len(value)
+                )
+            else:
+                assignment_end = _find_assignment_token_end(value, assignment_start)
             replacement_value = f"{first_character}{replacement}{first_character}"
+        elif is_field:
+            delimiter = r"[\r\n]" if not match["key_quote"] and env_name.lower() in ("authorization", "cookie") else r"[\s,}\]]"
+            end_match = re.search(delimiter, value[assignment_start:])
+            assignment_end = assignment_start + end_match.start() if end_match else len(value)
         else:
             assignment_end = _find_assignment_token_end(value, assignment_start)
 
@@ -282,7 +442,7 @@ def _redact_named_assignment(value: str, env_name: str, replacement: str) -> str
             continue
 
         redacted_parts.append(value[cursor : match.start()])
-        redacted_parts.append(f"{match.group(1)}{replacement_value}")
+        redacted_parts.append(f"{match['prefix']}{replacement_value}")
         cursor = assignment_end
         search_from = assignment_end
 
@@ -295,20 +455,33 @@ def _redact_sanitized_output(
     policy: dict[str, Any],
     replacement: str,
 ) -> str:
-    redacted = value
-    for env_name in policy.get("redactionPolicy", {}).get("envNames") or []:
+    env_names = policy.get("redactionPolicy", {}).get("envNames") or []
+    redacted = _redact_json_fields(value, env_names, replacement)
+    for env_name in env_names:
         redacted = _redact_named_assignment(redacted, str(env_name), replacement)
     redacted = re.sub(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}", f"Bearer {replacement}", redacted, flags=re.IGNORECASE)
     redacted = re.sub(r"\bsk-[A-Za-z0-9_-]{12,}\b", replacement, redacted)
     redacted = re.sub(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,}\b", replacement, redacted)
     redacted = re.sub(r"\brwy_[A-Za-z0-9_=-]{20,}\b", replacement, redacted, flags=re.IGNORECASE)
     redacted = re.sub(r"\b[A-Za-z][A-Za-z0-9+.-]*://[^\s\"'`]*:[^\s\"'`@]+@[^\s\"'`]+", replacement, redacted)
-    redacted = re.sub(
-        r"\b((?:token|secret|password|api[_-]?key|authorization|cookie)\s*=\s*)([\"']?)[^\s\"'`]+([\"']?)",
-        rf"\1\2{replacement}\3",
-        redacted,
-        flags=re.IGNORECASE,
-    )
+    sensitive_names = {
+        match[1]
+        for match in re.finditer(
+            r'''(?<![A-Za-z0-9_])["']?((?:[A-Za-z][A-Za-z0-9_]*_)?(?:token|secret|password|api[_-]?key|authorization|cookie))["']?\s*[:=]''',
+            redacted,
+            re.IGNORECASE | re.ASCII,
+        )
+    }
+    configured_names = {str(name).lower() for name in env_names}
+    for name in sorted(sensitive_names):
+        if name.lower() not in configured_names:
+            redacted = _redact_named_assignment(
+                redacted,
+                name,
+                replacement,
+                preserve_colon_prose=name.lower().replace("-", "_")
+                in {"token", "secret", "password", "api_key", "apikey", "authorization", "cookie"},
+            )
     redacted = re.sub(r"BEGIN [A-Z ]*PRIVATE KEY[\s\S]*?END [A-Z ]*PRIVATE KEY", replacement, redacted, flags=re.IGNORECASE)
     return redacted
 
@@ -318,6 +491,7 @@ def redact_output(
     *,
     apply_truncation: bool = True,
     preserve_record_separators: bool = False,
+    preserve_literal_unicode: bool = False,
 ) -> str:
     policy = load_cli_policy()
     replacement = policy.get("redactionPolicy", {}).get("replacement") or "[REDACTED]"
@@ -334,6 +508,18 @@ def redact_output(
         + frame.separator
         for frame in frames
     )
+    if preserve_literal_unicode and not preserve_record_separators:
+        # Answer literals may intentionally contain emoji selectors/joiners.
+        # Preserve them only when the canonical security view proves that the
+        # same credentials are redacted. Terminal controls and bidi overrides
+        # still cannot reach the renderer; other output callers keep defaults.
+        literal = _sanitize_terminal_segment(value or "")
+        if literal is not None:
+            literal = _redact_sanitized_output(
+                BIDI_CONTROL_PATTERN.sub("", literal), policy, replacement
+            )
+            if DEFAULT_IGNORABLE_CODE_POINT_PATTERN.sub("", literal) == redacted:
+                redacted = literal
     return truncate_output(redacted) if apply_truncation else redacted
 
 

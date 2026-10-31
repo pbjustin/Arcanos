@@ -13,6 +13,7 @@ from ..cli_session import (
     sanitize_summary_for_prompt,
 )
 from ..utils.text import sanitize_utf8_text
+from .cli_policy import redact_output
 
 if TYPE_CHECKING:
     from .cli import ArcanosCLI
@@ -70,8 +71,12 @@ def record_conversation_turn(
     # //audit assumption: limiter must track every billed request; risk: quota drift; invariant: request usage recorded before persistence; strategy: record then persist.
     cli.rate_limiter.record_request(tokens_used, cost_usd)
     # //audit assumption: persisted conversation text must be UTF-8 encodable; risk: runtime crash on malformed surrogate input; invariant: stored messages are serialization-safe; handling strategy: sanitize both user and assistant text before persistence.
-    normalized_user_message = sanitize_utf8_text(user_message)
-    normalized_response = sanitize_utf8_text(response_for_memory)
+    normalized_user_message = sanitize_utf8_text(redact_output(
+        user_message, apply_truncation=False, preserve_literal_unicode=True
+    ))
+    normalized_response = sanitize_utf8_text(redact_output(
+        response_for_memory, apply_truncation=False, preserve_literal_unicode=True
+    ))
     cli.memory.add_conversation(normalized_user_message, normalized_response, tokens_used, cost_usd)
 
 

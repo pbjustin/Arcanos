@@ -12,6 +12,8 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional, TYPE_CHECKING
 
+from rich.segment import Segment, Segments
+
 from .audit import record as audit_record
 from .trust_state import TrustState
 
@@ -28,12 +30,68 @@ from ..config import Config
 from ..conversation_routing import build_conversation_messages
 from ..credential_bootstrap import CredentialBootstrapError, bootstrap_credentials
 from ..error_handler import logger as error_logger
+from ..cli_midlayer import translate
 from .context import ConversationResult
 from . import state
 from arcanos.debug import log_audit_event
 
 if TYPE_CHECKING:
     from .cli import ArcanosCLI
+
+
+def _translate_backend_error_text(text: str) -> tuple[str, bool]:
+    """Inspect decoded JSON fields before displaying an untrusted error body.
+
+    Keep safe JSON verbatim. Withhold bodies with private or additionally
+    filtered fields rather than displaying their original escaped payloads.
+    """
+    def starts_json_container(value: str) -> bool:
+        # Plain bracketed warning labels are prose; malformed JSON bodies fail closed.
+        return value.lstrip().startswith("{") or bool(
+            re.match(r'^\s*\[\s*(?:["{\[\]\d-]|true\b|false\b|null\b|$)', value)
+        )
+
+    safe_text, show = translate("", text, source="backend")
+    if not show:
+        return "", False
+    try:
+        parsed = json.loads(safe_text)
+    except (ValueError, RecursionError):
+        return ("", False) if starts_json_container(safe_text) else (safe_text, True)
+
+    pending = [(parsed, True)]
+    while pending:
+        field, document = pending.pop()
+        if document:
+            # Decoded keys and their values must retain their assignment context.
+            try:
+                canonical = json.dumps(field, ensure_ascii=False)
+            except RecursionError:
+                return "", False
+            filtered, allowed = translate("", canonical, source="backend")
+            if not allowed or filtered != canonical:
+                return "", False
+        if isinstance(field, dict):
+            for key in field:
+                if not translate("", f"{key}:", source="backend")[1]:
+                    return "", False
+            pending.extend((value, False) for value in field.values())
+        elif isinstance(field, list):
+            pending.extend((value, False) for value in field)
+        elif isinstance(field, str) and field.strip():
+            filtered, allowed = translate("", field, source="backend")
+            if not allowed or filtered != field:
+                return "", False
+            # Nested encoded error bodies must not hide disclosure labels.
+            if field.lstrip().startswith(("{", "[", '"')):
+                try:
+                    pending.append((json.loads(field), True))
+                except ValueError:
+                    if starts_json_container(field):
+                        return "", False
+                except RecursionError:
+                    return "", False
+    return safe_text, True
 
 
 def report_backend_error(
@@ -51,9 +109,17 @@ def report_backend_error(
         cli.console.print(f"[red]Backend {action_label} failed.[/red]")
         return
 
-    details = f" ({error.details})" if error.details else ""
     status_info = f" [{error.status_code}]" if error.status_code else ""
-    cli.console.print(f"[red]Backend {action_label} failed{status_info}: {error.message}{details}[/red]")
+    safe_message, show_message = _translate_backend_error_text(error.message)
+    safe_details, show_details = _translate_backend_error_text(error.details or "")
+    message = f"Backend {action_label} failed{status_info}"
+    if show_message:
+        message += f": {safe_message}"
+    if show_details:
+        message += f" ({safe_details})"
+    if not show_message or (error.details and not show_details):
+        message += "; internal diagnostic details were withheld."
+    cli.console.print(Segments([Segment(message)]), style="red", soft_wrap=True)
 
     # //audit assumption: network and timeout errors are operator-actionable; risk: unresolved connectivity issue; invariant: remediation hint shown; strategy: print endpoint guidance.
     if error.kind == "network" or error.kind == "timeout":
@@ -767,6 +833,7 @@ def perform_backend_conversation(
             cost_usd=response.value.cost_usd,
             model=response.value.model,
             source="backend",
+            presentation=getattr(response.value, "presentation", None),
         )
 
     if response.error and response.error.kind == "confirmation":
@@ -916,6 +983,7 @@ def perform_backend_vision(cli: "ArcanosCLI", use_camera: bool) -> Optional[Conv
         cost_usd=response.value.cost_usd,
         model=response.value.model,
         source="backend",
+        presentation=getattr(response.value, "presentation", None),
     )
 
 

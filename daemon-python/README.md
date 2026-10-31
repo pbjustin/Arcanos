@@ -56,6 +56,32 @@ You (terminal)
   -> summarized tool result returned to the backend for the next loop step
 ```
 
+## Answer presentation
+
+The CLI displays the complete approved answer as literal text, preserving
+Markdown source, code fences, indentation, quoted literals, and failure details.
+Ordinary and agentic chat, vision, and push-to-talk use the same disclosure
+boundary. Local response streams are buffered until that boundary can inspect
+the complete answer. Speech may be shortened separately from the textual answer.
+
+Finalized backend answers may carry the server-owned outer field
+`presentation: "public-answer-v1"`. The client preserves headings such as
+`Audit Summary` in these answers. Missing, unknown, or nested presentation
+metadata retains legacy private audit/routing section protection; local provider
+responses without producer metadata retain that protection too. Heading text,
+model output, route names, and debug flags cannot confer this state.
+
+Disclosure labels, private machine records, and credentials remain protected
+for every presentation format, including debug display mode. Unsafe terminal
+controls withhold the complete answer and show one neutral notice. Safe styling
+can be removed; significant code whitespace remains intact. The existing CLI
+redaction policy applies without answer-length truncation.
+Structured backend errors are also inspected after JSON decoding so escaped
+fields cannot hide private diagnostics. Unsafe or ambiguous structured error
+bodies are withheld with an explicit notice; the failure summary remains visible.
+Proposal extraction does not remove examples from the answer or grant execution
+permission; existing confirmation and policy checks still apply.
+
 ## Prerequisites
 
 - Python 3.10+

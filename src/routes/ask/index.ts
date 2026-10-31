@@ -1483,7 +1483,7 @@ export const handleAIRequest = async (
         }
       }
     });
-    const completedOutput = buildCompletedQueuedAskOutput(output, queuedAskJobInput);
+    const completedOutput = buildCompletedQueuedAskOutput(output, queuedAskJobInput, { includePresentation: true });
     recordPromptDebugTrace(requestId, 'response', {
       ...buildPromptDebugContext(req, endpointName, rawPrompt, normalizedPrompt),
       selectedRoute: endpointName,

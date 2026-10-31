@@ -1054,7 +1054,12 @@ class BackendApiClient:
                 response_text=response_text,
                 tokens_used=tokens,
                 cost_usd=float(cost),
-                model=model
+                model=model,
+                presentation=(
+                    "public-answer-v1"
+                    if response_json.get("presentation") == "public-answer-v1"
+                    else None
+                ),
             )
         )
 
@@ -1113,7 +1118,12 @@ class BackendApiClient:
                 response_text=response_text,
                 tokens_used=tokens,
                 cost_usd=float(cost),
-                model=model
+                model=model,
+                presentation=(
+                    "public-answer-v1"
+                    if response_json.get("presentation") == "public-answer-v1"
+                    else None
+                ),
             )
         )
 

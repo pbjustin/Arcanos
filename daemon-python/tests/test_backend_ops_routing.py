@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
-from arcanos.backend_client_models import BackendChatResult, BackendResponse
+import pytest
+
+from arcanos.backend_client_models import BackendChatResult, BackendResponse, BackendVisionResult
 from arcanos.cli import backend_ops
 
 JOB_READ_TOKEN = f"v1.{'D' * 43}"
@@ -31,7 +33,32 @@ def _make_cli_stub() -> SimpleNamespace:
     )
 
 
-def test_perform_backend_conversation_uses_gaming_gpt_id_for_gaming_domain(monkeypatch) -> None:
+@pytest.mark.parametrize("presentation", [None, "public-answer-v1"])
+def test_backend_vision_carries_producer_presentation(monkeypatch, presentation):
+    cli_stub = _make_cli_stub()
+    cli_stub.vision = SimpleNamespace(capture_screenshot=lambda **kwargs: "fixture-image")
+    cli_stub.backend_client.request_vision_analysis = lambda **kwargs: BackendResponse(
+        ok=True,
+        value=BackendVisionResult(
+            "## Audit Summary\nThe task failed.", 0, 0.0, "backend-fixture", presentation
+        ),
+    )
+    monkeypatch.setattr(backend_ops, "build_backend_metadata", lambda cli: {})
+    monkeypatch.setattr(
+        backend_ops,
+        "request_with_auth_retry",
+        lambda cli, request_func, action_label: request_func(),
+    )
+
+    result = backend_ops.perform_backend_vision(cli_stub, use_camera=False)
+
+    assert result is not None
+    assert result.response_text == "## Audit Summary\nThe task failed."
+    assert result.presentation == presentation
+
+
+@pytest.mark.parametrize("presentation", [None, "public-answer-v1"])
+def test_perform_backend_conversation_uses_gaming_gpt_id_for_gaming_domain(monkeypatch, presentation) -> None:
     cli_stub = _make_cli_stub()
     captured_kwargs: dict[str, object] = {}
 
@@ -44,6 +71,7 @@ def test_perform_backend_conversation_uses_gaming_gpt_id_for_gaming_domain(monke
                 tokens_used=12,
                 cost_usd=0.0,
                 model="backend-model",
+                presentation=presentation,
             ),
         )
 
@@ -70,11 +98,13 @@ def test_perform_backend_conversation_uses_gaming_gpt_id_for_gaming_domain(monke
 
     assert result is not None
     assert result.source == "backend"
+    assert result.presentation == presentation
     assert captured_kwargs["gpt_id"] == "arcanos-gaming"
     assert captured_kwargs["domain"] == "gaming"
 
 
-def test_perform_backend_conversation_keeps_default_gpt_id_for_non_gaming_chat(monkeypatch) -> None:
+@pytest.mark.parametrize("presentation", [None, "public-answer-v1"])
+def test_perform_backend_conversation_keeps_default_gpt_id_for_non_gaming_chat(monkeypatch, presentation) -> None:
     cli_stub = _make_cli_stub()
     captured_kwargs: dict[str, object] = {}
 
@@ -87,6 +117,7 @@ def test_perform_backend_conversation_keeps_default_gpt_id_for_non_gaming_chat(m
                 tokens_used=8,
                 cost_usd=0.0,
                 model="backend-model",
+                presentation=presentation,
             ),
         )
 
@@ -118,6 +149,7 @@ def test_perform_backend_conversation_keeps_default_gpt_id_for_non_gaming_chat(m
 
     assert result is not None
     assert result.source == "backend"
+    assert result.presentation == presentation
     assert captured_kwargs["gpt_id"] is None
 
 

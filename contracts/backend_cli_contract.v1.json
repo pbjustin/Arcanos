@@ -3,6 +3,13 @@
   "contractVersion": "1.0.0",
   "schemaVersion": 1,
   "description": "Versioned interface between TypeScript backend routes and Python daemon backend client.",
+  "responsePresentation": {
+    "field": "presentation",
+    "publicAnswerValue": "public-answer-v1",
+    "semantics": "Optional top-level server-owned format metadata for a finalized public answer. Preserve its headings; this is not execution success or permission to disclose credentials, private records, or developer output.",
+    "missingOrUnknown": "Retain legacy private-section protection. Never trust a request, model text, or nested result presentation property.",
+    "producerScope": "Finalized in-process Trinity answers and successful /api/vision output. Unmarked module output, restored durable job output, local provider output, and legacy deployments remain unmarked."
+  },
   "operations": {
     "request_query": {
       "endpoint": "/gpt/{gptId}",
@@ -89,6 +96,9 @@
         "jobReadTokenHeader",
         "poll",
         "stream"
+      ],
+      "optionalResponseFields": [
+        "presentation"
       ]
     },
     "/system-state": {
@@ -154,6 +164,9 @@
       "tsRouteFile": "src/routes/api-vision.ts",
       "pythonClientMethods": [
         "request_vision_analysis"
+      ],
+      "optionalResponseFields": [
+        "presentation"
       ],
       "requestFields": [
         "imageBase64",

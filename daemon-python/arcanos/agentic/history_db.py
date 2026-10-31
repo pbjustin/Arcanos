@@ -154,7 +154,9 @@ class HistoryDB:
     def log_message(self, session_id: str, role: str, content: str) -> None:
         normalized_session_id = sanitize_utf8_text(session_id)
         normalized_role = sanitize_utf8_text(role)
-        normalized_content = sanitize_utf8_text(content)
+        normalized_content = sanitize_utf8_text(redact_output(
+            content, apply_truncation=False, preserve_literal_unicode=True
+        ))
         with self._conn() as c:
             c.execute(
                 "INSERT INTO messages(session_id, ts_ms, role, content) VALUES(?,?,?,?)",

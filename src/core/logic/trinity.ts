@@ -17,6 +17,7 @@
 import type OpenAI from 'openai';
 import { logArcanosRouting, logRoutingSummary } from "@platform/logging/aiLogger.js";
 import { generateRequestId } from "@shared/idGenerator.js";
+import { markFinalizedPublicAnswer } from '@shared/http/clientResponseCommon.js';
 import { resolveGamingGuideIntakeEndpointPolicy } from '@shared/gaming/gamingGuideIntakeCore.js';
 import { getTrinityMessages } from "@platform/runtime/prompts.js";
 import { MidLayerTranslator } from "@services/midLayerTranslator.js";
@@ -990,7 +991,7 @@ export async function runThroughBrain(
       durationMs: Date.now() - start,
       module: shortcutResult.module
     });
-    return shortcutResult;
+    return markFinalizedPublicAnswer(shortcutResult);
   }
 
   // Validate final authority before helper work, while deterministic shortcuts stay provider-free.
@@ -1729,7 +1730,7 @@ export async function runThroughBrain(
         durationMs: Date.now() - start,
         module: result.module
       });
-      return result;
+      return markFinalizedPublicAnswer(result);
     };
 
     //audit Assumption: explicit anti-simulation prompts on the main Trinity route should bypass persona-heavy multi-stage framing; failure risk: the normal intake/final pipeline or translator reintroduces theatrical language after the operator asked for a direct answer; expected invariant: direct-answer mode performs one guarded model call with strict output cleanup while preserving telemetry, audit, and budget controls; handling strategy: branch inside the guarded execution window when the prompt explicitly requests direct, non-simulated output.
@@ -2138,10 +2139,8 @@ export async function runThroughBrain(
     checkWatchdog();
 
     const userIntent = MidLayerTranslator.detectIntentFromUserMessage(trustedPolicyPrompt);
-    if (validateStructuredOutput) {
-      const providerBlocker = classifyTrinityProviderIntegrityBlocker(finalOutput.provider);
-      if (providerBlocker) throw new TrinityStructuredOutputError(providerBlocker);
-    }
+    const providerBlocker = classifyTrinityProviderIntegrityBlocker(finalOutput.provider);
+    if (providerBlocker) throw new TrinityStructuredOutputError(providerBlocker);
     const translatedFinalText = validateStructuredOutput ? finalOutput.output : gamingGuideIntakePolicy
       ? finalOutput.output.trim()
       : MidLayerTranslator.translate({ raw: finalOutput.output }, userIntent);
@@ -2414,7 +2413,7 @@ export async function runThroughBrain(
         mitigationId: finalRecoveryMitigationId
       });
     }
-    return result;
+    return markFinalizedPublicAnswer(result);
 
   } finally {
     if (effectiveTokenAuditSessionId && observedReasoningUsage && !reasoningUsageRecorded) {

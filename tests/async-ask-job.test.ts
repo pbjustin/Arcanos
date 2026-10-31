@@ -1,4 +1,9 @@
 import { describe, expect, it } from '@jest/globals';
+import type { TrinityResult } from '../src/core/logic/trinity.js';
+import {
+  getFinalizedPublicAnswerPresentation,
+  markFinalizedPublicAnswer
+} from '../src/shared/http/clientResponseCommon.js';
 import {
   buildCompletedQueuedAskOutput,
   buildQueuedAskJobInput,
@@ -78,8 +83,8 @@ describe('async ask job helpers', () => {
     expect(parsedJobInput.error).toContain('prompt');
   });
 
-  it('builds completed queued ask output with preserved client metadata', () => {
-    const completedOutput = buildCompletedQueuedAskOutput(
+  it.each([undefined, false, true])('builds completed output with client metadata (includePresentation=%s)', includePresentation => {
+    const trinityResult = markFinalizedPublicAnswer<TrinityResult>(
       {
         result: 'Refactored version ready.',
         module: 'arcanos-final',
@@ -122,17 +127,22 @@ describe('async ask job helpers', () => {
           debugPipeline: false,
           strictUserVisibleOutput: true
         }
-      },
-      {
-        prompt: 'Refactor this TypeScript function.',
-        endpointName: 'brain',
-        clientContext: { routingDirectives: ['concise'] },
-        auditFlag: {
-          auditFlag: 'SCHEMA_VALIDATION_BYPASS',
-          reason: 'lenient-path',
-          timestamp: '2026-03-06T12:00:00.000Z'
-        }
       }
+    );
+    const jobInput = buildQueuedAskJobInput({
+      prompt: 'Refactor this TypeScript function.',
+      endpointName: 'brain',
+      clientContext: { routingDirectives: ['concise'] },
+      auditFlag: {
+        auditFlag: 'SCHEMA_VALIDATION_BYPASS',
+        reason: 'lenient-path',
+        timestamp: '2026-03-06T12:00:00.000Z'
+      }
+    });
+    const completedOutput = buildCompletedQueuedAskOutput(
+      trinityResult,
+      jobInput,
+      { includePresentation }
     );
 
     expect(completedOutput).toEqual({
@@ -143,6 +153,7 @@ describe('async ask job helpers', () => {
         created: 1772810000
       },
       activeModel: 'ft:gpt-4.1',
+      ...(includePresentation ? { presentation: 'public-answer-v1' } : {}),
       fallbackFlag: false,
       endpoint: 'brain',
       gpt5Used: true,
@@ -155,6 +166,15 @@ describe('async ask job helpers', () => {
         timestamp: '2026-03-06T12:00:00.000Z'
       }
     });
+    const restoredJobData = JSON.parse(JSON.stringify({ output: completedOutput }));
+    expect(restoredJobData.output.result).toBe(trinityResult.result);
+    if (includePresentation) {
+      expect(restoredJobData.output.presentation).toBe('public-answer-v1');
+    } else {
+      expect(completedOutput).not.toHaveProperty('presentation');
+      expect(restoredJobData.output).not.toHaveProperty('presentation');
+    }
+    expect(getFinalizedPublicAnswerPresentation(trinityResult)).toBe('public-answer-v1');
   });
 
   it('builds pending queue responses with a poll URL', () => {

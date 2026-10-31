@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import type OpenAI from 'openai';
 import type { ResponseCreateParamsNonStreaming } from 'openai/resources/responses/responses';
+import { getFinalizedPublicAnswerPresentation } from '../src/shared/http/clientResponseCommon.js';
+import { buildTrinityUserVisibleResponse } from '../src/shared/ask/trinityResponseSerializer.js';
 
 // Keep extraction, stages, routing, honesty and final delivery real. Only the
 // provider and unrelated persistence/background effects are replaced.
@@ -97,12 +99,48 @@ describe('Trinity caller-declared final JSON integrity at actual provider extrac
       expect(result.result).toBe(raw);
       expect(JSON.parse(result.result)).toEqual(JSON.parse(raw));
       expect(result.auditSafe.processedSafely).toBe(true);
+      expect(getFinalizedPublicAnswerPresentation(result)).toBe('public-answer-v1');
+      expect(buildTrinityUserVisibleResponse({ trinityResult: result }).presentation).toBe('public-answer-v1');
       expect(responsesCreate).toHaveBeenCalledTimes(4);
   });
 
   it('preserves direct-answer JSON including Markdown-like string data', async () => {
-    expect((await run('direct')).result).toBe(raw);
+    const result = await run('direct');
+    expect(result.result).toBe(raw);
+    expect(getFinalizedPublicAnswerPresentation(result)).toBe('public-answer-v1');
     expect(responsesCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('marks an approved exact-literal public heading without provider work', async () => {
+    const result = await runTrinityWritingPipeline({
+      input: { prompt: 'Write exactly this text and nothing else: ## Audit Summary', sourceEndpoint: 'presentation.fixture' },
+      context: { client, runtimeBudget: createRuntimeBudgetWithLimit(20_000, 0),
+        runOptions: { disableMemoryAccess: true, disableOptionalSideEffects: true } },
+    });
+    const serialized = buildTrinityUserVisibleResponse({ trinityResult: result });
+    expect(serialized.result).toBe('## Audit Summary');
+    expect(serialized.presentation).toBe('public-answer-v1');
+    expect(JSON.parse(JSON.stringify(result))).not.toHaveProperty('presentation');
+    expect(responsesCreate).not.toHaveBeenCalled();
+  });
+
+  it('does not recreate provenance from serialized or changed output', async () => {
+    const result = await run('direct');
+    const restored = JSON.parse(JSON.stringify(result));
+    restored.presentation = 'public-answer-v1';
+    expect(buildTrinityUserVisibleResponse({ trinityResult: restored }).presentation).toBeUndefined();
+    result.result += '\nchanged after finalization';
+    expect(buildTrinityUserVisibleResponse({ trinityResult: result }).presentation).toBeUndefined();
+  });
+
+  it('omits presentation for persisted output without changing finalized in-process provenance', async () => {
+    const result = await run('direct');
+    const queued = buildTrinityUserVisibleResponse({ trinityResult: result, includePresentation: false });
+    expect(queued.result).toBe(raw);
+    expect(queued).not.toHaveProperty('presentation');
+    expect(JSON.parse(JSON.stringify(queued))).not.toHaveProperty('presentation');
+    expect(getFinalizedPublicAnswerPresentation(result)).toBe('public-answer-v1');
+    expect(buildTrinityUserVisibleResponse({ trinityResult: result }).presentation).toBe('public-answer-v1');
   });
 
   it('preserves a false verification flag through the structured query-finetune compatibility caller', async () => {
@@ -199,8 +237,48 @@ describe('Trinity caller-declared final JSON integrity at actual provider extrac
 
   it('retains ordinary direct prose processing when no JSON contract is declared', async () => {
     finalText = 'Direct answer: **Use** `value`.';
-    expect((await run('direct', null)).result).toBe('Use value.');
+    const result = await run('direct', null);
+    expect(result.result).toBe('Use value.');
+    expect(getFinalizedPublicAnswerPresentation(result)).toBe('public-answer-v1');
     expect(responsesCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves healthy standard final output without a caller-declared JSON contract', async () => {
+    finalText = 'Use the supplied outline.';
+    const result = await run('explained', null);
+    expect(result.result).toBe(finalText);
+    expect(buildTrinityUserVisibleResponse({ trinityResult: result }).presentation).toBe('public-answer-v1');
+    expect(responsesCreate).toHaveBeenCalledTimes(4);
+  });
+
+  it.each(['', '   ', '\u200b'])(
+    'rejects an empty visible final answer without a JSON contract before public delivery: %j',
+    async output => {
+      finalText = output;
+      const delivered = jest.fn();
+      await expect(run('explained', null).then(delivered)).rejects.toMatchObject({
+        code: 'TRINITY_STRUCTURED_OUTPUT_INVALID', reason: 'empty_output',
+      });
+      expect(delivered).not.toHaveBeenCalled();
+      expect(responsesCreate).toHaveBeenCalledTimes(4);
+    }
+  );
+
+  it.each([
+    ['incomplete', { status: 'incomplete' }],
+    ['length', { status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' } }],
+    ['content filter', { status: 'incomplete', incomplete_details: { reason: 'content_filter' } }],
+  ])('does not deliver provider %s final output or its public marker without a JSON contract', async (_label, metadata) => {
+    finalText = 'The supplied outline has two steps.';
+    responsesCreate.mockImplementation(async (payload: ResponseCreateParamsNonStreaming) => ({
+      ...response(payload), ...(payload.model === authority ? metadata : {}),
+    }));
+    const delivered = jest.fn();
+    await expect(run('explained', null).then(delivered)).rejects.toMatchObject({
+      code: 'OPENAI_COMPLETION_INCOMPLETE',
+    });
+    expect(delivered).not.toHaveBeenCalled();
+    expect(responsesCreate).toHaveBeenCalledTimes(4);
   });
 
   it('never enters the optional prose repair stage to repair JSON', async () => {

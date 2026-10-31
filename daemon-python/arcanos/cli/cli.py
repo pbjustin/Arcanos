@@ -29,7 +29,6 @@ if sys.platform == "win32":
             except Exception:
                 pass
 
-from rich.markdown import Markdown
 from rich.table import Table
 from rich.console import Console
 
@@ -58,7 +57,7 @@ from ..protocol_runtime.schema_loader import load_protocol_contract
 from ..protocol_runtime.state_store import InMemoryProtocolStateStore
 from ..vision import VisionSystem
 from ..audio import AudioSystem
-from ..voice_boundary import Persona, apply_voice_boundary
+from ..voice_boundary import Persona
 from ..conversation_routing import ConversationRouteDecision, determine_conversation_route
 from ..cli_session import SessionContext
 from ..cli_ui import build_stats_table
@@ -196,6 +195,7 @@ class ArcanosCLI:
         memory: Any,
         debug_voice: bool = False,
         filtered_text: Any = _UNSET_FILTER,
+        presentation: str | None = None,
     ) -> Optional[str]:
         return ui_ops.speak_to_user(
             self,
@@ -205,6 +205,7 @@ class ArcanosCLI:
             memory=memory,
             debug_voice=debug_voice,
             filtered_text=filtered_text,
+            presentation=presentation,
         )
 
     def _get_or_create_instance_id(self) -> str:
@@ -500,29 +501,23 @@ class ArcanosCLI:
             return None
 
         response_for_user: Optional[str] = None
+        translated, show = translate(
+            message,
+            result.response_text,
+            source=result.source,
+            debug=from_debug,
+            presentation=getattr(result, "presentation", None),
+        )
         if not return_result:
-            translated, show = translate(
-                message,
+            response_for_user = ui_ops.speak_to_user(
+                self,
                 result.response_text,
-                source=result.source,
-                debug=from_debug,
+                persona=resolve_persona(self),
+                user_text=message,
+                memory=self.memory,
+                debug_voice=from_debug,
+                filtered_text=translated if show else None,
             )
-            if show and translated:
-                persona = resolve_persona(self)
-                sanitized = translated
-                if result.source == "backend":
-                    sanitized = apply_voice_boundary(
-                        translated,
-                        persona=persona,
-                        user_text=message,
-                        memory=self.memory,
-                        debug_voice=from_debug,
-                    )
-                response_for_user = sanitized
-                if not use_streaming:
-                    self.console.print()
-                    self.console.print(Markdown(sanitized))
-                    self.console.print()
 
         update_payload = {
             "eventId": str(uuid.uuid4()),
@@ -533,7 +528,10 @@ class ArcanosCLI:
             "messageLength": len(route_decision.normalized_message),
         }
 
-        conversation_response = result.response_text if return_result else (response_for_user or "")
+        if return_result:
+            conversation_response = translated if show else ""
+        else:
+            conversation_response = response_for_user or ""
         memory_ops.record_conversation_turn(
             self,
             route_decision.normalized_message,

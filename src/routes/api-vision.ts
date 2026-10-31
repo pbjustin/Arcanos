@@ -13,6 +13,8 @@ import { getOpenAIClientOrAdapter } from "@services/openai/clientBridge.js";
 import { GenerativeModelPolicyError, resolveGenerativeModel } from '@services/openai/credentialProvider.js';
 import { ensureModelMatchesExpectation } from '@services/openai/chatFallbacks.js';
 import { sendOpenAIProcessingFailed, sendOpenAIServiceUnavailable } from "@platform/resilience/serviceUnavailable.js";
+import { PUBLIC_ANSWER_PRESENTATION } from '@shared/http/clientResponseCommon.js';
+import { hasVisibleContent } from '@shared/promptUtils.js';
 
 const router = express.Router();
 
@@ -43,6 +45,7 @@ interface VisionRequest {
 
 interface VisionResponse {
   response: string;
+  presentation: typeof PUBLIC_ANSWER_PRESENTATION;
   tokens: number;
   cost: number;
   model: string;
@@ -130,8 +133,14 @@ router.post('/api/vision', visionValidation, asyncHandler(async (req: Request<{}
     });
     ensureModelMatchesExpectation(response, visionModel);
     const completion = convertResponseToLegacyChatCompletion(response, visionModel);
+    const responseText = completion.choices[0]?.message?.content;
+    if (
+      completion.incomplete || completion.truncated || completion.length_truncated || completion.content_filtered
+      || typeof responseText !== 'string' || !hasVisibleContent(responseText)
+    ) {
+      throw new Error('OpenAI vision response ended before a complete answer was available.');
+    }
 
-    const responseText = completion.choices[0]?.message?.content || '';
     const tokens = completion.usage?.total_tokens || 0;
     const inputTokens = completion.usage?.prompt_tokens || 0;
     const outputTokens = completion.usage?.completion_tokens || 0;
@@ -152,6 +161,7 @@ router.post('/api/vision', visionValidation, asyncHandler(async (req: Request<{}
 
     return res.json({
       response: responseText,
+      presentation: PUBLIC_ANSWER_PRESENTATION,
       tokens,
       cost,
       model: visionModel

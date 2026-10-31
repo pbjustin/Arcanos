@@ -46,6 +46,7 @@ import {
   shapeClientRouteResult
 } from '@shared/http/clientResponseGuards.js';
 import { sendPreparedJsonResponse } from '@shared/http/sendPreparedJsonResponse.js';
+import { getFinalizedPublicAnswerPresentation } from '@shared/http/clientResponseCommon.js';
 import { sendBoundedJsonResponse } from '@shared/http/sendBoundedJsonResponse.js';
 import { applyCanonicalGptRouteHeaders } from '@shared/http/gptRouteHeaders.js';
 import {
@@ -2700,6 +2701,7 @@ router.post(
                 action: GPT_QUERY_AND_WAIT_ACTION,
                 status: 'completed',
                 result: extractDispatcherResultText(directEnvelope.result),
+                presentation: getFinalizedPublicAnswerPresentation(directEnvelope.result),
                 ...(shapedDirectResult.meta ? { meta: shapedDirectResult.meta } : {}),
                 ...(shapedDirectResult.activeModel ? { activeModel: shapedDirectResult.activeModel } : {}),
                 ...(typeof shapedDirectResult.fallbackFlag === 'boolean'
@@ -2892,6 +2894,7 @@ router.post(
             const fastPathSerializationStartedAt = Date.now();
             const publicEnvelope = prepareBoundedClientJsonPayload({
               ...fastPathEnvelope,
+              presentation: getFinalizedPublicAnswerPresentation(fastPathEnvelope.result),
               result: shapeClientRouteResult(fastPathEnvelope.result),
             }, {
               logger: req.logger,
@@ -4448,6 +4451,7 @@ router.post(
               gptId: incomingGptId,
               action: GPT_QUERY_ACTION,
               result: resultText,
+              presentation: getFinalizedPublicAnswerPresentation(envelope.result),
               ...(shapedCoreResult.meta ? { meta: shapedCoreResult.meta } : {}),
               ...(shapedCoreResult.activeModel ? { activeModel: shapedCoreResult.activeModel } : {}),
               ...(typeof shapedCoreResult.fallbackFlag === 'boolean'
@@ -4524,6 +4528,7 @@ router.post(
           && Array.isArray(envelope.result);
         const publicPayload = {
           ...envelope,
+          presentation: getFinalizedPublicAnswerPresentation(envelope.result),
           ...(isDirectModuleQueryGpt(incomingGptId)
             ? {
                 requestId: requestId ?? traceId,

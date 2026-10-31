@@ -12,7 +12,6 @@ from ..cli_intents import truncate_for_tts
 from ..config import Config
 from ..gpt_client import GPT4O_MINI_INPUT_COST, GPT4O_MINI_OUTPUT_COST
 from ..media_routing import parse_vision_route_args, parse_voice_route_args
-from ..voice_boundary import apply_voice_boundary
 from . import backend_ops, ui_ops
 from .context import ConversationResult
 
@@ -47,8 +46,8 @@ def perform_local_conversation(cli: "ArcanosCLI", message: str) -> Optional[Conv
 
 def perform_local_conversation_streaming(cli: "ArcanosCLI", message: str) -> Optional[ConversationResult]:
     """
-    Purpose: Execute a local GPT conversation with streaming console output.
-    Inputs/Outputs: message text; streams response and returns ConversationResult.
+    Purpose: Collect a local GPT stream before applying the final presentation boundary.
+    Inputs/Outputs: message text; returns the complete ConversationResult for safe display.
     Edge cases: Falls back to non-streaming mode if stream errors.
     """
     history = cli.memory.get_recent_conversations(limit=5)
@@ -62,16 +61,11 @@ def perform_local_conversation_streaming(cli: "ArcanosCLI", message: str) -> Opt
         collected_chunks: list[str] = []
         tokens_used = 0
         cost_usd = 0.0
-        first_chunk = True
         cli.console.print()
         cli.console.print("[dim]Thinking...[/dim]", end="\r")
         for chunk in stream:
             if isinstance(chunk, str):
-                if first_chunk:
-                    cli.console.print(" " * 20, end="\r")
-                    first_chunk = False
                 collected_chunks.append(chunk)
-                cli.console.print(chunk, end="")
             else:
                 tokens_used = chunk.total_tokens
                 input_t = chunk.prompt_tokens
@@ -149,21 +143,14 @@ def handle_see(cli: "ArcanosCLI", args: list[str], return_result: bool = False) 
 
     response_for_user: Optional[str] = None
     if not return_result:
-        response_for_user = apply_voice_boundary(
-            result.response_text,
-            persona=cli._voice_persona,
-            user_text=" ".join(args),
-            memory=cli.memory,
-            debug_voice=False,
-        )
-        ui_ops.speak_to_user(
+        response_for_user = ui_ops.speak_to_user(
             cli,
             result.response_text,
             persona=cli._voice_persona,
             user_text=" ".join(args),
             memory=cli.memory,
             debug_voice=False,
-            filtered_text=response_for_user,
+            presentation=getattr(result, "presentation", None),
         )
 
     cli.rate_limiter.record_request(result.tokens_used, result.cost_usd)
@@ -288,21 +275,13 @@ def handle_ptt_speech(cli: "ArcanosCLI", text: str, has_screenshot: bool) -> Non
         if img_base64:
             response, tokens, cost = cli.vision.analyze_image(img_base64, text)
             if response:
-                response_for_user = apply_voice_boundary(
-                    response,
-                    persona=cli._voice_persona,
-                    user_text=text,
-                    memory=cli.memory,
-                    debug_voice=False,
-                )
-                ui_ops.speak_to_user(
+                response_for_user = ui_ops.speak_to_user(
                     cli,
                     response,
                     persona=cli._voice_persona,
                     user_text=text,
                     memory=cli.memory,
                     debug_voice=False,
-                    filtered_text=response_for_user,
                 )
                 cli._last_response = response_for_user
                 cli.rate_limiter.record_request(tokens, cost)
