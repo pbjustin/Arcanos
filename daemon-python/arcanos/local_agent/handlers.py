@@ -13,7 +13,10 @@ import time
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
 
+from ..debug import log_audit_event
 from ..protocol_runtime.tools import repository_tools
+from ..agentic.history_db import HistoryDB
+from ..agentic.policy_guard import PolicyGuard
 from .contracts import (
     load_local_agent_capability_catalog,
     validate_local_agent_input,
@@ -135,6 +138,13 @@ def execute_local_agent_action(
         )
     if action != "patch.apply" and mutation_authorization is not None:
         raise PermissionError("Mutation authorization is bound only to patch.apply.")
+    if action in {"tests.run", "patch.apply"}:
+        try:
+            safe_mode = PolicyGuard(HistoryDB()).is_safe_mode()
+        except Exception as error:
+            raise PermissionError("Local safety policy is unavailable.") from error
+        if safe_mode:
+            raise PermissionError("safe mode is enabled (local mutation disabled).")
     result = registry[action](
         payload,
         resolved_root,
@@ -375,6 +385,12 @@ def _handle_patch_apply(
         timeout_ms=timeout_ms,
         mutation_authorization=mutation_authorization,
         cancellation_event=cancellation_event,
+        history_session_id=getattr(mutation_authorization, "authorization_id", "local-agent"),
+    )
+    log_audit_event(
+        "local_agent.patch.applied" if result.applied else "local_agent.patch.failed",
+        rollback_id=result.rollback_id, patch_hash=result.patch_sha256,
+        return_code=result.process.exit_code,
     )
     if not result.applied:
         error_message = (

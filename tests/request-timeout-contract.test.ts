@@ -28,6 +28,10 @@ const daemonAgentLoopSource = readFileSync(
   new URL('../daemon-python/arcanos/agentic/agent_loop.py', import.meta.url),
   'utf8',
 );
+const daemonRunOpsSource = readFileSync(
+  new URL('../daemon-python/arcanos/cli/run_ops.py', import.meta.url),
+  'utf8',
+);
 const daemonConfigurationSection =
   configurationGuide.match(
     /### Daemon-specific core variables[\s\S]*?(?=\n##\s)/,
@@ -57,7 +61,8 @@ describe('request timeout configuration ownership', () => {
     expect(daemonConfigSource).toContain(
       'REQUEST_TIMEOUT must be at least 5 seconds',
     );
-    expect(daemonAgentLoopSource).toContain('timeout=Config.REQUEST_TIMEOUT');
+    expect(daemonAgentLoopSource).toContain('timeout_seconds=Config.REQUEST_TIMEOUT');
+    expect(daemonRunOpsSource).toContain('execute_kwargs["timeout"] = timeout_seconds');
     expect(daemonConfigurationSection).toMatch(
       /^\|\s*`REQUEST_TIMEOUT`\s*\|\s*`30`\s*\|[^\n]*seconds/mi,
     );

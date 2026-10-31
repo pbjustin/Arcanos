@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import sys
+import json
 from typing import Any, Optional
 
 from ..config import Config
 from ..assistant.translator import translate_response
 from ..cli.cli_policy import redact_output
-from ..cli import ui_ops
+from ..cli.idempotency import command_fingerprint
+from ..cli import run_ops, ui_ops
 from ..voice_boundary import Persona
 from .history_db import HistoryDB
 from .patch_orchestrator import PatchOrchestrator
@@ -25,10 +26,8 @@ class ToolResult:
 def _format_followup(results: list[ToolResult]) -> str:
     lines = ["Tool results:"]
     for r in results:
-        if r.kind == "patch":
-            lines.append(f"- patch ok={r.ok} rollback_id={r.detail.get('rollback_id')} files={r.detail.get('files')}")
-        else:
-            lines.append(f"- command ok={r.ok} rc={r.detail.get('return_code')} cmd={r.detail.get('command')}")
+        detail = {"action_type": r.kind, "ok": r.ok, **r.detail}
+        lines.append(redact_output(json.dumps(detail, ensure_ascii=False), apply_truncation=False))
     lines.append("Continue with the next step. If no further action is needed, say DONE.")
     return "\n".join(lines)
 
@@ -100,64 +99,49 @@ def run_agentic_loop(cli: Any, user_message: str, *, domain: Optional[str], from
         results: list[ToolResult] = []
 
         for p in patches:
-            res = orchestrator.apply_with_approval(cli.instance_id, p.patch_text, summary="assistant proposed patch")
-            results.append(ToolResult("patch", res.ok, {"rollback_id": res.rollback_id, "files": res.files, "error": res.error}))
+            res = orchestrator.apply_with_approval(
+                cli.instance_id, p.patch_text, summary="assistant proposed patch",
+                dry_run=lambda: getattr(cli, "dry_run", False) is True,
+            )
+            results.append(ToolResult("patch", res.ok, {
+                "action_id": res.rollback_id, "rollback_id": res.rollback_id,
+                "files": res.files, "error": res.error,
+                "status": getattr(res, "status", "succeeded" if res.ok else "blocked"),
+                "approval_status": "approved" if getattr(res, "approved", False) else (
+                    "denied" if getattr(res, "status", "") == "denied" else "unapproved"
+                ),
+                "workspace_changed": getattr(res, "workspace_changed", None),
+                "return_code": getattr(res, "exit_code", None),
+            }))
 
         for c in commands:
-            display_command = redact_output(c.command)
+            command = c.command
+            action_id = command_fingerprint("agentic-command", {"command": command})
+            display_command = redact_output(command)
             cli.console.print("\n[bold]=== ARCANOS COMMAND PROPOSAL ===[/bold]")
-            cli.console.print(f"Command:\n{display_command}\nReason: {c.reason}")
+            cli.console.print(f"Command:\n{display_command}\nReason: {redact_output(c.reason)}", markup=False)
             cli.console.print("[dim]Safety: policy checked, explicit confirmation required, output redacted in history.[/dim]")
-            if _contains_high_risk_shell_tokens(c.command):
+            if _contains_high_risk_shell_tokens(command):
                 # //audit assumption: agentic commands should be single-step and non-chained; risk: prompt-injected multi-command execution; invariant: high-risk shell token commands are blocked; strategy: deny and require manual rewrite.
                 reason = "High-risk shell chaining token detected in command proposal"
                 cli.console.print(f"[red]Blocked:[/red] {reason}")
-                results.append(ToolResult("command", False, {"command": display_command, "blocked": reason}))
+                results.append(ToolResult("command", False, {"action_id": action_id, "command": display_command, "status": "blocked", "approval_status": "unapproved", "error": reason, "workspace_changed": False}))
                 continue
-            is_safe, reason = cli.terminal.is_command_safe(c.command)
+            is_safe, reason = cli.terminal.is_command_safe(command)
             if not is_safe:
-                cli.console.print(f"[red]Blocked:[/red] {reason}")
-                results.append(ToolResult("command", False, {"command": display_command, "blocked": reason}))
+                cli.console.print(f"Blocked: {redact_output(reason or 'command blocked by terminal policy')}", markup=False)
+                results.append(ToolResult("command", False, {"action_id": action_id, "command": display_command, "status": "blocked", "approval_status": "unapproved", "error": redact_output(reason or "command blocked by terminal policy"), "workspace_changed": False}))
                 continue
 
-            # //audit assumption: command execution proposals require explicit human confirmation; failure risk: piped/non-interactive sessions auto-run commands; expected invariant: commands are denied when TTY confirmation is unavailable; handling strategy: fail closed with structured denial.
-            if not sys.stdin or not sys.stdin.isatty():
-                denial_reason = "non_interactive_confirmation_unavailable"
-                cli.console.print("[yellow]Non-interactive session: command proposal auto-denied.[/yellow]")
-                results.append(ToolResult("command", False, {"command": display_command, "denied": True, "reason": denial_reason}))
-                continue
-
-            ans = input("\nRun command? [y/N] ").strip().lower()
-            if ans not in ("y", "yes"):
-                results.append(ToolResult("command", False, {"command": display_command, "denied": True}))
-                continue
-
-            out, err, rc = cli.terminal.execute(
-                c.command,
-                timeout=Config.REQUEST_TIMEOUT,
-                check_safety=True,
-                elevated=Config.RUN_ELEVATED,
+            execution = run_ops.handle_run(
+                cli, command, return_result=True, timeout_seconds=Config.REQUEST_TIMEOUT,
             )
-            history.log_command(cli.instance_id, c.command, "success" if rc == 0 else "failed", rc, out or "", err or "")
-            if rc == 0:
-                guard.record_success()
-            else:
-                guard.record_failure(cli.instance_id, "command", {"command": c.command, "return_code": rc})
-            cli.console.print(f"[green]Command finished[/green] rc={rc}")
-            results.append(
-                ToolResult(
-                    "command",
-                    rc == 0,
-                    {
-                        "command": display_command,
-                        "return_code": rc,
-                        "stdout": redact_output(out or ""),
-                        "stderr": redact_output(err or ""),
-                    },
-                )
-            )
+            results.append(ToolResult("command", execution["ok"], {"command": display_command, **execution}))
 
         prompt = _format_followup(results)
+        if getattr(cli, "dry_run", False) is True:
+            # Dry-run proposals must not launch Git for an audit snapshot.
+            continue
         # snapshot state for audit/replay
         try:
             import subprocess
@@ -174,7 +158,7 @@ def run_agentic_loop(cli: Any, user_message: str, *, domain: Optional[str], from
                     repo_index_context = to_context_payload(build_repo_index())
                 except Exception as error:
                     # //audit assumption: repo index failures are non-fatal for loop continuity; risk: silent context loss; invariant: operator sees degraded mode; strategy: print warning and continue with empty context.
-                    cli.console.print(f"[yellow]Warning: Failed to build repo index; continuing without it. Error: {error}[/yellow]")
+                    cli.console.print(redact_output(f"Warning: Failed to build repo index; continuing without it. Error: {error}"), markup=False)
                     repo_index_context = {}
 
             repo_root = Path(repo_index_context.get("repoRoot") or Path.cwd())
