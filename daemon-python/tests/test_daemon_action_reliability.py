@@ -27,6 +27,75 @@ from arcanos.config import Config
 from rich.console import Console
 
 
+def test_bridge_postapply_permission_error_reports_failure_after_actual_mutation(
+    tmp_path, monkeypatch,
+):
+    root = tmp_path / "workspace"
+    root.mkdir()
+    subprocess.run(["git", "init", "--quiet", str(root)], check=True, capture_output=True)
+    monkeypatch.setenv("ARCANOS_CLI_SANDBOX_ROOT", str(root))
+    monkeypatch.setattr(Config, "HISTORY_DB_PATH", tmp_path / "history.db")
+    monkeypatch.setattr(Config, "PATCH_BACKUP_DIR", tmp_path / "backups")
+    target = root / "sample.txt"
+    target.write_bytes(b"old\n")
+    patch = "diff --git a/sample.txt b/sample.txt\n--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n"
+    original_run = patch_handler.run_bounded_process
+    original_validation = patch_handler._validate_patch_targets
+    observed = {"applied": False, "permission_raised": False}
+
+    def apply_and_observe(argv, **kwargs):
+        result = original_run(argv, **kwargs)
+        if "apply" in argv:
+            assert result.exit_code == 0
+            assert target.read_bytes() == b"new\n"
+            observed["applied"] = True
+        return result
+
+    def reject_after_apply(*args, **kwargs):
+        if observed["applied"] and not observed["permission_raised"]:
+            observed["permission_raised"] = True
+            raise PermissionError(
+                "Authorization: Token example-postapply-credential\n"
+                "<vbl sev3>private postapply diagnostic"
+            )
+        return original_validation(*args, **kwargs)
+
+    monkeypatch.setattr(patch_handler, "run_bounded_process", apply_and_observe)
+    monkeypatch.setattr(patch_handler, "_validate_patch_targets", reject_after_apply)
+    audit = MagicMock()
+    monkeypatch.setattr(local_bridge, "log_audit_event", audit)
+    monkeypatch.setattr(patch_handler, "log_audit_event", audit)
+    bridge = local_bridge.LocalBridge(port=0)
+    job = local_bridge.BridgePatchJob(
+        "fixture-patch-audit", patch, "fixture-proposal", 5, str(root),
+        local_bridge._BridgeJobLifecycle(time.monotonic() + 10),
+    )
+    bridge.jobs.put(job)
+    bridge.jobs.put(None)
+
+    bridge._worker_loop()
+
+    _, result = job.lifecycle.snapshot()
+    assert observed == {"applied": True, "permission_raised": True}
+    assert target.read_bytes() == b"new\n"
+    assert result["status"] == "error"
+    assert result["ok"] is False and result["exitCode"] is None
+    assert set(result) == {
+        "ok", "status", "stdout", "stderr", "exitCode", "durationMs",
+        "truncated", "auditId",
+    }
+    events = [call.args[0] for call in audit.call_args_list]
+    assert events.count("daemon.patch.recovery_registered") == 1
+    assert events.count("daemon.patch.failed") == 1
+    assert "daemon.patch.denied" not in events
+    assert "daemon.patch.applied" not in events
+    assert "example-postapply-credential" not in repr(audit.call_args_list) + repr(result)
+    assert "private postapply diagnostic" not in repr(audit.call_args_list) + repr(result)
+    rows = HistoryDB().recent_patches()
+    assert len(rows) == 1 and rows[0].status == "failed"
+    assert Path(rows[0].backups["sample.txt"]).read_bytes() == b"old\n"
+
+
 @pytest.mark.parametrize("kind", ["command", "patch"])
 @pytest.mark.parametrize("policy_state", ["safe_mode", "unavailable"])
 def test_bridge_policy_gate_denial_has_one_sanitized_audit(
@@ -83,7 +152,7 @@ def test_bridge_policy_gate_denial_has_one_sanitized_audit(
 @pytest.mark.parametrize(
     "completion,event,status,exit_code",
     [
-        ("patch_permission", "daemon.patch.recovery_registered", "blocked", None),
+        ("patch_permission", "daemon.patch.recovery_registered", "error", None),
         ("command_permission", "daemon.command.failed", "blocked", None),
         ("timeout", "daemon.command.timeout", "timeout", None),
         ("failed", "daemon.command.failed", "failed", 7),
@@ -120,7 +189,14 @@ def test_bridge_other_completion_audits_are_not_duplicated_as_policy_denials(
     bridge._worker_loop()
 
     _, result = job.lifecycle.snapshot()
-    audit.assert_called_once_with(event, audit_id="fixture-audit")
+    if is_patch:
+        assert audit.call_count == 2
+        audit.assert_any_call(event, audit_id="fixture-audit")
+        audit.assert_any_call(
+            "daemon.patch.failed", audit_id="fixture-audit", error_type="PermissionError",
+        )
+    else:
+        audit.assert_called_once_with(event, audit_id="fixture-audit")
     assert result["status"] == status
     assert result["exitCode"] == exit_code
     assert "synthetic-credential" not in repr(audit.call_args) + repr(result)

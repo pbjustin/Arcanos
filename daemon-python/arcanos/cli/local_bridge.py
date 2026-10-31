@@ -623,8 +623,10 @@ class LocalBridge:
                     stderr="Local execution timed out",
                 )
             except PermissionError as error:
-                if isinstance(error, _LocalExecutionPolicyDenied):
-                    is_patch = isinstance(job, BridgePatchJob)
+                is_patch = isinstance(job, BridgePatchJob)
+                policy_denied = isinstance(error, _LocalExecutionPolicyDenied)
+                patch_failure = is_patch and not policy_denied
+                if policy_denied:
                     payload = job.patch if is_patch else job.command
                     hash_field = "patch_hash" if is_patch else "command_hash"
                     log_audit_event(
@@ -635,10 +637,16 @@ class LocalBridge:
                         reason="local_execution_policy",
                         **{hash_field: hashlib.sha256(payload.encode("utf-8")).hexdigest()},
                     )
+                elif patch_failure:
+                    log_audit_event(
+                        "daemon.patch.failed",
+                        audit_id=job.audit_id,
+                        error_type=type(error).__name__,
+                    )
                 result = _empty_response(
-                    ok=False, status="blocked", exit_code=None,
+                    ok=False, status="error" if patch_failure else "blocked", exit_code=None,
                     duration_ms=_elapsed_ms(start), audit_id=job.audit_id,
-                    stderr="Local execution was blocked by safety policy",
+                    stderr="Bridge execution failed" if patch_failure else "Local execution was blocked by safety policy",
                 )
             except Exception as exc:
                 failed_event = "daemon.patch.failed" if isinstance(job, BridgePatchJob) else "daemon.command.failed"
