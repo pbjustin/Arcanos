@@ -357,6 +357,8 @@ def test_agentic_approval_cannot_authorize_modified_proposal(local_cli, monkeypa
     monkeypatch.setattr(agent_loop.ui_ops, "speak_to_user", lambda *args, **kwargs: None)
     monkeypatch.setattr(Config, "AGENT_MAX_STEPS", 2)
     monkeypatch.setattr(Config, "REPO_INDEX_ENABLED", False)
+    monkeypatch.setattr(Config, "REQUEST_TIMEOUT", 47)
+    monkeypatch.setattr("subprocess.check_output", lambda *_args, **_kwargs: "fixture-head")
 
     def approve(_message=""):
         proposal.command = "echo unapproved"
@@ -366,3 +368,4 @@ def test_agentic_approval_cannot_authorize_modified_proposal(local_cli, monkeypa
     cli._confirm_action.side_effect = lambda message: approve(message) == "yes"
     agent_loop.run_agentic_loop(cli, "show proposed command", domain=None, from_debug=False)
     assert cli.terminal.execute.call_args.args[0] == "echo approved"
+    assert cli.terminal.execute.call_args.kwargs["timeout"] == 47
