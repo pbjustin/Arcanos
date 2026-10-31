@@ -63,6 +63,7 @@ class PatchApplyResult:
         "patch_sha256",
         "process",
         "rollback_id",
+        "history_recorded",
     )
 
     def __init__(
@@ -74,6 +75,7 @@ class PatchApplyResult:
         patch_sha256: str,
         process: ProcessResult,
         rollback_id: str,
+        history_recorded: bool = True,
     ) -> None:
         self.applied = applied
         self.backups = dict(backups)
@@ -81,6 +83,7 @@ class PatchApplyResult:
         self.patch_sha256 = patch_sha256
         self.process = process
         self.rollback_id = rollback_id
+        self.history_recorded = history_recorded
 
 
 def issue_patch_execution_authorization(
@@ -161,6 +164,8 @@ def apply_authorized_patch(
     backup_root: Path | None = None,
     rollback_id: str | None = None,
     history_session_id: str | None = None,
+    history: HistoryDB | None = None,
+    history_summary: str = "local patch",
     cancellation_event: threading.Event | None = None,
 ) -> PatchApplyResult:
     """Apply an exact authorized patch; callers cannot authorize via payload fields."""
@@ -219,11 +224,11 @@ def apply_authorized_patch(
             rel: _file_state(resolved_root / rel) for rel in patch_decision.files
         }:
             raise PermissionError("Patch target changed while its backup was prepared.")
-    history = None
+    history = history if history_session_id is not None else None
     if history_session_id is not None:
-        history = HistoryDB()
+        history = history if history is not None else HistoryDB()
         history.log_patch(
-            history_session_id, resolved_rollback_id, "applying", "local patch",
+            history_session_id, resolved_rollback_id, "applying", history_summary,
             patch_decision.files, backups, patch_text,
             patch_sha256=patch_decision.patch_hash,
         )
@@ -234,6 +239,7 @@ def apply_authorized_patch(
     applied = False
     process = None
     recovery_recorded = False
+    history_recorded = True
     primary_failed = False
     try:
         process = run_bounded_process(
@@ -264,6 +270,7 @@ def apply_authorized_patch(
             process is not None and process.exit_code != 0
         )
         bookkeeping_error = None
+        history_error = None
         try:
             if recovery is not None:
                 _validate_patch_targets(patch_decision, resolved_root)
@@ -284,15 +291,18 @@ def apply_authorized_patch(
                     None if status == "applied" else "patch_application_failed",
                 )
         except Exception as error:
-            if bookkeeping_error is None:
-                bookkeeping_error = error
-        if bookkeeping_error is not None:
-            if not primary_failed:
-                raise bookkeeping_error
+            history_recorded = False
+            history_error = error
+        if bookkeeping_error is not None and not primary_failed:
+            raise bookkeeping_error
+        diagnostic = bookkeeping_error or history_error
+        if diagnostic is not None:
             try:
                 log_audit_event(
                     "daemon.patch.recovery_failed", rollback_id=resolved_rollback_id,
-                    error_type=type(bookkeeping_error).__name__,
+                    error_type=type(diagnostic).__name__,
+                    outcome="applied" if applied else "failed",
+                    history_recorded=history_recorded,
                 )
             except Exception:
                 pass
@@ -303,6 +313,7 @@ def apply_authorized_patch(
         patch_sha256=patch_decision.patch_hash,
         process=process,
         rollback_id=resolved_rollback_id,
+        history_recorded=history_recorded,
     )
 
 

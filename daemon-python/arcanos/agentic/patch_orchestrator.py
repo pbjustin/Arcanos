@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sqlite3
 import sys
 import uuid
 from dataclasses import dataclass
@@ -249,6 +250,9 @@ class PatchOrchestrator:
                 mutation_authorization=patch_authorization,
                 backup_root=Config.PATCH_BACKUP_DIR,
                 rollback_id=rollback_id,
+                history_session_id=session_id,
+                history=self.history,
+                history_summary=summary or "local patch",
             )
             backups = apply_result.backups
             recovery = read_patch_recovery(Config.PATCH_BACKUP_DIR, rollback_id)
@@ -264,59 +268,67 @@ class PatchOrchestrator:
             except (OSError, ValueError, PermissionError):
                 pass
             observed_exit = apply_result.process.exit_code if apply_result is not None else None
-            if apply_result is not None and not apply_result.applied:
+            preapply_history_failure = isinstance(error, sqlite3.Error) and apply_result is None
+            if preapply_history_failure:
+                reason = "patch_history_unavailable_before_execution"
+                changed = False
+            elif apply_result is not None and not apply_result.applied:
                 reason = sanitize_tool_output(
                     apply_result.process.stderr or apply_result.process.stdout
                     or f"git apply failed rc={observed_exit}"
                 )
             else:
                 reason = sanitize_tool_output(str(error)) or type(error).__name__
-            self.history.log_patch(
-                session_id, rollback_id, "failed", summary or "apply failed",
-                files, backups, patch_text, patch_sha256=patch_decision.patch_hash,
-                error=reason,
-            )
-            self.guard.record_failure(session_id, "patch", {"error": reason, "rollback_id": rollback_id})
+            status = "blocked" if preapply_history_failure else "failed"
+            try:
+                self.history.log_patch(
+                    session_id, rollback_id, status, summary or "apply failed",
+                    files, backups, patch_text, patch_sha256=patch_decision.patch_hash,
+                    error=reason,
+                )
+                self.guard.record_failure(session_id, "patch", {"error": reason, "rollback_id": rollback_id})
+            except Exception:
+                reason = self._history_warning(rollback_id, status, reason)
             return ApplyResult(False, rollback_id, files, backups, reason,
-                               status="failed", approved=True, workspace_changed=changed,
+                               status=status, approved=True, workspace_changed=changed,
                                exit_code=observed_exit)
-        if not apply_result.applied:
-            err = sanitize_tool_output(
-                apply_result.process.stderr
-                or apply_result.process.stdout
-                or f"git apply failed rc={apply_result.process.exit_code}"
-            )
-            self.history.log_patch(
-                session_id,
-                rollback_id,
-                "failed",
-                summary or "apply failed",
-                files,
-                backups,
-                patch_text,
-                patch_sha256=patch_decision.patch_hash,
-                error=err,
-            )
-            self.guard.record_failure(session_id, "patch", {"error": err, "rollback_id": rollback_id})
-            return ApplyResult(ok=False, rollback_id=rollback_id, files=files, backups=backups, error=err, status="failed", approved=True, workspace_changed=changed, exit_code=apply_result.process.exit_code)
-
-        self.history.log_patch(
-            session_id,
-            rollback_id,
-            "applied",
-            summary or "applied",
-            files,
-            backups,
-            patch_text,
-            patch_sha256=patch_decision.patch_hash,
+        status = "applied" if apply_result.applied else "failed"
+        reason = None if apply_result.applied else sanitize_tool_output(
+            apply_result.process.stderr or apply_result.process.stdout
+            or f"git apply failed rc={apply_result.process.exit_code}"
         )
-        self.guard.record_success()
-        self.console.print(f"[green]Patch applied.[/green] rollback_id={rollback_id}")
-        return ApplyResult(ok=True, rollback_id=rollback_id, files=files, backups=backups, approved=True, workspace_changed=changed, exit_code=apply_result.process.exit_code)
+        history_recorded = apply_result.history_recorded
+        try:
+            if apply_result.applied:
+                self.guard.record_success()
+            else:
+                if history_recorded:
+                    self.history.update_patch_status(rollback_id, "failed", reason)
+                self.guard.record_failure(session_id, "patch", {"error": reason, "rollback_id": rollback_id})
+        except Exception:
+            history_recorded = False
+        if not history_recorded:
+            reason = self._history_warning(rollback_id, status, reason)
+        if apply_result.applied:
+            self.console.print(f"[green]Patch applied.[/green] rollback_id={rollback_id}")
+        return ApplyResult(
+            ok=apply_result.applied, rollback_id=rollback_id, files=files,
+            backups=backups, error=reason, status=status, approved=True,
+            workspace_changed=changed, exit_code=apply_result.process.exit_code,
+        )
+
+    def _history_warning(self, rollback_id: str, status: str, reason: str | None) -> str:
+        warning = f"patch_{status}_history_incomplete_manual_reconciliation_required"
+        self.console.print(
+            f"Patch {status}; history is incomplete. Retain rollback_id={rollback_id} "
+            "for manual reconciliation; no rollback has been performed.",
+            markup=False,
+        )
+        return f"{reason}; {warning}" if reason else warning
 
     def rollback(self, session_id: str, rollback_id: str, *, dry_run: bool | Callable[[], bool] = False) -> bool:
         record = self.history.get_patch(rollback_id)
-        if not record or record.get("status") not in {"applied", "failed", "rollback_failed"}:
+        if not record or record.get("status") not in {"applying", "applied", "failed", "rollback_failed"}:
             self.console.print("[red]Rollback unavailable for this operation state.[/red]")
             return False
         if _dry_run_active(dry_run) or self.guard.is_safe_mode():
@@ -326,6 +338,8 @@ class PatchOrchestrator:
         restoration_started = False
         try:
             recovery = read_patch_recovery(Config.PATCH_BACKUP_DIR, rollback_id)
+            if record.get("status") == "applying" and recovery.get("status") not in {"applied", "failed"}:
+                raise PermissionError("Patch outcome requires manual reconciliation before rollback.")
             self._validate_recovery(record, recovery)
             if not sys.stdin or not sys.stdin.isatty():
                 raise PermissionError("non_interactive_confirmation_unavailable")

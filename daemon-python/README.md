@@ -252,9 +252,15 @@ created by the patch, and records progress if restoration fails partway.
 Missing or altered backups, a different repository, and later workspace edits
 produce explicit failures. A completed rollback cannot run again. Legacy
 records without verified recovery metadata require manual recovery.
-Bridge and Local Agent patch applications also register their rollback IDs in
-the same history before execution; use `/history` to locate them for local
-interactive recovery. Their public result envelopes remain unchanged.
+Interactive, bridge, and Local Agent patches register their rollback IDs in
+the same history before execution; unavailable registration blocks application.
+If the final history update fails after application, the observed filesystem
+result and recovery manifest remain available. The interactive result warns
+with the rollback ID; audit metadata records incomplete history for remote
+patches. Use `/history` to locate the registered operation once SQLite is
+available. An `applying` history row can be recovered only with a validated
+completed manifest and the usual confirmation and conflict checks; incomplete
+metadata requires manual reconciliation. Public result envelopes remain unchanged.
 
 ## Command proposal safety
 
@@ -274,6 +280,10 @@ Commands extracted from assistant responses use the terminal safety layer:
 - a final interactive `Run command? [y/N]` prompt
 
 Approval in one surface does not authorize a changed command or bypass the checks in another surface.
+
+The terminal whitelist rejects unquoted PowerShell grouping and subexpressions
+that can execute nested commands. Parentheses inside quoted literal arguments
+remain supported.
 
 Direct `/run`, inline agentic commands, and backend-delivered `run` commands
 share the existing trust, terminal safety, safe-mode, rate, confirmation, and

@@ -5,6 +5,7 @@ import io
 import json
 from pathlib import Path
 import subprocess
+import sqlite3
 
 import pytest
 from rich.console import Console
@@ -174,6 +175,7 @@ def test_partial_patch_failure_retains_recoverable_backup(workspace, monkeypatch
     assert not result.ok
     assert result.backups
     assert history.get_patch(result.rollback_id)["status"] == "failed"
+    assert history.recent_patches()[0].summary != "applied"
     approve_rollback(monkeypatch, result.rollback_id)
     assert orch.rollback("session", result.rollback_id)
     assert (root / "sample.txt").read_bytes() == b"old\n"
@@ -445,6 +447,16 @@ def test_patch_bookkeeping_never_masks_primary_failure(workspace, monkeypatch, b
     elif primary == "nonzero":
         result = patch_handler.apply_authorized_patch(payload, **kwargs)
         assert not result.applied and result.process.exit_code == 7
+    elif bookkeeping == "history":
+        if primary == "success_outer_error":
+            try:
+                raise ValueError("unrelated caller exception")
+            except ValueError:
+                result = patch_handler.apply_authorized_patch(payload, **kwargs)
+        else:
+            result = patch_handler.apply_authorized_patch(payload, **kwargs)
+        assert result.applied and result.process.exit_code == 0
+        assert result.history_recorded is False
     else:
         with pytest.raises(PermissionError, match="secondary bookkeeping failure"):
             if primary == "success_outer_error":
@@ -546,3 +558,119 @@ def test_recovery_cleanup_failure_preserves_original_write_error(workspace, monk
     with pytest.raises(OSError, match="original metadata write failure"):
         patch_handler.write_patch_recovery(Config.PATCH_BACKUP_DIR, rollback_id, {"rollback_id": rollback_id})
     assert temporary.exists()
+
+
+@pytest.mark.parametrize("conflict", [False, True])
+def test_successful_patch_survives_final_sqlite_history_failure_and_remains_recoverable(workspace, monkeypatch, conflict):
+    root, orch, history, output = workspace
+    real_run = patch_handler.run_bounded_process
+    original_connection = history._conn
+    def unavailable_history():
+        assert (root / "sample.txt").read_bytes() == b"new\n"
+        raise sqlite3.OperationalError("private sqlite database path must not leak")
+    def successful_apply(argv, **kwargs):
+        result = real_run(argv, **kwargs)
+        if "apply" in argv:
+            assert result.exit_code == 0
+            monkeypatch.setattr(history, "_conn", unavailable_history)
+        return result
+    monkeypatch.setattr(patch_handler, "run_bounded_process", successful_apply)
+    approve(monkeypatch, patch_for())
+    result = orch.apply_with_approval("session", patch_for(), summary="original patch summary")
+    assert result.ok and result.status == "applied" and result.approved
+    assert result.exit_code == 0 and result.workspace_changed is True
+    assert result.backups and result.rollback_id
+    assert "history" in result.error and "applied" in result.error
+    assert "private sqlite" not in result.error + output.getvalue()
+    assert result.rollback_id in output.getvalue() and "history" in output.getvalue().lower()
+    manifest = patch_handler.read_patch_recovery(Config.PATCH_BACKUP_DIR, result.rollback_id)
+    assert manifest["status"] == "applied" and manifest["after"] != manifest["before"]
+    monkeypatch.setattr(history, "_conn", original_connection)
+    record = history.get_patch(result.rollback_id)
+    assert record["status"] == "applying"
+    assert history.recent_patches()[0].rollback_id == result.rollback_id
+    assert history.recent_patches()[0].summary == "original patch summary"
+    if conflict:
+        (root / "sample.txt").write_bytes(b"unrelated edit\n")
+    approve_rollback(monkeypatch, result.rollback_id)
+    assert orch.rollback("session", result.rollback_id) is not conflict
+    assert (root / "sample.txt").read_bytes() == (b"unrelated edit\n" if conflict else b"old\n")
+    assert history.get_patch(result.rollback_id)["status"] == ("applying" if conflict else "rolled_back")
+
+
+def test_sqlite_history_unavailable_before_apply_never_dispatches(workspace, monkeypatch):
+    root, orch, history, output = workspace
+    def unavailable_registration(*_args, **_kwargs):
+        raise sqlite3.OperationalError("private preapply sqlite path")
+    monkeypatch.setattr(history, "log_patch", unavailable_registration)
+    approve(monkeypatch, patch_for())
+    result = orch.apply_with_approval("session", patch_for())
+    assert not result.ok and result.status == "blocked" and result.approved
+    assert result.exit_code is None and result.workspace_changed is False
+    assert (root / "sample.txt").read_bytes() == b"old\n"
+    assert "private preapply" not in result.error + output.getvalue()
+
+
+@pytest.mark.parametrize("succeeded", [True, False])
+def test_postdispatch_policy_history_error_preserves_observed_patch_result(workspace, monkeypatch, succeeded):
+    root, orch, _, output = workspace
+    def unavailable_policy(*_args, **_kwargs):
+        raise sqlite3.OperationalError("private policy sqlite path")
+    monkeypatch.setattr(orch.guard, "record_success" if succeeded else "record_failure", unavailable_policy)
+    if not succeeded:
+        real_run = patch_handler.run_bounded_process
+        def failed_process(argv, **kwargs):
+            if "apply" not in argv:
+                return real_run(argv, **kwargs)
+            (root / "sample.txt").write_bytes(b"partial\n")
+            return ProcessResult(tuple(argv), 7, "", "actual process failure", 1, False)
+        monkeypatch.setattr(patch_handler, "run_bounded_process", failed_process)
+    approve(monkeypatch, patch_for())
+    result = orch.apply_with_approval("session", patch_for())
+    assert result.ok is succeeded
+    assert result.status == ("applied" if succeeded else "failed")
+    assert result.exit_code == (0 if succeeded else 7)
+    assert result.workspace_changed is True and result.backups
+    assert "history" in result.error
+    assert "private policy" not in result.error + output.getvalue()
+    if not succeeded:
+        assert "actual process failure" in result.error
+
+
+@pytest.mark.parametrize("exit_code", [0, 7])
+def test_remote_patch_final_history_failure_preserves_filesystem_outcome(workspace, monkeypatch, exit_code):
+    root, _, _, _ = workspace
+    real_run = patch_handler.run_bounded_process
+    def observed_process(argv, **kwargs):
+        if "apply" not in argv or exit_code == 0:
+            return real_run(argv, **kwargs)
+        (root / "sample.txt").write_bytes(b"partial\n")
+        return ProcessResult(tuple(argv), exit_code, "", "actual process failure", 1, False)
+    monkeypatch.setattr(patch_handler, "run_bounded_process", observed_process)
+    def unavailable_update(*_args, **_kwargs):
+        raise sqlite3.OperationalError("private remote sqlite path")
+    monkeypatch.setattr(patch_handler.HistoryDB, "update_patch_status", unavailable_update)
+    payload = {"patch": patch_for()}
+    authorization = patch_handler.issue_patch_execution_authorization(payload, authorization_id="remote-history-fixture")
+    result = patch_handler.apply_authorized_patch(payload, workspace_root=root, timeout_ms=5000, mutation_authorization=authorization, history_session_id="remote-session")
+    assert result.applied is (exit_code == 0)
+    assert result.process.exit_code == exit_code and result.history_recorded is False
+    assert result.backups
+    assert HistoryDB().get_patch(result.rollback_id)["status"] == "applying"
+    assert patch_handler.read_patch_recovery(Config.PATCH_BACKUP_DIR, result.rollback_id)["status"] == ("applied" if exit_code == 0 else "failed")
+
+
+@pytest.mark.parametrize("manifest_status", ["applying", "rolling_back"])
+def test_applying_history_without_terminal_manifest_cannot_restore(workspace, monkeypatch, manifest_status):
+    root, orch, history, _ = workspace
+    result = apply(workspace, monkeypatch)
+    history.update_patch_status(result.rollback_id, "applying")
+    manifest = patch_handler.read_patch_recovery(Config.PATCH_BACKUP_DIR, result.rollback_id)
+    manifest["status"] = manifest_status
+    if manifest_status == "applying":
+        manifest.pop("after")
+    patch_handler.write_patch_recovery(Config.PATCH_BACKUP_DIR, result.rollback_id, manifest)
+    approve_rollback(monkeypatch, result.rollback_id)
+    assert not orch.rollback("session", result.rollback_id)
+    assert (root / "sample.txt").read_bytes() == b"new\n"
+    assert history.get_patch(result.rollback_id)["status"] == "applying"
