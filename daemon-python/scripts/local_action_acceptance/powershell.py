@@ -21,6 +21,7 @@ def _child(config_path: Path) -> int:
     source_root = Path(config["source_root"]).resolve()
     from arcanos.config import Config
     from arcanos.terminal import TerminalController
+    from arcanos.voice_boundary import sanitize_tool_output
     import arcanos.terminal as terminal_module
     Path(terminal_module.__file__).resolve().relative_to(source_root)
     Path(Config.DATA_DIR).resolve().relative_to(case_root)
@@ -59,6 +60,9 @@ def _child(config_path: Path) -> int:
             result.update(exit_code=exit_code, stdout_sha256=_digest(stdout or ""),
                           stderr_sha256=_digest(stderr or ""), stderr_empty=not stderr,
                           output_intact=(stdout or "") == config.get("expected_output"))
+            if config.get("expected_output") is not None and (stderr or not result["output_intact"]):
+                result["diagnostic"] = {"stdout": sanitize_tool_output(stdout or "")[:1000],
+                                        "stderr": sanitize_tool_output(stderr or "")[:1000]}
         except ValueError:
             result["exception_category"] = "policy_rejected"
         except TimeoutError:

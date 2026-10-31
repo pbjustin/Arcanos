@@ -17,6 +17,9 @@ def test_native_powershell_hashtable_sentinel_and_literal_controls(tmp_path, mon
     from local_action_acceptance import powershell
 
     receipt = powershell.run(tmp_path / "powershell", SOURCE_ROOT)
+    if receipt["failed"]:
+        with capsys.disabled():
+            print(json.dumps({"native_policy_failures": [case for case in receipt["cases"] if case["status"] != "PASS"]}))
     assert receipt["failed"] == 0, receipt
     assert receipt["all_child_processes_exited"]
     assert receipt["all_native_processes_exited"]
@@ -56,6 +59,17 @@ def test_native_cli_hashtable_rejected_before_dispatch(tmp_path, monkeypatch, ca
         assert result["native_dispatch_count"] == 0
         assert result["sentinel_existed_before"] is result["sentinel_exists_after"] is False
         assert not (fixture.repository / "sentinel.txt").exists()
+    except Exception:
+        from arcanos.voice_boundary import sanitize_tool_output
+        from local_action_acceptance.cli import _receipt
+
+        transcript = fixture.console.transcript if fixture.console else ""
+        for credential in (fixture.backend.token, fixture.backend.daemon_token):
+            transcript = transcript.replace(credential, "[REDACTED]")
+        with capsys.disabled():
+            print(json.dumps({"native_cli_failure": _receipt(fixture),
+                              "console": sanitize_tool_output(transcript)[-4000:]}))
+        raise
     finally:
         fixture.close()
     assert fixture.cleanup["job_closed"]
