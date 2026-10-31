@@ -688,6 +688,71 @@ def test_approved_patch_with_unicode_filename_can_roll_back(workspace, monkeypat
     assert history.get_patch(result.rollback_id)["status"] == "rolled_back"
 
 
+@pytest.mark.parametrize("sql_write", ["update_patch_status", "log_policy_event"])
+def test_completed_rollback_preserves_success_when_sqlite_write_fails(workspace, monkeypatch, sql_write):
+    root, orch, history, output = workspace
+    result = apply(workspace, monkeypatch)
+    def unavailable_history(*_args, **_kwargs):
+        assert (root / "sample.txt").read_bytes() == b"old\n"
+        raise sqlite3.OperationalError("private completed sqlite details")
+    monkeypatch.setattr(history, sql_write, unavailable_history)
+    approve_rollback(monkeypatch, result.rollback_id)
+    assert orch.rollback("session", result.rollback_id) is True
+    assert (root / "sample.txt").read_bytes() == b"old\n"
+    manifest = patch_handler.read_patch_recovery(Config.PATCH_BACKUP_DIR, result.rollback_id)
+    assert manifest["status"] == "rolled_back" and manifest["restored"] == ["sample.txt"]
+    displayed = output.getvalue()
+    assert "history" in displayed.lower() and "manual reconciliation" in displayed
+    assert result.rollback_id in displayed
+    assert "private completed" not in displayed and "no rollback" not in displayed.lower()
+
+
+@pytest.mark.parametrize("sql_write", ["update_patch_status", "log_policy_event"])
+def test_partial_rollback_sqlite_failure_preserves_original_error_and_progress(workspace, monkeypatch, sql_write):
+    root, orch, history, output = workspace
+    (root / "second.txt").write_bytes(b"old\n")
+    result = apply(workspace, monkeypatch, patch_for() + patch_for("second.txt"))
+    import arcanos.agentic.patch_orchestrator as module
+    real_copy = module.shutil.copy2
+    def interrupted_restore(source, destination):
+        if Path(destination).name == "second.txt":
+            raise OSError("Authorization: Token restorecredential\noriginal restore failed")
+        return real_copy(source, destination)
+    def unavailable_history(*_args, **_kwargs):
+        raise sqlite3.OperationalError("private partial sqlite details")
+    monkeypatch.setattr(module.shutil, "copy2", interrupted_restore)
+    monkeypatch.setattr(history, sql_write, unavailable_history)
+    approve_rollback(monkeypatch, result.rollback_id)
+    assert orch.rollback("session", result.rollback_id) is False
+    assert (root / "sample.txt").read_bytes() == b"old\n"
+    assert (root / "second.txt").read_bytes() == b"new\n"
+    manifest = patch_handler.read_patch_recovery(Config.PATCH_BACKUP_DIR, result.rollback_id)
+    assert manifest["status"] == "rolling_back" and manifest["restored"] == ["sample.txt"]
+    displayed = output.getvalue()
+    assert "original restore failed" in displayed
+    assert "history" in displayed.lower() and "incomplete" in displayed.lower()
+    assert result.rollback_id in displayed and "manual reconciliation" in displayed
+    assert "restorecredential" not in displayed and "private partial" not in displayed
+    assert "Rollback complete" not in displayed and "no rollback" not in displayed.lower()
+
+
+def test_refused_rollback_sqlite_event_failure_remains_false_and_unmodified(workspace, monkeypatch):
+    root, orch, history, output = workspace
+    result = apply(workspace, monkeypatch)
+    def unavailable_event(*_args, **_kwargs):
+        raise sqlite3.OperationalError("private refused sqlite details")
+    monkeypatch.setattr(history, "log_policy_event", unavailable_event)
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "wrong-rollback-id")
+    assert orch.rollback("session", result.rollback_id) is False
+    assert (root / "sample.txt").read_bytes() == b"new\n"
+    assert history.get_patch(result.rollback_id)["status"] == "applied"
+    assert patch_handler.read_patch_recovery(Config.PATCH_BACKUP_DIR, result.rollback_id)["status"] == "applied"
+    displayed = output.getvalue()
+    assert "rollback_confirmation_mismatch" in displayed
+    assert "not performed" in displayed.lower() and "history" in displayed.lower()
+    assert "private refused" not in displayed and result.rollback_id in displayed
+
+
 @pytest.mark.parametrize("unsafe", ["../escape.txt", ".env", "a\x1bb.txt"])
 def test_unicode_rollback_header_change_retains_unsafe_path_rejection(workspace, monkeypatch, unsafe):
     _, orch, history, _ = workspace

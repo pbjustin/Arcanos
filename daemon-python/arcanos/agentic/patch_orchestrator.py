@@ -374,16 +374,31 @@ class PatchOrchestrator:
             write_patch_recovery(Config.PATCH_BACKUP_DIR, rollback_id, recovery)
         except (OSError, ValueError, KeyError, TypeError, EOFError) as error:
             reason = sanitize_tool_output(str(error)) or type(error).__name__
-            if restoration_started:
-                self.history.update_patch_status(rollback_id, "rollback_failed", reason)
-            self.history.log_policy_event(session_id, "rollback_failed", {"rollback_id": rollback_id, "reason": reason})
-            self.console.print(f"[red]Rollback failed:[/red] {reason}")
+            try:
+                if restoration_started:
+                    self.history.update_patch_status(rollback_id, "rollback_failed", reason)
+                self.history.log_policy_event(session_id, "rollback_failed", {"rollback_id": rollback_id, "reason": reason})
+            except sqlite3.Error:
+                self._rollback_history_warning(
+                    rollback_id, "incomplete" if restoration_started else "not performed in this attempt",
+                )
+            self.console.print(f"Rollback failed: {reason}", markup=False)
             return False
 
-        self.history.update_patch_status(rollback_id, "rolled_back")
-        self.history.log_policy_event(session_id, "rollback", {"rollback_id": rollback_id})
+        try:
+            self.history.update_patch_status(rollback_id, "rolled_back")
+            self.history.log_policy_event(session_id, "rollback", {"rollback_id": rollback_id})
+        except sqlite3.Error:
+            self._rollback_history_warning(rollback_id, "completed")
         self.console.print(f"[green]Rollback complete.[/green] rollback_id={rollback_id}")
         return True
+
+    def _rollback_history_warning(self, rollback_id: str, outcome: str) -> None:
+        self.console.print(
+            f"Rollback {outcome}; history is incomplete. Retain rollback_id={rollback_id} "
+            "and its recovery manifest for progress and manual reconciliation.",
+            markup=False,
+        )
 
     def _validate_recovery(self, record: dict, recovery: dict, *, only: str | None = None) -> None:
         repo_root = _find_repo_root(Path.cwd())

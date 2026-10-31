@@ -252,6 +252,9 @@ created by the patch, and records progress if restoration fails partway.
 Missing or altered backups, a different repository, and later workspace edits
 produce explicit failures. A completed rollback cannot run again. Legacy
 records without verified recovery metadata require manual recovery.
+If SQLite bookkeeping fails during rollback, the result still reflects verified
+restoration or its original failure. A history warning retains the rollback ID
+for manual reconciliation; incomplete restoration never becomes success.
 Interactive, bridge, and Local Agent patches register their rollback IDs in
 the same history before execution; unavailable registration blocks application.
 If the final history update fails after application, the observed filesystem
