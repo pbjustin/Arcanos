@@ -403,7 +403,7 @@ class PatchOrchestrator:
         # Run the same target and secret/link policy as patch application.
         selected = [only] if only is not None else files
         headers = "\n".join(
-            f"diff --git {json.dumps('a/' + rel)} {json.dumps('b/' + rel)}"
+            f"diff --git {json.dumps('a/' + rel, ensure_ascii=False)} {json.dumps('b/' + rel, ensure_ascii=False)}"
             for rel in selected
         )
         _require_allowed_patch(headers, repo_root)

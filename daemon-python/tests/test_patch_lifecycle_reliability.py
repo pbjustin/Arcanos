@@ -674,3 +674,27 @@ def test_applying_history_without_terminal_manifest_cannot_restore(workspace, mo
     assert not orch.rollback("session", result.rollback_id)
     assert (root / "sample.txt").read_bytes() == b"new\n"
     assert history.get_patch(result.rollback_id)["status"] == "applying"
+
+
+@pytest.mark.parametrize("name", ["sample.txt", "café.txt", "文件.txt"])
+def test_approved_patch_with_unicode_filename_can_roll_back(workspace, monkeypatch, name):
+    root, orch, history, _ = workspace
+    (root / name).write_bytes(b"old\n")
+    result = apply(workspace, monkeypatch, patch_for(name))
+    assert (root / name).read_bytes() == b"new\n"
+    approve_rollback(monkeypatch, result.rollback_id)
+    assert orch.rollback("session", result.rollback_id)
+    assert (root / name).read_bytes() == b"old\n"
+    assert history.get_patch(result.rollback_id)["status"] == "rolled_back"
+
+
+@pytest.mark.parametrize("unsafe", ["../escape.txt", ".env", "a\x1bb.txt"])
+def test_unicode_rollback_header_change_retains_unsafe_path_rejection(workspace, monkeypatch, unsafe):
+    _, orch, history, _ = workspace
+    result = apply(workspace, monkeypatch)
+    record = history.get_patch(result.rollback_id)
+    manifest = patch_handler.read_patch_recovery(Config.PATCH_BACKUP_DIR, result.rollback_id)
+    record["files"] = manifest["files"] = [unsafe]
+    manifest["before"] = manifest["after"] = {unsafe: None}
+    with pytest.raises(PermissionError):
+        orch._validate_recovery(record, manifest)
