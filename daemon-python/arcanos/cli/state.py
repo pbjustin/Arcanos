@@ -9,6 +9,7 @@ from collections import deque
 from typing import Any, Mapping, TYPE_CHECKING
 
 from .audit import record as audit_record
+from ..voice_boundary import sanitize_tool_output
 from .trust_state import TrustState
 
 from ..cli_config import DEFAULT_ACTIVITY_HISTORY_LIMIT, MIN_REGISTRY_CACHE_TTL_MINUTES
@@ -31,6 +32,7 @@ def initialize_runtime_state(cli: "ArcanosCLI") -> None:
     cli._registry_cache_warning_logged = False
     cli._registry_cache_ttl_seconds = max(MIN_REGISTRY_CACHE_TTL_MINUTES, Config.REGISTRY_CACHE_TTL_MINUTES) * 60
     cli._last_confirmation_handled = False
+    cli.dry_run = False
     cli._backend_routing_preferred = "backend"
     cli._trust_state = TrustState.DEGRADED
 
@@ -46,7 +48,7 @@ def append_activity(cli: "ArcanosCLI", kind: str, detail: str) -> None:
             {
                 "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "kind": kind,
-                "detail": detail,
+                "detail": sanitize_tool_output(detail),
             }
         )
 

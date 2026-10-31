@@ -14,8 +14,11 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
 from ..config import Config
+from ..agentic.history_db import HistoryDB
+from ..agentic.policy_guard import PolicyGuard
 from ..cli.cli_policy import strip_unsafe_output_controls
 from ..error_handler import logger as error_logger
+from ..voice_boundary import sanitize_tool_output
 from .contracts import (
     load_local_agent_capability_catalog,
     validate_local_agent_input,
@@ -107,6 +110,7 @@ class LocalAgentExecutionRunner:
         monotonic: Callable[[], float] = time.monotonic,
         heartbeat_interval_seconds: float = 10.0,
         should_continue: Callable[[], bool] = lambda: True,
+        dry_run: Callable[[], bool] = lambda: False,
     ) -> None:
         if not device_id or not principal_id:
             raise ValueError("Pinned local-agent identity is required")
@@ -135,6 +139,7 @@ class LocalAgentExecutionRunner:
         self.monotonic = monotonic
         self.heartbeat_interval_seconds = max(0.0, heartbeat_interval_seconds)
         self.should_continue = should_continue
+        self.dry_run = dry_run
 
     def run_once(self) -> LocalAgentCycleResult:
         device_heartbeat = self.client.heartbeat()
@@ -258,6 +263,24 @@ class LocalAgentExecutionRunner:
         )
         effective_timeout_ms = min(assignment.timeout_ms, remaining_ms)
 
+        policy_code = None
+        try:
+            if self.dry_run():
+                policy_code = "LOCAL_AGENT_DRY_RUN"
+            elif assignment.may_modify_files and PolicyGuard(HistoryDB()).is_safe_mode():
+                policy_code = "LOCAL_AGENT_SAFE_MODE"
+        except Exception:
+            policy_code = "LOCAL_AGENT_POLICY_UNAVAILABLE"
+        if policy_code is not None:
+            return self._persist_and_submit(
+                assignment,
+                self._failure_result(
+                    assignment, code=policy_code, classification="authorization",
+                    message="The assigned action was blocked by local execution policy.",
+                    retryable=False, duration_ms=0,
+                ),
+            )
+
         try:
             self.journal.mark_execution_started(assignment.job_id)
         except LocalAgentJournalError:
@@ -292,12 +315,30 @@ class LocalAgentExecutionRunner:
             )
             validate_local_agent_output(assignment.action, output)
             duration_ms = _bounded_duration_ms(self.monotonic() - started)
-            result = self._success_result(
-                assignment,
-                output=output,
-                duration_ms=duration_ms,
-                output_truncated=output_truncated,
-            )
+            if assignment.action == "tests.run" and (
+                output.get("status") != "passed" or output.get("exitCode") != 0
+            ):
+                timed_out = output.get("status") == "timed_out"
+                exit_code = output.get("exitCode")
+                message = (
+                    "The local test profile timed out."
+                    if timed_out
+                    else f"The local test profile failed with exit code {exit_code}."
+                )
+                result = self._failure_result(
+                    assignment,
+                    code="LOCAL_AGENT_TESTS_TIMED_OUT" if timed_out else "LOCAL_AGENT_TESTS_FAILED",
+                    classification="timeout" if timed_out else "execution",
+                    message=message, retryable=False, duration_ms=duration_ms,
+                )
+                result["metrics"]["outputTruncated"] = output_truncated
+            else:
+                result = self._success_result(
+                    assignment,
+                    output=output,
+                    duration_ms=duration_ms,
+                    output_truncated=output_truncated,
+                )
         except Exception as exc:
             duration_ms = _bounded_duration_ms(self.monotonic() - started)
             if assignment.may_modify_files:
@@ -598,6 +639,7 @@ def sanitize_handler_output(
 
 def build_local_agent_execution_runner(
     should_continue: Callable[[], bool] = lambda: True,
+    dry_run: Callable[[], bool] = lambda: False,
 ) -> LocalAgentExecutionRunner:
     backend_url = _required_config(Config.BACKEND_URL, "backend URL")
     executor_credential = _required_config(
@@ -651,15 +693,17 @@ def build_local_agent_execution_runner(
             )
         ),
         should_continue=should_continue,
+        dry_run=dry_run,
     )
 
 
 def local_agent_execution_loop(
     should_continue: Callable[[], bool],
+    dry_run: Callable[[], bool] = lambda: False,
 ) -> None:
     """Run the outbound polling loop until the embedding daemon stops."""
     try:
-        runner = build_local_agent_execution_runner(should_continue)
+        runner = build_local_agent_execution_runner(should_continue, dry_run)
     except Exception:
         error_logger.error(
             "[LOCAL_AGENT] Executor disabled "
@@ -839,6 +883,8 @@ def _sanitize_value(
             for item in value[:MAX_OUTPUT_COLLECTION_ITEMS]
         ]
     if isinstance(value, str):
+        if len(value) > MAX_OUTPUT_STRING_CHARS:
+            state["truncated"] = True
         sanitized = _sanitize_text(value, workspace_root)
         if len(sanitized) > MAX_OUTPUT_STRING_CHARS:
             state["truncated"] = True
@@ -862,7 +908,9 @@ def _sanitize_text(value: str, workspace_root: Path) -> str:
     result = _PRIVATE_KEY_RE.sub("[REDACTED PRIVATE KEY]", result)
     result = _BEARER_RE.sub(r"\1 [REDACTED]", result)
     result = _SECRET_ASSIGNMENT_RE.sub(r"\1\2[REDACTED]", result)
-    return result
+    # This adapter owns its 16 KiB string and 32 KiB result bounds and reports
+    # truncation there; an earlier CLI-policy cut would hide lost output.
+    return sanitize_tool_output(result, apply_truncation=False)
 
 
 def _apply_action_truncation_marker(

@@ -13,6 +13,7 @@ from typing import Any, Optional
 from ..config import Config
 from ..cli.cli_policy import redact_output, redact_patch_preview
 from ..utils.text import sanitize_utf8_text
+from ..voice_boundary import sanitize_tool_output
 
 
 def _now_ms() -> int:
@@ -30,7 +31,14 @@ def _sanitize_json_value(value: Any) -> Any:
     if isinstance(value, list):
         return [_sanitize_json_value(item) for item in value]
     if isinstance(value, dict):
-        return {str(_sanitize_json_value(key)): _sanitize_json_value(item) for key, item in value.items()}
+        sanitized = {str(_sanitize_json_value(key)): _sanitize_json_value(item) for key, item in value.items()}
+        # Preserve key/value context: sanitizing a password value alone cannot
+        # recognize that its otherwise ordinary text is a credential.
+        encoded = redact_output(json.dumps(sanitized, ensure_ascii=False), apply_truncation=False)
+        try:
+            return json.loads(encoded)
+        except (TypeError, ValueError):
+            return "[REDACTED]"
     return value
 
 
@@ -179,8 +187,8 @@ class HistoryDB:
         normalized_session_id = sanitize_utf8_text(session_id)
         normalized_command = sanitize_utf8_text(redact_output(command))
         normalized_status = sanitize_utf8_text(status)
-        normalized_stdout = sanitize_utf8_text(redact_output(stdout))
-        normalized_stderr = sanitize_utf8_text(redact_output(stderr))
+        normalized_stdout = sanitize_utf8_text(sanitize_tool_output(stdout))
+        normalized_stderr = sanitize_utf8_text(sanitize_tool_output(stderr))
         with self._conn() as c:
             c.execute(
                 "INSERT INTO commands(id, session_id, ts_ms, command, status, return_code, stdout, stderr) "
@@ -215,8 +223,8 @@ class HistoryDB:
     ) -> None:
         raw_patch_text = patch_text or ""
         normalized_patch_text = sanitize_utf8_text(redact_patch_preview(raw_patch_text))
-        normalized_summary = sanitize_utf8_text(summary)
-        normalized_error = sanitize_utf8_text(error) if isinstance(error, str) else None
+        normalized_summary = sanitize_utf8_text(sanitize_tool_output(summary))
+        normalized_error = sanitize_utf8_text(sanitize_tool_output(error)) if isinstance(error, str) else None
         normalized_session_id = sanitize_utf8_text(session_id)
         sanitized_files = _sanitize_json_value(files)
         sanitized_backups = _sanitize_json_value(backups)
@@ -265,7 +273,7 @@ class HistoryDB:
     def get_patch(self, rollback_id: str) -> Optional[dict[str, Any]]:
         with self._conn() as c:
             row = c.execute(
-                "SELECT rollback_id, files_json, backups_json, patch_sha256 FROM patches WHERE rollback_id=?",
+                "SELECT rollback_id, files_json, backups_json, patch_sha256, status, session_id FROM patches WHERE rollback_id=?",
                 (rollback_id,),
             ).fetchone()
         if not row:
@@ -275,7 +283,19 @@ class HistoryDB:
             "files": json.loads(row[1] or "[]"),
             "backups": json.loads(row[2] or "{}"),
             "patch_sha256": row[3] or "",
+            "status": row[4],
+            "session_id": row[5],
         }
+
+    def update_patch_status(self, rollback_id: str, status: str, error: Optional[str] = None) -> None:
+        """Update the outcome without replacing the original recovery record."""
+        with self._conn() as c:
+            c.execute(
+                "UPDATE patches SET status=?, error=? WHERE rollback_id=?",
+                (sanitize_utf8_text(status),
+                 sanitize_utf8_text(sanitize_tool_output(error)) if isinstance(error, str) else None,
+                 rollback_id),
+            )
 
     # -----------------------
     # Snapshots / Policy / State / Feedback
@@ -334,7 +354,7 @@ class HistoryDB:
                 (sanitize_utf8_text(key), json.dumps(sanitized_value), _now_ms()),
             )
 
-    def get_state(self, key: str, default: Any = None) -> Any:
+    def get_state(self, key: str, default: Any = None, *, strict: bool = False) -> Any:
         with self._conn() as c:
             row = c.execute("SELECT value_json FROM kv_state WHERE key=?", (key,)).fetchone()
         if not row:
@@ -342,6 +362,8 @@ class HistoryDB:
         try:
             return json.loads(row[0])
         except Exception:
+            if strict:
+                raise ValueError("Invalid local policy state.") from None
             return default
 
     def log_feedback(self, session_id: str, target_id: str, rating: int, note: str) -> str:
@@ -355,7 +377,7 @@ class HistoryDB:
                     _now_ms(),
                     sanitize_utf8_text(target_id),
                     rating,
-                    sanitize_utf8_text(note),
+                    sanitize_utf8_text(redact_output(note)),
                 ),
             )
         return fb_id

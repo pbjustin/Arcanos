@@ -34,7 +34,12 @@ class PolicyGuard:
         self.db = db
 
     def is_safe_mode(self) -> bool:
-        return bool(self.db.get_state(self.SAFE_MODE_KEY, False))
+        try:
+            value = self.db.get_state(self.SAFE_MODE_KEY, False, strict=True)
+        except Exception:
+            return True
+        # Invalid persisted policy is unsafe, rather than permission to act.
+        return value if type(value) is bool else True
 
     def enable_safe_mode(self, session_id: str, reason: str) -> None:
         self.db.set_state(self.SAFE_MODE_KEY, True)

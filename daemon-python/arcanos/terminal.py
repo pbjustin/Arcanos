@@ -8,6 +8,7 @@ import base64
 import hashlib
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -87,16 +88,58 @@ class TerminalController:
             return [shell, "-c", command]
         raise ValueError(f"Unsupported shell: {shell}. Set ARCANOS_SHELL to a valid shell.")
 
-    def is_command_safe(self, command: str) -> Tuple[bool, Optional[str]]:
+    def _contains_shell_control(self, command: str, shell: str) -> bool:
+        """Keep allowlisted prefixes from authorizing a second shell operation."""
+        quote = None
+        for index, character in enumerate(command):
+            if character in "\r\n":
+                return True
+            if quote == "'":
+                if character == "'":
+                    quote = None
+                continue
+            if character == "`" or command.startswith(("$(", "${"), index):
+                return True
+            if quote == '"':
+                # Escaped quotes differ between supported shells. Ambiguous
+                # quote escapes must not hide a control operator from policy.
+                if character == "\\" and command[index + 1:index + 2] == '"':
+                    return True
+                if character == '"':
+                    quote = None
+                continue
+            if character in "\\^" and command[index + 1:index + 2] in ("'", '"'):
+                # Escaped opening quotes are literal shell arguments, not the
+                # start of a protected span. Reject ambiguous escape forms
+                # rather than hiding an executable chain inside false quotes.
+                return True
+            if character == '"' or (character == "'" and shell != "cmd"):
+                quote = character
+            elif shell == "powershell" and (
+                character in "()" or command.startswith("@{", index)
+            ):
+                # PowerShell evaluates grouping, arrays, and hashtable values
+                # before invoking the allowlisted command.
+                return True
+            elif character in ";|&<>":
+                return True
+        return quote is not None
+
+    def is_command_safe(self, command: str, shell: Optional[str] = None) -> Tuple[bool, Optional[str]]:
         """
         Check if command is safe to execute
         Returns: (is_safe, reason_if_not)
         """
-        # Whitelist overrides everything
         if self.whitelist:
-            # //audit assumption: whitelist present; risk: overly strict block; invariant: only whitelisted allowed; strategy: prefix match.
+            normalized_shell = self._normalize_shell_name(shell or self._detect_shell())
+            if self._contains_shell_control(command, normalized_shell):
+                return False, "Shell chaining or substitution is not allowed by the command whitelist."
             for allowed_cmd in self.whitelist:
-                if command.lower().startswith(allowed_cmd.lower()):
+                prefix = allowed_cmd.lower().strip()
+                normalized = command.lower()
+                if prefix and normalized.startswith(prefix) and (
+                    len(normalized) == len(prefix) or normalized[len(prefix)].isspace()
+                ):
                     return True, None
             return False, f"Command not in whitelist. Allowed: {', '.join(self.whitelist)}"
 
@@ -150,7 +193,9 @@ class TerminalController:
                 stderr = f.read().strip()
             with open(p_rc, "r", encoding="utf-8", errors="replace") as f:
                 rc_s = f.read().strip()
-            return_code = int(rc_s) if (rc_s and rc_s.strip().isdigit()) else 1
+            if not re.fullmatch(r"[+-]?[0-9]{1,10}", rc_s):
+                raise RuntimeError("Elevated command completion was not confirmed")
+            return_code = int(rc_s)
             return (stdout or None, stderr or None, return_code)
         except subprocess.TimeoutExpired:
             raise TimeoutError(f"Command timed out after {timeout} seconds")
@@ -234,7 +279,6 @@ class TerminalController:
             raise TimeoutError("ActionPlan command timed out") from exc
         return result.stdout.strip(), result.stderr.strip(), result.returncode
 
-    @handle_errors("executing command")
     def execute(
         self,
         command: str,
@@ -259,7 +303,7 @@ class TerminalController:
         
         # Safety check
         if check_safety:
-            is_safe, reason = self.is_command_safe(command)
+            is_safe, reason = self.is_command_safe(command, shell=shell)
             if not is_safe:
                 # Audit log: command blocked
                 log_audit_event(

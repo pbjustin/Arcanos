@@ -243,6 +243,28 @@ Rollback:
 /rollback <rollback_id>
 ```
 
+Rollback requires an interactive confirmation of the exact rollback ID and
+respects safe mode and CLI dry-run. New operations retain a recovery manifest
+beside the original backups, bound to the repository identity, patch hash,
+target paths, and before/after file hashes and modes. Recovery preflights all
+targets and backups before writing, restores deleted files, removes files
+created by the patch, and records progress if restoration fails partway.
+Missing or altered backups, a different repository, and later workspace edits
+produce explicit failures. A completed rollback cannot run again. Legacy
+records without verified recovery metadata require manual recovery.
+If SQLite bookkeeping fails during rollback, the result still reflects verified
+restoration or its original failure. A history warning retains the rollback ID
+for manual reconciliation; incomplete restoration never becomes success.
+Interactive, bridge, and Local Agent patches register their rollback IDs in
+the same history before execution; unavailable registration blocks application.
+If the final history update fails after application, the observed filesystem
+result and recovery manifest remain available. The interactive result warns
+with the rollback ID; audit metadata records incomplete history for remote
+patches. Use `/history` to locate the registered operation once SQLite is
+available. An `applying` history row can be recovered only with a validated
+completed manifest and the usual confirmation and conflict checks; incomplete
+metadata requires manual reconciliation. Public result envelopes remain unchanged.
+
 ## Command proposal safety
 
 The daemon has distinct command surfaces; they do not all use the same policy implementation.
@@ -261,6 +283,29 @@ Commands extracted from assistant responses use the terminal safety layer:
 - a final interactive `Run command? [y/N]` prompt
 
 Approval in one surface does not authorize a changed command or bypass the checks in another surface.
+
+The terminal whitelist rejects unquoted PowerShell grouping and subexpressions
+that can execute nested commands. Parentheses inside quoted literal arguments
+remain supported.
+
+Direct `/run`, inline agentic commands, and backend-delivered `run` commands
+share the existing trust, terminal safety, safe-mode, rate, confirmation, and
+short-window duplicate guards. Approval binds the captured command, working
+directory, and elevation choice. CLI dry-run returns a proposal without
+dispatch; the embedded Local Agent and ActionPlan execution paths also observe
+it. Standalone bridges have their own runtime and retain their existing
+authorization contracts; persisted safe mode blocks their mutating work.
+
+Command results retain the actual integer exit code. Denial, policy refusal,
+dry-run, and malformed or missing execution evidence cannot become success.
+Commands report unknown workspace changes after dispatch rather than claiming
+that no files changed. Credentials and unsafe terminal controls are redacted
+before command output reaches display, audit/history, or agentic feedback.
+ActionPlan feedback keeps raw output private, records confirmed zero-exit
+completion, and carries nonzero exits in the existing error category; its
+public schema is unchanged. Delivery acknowledgement is separate from action
+completion. Durable execution journals replay pending results without rerunning
+the local operation; ordinary `/run` retains its existing short-window deduplication.
 
 ## Local bridge safety
 
@@ -342,6 +387,31 @@ The query methods create writing work through the GPT route. Status and result m
 - `/dryrun on|off`: proposal-only mode
 - `/safemode on|off`: block patch/command execution until disabled
 - `/feedback <rollback_id> <rating 1-5> <note...>`: record patch feedback
+
+## Native Windows local-action acceptance
+
+The opt-in acceptance runner launches real Windows console processes and
+loopback HTTP fixtures. Run it from a clean source checkout without operator
+`.env` files, using Windows Python 3.11, Git, PowerShell, and the daemon's
+installed development dependencies:
+
+```powershell
+python daemon-python/scripts/run_windows_local_action_acceptance.py --output C:\Temp\arcanos-local-acceptance-new
+```
+
+The output must be a new directory outside the source checkout. All mutation
+targets are separate standalone disposable Git repositories. Synthetic profiles,
+SQLite databases, backups, logs, and credentials stay under that directory.
+The receipt records the tested commit, fixture hashes, native process and HTTP
+observations, recovery state, and cleanup. Dirty source snapshots and partial
+`--parts` runs cannot produce an aggregate exact-head PASS.
+
+Real CLI entry-point, HTTP, Git, and injected fault-path evidence are labeled
+separately. The Python socket observer rejects non-fixture connections; selected
+native commands are fixed local workloads, not an operating-system network
+sandbox. Linux/container checks and ordinary mocked regressions remain separate
+evidence. Elevated/UAC acceptance is not run. No production backend or provider
+credential is used.
 
 ## Troubleshooting
 

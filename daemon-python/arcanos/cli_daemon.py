@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import threading
 import time
+import os
 
 from .backend_client import BackendRequestError
 from .cli_types import DaemonCommand
 from .config import Config, is_valid_daemon_access_token
 from .error_handler import logger as error_logger
+from .cli.cli_policy import redact_output
+from .cli.daemon_ops import _hash_command_proposal
 
 
 # Timing constants for daemon background threads
@@ -276,7 +279,12 @@ def handle_daemon_command(self, command: DaemonCommand) -> bool:
     elif command_name == "run":
         # //audit assumption: run commands require explicit payload; risk: unsafe execution; invariant: command string required; strategy: validate and run.
         command_text = command_payload.get("command") if isinstance(command_payload, dict) else None
+        proposal_id = command_payload.get("proposalId") if isinstance(command_payload, dict) else None
         if isinstance(command_text, str) and command_text.strip():
+            cwd = os.path.realpath(os.getcwd())
+            if proposal_id != _hash_command_proposal(command_text.strip(), cwd):
+                self.console.print("[yellow]Run command rejected: proposalId mismatch or missing[/yellow]")
+                return True
             self.handle_run(command_text.strip())
         else:
             # //audit assumption: missing command is invalid; risk: no-op; invariant: warning shown; strategy: notify.
@@ -293,7 +301,9 @@ def handle_daemon_command(self, command: DaemonCommand) -> bool:
         # //audit assumption: notify payload may include message; risk: invalid payload; invariant: string message; strategy: validate.
         message = command_payload.get("message") if isinstance(command_payload, dict) else None
         if message and isinstance(message, str):
-            self.console.print(f"[cyan]Backend message:[/cyan] {message}")
+            self.console.print(
+                f"Backend message: {redact_output(message)}", markup=False, highlight=False
+            )
         else:
             self.console.print("[yellow]Notify command missing message[/yellow]")
 
