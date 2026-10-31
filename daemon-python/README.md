@@ -388,6 +388,31 @@ The query methods create writing work through the GPT route. Status and result m
 - `/safemode on|off`: block patch/command execution until disabled
 - `/feedback <rollback_id> <rating 1-5> <note...>`: record patch feedback
 
+## Native Windows local-action acceptance
+
+The opt-in acceptance runner launches real Windows console processes and
+loopback HTTP fixtures. Run it from a clean source checkout without operator
+`.env` files, using Windows Python 3.11, Git, PowerShell, and the daemon's
+installed development dependencies:
+
+```powershell
+python daemon-python/scripts/run_windows_local_action_acceptance.py --output C:\Temp\arcanos-local-acceptance-new
+```
+
+The output must be a new directory outside the source checkout. All mutation
+targets are separate standalone disposable Git repositories. Synthetic profiles,
+SQLite databases, backups, logs, and credentials stay under that directory.
+The receipt records the tested commit, fixture hashes, native process and HTTP
+observations, recovery state, and cleanup. Dirty source snapshots and partial
+`--parts` runs cannot produce an aggregate exact-head PASS.
+
+Real CLI entry-point, HTTP, Git, and injected fault-path evidence are labeled
+separately. The Python socket observer rejects non-fixture connections; selected
+native commands are fixed local workloads, not an operating-system network
+sandbox. Linux/container checks and ordinary mocked regressions remain separate
+evidence. Elevated/UAC acceptance is not run. No production backend or provider
+credential is used.
+
 ## Troubleshooting
 
 - Startup rejects configuration: set `OPENAI_API_KEY`; current validation requires it before the CLI starts.
