@@ -509,6 +509,70 @@ def test_offline_device_never_claims_or_executes(
     handler.assert_not_called()
 
 
+@pytest.mark.parametrize("action", ["git.status", "tests.run", "patch.apply"])
+def test_embedding_daemon_dry_run_never_dispatches_assigned_actions(
+    journal: LocalAgentExecutionJournal, workspace: Path, action: str,
+) -> None:
+    payload = {"profile": "python-unit"} if action == "tests.run" else {}
+    if action == "patch.apply":
+        payload = {"patch": "x", "expectedPatchSha256": "a" * 64}
+    client = _FakeClient(claim=_assignment(action=action, payload=payload, authorization="confirmed"))
+    handler = MagicMock()
+    runner = _runner(client=client, journal=journal, workspace=workspace, execute_handler=handler)
+    runner.dry_run = lambda: True
+
+    assert runner.run_once().disposition == "ACCEPTED"
+
+    handler.assert_not_called()
+    assert client.result_calls[0][1]["outcome"] == "failed"
+    assert client.result_calls[0][1]["error"]["code"] == "LOCAL_AGENT_DRY_RUN"
+
+
+def test_local_agent_tool_result_is_sanitized_before_sqlite_and_submission(
+    journal: LocalAgentExecutionJournal, workspace: Path,
+) -> None:
+    client = _FakeClient(claim=_assignment(action="git.diff", payload={"base": "main", "head": "HEAD"}))
+    diff = "Authorization: Token sunshine\nThe command failed.\n"
+    handler = MagicMock(return_value={
+        "base": "main", "head": "HEAD", "diff": diff,
+        "bytes": len(diff.encode("utf-8")), "truncated": False,
+    })
+    runner = _runner(client=client, journal=journal, workspace=workspace, execute_handler=handler)
+
+    assert runner.run_once().disposition == "ACCEPTED"
+
+    assert "sunshine" not in repr(client.result_calls)
+    assert "The command failed." in repr(client.result_calls)
+    assert b"sunshine" not in journal.path.read_bytes()
+
+
+@pytest.mark.parametrize("status,exit_code", [("failed", 7), ("timed_out", None), ("passed", 7)])
+def test_failed_or_timed_out_test_profile_is_not_submitted_as_success(
+    journal: LocalAgentExecutionJournal, workspace: Path, status: str, exit_code: int | None,
+) -> None:
+    client = _FakeClient(claim=_assignment(
+        action="tests.run", payload={"profile": "python-unit"}, authorization="confirmed",
+    ))
+    handler = MagicMock(return_value={
+        "profile": "python-unit", "status": status, "exitCode": exit_code,
+        "stdout": "private test output", "stderr": "private failure output",
+        "durationMs": 1, "truncated": False,
+    })
+    runner = _runner(client=client, journal=journal, workspace=workspace, execute_handler=handler)
+
+    assert runner.run_once().disposition == "ACCEPTED"
+
+    result = client.result_calls[0][1]
+    assert result["outcome"] == "failed"
+    assert "output" not in result
+    if exit_code is not None:
+        assert f"exit code {exit_code}" in result["error"]["message"]
+    else:
+        assert "timed out" in result["error"]["message"]
+    assert "private test output" not in repr(result)
+    assert "private failure output" not in repr(result)
+
+
 def test_terminal_replay_rotates_claim_intent_without_execution(
     journal: LocalAgentExecutionJournal,
     workspace: Path,

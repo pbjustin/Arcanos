@@ -129,3 +129,13 @@ def apply_voice_boundary(
         if literal_severity != severity:
             return None
     return safe_text if safe_text.strip() else None
+
+
+def sanitize_tool_output(text: str) -> str:
+    """Protect local tool data without changing its separately reported outcome."""
+    if not text:
+        return ""
+    approved = apply_voice_boundary(text, persona=Persona.CALM)
+    if approved is None:
+        return "[Tool output withheld]"
+    return redact_output(approved)

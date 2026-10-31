@@ -697,7 +697,7 @@ class ArcanosCLI:
         from ..agentic.policy_guard import PolicyGuard
         guard = PolicyGuard(db)
         orch = PatchOrchestrator(self.console, db, guard)
-        orch.rollback(self.instance_id, rollback_id)
+        orch.rollback(self.instance_id, rollback_id, dry_run=lambda: self.dry_run)
 
     @handle_errors("exporting audit history")
     def handle_audit(self, args: str) -> None:

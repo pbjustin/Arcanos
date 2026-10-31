@@ -383,7 +383,7 @@ def test_nonzero_local_exit_is_submitted_as_failure_without_output_payload(
         "outcome": "failed",
         "error": {
             "code": "ACTION_EXECUTION_FAILED",
-            "category": "nonzero_or_unconfirmed",
+            "category": "exit_7",
         },
     }
     assert "sensitive stdout" not in repr(client.method_calls)
@@ -409,7 +409,8 @@ def test_cli_execution_seam_passes_only_opaque_run_identity() -> None:
     )
 
 
-def test_run_operation_uses_sanitized_phase2e_activity_and_audit_payload() -> None:
+def test_run_operation_uses_sanitized_phase2e_activity_and_audit_payload(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(run_ops.Config, "HISTORY_DB_PATH", tmp_path / "history.sqlite3")
     command = "echo credential-sentinel"
     cli = MagicMock()
     cli._idempotency_guard.check_and_record.return_value = True
@@ -443,7 +444,8 @@ def test_run_operation_uses_sanitized_phase2e_activity_and_audit_payload() -> No
     assert command not in repr(governed.call_args.kwargs["payload"])
 
 
-def test_real_phase2e_run_seam_never_logs_raw_dependency_failure() -> None:
+def test_real_phase2e_run_seam_never_logs_raw_dependency_failure(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(run_ops.Config, "HISTORY_DB_PATH", tmp_path / "history.sqlite3")
     sentinel = "CREDENTIAL_SENTINEL /private/action-plan.sql SELECT secret"
     cli = MagicMock()
     cli._idempotency_guard.check_and_record.return_value = True
@@ -647,7 +649,10 @@ def test_lost_acceptance_response_is_confirmed_by_exact_bound_result_evidence(
     )
     client.get_result.return_value = BackendResponse(
         ok=True,
-        value=_result_read(),
+        value={
+            **_result_read(),
+            "output": {"return_code": 0, "status": "executed"},
+        },
     )
     runner, console, handler = _runner(journal, client)
 

@@ -10,6 +10,13 @@ import pytest
 from arcanos.config import Config
 
 
+@pytest.fixture(autouse=True)
+def isolate_local_action_storage(monkeypatch, tmp_path):
+    """Policy checks and patch backups must never use an operator's state."""
+    monkeypatch.setattr(Config, "HISTORY_DB_PATH", tmp_path / "history.db")
+    monkeypatch.setattr(Config, "PATCH_BACKUP_DIR", tmp_path / "patch_backups")
+
+
 @pytest.fixture
 def mock_cli_instance():
     """Create a mock CLI instance with required attributes."""

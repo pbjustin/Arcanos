@@ -243,6 +243,19 @@ Rollback:
 /rollback <rollback_id>
 ```
 
+Rollback requires an interactive confirmation of the exact rollback ID and
+respects safe mode and CLI dry-run. New operations retain a recovery manifest
+beside the original backups, bound to the repository identity, patch hash,
+target paths, and before/after file hashes and modes. Recovery preflights all
+targets and backups before writing, restores deleted files, removes files
+created by the patch, and records progress if restoration fails partway.
+Missing or altered backups, a different repository, and later workspace edits
+produce explicit failures. A completed rollback cannot run again. Legacy
+records without verified recovery metadata require manual recovery.
+Bridge and Local Agent patch applications also register their rollback IDs in
+the same history before execution; use `/history` to locate them for local
+interactive recovery. Their public result envelopes remain unchanged.
+
 ## Command proposal safety
 
 The daemon has distinct command surfaces; they do not all use the same policy implementation.
@@ -261,6 +274,25 @@ Commands extracted from assistant responses use the terminal safety layer:
 - a final interactive `Run command? [y/N]` prompt
 
 Approval in one surface does not authorize a changed command or bypass the checks in another surface.
+
+Direct `/run`, inline agentic commands, and backend-delivered `run` commands
+share the existing trust, terminal safety, safe-mode, rate, confirmation, and
+short-window duplicate guards. Approval binds the captured command, working
+directory, and elevation choice. CLI dry-run returns a proposal without
+dispatch; the embedded Local Agent and ActionPlan execution paths also observe
+it. Standalone bridges have their own runtime and retain their existing
+authorization contracts; persisted safe mode blocks their mutating work.
+
+Command results retain the actual integer exit code. Denial, policy refusal,
+dry-run, and malformed or missing execution evidence cannot become success.
+Commands report unknown workspace changes after dispatch rather than claiming
+that no files changed. Credentials and unsafe terminal controls are redacted
+before command output reaches display, audit/history, or agentic feedback.
+ActionPlan feedback keeps raw output private, records confirmed zero-exit
+completion, and carries nonzero exits in the existing error category; its
+public schema is unchanged. Delivery acknowledgement is separate from action
+completion. Durable execution journals replay pending results without rerunning
+the local operation; ordinary `/run` retains its existing short-window deduplication.
 
 ## Local bridge safety
 

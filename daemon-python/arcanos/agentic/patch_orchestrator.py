@@ -1,24 +1,34 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import sys
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from rich.console import Console
 from rich.syntax import Syntax
 
 from ..config import Config
-from ..cli.cli_policy import validate_patch_text
+from ..cli.cli_policy import redact_output, validate_patch_text
 from ..local_agent.patch_handler import (
     apply_authorized_patch,
     issue_patch_execution_authorization,
+    read_patch_recovery,
+    write_patch_recovery,
+    _file_state,
+    _require_allowed_patch,
 )
+from ..local_agent.secure_fs import has_link_or_reparse_component, path_identity
 from .history_db import HistoryDB
 from .policy_guard import PolicyGuard
+
+
+def _dry_run_active(value: bool | Callable[[], bool]) -> bool:
+    return bool(value() if callable(value) else value)
 
 
 def _parse_files_from_patch(patch_text: str) -> list[str]:
@@ -60,6 +70,18 @@ class ApplyResult:
     files: list[str]
     backups: dict[str, str]
     error: Optional[str] = None
+    status: str = ""
+    approved: bool = False
+    workspace_changed: bool | None = False
+    exit_code: int | None = None
+
+    def __post_init__(self) -> None:
+        if not self.status:
+            self.status = "applied" if self.ok else (
+                "denied" if self.error in {
+                    "denied", "patch_hash_mismatch", "non_interactive_confirmation_unavailable"
+                } else "blocked"
+            )
 
 
 class PatchOrchestrator:
@@ -68,7 +90,7 @@ class PatchOrchestrator:
         self.history = history
         self.guard = guard
 
-    def apply_with_approval(self, session_id: str, patch_text: str, summary: str = "") -> ApplyResult:
+    def apply_with_approval(self, session_id: str, patch_text: str, summary: str = "", *, dry_run: bool | Callable[[], bool] = False) -> ApplyResult:
         rollback_id = str(uuid.uuid4())
         repo_root = _find_repo_root(Path.cwd())
         patch_decision = validate_patch_text(patch_text, str(repo_root))
@@ -89,6 +111,15 @@ class PatchOrchestrator:
             )
             self.guard.record_failure(session_id, "patch", {"reason": patch_decision.reason, "rollback_id": rollback_id})
             return ApplyResult(ok=False, rollback_id=rollback_id, files=files, backups={}, error=patch_decision.reason)
+
+        if _dry_run_active(dry_run):
+            self.history.log_patch(
+                session_id, rollback_id, "proposed", summary or "dry-run proposal",
+                files, {}, patch_text, patch_sha256=patch_decision.patch_hash,
+                error="dry_run",
+            )
+            self.console.print("[yellow]Dry-run: patch proposed; no files changed.[/yellow]")
+            return ApplyResult(False, rollback_id, files, {}, "dry_run", status="proposed")
 
         decision = self.guard.check_patch(session_id, patch_text)
         if not decision.allowed:
@@ -179,6 +210,23 @@ class PatchOrchestrator:
             )
             return ApplyResult(ok=False, rollback_id=rollback_id, files=files, backups={}, error="denied")
 
+        # Policy may have changed while the operator reviewed the proposal.
+        if _dry_run_active(dry_run):
+            self.history.log_patch(
+                session_id, rollback_id, "proposed", summary or "dry-run proposal",
+                files, {}, patch_text, patch_sha256=patch_decision.patch_hash,
+                error="dry_run",
+            )
+            return ApplyResult(False, rollback_id, files, {}, "dry_run",
+                               status="proposed", approved=True)
+        if self.guard.is_safe_mode():
+            reason = "safe mode is enabled (patching disabled)"
+            self.history.log_patch(
+                session_id, rollback_id, "blocked", summary or "blocked", files,
+                {}, patch_text, patch_sha256=patch_decision.patch_hash, error=reason,
+            )
+            return ApplyResult(False, rollback_id, files, {}, reason, approved=True)
+
         patch_payload = {
             "patch": patch_text,
             "expectedPatchSha256": patch_decision.patch_hash,
@@ -189,17 +237,41 @@ class PatchOrchestrator:
                 f"interactive:{session_id}:{rollback_id}:{patch_decision.patch_hash}"
             ),
         )
-        apply_result = apply_authorized_patch(
-            patch_payload,
-            workspace_root=repo_root,
-            timeout_ms=120000,
-            mutation_authorization=patch_authorization,
-            backup_root=Config.PATCH_BACKUP_DIR,
-            rollback_id=rollback_id,
-        )
-        backups = apply_result.backups
+        backups = {}
+        changed = None
+        try:
+            apply_result = apply_authorized_patch(
+                patch_payload,
+                workspace_root=repo_root,
+                timeout_ms=120000,
+                mutation_authorization=patch_authorization,
+                backup_root=Config.PATCH_BACKUP_DIR,
+                rollback_id=rollback_id,
+            )
+            backups = apply_result.backups
+            recovery = read_patch_recovery(Config.PATCH_BACKUP_DIR, rollback_id)
+            changed = recovery["before"] != recovery["after"]
+        except Exception as error:
+            # Backups/recovery metadata can exist even when process execution or
+            # post-apply validation raises. Keep the operation addressable.
+            try:
+                recovery = read_patch_recovery(Config.PATCH_BACKUP_DIR, rollback_id)
+                backups = recovery.get("backups", {})
+                if "after" in recovery:
+                    changed = recovery["before"] != recovery["after"]
+            except (OSError, ValueError, PermissionError):
+                pass
+            reason = redact_output(str(error)) or type(error).__name__
+            self.history.log_patch(
+                session_id, rollback_id, "failed", summary or "apply failed",
+                files, backups, patch_text, patch_sha256=patch_decision.patch_hash,
+                error=reason,
+            )
+            self.guard.record_failure(session_id, "patch", {"error": reason, "rollback_id": rollback_id})
+            return ApplyResult(False, rollback_id, files, backups, reason,
+                               status="failed", approved=True, workspace_changed=changed)
         if not apply_result.applied:
-            err = (
+            err = redact_output(
                 apply_result.process.stderr
                 or apply_result.process.stdout
                 or f"git apply failed rc={apply_result.process.exit_code}"
@@ -216,7 +288,7 @@ class PatchOrchestrator:
                 error=err,
             )
             self.guard.record_failure(session_id, "patch", {"error": err, "rollback_id": rollback_id})
-            return ApplyResult(ok=False, rollback_id=rollback_id, files=files, backups=backups, error=err)
+            return ApplyResult(ok=False, rollback_id=rollback_id, files=files, backups=backups, error=err, status="failed", approved=True, workspace_changed=changed, exit_code=apply_result.process.exit_code)
 
         self.history.log_patch(
             session_id,
@@ -230,26 +302,98 @@ class PatchOrchestrator:
         )
         self.guard.record_success()
         self.console.print(f"[green]Patch applied.[/green] rollback_id={rollback_id}")
-        return ApplyResult(ok=True, rollback_id=rollback_id, files=files, backups=backups)
+        return ApplyResult(ok=True, rollback_id=rollback_id, files=files, backups=backups, approved=True, workspace_changed=changed, exit_code=apply_result.process.exit_code)
 
-    def rollback(self, session_id: str, rollback_id: str) -> bool:
+    def rollback(self, session_id: str, rollback_id: str, *, dry_run: bool | Callable[[], bool] = False) -> bool:
         record = self.history.get_patch(rollback_id)
-        if not record:
-            self.console.print("[red]No such rollback_id.[/red]")
+        if not record or record.get("status") not in {"applied", "failed", "rollback_failed"}:
+            self.console.print("[red]Rollback unavailable for this operation state.[/red]")
             return False
-        backups = record.get("backups", {})
-        if not backups:
-            self.console.print("[yellow]No backups recorded for this rollback id.[/yellow]")
+        if _dry_run_active(dry_run) or self.guard.is_safe_mode():
+            self.console.print("[yellow]Rollback blocked by dry-run or safe mode.[/yellow]")
             return False
 
-        repo_root = _find_repo_root(Path.cwd())
-        for rel, backup_path in backups.items():
-            src = Path(backup_path)
-            dst = repo_root / rel
-            if src.exists():
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, dst)
+        try:
+            recovery = read_patch_recovery(Config.PATCH_BACKUP_DIR, rollback_id)
+            self._validate_recovery(record, recovery)
+            if not sys.stdin or not sys.stdin.isatty():
+                raise PermissionError("non_interactive_confirmation_unavailable")
+            exact = input(f"Confirm rollback id ({rollback_id}): ").strip()
+            if exact != rollback_id:
+                raise PermissionError("rollback_confirmation_mismatch")
+            if _dry_run_active(dry_run) or self.guard.is_safe_mode():
+                raise PermissionError("Rollback blocked by dry-run or safe mode.")
+            self._validate_recovery(record, recovery)
+            recovery["status"] = "rolling_back"
+            write_patch_recovery(Config.PATCH_BACKUP_DIR, rollback_id, recovery)
+            repo_root = Path(recovery["workspace"])
+            for rel in recovery["files"]:
+                # Recheck each path immediately before touching it; another file
+                # failing must not erase the remaining recovery information.
+                self._validate_recovery(record, recovery, only=rel)
+                if _dry_run_active(dry_run) or self.guard.is_safe_mode():
+                    raise PermissionError("Rollback blocked by dry-run or safe mode.")
+                destination = repo_root / rel
+                if _file_state(destination) != recovery["before"][rel]:
+                    if recovery["before"][rel] is None:
+                        destination.unlink()
+                    else:
+                        destination.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(Path(recovery["backups"][rel]), destination)
+                    if _file_state(destination) != recovery["before"][rel]:
+                        raise OSError("Rollback verification failed.")
+                recovery.setdefault("restored", []).append(rel)
+                write_patch_recovery(Config.PATCH_BACKUP_DIR, rollback_id, recovery)
+            recovery["status"] = "rolled_back"
+            write_patch_recovery(Config.PATCH_BACKUP_DIR, rollback_id, recovery)
+        except (OSError, ValueError, KeyError, TypeError, EOFError) as error:
+            reason = redact_output(str(error)) or type(error).__name__
+            self.history.update_patch_status(rollback_id, "rollback_failed", reason)
+            self.history.log_policy_event(session_id, "rollback_failed", {"rollback_id": rollback_id, "reason": reason})
+            self.console.print(f"[red]Rollback failed:[/red] {reason}")
+            return False
 
+        self.history.update_patch_status(rollback_id, "rolled_back")
         self.history.log_policy_event(session_id, "rollback", {"rollback_id": rollback_id})
         self.console.print(f"[green]Rollback complete.[/green] rollback_id={rollback_id}")
         return True
+
+    def _validate_recovery(self, record: dict, recovery: dict, *, only: str | None = None) -> None:
+        repo_root = _find_repo_root(Path.cwd())
+        files = recovery.get("files")
+        if (
+            recovery.get("workspace") != str(repo_root)
+            or recovery.get("root_identity") != list(path_identity(repo_root))
+            or recovery.get("git_identity") != list(path_identity(repo_root / ".git"))
+            or recovery.get("patch_sha256") != record.get("patch_sha256")
+            or files != record.get("files")
+            or recovery.get("status") not in {"applied", "failed", "rolling_back"}
+            or not isinstance(files, list) or not files or len(files) > 1000
+            or set(recovery.get("before", {})) != set(files)
+            or set(recovery.get("after", {})) != set(files)
+        ):
+            raise PermissionError("Rollback recovery metadata does not match the operation/workspace.")
+        # Run the same target and secret/link policy as patch application.
+        selected = [only] if only is not None else files
+        headers = "\n".join(
+            f"diff --git {json.dumps('a/' + rel)} {json.dumps('b/' + rel)}"
+            for rel in selected
+        )
+        _require_allowed_patch(headers, repo_root)
+        backup_directory = Path(Config.PATCH_BACKUP_DIR).absolute() / recovery["rollback_id"]
+        for rel in selected:
+            before = recovery["before"][rel]
+            after = recovery["after"][rel]
+            expected = before if rel in recovery.get("restored", []) else after
+            current = _file_state(repo_root / rel)
+            if current != expected:
+                # A previously interrupted restore may have completed its copy
+                # before recording it. Matching original bytes need no write.
+                if recovery["status"] != "rolling_back" or current != before:
+                    raise PermissionError("Rollback conflict: workspace file changed after the operation.")
+            if before is not None:
+                source = backup_directory / "files" / rel
+                if (recovery.get("backups", {}).get(rel) != str(source)
+                        or has_link_or_reparse_component(backup_directory, source)
+                        or _file_state(source) != before):
+                    raise PermissionError("Rollback backup is missing, changed, or unsafe.")

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-30T19:26:30.489Z",
+  "generatedAt": "2026-10-31T03:19:48.583Z",
   "scopes": [
     {
       "scope": "clients",
@@ -574,6 +574,9 @@
           "relativePath": "daemon-python/tests/test_credential_verification.py"
         },
         {
+          "relativePath": "daemon-python/tests/test_daemon_action_reliability.py"
+        },
+        {
           "relativePath": "daemon-python/tests/test_daemon_transport_auth.py"
         },
         {
@@ -584,6 +587,9 @@
         },
         {
           "relativePath": "daemon-python/tests/test_history_db_utf8.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_local_action_audit.py"
         },
         {
           "relativePath": "daemon-python/tests/test_local_agent_handlers.py"
@@ -604,6 +610,9 @@
           "relativePath": "daemon-python/tests/test_local_bridge_security.py"
         },
         {
+          "relativePath": "daemon-python/tests/test_local_execution_reliability.py"
+        },
+        {
           "relativePath": "daemon-python/tests/test_memory_ops.py"
         },
         {
@@ -611,6 +620,9 @@
         },
         {
           "relativePath": "daemon-python/tests/test_openai_unified_client.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_patch_lifecycle_reliability.py"
         },
         {
           "relativePath": "daemon-python/tests/test_patch_orchestrator_non_interactive.py"

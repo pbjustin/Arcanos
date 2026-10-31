@@ -16,6 +16,7 @@ from ..cli_types import DaemonCommand
 from ..config import Config, is_valid_daemon_access_token
 from ..error_handler import logger as error_logger
 from . import backend_ops
+from .cli_policy import redact_output
 
 if TYPE_CHECKING:
     from .cli import ArcanosCLI
@@ -77,7 +78,7 @@ def start_daemon_threads(cli: "ArcanosCLI") -> None:
 
         cli._local_agent_execution_thread = threading.Thread(
             target=local_agent_execution_loop,
-            args=(lambda: cli._daemon_running,),
+            args=(lambda: cli._daemon_running, lambda: bool(getattr(cli, "dry_run", False))),
             daemon=True,
             name="local-agent-execution-poll",
         )
@@ -281,7 +282,9 @@ def handle_daemon_command(cli: "ArcanosCLI", command: DaemonCommand) -> bool:
     elif command_name == "notify":
         message = command_payload.get("message") if isinstance(command_payload, dict) else None
         if message and isinstance(message, str):
-            cli.console.print(f"[cyan]Backend message:[/cyan] {message}")
+            cli.console.print(
+                f"Backend message: {redact_output(message)}", markup=False, highlight=False
+            )
         else:
             cli.console.print("[yellow]Notify command missing message[/yellow]")
 

@@ -304,8 +304,12 @@ class ActionPlanExecutionRunner:
                 output = None
                 error = {
                     "code": "ACTION_EXECUTION_FAILED",
-                    "category": "nonzero_or_unconfirmed",
+                    "category": _execution_failure_category(execution, return_code),
                 }
+            else:
+                # Only confirmed local completion is success evidence. Keep raw
+                # command output private while retaining the actual exit status.
+                output = {"return_code": return_code, "status": "executed"}
         except Exception as exc:
             outcome = "failed"
             output = None
@@ -567,6 +571,27 @@ def _safe_exception_class(error: BaseException) -> str:
     if isinstance(error, ValueError):
         return "validation"
     return "execution"
+
+
+def _execution_failure_category(execution: Any, return_code: Any) -> str:
+    """Retain bounded exit/policy evidence in the existing closed error shape."""
+
+    if (
+        isinstance(return_code, int)
+        and not isinstance(return_code, bool)
+        and -(2**31) <= return_code <= 2**32 - 1
+        and return_code != 0
+    ):
+        return (
+            f"exit_{return_code}"
+            if return_code > 0
+            else f"exit_negative_{abs(return_code)}"
+        )
+    if isinstance(execution, Mapping) and execution.get("error_category") in {
+        "dry_run", "policy", "validation", "permission", "timeout", "execution",
+    }:
+        return str(execution["error_category"])
+    return "nonzero_or_unconfirmed"
 
 
 def _execute_cli_command(

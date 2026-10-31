@@ -19,6 +19,9 @@ from pathlib import Path
 from typing import Any
 
 from arcanos.debug import log_audit_event
+from ..agentic.history_db import HistoryDB
+from ..agentic.policy_guard import PolicyGuard
+from ..voice_boundary import sanitize_tool_output
 from ..credential_verification import (
     has_configured_purpose_bound_credential_collision,
     timing_safe_equal_opaque_secret,
@@ -136,7 +139,10 @@ def _empty_response(
 
 
 def _truncate_output(stdout: str, stderr: str) -> tuple[str, str, bool]:
-    truncated = False
+    truncated = len(stdout) > MAX_OUTPUT_CHARS or len(stderr) > MAX_OUTPUT_CHARS
+    stdout = sanitize_tool_output(stdout)
+    stderr = sanitize_tool_output(stderr)
+    truncated = truncated or stdout.endswith("[truncated]") or stderr.endswith("[truncated]")
     if len(stdout) > MAX_OUTPUT_CHARS:
         stdout = stdout[:MAX_OUTPUT_CHARS]
         truncated = True
@@ -606,6 +612,18 @@ class LocalBridge:
                     truncated=truncated,
                     audit_id=job.audit_id,
                 )
+            except TimeoutError:
+                result = _empty_response(
+                    ok=False, status="timeout", exit_code=None,
+                    duration_ms=_elapsed_ms(start), audit_id=job.audit_id,
+                    stderr="Local execution timed out",
+                )
+            except PermissionError:
+                result = _empty_response(
+                    ok=False, status="blocked", exit_code=None,
+                    duration_ms=_elapsed_ms(start), audit_id=job.audit_id,
+                    stderr="Local execution was blocked by safety policy",
+                )
             except Exception as exc:
                 failed_event = "daemon.patch.failed" if isinstance(job, BridgePatchJob) else "daemon.command.failed"
                 log_audit_event(
@@ -616,7 +634,7 @@ class LocalBridge:
                 result = _empty_response(
                     ok=False,
                     status="error",
-                    exit_code=1,
+                    exit_code=None,
                     duration_ms=_elapsed_ms(start),
                     audit_id=job.audit_id,
                     stderr="Bridge execution failed",
@@ -628,6 +646,7 @@ class LocalBridge:
         return self._execute_bounded(job.command, _resolve_sandboxed_cwd(job.cwd), job.timeout)
 
     def _apply_patch(self, job: BridgePatchJob) -> tuple[str | None, str | None, int]:
+        _require_local_execution_policy()
         cwd = _resolve_sandboxed_cwd(job.cwd)
         patch_decision = validate_patch_text(job.patch, cwd)
         if not patch_decision.allowed:
@@ -652,6 +671,7 @@ class LocalBridge:
             workspace_root=Path(cwd),
             timeout_ms=job.timeout * 1000,
             mutation_authorization=patch_authorization,
+            history_session_id=job.audit_id,
         )
         process = apply_result.process
         stdout = process.stdout
@@ -662,12 +682,14 @@ class LocalBridge:
             audit_id=job.audit_id,
             proposal_id=job.proposal_id,
             patch_hash=patch_decision.patch_hash,
+            rollback_id=apply_result.rollback_id,
             duration_ms=_elapsed_ms(start),
             return_code=process.exit_code,
         )
         return stdout, stderr, process.exit_code
 
     def _execute_bounded(self, command: str, cwd: str, timeout: int) -> tuple[str | None, str | None, int]:
+        _require_local_execution_policy()
         command_hash = hashlib.sha256(command.encode("utf-8")).hexdigest()
         decision = evaluate_command_policy(command, cwd, timeout * 1000)
         if not decision.allowed:
@@ -761,11 +783,11 @@ class LocalBridge:
         if stderr_truncated:
             stderr = f"{stderr}\n[truncated]"
         log_audit_event(
-            "daemon.command.completed",
+            "daemon.command.completed" if return_code == 0 else "daemon.command.failed",
             command_hash=command_hash,
             command_length=len(command),
             source="local_bridge",
-            outcome="completed",
+            outcome="completed" if return_code == 0 else "failed",
             return_code=return_code,
         )
         return stdout, stderr, return_code
@@ -775,6 +797,15 @@ def _coerce_timeout(raw_timeout: Any) -> int:
     if isinstance(raw_timeout, int) and raw_timeout > 0:
         return max(1, int(evaluate_command_policy("git status", timeout_ms=raw_timeout * 1000).timeout_ms / 1000))
     return max(1, int(evaluate_command_policy("git status").timeout_ms / 1000))
+
+
+def _require_local_execution_policy() -> None:
+    try:
+        safe_mode = PolicyGuard(HistoryDB()).is_safe_mode()
+    except Exception as error:
+        raise PermissionError("Local safety policy is unavailable") from error
+    if safe_mode:
+        raise PermissionError("safe mode is enabled (local execution disabled)")
 
 
 def _elapsed_ms(start: float) -> int:
