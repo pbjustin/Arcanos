@@ -310,6 +310,7 @@
     },
     "express-rate-limit": "8.3.0",
     "fast-uri": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.9.tgz",
+    "follow-redirects": "https://codeload.github.com/follow-redirects/follow-redirects/tar.gz/e3b45a7a104fd84ab8e8914c78e9df4b930c1651",
     "ip-address": "https://registry.npmjs.org/ip-address/-/ip-address-10.7.4.tgz",
     "undici": "https://registry.npmjs.org/undici/-/undici-7.30.1.tgz",
     "proxy-from-env": "https://codeload.github.com/Rob--W/proxy-from-env/tar.gz/refs/tags/v2.1.0",

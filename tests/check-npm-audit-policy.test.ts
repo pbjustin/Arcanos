@@ -6,6 +6,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { runInNewContext } from 'node:vm';
 
 import { ipKeyGenerator } from 'express-rate-limit';
 import { Address4, Address6 } from 'ip-address';
@@ -753,6 +754,26 @@ describe('installed follow-redirects credential boundaries (loopback only)', () 
     for (const header of ['authorization', 'x-api^key', 'x-token|secret']) expect(result.headers[header]).toBeUndefined();
     expect(result.headers['x-token']).toBe('ordinary-token-name');
     expect(result.headers.secret).toBe('test-ordinary-secret-name');
+  });
+
+  it.each(['object', 'array'] as const)('strips cross-realm sensitive headers from %s-form headers (GHSA-mrwp-f3q8-3g9p)', async form => {
+    const sensitiveHeaders = runInNewContext("['X-Private']") as string[];
+    expect(Array.isArray(sensitiveHeaders)).toBe(true);
+    expect(sensitiveHeaders instanceof Array).toBe(false);
+    const headers = form === 'array' ? [
+      'Host', `127.0.0.1:${sourcePort}`,
+      'X-Private', 'test-synthetic-cross-realm', 'X-Public', 'ordinary-value',
+    ] : {
+      'X-Private': 'test-synthetic-cross-realm', 'X-Public': 'ordinary-value',
+    };
+    const result = await send({ path: '/cross-origin', headers, sensitiveHeaders });
+
+    expect(received.at(-1)).toMatchObject({
+      'x-private': 'test-synthetic-cross-realm', 'x-public': 'ordinary-value',
+    });
+    expect(result.headers['x-private']).toBeUndefined();
+    expect(result.headers['x-public']).toBe('ordinary-value');
+    expect(result.headers.host).toBe(`127.0.0.1:${destinationPort}`);
   });
 
   it.each(['/echo', '/same-origin'])('preserves ordinary POST bodies and same-origin credentials through %s', async path => {
