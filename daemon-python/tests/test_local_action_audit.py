@@ -11,6 +11,7 @@ import pytest
 from arcanos.agentic.history_db import HistoryDB
 from arcanos.agentic.policy_guard import PolicyGuard
 from arcanos.cli import audit, state
+from arcanos.voice_boundary import sanitize_tool_output
 
 
 SECRET = "sun" + "shine"
@@ -98,3 +99,8 @@ def test_structured_credentials_are_redacted_in_policy_history(tmp_path):
     db.export_audit(tmp_path / "audit.json")
     assert SECRET not in (tmp_path / "audit.json").read_text(encoding="utf-8")
     assert SECRET not in json.dumps(db.get_state("fixture"))
+
+
+@pytest.mark.parametrize("value", [" ", "\t", "\r\n", " \n\t "])
+def test_whitespace_tool_output_is_empty_not_withheld(value):
+    assert sanitize_tool_output(value) == ""

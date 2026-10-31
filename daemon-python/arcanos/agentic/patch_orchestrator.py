@@ -13,7 +13,8 @@ from rich.console import Console
 from rich.syntax import Syntax
 
 from ..config import Config
-from ..cli.cli_policy import redact_output, validate_patch_text
+from ..cli.cli_policy import validate_patch_text
+from ..voice_boundary import sanitize_tool_output
 from ..local_agent.patch_handler import (
     apply_authorized_patch,
     issue_patch_execution_authorization,
@@ -239,6 +240,7 @@ class PatchOrchestrator:
         )
         backups = {}
         changed = None
+        apply_result = None
         try:
             apply_result = apply_authorized_patch(
                 patch_payload,
@@ -261,7 +263,14 @@ class PatchOrchestrator:
                     changed = recovery["before"] != recovery["after"]
             except (OSError, ValueError, PermissionError):
                 pass
-            reason = redact_output(str(error)) or type(error).__name__
+            observed_exit = apply_result.process.exit_code if apply_result is not None else None
+            if apply_result is not None and not apply_result.applied:
+                reason = sanitize_tool_output(
+                    apply_result.process.stderr or apply_result.process.stdout
+                    or f"git apply failed rc={observed_exit}"
+                )
+            else:
+                reason = sanitize_tool_output(str(error)) or type(error).__name__
             self.history.log_patch(
                 session_id, rollback_id, "failed", summary or "apply failed",
                 files, backups, patch_text, patch_sha256=patch_decision.patch_hash,
@@ -269,9 +278,10 @@ class PatchOrchestrator:
             )
             self.guard.record_failure(session_id, "patch", {"error": reason, "rollback_id": rollback_id})
             return ApplyResult(False, rollback_id, files, backups, reason,
-                               status="failed", approved=True, workspace_changed=changed)
+                               status="failed", approved=True, workspace_changed=changed,
+                               exit_code=observed_exit)
         if not apply_result.applied:
-            err = redact_output(
+            err = sanitize_tool_output(
                 apply_result.process.stderr
                 or apply_result.process.stdout
                 or f"git apply failed rc={apply_result.process.exit_code}"
@@ -313,6 +323,7 @@ class PatchOrchestrator:
             self.console.print("[yellow]Rollback blocked by dry-run or safe mode.[/yellow]")
             return False
 
+        restoration_started = False
         try:
             recovery = read_patch_recovery(Config.PATCH_BACKUP_DIR, rollback_id)
             self._validate_recovery(record, recovery)
@@ -326,6 +337,7 @@ class PatchOrchestrator:
             self._validate_recovery(record, recovery)
             recovery["status"] = "rolling_back"
             write_patch_recovery(Config.PATCH_BACKUP_DIR, rollback_id, recovery)
+            restoration_started = True
             repo_root = Path(recovery["workspace"])
             for rel in recovery["files"]:
                 # Recheck each path immediately before touching it; another file
@@ -347,8 +359,9 @@ class PatchOrchestrator:
             recovery["status"] = "rolled_back"
             write_patch_recovery(Config.PATCH_BACKUP_DIR, rollback_id, recovery)
         except (OSError, ValueError, KeyError, TypeError, EOFError) as error:
-            reason = redact_output(str(error)) or type(error).__name__
-            self.history.update_patch_status(rollback_id, "rollback_failed", reason)
+            reason = sanitize_tool_output(str(error)) or type(error).__name__
+            if restoration_started:
+                self.history.update_patch_status(rollback_id, "rollback_failed", reason)
             self.history.log_policy_event(session_id, "rollback_failed", {"rollback_id": rollback_id, "reason": reason})
             self.console.print(f"[red]Rollback failed:[/red] {reason}")
             return False

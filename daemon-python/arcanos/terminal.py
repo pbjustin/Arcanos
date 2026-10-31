@@ -107,6 +107,11 @@ class TerminalController:
                 if character == '"':
                     quote = None
                 continue
+            if character in "\\^" and command[index + 1:index + 2] in ("'", '"'):
+                # Escaped opening quotes are literal shell arguments, not the
+                # start of a protected span. Reject ambiguous escape forms
+                # rather than hiding an executable chain inside false quotes.
+                return True
             if character == '"' or (character == "'" and shell != "cmd"):
                 quote = character
             elif character in ";|&<>":

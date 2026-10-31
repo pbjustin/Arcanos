@@ -232,6 +232,25 @@ def test_cmd_single_quotes_cannot_hide_shell_chaining(monkeypatch):
     assert terminal.is_command_safe("echo 'literal&echo unauthorized'")[0] is False
 
 
+@pytest.mark.parametrize(("shell", "command"), [
+    ("bash", r"echo \' ; echo unauthorized ; echo \'"),
+    ("sh", r'echo \" ; echo unauthorized ; echo \"'),
+    ("bash", 'echo \\" ; echo unauthorized #"'),
+    ("bash", "echo \\' ; echo unauthorized #'"),
+    ("bash", "echo \\\\' ; echo unauthorized ; echo '\\\\"),
+    ("cmd", 'echo ^" & echo unauthorized ^"'),
+    ("cmd", 'echo ^" & echo unauthorized "'),
+    ("cmd", 'echo ^^" & echo unauthorized ^^"'),
+    ("cmd", "echo ^' & echo unauthorized ^'"),
+    ("powershell", 'echo `" ; echo unauthorized `"'),
+])
+def test_terminal_whitelist_escaped_quotes_cannot_hide_real_chaining(monkeypatch, shell, command):
+    terminal = TerminalController()
+    terminal.whitelist = ["echo"]
+    monkeypatch.setattr(terminal, "_detect_shell", lambda: shell)
+    assert terminal.is_command_safe(command)[0] is False
+
+
 def test_action_plan_dry_run_never_executes(local_cli):
     cli, _history, _output = local_cli
     cli.dry_run = True

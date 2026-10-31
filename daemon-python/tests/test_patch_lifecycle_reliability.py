@@ -72,6 +72,29 @@ def test_applied_patch_roundtrip_updates_status(workspace, monkeypatch):
     assert history.get_patch(result.rollback_id)["status"] == "rolled_back"
 
 
+@pytest.mark.parametrize("private", [
+    '<vbl severity="3" />\nprivate-patch-fixture',
+    '{"boot_snapshot": "private-patch-fixture"}',
+])
+@pytest.mark.parametrize("outcome", ["nonzero", "exception"])
+def test_private_patch_errors_do_not_reach_agentic_feedback(workspace, monkeypatch, private, outcome):
+    root, orch, _, _ = workspace
+    real_run = patch_handler.run_bounded_process
+    def failed_process(argv, **kwargs):
+        if "apply" not in argv:
+            return real_run(argv, **kwargs)
+        if outcome == "exception":
+            raise RuntimeError(private)
+        return ProcessResult(tuple(argv), 7, "", private, 1, False)
+    monkeypatch.setattr(patch_handler, "run_bounded_process", failed_process)
+    approve(monkeypatch, patch_for())
+    result = orch.apply_with_approval("session", patch_for())
+    assert not result.ok and result.status == "failed"
+    assert result.exit_code == (7 if outcome == "nonzero" else None)
+    assert "private-patch-fixture" not in result.error
+    assert (root / "sample.txt").read_bytes() == b"old\n"
+
+
 def test_dry_run_patch_never_executes_or_creates_backups(workspace, monkeypatch):
     root, orch, _, _ = workspace
     approve(monkeypatch, patch_for())
@@ -364,3 +387,162 @@ def test_remote_patch_history_is_registered_before_execution_and_remains_rollbac
     approve_rollback(monkeypatch, observed[0])
     assert orch.rollback("operator", observed[0])
     assert (root / "sample.txt").read_bytes() == b"old\n"
+
+
+@pytest.mark.parametrize("original_status", ["applied", "failed"])
+@pytest.mark.parametrize("refusal", ["denied", "noninteractive", "conflict", "missing_backup"])
+def test_rollback_refusal_preserves_original_operation_state(workspace, monkeypatch, original_status, refusal):
+    root, orch, history, _ = workspace
+    result = apply(workspace, monkeypatch)
+    history.update_patch_status(result.rollback_id, original_status)
+    approve_rollback(monkeypatch, result.rollback_id)
+    if refusal == "denied":
+        monkeypatch.setattr("builtins.input", lambda _prompt="": "wrong-id")
+    elif refusal == "noninteractive":
+        monkeypatch.setattr("arcanos.agentic.patch_orchestrator.sys.stdin", type("NonTty", (), {"isatty": lambda _: False})())
+    elif refusal == "conflict":
+        (root / "sample.txt").write_bytes(b"unrelated edit\n")
+    else:
+        Path(result.backups["sample.txt"]).unlink()
+    expected = (root / "sample.txt").read_bytes()
+    assert not orch.rollback("session", result.rollback_id)
+    assert history.get_patch(result.rollback_id)["status"] == original_status
+    assert (root / "sample.txt").read_bytes() == expected
+
+
+@pytest.mark.parametrize("bookkeeping", ["recovery", "history"])
+@pytest.mark.parametrize("primary", ["timeout", "nonzero", "success", "success_outer_error"])
+def test_patch_bookkeeping_never_masks_primary_failure(workspace, monkeypatch, bookkeeping, primary):
+    root, _, _, _ = workspace
+    patch = patch_for()
+    payload = {"patch": patch}
+    authorization = patch_handler.issue_patch_execution_authorization(payload, authorization_id="bookkeeping-fixture")
+    real_run = patch_handler.run_bounded_process
+    def process_result(argv, **kwargs):
+        if "apply" not in argv:
+            return real_run(argv, **kwargs)
+        if primary == "timeout":
+            raise TimeoutError("primary process timeout")
+        return ProcessResult(tuple(argv), 7 if primary == "nonzero" else 0, "", "primary exit failure", 1, False)
+    monkeypatch.setattr(patch_handler, "run_bounded_process", process_result)
+    if bookkeeping == "recovery":
+        real_write = patch_handler.write_patch_recovery
+        calls = []
+        def failed_recovery(*args, **kwargs):
+            calls.append(True)
+            if len(calls) > 1:
+                raise PermissionError("secondary bookkeeping failure")
+            return real_write(*args, **kwargs)
+        monkeypatch.setattr(patch_handler, "write_patch_recovery", failed_recovery)
+    else:
+        def failed_history(*_args, **_kwargs):
+            raise PermissionError("secondary bookkeeping failure")
+        monkeypatch.setattr(patch_handler.HistoryDB, "update_patch_status", failed_history)
+    kwargs = dict(workspace_root=root, timeout_ms=5000, mutation_authorization=authorization, history_session_id="bookkeeping-session")
+    if primary == "timeout":
+        with pytest.raises(TimeoutError, match="primary process timeout"):
+            patch_handler.apply_authorized_patch(payload, **kwargs)
+    elif primary == "nonzero":
+        result = patch_handler.apply_authorized_patch(payload, **kwargs)
+        assert not result.applied and result.process.exit_code == 7
+    else:
+        with pytest.raises(PermissionError, match="secondary bookkeeping failure"):
+            if primary == "success_outer_error":
+                try:
+                    raise ValueError("unrelated caller exception")
+                except ValueError:
+                    patch_handler.apply_authorized_patch(payload, **kwargs)
+            else:
+                patch_handler.apply_authorized_patch(payload, **kwargs)
+
+
+@pytest.mark.parametrize("failure", ["dump", "replace"])
+def test_recovery_metadata_failure_removes_own_temp_and_permits_retry(workspace, monkeypatch, failure):
+    _, _, _, _ = workspace
+    import uuid
+    rollback_id = str(uuid.uuid4())
+    directory = Config.PATCH_BACKUP_DIR / rollback_id
+    directory.mkdir(parents=True)
+    original = {"rollback_id": rollback_id, "status": "applied"}
+    updated = {"rollback_id": rollback_id, "status": "rolling_back"}
+    patch_handler.write_patch_recovery(Config.PATCH_BACKUP_DIR, rollback_id, original)
+    target = patch_handler.json if failure == "dump" else patch_handler.os
+    name = "dump" if failure == "dump" else "replace"
+    real_operation = getattr(target, name)
+    def failed_write(*_args, **_kwargs):
+        raise OSError("injected metadata failure")
+    monkeypatch.setattr(target, name, failed_write)
+    with pytest.raises(OSError, match="injected metadata failure"):
+        patch_handler.write_patch_recovery(Config.PATCH_BACKUP_DIR, rollback_id, updated)
+    assert not (directory / "manifest.tmp").exists()
+    assert patch_handler.read_patch_recovery(Config.PATCH_BACKUP_DIR, rollback_id) == original
+    monkeypatch.setattr(target, name, real_operation)
+    patch_handler.write_patch_recovery(Config.PATCH_BACKUP_DIR, rollback_id, updated)
+    assert patch_handler.read_patch_recovery(Config.PATCH_BACKUP_DIR, rollback_id) == updated
+
+
+def test_recovery_cleanup_preserves_replaced_or_preexisting_temporary_file(workspace, monkeypatch):
+    import uuid
+    rollback_id = str(uuid.uuid4())
+    directory = Config.PATCH_BACKUP_DIR / rollback_id
+    directory.mkdir(parents=True)
+    temporary = directory / "manifest.tmp"
+    temporary.write_text("preexisting", encoding="utf-8")
+    with pytest.raises(PermissionError, match="Unexpected"):
+        patch_handler.write_patch_recovery(Config.PATCH_BACKUP_DIR, rollback_id, {"rollback_id": rollback_id})
+    assert temporary.read_text(encoding="utf-8") == "preexisting"
+    temporary.unlink()
+    def replaced_temp(*_args, **_kwargs):
+        temporary.rename(directory / "retained-original.tmp")
+        temporary.write_text("replacement", encoding="utf-8")
+        raise OSError("original replace failure")
+    monkeypatch.setattr(patch_handler.os, "replace", replaced_temp)
+    with pytest.raises(OSError, match="original replace failure"):
+        patch_handler.write_patch_recovery(Config.PATCH_BACKUP_DIR, rollback_id, {"rollback_id": rollback_id})
+    assert temporary.read_text(encoding="utf-8") == "replacement"
+
+
+def test_interactive_patch_preserves_nonzero_exit_when_recovery_write_fails(workspace, monkeypatch):
+    root, orch, _, _ = workspace
+    real_run = patch_handler.run_bounded_process
+    def failed_process(argv, **kwargs):
+        if "apply" not in argv:
+            return real_run(argv, **kwargs)
+        (root / "sample.txt").write_bytes(b"partial\n")
+        return ProcessResult(tuple(argv), 7, "", "primary exit failure", 1, False)
+    monkeypatch.setattr(patch_handler, "run_bounded_process", failed_process)
+    real_write = patch_handler.write_patch_recovery
+    calls = []
+    def failed_recovery(*args, **kwargs):
+        calls.append(True)
+        if len(calls) > 1:
+            raise PermissionError("secondary bookkeeping failure")
+        return real_write(*args, **kwargs)
+    monkeypatch.setattr(patch_handler, "write_patch_recovery", failed_recovery)
+    approve(monkeypatch, patch_for())
+    result = orch.apply_with_approval("session", patch_for())
+    assert not result.ok and result.status == "failed"
+    assert result.exit_code == 7
+    assert result.error == "primary exit failure"
+    assert result.workspace_changed is None
+    assert result.backups
+
+
+def test_recovery_cleanup_failure_preserves_original_write_error(workspace, monkeypatch):
+    import uuid
+    rollback_id = str(uuid.uuid4())
+    directory = Config.PATCH_BACKUP_DIR / rollback_id
+    directory.mkdir(parents=True)
+    temporary = directory / "manifest.tmp"
+    def failed_replace(*_args, **_kwargs):
+        raise OSError("original metadata write failure")
+    real_unlink = Path.unlink
+    def failed_cleanup(path, *args, **kwargs):
+        if path == temporary:
+            raise PermissionError("secondary cleanup failure")
+        return real_unlink(path, *args, **kwargs)
+    monkeypatch.setattr(patch_handler.os, "replace", failed_replace)
+    monkeypatch.setattr(Path, "unlink", failed_cleanup)
+    with pytest.raises(OSError, match="original metadata write failure"):
+        patch_handler.write_patch_recovery(Config.PATCH_BACKUP_DIR, rollback_id, {"rollback_id": rollback_id})
+    assert temporary.exists()

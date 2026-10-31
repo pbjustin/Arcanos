@@ -908,7 +908,9 @@ def _sanitize_text(value: str, workspace_root: Path) -> str:
     result = _PRIVATE_KEY_RE.sub("[REDACTED PRIVATE KEY]", result)
     result = _BEARER_RE.sub(r"\1 [REDACTED]", result)
     result = _SECRET_ASSIGNMENT_RE.sub(r"\1\2[REDACTED]", result)
-    return sanitize_tool_output(result)
+    # This adapter owns its 16 KiB string and 32 KiB result bounds and reports
+    # truncation there; an earlier CLI-policy cut would hide lost output.
+    return sanitize_tool_output(result, apply_truncation=False)
 
 
 def _apply_action_truncation_marker(

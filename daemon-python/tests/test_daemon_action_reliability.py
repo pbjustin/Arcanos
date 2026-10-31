@@ -27,6 +27,21 @@ from arcanos.config import Config
 from rich.console import Console
 
 
+@pytest.mark.parametrize("size", [13000, 16385])
+def test_local_agent_owns_its_output_bound_and_reports_any_truncation(tmp_path, size):
+    raw = "x" * size
+    output, truncated = sanitize_handler_output(
+        "git.diff", {"diff": raw, "bytes": size, "truncated": False},
+        workspace_root=tmp_path,
+    )
+    if size < 16384:
+        assert output["diff"] == raw
+        assert truncated is False
+    else:
+        assert truncated is True
+        assert output["diff"] != raw
+
+
 @pytest.mark.parametrize("adapter", ["bridge", "local-agent"])
 @pytest.mark.parametrize("partial_failure", [False, True])
 def test_remote_patch_history_makes_success_and_partial_failure_rollback_addressable(

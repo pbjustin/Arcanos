@@ -232,7 +232,9 @@ def apply_authorized_patch(
             patch_hash=patch_decision.patch_hash, file_count=len(patch_decision.files),
         )
     applied = False
+    process = None
     recovery_recorded = False
+    primary_failed = False
     try:
         process = run_bounded_process(
             build_validated_git_argv(
@@ -252,9 +254,16 @@ def apply_authorized_patch(
             raise PermissionError("Workspace identity changed during patch application.")
         _validate_patch_targets(patch_decision, resolved_root)
         applied = process.exit_code == 0
+    except BaseException:
+        primary_failed = True
+        raise
     finally:
         # A failed/terminated process may already have changed files. Preserve
-        # the observed state alongside the original backups before reporting.
+        # the observed state without masking its primary exception/exit code.
+        primary_failed = primary_failed or (
+            process is not None and process.exit_code != 0
+        )
+        bookkeeping_error = None
         try:
             if recovery is not None:
                 _validate_patch_targets(patch_decision, resolved_root)
@@ -265,13 +274,28 @@ def apply_authorized_patch(
                 recovery["status"] = "applied" if applied else "failed"
                 write_patch_recovery(backup_root, resolved_rollback_id, recovery)
                 recovery_recorded = True
-        finally:
+        except Exception as error:
+            bookkeeping_error = error
+        try:
             if history is not None:
                 status = "applied" if applied and recovery_recorded else "failed"
                 history.update_patch_status(
                     resolved_rollback_id, status,
                     None if status == "applied" else "patch_application_failed",
                 )
+        except Exception as error:
+            if bookkeeping_error is None:
+                bookkeeping_error = error
+        if bookkeeping_error is not None:
+            if not primary_failed:
+                raise bookkeeping_error
+            try:
+                log_audit_event(
+                    "daemon.patch.recovery_failed", rollback_id=resolved_rollback_id,
+                    error_type=type(bookkeeping_error).__name__,
+                )
+            except Exception:
+                pass
     return PatchApplyResult(
         applied=process.exit_code == 0,
         backups=backups,
@@ -433,9 +457,24 @@ def write_patch_recovery(backup_root: Path, rollback_id: str, record: dict[str, 
     temporary = directory / "manifest.tmp"
     if os.path.lexists(temporary):
         raise PermissionError("Unexpected patch recovery temporary file.")
-    with temporary.open("x", encoding="utf-8") as handle:
-        json.dump(record, handle, ensure_ascii=False, sort_keys=True)
-    os.replace(temporary, destination)
+    temporary_identity = None
+    try:
+        with temporary.open("x", encoding="utf-8") as handle:
+            metadata = os.fstat(handle.fileno())
+            temporary_identity = (int(metadata.st_dev), int(metadata.st_ino))
+            json.dump(record, handle, ensure_ascii=False, sort_keys=True)
+        os.replace(temporary, destination)
+    except BaseException:
+        # Remove only the unchanged file this call created. Unexpected or
+        # replaced paths belong to somebody else; cleanup cannot mask failure.
+        try:
+            if (temporary_identity is not None
+                    and not has_link_or_reparse_component(directory, temporary)
+                    and path_identity(temporary) == temporary_identity):
+                temporary.unlink()
+        except OSError:
+            pass
+        raise
 
 
 def read_patch_recovery(backup_root: Path, rollback_id: str) -> dict[str, Any]:
