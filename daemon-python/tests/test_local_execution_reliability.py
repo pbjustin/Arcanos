@@ -283,6 +283,35 @@ def test_terminal_whitelist_escaped_quotes_cannot_hide_real_chaining(monkeypatch
     assert terminal.is_command_safe(command)[0] is False
 
 
+@pytest.mark.parametrize("shell", ["powershell", "pwsh"])
+@pytest.mark.parametrize("command", [
+    "Write-Output (Get-Date)",
+    "Write-Output ((Get-Date))",
+    "Write-Output @(Get-Date)",
+])
+def test_terminal_whitelist_blocks_unquoted_powershell_grouping(shell, command):
+    terminal = TerminalController()
+    terminal.whitelist = ["Write-Output"]
+    assert terminal.is_command_safe(command, shell=shell)[0] is False
+
+
+@pytest.mark.parametrize(("shell", "command"), [
+    ("powershell", 'Write-Output "(Get-Date)"'),
+    ("powershell", "Write-Output '(Get-Date)'"),
+    ("pwsh", 'Write-Output "left(right)"'),
+    ("pwsh", "Write-Output '$(Get-Date)'"),
+    ("cmd", "echo (literal)"),
+    ("cmd", 'echo "left(right)"'),
+    ("bash", 'echo "(literal)"'),
+    ("bash", "echo '(literal)'"),
+    ("sh", 'echo "left(right)"'),
+])
+def test_terminal_whitelist_preserves_literal_parentheses(shell, command):
+    terminal = TerminalController()
+    terminal.whitelist = ["Write-Output", "echo"]
+    assert terminal.is_command_safe(command, shell=shell)[0] is True
+
+
 def test_action_plan_dry_run_never_executes(local_cli):
     cli, _history, _output = local_cli
     cli.dry_run = True

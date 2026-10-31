@@ -115,6 +115,10 @@ class TerminalController:
                 return True
             if character == '"' or (character == "'" and shell != "cmd"):
                 quote = character
+            elif shell == "powershell" and character in "()":
+                # PowerShell evaluates unquoted grouping/array expressions
+                # before invoking the allowlisted command.
+                return True
             elif character in ";|&<>":
                 return True
         return quote is not None
