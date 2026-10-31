@@ -22,6 +22,7 @@ def patch_for(name="sample.txt", before="old", after="new"):
     return "\n".join([
         f"diff --git a/{name} b/{name}",
         *(["new file mode 100644"] if before is None else []),
+        *(["deleted file mode 100644"] if after is None else []),
         f"--- a/{name}" if before is not None else "--- /dev/null",
         f"+++ b/{name}" if after is not None else "+++ /dev/null",
         f"@@ -{1 if before is not None else 0},{1 if before is not None else 0} +{1 if after is not None else 0},{1 if after is not None else 0} @@",

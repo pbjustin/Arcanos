@@ -796,10 +796,14 @@ def validate_patch_text(patch_text: str, cwd: str | None = None) -> PatchDecisio
 def parse_patch_paths(patch_text: str) -> list[str]:
     files: list[str] = []
     in_hunk = False
+    git_block = False
+    deletion_mode = False
     for line in patch_text.splitlines():
         candidates: list[str] = []
         if line.startswith("diff --git "):
             in_hunk = False
+            git_block = True
+            deletion_mode = False
             first_path, second_path = _parse_git_diff_paths(line[11:])
             candidates.extend(
                 [
@@ -809,8 +813,14 @@ def parse_patch_paths(patch_text: str) -> list[str]:
             )
         elif line.startswith("@@"):
             in_hunk = True
+        elif not in_hunk and re.fullmatch(r"deleted file mode [0-7]{6}", line):
+            deletion_mode = True
         elif not in_hunk and line.startswith(("--- ", "+++ ")):
             value = _parse_git_header_path(line[4:])
+            if line.startswith("+++ ") and value == "/dev/null" and git_block and not deletion_mode:
+                # Git-style deletion without mode metadata can write dev/null
+                # on Windows, outside this diff's declared target inventory.
+                raise ValueError("Git deletion requires deleted file mode metadata.")
             if value != "/dev/null":
                 candidates.append(_strip_git_diff_prefix(value))
         elif not in_hunk and line.startswith(

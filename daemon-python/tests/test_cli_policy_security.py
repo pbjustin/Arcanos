@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 
 import pytest
 
@@ -1614,3 +1615,37 @@ def test_safe_patch_preview_redacts_added_lines(monkeypatch, tmp_path) -> None:
     assert decision.patch_hash
     assert "placeholder-redaction-value" not in decision.redacted_preview
     assert "+[redacted added line]" in decision.redacted_preview
+
+
+@pytest.mark.parametrize("shape", ["ambiguous_git", "canonical_git", "plain_unified"])
+def test_git_deletion_policy_accounts_for_every_actual_workspace_change(tmp_path, shape):
+    from arcanos.local_agent.patch_handler import apply_authorized_patch, issue_patch_execution_authorization
+    repository = tmp_path / "repo"
+    subprocess.run(["git", "init", "--quiet", str(repository)], check=True, capture_output=True)
+    target = repository / "sample.txt"
+    target.write_bytes(b"old\n")
+    prefix = "" if shape == "plain_unified" else "diff --git a/sample.txt b/sample.txt\n"
+    if shape == "canonical_git":
+        prefix += "deleted file mode 100644\n"
+    patch = prefix + "--- a/sample.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-old\n"
+    payload = {"patch": patch}
+    authorization = issue_patch_execution_authorization(payload, authorization_id="deletion-policy-fixture")
+    if shape == "ambiguous_git":
+        with pytest.raises(PermissionError, match="patch_path_malformed"):
+            apply_authorized_patch(payload, workspace_root=repository, timeout_ms=5000, mutation_authorization=authorization)
+        assert target.read_bytes() == b"old\n"
+    else:
+        result = apply_authorized_patch(payload, workspace_root=repository, timeout_ms=5000, mutation_authorization=authorization)
+        assert result.applied and result.process.exit_code == 0
+        assert not target.exists()
+    assert not (repository / "dev" / "null").exists()
+
+
+@pytest.mark.parametrize("first_block", [
+    "diff --git a/first.txt b/first.txt\ndeleted file mode 100644\n--- a/first.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-old\n",
+    "diff --git a/first.txt b/first.txt\n--- a/first.txt\n+++ b/first.txt\n@@ -1 +1 @@\n-old\n+deleted file mode 100644\n",
+])
+def test_git_deletion_mode_cannot_leak_between_blocks_or_be_spoofed_by_hunk_text(tmp_path, first_block):
+    ambiguous = "diff --git a/second.txt b/second.txt\n--- a/second.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-old\n"
+    decision = validate_patch_text(first_block + ambiguous, str(tmp_path))
+    assert not decision.allowed and decision.reason == "patch_path_malformed"
