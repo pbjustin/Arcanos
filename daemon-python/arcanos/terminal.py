@@ -8,6 +8,7 @@ import base64
 import hashlib
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -186,7 +187,9 @@ class TerminalController:
                 stderr = f.read().strip()
             with open(p_rc, "r", encoding="utf-8", errors="replace") as f:
                 rc_s = f.read().strip()
-            return_code = int(rc_s) if (rc_s and rc_s.strip().isdigit()) else 1
+            if not re.fullmatch(r"[+-]?[0-9]{1,10}", rc_s):
+                raise RuntimeError("Elevated command completion was not confirmed")
+            return_code = int(rc_s)
             return (stdout or None, stderr or None, return_code)
         except subprocess.TimeoutExpired:
             raise TimeoutError(f"Command timed out after {timeout} seconds")

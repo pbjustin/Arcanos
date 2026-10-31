@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import io
+from pathlib import Path
+import tempfile
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -204,6 +206,36 @@ def test_real_terminal_exception_reaches_sanitized_result_without_raw_logging(lo
     assert result["ok"] is False
     assert result["status"] == "failed"
     assert "sunshine" not in caplog.text + repr(result)
+
+
+@pytest.mark.parametrize("completion,wrapper_exit,expected", [
+    ("-7", 0, -7), ("7", 0, 7), ("0", 0, 0),
+    ("", 0, None), ("", 9, None), ("invalid", 0, None),
+])
+def test_elevated_completion_retains_real_exit_or_unknown(local_cli, monkeypatch, tmp_path, completion, wrapper_exit, expected):
+    cli, _, _ = local_cli
+    terminal = TerminalController()
+    cli.terminal = terminal
+    monkeypatch.setattr(Config, "RUN_ELEVATED", True)
+    monkeypatch.setattr(terminal, "_detect_shell", lambda: "powershell")
+    monkeypatch.setattr(terminal, "is_command_safe", lambda *_args, **_kwargs: (True, None))
+    monkeypatch.setattr(terminal, "_execute_elevated", lambda command, _shell, timeout: terminal._execute_elevated_windows(command, timeout))
+    real_mkstemp = tempfile.mkstemp
+    paths = {}
+    def make_temp(*args, **kwargs):
+        descriptor, path = real_mkstemp(*args, **kwargs, dir=tmp_path)
+        paths[kwargs["prefix"]] = path
+        return descriptor, path
+    def wrapper(*_args, **_kwargs):
+        Path(paths["arcanos_rc_"]).write_text(completion, encoding="utf-8")
+        return SimpleNamespace(returncode=wrapper_exit)
+    monkeypatch.setattr("arcanos.terminal.tempfile.mkstemp", make_temp)
+    monkeypatch.setattr("arcanos.terminal.subprocess.run", wrapper)
+    result = run_ops.handle_run(cli, "echo fixture", return_result=True)
+    assert result["return_code"] == expected
+    assert result["ok"] is (expected == 0)
+    assert result["status"] == ("succeeded" if expected == 0 else "failed")
+    assert not any(Path(path).exists() for path in paths.values())
 
 
 @pytest.mark.parametrize("command", [
