@@ -1,13 +1,16 @@
-import { afterEach, describe, expect, it } from '@jest/globals';
+import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { performance } from 'node:perf_hooks';
+import { runInNewContext } from 'node:vm';
 import yaml from 'js-yaml';
 import {
   containerArguments, parseOptions, retainProof, runFixtures, validateFixtureProof,
 } from '../scripts/run-railway-inspection-e2e.mjs';
 import { fixtureCaseWritesReceipt, requiredFixtureCases } from './fixtures/railway-production-inspection/cases.mjs';
+import { startFixtureClock } from './fixtures/railway-production-inspection/timing.mjs';
 
 const sourceSha = 'a'.repeat(40);
 const sourceContextSha256 = 'b'.repeat(64);
@@ -29,6 +32,42 @@ const proof = (postgresMajor = 17) => ({
 describe('inspection E2E fixture safety', () => {
   const directories = [];
   afterEach(() => { for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
+
+  it.each([14990, 30000])('keeps the timeout duration monotonic when wall time changes to %s', wallEnd => {
+    const wall = jest.spyOn(Date, 'now').mockReturnValueOnce(10000).mockReturnValueOnce(wallEnd);
+    const monotonic = jest.spyOn(performance, 'now').mockReturnValueOnce(100).mockReturnValueOnce(5600);
+    try {
+      const elapsed = startFixtureClock();
+      expect(elapsed()).toBe(5500);
+    } finally {
+      wall.mockRestore();
+      monotonic.mockRestore();
+    }
+  });
+
+  it('pauses the observed lock-waiting backend before any TLS-inspection await', async () => {
+    const source = readFileSync('tests/fixtures/railway-production-inspection/run-fixtures.mjs', 'utf8');
+    const timeoutCase = source.slice(source.indexOf("await runCase('database-query-timeout'"),
+      source.indexOf("await runCase('database-connection-loss'"));
+    const body = /duringCollector: async \(\) => \{([\s\S]*?)\n    \}, errorCode:/u.exec(timeoutCase)?.[1];
+    expect(body).toBeDefined();
+    const events = [];
+    const backend = { pid: 12345, wait_event_type: 'Lock', query: 'SELECT fixture_constraints' };
+    // Execute the actual fixture callback with inert effects; never signal a real process or run SQL.
+    const inject = runInNewContext(`(async () => {${body}})`, {
+      collectorBackend: async predicate => { expect(predicate(backend)).toBe(true); return backend; },
+      normalizeSql: value => value.trim(), CATALOG_QUERIES: { constraints: backend.query },
+      captureTlsSession: async () => { events.push('tls'); },
+      suspendBackend: (observed, durationMs) => {
+        expect(observed).toBe(backend); expect(durationMs).toBe(5500);
+        events.push('pause'); return Promise.resolve();
+      },
+      lockClient: { query: async sql => { expect(sql).toBe('ROLLBACK'); events.push('rollback'); },
+        end: async () => { events.push('end'); } },
+    });
+    await inject();
+    expect(events).toEqual(['pause', 'tls', 'rollback', 'end']);
+  });
 
   /** Build synthetic artifact files to test independent validation, without executing any collector. */
   function receiptBundle() {

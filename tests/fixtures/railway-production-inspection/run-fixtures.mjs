@@ -22,6 +22,7 @@ import {
 } from '../../../scripts/railway-production-readonly-inspection.mjs';
 import { requiredFixtureCases } from './cases.mjs';
 import { generateExpiredCertificate } from './expired-certificate.mjs';
+import { startFixtureClock } from './timing.mjs';
 
 const fixtureDirectory = dirname(fileURLToPath(import.meta.url));
 const root = resolve(fixtureDirectory, '../../..');
@@ -413,7 +414,7 @@ async function executeCase(name, options = {}) {
   const secrets = [...new Set([token, password, environment.RAILWAY_TOKEN, variables.PGPASSWORD])]
     .filter(value => typeof value === 'string' && value.length > 0);
   await options.beforeCollector();
-  const startedAt = Date.now();
+  const elapsed = startFixtureClock();
   const execution = executeCollector(environment);
   if (options.duringCollector) {
     currentCase.backgroundFault = options.duringCollector();
@@ -422,7 +423,7 @@ async function executeCase(name, options = {}) {
   }
   const result = await execution;
   // Measure the collector's exit before waiting for an injected fault to finish.
-  const elapsedMs = Date.now() - startedAt;
+  const elapsedMs = elapsed();
   if (currentCase.backgroundFault) await currentCase.backgroundFault;
   await options.afterCollector();
   check(!result.timedOut, `${name}_COLLECTOR_HARNESS_TIMEOUT`);
@@ -813,8 +814,9 @@ log_disconnections=on
     }, duringCollector: async () => {
       const backend = await collectorBackend(row => row.wait_event_type === 'Lock'
         && normalizeSql(row.query) === normalizeSql(CATALOG_QUERIES.constraints));
-      await captureTlsSession();
+      // Stop the observed query before another await can let lock_timeout win.
       const suspended = suspendBackend(backend, 5500);
+      await captureTlsSession();
       await lockClient.query('ROLLBACK');
       await lockClient.end(); lockClient = undefined;
       await suspended;
