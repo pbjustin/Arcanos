@@ -47,6 +47,15 @@ describe('health-check host load diagnostics', () => {
     });
     expect(report.status).toBe('ok');
     expect(console.warn).not.toHaveBeenCalled();
+    // No container CPU source exists in this diagnostic. Its host measurement
+    // cannot become a container-utilization field or an overload verdict.
+    expect(Object.keys(report).sort()).toEqual([
+      'components', 'metrics', 'raw', 'resilience', 'security', 'status', 'summary', 'telemetry'
+    ]);
+    expect(Object.keys(report.components).sort()).toEqual(['memory', 'workers']);
+    expect(Object.keys(report.metrics).sort()).toEqual(['loadAverage', 'uptimeSeconds']);
+    expect(report.telemetry).toBe(telemetry);
+    expect(report.resilience.circuitBreaker).toBe(circuitBreaker);
   });
 
   it('preserves the diagnostics response shape and reports worker failures independently of load', () => {

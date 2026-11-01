@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-01T00:08:54.198Z",
+  "generatedAt": "2026-11-01T06:00:08.919Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -5284,6 +5284,12 @@
           "relativePath": "tests/integration/session-system.integration.test.ts"
         },
         {
+          "relativePath": "tests/integration/worker-runtime-persistence.pg18.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/integration/worker-runtime-process.pg18.integration.test.ts"
+        },
+        {
           "relativePath": "tests/intent-mode-classification.test.ts"
         },
         {
@@ -5564,6 +5570,9 @@
         },
         {
           "relativePath": "tests/openai-provider-health-lifecycle.test.ts"
+        },
+        {
+          "relativePath": "tests/openai-provider-health.loopback.integration.test.ts"
         },
         {
           "relativePath": "tests/openai-resilience-redaction.test.ts"

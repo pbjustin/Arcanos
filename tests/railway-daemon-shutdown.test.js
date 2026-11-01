@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { EventEmitter } from 'node:events';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { observeCliBridgeDaemon } from '../scripts/start-railway-service.mjs';
 
 describe('Railway CLI daemon shutdown logging', () => {
@@ -81,4 +83,26 @@ describe('Railway CLI daemon shutdown logging', () => {
     }));
     expect(log).not.toHaveBeenCalled();
   });
+
+  it('exercises the actual launcher entry with native disposable children and preserves error outcomes', () => {
+    const fixturePath = fileURLToPath(new URL('./fixtures/railway-launcher-process.mjs', import.meta.url));
+    const result = spawnSync(process.execPath, [fixturePath, 'run'], {
+      env: {}, encoding: 'utf8', timeout: 20_000, maxBuffer: 1024 * 1024
+    });
+    expect({ error: result.error?.message, status: result.status, stderr: result.stderr })
+      .toEqual({ error: undefined, status: 0, stderr: '' });
+    const scenarios = result.stdout.trim().split('\n').map(line => JSON.parse(line));
+    expect(scenarios.map(row => row.scenario)).toEqual([
+      'SIGTERM', 'SIGINT', 'unexpected-exit', 'spawn-failure', 'failed-forward'
+    ]);
+    for (const row of scenarios) {
+      expect(row.launcherExitCode).toBe(0);
+      expect(row.remainingFixtureChildren).toBe(0);
+      expect(row.daemonSeverity).toBe(row.scenario.startsWith('SIG') ? 'info' : 'error');
+      expect(row.nativeChildren).toBe(row.scenario === 'spawn-failure' ? 1 : 2);
+      expect(row.signalDelivery).toBe(process.platform === 'win32'
+        ? 'signal_event_injection_and_ipc_web_drain' : 'native_os_signal');
+      expect(row.forwardingFaultInjected).toBe(row.scenario === 'failed-forward');
+    }
+  }, 25_000);
 });
