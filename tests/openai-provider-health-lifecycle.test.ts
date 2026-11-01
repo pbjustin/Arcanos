@@ -3,6 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 const modelsListMock = jest.fn<(...args: unknown[]) => Promise<unknown>>();
 const loggerErrorMock = jest.fn();
 const loggerInfoMock = jest.fn();
+const loggerWarnMock = jest.fn();
+let configuredApiKey = 'test-provider-health-key';
+let configuredBaseUrl = 'https://provider.invalid/v1';
+let credentialSource: string | null = 'test';
 
 jest.unstable_mockModule('@platform/resilience/cache.js', () => ({
   responseCache: { getStats: () => ({}) }
@@ -28,22 +32,22 @@ jest.unstable_mockModule('@arcanos/openai/unifiedClient', () => ({
   })
 }));
 jest.unstable_mockModule('@services/openai/credentialProvider.js', () => ({
-  getOpenAIKeySource: () => 'test',
+  getOpenAIKeySource: () => credentialSource,
   resetCredentialCache: () => {},
-  resolveOpenAIBaseURL: () => 'https://provider.invalid/v1'
+  resolveOpenAIBaseURL: () => configuredBaseUrl
 }));
 jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({
   getOpenAIClientOrAdapter: () => ({ client: { models: { list: modelsListMock } } })
 }));
 jest.unstable_mockModule('@platform/runtime/unifiedConfig.js', () => ({
-  getConfig: () => ({ openaiApiKey: 'test-provider-health-key', defaultModel: 'test-model' })
+  getConfig: () => ({ openaiApiKey: configuredApiKey, defaultModel: 'test-model' })
 }));
 jest.unstable_mockModule('@platform/runtime/env.js', () => ({
   getEnv: (name: string) => process.env[name],
   getEnvNumber: (_name: string, fallback: number) => fallback
 }));
 jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
-  logger: { info: loggerInfoMock, warn: jest.fn(), error: loggerErrorMock },
+  logger: { info: loggerInfoMock, warn: loggerWarnMock, error: loggerErrorMock },
   aiLogger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() }
 }));
 jest.unstable_mockModule('@services/openai/aiExecutionContext.js', () => ({
@@ -51,17 +55,22 @@ jest.unstable_mockModule('@services/openai/aiExecutionContext.js', () => ({
 }));
 
 const {
-  getOpenAIServiceHealth, probeOpenAIProviderHealth, validateAPIKeyAtStartup
+  getOpenAIServiceHealth, getOpenAIProviderRuntimeStatus, probeOpenAIProviderHealth,
+  reinitializeOpenAIProvider, validateAPIKeyAtStartup
 } = await import('../src/services/openai/serviceHealth.js');
 
 describe('OpenAI provider health lifecycle', () => {
   beforeEach(async () => {
     jest.useFakeTimers({ now: new Date('2026-10-31T12:00:00.000Z') });
+    configuredApiKey = 'test-provider-health-key';
+    configuredBaseUrl = 'https://provider.invalid/v1';
+    credentialSource = 'test';
     modelsListMock.mockReset().mockResolvedValue({ data: [] });
     await probeOpenAIProviderHealth({ force: true, source: 'fixture_reset' });
     modelsListMock.mockClear();
     loggerErrorMock.mockClear();
     loggerInfoMock.mockClear();
+    loggerWarnMock.mockClear();
   });
 
   afterEach(() => {
@@ -101,6 +110,77 @@ describe('OpenAI provider health lifecycle', () => {
       lastAttemptAt: '2026-10-31T12:00:00.000Z',
       lastSuccessAt: '2026-10-31T12:00:00.500Z'
     } });
+  });
+
+  it('does not clear failure state for new credentials when an old probe succeeds', async () => {
+    modelsListMock.mockRejectedValueOnce(Object.assign(new Error('Unauthorized'), { status: 401 }));
+    await probeOpenAIProviderHealth({ force: true });
+    let release!: () => void;
+    modelsListMock.mockImplementationOnce(() => new Promise(resolve => {
+      release = () => resolve({ data: [] });
+    }));
+    const pendingA = probeOpenAIProviderHealth({ force: true, source: 'configuration_A' });
+    configuredApiKey = 'test-provider-replacement-key';
+    const reloadedB = await reinitializeOpenAIProvider({ ignoreBackoff: true, source: 'configuration_B' });
+    expect(reloadedB.reason).toBe('provider_probe_in_flight');
+    const stateBeforeCompletion = getOpenAIProviderRuntimeStatus();
+    release();
+
+    await expect(pendingA).resolves.toEqual({
+      ok: false, skipped: true, reason: 'provider_configuration_changed', runtime: stateBeforeCompletion
+    });
+    expect(getOpenAIProviderRuntimeStatus()).toEqual(stateBeforeCompletion);
+    expect(loggerInfoMock).not.toHaveBeenCalledWith('openai.provider.healthy', expect.anything());
+    expect(loggerWarnMock).toHaveBeenCalledWith('openai.provider.probe_superseded', {
+      module: 'openai.service_health', source: 'configuration_A', outcome: 'succeeded',
+      reason: 'provider_configuration_changed'
+    });
+    expect(modelsListMock).toHaveBeenCalledTimes(2);
+    modelsListMock.mockResolvedValueOnce({ data: [] });
+    await expect(probeOpenAIProviderHealth({ force: true, source: 'configuration_B' })).resolves.toMatchObject({ ok: true });
+    expect(modelsListMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not apply an old endpoint authentication failure to the reloaded provider', async () => {
+    let fail!: () => void;
+    modelsListMock.mockImplementationOnce(() => new Promise((_resolve, reject) => {
+      fail = () => reject(Object.assign(new Error('Unauthorized'), { status: 401 }));
+    }));
+    const pendingA = probeOpenAIProviderHealth({ force: true, source: 'configuration_A' });
+    configuredBaseUrl = 'https://replacement-provider.invalid/v1';
+    const reloadedB = await reinitializeOpenAIProvider({ ignoreBackoff: true, source: 'configuration_B' });
+    expect(reloadedB.reason).toBe('provider_probe_in_flight');
+    const stateBeforeCompletion = getOpenAIProviderRuntimeStatus();
+    fail();
+
+    await expect(pendingA).resolves.toEqual({
+      ok: false, skipped: true, reason: 'provider_configuration_changed', runtime: stateBeforeCompletion
+    });
+    expect(getOpenAIProviderRuntimeStatus()).toEqual(stateBeforeCompletion);
+    expect(getOpenAIServiceHealth().providerRuntime.authenticationBlocked).toBe(false);
+    expect(loggerWarnMock).toHaveBeenCalledWith('openai.provider.probe_superseded', {
+      module: 'openai.service_health', source: 'configuration_A', outcome: 'failed',
+      reason: 'provider_configuration_changed', category: 'authentication', status: 401
+    });
+    expect(modelsListMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts the pending probe after an unchanged forced reload despite source metadata changing', async () => {
+    credentialSource = null;
+    let release!: () => void;
+    modelsListMock.mockImplementationOnce(() => new Promise(resolve => {
+      release = () => resolve({ data: [] });
+    }));
+    const pending = probeOpenAIProviderHealth({ force: true });
+    const initialVersion = getOpenAIProviderRuntimeStatus().configVersion;
+    credentialSource = 'test';
+    const reload = await reinitializeOpenAIProvider({ forceReload: true, ignoreBackoff: true });
+    expect(reload.runtime.configVersion).not.toBe(initialVersion);
+    expect(reload.reason).toBe('provider_probe_in_flight');
+    release();
+
+    await expect(pending).resolves.toMatchObject({ ok: true, skipped: false });
+    expect(modelsListMock).toHaveBeenCalledTimes(1);
   });
 
   it('records failure at completion while retaining the attempt start', async () => {

@@ -530,9 +530,26 @@ export async function probeOpenAIProviderHealth(options: {
   }
 
   const timeoutMs = Math.max(1_000, options.timeoutMs ?? resolveProviderProbeTimeoutMs());
-  // Keep the failure bound to the configuration that sent this request even
+  // Keep the outcome bound to the configuration that sent this request even
   // if another local reload happens while its transport is pending.
   const attemptedAuthenticationFingerprint = resolveProviderAuthenticationFingerprint();
+  const supersededResult = (outcome: 'succeeded' | 'failed', error?: unknown): OpenAIProviderProbeResult | null => {
+    if (attemptedAuthenticationFingerprint === resolveProviderAuthenticationFingerprint()) return null;
+    const failure = outcome === 'failed' ? classifyProviderFailure(error) : null;
+    logger.warn('openai.provider.probe_superseded', {
+      module: 'openai.service_health',
+      source,
+      reason: 'provider_configuration_changed',
+      outcome,
+      ...(failure ? { category: failure.category, status: failure.status } : {})
+    });
+    return {
+      ok: false,
+      skipped: true,
+      reason: 'provider_configuration_changed',
+      runtime: cloneProviderRuntimeState(getProviderRuntimeState())
+    };
+  };
   const timeoutError = new Error(`OpenAI provider probe timed out after ${timeoutMs}ms`);
   const probeController = new AbortController();
   const probeExecutionContext = getAiExecutionContext();
@@ -570,6 +587,8 @@ export async function probeOpenAIProviderHealth(options: {
       Boolean(probeExecutionContext?.workerBudget)
     );
 
+    const superseded = supersededResult('succeeded');
+    if (superseded) return superseded;
     return {
       ok: true,
       skipped: false,
@@ -584,6 +603,8 @@ export async function probeOpenAIProviderHealth(options: {
     // failures. Preserve them for the worker's paused-budget control flow and
     // do not poison the shared provider backoff/circuit state.
     rethrowWorkerAiBudgetError(error);
+    const superseded = supersededResult('failed', error);
+    if (superseded) return superseded;
     return {
       ok: false,
       skipped: false,
