@@ -115,6 +115,7 @@ async function runScenario(scenario) {
     },
     stdio: ['ignore', 'pipe', 'pipe', 'ipc']
   });
+  const exited = new Promise(resolveExit => launcher.once('exit', resolveExit));
   let stdout = '';
   let stderr = '';
   let ready = false;
@@ -172,8 +173,11 @@ async function runScenario(scenario) {
     if (launcher.connected) launcher.disconnect();
     if (exitCode === undefined) launcher.kill('SIGKILL');
     for (const pid of livePids) {
-      try { process.kill(pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+      try { process.kill(pid, 'SIGKILL'); } catch (error) {
+        if (error.code !== 'ESRCH') console.error('[railway-launcher-fixture] cleanup.kill.failed', JSON.stringify({ code: error.code ?? 'unknown' }));
+      }
     }
+    await exited;
     // Verify the unique, absolute owned target before recursive fixture cleanup.
     assert.equal(dirname(resolve(fixtureRoot)), resolve(tmpdir()));
     assert.ok(basename(fixtureRoot).startsWith('arcanos-launcher-native-'));

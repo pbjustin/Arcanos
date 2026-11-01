@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { EventEmitter } from 'node:events';
 import { spawnSync } from 'node:child_process';
+import { existsSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { observeCliBridgeDaemon } from '../scripts/start-railway-service.mjs';
 
@@ -105,4 +108,74 @@ describe('Railway CLI daemon shutdown logging', () => {
       expect(row.forwardingFaultInjected).toBe(row.scenario === 'failed-forward');
     }
   }, 25_000);
+
+  it('preserves the original fixture failure and removes its directory when child cleanup kill throws', async () => {
+    const fixturePath = fileURLToPath(new URL('./fixtures/railway-launcher-process.mjs', import.meta.url));
+    const preloader = `
+      import childProcess from 'node:child_process';
+      import fs from 'node:fs';
+      import { syncBuiltinESMExports } from 'node:module';
+      const nativeSpawn = childProcess.spawn;
+      const nativeMkdtemp = fs.mkdtempSync;
+      const nativeKill = process.kill;
+      fs.mkdtempSync = (...args) => {
+        const directory = nativeMkdtemp(...args);
+        process.stdout.write(JSON.stringify({ fixtureDirectory: directory }) + '\\n');
+        return directory;
+      };
+      childProcess.spawn = (...args) => {
+        const launcher = nativeSpawn(...args);
+        process.stdout.write(JSON.stringify({ fixturePid: launcher.pid }) + '\\n');
+        launcher.on('message', message => {
+          if (message.kind === 'fixture-spawn') process.stdout.write(JSON.stringify({ fixturePid: message.pid }) + '\\n');
+        });
+        const nativeSend = launcher.send.bind(launcher);
+        const nativeChildKill = launcher.kill.bind(launcher);
+        launcher.send = (message, ...rest) => {
+          if (message?.kind === 'signal-event') throw new Error('synthetic-launcher-primary-failure');
+          return nativeSend(message, ...rest);
+        };
+        launcher.kill = signal => {
+          if (signal === 'SIGTERM' || signal === 'SIGINT') throw new Error('synthetic-launcher-primary-failure');
+          return nativeChildKill(signal);
+        };
+        return launcher;
+      };
+      process.kill = (pid, signal) => {
+        try { nativeKill(pid, signal); } catch { /* target may already have exited */ }
+        throw Object.assign(new Error('synthetic-cleanup-EPERM'), { code: 'EPERM' });
+      };
+      syncBuiltinESMExports();
+    `;
+    const result = spawnSync(process.execPath, [
+      '--import', `data:text/javascript;base64,${Buffer.from(preloader).toString('base64')}`, fixturePath, 'run'
+    ], { env: {}, encoding: 'utf8', timeout: 10_000, maxBuffer: 1024 * 1024 });
+    const observations = result.stdout.trim().split('\n').map(line => JSON.parse(line));
+    const { fixtureDirectory } = observations.find(row => row.fixtureDirectory);
+    try {
+      for (const { fixturePid } of observations.filter(row => row.fixturePid)) {
+        let alive = true;
+        const deadline = Date.now() + 2_000;
+        while (alive && Date.now() < deadline) {
+          try { process.kill(fixturePid, 0); } catch (error) {
+            if (error.code !== 'ESRCH') throw error;
+            alive = false;
+          }
+          if (alive) await new Promise(resolveDelay => setTimeout(resolveDelay, 10));
+        }
+        expect(alive).toBe(false);
+      }
+      expect(result.error).toBeUndefined();
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain('synthetic-launcher-primary-failure');
+      expect(result.stderr).toContain('cleanup.kill.failed');
+      expect(result.stderr).not.toContain('synthetic-cleanup-EPERM');
+      expect(existsSync(fixtureDirectory)).toBe(false);
+    } finally {
+      // Remove the test-owned directory even when the red regression exposes a leak.
+      expect(dirname(resolve(fixtureDirectory))).toBe(resolve(tmpdir()));
+      expect(basename(fixtureDirectory)).toMatch(/^arcanos-launcher-native-/u);
+      rmSync(fixtureDirectory, { recursive: true, force: true });
+    }
+  });
 });
