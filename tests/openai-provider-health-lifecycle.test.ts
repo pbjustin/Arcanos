@@ -103,8 +103,12 @@ describe('OpenAI provider health lifecycle', () => {
       release = () => resolve({ data: [] });
     }));
     const probe = probeOpenAIProviderHealth({ force: true });
-    await jest.advanceTimersByTimeAsync(500);
-    release();
+    try {
+      await jest.advanceTimersByTimeAsync(500);
+    } finally {
+      release();
+      await probe;
+    }
 
     await expect(probe).resolves.toMatchObject({ runtime: {
       lastAttemptAt: '2026-10-31T12:00:00.000Z',
@@ -121,24 +125,25 @@ describe('OpenAI provider health lifecycle', () => {
     }));
     const pendingA = probeOpenAIProviderHealth({ force: true, source: 'configuration_A' });
     configuredApiKey = 'test-provider-replacement-key';
-    const reloadedB = await reinitializeOpenAIProvider({ ignoreBackoff: true, source: 'configuration_B' });
-    expect(reloadedB.reason).toBe('provider_probe_in_flight');
+    const reloadB = reinitializeOpenAIProvider({ ignoreBackoff: true, source: 'configuration_B' });
     const stateBeforeCompletion = getOpenAIProviderRuntimeStatus();
-    release();
+    try {
+      expect(modelsListMock).toHaveBeenCalledTimes(2);
+    } finally {
+      release();
+      await Promise.all([pendingA, reloadB]);
+    }
 
     await expect(pendingA).resolves.toEqual({
       ok: false, skipped: true, reason: 'provider_configuration_changed', runtime: stateBeforeCompletion
     });
-    expect(getOpenAIProviderRuntimeStatus()).toEqual(stateBeforeCompletion);
-    expect(loggerInfoMock).not.toHaveBeenCalledWith('openai.provider.healthy', expect.anything());
     expect(loggerWarnMock).toHaveBeenCalledWith('openai.provider.probe_superseded', {
       module: 'openai.service_health', source: 'configuration_A', outcome: 'succeeded',
       reason: 'provider_configuration_changed'
     });
-    expect(modelsListMock).toHaveBeenCalledTimes(2);
-    modelsListMock.mockResolvedValueOnce({ data: [] });
-    await expect(probeOpenAIProviderHealth({ force: true, source: 'configuration_B' })).resolves.toMatchObject({ ok: true });
+    await expect(reloadB).resolves.toMatchObject({ ok: true, skipped: false });
     expect(modelsListMock).toHaveBeenCalledTimes(3);
+    expect(loggerInfoMock).toHaveBeenCalledWith('openai.provider.healthy', expect.objectContaining({ source: 'configuration_B' }));
   });
 
   it('does not apply an old endpoint authentication failure to the reloaded provider', async () => {
@@ -148,21 +153,25 @@ describe('OpenAI provider health lifecycle', () => {
     }));
     const pendingA = probeOpenAIProviderHealth({ force: true, source: 'configuration_A' });
     configuredBaseUrl = 'https://replacement-provider.invalid/v1';
-    const reloadedB = await reinitializeOpenAIProvider({ ignoreBackoff: true, source: 'configuration_B' });
-    expect(reloadedB.reason).toBe('provider_probe_in_flight');
+    const reloadB = reinitializeOpenAIProvider({ ignoreBackoff: true, source: 'configuration_B' });
     const stateBeforeCompletion = getOpenAIProviderRuntimeStatus();
-    fail();
+    try {
+      expect(modelsListMock).toHaveBeenCalledTimes(1);
+    } finally {
+      fail();
+      await Promise.all([pendingA, reloadB]);
+    }
 
     await expect(pendingA).resolves.toEqual({
       ok: false, skipped: true, reason: 'provider_configuration_changed', runtime: stateBeforeCompletion
     });
-    expect(getOpenAIProviderRuntimeStatus()).toEqual(stateBeforeCompletion);
     expect(getOpenAIServiceHealth().providerRuntime.authenticationBlocked).toBe(false);
     expect(loggerWarnMock).toHaveBeenCalledWith('openai.provider.probe_superseded', {
       module: 'openai.service_health', source: 'configuration_A', outcome: 'failed',
       reason: 'provider_configuration_changed', category: 'authentication', status: 401
     });
-    expect(modelsListMock).toHaveBeenCalledTimes(1);
+    await expect(reloadB).resolves.toMatchObject({ ok: true, skipped: false });
+    expect(modelsListMock).toHaveBeenCalledTimes(2);
   });
 
   it('accepts the pending probe after an unchanged forced reload despite source metadata changing', async () => {
@@ -172,15 +181,93 @@ describe('OpenAI provider health lifecycle', () => {
       release = () => resolve({ data: [] });
     }));
     const pending = probeOpenAIProviderHealth({ force: true });
-    const initialVersion = getOpenAIProviderRuntimeStatus().configVersion;
-    credentialSource = 'test';
-    const reload = await reinitializeOpenAIProvider({ forceReload: true, ignoreBackoff: true });
-    expect(reload.runtime.configVersion).not.toBe(initialVersion);
-    expect(reload.reason).toBe('provider_probe_in_flight');
-    release();
+    try {
+      const initialVersion = getOpenAIProviderRuntimeStatus().configVersion;
+      credentialSource = 'test';
+      const reload = await reinitializeOpenAIProvider({ forceReload: true, ignoreBackoff: true });
+      expect(reload.runtime.configVersion).not.toBe(initialVersion);
+      expect(reload.reason).toBe('provider_probe_in_flight');
+    } finally {
+      release();
+      await pending;
+    }
 
     await expect(pending).resolves.toMatchObject({ ok: true, skipped: false });
     expect(modelsListMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts only one replacement transport for concurrent reinitializations', async () => {
+    let release!: () => void;
+    modelsListMock.mockImplementationOnce(() => new Promise(resolve => {
+      release = () => resolve({ data: [] });
+    }));
+    const pendingA = probeOpenAIProviderHealth({ force: true });
+    configuredApiKey = 'test-provider-replacement-key';
+    const firstReload = reinitializeOpenAIProvider({ ignoreBackoff: true });
+    const secondReload = reinitializeOpenAIProvider({ ignoreBackoff: true });
+    try {
+      expect(modelsListMock).toHaveBeenCalledTimes(1);
+    } finally {
+      release();
+      await Promise.all([pendingA, firstReload, secondReload]);
+    }
+    await expect(firstReload).resolves.toMatchObject({ ok: true, skipped: false });
+    await expect(secondReload).resolves.toMatchObject({
+      ok: false, skipped: true, reason: 'provider_probe_in_flight'
+    });
+    expect(modelsListMock).toHaveBeenCalledTimes(2);
+    await jest.advanceTimersByTimeAsync(60_000);
+    expect(modelsListMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not probe a requested replacement that changes again while waiting', async () => {
+    let release!: () => void;
+    modelsListMock.mockImplementationOnce(() => new Promise(resolve => {
+      release = () => resolve({ data: [] });
+    }));
+    const pendingA = probeOpenAIProviderHealth({ force: true });
+    configuredApiKey = 'test-provider-replacement-key';
+    const reloadB = reinitializeOpenAIProvider({ ignoreBackoff: true });
+    configuredBaseUrl = 'https://third-provider.invalid/v1';
+    try {
+      expect(modelsListMock).toHaveBeenCalledTimes(1);
+    } finally {
+      release();
+      await Promise.all([pendingA, reloadB]);
+    }
+    await expect(reloadB).resolves.toMatchObject({
+      ok: false, skipped: true, reason: 'provider_configuration_changed'
+    });
+    expect(modelsListMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { status: 500, reason: 'provider_backoff_active', suppressUnchangedAuthenticationProbe: false },
+    { status: 401, reason: 'provider_authentication_unchanged', suppressUnchangedAuthenticationProbe: true }
+  ])('preserves $reason before the replacement probe', async ({ status, reason, suppressUnchangedAuthenticationProbe }) => {
+    modelsListMock.mockRejectedValueOnce(Object.assign(new Error('Provider unavailable'), { status }));
+    await probeOpenAIProviderHealth({ force: true });
+    const failed = getOpenAIProviderRuntimeStatus();
+    const originalApiKey = configuredApiKey;
+    configuredApiKey = 'test-provider-intermediate-key';
+    let release!: () => void;
+    modelsListMock.mockImplementationOnce(() => new Promise(resolve => {
+      release = () => resolve({ data: [] });
+    }));
+    const pendingA = probeOpenAIProviderHealth({ force: true });
+    configuredApiKey = originalApiKey;
+    const reload = reinitializeOpenAIProvider({ suppressUnchangedAuthenticationProbe });
+    try {
+      expect(modelsListMock).toHaveBeenCalledTimes(2);
+    } finally {
+      release();
+      await Promise.all([pendingA, reload]);
+    }
+    await expect(reload).resolves.toMatchObject({
+      ok: false, skipped: true, reason,
+      runtime: { nextRetryAt: failed.nextRetryAt, consecutiveFailures: failed.consecutiveFailures }
+    });
+    expect(modelsListMock).toHaveBeenCalledTimes(2);
   });
 
   it('records failure at completion while retaining the attempt start', async () => {
@@ -189,8 +276,12 @@ describe('OpenAI provider health lifecycle', () => {
       fail = () => reject(new Error('network unavailable'));
     }));
     const probe = probeOpenAIProviderHealth({ force: true });
-    await jest.advanceTimersByTimeAsync(500);
-    fail();
+    try {
+      await jest.advanceTimersByTimeAsync(500);
+    } finally {
+      fail();
+      await probe;
+    }
 
     await expect(probe).resolves.toMatchObject({ runtime: {
       lastAttemptAt: '2026-10-31T12:00:00.000Z',
@@ -201,14 +292,21 @@ describe('OpenAI provider health lifecycle', () => {
 
   it('aborts one timed-out transport, observes backoff, then recovers without a retry loop', async () => {
     let signal: AbortSignal | undefined;
+    let rejectTransport!: (error: Error) => void;
     modelsListMock.mockImplementationOnce((options: unknown) => {
       signal = (options as { signal: AbortSignal }).signal;
       return new Promise((_resolve, reject) => {
+        rejectTransport = reject;
         signal?.addEventListener('abort', () => reject(signal?.reason), { once: true });
       });
     });
     const probe = probeOpenAIProviderHealth({ force: true, source: 'startup' });
-    await jest.advanceTimersByTimeAsync(4000);
+    try {
+      await jest.advanceTimersByTimeAsync(4000);
+    } finally {
+      rejectTransport(new Error('Fixture transport settled'));
+      await probe;
+    }
     const failed = await probe;
 
     expect(failed).toMatchObject({ ok: false, runtime: {

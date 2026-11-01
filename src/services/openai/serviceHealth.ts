@@ -77,7 +77,10 @@ const DEFAULT_PROVIDER_PROBE_TIMEOUT_MS = 4_000;
 // meaningful provider timeout.
 const OPENAI_PROVIDER_PROBE_SDK_TIMEOUT_MS = 0x7fffffff;
 let providerRuntimeState: OpenAIProviderRuntimeState | null = null;
-let providerProbeInFlight = false;
+let providerProbeInFlight: {
+  authenticationFingerprint: string;
+  settled: Promise<void>;
+} | null = null;
 
 function createInitialProviderRuntimeState(): OpenAIProviderRuntimeState {
   return {
@@ -556,7 +559,11 @@ export async function probeOpenAIProviderHealth(options: {
   const previousTransportReady = probeExecutionContext?.workerBudgetTransportReady;
   let scopedTransportReady: ((operation: string) => void) | undefined;
 
-  providerProbeInFlight = true;
+  let settleProbe!: () => void;
+  providerProbeInFlight = {
+    authenticationFingerprint: attemptedAuthenticationFingerprint,
+    settled: new Promise<void>(resolve => { settleProbe = resolve; })
+  };
   try {
     await runProbeWithTimeout(
       armTimeout => {
@@ -616,13 +623,14 @@ export async function probeOpenAIProviderHealth(options: {
       })
     };
   } finally {
-    providerProbeInFlight = false;
+    providerProbeInFlight = null;
     if (
       probeExecutionContext
       && probeExecutionContext.workerBudgetTransportReady === scopedTransportReady
     ) {
       probeExecutionContext.workerBudgetTransportReady = previousTransportReady;
     }
+    settleProbe();
   }
 }
 
@@ -638,6 +646,19 @@ export async function reinitializeOpenAIProvider(options: {
     forceReload: options.forceReload ?? true,
     reason: source
   });
+  const pendingProbe = providerProbeInFlight;
+  const requestedAuthenticationFingerprint = resolveProviderAuthenticationFingerprint();
+  if (pendingProbe && pendingProbe.authenticationFingerprint !== requestedAuthenticationFingerprint) {
+    // Keep the one replacement probe inside this explicit caller's lifetime
+    // and budget context. Settlement carries no other caller's health/budget result.
+    await pendingProbe.settled;
+    if (requestedAuthenticationFingerprint !== resolveProviderAuthenticationFingerprint()) {
+      return {
+        ok: false, skipped: true, reason: 'provider_configuration_changed',
+        runtime: cloneProviderRuntimeState(getProviderRuntimeState()), reloaded: reload.reloaded
+      };
+    }
+  }
   const state = getProviderRuntimeState();
 
   // A local client reload cannot repair revoked credentials. Self-healing can
