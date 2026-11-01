@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { lstatSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { lstatSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -71,7 +71,7 @@ function verifiedGitSha(rootPath, sourceFiles) {
     // A source snapshot without its own Git metadata must not discover an ancestor repository.
     lstatSync(resolve(rootPath, '.git'));
     const git = args => execFileSync('git', args, { cwd: rootPath, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 8 * 1024 * 1024, timeout: 5_000 });
-    if (resolve(git(['rev-parse', '--show-toplevel']).trim()).toLowerCase() !== resolve(rootPath).toLowerCase()) return null;
+    if (realpathSync.native(git(['rev-parse', '--show-toplevel']).trim()) !== realpathSync.native(rootPath)) return null;
     if (git(['status', '--porcelain', '--untracked-files=all']).trim()) return null;
     const sha = normalizeSha(git(['rev-parse', 'HEAD']).trim());
     if (!sha) return null;

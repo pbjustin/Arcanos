@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
@@ -18,6 +18,15 @@ function fixture() {
   writeFileSync(join(rootPath, 'scripts/start.mjs'), 'export {};\n');
   writeFileSync(join(rootPath, '.gitignore'), 'dist/\nnode_modules/\n.env\n');
   return { rootPath, env: {} };
+}
+function initializeGitFixture(options) {
+  const git = args => execFileSync('git', args, { cwd: options.rootPath, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  git(['init']);
+  git(['config', 'core.autocrlf', 'false']);
+  git(['config', 'core.hooksPath', '.unused-test-hooks']);
+  git(['add', '.']);
+  git(['-c', 'user.name=Offline fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-m', 'synthetic build inputs']);
+  return git;
 }
 afterEach(() => {
   for (const rootPath of roots.splice(0)) rmSync(rootPath, { recursive: true, force: true });
@@ -77,12 +86,7 @@ describe('production build identity', () => {
 
   it('establishes a Git SHA only for a complete clean checkout with matching blob bytes', () => {
     const options = fixture();
-    const git = args => execFileSync('git', args, { cwd: options.rootPath, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-    git(['init']);
-    git(['config', 'core.autocrlf', 'false']);
-    git(['config', 'core.hooksPath', '.unused-test-hooks']);
-    git(['add', '.']);
-    git(['-c', 'user.name=Offline fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-m', 'synthetic build inputs']);
+    const git = initializeGitFixture(options);
     const sha = git(['rev-parse', 'HEAD']).trim();
     expect(writeProductionBuildIdentity(options).gitSha).toBe(sha);
     expect(readProductionBuildIdentity(options)).toMatchObject({ status: 'verified_checkout', gitSha: sha });
@@ -97,6 +101,52 @@ describe('production build identity', () => {
     git(['update-index', '--assume-unchanged', 'src/start-server.ts']);
     expect(git(['status', '--porcelain']).trim()).toBe('');
     expect(writeProductionBuildIdentity(options).gitSha).toBeNull();
+  });
+
+  it('establishes the same clean-checkout identity through a junction or symlink alias', () => {
+    const options = fixture();
+    const git = initializeGitFixture(options);
+    const sha = git(['rev-parse', 'HEAD']).trim();
+    const aliases = mkdtempSync(join(tmpdir(), 'arcanos-build-identity-alias-'));
+    roots.push(aliases);
+    const alias = join(aliases, 'checkout');
+    symlinkSync(options.rootPath, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    expect(realpathSync.native(alias)).toBe(realpathSync.native(options.rootPath));
+    const physicalIdentity = writeProductionBuildIdentity(options);
+    const aliasedOptions = { ...options, rootPath: alias };
+
+    expect(writeProductionBuildIdentity(aliasedOptions)).toEqual(physicalIdentity);
+    expect(readProductionBuildIdentity(aliasedOptions)).toMatchObject({ status: 'verified_checkout', gitSha: sha });
+    writeFileSync(join(alias, 'src/start-server.ts'), 'dirty source through alias');
+    expect(writeProductionBuildIdentity(aliasedOptions).gitSha).toBeNull();
+  });
+
+  it('does not accept local Git metadata that names another physical worktree', () => {
+    const checkout = fixture();
+    const git = initializeGitFixture(checkout);
+    git(['config', 'core.worktree', checkout.rootPath]);
+    const snapshot = fixture();
+    writeFileSync(join(snapshot.rootPath, '.git'), `gitdir: ${join(checkout.rootPath, '.git')}\n`);
+    const discoveredRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      cwd: snapshot.rootPath, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']
+    }).trim();
+
+    expect(realpathSync.native(discoveredRoot)).toBe(realpathSync.native(checkout.rootPath));
+    expect(realpathSync.native(discoveredRoot)).not.toBe(realpathSync.native(snapshot.rootPath));
+    expect(writeProductionBuildIdentity(snapshot).gitSha).toBeNull();
+  });
+
+  it('does not borrow an ancestor repository for a nested source snapshot without its own Git metadata', () => {
+    const checkout = fixture();
+    const snapshot = join(checkout.rootPath, 'snapshot');
+    mkdirSync(snapshot);
+    for (const path of ['src', 'scripts', 'packages', 'dist']) mkdirSync(join(snapshot, path));
+    writeFileSync(join(snapshot, 'src/start-server.ts'), 'export const version = 1;\n');
+    writeFileSync(join(snapshot, 'dist/start-server.js'), 'export const version = 1;\n');
+    writeFileSync(join(checkout.rootPath, '.gitignore'), 'dist/\nnode_modules/\n.env\nsnapshot/\n');
+    initializeGitFixture(checkout);
+
+    expect(writeProductionBuildIdentity({ rootPath: snapshot, env: {} }).gitSha).toBeNull();
   });
 
   it('contains only validated identity fields and never logs credentials or arbitrary receipt fields', () => {
