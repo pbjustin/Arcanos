@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { APIConnectionError, APIConnectionTimeoutError } from 'openai/error';
 
 const modelsListMock = jest.fn<(...args: unknown[]) => Promise<unknown>>();
 const loggerErrorMock = jest.fn();
@@ -343,6 +344,18 @@ describe('OpenAI provider health lifecycle', () => {
     expect(loggerErrorMock).toHaveBeenCalledWith('openai.provider.failure', expect.objectContaining({
       category: 'authentication', status: 401
     }));
+  });
+
+  it.each([
+    { error: new APIConnectionError({ message: 'Opaque transport failure' }), category: 'network', status: null },
+    { error: new APIConnectionTimeoutError({ message: 'Opaque transport failure' }), category: 'timeout', status: null },
+    { error: Object.assign(new Error('Connection error.'), { name: 'APIConnectionError' }), category: 'unknown', status: null },
+    { error: Object.assign(new APIConnectionError({ message: 'Opaque transport failure' }), { status: 401 }), category: 'authentication', status: 401 }
+  ])('classifies actual SDK errors without trusting a spoofed error name: $category / $status', async ({ error, category, status }) => {
+    modelsListMock.mockRejectedValueOnce(error);
+    await expect(probeOpenAIProviderHealth({ force: true })).resolves.toMatchObject({
+      ok: false, runtime: { lastFailureCategory: category, lastFailureStatus: status }
+    });
   });
 
   it('keeps health reads provider-free throughout healthy idle polling', () => {

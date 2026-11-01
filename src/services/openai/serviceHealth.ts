@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { APIConnectionError, APIConnectionTimeoutError } from 'openai/error';
 import { responseCache } from '@platform/resilience/cache.js';
 import {
   instrumentOpenAIOperation,
@@ -303,6 +304,7 @@ function classifyProviderFailure(error: unknown): {
   }
 
   if (
+    error instanceof APIConnectionTimeoutError ||
     normalizedReason.includes('timeout') ||
     normalizedReason.includes('timed out') ||
     normalizedReason.includes('aborted')
@@ -315,6 +317,7 @@ function classifyProviderFailure(error: unknown): {
   }
 
   if (
+    error instanceof APIConnectionError ||
     normalizedReason.includes('econn') ||
     normalizedReason.includes('network') ||
     normalizedReason.includes('socket') ||
