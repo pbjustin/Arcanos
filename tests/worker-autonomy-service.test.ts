@@ -737,6 +737,54 @@ describe('workerAutonomyService', () => {
     ]);
   });
 
+  it('preserves the rich capture time and real poll observations when overlaying newer liveness', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-10-31T12:00:00.000Z'));
+    const capturedAt = '2026-10-31T09:00:00.000Z';
+    const lastPollAt = '2026-10-31T08:59:55.000Z';
+    const lastSeenAt = '2026-10-31T11:59:55.000Z';
+    const stored = {
+      workerId: 'async-queue-slot-1', workerType: 'async_queue', healthStatus: 'healthy',
+      currentJobId: null, lastError: null, startedAt: capturedAt,
+      lastHeartbeatAt: capturedAt, lastInspectorRunAt: capturedAt, updatedAt: capturedAt,
+      snapshot: { dispatcherStarted: true, activeListeners: 1, lastPollAt, lastClaimAttemptAt: lastPollAt }
+    };
+    listWorkerRuntimeSnapshotsMock.mockResolvedValue([stored]);
+    listWorkerLivenessMock.mockResolvedValue([{ workerId: stored.workerId, healthStatus: 'healthy', lastSeenAt }]);
+
+    try {
+      const report = await getWorkerAutonomyHealthReport();
+
+      expect(report.overallStatus).toBe('healthy');
+      expect(report.workers[0]).toMatchObject({
+        updatedAt: capturedAt, lastHeartbeatAt: lastSeenAt,
+        snapshot: { lastPollAt, lastClaimAttemptAt: lastPollAt, livenessLastSeenAt: lastSeenAt }
+      });
+      expect(stored.updatedAt).toBe(capturedAt);
+      expect(stored.lastHeartbeatAt).toBe(capturedAt);
+      expect(upsertWorkerRuntimeSnapshotMock).not.toHaveBeenCalled();
+      expect(upsertWorkerRuntimeStateMock).not.toHaveBeenCalled();
+      expect(appendWorkerRuntimeHistoryMock).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('keeps heartbeat-only observations explicit without inventing poll or claim timestamps', async () => {
+    const lastSeenAt = new Date().toISOString();
+    listWorkerLivenessMock.mockResolvedValue([{
+      workerId: 'async-queue-slot-1', healthStatus: 'healthy', lastSeenAt
+    }]);
+
+    const report = await getWorkerAutonomyHealthReport();
+
+    expect(report.workers[0]).toMatchObject({
+      startedAt: null, updatedAt: lastSeenAt, lastHeartbeatAt: lastSeenAt,
+      snapshot: { livenessLastSeenAt: lastSeenAt }
+    });
+    expect(report.workers[0]?.snapshot).not.toHaveProperty('lastPollAt');
+    expect(report.workers[0]?.snapshot).not.toHaveProperty('lastClaimAttemptAt');
+  });
+
   it('schedules retries for transient failures before exhausting the retry budget', async () => {
     const service = new WorkerAutonomyService({
       workerId: 'async-queue',
@@ -3130,8 +3178,18 @@ describe('workerAutonomyService', () => {
       expect(upsertWorkerRuntimeStateMock).toHaveBeenCalledTimes(1);
       expect(appendWorkerRuntimeHistoryMock).toHaveBeenCalledTimes(1);
       expect(upsertWorkerRuntimeSnapshotMock).not.toHaveBeenCalled();
+      expect(upsertWorkerRuntimeStateMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          updatedAt: '2026-10-31T00:00:00.000Z',
+          snapshot: expect.objectContaining({
+            lastPollAt: '2026-10-31T00:00:00.000Z',
+            lastClaimAttemptAt: '2026-10-31T00:00:00.000Z'
+          })
+        }), expect.anything()
+      );
 
       await service.setClaimAcceptanceState('dependency_failure', { reason: 'database unavailable' });
+      jest.setSystemTime(startMs + 6 * 60 * 1_000);
       await service.setClaimAcceptanceState('accepting');
       await pipeline.flushAll('recovered');
 
@@ -3143,7 +3201,14 @@ describe('workerAutonomyService', () => {
         expect.objectContaining({ source: 'claim-acceptance-dependency_failure' })
       );
       expect(upsertWorkerRuntimeStateMock).toHaveBeenLastCalledWith(
-        expect.objectContaining({ healthStatus: 'healthy' }),
+        expect.objectContaining({
+          healthStatus: 'healthy', updatedAt: '2026-10-31T00:06:00.000Z',
+          lastHeartbeatAt: '2026-10-31T00:05:00.000Z',
+          snapshot: expect.objectContaining({
+            lastPollAt: '2026-10-31T00:05:00.000Z',
+            lastClaimAttemptAt: '2026-10-31T00:05:00.000Z'
+          })
+        }),
         expect.objectContaining({ source: 'claim-acceptance-recovered' })
       );
       expect(fetchMock).not.toHaveBeenCalled();

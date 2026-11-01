@@ -164,7 +164,9 @@ export interface WorkerControlWorkerSnapshot {
   activeJobs: string[];
   dispatcherStarted: boolean;
   activeListeners: number;
+  /** Last real poll captured in the rich snapshot; not a live polling watermark. */
   lastPollAt: string | null;
+  /** Last real claim attempt captured in the rich snapshot; never inferred from a heartbeat. */
   lastClaimAttemptAt: string | null;
   lastClaimResult: string | null;
   disabledReason: string | null;
@@ -190,6 +192,7 @@ export interface WorkerControlWorkerSnapshot {
   recentRecoveryEvents?: Record<string, unknown>[];
   lastWatchdogEvent?: Record<string, unknown> | null;
   lastWatchdogRunAt?: string | null;
+  /** Rich snapshot capture time, or liveness observation time when no rich snapshot exists. */
   updatedAt: string;
   watchdog: {
     triggered: boolean;

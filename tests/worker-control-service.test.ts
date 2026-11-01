@@ -169,6 +169,35 @@ describe('workerControlService', () => {
     expect(health.operationalHealth.unhealthyWorkerIds).toEqual(['current-slot-1']);
   });
 
+  it.each([false, true])('uses the actual heartbeat rather than poll or capture age for staleness (stale: %s)', async stale => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-10-01T12:00:00.000Z'));
+    const report = mixedHeartbeatReport();
+    const worker = report.workers[2]!;
+    const lastPollAt = '2026-10-01T09:00:00.000Z';
+    const lastClaimAttemptAt = '2026-10-01T09:00:01.000Z';
+    // A fresh non-poll state transition cannot refresh a stale heartbeat;
+    // an old rich capture cannot invalidate a genuinely fresh heartbeat.
+    const capturedAt = stale ? '2026-10-01T12:00:00.000Z' : '2026-10-01T09:00:05.000Z';
+    getWorkerAutonomyHealthReportMock.mockResolvedValue({
+      ...report,
+      workers: [{
+        ...worker,
+        updatedAt: capturedAt,
+        lastHeartbeatAt: stale ? '2026-10-01T11:58:00.000Z' : '2026-10-01T11:59:55.000Z',
+        snapshot: { ...worker.snapshot, lastPollAt, lastClaimAttemptAt }
+      }]
+    });
+
+    const health = await getWorkerControlHealth();
+
+    expect(health.workers[0]).toMatchObject({
+      updatedAt: capturedAt, lastPollAt, lastClaimAttemptAt, stale,
+      heartbeatAgeMs: stale ? 120_000 : 5_000,
+      operationalStatus: stale ? 'degraded' : 'healthy'
+    });
+    expect(health.overallStatus).toBe(stale ? 'degraded' : 'healthy');
+  });
+
   it.each([[true, 0], [false, 1]])('retains unavailable fleets and stalled queues (all stale: %s, stalled: %s)', async (allStale, stalledRunning) => {
     jest.useFakeTimers().setSystemTime(new Date('2026-10-01T12:00:00.000Z'));
     getWorkerAutonomyHealthReportMock.mockResolvedValue(mixedHeartbeatReport(null, allStale as boolean, stalledRunning as number));

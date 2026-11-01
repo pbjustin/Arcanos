@@ -348,6 +348,82 @@ describe('WorkerRuntimeSnapshotPipeline', () => {
     );
   });
 
+  it('retries failed history on the next identical observation, then resumes idle write suppression', async () => {
+    repositoryAppendHistoryMock.mockRejectedValueOnce(new Error('history unavailable'));
+    const pipeline = new WorkerRuntimeSnapshotPipeline({ coalesceMs: 10_000 });
+    const snapshot = buildSnapshot();
+
+    for (let observation = 0; observation < 3; observation += 1) {
+      pipeline.recordSnapshotIntent(snapshot.workerId, 'worker-idle', snapshot);
+      await pipeline.flushAll('history-retry');
+    }
+
+    expect(repositoryUpsertStateMock).toHaveBeenCalledTimes(2);
+    expect(repositoryAppendHistoryMock).toHaveBeenCalledTimes(2);
+    expect(loggerWarnMock).toHaveBeenCalledWith(
+      'worker.snapshot_pipeline.history.failed',
+      expect.objectContaining({ error: 'history unavailable' })
+    );
+  });
+
+  it('does not invalidate a newer persisted state after an older history write fails late', async () => {
+    let failHistory!: (error: Error) => void;
+    repositoryAppendHistoryMock.mockImplementationOnce(() => new Promise<void>((_resolve, reject) => {
+      failHistory = reject;
+    }));
+    const pipeline = new WorkerRuntimeSnapshotPipeline({ coalesceMs: 10_000 });
+    const first = buildSnapshot();
+    const newer = buildSnapshot({ currentJobId: 'job-1' });
+
+    try {
+      pipeline.recordSnapshotIntent(first.workerId, 'worker-idle', first);
+      await pipeline.flushWorker(first.workerId, 'first');
+      pipeline.recordSnapshotIntent(newer.workerId, 'job-start', newer);
+      await pipeline.flushWorker(newer.workerId, 'newer');
+    } finally {
+      failHistory(new Error('late history failure'));
+      await pipeline.flushAll('drain');
+    }
+    pipeline.recordSnapshotIntent(newer.workerId, 'job-start', newer);
+    await pipeline.flushAll('unchanged');
+
+    expect(repositoryUpsertStateMock).toHaveBeenCalledTimes(2);
+    expect(repositoryAppendHistoryMock).toHaveBeenCalledTimes(2);
+    expect(loggerWarnMock).toHaveBeenCalledWith(
+      'worker.snapshot_pipeline.history.failed',
+      expect.objectContaining({ source: 'worker-idle', error: 'late history failure' })
+    );
+  });
+
+  it('keeps a newer successful A state cached when an older A history fails after A-B-A transitions', async () => {
+    let failHistory!: (error: Error) => void;
+    repositoryAppendHistoryMock.mockImplementationOnce(() => new Promise<void>((_resolve, reject) => {
+      failHistory = reject;
+    }));
+    const pipeline = new WorkerRuntimeSnapshotPipeline({ coalesceMs: 10_000 });
+    const first = buildSnapshot();
+    const changed = buildSnapshot({ currentJobId: 'job-1' });
+
+    try {
+      for (const snapshot of [first, changed, first]) {
+        pipeline.recordSnapshotIntent(snapshot.workerId, 'transition', snapshot);
+        await pipeline.flushWorker(snapshot.workerId, 'transition');
+      }
+    } finally {
+      failHistory(new Error('obsolete A history failure'));
+      await pipeline.flushAll('drain');
+    }
+    pipeline.recordSnapshotIntent(first.workerId, 'worker-idle', first);
+    await pipeline.flushAll('unchanged-newer-A');
+
+    expect(repositoryUpsertStateMock).toHaveBeenCalledTimes(3);
+    expect(repositoryAppendHistoryMock).toHaveBeenCalledTimes(3);
+    expect(loggerWarnMock).toHaveBeenCalledWith(
+      'worker.snapshot_pipeline.history.failed',
+      expect.objectContaining({ error: 'obsolete A history failure' })
+    );
+  });
+
   it('normalizes volatile inspector, watchdog, queue, and stats observations out of the state hash', () => {
     const baseline = buildSnapshot({ source: 'inspector' });
     const volatileOnly = {
