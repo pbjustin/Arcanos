@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { APIConnectionError, APIConnectionTimeoutError } from 'openai/error';
 import { responseCache } from '@platform/resilience/cache.js';
 import {
   instrumentOpenAIOperation,
@@ -77,6 +78,10 @@ const DEFAULT_PROVIDER_PROBE_TIMEOUT_MS = 4_000;
 // meaningful provider timeout.
 const OPENAI_PROVIDER_PROBE_SDK_TIMEOUT_MS = 0x7fffffff;
 let providerRuntimeState: OpenAIProviderRuntimeState | null = null;
+let providerProbeInFlight: {
+  authenticationFingerprint: string;
+  settled: Promise<void>;
+} | null = null;
 
 function createInitialProviderRuntimeState(): OpenAIProviderRuntimeState {
   return {
@@ -299,6 +304,7 @@ function classifyProviderFailure(error: unknown): {
   }
 
   if (
+    error instanceof APIConnectionTimeoutError ||
     normalizedReason.includes('timeout') ||
     normalizedReason.includes('timed out') ||
     normalizedReason.includes('aborted')
@@ -311,6 +317,7 @@ function classifyProviderFailure(error: unknown): {
   }
 
   if (
+    error instanceof APIConnectionError ||
     normalizedReason.includes('econn') ||
     normalizedReason.includes('network') ||
     normalizedReason.includes('socket') ||
@@ -367,7 +374,7 @@ function markProviderFailure(
   const nextRetryAt = new Date(Date.now() + backoffMs).toISOString();
 
   state.lastAttemptAt = context.attemptedAt;
-  state.lastFailureAt = context.attemptedAt;
+  state.lastFailureAt = new Date().toISOString();
   state.lastFailureReason = failure.reason;
   state.lastFailureCategory = failure.category;
   state.lastFailureStatus = failure.status;
@@ -400,7 +407,7 @@ function markProviderSuccess(
 ): OpenAIProviderRuntimeStatus {
   const state = getProviderRuntimeState();
   state.lastAttemptAt = context.attemptedAt;
-  state.lastSuccessAt = context.attemptedAt;
+  state.lastSuccessAt = new Date().toISOString();
   state.lastFailureReason = null;
   state.lastFailureCategory = null;
   state.lastFailureStatus = null;
@@ -412,7 +419,7 @@ function markProviderSuccess(
   logger.info('openai.provider.healthy', {
     module: 'openai.service_health',
     source: context.source,
-    at: context.attemptedAt
+    at: state.lastSuccessAt
   });
 
   return cloneProviderRuntimeState(state);
@@ -474,6 +481,18 @@ export async function probeOpenAIProviderHealth(options: {
   source?: string;
   timeoutMs?: number;
 } = {}): Promise<OpenAIProviderProbeResult> {
+  // A forced startup/recovery request may bypass backoff, but must not start
+  // another transport while a probe is pending. Do not share its promise:
+  // worker-budget admission and failures belong to the initiating context.
+  if (providerProbeInFlight) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: 'provider_probe_in_flight',
+      runtime: cloneProviderRuntimeState(getProviderRuntimeState())
+    };
+  }
+
   const source = options.source ?? 'runtime_probe';
   syncOpenAIProviderRuntime({
     reason: source
@@ -517,15 +536,37 @@ export async function probeOpenAIProviderHealth(options: {
   }
 
   const timeoutMs = Math.max(1_000, options.timeoutMs ?? resolveProviderProbeTimeoutMs());
-  // Keep the failure bound to the configuration that sent this request even
+  // Keep the outcome bound to the configuration that sent this request even
   // if another local reload happens while its transport is pending.
   const attemptedAuthenticationFingerprint = resolveProviderAuthenticationFingerprint();
+  const supersededResult = (outcome: 'succeeded' | 'failed', error?: unknown): OpenAIProviderProbeResult | null => {
+    if (attemptedAuthenticationFingerprint === resolveProviderAuthenticationFingerprint()) return null;
+    const failure = outcome === 'failed' ? classifyProviderFailure(error) : null;
+    logger.warn('openai.provider.probe_superseded', {
+      module: 'openai.service_health',
+      source,
+      reason: 'provider_configuration_changed',
+      outcome,
+      ...(failure ? { category: failure.category, status: failure.status } : {})
+    });
+    return {
+      ok: false,
+      skipped: true,
+      reason: 'provider_configuration_changed',
+      runtime: cloneProviderRuntimeState(getProviderRuntimeState())
+    };
+  };
   const timeoutError = new Error(`OpenAI provider probe timed out after ${timeoutMs}ms`);
   const probeController = new AbortController();
   const probeExecutionContext = getAiExecutionContext();
   const previousTransportReady = probeExecutionContext?.workerBudgetTransportReady;
   let scopedTransportReady: ((operation: string) => void) | undefined;
 
+  let settleProbe!: () => void;
+  providerProbeInFlight = {
+    authenticationFingerprint: attemptedAuthenticationFingerprint,
+    settled: new Promise<void>(resolve => { settleProbe = resolve; })
+  };
   try {
     await runProbeWithTimeout(
       armTimeout => {
@@ -556,6 +597,8 @@ export async function probeOpenAIProviderHealth(options: {
       Boolean(probeExecutionContext?.workerBudget)
     );
 
+    const superseded = supersededResult('succeeded');
+    if (superseded) return superseded;
     return {
       ok: true,
       skipped: false,
@@ -570,6 +613,8 @@ export async function probeOpenAIProviderHealth(options: {
     // failures. Preserve them for the worker's paused-budget control flow and
     // do not poison the shared provider backoff/circuit state.
     rethrowWorkerAiBudgetError(error);
+    const superseded = supersededResult('failed', error);
+    if (superseded) return superseded;
     return {
       ok: false,
       skipped: false,
@@ -581,12 +626,14 @@ export async function probeOpenAIProviderHealth(options: {
       })
     };
   } finally {
+    providerProbeInFlight = null;
     if (
       probeExecutionContext
       && probeExecutionContext.workerBudgetTransportReady === scopedTransportReady
     ) {
       probeExecutionContext.workerBudgetTransportReady = previousTransportReady;
     }
+    settleProbe();
   }
 }
 
@@ -602,6 +649,19 @@ export async function reinitializeOpenAIProvider(options: {
     forceReload: options.forceReload ?? true,
     reason: source
   });
+  const pendingProbe = providerProbeInFlight;
+  const requestedAuthenticationFingerprint = resolveProviderAuthenticationFingerprint();
+  if (pendingProbe && pendingProbe.authenticationFingerprint !== requestedAuthenticationFingerprint) {
+    // Keep the one replacement probe inside this explicit caller's lifetime
+    // and budget context. Settlement carries no other caller's health/budget result.
+    await pendingProbe.settled;
+    if (requestedAuthenticationFingerprint !== resolveProviderAuthenticationFingerprint()) {
+      return {
+        ok: false, skipped: true, reason: 'provider_configuration_changed',
+        runtime: cloneProviderRuntimeState(getProviderRuntimeState()), reloaded: reload.reloaded
+      };
+    }
+  }
   const state = getProviderRuntimeState();
 
   // A local client reload cannot repair revoked credentials. Self-healing can

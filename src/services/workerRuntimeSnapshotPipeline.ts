@@ -44,9 +44,12 @@ interface PendingSnapshotIntent {
   timer: TimerHandle | null;
 }
 
+interface PersistedSnapshotState {
+  readonly stateHash: string;
+}
+
 const DEFAULT_SNAPSHOT_PIPELINE_COALESCE_MS = 2_000;
 const DEFAULT_SKIP_LOG_MIN_INTERVAL_MS = 60_000;
-const POLL_DIAGNOSTIC_HASH_BUCKET_MS = 30_000;
 
 const defaultDependencies: WorkerRuntimeSnapshotPipelineDependencies = {
   recordLiveness: recordWorkerLiveness,
@@ -82,7 +85,7 @@ export class WorkerRuntimeSnapshotPipeline {
   private readonly skipLogMinIntervalMs: number;
   private readonly dependencies: WorkerRuntimeSnapshotPipelineDependencies;
   private readonly pendingByWorkerId = new Map<string, PendingSnapshotIntent>();
-  private readonly lastPersistedStateHashByWorkerId = new Map<string, string>();
+  private readonly lastPersistedStateByWorkerId = new Map<string, PersistedSnapshotState>();
   private readonly inFlightStateHashByWorkerId = new Map<string, string>();
   private readonly skippedWritesByWorkerId = new Map<string, number>();
   private readonly lastSkipLogAtMsByWorkerId = new Map<string, number>();
@@ -138,7 +141,7 @@ export class WorkerRuntimeSnapshotPipeline {
     const nowMs = this.dependencies.nowMs();
     const normalizedSource = source || 'unspecified';
     const stateHash = buildWorkerRuntimeSnapshotStateHash(snapshot);
-    const lastPersistedStateHash = this.lastPersistedStateHashByWorkerId.get(workerId);
+    const lastPersistedStateHash = this.lastPersistedStateByWorkerId.get(workerId)?.stateHash;
     const existingIntent = this.pendingByWorkerId.get(workerId);
 
     if (!existingIntent) {
@@ -186,7 +189,7 @@ export class WorkerRuntimeSnapshotPipeline {
     }
     this.pendingByWorkerId.delete(workerId);
 
-    const lastPersistedStateHash = this.lastPersistedStateHashByWorkerId.get(workerId);
+    const lastPersistedStateHash = this.lastPersistedStateByWorkerId.get(workerId)?.stateHash;
     if (lastPersistedStateHash === pendingIntent.stateHash) {
       this.recordSkippedSnapshot(pendingIntent.snapshot, pendingIntent.source, 'no_meaningful_delta');
       return;
@@ -200,7 +203,8 @@ export class WorkerRuntimeSnapshotPipeline {
         preserveLegacySnapshot: this.preserveLegacySnapshot
       });
       recordWorkerRuntimeStateWrite({ outcome: 'ok', source: pendingIntent.source });
-      this.lastPersistedStateHashByWorkerId.set(workerId, pendingIntent.stateHash);
+      const persistedState = { stateHash: pendingIntent.stateHash };
+      this.lastPersistedStateByWorkerId.set(workerId, persistedState);
       this.skippedWritesByWorkerId.set(workerId, 0);
       this.lastSkipLogAtMsByWorkerId.delete(workerId);
       logger.debug('worker.snapshot_pipeline.state.persisted', {
@@ -213,7 +217,7 @@ export class WorkerRuntimeSnapshotPipeline {
       });
 
       if (this.historyEnabled) {
-        this.enqueueHistoryWrite(pendingIntent);
+        this.enqueueHistoryWrite(pendingIntent, persistedState);
       }
     } catch (error: unknown) {
       recordWorkerRuntimeStateWrite({ outcome: 'error', source: pendingIntent.source });
@@ -269,13 +273,18 @@ export class WorkerRuntimeSnapshotPipeline {
     }
   }
 
-  private enqueueHistoryWrite(pendingIntent: PendingSnapshotIntent): void {
+  private enqueueHistoryWrite(pendingIntent: PendingSnapshotIntent, persistedState: PersistedSnapshotState): void {
     const historyWrite = this.dependencies.appendHistory(pendingIntent.snapshot, {
       source: pendingIntent.source,
       stateHash: pendingIntent.stateHash
     }).then(() => {
       recordWorkerRuntimeHistoryWrite({ outcome: 'ok', source: pendingIntent.source });
     }).catch((error: unknown) => {
+      // Let the next ordinary observation retry the current state/history pair.
+      // Entry identity fences older failures even when a newer state has the same hash.
+      if (this.lastPersistedStateByWorkerId.get(pendingIntent.workerId) === persistedState) {
+        this.lastPersistedStateByWorkerId.delete(pendingIntent.workerId);
+      }
       recordWorkerRuntimeHistoryWrite({ outcome: 'error', source: pendingIntent.source });
       logger.warn('worker.snapshot_pipeline.history.failed', {
         module: 'worker-runtime',
@@ -348,8 +357,8 @@ function normalizeWorkerRuntimeSnapshotPayloadForHash(
     activeJobs: snapshot.activeJobs,
     dispatcherStarted: snapshot.dispatcherStarted,
     activeListeners: snapshot.activeListeners,
-    lastPollDiagnosticBucket: normalizeTimestampBucket(snapshot.lastPollAt),
-    lastClaimAttemptDiagnosticBucket: normalizeTimestampBucket(snapshot.lastClaimAttemptAt),
+    // Poll/claim timestamps describe observation freshness, not a state transition.
+    // Durable heartbeat freshness is maintained independently in worker_liveness.
     lastClaimResult: snapshot.lastClaimResult,
     disabledReason: snapshot.disabledReason,
     processedJobs: snapshot.processedJobs,
@@ -367,17 +376,6 @@ function normalizeWorkerRuntimeSnapshotPayloadForHash(
     statsWorkerId: snapshot.statsWorkerId,
     watchdog: normalizeWatchdogSnapshotForHash(snapshot.watchdog)
   };
-}
-
-function normalizeTimestampBucket(value: unknown): number | null {
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    return null;
-  }
-
-  const parsedMs = Date.parse(value);
-  return Number.isFinite(parsedMs)
-    ? Math.floor(parsedMs / POLL_DIAGNOSTIC_HASH_BUCKET_MS)
-    : null;
 }
 
 function normalizeWatchdogSnapshotForHash(value: unknown): Record<string, unknown> | null {

@@ -256,6 +256,15 @@ jobs:
           docker build -t arcanos-test .
           echo "✅ Docker build successful"
 
+      - name: Verify production build identity against the actual image
+        timeout-minutes: 2
+        run: |
+          docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --tmpfs /tmp:rw,nosuid,nodev,size=256m,mode=1777 \
+            --mount "type=bind,src=$GITHUB_WORKSPACE/tests/fixtures/production-build-identity-artifact.mjs,dst=/fixture.mjs,readonly" \
+            --entrypoint /usr/bin/env arcanos-test -i PATH=/usr/local/bin:/usr/bin:/bin \
+            node /fixture.mjs --isolated-image
+
       - name: Verify isolated self-heal preview image artifact and executable ownership
         timeout-minutes: 10
         run: |
@@ -824,6 +833,10 @@ jobs:
         postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
       JOB_WORKER_BUDGET_TEST_DATABASE_URL: >-
         postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
+      WORKER_RUNTIME_TEST_DATABASE_URL: >-
+        postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
+      WORKER_RUNTIME_STARTUP_TEST_DATABASE_URL: >-
+        postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5433/arcanos_audit_pg18_20260727
       JOB_STALE_RECOVERY_TEST_DATABASE_URL: >-
         postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
       BACKSTAGE_AUTHORITY_WAIT_TEST_DATABASE_URL: >-
@@ -861,8 +874,8 @@ jobs:
       - name: 📦 Install dependencies
         run: npm ci
 
-      - name: Build shared packages for PostgreSQL HTTP consumers
-        run: npm run build:packages
+      - name: Build the worker and shared packages for PostgreSQL consumers
+        run: npm run build
 
       - name: Verify session persistence and readiness after pool restart
         timeout-minutes: 5

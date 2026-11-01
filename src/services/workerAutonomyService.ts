@@ -751,7 +751,7 @@ export class WorkerAutonomyService {
     const attemptedAt = new Date().toISOString();
     this.state.lastPollAt = attemptedAt;
     this.state.lastClaimAttemptAt = attemptedAt;
-    this.state.lastClaimResult = 'claim_attempt';
+    // Keep the last completed result when an independent heartbeat flushes during the claim.
   }
 
   recordClaimResult(result: string): void {
@@ -2142,7 +2142,7 @@ function mergeWorkerLivenessSnapshots(
         ...existingWorker,
         healthStatus: liveness.healthStatus || existingWorker.healthStatus,
         lastHeartbeatAt: liveness.lastSeenAt,
-        updatedAt: liveness.lastSeenAt,
+        // A heartbeat refreshes liveness, not the rich snapshot's capture time.
         snapshot: {
           ...existingWorker.snapshot,
           livenessLastSeenAt: liveness.lastSeenAt
@@ -2160,6 +2160,7 @@ function mergeWorkerLivenessSnapshots(
       startedAt: null,
       lastHeartbeatAt: liveness.lastSeenAt,
       lastInspectorRunAt: null,
+      // No rich capture exists: this timestamp describes only the liveness record.
       updatedAt: liveness.lastSeenAt,
       snapshot: {
         activeJobs: [],

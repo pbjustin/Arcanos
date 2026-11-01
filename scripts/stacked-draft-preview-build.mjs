@@ -69,12 +69,17 @@ export async function materializeGamingSourceArchive({ candidate, file, spawnArc
     bounded.destroy(boundaryFailure);
     child.kill('SIGKILL');
   }, timeoutMs);
+  const streamed = pipeline(child.stdout, bounded, output);
   try {
-    await Promise.all([pipeline(child.stdout, bounded, output), exited]);
+    await Promise.all([streamed, exited]);
     requireCondition(bytes > 0, 'GAMING_BUILD_SOURCE_ARCHIVE_READ_FAILED');
     return { sha256: hash.digest('hex'), bytes };
   } catch (error) {
+    clearTimeout(timer);
     child.kill('SIGKILL');
+    // A process failure may win before the output's asynchronous open/close.
+    // Drain that owned stream before callers can remove or reuse its directory.
+    await streamed.catch(() => {});
     // Killing Git can settle its nonzero close before the stream's original
     // limit/deadline error reaches pipeline(). Preserve the initiating boundary
     // failure rather than misclassifying that cleanup consequence as a read error.

@@ -225,6 +225,109 @@ describe('worker OpenAI budget wiring', () => {
     expect(nativeFetch).toHaveBeenCalledTimes(1);
   });
 
+  it('skips concurrent probes without sharing worker admission, then enforces the next worker budget', async () => {
+    let release!: () => void;
+    const response = new Promise<Response>(resolve => {
+      release = () => resolve(modelListResponse());
+    });
+    const nativeFetch = jest.fn(() => response);
+    configureWorkerOpenAI(nativeFetch);
+    const initiatingContext = createWorkerContext();
+    const concurrentContext = createWorkerContext();
+    const first = runWithAiExecutionContext(initiatingContext, () => probeOpenAIProviderHealth({
+      force: true, source: 'job_runner:initiating_probe'
+    }));
+    try {
+      for (let turn = 0; nativeFetch.mock.calls.length === 0; turn += 1) {
+        if (turn === 1000) throw new Error('first probe never reached native transport');
+        await new Promise<void>(resolve => setImmediate(resolve));
+      }
+      const healthBefore = getOpenAIProviderRuntimeStatus();
+      await expect(runWithAiExecutionContext(concurrentContext, () => probeOpenAIProviderHealth({
+        force: true, source: 'job_runner:concurrent_probe'
+      }))).resolves.toMatchObject({
+        ok: false, skipped: true, reason: 'provider_probe_in_flight', runtime: healthBefore
+      });
+      expect(getOpenAIProviderRuntimeStatus()).toEqual(healthBefore);
+      expect(reserveWorkerAiProviderAttemptMock).toHaveBeenCalledTimes(1);
+      expect(nativeFetch).toHaveBeenCalledTimes(1);
+      expect(concurrentContext.totals.calls).toBe(0);
+      expect(concurrentContext.workerBudgetFailure).toBeNull();
+    } finally {
+      release();
+      await first;
+    }
+
+    reserveWorkerAiProviderAttemptMock.mockResolvedValueOnce({
+      ...admittedReservation(), allowed: false, used: 2, remaining: 0,
+      nextAvailableAt: '2026-08-30T15:00:00.000Z'
+    });
+    await expect(runWithAiExecutionContext(concurrentContext, () => probeOpenAIProviderHealth({
+      force: true, source: 'job_runner:subsequent_probe'
+    }))).rejects.toBeInstanceOf(WorkerAiCallBudgetPausedError);
+    expect(reserveWorkerAiProviderAttemptMock).toHaveBeenCalledTimes(2);
+    expect(nativeFetch).toHaveBeenCalledTimes(1);
+    expect(concurrentContext.workerBudgetFailure).toBeInstanceOf(WorkerAiCallBudgetPausedError);
+  });
+
+  it.each([true, false])('admits a replacement-provider follow-up in its own worker budget (allowed: %s)', async allowed => {
+    let release!: () => void;
+    const response = new Promise<Response>(resolve => {
+      release = () => resolve(modelListResponse());
+    });
+    const requestedUrls: string[] = [];
+    const nativeFetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      requestedUrls.push(new Request(input, init).url);
+      return requestedUrls.length === 1 ? response : Promise.resolve(modelListResponse());
+    });
+    configureWorkerOpenAI(nativeFetch, { baseURL: 'https://initial.openai.test/v1' });
+    const initiatingContext = createWorkerContext();
+    const replacementContext = createWorkerContext();
+    const first = runWithAiExecutionContext(initiatingContext, () => probeOpenAIProviderHealth({
+      force: true, source: 'job_runner:initial_provider'
+    }));
+    let replacement: ReturnType<typeof reinitializeOpenAIProvider> | undefined;
+
+    try {
+      for (let turn = 0; nativeFetch.mock.calls.length === 0; turn += 1) {
+        if (turn === 1000) throw new Error('initial probe never reached native transport');
+        await new Promise<void>(resolve => setImmediate(resolve));
+      }
+      configureWorkerOpenAI(nativeFetch, {
+        apiKey: buildSyntheticOpenAIKey('replacement-budget'), baseURL: 'https://replacement.openai.test/v1'
+      });
+      reserveWorkerAiProviderAttemptMock.mockResolvedValueOnce(allowed ? admittedReservation() : {
+        ...admittedReservation(), allowed: false, used: 2, remaining: 0,
+        nextAvailableAt: '2026-08-30T15:00:00.000Z'
+      });
+      replacement = runWithAiExecutionContext(replacementContext, () => reinitializeOpenAIProvider({
+        ignoreBackoff: true, source: 'job_runner:replacement_provider'
+      }));
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(nativeFetch).toHaveBeenCalledTimes(1);
+      expect(reserveWorkerAiProviderAttemptMock).toHaveBeenCalledTimes(1);
+      expect(replacementContext.totals.calls).toBe(0);
+      release();
+      await Promise.all([
+        expect(first).resolves.toMatchObject({ skipped: true, reason: 'provider_configuration_changed' }),
+        allowed ? expect(replacement).resolves.toMatchObject({ ok: true, skipped: false })
+          : expect(replacement).rejects.toBeInstanceOf(WorkerAiCallBudgetPausedError)
+      ]);
+      expect(reserveWorkerAiProviderAttemptMock).toHaveBeenCalledTimes(2);
+      expect(nativeFetch).toHaveBeenCalledTimes(allowed ? 2 : 1);
+      expect(initiatingContext.workerBudgetFailure).toBeNull();
+      if (allowed) {
+        expect(requestedUrls[1]).toBe('https://replacement.openai.test/v1/models');
+        expect(replacementContext.totals.calls).toBe(1);
+      } else {
+        expect(replacementContext.workerBudgetFailure).toBeInstanceOf(WorkerAiCallBudgetPausedError);
+      }
+    } finally {
+      release();
+      await Promise.allSettled([first, ...(replacement ? [replacement] : [])]);
+    }
+  });
+
   it('rotates the configured unified client before one metered recovery probe', async () => {
     const rotatedApiKey = buildSyntheticOpenAIKey('worker-budget-rotated');
     const observedRequests: Request[] = [];

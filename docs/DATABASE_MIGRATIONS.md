@@ -16,6 +16,36 @@ and rollback after a real SQL failure.
 ## Overview
 Arcanos uses PostgreSQL when `DATABASE_URL` or equivalent `PG*` variables are configured. Without a database, several backend paths continue in reduced or in-memory mode, but queued async jobs and durable inspection require PostgreSQL.
 
+Worker liveness and rich runtime-state persistence have separate contracts.
+`worker_liveness` keeps heartbeat freshness independently of the snapshot hash.
+Poll/claim diagnostic timestamps alone do not create a state/history transition;
+their persisted values reflect the last meaningful snapshot capture. `lastClaimResult`
+retains the last completed result while a claim is pending; attempt timestamps
+continue advancing without creating a transient state/history transition. Restart,
+dependency, admission, watchdog and job-state changes remain observable. The
+existing state upsert still preserves the atomic legacy snapshot compatibility
+path. Consumers must use the liveness overlay for freshness, rather than the
+age of a poll timestamp in an otherwise unchanged rich snapshot. The liveness
+overlay preserves an existing rich snapshot's `updatedAt` capture time;
+heartbeat freshness uses `lastHeartbeatAt` and `livenessLastSeenAt`. `lastPollAt` and
+`lastClaimAttemptAt` remain real observations captured with that snapshot;
+heartbeats and non-poll state changes do not advance them. The latest
+unpersisted poll is unknown to cross-process readers. A liveness-only worker
+record has no rich capture or poll evidence: its `updatedAt` describes that
+liveness observation and its poll/claim timestamps remain absent or null.
+History append remains best-effort and reports failures. A failed append for
+the current state invalidates its deduplication cache so the next ordinary
+observation retries the state/history pair. This adds no scheduled retry and
+does not replay an obsolete transition after a newer state has persisted.
+
+Database query telemetry separates `connectionAcquireMs` from
+`clientQueryRoundTripMs` and `appWallClockMs`. The compatibility `executionMs`
+alias is client round-trip time, including network/driver/server time; it is
+not PostgreSQL execution time. `postgresExecutionMs: null` and
+`postgresExecutionKnown: false` explicitly identify unavailable server timing.
+Synthetic adapter latency comparisons cannot establish production or PostgreSQL
+execution latency. No migration is needed for these persistence/telemetry rules.
+
 ## Paired iPhone credentials
 
 `migrations/20260911_gpt_access_devices_v1.sql` adds `gpt_access_device_pairings`

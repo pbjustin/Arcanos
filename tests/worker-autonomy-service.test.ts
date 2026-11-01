@@ -92,6 +92,7 @@ const {
 const {
   buildAuthoritySynchronizationWorkerAiCallBudget
 } = await import('../src/workers/jobRunnerRuntime.js');
+const { WorkerRuntimeSnapshotPipeline } = await import('../src/services/workerRuntimeSnapshotPipeline.js');
 
 const workerTimingEnvKeys = [
   'JOB_WORKER_HEARTBEAT_MS',
@@ -734,6 +735,54 @@ describe('workerAutonomyService', () => {
         currentJobId: null
       })
     ]);
+  });
+
+  it('preserves the rich capture time and real poll observations when overlaying newer liveness', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-10-31T12:00:00.000Z'));
+    const capturedAt = '2026-10-31T09:00:00.000Z';
+    const lastPollAt = '2026-10-31T08:59:55.000Z';
+    const lastSeenAt = '2026-10-31T11:59:55.000Z';
+    const stored = {
+      workerId: 'async-queue-slot-1', workerType: 'async_queue', healthStatus: 'healthy',
+      currentJobId: null, lastError: null, startedAt: capturedAt,
+      lastHeartbeatAt: capturedAt, lastInspectorRunAt: capturedAt, updatedAt: capturedAt,
+      snapshot: { dispatcherStarted: true, activeListeners: 1, lastPollAt, lastClaimAttemptAt: lastPollAt }
+    };
+    listWorkerRuntimeSnapshotsMock.mockResolvedValue([stored]);
+    listWorkerLivenessMock.mockResolvedValue([{ workerId: stored.workerId, healthStatus: 'healthy', lastSeenAt }]);
+
+    try {
+      const report = await getWorkerAutonomyHealthReport();
+
+      expect(report.overallStatus).toBe('healthy');
+      expect(report.workers[0]).toMatchObject({
+        updatedAt: capturedAt, lastHeartbeatAt: lastSeenAt,
+        snapshot: { lastPollAt, lastClaimAttemptAt: lastPollAt, livenessLastSeenAt: lastSeenAt }
+      });
+      expect(stored.updatedAt).toBe(capturedAt);
+      expect(stored.lastHeartbeatAt).toBe(capturedAt);
+      expect(upsertWorkerRuntimeSnapshotMock).not.toHaveBeenCalled();
+      expect(upsertWorkerRuntimeStateMock).not.toHaveBeenCalled();
+      expect(appendWorkerRuntimeHistoryMock).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('keeps heartbeat-only observations explicit without inventing poll or claim timestamps', async () => {
+    const lastSeenAt = new Date().toISOString();
+    listWorkerLivenessMock.mockResolvedValue([{
+      workerId: 'async-queue-slot-1', healthStatus: 'healthy', lastSeenAt
+    }]);
+
+    const report = await getWorkerAutonomyHealthReport();
+
+    expect(report.workers[0]).toMatchObject({
+      startedAt: null, updatedAt: lastSeenAt, lastHeartbeatAt: lastSeenAt,
+      snapshot: { livenessLastSeenAt: lastSeenAt }
+    });
+    expect(report.workers[0]?.snapshot).not.toHaveProperty('lastPollAt');
+    expect(report.workers[0]?.snapshot).not.toHaveProperty('lastClaimAttemptAt');
   });
 
   it('schedules retries for transient failures before exhausting the retry budget', async () => {
@@ -3097,6 +3146,195 @@ describe('workerAutonomyService', () => {
     expect(upsertWorkerRuntimeSnapshotMock).not.toHaveBeenCalled();
 
     await service.flushSnapshotPipeline('test-cleanup');
+  });
+
+  it('does not invent a completed result when the first claim spans a heartbeat flush', async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(Date.parse('2026-10-31T00:00:00.000Z'));
+    const pipeline = new WorkerRuntimeSnapshotPipeline({
+      coalesceMs: 2_000,
+      dependencies: { setTimeout, clearTimeout }
+    });
+    const snapshotIntents = jest.spyOn(pipeline, 'recordSnapshotIntent');
+    const service = new WorkerAutonomyService(getWorkerAutonomySettings({
+      workerId: 'first-claim-heartbeat-slot'
+    }), pipeline);
+
+    try {
+      await service.recordWorkerHeartbeat();
+      await jest.advanceTimersByTimeAsync(2_001);
+      service.recordClaimAttempt();
+      await service.recordWorkerHeartbeat();
+      await jest.advanceTimersByTimeAsync(2_001);
+      await pipeline.flushAll('pending-first-claim');
+
+      expect(upsertWorkerRuntimeStateMock).toHaveBeenCalledTimes(1);
+      expect(appendWorkerRuntimeHistoryMock).toHaveBeenCalledTimes(1);
+      expect(upsertWorkerRuntimeStateMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ snapshot: expect.objectContaining({ lastClaimResult: null }) }),
+        expect.anything()
+      );
+      expect(recordWorkerLivenessMock).toHaveBeenCalledTimes(2);
+      expect(snapshotIntents).toHaveBeenLastCalledWith(
+        'first-claim-heartbeat-slot', 'worker-heartbeat',
+        expect.objectContaining({ snapshot: expect.objectContaining({
+          lastClaimResult: null,
+          lastPollAt: '2026-10-31T00:00:02.001Z',
+          lastClaimAttemptAt: '2026-10-31T00:00:02.001Z'
+        }) })
+      );
+    } finally {
+      await pipeline.shutdown('test-cleanup');
+      jest.useRealTimers();
+    }
+  });
+
+  it('retains the last completed claim result across heartbeats while repeated claims are pending', async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(Date.parse('2026-10-31T00:00:00.000Z'));
+    const pipeline = new WorkerRuntimeSnapshotPipeline({
+      coalesceMs: 2_000,
+      dependencies: { setTimeout, clearTimeout }
+    });
+    const service = new WorkerAutonomyService(getWorkerAutonomySettings({
+      workerId: 'pending-claim-heartbeat-slot', heartbeatIntervalMs: 1_000
+    }), pipeline);
+    const stateWritesWhilePending: number[] = [];
+    const stateWritesAfterCompletion: number[] = [];
+
+    try {
+      service.recordClaimResult('no_job_available');
+      await service.markIdle();
+      await service.recordWorkerHeartbeat();
+      await pipeline.flushAll('initial-completed-claim');
+
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        let finishClaim!: () => void;
+        const claimQuery = new Promise<void>(resolve => { finishClaim = resolve; });
+        service.recordClaimAttempt();
+        const completion = claimQuery.then(async () => {
+          service.recordClaimResult('no_job_available');
+          await service.markIdle();
+        });
+        try {
+          await service.recordWorkerHeartbeat();
+          await jest.advanceTimersByTimeAsync(2_001);
+          await pipeline.flushAll('claim-query-still-pending');
+          stateWritesWhilePending.push(upsertWorkerRuntimeStateMock.mock.calls.length);
+        } finally {
+          finishClaim();
+          await completion;
+        }
+        await pipeline.flushAll('claim-query-completed');
+        stateWritesAfterCompletion.push(upsertWorkerRuntimeStateMock.mock.calls.length);
+      }
+
+      expect(stateWritesWhilePending).toEqual([1, 1, 1]);
+      expect(stateWritesAfterCompletion).toEqual([1, 1, 1]);
+      expect(appendWorkerRuntimeHistoryMock).toHaveBeenCalledTimes(1);
+      expect(recordWorkerLivenessMock).toHaveBeenCalledTimes(4);
+      expect(recordWorkerLivenessMock).toHaveBeenLastCalledWith({
+        workerId: 'pending-claim-heartbeat-slot', healthStatus: 'healthy',
+        lastSeenAt: '2026-10-31T00:00:04.002Z'
+      });
+
+      service.recordClaimResult('budget_paused');
+      await service.recordWorkerHeartbeat();
+      await jest.advanceTimersByTimeAsync(2_001);
+      service.recordClaimAttempt();
+      await service.recordWorkerHeartbeat();
+      await jest.advanceTimersByTimeAsync(2_001);
+      expect(upsertWorkerRuntimeStateMock).toHaveBeenCalledTimes(2);
+      expect(upsertWorkerRuntimeStateMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ snapshot: expect.objectContaining({ lastClaimResult: 'budget_paused' }) }),
+        expect.anything()
+      );
+
+      service.recordClaimResult('claimed_job');
+      await service.recordWorkerHeartbeat();
+      await jest.advanceTimersByTimeAsync(2_001);
+      await pipeline.flushAll('completed-claim-transition');
+      expect(upsertWorkerRuntimeStateMock).toHaveBeenCalledTimes(3);
+      expect(appendWorkerRuntimeHistoryMock).toHaveBeenCalledTimes(3);
+      expect(upsertWorkerRuntimeStateMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ snapshot: expect.objectContaining({ lastClaimResult: 'claimed_job' }) }),
+        expect.anything()
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      await pipeline.shutdown('test-cleanup');
+      jest.useRealTimers();
+    }
+  });
+
+  it('keeps polling and heartbeat observations out of rich state writes through the real V2 pipeline', async () => {
+    jest.useFakeTimers();
+    const startMs = Date.parse('2026-10-31T00:00:00.000Z');
+    jest.setSystemTime(startMs);
+    const pipeline = new WorkerRuntimeSnapshotPipeline({ coalesceMs: 10_000 });
+    const service = new WorkerAutonomyService(getWorkerAutonomySettings({
+      workerId: 'idle-regression-slot-1',
+      heartbeatIntervalMs: 5_000,
+      staleAfterMs: 45_000
+    }), pipeline);
+
+    try {
+      for (let elapsedMs = 0; elapsedMs <= 5 * 60 * 1_000; elapsedMs += 5_000) {
+        jest.setSystemTime(startMs + elapsedMs);
+        service.recordClaimAttempt();
+        service.recordClaimResult('no_job_available');
+        await service.recordWorkerHeartbeat();
+        await service.markIdle();
+        await pipeline.flushAll('idle-regression');
+      }
+
+      expect(recordWorkerLivenessMock).toHaveBeenCalledTimes(61);
+      expect(recordWorkerLivenessMock).toHaveBeenLastCalledWith({
+        workerId: 'idle-regression-slot-1',
+        healthStatus: 'healthy',
+        lastSeenAt: '2026-10-31T00:05:00.000Z'
+      });
+      expect(upsertWorkerRuntimeStateMock).toHaveBeenCalledTimes(1);
+      expect(appendWorkerRuntimeHistoryMock).toHaveBeenCalledTimes(1);
+      expect(upsertWorkerRuntimeSnapshotMock).not.toHaveBeenCalled();
+      expect(upsertWorkerRuntimeStateMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          updatedAt: '2026-10-31T00:00:00.000Z',
+          snapshot: expect.objectContaining({
+            lastPollAt: '2026-10-31T00:00:00.000Z',
+            lastClaimAttemptAt: '2026-10-31T00:00:00.000Z'
+          })
+        }), expect.anything()
+      );
+
+      await service.setClaimAcceptanceState('dependency_failure', { reason: 'database unavailable' });
+      jest.setSystemTime(startMs + 6 * 60 * 1_000);
+      await service.setClaimAcceptanceState('accepting');
+      await pipeline.flushAll('recovered');
+
+      expect(upsertWorkerRuntimeStateMock).toHaveBeenCalledTimes(3);
+      expect(appendWorkerRuntimeHistoryMock).toHaveBeenCalledTimes(3);
+      expect(upsertWorkerRuntimeStateMock).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ healthStatus: 'unhealthy' }),
+        expect.objectContaining({ source: 'claim-acceptance-dependency_failure' })
+      );
+      expect(upsertWorkerRuntimeStateMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          healthStatus: 'healthy', updatedAt: '2026-10-31T00:06:00.000Z',
+          lastHeartbeatAt: '2026-10-31T00:05:00.000Z',
+          snapshot: expect.objectContaining({
+            lastPollAt: '2026-10-31T00:05:00.000Z',
+            lastClaimAttemptAt: '2026-10-31T00:05:00.000Z'
+          })
+        }),
+        expect.objectContaining({ source: 'claim-acceptance-recovered' })
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      await pipeline.shutdown('test-cleanup');
+      jest.useRealTimers();
+    }
   });
 
   it('routes worker heartbeat through V2 liveness without forcing rich snapshot persistence', async () => {

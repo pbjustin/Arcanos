@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { createHash } from 'node:crypto';
 import { PassThrough, Readable } from 'node:stream';
 import { tmpdir } from 'node:os';
+import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import { test } from 'node:test';
 import { createGamingCompiledManifest, sha256, validateGamingBuildAuthorization,
@@ -136,6 +138,56 @@ test('Gaming source materialization fails closed on byte cap, deadline and faile
     await assert.rejects(materializeGamingSourceArchive({ candidate: authorization.headSha, file: path.join(root, 'raised.tar'),
       maxBytes: 512 * 1024 * 1024 + 1 }), /SOURCE_ARCHIVE_BOUND_INVALID/u);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('failed Git materialization drains a pending native output open and close before rejecting', { timeout: 5000 }, async context => {
+  const root = fixture();
+  const createOutput = fs.createWriteStream;
+  const openOutput = fs.open;
+  let output;
+  let releaseOpen;
+  let markOpenRequested;
+  let markClosed;
+  let rejected = false;
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  const openRequested = new Promise(resolve => { markOpenRequested = resolve; });
+  const closed = new Promise(resolve => { markClosed = resolve; });
+  fs.createWriteStream = (file, options) => {
+    output = createOutput(file, { ...options, fs: { ...fs, open: (...args) => {
+      releaseOpen = () => openOutput(...args);
+      markOpenRequested();
+    } } });
+    output.once('close', markClosed);
+    return output;
+  };
+  syncBuiltinESMExports();
+  let materialization;
+  try {
+    materialization = materializeGamingSourceArchive({ candidate: authorization.headSha,
+      file: path.join(root, 'late-open.tar'), timeoutMs: 5, spawnArchive: () => {
+        const child = archiveProcess(Readable.from([Buffer.from('partial')]), false);
+        setImmediate(() => child.emit('close', 1));
+        return child;
+      } });
+    void materialization.catch(() => { rejected = true; });
+    await openRequested;
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(output.pending, true);
+    assert.equal(output.closed, false);
+    assert.equal(rejected, false, 'materialization returned before its pending output was closed');
+    // Cleanup must not turn an already-observed Git failure into a later timeout.
+    context.mock.timers.tick(5);
+    releaseOpen(); releaseOpen = undefined;
+    await assert.rejects(materialization, /GAMING_BUILD_SOURCE_ARCHIVE_READ_FAILED/u);
+    assert.equal(output.closed, true);
+  } finally {
+    releaseOpen?.();
+    if (materialization) await materialization.catch(() => {});
+    if (output) await closed;
+    fs.createWriteStream = createOutput;
+    syncBuiltinESMExports();
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('archive timeout classification survives Git closing synchronously during the deadline kill', async () => {

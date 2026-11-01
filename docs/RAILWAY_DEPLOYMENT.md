@@ -122,6 +122,43 @@ switch back to `false` restores the retained legacy selection on a compatible
 revision. Follow the linked migration gates and existing approved drain and
 activation procedure; implementation and synthetic validation do not authorize
 variable changes, restarts, deployment, or paid-provider evaluation.
+### Build identity and source references
+
+`npm run build` writes `dist/build-identity.json` through its `postbuild` hook.
+The normal role launcher reports `build.identity` once before starting the
+application. It remeasures the fixed source/build-input inventory and emitted
+workspace bytes against that receipt. `sourceDigest` is this application's
+SHA-256 inventory digest, **not** Railway's uploaded snapshot or container-image
+digest. `buildId` identifies the receipt's source, emitted bytes and references.
+This is artifact observation, not a signed external attestation, dependency
+integrity proof or the protected-configuration digest gate.
+
+The source inventory includes code/build inputs under `vendor/`, including
+checked-in `vendor/*/dist`, and `arcanos-ai-runtime/src`. It explicitly includes
+`prisma/schema.prisma` and the standalone runtime's `package.json`,
+`package-lock.json`, and `tsconfig.json`. Generated root/workspace `dist` output
+is excluded from the source inventory and measured separately by the emitted
+artifact inventory. The fixed inventories do not traverse runtime volumes;
+`node_modules` and dotenv paths are excluded from the source inventory before
+their contents are read.
+
+`gitSha` is populated only when a complete local Git checkout matches every
+tracked blob and contains no pending changes. Docker/source snapshots without
+Git metadata report it as null. `configuredGitSha` and `buildConfiguredGitSha`
+are platform references, never proof of the deployed commit. A build/runtime
+reference disagreement or a reference conflicting with a verified checkout
+reports `mismatch`; changed source/emitted bytes also report `mismatch` and
+withhold `gitSha`. Missing or malformed receipts warn as `unverified` without
+preventing startup. No runtime configuration, credentials or per-file hashes
+are logged. Native contained previews return before this observer is imported.
+
+Compare the startup receipt with the exact deployment's build logs, source
+snapshot digest and image digest. Without an independent mapping between those
+artifacts and a Git commit, the deployed commit remains unknown. Historical
+service configuration and recent-looking log fields do not establish that
+mapping or a count of commits behind main. Existing canonical start and
+protected-digest gates remain required; this observer does not replace them.
+
 Tracked Railway config (source: `railway.json`):
 - Build: `npm ci --include=dev --no-audit --no-fund && npm run build`
 - Start: `node scripts/start-railway-service-with-integrity.mjs`
@@ -930,7 +967,7 @@ Launcher behavior:
   any required maintenance separately against an explicitly confirmed
   database target under the operational approval gate.
 - Importing shared GPT dispatch or worker configuration code does not start the separate in-process EventEmitter runtime. That runtime is bootstrapped only by the explicit local/direct API lifecycle when configured.
-- The application keeps `/health`, `/healthz`, and `/readyz` available; Railway uses `/readyz` for deployment activation. In the normal web app, `/health` and `/healthz` both use the public registry/lifecycle projection from `src/core/diagnostics.ts`; required GPT registry failures can return `503`. These handlers register before the generic health router. Public readiness responses are a sanitized, no-store dependency projection with stable status and failure codes. The credential-free `/railway/healthcheck` compatibility diagnostic is also a no-store bounded projection and omits worker filenames, checked filesystem paths, free-form reasons, and exception text; it is not the configured Railway deployment probe.
+- The application keeps `/health`, `/healthz`, and `/readyz` available; the tracked Railway contract uses `/readyz` for deployment activation. Effective deployment configuration requires separate verification. In the normal web app, `/health` and `/healthz` both use the public registry/lifecycle projection from `src/core/diagnostics.ts`; required GPT registry failures can return `503`. These handlers register before the generic health router. Public readiness responses are a sanitized, no-store dependency projection with stable status and failure codes. The credential-free `/railway/healthcheck` compatibility diagnostic is also a no-store bounded projection and omits worker filenames, checked filesystem paths, free-form reasons, and exception text; it is not the tracked Railway deployment probe.
 - The web listener binds before Redis initialization. `/health` and `/healthz` remain live during a Redis outage, missing backend configuration, or incomplete database schema initialization, while production web `/readyz` returns `503` unless PostgreSQL is configured, connected, and schema-ready, Redis is configured and connected, and that Redis ready generation has passed the isolated public-provider Lua/write capability probe; a new revision therefore cannot activate in an in-memory/no-Redis, schema-incomplete, or command-incompatible fallback. Local, test, development, and non-web modes preserve optional unconfigured dependencies. Railway does not continuously monitor the activation path after the first successful response; see `STARTUP_RESILIENCE.md`.
 - Worker `/readyz` remains `503` until database bootstrap,
   autonomy/module-registry bootstrap, every configured consumer slot's
@@ -2529,6 +2566,117 @@ runtime mode or missing backend reference. A private worker needs
 no public domain solely for this check, but its exact Railway `SUCCESS` and the
 tracked contract do not replace the effective `/readyz`/timeout/drain readback
 required above.
+
+### Production readiness configuration assessment
+
+Read-only Railway `get-service-config` observations at 2026-11-01 03:25 UTC
+(October 31 in New York) covered project **Arcanos**
+(`7faf44e5-519c-4e73-8d7a-da9f389e6187`), environment **production**
+(`fb583147-6c39-4343-9267-500f357d25ab`). No variable values were requested.
+
+| Service | Saved activation path / timeout | Saved start command |
+| --- | --- | --- |
+| ARCANOS V2 (`c4ade025-3f13-4fca-9309-5d0dd81396fe`) | `/healthz` / 300 seconds | `node scripts/start-railway-service.mjs` |
+| ARCANOS Worker (`1765befb-b805-4051-9af9-28634e986886`) | `/healthz` / 300 seconds | Direct role launcher with the three transition preloads described above |
+
+Both saved configurations selected the Dockerfile builder and had no staged
+changes. The worker command preloads `notion-authority-root-probe.mjs`,
+`notion-root-status-diagnostic.mjs`, and `notion-wiki-root-compat.mjs` before
+`scripts/start-railway-service.mjs`. Their tracked implementations are inert.
+The snapshot above does not establish their deployed bytes or the effective
+configuration of an individual deployment: config-as-code can override saved
+dashboard settings without rewriting them. Effective activation settings and
+current application readiness remain **NOT_VERIFIED** by this assessment.
+
+Worker `/healthz` intentionally measures launcher liveness, including while
+bootstrap, a dependency failure, a budget pause, or shutdown makes `/readyz`
+unavailable. The saved activation path therefore differs from the maintained
+operational-readiness policy. Normal web `/healthz` similarly does not establish
+its database/Redis activation requirements. Preserve these endpoint contracts;
+the follow-up is to verify and align effective deployment settings.
+
+Before a separately authorized release, obtain approval for the exact action,
+project, environment, and both services above: use the canonical integrity
+wrapper, activation `/readyz`, timeout 300 seconds, and drain ceiling 60 seconds
+where effective settings differ. The benefit is that a new deployment cannot
+activate merely because its listener is alive; worker slots and required web
+dependencies must satisfy their existing readiness gates. This does not add
+continuous Railway readiness monitoring or a new restart policy.
+
+Capture the prior effective commands, activation settings, and exact successful
+deployment IDs before any approved change. If activation fails, retain the
+existing successful deployment and investigate the bounded evidence. Restoring
+captured settings or rolling back a deployment requires its own scoped approval
+and the rollback checks below; do not automatically substitute `/healthz` to
+make a failing candidate activate. This operational follow-up is separate from
+the code regression and CI verdict, and no configuration change was performed
+for this assessment.
+
+### Bounded observation after a separately authorized deployment
+
+This is a prepared read-only plan, **not executed production acceptance**.
+Confirm the same project, environment, and service IDs above plus the approved
+release SHA and fresh web/worker deployment IDs. Use existing Railway status,
+build/runtime/proxy logs, and already-collected metrics only. Do not enable
+collectors or verbose logging, read variables, query a database, initialize a
+service, request an application endpoint, submit a job, reinitialize a provider,
+or trigger inference, repair, restart, or deployment as part of observation.
+
+1. Fix the comparison windows in advance: the last 30 minutes before release,
+   the first 10 minutes of candidate startup, and 30 minutes after both roles
+   settle. Record UTC boundaries, deployment/replica identities, active slot
+   counts, traffic, and any restart. Retrieve only fixed event/metric fields;
+   cap each filtered log read at 500 records and at most four pages per service
+   per window. Mark truncation or missing coverage instead of extending the
+   window or treating a sample as the complete population.
+2. Correlate each deployment's existing `build.identity` record with its build
+   receipt, source snapshot and image digest where independently available.
+   Record `gitSha`, `buildId`, `sourceDigest`, `artifactDigest`, reference status,
+   and artifact status separately for web and worker. The application inventory
+   digest is not Railway's snapshot digest. A configured reference cannot fill
+   a missing verified SHA or prove identical source between roles; retain
+   **unverified** when the artifact-to-commit mapping is unavailable.
+3. Compare deltas of `worker_liveness_writes_total`,
+   `worker_runtime_state_writes_total`, `worker_runtime_history_writes_total`,
+   and `worker_runtime_snapshot_skipped_total` only if already collected.
+   Separate successful and failed writes, idle and busy periods, and genuine
+   restart/dependency/admission/job transitions. State/history writes must belong
+   to meaningful transitions or a retry of a reported current-state history
+   failure; timestamp-only polls produce none. Normalize comparisons by observed
+   slot-minutes. Slow-query logs alone cannot establish total write counts.
+4. For the available `db.query.slow` samples, report sample count and selection
+   plus median, p95, and maximum separately for `connectionAcquireMs`,
+   `clientQueryRoundTripMs`, and `appWallClockMs`. Connection acquisition can
+   include establishing a connection; it does not isolate pool queueing alone.
+   Preserve `postgresExecutionMs: null` / `postgresExecutionKnown: false` unless
+   independent existing server telemetry supplies a compatible measurement.
+   Neither `executionMs` nor client round-trip time proves PostgreSQL execution
+   time. Synthetic adapter costs remain a separate local comparison.
+5. Use existing per-worker heartbeat/status observations to assess freshness
+   against the configured stale threshold, with `worker.heartbeat.failed`,
+   snapshot-persistence failures, watchdog events, claim-recovery events, and
+   queue-acceptance transitions. Aggregate liveness counter growth alone does
+   not establish every slot's last-seen time. Missing per-worker evidence leaves
+   liveness **NOT_PROVEN**; do not manufacture watchdog incidents or jobs.
+6. Read naturally occurring provider startup/failure/recovery events only.
+   Keep authentication failures separate from timeout/network failures and
+   compare attempt, failure, success, backoff, and superseded-result metadata
+   where already emitted. Absence of a new failure/recovery cycle leaves live
+   recovery unproven. Healthy `no_actionable_incident` events with
+   `providerInvocation: false` establish containment for those events; they do
+   not classify unrelated background work or authorize a provider probe.
+7. Count `daemon.stopped` separately from `daemon.unreachable`, spawn failures,
+   unexpected exit signals, and deployment/replica failures. Correlate an
+   informational stop with an observed intentional shutdown. Do not send a
+   signal to produce evidence; a window without shutdown does not prove live
+   signal handling. Likewise, use existing Railway activation/proxy evidence
+   and slot transitions to assess readiness. `SUCCESS` or a `/healthz` response
+   alone cannot prove `/readyz` admission; missing observations remain unknown.
+
+Report **VERIFIED**, **FAILED**, or **NOT_PROVEN** per item with the exact window
+and evidence source. Any incident or missing release gate goes to the operator
+for a separately approved action. Local mocked regressions and a completed
+observation window must retain their distinct synthetic and live scope.
 
 ### Railway command safety
 

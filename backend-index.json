@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-31T19:29:22.525Z",
+  "generatedAt": "2026-11-01T06:00:08.919Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4366,6 +4366,9 @@
           "relativePath": "tests/diagnostic-execution-routes.test.ts"
         },
         {
+          "relativePath": "tests/diagnostics-host-load.test.ts"
+        },
+        {
           "relativePath": "tests/direct-answer-mode.test.ts"
         },
         {
@@ -5281,6 +5284,12 @@
           "relativePath": "tests/integration/session-system.integration.test.ts"
         },
         {
+          "relativePath": "tests/integration/worker-runtime-persistence.pg18.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/integration/worker-runtime-process.pg18.integration.test.ts"
+        },
+        {
           "relativePath": "tests/intent-mode-classification.test.ts"
         },
         {
@@ -5558,6 +5567,12 @@
         },
         {
           "relativePath": "tests/openai-prompt.test.ts"
+        },
+        {
+          "relativePath": "tests/openai-provider-health-lifecycle.test.ts"
+        },
+        {
+          "relativePath": "tests/openai-provider-health.loopback.integration.test.ts"
         },
         {
           "relativePath": "tests/openai-resilience-redaction.test.ts"

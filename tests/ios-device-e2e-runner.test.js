@@ -310,8 +310,10 @@ describe('required durable Swift device E2E CI coverage', () => {
   });
 
   it('builds the real Swift executable before resolving its path and fails on errors', () => {
-    const packageBuild = job.steps.find(value => value.run === 'npm run build:packages');
+    const packageBuild = job.steps.find(value => value.run === 'npm run build');
     expect(packageBuild).toBeDefined();
+    const scripts = JSON.parse(readFileSync('package.json', 'utf8')).scripts;
+    expect(scripts.build.split(' && ')).toContain('npm run build:packages');
     expect(packageBuild.if).toBeUndefined();
     expect(packageBuild['continue-on-error']).toBeUndefined();
     expect(job.steps.indexOf(packageBuild)).toBeLessThan(job.steps.indexOf(step));

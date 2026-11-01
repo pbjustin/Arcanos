@@ -360,7 +360,8 @@ isolated PostgreSQL 18 service with database
 `arcanos_audit_pg18_20260727`. It runs both
 `npm run test:local-agent-postgres` and `npm run test:postgres-fencing` through
 dedicated test-only URL variables: local-agent hardening, job-claim
-fencing, DAG-snapshot fencing, worker-budget identity, stale-recovery batching,
+fencing, DAG-snapshot fencing, worker-budget identity, worker runtime persistence,
+stale-recovery batching,
 Backstage roster atomicity, Backstage storyline atomicity, Backstage canon
 storyline atomicity, Notion partition storage, non-GPT terminal retention, and
 paired-device authentication.
@@ -396,6 +397,41 @@ runtime-schema bootstrap from migration suites requiring an initially empty
 schema on the primary service.
 It shares the required-database sentinel, so missing configuration fails CI
 instead of silently skipping persistence evidence.
+
+### Production-remediation acceptance boundaries
+
+The following fixtures supplement ordinary unit and sealed-preview results.
+They use disposable local dependencies; none establishes production acceptance.
+
+| Component and production entry | Fixture and actual implementation | Dependencies and assertions | Remaining boundary |
+| --- | --- | --- | --- |
+| Worker snapshots: `src/services/workerAutonomyService.ts` and `workerRuntimeSnapshotPipeline.ts` | `tests/integration/worker-runtime-persistence.pg18.integration.test.ts` executes the actual autonomy, pipeline, repositories and query helper | Real guarded PostgreSQL 18; connection ownership, schema readiness and logger are fixture seams. SQL triggers count writes and inject history/legacy failures; advisory locks test obsolete and A-B-A failures. Actual queue claims, fenced completion and watchdog recovery are exercised. | A three-hour virtual observation replay executes real SQL; it is not three hours of production operation. Client round trip and connection acquisition are separate from optional `pg_stat_statements` execution deltas. |
+| Provider health: `src/services/openai/serviceHealth.ts` | `tests/openai-provider-health.loopback.integration.test.ts` uses the actual orchestration, adapter, OpenAI SDK and native fetch | Real owned loopback HTTP servers; durable budget/event storage is mocked. Success, 401, disconnect, abort, recovery, backoff, concurrency, configuration replacement, superseded results, budget refusal and timestamps are asserted. Healthy reads make no requests. | No OpenAI service, paid inference or live credential acceptance. |
+| Build identity: Docker build and `scripts/production-build-identity.mjs` | `tests/fixtures/production-build-identity-artifact.mjs` checks the actual built image in the existing Railway compatibility job | Network-none, credential-empty, read-only image; mutations affect only a private temporary copy. Source/emitted mutations, missing/corrupt receipts, unknown Git, links and exclusions are checked before cleanup. | Native reporter execution is not application/dependency startup. A source digest is not a Railway snapshot, image attestation or proven Git identity. |
+| Daemon shutdown: `scripts/start-railway-service.mjs` | `tests/fixtures/railway-launcher-process.mjs`, invoked by `tests/railway-daemon-shutdown.test.js`, imports the real launcher entry | Real disposable native children replace only the reviewed Python/web spawn commands. Linux delivers actual SIGTERM/SIGINT; abnormal exit and ENOENT stay errors. Failed forwarding is explicitly injected. | Windows uses signal-event/IPC injection. These children do not run the Python bridge or web application. |
+| Diagnostics: `src/platform/logging/diagnostics.ts` | `tests/diagnostics-host-load.test.ts` executes the actual diagnostics collector with controlled OS readings | Large host load retains healthy classification and the existing public shape; host load is explicitly labeled and actual worker failures remain visible. | This API does not measure cgroup/container CPU utilization. |
+
+The worker persistence suite uses `WORKER_RUNTIME_TEST_DATABASE_URL`, the shared
+required-database sentinel and the existing disposable PostgreSQL service. An
+unset URL may intentionally skip local SQL cases; it cannot establish SQL
+acceptance. The fixture drops only its generated schema and verifies absence.
+`tests/integration/worker-runtime-process.pg18.integration.test.ts` separately
+starts the actual compiled job runner in a production/provider-credential-free native process,
+observes readiness and durable heartbeats, then stops and restarts it under the
+same worker identity. Its transport guard permits only the dedicated test
+database. `WORKER_RUNTIME_STARTUP_TEST_DATABASE_URL` targets the existing session
+service on port 5433 because full startup DDL includes public-schema objects;
+it must not share the primary migration fixture's initially empty schema.
+Cleanup preserves preexisting tables/data and removes only owned fixture state.
+The image fixture is mounted read-only into `arcanos-test` after the tracked
+Docker build; it never regenerates the original image receipt to hide a mismatch.
+
+The existing compiled-app model-policy and heartbeat commands exercise real
+HTTP application boundaries with isolated state and controlled or denied
+transport. Their dependency-activation seams remain explicit. Native Railway
+previews retain a passive worker and cannot prove worker persistence or provider
+recovery. Preview deployment still requires its separate opt-in and authorization;
+these fixtures do not add labels, create Railway resources or enable live probes.
 
 CI sets the single sentinel `ARCANOS_POSTGRES_TESTS_REQUIRE_DATABASE=1` for both
 package commands. Every selected suite resolves its explicit test URL

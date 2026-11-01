@@ -13,6 +13,8 @@ const POSTGRES_TEST_DATABASE_ENVIRONMENTS = [
   'JOB_CLAIM_FENCING_TEST_DATABASE_URL',
   'DAG_SNAPSHOT_GENERATION_TEST_DATABASE_URL',
   'JOB_WORKER_BUDGET_TEST_DATABASE_URL',
+  'WORKER_RUNTIME_TEST_DATABASE_URL',
+  'WORKER_RUNTIME_STARTUP_TEST_DATABASE_URL',
   'JOB_STALE_RECOVERY_TEST_DATABASE_URL',
   'BACKSTAGE_AUTHORITY_WAIT_TEST_DATABASE_URL',
   'BACKSTAGE_ROSTER_ATOMICITY_TEST_DATABASE_URL',
@@ -27,6 +29,8 @@ const POSTGRES_TEST_FILES = [
   'tests/integration/job-claim-fencing.pg18.integration.test.ts',
   'tests/integration/dag-snapshot-generation.pg18.integration.test.ts',
   'tests/integration/job-worker-budget-identity.pg18.integration.test.ts',
+  'tests/integration/worker-runtime-persistence.pg18.integration.test.ts',
+  'tests/integration/worker-runtime-process.pg18.integration.test.ts',
   'tests/integration/job-stale-recovery-batching.pg18.integration.test.ts',
   'tests/integration/backstage-authority-wait.pg18.integration.test.ts',
   'tests/integration/backstage-roster-atomicity.pg18.integration.test.ts',
@@ -56,7 +60,7 @@ function readWorkflowJob(workflow, jobId, nextJobId) {
 }
 
 describe('required PostgreSQL CI truth contract', () => {
-  it('uses one required-database sentinel for all seventeen PostgreSQL suites', () => {
+  it('uses one required-database sentinel for all registered PostgreSQL suites', () => {
     const workflow = readNormalized('.github/workflows/ci-cd.yml');
     const postgresJob = readWorkflowJob(
       workflow,
@@ -106,14 +110,14 @@ describe('required PostgreSQL CI truth contract', () => {
     );
   });
 
-  it('builds shared package exports before PostgreSQL HTTP consumers run', () => {
+  it('builds the root worker and shared package exports before PostgreSQL consumers run', () => {
     const postgresJob = readWorkflowJob(
       readNormalized('.github/workflows/ci-cd.yml'),
       'local-agent-postgres-concurrency',
       'runtime-redis-admission'
     );
     const install = postgresJob.indexOf('run: npm ci');
-    const packageBuild = postgresJob.indexOf('npm run build:packages');
+    const packageBuild = postgresJob.indexOf('run: npm run build\n');
 
     expect(install).toBeGreaterThan(-1);
     expect(packageBuild).toBeGreaterThan(install);
@@ -150,7 +154,7 @@ describe('required PostgreSQL CI truth contract', () => {
     const guard = source.indexOf('assertDisposablePostgresTestDatabaseUrl(configuredDatabaseUrl, TEST_DATABASE_ENV)');
     expect(guard).toBeGreaterThan(-1);
     expect(guard).toBeLessThan(source.indexOf("database = await import('@core/db/index.js')"));
-    expect(postgresJob.indexOf(path)).toBeGreaterThan(postgresJob.indexOf('npm run build:packages'));
+    expect(postgresJob.indexOf(path)).toBeGreaterThan(postgresJob.indexOf('run: npm run build\n'));
   });
 
   it('runs the aggregate gate after every dependency and fails on non-success', () => {

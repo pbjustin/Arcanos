@@ -138,7 +138,7 @@ function resolveShutdownTimeoutMs(): number {
  * Resolve deployment metadata for startup logging.
  *
  * Purpose:
- * - Emit enough Railway context to confirm which artifact is serving traffic.
+ * - Label Railway references separately from the launcher's measured build identity.
  *
  * Inputs/outputs:
  * - Input: Railway and git-related environment variables.
@@ -337,7 +337,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Ser
   markStartupListenerBound();
   const startupDeploymentSummary = resolveStartupDeploymentSummary();
   console.log(
-    `[STARTUP] HTTP listener bound on ${listenerConfig.host}:${listenerConfig.port} | service=${startupDeploymentSummary.serviceName} | deployment=${startupDeploymentSummary.deploymentId} | git=${startupDeploymentSummary.gitCommit} | branch=${startupDeploymentSummary.gitBranch}`
+    `[STARTUP] HTTP listener bound on ${listenerConfig.host}:${listenerConfig.port} | service=${startupDeploymentSummary.serviceName} | deployment=${startupDeploymentSummary.deploymentId} | configuredGit=${startupDeploymentSummary.gitCommit} | branch=${startupDeploymentSummary.gitBranch}`
   );
 
   const startFullRuntimeIfReady = () => {
@@ -356,7 +356,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Ser
         : startSelfHealing();
       selfHealingPreviewControl?.markReady();
       console.log(
-        `ARCANOS running on ${listenerConfig.host}:${listenerConfig.port} | service=${startupDeploymentSummary.serviceName} | deployment=${startupDeploymentSummary.deploymentId} | git=${startupDeploymentSummary.gitCommit} | branch=${startupDeploymentSummary.gitBranch} | workerHelperRoutes=enabled | askWorkerTools=enabled | selfHealLoop=${selfHealLoopStatus.loopRunning ? 'enabled' : 'disabled'} | selfHealIntervalMs=${selfHealLoopStatus.intervalMs}`
+        `ARCANOS running on ${listenerConfig.host}:${listenerConfig.port} | service=${startupDeploymentSummary.serviceName} | deployment=${startupDeploymentSummary.deploymentId} | configuredGit=${startupDeploymentSummary.gitCommit} | branch=${startupDeploymentSummary.gitBranch} | workerHelperRoutes=enabled | askWorkerTools=enabled | selfHealLoop=${selfHealLoopStatus.loopRunning ? 'enabled' : 'disabled'} | selfHealIntervalMs=${selfHealLoopStatus.intervalMs}`
       );
     } catch (error) {
       markStartupRuntimeFailed('FULL_RUNTIME_START_FAILED');
