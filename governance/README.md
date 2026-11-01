@@ -50,9 +50,16 @@ Maintain the policy of independent review for covered self-improve changes.
 Repository administrators should verify native protection requires pull requests,
 at least one independent approving review, dismissal of stale approvals, the
 existing required checks, and administrator enforcement as appropriate. This
-recommendation does not change GitHub settings. A sole maintainer cannot supply
-an independent approval on their own pull request; appoint an authorized second
-reviewer where that policy applies.
+recommendation does not change GitHub settings.
+
+The same 2026-11-01 inspection of the paginated collaborator list found only
+`@pbjustin`, a human administrator. Covered self-improve pull requests authored
+by `@pbjustin` therefore cannot currently meet the independent-review policy;
+they remain blocked until an authorized second human with repository write
+access can approve the current head. Other pull requests remain subject to
+their covered labels and actual native GitHub requirements. Native required-review
+settings remain **UNVERIFIED**; this finding does not establish such a requirement
+for an unrelated unlabeled pull request.
 
 The active [CODEOWNERS](../.github/CODEOWNERS) routes repository, documentation,
 daemon, and workflow changes to `@pbjustin`; routing alone does not enforce

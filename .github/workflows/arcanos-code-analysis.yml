@@ -72,7 +72,7 @@ jobs:
             printf 'Validated commit: `%s`\n' "$COMMIT_SHA"
             echo 'Type-check and lint passed for this commit.'
             echo 'This manual validation does not establish merge approval or deployment readiness.'
-            echo 'The former backend AI analysis and automated issue publication are retired.'
+            echo 'The former local-server AI path and automated issue publication are retired.'
           } > analysis_summary.md
           cat analysis_summary.md >> "$GITHUB_STEP_SUMMARY"
 
