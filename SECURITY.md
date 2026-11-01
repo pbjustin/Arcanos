@@ -67,9 +67,13 @@ must identify an unexpired backend-issued token, which is consumed on successful
 approval. Token issuance requires the
 configured automation secret. These tokens are process-local and do not survive
 restarts or work across replicas; an unknown token fails closed. Authenticated
-automation and explicit manual confirmation retain their existing flows. Worker
-healing requires an explicit execution request or the configured automation
-secret; GPT identity metadata cannot enable automatic execution.
+automation and explicit manual confirmation retain their existing flows.
+After authentication and confirmation, `POST /workers/heal` requires an explicit
+execution request or the configured automation secret; GPT identity metadata
+cannot enable automatic execution. Authenticated `POST /worker-helper/heal`
+executes by default, including with an empty request body, unless the caller
+requests plan-only mode. Both routes honor plan-only requests (`mode: plan`,
+`execute: false`, or `dryRun: true`) and retain their authorization and rate limits.
 Challenge-only CEF routes accept only their issued, request-bound, one-use
 challenge; other confirmation approvals cannot substitute for it. Route-specific
 authentication and scopes remain required independently of confirmation. See
