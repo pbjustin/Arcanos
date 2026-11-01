@@ -52,6 +52,7 @@ export interface HealthCheckReport {
   };
   metrics: {
     uptimeSeconds: number;
+    /** Host scheduler load averages; these are not container CPU utilization. */
     loadAverage: {
       oneMinute: string;
       fiveMinute: string;
@@ -160,7 +161,7 @@ export function runHealthCheck(): HealthCheckReport {
     `[🩺 HealthCheck] Memory | Heap: ${heapMB}MB | RSS: ${rssMB}MB | External: ${externalMB}MB | ArrayBuffers: ${arrayBuffersMB}MB`
   );
   console.log(`[🖥️ Runtime] PID: ${process.pid} | Node: ${process.version} | Uptime: ${uptime}s`);
-  console.log(`[📊 Load] 1m=${load1} | 5m=${load5} | 15m=${load15}`);
+  console.log(`[📊 Host load] 1m=${load1} | 5m=${load5} | 15m=${load15} | Scope=host (not container CPU utilization)`);
 
   if (security) {
     const matchedFingerprint = security.matchedFingerprint
