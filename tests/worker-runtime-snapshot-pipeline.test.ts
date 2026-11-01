@@ -227,7 +227,7 @@ describe('WorkerRuntimeSnapshotPipeline', () => {
     expect(changedHash).not.toBe(firstHash);
   });
 
-  it('keeps periodic poll diagnostic buckets in the state hash', () => {
+  it('ignores poll and claim timestamps across diagnostic bucket boundaries', () => {
     const firstHash = buildWorkerRuntimeSnapshotStateHash(buildSnapshot({
       lastPollAt: '2026-04-23T20:00:05.000Z',
       lastClaimAttemptAt: '2026-04-23T20:00:05.000Z'
@@ -242,7 +242,110 @@ describe('WorkerRuntimeSnapshotPipeline', () => {
     }));
 
     expect(firstHash).toBe(sameBucketHash);
-    expect(firstHash).not.toBe(nextBucketHash);
+    expect(firstHash).toBe(nextBucketHash);
+  });
+
+  it('keeps state and history stable through three hours of healthy idle polling while liveness advances', async () => {
+    const startMs = Date.parse('2026-10-31T00:00:00.000Z');
+    let nowMs = startMs;
+    // Controlled adapter costs quantify avoided client calls, not PostgreSQL execution.
+    let simulatedClientRoundTripMs = 0;
+    repositoryRecordLivenessMock.mockImplementation(async () => {
+      simulatedClientRoundTripMs += 10;
+    });
+    repositoryUpsertStateMock.mockImplementation(async () => {
+      simulatedClientRoundTripMs += 40;
+    });
+    repositoryAppendHistoryMock.mockImplementation(async () => {
+      simulatedClientRoundTripMs += 20;
+    });
+    const pipeline = new WorkerRuntimeSnapshotPipeline({
+      coalesceMs: 10_000,
+      dependencies: { nowMs: () => nowMs }
+    });
+
+    for (let elapsedMs = 0; elapsedMs <= 3 * 60 * 60 * 1_000; elapsedMs += 5_000) {
+      nowMs = startMs + elapsedMs;
+      const observedAt = new Date(nowMs).toISOString();
+      const snapshot = buildSnapshot({
+        lastHeartbeatAt: observedAt,
+        lastPollAt: observedAt,
+        lastClaimAttemptAt: observedAt,
+        source: 'worker-idle'
+      });
+      await pipeline.recordLiveness(snapshot.workerId, 'healthy', observedAt);
+      pipeline.recordSnapshotIntent(snapshot.workerId, 'worker-idle', snapshot);
+      await pipeline.flushAll('idle-poll');
+    }
+
+    expect({
+      livenessWrites: repositoryRecordLivenessMock.mock.calls.length,
+      stateWithLegacyWrites: repositoryUpsertStateMock.mock.calls.length,
+      historyWrites: repositoryAppendHistoryMock.mock.calls.length,
+      simulatedClientRoundTripMs
+    }).toEqual({
+      livenessWrites: 2_161,
+      stateWithLegacyWrites: 1,
+      historyWrites: 1,
+      simulatedClientRoundTripMs: 21_670
+    });
+    expect(repositoryRecordLivenessMock).toHaveBeenLastCalledWith({
+      workerId: 'async-queue-slot-1',
+      healthStatus: 'healthy',
+      lastSeenAt: '2026-10-31T03:00:00.000Z'
+    });
+    expect(repositoryUpsertStateMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ preserveLegacySnapshot: true })
+    );
+  });
+
+  it('persists degraded, recovered, and restarted worker states after timestamp-only polls', async () => {
+    const pipeline = new WorkerRuntimeSnapshotPipeline({ coalesceMs: 10_000 });
+    const healthy = buildSnapshot({ lastPollAt: '2026-10-31T00:00:00.000Z' });
+    const degraded = buildSnapshot({ healthStatus: 'degraded', lastError: 'dependency unavailable' });
+    const restarted = { ...healthy, startedAt: '2026-10-31T03:01:00.000Z' };
+
+    for (const [source, snapshot] of [
+      ['worker-idle', healthy],
+      ['worker-idle', buildSnapshot({ lastPollAt: '2026-10-31T03:00:00.000Z' })],
+      ['dependency-failure', degraded],
+      ['dependency-recovered', healthy],
+      ['bootstrap', restarted]
+    ] as const) {
+      pipeline.recordSnapshotIntent(snapshot.workerId, source, snapshot);
+      await pipeline.flushAll(source);
+    }
+
+    expect(repositoryUpsertStateMock).toHaveBeenCalledTimes(4);
+    expect(repositoryAppendHistoryMock).toHaveBeenCalledTimes(4);
+    expect(repositoryUpsertStateMock).toHaveBeenNthCalledWith(
+      2, degraded, expect.objectContaining({ source: 'dependency-failure' })
+    );
+    expect(repositoryUpsertStateMock).toHaveBeenNthCalledWith(
+      3, healthy, expect.objectContaining({ source: 'dependency-recovered' })
+    );
+    expect(repositoryUpsertStateMock).toHaveBeenLastCalledWith(
+      restarted, expect.objectContaining({ source: 'bootstrap' })
+    );
+  });
+
+  it('retries failed state persistence on the next identical idle observation', async () => {
+    repositoryUpsertStateMock.mockRejectedValueOnce(new Error('database unavailable'));
+    const pipeline = new WorkerRuntimeSnapshotPipeline({ coalesceMs: 10_000 });
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const snapshot = buildSnapshot();
+      pipeline.recordSnapshotIntent(snapshot.workerId, 'worker-idle', snapshot);
+      await pipeline.flushAll('retry');
+    }
+
+    expect(repositoryUpsertStateMock).toHaveBeenCalledTimes(2);
+    expect(repositoryAppendHistoryMock).toHaveBeenCalledTimes(1);
+    expect(loggerWarnMock).toHaveBeenCalledWith(
+      'worker.snapshot_pipeline.state.failed',
+      expect.objectContaining({ error: 'database unavailable' })
+    );
   });
 
   it('normalizes volatile inspector, watchdog, queue, and stats observations out of the state hash', () => {

@@ -46,7 +46,6 @@ interface PendingSnapshotIntent {
 
 const DEFAULT_SNAPSHOT_PIPELINE_COALESCE_MS = 2_000;
 const DEFAULT_SKIP_LOG_MIN_INTERVAL_MS = 60_000;
-const POLL_DIAGNOSTIC_HASH_BUCKET_MS = 30_000;
 
 const defaultDependencies: WorkerRuntimeSnapshotPipelineDependencies = {
   recordLiveness: recordWorkerLiveness,
@@ -348,8 +347,8 @@ function normalizeWorkerRuntimeSnapshotPayloadForHash(
     activeJobs: snapshot.activeJobs,
     dispatcherStarted: snapshot.dispatcherStarted,
     activeListeners: snapshot.activeListeners,
-    lastPollDiagnosticBucket: normalizeTimestampBucket(snapshot.lastPollAt),
-    lastClaimAttemptDiagnosticBucket: normalizeTimestampBucket(snapshot.lastClaimAttemptAt),
+    // Poll/claim timestamps describe observation freshness, not a state transition.
+    // Durable heartbeat freshness is maintained independently in worker_liveness.
     lastClaimResult: snapshot.lastClaimResult,
     disabledReason: snapshot.disabledReason,
     processedJobs: snapshot.processedJobs,
@@ -367,17 +366,6 @@ function normalizeWorkerRuntimeSnapshotPayloadForHash(
     statsWorkerId: snapshot.statsWorkerId,
     watchdog: normalizeWatchdogSnapshotForHash(snapshot.watchdog)
   };
-}
-
-function normalizeTimestampBucket(value: unknown): number | null {
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    return null;
-  }
-
-  const parsedMs = Date.parse(value);
-  return Number.isFinite(parsedMs)
-    ? Math.floor(parsedMs / POLL_DIAGNOSTIC_HASH_BUCKET_MS)
-    : null;
 }
 
 function normalizeWatchdogSnapshotForHash(value: unknown): Record<string, unknown> | null {
