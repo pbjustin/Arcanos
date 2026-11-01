@@ -186,7 +186,7 @@ Base URLs:
 Confirmation gate behavior (`src/transport/http/middleware/confirmGate.ts`):
 - Manual: `x-confirmed: yes`
 - Challenge retry: `x-confirmed: token:<challengeId>`
-- Trusted GPT presence path: a request GPT ID in configured `TRUSTED_GPT_IDS` plus a non-empty `x-arcanos-confirm-token`. In the current middleware this header is a presence marker for trusted IDs; it is not consumed or validated against the one-time-token store. Because the request path, body, or header can supply the GPT ID, this setting is not caller authentication. Use it only behind deployment middleware that authenticates the caller and binds the permitted identity.
+- One-time approval uses the `x-arcanos-confirm-token` header with an unexpired backend-issued token, consumed on successful approval, including requests with a GPT ID in `TRUSTED_GPT_IDS`. GPT IDs from paths, bodies, or headers are metadata and cannot grant approval. Token issuance requires the configured automation secret; storage is process-local, so unknown tokens on another replica or after restart fail closed. Challenge-only routes accept only their issued one-use challenge. Authentication and required scopes remain separate route gates.
 - Automation secret: configured header (default `x-arcanos-automation`)
 
 Public provider-capable HTTP ingress uses one atomic caller-plus-deployment
@@ -1632,6 +1632,10 @@ do not authorize either direct route. Authentication runs before confirmation,
 and neither `x-confirmed`, trusted automation, nor a confirmation challenge
 establishes caller identity. Direct and worker-helper heal requests share one
 10-per-15-minute principal budget whose keys never contain the credential.
+After confirmation, `/workers/heal` executes only when explicitly requested
+(`execute: true` or `mode: execute`) or approved by the configured automation
+secret. GPT identity metadata cannot enable automatic execution; explicit
+plan-only requests remain plan-only even for authenticated automation.
 
 ### Research, RAG, and command routing
 - `GET /api/commands` (control-plane operator and `arcanos:read` required)

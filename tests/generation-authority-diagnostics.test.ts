@@ -138,9 +138,9 @@ describe('generation authority does not gate non-generative diagnostics', () => 
     confirmGate(trustedRequest, responseRecorder().response, next);
     expect(next).toHaveBeenCalledTimes(2);
     expect(trustedRequest.confirmationContext).toMatchObject({
-      confirmationStatus: 'trusted-gpt', usedOneTimeToken: false, isTrustedGpt: true
+      confirmationStatus: 'one-time-token', usedOneTimeToken: true, isTrustedGpt: true
     });
-    expect(consumeOneTimeToken(trustedToken.token).ok).toBe(true);
+    expect(consumeOneTimeToken(trustedToken.token).ok).toBe(false);
 
     const solRequest = {
       ...request, body: { gptId: 'gpt-6.1-sol' },

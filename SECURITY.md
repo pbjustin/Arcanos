@@ -59,14 +59,20 @@ python -m pip list --outdated
   assess any configured JSONL file without printing its contents.
 - Repeated confirmation bypass concerns: review `TRUSTED_GPT_IDS`, `ARCANOS_AUTOMATION_SECRET`, and header usage.
 
-The legacy `confirmGate` trusted-GPT branch currently checks only that a
-nonempty one-time-token header is present; that branch does not validate or
-consume its value. This is a confirmation-verification gap requiring separate
-code/security review, not a verified approval mechanism. Challenge-only CEF
-routes require their issued challenge and exclude this bypass. See
-[`trustedGptBypassApproved`](src/transport/http/middleware/confirmGate.ts) and
-[CEF controls](docs/cef-hardening-controls.md). No live exploit or deployed
-configuration was tested during this documentation audit.
+`confirmGate` is an action-confirmation gate, not caller authentication or
+resource ownership. GPT identifiers from paths, bodies, or headers are metadata;
+allowlist membership does not grant approval. Where one-time-token approval is
+permitted, `x-arcanos-confirm-token` must identify an unexpired backend-issued
+token, which is consumed on successful approval. Token issuance requires the
+configured automation secret. These tokens are process-local and do not survive
+restarts or work across replicas; an unknown token fails closed. Authenticated
+automation and explicit manual confirmation retain their existing flows. Worker
+healing requires an explicit execution request or the configured automation
+secret; GPT identity metadata cannot enable automatic execution.
+Challenge-only CEF routes accept only their issued, request-bound, one-use
+challenge; other confirmation approvals cannot substitute for it. Route-specific
+authentication and scopes remain required independently of confirmation. See
+[CEF controls](docs/cef-hardening-controls.md).
 
 ## References
 - Security advisories: `https://github.com/pbjustin/Arcanos/security`

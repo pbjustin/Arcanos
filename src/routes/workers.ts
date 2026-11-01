@@ -193,9 +193,9 @@ router.post(
       const payload = await buildStatusPayload();
       const plan = await buildAutoHealPlan(payload);
       const planOnlyRequested = healRequest.data.planOnlyRequested;
-      const trustedAutomation = Boolean(
-        req.confirmationContext?.isTrustedGpt || req.confirmationContext?.automationSecretApproved,
-      );
+      // GPT identity is caller-controlled metadata; only authenticated automation
+      // can opt into execution without an explicit execute request.
+      const trustedAutomation = req.confirmationContext?.automationSecretApproved === true;
       const autoExecutionAllowed = trustedAutomation && !planOnlyRequested;
       const requestedExecution = healRequest.data.requestedExecution;
       const shouldExecute = !planOnlyRequested && (requestedExecution || autoExecutionAllowed);
