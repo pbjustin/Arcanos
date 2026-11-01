@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import fs, { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
@@ -71,6 +71,60 @@ describe('production build identity', () => {
     const external = fixture();
     symlinkSync(external.rootPath, join(options.rootPath, 'workers'), 'junction');
     expect(() => writeProductionBuildIdentity(options)).toThrow('BUILD_IDENTITY_LINK');
+  });
+
+  it.each(['README.md', 'catalog.json'])('ignores the ordinary packages/%s file when discovering emitted workspace output', name => {
+    const options = fixture();
+    const output = join(options.rootPath, 'packages', 'example', 'dist');
+    mkdirSync(output, { recursive: true });
+    writeFileSync(join(output, 'index.js'), 'export const version = 1;\n');
+    writeFileSync(join(options.rootPath, 'packages', name), 'ordinary workspace-root file');
+
+    const identity = writeProductionBuildIdentity(options);
+    expect(readProductionBuildIdentity(options)).toMatchObject({
+      status: 'unverified', artifactStatus: 'matches_build_receipt', buildId: identity.buildId
+    });
+    writeFileSync(join(output, 'index.js'), 'compiled mutation');
+    expect(readProductionBuildIdentity(options)).toMatchObject({ status: 'mismatch', artifactStatus: 'mismatch' });
+  });
+
+  it('continues rejecting linked workspace roots instead of skipping them as ordinary files', () => {
+    const options = fixture();
+    const external = fixture();
+    symlinkSync(external.rootPath, join(options.rootPath, 'packages', 'linked'), process.platform === 'win32' ? 'junction' : 'dir');
+    expect(() => writeProductionBuildIdentity(options)).toThrow('BUILD_IDENTITY_LINK');
+  });
+
+  it('ignores POSIX ENOTDIR for package files while preserving permission failures', async () => {
+    const options = fixture();
+    writeFileSync(join(options.rootPath, 'packages', 'catalog.json'), '{}');
+    const fileDescendant = join(options.rootPath, 'packages', 'catalog.json', 'dist');
+    let failure = Object.assign(new Error('test filesystem ENOTDIR'), { code: 'ENOTDIR' });
+    let inspectedDescendant = false;
+    await jest.isolateModulesAsync(async () => {
+      jest.unstable_mockModule('node:fs', () => ({
+        ...fs,
+        lstatSync: path => {
+          if (path === fileDescendant) {
+            inspectedDescendant = true;
+            throw failure;
+          }
+          return fs.lstatSync(path);
+        }
+      }));
+      try {
+        const isolated = await import('../scripts/production-build-identity.mjs');
+        expect(() => isolated.writeProductionBuildIdentity(options)).not.toThrow();
+        expect(isolated.readProductionBuildIdentity(options)).toMatchObject({ artifactStatus: 'matches_build_receipt' });
+        expect(inspectedDescendant).toBe(true);
+        failure = Object.assign(new Error('test filesystem EACCES'), { code: 'EACCES' });
+        inspectedDescendant = false;
+        expect(() => isolated.writeProductionBuildIdentity(options)).toThrow(failure);
+        expect(inspectedDescendant).toBe(true);
+      } finally {
+        jest.unstable_unmockModule('node:fs');
+      }
+    });
   });
 
   it('distinguishes changed build/runtime commit references from proven commits', () => {

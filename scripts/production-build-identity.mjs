@@ -35,7 +35,7 @@ function inventory(rootPath, runtime) {
       }
       stat = lstatSync(absolute);
     } catch (error) {
-      if (error.code === 'ENOENT') return;
+      if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return;
       throw error;
     }
     if (stat.isSymbolicLink()) throw new Error('BUILD_IDENTITY_LINK');
