@@ -22,9 +22,11 @@ jobs:
         env:
           REPOSITORY: ${{ github.repository }}
         run: |
-          jq -e --arg target "github.com/$REPOSITORY" '
-            type == "object" and
-            .module == "auto_audit_0432" and
-            .cycle == "4WEEK" and
-            .target == $target
+          jq -se --arg target "github.com/$REPOSITORY" '
+            length == 1 and (.[0] |
+              type == "object" and
+              .module == "auto_audit_0432" and
+              .cycle == "4WEEK" and
+              .target == $target
+            )
           ' arcanos_audit_config.json

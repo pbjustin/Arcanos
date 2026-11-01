@@ -143,7 +143,7 @@ toolchain, or a tested commit or tree that differs from the exact PR source.
 It verifies source identity and tracked cleanliness before and after commands
 and when assembling the final report. Required selections must contain every
 expected suite, consistent counts and only passing cases; the YAML selection
-requires all 119 security and consumer cases with no skips.
+requires all 121 security and consumer cases with no skips.
 The Windows job explicitly checks out the PR head (or the event SHA for pushes),
 so advancing main does not invalidate this receipt. Other CI jobs retain their
 existing synthetic-merge checkout behavior.

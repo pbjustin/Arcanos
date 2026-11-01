@@ -62,9 +62,11 @@ jobs:
           gh api "repos/$GH_REPO/pulls/$PR_NUMBER" > pr-current.json
           test "$(jq -r .head.sha pr-current.json)" = "$HEAD_SHA"
           test "$(jq -r .base.sha pr-current.json)" = "$BASE_SHA"
-          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
-          echo "head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
-          echo "base_sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
+          {
+            echo "pr_number=$PR_NUMBER"
+            echo "head_sha=$HEAD_SHA"
+            echo "base_sha=$BASE_SHA"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Advisory snapshot summary
         env:
@@ -74,7 +76,7 @@ jobs:
         run: |
           {
             echo '# ARCANOS Advisory PR Snapshot'
-            printf 'PR #%s head: `%s`; base: `%s`\n\n' "$PR_NUMBER" "$PR_HEAD_SHA" "$PR_BASE_SHA"
+            printf "PR #%s head: \`%s\`; base: \`%s\`\n\n" "$PR_NUMBER" "$PR_HEAD_SHA" "$PR_BASE_SHA"
             echo 'The artifact contains the captured PR diff and changed-file list.'
             echo 'PR code was not executed. This snapshot is not merge approval or deployment readiness.'
             echo 'Optional AI review requires separate explicit authorization; automated readiness checks remain retired.'

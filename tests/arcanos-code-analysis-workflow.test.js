@@ -121,6 +121,7 @@ describe('audit cycle read-only validation', () => {
   const workflow = readWorkflow('arcanos-audit-cycle');
   const job = workflow.jobs['enforce-cycle'];
   const step = job.steps.find(candidate => candidate.name === 'Validate audit config');
+  const validConfig = { module: 'auto_audit_0432', cycle: '4WEEK', target: 'github.com/pbjustin/Arcanos' };
   it('cannot write to the repository and retains scheduled validation', () => {
     expect(workflow.permissions).toEqual({ contents: 'read' });
     expect(workflow.on.schedule).toEqual([{ cron: '0 0 * * 0' }]);
@@ -129,22 +130,26 @@ describe('audit cycle read-only validation', () => {
   });
 
   it.each([
-    ['valid', { module: 'auto_audit_0432', cycle: '4WEEK', target: 'github.com/pbjustin/Arcanos' }, 0],
+    ['valid', validConfig, 0],
     ['wrong cycle', { module: 'auto_audit_0432', cycle: '1WEEK', target: 'github.com/pbjustin/Arcanos' }, 1],
     ['wrong module', { module: 'other', cycle: '4WEEK', target: 'github.com/pbjustin/Arcanos' }, 1],
     ['wrong target', { module: 'auto_audit_0432', cycle: '4WEEK', target: 'github.com/other/Repository' }, 1],
     ['null', null, 1], ['missing', undefined, 1],
+    ['invalid then valid documents', '{}\n' + JSON.stringify(validConfig), 1],
+    ['two valid documents', [validConfig, validConfig].map(value => JSON.stringify(value)).join('\n'), 1],
+    ['empty file', '', 1], ['malformed JSON', '{', 1],
   ])('validates %s policy without rewriting the file', (_label, config, fails) => {
     const directory = mkdtempSync(path.join(tmpdir(), 'arcanos-audit-policy-'));
     const file = path.join(directory, 'arcanos_audit_config.json');
-    if (config !== undefined) writeFileSync(file, JSON.stringify(config));
+    const source = typeof config === 'string' ? config : JSON.stringify(config);
+    if (config !== undefined) writeFileSync(file, source);
     try {
       const result = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', step.run], {
         cwd: directory, encoding: 'utf8', timeout: 5000,
         env: { PATH: process.env.PATH, REPOSITORY: 'pbjustin/Arcanos' },
       });
       expect(Number(result.status !== 0)).toBe(fails);
-      if (config !== undefined) expect(readFileSync(file, 'utf8')).toBe(JSON.stringify(config));
+      if (config !== undefined) expect(readFileSync(file, 'utf8')).toBe(source);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

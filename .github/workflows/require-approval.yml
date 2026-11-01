@@ -57,12 +57,17 @@ jobs:
             const approvers = [];
             for (const [login, review] of latestByUser.entries()) {
               if (review.state !== 'APPROVED' || review.commit_id !== pr.head.sha) continue;
-              const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                username: login
-              });
-              if (['write', 'maintain', 'admin'].includes(data.permission)) approvers.push(login);
+              try {
+                const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  username: login
+                });
+                if (['write', 'maintain', 'admin'].includes(data.permission)) approvers.push(login);
+              } catch (error) {
+                // Non-collaborators are ineligible; other API failures remain fatal.
+                if (error.status !== 404) throw error;
+              }
             }
 
             core.info(`Approvers (excluding author): ${approvers.join(', ')}`);

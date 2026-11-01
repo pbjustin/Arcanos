@@ -10,10 +10,15 @@ const review = (state = 'APPROVED', overrides = {}) => ({
   state, commit_id: head, user: { login: 'reviewer', type: 'User' }, ...overrides
 });
 
-async function evaluate(reviews, { labels = ['autonomy-2'], permission = 'write' } = {}) {
+async function evaluate(reviews, { labels = ['autonomy-2'], permission = 'write', permissionErrors = {} } = {}) {
   const failed = jest.fn();
   const paginate = jest.fn(async () => reviews);
-  const getPermission = jest.fn(async () => ({ data: { permission } }));
+  const getPermission = jest.fn(async ({ username }) => {
+    if (Object.hasOwn(permissionErrors, username)) {
+      throw Object.assign(new Error('Permission lookup failed'), { status: permissionErrors[username] });
+    }
+    return { data: { permission } };
+  });
   const getPr = jest.fn(async () => ({ data: {
     number: 42, labels: labels.map(name => ({ name })),
     user: { login: 'author' }, head: { sha: head }
@@ -52,6 +57,24 @@ describe('label-based independent human approval', () => {
 
   it.each(['write', 'maintain', 'admin'])('accepts a human reviewer with %s permission', async permission => {
     expect((await evaluate([review()], { permission })).failed).not.toHaveBeenCalled();
+  });
+
+  it('continues past an outsider 404 to a valid writer approval', async () => {
+    const outsider = review('APPROVED', { user: { login: 'outsider', type: 'User' } });
+    const result = await evaluate([outsider, review()], { permissionErrors: { outsider: 404 } });
+    expect(result.failed).not.toHaveBeenCalled();
+    expect(result.getPermission.mock.calls.map(([args]) => args.username)).toEqual(['outsider', 'reviewer']);
+  });
+
+  it('does not count an outsider 404 as approval', async () => {
+    const result = await evaluate([review()], { permissionErrors: { reviewer: 404 } });
+    expect(result.failed).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([403, 429, 500])('keeps permission lookup error %s fatal even after a valid approval', async status => {
+    const outsider = review('APPROVED', { user: { login: 'outsider', type: 'User' } });
+    await expect(evaluate([review(), outsider], { permissionErrors: { outsider: status } }))
+      .rejects.toMatchObject({ status });
   });
 
   it('paginates all reviews and fetches current labels/head rather than using event snapshots', async () => {

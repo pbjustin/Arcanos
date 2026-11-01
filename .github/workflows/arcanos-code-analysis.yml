@@ -69,7 +69,7 @@ jobs:
         run: |
           {
             echo '# ARCANOS Advisory Validation'
-            printf 'Validated commit: `%s`\n' "$COMMIT_SHA"
+            printf "Validated commit: \`%s\`\n" "$COMMIT_SHA"
             echo 'Type-check and lint passed for this commit.'
             echo 'This manual validation does not establish merge approval or deployment readiness.'
             echo 'The former local-server AI path and automated issue publication are retired.'
