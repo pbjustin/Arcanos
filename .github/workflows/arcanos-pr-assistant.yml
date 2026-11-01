@@ -1,4 +1,4 @@
-name: ARCANOS PR Assistant
+name: ARCANOS PR Assistant (Advisory Snapshot)
 
 on:
   workflow_dispatch:
@@ -8,383 +8,68 @@ on:
         required: true
         type: string
 
-env:
-  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-  ARCANOS_GPT_ACCESS_BASE_URL: ${{ format('{0}://localhost:{1}', 'http', '8080') }}
-  ARCANOS_GPT_ACCESS_SCOPES: >-
-    runtime.read,workers.read,queue.read,jobs.create,jobs.result,
-    logs.read_sanitized,db.explain_approved,mcp.approved_readonly,
-    diagnostics.read
-
 jobs:
   arcanos-pr-analysis:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
-      checks: write
       contents: read
-      pull-requests: write
-      issues: write
+      pull-requests: read
 
     steps:
       - name: 📥 Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
         with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
           fetch-depth: 0
 
-      - name: 🧰 Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24.18.1'
-          cache: 'npm'
-
-      - name: 📦 Install dependencies
-        run: npm ci
-
-      - name: 🐍 Install Python protocol runtime dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install --upgrade "jsonschema>=4.23.0,<5" "referencing>=0.35.1,<1"
-
-      - name: 🧹 Lint code
-        run: npm run lint
-
-      - name: 🔧 Build project
-        run: npm run build
-
-      - name: 🧪 Run tests
-        continue-on-error: true
-        run: npm test
-
-      - name: 🔧 Install GitHub CLI
-        run: |
-          type -p curl >/dev/null || (sudo apt update && sudo apt install curl -y)
-          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
-          && sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
-          && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
-          && sudo apt update \
-          && sudo apt install gh -y
-
-      - name: 📊 Get PR details
+      - name: Validate PR and capture diff
         id: pr-details
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            PR_NUMBER="${{ github.event.inputs.pr_number }}"
-          else
-            PR_NUMBER="${{ github.event.pull_request.number }}"
-          fi
-          
-          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
-          
-          # Get PR diff
-          gh pr diff $PR_NUMBER > pr.diff || echo "" > pr.diff
-          
-          # Get changed files
-          gh pr view $PR_NUMBER --json files --jq '.files[].path' > changed_files.txt || echo "" > changed_files.txt
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 🤖 Run ARCANOS PR Analysis
-        id: analysis
+          PR_NUMBER: ${{ inputs.pr_number }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          echo "Starting ARCANOS PR analysis..."
-          
-          # Set environment variables
-          export PORT=8080
-          export NODE_ENV=production
-          export OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY || 'sk-mock-for-ci-testing' }}"
-          export ARCANOS_GPT_ACCESS_TOKEN="${{ secrets.ARCANOS_GPT_ACCESS_TOKEN || 'ci-gpt-access-token-for-local-workflow-only' }}"
-          export ARCANOS_CONTROL_PLANE_ACCESS_TOKEN="ci-pr-analysis-control-token-local-only-2026"
-          export ARCANOS_CONTROL_PLANE_PRINCIPAL_ID="operator:ci-pr-analysis"
-          export ARCANOS_CONTROL_PLANE_SCOPES="repo:verify"
-          CI_CONTROL_PLANE_TOKEN="${ARCANOS_CONTROL_PLANE_ACCESS_TOKEN}"
-          
-          # Start the ARCANOS server in background
-          npm start > server.log 2>&1 &
-          SERVER_PID=$!
-          
-          # Wait for server to be ready with retries
-          echo "Waiting for server to start..."
-          MAX_RETRIES=30
-          RETRY_COUNT=0
-          SERVER_READY=false
-          
-          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-            if curl -f -s http://localhost:8080/health > /dev/null 2>&1; then
-              echo "Server is ready!"
-              SERVER_READY=true
-              break
-            fi
-            RETRY_COUNT=$((RETRY_COUNT + 1))
-            echo "Waiting for server... ($RETRY_COUNT/$MAX_RETRIES)"
-            sleep 2
-          done
-          
-          if [ "$SERVER_READY" = false ]; then
-            echo "❌ Server failed to start. Logs:"
-            cat server.log
-            exit 1
-          fi
-          
-          # Prepare analysis request payload in a file so large diffs do not exceed shell argument limits.
-          PR_FILES=$(cat changed_files.txt | jq -Rs 'split("\n") | map(select(. != ""))' || echo '[]')
-          jq -n \
-            --rawfile prDiff pr.diff \
-            --argjson prFiles "$PR_FILES" \
-            --arg prNumber "${{ steps.pr-details.outputs.pr_number }}" \
-            --arg repository "${{ github.repository }}" \
-            '{
-              prDiff: $prDiff,
-              prFiles: $prFiles,
-              metadata: {
-                prNumber: ($prNumber | tonumber),
-                repository: $repository
-              }
-            }' > analysis_request.json
-          
-          # Run PR analysis
-          echo "Running PR analysis..."
-          HTTP_CODE=$(curl -X POST http://localhost:8080/api/pr-analysis/analyze \
-            -H "Content-Type: application/json" \
-            -H "Authorization: Bearer $CI_CONTROL_PLANE_TOKEN" \
-            --data-binary @analysis_request.json \
-            -w "%{http_code}" \
-            -o analysis_result.json \
-            -s)
-          
-          # Stop the server
-          kill $SERVER_PID 2>/dev/null || true
-          sleep 2
-          kill -9 $SERVER_PID 2>/dev/null || true
-          
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "❌ PR analysis failed with HTTP code: $HTTP_CODE"
-            echo "Response:"
-            cat analysis_result.json || echo "No response body"
-            exit 1
-          fi
-          
-          # Extract markdown output
-          jq -r '.markdown // "Analysis completed"' analysis_result.json > analysis_report.md || echo "Analysis completed" > analysis_report.md
-          
-          # Extract status for step output
-          STATUS=$(jq -r '.result.status // "⚠️"' analysis_result.json)
-          echo "analysis_status=$STATUS" >> $GITHUB_OUTPUT
-          
-          echo "Analysis completed with status: $STATUS"
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,9}$ ]] || { echo 'Invalid PR number'; exit 1; }
+          gh api "repos/$GH_REPO/pulls/$PR_NUMBER" > pr-metadata.json
+          test "$(jq -r .state pr-metadata.json)" = open
+          HEAD_SHA=$(jq -r .head.sha pr-metadata.json)
+          BASE_SHA=$(jq -r .base.sha pr-metadata.json)
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ && "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          gh api "repos/$GH_REPO/pulls/$PR_NUMBER" -H 'Accept: application/vnd.github.diff' > pr.diff
+          gh api --paginate "repos/$GH_REPO/pulls/$PR_NUMBER/files?per_page=100" --jq '.[].filename' > changed_files.txt
+          # Reject a moving target rather than attributing a mixed snapshot to a commit.
+          gh api "repos/$GH_REPO/pulls/$PR_NUMBER" > pr-current.json
+          test "$(jq -r .head.sha pr-current.json)" = "$HEAD_SHA"
+          test "$(jq -r .base.sha pr-current.json)" = "$BASE_SHA"
+          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          echo "base_sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
 
-      - name: 📝 Post PR Comment
-        if: always() && steps.analysis.outcome == 'success'
-        uses: actions/github-script@v7
+      - name: Advisory snapshot summary
+        env:
+          PR_NUMBER: ${{ steps.pr-details.outputs.pr_number }}
+          PR_HEAD_SHA: ${{ steps.pr-details.outputs.head_sha }}
+          PR_BASE_SHA: ${{ steps.pr-details.outputs.base_sha }}
+        run: |
+          {
+            echo '# ARCANOS Advisory PR Snapshot'
+            printf 'PR #%s head: `%s`; base: `%s`\n\n' "$PR_NUMBER" "$PR_HEAD_SHA" "$PR_BASE_SHA"
+            echo 'The artifact contains the captured PR diff and changed-file list.'
+            echo 'PR code was not executed. This snapshot is not merge approval or deployment readiness.'
+            echo 'The former backend AI analysis and automated readiness checks are retired.'
+          } > analysis_report.md
+          cat analysis_report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload PR snapshot
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          script: |
-            const fs = require('fs');
-            
-            try {
-              if (!fs.existsSync('analysis_report.md')) {
-                console.log('No analysis report found, skipping comment');
-                return;
-              }
-              
-              const analysisReport = fs.readFileSync('analysis_report.md', 'utf8');
-              const prNumber = parseInt('${{ steps.pr-details.outputs.pr_number }}');
-              
-              if (!prNumber || isNaN(prNumber)) {
-                console.log('Invalid PR number, skipping comment');
-                return;
-              }
-
-              const workflowRunUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-              const footer = `\n\n---\n*Analysis triggered by: ${context.actor}*\n*Workflow run: [${context.runId}](${workflowRunUrl})*`;
-              const COMMENT_BODY_TARGET = 64000;
-
-              function buildBoundedPrComment(report) {
-                const fullBody = `${report}${footer}`;
-                if (fullBody.length <= COMMENT_BODY_TARGET) {
-                  return fullBody;
-                }
-
-                const truncationNotice = [
-                  '',
-                  '> ⚠️ Full ARCANOS report exceeded GitHub comment size limits, so this PR comment was truncated.',
-                  `> Download the complete \`analysis_report.md\` artifact from [workflow run ${context.runId}](${workflowRunUrl}).`
-                ].join('\n');
-                const maxReportLength = Math.max(0, COMMENT_BODY_TARGET - footer.length - truncationNotice.length);
-                return `${report.slice(0, maxReportLength).trimEnd()}${truncationNotice}${footer}`;
-              }
-              
-              // Check if we already have an ARCANOS comment
-              const comments = await github.rest.issues.listComments({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber
-              });
-              
-              const existingComment = comments.data.find(comment => 
-                comment.body.includes('🤖 ARCANOS PR Analysis Report') ||
-                comment.body.includes('ARCANOS PR Analysis')
-              );
-              
-              const commentBody = buildBoundedPrComment(analysisReport);
-              console.log(`ARCANOS PR comment length: ${commentBody.length}/${COMMENT_BODY_TARGET}`);
-              
-              if (existingComment) {
-                // Update existing comment
-                await github.rest.issues.updateComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  comment_id: existingComment.id,
-                  body: commentBody
-                });
-                console.log('Updated existing ARCANOS analysis comment');
-              } else {
-                // Create new comment
-                await github.rest.issues.createComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: prNumber,
-                  body: commentBody
-                });
-                console.log('Created new ARCANOS analysis comment');
-              }
-            } catch (error) {
-              console.error('Error posting PR comment:', error);
-              // Don't fail the workflow if comment posting fails
-            }
-
-      - name: 🚨 Create Issue for Critical Findings
-        if: always() && steps.analysis.outcome == 'success' && steps.analysis.outputs.analysis_status == '❌'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            
-            try {
-              if (!fs.existsSync('analysis_report.md')) {
-                console.log('No analysis report found, skipping issue creation');
-                return;
-              }
-              
-              const analysisReport = fs.readFileSync('analysis_report.md', 'utf8');
-              const prNumber = parseInt('${{ steps.pr-details.outputs.pr_number }}');
-              
-              if (!prNumber || isNaN(prNumber)) {
-                console.log('Invalid PR number, skipping issue creation');
-                return;
-              }
-
-              const workflowRunUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-              const prUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/pull/${prNumber}`;
-              const ISSUE_BODY_TARGET = 64000;
-
-              function buildBoundedIssueBody(report) {
-                const header = `Critical issues detected by ARCANOS PR Assistant in PR #${prNumber}.\n\n`;
-                const footer = `\n\n[View PR #${prNumber}](${prUrl})\n\n[Full workflow artifacts](${workflowRunUrl})`;
-                const fullBody = `${header}${report}${footer}`;
-                if (fullBody.length <= ISSUE_BODY_TARGET) {
-                  return fullBody;
-                }
-
-                const truncationNotice = [
-                  '',
-                  '> Full ARCANOS report exceeded GitHub issue size limits, so this tracking issue was truncated.',
-                  `> Download the complete \`analysis_report.md\` artifact from [workflow run ${context.runId}](${workflowRunUrl}).`
-                ].join('\n');
-                const maxReportLength = Math.max(0, ISSUE_BODY_TARGET - header.length - footer.length - truncationNotice.length);
-                return `${header}${report.slice(0, maxReportLength).trimEnd()}${truncationNotice}${footer}`;
-              }
-              
-              await github.rest.issues.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title: `🚨 ARCANOS: Critical Issues in PR #${prNumber}`,
-                body: buildBoundedIssueBody(analysisReport),
-                labels: ['arcanos', 'critical', 'pr-analysis', 'needs-attention']
-              });
-              
-              console.log('Created critical issues tracking issue');
-            } catch (error) {
-              console.error('Error creating issue:', error);
-              // Don't fail the workflow if issue creation fails
-            }
-
-      - name: 💾 Upload Analysis Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: arcanos-pr-analysis-${{ steps.pr-details.outputs.pr_number }}
+          name: arcanos-pr-analysis-${{ steps.pr-details.outputs.pr_number }}-${{ steps.pr-details.outputs.head_sha }}
           path: |
-            analysis_result.json
-            analysis_request.json
             analysis_report.md
+            pr-metadata.json
             pr.diff
             changed_files.txt
+          if-no-files-found: error
           retention-days: 30
-
-      - name: 📊 Set Check Status
-        if: always()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const status = '${{ steps.analysis.outputs.analysis_status }}' || 'unknown';
-            const prNumber = parseInt('${{ steps.pr-details.outputs.pr_number }}') || 0;
-            const analysisOutcome = '${{ steps.analysis.outcome }}';
-            
-            let checkStatus, summary;
-            
-            if (analysisOutcome !== 'success') {
-              checkStatus = 'failure';
-              summary = 'ARCANOS analysis workflow failed';
-            } else {
-              switch(status) {
-                case '✅':
-                  checkStatus = 'success';
-                  summary = 'All ARCANOS checks passed - Ready for merge';
-                  break;
-                case '⚠️':
-                  checkStatus = 'success';
-                  summary = 'ARCANOS found minor issues - Review recommended';
-                  break;
-                case '❌':
-                  checkStatus = 'failure';
-                  summary = 'ARCANOS found critical issues - Fixes required';
-                  break;
-                default:
-                  checkStatus = 'failure';
-                  summary = 'ARCANOS analysis completed with unknown status';
-              }
-            }
-            
-            try {
-              await github.rest.checks.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                name: 'ARCANOS PR Assistant',
-                head_sha: context.sha,
-                status: 'completed',
-                conclusion: checkStatus,
-                output: {
-                  title: 'ARCANOS PR Analysis',
-                  summary: summary,
-                  text: `PR #${prNumber} analysis completed with status: ${status}`
-                }
-              });
-              
-              console.log(`Set check status to: ${checkStatus}`);
-            } catch (error) {
-              console.error('Error setting check status:', error);
-              // Don't fail the workflow if check creation fails
-            }
-
-      - name: 🎯 Analysis Summary
-        run: |
-          echo "## 🤖 ARCANOS PR Analysis Summary"
-          echo "**PR Number:** ${{ steps.pr-details.outputs.pr_number }}"
-          echo "**Status:** ${{ steps.analysis.outputs.analysis_status }}"
-          echo "**Repository:** ${{ github.repository }}"
-          echo "**Analysis completed at:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
-          
-          if [ -f analysis_result.json ]; then
-            echo ""
-            echo "**Key Findings:**"
-            jq -r '.result.recommendations[] | "- " + .' analysis_result.json | head -5
-          fi

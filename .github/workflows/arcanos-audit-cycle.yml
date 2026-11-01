@@ -1,44 +1,30 @@
-# This workflow enforces ARCANOS auto_audit_0432 cycle = 4 weeks
-# and auto-commits config changes to the repo.
-
+# Validate policy drift without changing repository contents.
 name: Enforce ARCANOS Audit Cycle
 
 on:
   schedule:
-    # Runs every Sunday at midnight UTC (adjust as needed)
     - cron: "0 0 * * 0"
-  workflow_dispatch: # allows manual trigger
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   enforce-cycle:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
         with:
-          node-version: 24.18.1
+          persist-credentials: false
 
-      - name: Ensure audit config file
+      - name: Validate audit config
+        env:
+          REPOSITORY: ${{ github.repository }}
         run: |
-          echo "🔧 Ensuring ARCANOS audit cycle is set to 4WEEK..."
-          CONFIG_FILE="arcanos_audit_config.json"
-          if [ ! -f "$CONFIG_FILE" ]; then
-            echo '{ "module": "auto_audit_0432", "cycle": "4WEEK", "target": "github.com/${{ github.repository }}" }' > $CONFIG_FILE
-          else
-            jq '.cycle = "4WEEK"' $CONFIG_FILE > tmp.$$.json && mv tmp.$$.json $CONFIG_FILE
-          fi
-
-      - name: Commit changes
-        run: |
-          git config --global user.name "arc-automation"
-          git config --global user.email "arc-auto@users.noreply.github.com"
-          git add arcanos_audit_config.json
-          if git commit -m "🔄 Enforce ARCANOS auto_audit_0432 cycle = 4WEEK"; then
-            git push
-          else
-            echo "✅ No changes needed — already set to 4WEEK."
-          fi
+          jq -e --arg target "github.com/$REPOSITORY" '
+            type == "object" and
+            .module == "auto_audit_0432" and
+            .cycle == "4WEEK" and
+            .target == $target
+          ' arcanos_audit_config.json

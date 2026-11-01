@@ -8,20 +8,23 @@ on:
 
 permissions:
   pull-requests: read
-  contents: read
+
+concurrency:
+  group: require-approval-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   require-approval:
     runs-on: ubuntu-latest
     steps:
       - name: Check required approvals
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
-            const pr = context.payload.pull_request || (await github.rest.pulls.get({
+            const pr = (await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              pull_number: context.issue.number
+              pull_number: context.payload.pull_request.number
             })).data;
 
             const labels = (pr.labels || []).map(l => (typeof l === 'string' ? l : l.name));
@@ -31,28 +34,39 @@ jobs:
             core.info(`needsApproval: ${needsApproval}`);
 
             if (!needsApproval) {
-              core.info('No approval required for this PR by policy.');
+              core.info('No label-based approval required; branch protection remains independent.');
               return;
             }
 
-            const { data: reviews } = await github.rest.pulls.listReviews({
+            const reviews = await github.paginate(github.rest.pulls.listReviews, {
               owner: context.repo.owner,
               repo: context.repo.repo,
               pull_number: pr.number,
               per_page: 100
             });
 
-            // Keep only the latest review state per user (GitHub behavior for approvals)
+            // Comments do not revoke a submitted approval. Decisive reviews do.
             const latestByUser = new Map();
-            for (const r of reviews) latestByUser.set(r.user.login, r);
+            for (const review of reviews) {
+              if (review.user?.type !== 'User' || review.user.login === pr.user.login) continue;
+              if (['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'].includes(review.state)) {
+                latestByUser.set(review.user.login, review);
+              }
+            }
 
             const approvers = [];
-            for (const [login, r] of latestByUser.entries()) {
-              if (r.state === 'APPROVED' && login !== pr.user.login) approvers.push(login);
+            for (const [login, review] of latestByUser.entries()) {
+              if (review.state !== 'APPROVED' || review.commit_id !== pr.head.sha) continue;
+              const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username: login
+              });
+              if (['write', 'maintain', 'admin'].includes(data.permission)) approvers.push(login);
             }
 
             core.info(`Approvers (excluding author): ${approvers.join(', ')}`);
 
             if (approvers.length < 1) {
-              core.setFailed('This PR requires at least 1 human approval before merge (policy: autonomy >= 2).');
+              core.setFailed('This labeled PR requires an independent human approval of the current head from a reviewer with write access.');
             }

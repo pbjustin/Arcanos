@@ -71,7 +71,6 @@ Core workflows to review first:
 - [Documentation update analysis](../.github/workflows/auto-update-documentation.yml)
 - [Documentation link audit](../.github/workflows/documentation-links.yml)
 - [Release](../.github/workflows/arcanos-release.yml)
-- [Arcanos deployment](../.github/workflows/arcanos-deploy.yml)
 - [Railway automatic deployment](../.github/workflows/railway-auto-deploy.yml)
 - [Railway inspection fixture E2E](../.github/workflows/railway-inspection-fixture-e2e.yml):
   opted-in Railway preview PRs exercise the unchanged inspection command against
@@ -80,6 +79,22 @@ Core workflows to review first:
   only synthetic credentials. The workflow retains sanitized proof and failure
   receipts for seven days. It does not dispatch the production inspection.
 - [Railway worker-diagnostics preview cleanup](../.github/workflows/railway-worker-diagnostics-preview-cleanup.yml)
+
+The manual `arcanos-code-analysis.yml` workflow now performs read-only type and
+lint validation of a validated full commit SHA already on `main`. The manual
+`arcanos-pr-assistant.yml` workflow captures a PR diff and changed-file snapshot
+with its head/base SHAs; it executes no PR code. Both publish advisory artifacts,
+use no provider credentials, and cannot issue merge-readiness checks, comments,
+or automated findings issues. Their former backend AI analysis paths are retired.
+The scheduled audit-cycle workflow validates `arcanos_audit_config.json` without
+rewriting it or committing policy changes. None of these workflows replaces the
+required CI aggregate or human review.
+
+The obsolete `arcanos-deploy.yml` simulation was retired. It did not deploy and
+its success reports were not production evidence. The Railway automatic
+deployment workflow remains the authoritative promotion path, including its
+coordinated rollout hold, exact-commit checks, paired targets, and read-back
+verification. Advisory AI reports do not authorize merge or deployment.
 
 ## Native Windows verification scope
 
@@ -1077,7 +1092,6 @@ deployment behavior.
 - [Documentation audit](../.github/workflows/doc-audit.yml)
 - [Documentation update analysis](../.github/workflows/auto-update-documentation.yml)
 - [Documentation link audit](../.github/workflows/documentation-links.yml)
-- [Arcanos deployment](../.github/workflows/arcanos-deploy.yml)
 - [Railway automatic deployment](../.github/workflows/railway-auto-deploy.yml)
 - [Railway worker-diagnostics preview cleanup](../.github/workflows/railway-worker-diagnostics-preview-cleanup.yml)
 - [Railway configuration](../railway.json)
