@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-31T19:29:22.525Z",
+  "generatedAt": "2026-11-01T00:08:54.198Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4366,6 +4366,9 @@
           "relativePath": "tests/diagnostic-execution-routes.test.ts"
         },
         {
+          "relativePath": "tests/diagnostics-host-load.test.ts"
+        },
+        {
           "relativePath": "tests/direct-answer-mode.test.ts"
         },
         {
@@ -5558,6 +5561,9 @@
         },
         {
           "relativePath": "tests/openai-prompt.test.ts"
+        },
+        {
+          "relativePath": "tests/openai-provider-health-lifecycle.test.ts"
         },
         {
           "relativePath": "tests/openai-resilience-redaction.test.ts"

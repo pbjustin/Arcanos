@@ -23,6 +23,7 @@
     "dev:watch": "tsc --watch",
     "build": "npm run check:boundaries && npm run check:cef-layer-access && npm run check:routing-boundaries && npm run check:native-pr-preview-imports && npm run check:backstage-notion-partition-cutover-cli-syntax && npm run build:packages && npm run build:workers:only && tsc && node ./node_modules/tsc-alias/dist/index.js && npm run dist:repair-aliases && npm run dist:check-aliases && npm run check:native-pr-preview-dist-imports && npm run build:copy-assets",
     "build:copy-assets": "node scripts/copy-assets.cjs",
+    "postbuild": "node scripts/production-build-identity.mjs --write",
     "dist:repair-aliases": "node scripts/repair-dist-aliases.js --rewrite",
     "dist:check-aliases": "node scripts/repair-dist-aliases.js --check",
     "check:native-pr-preview-dist-imports": "node scripts/check-native-pr-preview-dist-imports.mjs",

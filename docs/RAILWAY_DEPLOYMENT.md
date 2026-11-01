@@ -122,6 +122,34 @@ switch back to `false` restores the retained legacy selection on a compatible
 revision. Follow the linked migration gates and existing approved drain and
 activation procedure; implementation and synthetic validation do not authorize
 variable changes, restarts, deployment, or paid-provider evaluation.
+### Build identity and source references
+
+`npm run build` writes `dist/build-identity.json` through its `postbuild` hook.
+The normal role launcher reports `build.identity` once before starting the
+application. It remeasures the fixed source/build-input inventory and emitted
+workspace bytes against that receipt. `sourceDigest` is this application's
+SHA-256 inventory digest, **not** Railway's uploaded snapshot or container-image
+digest. `buildId` identifies the receipt's source, emitted bytes and references.
+This is artifact observation, not a signed external attestation, dependency
+integrity proof or the protected-configuration digest gate.
+
+`gitSha` is populated only when a complete local Git checkout matches every
+tracked blob and contains no pending changes. Docker/source snapshots without
+Git metadata report it as null. `configuredGitSha` and `buildConfiguredGitSha`
+are platform references, never proof of the deployed commit. A build/runtime
+reference disagreement or a reference conflicting with a verified checkout
+reports `mismatch`; changed source/emitted bytes also report `mismatch` and
+withhold `gitSha`. Missing or malformed receipts warn as `unverified` without
+preventing startup. No runtime configuration, credentials or per-file hashes
+are logged. Native contained previews return before this observer is imported.
+
+Compare the startup receipt with the exact deployment's build logs, source
+snapshot digest and image digest. Without an independent mapping between those
+artifacts and a Git commit, the deployed commit remains unknown. Historical
+service configuration and recent-looking log fields do not establish that
+mapping or a count of commits behind main. Existing canonical start and
+protected-digest gates remain required; this observer does not replace them.
+
 Tracked Railway config (source: `railway.json`):
 - Build: `npm ci --include=dev --no-audit --no-fund && npm run build`
 - Start: `node scripts/start-railway-service-with-integrity.mjs`

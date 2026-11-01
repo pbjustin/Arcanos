@@ -702,6 +702,14 @@ export async function assertRailwayProcessIsolationOrThrow(env, options = {}) {
   return profileModule.assertSelfHealPreviewApplicationChildOrThrow(env, options);
 }
 
+/** The pinned import remains unreachable to native previews, which return first. */
+async function reportProductionBuildIdentityAfterPreview() {
+  const identityModule = await import(
+    new URL('./production-build-identity.mjs', import.meta.url).href
+  );
+  identityModule.reportProductionBuildIdentity();
+}
+
 /**
  * Emit a stable startup log for operator visibility.
  *
@@ -872,6 +880,45 @@ export function resolveCliBridgeListenerConfig(env = process.env) {
   };
 }
 
+/** Observe daemon failures while recognizing only successfully forwarded shutdowns. */
+export function observeCliBridgeDaemon(daemonProcess) {
+  let shutdownSignal = null;
+
+  daemonProcess.once('error', (error) => {
+    console.error('[railway-launcher] daemon.unreachable', JSON.stringify({
+      module: 'railway-launcher',
+      reason: 'spawn_error',
+      errorType: error instanceof Error ? error.name : 'Error'
+    }));
+  });
+  daemonProcess.once('exit', (code, signal) => {
+    const expectedShutdown = shutdownSignal !== null && (
+      signal === shutdownSignal || (signal === null && code === 0)
+    );
+    const metadata = JSON.stringify({
+      module: 'railway-launcher',
+      reason: signal ? `signal_${signal}` : `exit_${typeof code === 'number' ? code : 'unknown'}`,
+      restartPolicy: 'no-restart'
+    });
+    if (expectedShutdown) {
+      console.log('[railway-launcher] daemon.stopped', metadata);
+      return;
+    }
+    console.error('[railway-launcher] daemon.unreachable', metadata);
+  });
+
+  return (signal) => {
+    if (shutdownSignal !== null || !SHUTDOWN_SIGNALS.has(signal)) {
+      return;
+    }
+    // Child exit events arrive asynchronously; mark intent before forwarding.
+    shutdownSignal = signal;
+    if (!daemonProcess.kill(signal)) {
+      shutdownSignal = null;
+    }
+  };
+}
+
 function maybeStartCliBridgeDaemon() {
   if (!isCliBridgeEnabled()) {
     return null;
@@ -898,22 +945,7 @@ function maybeStartCliBridgeDaemon() {
     stdio: ['ignore', 'inherit', 'inherit']
   });
 
-  daemonProcess.once('error', (error) => {
-    console.error('[railway-launcher] daemon.unreachable', JSON.stringify({
-      module: 'railway-launcher',
-      reason: 'spawn_error',
-      errorType: error instanceof Error ? error.name : 'Error'
-    }));
-  });
-  daemonProcess.once('exit', (code, signal) => {
-    console.error('[railway-launcher] daemon.unreachable', JSON.stringify({
-      module: 'railway-launcher',
-      reason: signal ? `signal_${signal}` : `exit_${typeof code === 'number' ? code : 'unknown'}`,
-      restartPolicy: 'no-restart'
-    }));
-  });
-
-  return daemonProcess;
+  return observeCliBridgeDaemon(daemonProcess);
 }
 
 /**
@@ -1010,7 +1042,7 @@ async function runWebRuntime() {
     enabled: false,
     disabledReason: 'ARCANOS_PROCESS_KIND=web disables in-process workers; dedicated async workers must run in a separate worker service.'
   }));
-  const daemonProcess = maybeStartCliBridgeDaemon();
+  const shutdownDaemon = maybeStartCliBridgeDaemon();
   const webProcess = spawnProcess('node', [
     '--max-old-space-size=7168',
     '--import',
@@ -1025,7 +1057,7 @@ async function runWebRuntime() {
 
     shutdownRequested = true;
     console.log(`[railway-launcher] received ${signal}; forwarding shutdown to web runtime`);
-    daemonProcess?.kill(signal);
+    shutdownDaemon?.(signal);
     webProcess.kill(signal);
   };
 
@@ -1476,6 +1508,7 @@ async function main() {
     }
 
     const processKind = resolveProcessKindOrThrow();
+    await reportProductionBuildIdentityAfterPreview();
     const previewIsolation = await assertRailwayProcessIsolationOrThrow(process.env);
     if (previewIsolation.enabled) {
       console.log('[railway-launcher] preview.isolation.verified', JSON.stringify({

@@ -3818,6 +3818,50 @@ describe('native PR preview import boundary', () => {
     }
   });
 
+  it('keeps production build observation outside the native graph behind the pinned post-preview helper', async () => {
+    const sourceText = await readRailwayLauncherSource();
+    expect(findUnsafeRuntimeSyntax('scripts/start-railway-service.mjs', sourceText)).toEqual([]);
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain('scripts/production-build-identity.mjs');
+  });
+
+  it.each([
+    ["new URL('./production-build-identity.mjs', import.meta.url).href", "new URL('./foreign-identity.mjs', import.meta.url).href"],
+    ['identityModule.reportProductionBuildIdentity();', 'identityModule.writeProductionBuildIdentity();'],
+  ])('rejects production identity import or effect drift: %s', async (original, replacement) => {
+    const sourceText = replaceRequired(await readRailwayLauncherSource(), original, replacement);
+    expect(findUnsafeRuntimeSyntax('scripts/start-railway-service.mjs', sourceText)).toEqual(expect.arrayContaining([
+      expect.stringContaining('non-literal dynamic import'),
+      expect.stringContaining('critical launcher function "reportProductionBuildIdentityAfterPreview" body digest'),
+      expect.stringContaining('critical entry file semantic digest'),
+    ]));
+  });
+
+  it('rejects production build observation before native preview selection', async () => {
+    const original = await readRailwayLauncherSource();
+    const withoutCall = replaceRequired(original, '    await reportProductionBuildIdentityAfterPreview();\n', '');
+    const sourceText = replaceRequired(
+      withoutCall,
+      'async function main() {\n  try {',
+      'async function main() {\n  try {\n    await reportProductionBuildIdentityAfterPreview();'
+    );
+    expect(findUnsafeRuntimeSyntax('scripts/start-railway-service.mjs', sourceText)).toEqual(expect.arrayContaining([
+      expect.stringContaining('launcher helper call surface must match the reviewed contract'),
+      expect.stringContaining('forbidden launcher helper capability reference'),
+    ]));
+  });
+
+  it('rejects production build observation inside the contained native launcher', async () => {
+    const sourceText = replaceRequired(
+      await readRailwayLauncherSource(),
+      'async function runNativePrApplicationPreview() {',
+      'async function runNativePrApplicationPreview() {\n  await reportProductionBuildIdentityAfterPreview();'
+    );
+    expect(findUnsafeRuntimeSyntax('scripts/start-railway-service.mjs', sourceText)).toEqual(expect.arrayContaining([
+      expect.stringContaining('forbidden native preview launch call'),
+      expect.stringContaining('launcher helper call surface must match the reviewed contract'),
+    ]));
+  });
+
   it.each([
     ["new URL('./railway-self-heal-preview-profile.mjs', import.meta.url).href", "new URL('./foreign-profile.mjs', import.meta.url).href"],
     ["!['worker-coordinator-v1', 'worker-inference-containment-v1'].includes(env?.ARCANOS_SELF_HEAL_PREVIEW_PROFILE)", 'false'],

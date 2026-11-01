@@ -841,6 +841,8 @@ const RAILWAY_LAUNCHER_FILE = 'scripts/start-railway-service.mjs';
 const SELF_HEAL_PROFILE_ISOLATION_FUNCTION = 'assertRailwayProcessIsolationOrThrow';
 const SELF_HEAL_PROFILE_ISOLATION_FUNCTION_DIGEST =
   '877d5d8a2d39619f5acbe48577c71b962832a4a6d5064ef2a836a1b9e28a378c';
+const PRODUCTION_BUILD_IDENTITY_FUNCTION = 'reportProductionBuildIdentityAfterPreview';
+const PRODUCTION_BUILD_IDENTITY_FUNCTION_DIGEST = '6ca929f50d4ca615c4d2bbb4baea7f7a9c273dc40b5615b318691b5b6cd1850e';
 const NATIVE_PREVIEW_LAUNCH_FUNCTION = 'runNativePrApplicationPreview';
 const LAUNCHER_REPOSITORY_ROOT_STATEMENT_DIGEST =
   'd396b2efbae912e708125ebb4535806f5b516cf91aa48bc2ba579e6fb413e0d2';
@@ -851,6 +853,7 @@ const SENSITIVE_LAUNCHER_HELPER_NAMES = new Set([
   'maybeStartCliBridgeDaemon',
   'mirrorAndObserveWorkerOutput',
   'repairDistAliases',
+  PRODUCTION_BUILD_IDENTITY_FUNCTION,
   'resolveNativePrPreviewOrThrow',
   'runNativePrApplicationPreview',
   'runPassivePrPreview',
@@ -862,6 +865,7 @@ const NON_EXPORTABLE_LAUNCHER_HELPER_NAMES = new Set([
   'main',
   'maybeStartCliBridgeDaemon',
   'repairDistAliases',
+  PRODUCTION_BUILD_IDENTITY_FUNCTION,
   'runNativePrApplicationPreview',
   'runPassivePrPreview',
   'runWebRuntime',
@@ -873,6 +877,7 @@ const LISTENER_FACTORY_NAMES = new Set([
   'express',
 ]);
 const CRITICAL_LAUNCHER_FUNCTION_DIGESTS = new Map([
+  [PRODUCTION_BUILD_IDENTITY_FUNCTION, PRODUCTION_BUILD_IDENTITY_FUNCTION_DIGEST],
   [
     'buildNativePrApplicationChildEnvironment',
     '632efa1cd27c3327b71c5f169c39c82b88abd507753a53db87bfa4138c6bf48f',
@@ -1089,7 +1094,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'scripts/start-railway-service.mjs',
-    '4593163ddf34e3c996c3ac38d41d4c09d45fe2473dda9cdb6efad2ed3fbd280d',
+    '80802e1b6d19db618221f47d635a15b87e4901f554130f708796ebd357a633ba',
   ],
   [
     'src/start-native-pr-preview.ts',
@@ -4444,6 +4449,7 @@ function inspectSensitiveLauncherHelpers(
     return calls?.length === 1 ? calls[0] : null;
   };
   const maybeStartCall = onlyCall('maybeStartCliBridgeDaemon');
+  const buildIdentityCall = onlyCall(PRODUCTION_BUILD_IDENTITY_FUNCTION);
   const productionEnvironmentCall =
     onlyCall('buildChildEnvironment');
   const childEnvironmentCall =
@@ -4546,10 +4552,20 @@ function inspectSensitiveLauncherHelpers(
     && isDirectConstCallBinding(
       maybeStartCall,
       functions.get('runWebRuntime'),
-      'daemonProcess'
+      'shutdownDaemon'
     )
   ) {
     approvedCalls.add(maybeStartCall);
+  }
+  if (
+    buildIdentityCall
+    && buildIdentityCall.arguments.length === 0
+    && nearestContainingFunction(buildIdentityCall) === mainFunction
+    && mainTryBlock?.statements[1] === nativePreviewIf
+    && directAwaitCallStatement(buildIdentityCall, mainTryBlock)
+      === mainTryBlock?.statements[3]
+  ) {
+    approvedCalls.add(buildIdentityCall);
   }
   if (
     repairCall
@@ -5200,6 +5216,15 @@ export function findUnsafeRuntimeSyntax(filePath, sourceText) {
     && profileIsolationFunction
     && sourceNodeDigest(profileIsolationFunction, sourceFile) === SELF_HEAL_PROFILE_ISOLATION_FUNCTION_DIGEST
   );
+  const buildIdentityFunction = filePath === RAILWAY_LAUNCHER_FILE
+    ? uniqueTopLevelFunctionBinding(sourceFile, bindingIdentifiers, PRODUCTION_BUILD_IDENTITY_FUNCTION)
+    : null;
+  const reviewedBuildIdentityFunction = Boolean(
+    hasExactReviewedEntryDigest
+    && launcherContract?.sensitiveHelperContractSafe
+    && buildIdentityFunction
+    && sourceNodeDigest(buildIdentityFunction, sourceFile) === PRODUCTION_BUILD_IDENTITY_FUNCTION_DIGEST
+  );
 
   function checkSpecifier(specifier, lineNumber) {
     const fileSpecificImports =
@@ -5381,6 +5406,11 @@ export function findUnsafeRuntimeSyntax(filePath, sourceText) {
       ) {
         // The pinned helper admits only the exact sealed application child and
         // imports one fixed launcher-relative module after native-mode return.
+      } else if (
+        reviewedBuildIdentityFunction
+        && nearestContainingFunction(node) === buildIdentityFunction
+      ) {
+        // This exact pinned identity observation runs only after native preview returns.
       } else if (!argument || !ts.isStringLiteral(argument)) {
         violations.push(`${filePath}:${lineNumber}: non-literal dynamic import`);
       } else if (!isLocalImportSpecifier(argument.text)) {
