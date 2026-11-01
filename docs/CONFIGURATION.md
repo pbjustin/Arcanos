@@ -672,11 +672,20 @@ Protected queued generation is independent of the originating HTTP connection. `
 ### Confirmation and automation
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `TRUSTED_GPT_IDS` | empty | GPT IDs recorded as trusted confirmation metadata. Membership does not grant approval or authenticate the caller. Where one-time-token approval is permitted, `x-arcanos-confirm-token` must match an unexpired backend-issued token and is consumed on successful approval regardless of GPT ID. Token storage is process-local; unknown tokens fail closed. Optional backend-service GPT-ID authentication uses its own configured auth mode and checks. |
+| `TRUSTED_GPT_IDS` | empty | Ordinary GPT IDs are confirmation metadata and do not grant approval or authenticate the caller. **Compatibility exception:** a standalone `*` in this comma-separated list (after trimming entries) enables global allow-all confirmation, even when `ALLOW_ALL_GPTS=false`. It approves every ordinary request reaching `confirmGate`, including requests with no GPT ID and missing or invalid tokens. With allow-all disabled, one-time-token approval requires an unexpired backend-issued `x-arcanos-confirm-token`, consumed on successful approval regardless of GPT ID. Storage is process-local; unknown tokens fail closed. Optional backend-service GPT-ID authentication uses its own configured auth mode and checks. |
+| `ALLOW_ALL_GPTS` | unset | Exact `true` enables global allow-all confirmation. Effective allow-all is `TRUSTED_GPT_IDS` containing a standalone `*` **or** `ALLOW_ALL_GPTS=true`; `false` cannot override the wildcard. Ordinary requests need no confirmation header or token, and supplied tokens are not validated or consumed. Challenge-only routes still require their issued one-use challenge. Independent route authentication and scopes remain required. |
 | `ARCANOS_AUTOMATION_SECRET` | empty | Shared secret for automation bypass. |
 | `ARCANOS_AUTOMATION_HEADER` | `x-arcanos-automation` | Header carrying automation secret. |
 | `CONFIRMATION_CHALLENGE_TTL_MS` | `120000` (2 minutes) | Lifetime of ordinary in-memory one-use backend confirmation challenges. It must be positive; invalid values fall back to the 2-minute default. This setting still applies to Phase One Backstage mutations, generic GPT Access credentials, and direct/control-plane/legacy aliases. The dedicated Backstage canon Action lane does not issue this second challenge, so changing this TTL is neither required nor recommended for that Builder flow. |
 | `ASK_ROUTE_MODE` | `gone` | Legacy ask-style migration switch. Set `compat` only while temporarily supporting old `/brain` callers. |
+
+To require ordinary confirmation, remove standalone `*` entries from
+`TRUSTED_GPT_IDS` and keep `ALLOW_ALL_GPTS` unset or `false`. The gate captures
+these settings at module load, so apply an authorized configuration change through
+the normal restart/deployment process. Callers that previously relied on allow-all
+will then need manual, challenge, valid one-time-token, or configured automation
+approval. Changing wildcard precedence would break that existing compatibility
+behavior and requires a separate runtime policy change.
 
 ### HTTP control-plane authentication
 

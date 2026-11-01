@@ -186,8 +186,9 @@ Base URLs:
 Confirmation gate behavior (`src/transport/http/middleware/confirmGate.ts`):
 - Manual: `x-confirmed: yes`
 - Challenge retry: `x-confirmed: token:<challengeId>`
-- One-time approval uses the `x-arcanos-confirm-token` header with an unexpired backend-issued token, consumed on successful approval, including requests with a GPT ID in `TRUSTED_GPT_IDS`. GPT IDs from paths, bodies, or headers are metadata and cannot grant approval. Token issuance requires the configured automation secret; storage is process-local, so unknown tokens on another replica or after restart fail closed. Challenge-only routes accept only their issued one-use challenge. Authentication and required scopes remain separate route gates.
+- With allow-all disabled, one-time approval uses the `x-arcanos-confirm-token` header with an unexpired backend-issued token, consumed on successful approval, including requests with an ordinary GPT ID in `TRUSTED_GPT_IDS`. GPT IDs from paths, bodies, or headers are metadata and cannot grant approval. Token issuance requires the configured automation secret; storage is process-local, so unknown tokens on another replica or after restart fail closed. Challenge-only routes accept only their issued one-use challenge. Authentication and required scopes remain separate route gates.
 - Automation secret: configured header (default `x-arcanos-automation`)
+- Global allow-all compatibility: `TRUSTED_GPT_IDS` containing a standalone `*` entry **or** exact `ALLOW_ALL_GPTS=true` approves every ordinary request reaching the gate, even with no GPT ID, no token, or an invalid token. `ALLOW_ALL_GPTS=false` does not override the wildcard. Supplied tokens are not validated or consumed in this mode. Challenge-only routes still require their issued one-use challenge; route authentication and scopes remain independent. To require ordinary confirmation, remove `*` entries and keep `ALLOW_ALL_GPTS` unset or `false`; callers relying on allow-all must then supply a supported approval.
 
 Public provider-capable HTTP ingress uses one atomic caller-plus-deployment
 admission ceiling. Production counters live in shared Redis, so replicas and

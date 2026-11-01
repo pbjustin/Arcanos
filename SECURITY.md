@@ -61,9 +61,10 @@ python -m pip list --outdated
 
 `confirmGate` is an action-confirmation gate, not caller authentication or
 resource ownership. GPT identifiers from paths, bodies, or headers are metadata;
-allowlist membership does not grant approval. Where one-time-token approval is
-permitted, `x-arcanos-confirm-token` must identify an unexpired backend-issued
-token, which is consumed on successful approval. Token issuance requires the
+ordinary allowlist membership does not grant approval. With global allow-all
+disabled, where one-time-token approval is permitted, `x-arcanos-confirm-token`
+must identify an unexpired backend-issued token, which is consumed on successful
+approval. Token issuance requires the
 configured automation secret. These tokens are process-local and do not survive
 restarts or work across replicas; an unknown token fails closed. Authenticated
 automation and explicit manual confirmation retain their existing flows. Worker
@@ -73,6 +74,23 @@ Challenge-only CEF routes accept only their issued, request-bound, one-use
 challenge; other confirmation approvals cannot substitute for it. Route-specific
 authentication and scopes remain required independently of confirmation. See
 [CEF controls](docs/cef-hardening-controls.md).
+
+Global allow-all compatibility remains an explicit configuration exception:
+`TRUSTED_GPT_IDS` containing a standalone `*` (after trimming comma-separated
+entries), or exact `ALLOW_ALL_GPTS=true`, approves every ordinary request reaching
+`confirmGate`. `ALLOW_ALL_GPTS=false` does not override the wildcard. No GPT ID or
+confirmation token is required, and supplied tokens are neither validated nor
+consumed. This materially removes the confirmation boundary when either setting
+is active and a request can reach an ordinary gated action; independent route
+authentication and scopes still apply. Challenge-only routes retain their issued
+one-use challenge requirement. No production configuration has been inspected
+to establish whether this exposure is active.
+
+The narrow configuration correction is to remove standalone `*` entries and keep
+`ALLOW_ALL_GPTS` unset or `false`, through an authorized configuration change and
+normal restart/deployment process. Callers relying on allow-all must then supply
+a supported approval. Making `false` override `*` would change existing runtime
+compatibility and is a separate policy change; this repair preserves that behavior.
 
 ## References
 - Security advisories: `https://github.com/pbjustin/Arcanos/security`

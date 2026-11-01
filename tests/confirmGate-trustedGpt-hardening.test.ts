@@ -90,6 +90,28 @@ describe('confirmGate trusted GPT hardening', () => {
     });
   });
 
+  it.each([undefined, 'synthetic-invalid-token'])('preserves wildcard allow-all with ALLOW_ALL_GPTS=false and token %s', async token => {
+    process.env.TRUSTED_GPT_IDS = `${trustedId}, * `;
+    const { confirmGate, getConfirmGateConfiguration } = await import('../src/transport/http/middleware/confirmGate.js');
+    const req = {
+      method: 'POST', path: '/api/protected', body: {},
+      headers: token === undefined ? {} : { 'x-arcanos-confirm-token': token },
+    } as unknown as Request;
+    const next = jest.fn();
+    const recorder = responseRecorder();
+
+    confirmGate(req, recorder.response, next);
+
+    expect(getConfirmGateConfiguration()).toMatchObject({ allowAllGpts: true, requiresHeader: false });
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(recorder.status).not.toHaveBeenCalled();
+    expect(req.confirmationContext).toMatchObject({
+      confirmationStatus: 'auto-allowed', allowAllOverride: true, isTrustedGpt: false,
+      usedOneTimeToken: false, usedChallengeToken: false,
+    });
+    expect(req.confirmationContext?.gptId).toBeUndefined();
+  });
+
   it('preserves authenticated automation approval independently of GPT metadata', async () => {
     const { confirmGate } = await import('../src/transport/http/middleware/confirmGate.js');
     const req = requestWithIdentity('body', 'synthetic-invalid-token');
@@ -109,7 +131,8 @@ describe('confirmGate trusted GPT hardening', () => {
     expect(recorder.status).toHaveBeenCalledWith(403);
   });
 
-  it('preserves challenge-only approval and rejects other approvals without consuming their token', async () => {
+  it.each([trustedId, '*'])('preserves challenge-only approval with TRUSTED_GPT_IDS=%s and rejects other approvals without consuming their token', async configuredIds => {
+    process.env.TRUSTED_GPT_IDS = configuredIds;
     const { confirmGate } = await import('../src/transport/http/middleware/confirmGate.js');
     const { createOneTimeToken, consumeOneTimeToken } = await import('../src/lib/tokenStore.js');
     const { token } = createOneTimeToken();
