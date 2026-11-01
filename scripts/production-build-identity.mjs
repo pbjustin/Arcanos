@@ -9,11 +9,13 @@ export const BUILD_IDENTITY_PATH = 'dist/build-identity.json';
 // Fixed code/build inputs only: never walk runtime volumes, credentials or node_modules.
 const SOURCE_ROOTS = [
   'src', 'scripts', 'config', 'contracts', 'schemas', 'openapi',
-  'workers/src', 'daemon-python/arcanos', 'packages',
+  'workers/src', 'daemon-python/arcanos', 'packages', 'vendor', 'arcanos-ai-runtime/src',
 ];
 const SOURCE_FILES = [
   'package.json', 'package-lock.json', 'tsconfig.json', 'Dockerfile', 'railway.json',
   'workers/package.json', 'workers/tsconfig.json', 'daemon-python/pyproject.toml',
+  'prisma/schema.prisma', 'arcanos-ai-runtime/package.json',
+  'arcanos-ai-runtime/package-lock.json', 'arcanos-ai-runtime/tsconfig.json',
 ];
 const CODE_EXTENSIONS = /\.(?:[cm]?js|ts|json|py|toml)$/u;
 const SHA = /^[0-9a-f]{40}$/u;
@@ -39,9 +41,12 @@ function inventory(rootPath, runtime) {
       throw error;
     }
     if (stat.isSymbolicLink()) throw new Error('BUILD_IDENTITY_LINK');
+    if (/(?:^|\/)\.env(?:\.|$)/u.test(path)) return;
     if (stat.isDirectory()) {
       for (const name of readdirSync(absolute).sort()) {
-        if (['node_modules', '__pycache__', 'dist', '.git'].includes(name) && !runtime) continue;
+        if (['node_modules', '__pycache__', '.git'].includes(name) && !runtime) continue;
+        // Checked-in vendor dist files are dependency inputs, not generated workspace output.
+        if (name === 'dist' && !runtime && !path.startsWith('vendor/')) continue;
         visit(`${path}/${name}`);
       }
       return;

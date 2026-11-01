@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import fs, { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import {
   BUILD_IDENTITY_PATH, readProductionBuildIdentity, reportProductionBuildIdentity,
@@ -65,6 +65,60 @@ describe('production build identity', () => {
       expect(readProductionBuildIdentity(options)).toMatchObject({ status: 'mismatch' });
     }
   });
+
+  it.each([
+    'prisma/schema.prisma',
+    'vendor/minimatch-9.0.7/package.json',
+    'vendor/minimatch-9.0.7/dist/commonjs/index.js',
+    'arcanos-ai-runtime/src/worker.ts',
+    'arcanos-ai-runtime/package.json',
+    'arcanos-ai-runtime/package-lock.json',
+    'arcanos-ai-runtime/tsconfig.json'
+  ])('measures the Docker build input %s and detects later source changes', path => {
+    const options = fixture();
+    const input = join(options.rootPath, path);
+    mkdirSync(dirname(input), { recursive: true });
+    writeFileSync(input, 'initial build input');
+    const first = writeProductionBuildIdentity(options);
+    expect(writeProductionBuildIdentity(options)).toEqual(first);
+    expect(readProductionBuildIdentity(options)).toMatchObject({ artifactStatus: 'matches_build_receipt' });
+
+    writeFileSync(input, 'modified build input');
+    expect(readProductionBuildIdentity(options)).toMatchObject({ artifactStatus: 'mismatch', gitSha: null });
+    const revised = writeProductionBuildIdentity(options);
+    expect(revised.sourceDigest).not.toBe(first.sourceDigest);
+    expect(revised.artifactDigest).toBe(first.artifactDigest);
+    expect(revised.buildId).not.toBe(first.buildId);
+  });
+
+  it('excludes dotenv files, installed dependencies and runtime data from added source coverage', () => {
+    const options = fixture();
+    const first = writeProductionBuildIdentity(options);
+    for (const path of [
+      'prisma/.env', 'vendor/minimatch-9.0.7/.env.json',
+      'vendor/minimatch-9.0.7/node_modules/private/index.js',
+      'arcanos-ai-runtime/.env.production', 'arcanos-ai-runtime/data/credentials.json',
+      'arcanos-ai-runtime/node_modules/private/index.js', 'arcanos-ai-runtime/dist/server.js',
+      'dist/.env.production', 'dist/.env.json', 'packages/example/dist/.env'
+    ]) {
+      const excluded = join(options.rootPath, path);
+      mkdirSync(dirname(excluded), { recursive: true });
+      writeFileSync(excluded, 'test-private-material');
+    }
+    expect(writeProductionBuildIdentity(options)).toEqual(first);
+    expect(readProductionBuildIdentity(options)).toMatchObject({ artifactStatus: 'matches_build_receipt' });
+  });
+
+  it.each(['vendor/minimatch-9.0.7', 'arcanos-ai-runtime/src'])(
+    'rejects a linked newly covered source root %s', path => {
+      const options = fixture();
+      const external = fixture();
+      const linked = join(options.rootPath, path);
+      mkdirSync(dirname(linked), { recursive: true });
+      symlinkSync(external.rootPath, linked, process.platform === 'win32' ? 'junction' : 'dir');
+      expect(() => writeProductionBuildIdentity(options)).toThrow('BUILD_IDENTITY_LINK');
+    }
+  );
 
   it('rejects a junction or symlink ancestor outside the fixed code roots', () => {
     const options = fixture();
