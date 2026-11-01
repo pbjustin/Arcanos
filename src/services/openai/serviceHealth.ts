@@ -77,6 +77,7 @@ const DEFAULT_PROVIDER_PROBE_TIMEOUT_MS = 4_000;
 // meaningful provider timeout.
 const OPENAI_PROVIDER_PROBE_SDK_TIMEOUT_MS = 0x7fffffff;
 let providerRuntimeState: OpenAIProviderRuntimeState | null = null;
+let providerProbeInFlight = false;
 
 function createInitialProviderRuntimeState(): OpenAIProviderRuntimeState {
   return {
@@ -367,7 +368,7 @@ function markProviderFailure(
   const nextRetryAt = new Date(Date.now() + backoffMs).toISOString();
 
   state.lastAttemptAt = context.attemptedAt;
-  state.lastFailureAt = context.attemptedAt;
+  state.lastFailureAt = new Date().toISOString();
   state.lastFailureReason = failure.reason;
   state.lastFailureCategory = failure.category;
   state.lastFailureStatus = failure.status;
@@ -400,7 +401,7 @@ function markProviderSuccess(
 ): OpenAIProviderRuntimeStatus {
   const state = getProviderRuntimeState();
   state.lastAttemptAt = context.attemptedAt;
-  state.lastSuccessAt = context.attemptedAt;
+  state.lastSuccessAt = new Date().toISOString();
   state.lastFailureReason = null;
   state.lastFailureCategory = null;
   state.lastFailureStatus = null;
@@ -412,7 +413,7 @@ function markProviderSuccess(
   logger.info('openai.provider.healthy', {
     module: 'openai.service_health',
     source: context.source,
-    at: context.attemptedAt
+    at: state.lastSuccessAt
   });
 
   return cloneProviderRuntimeState(state);
@@ -474,6 +475,18 @@ export async function probeOpenAIProviderHealth(options: {
   source?: string;
   timeoutMs?: number;
 } = {}): Promise<OpenAIProviderProbeResult> {
+  // A forced startup/recovery request may bypass backoff, but must not start
+  // another transport while a probe is pending. Do not share its promise:
+  // worker-budget admission and failures belong to the initiating context.
+  if (providerProbeInFlight) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: 'provider_probe_in_flight',
+      runtime: cloneProviderRuntimeState(getProviderRuntimeState())
+    };
+  }
+
   const source = options.source ?? 'runtime_probe';
   syncOpenAIProviderRuntime({
     reason: source
@@ -526,6 +539,7 @@ export async function probeOpenAIProviderHealth(options: {
   const previousTransportReady = probeExecutionContext?.workerBudgetTransportReady;
   let scopedTransportReady: ((operation: string) => void) | undefined;
 
+  providerProbeInFlight = true;
   try {
     await runProbeWithTimeout(
       armTimeout => {
@@ -581,6 +595,7 @@ export async function probeOpenAIProviderHealth(options: {
       })
     };
   } finally {
+    providerProbeInFlight = false;
     if (
       probeExecutionContext
       && probeExecutionContext.workerBudgetTransportReady === scopedTransportReady

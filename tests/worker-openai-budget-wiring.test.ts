@@ -225,6 +225,48 @@ describe('worker OpenAI budget wiring', () => {
     expect(nativeFetch).toHaveBeenCalledTimes(1);
   });
 
+  it('skips concurrent probes without sharing worker admission, then enforces the next worker budget', async () => {
+    let release!: () => void;
+    const nativeFetch = jest.fn(() => new Promise<Response>(resolve => {
+      release = () => resolve(modelListResponse());
+    }));
+    configureWorkerOpenAI(nativeFetch);
+    const initiatingContext = createWorkerContext();
+    const concurrentContext = createWorkerContext();
+    const first = runWithAiExecutionContext(initiatingContext, () => probeOpenAIProviderHealth({
+      force: true, source: 'job_runner:initiating_probe'
+    }));
+    while (nativeFetch.mock.calls.length === 0) await Promise.resolve();
+    const healthBefore = getOpenAIProviderRuntimeStatus();
+
+    try {
+      await expect(runWithAiExecutionContext(concurrentContext, () => probeOpenAIProviderHealth({
+        force: true, source: 'job_runner:concurrent_probe'
+      }))).resolves.toMatchObject({
+        ok: false, skipped: true, reason: 'provider_probe_in_flight', runtime: healthBefore
+      });
+      expect(getOpenAIProviderRuntimeStatus()).toEqual(healthBefore);
+      expect(reserveWorkerAiProviderAttemptMock).toHaveBeenCalledTimes(1);
+      expect(nativeFetch).toHaveBeenCalledTimes(1);
+      expect(concurrentContext.totals.calls).toBe(0);
+      expect(concurrentContext.workerBudgetFailure).toBeNull();
+    } finally {
+      release();
+      await first;
+    }
+
+    reserveWorkerAiProviderAttemptMock.mockResolvedValueOnce({
+      ...admittedReservation(), allowed: false, used: 2, remaining: 0,
+      nextAvailableAt: '2026-08-30T15:00:00.000Z'
+    });
+    await expect(runWithAiExecutionContext(concurrentContext, () => probeOpenAIProviderHealth({
+      force: true, source: 'job_runner:subsequent_probe'
+    }))).rejects.toBeInstanceOf(WorkerAiCallBudgetPausedError);
+    expect(reserveWorkerAiProviderAttemptMock).toHaveBeenCalledTimes(2);
+    expect(nativeFetch).toHaveBeenCalledTimes(1);
+    expect(concurrentContext.workerBudgetFailure).toBeInstanceOf(WorkerAiCallBudgetPausedError);
+  });
+
   it('rotates the configured unified client before one metered recovery probe', async () => {
     const rotatedApiKey = buildSyntheticOpenAIKey('worker-budget-rotated');
     const observedRequests: Request[] = [];
