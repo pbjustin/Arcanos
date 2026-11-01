@@ -751,7 +751,7 @@ export class WorkerAutonomyService {
     const attemptedAt = new Date().toISOString();
     this.state.lastPollAt = attemptedAt;
     this.state.lastClaimAttemptAt = attemptedAt;
-    this.state.lastClaimResult = 'claim_attempt';
+    // Keep the last completed result when an independent heartbeat flushes during the claim.
   }
 
   recordClaimResult(result: string): void {

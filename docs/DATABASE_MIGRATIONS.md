@@ -19,7 +19,9 @@ Arcanos uses PostgreSQL when `DATABASE_URL` or equivalent `PG*` variables are co
 Worker liveness and rich runtime-state persistence have separate contracts.
 `worker_liveness` keeps heartbeat freshness independently of the snapshot hash.
 Poll/claim diagnostic timestamps alone do not create a state/history transition;
-their persisted values reflect the last meaningful snapshot capture. Restart,
+their persisted values reflect the last meaningful snapshot capture. `lastClaimResult`
+retains the last completed result while a claim is pending; attempt timestamps
+continue advancing without creating a transient state/history transition. Restart,
 dependency, admission, watchdog and job-state changes remain observable. The
 existing state upsert still preserves the atomic legacy snapshot compatibility
 path. Consumers must use the liveness overlay for freshness, rather than the
