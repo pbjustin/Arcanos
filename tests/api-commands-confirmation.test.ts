@@ -143,6 +143,22 @@ describe('POST /api/commands/execute challenge confirmation', () => {
     });
   });
 
+  it('does not treat a valid confirmation token or GPT identity as caller authentication', async () => {
+    const { createOneTimeToken, consumeOneTimeToken } = await import('../src/lib/tokenStore.js');
+    const { token } = createOneTimeToken();
+    const response = await request(app)
+      .post('/api/commands/execute')
+      .set('x-gpt-id', 'trusted-test-gpt')
+      .set('x-arcanos-confirm-token', token)
+      .set('x-confirmed', 'yes')
+      .send({ command: 'audit-safe:set-mode', payload: { mode: 'true' } });
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe('CONTROL_PLANE_AUTH_REQUIRED');
+    expect(mockExecuteCommand).not.toHaveBeenCalled();
+    expect(consumeOneTimeToken(token).ok).toBe(true);
+  });
+
   it('rejects manual and compatibility bypass headers in challenge-only mode', async () => {
     const response = await commandRequest(app, {
       command: 'audit-safe:set-mode',

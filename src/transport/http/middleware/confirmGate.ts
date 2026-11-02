@@ -46,7 +46,8 @@ declare module 'express-serve-static-core' {
  * 
  * Requires explicit confirmation headers (`x-confirmed: yes` for manual approval or
  * `x-confirmed: token:<challengeId>` when responding to a pending confirmation
- * challenge) for the request to proceed unless a trusted GPT ID bypasses the gate.
+ * challenge), a valid one-time token, or configured operator approval. GPT identity
+ * metadata does not grant approval.
  */
 function isFineTunedModelIdentifier(value: string | undefined): value is string {
   if (!value) {
@@ -104,7 +105,7 @@ if (allowAllGpts) {
 
 if (implicitlyTrustedFineTunedIds.length > 0) {
   console.log(
-    `[🧠 CONFIRM-GATE] Auto-trusting fine-tuned model identifiers for autonomous access: ${implicitlyTrustedFineTunedIds.join(', ')}`,
+    `[🧠 CONFIRM-GATE] Configured fine-tuned identifiers for confirmation metadata: ${implicitlyTrustedFineTunedIds.join(', ')}`,
   );
 }
 
@@ -165,7 +166,8 @@ export function confirmGate(
   const gptIdFromPath = typeof req.params?.gptId === 'string' ? req.params.gptId.trim() : '';
   const gptIdFromBody = typeof req.body?.gptId === 'string' ? req.body.gptId.trim() : '';
   const gptIdFromHeader = (resolveHeader(req.headers, 'x-gpt-id') || '').toString().trim();
-  //audit Assumption: path-bound GPT routing is authoritative, but compatibility callers may still rely on body/header metadata on non-canonical routes; failure risk: trust checks bind to the wrong identity; expected invariant: route params win whenever present; handling strategy: prefer path, then body, then header.
+  // GPT identifiers are caller-controlled metadata, not approval credentials.
+  // Preserve routing precedence for diagnostics: path, then body, then header.
   const gptId =
     gptIdFromPath.length > 0
       ? gptIdFromPath
@@ -200,8 +202,6 @@ export function confirmGate(
       ? normalizedConfirmation.slice(confirmationTokenPrefix.length).trim()
       : undefined;
   const oneTimeTokenValue = oneTimeTokenHeader?.toString().trim();
-  //audit Assumption: trusted GPT metadata alone must not bypass confirmation; failure risk: spoofed gptId headers/body; expected invariant: trusted bypass requires additional operator-scoped token header presence; handling strategy: gate trusted bypass behind token presence without consuming the token.
-  const trustedGptBypassApproved = isTrustedGpt && Boolean(oneTimeTokenValue);
 
   let hasValidToken = false;
   if ((requireChallengeToken || !allowAllGpts) && providedToken) {
@@ -231,7 +231,6 @@ export function confirmGate(
     && !manualConfirmation
     && !hasValidToken
     && !automationBypassApproved
-    && !trustedGptBypassApproved
   ) {
     // //audit Assumption: one-time token grants single-use approval; risk: token replay if not consumed; invariant: consume on success; handling: consume + set approval when valid.
     try {
@@ -264,7 +263,6 @@ export function confirmGate(
       || hasValidToken
       || oneTimeTokenApproved
       || automationBypassApproved
-      || trustedGptBypassApproved
       || allowAllGpts;
   if (!confirmationApproved) {
     const challenge = createConfirmationChallenge(
@@ -297,9 +295,7 @@ export function confirmGate(
       requireChallengeToken
         ? 'This operation requires the issued one-use challenge; other confirmation bypasses are not accepted.'
         : 'Alternatively, request a one-time token and resend with header: x-arcanos-confirm-token: <token>.',
-      requireChallengeToken
-        ? undefined
-        : 'Trusted GPT IDs in TRUSTED_GPT_IDS bypass only when paired with x-arcanos-confirm-token.',
+      'GPT identifiers do not grant confirmation approval.',
       !requireChallengeToken && automationBypassEnabled
         ? `Backend automations can also send ${automationBypassHeader}: <secret> when ARC automation is configured.`
         : undefined,
@@ -342,8 +338,6 @@ export function confirmGate(
     ? 'confirmed'
     : automationBypassApproved
     ? 'automation-secret'
-    : trustedGptBypassApproved
-    ? 'trusted-gpt'
     : oneTimeTokenApproved
     ? 'one-time-token'
     : 'confirmed';

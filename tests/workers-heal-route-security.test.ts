@@ -53,6 +53,17 @@ for (const environmentName of PURPOSE_BOUND_CREDENTIAL_ENV_NAMES) {
   delete process.env[environmentName];
 }
 
+const confirmationEnvironmentNames = [
+  'ALLOW_ALL_GPTS', 'TRUSTED_GPT_IDS', 'ARCANOS_AUTOMATION_SECRET', 'ARCANOS_AUTOMATION_HEADER',
+] as const;
+const originalConfirmationEnvironment = new Map(
+  confirmationEnvironmentNames.map(name => [name, process.env[name]] as const)
+);
+process.env.ALLOW_ALL_GPTS = 'false';
+process.env.TRUSTED_GPT_IDS = 'synthetic-worker-gpt';
+process.env.ARCANOS_AUTOMATION_SECRET = 'synthetic-worker-automation-secret';
+process.env.ARCANOS_AUTOMATION_HEADER = 'x-worker-automation';
+
 const workersRouter = (await import('../src/routes/workers.js')).default;
 const workerHelperRouter = (await import('../src/routes/worker-helper.js')).default;
 const workerHelperToken = 'workers-heal-route-token-1234567890';
@@ -155,6 +166,55 @@ describe('workers heal route security', () => {
     expect(updateStateMock).toHaveBeenCalledTimes(1);
   });
 
+  it.each(['body', 'header'] as const)('does not auto-execute from trusted %s GPT metadata', async source => {
+    const response = await withWorkerHelperToken(
+      request(buildApp({ id: source === 'body' ? 901 : 902, role: 'operator' })).post('/workers/heal')
+    )
+      .set('x-confirmed', 'yes')
+      .set('x-gpt-id', source === 'header' ? 'synthetic-worker-gpt' : '')
+      .set('x-worker-automation', 'synthetic-wrong-secret')
+      .send(source === 'body' ? { gptId: 'synthetic-worker-gpt' } : {});
+
+    expect(response.status).toBe(200);
+    expect(response.body.mode).toBe('plan');
+    expect(buildAutoHealPlanMock).toHaveBeenCalledTimes(1);
+    expect(healWorkerRuntimeMock).not.toHaveBeenCalled();
+    expect(updateStateMock).not.toHaveBeenCalled();
+  });
+
+  it('does not auto-execute from trusted GPT metadata paired with valid one-time approval', async () => {
+    const { createOneTimeToken, consumeOneTimeToken } = await import('../src/lib/tokenStore.js');
+    const { token } = createOneTimeToken();
+    const response = await withWorkerHelperToken(
+      request(buildApp({ id: 903, role: 'operator' })).post('/workers/heal')
+    )
+      .set('x-arcanos-confirm-token', token)
+      .set('x-gpt-id', 'synthetic-worker-gpt')
+      .send({});
+
+    expect(response.status).toBe(200);
+    expect(response.body.mode).toBe('plan');
+    expect(healWorkerRuntimeMock).not.toHaveBeenCalled();
+    expect(consumeOneTimeToken(token).ok).toBe(false);
+  });
+
+  it('preserves authenticated automation execution and explicit plan-only requests', async () => {
+    const app = buildApp({ id: 904, role: 'operator' });
+    const automatic = await withWorkerHelperToken(request(app).post('/workers/heal'))
+      .set('x-worker-automation', 'synthetic-worker-automation-secret')
+      .send({});
+    expect(automatic.status).toBe(200);
+    expect(automatic.body.mode).toBe('execute');
+    expect(healWorkerRuntimeMock).toHaveBeenCalledTimes(1);
+
+    const planOnly = await withWorkerHelperToken(request(app).post('/workers/heal'))
+      .set('x-worker-automation', 'synthetic-worker-automation-secret')
+      .send({ mode: 'plan' });
+    expect(planOnly.status).toBe(200);
+    expect(planOnly.body.mode).toBe('plan');
+    expect(healWorkerRuntimeMock).toHaveBeenCalledTimes(1);
+  });
+
   it('does not disclose worker-heal dependency failures', async () => {
     buildAutoHealPlanMock.mockRejectedValueOnce(
       new Error('database password=test-worker-heal-secret')
@@ -214,6 +274,10 @@ describe('workers heal route security', () => {
 });
 
 afterAll(() => {
+  for (const [name, value] of originalConfirmationEnvironment) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
   for (const environmentName of PURPOSE_BOUND_CREDENTIAL_ENV_NAMES) {
     delete process.env[environmentName];
   }

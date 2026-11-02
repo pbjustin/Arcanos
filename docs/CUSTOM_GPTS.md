@@ -7,7 +7,9 @@ Arcanos routes Custom GPT requests through the `/gpt/:gptId` gateway. This gatew
 Custom GPTs let Arcanos ship specialized assistants (Backstage Booker, Arcanos Gaming, Tutor) that:
 - **Map cleanly to backend modules** so each assistant uses its own action surface (book events, run tutoring flows, etc.). The GPT router and service-level module registry enforce this boundary and keep action lists explicit per module. (`src/routes/gptRouter.ts`) (`src/services/moduleRegistry.ts`)
 - **Provide traceable acknowledgements** back to the caller, including matched module, action inventory, and routing metadata for auditability and debugging. (`src/routes/gptRouter.ts`)
-- **Support explicit confirmation flows.** A GPT ID in `TRUSTED_GPT_IDS` is eligible for the trusted path only when the request also presents a non-empty `x-arcanos-confirm-token`; membership alone does not bypass confirmation. The current trusted path treats that header as a presence marker rather than validating it against the one-time-token store. Because request metadata can supply the ID, this setting is not caller authentication; deploy it only behind middleware that authenticates the caller and binds the permitted identity. (`src/transport/http/middleware/confirmGate.ts`)
+- **Support explicit confirmation flows.** Ordinary GPT IDs in `TRUSTED_GPT_IDS` are caller-controlled metadata, not authentication or approval. With global allow-all disabled, permitted one-time approval requires an unexpired backend-issued `x-arcanos-confirm-token`, consumed on successful approval regardless of GPT ID. Manual `x-confirmed: yes` and the configured automation secret remain ordinary approval paths. Challenge-only routes accept only their issued, request-bound, one-use challenge. Route authentication and scopes remain separate requirements. (`src/transport/http/middleware/confirmGate.ts`)
+
+**Allow-all compatibility:** A standalone `*` entry in `TRUSTED_GPT_IDS`, or exact `ALLOW_ALL_GPTS=true`, globally approves ordinary requests reaching `confirmGate`, including requests with no GPT ID or missing/invalid tokens. `ALLOW_ALL_GPTS=false` does not override `*`; supplied tokens are not validated or consumed in this mode. Challenge-only routes and independent authentication/scopes retain their requirements. Active production exposure is **UNVERIFIED**; this repository review does not establish deployed values. See [Security policy](../SECURITY.md#troubleshooting) and [confirmation configuration](CONFIGURATION.md#confirmation-and-automation).
 
 ## How Custom GPT Routing Works
 1. The GPT calls `POST /gpt/:gptId` with a request body that contains `prompt` and optional `gptVersion`, `action`, `payload`, and `context`.
@@ -48,7 +50,7 @@ Use a single HTTP action in your Custom GPT definition:
 - **URL:** `https://<your-backend>/gpt/{gptId}`
 - **Headers:**
   - `Content-Type: application/json`
-  - `x-gpt-id: <gpt-id>` (optional caller metadata; a trusted ID still needs a non-empty `x-arcanos-confirm-token` presence marker on confirmation-gated endpoints)
+  - `x-gpt-id: <gpt-id>` (optional caller metadata; grants no authentication or confirmation approval; supply the endpoint’s required authentication and confirmation headers separately)
 - **Body schema:**
 ```json
 {

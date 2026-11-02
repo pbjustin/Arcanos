@@ -211,7 +211,7 @@ describe('ConfirmGate Middleware - One-Time Token Integration', () => {
       expect(result.ok).toBe(true);
     });
 
-    it('should not use one-time token when trusted GPT ID provided', async () => {
+    it('should consume one-time token even when trusted GPT ID provided', async () => {
       // Set up a trusted GPT ID
       process.env.TRUSTED_GPT_IDS = 'trusted-gpt-123';
       jest.resetModules();
@@ -243,14 +243,14 @@ describe('ConfirmGate Middleware - One-Time Token Integration', () => {
       // Call confirmGate middleware
       confirmGate(mockReq, mockRes, mockNext);
       
-      // Should approve via trusted GPT, not one-time token
+      // The token supplies approval; the GPT ID remains metadata.
       expect(mockNext).toHaveBeenCalled();
-      expect(mockReq.confirmationContext?.usedOneTimeToken).toBe(false);
+      expect(mockReq.confirmationContext?.usedOneTimeToken).toBe(true);
       expect(mockReq.confirmationContext?.isTrustedGpt).toBe(true);
+      expect(mockReq.confirmationContext?.confirmationStatus).toBe('one-time-token');
       
-      // Token should still be consumable (wasn't used)
       const result = consumeOneTimeToken(record.token);
-      expect(result.ok).toBe(true);
+      expect(result.ok).toBe(false);
     });
 
     it('should not use one-time token when automation secret provided', async () => {
