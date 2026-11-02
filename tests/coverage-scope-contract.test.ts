@@ -94,7 +94,7 @@ describe('Jest and Codecov coverage scope contract', () => {
       'utf8'
     );
     const uploadStep = workflow.match(
-      /uses: codecov\/codecov-action@v5[\s\S]*?fail_ci_if_error: false/u
+      /uses: codecov\/codecov-action@v7[\s\S]*?fail_ci_if_error: false/u
     )?.[0];
 
     expect(uploadStep).toBeDefined();
