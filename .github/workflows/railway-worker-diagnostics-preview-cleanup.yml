@@ -31,7 +31,7 @@ jobs:
     steps:
       # This trusted workflow intentionally never checks out or executes PR code.
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '24.18.1'
 

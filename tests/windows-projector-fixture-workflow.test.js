@@ -244,7 +244,7 @@ describe('Native Windows projector workflow receipt contract', () => {
     expect(fixtureStep.env.PROJECTOR_PR_HEAD_SHA).toBe('${{ github.event.pull_request.head.sha || github.sha }}');
     expect(fixtureStep['continue-on-error']).toBeUndefined();
     expect(upload).toMatchObject({
-      if: 'always()', uses: 'actions/upload-artifact@v4',
+      if: 'always()', uses: 'actions/upload-artifact@v7',
       with: {
         name: 'windows-projector-fixtures-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}',
         path: '${{ runner.temp }}/arcanos-projector-fixtures/',

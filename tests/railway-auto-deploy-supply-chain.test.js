@@ -4,11 +4,11 @@ import { describe, expect, it } from '@jest/globals';
 import yaml from 'js-yaml';
 
 const CHECKOUT_ACTION =
-  'actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955';
+  'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1';
 const SETUP_NODE_ACTION =
-  'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020';
+  'actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1';
 const UPLOAD_ARTIFACT_ACTION =
-  'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02';
+  'actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9';
 const RAILWAY_CLI_VERSION = '4.30.2';
 const RAILWAY_CLI_ARCHIVE_SHA256 =
   'e8bd57fd6517b5cf387a9c072ce79fdc069fc0b877c171b58e325b22e96c9000';
