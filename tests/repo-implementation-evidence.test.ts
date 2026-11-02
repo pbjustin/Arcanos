@@ -15,10 +15,21 @@ describe('repo inspection prompt detection', () => {
     expect(shouldInspectRepoPrompt('Ping the backend and tell me if it is up.')).toBe(false);
   });
 
+  it.each([
+    'Explain what ARCANOS can help me do in two short sentences. Do not claim knowledge of your deployed Git revision unless it is verified.',
+    'What can ARCANOS help me do? Do not guess the deployed Git revision.',
+    'Explain what ARCANOS can help me do; do not claim knowledge of the deployed Git revision.'
+  ])('does not combine a conversation request with an unrelated revision disclaimer: %s', (prompt) => {
+    expect(shouldInspectRepoPrompt(prompt)).toBe(false);
+  });
+
   it('keeps explicit repository inspection prompts routed to evidence mode', () => {
     expect(shouldInspectRepoPrompt('Is my CLI implemented?')).toBe(true);
     expect(shouldInspectRepoPrompt('Show me the repo status and changed files.')).toBe(true);
     expect(shouldInspectRepoPrompt('Inspect the codebase and list the protocol schemas.')).toBe(true);
+    expect(shouldInspectRepoPrompt('Show me the Git status. Do not claim knowledge of your deployed Git revision unless it is verified.')).toBe(true);
+    expect(shouldInspectRepoPrompt('Which files\nare in the repository?')).toBe(true);
+    expect(shouldInspectRepoPrompt('Inspect the codebase; list the protocol schemas.')).toBe(true);
   });
 
   it('does not hijack prompt-authoring requests that merely mention repo inspection', () => {

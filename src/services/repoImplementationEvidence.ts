@@ -112,12 +112,12 @@ export function shouldInspectRepoPrompt(prompt: string | null): boolean {
     return true;
   }
 
-  const hasRepoTarget = repoTargetPatterns.some((pattern) => pattern.test(normalizedPrompt));
-  if (!hasRepoTarget) {
-    return false;
-  }
-
-  return repoInspectionIntentPatterns.some((pattern) => pattern.test(normalizedPrompt));
+  // Keep inspection intent and its repository target in the same statement;
+  // an unrelated revision disclaimer must not redirect a conversation request.
+  return normalizedPrompt.split(/[.!?;]+/).some((statement) =>
+    repoTargetPatterns.some((pattern) => pattern.test(statement))
+    && repoInspectionIntentPatterns.some((pattern) => pattern.test(statement))
+  );
 }
 
 /**
