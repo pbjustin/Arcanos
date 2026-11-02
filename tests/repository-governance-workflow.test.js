@@ -119,7 +119,7 @@ describe('deployment reporting and dependency maintenance', () => {
     for (const update of dependabot.updates) {
       expect(update.schedule.interval).toBe('weekly');
       expect(update['open-pull-requests-limit']).toBe(2);
-      expect(Object.values(update.groups)).toEqual([{ patterns: ['*'] }]);
+      expect(Object.values(update.groups)).toEqual([{ patterns: ['*'], 'update-types': ['minor', 'patch'] }]);
     }
   });
 });
