@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-01T06:00:08.919Z",
+  "generatedAt": "2026-11-02T04:37:57.962Z",
   "scopes": [
     {
       "scope": "clients",
@@ -656,6 +656,9 @@
         },
         {
           "relativePath": "daemon-python/tests/test_openai_adapter.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_openai_sdk_compatibility.py"
         },
         {
           "relativePath": "daemon-python/tests/test_openai_unified_client.py"
