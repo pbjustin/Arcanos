@@ -13,7 +13,7 @@ const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{1
 const QUERY_TIMEOUT_MS = 250;
 type Row = Record<string, unknown>;
 export interface ShutdownPgClient {
-  connect(): Promise<void>;
+  connect(): Promise<unknown>;
   query(sql: string, values?: unknown[]): Promise<{ rows: Row[] }>;
   end(): Promise<void>;
   on?(event: 'error', listener: (error: Error) => void): unknown;
