@@ -310,7 +310,7 @@ describe('npm audit policy', () => {
     );
   });
 
-  it('pins patched dependency artifacts and unchanged parent packages', () => {
+  it('pins patched dependency artifacts and reviewed parent packages', () => {
     const rootPackage = JSON.parse(
       readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'),
     );
@@ -388,10 +388,10 @@ describe('npm audit policy', () => {
 
     const expectedLockIdentities = {
       'node_modules/@modelcontextprotocol/sdk': {
-        version: '1.32.0',
-        resolved: 'https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.32.0.tgz',
+        version: '1.32.2',
+        resolved: 'https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.32.2.tgz',
         integrity:
-          'sha512-8BviX/hK4Gd2eL1KdTwm0gfl4d3wdoErW0Jd00h6nomUAtk6IJk5vwQJc6kfWtJTzN5OEV/lgIiJKI8fiDGAlA==',
+          'sha512-SWsVtH/0vULSQStoZ6xxH2K09Li8fXYTMC64ZeogCdpZ3XSi1eCPOByV1OpuJxuI3OcmHhosDWYyii07tpPsLw==',
       },
       'vendor/minimatch-9.0.7/node_modules/brace-expansion': {
         version: '5.0.12',
@@ -441,8 +441,8 @@ describe('npm audit policy', () => {
       expect(packageLock.packages[node]).toMatchObject(identity);
     }
 
-    expect(packageLock.packages['node_modules/ajv'].version).toBe('8.18.0');
-    expect(packageLock.packages['node_modules/cheerio'].version).toBe('1.1.2');
+    expect(packageLock.packages['node_modules/ajv'].version).toBe('8.20.0');
+    expect(packageLock.packages['node_modules/cheerio'].version).toBe('1.2.0');
     expect(runtimePackageLock.packages['node_modules/qs']).toMatchObject(
       runtimeQsArtifact,
     );

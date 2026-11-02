@@ -6,7 +6,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import cron from 'node-cron';
+import cron, { type ScheduledTask } from 'node-cron';
 import { initializeDatabaseWithSchema as initializeDatabase, getStatus } from "@core/db/index.js";
 import { createWorkerContext } from "@platform/runtime/workerContext.js";
 import { resolveWorkersDirectory } from "@platform/runtime/workerPaths.js";
@@ -27,7 +27,7 @@ interface WorkerInitResult {
 }
 
 // Store scheduled tasks for cleanup
-const scheduledTasks: Map<string, cron.ScheduledTask> = new Map();
+const scheduledTasks: Map<string, ScheduledTask> = new Map();
 
 // Dynamic import for workers
 async function initializeWorkers(): Promise<WorkerInitResult> {

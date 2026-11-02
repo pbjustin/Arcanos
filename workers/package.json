@@ -11,14 +11,14 @@
   },
   "dependencies": {
     "openai": "^6.25.0",
-    "ws": "8.21.0",
+    "ws": "8.22.0",
     "@arcanos/runtime": "file:../packages/arcanos-runtime",
     "@arcanos/openai": "file:../packages/arcanos-openai",
     "typescript": "^5.9.2"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
-    "@types/ws": "^8.5.13"
+    "@types/ws": "^8.18.2"
   },
   "engines": {
     "node": "24.18.1",
