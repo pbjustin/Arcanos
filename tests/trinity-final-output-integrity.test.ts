@@ -69,9 +69,10 @@ function response(payload: ResponseCreateParamsNonStreaming) {
     output_text: text, output: [], usage: { input_tokens: 5, output_tokens: 5, total_tokens: 10 } };
 }
 
-function run(answerMode: 'direct' | 'explained' = 'explained', finalOutputContract: typeof contract | null = contract) {
+function run(answerMode: 'direct' | 'explained' = 'explained', finalOutputContract: typeof contract | null = contract,
+  requestedPrompt = prompt) {
   return runTrinityWritingPipeline({
-    input: { prompt, sourceEndpoint: 'trinity-output-integrity.fixture' },
+    input: { prompt: requestedPrompt, sourceEndpoint: 'trinity-output-integrity.fixture' },
     context: { client, runtimeBudget: createRuntimeBudgetWithLimit(20_000, 0), runOptions: {
       disableMemoryAccess: true, disableOptionalSideEffects: true, answerMode,
       ...(canCallBackend ? { toolBackedCapabilities: { callBackend: true } } : {}),
@@ -227,6 +228,26 @@ describe('Trinity caller-declared final JSON integrity at actual provider extrac
     expect(responsesCreate).toHaveBeenCalledTimes(4);
   });
 
+  it.each([
+    'The `<analysis_output>` tag labels an internal envelope.',
+    '```xml\n<analysis_output>\nExample text, not a private record.\n</analysis_output>\n```',
+    'An indented source example:\n\n    <analysis_output>\n    Example text.\n    </analysis_output>',
+    '~~~~xml\n<analysis_output>\n```\n</analysis_output>\n~~~~',
+  ])('retains ordinary inline and source examples of analysis tags', async output => {
+    finalText = output;
+    const result = await run('explained', null, 'Return a source code example using XML tags.');
+    expect(result.result).toBe(output);
+    expect(buildTrinityUserVisibleResponse({ trinityResult: result }).presentation).toBe('public-answer-v1');
+    expect(responsesCreate).toHaveBeenCalledTimes(4);
+  });
+
+  it('retains unsupported-action claim checks for code presentation', async () => {
+    finalText = 'I ran npm test.\n\n```python\nprint("café 雪")\n```';
+    const result = await run('explained', null, 'Return a source code example.');
+    expect(result.result).not.toContain('I ran npm test.');
+    expect(responsesCreate).toHaveBeenCalledTimes(4);
+  });
+
   it('preserves a matching synthetic completed-action claim in the full path', async () => {
     toolClaimText = 'I ran npm test.';
     canCallBackend = true;
@@ -248,6 +269,39 @@ describe('Trinity caller-declared final JSON integrity at actual provider extrac
     const result = await run('explained', null);
     expect(result.result).toBe(finalText);
     expect(buildTrinityUserVisibleResponse({ trinityResult: result }).presentation).toBe('public-answer-v1');
+    expect(responsesCreate).toHaveBeenCalledTimes(4);
+  });
+
+  it('preserves a complete fenced Python answer, literal Unicode, indentation and its final line', async () => {
+    finalText = [
+      'A short Markdown example:',
+      '',
+      '```python',
+      'def example():',
+      '    print("café 雪")',
+      '    # Do not change the code or its spacing.',
+      '```',
+      '',
+      'END-OF-LIVE-TEST',
+    ].join('\n');
+    const result = await run('explained', null,
+      'Return a short Markdown example containing a fenced Python code block, the Unicode text “café 雪”, '
+      + 'and a final line reading END-OF-LIVE-TEST.');
+    expect(result.result).toBe(finalText);
+    expect(buildTrinityUserVisibleResponse({ trinityResult: result }).presentation).toBe('public-answer-v1');
+    expect(responsesCreate).toHaveBeenCalledTimes(4);
+  });
+
+  it.each([
+    'GPT-5.1 analysis:\n<analysis_output>\n```python\nprint("café 雪")\n```\nEND-OF-LIVE-TEST\n</analysis_output>',
+    'GPT-5.1 analysis:\n<analysis_output>\n```python\nprint("café 雪")',
+  ])('withholds an internal analysis envelope before public answer finalization', async output => {
+    finalText = output;
+    const delivered = jest.fn();
+    await expect(run('explained', null,
+      'Return a short Markdown example containing a fenced Python code block.').then(delivered))
+      .rejects.toMatchObject({ code: 'TRINITY_STRUCTURED_OUTPUT_INVALID', reason: 'private_output' });
+    expect(delivered).not.toHaveBeenCalled();
     expect(responsesCreate).toHaveBeenCalledTimes(4);
   });
 

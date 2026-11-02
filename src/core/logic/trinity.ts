@@ -102,7 +102,7 @@ import {
   validateTrinityAnswerIntegrity,
   readIntentMode
 } from './trinityHonesty.js';
-import { createTrinityStructuredOutputValidator, TrinityStructuredOutputError } from './trinityStructuredOutput.js';
+import { assertTrinityFinalOutputIsPublic, createTrinityStructuredOutputValidator, TrinityStructuredOutputError } from './trinityStructuredOutput.js';
 import {
   appendTrinityIntegrityContinuation,
   buildTrinityIntegrityRepairSystemPolicy,
@@ -1177,6 +1177,7 @@ export async function runThroughBrain(
         getAiExecutionContext()?.traceId
       );
       const prepareDirectAnswerCandidate = (candidateText: string) => {
+        assertTrinityFinalOutputIsPublic(candidateText);
         if (validateStructuredOutput) {
           const providerBlocker = classifyTrinityProviderIntegrityBlocker(directAnswerOutput.provider);
           if (providerBlocker) throw new TrinityStructuredOutputError(providerBlocker);
@@ -2141,6 +2142,8 @@ export async function runThroughBrain(
     const userIntent = MidLayerTranslator.detectIntentFromUserMessage(trustedPolicyPrompt);
     const providerBlocker = classifyTrinityProviderIntegrityBlocker(finalOutput.provider);
     if (providerBlocker) throw new TrinityStructuredOutputError(providerBlocker);
+    assertTrinityFinalOutputIsPublic(finalOutput.output);
+    const preserveFinalPresentation = Boolean(gamingGuideIntakePolicy) || userIntent === 'code';
     const translatedFinalText = validateStructuredOutput ? finalOutput.output : gamingGuideIntakePolicy
       ? finalOutput.output.trim()
       : MidLayerTranslator.translate({ raw: finalOutput.output }, userIntent);
@@ -2152,8 +2155,9 @@ export async function runThroughBrain(
       reasoningHonesty,
       capabilityFlags,
       readIntentMode(outputControls),
-      Boolean(gamingGuideIntakePolicy),
-      outputControls.instructionalVerificationPolicy
+      preserveFinalPresentation,
+      outputControls.instructionalVerificationPolicy,
+      trustedPolicyPrompt
     );
     const enforcedFinalOutput = validateStructuredOutput
       ? { text: honestyFilteredFinal.text, removedMetaSections: [], blockedOrRewrittenClaims: [] }
@@ -2163,7 +2167,7 @@ export async function runThroughBrain(
       capabilityFlags,
       outputControls,
       reasoningHonesty,
-      preservePresentation: Boolean(gamingGuideIntakePolicy)
+      preservePresentation: preserveFinalPresentation
     });
     const finalText = enforcedFinalOutput.text;
     // Gaming replaces the legacy ledger audit with one audit of the actual final

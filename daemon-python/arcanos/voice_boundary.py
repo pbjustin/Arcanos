@@ -50,6 +50,7 @@ def extract_severity(text: str) -> Tuple[str, Optional[Severity]]:
 _PRIVATE_RECORD = re.compile(
     r'^\s*(?:["\']?(?:audit_trace|boot_snapshot|memory_shell_\w+)["\']?\s*[:=]'
     r"|(?:active session id|session_boot|logic_engine|goals_processor)\s*[:=]"
+    r"|</?analysis_output>\s*$"
     r"|\[SYSTEM\b)",
     re.IGNORECASE,
 )

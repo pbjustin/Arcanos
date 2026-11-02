@@ -733,6 +733,24 @@ function hasMatchingCompletedExecutionEvidence(text: string, evidenceTags: Trini
   return claims.length > 0 && claims.every(claim => supportedClaims.has(claim));
 }
 
+function isRequestedLiteralToken(text: string, userPrompt: string): boolean {
+  const token = text.trim();
+  if (token.length > 160 || !/^[A-Z][A-Z0-9]*(?:[-_][A-Z0-9]+)+$/u.test(token)) return false;
+  if (!token.split(/[-_]/u).some(component => /^(?:MARKER|TEST|EXAMPLE|TOKEN|SENTINEL)\d*$/u.test(component))) return false;
+  const inspection = token.replace(/[-_]/gu, ' ');
+  if (LIVE_VERIFICATION_PATTERN.test(inspection) || BACKEND_ACTION_PATTERN.test(inspection)
+    || CURRENT_EXTERNAL_FACT_VERB_PATTERN.test(inspection)
+    || /\b(?:healthy|unhealthy|ready|running|success|successful|succeeded|failed|passed|executed|deployed|complete|completed|available|connected|authenticated)\b/iu.test(inspection)) return false;
+  // A formatting contract may request an exact final line without asserting
+  // its contents as verified state. Mere mentions, histories, conditions and
+  // factual status requests cannot grant this narrow literal exception.
+  const request = userPrompt.trim().match(
+    /^(?:return|output|write|include)\b([\s\S]*?)\b(?:a|the)\s+(?:final|last)\s+line\s+(?:reading|saying|that\s+reads)\s+(["'`]?)([A-Z][A-Z0-9]*(?:[-_][A-Z0-9]+)+)\2[.!?]?\s*$/iu
+  );
+  return request?.[3] === token
+    && !/\b(?:if|unless|when|whether|once|after|provided|conditional|not|never|don't)\b/iu.test(request[1] ?? '');
+}
+
 function impliesCurrentExternalStateClaim(text: string): boolean {
   return (
     (CURRENT_EXTERNAL_STATE_PATTERN.test(text) && EXTERNAL_STATE_CONTEXT_PATTERN.test(text)) ||
@@ -1348,6 +1366,7 @@ function rewriteUnsupportedClaims(params: {
   const reviewText = sectionRewrite.text.replace(/^(\s*\d+\.)[ \t]*\r?\n\s*(?=\S)/gm, '$1 ');
   const rewrittenText = transformHonestySegments(reviewText, segment => {
     if (isArtifactInstruction(segment)) return segment;
+    const requestedLiteral = isRequestedLiteralToken(segment, params.userPrompt);
     const externalStateSectionHeading = isLikelyCurrentExternalStateSectionHeading(segment, params.userPrompt);
     if (isSectionHeading(segment) && !externalStateSectionHeading) {
       inUnsupportedExternalStateSection = false;
@@ -1355,10 +1374,10 @@ function rewriteUnsupportedClaims(params: {
 
     const impliesLiveVerification = LIVE_VERIFICATION_PATTERN.test(segment)
       && !isTutorLocalMathInstruction(segment, params.instructionalVerificationPolicy);
-    const impliesCurrentExternalState = impliesCurrentExternalStateClaim(segment);
+    const impliesCurrentExternalState = impliesCurrentExternalStateClaim(segment) && !requestedLiteral;
     const impliesIndirectCurrentExternalState =
-      isLikelyCurrentExternalStateFactAssertion(segment, params.userPrompt) ||
-      (inUnsupportedExternalStateSection && isLikelyUnsupportedExternalStateSectionBody(segment));
+      !requestedLiteral && (isLikelyCurrentExternalStateFactAssertion(segment, params.userPrompt) ||
+      (inUnsupportedExternalStateSection && isLikelyUnsupportedExternalStateSectionBody(segment)));
     const qualifiedCurrentStateLimitation = isQualifiedCurrentStateLimitation(segment)
       || isExplicitVerificationDenial(segment);
     const allowsProvidedDataVerification = allowsProvidedDataVerificationClaim(segment, params.capabilityFlags);
@@ -2108,7 +2127,8 @@ export function prepareTrinityDirectAnswerHonesty(params: {
     && !/\b(live|runtime|deploy(?:ment|ed)?|production|servers?|web|internet|online|remote|backend|api|services?|queue|worker|competitors?|market|news|pricing|release|launch|external|trends?|compan(?:y|ies)|regulation|stocks?|execute|run|save|persist|store|write|database)\b/i.test(params.userPrompt);
   const reasoningHonesty = createDefaultTrinityReasoningHonesty();
   const honestyFiltered = enforceFinalStageHonesty(params.candidateText, reasoningHonesty, capabilityFlags,
-    readIntentMode(outputControls), params.preservePresentation, outputControls.instructionalVerificationPolicy);
+    readIntentMode(outputControls), params.preservePresentation, outputControls.instructionalVerificationPolicy,
+    params.userPrompt);
   const ruleIds = [...honestyFiltered.ruleIds];
   if (needsCurrentStateLimitation && !suppliedCanonScope) ruleIds.push('CURRENT_EXTERNAL_USER_REQUEST');
   if (honestyFiltered.blocked || needsCurrentStateLimitation) {
@@ -2150,7 +2170,8 @@ export function enforceFinalStageHonesty(
   capabilityFlags: TrinityCapabilityFlags,
   requestIntent: TrinityIntentMode = 'EXECUTE_TASK',
   preservePresentation = false,
-  instructionalVerificationPolicy?: TrinityOutputControls['instructionalVerificationPolicy']
+  instructionalVerificationPolicy?: TrinityOutputControls['instructionalVerificationPolicy'],
+  literalRequestPrompt = ''
 ): FinalClaimBlockResult {
   const promptGeneration = requestIntent === 'PROMPT_GENERATION';
   const supportsLiveVerification =
@@ -2179,7 +2200,7 @@ export function enforceFinalStageHonesty(
     const localInstruction = isTutorLocalInstructionReviewUnit(line, instructionalVerificationPolicy);
     if (localInstruction) ruleIds.add('TUTOR_LOCAL_INSTRUCTION_EXEMPT');
     const impliesLiveVerification = LIVE_VERIFICATION_PATTERN.test(line) && !localInstruction;
-    const impliesCurrentExternalState = impliesCurrentExternalStateClaim(line);
+    const impliesCurrentExternalState = impliesCurrentExternalStateClaim(line) && !isRequestedLiteralToken(line, literalRequestPrompt);
     const qualifiedCurrentStateLimitation = isQualifiedCurrentStateLimitation(line)
       || isExplicitVerificationDenial(line);
     const allowsProvidedDataVerification = allowsProvidedDataVerificationClaim(line, capabilityFlags);

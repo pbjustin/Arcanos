@@ -598,6 +598,11 @@ def test_safe_explanations_and_code_remain_exact_in_stored_history(
             '```json\n{"\\u0061udit_trace":"PRIVATE_HISTORY_FIXTURE"}\n```\n\n```bash\nprintf PRIVATE_HISTORY_FIXTURE\n```',
             "public-answer-v1",
         ),
+        (
+            "GPT-5.1 analysis:\n<analysis_output>\nPRIVATE_HISTORY_FIXTURE\n</analysis_output>",
+            "public-answer-v1",
+        ),
+        ("<analysis_output>\nPRIVATE_HISTORY_FIXTURE", None),
     ],
     ids=[
         "private-label",
@@ -606,6 +611,8 @@ def test_safe_explanations_and_code_remain_exact_in_stored_history(
         "escaped-private-key",
         "nested-escaped-private-key",
         "fenced-escaped-private-proposal",
+        "analysis-envelope",
+        "truncated-analysis-envelope",
     ],
 )
 def test_withheld_answers_cannot_reappear_in_conversation_or_audit_history(
@@ -633,6 +640,26 @@ def test_withheld_answers_cannot_reappear_in_conversation_or_audit_history(
     assert "Nothing to speak yet." in output.getvalue()
     cli.audio.speak.assert_not_called()
     cli.terminal.is_command_safe.assert_not_called()
+    cli.terminal.execute.assert_not_called()
+
+
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+def test_analysis_envelope_examples_remain_complete_public_code(
+    presentation_cli, monkeypatch, agentic
+):
+    cli, output = presentation_cli
+    answer = (
+        "A literal markup example:\n\n```xml\n<analysis_output>\n"
+        "example text\n</analysis_output>\n```\n\n"
+        "    <analysis_output>\n    indented example\n    </analysis_output>"
+    )
+    _deliver(
+        monkeypatch, cli, answer, agentic=agentic, presentation="public-answer-v1"
+    )
+
+    assert answer in output.getvalue()
+    assert [call.args[1] for call in cli.memory.add_conversation.call_args_list] == [answer]
+    assert NO_DISPLAYABLE_NOTICE not in output.getvalue()
     cli.terminal.execute.assert_not_called()
 
 

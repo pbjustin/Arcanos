@@ -18,9 +18,33 @@ export class TrinityStructuredOutputError extends Error {
   readonly code = 'TRINITY_STRUCTURED_OUTPUT_INVALID';
 
   constructor(readonly reason: 'invalid_contract' | 'invalid_json' | 'schema_mismatch' | 'unsupported_claim'
-    | 'missing_required_limitation' | 'provider_incomplete' | 'content_filtered' | 'empty_output') {
+    | 'missing_required_limitation' | 'provider_incomplete' | 'content_filtered' | 'empty_output' | 'private_output') {
     super(`Trinity structured output rejected: ${reason}`);
     this.name = 'TrinityStructuredOutputError';
+  }
+}
+
+/** Never promote an echoed internal reasoning envelope into a public answer. */
+export function assertTrinityFinalOutputIsPublic(text: string): void {
+  let fence: { character: string; length: number } | undefined;
+  for (const line of text.split(/\r?\n/u)) {
+    const match = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(line);
+    if (fence) {
+      if (match && match[1]![0] === fence.character && match[1]!.length >= fence.length && !match[2]!.trim()) {
+        fence = undefined;
+      }
+      continue;
+    }
+    if (match) {
+      fence = { character: match[1]![0]!, length: match[1]!.length };
+      continue;
+    }
+    // Fenced/indented source examples and inline mentions are ordinary content.
+    // Reject the envelope itself, including an unterminated one; unwrapping it
+    // would incorrectly treat private reasoning as an authoritative final answer.
+    if (/^ {0,3}<\/?analysis_output>[ \t]*$/u.test(line)) {
+      throw new TrinityStructuredOutputError('private_output');
+    }
   }
 }
 
@@ -60,7 +84,7 @@ export function createTrinityStructuredOutputValidator(contract: TrinityStructur
         const filtered = enforceFinalStageHonesty(entry, honesty, capabilities,
           readIntentMode(context.outputControls), true, context.outputControls.instructionalVerificationPolicy);
         const enforced = enforceFinalStageHonestyAndMinimalism({
-          text: entry, userPrompt: context.userPrompt, capabilityFlags: capabilities,
+          text: entry, userPrompt: isValue ? context.userPrompt : '', capabilityFlags: capabilities,
           outputControls: context.outputControls, reasoningHonesty: honesty,
           preservePresentation: true,
         });

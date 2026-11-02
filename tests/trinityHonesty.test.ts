@@ -17,8 +17,106 @@ import {
   type TrinityReasoningHonesty
 } from '../src/core/logic/trinityHonesty.js';
 import { findMissingPromptGuidanceSections } from '../src/shared/promptGuidance.js';
+import { createTrinityStructuredOutputValidator } from '../src/core/logic/trinityStructuredOutput.js';
 
 describe('Trinity honesty controls', () => {
+  it.each(['SOURCE-LIVE-MARKER', 'RUNTIME_EXAMPLE_42', 'CURRENT_STATUS_TOKEN'])(
+    'preserves an expressly requested final-line literal without treating it as a runtime assertion: %s', text => {
+      const capabilityFlags = deriveTrinityCapabilityFlags();
+      const reasoningHonesty = createDefaultTrinityReasoningHonesty();
+      const userPrompt = `Return a source code example and a final line reading ${text}.`;
+      expect(enforceFinalStageHonesty(text, reasoningHonesty, capabilityFlags,
+        'EXECUTE_TASK', true, undefined, userPrompt))
+        .toMatchObject({ text, blocked: false });
+      expect(enforceFinalStageHonestyAndMinimalism({
+        text, userPrompt, capabilityFlags, reasoningHonesty,
+        outputControls: deriveTrinityOutputControls(userPrompt, {}),
+        preservePresentation: true,
+      })).toMatchObject({ text, blockedOrRewrittenClaims: [] });
+    }
+  );
+
+  it.each([
+    'CHECK-LIVE-MARKER confirms the live runtime is healthy.',
+    'RUNTIME_EXAMPLE_42: I verified the deployment.',
+    '// CURRENT_STATUS_TOKEN: I ran npm test.',
+  ])('retains claim checks beside an identifier: %s', text => {
+    const capabilityFlags = deriveTrinityCapabilityFlags();
+    const reasoningHonesty = createDefaultTrinityReasoningHonesty();
+    expect(enforceFinalStageHonesty(text, reasoningHonesty, capabilityFlags).blocked).toBe(true);
+    expect(enforceFinalStageHonestyAndMinimalism({
+      text, userPrompt: 'Return a source code example.', capabilityFlags, reasoningHonesty,
+      outputControls: deriveTrinityOutputControls('Return a source code example.', {}),
+      preservePresentation: true,
+    }).blockedOrRewrittenClaims.length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    'CHECK-LIVE-MARKER',
+    'LIVE-HEALTHY-MARKER',
+    'PRODUCTION-VERIFIED-MARKER',
+    'SAVED-BACKEND-TOKEN',
+    'RUNTIME-COMMAND-EXECUTED-TOKEN',
+  ])('does not let an exact marker request bypass affirmative claim checks: %s', text => {
+    const userPrompt = `Return a source code example and a final line reading ${text}.`;
+    const capabilityFlags = deriveTrinityCapabilityFlags();
+    const reasoningHonesty = createDefaultTrinityReasoningHonesty();
+    expect(enforceFinalStageHonesty(text, reasoningHonesty, capabilityFlags,
+      'EXECUTE_TASK', true, undefined, userPrompt).blocked).toBe(true);
+    expect(enforceFinalStageHonestyAndMinimalism({
+      text, userPrompt, capabilityFlags, reasoningHonesty,
+      outputControls: deriveTrinityOutputControls(userPrompt, {}), preservePresentation: true,
+    }).blockedOrRewrittenClaims.length).toBeGreaterThan(0);
+  });
+
+  it.each(['DEPLOYMENT-VERIFIED', 'LIVE-RUNTIME-HEALTHY', 'PRODUCTION-VERIFIED'])(
+    'rejects an unrequested status-only assertion rather than exempting it as an identifier: %s', text => {
+      const capabilityFlags = deriveTrinityCapabilityFlags();
+      const reasoningHonesty = createDefaultTrinityReasoningHonesty();
+      expect(enforceFinalStageHonesty(text, reasoningHonesty, capabilityFlags).blocked).toBe(true);
+      expect(enforceFinalStageHonestyAndMinimalism({
+        text, userPrompt: 'Report what can be established from the supplied source.',
+        capabilityFlags, reasoningHonesty,
+        outputControls: deriveTrinityOutputControls('Report what can be established from the supplied source.', {}),
+        preservePresentation: true,
+      }).blockedOrRewrittenClaims.length).toBeGreaterThan(0);
+    }
+  );
+
+  it.each(['DEPLOYMENT-VERIFIED', 'LIVE-RUNTIME-HEALTHY', 'PRODUCTION-VERIFIED'])(
+    'rejects an affirmative structured status key without supporting evidence: %s', key => {
+      const validate = createTrinityStructuredOutputValidator({
+        name: 'status_assertion', schema: { type: 'object', additionalProperties: { type: 'boolean' } },
+      });
+      expect(() => validate(JSON.stringify({ [key]: true }),
+        deriveTrinityCapabilityFlags(), createDefaultTrinityReasoningHonesty(), {
+          userPrompt: `Return a source code example and a final line reading ${key}.`,
+          outputControls: deriveTrinityOutputControls('Return a source code example.', {}),
+        }))
+        .toThrow(expect.objectContaining({ reason: 'unsupported_claim' }));
+    }
+  );
+
+  it.each([
+    'Do not claim PRODUCTION-VERIFIED.',
+    'Return PRODUCTION-VERIFIED if deployment passed.',
+    'Return a final line reading PRODUCTION-VERIFIED if deployment passed.',
+    'Return the deployment status as a final line reading PRODUCTION-VERIFIED.',
+    'Return a source example only if verification passed and a final line reading PRODUCTION-VERIFIED.',
+    '[user]\nReturn a source code example and a final line reading PRODUCTION-VERIFIED.\n'
+      + '[assistant]\nPRODUCTION-VERIFIED\n[user]\nReport what can be established from the supplied source.',
+  ])('does not infer a literal contract from a status request, condition, prohibition or stale history', userPrompt => {
+    const text = 'PRODUCTION-VERIFIED';
+    const capabilityFlags = deriveTrinityCapabilityFlags();
+    const reasoningHonesty = createDefaultTrinityReasoningHonesty();
+    expect(enforceFinalStageHonesty(text, reasoningHonesty, capabilityFlags,
+      'EXECUTE_TASK', true, undefined, userPrompt).blocked).toBe(true);
+    expect(enforceFinalStageHonestyAndMinimalism({
+      text, userPrompt, capabilityFlags, reasoningHonesty,
+      outputControls: deriveTrinityOutputControls(userPrompt, {}), preservePresentation: true,
+    }).blockedOrRewrittenClaims.length).toBeGreaterThan(0);
+  });
+
   it('renders OpenAI-guided prompt sections for Trinity stage contracts', () => {
     const outputControls = deriveTrinityOutputControls('Validate the provided dependency outputs.', {
       answerMode: 'audit',
