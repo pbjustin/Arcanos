@@ -9,6 +9,7 @@ updates:
     groups:
       npm-dependencies:
         patterns: ['*']
+        update-types: ['minor', 'patch']
   - package-ecosystem: pip
     directory: /daemon-python
     schedule:
@@ -17,6 +18,7 @@ updates:
     groups:
       python-dependencies:
         patterns: ['*']
+        update-types: ['minor', 'patch']
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -25,3 +27,4 @@ updates:
     groups:
       github-actions:
         patterns: ['*']
+        update-types: ['minor', 'patch']
