@@ -71,7 +71,6 @@ Core workflows to review first:
 - [Documentation update analysis](../.github/workflows/auto-update-documentation.yml)
 - [Documentation link audit](../.github/workflows/documentation-links.yml)
 - [Release](../.github/workflows/arcanos-release.yml)
-- [Arcanos deployment](../.github/workflows/arcanos-deploy.yml)
 - [Railway automatic deployment](../.github/workflows/railway-auto-deploy.yml)
 - [Railway inspection fixture E2E](../.github/workflows/railway-inspection-fixture-e2e.yml):
   opted-in Railway preview PRs exercise the unchanged inspection command against
@@ -80,6 +79,50 @@ Core workflows to review first:
   only synthetic credentials. The workflow retains sanitized proof and failure
   receipts for seven days. It does not dispatch the production inspection.
 - [Railway worker-diagnostics preview cleanup](../.github/workflows/railway-worker-diagnostics-preview-cleanup.yml)
+
+The manual `arcanos-code-analysis.yml` workflow performs read-only type and
+lint validation of a validated full commit SHA already on `main`. The manual
+`arcanos-pr-assistant.yml` workflow captures a PR diff and changed-file snapshot
+with its head/base SHAs; it executes no PR code. Static validation and snapshot
+capture use no provider credentials. Neither workflow publishes merge-readiness
+checks, comments, or automated findings issues.
+
+Optional AI review in the PR assistant is disabled by default. A main-branch
+manual dispatch must select `ai_review`, supply the exact PR commit in
+`authorized_head_sha`, and type `AUTHORIZE ONE PR ADVISORY JOB`. The captured PR
+head must match that explicit authorization before building or consulting.
+This authorizes one durable remote job and its provider cost, using the existing
+[arcanos-core advisory bridge](security/arcanos-core-advisory-bridge.md), rather
+than starting a local server or passing an OpenAI key into repository commands.
+The separate advisory job builds only trusted dispatch code before credentials
+are available. Its final consultation step receives the configured HTTPS origin
+from `ARCANOS_CORE_ADVISORY_BASE_URL` and the purpose-bound
+`ARCANOS_CORE_ADVISORY_ACCESS_TOKEN` secret; the gateway must restrict this
+credential to `jobs.create` and `jobs.result`. No credential or setting is
+created by these workflows.
+
+The consultation uses the exact captured PR head/base and complete diff, bounded
+to the bridge's 12,000-character context. Empty, oversized, identity-mismatched,
+or credential-shaped input fails before consultation; it is never silently
+truncated. The bridge fixes `arcanos-core`, rejects redirects, applies 10-second
+request limits, at most 30 result polls and a 120-second polling deadline, caps
+responses at 128 KiB and requests at most 2,048 output tokens. The step has a
+180-second process limit. The deployed backend retains model-role, admission,
+and job authorization policy. Only sanitized advisory JSON is retained, for
+seven days; it cannot approve a merge, dispatch a deployment, or replace required
+CI or human review. Timing out polling does not cancel a dispatched remote job.
+No live consultation is part of routine local validation.
+
+The former local-server analysis paths remain retired. The scheduled audit-cycle
+workflow validates `arcanos_audit_config.json` without rewriting it or committing
+policy changes. None of these workflows replaces the required CI aggregate or
+human review.
+
+The obsolete `arcanos-deploy.yml` simulation was retired. It did not deploy and
+its success reports were not production evidence. The Railway automatic
+deployment workflow remains the authoritative promotion path, including its
+coordinated rollout hold, exact-commit checks, paired targets, and read-back
+verification. Advisory AI reports do not authorize merge or deployment.
 
 ## Native Windows verification scope
 
@@ -100,7 +143,7 @@ toolchain, or a tested commit or tree that differs from the exact PR source.
 It verifies source identity and tracked cleanliness before and after commands
 and when assembling the final report. Required selections must contain every
 expected suite, consistent counts and only passing cases; the YAML selection
-requires all 119 security and consumer cases with no skips.
+requires all 121 security and consumer cases with no skips.
 The Windows job explicitly checks out the PR head (or the event SHA for pushes),
 so advancing main does not invalidate this receipt. Other CI jobs retain their
 existing synthetic-merge checkout behavior.
@@ -1077,7 +1120,6 @@ deployment behavior.
 - [Documentation audit](../.github/workflows/doc-audit.yml)
 - [Documentation update analysis](../.github/workflows/auto-update-documentation.yml)
 - [Documentation link audit](../.github/workflows/documentation-links.yml)
-- [Arcanos deployment](../.github/workflows/arcanos-deploy.yml)
 - [Railway automatic deployment](../.github/workflows/railway-auto-deploy.yml)
 - [Railway worker-diagnostics preview cleanup](../.github/workflows/railway-worker-diagnostics-preview-cleanup.yml)
 - [Railway configuration](../railway.json)

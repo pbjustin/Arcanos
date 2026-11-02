@@ -69,7 +69,8 @@ export function validateWindowsJest(name, summary) {
     || summary.numTotalTestSuites !== selected.length || summary.numPassedTestSuites !== selected.length) {
     errors.push('JEST_COUNTS_MISMATCH');
   }
-  if (name === 'yaml' && assertions.length !== 123) errors.push('YAML_REQUIRED_CASES_MISSING');
+  // Retiring arcanos-deploy.yml removes one case from each real YAML parser.
+  if (name === 'yaml' && assertions.length !== 121) errors.push('YAML_REQUIRED_CASES_MISSING');
   return errors;
 }
 

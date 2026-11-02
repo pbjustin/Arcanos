@@ -31,12 +31,12 @@ const providerBearingPrJobs = [
   {
     path: '.github/workflows/arcanos-pr-assistant.yml',
     job: 'arcanos-pr-analysis',
-    expectedGate: "github.event_name == 'workflow_dispatch'",
+    expectedGate: "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'",
   },
   {
     path: '.github/workflows/arcanos-code-analysis.yml',
     job: 'arcanos-analysis',
-    expectedGate: "github.event_name == 'workflow_dispatch'",
+    expectedGate: "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'",
   },
   {
     path: '.github/workflows/auto-update-documentation.yml',

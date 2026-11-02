@@ -77,7 +77,7 @@ test('native metadata requires executable paths and a SHA-256 identity', () => {
 
 function passingJest(name = 'yaml') {
   const files = windowsSelections[name];
-  const counts = name === 'yaml' ? [106, 17] : files.map(() => 1);
+  const counts = name === 'yaml' ? [104, 17] : files.map(() => 1);
   const numTests = counts.reduce((total, count) => total + count, 0);
   return { success: true, wasInterrupted: false, numTotalTests: numTests, numPassedTests: numTests,
     numFailedTests: 0, numPendingTests: 0, numTodoTests: 0, numRuntimeErrorTestSuites: 0,
@@ -87,7 +87,7 @@ function passingJest(name = 'yaml') {
         fullName: `${file} synthetic case ${number}`, status: 'passed' })) })) };
 }
 
-test('every selection requires all expected suites and YAML requires its complete 123 cases', () => {
+test('every selection requires all expected suites and YAML requires its complete 121 cases', () => {
   for (const name of Object.keys(windowsSelections)) {
     assert.deepEqual(validateWindowsJest(name, summarizeJest(passingJest(name))), []);
   }
@@ -96,9 +96,9 @@ test('every selection requires all expected suites and YAML requires its complet
   summary.numTotalTests -= 1;
   summary.numPassedTests -= 1;
   assert.deepEqual(validateWindowsJest('yaml', summary), ['YAML_REQUIRED_CASES_MISSING']);
-  // Two new workflows add one assertion through each of the two real parsers.
-  // A historically green 119-case report cannot cover the current inventory.
-  for (const total of [119, 124]) {
+  // The retired deployment workflow removes one case from each real parser.
+  // Reject both incomplete reports and the obsolete 123-case inventory.
+  for (const total of [119, 123]) {
     const changed = summarizeJest(passingJest());
     const assertions = changed.suites[0].assertions;
     while (changed.suites.flatMap(suite => suite.assertions).length < total) assertions.push({ ...assertions[0] });

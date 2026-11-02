@@ -1,0 +1,27 @@
+version: 2
+updates:
+  # The root lockfile owns packages/*, workers, and arcanos-ai-runtime workspaces.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
+    groups:
+      npm-dependencies:
+        patterns: ['*']
+  - package-ecosystem: pip
+    directory: /daemon-python
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
+    groups:
+      python-dependencies:
+        patterns: ['*']
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
+    groups:
+      github-actions:
+        patterns: ['*']

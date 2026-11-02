@@ -23,19 +23,56 @@ Each rollback evidence pack must record the trigger, decision, applied changes, 
 
 ## Branch protection and human approval
 
-`.github/workflows/require-approval.yml` fails its `require-approval` job when a pull request has the `requires-human-approval`, `autonomy-2`, or `autonomy-3` label but lacks an approved review from someone other than the pull-request author. Self-improve pull requests use `self-improve`, `autonomy-<n>`, and either `requires-human-approval` for Level 2 or higher or `propose-only`.
+The label-based policy in [require-approval.yml](../.github/workflows/require-approval.yml)
+requires an approving review of the current pull-request head from a human with
+repository write, maintain, or admin access other than the author when a PR has
+`requires-human-approval`, `autonomy-2`, or `autonomy-3`. Bot reviews, stale
+approvals, dismissed reviews, and changes-requested reviews do not satisfy it.
+Self-improve pull requests use `self-improve`, `autonomy-<n>`, and either
+`requires-human-approval` for Level 2 or higher or `propose-only`.
 
-Protect `main` in GitHub with:
+Labels are mutable and unlabeled pull requests skip this workflow's approval
+requirement. Its `pull_request_target` run uses trusted base-branch workflow
+code without checking out or executing PR code; its result is not a replacement
+for GitHub's native required-review enforcement on the PR head.
 
-1. pull requests required before merging;
-2. at least one approving review; and
-3. required status checks for the `build-test` job from the `PR CI`
-   workflow, the `require-approval` job from the `Require Human Approval
-   (Self-Improve)` workflow, and the `docs:check` job from the `Documentation
-   Audit` workflow.
+A read-only GitHub inspection on 2026-11-01 verified that `main` is protected and
+lists `docs:check` (Documentation Audit) and `All Checks Complete` (CI/CD Pipeline)
+as required status contexts, associated with the GitHub Actions app (15368).
+The limited branch response reports `enforcement_level: non_admins` for these
+checks. Repository and applicable-branch ruleset endpoints returned empty lists.
+The full branch-protection endpoint was inaccessible (HTTP 403); required review
+counts, stale-review dismissal, Code Owner review, bypasses, and administrator
+enforcement are **UNVERIFIED**. `build-test` and `require-approval` must not be
+described as configured required checks without current GitHub evidence.
 
-The active [CODEOWNERS](../.github/CODEOWNERS) file routes repository,
-documentation, daemon, and workflow changes to the current maintainer.
-Optionally require Code Owner review through branch protection. The approval
-workflow is label-driven, so the same gate can be applied to another pull
-request by adding a covered label.
+Maintain the policy of independent review for covered self-improve changes.
+Repository administrators should verify native protection requires pull requests,
+at least one independent approving review, dismissal of stale approvals, the
+existing required checks, and administrator enforcement as appropriate. This
+recommendation does not change GitHub settings.
+
+The same 2026-11-01 inspection of the paginated collaborator list found only
+`@pbjustin`, a human administrator. Covered self-improve pull requests authored
+by `@pbjustin` therefore cannot currently meet the independent-review policy;
+they remain blocked until an authorized second human with repository write
+access can approve the current head. Other pull requests remain subject to
+their covered labels and actual native GitHub requirements. Native required-review
+settings remain **UNVERIFIED**; this finding does not establish such a requirement
+for an unrelated unlabeled pull request.
+
+The active [CODEOWNERS](../.github/CODEOWNERS) routes repository, documentation,
+daemon, and workflow changes to `@pbjustin`; routing alone does not enforce
+review. Keep advisory AI analysis and CodeRabbit findings separate from required
+CI and human approval. Neither authorizes a merge or production promotion.
+
+## Dependency and security settings
+
+[Dependabot](../.github/dependabot.yml) proposes grouped weekly updates for npm
+workspaces (including the standalone runtime), the Python daemon, and GitHub Actions.
+It does not merge or deploy updates and does not replace the existing dependency
+policy checks.
+
+GitHub secret scanning, push protection, and CodeQL activation are **UNVERIFIED**
+from the available API responses. Administrators should inspect these settings
+and enable the appropriate built-in protections without adding duplicate scans.

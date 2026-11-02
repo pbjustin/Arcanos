@@ -1,4 +1,4 @@
-name: ARCANOS Code Analysis
+name: ARCANOS Code Analysis (Advisory Validation)
 
 on:
   workflow_dispatch:
@@ -13,29 +13,38 @@ on:
         default: 'manual'
         type: string
 
-env:
-  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-  DEPLOY_MODE: agent-control
-
 jobs:
   arcanos-analysis:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      actions: write
-      issues: read
-      pull-requests: write
-      
+      contents: read
+
     steps:
+      - name: Validate analysis inputs
+        id: target
+        env:
+          REQUESTED_SHA: ${{ inputs.commit_sha || github.sha }}
+          TRIGGER_SOURCE: ${{ inputs.trigger_source || 'manual' }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          [[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'Expected a full lowercase commit SHA'; exit 1; }
+          [[ "$TRIGGER_SOURCE" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || { echo 'Invalid trigger source'; exit 1; }
+          # Only analyze commits already reachable from the trusted main branch.
+          STATUS=$(gh api "repos/$GH_REPO/compare/$REQUESTED_SHA...main" --jq .status)
+          [[ "$STATUS" == ahead || "$STATUS" == identical ]] || { echo 'Commit must be on main'; exit 1; }
+          echo "commit_sha=$REQUESTED_SHA" >> "$GITHUB_OUTPUT"
+
       - name: 📥 Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || inputs.commit_sha || github.sha }}
+          ref: ${{ steps.target.outputs.commit_sha }}
+          persist-credentials: false
           fetch-depth: 0
 
       - name: 🧰 Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24.18.1'
           cache: 'npm'
@@ -43,222 +52,34 @@ jobs:
       - name: 📦 Install dependencies
         run: npm ci
 
-      - name: 🔧 Build project
-        run: npm run build
+      - name: Verify checkout SHA
+        env:
+          COMMIT_SHA: ${{ steps.target.outputs.commit_sha }}
+        run: test "$(git rev-parse HEAD)" = "$COMMIT_SHA"
 
-      - name: 🤖 Run ARCANOS Analysis
-        id: arcanos_analysis
+      - name: Validate types
+        run: npm run type-check
+
+      - name: Validate lint
+        run: npm run lint
+
+      - name: Advisory summary
+        env:
+          COMMIT_SHA: ${{ steps.target.outputs.commit_sha }}
         run: |
-          echo "Starting ARCANOS code analysis..."
-          COMMIT_SHA="${{ github.event.pull_request.head.sha || inputs.commit_sha || github.sha }}"
-          TRIGGER_SOURCE="${{ github.event_name == 'pull_request' && 'pull_request' || inputs.trigger_source || 'manual' }}"
-          
-          echo "Commit SHA: $COMMIT_SHA"
-          echo "Trigger source: $TRIGGER_SOURCE"
-          
-          # Set environment variables.
-          # Use test-mode plus empty OpenAI key aliases so the backend stays on deterministic
-          # mock responses instead of attempting live API auth during CI analysis.
-          export PORT=8080
-          export NODE_ENV=test
-          export OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY || '' }}"
-          export RAILWAY_OPENAI_API_KEY=""
-          export API_KEY=""
-          export OPENAI_KEY=""
-          CI_API_KEY="ci-analysis-token"
-          
-          # Start ARCANOS backend for analysis
-          npm start > server.log 2>&1 &
-          SERVER_PID=$!
-          
-          # Wait for server to be ready with retries
-          echo "Waiting for server to start..."
-          MAX_RETRIES=30
-          RETRY_COUNT=0
-          SERVER_READY=false
-          
-          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-            if curl -f -s http://localhost:8080/health > /dev/null 2>&1; then
-              echo "Server is ready!"
-              SERVER_READY=true
-              break
-            fi
-            RETRY_COUNT=$((RETRY_COUNT + 1))
-            echo "Waiting for server... ($RETRY_COUNT/$MAX_RETRIES)"
-            sleep 2
-          done
-          
-          if [ "$SERVER_READY" = false ]; then
-            echo "❌ Server failed to start. Logs:"
-            cat server.log
-            exit 1
-          fi
-          
-          # //audit Assumption: CI analysis should hit the canonical GPT route while
-          # staying compatible with local workflows that do not provision durable
-          # async job persistence. Failure risk: forcing the public async `query`
-          # action in CI turns a healthy sync analysis path into a hard 503 when the
-          # jobs backend is intentionally unavailable. Expected invariant: agent/tool
-          # clients use explicit async actions, while this internal CI workflow uses
-          # the supported sync fallback on the same /gpt/{gptId} route.
-          PROMPT="Analyze the current codebase changes and provide recommendations for code quality, security, and performance improvements. Focus on the commit SHA: $COMMIT_SHA"
-          HTTP_CODE=$(curl -X POST http://localhost:8080/gpt/arcanos-daemon \
-            -H "Content-Type: application/json" \
-            -H "Authorization: Bearer $CI_API_KEY" \
-            -d "$(jq -nc --arg p "$PROMPT" '{prompt: $p, executionMode: "sync", metadata: {context: "code_analysis"}}')" \
-            -w "%{http_code}" \
-            -o analysis_result.json \
-            -s)
-          
-          # Stop the server
-          kill $SERVER_PID 2>/dev/null || true
-          sleep 2
-          kill -9 $SERVER_PID 2>/dev/null || true
-          
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "❌ Analysis failed with HTTP code: $HTTP_CODE"
-            echo "Response:"
-            cat analysis_result.json || echo "No response body"
-            exit 1
-          fi
-          
-          echo "Analysis completed. Results saved to analysis_result.json"
+          {
+            echo '# ARCANOS Advisory Validation'
+            printf "Validated commit: \`%s\`\n" "$COMMIT_SHA"
+            echo 'Type-check and lint passed for this commit.'
+            echo 'This manual validation does not establish merge approval or deployment readiness.'
+            echo 'The former local-server AI path and automated issue publication are retired.'
+          } > analysis_summary.md
+          cat analysis_summary.md >> "$GITHUB_STEP_SUMMARY"
 
-      - name: 📊 Process Analysis Results
-        run: |
-          COMMIT_SHA="${{ github.event.pull_request.head.sha || inputs.commit_sha || github.sha }}"
-          TRIGGER_SOURCE="${{ github.event_name == 'pull_request' && 'pull_request' || inputs.trigger_source || 'manual' }}"
-          
-          if [ -f analysis_result.json ]; then
-            echo "ARCANOS Analysis Results:"
-            cat analysis_result.json
-            
-            # Extract key insights and create summary
-            echo "## ARCANOS Code Analysis Report" > analysis_summary.md
-            echo "**Commit:** $COMMIT_SHA" >> analysis_summary.md
-            echo "**Triggered by:** $TRIGGER_SOURCE" >> analysis_summary.md
-            echo "**Timestamp:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> analysis_summary.md
-            echo "" >> analysis_summary.md
-            echo "### Analysis Results" >> analysis_summary.md
-            
-            # Try to extract response from JSON
-            if command -v jq &> /dev/null; then
-              RESPONSE=$(jq -r '.result.text // .result.result // .result.response // .response // .content // .' analysis_result.json 2>/dev/null || cat analysis_result.json)
-              echo "$RESPONSE" >> analysis_summary.md
-            else
-              echo '```json' >> analysis_summary.md
-              cat analysis_result.json >> analysis_summary.md
-              echo '```' >> analysis_summary.md
-            fi
-          else
-            echo "No analysis results found"
-            exit 1
-          fi
-
-      - name: 💾 Upload Analysis Artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
+      - name: Upload validation summary
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: arcanos-analysis-${{ github.event.pull_request.head.sha || inputs.commit_sha || github.sha }}
-          path: |
-            analysis_result.json
-            analysis_summary.md
-            server.log
-          if-no-files-found: ignore
+          name: arcanos-analysis-${{ steps.target.outputs.commit_sha }}
+          path: analysis_summary.md
+          if-no-files-found: error
           retention-days: 30
-
-      - name: 📝 Post PR Comment (if PR)
-        if: always() && github.event_name == 'pull_request' && steps.arcanos_analysis.outcome == 'success'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            
-            try {
-              if (!fs.existsSync('analysis_summary.md')) {
-                console.log('No analysis summary found, skipping comment');
-                return;
-              }
-              
-              const summary = fs.readFileSync('analysis_summary.md', 'utf8');
-              const prNumber = context.payload.pull_request.number;
-              
-              // Check if we already have an ARCANOS comment
-              const comments = await github.rest.issues.listComments({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber
-              });
-              
-              const existingComment = comments.data.find(comment => 
-                comment.body.includes('ARCANOS Code Analysis Report')
-              );
-              
-              const commentBody = `${summary}\n\n---\n*Analysis triggered by: ${context.actor}*\n*Workflow run: [${context.runId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})*`;
-              
-              if (existingComment) {
-                await github.rest.issues.updateComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  comment_id: existingComment.id,
-                  body: commentBody
-                });
-                console.log('Updated existing ARCANOS analysis comment');
-              } else {
-                await github.rest.issues.createComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: prNumber,
-                  body: commentBody
-                });
-                console.log('Created new ARCANOS analysis comment');
-              }
-            } catch (error) {
-              console.error('Error posting PR comment:', error);
-            }
-
-      - name: 📝 Create Issue for Critical Findings
-        if: always() && steps.arcanos_analysis.outcome == 'success'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            
-            try {
-              if (!fs.existsSync('analysis_result.json')) {
-                console.log('No analysis results found, skipping issue creation');
-                return;
-              }
-              
-              const analysisData = fs.readFileSync('analysis_result.json', 'utf8');
-              const analysis = JSON.parse(analysisData);
-              
-              // Check if analysis indicates critical issues
-              const analysisText = analysis.response || analysis.content || JSON.stringify(analysis);
-              
-              if (analysisText.toLowerCase().includes('critical') || 
-                  analysisText.toLowerCase().includes('security') ||
-                  analysisText.toLowerCase().includes('vulnerability')) {
-                
-                const summary = fs.existsSync('analysis_summary.md') 
-                  ? fs.readFileSync('analysis_summary.md', 'utf8')
-                  : 'See analysis artifacts for details';
-                
-                const commitSha = context.sha.substring(0, 7);
-                const prLink = context.payload.pull_request 
-                  ? `[PR #${context.payload.pull_request.number}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/pull/${context.payload.pull_request.number})`
-                  : `Commit ${commitSha}`;
-                
-                await github.rest.issues.create({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  title: `🤖 ARCANOS: Critical Code Analysis Findings - ${commitSha}`,
-                  body: `${summary}\n\n---\nRelated: ${prLink}`,
-                  labels: ['arcanos', 'code-analysis', 'needs-review']
-                });
-                
-                console.log('Created issue for critical findings');
-              }
-            } catch (error) {
-              console.log('No critical findings or error processing results:', error.message);
-            }
