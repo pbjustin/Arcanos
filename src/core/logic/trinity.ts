@@ -808,8 +808,6 @@ export async function runThroughBrain(
       ? options.trustedPolicyPrompt
       : prompt;
   const outputControls = deriveTrinityOutputControls(trustedPolicyPrompt, options);
-  const preserveDirectAnswerPresentation = options.sourceEndpoint === 'backstage-booker.generateBooking'
-    && options.directAnswerPreservePresentation === true;
   logCoreExecution('start', {
     requestId,
     sourceEndpoint: options.sourceEndpoint,
@@ -858,6 +856,9 @@ export async function runThroughBrain(
     options.directAnswerUserIntentPrompt.trim().length > 0
       ? options.directAnswerUserIntentPrompt.trim()
       : trustedPolicyPrompt;
+  const preserveDirectAnswerPresentation = (options.sourceEndpoint === 'backstage-booker.generateBooking'
+    && options.directAnswerPreservePresentation === true)
+    || MidLayerTranslator.detectIntentFromUserMessage(directAnswerUserIntentPrompt) === 'code';
 
   // --- Retry lineage check ---
   registerRetry(requestId);

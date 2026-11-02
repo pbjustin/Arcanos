@@ -241,11 +241,15 @@ describe('Trinity caller-declared final JSON integrity at actual provider extrac
     expect(responsesCreate).toHaveBeenCalledTimes(4);
   });
 
-  it('retains unsupported-action claim checks for code presentation', async () => {
+  it.each(['direct', 'explained'] as const)('retains unsupported-action claim checks for %s code presentation', async mode => {
     finalText = 'I ran npm test.\n\n```python\nprint("café 雪")\n```';
-    const result = await run('explained', null, 'Return a source code example.');
-    expect(result.result).not.toContain('I ran npm test.');
-    expect(responsesCreate).toHaveBeenCalledTimes(4);
+    const pending = run(mode, null, 'Return a source code example.');
+    if (mode === 'direct') {
+      await expect(pending).rejects.toMatchObject({ code: 'TRINITY_OUTPUT_INTEGRITY_FAILED' });
+    } else {
+      expect((await pending).result).not.toContain('I ran npm test.');
+    }
+    expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
   });
 
   it('preserves a matching synthetic completed-action claim in the full path', async () => {
@@ -272,37 +276,43 @@ describe('Trinity caller-declared final JSON integrity at actual provider extrac
     expect(responsesCreate).toHaveBeenCalledTimes(4);
   });
 
-  it('preserves a complete fenced Python answer, literal Unicode, indentation and its final line', async () => {
+  it.each(['direct', 'explained'] as const)('preserves a complete fenced Python answer in %s mode, including Unicode, nested indentation and its final line', async mode => {
     finalText = [
       'A short Markdown example:',
       '',
       '```python',
-      'def example():',
-      '    print("café 雪")',
-      '    # Do not change the code or its spacing.',
+      'def example(enabled):',
+      '    if enabled:',
+      '        print("café 雪")',
+      '        # Do not change the code or its spacing.',
       '```',
       '',
       'END-OF-LIVE-TEST',
     ].join('\n');
-    const result = await run('explained', null,
+    const result = await run(mode, null,
       'Return a short Markdown example containing a fenced Python code block, the Unicode text “café 雪”, '
       + 'and a final line reading END-OF-LIVE-TEST.');
     expect(result.result).toBe(finalText);
     expect(buildTrinityUserVisibleResponse({ trinityResult: result }).presentation).toBe('public-answer-v1');
-    expect(responsesCreate).toHaveBeenCalledTimes(4);
+    expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
   });
 
-  it.each([
-    'GPT-5.1 analysis:\n<analysis_output>\n```python\nprint("café 雪")\n```\nEND-OF-LIVE-TEST\n</analysis_output>',
-    'GPT-5.1 analysis:\n<analysis_output>\n```python\nprint("café 雪")',
-  ])('withholds an internal analysis envelope before public answer finalization', async output => {
+  it.each(([
+    ['multiline', 'GPT-5.1 analysis:\n<analysis_output>\n```python\nprint("café 雪")\n```\nEND-OF-LIVE-TEST\n</analysis_output>'],
+    ['unterminated multiline', 'GPT-5.1 analysis:\n<analysis_output>\n```python\nprint("café 雪")'],
+    ['one-line', '<analysis_output>private synthetic reasoning</analysis_output>'],
+    ['uppercase', '<ANALYSIS_OUTPUT>private synthetic reasoning</ANALYSIS_OUTPUT>'],
+    ['prefixed one-line', 'GPT-5.1 analysis:\n<analysis_output>private synthetic reasoning</analysis_output>'],
+    ['truncated opener', '<analysis_output'],
+  ] as const).flatMap(([label, output]) => (['direct', 'explained'] as const).map(mode => ({ label, output, mode }))))(
+    'withholds a $label internal analysis envelope in $mode mode before public answer finalization', async ({ output, mode }) => {
     finalText = output;
     const delivered = jest.fn();
-    await expect(run('explained', null,
+    await expect(run(mode, null,
       'Return a short Markdown example containing a fenced Python code block.').then(delivered))
       .rejects.toMatchObject({ code: 'TRINITY_STRUCTURED_OUTPUT_INVALID', reason: 'private_output' });
     expect(delivered).not.toHaveBeenCalled();
-    expect(responsesCreate).toHaveBeenCalledTimes(4);
+    expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
   });
 
   it.each(['', '   ', '\u200b'])(
