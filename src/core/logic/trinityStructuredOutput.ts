@@ -40,9 +40,9 @@ export function assertTrinityFinalOutputIsPublic(text: string): void {
       continue;
     }
     // Fenced/indented source examples and inline mentions are ordinary content.
-    // Reject the envelope itself, including an unterminated one; unwrapping it
+    // Reject an envelope prefix, including an unterminated one; unwrapping it
     // would incorrectly treat private reasoning as an authoritative final answer.
-    if (/^ {0,3}<\/?analysis_output>[ \t]*$/u.test(line)) {
+    if (/^ {0,3}<\/?analysis_output(?:[ \t>]|$)/iu.test(line)) {
       throw new TrinityStructuredOutputError('private_output');
     }
   }

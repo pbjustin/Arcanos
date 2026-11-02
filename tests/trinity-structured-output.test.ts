@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { createTrinityStructuredOutputValidator } from '../src/core/logic/trinityStructuredOutput.js';
+import { assertTrinityFinalOutputIsPublic, createTrinityStructuredOutputValidator } from '../src/core/logic/trinityStructuredOutput.js';
 import { createDefaultTrinityReasoningHonesty, deriveTrinityCapabilityFlags, deriveTrinityOutputControls } from '../src/core/logic/trinityHonesty.js';
 
 const contract = {
@@ -11,6 +11,36 @@ const contract = {
 const flags = deriveTrinityCapabilityFlags();
 const honesty = createDefaultTrinityReasoningHonesty();
 const validate = createTrinityStructuredOutputValidator(contract);
+
+describe('Trinity private final-envelope boundary', () => {
+  it.each([
+    '<analysis_output>private reasoning fixture</analysis_output>',
+    '<ANALYSIS_OUTPUT>private reasoning fixture</ANALYSIS_OUTPUT>',
+    '  <Analysis_Output>private reasoning fixture</Analysis_Output>',
+    'GPT-5.1 analysis:\n<analysis_output>private reasoning fixture</analysis_output>',
+    '<analysis_output>private reasoning fixture',
+    '<analysis_output\nprivate reasoning fixture',
+    '<analysis_output private reasoning fixture',
+    '</analysis_output>private reasoning fixture',
+  ])('rejects an unquoted private-envelope prefix: %p', text => {
+    expect(() => assertTrinityFinalOutputIsPublic(text)).toThrow(expect.objectContaining({
+      code: 'TRINITY_STRUCTURED_OUTPUT_INVALID', reason: 'private_output',
+    }));
+  });
+
+  it.each([
+    '```xml\n<analysis_output>example text</analysis_output>\n```',
+    '~~~xml\n<ANALYSIS_OUTPUT>example text</ANALYSIS_OUTPUT>\n~~~',
+    '    <analysis_output>indented example</analysis_output>',
+    '\t<analysis_output>indented example</analysis_output>',
+    'The `<analysis_output>` label is literal text.',
+    '`<analysis_output>example text</analysis_output>`',
+    'The <analysis_output> label is literal text.',
+    '<analysis_output_example>ordinary element</analysis_output_example>',
+  ])('preserves code examples and inline mentions: %p', text => {
+    expect(() => assertTrinityFinalOutputIsPublic(text)).not.toThrow();
+  });
+});
 
 describe('Trinity final JSON contract validation', () => {
   it('preserves a caller-owned false verification flag without asserting completed work', () => {

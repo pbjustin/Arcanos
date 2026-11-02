@@ -603,6 +603,18 @@ def test_safe_explanations_and_code_remain_exact_in_stored_history(
             "public-answer-v1",
         ),
         ("<analysis_output>\nPRIVATE_HISTORY_FIXTURE", None),
+        (
+            "<analysis_output>PRIVATE_HISTORY_FIXTURE</analysis_output>",
+            "public-answer-v1",
+        ),
+        ("<ANALYSIS_OUTPUT>PRIVATE_HISTORY_FIXTURE</ANALYSIS_OUTPUT>", None),
+        (
+            "GPT-5.1 analysis:\n<analysis_output>PRIVATE_HISTORY_FIXTURE",
+            "public-answer-v1",
+        ),
+        ("<analysis_output\nPRIVATE_HISTORY_FIXTURE", None),
+        ("<analysis_output PRIVATE_HISTORY_FIXTURE", None),
+        ("</analysis_output>PRIVATE_HISTORY_FIXTURE", "public-answer-v1"),
     ],
     ids=[
         "private-label",
@@ -613,6 +625,12 @@ def test_safe_explanations_and_code_remain_exact_in_stored_history(
         "fenced-escaped-private-proposal",
         "analysis-envelope",
         "truncated-analysis-envelope",
+        "one-line-analysis-envelope",
+        "uppercase-one-line-analysis-envelope",
+        "unterminated-one-line-analysis-envelope",
+        "truncated-analysis-opening-tag",
+        "malformed-analysis-opening-tag",
+        "one-line-analysis-closing-tag",
     ],
 )
 def test_withheld_answers_cannot_reappear_in_conversation_or_audit_history(
@@ -651,7 +669,11 @@ def test_analysis_envelope_examples_remain_complete_public_code(
     answer = (
         "A literal markup example:\n\n```xml\n<analysis_output>\n"
         "example text\n</analysis_output>\n```\n\n"
-        "    <analysis_output>\n    indented example\n    </analysis_output>"
+        "~~~xml\n<ANALYSIS_OUTPUT>one-line example</ANALYSIS_OUTPUT>\n~~~\n\n"
+        "    <analysis_output>\n    indented example\n    </analysis_output>\n"
+        "    <analysis_output>one-line indented example</analysis_output>\n"
+        "\t<analysis_output>tab-indented example</analysis_output>\n\n"
+        "The `<analysis_output>` label is literal text."
     )
     _deliver(
         monkeypatch, cli, answer, agentic=agentic, presentation="public-answer-v1"
