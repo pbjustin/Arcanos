@@ -549,7 +549,7 @@ describe('native PR workflow safety', () => {
     expect(job['continue-on-error']).toBeUndefined();
     expect(job.steps.every(step => step['continue-on-error'] === undefined)).toBe(true);
     expect(JSON.stringify(job)).not.toContain('secrets.');
-    const checkout = job.steps.filter(step => step.uses === 'actions/checkout@v4');
+    const checkout = job.steps.filter(step => step.uses === 'actions/checkout@v7');
     expect(checkout).toHaveLength(1);
     expect(checkout[0].with).toEqual({
       ref: '${{ github.event.pull_request.head.sha || github.sha }}',
@@ -562,7 +562,7 @@ describe('native PR workflow safety', () => {
       return matches[0];
     };
     const gate = id => `\${{ !cancelled() && steps.${id}.outcome == 'success' }}`;
-    expect(job.steps.find(step => step.id === 'windows_node').uses).toBe('actions/setup-node@v4');
+    expect(job.steps.find(step => step.id === 'windows_node').uses).toBe('actions/setup-node@v7');
     expect(command('node scripts/ci-windows-verification.mjs metadata').id).toBe('windows_metadata');
     expect(command('node scripts/ci-windows-verification.mjs metadata').env.EVIDENCE_HEAD_SHA)
       .toBe('${{ github.event.pull_request.head.sha || github.sha }}');
@@ -577,7 +577,7 @@ describe('native PR workflow safety', () => {
       expect(command(`node scripts/ci-windows-verification.mjs run ${name}`).if).toBe(gate('windows_build'));
     }
     expect(command('node scripts/ci-windows-verification.mjs report').if).toBe('always()');
-    const upload = job.steps.filter(step => step.uses === 'actions/upload-artifact@v4');
+    const upload = job.steps.filter(step => step.uses === 'actions/upload-artifact@v7');
     expect(upload).toHaveLength(2);
     for (const [name, artifact, directory] of [
       ['Upload native Windows verification evidence', 'native-windows', 'arcanos-windows-verification'],
@@ -718,7 +718,7 @@ describe('native PR workflow safety', () => {
     expect(receipt.env.ARCANOS_CI_RECEIPTS_ENABLED).toBe('true');
     expect(receipt.env.ARCANOS_CI_VERIFIER_STEP_OUTCOME).toBe('${{ steps.required-results.outcome }}');
     expect(receipt.env.GITHUB_TOKEN).toBe('${{ github.token }}');
-    expect(upload.uses).toBe('actions/upload-artifact@v4');
+    expect(upload.uses).toBe('actions/upload-artifact@v7');
     expect(upload.with['retention-days']).toBe(30);
     expect(upload.with['if-no-files-found']).toBe('error');
   });
