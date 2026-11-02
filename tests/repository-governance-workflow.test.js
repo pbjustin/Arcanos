@@ -118,7 +118,7 @@ describe('deployment reporting and dependency maintenance', () => {
     expect(dependabot.updates[1].directory).toBe('/daemon-python');
     for (const update of dependabot.updates) {
       expect(update.schedule.interval).toBe('weekly');
-      expect(update['open-pull-requests-limit']).toBe(2);
+      expect(update['open-pull-requests-limit']).toBe(0);
       expect(Object.values(update.groups)).toEqual([{ patterns: ['*'], 'update-types': ['minor', 'patch'] }]);
     }
   });

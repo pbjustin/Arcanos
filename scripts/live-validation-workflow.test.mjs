@@ -13,10 +13,10 @@ const workflow = yaml.load(readFileSync(new URL('../.github/workflows/live-pr-ac
 const SHA = 'a'.repeat(40);
 const CONTROLLER_SHA = 'b'.repeat(40);
 const actions = new Set([
-  'actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955',
-  'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020',
-  'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02',
-  'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093',
+  'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+  'actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1',
+  'actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9',
+  'actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333',
 ]);
 const offline = workflow.jobs['candidate-offline'];
 const live = workflow.jobs['live-acceptance'];
@@ -153,7 +153,7 @@ test('required CI scans every exact PR commit beyond the first API page and bloc
   const security = ci.jobs['security-audit'];
   const action = named(security, '🔍 Run gitleaks secret scan');
   const scan = named(security, 'Scan complete exact PR commit range');
-  assert.equal(action.uses, 'gitleaks/gitleaks-action@v2');
+  assert.equal(action.uses, 'gitleaks/gitleaks-action@v3');
   assert.deepEqual(action.env, { GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}' });
   assert.equal(scan.if, "github.event_name == 'pull_request'");
   assert.equal(scan.shell, 'bash');

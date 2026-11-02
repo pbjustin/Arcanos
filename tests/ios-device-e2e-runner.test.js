@@ -328,7 +328,7 @@ describe('required durable Swift device E2E CI coverage', () => {
   });
 
   it('retains only the sanitized proof after success without weakening the pipeline exit status', () => {
-    const upload = job.steps.find(value => value.uses === 'actions/upload-artifact@v4');
+    const upload = job.steps.find(value => value.uses === 'actions/upload-artifact@v7');
     expect(step.run).toContain('set -euo pipefail');
     expect(step.run).toContain('node scripts/validate-ios-device-gateway-e2e.mjs | tee local_artifacts/ios-device-e2e-proof.json');
     expect(upload.if).toBe('success()');

@@ -38,12 +38,12 @@ jobs:
 
     steps:
       - name: Checkout source commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -82,7 +82,7 @@ jobs:
 
       - name: Upload offline validation evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: documentation-offline-validation-${{ github.run_id }}-${{ github.run_attempt }}
           path: documentation-offline-validation.json
@@ -103,13 +103,13 @@ jobs:
 
     steps:
       - name: Checkout source commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -367,7 +367,7 @@ jobs:
 
       - name: Upload analysis artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: documentation-analysis-${{ github.run_id }}-${{ github.run_attempt }}
           path: |

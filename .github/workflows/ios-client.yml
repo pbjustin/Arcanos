@@ -23,10 +23,10 @@ jobs:
   contract-drift:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '24.18.1'
           cache: npm
@@ -42,7 +42,7 @@ jobs:
       # https://github.com/actions/runner-images/blob/main/images/macos/macos-15-Readme.md
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Record Apple toolchain
@@ -99,7 +99,7 @@ jobs:
             | tee local_artifacts/ios-recovery/shipping-proof.json
       - name: Retain sanitized recovery process proofs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ios-recovery-proofs-${{ github.sha }}
           path: local_artifacts/ios-recovery/*.json
