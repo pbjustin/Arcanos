@@ -108,16 +108,25 @@ export function shouldInspectRepoPrompt(prompt: string | null): boolean {
   if (repoInspectionDisallowedPatterns.some((pattern) => pattern.test(normalizedPrompt))) {
     return false;
   }
-  if (verificationPhrases.some((phrase) => normalizedPrompt.includes(phrase))) {
-    return true;
-  }
-
-  // Keep inspection intent and its repository target in the same statement;
-  // an unrelated revision disclaimer must not redirect a conversation request.
-  return normalizedPrompt.split(/[.!?;]+/).some((statement) =>
-    repoTargetPatterns.some((pattern) => pattern.test(statement))
-    && repoInspectionIntentPatterns.some((pattern) => pattern.test(statement))
+  // Keep filename dots intact and exclude only explicit negated inspection
+  // clauses. A contrasting affirmative clause still retains its own intent.
+  const statements = normalizedPrompt.split(/[!?;]+|\.(?=\s|$)/u).map((statement) =>
+    statement.replace(
+      /\b(?:do\s+not|don['’]t|never)\s+(?:inspect|show|list|find|locate|read|open|verify|check)\b[^,]*?(?=,|\bbut\b|$)/gu,
+      ''
+    ).trim()
   );
+  return statements.some((statement, index) => {
+    if (verificationPhrases.some((phrase) => statement.includes(phrase))) return true;
+    if (repoTargetPatterns.some((pattern) => pattern.test(statement))
+      && repoInspectionIntentPatterns.some((pattern) => pattern.test(statement))) return true;
+
+    // A direct pronoun request may refer to the immediately preceding repo;
+    // generic questions cannot borrow a repository target from another sentence.
+    return index > 0
+      && repoTargetPatterns.some((pattern) => pattern.test(statements[index - 1]!))
+      && /^(?:please\s+)?(?:inspect|show|list|find|locate|read|open|verify|check)\s+(?:it|this|that|them|these|those)$/u.test(statement);
+  });
 }
 
 /**
