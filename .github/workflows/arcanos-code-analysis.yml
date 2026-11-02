@@ -37,14 +37,14 @@ jobs:
           echo "commit_sha=$REQUESTED_SHA" >> "$GITHUB_OUTPUT"
 
       - name: 📥 Checkout code
-        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: ${{ steps.target.outputs.commit_sha }}
           persist-credentials: false
           fetch-depth: 0
 
       - name: 🧰 Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24.18.1'
           cache: 'npm'
@@ -77,7 +77,7 @@ jobs:
           cat analysis_summary.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload validation summary
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: arcanos-analysis-${{ steps.target.outputs.commit_sha }}
           path: analysis_summary.md

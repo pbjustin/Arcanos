@@ -23,7 +23,7 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       PYTHONDONTWRITEBYTECODE: '1'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Validate isolation, automation and distribution guards without secrets
@@ -60,7 +60,7 @@ jobs:
           --output local_artifacts/ios-phase3c/cloud-summary.json
       - name: Retain sanitized Apple and Simulator evidence only
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ios-phase3c-apple-${{ github.sha }}-${{ github.run_attempt }}
           path: |
