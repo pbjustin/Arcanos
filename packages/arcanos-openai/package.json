@@ -44,7 +44,7 @@
   },
   "dependencies": {
     "@arcanos/runtime": "file:../arcanos-runtime",
-    "openai": "^6.25.0"
+    "openai": "^7.45.1"
   },
   "types": "dist/index.d.ts",
   "scripts": {
