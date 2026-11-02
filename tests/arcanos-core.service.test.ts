@@ -295,6 +295,42 @@ describe('ARCANOS:CORE service', () => {
     expect(input.maxOutputTokens).toBe(1);
   });
 
+  it('retains daemon conversation history when prompt repeats the latest user message', async () => {
+    const prompt = 'In the Python example you just gave, what text does print output?';
+    const messages = [
+      { role: 'system', content: 'You are the ARCANOS daemon assistant.' },
+      { role: 'user', content: 'Return a fenced Python example with Unicode and a final line reading END-OF-LIVE-TEST.' },
+      { role: 'assistant', content: '```python\nprint("café 雪")\n```\nEND-OF-LIVE-TEST' },
+      { role: 'user', content: prompt },
+    ];
+    mockGetOpenAIClientOrAdapter.mockReturnValue({ client: { id: 'openai-client' } });
+    mockRunTrinityWritingPipeline.mockResolvedValue({ result: 'café 雪' });
+
+    await ArcanosCore.actions.query({ prompt, messages });
+
+    const [{ input }] = mockRunTrinityWritingPipeline.mock.calls[0] as Array<[{ input: Record<string, unknown> }]>;
+    expect(input.messages).toBe(messages);
+    expect(input.prompt).toBeUndefined();
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      context: expect.objectContaining({
+        runOptions: expect.objectContaining({ trustedPolicyPrompt: prompt }),
+      }),
+    }));
+  });
+
+  it('preserves explicit prompt precedence when supplied messages end with a different request', async () => {
+    const prompt = 'Explain the next step without executing anything.';
+    const messages = [{ role: 'user', content: 'A stale, different request.' }];
+    mockGetOpenAIClientOrAdapter.mockReturnValue({ client: { id: 'openai-client' } });
+    mockRunTrinityWritingPipeline.mockResolvedValue({ result: 'core-response' });
+
+    await ArcanosCore.actions.query({ prompt, messages });
+
+    const [{ input }] = mockRunTrinityWritingPipeline.mock.calls[0] as Array<[{ input: Record<string, unknown> }]>;
+    expect(input.prompt).toBe(prompt);
+    expect(input.messages).toBeUndefined();
+  });
+
   it('falls back to a mock response when the OpenAI client is unavailable', async () => {
     mockGetOpenAIClientOrAdapter.mockReturnValue({ client: null });
     mockGenerateMockResponse.mockReturnValue({ result: 'mock-core-response' });
