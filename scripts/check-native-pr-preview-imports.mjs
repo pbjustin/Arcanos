@@ -939,7 +939,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['src/bookerMcpPreviewFixture.ts', 'd79eeba799864f6d16ab5686c0763bebd06d53357f9c8cb47db249701ded4d37'],
   ['src/bookerMcpRealAuthPreview.ts', '6a9eb5a1c02230f6cb98f7531231ed2c5b119ffa41d4f7b5caf17bcec0ae1bce'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/http/clientDisconnectAbort.ts', '296cca6209bb8c65d3e9934614d7612e664c46ed2efd42cc807e88454f87ec1f'],
-  ['src/core/logic/trinityStructuredOutput.ts', '8696e1c882cdc282e23a1071c2632931807c1a1fee0b6f667322d380ec786d08'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/core/logic/trinityStructuredOutput.ts', '270abf504750e7f5f8982974022427385f80b27c30603103a942159014af8a54'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gpt/trinityFinalOutputPreviewFixture.ts', '7d3f6ffe15d6be161493ba8dac983958579d5fb9af8bc5d0d1080bab096f1feb'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/validation/zodIssues.ts', '0baaff406fd2ceb2a0f41aec26a1c333c865f496a3bd912799fdf1257c9004ea'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/validation/zodNumberChecks.ts', '95aa7a56141ba5e6b60f315f406a4739110b6ac43e66b1a1c92bb8023d673858'], // gitleaks:allow -- public source semantic SHA-256

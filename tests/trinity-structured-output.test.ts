@@ -13,6 +13,21 @@ const honesty = createDefaultTrinityReasoningHonesty();
 const validate = createTrinityStructuredOutputValidator(contract);
 
 describe('Trinity private final-envelope boundary', () => {
+  it.each(['\n', '\r\n', '\r'])('rejects private envelopes after %p line boundaries', newline => {
+    const privateEnvelope = '<analysis_output>private reasoning fixture</analysis_output>';
+    for (const prefix of ['GPT-5.1 analysis:', ['```xml', '<analysis_output>example</analysis_output>', '```'].join(newline)]) {
+      expect(() => assertTrinityFinalOutputIsPublic(`${prefix}${newline}${privateEnvelope}`))
+        .toThrow(expect.objectContaining({ reason: 'private_output' }));
+    }
+  });
+
+  it.each(['\n', '\r\n', '\r'])('preserves fenced source examples with %p line boundaries', newline => {
+    expect(() => assertTrinityFinalOutputIsPublic([
+      '```xml', '<analysis_output>example</analysis_output>', '```',
+      '    <analysis_output>indented example</analysis_output>',
+    ].join(newline))).not.toThrow();
+  });
+
   it.each([
     '<analysis_output>private reasoning fixture</analysis_output>',
     '<ANALYSIS_OUTPUT>private reasoning fixture</ANALYSIS_OUTPUT>',

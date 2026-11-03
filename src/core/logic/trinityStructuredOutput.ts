@@ -27,7 +27,7 @@ export class TrinityStructuredOutputError extends Error {
 /** Never promote an echoed internal reasoning envelope into a public answer. */
 export function assertTrinityFinalOutputIsPublic(text: string): void {
   let fence: { character: string; length: number } | undefined;
-  for (const line of text.split(/\r?\n/u)) {
+  for (const line of text.split(/\r\n?|\n/u)) {
     const match = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(line);
     if (fence) {
       if (match && match[1]![0] === fence.character && match[1]!.length >= fence.length && !match[2]!.trim()) {

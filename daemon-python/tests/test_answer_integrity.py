@@ -602,6 +602,14 @@ def test_safe_explanations_and_code_remain_exact_in_stored_history(
             "GPT-5.1 analysis:\n<analysis_output>\nPRIVATE_HISTORY_FIXTURE\n</analysis_output>",
             "public-answer-v1",
         ),
+        (
+            "GPT-5.1 analysis:\r\n<analysis_output>\r\nPRIVATE_HISTORY_FIXTURE\r\n</analysis_output>",
+            "public-answer-v1",
+        ),
+        (
+            "GPT-5.1 analysis:\r<analysis_output>\rPRIVATE_HISTORY_FIXTURE\r</analysis_output>",
+            "public-answer-v1",
+        ),
         ("<analysis_output>\nPRIVATE_HISTORY_FIXTURE", None),
         (
             "<analysis_output>PRIVATE_HISTORY_FIXTURE</analysis_output>",
@@ -624,6 +632,8 @@ def test_safe_explanations_and_code_remain_exact_in_stored_history(
         "nested-escaped-private-key",
         "fenced-escaped-private-proposal",
         "analysis-envelope",
+        "crlf-analysis-envelope",
+        "cr-analysis-envelope",
         "truncated-analysis-envelope",
         "one-line-analysis-envelope",
         "uppercase-one-line-analysis-envelope",
@@ -662,8 +672,10 @@ def test_withheld_answers_cannot_reappear_in_conversation_or_audit_history(
 
 
 @pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+# Bare CR remains rejected by the unsafe-terminal-frame regression below.
+@pytest.mark.parametrize("line_ending", ["\n", "\r\n"], ids=["lf", "crlf"])
 def test_analysis_envelope_examples_remain_complete_public_code(
-    presentation_cli, monkeypatch, agentic
+    presentation_cli, monkeypatch, agentic, line_ending
 ):
     cli, output = presentation_cli
     answer = (
@@ -674,7 +686,7 @@ def test_analysis_envelope_examples_remain_complete_public_code(
         "    <analysis_output>one-line indented example</analysis_output>\n"
         "\t<analysis_output>tab-indented example</analysis_output>\n\n"
         "The `<analysis_output>` label is literal text."
-    )
+    ).replace("\n", line_ending)
     _deliver(
         monkeypatch, cli, answer, agentic=agentic, presentation="public-answer-v1"
     )
