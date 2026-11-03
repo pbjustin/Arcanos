@@ -1249,6 +1249,7 @@ export async function runThroughBrain(
         const text = preserveDirectOutputPresentation
           ? enforcedOutput.text
           : applyTrinityDirectAnswerOutputContract(enforcedOutput.text, trustedPolicyPrompt);
+        assertTrinityFinalOutputIsPublic(text, trustedPolicyPrompt);
         return {
           directAnswerReasoningHonesty: reasoningHonesty,
           honestyFilteredFinal: honestyFiltered,
@@ -2222,6 +2223,7 @@ export async function runThroughBrain(
       };
     }
     const finalText = enforcedFinalOutput.text;
+    if (!validateStructuredOutput) assertTrinityFinalOutputIsPublic(finalText, trustedPolicyPrompt);
     // Gaming replaces the legacy ledger audit with one audit of the actual final
     // candidate. Its callback owns strict validation and cannot trigger escalation.
     let gamingAuditResult: Awaited<ReturnType<NonNullable<TrinityRunOptions['gamingClearAnswerAudit']>>> | undefined;

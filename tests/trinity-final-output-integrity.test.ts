@@ -462,6 +462,47 @@ describe('Trinity caller-declared final JSON integrity at actual provider extrac
     expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
   });
 
+  it.each((['direct', 'explained'] as const).flatMap(mode => [
+    'Understood. ', 'Below is a concise response: ',
+  ].map(prefix => ({ mode, prefix }))))('rejects a private envelope exposed by final shaping in $mode mode: $prefix', async ({ mode, prefix }) => {
+    finalText = `${prefix}<analysis_output>PRIVATE_FINAL_SHAPING_FIXTURE</analysis_output>`;
+    const published = jest.fn();
+    const info = jest.spyOn(logger, 'info');
+    const observed = await run(mode, null, 'Assess the supplied outline.').then(result => {
+      published(buildTrinityUserVisibleResponse({ trinityResult: result }));
+      return { sink: 'public' };
+    }, error => {
+      expect(String(error)).not.toContain('PRIVATE_FINAL_SHAPING_FIXTURE');
+      expect(JSON.stringify(error)).not.toContain('PRIVATE_FINAL_SHAPING_FIXTURE');
+      expect(error.stack ?? '').not.toContain('PRIVATE_FINAL_SHAPING_FIXTURE');
+      return { sink: 'error', code: error.code, reason: error.reason };
+    });
+    expect(observed).toEqual({ sink: 'error', code: 'TRINITY_STRUCTURED_OUTPUT_INVALID', reason: 'private_output' });
+    expect(published).not.toHaveBeenCalled();
+    expect(info).not.toHaveBeenCalledWith('trinity.exit', expect.anything());
+    expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
+  });
+
+  it.each((['direct', 'explained'] as const).flatMap(mode => [
+    'Understood. ', 'Below is a concise response: ',
+  ].map(prefix => ({ mode, prefix }))))('preserves a fenced XML example after final shaping in $mode mode: $prefix', async ({ mode, prefix }) => {
+    const example = '```xml\n<analysis_output>quoted café 雪</analysis_output>\n```';
+    finalText = `${prefix.trimEnd()}\n${example}`;
+    const result = await run(mode, null, 'Return a source code example using XML tags.');
+    const publication = buildTrinityUserVisibleResponse({ trinityResult: result });
+    expect(publication.result).toContain(example);
+    expect(publication.presentation).toBe('public-answer-v1');
+    expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
+  });
+
+  it.each(['direct', 'explained'] as const)('retains incomplete-provider priority over a shaping-exposed envelope in %s mode', async mode => {
+    finalText = 'Understood. <analysis_output>PRIVATE_FINAL_SHAPING_FIXTURE</analysis_output>';
+    incomplete = true;
+    await expect(run(mode, null, 'Assess the supplied outline.'))
+      .rejects.toMatchObject({ code: 'OPENAI_COMPLETION_INCOMPLETE' });
+    expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
+  });
+
   it.each(([
     ['multiline', 'GPT-5.1 analysis:\n<analysis_output>\n```python\nprint("café 雪")\n```\nEND-OF-LIVE-TEST\n</analysis_output>'],
     ['unterminated multiline', 'GPT-5.1 analysis:\n<analysis_output>\n```python\nprint("café 雪")'],
