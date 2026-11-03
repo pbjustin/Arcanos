@@ -16,6 +16,14 @@ const {
   isVerificationQuestion
 } = await import('../src/services/repoImplementationEvidence.js');
 const { tryDispatchRepoTools } = await import('../src/routes/ask/repoTools.js');
+const commaRevisionDisclaimerPrompts = ['', 'but '].flatMap(conjunction => [
+  'do not claim knowledge of the deployed Git revision',
+  'do not guess the deployed Git revision',
+  "don't claim knowledge of the deployed Git revision",
+  'don’t guess the deployed Git revision',
+  'never claim knowledge of the deployed Git revision',
+  'never guess the deployed Git revision',
+].map(disclaimer => `What can ARCANOS help me do, ${conjunction}${disclaimer}.`));
 
 describe('repo inspection prompt detection', () => {
   it('requires repo intent instead of matching generic backend language', () => {
@@ -26,7 +34,8 @@ describe('repo inspection prompt detection', () => {
   it.each([
     'Explain what ARCANOS can help me do in two short sentences. Do not claim knowledge of your deployed Git revision unless it is verified.',
     'What can ARCANOS help me do? Do not guess the deployed Git revision.',
-    'Explain what ARCANOS can help me do; do not claim knowledge of the deployed Git revision.'
+    'Explain what ARCANOS can help me do; do not claim knowledge of the deployed Git revision.',
+    ...commaRevisionDisclaimerPrompts,
   ])('does not combine a conversation request with an unrelated revision disclaimer: %s', (prompt) => {
     expect(shouldInspectRepoPrompt(prompt)).toBe(false);
   });
@@ -175,6 +184,9 @@ describe('repo inspection prompt detection', () => {
     'Do not inspect the Git history, can you see my codebase?',
     'Do not read the repository, its files, but show me its status',
     'Inspect the repository files, but do not check the deployed Git revision.',
+    'List repository files, CLI commands, and Git status.',
+    'Inspect the repository files, but do not claim knowledge of the deployed Git revision.',
+    'Do not claim knowledge of the deployed Git revision, but inspect the repository files.',
     'Show me the repo status. Do not check the deployed Git revision.'
   ])('preserves an affirmative inspection beside a negated check: %s', (prompt) => {
     expect(shouldInspectRepoPrompt(prompt)).toBe(true);
@@ -208,7 +220,11 @@ describe('repository status routing through the ask tool caller', () => {
     ['Do not read the repository files, what is their status?', true],
     ['Do not read the repository files, the weather, what is their status?', false],
     ['Do not read the repository files. What is their status?', false],
+    ['List repository files, CLI commands, and Git status.', true],
+    ['Inspect the repository files, but do not claim knowledge of the deployed Git revision.', true],
+    ['Do not read the repository files, but show me their status', true],
     ['Do not read repository files\nDo not check the weather, what is their status?', false],
+    ...commaRevisionDisclaimerPrompts.map(prompt => [prompt, false] as const),
     ...['\n', '\r\n', '\r'].map(newline => [
       `What can ARCANOS help me do${newline}Do not claim knowledge of the deployed Git revision unless it is verified`, false,
     ] as const),
