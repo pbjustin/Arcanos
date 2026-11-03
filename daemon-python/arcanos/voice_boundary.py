@@ -86,6 +86,14 @@ def _has_private_analysis(text: str, user_text: str) -> bool:
                 return True
         return False
 
+    # Exact current-source text stays literal even when its JSON is incomplete.
+    quoted = (
+        q for unit in (text, text.strip())
+        for q in (json.dumps(unit, ensure_ascii=False), f"'{unit}'", f"`{unit}`")
+    )
+    if isinstance(user_text, str) and any(q in user_text for q in quoted):
+        return False
+
     fence = ""
     fence_length = 0
     for line in text.splitlines():
@@ -103,14 +111,16 @@ def _has_private_analysis(text: str, user_text: str) -> bool:
         if line.startswith(("    ", "\t")):
             continue
         if _ANALYSIS_RECORD.match(line):
-            # Only the exact current-source scalar unit is a literal example;
-            # a tag, neighboring value, or earlier request cannot authorize it.
-            quoted = (
-                q for unit in (text, text.strip())
-                for q in (json.dumps(unit, ensure_ascii=False), f"'{unit}'", f"`{unit}`")
-            )
-            if not isinstance(user_text, str) or not any(q in user_text for q in quoted):
-                return True
+            return True
+        # Inspect complete scalars without repairing a malformed outer document.
+        if line.lstrip().startswith(("{", "[", '"')):
+            for token in re.finditer(r'"(?:\\.|[^"\\\r\n])*"', line):
+                try:
+                    value = json.loads(token[0])
+                except ValueError:
+                    continue
+                if _has_private_analysis(value, user_text):
+                    return True
 
     return False
 

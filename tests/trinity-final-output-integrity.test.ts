@@ -553,6 +553,51 @@ describe('Trinity caller-declared final JSON integrity at actual provider extrac
     expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
   });
 
+  it.each((['direct', 'explained'] as const).flatMap(mode => [false, true].flatMap(structured => [
+    '{"answer":"<analysis_output>PRIVATE_MALFORMED_FIXTURE</analysis_output>",}',
+    '{"answer":"<analysis_output>PRIVATE_MALFORMED_FIXTURE</analysis_output>"',
+    '["<analysis_output>PRIVATE_MALFORMED_FIXTURE</analysis_output>",]',
+    '{"answer":["<analysis_output>PRIVATE_MALFORMED_FIXTURE</analysis_output>"],}',
+  ].map(output => ({ mode, structured, output })))))(
+    'withholds malformed JSON analysis through $mode publication (contract: $structured): $output', async ({ mode, structured, output }) => {
+      finalText = output;
+      const malformedContract: TrinityStructuredOutputContract = {
+        name: 'malformed_privacy', schema: { type: 'object', additionalProperties: false, required: ['answer'],
+          properties: { answer: { type: 'string' } } },
+      };
+      const published = jest.fn();
+      const observed = await run(mode, structured ? malformedContract : null,
+        'Assess the supplied outline and return a short answer.').then(result => {
+        const publication = buildTrinityUserVisibleResponse({ trinityResult: result });
+        published(publication);
+        return { sink: 'public', privateMarkerPresent: publication.result.includes('PRIVATE_MALFORMED_FIXTURE') };
+      }, error => {
+        expect(String(error)).not.toContain('PRIVATE_MALFORMED_FIXTURE');
+        expect(JSON.stringify(error)).not.toContain('PRIVATE_MALFORMED_FIXTURE');
+        expect(error.stack ?? '').not.toContain('PRIVATE_MALFORMED_FIXTURE');
+        return { sink: 'error', code: error.code, reason: error.reason };
+      });
+      expect(observed).toEqual({ sink: 'error', code: 'TRINITY_STRUCTURED_OUTPUT_INVALID',
+        reason: structured ? 'invalid_json' : 'private_output' });
+      expect(published).not.toHaveBeenCalled();
+      expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
+    });
+
+  it.each((['direct', 'explained'] as const).flatMap(mode => [
+    '{"answer":"<analysis_output>quoted café 雪</analysis_output>",}',
+    '{"answer":"<analysis_output>quoted café 雪</analysis_output>"',
+    '["<analysis_output>quoted café 雪</analysis_output>",]',
+    '{"answer":["<analysis_output>quoted café 雪</analysis_output>"],}',
+  ].map(output => ({ mode, output }))))('preserves requested malformed JSON source through $mode publication: $output', async ({ mode, output }) => {
+    finalText = output;
+    const result = await run(mode, null,
+      'Return a source code example containing the literal "<analysis_output>quoted café 雪</analysis_output>".');
+    const publication = buildTrinityUserVisibleResponse({ trinityResult: result });
+    expect(publication.result).toBe(output);
+    expect(publication.presentation).toBe('public-answer-v1');
+    expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
+  });
+
   it.each((['direct', 'explained'] as const).flatMap(mode => [false, true].flatMap(structured =>
     ['root', 'nested', 'encoded-value', 'encoded-key'].map(shape => ({ mode, structured, shape })))))('blocks a decoded JSON key in the actual $mode provider-to-publication path (contract: $structured, shape: $shape)', async ({ mode, structured, shape }) => {
       const key = 'GPT-5.1 analysis:\n<analysis_output>PRIVATE_KEY_FIXTURE</analysis_output>';

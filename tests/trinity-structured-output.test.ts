@@ -16,6 +16,35 @@ const lineBoundaries = [
 ];
 
 describe('Trinity private final-envelope boundary', () => {
+  it.each([
+    '{"answer":"<analysis_output>PRIVATE_MALFORMED_FIXTURE</analysis_output>",}',
+    '{"answer":"<analysis_output>PRIVATE_MALFORMED_FIXTURE</analysis_output>"',
+    '["<analysis_output>PRIVATE_MALFORMED_FIXTURE</analysis_output>",]',
+    '{"answer":["<analysis_output>PRIVATE_MALFORMED_FIXTURE</analysis_output>"],}',
+    '{"answer":"\\u003canalysis_output>PRIVATE_MALFORMED_FIXTURE</analysis_output>",}',
+    '{"\\u003canalysis_output>PRIVATE_MALFORMED_FIXTURE</analysis_output>":false,}',
+  ])('inspects complete JSON string scalars in a malformed container: %p', text => {
+    expect(() => assertTrinityFinalOutputIsPublic(text))
+      .toThrow(expect.objectContaining({ reason: 'private_output' }));
+    expect(() => validate(text, flags, honesty))
+      .toThrow(expect.objectContaining({ reason: 'invalid_json' }));
+  });
+
+  it.each(['\n', '\r\n', '\r'])('preserves malformed JSON and XML source examples with %p boundaries', newline => {
+    const xml = '<analysis_output>quoted café 雪</analysis_output>';
+    const text = `{"answer":${JSON.stringify(xml)},}`;
+    const current = `Return JSON containing the exact literal ${JSON.stringify(xml)}.`;
+    expect(() => assertTrinityFinalOutputIsPublic(text, current)).not.toThrow();
+    expect(() => assertTrinityFinalOutputIsPublic(text, `Return the exact document ${JSON.stringify(text)}.`)).not.toThrow();
+    expect(() => assertTrinityFinalOutputIsPublic(['```json', text, '```'].join(newline))).not.toThrow();
+    expect(() => assertTrinityFinalOutputIsPublic(['An invalid JSON example:', `    ${text}`].join(newline))).not.toThrow();
+    expect(() => assertTrinityFinalOutputIsPublic('The example uses "<analysis_output>quoted café 雪</analysis_output>", as literal text.')).not.toThrow();
+    expect(() => assertTrinityFinalOutputIsPublic(`{"answer":${JSON.stringify(xml)},"other":"<analysis_output>PRIVATE_NEIGHBOR_FIXTURE</analysis_output>",}`, current))
+      .toThrow(expect.objectContaining({ reason: 'private_output' }));
+    expect(() => validate(text, flags, honesty, { userPrompt: current, outputControls: deriveTrinityOutputControls(current, {}) }))
+      .toThrow(expect.objectContaining({ reason: 'invalid_json' }));
+  });
+
   it.each(['```x```', '```xml`'])('rejects a malformed backtick opener before private analysis: %p', opener => {
     const answer = `${opener}\n<analysis_output>PRIVATE_FENCE_FIXTURE</analysis_output>`;
     for (const text of [answer, JSON.stringify({ answer }), JSON.stringify({ [answer]: 'Public value.' })]) {

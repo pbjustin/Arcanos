@@ -57,6 +57,17 @@ export function assertTrinityFinalOutputIsPublic(text: string, userPrompt = ''):
       continue;
     }
     if (line.startsWith('    ') || line.startsWith('\t')) continue;
+    // Invalid containers can still carry complete JSON strings. Inspect
+    // those scalars without repairing the document or changing contract errors.
+    if (!quotedSource && /^\s*(?:\{|\[|")/u.test(line)) {
+      for (const token of line.matchAll(/"(?:\\.|[^"\\\r\n])*"/gu)) {
+        let value: string;
+        try {
+          value = JSON.parse(token[0]);
+        } catch { continue; }
+        assertTrinityFinalOutputIsPublic(value, userPrompt);
+      }
+    }
     // Fenced/indented source examples and inline mentions are ordinary content.
     // Reject an envelope prefix, including an unterminated one; unwrapping it
     // would incorrectly treat private reasoning as an authoritative final answer.

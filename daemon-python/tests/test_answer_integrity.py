@@ -1078,11 +1078,58 @@ def _deliver_through_backend_transport(
             None,
         ),
         (
+            "malformed-json-trailing-comma",
+            '{"answer":"<analysis_output>PRIVATE_FIXTURE</analysis_output>",}',
+            "PRIVATE_FIXTURE",
+            "What is the complete answer?",
+            None,
+        ),
+        (
+            "malformed-json-missing-brace",
+            '{"answer":"<analysis_output>PRIVATE_FIXTURE</analysis_output>"',
+            "PRIVATE_FIXTURE",
+            "What is the complete answer?",
+            None,
+        ),
+        (
             "json-example-request-without-literal",
             '{"answer":"<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>"}',
             "PRIVATE_JSON_FIXTURE",
             "Return a JSON example.",
             None,
+        ),
+        (
+            "malformed-json-rootarray",
+            '["<analysis_output>PRIVATE_FIXTURE</analysis_output>",]',
+            "PRIVATE_FIXTURE", "What is the complete answer?", None,
+        ),
+        (
+            "malformed-json-nestedarray",
+            '{"answer":["<analysis_output>PRIVATE_FIXTURE</analysis_output>"],}',
+            "PRIVATE_FIXTURE", "What is the complete answer?", None,
+        ),
+        (
+            "malformed-json-encoded-value",
+            r'{"answer":"\u003canalysis_output>PRIVATE_FIXTURE\u003c/analysis_output>",}',
+            "PRIVATE_FIXTURE", "What is the complete answer?", None,
+        ),
+        (
+            "malformed-json-encoded-key",
+            r'{"\u003canalysis_output>PRIVATE_FIXTURE\u003c/analysis_output>":"Public value.",}',
+            "PRIVATE_FIXTURE", "What is the complete answer?", None,
+        ),
+        (
+            "malformed-json-neighbor",
+            '{"example":"<analysis_output>SAFE_XML_FIXTURE</analysis_output>",'
+            '"answer":"<analysis_output>PRIVATE_FIXTURE</analysis_output>",}',
+            "PRIVATE_FIXTURE",
+            'Return the literal XML `<analysis_output>SAFE_XML_FIXTURE</analysis_output>`.', None,
+        ),
+        (
+            "malformed-json-history",
+            '{"answer":"<analysis_output>PRIVATE_FIXTURE</analysis_output>",}',
+            "PRIVATE_FIXTURE", "Continue",
+            'Return the literal XML `<analysis_output>PRIVATE_FIXTURE</analysis_output>`.',
         ),
         (
             "neighboring-json-value",
@@ -1130,7 +1177,11 @@ def _deliver_through_backend_transport(
         ),
     ],
     ids=[
-        "inline-analysis", "json-analysis", "json-generic-example-request",
+        "inline-analysis", "json-analysis", "malformed-json-trailing-comma",
+        "malformed-json-missing-brace", "json-generic-example-request",
+        "malformed-json-rootarray", "malformed-json-nestedarray",
+        "malformed-json-encoded-value", "malformed-json-encoded-key",
+        "malformed-json-neighbor", "malformed-json-history",
         "neighboring-json-value", "tag-only-source", "historical-source",
         "prefixed-unit-not-provided", "suffixed-unit-not-provided",
         "other-private-record-not-exempt",
@@ -1164,7 +1215,10 @@ def test_backend_transport_private_analysis_cannot_reach_any_user_sink(
     }))
     assert not any(sinks["disclosure_accepted"])
     assert not any(leaked.values())
+    assert sinks["display"].count(NO_DISPLAYABLE_NOTICE) == 1
     assert sinks["ordinary_json_assistant"] == [""]
+    assert sinks["initial_speech"] == []
+    assert sinks["replay_speech"] == []
     if agentic:
         assert sinks["sqlite_audit_assistant"] == [""]
 
@@ -1354,6 +1408,44 @@ def test_backend_transport_separator_examples_cannot_exempt_private_neighbors(
     "answer,message,should_show",
     [
         (
+            'An example: "<analysis_output>quoted café 雪</analysis_output>".',
+            "Show an inline XML example.", True,
+        ),
+        (
+            '"An example: \\"<analysis_output>quoted café 雪</analysis_output>\\""',
+            "Show a quoted inline XML example.", True,
+        ),
+        (
+            '`{"answer":"<analysis_output>quoted café 雪</analysis_output>",}`',
+            "Show an inline malformed JSON source example.", True,
+        ),
+        (
+            '{"answer":"Public café 雪",}',
+            "Show a malformed JSON example.", True,
+        ),
+        (
+            '{"answer":"Public café 雪"',
+            "Show a malformed JSON example.", True,
+        ),
+        (
+            '```json\n{"answer":"<analysis_output>quoted café 雪</analysis_output>",}\n```',
+            "Show a malformed JSON source example.", True,
+        ),
+        (
+            '    {"answer":"<analysis_output>quoted café 雪</analysis_output>"',
+            "Show a malformed JSON source example.", True,
+        ),
+        (
+            '{"answer":"<analysis_output>quoted café 雪</analysis_output>",}',
+            'Return this exact source literal: `{"answer":"<analysis_output>quoted café 雪</analysis_output>",}`.',
+            True,
+        ),
+        (
+            '{"answer":"<analysis_output>quoted café 雪</analysis_output>"',
+            'Return JSON containing the exact literal `<analysis_output>quoted café 雪</analysis_output>`.',
+            True,
+        ),
+        (
             '{"answer":"<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>"}',
             'Return JSON with an answer string containing this exact literal XML: '
             '`<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>`.',
@@ -1420,6 +1512,11 @@ def test_backend_transport_separator_examples_cannot_exempt_private_neighbors(
         ],
     ],
     ids=[
+        "malformed-json-inline-colon-prose", "malformed-json-quoted-colon-prose",
+        "malformed-json-inline-code",
+        "malformed-json-public-trailing-comma", "malformed-json-public-missing-brace",
+        "malformed-json-fenced-xml", "malformed-json-indented-xml",
+        "malformed-json-whole-source", "malformed-json-scalar-source",
         "requested-json-literal-xml", "requested-json-key-xml", "requested-json-key-prefixed",
         "requested-json-literal-ls",
         "requested-json-literal-ps", "inline-xml", "inline-code-xml",
