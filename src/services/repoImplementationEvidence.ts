@@ -108,23 +108,33 @@ export function shouldInspectRepoPrompt(prompt: string | null): boolean {
   if (repoInspectionDisallowedPatterns.some((pattern) => pattern.test(normalizedPrompt))) {
     return false;
   }
-  // Keep filename dots intact and exclude only explicit negated inspection
-  // clauses. A contrasting affirmative clause still retains its own intent.
-  const statements = normalizedPrompt.split(/[!?;]+|\.(?=\s|$)/u).map((statement) =>
-    statement.replace(
-      /\b(?:do\s+not|don['’]t|never)\s+(?:inspect|show|list|find|locate|read|open|verify|check)\b[^,]*?(?=,|\bbut\b|$)/gu,
-      ''
-    ).trim()
-  );
-  return statements.some((statement, index) => {
+  // List-marker dots are formatting, while filename dots remain intact.
+  const statements = normalizedPrompt.replace(/^([ \t]*\d+)\.(?=[ \t])/gmu, '$1')
+    .split(/[!?;]+|\.(?=\s|$)/u).map((statement) => {
+      let negatedRepoReference = false;
+      const text = statement.replace(
+        /\b(?:do\s+not|don['’]t|never)\s+(?:inspect|show|list|find|locate|read|open|verify|check)\b[^,\r\n]*?(?=,|\bbut\b|[\r\n]|$)/gu,
+        (clause) => {
+          negatedRepoReference ||= repoTargetPatterns.some((pattern) => pattern.test(clause));
+          return '';
+        }
+      ).trim();
+      return { text, negatedRepoReference };
+    });
+  return statements.some(({ text: statement, negatedRepoReference }, index) => {
     if (verificationPhrases.some((phrase) => statement.includes(phrase))) return true;
     if (repoTargetPatterns.some((pattern) => pattern.test(statement))
       && repoInspectionIntentPatterns.some((pattern) => pattern.test(statement))) return true;
 
+    // An explicit contrast can retain the removed clause's repository as the
+    // antecedent of "its/their status", without treating the negated verb as intent.
+    if (negatedRepoReference
+      && /^,?\s*but\s+(?:please\s+)?(?:show|check|verify)\s+(?:me\s+)?(?:its|their)\s+status$/u.test(statement)) return true;
+
     // A direct pronoun request may refer to the immediately preceding repo;
     // generic questions cannot borrow a repository target from another sentence.
     return index > 0
-      && repoTargetPatterns.some((pattern) => pattern.test(statements[index - 1]!))
+      && repoTargetPatterns.some((pattern) => pattern.test(statements[index - 1]!.text))
       && /^(?:please\s+)?(?:inspect|show|list|find|locate|read|open|verify|check)\s+(?:it|this|that|them|these|those)$/u.test(statement);
   });
 }

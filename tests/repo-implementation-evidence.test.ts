@@ -47,6 +47,41 @@ describe('repo inspection prompt detection', () => {
     expect(shouldInspectRepoPrompt(prompt)).toBe(true);
   });
 
+  it.each(['\n', '\r\n', '\r'])(
+    'keeps a numbered repository list attached to its inspection request with %j line endings', (newline) => {
+      expect(shouldInspectRepoPrompt(`Inspect the following:${newline}1. repository files${newline}2. CLI commands`))
+        .toBe(true);
+      expect(shouldInspectRepoPrompt(`Inspect the following:${newline}1. weather${newline}2. recipes`))
+        .toBe(false);
+    }
+  );
+
+  it.each(['\n', '\r\n', '\r'])(
+    'ends a negated check before a new affirmative inspection with %j line endings', (newline) => {
+      expect(shouldInspectRepoPrompt(`Do not check the deployed Git revision${newline}Inspect the repository files`))
+        .toBe(true);
+      expect(shouldInspectRepoPrompt(`Do not check the deployed Git revision${newline}Do not inspect the repository files`))
+        .toBe(false);
+    }
+  );
+
+  it.each([
+    'Do not read the repository files but show me its status',
+    "Don't read the repository files but show me its status",
+    'Do not read the repository files, but check their status'
+  ])('retains a repository antecedent for an affirmative possessive status request: %s', (prompt) => {
+    expect(shouldInspectRepoPrompt(prompt)).toBe(true);
+  });
+
+  it.each([
+    'Do not read the repository files but show me that recipe',
+    'Do not read the repository files but show me your status',
+    'Do not read the repository files but do not show me its status',
+    'Do not read the repository files. Show me its status'
+  ])('does not reuse a negated repository target for a different or negated request: %s', (prompt) => {
+    expect(shouldInspectRepoPrompt(prompt)).toBe(false);
+  });
+
   it.each([
     'What can ARCANOS help me do? Do not check the deployed Git revision.',
     "What can ARCANOS help me do? Don't check the deployed Git revision.",
