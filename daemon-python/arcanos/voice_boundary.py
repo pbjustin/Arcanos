@@ -97,7 +97,7 @@ def _has_private_analysis(text: str, user_text: str) -> bool:
             ):
                 fence = ""
             continue
-        if match:
+        if match and (match[1][0] != "`" or "`" not in match[2]):
             fence, fence_length = match[1][0], len(match[1])
             continue
         if line.startswith(("    ", "\t")):
@@ -105,8 +105,10 @@ def _has_private_analysis(text: str, user_text: str) -> bool:
         if _ANALYSIS_RECORD.match(line):
             # Only the exact current-source scalar unit is a literal example;
             # a tag, neighboring value, or earlier request cannot authorize it.
-            unit = text.strip()
-            quoted = (json.dumps(unit, ensure_ascii=False), f"'{unit}'", f"`{unit}`")
+            quoted = (
+                q for unit in (text, text.strip())
+                for q in (json.dumps(unit, ensure_ascii=False), f"'{unit}'", f"`{unit}`")
+            )
             if not isinstance(user_text, str) or not any(q in user_text for q in quoted):
                 return True
 
@@ -135,7 +137,7 @@ def classify(text: str, user_text: str = "") -> Severity:
             ):
                 fence = ""
             continue
-        if match:
+        if match and (match[1][0] != "`" or "`" not in match[2]):
             fence, fence_length = match[1][0], len(match[1])
             continue
         if line.startswith(("    ", "\t")):

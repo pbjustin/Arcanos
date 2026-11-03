@@ -41,9 +41,8 @@ export function assertTrinityFinalOutputIsPublic(text: string, userPrompt = ''):
   }
   // An exact quoted value already supplied by the current user is source data,
   // not permission to disclose a different envelope or a neighboring JSON field.
-  const literal = text.trim();
-  const quotedSource = literal.length > 0 && [JSON.stringify(literal), `'${literal}'`, `\`${literal}\``]
-    .some(quoted => userPrompt.includes(quoted));
+  const quotedSource = [text, text.trim()].some(literal => literal.length > 0
+    && [JSON.stringify(literal), `'${literal}'`, `\`${literal}\``].some(quoted => userPrompt.includes(quoted)));
   let fence: { character: string; length: number } | undefined;
   for (const line of text.split(/\r\n?|[\n\v\f\x1c-\x1e\x85\u2028\u2029]/u)) {
     const match = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(line);
@@ -53,14 +52,15 @@ export function assertTrinityFinalOutputIsPublic(text: string, userPrompt = ''):
       }
       continue;
     }
-    if (match) {
+    if (match && (match[1]![0] !== '`' || !match[2]!.includes('`'))) {
       fence = { character: match[1]![0]!, length: match[1]!.length };
       continue;
     }
+    if (line.startsWith('    ') || line.startsWith('\t')) continue;
     // Fenced/indented source examples and inline mentions are ordinary content.
     // Reject an envelope prefix, including an unterminated one; unwrapping it
     // would incorrectly treat private reasoning as an authoritative final answer.
-    if (/^ {0,3}(?:GPT-[\w.-]+[ \t]+analysis:[ \t]*)?<\/?analysis_output(?:[ \t>]|$)/iu.test(line)
+    if (/^\s*(?:GPT-[\w.-]+[ \t]+analysis:[ \t]*)?<\/?analysis_output(?:[ \t>]|$)/iu.test(line)
       && !quotedSource) {
       throw new TrinityStructuredOutputError('private_output');
     }

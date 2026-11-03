@@ -16,6 +16,61 @@ const lineBoundaries = [
 ];
 
 describe('Trinity private final-envelope boundary', () => {
+  it.each(['```x```', '```xml`'])('rejects a malformed backtick opener before private analysis: %p', opener => {
+    const answer = `${opener}\n<analysis_output>PRIVATE_FENCE_FIXTURE</analysis_output>`;
+    for (const text of [answer, JSON.stringify({ answer }), JSON.stringify({ [answer]: 'Public value.' })]) {
+      expect(() => assertTrinityFinalOutputIsPublic(text))
+        .toThrow(expect.objectContaining({ reason: 'private_output' }));
+    }
+  });
+
+  it.each(['\u00a0', '\u3000'])('rejects Unicode whitespace before private analysis: %p', prefix => {
+    const answer = `${prefix}<analysis_output>PRIVATE_WHITESPACE_FIXTURE</analysis_output>`;
+    for (const text of [answer, JSON.stringify({ answer }), JSON.stringify({ [answer]: 'Public value.' })]) {
+      expect(() => assertTrinityFinalOutputIsPublic(text))
+        .toThrow(expect.objectContaining({ reason: 'private_output' }));
+    }
+  });
+
+  it.each([
+    '```xml\n<analysis_output>café 雪</analysis_output>\n````',
+    '~~~xml`example`\n<analysis_output>café 雪</analysis_output>\n~~~',
+    '````xml\n```x```\n<analysis_output>café 雪</analysis_output>\n````',
+    '    \u00a0<analysis_output>café 雪</analysis_output>',
+    '\t\u3000<analysis_output>café 雪</analysis_output>',
+  ])('preserves valid fence and indented Unicode source examples: %p', answer => {
+    for (const text of [answer, JSON.stringify({ answer }), JSON.stringify({ [answer]: 'Public value.' })]) {
+      expect(() => assertTrinityFinalOutputIsPublic(text)).not.toThrow();
+    }
+  });
+
+  it.each(['```x```\n', '\u00a0', '\u3000'])('preserves only the exact current-source scalar after %p', prefix => {
+    const answer = `${prefix}<analysis_output>quoted café 雪</analysis_output>`;
+    const userPrompt = `Return the exact literal ${JSON.stringify(answer.trim())}.`;
+    for (const text of [answer, JSON.stringify({ answer }), JSON.stringify({ [answer]: 'Public value.' })]) {
+      expect(() => assertTrinityFinalOutputIsPublic(text, userPrompt)).not.toThrow();
+    }
+    expect(() => assertTrinityFinalOutputIsPublic(JSON.stringify({ answer, other: answer.replace('quoted café 雪', 'PRIVATE_NEIGHBOR_FIXTURE') }), userPrompt))
+      .toThrow(expect.objectContaining({ reason: 'private_output' }));
+  });
+
+  it.each(['\u00a0', '\u3000'])('preserves a raw leading-Unicode scalar explicitly quoted by the current user: %p', prefix => {
+    const literal = `${prefix}<analysis_output>quoted café 雪</analysis_output>`;
+    const userPrompt = `Return the exact literal ${JSON.stringify(literal)}.`;
+    const validateObject = createTrinityStructuredOutputValidator({ name: 'literal_example', schema: { type: 'object' } });
+    for (const text of [literal, JSON.stringify({ answer: literal }), JSON.stringify({ [literal]: 'Public value.' })]) {
+      expect(() => assertTrinityFinalOutputIsPublic(text, userPrompt)).not.toThrow();
+      expect(() => assertTrinityFinalOutputIsPublic(text, 'Continue'))
+        .toThrow(expect.objectContaining({ reason: 'private_output' }));
+      if (text !== literal) {
+        expect(validateObject(text, flags, honesty, { userPrompt, outputControls: deriveTrinityOutputControls(userPrompt, {}) })).toBe(text);
+      }
+    }
+    const privateNeighbor = literal.replace('quoted café 雪', 'PRIVATE_RAW_NEIGHBOR_FIXTURE');
+    expect(() => assertTrinityFinalOutputIsPublic(JSON.stringify({ answer: literal, other: privateNeighbor }), userPrompt))
+      .toThrow(expect.objectContaining({ reason: 'private_output' }));
+  });
+
   it.each([
     'GPT-5.1 analysis: <analysis_output>PRIVATE_INLINE_FIXTURE</analysis_output>',
     '{"answer":"<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>"}',

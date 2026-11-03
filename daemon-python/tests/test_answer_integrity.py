@@ -1218,6 +1218,101 @@ def test_backend_transport_private_analysis_keys_cannot_reach_any_user_sink(
 
 @pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
 @pytest.mark.parametrize("presentation", [None, "public-answer-v1"], ids=["unmarked", "public-answer"])
+@pytest.mark.parametrize("shape", ["plain", "value", "key"])
+@pytest.mark.parametrize(
+    "prefix", ["```x```\n", "\u00a0", "\u3000"], ids=["malformed-fence", "nbsp", "ideographic-space"]
+)
+def test_backend_transport_fence_and_whitespace_cannot_hide_private_analysis(
+    presentation_cli, monkeypatch, tmp_path, agentic, presentation, shape, prefix
+):
+    marker = "PRIVATE_BOUNDARY_FIXTURE"
+    answer = f"{prefix}<analysis_output>{marker}</analysis_output>"
+    if shape == "value":
+        answer = json.dumps({"answer": answer}, ensure_ascii=False)
+    elif shape == "key":
+        answer = json.dumps({answer: "Public value."}, ensure_ascii=False)
+    sinks = _deliver_through_backend_transport(
+        presentation_cli, monkeypatch, tmp_path, answer,
+        agentic=agentic, presentation=presentation, message="Return a short example.",
+    )
+    leaked = {name: marker in json.dumps(value) for name, value in sinks.items()
+              if name not in {"transport_parser_accepted", "disclosure_accepted"}}
+    print(json.dumps({"shape": shape, "agentic": agentic, "presentation": presentation,
+                      "disclosure_accepted": sinks["disclosure_accepted"], "leaked_sinks": leaked}))
+    assert sinks["disclosure_accepted"] == [False]
+    assert not any(leaked.values())
+    assert sinks["ordinary_json_assistant"] == [""]
+    assert sinks["initial_speech"] == []
+    assert sinks["replay_speech"] == []
+    if agentic:
+        assert sinks["sqlite_audit_assistant"] == [""]
+
+
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+@pytest.mark.parametrize("presentation", [None, "public-answer-v1"], ids=["unmarked", "public-answer"])
+@pytest.mark.parametrize("shape", ["plain", "value", "key"])
+@pytest.mark.parametrize("prefix", ["```x```\n", "\u00a0", "\u3000"], ids=["malformed-fence", "nbsp", "ideographic-space"])
+def test_backend_transport_exact_source_boundary_example_remains_literal(
+    presentation_cli, monkeypatch, tmp_path, agentic, presentation, shape, prefix
+):
+    literal = f"{prefix}<analysis_output>quoted café 雪</analysis_output>"
+    answer = literal
+    if shape == "value":
+        answer = json.dumps({"answer": literal}, ensure_ascii=False)
+    elif shape == "key":
+        answer = json.dumps({literal: "Public value."}, ensure_ascii=False)
+    sinks = _deliver_through_backend_transport(
+        presentation_cli, monkeypatch, tmp_path, answer,
+        agentic=agentic, presentation=presentation,
+        message=f"Return the exact literal {json.dumps(literal, ensure_ascii=False)}.",
+    )
+    assert sinks["disclosure_accepted"] == [True], {
+        "console_preserved": answer in sinks["display"],
+        "ordinary_json_assistant": sinks["ordinary_json_assistant"],
+        "sqlite_audit_assistant": sinks["sqlite_audit_assistant"],
+        "initial_speech": sinks["initial_speech"],
+        "replay_speech": sinks["replay_speech"],
+    }
+    assert answer in sinks["display"]
+    assert sinks["ordinary_json_assistant"] == [answer]
+    if agentic:
+        assert sinks["sqlite_audit_assistant"] == [answer]
+    else:
+        assert sinks["initial_speech"] == [answer.strip()]
+        assert sinks["replay_speech"] == [answer.strip()]
+
+
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+@pytest.mark.parametrize("presentation", [None, "public-answer-v1"], ids=["unmarked", "public-answer"])
+@pytest.mark.parametrize("prefix", ["\u00a0", "\u3000"], ids=["nbsp", "ideographic-space"])
+@pytest.mark.parametrize("context", ["neighbor", "history"])
+def test_backend_transport_raw_source_quote_cannot_exempt_private_neighbor_or_history(
+    presentation_cli, monkeypatch, tmp_path, agentic, presentation, prefix, context
+):
+    literal = f"{prefix}<analysis_output>quoted café 雪</analysis_output>"
+    quote_request = f"Return the exact literal {json.dumps(literal, ensure_ascii=False)}."
+    private = literal.replace("quoted café 雪", "PRIVATE_RAW_NEIGHBOR_FIXTURE")
+    answer = json.dumps({"answer": literal, "other": private}, ensure_ascii=False)
+    message, previous = quote_request, None
+    if context == "history":
+        answer = json.dumps({literal: "Public value."}, ensure_ascii=False)
+        message, previous = "Continue", quote_request
+    sinks = _deliver_through_backend_transport(
+        presentation_cli, monkeypatch, tmp_path, answer,
+        agentic=agentic, presentation=presentation, message=message,
+        previous_user_message=previous,
+    )
+    assert sinks["disclosure_accepted"] == [False]
+    assert sinks["ordinary_json_assistant"] == [""]
+    assert "PRIVATE_RAW_NEIGHBOR_FIXTURE" not in json.dumps(sinks)
+    assert sinks["initial_speech"] == []
+    assert sinks["replay_speech"] == []
+    if agentic:
+        assert sinks["sqlite_audit_assistant"] == [""]
+
+
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+@pytest.mark.parametrize("presentation", [None, "public-answer-v1"], ids=["unmarked", "public-answer"])
 @pytest.mark.parametrize("ending", ["\u2028", "\u2029"], ids=["ls", "ps"])
 @pytest.mark.parametrize("shape", ["neighbor", "key", "nested-json", "quoted-json"])
 def test_backend_transport_separator_examples_cannot_exempt_private_neighbors(
@@ -1313,6 +1408,16 @@ def test_backend_transport_separator_examples_cannot_exempt_private_neighbors(
             )
             for ending in ("\n", "\r\n", "\r")
         ],
+        *[
+            (answer, "Show this XML source example.", True)
+            for answer in (
+                "```xml\n<analysis_output>café 雪</analysis_output>\n````",
+                "~~~xml`example`\n<analysis_output>café 雪</analysis_output>\n~~~",
+                "````xml\n```x```\n<analysis_output>café 雪</analysis_output>\n````",
+                "    \u00a0<analysis_output>café 雪</analysis_output>",
+                "\t\u3000<analysis_output>café 雪</analysis_output>",
+            )
+        ],
     ],
     ids=[
         "requested-json-literal-xml", "requested-json-key-xml", "requested-json-key-prefixed",
@@ -1320,6 +1425,8 @@ def test_backend_transport_separator_examples_cannot_exempt_private_neighbors(
         "requested-json-literal-ps", "inline-xml", "inline-code-xml",
         "fenced-lf", "fenced-crlf", "fenced-cr-terminal-refusal",
         "indented-lf", "indented-crlf", "indented-cr-terminal-refusal",
+        "backtick-longer-close", "tilde-backtick-info", "nested-inline-backticks",
+        "indented-nbsp", "indented-ideographic-space",
     ],
 )
 def test_backend_transport_literal_xml_controls_keep_supported_presentation(

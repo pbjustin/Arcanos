@@ -512,6 +512,15 @@ describe('Trinity caller-declared final JSON integrity at actual provider extrac
   it.each((['direct', 'explained'] as const).flatMap(mode => [
     { mode, label: 'same-line analysis prefix', output: 'GPT-5.1 analysis: <analysis_output>PRIVATE_INLINE_FIXTURE</analysis_output>',
       structured: false, invalidJson: false, context: 'plain' },
+    ...([
+      ['review malformed inline backtick opener', '```x```\n<analysis_output>PRIVATE_INLINE_FIXTURE</analysis_output>'],
+      ['review NBSP analysis prefix', '\u00a0<analysis_output>PRIVATE_INLINE_FIXTURE</analysis_output>'],
+      ['review ideographic-space analysis prefix', '\u3000<analysis_output>PRIVATE_INLINE_FIXTURE</analysis_output>'],
+    ] as const).flatMap(([label, output]) => [
+      { mode, label: `${label} plain`, output, structured: false, invalidJson: false, context: 'code' },
+      { mode, label: `${label} JSON`, output: JSON.stringify({ answer: output }),
+        structured: true, invalidJson: false, context: 'code' },
+    ]),
     { mode, label: 'same-line analysis prefix with JSON contract', output: 'GPT-5.1 analysis: <analysis_output>PRIVATE_INLINE_FIXTURE</analysis_output>',
       structured: true, invalidJson: true, context: 'plain' },
     { mode, label: 'JSON envelope without a contract', output: '{"answer":"<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>"}',
