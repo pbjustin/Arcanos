@@ -112,6 +112,7 @@ export function shouldInspectRepoPrompt(prompt: string | null): boolean {
   const statements = normalizedPrompt.replace(/^([ \t]*\d+)\.(?=[ \t])/gmu, '$1')
     .split(/[!?;]+|\.(?=\s|$)/u).map((statement) => {
       let negatedRepoReference = false;
+      let latestNegatedRepoReference = false;
       const text = statement.replace(
         // Commas can continue prohibited targets; only a new inspection request
         // or question starts an affirmative comma clause.
@@ -119,13 +120,14 @@ export function shouldInspectRepoPrompt(prompt: string | null): boolean {
         (clause) => {
           // A later unrelated target cannot borrow the earlier repo antecedent.
           const finalTarget = clause.replace(/,[ \t]*$/u, '').split(',').at(-1) ?? clause;
-          negatedRepoReference ||= repoTargetPatterns.some((pattern) => pattern.test(finalTarget));
+          latestNegatedRepoReference = repoTargetPatterns.some((pattern) => pattern.test(finalTarget));
+          negatedRepoReference ||= latestNegatedRepoReference;
           return '';
         }
       ).trim();
-      return { text, negatedRepoReference };
+      return { text, negatedRepoReference, latestNegatedRepoReference };
     });
-  return statements.some(({ text: statement, negatedRepoReference }, index) => {
+  return statements.some(({ text: statement, negatedRepoReference, latestNegatedRepoReference }, index) => {
     if (verificationPhrases.some((phrase) => statement.includes(phrase))) return true;
     if (repoTargetPatterns.some((pattern) => pattern.test(statement))
       && repoInspectionIntentPatterns.some((pattern) => pattern.test(statement))) return true;
@@ -134,6 +136,9 @@ export function shouldInspectRepoPrompt(prompt: string | null): boolean {
     // antecedent of "its/their status", without treating the negated verb as intent.
     if (negatedRepoReference
       && /^,?\s*but\s+(?:please\s+)?(?:show|check|verify)\s+(?:me\s+)?(?:its|their)\s+status$/u.test(statement)) return true;
+    // A status question cannot borrow a repo across a later unrelated target.
+    if (latestNegatedRepoReference
+      && /^,?\s*(?:but\s+)?what\s+is\s+(?:its|their)\s+status$/u.test(statement)) return true;
 
     // A direct pronoun request may refer to the immediately preceding repo;
     // generic questions cannot borrow a repository target from another sentence.

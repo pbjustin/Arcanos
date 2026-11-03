@@ -1,13 +1,21 @@
 import { describe, expect, it, jest } from '@jest/globals';
 
+const runAskToolMode = jest.fn<(...args: unknown[]) => Promise<unknown>>();
+
 jest.unstable_mockModule('@arcanos/cli/client', () => ({
   invokeTool: jest.fn()
+}));
+
+jest.unstable_mockModule('../src/routes/ask/toolRuntime.js', () => ({
+  buildToolAskResponse: jest.fn(),
+  runAskToolMode,
 }));
 
 const {
   shouldInspectRepoPrompt,
   isVerificationQuestion
 } = await import('../src/services/repoImplementationEvidence.js');
+const { tryDispatchRepoTools } = await import('../src/routes/ask/repoTools.js');
 
 describe('repo inspection prompt detection', () => {
   it('requires repo intent instead of matching generic backend language', () => {
@@ -65,10 +73,32 @@ describe('repo inspection prompt detection', () => {
     }
   );
 
+  it.each(['\n', '\r\n', '\r'])(
+    'does not reuse an earlier repository after an unrelated negated target with %j line endings', (newline) => {
+      expect(shouldInspectRepoPrompt(`Do not read repository files${newline}Do not check the weather, what is their status?`))
+        .toBe(false);
+      expect(shouldInspectRepoPrompt(`Do not read repository files${newline}Do not check the weather${newline}What is its status?`))
+        .toBe(false);
+    }
+  );
+
+  it.each(['\n', '\r\n', '\r'])(
+    'retains an existing possessive contrast after multiple prohibitions with %j line endings', (newline) => {
+      expect(shouldInspectRepoPrompt(`Do not read repository files${newline}Do not inspect their contents, but show me their status`))
+        .toBe(true);
+      expect(shouldInspectRepoPrompt(`Do not read repository files${newline}Do not open their contents but check their status`))
+        .toBe(true);
+    }
+  );
+
   it.each([
     'Do not read the repository files but show me its status',
     "Don't read the repository files but show me its status",
-    'Do not read the repository files, but check their status'
+    'Do not read the repository files, but check their status',
+    'Do not read the repository files, what is their status?',
+    'Do not read the repository files, what is its status?',
+    'Do not read the repository files, but what is their status?',
+    'Do not read the repository, its files, what is their status?'
   ])('retains a repository antecedent for an affirmative possessive status request: %s', (prompt) => {
     expect(shouldInspectRepoPrompt(prompt)).toBe(true);
   });
@@ -77,7 +107,13 @@ describe('repo inspection prompt detection', () => {
     'Do not read the repository files but show me that recipe',
     'Do not read the repository files but show me your status',
     'Do not read the repository files but do not show me its status',
-    'Do not read the repository files. Show me its status'
+    'Do not read the repository files. Show me its status',
+    'Do not read the repository files, what is your status?',
+    'Do not read the repository files, do not check their status',
+    'Do not read the repository files. What is their status?',
+    'Do not read the repository files, the weather, what is their status?',
+    'Do not read the repository files, what is the weather?',
+    'Do not read the repository files, what is their status for that recipe?'
   ])('does not reuse a negated repository target for a different or negated request: %s', (prompt) => {
     expect(shouldInspectRepoPrompt(prompt)).toBe(false);
   });
@@ -148,5 +184,28 @@ describe('repo inspection prompt detection', () => {
   it('still marks explicit verification prompts as verification questions', () => {
     expect(isVerificationQuestion('What commands exist?')).toBe(true);
     expect(isVerificationQuestion('Can you see my codebase?')).toBe(true);
+  });
+});
+
+describe('repository status routing through the ask tool caller', () => {
+  it.each([
+    ['Do not read the repository files, what is their status?', true],
+    ['Do not read the repository files, the weather, what is their status?', false],
+    ['Do not read the repository files. What is their status?', false],
+    ['Do not read repository files\nDo not check the weather, what is their status?', false],
+  ] as const)('dispatches only an affirmative repository status request: %s', async (prompt, requested) => {
+    runAskToolMode.mockReset();
+    const response = { result: 'Synthetic repository status.' };
+    runAskToolMode.mockResolvedValue(response);
+    const client = {} as Parameters<typeof tryDispatchRepoTools>[0];
+    const result = await tryDispatchRepoTools(client, prompt);
+    if (requested) {
+      expect(result).toBe(response);
+      expect(runAskToolMode).toHaveBeenCalledTimes(1);
+      expect(runAskToolMode).toHaveBeenCalledWith(expect.objectContaining({ client, prompt, moduleName: 'repo-tools' }));
+    } else {
+      expect(result).toBeNull();
+      expect(runAskToolMode).not.toHaveBeenCalled();
+    }
   });
 });
