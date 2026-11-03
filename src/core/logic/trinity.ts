@@ -856,9 +856,15 @@ export async function runThroughBrain(
     options.directAnswerUserIntentPrompt.trim().length > 0
       ? options.directAnswerUserIntentPrompt.trim()
       : trustedPolicyPrompt;
+  // Keep a continuation's presentation without deriving policy, literals,
+  // capabilities or limits from earlier messages.
+  const preserveContinuationPresentation = outputControls.maxWords === null
+    && outputControls.requestedVerbosity !== 'minimal'
+    && /^(?:continue|go\s+on|keep\s+going)[.!?]*$/iu.test(trustedPolicyPrompt.trim());
   const preserveDirectAnswerPresentation = (options.sourceEndpoint === 'backstage-booker.generateBooking'
     && options.directAnswerPreservePresentation === true)
-    || MidLayerTranslator.detectIntentFromUserMessage(directAnswerUserIntentPrompt) === 'code';
+    || MidLayerTranslator.detectIntentFromUserMessage(directAnswerUserIntentPrompt) === 'code'
+    || preserveContinuationPresentation;
 
   // --- Retry lineage check ---
   registerRetry(requestId);
@@ -2144,10 +2150,11 @@ export async function runThroughBrain(
     const providerBlocker = classifyTrinityProviderIntegrityBlocker(finalOutput.provider);
     if (providerBlocker) throw new TrinityStructuredOutputError(providerBlocker);
     assertTrinityFinalOutputIsPublic(finalOutput.output);
-    const preserveFinalPresentation = Boolean(gamingGuideIntakePolicy) || userIntent === 'code';
+    const preserveFinalPresentation = Boolean(gamingGuideIntakePolicy) || userIntent === 'code'
+      || preserveContinuationPresentation;
     const translatedFinalText = validateStructuredOutput ? finalOutput.output : gamingGuideIntakePolicy
       ? finalOutput.output.trim()
-      : MidLayerTranslator.translate({ raw: finalOutput.output }, userIntent);
+      : MidLayerTranslator.translate({ raw: finalOutput.output }, preserveContinuationPresentation ? 'code' : userIntent);
     const honestyFilteredFinal = validateStructuredOutput
       ? { text: validateStructuredOutput(translatedFinalText, reasoningHonesty),
           blocked: false, blockedCategories: [], ruleIds: ['NO_HONESTY_REWRITE' as const] }
