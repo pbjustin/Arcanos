@@ -11,6 +11,9 @@ const contract = {
 const flags = deriveTrinityCapabilityFlags();
 const honesty = createDefaultTrinityReasoningHonesty();
 const validate = createTrinityStructuredOutputValidator(contract);
+const lineBoundaries = [
+  '\n', '\r\n', '\r', '\v', '\f', '\x1c', '\x1d', '\x1e', '\x85', '\u2028', '\u2029',
+];
 
 describe('Trinity private final-envelope boundary', () => {
   it.each([
@@ -21,12 +24,29 @@ describe('Trinity private final-envelope boundary', () => {
     expect(() => assertTrinityFinalOutputIsPublic(text)).toThrow(expect.objectContaining({ reason: 'private_output' }));
   });
 
-  it.each(['\n', '\r\n', '\r'])('preserves exact current-user quoted XML JSON data with %p content', newline => {
+  it.each(lineBoundaries)('preserves exact current-user quoted XML JSON data with %p content', newline => {
     const xml = `<analysis_output>${newline}quoted café 雪${newline}</analysis_output>`;
     const text = JSON.stringify({ answer: xml });
     const userPrompt = `Return a JSON document containing the literal ${JSON.stringify(xml)}.`;
     expect(() => assertTrinityFinalOutputIsPublic(text, userPrompt)).not.toThrow();
     expect(validate(text, flags, honesty, { userPrompt, outputControls: deriveTrinityOutputControls(userPrompt, {}) })).toBe(text);
+  });
+
+  it.each(lineBoundaries)('does not extend a quoted JSON value to a private neighbor after %p', newline => {
+    const xml = `<analysis_output>${newline}quoted café 雪${newline}</analysis_output>`;
+    const privateValue = `GPT-5.1 analysis:${newline}<analysis_output>private reasoning fixture</analysis_output>`;
+    const nestedJson = JSON.stringify({ answer: privateValue });
+    for (const text of [
+      JSON.stringify({ answer: xml, nested: [{ answer: privateValue }] }),
+      JSON.stringify({ [xml]: privateValue }),
+      JSON.stringify({ answer: xml, nested: nestedJson }),
+    ]) {
+      expect(() => assertTrinityFinalOutputIsPublic(text, `Return the literal ${JSON.stringify(xml)}.`))
+        .toThrow(expect.objectContaining({ reason: 'private_output' }));
+    }
+    expect(() => assertTrinityFinalOutputIsPublic(JSON.stringify({ answer: nestedJson }),
+      `Return the literal ${JSON.stringify(nestedJson)}.`))
+      .toThrow(expect.objectContaining({ reason: 'private_output' }));
   });
 
   it('retains structured validity and honesty checks for quoted source data', () => {
@@ -39,7 +59,7 @@ describe('Trinity private final-envelope boundary', () => {
       .toThrow(expect.objectContaining({ reason: 'invalid_json' }));
   });
 
-  it.each(['\n', '\r\n', '\r'])('rejects private envelopes after %p line boundaries', newline => {
+  it.each(lineBoundaries)('rejects private envelopes after %p line boundaries', newline => {
     const privateEnvelope = '<analysis_output>private reasoning fixture</analysis_output>';
     for (const prefix of ['GPT-5.1 analysis:', ['```xml', '<analysis_output>example</analysis_output>', '```'].join(newline)]) {
       expect(() => assertTrinityFinalOutputIsPublic(`${prefix}${newline}${privateEnvelope}`))
@@ -47,7 +67,20 @@ describe('Trinity private final-envelope boundary', () => {
     }
   });
 
-  it.each(['\n', '\r\n', '\r'])('preserves fenced source examples with %p line boundaries', newline => {
+  it.each(lineBoundaries)('rejects decoded JSON private envelopes after %p line boundaries', newline => {
+    const privateValue = `GPT-5.1 analysis:${newline}<analysis_output>private reasoning fixture</analysis_output>`;
+    const text = JSON.stringify({ answer: privateValue });
+    expect(() => assertTrinityFinalOutputIsPublic(text))
+      .toThrow(expect.objectContaining({ reason: 'private_output' }));
+    expect(() => validate(text, flags, honesty))
+      .toThrow(expect.objectContaining({ reason: 'private_output' }));
+    expect(() => validate(privateValue, flags, honesty))
+      .toThrow(expect.objectContaining({ reason: 'invalid_json' }));
+    expect(() => validate(JSON.stringify({ answer: privateValue, extra: true }), flags, honesty))
+      .toThrow(expect.objectContaining({ reason: 'schema_mismatch' }));
+  });
+
+  it.each(lineBoundaries)('preserves fenced source examples with %p line boundaries', newline => {
     expect(() => assertTrinityFinalOutputIsPublic([
       '```xml', '<analysis_output>example</analysis_output>', '```',
       '    <analysis_output>indented example</analysis_output>',

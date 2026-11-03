@@ -67,6 +67,24 @@ _ANALYSIS_RECORD = re.compile(
 
 def _has_private_analysis(text: str, user_text: str) -> bool:
     """Inspect analysis records, including decoded JSON values, without unwrapping."""
+    try:
+        value = json.loads(text)
+    except ValueError:
+        pass
+    except RecursionError:
+        return True
+    else:
+        pending = [value]
+        while pending:
+            value = pending.pop()
+            if isinstance(value, dict):
+                pending.extend(value.values())
+            elif isinstance(value, list):
+                pending.extend(value)
+            elif isinstance(value, str) and _has_private_analysis(value, user_text):
+                return True
+        return False
+
     fence = ""
     fence_length = 0
     for line in text.splitlines():
@@ -91,21 +109,6 @@ def _has_private_analysis(text: str, user_text: str) -> bool:
             if not isinstance(user_text, str) or not any(q in user_text for q in quoted):
                 return True
 
-    try:
-        value = json.loads(text)
-    except ValueError:
-        return False
-    except RecursionError:
-        return True
-    pending = [value]
-    while pending:
-        value = pending.pop()
-        if isinstance(value, dict):
-            pending.extend(value.values())
-        elif isinstance(value, list):
-            pending.extend(value)
-        elif isinstance(value, str) and _has_private_analysis(value, user_text):
-            return True
     return False
 
 

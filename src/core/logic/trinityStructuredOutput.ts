@@ -26,13 +26,25 @@ export class TrinityStructuredOutputError extends Error {
 
 /** Never promote an echoed internal reasoning envelope into a public answer. */
 export function assertTrinityFinalOutputIsPublic(text: string, userPrompt = ''): void {
+  // Inspect decoded JSON values before line boundaries inside their encoding.
+  // Each value retains its own exact-source exception; neighboring fields do not.
+  try {
+    JSON.parse(text, (_key, value: unknown) => {
+      if (typeof value === 'string') assertTrinityFinalOutputIsPublic(value, userPrompt);
+      return value;
+    });
+    return;
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    // JSON validity and schema errors retain their existing contract boundary.
+  }
   // An exact quoted value already supplied by the current user is source data,
   // not permission to disclose a different envelope or a neighboring JSON field.
   const literal = text.trim();
   const quotedSource = literal.length > 0 && [JSON.stringify(literal), `'${literal}'`, `\`${literal}\``]
     .some(quoted => userPrompt.includes(quoted));
   let fence: { character: string; length: number } | undefined;
-  for (const line of text.split(/\r\n?|\n/u)) {
+  for (const line of text.split(/\r\n?|[\n\v\f\x1c-\x1e\x85\u2028\u2029]/u)) {
     const match = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(line);
     if (fence) {
       if (match && match[1]![0] === fence.character && match[1]!.length >= fence.length && !match[2]!.trim()) {
@@ -51,17 +63,6 @@ export function assertTrinityFinalOutputIsPublic(text: string, userPrompt = ''):
       && !quotedSource) {
       throw new TrinityStructuredOutputError('private_output');
     }
-  }
-  // A JSON string remains answer content after decoding. Inspect each value
-  // without changing the document or treating every mention of the tag as private.
-  try {
-    JSON.parse(text, (_key, value: unknown) => {
-      if (typeof value === 'string') assertTrinityFinalOutputIsPublic(value, userPrompt);
-      return value;
-    });
-  } catch (error) {
-    if (!(error instanceof SyntaxError)) throw error;
-    // JSON validity and schema errors retain their existing contract boundary.
   }
 }
 

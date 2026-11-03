@@ -1173,6 +1173,43 @@ def test_backend_transport_private_analysis_cannot_reach_any_user_sink(
 @pytest.mark.parametrize(
     "presentation", [None, "public-answer-v1"], ids=["unmarked", "public-answer"]
 )
+@pytest.mark.parametrize("ending", ["\u2028", "\u2029"], ids=["ls", "ps"])
+@pytest.mark.parametrize("shape", ["neighbor", "key", "nested-json", "quoted-json"])
+def test_backend_transport_separator_examples_cannot_exempt_private_neighbors(
+    presentation_cli, monkeypatch, tmp_path, agentic, presentation, ending, shape
+):
+    xml = f"<analysis_output>{ending}SAFE_XML_FIXTURE{ending}</analysis_output>"
+    marker = "PRIVATE_SEPARATOR_FIXTURE"
+    private_value = f"GPT-5.1 analysis:{ending}<analysis_output>{marker}</analysis_output>"
+    encoded = json.dumps({"answer": private_value}, ensure_ascii=False)
+    message = f"Return JSON with the exact literal `{xml}`."
+    if shape == "neighbor":
+        value = {"example": xml, "nested": [{"answer": private_value}]}
+    elif shape == "key":
+        value = {xml: private_value}
+    elif shape == "nested-json":
+        value = {"example": xml, "nested": encoded}
+    else:
+        value = {"answer": encoded}
+        message = f"Return the literal {json.dumps(encoded, ensure_ascii=False)}."
+    sinks = _deliver_through_backend_transport(
+        presentation_cli, monkeypatch, tmp_path,
+        json.dumps(value, ensure_ascii=False),
+        agentic=agentic, presentation=presentation, message=message,
+    )
+    assert sinks["disclosure_accepted"] == [False]
+    assert marker not in json.dumps(sinks)
+    assert sinks["ordinary_json_assistant"] == [""]
+    assert sinks["initial_speech"] == []
+    assert sinks["replay_speech"] == []
+    if agentic:
+        assert sinks["sqlite_audit_assistant"] == [""]
+
+
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+@pytest.mark.parametrize(
+    "presentation", [None, "public-answer-v1"], ids=["unmarked", "public-answer"]
+)
 @pytest.mark.parametrize(
     "answer,message,should_show",
     [
@@ -1182,6 +1219,18 @@ def test_backend_transport_private_analysis_cannot_reach_any_user_sink(
             '`<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>`.',
             True,
         ),
+        *[
+            (
+                json.dumps(
+                    {"answer": f"<analysis_output>{ending}café 雪{ending}</analysis_output>"},
+                    ensure_ascii=False,
+                ),
+                "Return JSON with this exact literal XML in the answer string: "
+                f"`<analysis_output>{ending}café 雪{ending}</analysis_output>`.",
+                True,
+            )
+            for ending in ("\u2028", "\u2029")
+        ],
         (
             "The XML example is <analysis_output>café 雪</analysis_output>.",
             "Show this XML literal inline: `<analysis_output>café 雪</analysis_output>`.",
@@ -1210,7 +1259,8 @@ def test_backend_transport_private_analysis_cannot_reach_any_user_sink(
         ],
     ],
     ids=[
-        "requested-json-literal-xml", "inline-xml", "inline-code-xml",
+        "requested-json-literal-xml", "requested-json-literal-ls",
+        "requested-json-literal-ps", "inline-xml", "inline-code-xml",
         "fenced-lf", "fenced-crlf", "fenced-cr-terminal-refusal",
         "indented-lf", "indented-crlf", "indented-cr-terminal-refusal",
     ],
@@ -1227,7 +1277,13 @@ def test_backend_transport_literal_xml_controls_keep_supported_presentation(
         presentation=presentation,
         message=message,
     )
-    assert sinks["disclosure_accepted"] == [should_show]
+    assert sinks["disclosure_accepted"] == [should_show], {
+        "console_preserved": answer in sinks["display"],
+        "ordinary_json_assistant": sinks["ordinary_json_assistant"],
+        "sqlite_audit_assistant": sinks["sqlite_audit_assistant"],
+        "initial_speech": sinks["initial_speech"],
+        "replay_speech": sinks["replay_speech"],
+    }
     if should_show:
         assert answer in sinks["display"]
         assert sinks["ordinary_json_assistant"] == [answer]
@@ -1505,6 +1561,14 @@ def test_backend_error_disclosure_labels_cannot_be_hidden_by_error_prefix(
         ),
         json.dumps({"error": '["<vbl severity=\\"4\\" /> private-json-error-fixture"'}),
         *[
+            json.dumps(
+                {"error": {"message": f"GPT-5.1 analysis:{ending}"
+                 "<analysis_output>private-json-error-fixture</analysis_output>"}},
+                ensure_ascii=False,
+            )
+            for ending in ("\u2028", "\u2029")
+        ],
+        *[
             json.dumps({key: "private-json-error-fixture"})
             for key in [
                 "active session id",
@@ -1526,6 +1590,8 @@ def test_backend_error_disclosure_labels_cannot_be_hidden_by_error_prefix(
         "malformed-array",
         "nested-malformed-object",
         "nested-malformed-array",
+        "analysis-ls",
+        "analysis-ps",
         "session-id",
         "boot-record",
         "logic-record",

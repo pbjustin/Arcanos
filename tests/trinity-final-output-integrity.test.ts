@@ -465,6 +465,14 @@ describe('Trinity caller-declared final JSON integrity at actual provider extrac
       output: JSON.stringify({ answer: '<analysis_output>quoted example café 雪</analysis_output>',
         other: '<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>' }),
       structured: true, invalidJson: false, context: 'mixed' },
+    ...['\v', '\f', '\x1c', '\x1d', '\x1e', '\x85', '\u2028', '\u2029'].flatMap(separator => [
+      { mode, label: `splitlines ${JSON.stringify(separator)} plain envelope`,
+        output: `GPT-5.1 analysis:${separator}<analysis_output>PRIVATE_INLINE_FIXTURE</analysis_output>`,
+        structured: false, invalidJson: false, context: 'plain' },
+      { mode, label: `splitlines ${JSON.stringify(separator)} JSON envelope`,
+        output: JSON.stringify({ answer: `GPT-5.1 analysis:${separator}<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>` }),
+        structured: true, invalidJson: false, context: 'plain' },
+    ]),
   ]))('blocks $label in the actual $mode provider-to-publication path', async ({ mode, output, structured, invalidJson, context }) => {
     finalText = output;
     const answerContract: TrinityStructuredOutputContract = {
@@ -517,9 +525,10 @@ describe('Trinity caller-declared final JSON integrity at actual provider extrac
     expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
   });
 
-  it.each((['direct', 'explained'] as const).flatMap(mode => [true, false].map(structured => ({ mode, structured }))))(
-    'preserves caller-supplied quoted XML as $mode JSON data (contract: $structured)', async ({ mode, structured }) => {
-    const xml = '<analysis_output>quoted example café 雪</analysis_output>';
+  it.each((['direct', 'explained'] as const).flatMap(mode => [true, false].flatMap(structured =>
+    ['', '\x85', '\u2028', '\u2029'].map(separator => ({ mode, structured, separator })))))(
+    'preserves caller-supplied quoted XML as $mode JSON data (contract: $structured, separator: $separator)', async ({ mode, structured, separator }) => {
+    const xml = `<analysis_output>quoted example café 雪${separator}</analysis_output>`;
     finalText = JSON.stringify({ answer: xml });
     const answerContract: TrinityStructuredOutputContract = {
       name: 'quoted_xml', schema: { type: 'object', additionalProperties: false, required: ['answer'],
