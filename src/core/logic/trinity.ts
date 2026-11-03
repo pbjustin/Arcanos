@@ -17,6 +17,7 @@
 import type OpenAI from 'openai';
 import { logArcanosRouting, logRoutingSummary } from "@platform/logging/aiLogger.js";
 import { generateRequestId } from "@shared/idGenerator.js";
+import { countWords } from '@shared/text/countWords.js';
 import { markFinalizedPublicAnswer } from '@shared/http/clientResponseCommon.js';
 import { resolveGamingGuideIntakeEndpointPolicy } from '@shared/gaming/gamingGuideIntakeCore.js';
 import { getTrinityMessages } from "@platform/runtime/prompts.js";
@@ -99,10 +100,11 @@ import {
   enforceFinalStageHonesty,
   prepareTrinityDirectAnswerHonesty,
   enforceFinalStageHonestyAndMinimalism,
+  resolveEffectiveWordLimit,
   validateTrinityAnswerIntegrity,
   readIntentMode
 } from './trinityHonesty.js';
-import { createTrinityStructuredOutputValidator, TrinityStructuredOutputError } from './trinityStructuredOutput.js';
+import { assertTrinityFinalOutputIsPublic, createTrinityStructuredOutputValidator, TrinityStructuredOutputError } from './trinityStructuredOutput.js';
 import {
   appendTrinityIntegrityContinuation,
   buildTrinityIntegrityRepairSystemPolicy,
@@ -121,6 +123,7 @@ import {
 } from '@core/adapters/openai.adapter.js';
 import {
   applyTrinityDirectAnswerOutputContract,
+  parseTrinityDirectAnswerOutputContract,
   TRINITY_DIRECT_ANSWER_AUDIT_FLAG,
   TRINITY_DIRECT_ANSWER_STAGE
 } from './trinityDirectAnswerMode.js';
@@ -150,6 +153,11 @@ const DEFAULT_TRINITY_CLEAR_AUDIT_TIMEOUT_MS = 3_000;
 const DEFAULT_TRINITY_JUDGED_FEEDBACK_TIMEOUT_MS = 750;
 const DEFAULT_TRINITY_DIRECT_ANSWER_RECOVERY_TIMEOUT_MS = 8_000;
 const OPTIONAL_SIDE_EFFECTS_DISABLED_REASON = 'disabled_by_caller';
+// Wrapped requests and dots inside version/file names retain their code cue.
+const EXPLICIT_CODE_PRESENTATION_REQUEST =
+  /\b(?:write|generate|return|provide|show|give)\b(?:[^.!?]|\.(?=\S)){0,120}\b(?:code|script|snippet)\b/iu;
+const CODE_PRESENTATION_OUTPUT =
+  /^ {0,3}(?:`{3,}[^`\r\n]*|~{3,}[^\r\n]*)$|^(?: {4}|\t)[ \t]*\S|^[ \t]*[A-Za-z_$][\w.$]*\(/mu;
 const SENSITIVE_AUDIT_CONTENT_REDACTED = '[SENSITIVE_CONTEXT_REDACTED]';
 const SENSITIVE_AUDIT_CONTENT_REDACTED_FLAG = 'SENSITIVE_CONTEXT_AUDIT_CONTENT_REDACTED';
 
@@ -808,8 +816,7 @@ export async function runThroughBrain(
       ? options.trustedPolicyPrompt
       : prompt;
   const outputControls = deriveTrinityOutputControls(trustedPolicyPrompt, options);
-  const preserveDirectAnswerPresentation = options.sourceEndpoint === 'backstage-booker.generateBooking'
-    && options.directAnswerPreservePresentation === true;
+  const effectiveWordLimit = resolveEffectiveWordLimit(outputControls);
   logCoreExecution('start', {
     requestId,
     sourceEndpoint: options.sourceEndpoint,
@@ -858,6 +865,19 @@ export async function runThroughBrain(
     options.directAnswerUserIntentPrompt.trim().length > 0
       ? options.directAnswerUserIntentPrompt.trim()
       : trustedPolicyPrompt;
+  // Keep a continuation's presentation without deriving policy, literals,
+  // capabilities or limits from earlier messages.
+  const hasNoExplicitOutputLimit = outputControls.maxWords === null
+    && outputControls.requestedVerbosity !== 'minimal';
+  const directAnswerOutputContract = parseTrinityDirectAnswerOutputContract(trustedPolicyPrompt);
+  const preserveContinuationPresentation = hasNoExplicitOutputLimit
+    && /^(?:continue|go\s+on|keep\s+going)[.!?]*$/iu.test(trustedPolicyPrompt.trim());
+  const preserveBookerDirectPresentation = options.sourceEndpoint === 'backstage-booker.generateBooking'
+    && options.directAnswerPreservePresentation === true;
+  const preserveDirectAnswerPresentation = preserveBookerDirectPresentation
+    || (directAnswerOutputContract === null
+      && EXPLICIT_CODE_PRESENTATION_REQUEST.test(directAnswerUserIntentPrompt))
+    || preserveContinuationPresentation;
 
   // --- Retry lineage check ---
   registerRetry(requestId);
@@ -1177,6 +1197,7 @@ export async function runThroughBrain(
         getAiExecutionContext()?.traceId
       );
       const prepareDirectAnswerCandidate = (candidateText: string) => {
+        if (!validateStructuredOutput) assertTrinityFinalOutputIsPublic(candidateText, trustedPolicyPrompt);
         if (validateStructuredOutput) {
           const providerBlocker = classifyTrinityProviderIntegrityBlocker(directAnswerOutput.provider);
           if (providerBlocker) throw new TrinityStructuredOutputError(providerBlocker);
@@ -1194,24 +1215,41 @@ export async function runThroughBrain(
             integrity: { valid: true, issues: [] },
           };
         }
+        const preserveDirectCandidatePresentation = preserveDirectAnswerPresentation
+          || (directAnswerOutputContract === null && CODE_PRESENTATION_OUTPUT.test(candidateText));
         const { reasoningHonesty, honestyFiltered } = prepareTrinityDirectAnswerHonesty({
           candidateText,
           userPrompt: directAnswerUserIntentPrompt,
           capabilityFlags,
           outputControls,
-          preservePresentation: preserveDirectAnswerPresentation,
+          preservePresentation: preserveDirectCandidatePresentation,
         });
-        const enforcedOutput = enforceFinalStageHonestyAndMinimalism({
+        const directOutputEnforcement = {
           text: honestyFiltered.text,
           userPrompt: directAnswerUserIntentPrompt,
           capabilityFlags,
           outputControls,
           reasoningHonesty,
-          preservePresentation: preserveDirectAnswerPresentation,
-        });
-        const text = preserveDirectAnswerPresentation
+          preservePresentation: preserveDirectCandidatePresentation,
+        };
+        let enforcedOutput = enforceFinalStageHonestyAndMinimalism(directOutputEnforcement);
+        const preserveDirectOutputPresentation = preserveBookerDirectPresentation
+          || (preserveDirectCandidatePresentation
+            && (effectiveWordLimit === null || countWords(enforcedOutput.text) <= effectiveWordLimit));
+        if (preserveDirectCandidatePresentation && !preserveDirectOutputPresentation) {
+          const limitedOutput = enforceFinalStageHonestyAndMinimalism({
+            ...directOutputEnforcement, text: enforcedOutput.text, preservePresentation: false,
+          });
+          enforcedOutput = {
+            ...limitedOutput,
+            removedMetaSections: [...enforcedOutput.removedMetaSections, ...limitedOutput.removedMetaSections],
+            blockedOrRewrittenClaims: [...enforcedOutput.blockedOrRewrittenClaims, ...limitedOutput.blockedOrRewrittenClaims],
+          };
+        }
+        const text = preserveDirectOutputPresentation
           ? enforcedOutput.text
           : applyTrinityDirectAnswerOutputContract(enforcedOutput.text, trustedPolicyPrompt);
+        assertTrinityFinalOutputIsPublic(text, trustedPolicyPrompt);
         return {
           directAnswerReasoningHonesty: reasoningHonesty,
           honestyFilteredFinal: honestyFiltered,
@@ -2141,9 +2179,15 @@ export async function runThroughBrain(
     const userIntent = MidLayerTranslator.detectIntentFromUserMessage(trustedPolicyPrompt);
     const providerBlocker = classifyTrinityProviderIntegrityBlocker(finalOutput.provider);
     if (providerBlocker) throw new TrinityStructuredOutputError(providerBlocker);
+    if (!validateStructuredOutput) assertTrinityFinalOutputIsPublic(finalOutput.output, trustedPolicyPrompt);
+    const preserveFinalPresentation = Boolean(gamingGuideIntakePolicy)
+      || EXPLICIT_CODE_PRESENTATION_REQUEST.test(trustedPolicyPrompt)
+      || CODE_PRESENTATION_OUTPUT.test(finalOutput.output)
+      || preserveContinuationPresentation;
+    const presentationIntent = preserveFinalPresentation ? 'code' : userIntent === 'code' ? 'default' : userIntent;
     const translatedFinalText = validateStructuredOutput ? finalOutput.output : gamingGuideIntakePolicy
       ? finalOutput.output.trim()
-      : MidLayerTranslator.translate({ raw: finalOutput.output }, userIntent);
+      : MidLayerTranslator.translate({ raw: finalOutput.output }, presentationIntent);
     const honestyFilteredFinal = validateStructuredOutput
       ? { text: validateStructuredOutput(translatedFinalText, reasoningHonesty),
           blocked: false, blockedCategories: [], ruleIds: ['NO_HONESTY_REWRITE' as const] }
@@ -2152,20 +2196,34 @@ export async function runThroughBrain(
       reasoningHonesty,
       capabilityFlags,
       readIntentMode(outputControls),
-      Boolean(gamingGuideIntakePolicy),
-      outputControls.instructionalVerificationPolicy
+      preserveFinalPresentation,
+      outputControls.instructionalVerificationPolicy,
+      trustedPolicyPrompt
     );
-    const enforcedFinalOutput = validateStructuredOutput
-      ? { text: honestyFilteredFinal.text, removedMetaSections: [], blockedOrRewrittenClaims: [] }
-      : enforceFinalStageHonestyAndMinimalism({
+    const finalOutputEnforcement = {
       text: honestyFilteredFinal.text,
       userPrompt: trustedPolicyPrompt,
       capabilityFlags,
       outputControls,
       reasoningHonesty,
-      preservePresentation: Boolean(gamingGuideIntakePolicy)
-    });
+      preservePresentation: preserveFinalPresentation
+    };
+    let enforcedFinalOutput = validateStructuredOutput
+      ? { text: honestyFilteredFinal.text, removedMetaSections: [], blockedOrRewrittenClaims: [] }
+      : enforceFinalStageHonestyAndMinimalism(finalOutputEnforcement);
+    if (!validateStructuredOutput && !gamingGuideIntakePolicy && preserveFinalPresentation
+      && effectiveWordLimit !== null && countWords(enforcedFinalOutput.text) > effectiveWordLimit) {
+      const limitedOutput = enforceFinalStageHonestyAndMinimalism({
+        ...finalOutputEnforcement, text: enforcedFinalOutput.text, preservePresentation: false,
+      });
+      enforcedFinalOutput = {
+        ...limitedOutput,
+        removedMetaSections: [...enforcedFinalOutput.removedMetaSections, ...limitedOutput.removedMetaSections],
+        blockedOrRewrittenClaims: [...enforcedFinalOutput.blockedOrRewrittenClaims, ...limitedOutput.blockedOrRewrittenClaims],
+      };
+    }
     const finalText = enforcedFinalOutput.text;
+    if (!validateStructuredOutput) assertTrinityFinalOutputIsPublic(finalText, trustedPolicyPrompt);
     // Gaming replaces the legacy ledger audit with one audit of the actual final
     // candidate. Its callback owns strict validation and cannot trigger escalation.
     let gamingAuditResult: Awaited<ReturnType<NonNullable<TrinityRunOptions['gamingClearAnswerAudit']>>> | undefined;

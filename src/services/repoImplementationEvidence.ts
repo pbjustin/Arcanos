@@ -108,16 +108,45 @@ export function shouldInspectRepoPrompt(prompt: string | null): boolean {
   if (repoInspectionDisallowedPatterns.some((pattern) => pattern.test(normalizedPrompt))) {
     return false;
   }
-  if (verificationPhrases.some((phrase) => normalizedPrompt.includes(phrase))) {
-    return true;
-  }
+  // List-marker dots are formatting, while filename dots remain intact.
+  // Claim/guess disclaimers after a newline or comma have their own statement.
+  const statements = normalizedPrompt.replace(/^([ \t]*\d+)\.(?=[ \t])/gmu, '$1')
+    .split(/[!?;]+|\.(?=\s|$)|(?:\r\n?|\n|,(?:[ \t]*but\b)?)(?=[ \t]*(?:do[ \t]+not|don['’]t|never)[ \t]+(?:claim|guess)\b)/u).map((statement) => {
+      let negatedRepoReference = false;
+      let latestNegatedRepoReference = false;
+      const text = statement.replace(
+        // Commas can continue prohibited targets; only a new inspection request
+        // or question starts an affirmative comma clause.
+        /\b(?:do\s+not|don['’]t|never)\s+(?:inspect|show|list|find|locate|read|open|verify|check)\b[^\r\n]*?(?=,[ \t]*(?:please[ \t]+)?(?:inspect|show|list|find|locate|read|open|verify|check|where|which|what|is|are|do[ \t]+i[ \t]+have|can[ \t]+you[ \t]+see)\b|\bbut\b|[\r\n]|$)/gu,
+        (clause) => {
+          // A later unrelated target cannot borrow the earlier repo antecedent.
+          const finalTarget = clause.replace(/,[ \t]*$/u, '').split(',').at(-1) ?? clause;
+          latestNegatedRepoReference = repoTargetPatterns.some((pattern) => pattern.test(finalTarget));
+          negatedRepoReference ||= latestNegatedRepoReference;
+          return '';
+        }
+      ).trim();
+      return { text, negatedRepoReference, latestNegatedRepoReference };
+    });
+  return statements.some(({ text: statement, negatedRepoReference, latestNegatedRepoReference }, index) => {
+    if (verificationPhrases.some((phrase) => statement.includes(phrase))) return true;
+    if (repoTargetPatterns.some((pattern) => pattern.test(statement))
+      && repoInspectionIntentPatterns.some((pattern) => pattern.test(statement))) return true;
 
-  const hasRepoTarget = repoTargetPatterns.some((pattern) => pattern.test(normalizedPrompt));
-  if (!hasRepoTarget) {
-    return false;
-  }
+    // An explicit contrast can retain the removed clause's repository as the
+    // antecedent of "its/their status", without treating the negated verb as intent.
+    if (negatedRepoReference
+      && /^,?\s*but\s+(?:please\s+)?(?:show|check|verify)\s+(?:me\s+)?(?:its|their)\s+status$/u.test(statement)) return true;
+    // A status question cannot borrow a repo across a later unrelated target.
+    if (latestNegatedRepoReference
+      && /^,?\s*(?:but\s+)?what\s+is\s+(?:its|their)\s+status$/u.test(statement)) return true;
 
-  return repoInspectionIntentPatterns.some((pattern) => pattern.test(normalizedPrompt));
+    // A direct pronoun request may refer to the immediately preceding repo;
+    // generic questions cannot borrow a repository target from another sentence.
+    return index > 0
+      && repoTargetPatterns.some((pattern) => pattern.test(statements[index - 1]!.text))
+      && /^(?:please\s+)?(?:inspect|show|list|find|locate|read|open|verify|check)\s+(?:it|this|that|them|these|those)$/u.test(statement);
+  });
 }
 
 /**

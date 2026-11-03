@@ -143,6 +143,10 @@ export class MidLayerTranslator {
       return this.getFallbackForIntent(resolvedIntent);
     }
 
+    // Code responses already have a presentation contract. Tone and whitespace
+    // shaping can change source literals, indentation, fences and trailing text.
+    if (resolvedIntent === 'code') return text;
+
     // Step 6: Humanize contractions
     text = this.humanize(text);
 

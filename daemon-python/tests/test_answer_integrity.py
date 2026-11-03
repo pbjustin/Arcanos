@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+import requests
 from rich.console import Console
 
 from arcanos.agentic import agent_loop
@@ -20,6 +21,7 @@ from arcanos.cli.trust_state import TrustState
 from arcanos.cli_midlayer import translate
 from arcanos.cli_session import SessionContext
 from arcanos.config import Config
+from arcanos.schema import Memory
 from arcanos.voice_boundary import Persona, apply_voice_boundary
 
 PYTHON_ANSWER = """```python
@@ -598,6 +600,31 @@ def test_safe_explanations_and_code_remain_exact_in_stored_history(
             '```json\n{"\\u0061udit_trace":"PRIVATE_HISTORY_FIXTURE"}\n```\n\n```bash\nprintf PRIVATE_HISTORY_FIXTURE\n```',
             "public-answer-v1",
         ),
+        (
+            "GPT-5.1 analysis:\n<analysis_output>\nPRIVATE_HISTORY_FIXTURE\n</analysis_output>",
+            "public-answer-v1",
+        ),
+        (
+            "GPT-5.1 analysis:\r\n<analysis_output>\r\nPRIVATE_HISTORY_FIXTURE\r\n</analysis_output>",
+            "public-answer-v1",
+        ),
+        (
+            "GPT-5.1 analysis:\r<analysis_output>\rPRIVATE_HISTORY_FIXTURE\r</analysis_output>",
+            "public-answer-v1",
+        ),
+        ("<analysis_output>\nPRIVATE_HISTORY_FIXTURE", None),
+        (
+            "<analysis_output>PRIVATE_HISTORY_FIXTURE</analysis_output>",
+            "public-answer-v1",
+        ),
+        ("<ANALYSIS_OUTPUT>PRIVATE_HISTORY_FIXTURE</ANALYSIS_OUTPUT>", None),
+        (
+            "GPT-5.1 analysis:\n<analysis_output>PRIVATE_HISTORY_FIXTURE",
+            "public-answer-v1",
+        ),
+        ("<analysis_output\nPRIVATE_HISTORY_FIXTURE", None),
+        ("<analysis_output PRIVATE_HISTORY_FIXTURE", None),
+        ("</analysis_output>PRIVATE_HISTORY_FIXTURE", "public-answer-v1"),
     ],
     ids=[
         "private-label",
@@ -606,6 +633,16 @@ def test_safe_explanations_and_code_remain_exact_in_stored_history(
         "escaped-private-key",
         "nested-escaped-private-key",
         "fenced-escaped-private-proposal",
+        "analysis-envelope",
+        "crlf-analysis-envelope",
+        "cr-analysis-envelope",
+        "truncated-analysis-envelope",
+        "one-line-analysis-envelope",
+        "uppercase-one-line-analysis-envelope",
+        "unterminated-one-line-analysis-envelope",
+        "truncated-analysis-opening-tag",
+        "malformed-analysis-opening-tag",
+        "one-line-analysis-closing-tag",
     ],
 )
 def test_withheld_answers_cannot_reappear_in_conversation_or_audit_history(
@@ -633,6 +670,32 @@ def test_withheld_answers_cannot_reappear_in_conversation_or_audit_history(
     assert "Nothing to speak yet." in output.getvalue()
     cli.audio.speak.assert_not_called()
     cli.terminal.is_command_safe.assert_not_called()
+    cli.terminal.execute.assert_not_called()
+
+
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+# Bare CR remains rejected by the unsafe-terminal-frame regression below.
+@pytest.mark.parametrize("line_ending", ["\n", "\r\n"], ids=["lf", "crlf"])
+def test_analysis_envelope_examples_remain_complete_public_code(
+    presentation_cli, monkeypatch, agentic, line_ending
+):
+    cli, output = presentation_cli
+    answer = (
+        "A literal markup example:\n\n```xml\n<analysis_output>\n"
+        "example text\n</analysis_output>\n```\n\n"
+        "~~~xml\n<ANALYSIS_OUTPUT>one-line example</ANALYSIS_OUTPUT>\n~~~\n\n"
+        "    <analysis_output>\n    indented example\n    </analysis_output>\n"
+        "    <analysis_output>one-line indented example</analysis_output>\n"
+        "\t<analysis_output>tab-indented example</analysis_output>\n\n"
+        "The `<analysis_output>` label is literal text."
+    ).replace("\n", line_ending)
+    _deliver(
+        monkeypatch, cli, answer, agentic=agentic, presentation="public-answer-v1"
+    )
+
+    assert answer in output.getvalue()
+    assert [call.args[1] for call in cli.memory.add_conversation.call_args_list] == [answer]
+    assert NO_DISPLAYABLE_NOTICE not in output.getvalue()
     cli.terminal.execute.assert_not_called()
 
 
@@ -894,6 +957,612 @@ def test_backend_parse_to_cli_preserves_code_and_ignores_private_envelope_fields
     assert "private-envelope-fixture" not in output.getvalue()
 
 
+def _deliver_through_backend_transport(
+    presentation_cli, monkeypatch, tmp_path, answer, *, agentic, presentation, message,
+    previous_user_message=None,
+):
+    """Inject only HTTP response bytes; retain real parsing, disclosure and storage."""
+    cli, output = presentation_cli
+    cli.client_id = "privacy-transport-fixture"
+    cli.memory = Memory(tmp_path / "memories.json")
+    if previous_user_message is not None:
+        cli.memory.add_conversation(previous_user_message, "Earlier literal example.", 0, 0.0)
+    previous_history = list(cli.memory.get_recent_conversations())
+    history = HistoryDB(tmp_path / "history.sqlite3") if agentic else None
+    if history is not None:
+        monkeypatch.setattr(agent_loop, "HistoryDB", lambda: history)
+    monkeypatch.setattr(Config, "AGENTIC_ENABLED", agentic)
+    monkeypatch.setattr(
+        cli_module.backend_ops, "refresh_registry_cache_if_stale", lambda _: None
+    )
+
+    envelope = {"ok": True, "result": {"text": answer}, "model": "privacy-fixture"}
+    if presentation is not None:
+        envelope["presentation"] = presentation
+    response = requests.Response()
+    response.status_code = 200
+    response._content = json.dumps(envelope, ensure_ascii=False).encode("utf-8")
+    response.headers["Content-Type"] = "application/json; charset=utf-8"
+
+    def send(method, url, **_kwargs):
+        assert method == "post"
+        assert url == "https://privacy-fixture.invalid/gpt/arcanos-daemon"
+        return response
+
+    sender = MagicMock(side_effect=send)
+    client = BackendApiClient(
+        "https://privacy-fixture.invalid",
+        token_provider=lambda: "offline-transport-fixture",
+        request_sender=sender,
+    )
+    cli.backend_client = client
+    parsed_results = []
+    original_parse = client._parse_chat_response
+
+    def parse(payload):
+        result = original_parse(payload)
+        parsed_results.append(result)
+        return result
+
+    monkeypatch.setattr(client, "_parse_chat_response", parse)
+    disclosure_results = []
+    original_translate = cli_module.translate
+
+    def observe_disclosure(*args, **kwargs):
+        result = original_translate(*args, **kwargs)
+        disclosure_results.append(result)
+        return result
+
+    monkeypatch.setattr(cli_module, "translate", observe_disclosure)
+    cli.handle_ask(message, route_override="backend", speak_response=True)
+    delivered_output = output.getvalue()
+    initial_speech = [call.args[0] for call in cli.audio.speak.call_args_list]
+    initial_speech_count = cli.audio.speak.call_count
+    cli.handle_speak()
+    replay_speech = [
+        call.args[0]
+        for call in cli.audio.speak.call_args_list[initial_speech_count:]
+    ]
+    conversations = json.loads(cli.memory.file_path.read_text(encoding="utf-8"))[
+        "conversations"
+    ]
+    sqlite_assistant = None
+    if history is not None:
+        export_path = tmp_path / "audit.json"
+        history.export_audit(export_path, session_id=cli.instance_id)
+        audit = json.loads(export_path.read_text(encoding="utf-8"))
+        sqlite_assistant = [row[2] for row in audit["messages"] if row[1] == "assistant"]
+    assert sender.call_count == 1
+    if previous_user_message is not None:
+        assert any(
+            item["content"] == previous_user_message
+            for item in sender.call_args.kwargs["json"]["messages"]
+        )
+    assert conversations[:-1] == previous_history
+    assert len(parsed_results) == 1
+    assert parsed_results[0].ok
+    assert parsed_results[0].value is not None
+    assert parsed_results[0].value.response_text == answer
+    cli.terminal.is_command_safe.assert_not_called()
+    cli.terminal.execute.assert_not_called()
+    return {
+        "transport_parser_accepted": True,
+        "disclosure_accepted": [show for _, show in disclosure_results],
+        "display": delivered_output,
+        "ordinary_json_assistant": [conversations[-1]["ai"]],
+        "sqlite_audit_assistant": sqlite_assistant,
+        "initial_speech": initial_speech,
+        "replay_speech": replay_speech,
+    }
+
+
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+@pytest.mark.parametrize(
+    "presentation", [None, "public-answer-v1"], ids=["unmarked", "public-answer"]
+)
+@pytest.mark.parametrize(
+    "case,answer,marker,message,previous_user_message",
+    [
+        (
+            "inline",
+            "GPT-5.1 analysis: <analysis_output>PRIVATE_INLINE_FIXTURE</analysis_output>",
+            "PRIVATE_INLINE_FIXTURE",
+            "What is the complete answer?",
+            None,
+        ),
+        (
+            "json",
+            '{"answer":"<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>"}',
+            "PRIVATE_JSON_FIXTURE",
+            "What is the complete answer?",
+            None,
+        ),
+        (
+            "malformed-json-trailing-comma",
+            '{"answer":"<analysis_output>PRIVATE_FIXTURE</analysis_output>",}',
+            "PRIVATE_FIXTURE",
+            "What is the complete answer?",
+            None,
+        ),
+        (
+            "malformed-json-missing-brace",
+            '{"answer":"<analysis_output>PRIVATE_FIXTURE</analysis_output>"',
+            "PRIVATE_FIXTURE",
+            "What is the complete answer?",
+            None,
+        ),
+        (
+            "json-example-request-without-literal",
+            '{"answer":"<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>"}',
+            "PRIVATE_JSON_FIXTURE",
+            "Return a JSON example.",
+            None,
+        ),
+        (
+            "malformed-json-rootarray",
+            '["<analysis_output>PRIVATE_FIXTURE</analysis_output>",]',
+            "PRIVATE_FIXTURE", "What is the complete answer?", None,
+        ),
+        (
+            "malformed-json-nestedarray",
+            '{"answer":["<analysis_output>PRIVATE_FIXTURE</analysis_output>"],}',
+            "PRIVATE_FIXTURE", "What is the complete answer?", None,
+        ),
+        (
+            "malformed-json-encoded-value",
+            r'{"answer":"\u003canalysis_output>PRIVATE_FIXTURE\u003c/analysis_output>",}',
+            "PRIVATE_FIXTURE", "What is the complete answer?", None,
+        ),
+        (
+            "malformed-json-encoded-key",
+            r'{"\u003canalysis_output>PRIVATE_FIXTURE\u003c/analysis_output>":"Public value.",}',
+            "PRIVATE_FIXTURE", "What is the complete answer?", None,
+        ),
+        (
+            "malformed-json-neighbor",
+            '{"example":"<analysis_output>SAFE_XML_FIXTURE</analysis_output>",'
+            '"answer":"<analysis_output>PRIVATE_FIXTURE</analysis_output>",}',
+            "PRIVATE_FIXTURE",
+            'Return the literal XML `<analysis_output>SAFE_XML_FIXTURE</analysis_output>`.', None,
+        ),
+        (
+            "malformed-json-history",
+            '{"answer":"<analysis_output>PRIVATE_FIXTURE</analysis_output>",}',
+            "PRIVATE_FIXTURE", "Continue",
+            'Return the literal XML `<analysis_output>PRIVATE_FIXTURE</analysis_output>`.',
+        ),
+        (
+            "neighboring-json-value",
+            '{"example":"<analysis_output>SAFE_XML_FIXTURE</analysis_output>",'
+            '"answer":"<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>"}',
+            "PRIVATE_JSON_FIXTURE",
+            'Return JSON with the literal XML `<analysis_output>SAFE_XML_FIXTURE</analysis_output>`.',
+            None,
+        ),
+        (
+            "tag-only-source",
+            '{"answer":"<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>"}',
+            "PRIVATE_JSON_FIXTURE",
+            "The tag is `<analysis_output>`. Return the complete answer.",
+            None,
+        ),
+        (
+            "historical-source",
+            '{"answer":"<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>"}',
+            "PRIVATE_JSON_FIXTURE",
+            "Continue",
+            'Return the literal XML `<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>`.',
+        ),
+        (
+            "prefixed-unit-not-provided",
+            "GPT-5.1 analysis: <analysis_output>PRIVATE_INLINE_FIXTURE</analysis_output>",
+            "PRIVATE_INLINE_FIXTURE",
+            'Return the literal XML `<analysis_output>PRIVATE_INLINE_FIXTURE</analysis_output>`.',
+            None,
+        ),
+        (
+            "suffixed-unit-not-provided",
+            '{"answer":"<analysis_output>SAFE_XML_FIXTURE</analysis_output> PRIVATE_SUFFIX_FIXTURE"}',
+            "PRIVATE_SUFFIX_FIXTURE",
+            'Return the literal XML `<analysis_output>SAFE_XML_FIXTURE</analysis_output>`.',
+            None,
+        ),
+        (
+            "other-private-record-not-exempt",
+            '{"answer":"<analysis_output>SAFE_XML_FIXTURE</analysis_output>",'
+            '"audit_trace":"PRIVATE_NEIGHBOR_RECORD"}',
+            "PRIVATE_NEIGHBOR_RECORD",
+            'Return the literal XML `<analysis_output>SAFE_XML_FIXTURE</analysis_output>`.',
+            None,
+        ),
+    ],
+    ids=[
+        "inline-analysis", "json-analysis", "malformed-json-trailing-comma",
+        "malformed-json-missing-brace", "json-generic-example-request",
+        "malformed-json-rootarray", "malformed-json-nestedarray",
+        "malformed-json-encoded-value", "malformed-json-encoded-key",
+        "malformed-json-neighbor", "malformed-json-history",
+        "neighboring-json-value", "tag-only-source", "historical-source",
+        "prefixed-unit-not-provided", "suffixed-unit-not-provided",
+        "other-private-record-not-exempt",
+    ],
+)
+def test_backend_transport_private_analysis_cannot_reach_any_user_sink(
+    presentation_cli, monkeypatch, tmp_path, agentic, presentation, case, answer, marker,
+    message, previous_user_message,
+):
+    sinks = _deliver_through_backend_transport(
+        presentation_cli,
+        monkeypatch,
+        tmp_path,
+        answer,
+        agentic=agentic,
+        presentation=presentation,
+        message=message,
+        previous_user_message=previous_user_message,
+    )
+    leaked = {
+        name: marker in json.dumps(value)
+        for name, value in sinks.items()
+        if name not in {"transport_parser_accepted", "disclosure_accepted"}
+    }
+    print(json.dumps({
+        "case": case, "agentic": agentic, "presentation": presentation,
+        "transport_parser_accepted": sinks["transport_parser_accepted"],
+        "disclosure_accepted": sinks["disclosure_accepted"], "leaked_sinks": leaked,
+        "not_reached_sinks": ["initial_speech", "replay_speech"] if agentic
+        else ["sqlite_audit_assistant"],
+    }))
+    assert not any(sinks["disclosure_accepted"])
+    assert not any(leaked.values())
+    assert sinks["display"].count(NO_DISPLAYABLE_NOTICE) == 1
+    assert sinks["ordinary_json_assistant"] == [""]
+    assert sinks["initial_speech"] == []
+    assert sinks["replay_speech"] == []
+    if agentic:
+        assert sinks["sqlite_audit_assistant"] == [""]
+
+
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+@pytest.mark.parametrize(
+    "presentation", [None, "public-answer-v1"], ids=["unmarked", "public-answer"]
+)
+@pytest.mark.parametrize("shape", ["plain", "escaped", "nested", "encoded", "neighbor", "history"])
+def test_backend_transport_private_analysis_keys_cannot_reach_any_user_sink(
+    presentation_cli, monkeypatch, tmp_path, shape, agentic, presentation
+):
+    marker = "PRIVATE_KEY_FIXTURE"
+    key = f"GPT-5.1 analysis:\n<analysis_output>{marker}</analysis_output>"
+    value = {key: "Public label."}
+    message = "Return a JSON example."
+    previous = None
+    if shape == "nested":
+        value = {"answer": [value]}
+    elif shape == "encoded":
+        value = {"answer": json.dumps(value)}
+    elif shape == "neighbor":
+        safe_key = "<analysis_output>SAFE_KEY_FIXTURE</analysis_output>"
+        value = {safe_key: "User-provided label.", key: "Public label."}
+        message = f"Return JSON with this exact property name: `{safe_key}`."
+    elif shape == "history":
+        message = "Continue"
+        previous = f"Return JSON with this exact property name: {json.dumps(key)}."
+    answer = json.dumps(value)
+    if shape == "escaped":
+        answer = answer.replace("<", "\\u003c")
+    sinks = _deliver_through_backend_transport(
+        presentation_cli, monkeypatch, tmp_path, answer,
+        agentic=agentic, presentation=presentation, message=message,
+        previous_user_message=previous,
+    )
+    print(json.dumps({
+        "shape": shape, "agentic": agentic, "presentation": presentation,
+        "disclosure_accepted": sinks["disclosure_accepted"],
+        "leaked_sinks": {name: marker in json.dumps(value) for name, value in sinks.items()
+                         if name not in {"transport_parser_accepted", "disclosure_accepted"}},
+    }))
+    assert sinks["disclosure_accepted"] == [False]
+    assert marker not in json.dumps(sinks)
+    assert sinks["ordinary_json_assistant"] == [""]
+    assert sinks["initial_speech"] == []
+    assert sinks["replay_speech"] == []
+    if agentic:
+        assert sinks["sqlite_audit_assistant"] == [""]
+
+
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+@pytest.mark.parametrize("presentation", [None, "public-answer-v1"], ids=["unmarked", "public-answer"])
+@pytest.mark.parametrize("shape", ["plain", "value", "key"])
+@pytest.mark.parametrize(
+    "prefix", ["```x```\n", "\u00a0", "\u3000"], ids=["malformed-fence", "nbsp", "ideographic-space"]
+)
+def test_backend_transport_fence_and_whitespace_cannot_hide_private_analysis(
+    presentation_cli, monkeypatch, tmp_path, agentic, presentation, shape, prefix
+):
+    marker = "PRIVATE_BOUNDARY_FIXTURE"
+    answer = f"{prefix}<analysis_output>{marker}</analysis_output>"
+    if shape == "value":
+        answer = json.dumps({"answer": answer}, ensure_ascii=False)
+    elif shape == "key":
+        answer = json.dumps({answer: "Public value."}, ensure_ascii=False)
+    sinks = _deliver_through_backend_transport(
+        presentation_cli, monkeypatch, tmp_path, answer,
+        agentic=agentic, presentation=presentation, message="Return a short example.",
+    )
+    leaked = {name: marker in json.dumps(value) for name, value in sinks.items()
+              if name not in {"transport_parser_accepted", "disclosure_accepted"}}
+    print(json.dumps({"shape": shape, "agentic": agentic, "presentation": presentation,
+                      "disclosure_accepted": sinks["disclosure_accepted"], "leaked_sinks": leaked}))
+    assert sinks["disclosure_accepted"] == [False]
+    assert not any(leaked.values())
+    assert sinks["ordinary_json_assistant"] == [""]
+    assert sinks["initial_speech"] == []
+    assert sinks["replay_speech"] == []
+    if agentic:
+        assert sinks["sqlite_audit_assistant"] == [""]
+
+
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+@pytest.mark.parametrize("presentation", [None, "public-answer-v1"], ids=["unmarked", "public-answer"])
+@pytest.mark.parametrize("shape", ["plain", "value", "key"])
+@pytest.mark.parametrize("prefix", ["```x```\n", "\u00a0", "\u3000"], ids=["malformed-fence", "nbsp", "ideographic-space"])
+def test_backend_transport_exact_source_boundary_example_remains_literal(
+    presentation_cli, monkeypatch, tmp_path, agentic, presentation, shape, prefix
+):
+    literal = f"{prefix}<analysis_output>quoted café 雪</analysis_output>"
+    answer = literal
+    if shape == "value":
+        answer = json.dumps({"answer": literal}, ensure_ascii=False)
+    elif shape == "key":
+        answer = json.dumps({literal: "Public value."}, ensure_ascii=False)
+    sinks = _deliver_through_backend_transport(
+        presentation_cli, monkeypatch, tmp_path, answer,
+        agentic=agentic, presentation=presentation,
+        message=f"Return the exact literal {json.dumps(literal, ensure_ascii=False)}.",
+    )
+    assert sinks["disclosure_accepted"] == [True], {
+        "console_preserved": answer in sinks["display"],
+        "ordinary_json_assistant": sinks["ordinary_json_assistant"],
+        "sqlite_audit_assistant": sinks["sqlite_audit_assistant"],
+        "initial_speech": sinks["initial_speech"],
+        "replay_speech": sinks["replay_speech"],
+    }
+    assert answer in sinks["display"]
+    assert sinks["ordinary_json_assistant"] == [answer]
+    if agentic:
+        assert sinks["sqlite_audit_assistant"] == [answer]
+    else:
+        assert sinks["initial_speech"] == [answer.strip()]
+        assert sinks["replay_speech"] == [answer.strip()]
+
+
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+@pytest.mark.parametrize("presentation", [None, "public-answer-v1"], ids=["unmarked", "public-answer"])
+@pytest.mark.parametrize("prefix", ["\u00a0", "\u3000"], ids=["nbsp", "ideographic-space"])
+@pytest.mark.parametrize("context", ["neighbor", "history"])
+def test_backend_transport_raw_source_quote_cannot_exempt_private_neighbor_or_history(
+    presentation_cli, monkeypatch, tmp_path, agentic, presentation, prefix, context
+):
+    literal = f"{prefix}<analysis_output>quoted café 雪</analysis_output>"
+    quote_request = f"Return the exact literal {json.dumps(literal, ensure_ascii=False)}."
+    private = literal.replace("quoted café 雪", "PRIVATE_RAW_NEIGHBOR_FIXTURE")
+    answer = json.dumps({"answer": literal, "other": private}, ensure_ascii=False)
+    message, previous = quote_request, None
+    if context == "history":
+        answer = json.dumps({literal: "Public value."}, ensure_ascii=False)
+        message, previous = "Continue", quote_request
+    sinks = _deliver_through_backend_transport(
+        presentation_cli, monkeypatch, tmp_path, answer,
+        agentic=agentic, presentation=presentation, message=message,
+        previous_user_message=previous,
+    )
+    assert sinks["disclosure_accepted"] == [False]
+    assert sinks["ordinary_json_assistant"] == [""]
+    assert "PRIVATE_RAW_NEIGHBOR_FIXTURE" not in json.dumps(sinks)
+    assert sinks["initial_speech"] == []
+    assert sinks["replay_speech"] == []
+    if agentic:
+        assert sinks["sqlite_audit_assistant"] == [""]
+
+
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+@pytest.mark.parametrize("presentation", [None, "public-answer-v1"], ids=["unmarked", "public-answer"])
+@pytest.mark.parametrize("ending", ["\u2028", "\u2029"], ids=["ls", "ps"])
+@pytest.mark.parametrize("shape", ["neighbor", "key", "nested-json", "quoted-json"])
+def test_backend_transport_separator_examples_cannot_exempt_private_neighbors(
+    presentation_cli, monkeypatch, tmp_path, agentic, presentation, ending, shape
+):
+    xml = f"<analysis_output>{ending}SAFE_XML_FIXTURE{ending}</analysis_output>"
+    marker = "PRIVATE_SEPARATOR_FIXTURE"
+    private_value = f"GPT-5.1 analysis:{ending}<analysis_output>{marker}</analysis_output>"
+    encoded = json.dumps({"answer": private_value}, ensure_ascii=False)
+    message = f"Return JSON with the exact literal `{xml}`."
+    if shape == "neighbor":
+        value = {"example": xml, "nested": [{"answer": private_value}]}
+    elif shape == "key":
+        value = {xml: private_value}
+    elif shape == "nested-json":
+        value = {"example": xml, "nested": encoded}
+    else:
+        value = {"answer": encoded}
+        message = f"Return the literal {json.dumps(encoded, ensure_ascii=False)}."
+    sinks = _deliver_through_backend_transport(
+        presentation_cli, monkeypatch, tmp_path,
+        json.dumps(value, ensure_ascii=False),
+        agentic=agentic, presentation=presentation, message=message,
+    )
+    assert sinks["disclosure_accepted"] == [False]
+    assert marker not in json.dumps(sinks)
+    assert sinks["ordinary_json_assistant"] == [""]
+    assert sinks["initial_speech"] == []
+    assert sinks["replay_speech"] == []
+    if agentic:
+        assert sinks["sqlite_audit_assistant"] == [""]
+
+
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+@pytest.mark.parametrize(
+    "presentation", [None, "public-answer-v1"], ids=["unmarked", "public-answer"]
+)
+@pytest.mark.parametrize(
+    "answer,message,should_show",
+    [
+        (
+            'An example: "<analysis_output>quoted café 雪</analysis_output>".',
+            "Show an inline XML example.", True,
+        ),
+        (
+            '"An example: \\"<analysis_output>quoted café 雪</analysis_output>\\""',
+            "Show a quoted inline XML example.", True,
+        ),
+        (
+            '`{"answer":"<analysis_output>quoted café 雪</analysis_output>",}`',
+            "Show an inline malformed JSON source example.", True,
+        ),
+        (
+            '{"answer":"Public café 雪",}',
+            "Show a malformed JSON example.", True,
+        ),
+        (
+            '{"answer":"Public café 雪"',
+            "Show a malformed JSON example.", True,
+        ),
+        (
+            '```json\n{"answer":"<analysis_output>quoted café 雪</analysis_output>",}\n```',
+            "Show a malformed JSON source example.", True,
+        ),
+        (
+            '    {"answer":"<analysis_output>quoted café 雪</analysis_output>"',
+            "Show a malformed JSON source example.", True,
+        ),
+        (
+            '{"answer":"<analysis_output>quoted café 雪</analysis_output>",}',
+            'Return this exact source literal: `{"answer":"<analysis_output>quoted café 雪</analysis_output>",}`.',
+            True,
+        ),
+        (
+            '{"answer":"<analysis_output>quoted café 雪</analysis_output>"',
+            'Return JSON containing the exact literal `<analysis_output>quoted café 雪</analysis_output>`.',
+            True,
+        ),
+        (
+            '{"answer":"<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>"}',
+            'Return JSON with an answer string containing this exact literal XML: '
+            '`<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>`.',
+            True,
+        ),
+        *[
+            (
+                json.dumps({key: "Public label."}, ensure_ascii=False),
+                f"Return JSON with this exact property name: {json.dumps(key, ensure_ascii=False)}.",
+                True,
+            )
+            for key in (
+                "<analysis_output>quoted café 雪</analysis_output>",
+                "GPT-5.1 analysis:\n<analysis_output>quoted café 雪</analysis_output>",
+            )
+        ],
+        *[
+            (
+                json.dumps(
+                    {"answer": f"<analysis_output>{ending}café 雪{ending}</analysis_output>"},
+                    ensure_ascii=False,
+                ),
+                "Return JSON with this exact literal XML in the answer string: "
+                f"`<analysis_output>{ending}café 雪{ending}</analysis_output>`.",
+                True,
+            )
+            for ending in ("\u2028", "\u2029")
+        ],
+        (
+            "The XML example is <analysis_output>café 雪</analysis_output>.",
+            "Show this XML literal inline: `<analysis_output>café 雪</analysis_output>`.",
+            True,
+        ),
+        (
+            "`<analysis_output>café 雪</analysis_output>`",
+            "Show this exact XML literal as inline code: `<analysis_output>café 雪</analysis_output>`.",
+            True,
+        ),
+        *[
+            (
+                f"```xml{ending}<analysis_output>café 雪</analysis_output>{ending}```",
+                "Show this XML literal as fenced code: `<analysis_output>café 雪</analysis_output>`.",
+                ending != "\r",
+            )
+            for ending in ("\n", "\r\n", "\r")
+        ],
+        *[
+            (
+                f"    <analysis_output>{ending}    café 雪{ending}    </analysis_output>",
+                "Show this XML literal as indented code: `<analysis_output>café 雪</analysis_output>`.",
+                ending != "\r",
+            )
+            for ending in ("\n", "\r\n", "\r")
+        ],
+        *[
+            (answer, "Show this XML source example.", True)
+            for answer in (
+                "```xml\n<analysis_output>café 雪</analysis_output>\n````",
+                "~~~xml`example`\n<analysis_output>café 雪</analysis_output>\n~~~",
+                "````xml\n```x```\n<analysis_output>café 雪</analysis_output>\n````",
+                "    \u00a0<analysis_output>café 雪</analysis_output>",
+                "\t\u3000<analysis_output>café 雪</analysis_output>",
+            )
+        ],
+    ],
+    ids=[
+        "malformed-json-inline-colon-prose", "malformed-json-quoted-colon-prose",
+        "malformed-json-inline-code",
+        "malformed-json-public-trailing-comma", "malformed-json-public-missing-brace",
+        "malformed-json-fenced-xml", "malformed-json-indented-xml",
+        "malformed-json-whole-source", "malformed-json-scalar-source",
+        "requested-json-literal-xml", "requested-json-key-xml", "requested-json-key-prefixed",
+        "requested-json-literal-ls",
+        "requested-json-literal-ps", "inline-xml", "inline-code-xml",
+        "fenced-lf", "fenced-crlf", "fenced-cr-terminal-refusal",
+        "indented-lf", "indented-crlf", "indented-cr-terminal-refusal",
+        "backtick-longer-close", "tilde-backtick-info", "nested-inline-backticks",
+        "indented-nbsp", "indented-ideographic-space",
+    ],
+)
+def test_backend_transport_literal_xml_controls_keep_supported_presentation(
+    presentation_cli, monkeypatch, tmp_path, agentic, presentation, answer, message, should_show
+):
+    sinks = _deliver_through_backend_transport(
+        presentation_cli,
+        monkeypatch,
+        tmp_path,
+        answer,
+        agentic=agentic,
+        presentation=presentation,
+        message=message,
+    )
+    assert sinks["disclosure_accepted"] == [should_show], {
+        "console_preserved": answer in sinks["display"],
+        "ordinary_json_assistant": sinks["ordinary_json_assistant"],
+        "sqlite_audit_assistant": sinks["sqlite_audit_assistant"],
+        "initial_speech": sinks["initial_speech"],
+        "replay_speech": sinks["replay_speech"],
+    }
+    if should_show:
+        assert answer in sinks["display"]
+        assert sinks["ordinary_json_assistant"] == [answer]
+        if agentic:
+            assert sinks["sqlite_audit_assistant"] == [answer]
+        else:
+            # TTS trims outer whitespace; display and history retain exact bytes.
+            assert sinks["initial_speech"] == [answer.strip()]
+            assert sinks["replay_speech"] == [answer.strip()]
+    else:
+        assert sinks["display"].count(NO_DISPLAYABLE_NOTICE) == 1
+        assert sinks["ordinary_json_assistant"] == [""]
+        assert sinks["initial_speech"] == []
+        assert sinks["replay_speech"] == []
+        if agentic:
+            assert sinks["sqlite_audit_assistant"] == [""]
+
+
 def test_private_agentic_payload_cannot_become_an_action_proposal(
     presentation_cli, monkeypatch
 ):
@@ -1153,6 +1822,14 @@ def test_backend_error_disclosure_labels_cannot_be_hidden_by_error_prefix(
         ),
         json.dumps({"error": '["<vbl severity=\\"4\\" /> private-json-error-fixture"'}),
         *[
+            json.dumps(
+                {"error": {"message": f"GPT-5.1 analysis:{ending}"
+                 "<analysis_output>private-json-error-fixture</analysis_output>"}},
+                ensure_ascii=False,
+            )
+            for ending in ("\u2028", "\u2029")
+        ],
+        *[
             json.dumps({key: "private-json-error-fixture"})
             for key in [
                 "active session id",
@@ -1174,6 +1851,8 @@ def test_backend_error_disclosure_labels_cannot_be_hidden_by_error_prefix(
         "malformed-array",
         "nested-malformed-object",
         "nested-malformed-array",
+        "analysis-ls",
+        "analysis-ps",
         "session-id",
         "boot-record",
         "logic-record",

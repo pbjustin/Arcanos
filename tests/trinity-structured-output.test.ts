@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { createTrinityStructuredOutputValidator } from '../src/core/logic/trinityStructuredOutput.js';
+import { assertTrinityFinalOutputIsPublic, createTrinityStructuredOutputValidator } from '../src/core/logic/trinityStructuredOutput.js';
 import { createDefaultTrinityReasoningHonesty, deriveTrinityCapabilityFlags, deriveTrinityOutputControls } from '../src/core/logic/trinityHonesty.js';
 
 const contract = {
@@ -11,8 +11,276 @@ const contract = {
 const flags = deriveTrinityCapabilityFlags();
 const honesty = createDefaultTrinityReasoningHonesty();
 const validate = createTrinityStructuredOutputValidator(contract);
+const lineBoundaries = [
+  '\n', '\r\n', '\r', '\v', '\f', '\x1c', '\x1d', '\x1e', '\x85', '\u2028', '\u2029',
+];
+
+describe('Trinity private final-envelope boundary', () => {
+  it.each([
+    '{"answer":"<analysis_output>PRIVATE_MALFORMED_FIXTURE</analysis_output>",}',
+    '{"answer":"<analysis_output>PRIVATE_MALFORMED_FIXTURE</analysis_output>"',
+    '["<analysis_output>PRIVATE_MALFORMED_FIXTURE</analysis_output>",]',
+    '{"answer":["<analysis_output>PRIVATE_MALFORMED_FIXTURE</analysis_output>"],}',
+    '{"answer":"\\u003canalysis_output>PRIVATE_MALFORMED_FIXTURE</analysis_output>",}',
+    '{"\\u003canalysis_output>PRIVATE_MALFORMED_FIXTURE</analysis_output>":false,}',
+  ])('inspects complete JSON string scalars in a malformed container: %p', text => {
+    expect(() => assertTrinityFinalOutputIsPublic(text))
+      .toThrow(expect.objectContaining({ reason: 'private_output' }));
+    expect(() => validate(text, flags, honesty))
+      .toThrow(expect.objectContaining({ reason: 'invalid_json' }));
+  });
+
+  it.each(['\n', '\r\n', '\r'])('preserves malformed JSON and XML source examples with %p boundaries', newline => {
+    const xml = '<analysis_output>quoted café 雪</analysis_output>';
+    const text = `{"answer":${JSON.stringify(xml)},}`;
+    const current = `Return JSON containing the exact literal ${JSON.stringify(xml)}.`;
+    expect(() => assertTrinityFinalOutputIsPublic(text, current)).not.toThrow();
+    expect(() => assertTrinityFinalOutputIsPublic(text, `Return the exact document ${JSON.stringify(text)}.`)).not.toThrow();
+    expect(() => assertTrinityFinalOutputIsPublic(['```json', text, '```'].join(newline))).not.toThrow();
+    expect(() => assertTrinityFinalOutputIsPublic(['An invalid JSON example:', `    ${text}`].join(newline))).not.toThrow();
+    expect(() => assertTrinityFinalOutputIsPublic('The example uses "<analysis_output>quoted café 雪</analysis_output>", as literal text.')).not.toThrow();
+    expect(() => assertTrinityFinalOutputIsPublic(`{"answer":${JSON.stringify(xml)},"other":"<analysis_output>PRIVATE_NEIGHBOR_FIXTURE</analysis_output>",}`, current))
+      .toThrow(expect.objectContaining({ reason: 'private_output' }));
+    expect(() => validate(text, flags, honesty, { userPrompt: current, outputControls: deriveTrinityOutputControls(current, {}) }))
+      .toThrow(expect.objectContaining({ reason: 'invalid_json' }));
+  });
+
+  it.each(['```x```', '```xml`'])('rejects a malformed backtick opener before private analysis: %p', opener => {
+    const answer = `${opener}\n<analysis_output>PRIVATE_FENCE_FIXTURE</analysis_output>`;
+    for (const text of [answer, JSON.stringify({ answer }), JSON.stringify({ [answer]: 'Public value.' })]) {
+      expect(() => assertTrinityFinalOutputIsPublic(text))
+        .toThrow(expect.objectContaining({ reason: 'private_output' }));
+    }
+  });
+
+  it.each(['\u00a0', '\u3000'])('rejects Unicode whitespace before private analysis: %p', prefix => {
+    const answer = `${prefix}<analysis_output>PRIVATE_WHITESPACE_FIXTURE</analysis_output>`;
+    for (const text of [answer, JSON.stringify({ answer }), JSON.stringify({ [answer]: 'Public value.' })]) {
+      expect(() => assertTrinityFinalOutputIsPublic(text))
+        .toThrow(expect.objectContaining({ reason: 'private_output' }));
+    }
+  });
+
+  it.each([
+    '```xml\n<analysis_output>café 雪</analysis_output>\n````',
+    '~~~xml`example`\n<analysis_output>café 雪</analysis_output>\n~~~',
+    '````xml\n```x```\n<analysis_output>café 雪</analysis_output>\n````',
+    '    \u00a0<analysis_output>café 雪</analysis_output>',
+    '\t\u3000<analysis_output>café 雪</analysis_output>',
+  ])('preserves valid fence and indented Unicode source examples: %p', answer => {
+    for (const text of [answer, JSON.stringify({ answer }), JSON.stringify({ [answer]: 'Public value.' })]) {
+      expect(() => assertTrinityFinalOutputIsPublic(text)).not.toThrow();
+    }
+  });
+
+  it.each(['```x```\n', '\u00a0', '\u3000'])('preserves only the exact current-source scalar after %p', prefix => {
+    const answer = `${prefix}<analysis_output>quoted café 雪</analysis_output>`;
+    const userPrompt = `Return the exact literal ${JSON.stringify(answer.trim())}.`;
+    for (const text of [answer, JSON.stringify({ answer }), JSON.stringify({ [answer]: 'Public value.' })]) {
+      expect(() => assertTrinityFinalOutputIsPublic(text, userPrompt)).not.toThrow();
+    }
+    expect(() => assertTrinityFinalOutputIsPublic(JSON.stringify({ answer, other: answer.replace('quoted café 雪', 'PRIVATE_NEIGHBOR_FIXTURE') }), userPrompt))
+      .toThrow(expect.objectContaining({ reason: 'private_output' }));
+  });
+
+  it.each(['\u00a0', '\u3000'])('preserves a raw leading-Unicode scalar explicitly quoted by the current user: %p', prefix => {
+    const literal = `${prefix}<analysis_output>quoted café 雪</analysis_output>`;
+    const userPrompt = `Return the exact literal ${JSON.stringify(literal)}.`;
+    const validateObject = createTrinityStructuredOutputValidator({ name: 'literal_example', schema: { type: 'object' } });
+    for (const text of [literal, JSON.stringify({ answer: literal }), JSON.stringify({ [literal]: 'Public value.' })]) {
+      expect(() => assertTrinityFinalOutputIsPublic(text, userPrompt)).not.toThrow();
+      expect(() => assertTrinityFinalOutputIsPublic(text, 'Continue'))
+        .toThrow(expect.objectContaining({ reason: 'private_output' }));
+      if (text !== literal) {
+        expect(validateObject(text, flags, honesty, { userPrompt, outputControls: deriveTrinityOutputControls(userPrompt, {}) })).toBe(text);
+      }
+    }
+    const privateNeighbor = literal.replace('quoted café 雪', 'PRIVATE_RAW_NEIGHBOR_FIXTURE');
+    expect(() => assertTrinityFinalOutputIsPublic(JSON.stringify({ answer: literal, other: privateNeighbor }), userPrompt))
+      .toThrow(expect.objectContaining({ reason: 'private_output' }));
+  });
+
+  it.each([
+    'GPT-5.1 analysis: <analysis_output>PRIVATE_INLINE_FIXTURE</analysis_output>',
+    '{"answer":"<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>"}',
+    '{"nested":[{"answer":"\\u003canalysis_output>PRIVATE_JSON_FIXTURE</analysis_output>"}]}',
+  ])('rejects internal envelopes in inline records and decoded JSON values: %p', text => {
+    expect(() => assertTrinityFinalOutputIsPublic(text)).toThrow(expect.objectContaining({ reason: 'private_output' }));
+  });
+
+  it.each(lineBoundaries)('preserves exact current-user quoted XML JSON data with %p content', newline => {
+    const xml = `<analysis_output>${newline}quoted café 雪${newline}</analysis_output>`;
+    const text = JSON.stringify({ answer: xml });
+    const userPrompt = `Return a JSON document containing the literal ${JSON.stringify(xml)}.`;
+    expect(() => assertTrinityFinalOutputIsPublic(text, userPrompt)).not.toThrow();
+    expect(validate(text, flags, honesty, { userPrompt, outputControls: deriveTrinityOutputControls(userPrompt, {}) })).toBe(text);
+  });
+
+  it.each(['\n', '\u2028'])('rejects decoded JSON analysis keys after %p without changing error priority', newline => {
+    const key = `GPT-5.1 analysis:${newline}<analysis_output>PRIVATE_KEY_FIXTURE</analysis_output>`;
+    const document = JSON.stringify({ [key]: 'Public value.' });
+    const validateObject = createTrinityStructuredOutputValidator({ name: 'key_example', schema: { type: 'object' } });
+    for (const text of [
+      document,
+      JSON.stringify({ answer: [{ [key]: 'Public value.' }] }),
+      JSON.stringify({ answer: document }),
+      JSON.stringify({ [document]: 'Public value.' }),
+    ]) {
+      expect(() => assertTrinityFinalOutputIsPublic(text))
+        .toThrow(expect.objectContaining({ reason: 'private_output' }));
+      expect(() => validateObject(text, flags, honesty))
+        .toThrow(expect.objectContaining({ reason: 'private_output' }));
+    }
+    expect(() => validateObject(document.slice(0, -1), flags, honesty))
+      .toThrow(expect.objectContaining({ reason: 'invalid_json' }));
+    expect(() => validate(document, flags, honesty))
+      .toThrow(expect.objectContaining({ reason: 'schema_mismatch' }));
+  });
+
+  it.each(lineBoundaries)('preserves an exact current-user literal JSON key after %p', newline => {
+    const key = `<analysis_output>${newline}quoted café 雪${newline}</analysis_output>`;
+    const text = JSON.stringify({ [key]: 'Public value.' });
+    const userPrompt = `Use this exact literal as the JSON key: ${JSON.stringify(key)}.`;
+    const validateObject = createTrinityStructuredOutputValidator({ name: 'key_example', schema: { type: 'object' } });
+    expect(() => assertTrinityFinalOutputIsPublic(text, userPrompt)).not.toThrow();
+    expect(validateObject(text, flags, honesty, { userPrompt, outputControls: deriveTrinityOutputControls(userPrompt, {}) })).toBe(text);
+    const otherKey = `GPT-5.1 analysis:${newline}<analysis_output>PRIVATE_KEY_FIXTURE</analysis_output>`;
+    for (const other of [{ [key]: 'Public value.', [otherKey]: 'Private neighbor.' }, { [key]: otherKey }]) {
+      expect(() => assertTrinityFinalOutputIsPublic(JSON.stringify(other), userPrompt))
+        .toThrow(expect.objectContaining({ reason: 'private_output' }));
+    }
+  });
+
+  it.each([
+    '', 'The <analysis_output> label is ordinary key data.',
+    '```xml\n<analysis_output>source example</analysis_output>\n```',
+    '    <analysis_output>indented example</analysis_output>',
+  ])('preserves ordinary and source-example JSON keys: %p', key => {
+    expect(() => assertTrinityFinalOutputIsPublic(JSON.stringify({ [key]: 'Public value.' }))).not.toThrow();
+  });
+
+  it.each(lineBoundaries)('does not extend a quoted JSON value to a private neighbor after %p', newline => {
+    const xml = `<analysis_output>${newline}quoted café 雪${newline}</analysis_output>`;
+    const privateValue = `GPT-5.1 analysis:${newline}<analysis_output>private reasoning fixture</analysis_output>`;
+    const nestedJson = JSON.stringify({ answer: privateValue });
+    for (const text of [
+      JSON.stringify({ answer: xml, nested: [{ answer: privateValue }] }),
+      JSON.stringify({ [xml]: privateValue }),
+      JSON.stringify({ answer: xml, nested: nestedJson }),
+    ]) {
+      expect(() => assertTrinityFinalOutputIsPublic(text, `Return the literal ${JSON.stringify(xml)}.`))
+        .toThrow(expect.objectContaining({ reason: 'private_output' }));
+    }
+    expect(() => assertTrinityFinalOutputIsPublic(JSON.stringify({ answer: nestedJson }),
+      `Return the literal ${JSON.stringify(nestedJson)}.`))
+      .toThrow(expect.objectContaining({ reason: 'private_output' }));
+  });
+
+  it('retains structured validity and honesty checks for quoted source data', () => {
+    const xml = '<analysis_output>I ran npm test.</analysis_output>';
+    const userPrompt = `Return the literal ${JSON.stringify(xml)} in the answer field.`;
+    const context = { userPrompt, outputControls: deriveTrinityOutputControls(userPrompt, {}) };
+    expect(() => validate(JSON.stringify({ answer: xml }), flags, honesty, context))
+      .toThrow(expect.objectContaining({ reason: 'unsupported_claim' }));
+    expect(() => validate('GPT-5.1 analysis: <analysis_output>PRIVATE_INLINE_FIXTURE</analysis_output>', flags, honesty, context))
+      .toThrow(expect.objectContaining({ reason: 'invalid_json' }));
+  });
+
+  it.each(lineBoundaries)('rejects private envelopes after %p line boundaries', newline => {
+    const privateEnvelope = '<analysis_output>private reasoning fixture</analysis_output>';
+    for (const prefix of ['GPT-5.1 analysis:', ['```xml', '<analysis_output>example</analysis_output>', '```'].join(newline)]) {
+      expect(() => assertTrinityFinalOutputIsPublic(`${prefix}${newline}${privateEnvelope}`))
+        .toThrow(expect.objectContaining({ reason: 'private_output' }));
+    }
+  });
+
+  it.each(lineBoundaries)('rejects decoded JSON private envelopes after %p line boundaries', newline => {
+    const privateValue = `GPT-5.1 analysis:${newline}<analysis_output>private reasoning fixture</analysis_output>`;
+    const text = JSON.stringify({ answer: privateValue });
+    expect(() => assertTrinityFinalOutputIsPublic(text))
+      .toThrow(expect.objectContaining({ reason: 'private_output' }));
+    expect(() => validate(text, flags, honesty))
+      .toThrow(expect.objectContaining({ reason: 'private_output' }));
+    expect(() => validate(privateValue, flags, honesty))
+      .toThrow(expect.objectContaining({ reason: 'invalid_json' }));
+    expect(() => validate(JSON.stringify({ answer: privateValue, extra: true }), flags, honesty))
+      .toThrow(expect.objectContaining({ reason: 'schema_mismatch' }));
+  });
+
+  it.each(lineBoundaries)('preserves fenced source examples with %p line boundaries', newline => {
+    expect(() => assertTrinityFinalOutputIsPublic([
+      '```xml', '<analysis_output>example</analysis_output>', '```',
+      '    <analysis_output>indented example</analysis_output>',
+    ].join(newline))).not.toThrow();
+  });
+
+  it.each([
+    '<analysis_output>private reasoning fixture</analysis_output>',
+    '<ANALYSIS_OUTPUT>private reasoning fixture</ANALYSIS_OUTPUT>',
+    '  <Analysis_Output>private reasoning fixture</Analysis_Output>',
+    'GPT-5.1 analysis:\n<analysis_output>private reasoning fixture</analysis_output>',
+    '<analysis_output>private reasoning fixture',
+    '<analysis_output\nprivate reasoning fixture',
+    '<analysis_output private reasoning fixture',
+    '</analysis_output>private reasoning fixture',
+  ])('rejects an unquoted private-envelope prefix: %p', text => {
+    expect(() => assertTrinityFinalOutputIsPublic(text)).toThrow(expect.objectContaining({
+      code: 'TRINITY_STRUCTURED_OUTPUT_INVALID', reason: 'private_output',
+    }));
+  });
+
+  it.each([
+    '```xml\n<analysis_output>example text</analysis_output>\n```',
+    '~~~xml\n<ANALYSIS_OUTPUT>example text</ANALYSIS_OUTPUT>\n~~~',
+    '    <analysis_output>indented example</analysis_output>',
+    '\t<analysis_output>indented example</analysis_output>',
+    'The `<analysis_output>` label is literal text.',
+    '`<analysis_output>example text</analysis_output>`',
+    'The <analysis_output> label is literal text.',
+    '<analysis_output_example>ordinary element</analysis_output_example>',
+  ])('preserves code examples and inline mentions: %p', text => {
+    expect(() => assertTrinityFinalOutputIsPublic(text)).not.toThrow();
+  });
+});
 
 describe('Trinity final JSON contract validation', () => {
+  it('uses the current final-line literal contract for a structured string value', () => {
+    const userPrompt = 'Return a source code example and a final line reading SOURCE-LIVE-MARKER.';
+    const raw = JSON.stringify({ answer: 'SOURCE-LIVE-MARKER' });
+    expect(validate(raw, flags, honesty, {
+      userPrompt, outputControls: deriveTrinityOutputControls(userPrompt, {}),
+    })).toBe(raw);
+  });
+
+  it('retains current requested string values without granting the same exception to keys or other claims', () => {
+    const validateFields = createTrinityStructuredOutputValidator({ name: 'marker_fields', schema: { type: 'object' } });
+    const marker = 'SOURCE-LIVE-MARKER';
+    const userPrompt = `Return a source code example and a final line reading ${marker}.`;
+    const context = { userPrompt, outputControls: deriveTrinityOutputControls(userPrompt, {}) };
+    const raw = JSON.stringify({ answer: marker, nested: [{ value: marker }] });
+    expect(validateFields(raw, flags, honesty, context)).toBe(raw);
+    for (const value of [true, false]) {
+      expect(() => validateFields(JSON.stringify({ answer: marker, [marker]: value }), flags, honesty, context))
+        .toThrow(expect.objectContaining({ reason: 'unsupported_claim' }));
+    }
+    expect(() => validateFields(JSON.stringify({ answer: marker, other: 'PRODUCTION-VERIFIED' }), flags, honesty, context))
+      .toThrow(expect.objectContaining({ reason: 'unsupported_claim' }));
+    expect(() => validateFields(raw, flags, honesty, {
+      userPrompt: 'Report only what can be established from the supplied source.', outputControls: context.outputControls,
+    })).toThrow(expect.objectContaining({ reason: 'unsupported_claim' }));
+  });
+
+  it('retains a requested marker alongside a required structured limitation', () => {
+    const userPrompt = 'Return a source code example and a final line reading SOURCE-LIVE-MARKER.';
+    const partial = { ...honesty, responseMode: 'partial_refusal' as const,
+      blockedSubtasks: ['verify live status'], userVisibleCaveats: ["I can't verify live status here."] };
+    const validateFields = createTrinityStructuredOutputValidator({ name: 'marker_limitation', schema: { type: 'object' } });
+    const raw = JSON.stringify({ caveat: 'I cannot verify live status here.', answer: 'SOURCE-LIVE-MARKER' });
+    expect(validateFields(raw, flags, partial, {
+      userPrompt, outputControls: deriveTrinityOutputControls(userPrompt, {}),
+    })).toBe(raw);
+  });
+
   it('preserves a caller-owned false verification flag without asserting completed work', () => {
     const validateFlag = createTrinityStructuredOutputValidator({
       name: 'verification_flag', schema: {

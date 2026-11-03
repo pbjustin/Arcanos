@@ -1016,7 +1016,9 @@ export const ArcanosCore: ModuleDef = {
           ? (payload as ArcanosCoreQueryPayload)
           : {};
       const directPrompt = extractDirectPrompt(normalizedPayload);
-      const messages = directPrompt ? undefined : readTrinityMessages(normalizedPayload.messages);
+      const messages = !directPrompt || directPrompt === extractPromptFromMessages(normalizedPayload.messages)
+        ? readTrinityMessages(normalizedPayload.messages)
+        : undefined;
       const prompt = extractPrompt(normalizedPayload);
       emitCoreRuntimeTrace({
         phase: 'prompt_normalization',
@@ -1135,6 +1137,7 @@ export const ArcanosCore: ModuleDef = {
         sourceEndpoint,
         maxOutputTokens,
         runOptions: {
+          ...(messages ? { trustedPolicyPrompt: prompt } : {}),
           ...(answerMode ? { answerMode } : {}),
           ...(maxWords ? { maxWords } : {})
         },
