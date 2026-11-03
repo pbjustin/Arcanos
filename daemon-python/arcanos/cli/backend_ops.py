@@ -205,7 +205,11 @@ def request_backend_system_state_payload(cli: "ArcanosCLI") -> Optional[dict[str
         # //audit assumption: backend client may be missing; risk: attempted state call without backend; invariant: no request attempted; strategy: return None.
         return None
 
-    metadata = build_backend_metadata(cli)
+    metadata = {
+        "source": "daemon",
+        "client": cli.client_id,
+        "instanceId": cli.instance_id,
+    }
     response = request_with_auth_retry(
         cli,
         lambda: cli.backend_client.request_system_state(metadata=metadata),

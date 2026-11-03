@@ -7,6 +7,9 @@ from types import SimpleNamespace
 
 import pytest
 
+import arcanos.backend_client as backend_client_module
+from arcanos.agentic import repo_indexer
+from arcanos.backend_client import BackendApiClient
 from arcanos.backend_client_models import BackendChatResult, BackendResponse, BackendVisionResult
 from arcanos.cli import backend_ops
 
@@ -31,6 +34,48 @@ def _make_cli_stub() -> SimpleNamespace:
         client_id="test-client",
         console=console_stub,
     )
+
+
+def test_system_state_read_preserves_session_without_building_repo_index(monkeypatch) -> None:
+    cli_stub = _make_cli_stub()
+    repo_scans: list[bool] = []
+    requests: list[tuple[str, str, dict]] = []
+    state_payload = {"mode": "system_state", "intent": {"version": 7}}
+
+    def _build_repo_index():
+        repo_scans.append(True)
+        raise AssertionError("System-state reads must not scan the repository")
+
+    def _request(method, url, **kwargs):
+        requests.append((method, url, kwargs))
+        return SimpleNamespace(
+            status_code=200, headers={}, text=json.dumps(state_payload),
+            json=lambda: state_payload,
+        )
+
+    def _unrelated_credential():
+        raise AssertionError("System-state reads must use the control-plane credential")
+
+    monkeypatch.setattr(backend_ops.Config, "REPO_INDEX_ENABLED", True)
+    monkeypatch.setattr(
+        backend_ops.Config, "CONTROL_PLANE_ACCESS_TOKEN",
+        "synthetic-system-state-metadata-control-token-1234567890",
+    )
+    monkeypatch.setattr(repo_indexer, "build_repo_index", _build_repo_index)
+    monkeypatch.setattr(backend_client_module, "log_audit_event", lambda *args, **kwargs: None)
+    cli_stub.backend_client = BackendApiClient(
+        "https://backend.example.invalid", _unrelated_credential, request_sender=_request,
+    )
+
+    result = backend_ops.request_backend_system_state_payload(cli_stub)
+
+    assert repo_scans == []
+    assert result is state_payload
+    assert len(requests) == 1
+    method, url, options = requests[0]
+    assert method == "get"
+    assert url == "https://backend.example.invalid/system-state?sessionId=test-instance"
+    assert options["json"] is None
 
 
 @pytest.mark.parametrize("presentation", [None, "public-answer-v1"])
