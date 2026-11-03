@@ -155,9 +155,9 @@ const DEFAULT_TRINITY_DIRECT_ANSWER_RECOVERY_TIMEOUT_MS = 8_000;
 const OPTIONAL_SIDE_EFFECTS_DISABLED_REASON = 'disabled_by_caller';
 // Wrapped requests and dots inside version/file names retain their code cue.
 const EXPLICIT_CODE_PRESENTATION_REQUEST =
-  /\b(?:write|generate|return|provide|show)\b(?:[^.!?]|\.(?=\S)){0,120}\b(?:code|script|snippet)\b/iu;
+  /\b(?:write|generate|return|provide|show|give)\b(?:[^.!?]|\.(?=\S)){0,120}\b(?:code|script|snippet)\b/iu;
 const CODE_PRESENTATION_OUTPUT =
-  /^ {0,3}(?:`{3,}[^`\r\n]*|~{3,}[^\r\n]*)$|^(?: {4}|\t)[ \t]*\S/mu;
+  /^ {0,3}(?:`{3,}[^`\r\n]*|~{3,}[^\r\n]*)$|^(?: {4}|\t)[ \t]*\S|^[ \t]*[A-Za-z_$][\w.$]*\(/mu;
 const SENSITIVE_AUDIT_CONTENT_REDACTED = '[SENSITIVE_CONTEXT_REDACTED]';
 const SENSITIVE_AUDIT_CONTENT_REDACTED_FLAG = 'SENSITIVE_CONTEXT_AUDIT_CONTENT_REDACTED';
 

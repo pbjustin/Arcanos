@@ -304,10 +304,18 @@ describe('Trinity caller-declared final JSON integrity at actual provider extrac
 
   it.each((['direct', 'explained'] as const).flatMap(mode => [
     'Return a source code example.', 'Return Python 3.11 code.', 'Show src/app.ts code.',
+    'Give me a code example.',
     ...['\n', '\r\n', '\r'].map(newline => `Return a source${newline}code example.`),
   ].map(request => ({ mode, request }))))('preserves a one-line literal for an explicit code request in $mode mode: $request', async ({ mode, request }) => {
     finalText = 'print("It is café 雪; do not alter this literal.")';
     const result = await run(mode, null, request);
+    expect(result.result).toBe(finalText);
+    expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
+  });
+
+  it.each(['direct', 'explained'] as const)('preserves a standalone function-call literal without a code-request keyword in %s mode', async mode => {
+    finalText = 'print("It is café 雪; do not alter this literal.")';
+    const result = await run(mode, null, 'Assess the supplied example.');
     expect(result.result).toBe(finalText);
     expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
   });
