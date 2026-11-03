@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+import requests
 from rich.console import Console
 
 from arcanos.agentic import agent_loop
@@ -20,6 +21,7 @@ from arcanos.cli.trust_state import TrustState
 from arcanos.cli_midlayer import translate
 from arcanos.cli_session import SessionContext
 from arcanos.config import Config
+from arcanos.schema import Memory
 from arcanos.voice_boundary import Persona, apply_voice_boundary
 
 PYTHON_ANSWER = """```python
@@ -953,6 +955,295 @@ def test_backend_parse_to_cli_preserves_code_and_ignores_private_envelope_fields
 
     assert PYTHON_ANSWER in output.getvalue()
     assert "private-envelope-fixture" not in output.getvalue()
+
+
+def _deliver_through_backend_transport(
+    presentation_cli, monkeypatch, tmp_path, answer, *, agentic, presentation, message,
+    previous_user_message=None,
+):
+    """Inject only HTTP response bytes; retain real parsing, disclosure and storage."""
+    cli, output = presentation_cli
+    cli.client_id = "privacy-transport-fixture"
+    cli.memory = Memory(tmp_path / "memories.json")
+    if previous_user_message is not None:
+        cli.memory.add_conversation(previous_user_message, "Earlier literal example.", 0, 0.0)
+    previous_history = list(cli.memory.get_recent_conversations())
+    history = HistoryDB(tmp_path / "history.sqlite3") if agentic else None
+    if history is not None:
+        monkeypatch.setattr(agent_loop, "HistoryDB", lambda: history)
+    monkeypatch.setattr(Config, "AGENTIC_ENABLED", agentic)
+    monkeypatch.setattr(
+        cli_module.backend_ops, "refresh_registry_cache_if_stale", lambda _: None
+    )
+
+    envelope = {"ok": True, "result": {"text": answer}, "model": "privacy-fixture"}
+    if presentation is not None:
+        envelope["presentation"] = presentation
+    response = requests.Response()
+    response.status_code = 200
+    response._content = json.dumps(envelope, ensure_ascii=False).encode("utf-8")
+    response.headers["Content-Type"] = "application/json; charset=utf-8"
+
+    def send(method, url, **_kwargs):
+        assert method == "post"
+        assert url == "https://privacy-fixture.invalid/gpt/arcanos-daemon"
+        return response
+
+    sender = MagicMock(side_effect=send)
+    client = BackendApiClient(
+        "https://privacy-fixture.invalid",
+        token_provider=lambda: "offline-transport-fixture",
+        request_sender=sender,
+    )
+    cli.backend_client = client
+    parsed_results = []
+    original_parse = client._parse_chat_response
+
+    def parse(payload):
+        result = original_parse(payload)
+        parsed_results.append(result)
+        return result
+
+    monkeypatch.setattr(client, "_parse_chat_response", parse)
+    disclosure_results = []
+    original_translate = cli_module.translate
+
+    def observe_disclosure(*args, **kwargs):
+        result = original_translate(*args, **kwargs)
+        disclosure_results.append(result)
+        return result
+
+    monkeypatch.setattr(cli_module, "translate", observe_disclosure)
+    cli.handle_ask(message, route_override="backend", speak_response=True)
+    delivered_output = output.getvalue()
+    initial_speech = [call.args[0] for call in cli.audio.speak.call_args_list]
+    initial_speech_count = cli.audio.speak.call_count
+    cli.handle_speak()
+    replay_speech = [
+        call.args[0]
+        for call in cli.audio.speak.call_args_list[initial_speech_count:]
+    ]
+    conversations = json.loads(cli.memory.file_path.read_text(encoding="utf-8"))[
+        "conversations"
+    ]
+    sqlite_assistant = None
+    if history is not None:
+        export_path = tmp_path / "audit.json"
+        history.export_audit(export_path, session_id=cli.instance_id)
+        audit = json.loads(export_path.read_text(encoding="utf-8"))
+        sqlite_assistant = [row[2] for row in audit["messages"] if row[1] == "assistant"]
+    assert sender.call_count == 1
+    if previous_user_message is not None:
+        assert any(
+            item["content"] == previous_user_message
+            for item in sender.call_args.kwargs["json"]["messages"]
+        )
+    assert conversations[:-1] == previous_history
+    assert len(parsed_results) == 1
+    assert parsed_results[0].ok
+    assert parsed_results[0].value is not None
+    assert parsed_results[0].value.response_text == answer
+    cli.terminal.is_command_safe.assert_not_called()
+    cli.terminal.execute.assert_not_called()
+    return {
+        "transport_parser_accepted": True,
+        "disclosure_accepted": [show for _, show in disclosure_results],
+        "display": delivered_output,
+        "ordinary_json_assistant": [conversations[-1]["ai"]],
+        "sqlite_audit_assistant": sqlite_assistant,
+        "initial_speech": initial_speech,
+        "replay_speech": replay_speech,
+    }
+
+
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+@pytest.mark.parametrize(
+    "presentation", [None, "public-answer-v1"], ids=["unmarked", "public-answer"]
+)
+@pytest.mark.parametrize(
+    "case,answer,marker,message,previous_user_message",
+    [
+        (
+            "inline",
+            "GPT-5.1 analysis: <analysis_output>PRIVATE_INLINE_FIXTURE</analysis_output>",
+            "PRIVATE_INLINE_FIXTURE",
+            "What is the complete answer?",
+            None,
+        ),
+        (
+            "json",
+            '{"answer":"<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>"}',
+            "PRIVATE_JSON_FIXTURE",
+            "What is the complete answer?",
+            None,
+        ),
+        (
+            "json-example-request-without-literal",
+            '{"answer":"<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>"}',
+            "PRIVATE_JSON_FIXTURE",
+            "Return a JSON example.",
+            None,
+        ),
+        (
+            "neighboring-json-value",
+            '{"example":"<analysis_output>SAFE_XML_FIXTURE</analysis_output>",'
+            '"answer":"<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>"}',
+            "PRIVATE_JSON_FIXTURE",
+            'Return JSON with the literal XML `<analysis_output>SAFE_XML_FIXTURE</analysis_output>`.',
+            None,
+        ),
+        (
+            "tag-only-source",
+            '{"answer":"<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>"}',
+            "PRIVATE_JSON_FIXTURE",
+            "The tag is `<analysis_output>`. Return the complete answer.",
+            None,
+        ),
+        (
+            "historical-source",
+            '{"answer":"<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>"}',
+            "PRIVATE_JSON_FIXTURE",
+            "Continue",
+            'Return the literal XML `<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>`.',
+        ),
+        (
+            "prefixed-unit-not-provided",
+            "GPT-5.1 analysis: <analysis_output>PRIVATE_INLINE_FIXTURE</analysis_output>",
+            "PRIVATE_INLINE_FIXTURE",
+            'Return the literal XML `<analysis_output>PRIVATE_INLINE_FIXTURE</analysis_output>`.',
+            None,
+        ),
+        (
+            "suffixed-unit-not-provided",
+            '{"answer":"<analysis_output>SAFE_XML_FIXTURE</analysis_output> PRIVATE_SUFFIX_FIXTURE"}',
+            "PRIVATE_SUFFIX_FIXTURE",
+            'Return the literal XML `<analysis_output>SAFE_XML_FIXTURE</analysis_output>`.',
+            None,
+        ),
+        (
+            "other-private-record-not-exempt",
+            '{"answer":"<analysis_output>SAFE_XML_FIXTURE</analysis_output>",'
+            '"audit_trace":"PRIVATE_NEIGHBOR_RECORD"}',
+            "PRIVATE_NEIGHBOR_RECORD",
+            'Return the literal XML `<analysis_output>SAFE_XML_FIXTURE</analysis_output>`.',
+            None,
+        ),
+    ],
+    ids=[
+        "inline-analysis", "json-analysis", "json-generic-example-request",
+        "neighboring-json-value", "tag-only-source", "historical-source",
+        "prefixed-unit-not-provided", "suffixed-unit-not-provided",
+        "other-private-record-not-exempt",
+    ],
+)
+def test_backend_transport_private_analysis_cannot_reach_any_user_sink(
+    presentation_cli, monkeypatch, tmp_path, agentic, presentation, case, answer, marker,
+    message, previous_user_message,
+):
+    sinks = _deliver_through_backend_transport(
+        presentation_cli,
+        monkeypatch,
+        tmp_path,
+        answer,
+        agentic=agentic,
+        presentation=presentation,
+        message=message,
+        previous_user_message=previous_user_message,
+    )
+    leaked = {
+        name: marker in json.dumps(value)
+        for name, value in sinks.items()
+        if name not in {"transport_parser_accepted", "disclosure_accepted"}
+    }
+    print(json.dumps({
+        "case": case, "agentic": agentic, "presentation": presentation,
+        "transport_parser_accepted": sinks["transport_parser_accepted"],
+        "disclosure_accepted": sinks["disclosure_accepted"], "leaked_sinks": leaked,
+        "not_reached_sinks": ["initial_speech", "replay_speech"] if agentic
+        else ["sqlite_audit_assistant"],
+    }))
+    assert not any(sinks["disclosure_accepted"])
+    assert not any(leaked.values())
+    assert sinks["ordinary_json_assistant"] == [""]
+    if agentic:
+        assert sinks["sqlite_audit_assistant"] == [""]
+
+
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+@pytest.mark.parametrize(
+    "presentation", [None, "public-answer-v1"], ids=["unmarked", "public-answer"]
+)
+@pytest.mark.parametrize(
+    "answer,message,should_show",
+    [
+        (
+            '{"answer":"<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>"}',
+            'Return JSON with an answer string containing this exact literal XML: '
+            '`<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>`.',
+            True,
+        ),
+        (
+            "The XML example is <analysis_output>café 雪</analysis_output>.",
+            "Show this XML literal inline: `<analysis_output>café 雪</analysis_output>`.",
+            True,
+        ),
+        (
+            "`<analysis_output>café 雪</analysis_output>`",
+            "Show this exact XML literal as inline code: `<analysis_output>café 雪</analysis_output>`.",
+            True,
+        ),
+        *[
+            (
+                f"```xml{ending}<analysis_output>café 雪</analysis_output>{ending}```",
+                "Show this XML literal as fenced code: `<analysis_output>café 雪</analysis_output>`.",
+                ending != "\r",
+            )
+            for ending in ("\n", "\r\n", "\r")
+        ],
+        *[
+            (
+                f"    <analysis_output>{ending}    café 雪{ending}    </analysis_output>",
+                "Show this XML literal as indented code: `<analysis_output>café 雪</analysis_output>`.",
+                ending != "\r",
+            )
+            for ending in ("\n", "\r\n", "\r")
+        ],
+    ],
+    ids=[
+        "requested-json-literal-xml", "inline-xml", "inline-code-xml",
+        "fenced-lf", "fenced-crlf", "fenced-cr-terminal-refusal",
+        "indented-lf", "indented-crlf", "indented-cr-terminal-refusal",
+    ],
+)
+def test_backend_transport_literal_xml_controls_keep_supported_presentation(
+    presentation_cli, monkeypatch, tmp_path, agentic, presentation, answer, message, should_show
+):
+    sinks = _deliver_through_backend_transport(
+        presentation_cli,
+        monkeypatch,
+        tmp_path,
+        answer,
+        agentic=agentic,
+        presentation=presentation,
+        message=message,
+    )
+    assert sinks["disclosure_accepted"] == [should_show]
+    if should_show:
+        assert answer in sinks["display"]
+        assert sinks["ordinary_json_assistant"] == [answer]
+        if agentic:
+            assert sinks["sqlite_audit_assistant"] == [answer]
+        else:
+            # TTS trims outer whitespace; display and history retain exact bytes.
+            assert sinks["initial_speech"] == [answer.strip()]
+            assert sinks["replay_speech"] == [answer.strip()]
+    else:
+        assert sinks["display"].count(NO_DISPLAYABLE_NOTICE) == 1
+        assert sinks["ordinary_json_assistant"] == [""]
+        assert sinks["initial_speech"] == []
+        assert sinks["replay_speech"] == []
+        if agentic:
+            assert sinks["sqlite_audit_assistant"] == [""]
 
 
 def test_private_agentic_payload_cannot_become_an_action_proposal(

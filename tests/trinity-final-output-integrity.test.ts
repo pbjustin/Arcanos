@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 import type OpenAI from 'openai';
 import type { ResponseCreateParamsNonStreaming } from 'openai/resources/responses/responses';
 import type { TrinityGenerationMessage } from '../src/core/logic/trinityGenerationFacade.js';
+import type { TrinityStructuredOutputContract } from '../src/core/logic/trinityTypes.js';
 import { getFinalizedPublicAnswerPresentation } from '../src/shared/http/clientResponseCommon.js';
 import { buildTrinityUserVisibleResponse } from '../src/shared/ask/trinityResponseSerializer.js';
 
@@ -29,6 +30,7 @@ jest.unstable_mockModule('@services/selfImprove/selfHealingV2.js', () => ({
 const { runThroughBrain } = await import('../src/core/logic/trinity.js');
 const { runTrinityWritingPipeline } = await import('../src/core/logic/trinityWritingPipeline.js');
 const { runTrinity } = await import('../src/trinity/trinity.js');
+const { classifyTrinityIntegrityRepairFailure } = await import('../src/core/logic/trinityIntegrityRecovery.js');
 const { logger } = await import('../src/platform/logging/structuredLogging.js');
 const { createRuntimeBudgetWithLimit } = await import('../src/platform/resilience/runtimeBudget.js');
 const responsesCreate = jest.fn();
@@ -70,7 +72,7 @@ function response(payload: ResponseCreateParamsNonStreaming) {
     output_text: text, output: [], usage: { input_tokens: 5, output_tokens: 5, total_tokens: 10 } };
 }
 
-function run(answerMode: 'direct' | 'explained' = 'explained', finalOutputContract: typeof contract | null = contract,
+function run(answerMode: 'direct' | 'explained' = 'explained', finalOutputContract: TrinityStructuredOutputContract | null = contract,
   requestedPrompt = prompt, messages?: TrinityGenerationMessage[], maxWords?: number) {
   return runTrinityWritingPipeline({
     input: { ...(messages ? { messages } : { prompt: requestedPrompt }), sourceEndpoint: 'trinity-output-integrity.fixture' },
@@ -394,6 +396,115 @@ describe('Trinity caller-declared final JSON integrity at actual provider extrac
     await expect(run(mode, null,
       'Return a short Markdown example containing a fenced Python code block.').then(delivered))
       .rejects.toMatchObject({ code: 'TRINITY_STRUCTURED_OUTPUT_INVALID', reason: 'private_output' });
+    expect(delivered).not.toHaveBeenCalled();
+    expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
+  });
+
+  it.each((['direct', 'explained'] as const).flatMap(mode => [
+    { mode, label: 'same-line analysis prefix', output: 'GPT-5.1 analysis: <analysis_output>PRIVATE_INLINE_FIXTURE</analysis_output>',
+      structured: false, invalidJson: false, context: 'plain' },
+    { mode, label: 'same-line analysis prefix with JSON contract', output: 'GPT-5.1 analysis: <analysis_output>PRIVATE_INLINE_FIXTURE</analysis_output>',
+      structured: true, invalidJson: true, context: 'plain' },
+    { mode, label: 'JSON envelope without a contract', output: '{"answer":"<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>"}',
+      structured: false, invalidJson: false, context: 'plain' },
+    { mode, label: 'JSON envelope with a matching contract', output: '{"answer":"<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>"}',
+      structured: true, invalidJson: false, context: 'plain' },
+    { mode, label: 'same-line analysis prefix under a generic code request', output: 'GPT-5.1 analysis: <analysis_output>PRIVATE_INLINE_FIXTURE</analysis_output>',
+      structured: false, invalidJson: false, context: 'code' },
+    { mode, label: 'JSON envelope under a generic code request', output: '{"answer":"<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>"}',
+      structured: true, invalidJson: false, context: 'code' },
+    { mode, label: 'JSON envelope with only its tag quoted in the current request',
+      output: '{"answer":"<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>"}',
+      structured: true, invalidJson: false, context: 'tag-only' },
+    { mode, label: 'JSON envelope whose full quote exists only in history',
+      output: '{"answer":"<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>"}',
+      structured: true, invalidJson: false, context: 'history' },
+    { mode, label: 'mixed JSON with a provided literal and another private envelope',
+      output: JSON.stringify({ answer: '<analysis_output>quoted example café 雪</analysis_output>',
+        other: '<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>' }),
+      structured: true, invalidJson: false, context: 'mixed' },
+  ]))('blocks $label in the actual $mode provider-to-publication path', async ({ mode, output, structured, invalidJson, context }) => {
+    finalText = output;
+    const answerContract: TrinityStructuredOutputContract = {
+      name: 'public_answer', schema: { type: 'object', additionalProperties: false,
+        required: context === 'mixed' ? ['answer', 'other'] : ['answer'],
+        properties: { answer: { type: 'string' }, ...(context === 'mixed' ? { other: { type: 'string' } } : {}) } },
+    };
+    const currentRequest = context === 'code' ? 'Return a source code example using XML tags.'
+      : context === 'tag-only' ? 'Assess the quoted "<analysis_output>" tag and return an example.'
+      : context === 'history' ? 'Continue'
+      : context === 'mixed' ? 'Return JSON whose answer field is the literal XML string "<analysis_output>quoted example café 雪</analysis_output>" and whose other field contains relevant findings.'
+      : 'Assess the supplied outline and return a short example.';
+    const messages: TrinityGenerationMessage[] | undefined = context === 'history' ? [
+      { role: 'user', content: 'Return JSON whose answer is the literal XML string "<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>".' },
+      { role: 'assistant', content: output },
+      { role: 'user', content: currentRequest },
+    ] : undefined;
+    const observed = await run(mode, structured ? answerContract : null, currentRequest, messages).then(result => {
+      const publication = buildTrinityUserVisibleResponse({ trinityResult: result });
+      return { sink: 'public' as const, text: publication.result, presentation: publication.presentation };
+    }, error => {
+      expect(String(error)).not.toMatch(/PRIVATE_(?:INLINE|JSON)_FIXTURE/u);
+      expect(JSON.stringify(error)).not.toMatch(/PRIVATE_(?:INLINE|JSON)_FIXTURE/u);
+      expect(error.stack ?? '').not.toMatch(/PRIVATE_(?:INLINE|JSON)_FIXTURE/u);
+      return { sink: 'error' as const, code: error.code, reason: error.reason, message: error.message };
+    });
+    expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
+    expect(observed).toEqual({
+      sink: 'error', code: 'TRINITY_STRUCTURED_OUTPUT_INVALID',
+      reason: invalidJson ? 'invalid_json' : 'private_output',
+      message: expect.any(String),
+    });
+    expect(JSON.stringify(observed)).not.toMatch(/PRIVATE_(?:INLINE|JSON)_FIXTURE/u);
+  });
+
+  it.each((['direct', 'explained'] as const).flatMap(mode => [
+    { mode, label: 'inline mention', output: 'The `<analysis_output>` tag labels a quoted XML example.' },
+    ...(['\n', '\r\n', '\r'] as const).flatMap(newline => [
+      { mode, label: `fenced XML ${JSON.stringify(newline)}`,
+        output: ['```xml', '<analysis_output>quoted example café 雪</analysis_output>', '```'].join(newline) },
+      { mode, label: `indented XML ${JSON.stringify(newline)}`,
+        output: ['An XML example:', '', '    <analysis_output>quoted example café 雪</analysis_output>'].join(newline) },
+    ]),
+  ]))('preserves legitimate $label data through $mode publication', async ({ mode, output }) => {
+    finalText = output;
+    const result = await run(mode, null, 'Return a source code example using XML tags.');
+    const publication = buildTrinityUserVisibleResponse({ trinityResult: result });
+    expect(publication.result).toBe(output);
+    expect(publication.presentation).toBe('public-answer-v1');
+    expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
+  });
+
+  it.each((['direct', 'explained'] as const).flatMap(mode => [true, false].map(structured => ({ mode, structured }))))(
+    'preserves caller-supplied quoted XML as $mode JSON data (contract: $structured)', async ({ mode, structured }) => {
+    const xml = '<analysis_output>quoted example café 雪</analysis_output>';
+    finalText = JSON.stringify({ answer: xml });
+    const answerContract: TrinityStructuredOutputContract = {
+      name: 'quoted_xml', schema: { type: 'object', additionalProperties: false, required: ['answer'],
+        properties: { answer: { type: 'string' } } },
+    };
+    const result = await run(mode, structured ? answerContract : null,
+      `Return a JSON object whose answer field is the literal XML string "${xml}".`);
+    const publication = buildTrinityUserVisibleResponse({ trinityResult: result });
+    expect(publication.result).toBe(finalText);
+    expect(JSON.parse(publication.result)).toEqual({ answer: xml });
+    expect(publication.presentation).toBe('public-answer-v1');
+    expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
+  });
+
+  it.each(['direct', 'explained'] as const)('retains provider-incomplete priority over private JSON content in %s mode', async mode => {
+    finalText = '{"answer":"<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>"}';
+    incomplete = true;
+    const answerContract: TrinityStructuredOutputContract = {
+      name: 'incomplete_answer', schema: { type: 'object', additionalProperties: false, required: ['answer'],
+        properties: { answer: { type: 'string' } } },
+    };
+    const delivered = jest.fn();
+    const pending = run(mode, answerContract, 'Assess the supplied outline and return a short example.').then(delivered);
+    await expect(pending).rejects.toMatchObject({ code: 'OPENAI_COMPLETION_INCOMPLETE' });
+    const error = await pending.catch(value => value);
+    expect(classifyTrinityIntegrityRepairFailure(error)).toBe('provider_incomplete');
+    expect(String(error)).not.toContain('PRIVATE_JSON_FIXTURE');
     expect(delivered).not.toHaveBeenCalled();
     expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
   });

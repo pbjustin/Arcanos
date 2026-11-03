@@ -13,6 +13,32 @@ const honesty = createDefaultTrinityReasoningHonesty();
 const validate = createTrinityStructuredOutputValidator(contract);
 
 describe('Trinity private final-envelope boundary', () => {
+  it.each([
+    'GPT-5.1 analysis: <analysis_output>PRIVATE_INLINE_FIXTURE</analysis_output>',
+    '{"answer":"<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>"}',
+    '{"nested":[{"answer":"\\u003canalysis_output>PRIVATE_JSON_FIXTURE</analysis_output>"}]}',
+  ])('rejects internal envelopes in inline records and decoded JSON values: %p', text => {
+    expect(() => assertTrinityFinalOutputIsPublic(text)).toThrow(expect.objectContaining({ reason: 'private_output' }));
+  });
+
+  it.each(['\n', '\r\n', '\r'])('preserves exact current-user quoted XML JSON data with %p content', newline => {
+    const xml = `<analysis_output>${newline}quoted café 雪${newline}</analysis_output>`;
+    const text = JSON.stringify({ answer: xml });
+    const userPrompt = `Return a JSON document containing the literal ${JSON.stringify(xml)}.`;
+    expect(() => assertTrinityFinalOutputIsPublic(text, userPrompt)).not.toThrow();
+    expect(validate(text, flags, honesty, { userPrompt, outputControls: deriveTrinityOutputControls(userPrompt, {}) })).toBe(text);
+  });
+
+  it('retains structured validity and honesty checks for quoted source data', () => {
+    const xml = '<analysis_output>I ran npm test.</analysis_output>';
+    const userPrompt = `Return the literal ${JSON.stringify(xml)} in the answer field.`;
+    const context = { userPrompt, outputControls: deriveTrinityOutputControls(userPrompt, {}) };
+    expect(() => validate(JSON.stringify({ answer: xml }), flags, honesty, context))
+      .toThrow(expect.objectContaining({ reason: 'unsupported_claim' }));
+    expect(() => validate('GPT-5.1 analysis: <analysis_output>PRIVATE_INLINE_FIXTURE</analysis_output>', flags, honesty, context))
+      .toThrow(expect.objectContaining({ reason: 'invalid_json' }));
+  });
+
   it.each(['\n', '\r\n', '\r'])('rejects private envelopes after %p line boundaries', newline => {
     const privateEnvelope = '<analysis_output>private reasoning fixture</analysis_output>';
     for (const prefix of ['GPT-5.1 analysis:', ['```xml', '<analysis_output>example</analysis_output>', '```'].join(newline)]) {

@@ -1184,7 +1184,7 @@ export async function runThroughBrain(
         getAiExecutionContext()?.traceId
       );
       const prepareDirectAnswerCandidate = (candidateText: string) => {
-        assertTrinityFinalOutputIsPublic(candidateText);
+        if (!validateStructuredOutput) assertTrinityFinalOutputIsPublic(candidateText, trustedPolicyPrompt);
         if (validateStructuredOutput) {
           const providerBlocker = classifyTrinityProviderIntegrityBlocker(directAnswerOutput.provider);
           if (providerBlocker) throw new TrinityStructuredOutputError(providerBlocker);
@@ -2149,7 +2149,7 @@ export async function runThroughBrain(
     const userIntent = MidLayerTranslator.detectIntentFromUserMessage(trustedPolicyPrompt);
     const providerBlocker = classifyTrinityProviderIntegrityBlocker(finalOutput.provider);
     if (providerBlocker) throw new TrinityStructuredOutputError(providerBlocker);
-    assertTrinityFinalOutputIsPublic(finalOutput.output);
+    if (!validateStructuredOutput) assertTrinityFinalOutputIsPublic(finalOutput.output, trustedPolicyPrompt);
     const preserveFinalPresentation = Boolean(gamingGuideIntakePolicy) || userIntent === 'code'
       || preserveContinuationPresentation;
     const translatedFinalText = validateStructuredOutput ? finalOutput.output : gamingGuideIntakePolicy

@@ -25,7 +25,12 @@ export class TrinityStructuredOutputError extends Error {
 }
 
 /** Never promote an echoed internal reasoning envelope into a public answer. */
-export function assertTrinityFinalOutputIsPublic(text: string): void {
+export function assertTrinityFinalOutputIsPublic(text: string, userPrompt = ''): void {
+  // An exact quoted value already supplied by the current user is source data,
+  // not permission to disclose a different envelope or a neighboring JSON field.
+  const literal = text.trim();
+  const quotedSource = literal.length > 0 && [JSON.stringify(literal), `'${literal}'`, `\`${literal}\``]
+    .some(quoted => userPrompt.includes(quoted));
   let fence: { character: string; length: number } | undefined;
   for (const line of text.split(/\r\n?|\n/u)) {
     const match = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(line);
@@ -42,9 +47,21 @@ export function assertTrinityFinalOutputIsPublic(text: string): void {
     // Fenced/indented source examples and inline mentions are ordinary content.
     // Reject an envelope prefix, including an unterminated one; unwrapping it
     // would incorrectly treat private reasoning as an authoritative final answer.
-    if (/^ {0,3}<\/?analysis_output(?:[ \t>]|$)/iu.test(line)) {
+    if (/^ {0,3}(?:GPT-[\w.-]+[ \t]+analysis:[ \t]*)?<\/?analysis_output(?:[ \t>]|$)/iu.test(line)
+      && !quotedSource) {
       throw new TrinityStructuredOutputError('private_output');
     }
+  }
+  // A JSON string remains answer content after decoding. Inspect each value
+  // without changing the document or treating every mention of the tag as private.
+  try {
+    JSON.parse(text, (_key, value: unknown) => {
+      if (typeof value === 'string') assertTrinityFinalOutputIsPublic(value, userPrompt);
+      return value;
+    });
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    // JSON validity and schema errors retain their existing contract boundary.
   }
 }
 
@@ -74,6 +91,7 @@ export function createTrinityStructuredOutputValidator(contract: TrinityStructur
       throw new TrinityStructuredOutputError('invalid_json');
     }
     if (!validate(value)) throw new TrinityStructuredOutputError('schema_mismatch');
+    assertTrinityFinalOutputIsPublic(text, context.userPrompt);
 
     // Inspect fields independently: one field's limitation cannot excuse a
     // different claim, and a vocabulary key cannot supply another field's subject.
