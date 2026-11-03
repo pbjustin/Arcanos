@@ -789,9 +789,15 @@ class BackendApiClient:
         code = error.get("code") if isinstance(error, dict) else body.get("code")
         status = response.status_code
         if status == 429:
+            message = "Rate limit exceeded. Try again later."
+            retry_after = body.get("retryAfter")
+            # The largest current system-state limiter window is 15 minutes.
+            if type(retry_after) is int and 1 <= retry_after <= 15 * 60:
+                unit = "second" if retry_after == 1 else "seconds"
+                message = f"Rate limit exceeded. Try again in {retry_after} {unit}."
             return BackendRequestError(
                 kind="rate_limit",
-                message="Rate limit exceeded. Try again later.",
+                message=message,
                 status_code=status,
             )
         if method.lower() == "post" and status == 403 and code == "CONFIRMATION_REQUIRED":

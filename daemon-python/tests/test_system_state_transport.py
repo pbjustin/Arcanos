@@ -193,7 +193,57 @@ def test_control_rate_limit_preserves_existing_error_kind():
     assert not response.ok
     assert response.error.kind == "rate_limit"
     assert response.error.status_code == 429
+    assert response.error.message == "Rate limit exceeded. Try again later."
+    assert response.error.details is None
     assert CONTROL_TOKEN not in repr(response.error)
+
+
+@pytest.mark.parametrize(
+    "retry_after,expected_wait",
+    [(1, "1 second"), (60, "60 seconds"), (61, "61 seconds"),
+     (300, "300 seconds"), (900, "900 seconds")],
+)
+def test_control_rate_limit_preserves_bounded_server_retry_guidance(retry_after, expected_wait):
+    backend_response = _response(429, {
+        "retryAfter": retry_after, "message": CONTROL_TOKEN, "model": CONTROL_TOKEN,
+    })
+    backend_response.headers["Retry-After"] = CONTROL_TOKEN
+    sender = MagicMock(return_value=backend_response)
+    client = BackendApiClient("https://backend.example", lambda: GPT_TOKEN, request_sender=sender)
+
+    response = client.request_system_state()
+
+    assert not response.ok
+    assert response.error.kind == "rate_limit"
+    assert response.error.status_code == 429
+    assert response.error.message == f"Rate limit exceeded. Try again in {expected_wait}."
+    assert response.error.details is None
+    assert CONTROL_TOKEN not in repr(response.error)
+    assert CONTROL_TOKEN not in repr(backend_client_module.log_audit_event.call_args_list)
+    assert sender.call_count == 1
+
+
+@pytest.mark.parametrize(
+    "retry_after",
+    [None, True, False, 0, -1, 1.0, 1.5, "60", CONTROL_TOKEN,
+     {"seconds": 60}, [60], 901, 2 ** 1000],
+)
+def test_control_rate_limit_rejects_malformed_or_excessive_retry_guidance(retry_after):
+    sender = MagicMock(return_value=_response(429, {
+        "retryAfter": retry_after, "message": CONTROL_TOKEN, "model": CONTROL_TOKEN,
+    }))
+    client = BackendApiClient("https://backend.example", lambda: GPT_TOKEN, request_sender=sender)
+
+    response = client.request_system_state()
+
+    assert not response.ok
+    assert response.error.kind == "rate_limit"
+    assert response.error.status_code == 429
+    assert response.error.message == "Rate limit exceeded. Try again later."
+    assert response.error.details is None
+    assert CONTROL_TOKEN not in repr(response.error)
+    assert CONTROL_TOKEN not in repr(backend_client_module.log_audit_event.call_args_list)
+    assert sender.call_count == 1
 
 
 @pytest.mark.parametrize("exception", [requests.Timeout, requests.ConnectionError])
