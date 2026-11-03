@@ -381,6 +381,48 @@ describe('Trinity caller-declared final JSON integrity at actual provider extrac
     expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
   });
 
+  it.each(['direct', 'explained'] as const)('enforces an explicit word limit for code intent in %s mode', async mode => {
+    finalText = 'One two three four five six seven eight nine ten.';
+    const result = await run(mode, null, 'Explain the git implementation.', undefined, 5);
+    expect(result.result.split(/\s+/u).length).toBeLessThanOrEqual(5);
+    expect(result.outputControls?.maxWords).toBe(5);
+    expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
+  });
+
+  it.each(['direct', 'explained'] as const)('enforces minimal verbosity for code intent in %s mode', async mode => {
+    finalText = Array.from({ length: 100 }, () => 'Example').join(' ') + '.';
+    const result = await run(mode, null, 'Give a minimal explanation of git.');
+    expect(result.result.split(/\s+/u).length).toBeLessThanOrEqual(90);
+    expect(result.outputControls?.requestedVerbosity).toBe('minimal');
+    expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
+  });
+
+  it('enforces the current direct bullet contract for code intent without retaining extra framing', async () => {
+    finalText = 'Unrequested framing.\n1. First item.\n2. Second item.\n3. Extra item.\nUnrequested tail.';
+    const result = await run('direct', null, 'Return exactly two bullets about git.');
+    expect(result.result).toBe('1. First item.\n2. Second item.');
+    expect(responsesCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it.each((['direct', 'explained'] as const).flatMap(mode => [true, false].map(minimal => ({ mode, minimal }))))(
+    'preserves already-compliant code under a $mode output limit (minimal: $minimal)', async ({ mode, minimal }) => {
+    finalText = '```python\ndef example(enabled):\n    if enabled:\n        print("café 雪")\n```';
+    const result = await run(mode, null,
+      `Return a ${minimal ? 'minimal ' : ''}nested Python code example.`, undefined, minimal ? undefined : 100);
+    expect(result.result).toBe(finalText);
+    expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
+  });
+
+  it.each(['direct', 'explained'] as const)('enforces the %s word limit after denying an unsupported persistence claim', async mode => {
+    finalText = 'The data is stored.';
+    const result = await run(mode, null, 'Return a code example.', undefined, 5);
+    expect(result.result.split(/\s+/u).length).toBeLessThanOrEqual(5);
+    expect(result.result).not.toContain('The data is stored.');
+    expect(result.reasoningHonesty?.blockedOrRewrittenClaims).toContain('The data is stored.');
+    expect(result.auditSafe.auditFlags).toContain('FINAL_UNSUPPORTED_CLAIM_REWRITTEN');
+    expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
+  });
+
   it.each(([
     ['multiline', 'GPT-5.1 analysis:\n<analysis_output>\n```python\nprint("café 雪")\n```\nEND-OF-LIVE-TEST\n</analysis_output>'],
     ['unterminated multiline', 'GPT-5.1 analysis:\n<analysis_output>\n```python\nprint("café 雪")'],

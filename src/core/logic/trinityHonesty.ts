@@ -1654,7 +1654,7 @@ function removeUnrequestedMetaSections(text: string, outputControls: TrinityOutp
   };
 }
 
-function resolveEffectiveWordLimit(outputControls: TrinityOutputControls): number | null {
+export function resolveEffectiveWordLimit(outputControls: TrinityOutputControls): number | null {
   if (typeof outputControls.maxWords === 'number' && outputControls.maxWords > 0) {
     return outputControls.maxWords;
   }

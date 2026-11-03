@@ -17,6 +17,7 @@
 import type OpenAI from 'openai';
 import { logArcanosRouting, logRoutingSummary } from "@platform/logging/aiLogger.js";
 import { generateRequestId } from "@shared/idGenerator.js";
+import { countWords } from '@shared/text/countWords.js';
 import { markFinalizedPublicAnswer } from '@shared/http/clientResponseCommon.js';
 import { resolveGamingGuideIntakeEndpointPolicy } from '@shared/gaming/gamingGuideIntakeCore.js';
 import { getTrinityMessages } from "@platform/runtime/prompts.js";
@@ -99,6 +100,7 @@ import {
   enforceFinalStageHonesty,
   prepareTrinityDirectAnswerHonesty,
   enforceFinalStageHonestyAndMinimalism,
+  resolveEffectiveWordLimit,
   validateTrinityAnswerIntegrity,
   readIntentMode
 } from './trinityHonesty.js';
@@ -121,6 +123,7 @@ import {
 } from '@core/adapters/openai.adapter.js';
 import {
   applyTrinityDirectAnswerOutputContract,
+  parseTrinityDirectAnswerOutputContract,
   TRINITY_DIRECT_ANSWER_AUDIT_FLAG,
   TRINITY_DIRECT_ANSWER_STAGE
 } from './trinityDirectAnswerMode.js';
@@ -808,6 +811,7 @@ export async function runThroughBrain(
       ? options.trustedPolicyPrompt
       : prompt;
   const outputControls = deriveTrinityOutputControls(trustedPolicyPrompt, options);
+  const effectiveWordLimit = resolveEffectiveWordLimit(outputControls);
   logCoreExecution('start', {
     requestId,
     sourceEndpoint: options.sourceEndpoint,
@@ -858,12 +862,16 @@ export async function runThroughBrain(
       : trustedPolicyPrompt;
   // Keep a continuation's presentation without deriving policy, literals,
   // capabilities or limits from earlier messages.
-  const preserveContinuationPresentation = outputControls.maxWords === null
-    && outputControls.requestedVerbosity !== 'minimal'
+  const hasNoExplicitOutputLimit = outputControls.maxWords === null
+    && outputControls.requestedVerbosity !== 'minimal';
+  const directAnswerOutputContract = parseTrinityDirectAnswerOutputContract(trustedPolicyPrompt);
+  const preserveContinuationPresentation = hasNoExplicitOutputLimit
     && /^(?:continue|go\s+on|keep\s+going)[.!?]*$/iu.test(trustedPolicyPrompt.trim());
-  const preserveDirectAnswerPresentation = (options.sourceEndpoint === 'backstage-booker.generateBooking'
-    && options.directAnswerPreservePresentation === true)
-    || MidLayerTranslator.detectIntentFromUserMessage(directAnswerUserIntentPrompt) === 'code'
+  const preserveBookerDirectPresentation = options.sourceEndpoint === 'backstage-booker.generateBooking'
+    && options.directAnswerPreservePresentation === true;
+  const preserveDirectAnswerPresentation = preserveBookerDirectPresentation
+    || (directAnswerOutputContract === null
+      && MidLayerTranslator.detectIntentFromUserMessage(directAnswerUserIntentPrompt) === 'code')
     || preserveContinuationPresentation;
 
   // --- Retry lineage check ---
@@ -1209,15 +1217,29 @@ export async function runThroughBrain(
           outputControls,
           preservePresentation: preserveDirectAnswerPresentation,
         });
-        const enforcedOutput = enforceFinalStageHonestyAndMinimalism({
+        const directOutputEnforcement = {
           text: honestyFiltered.text,
           userPrompt: directAnswerUserIntentPrompt,
           capabilityFlags,
           outputControls,
           reasoningHonesty,
           preservePresentation: preserveDirectAnswerPresentation,
-        });
-        const text = preserveDirectAnswerPresentation
+        };
+        let enforcedOutput = enforceFinalStageHonestyAndMinimalism(directOutputEnforcement);
+        const preserveDirectOutputPresentation = preserveBookerDirectPresentation
+          || (preserveDirectAnswerPresentation
+            && (effectiveWordLimit === null || countWords(enforcedOutput.text) <= effectiveWordLimit));
+        if (preserveDirectAnswerPresentation && !preserveDirectOutputPresentation) {
+          const limitedOutput = enforceFinalStageHonestyAndMinimalism({
+            ...directOutputEnforcement, text: enforcedOutput.text, preservePresentation: false,
+          });
+          enforcedOutput = {
+            ...limitedOutput,
+            removedMetaSections: [...enforcedOutput.removedMetaSections, ...limitedOutput.removedMetaSections],
+            blockedOrRewrittenClaims: [...enforcedOutput.blockedOrRewrittenClaims, ...limitedOutput.blockedOrRewrittenClaims],
+          };
+        }
+        const text = preserveDirectOutputPresentation
           ? enforcedOutput.text
           : applyTrinityDirectAnswerOutputContract(enforcedOutput.text, trustedPolicyPrompt);
         return {
@@ -2167,16 +2189,28 @@ export async function runThroughBrain(
       outputControls.instructionalVerificationPolicy,
       trustedPolicyPrompt
     );
-    const enforcedFinalOutput = validateStructuredOutput
-      ? { text: honestyFilteredFinal.text, removedMetaSections: [], blockedOrRewrittenClaims: [] }
-      : enforceFinalStageHonestyAndMinimalism({
+    const finalOutputEnforcement = {
       text: honestyFilteredFinal.text,
       userPrompt: trustedPolicyPrompt,
       capabilityFlags,
       outputControls,
       reasoningHonesty,
       preservePresentation: preserveFinalPresentation
-    });
+    };
+    let enforcedFinalOutput = validateStructuredOutput
+      ? { text: honestyFilteredFinal.text, removedMetaSections: [], blockedOrRewrittenClaims: [] }
+      : enforceFinalStageHonestyAndMinimalism(finalOutputEnforcement);
+    if (!validateStructuredOutput && !gamingGuideIntakePolicy && preserveFinalPresentation
+      && effectiveWordLimit !== null && countWords(enforcedFinalOutput.text) > effectiveWordLimit) {
+      const limitedOutput = enforceFinalStageHonestyAndMinimalism({
+        ...finalOutputEnforcement, text: enforcedFinalOutput.text, preservePresentation: false,
+      });
+      enforcedFinalOutput = {
+        ...limitedOutput,
+        removedMetaSections: [...enforcedFinalOutput.removedMetaSections, ...limitedOutput.removedMetaSections],
+        blockedOrRewrittenClaims: [...enforcedFinalOutput.blockedOrRewrittenClaims, ...limitedOutput.blockedOrRewrittenClaims],
+      };
+    }
     const finalText = enforcedFinalOutput.text;
     // Gaming replaces the legacy ledger audit with one audit of the actual final
     // candidate. Its callback owns strict validation and cannot trigger escalation.
