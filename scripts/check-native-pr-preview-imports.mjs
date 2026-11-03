@@ -939,7 +939,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['src/bookerMcpPreviewFixture.ts', 'd79eeba799864f6d16ab5686c0763bebd06d53357f9c8cb47db249701ded4d37'],
   ['src/bookerMcpRealAuthPreview.ts', '6a9eb5a1c02230f6cb98f7531231ed2c5b119ffa41d4f7b5caf17bcec0ae1bce'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/http/clientDisconnectAbort.ts', '296cca6209bb8c65d3e9934614d7612e664c46ed2efd42cc807e88454f87ec1f'],
-  ['src/core/logic/trinityStructuredOutput.ts', '49b47a127da0e041cd0087e1305b932d401862b4efd218a957a4492ab2b6e627'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/core/logic/trinityStructuredOutput.ts', '5f0433d0d5b5f40522416265d8b20c1fdf12717a683784478984710164a20d3e'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gpt/trinityFinalOutputPreviewFixture.ts', '7d3f6ffe15d6be161493ba8dac983958579d5fb9af8bc5d0d1080bab096f1feb'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/validation/zodIssues.ts', '0baaff406fd2ceb2a0f41aec26a1c333c865f496a3bd912799fdf1257c9004ea'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/validation/zodNumberChecks.ts', '95aa7a56141ba5e6b60f315f406a4739110b6ac43e66b1a1c92bb8023d673858'], // gitleaks:allow -- public source semantic SHA-256
@@ -968,7 +968,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['scripts/tutor-package-core.mjs', '1aa853e7dcc157d863dfe6f506e6c8779cd4a1defbea70b453d7d2954cfce2d8'], // gitleaks:allow -- public source semantic SHA-256
   ['scripts/tutor-package-core.d.mts', '4b2596dbe443c4f26069252eee614b810977632ac606c6d12d9c273b1db8ccb8'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/chatgpt/pluginMigrationPreviewFixture.ts', 'c723fbc47ff3faf54ada2c46b991ddcddc7b781076100335d3379c9fb9791b92'], // gitleaks:allow -- public source semantic SHA-256
-  ['src/core/logic/trinityHonesty.ts', 'b391857564a8fb7b24455c37cdd3b743f4bb8b9caaf9e38728879172ae0ad3e7'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/core/logic/trinityHonesty.ts', '61d3f2e40db37378d321d78d1e112b5ad3cc8701668c156dee815e84e415d522'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/text/countWords.ts', '5a1ff6743306061b9634f2d0f043c29be6e3ec404bda3569d8da0f031ac68fc9'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/text/intentModeClassifier.ts', '848e9b19da342101f6b9dfb20cf83f18c1dae32e650cfec8a3e928fca0bc5fe2'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/promptGuidance.ts', 'de0d8aff69e7aa5bb5e3e80cc45c8a70fcd9c848d0b5257f8038f6b0a524283a'], // gitleaks:allow -- public source semantic SHA-256

@@ -215,6 +215,43 @@ describe('Trinity private final-envelope boundary', () => {
 });
 
 describe('Trinity final JSON contract validation', () => {
+  it('uses the current final-line literal contract for a structured string value', () => {
+    const userPrompt = 'Return a source code example and a final line reading SOURCE-LIVE-MARKER.';
+    const raw = JSON.stringify({ answer: 'SOURCE-LIVE-MARKER' });
+    expect(validate(raw, flags, honesty, {
+      userPrompt, outputControls: deriveTrinityOutputControls(userPrompt, {}),
+    })).toBe(raw);
+  });
+
+  it('retains current requested string values without granting the same exception to keys or other claims', () => {
+    const validateFields = createTrinityStructuredOutputValidator({ name: 'marker_fields', schema: { type: 'object' } });
+    const marker = 'SOURCE-LIVE-MARKER';
+    const userPrompt = `Return a source code example and a final line reading ${marker}.`;
+    const context = { userPrompt, outputControls: deriveTrinityOutputControls(userPrompt, {}) };
+    const raw = JSON.stringify({ answer: marker, nested: [{ value: marker }] });
+    expect(validateFields(raw, flags, honesty, context)).toBe(raw);
+    for (const value of [true, false]) {
+      expect(() => validateFields(JSON.stringify({ answer: marker, [marker]: value }), flags, honesty, context))
+        .toThrow(expect.objectContaining({ reason: 'unsupported_claim' }));
+    }
+    expect(() => validateFields(JSON.stringify({ answer: marker, other: 'PRODUCTION-VERIFIED' }), flags, honesty, context))
+      .toThrow(expect.objectContaining({ reason: 'unsupported_claim' }));
+    expect(() => validateFields(raw, flags, honesty, {
+      userPrompt: 'Report only what can be established from the supplied source.', outputControls: context.outputControls,
+    })).toThrow(expect.objectContaining({ reason: 'unsupported_claim' }));
+  });
+
+  it('retains a requested marker alongside a required structured limitation', () => {
+    const userPrompt = 'Return a source code example and a final line reading SOURCE-LIVE-MARKER.';
+    const partial = { ...honesty, responseMode: 'partial_refusal' as const,
+      blockedSubtasks: ['verify live status'], userVisibleCaveats: ["I can't verify live status here."] };
+    const validateFields = createTrinityStructuredOutputValidator({ name: 'marker_limitation', schema: { type: 'object' } });
+    const raw = JSON.stringify({ caveat: 'I cannot verify live status here.', answer: 'SOURCE-LIVE-MARKER' });
+    expect(validateFields(raw, flags, partial, {
+      userPrompt, outputControls: deriveTrinityOutputControls(userPrompt, {}),
+    })).toBe(raw);
+  });
+
   it('preserves a caller-owned false verification flag without asserting completed work', () => {
     const validateFlag = createTrinityStructuredOutputValidator({
       name: 'verification_flag', schema: {

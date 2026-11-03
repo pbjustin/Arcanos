@@ -520,6 +520,11 @@ function rewriteUnsupportedCurrentExternalStateSections(params: {
       continue;
     }
 
+    if (isRequestedLiteralToken(line, params.userPrompt)) {
+      keptLines.push(rawLine);
+      continue;
+    }
+
     if (isLikelyCurrentExternalStateSectionHeading(line, params.userPrompt)) {
       blockedOrRewrittenClaims.push(line);
       if (!liveLimitationAdded) {
@@ -747,8 +752,13 @@ function isRequestedLiteralToken(text: string, userPrompt: string): boolean {
   const request = userPrompt.trim().match(
     /^(?:return|output|write|include)\b([\s\S]*?)\b(?:a|the)\s+(?:final|last)\s+line\s+(?:reading|saying|that\s+reads)\s+(["'`]?)([A-Z][A-Z0-9]*(?:[-_][A-Z0-9]+)+)\2[.!?]?\s*$/iu
   );
+  // Explicitly introduced code quotations are payload, while conditions on
+  // the requested output remain part of the instruction being checked.
+  const conditionScope = (request?.[1] ?? '').replace(
+    /(\b(?:code|script|snippet)(?:\s+example)?\s+(?:(?:that\s+)?(?:uses?|contains?)|using|containing|with)\s+)`[^`\r\n]*`/giu, '$1'
+  );
   return request?.[3] === token
-    && !/\b(?:if|unless|when|whether|once|after|provided|conditional|not|never|don't)\b/iu.test(request[1] ?? '');
+    && !/\b(?:if|unless|when|whether|once|after|provided|conditional|not|never|don't)\b/iu.test(conditionScope);
 }
 
 function impliesCurrentExternalStateClaim(text: string): boolean {

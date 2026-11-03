@@ -102,7 +102,8 @@ export function createTrinityStructuredOutputValidator(contract: TrinityStructur
       if (typeof entry === 'string') {
         if (isValue) stringValues.push(entry);
         const filtered = enforceFinalStageHonesty(entry, honesty, capabilities,
-          readIntentMode(context.outputControls), true, context.outputControls.instructionalVerificationPolicy);
+          readIntentMode(context.outputControls), true, context.outputControls.instructionalVerificationPolicy,
+          isValue ? context.userPrompt : '');
         const enforced = enforceFinalStageHonestyAndMinimalism({
           text: entry, userPrompt: isValue ? context.userPrompt : '', capabilityFlags: capabilities,
           outputControls: context.outputControls, reasoningHonesty: honesty,
@@ -126,7 +127,8 @@ export function createTrinityStructuredOutputValidator(contract: TrinityStructur
       // rather than appending prose to JSON or demanding it in every field.
       const combined = stringValues.join('\n');
       const withRequiredLimitation = enforceFinalStageHonesty(combined, honesty, capabilities,
-        readIntentMode(context.outputControls), true, context.outputControls.instructionalVerificationPolicy);
+        readIntentMode(context.outputControls), true, context.outputControls.instructionalVerificationPolicy,
+        context.userPrompt);
       if (withRequiredLimitation.text !== combined.trim()) {
         throw new TrinityStructuredOutputError(withRequiredLimitation.blocked
           ? 'unsupported_claim' : 'missing_required_limitation');

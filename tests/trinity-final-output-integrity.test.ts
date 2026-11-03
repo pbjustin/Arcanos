@@ -371,6 +371,37 @@ describe('Trinity caller-declared final JSON integrity at actual provider extrac
     expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
   });
 
+  it.each(['direct', 'explained'] as const)('preserves a requested marker after conditional example code through %s publication', async mode => {
+    finalText = '```javascript\nif (ready) run();\n```\nSOURCE-LIVE-MARKER';
+    const result = await run(mode, null,
+      'Return a code example using `if (ready) run();` and a final line reading SOURCE-LIVE-MARKER.');
+    expect(buildTrinityUserVisibleResponse({ trinityResult: result }).result).toBe(finalText);
+    expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
+  });
+
+  it.each(['direct', 'explained'] as const)('preserves only the requested marker when rewriting a current-state section through %s publication', async mode => {
+    finalText = 'Competitors:\nCompetitors are lowering prices.\nSOURCE-LIVE-MARKER';
+    const result = await run(mode, null,
+      'Return a summary of current competitors and a final line reading SOURCE-LIVE-MARKER.');
+    const publication = buildTrinityUserVisibleResponse({ trinityResult: result });
+    expect(publication.result.trim()).toMatch(/SOURCE-LIVE-MARKER$/u);
+    expect(publication.result).not.toContain('Competitors are lowering prices.');
+    expect(result.reasoningHonesty?.blockedOrRewrittenClaims).not.toContain('SOURCE-LIVE-MARKER');
+    expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
+  });
+
+  it.each(['direct', 'explained'] as const)('preserves the explicitly requested literal JSON value through %s publication', async mode => {
+    finalText = '{"answer":"SOURCE-LIVE-MARKER"}';
+    const markerContract: TrinityStructuredOutputContract = {
+      name: 'literal_marker', schema: { type: 'object', additionalProperties: false, required: ['answer'],
+        properties: { answer: { type: 'string' } } },
+    };
+    const result = await run(mode, markerContract,
+      'Return a JSON answer and a final line reading SOURCE-LIVE-MARKER.');
+    expect(buildTrinityUserVisibleResponse({ trinityResult: result }).result).toBe(finalText);
+    expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
+  });
+
   it.each((['direct', 'explained'] as const).flatMap(mode => [
     { mode, priorRequest: 'Return a code example and a final line reading SOURCE-LIVE-MARKER.',
       output: 'SOURCE-LIVE-MARKER' },
