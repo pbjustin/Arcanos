@@ -113,9 +113,13 @@ export function shouldInspectRepoPrompt(prompt: string | null): boolean {
     .split(/[!?;]+|\.(?=\s|$)/u).map((statement) => {
       let negatedRepoReference = false;
       const text = statement.replace(
-        /\b(?:do\s+not|don['’]t|never)\s+(?:inspect|show|list|find|locate|read|open|verify|check)\b[^,\r\n]*?(?=,|\bbut\b|[\r\n]|$)/gu,
+        // Commas can continue prohibited targets; only a new inspection request
+        // or question starts an affirmative comma clause.
+        /\b(?:do\s+not|don['’]t|never)\s+(?:inspect|show|list|find|locate|read|open|verify|check)\b[^\r\n]*?(?=,[ \t]*(?:please[ \t]+)?(?:inspect|show|list|find|locate|read|open|verify|check|where|which|what|is|are|do[ \t]+i[ \t]+have|can[ \t]+you[ \t]+see)\b|\bbut\b|[\r\n]|$)/gu,
         (clause) => {
-          negatedRepoReference ||= repoTargetPatterns.some((pattern) => pattern.test(clause));
+          // A later unrelated target cannot borrow the earlier repo antecedent.
+          const finalTarget = clause.replace(/,[ \t]*$/u, '').split(',').at(-1) ?? clause;
+          negatedRepoReference ||= repoTargetPatterns.some((pattern) => pattern.test(finalTarget));
           return '';
         }
       ).trim();

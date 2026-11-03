@@ -94,8 +94,34 @@ describe('repo inspection prompt detection', () => {
   });
 
   it.each([
+    'Do not inspect the repository, its files, or Git status.',
+    "Don't inspect the repository, its files, and CLI commands.",
+    'Never check repository files, Git status, or available tools.',
+    'Do not inspect the repository, including Git status and protocol schemas.',
+    'What can ARCANOS help me do? Do not inspect the repository, its files, or Git status.',
+    'Do not inspect the repository, its files, or Git status, but show me that recipe.',
+    'Do not inspect the repository, show me the weather.',
+    'Do not inspect the repository, what is the weather?',
+    'Do not inspect the repository, do not check the weather, but show me its status',
+    'Do not inspect the repository, never check the weather, but show me its status',
+    'Do not inspect the repository, the weather, but show me its status'
+  ])('keeps comma-separated prohibited targets out of repository intent: %s', (prompt) => {
+    expect(shouldInspectRepoPrompt(prompt)).toBe(false);
+  });
+
+  it.each([
     'Do not check the deployed Git revision, but inspect the repository files.',
     "Don't check the deployed Git revision but inspect the repository files.",
+    'Do not check the deployed Git revision, inspect the repository files.',
+    'Do not check the deployed Git revision, please list the repository files.',
+    'Do not check the deployed Git revision, which repository files exist?',
+    'Do not inspect the Git history, where is the package.json file?',
+    'Do not inspect the Git history, what commands exist?',
+    'Do not inspect the Git history, is my CLI implemented?',
+    'Do not inspect the Git history, are repository files missing?',
+    'Do not inspect the Git history, do I have a CLI?',
+    'Do not inspect the Git history, can you see my codebase?',
+    'Do not read the repository, its files, but show me its status',
     'Inspect the repository files, but do not check the deployed Git revision.',
     'Show me the repo status. Do not check the deployed Git revision.'
   ])('preserves an affirmative inspection beside a negated check: %s', (prompt) => {
