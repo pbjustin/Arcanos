@@ -109,8 +109,9 @@ export function shouldInspectRepoPrompt(prompt: string | null): boolean {
     return false;
   }
   // List-marker dots are formatting, while filename dots remain intact.
+  // Only line-leading claim/guess disclaimers add a newline statement boundary.
   const statements = normalizedPrompt.replace(/^([ \t]*\d+)\.(?=[ \t])/gmu, '$1')
-    .split(/[!?;]+|\.(?=\s|$)/u).map((statement) => {
+    .split(/[!?;]+|\.(?=\s|$)|(?:\r\n?|\n)(?=[ \t]*(?:do[ \t]+not|don['’]t|never)[ \t]+(?:claim|guess)\b)/u).map((statement) => {
       let negatedRepoReference = false;
       let latestNegatedRepoReference = false;
       const text = statement.replace(

@@ -31,6 +31,18 @@ describe('repo inspection prompt detection', () => {
     expect(shouldInspectRepoPrompt(prompt)).toBe(false);
   });
 
+  it.each(['\n', '\r\n', '\r'].flatMap(newline => [
+    'Do not claim knowledge of the deployed Git revision unless it is verified',
+    "Don't guess the deployed Git revision",
+    'Don’t claim knowledge of the deployed Git revision unless it is verified',
+    'Never claim knowledge of the deployed Git revision unless it is verified',
+  ].map(disclaimer => ({ newline, disclaimer }))))(
+    'does not borrow a repository target from a line-leading disclaimer: $disclaimer ($newline)', ({ newline, disclaimer }) => {
+      expect(shouldInspectRepoPrompt(`What can ARCANOS help me do${newline}${disclaimer}`)).toBe(false);
+      expect(shouldInspectRepoPrompt(`Inspect the repository files${newline}${disclaimer}`)).toBe(true);
+    }
+  );
+
   it('keeps explicit repository inspection prompts routed to evidence mode', () => {
     expect(shouldInspectRepoPrompt('Is my CLI implemented?')).toBe(true);
     expect(shouldInspectRepoPrompt('Show me the repo status and changed files.')).toBe(true);
@@ -90,6 +102,10 @@ describe('repo inspection prompt detection', () => {
         .toBe(true);
     }
   );
+
+  it.each(['\n', '\r\n', '\r'])('retains a wrapped possessive status question with %j line endings', newline => {
+    expect(shouldInspectRepoPrompt(`Do not read the repository files${newline}What is their status?`)).toBe(true);
+  });
 
   it.each([
     'Do not read the repository files but show me its status',
@@ -193,6 +209,9 @@ describe('repository status routing through the ask tool caller', () => {
     ['Do not read the repository files, the weather, what is their status?', false],
     ['Do not read the repository files. What is their status?', false],
     ['Do not read repository files\nDo not check the weather, what is their status?', false],
+    ...['\n', '\r\n', '\r'].map(newline => [
+      `What can ARCANOS help me do${newline}Do not claim knowledge of the deployed Git revision unless it is verified`, false,
+    ] as const),
   ] as const)('dispatches only an affirmative repository status request: %s', async (prompt, requested) => {
     runAskToolMode.mockReset();
     const response = { result: 'Synthetic repository status.' };
