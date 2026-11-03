@@ -153,6 +153,11 @@ const DEFAULT_TRINITY_CLEAR_AUDIT_TIMEOUT_MS = 3_000;
 const DEFAULT_TRINITY_JUDGED_FEEDBACK_TIMEOUT_MS = 750;
 const DEFAULT_TRINITY_DIRECT_ANSWER_RECOVERY_TIMEOUT_MS = 8_000;
 const OPTIONAL_SIDE_EFFECTS_DISABLED_REASON = 'disabled_by_caller';
+// Wrapped requests and dots inside version/file names retain their code cue.
+const EXPLICIT_CODE_PRESENTATION_REQUEST =
+  /\b(?:write|generate|return|provide|show)\b(?:[^.!?]|\.(?=\S)){0,120}\b(?:code|script|snippet)\b/iu;
+const CODE_PRESENTATION_OUTPUT =
+  /^ {0,3}(?:`{3,}[^`\r\n]*|~{3,}[^\r\n]*)$|^(?: {4}|\t)[ \t]*\S/mu;
 const SENSITIVE_AUDIT_CONTENT_REDACTED = '[SENSITIVE_CONTEXT_REDACTED]';
 const SENSITIVE_AUDIT_CONTENT_REDACTED_FLAG = 'SENSITIVE_CONTEXT_AUDIT_CONTENT_REDACTED';
 
@@ -871,7 +876,7 @@ export async function runThroughBrain(
     && options.directAnswerPreservePresentation === true;
   const preserveDirectAnswerPresentation = preserveBookerDirectPresentation
     || (directAnswerOutputContract === null
-      && MidLayerTranslator.detectIntentFromUserMessage(directAnswerUserIntentPrompt) === 'code')
+      && EXPLICIT_CODE_PRESENTATION_REQUEST.test(directAnswerUserIntentPrompt))
     || preserveContinuationPresentation;
 
   // --- Retry lineage check ---
@@ -1210,12 +1215,14 @@ export async function runThroughBrain(
             integrity: { valid: true, issues: [] },
           };
         }
+        const preserveDirectCandidatePresentation = preserveDirectAnswerPresentation
+          || (directAnswerOutputContract === null && CODE_PRESENTATION_OUTPUT.test(candidateText));
         const { reasoningHonesty, honestyFiltered } = prepareTrinityDirectAnswerHonesty({
           candidateText,
           userPrompt: directAnswerUserIntentPrompt,
           capabilityFlags,
           outputControls,
-          preservePresentation: preserveDirectAnswerPresentation,
+          preservePresentation: preserveDirectCandidatePresentation,
         });
         const directOutputEnforcement = {
           text: honestyFiltered.text,
@@ -1223,13 +1230,13 @@ export async function runThroughBrain(
           capabilityFlags,
           outputControls,
           reasoningHonesty,
-          preservePresentation: preserveDirectAnswerPresentation,
+          preservePresentation: preserveDirectCandidatePresentation,
         };
         let enforcedOutput = enforceFinalStageHonestyAndMinimalism(directOutputEnforcement);
         const preserveDirectOutputPresentation = preserveBookerDirectPresentation
-          || (preserveDirectAnswerPresentation
+          || (preserveDirectCandidatePresentation
             && (effectiveWordLimit === null || countWords(enforcedOutput.text) <= effectiveWordLimit));
-        if (preserveDirectAnswerPresentation && !preserveDirectOutputPresentation) {
+        if (preserveDirectCandidatePresentation && !preserveDirectOutputPresentation) {
           const limitedOutput = enforceFinalStageHonestyAndMinimalism({
             ...directOutputEnforcement, text: enforcedOutput.text, preservePresentation: false,
           });
@@ -2172,11 +2179,14 @@ export async function runThroughBrain(
     const providerBlocker = classifyTrinityProviderIntegrityBlocker(finalOutput.provider);
     if (providerBlocker) throw new TrinityStructuredOutputError(providerBlocker);
     if (!validateStructuredOutput) assertTrinityFinalOutputIsPublic(finalOutput.output, trustedPolicyPrompt);
-    const preserveFinalPresentation = Boolean(gamingGuideIntakePolicy) || userIntent === 'code'
+    const preserveFinalPresentation = Boolean(gamingGuideIntakePolicy)
+      || EXPLICIT_CODE_PRESENTATION_REQUEST.test(trustedPolicyPrompt)
+      || CODE_PRESENTATION_OUTPUT.test(finalOutput.output)
       || preserveContinuationPresentation;
+    const presentationIntent = preserveFinalPresentation ? 'code' : userIntent === 'code' ? 'default' : userIntent;
     const translatedFinalText = validateStructuredOutput ? finalOutput.output : gamingGuideIntakePolicy
       ? finalOutput.output.trim()
-      : MidLayerTranslator.translate({ raw: finalOutput.output }, preserveContinuationPresentation ? 'code' : userIntent);
+      : MidLayerTranslator.translate({ raw: finalOutput.output }, presentationIntent);
     const honestyFilteredFinal = validateStructuredOutput
       ? { text: validateStructuredOutput(translatedFinalText, reasoningHonesty),
           blocked: false, blockedCategories: [], ruleIds: ['NO_HONESTY_REWRITE' as const] }

@@ -281,6 +281,37 @@ describe('Trinity caller-declared final JSON integrity at actual provider extrac
     expect(responsesCreate).toHaveBeenCalledTimes(4);
   });
 
+  it.each((['direct', 'explained'] as const).flatMap(mode => [
+    'Assess the function of the liver.',
+    'Assess the effect of a measurement error.',
+    'Assess the history of git.',
+  ].map(request => ({ mode, request }))))('shapes ordinary prose with a broad code keyword in $mode mode: $request', async ({ mode, request }) => {
+    finalText = 'I can help with that.\n\nThe supplied description has two parts.\n\nThe supplied description has two parts.';
+    const result = await run(mode, null, request);
+    expect(result.result).not.toContain('I can help with that.');
+    expect(result.result.match(/The supplied description has two parts\./gu)).toHaveLength(1);
+    expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
+  });
+
+  it.each((['direct', 'explained'] as const).flatMap(mode => [false, true].map(fenced => ({ mode, fenced }))))(
+    'preserves a code-shaped $mode output without an explicit code request (fenced: $fenced)', async ({ mode, fenced }) => {
+    const code = 'def example(enabled):\n    if enabled:\n        print("It is café 雪; do not alter this literal.")';
+    finalText = fenced ? `\`\`\`python\n${code}\n\`\`\`` : code;
+    const result = await run(mode, null, 'Assess the supplied example.');
+    expect(result.result).toBe(finalText);
+    expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
+  });
+
+  it.each((['direct', 'explained'] as const).flatMap(mode => [
+    'Return a source code example.', 'Return Python 3.11 code.', 'Show src/app.ts code.',
+    ...['\n', '\r\n', '\r'].map(newline => `Return a source${newline}code example.`),
+  ].map(request => ({ mode, request }))))('preserves a one-line literal for an explicit code request in $mode mode: $request', async ({ mode, request }) => {
+    finalText = 'print("It is café 雪; do not alter this literal.")';
+    const result = await run(mode, null, request);
+    expect(result.result).toBe(finalText);
+    expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
+  });
+
   it.each(['direct', 'explained'] as const)('preserves a complete fenced Python answer in %s mode, including Unicode, nested indentation and its final line', async mode => {
     finalText = [
       'A short Markdown example:',
