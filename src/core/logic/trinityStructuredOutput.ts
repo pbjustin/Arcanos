@@ -26,10 +26,11 @@ export class TrinityStructuredOutputError extends Error {
 
 /** Never promote an echoed internal reasoning envelope into a public answer. */
 export function assertTrinityFinalOutputIsPublic(text: string, userPrompt = ''): void {
-  // Inspect decoded JSON values before line boundaries inside their encoding.
-  // Each value retains its own exact-source exception; neighboring fields do not.
+  // Inspect decoded JSON keys and values before line boundaries in their encoding.
+  // Each scalar retains its own exact-source exception; neighboring fields do not.
   try {
-    JSON.parse(text, (_key, value: unknown) => {
+    JSON.parse(text, (key, value: unknown) => {
+      if (key) assertTrinityFinalOutputIsPublic(key, userPrompt);
       if (typeof value === 'string') assertTrinityFinalOutputIsPublic(value, userPrompt);
       return value;
     });

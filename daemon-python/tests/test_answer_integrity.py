@@ -1173,6 +1173,51 @@ def test_backend_transport_private_analysis_cannot_reach_any_user_sink(
 @pytest.mark.parametrize(
     "presentation", [None, "public-answer-v1"], ids=["unmarked", "public-answer"]
 )
+@pytest.mark.parametrize("shape", ["plain", "escaped", "nested", "encoded", "neighbor", "history"])
+def test_backend_transport_private_analysis_keys_cannot_reach_any_user_sink(
+    presentation_cli, monkeypatch, tmp_path, shape, agentic, presentation
+):
+    marker = "PRIVATE_KEY_FIXTURE"
+    key = f"GPT-5.1 analysis:\n<analysis_output>{marker}</analysis_output>"
+    value = {key: "Public label."}
+    message = "Return a JSON example."
+    previous = None
+    if shape == "nested":
+        value = {"answer": [value]}
+    elif shape == "encoded":
+        value = {"answer": json.dumps(value)}
+    elif shape == "neighbor":
+        safe_key = "<analysis_output>SAFE_KEY_FIXTURE</analysis_output>"
+        value = {safe_key: "User-provided label.", key: "Public label."}
+        message = f"Return JSON with this exact property name: `{safe_key}`."
+    elif shape == "history":
+        message = "Continue"
+        previous = f"Return JSON with this exact property name: {json.dumps(key)}."
+    answer = json.dumps(value)
+    if shape == "escaped":
+        answer = answer.replace("<", "\\u003c")
+    sinks = _deliver_through_backend_transport(
+        presentation_cli, monkeypatch, tmp_path, answer,
+        agentic=agentic, presentation=presentation, message=message,
+        previous_user_message=previous,
+    )
+    print(json.dumps({
+        "shape": shape, "agentic": agentic, "presentation": presentation,
+        "disclosure_accepted": sinks["disclosure_accepted"],
+        "leaked_sinks": {name: marker in json.dumps(value) for name, value in sinks.items()
+                         if name not in {"transport_parser_accepted", "disclosure_accepted"}},
+    }))
+    assert sinks["disclosure_accepted"] == [False]
+    assert marker not in json.dumps(sinks)
+    assert sinks["ordinary_json_assistant"] == [""]
+    assert sinks["initial_speech"] == []
+    assert sinks["replay_speech"] == []
+    if agentic:
+        assert sinks["sqlite_audit_assistant"] == [""]
+
+
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+@pytest.mark.parametrize("presentation", [None, "public-answer-v1"], ids=["unmarked", "public-answer"])
 @pytest.mark.parametrize("ending", ["\u2028", "\u2029"], ids=["ls", "ps"])
 @pytest.mark.parametrize("shape", ["neighbor", "key", "nested-json", "quoted-json"])
 def test_backend_transport_separator_examples_cannot_exempt_private_neighbors(
@@ -1221,6 +1266,17 @@ def test_backend_transport_separator_examples_cannot_exempt_private_neighbors(
         ),
         *[
             (
+                json.dumps({key: "Public label."}, ensure_ascii=False),
+                f"Return JSON with this exact property name: {json.dumps(key, ensure_ascii=False)}.",
+                True,
+            )
+            for key in (
+                "<analysis_output>quoted café 雪</analysis_output>",
+                "GPT-5.1 analysis:\n<analysis_output>quoted café 雪</analysis_output>",
+            )
+        ],
+        *[
+            (
                 json.dumps(
                     {"answer": f"<analysis_output>{ending}café 雪{ending}</analysis_output>"},
                     ensure_ascii=False,
@@ -1259,7 +1315,8 @@ def test_backend_transport_separator_examples_cannot_exempt_private_neighbors(
         ],
     ],
     ids=[
-        "requested-json-literal-xml", "requested-json-literal-ls",
+        "requested-json-literal-xml", "requested-json-key-xml", "requested-json-key-prefixed",
+        "requested-json-literal-ls",
         "requested-json-literal-ps", "inline-xml", "inline-code-xml",
         "fenced-lf", "fenced-crlf", "fenced-cr-terminal-refusal",
         "indented-lf", "indented-crlf", "indented-cr-terminal-refusal",

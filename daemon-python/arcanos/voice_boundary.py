@@ -66,7 +66,7 @@ _ANALYSIS_RECORD = re.compile(
 
 
 def _has_private_analysis(text: str, user_text: str) -> bool:
-    """Inspect analysis records, including decoded JSON values, without unwrapping."""
+    """Inspect analysis records, including decoded JSON keys and values, without unwrapping."""
     try:
         value = json.loads(text)
     except ValueError:
@@ -78,6 +78,7 @@ def _has_private_analysis(text: str, user_text: str) -> bool:
         while pending:
             value = pending.pop()
             if isinstance(value, dict):
+                pending.extend(value.keys())
                 pending.extend(value.values())
             elif isinstance(value, list):
                 pending.extend(value)

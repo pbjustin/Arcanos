@@ -442,6 +442,42 @@ describe('Trinity caller-declared final JSON integrity at actual provider extrac
     expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
   });
 
+  it.each((['direct', 'explained'] as const).flatMap(mode => [false, true].flatMap(structured =>
+    ['root', 'nested', 'encoded-value', 'encoded-key'].map(shape => ({ mode, structured, shape })))))('blocks a decoded JSON key in the actual $mode provider-to-publication path (contract: $structured, shape: $shape)', async ({ mode, structured, shape }) => {
+      const key = 'GPT-5.1 analysis:\n<analysis_output>PRIVATE_KEY_FIXTURE</analysis_output>';
+      const document = JSON.stringify({ [key]: 'Public example value.' });
+      finalText = shape === 'root' ? document : shape === 'nested' ? JSON.stringify({ answer: [{ [key]: 'Public example value.' }] })
+        : shape === 'encoded-value' ? JSON.stringify({ answer: document }) : JSON.stringify({ [document]: 'Public example value.' });
+      const keyContract: TrinityStructuredOutputContract = {
+        name: 'key_example', schema: { type: 'object' },
+      };
+      const observed = await run(mode, structured ? keyContract : null).then(result => {
+        const publication = buildTrinityUserVisibleResponse({ trinityResult: result });
+        return { sink: 'public', text: publication.result, presentation: publication.presentation };
+      }, error => {
+        expect(String(error)).not.toContain('PRIVATE_KEY_FIXTURE');
+        expect(JSON.stringify(error)).not.toContain('PRIVATE_KEY_FIXTURE');
+        expect(error.stack ?? '').not.toContain('PRIVATE_KEY_FIXTURE');
+        return { sink: 'error', code: error.code, reason: error.reason };
+      });
+      expect(observed).toEqual({ sink: 'error', code: 'TRINITY_STRUCTURED_OUTPUT_INVALID', reason: 'private_output' });
+      expect(JSON.stringify(observed)).not.toContain('PRIVATE_KEY_FIXTURE');
+      expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
+    });
+
+  it.each((['direct', 'explained'] as const).flatMap(mode => [false, true].map(structured => ({ mode, structured }))))(
+    'preserves an exact quoted JSON key through $mode publication (contract: $structured)', async ({ mode, structured }) => {
+      const key = 'GPT-5.1 analysis:\n<analysis_output>quoted café 雪</analysis_output>';
+      finalText = JSON.stringify({ [key]: 'Public example value.' });
+      const keyContract: TrinityStructuredOutputContract = { name: 'key_example', schema: { type: 'object' } };
+      const result = await run(mode, structured ? keyContract : null,
+        `Return a JSON object whose key is the exact literal string ${JSON.stringify(key)}.`);
+      const publication = buildTrinityUserVisibleResponse({ trinityResult: result });
+      expect(publication.result).toBe(finalText);
+      expect(publication.presentation).toBe('public-answer-v1');
+      expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
+    });
+
   it.each((['direct', 'explained'] as const).flatMap(mode => [
     { mode, label: 'same-line analysis prefix', output: 'GPT-5.1 analysis: <analysis_output>PRIVATE_INLINE_FIXTURE</analysis_output>',
       structured: false, invalidJson: false, context: 'plain' },
@@ -543,12 +579,14 @@ describe('Trinity caller-declared final JSON integrity at actual provider extrac
     expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
   });
 
-  it.each(['direct', 'explained'] as const)('retains provider-incomplete priority over private JSON content in %s mode', async mode => {
-    finalText = '{"answer":"<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>"}';
+  it.each((['direct', 'explained'] as const).flatMap(mode => ['key', 'value'].map(location => ({ mode, location }))))
+  ('retains provider-incomplete priority over private JSON $location in $mode mode', async ({ mode, location }) => {
+    finalText = location === 'key'
+      ? JSON.stringify({ 'GPT-5.1 analysis:\n<analysis_output>PRIVATE_KEY_FIXTURE</analysis_output>': 'Public example value.' })
+      : '{"answer":"<analysis_output>PRIVATE_JSON_FIXTURE</analysis_output>"}';
     incomplete = true;
     const answerContract: TrinityStructuredOutputContract = {
-      name: 'incomplete_answer', schema: { type: 'object', additionalProperties: false, required: ['answer'],
-        properties: { answer: { type: 'string' } } },
+      name: 'incomplete_answer', schema: { type: 'object', additionalProperties: { type: 'string' } },
     };
     const delivered = jest.fn();
     const pending = run(mode, answerContract, 'Assess the supplied outline and return a short example.').then(delivered);
@@ -556,6 +594,7 @@ describe('Trinity caller-declared final JSON integrity at actual provider extrac
     const error = await pending.catch(value => value);
     expect(classifyTrinityIntegrityRepairFailure(error)).toBe('provider_incomplete');
     expect(String(error)).not.toContain('PRIVATE_JSON_FIXTURE');
+    expect(String(error)).not.toContain('PRIVATE_KEY_FIXTURE');
     expect(delivered).not.toHaveBeenCalled();
     expect(responsesCreate).toHaveBeenCalledTimes(mode === 'direct' ? 1 : 4);
   });

@@ -32,6 +32,49 @@ describe('Trinity private final-envelope boundary', () => {
     expect(validate(text, flags, honesty, { userPrompt, outputControls: deriveTrinityOutputControls(userPrompt, {}) })).toBe(text);
   });
 
+  it.each(['\n', '\u2028'])('rejects decoded JSON analysis keys after %p without changing error priority', newline => {
+    const key = `GPT-5.1 analysis:${newline}<analysis_output>PRIVATE_KEY_FIXTURE</analysis_output>`;
+    const document = JSON.stringify({ [key]: 'Public value.' });
+    const validateObject = createTrinityStructuredOutputValidator({ name: 'key_example', schema: { type: 'object' } });
+    for (const text of [
+      document,
+      JSON.stringify({ answer: [{ [key]: 'Public value.' }] }),
+      JSON.stringify({ answer: document }),
+      JSON.stringify({ [document]: 'Public value.' }),
+    ]) {
+      expect(() => assertTrinityFinalOutputIsPublic(text))
+        .toThrow(expect.objectContaining({ reason: 'private_output' }));
+      expect(() => validateObject(text, flags, honesty))
+        .toThrow(expect.objectContaining({ reason: 'private_output' }));
+    }
+    expect(() => validateObject(document.slice(0, -1), flags, honesty))
+      .toThrow(expect.objectContaining({ reason: 'invalid_json' }));
+    expect(() => validate(document, flags, honesty))
+      .toThrow(expect.objectContaining({ reason: 'schema_mismatch' }));
+  });
+
+  it.each(lineBoundaries)('preserves an exact current-user literal JSON key after %p', newline => {
+    const key = `<analysis_output>${newline}quoted café 雪${newline}</analysis_output>`;
+    const text = JSON.stringify({ [key]: 'Public value.' });
+    const userPrompt = `Use this exact literal as the JSON key: ${JSON.stringify(key)}.`;
+    const validateObject = createTrinityStructuredOutputValidator({ name: 'key_example', schema: { type: 'object' } });
+    expect(() => assertTrinityFinalOutputIsPublic(text, userPrompt)).not.toThrow();
+    expect(validateObject(text, flags, honesty, { userPrompt, outputControls: deriveTrinityOutputControls(userPrompt, {}) })).toBe(text);
+    const otherKey = `GPT-5.1 analysis:${newline}<analysis_output>PRIVATE_KEY_FIXTURE</analysis_output>`;
+    for (const other of [{ [key]: 'Public value.', [otherKey]: 'Private neighbor.' }, { [key]: otherKey }]) {
+      expect(() => assertTrinityFinalOutputIsPublic(JSON.stringify(other), userPrompt))
+        .toThrow(expect.objectContaining({ reason: 'private_output' }));
+    }
+  });
+
+  it.each([
+    '', 'The <analysis_output> label is ordinary key data.',
+    '```xml\n<analysis_output>source example</analysis_output>\n```',
+    '    <analysis_output>indented example</analysis_output>',
+  ])('preserves ordinary and source-example JSON keys: %p', key => {
+    expect(() => assertTrinityFinalOutputIsPublic(JSON.stringify({ [key]: 'Public value.' }))).not.toThrow();
+  });
+
   it.each(lineBoundaries)('does not extend a quoted JSON value to a private neighbor after %p', newline => {
     const xml = `<analysis_output>${newline}quoted café 雪${newline}</analysis_output>`;
     const privateValue = `GPT-5.1 analysis:${newline}<analysis_output>private reasoning fixture</analysis_output>`;
