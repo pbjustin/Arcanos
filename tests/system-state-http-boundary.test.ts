@@ -1,8 +1,12 @@
-import { readFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import express from 'express';
 import request from 'supertest';
-import { afterAll, beforeEach, describe, expect, it } from '@jest/globals';
+import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 import { recordChatIntent } from '../src/routes/ask/intent_store.js';
 import systemStateRouter from '../src/routes/system-state.js';
@@ -166,6 +170,240 @@ describe('system-state HTTP ingress boundary', () => {
     expect(response.status).toBe(503);
     expect(response.body.error.code).toBe('CONTROL_PLANE_AUTH_UNAVAILABLE');
   });
+
+  it.each([
+    'ARCANOS_CONTROL_PLANE_ACCESS_TOKEN',
+    'ARCANOS_CONTROL_PLANE_PRINCIPAL_ID',
+  ])('returns configuration unavailable for missing %s on both daemon methods', async (name) => {
+    delete process.env[name];
+    const app = buildApp();
+
+    for (const method of ['get', 'post'] as const) {
+      const response = await request(app)[method]('/system-state')
+        .set('Authorization', `Bearer ${controlPlaneToken}`)
+        .send(method === 'post' ? {} : undefined);
+
+      expect(response.status).toBe(503);
+      expect(response.body.error.code).toBe('CONTROL_PLANE_AUTH_UNAVAILABLE');
+      expect(response.text).not.toContain(controlPlaneToken);
+      expect(response.headers['x-confirmation-challenge']).toBeUndefined();
+    }
+  });
+
+  it.each([undefined, ''])('denies reads when server scopes are %s', async (scopes) => {
+    if (scopes === undefined) {
+      delete process.env.ARCANOS_CONTROL_PLANE_SCOPES;
+    } else {
+      process.env.ARCANOS_CONTROL_PLANE_SCOPES = scopes;
+    }
+
+    const response = await authenticatedGet(buildApp());
+
+    expect(response.status).toBe(403);
+    expect(response.body.error.code).toBe('CONTROL_PLANE_SCOPE_DENIED');
+  });
+
+  it('rejects malformed server scopes as unavailable configuration', async () => {
+    process.env.ARCANOS_CONTROL_PLANE_SCOPES = 'arcanos:read,,mcp:invoke';
+
+    const response = await authenticatedGet(buildApp());
+
+    expect(response.status).toBe(503);
+    expect(response.body.error.code).toBe('CONTROL_PLANE_AUTH_UNAVAILABLE');
+  });
+
+  it.each([
+    undefined,
+    'Bearer invalid-system-state-test-control-token-1234567890',
+    'Basic system-state-client-basic-token-1234567890',
+  ])('rejects missing or invalid GET authentication (%s)', async (authorization) => {
+    const pending = request(buildApp()).get('/system-state');
+    if (authorization !== undefined) {
+      pending.set('Authorization', authorization);
+    }
+    const response = await pending;
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe('CONTROL_PLANE_AUTH_REQUIRED');
+    expect(response.headers['www-authenticate']).toBe('Bearer realm="control-plane"');
+    expect(response.headers['cache-control']).toBe('no-store');
+    if (authorization !== undefined) {
+      expect(response.text).not.toContain(authorization.split(' ')[1]);
+    }
+  });
+
+  it('keeps credentials out of authentication, scope, and validation error logs', async () => {
+    const audit = { warn: jest.fn(), error: jest.fn() };
+    const app = express();
+    app.use((req, _res, next) => {
+      req.logger = audit as unknown as express.Request['logger'];
+      next();
+    });
+    app.use(systemStateRouter);
+    const invalidToken = 'synthetic-private-invalid-control-token-1234567890';
+    const sensitiveSession = `private-session-${'x'.repeat(100)}`;
+
+    delete process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID;
+    const unavailable = await authenticatedGet(app);
+    configureControlPlane();
+    const invalid = await request(app).get('/system-state')
+      .set('Authorization', `Bearer ${invalidToken}`);
+    configureControlPlane('mcp:invoke');
+    const denied = await authenticatedGet(app);
+    configureControlPlane();
+    const badRequest = await authenticatedGet(app).query({ sessionId: sensitiveSession });
+
+    expect([unavailable.status, invalid.status, denied.status, badRequest.status])
+      .toEqual([503, 401, 403, 400]);
+    expect(audit.error).toHaveBeenCalledWith('control_plane.http_auth.denied', {
+      reason: 'configuration_unavailable', statusCode: 503,
+    });
+    expect(audit.warn).toHaveBeenCalledWith('control_plane.http_auth.denied', {
+      reason: 'invalid_auth', statusCode: 401,
+    });
+    expect(audit.warn).toHaveBeenCalledWith('system_state.http_authorization.denied', {
+      reason: 'missing_scope', statusCode: 403, method: 'GET',
+    });
+    const observed = JSON.stringify({
+      logs: [audit.warn.mock.calls, audit.error.mock.calls],
+      errors: [unavailable.body, invalid.body, denied.body, badRequest.body],
+    });
+    for (const secret of [controlPlaneToken, invalidToken, sensitiveSession]) {
+      expect(observed).not.toContain(secret);
+    }
+  });
+
+  it('retrieves state through the real Python HTTP client while preserving authorization failures', async () => {
+    // Resolve dependencies before opening the fixture server or isolating the
+    // child from operator data. Python user sites need not be installation-local.
+    const userSite = spawnSync('python', ['-c', 'import site; print(site.getusersitepackages() if site.ENABLE_USER_SITE else "")'], {
+      encoding: 'utf8', windowsHide: true, timeout: 10_000,
+    });
+    expect(userSite.status).toBe(0);
+    const sandbox = mkdtempSync(path.join(tmpdir(), 'arcanos-system-state-e2e-'));
+    const sessionId = 'synthetic-daemon-system-state-e2e';
+    const seeded = recordChatIntent('Seed isolated daemon system state', sessionId);
+    const observed: Array<{ method: string; path: string; sessionId: unknown; dedicated: boolean }> = [];
+    const app = express();
+    app.use((req, _res, next) => {
+      observed.push({
+        method: req.method,
+        path: req.path,
+        sessionId: req.query.sessionId,
+        dedicated: req.get('Authorization') === `Bearer ${controlPlaneToken}`
+          && !req.get('X-Gpt-Id') && !req.get('X-Arcanos-Daemon-Token'),
+      });
+      next();
+    });
+    app.use(systemStateRouter);
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise<void>((resolve, reject) => {
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      throw new Error('Expected a loopback fixture port');
+    }
+    const daemonPath = fileURLToPath(new URL('../daemon-python', import.meta.url));
+    const code = `
+import json, os, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import arcanos.env as runtime_env
+# This fixture must never hydrate a project or installed operator .env.
+runtime_env._BOOTSTRAPPED = True
+runtime_env._BASE_DIR = Path(os.environ["DATA_DIR"])
+from arcanos.backend_client import BackendApiClient
+def unrelated_credential():
+    raise AssertionError("Control-plane requests must not select unrelated credentials")
+client = BackendApiClient(sys.argv[2], unrelated_credential,
+    daemon_access_token_provider=unrelated_credential, timeout_seconds=5)
+kwargs = {"metadata": {"instanceId": "synthetic-daemon-system-state-e2e"}}
+if sys.argv[3] == "mutation":
+    kwargs.update(expected_version=1, patch={"label": "unapproved-fixture-mutation"})
+result = client.request_system_state(**kwargs)
+error = result.error
+print(json.dumps({"ok": result.ok, "kind": error.kind if error else None,
+    "status": error.status_code if error else None,
+    "challenge": bool(error.confirmation_challenge_id) if error else False,
+    "mode": result.value.get("mode") if result.value else None,
+    "intent": result.value.get("intent") if result.value else None}))
+`;
+    const launchEnvironment = Object.fromEntries(
+      ['SystemRoot', 'WINDIR', 'PATH', 'PATHEXT'].filter(name => process.env[name] !== undefined)
+        .map(name => [name, process.env[name]!])
+    );
+    try {
+      for (const scenario of [
+        { name: 'read', token: controlPlaneToken, status: null, kind: null },
+        { name: 'missing-server-token', token: controlPlaneToken, status: 503, kind: 'configuration' },
+        { name: 'invalid-client-token', token: 'invalid-python-test-control-token-1234567890', status: 401, kind: 'control_plane_auth' },
+        { name: 'missing-client-token', token: '', status: null, kind: 'control_plane_auth' },
+        { name: 'missing-scope', token: controlPlaneToken, status: 403, kind: 'control_plane_auth' },
+        { name: 'mutation', token: controlPlaneToken, status: 403, kind: 'confirmation' },
+      ]) {
+        configureControlPlane(scenario.name === 'missing-scope' ? 'mcp:invoke' : 'arcanos:read,mcp:invoke');
+        if (scenario.name === 'missing-server-token') {
+          delete process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN;
+        }
+        const beforeCount = observed.length;
+        const output = await new Promise<{ stdout: string; stderr: string; exitCode: number | null }>((resolve, reject) => {
+          const child = spawn('python', ['-c', code, daemonPath, `http://127.0.0.1:${address.port}`, scenario.name], {
+            cwd: sandbox,
+            env: {
+              ...launchEnvironment,
+              USERPROFILE: sandbox, LOCALAPPDATA: sandbox, APPDATA: sandbox,
+              HOME: sandbox, DATA_DIR: sandbox, TEMP: sandbox, TMP: sandbox,
+              BACKEND_ALLOW_HTTP: 'true', PYTHONIOENCODING: 'utf-8',
+              OPENAI_API_KEY: 'synthetic-unused-control-plane-test-provider-key',
+              PYTHONPATH: userSite.stdout.trim(),
+              ARCANOS_CONTROL_PLANE_ACCESS_TOKEN: scenario.token,
+            },
+            windowsHide: true,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            timeout: 10_000,
+          });
+          let stdout = '';
+          let stderr = '';
+          child.stdout.on('data', chunk => { stdout += chunk.toString(); });
+          child.stderr.on('data', chunk => { stderr += chunk.toString(); });
+          child.once('error', reject);
+          child.once('close', exitCode => resolve({ stdout, stderr, exitCode }));
+        });
+        expect({ exitCode: output.exitCode, stderr: output.stderr }).toEqual({ exitCode: 0, stderr: '' });
+        const result = JSON.parse(output.stdout);
+        expect(result).toMatchObject({
+          ok: scenario.name === 'read', status: scenario.status, kind: scenario.kind,
+          challenge: scenario.name === 'mutation',
+        });
+        if (scenario.name === 'read') {
+          expect(result.mode).toBe('system_state');
+          expect(result.intent).toMatchObject({ version: seeded.version, label: seeded.label });
+        }
+        if (scenario.name === 'missing-client-token') {
+          expect(observed).toHaveLength(beforeCount);
+        } else {
+          expect(observed.slice(beforeCount)).toEqual([{
+            method: scenario.name === 'mutation' ? 'POST' : 'GET',
+            path: '/system-state',
+            sessionId: scenario.name === 'mutation' ? undefined : sessionId,
+            dedicated: scenario.name !== 'invalid-client-token',
+          }]);
+        }
+        for (const secret of [controlPlaneToken, 'invalid-python-test-control-token-1234567890']) {
+          expect(output.stdout + output.stderr).not.toContain(secret);
+          expect(readFileSync(path.join(sandbox, 'logs', 'debug_server.log'), 'utf8')).not.toContain(secret);
+        }
+      }
+      const finalState = await authenticatedGet(app).query({ sessionId });
+      expect(finalState.body.intent).toMatchObject({ version: seeded.version, label: seeded.label });
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  }, 60_000);
 
   it('keeps invalid bearer traffic from exhausting authenticated ingress', async () => {
     const app = express();

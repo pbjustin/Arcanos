@@ -180,6 +180,29 @@ def presentation_cli(monkeypatch):
     return cli, output
 
 
+@pytest.mark.parametrize("route", ["backend", "local"])
+def test_failed_system_state_query_never_falls_back_to_generation(
+    presentation_cli, monkeypatch, route
+):
+    cli, output = presentation_cli
+    backend = MagicMock()
+    local = MagicMock()
+    monkeypatch.setattr(cli_module.backend_ops, "perform_backend_conversation", backend)
+    monkeypatch.setattr(cli_module.local_ops, "perform_local_conversation", local)
+    initial_session_id = cli.session.session_id
+
+    response = cli.handle_ask(
+        "What am I working on?", route_override=route, return_result=True
+    )
+
+    assert response is None
+    assert "Failed to fetch backend system state" in output.getvalue()
+    backend.assert_not_called()
+    local.assert_not_called()
+    cli.memory.add_conversation.assert_not_called()
+    assert cli.session.session_id == initial_session_id
+
+
 def _deliver(
     monkeypatch,
     cli,

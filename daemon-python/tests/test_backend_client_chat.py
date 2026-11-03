@@ -139,8 +139,9 @@ def test_request_system_state_uses_direct_system_state_route_with_update_fields(
     assert response.ok is True
     assert response.value == {"state": {"ok": True}}
     client._request_json.assert_called_once()
-    _, path, payload = client._request_json.call_args.args
+    method, path, payload = client._request_json.call_args.args
     assert path == "/system-state"
+    assert method == "post"
     assert "gptId" not in payload
     assert "mode" not in payload
     assert payload["metadata"] == {"instanceId": "cli-123"}
@@ -159,10 +160,10 @@ def test_request_system_state_ignores_explicit_gpt_id_on_direct_route() -> None:
     response = request_system_state(client, gpt_id="arcanos-gaming")
 
     assert response.ok is True
-    _, path, payload = client._request_json.call_args.args
+    method, path, payload = client._request_json.call_args.args
     assert path == "/system-state"
-    assert "gptId" not in payload
-    assert "mode" not in payload
+    assert method == "get"
+    assert payload is None
 
 
 def test_request_query_uses_canonical_gpt_bridge_action_and_normalizes_response() -> None:

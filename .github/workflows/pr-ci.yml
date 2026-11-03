@@ -35,7 +35,7 @@ jobs:
       - name: Install minimal Python protocol runtime dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install --upgrade "jsonschema>=4.23.0,<5" "referencing>=0.35.1,<1"
+          python -m pip install --upgrade "jsonschema>=4.23.0,<5" "referencing>=0.35.1,<1" "requests>=2.31.0"
 
       - name: Boundary checks
         run: |

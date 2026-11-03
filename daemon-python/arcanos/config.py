@@ -173,6 +173,28 @@ def get_daemon_access_token() -> Optional[str]:
     return token
 
 
+def is_valid_control_plane_access_token(value: Optional[str]) -> bool:
+    """Validate the backend's exact, bounded visible-ASCII bearer grammar."""
+    return (
+        is_valid_daemon_access_token(value)
+        and re.fullmatch(r"[\x21-\x7E]+", value) is not None
+    )
+
+
+def get_control_plane_access_token() -> Optional[str]:
+    """Read only the dedicated control-plane credential, rejecting peer reuse."""
+    token = get_env("ARCANOS_CONTROL_PLANE_ACCESS_TOKEN")
+    if not is_valid_control_plane_access_token(token):
+        return None
+    if has_configured_purpose_bound_credential_collision(
+        credential=token,
+        own_environment_name="ARCANOS_CONTROL_PLANE_ACCESS_TOKEN",
+        read_environment_value=get_env,
+    ):
+        return None
+    return token
+
+
 def get_action_plan_executor_token() -> Optional[str]:
     """
     Purpose: Read the ActionPlan executor credential without canonical peer reuse.
@@ -242,6 +264,7 @@ class Config:
     BACKEND_URL: Optional[str] = get_backend_base_url()
     BACKEND_TOKEN: Optional[str] = get_backend_token()
     DAEMON_ACCESS_TOKEN: Optional[str] = get_daemon_access_token()
+    CONTROL_PLANE_ACCESS_TOKEN: Optional[str] = get_control_plane_access_token()
     ARCANOS_JOB_READ_TOKEN: Optional[str] = (
         get_env("ARCANOS_JOB_READ_TOKEN") or None
     )

@@ -1094,7 +1094,7 @@ Environment variables:
 | `QUEUE_BACKSTAGE_NOTION_PARTITION_SYNC_TERMINAL_RETENTION_MS` | Optional on worker; defaults to 604800000 | Retains only completed/cancelled protected manual partition-sync job rows for 1 hour-30 days. Cleanup remains positively allowlisted and preserves active idempotency and observation windows. |
 | `ARCANOS_BACKSTAGE_NOTION_RAG_MAX_STALENESS_MS` | Optional; web only | Maximum last-complete-verification age; default 86,400,000 ms, clamped to 300,000–604,800,000 ms. |
 | `ARCANOS_GAMING_SOURCE_ACCESS_TOKEN` | Optional; required only for Arcanos Gaming source ingestion, refresh, and status Actions on the web service | Exact 32–4096-character visible-ASCII non-placeholder Bearer credential, distinct from every other canonical application credential. Configure it only on the web service and in the Arcanos Gaming Custom GPT Action authentication field; do not copy it to the worker service. It grants access only to the three `/gpt-access/gaming/sources/*` lifecycle routes. Generic GPT Access routes reject it, and the generic GPT Access token is rejected on the Gaming source routes. |
-| `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN` | Required on the web service when HTTP control-plane, AFOL decision/inspection, reinforcement feedback/inspection, Backstage state mutation, protected DevOps/PR diagnostic execution, legacy SDK/orchestration control, `/api/self-heal/*`, `/api/self-improve/*`, detailed self-heal status, or CLI self-heal inspection is used | Exact purpose-bound bearer credential stored only in Railway Variables. It must remain distinct from approval, GPT Access, daemon, memory, worker-helper, automation, and other application credentials. Backstage mutation paths include direct, canonical GPT, GPT-selected `/dispatch`, and legacy module aliases; missing or invalid control-plane configuration fails them closed with 503. |
+| `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN` | Required on the web service when HTTP control-plane, AFOL decision/inspection, reinforcement feedback/inspection, Backstage state mutation, protected DevOps/PR diagnostic execution, legacy SDK/orchestration control, `/api/self-heal/*`, `/api/self-improve/*`, detailed self-heal status, or CLI self-heal inspection is used | Store the backend copy in web-service Railway Variables and deliver the identical credential securely to authorized daemon clients. It must remain distinct from approval, GPT Access, daemon, memory, worker-helper, automation, and other application credentials. Backstage mutation paths include direct, canonical GPT, GPT-selected `/dispatch`, and legacy module aliases; missing or invalid control-plane configuration fails them closed with 503. |
 | `ARCANOS_CONTROL_PLANE_PRINCIPAL_ID` | Required with the control-plane access token | Server-owned operator identifier used for HTTP control-plane attribution. Do not derive it from request fields. |
 | `ARCANOS_CONTROL_PLANE_SCOPES` | Required with the control-plane access token | Grant only intended operations. Manual partition shard enqueue, its actor-scoped status reads, the bounded universe diagnostics read, and the monolith authority-status read require `backstage:notion-sync`; enqueue also consumes a one-use challenge bound to actor, target, idempotency hash, and exact configuration. The authority view is `GET|HEAD /api/backstage/notion-partitions/:universeId/authority-status`; it reports only bounded identifier-free process-independent authority metadata and never admits protected generation. AFOL health/log/analytics and root `/memory`, `/memory/digest`, and `/reinforcement/metrics` reads require `arcanos:read`; `/api/afol/decide` requires `mcp:invoke` plus its issued one-use challenge; `/reinforce`, `/audit`, and `/reinforcement/judge` require `mcp:invoke`. Backstage `bookEvent`, `updateRoster`, `trackStoryline`, `saveStoryline`, `upsertStoryline`, and `appendCanonBeat` require `mcp:invoke` plus confirmation across every public HTTP alias; `/backstage/book-gpt` is included because it saves, while generation and simulation stay public. `/api/codebase/*` requires `repo:read`; direct PR analysis requires `repo:verify`; DevOps self-test/daily-summary execution requires `diagnostics:execute`; legacy SDK/orchestration reads require `arcanos:read`, while SDK mutations and orchestration reset/purge require `mcp:invoke` plus confirmation; prompt and AI-routing debug reads, self-heal reads, and detailed safety diagnostics also require `arcanos:read`; an active provider probe adds `self-heal:probe`; decisions require `self-heal:decide`; and `execute: true` adds `self-heal:execute`. Manual self-improve runs require both decision and execution scopes. Freeze, unfreeze, autonomy changes, and integrity-quarantine release require `self-improve:control`. Omit active grants unless the operator workflow explicitly needs them. |
 | `PROMPT_DEBUG_TRACE_MODE` | Optional; defaults to `metadata` | Keep `metadata` in normal deployments. Use `off` to collect nothing. `full` can retain sensitive prompt and response prose after bounded redaction and should be enabled only for a short, approved diagnostic window. Invalid values fail closed to `off`. |
@@ -1141,6 +1141,72 @@ Environment separation:
 - `GPT_ACCESS_*` natural-language dispatch variables do not change or recycle the worker service. Worker recycle/recover dispatch uses registered privileged actions, requires explicit `workers.recover` scope plus confirmation, and reclaims stale queue jobs through the approved recovery runner.
 - Dispatch confidence thresholds are fixed code policy, not Railway variables: readonly `0.65`, privileged `0.78`, and destructive `0.90`.
 - Confirm each service role through an approved control plane against the exact project, environment, and service. Do not reproduce raw variable output in reports.
+
+### Daemon system-state configuration and acceptance
+
+The Python daemon reads state through authenticated `GET /system-state` on the
+web service. `POST /system-state` remains a mutation operation requiring
+`mcp:invoke` and an issued, one-use confirmation bound to the principal and
+request. Do not grant mutation scopes merely to restore reads.
+
+A read-only, names-only audit on 2026-11-03 found
+`ARCANOS_CONTROL_PLANE_ACCESS_TOKEN`, `ARCANOS_CONTROL_PLANE_PRINCIPAL_ID`, and
+`ARCANOS_CONTROL_PLANE_SCOPES` absent from production **ARCANOS V2** and
+**ARCANOS Worker**, and absent from shared variable names. Neither service had
+staged changes. This confirms the configuration gap reported in the November 2
+investigation; it does not reproduce its nine historical requests or establish
+live authenticated acceptance. No secret values were retrieved.
+
+For a separately authorized configuration change in project **Arcanos**, environment
+**production**, service **ARCANOS V2**:
+
+| Variable | Required configuration |
+| --- | --- |
+| `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN` | Provision a dedicated 32–4096 visible-ASCII, non-placeholder credential without whitespace, distinct from every purpose-bound application credential. Deliver the identical value securely to the daemon environment under this name. Do not generate, copy, or print it in a command transcript. |
+| `ARCANOS_CONTROL_PLANE_PRINCIPAL_ID` | Set an operator identifier, such as `operator:daemon-system-state`, selected by the server operator. This identifier is not a caller-supplied session identity. |
+| `ARCANOS_CONTROL_PLANE_SCOPES` | Set `arcanos:read` for this read-only workflow. Any additional scope needs its own intended operation and authorization. |
+
+Keep these settings service-scoped on web; do not add them to shared variables
+or **ARCANOS Worker**. The worker does not serve the normal web system-state
+router. Leave GPT Access, daemon-coordination, automation, Railway, OpenAI, and
+approval credentials unchanged. A names-only audit cannot prove a credential's
+format, non-collision, runtime injection, or equality with the daemon copy.
+
+Missing/invalid server token or principal, a colliding credential, or malformed
+scope configuration returns `503 CONTROL_PLANE_AUTH_UNAVAILABLE`. Empty/absent
+scopes grant no operations and return `403 CONTROL_PLANE_SCOPE_DENIED` after valid
+authentication. Missing/invalid client bearer returns
+`401 CONTROL_PLANE_AUTH_REQUIRED`. Confirmation rejection is a separate POST
+response, not evidence of provider failure. GPT success does not prove any of
+these control-plane conditions; intermittent provider timeouts require separate
+investigation.
+
+Bounded acceptance after explicit configuration/deployment approval:
+
+1. Record the approved action, exact project/environment/web service, release SHA,
+   expected web rollout, and rollback plan before changing variables. Preserve the
+   previous configuration securely for rollback without logging values. This
+   procedure does not itself authorize credential provisioning or deployment.
+2. Verify the released SHA and variable names through Railway. Use the repaired
+   daemon with its dedicated credential and HTTPS web origin; make one
+   `request_system_state()` call with a synthetic session identity. Require GET,
+   HTTP 200, `ok: true`, expected state structure, and `Cache-Control: no-store`.
+   Retain only status/method and redacted assertions, not state, session URLs,
+   headers, or credentials. The state handler may initialize in-process session
+   state; it does not invoke inference or apply a patch.
+3. At most one missing-bearer GET and one synthetic-invalid-bearer GET may verify
+   401 rejection within that approved window. Do not test missing server settings
+   or scope denial by removing production variables; isolated regression tests
+   cover those cases. Do not POST, invoke GPT, probe providers, or mutate state
+   as part of this read acceptance.
+4. If any check fails, stop and classify configuration, bearer, scope, transport,
+   or backend failure. Do not retry through generation or broaden scopes. Roll
+   back only the approved web configuration/release if authorized, and report
+   the authenticated live path as **BLOCKED** until it has actually passed.
+
+Automated Python/backend and loopback HTTP fixtures are isolated acceptance
+evidence. They do not establish production credential configuration or live
+acceptance, and sealed PR previews do not mount this authenticated route.
 
 ### Disposable Backstage durable heavy-flow proof
 

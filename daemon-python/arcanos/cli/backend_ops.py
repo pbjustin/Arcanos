@@ -197,7 +197,7 @@ def build_backend_metadata(cli: "ArcanosCLI") -> dict[str, Any]:
 
 def request_backend_system_state_payload(cli: "ArcanosCLI") -> Optional[dict[str, Any]]:
     """
-    Purpose: Fetch backend-owned system state via the canonical daemon GPT route.
+    Purpose: Fetch backend-owned system state via authenticated GET /system-state.
     Inputs/Outputs: CLI instance; returns parsed state payload or None.
     Edge cases: Returns None when backend is not configured or request fails.
     """

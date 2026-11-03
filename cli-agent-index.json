@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-02T04:37:57.962Z",
+  "generatedAt": "2026-11-03T19:05:51.579Z",
   "scopes": [
     {
       "scope": "clients",
@@ -683,6 +683,9 @@
         },
         {
           "relativePath": "daemon-python/tests/test_schema_memory.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_system_state_transport.py"
         },
         {
           "relativePath": "daemon-python/tests/test_telemetry_sanitization.py"
