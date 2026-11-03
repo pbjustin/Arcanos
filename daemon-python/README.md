@@ -37,12 +37,29 @@ See [CLI overview](../docs/CLI_OVERVIEW.md) for the TypeScript CLI.
 The daemon preserves the backend writing/control-plane split:
 
 - assistant chat and GPT/module-bound writing traffic use `/gpt/:gptId`
-- system-state reads use the direct `/system-state` endpoint
+- system-state reads use authenticated `GET /system-state`
 - daemon coordination uses purpose-bound `/api/daemon/*` transport
 - update checks use `/api/update`
 - job, runtime, DAG, and other control-plane reads use their structured direct or `/gpt-access/*` endpoints
 
 The daemon does not use legacy ask-style routes such as `/api/arcanos/ask` or `/query-finetune` for its active chat flow. Do not encode job lookups, runtime diagnostics, DAG inspection, or MCP control calls as prompt text sent to `/gpt/:gptId`.
+
+System-state requests require the dedicated `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN`
+in the daemon environment and the identical, distinct credential on the backend
+web service. There is no fallback to GPT Access, `BACKEND_TOKEN`, daemon,
+automation, Railway, or OpenAI credentials. Configure the server-owned
+`ARCANOS_CONTROL_PLANE_PRINCIPAL_ID` and `ARCANOS_CONTROL_PLANE_SCOPES` on the web
+service; read-only access needs only `arcanos:read`. The optional session identity
+is passed as the GET `sessionId` query parameter without conversation messages or
+repository metadata. Do not log URLs containing that query.
+
+`request_system_state(expected_version=..., patch=...)` retains the explicit POST
+mutation path. Both arguments are mandatory together; the server additionally
+requires `mcp:invoke` and its issued, one-use principal/request-bound confirmation.
+The client does not automatically approve or replay a mutation. Authentication,
+scope, confirmation, HTTP/backend, and transport failures remain structured
+errors and do not enter GPT generation. See the
+[production configuration and acceptance procedure](../docs/RAILWAY_DEPLOYMENT.md#daemon-system-state-configuration-and-acceptance).
 
 High-level flow:
 
@@ -423,7 +440,10 @@ credential is used.
 - Other backend route failure: verify `BACKEND_URL`, backend health,
   `BACKEND_TOKEN`, and the configured GPT ID.
 - `410 Gone` from an old ask-style route: move writing calls to `/gpt/<gpt-id>`.
-- System-state failure: verify the direct `/system-state` endpoint and backend authorization.
+- System-state failure: verify the dedicated token and GET route. Server token/principal
+  configuration unavailable returns 503; invalid bearer returns 401; missing read scope
+  returns 403; POST confirmation is a separate requirement. A successful GPT response
+  does not prove control-plane configuration or authorization.
 - Patch application failure: verify the repository is a Git worktree and that patch paths are valid.
 - Debug-server `401`: configure one supported authentication method and send the matching header.
 - Unexpected `arcanos` behavior: check which executable resolves on `PATH`, then use one of the unambiguous invocations above.

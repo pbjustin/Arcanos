@@ -359,7 +359,10 @@ Job-backed `POST /gpt/:gptId` response shapes:
 - Duplicate submissions on reusable authenticated scopes set `deduped: true`
   and return the canonical `jobId`; anonymous public submissions never do.
 - Job-backed creation responses use `Cache-Control: no-store`.
-- `200 OK` system-state retrieval/update: authenticated `POST /system-state`
+- `200 OK` system-state retrieval: authenticated `GET /system-state` with an
+  optional `sessionId` query parameter requires the control-plane operator bearer
+  and `arcanos:read`. The Python daemon uses this read path without a JSON body.
+- `200 OK` system-state update: authenticated `POST /system-state`
   with `{ "sessionId": "...", "expectedVersion": 1, "patch": { ... } }` is
   handled directly on the control plane and never enters the GPT writing
   dispatcher. It requires the control-plane operator bearer, `mcp:invoke`, and
@@ -664,6 +667,13 @@ automation bypasses are not accepted. The server accepts caller-selected
 `sessionId` values up to 100 characters for compatibility. This is
 deployment-wide operator containment, not tenant or per-session ownership
 enforcement.
+
+Missing or invalid server token/principal configuration, a purpose-bound token
+collision, or malformed scopes returns `503 CONTROL_PLANE_AUTH_UNAVAILABLE`.
+Absent/empty scopes grant no operations and return `403 CONTROL_PLANE_SCOPE_DENIED`
+after valid authentication. Missing/invalid client authentication returns
+`401 CONTROL_PLANE_AUTH_REQUIRED`; this is separate from scope denial and mutation
+confirmation. GPT writing routes do not supply a fallback for these failures.
 
 Backstage generation and simulation actions retain their existing authorization
 classification through the

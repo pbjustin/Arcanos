@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Sequence, TYPE_CHECKING
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from ..backend_client_models import (
     BackendChatResult,
@@ -399,7 +399,12 @@ def request_system_state(
         payload["expectedVersion"] = expected_version
         payload["patch"] = dict(patch)
 
-    response = client._request_json("post", "/system-state", payload)
+    if expected_version is None:
+        query = urlencode({"sessionId": payload["sessionId"]}) if "sessionId" in payload else ""
+        path = f"/system-state?{query}" if query else "/system-state"
+        response = client._request_json("get", path, None)
+    else:
+        response = client._request_json("post", "/system-state", payload)
     if not response.ok or not response.value:
         # //audit assumption: response must be ok; risk: backend failure; invariant: ok response; strategy: return structured error.
         return BackendResponse(ok=False, error=response.error)

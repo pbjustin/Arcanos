@@ -1,6 +1,9 @@
 import express from 'express';
 import request from 'supertest';
 import { afterAll, afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import {
+  createSystemStateHttpBoundary,
+} from '../src/services/controlPlane/systemStateHttpBoundary.js';
 
 const originalPublicProviderRateLimitMax = process.env.PUBLIC_PROVIDER_RATE_LIMIT_MAX;
 const originalPublicProviderClientRateLimitMax =
@@ -179,6 +182,39 @@ describe('gpt router auth logging', () => {
       module: 'ARCANOS:GAMING',
       route: 'gaming',
     });
+  });
+
+  it('continues GPT conversations when the separate control plane is unconfigured', async () => {
+    mockRouteGptRequest.mockResolvedValue({
+      ok: true,
+      result: { response: 'Synthetic conversation remains available.' },
+      _route: {
+        gptId: 'arcanos-core', module: 'ARCANOS:CORE', route: 'core', action: 'query',
+      },
+    });
+    const app = express();
+    app.use(requestContext);
+    app.use('/system-state', createSystemStateHttpBoundary({
+      authenticationEnvironment: Object.freeze({}),
+    }));
+    app.use(express.json());
+    app.use('/gpt', gptRouter);
+
+    for (const method of ['get', 'post'] as const) {
+      const denied = await request(app)[method]('/system-state').send({});
+      expect(denied.status).toBe(503);
+      expect(denied.body.error.code).toBe('CONTROL_PLANE_AUTH_UNAVAILABLE');
+    }
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+    expect(mockExecuteSystemStateRequest).not.toHaveBeenCalled();
+
+    const conversation = await request(app).post('/gpt/arcanos-core')
+      .send({ action: 'query', prompt: 'Continue our synthetic conversation.' });
+
+    expect(conversation.status).toBe(200);
+    expect(conversation.text).toContain('Synthetic conversation remains available.');
+    expect(mockRouteGptRequest).toHaveBeenCalledTimes(1);
+    expect(mockExecuteSystemStateRequest).not.toHaveBeenCalled();
   });
 
   it('rejects oversized route identifiers without logging the caller-controlled identifier', async () => {

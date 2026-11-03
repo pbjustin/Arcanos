@@ -8,6 +8,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional, Sequence
 from urllib.parse import urlsplit
+from uuid import UUID
 
 import requests
 
@@ -39,7 +40,7 @@ from ..backend_client_models import (
     BackendTranscriptionResult,
     BackendVisionResult,
 )
-from ..config import Config, is_valid_daemon_access_token
+from ..config import Config, is_valid_control_plane_access_token, is_valid_daemon_access_token
 from arcanos.debug import log_audit_event
 
 DAEMON_ACCESS_TOKEN_HEADER_NAME = "x-arcanos-daemon-token"
@@ -105,6 +106,15 @@ class BackendRequestContext:
             name.lower() == JOB_READ_TOKEN_HEADER_NAME
             for name in self.headers
         )
+
+    @property
+    def is_system_state(self) -> bool:
+        return urlsplit(self.resolved_path).path.lower().rstrip("/") == "/system-state"
+
+    @property
+    def audit_url(self) -> str:
+        # Read requests carry session identity in the query, never in telemetry.
+        return self.url.split("?", 1)[0] if self.is_system_state else self.url
 
 
 class BackendApiClient:
@@ -301,6 +311,28 @@ class BackendApiClient:
         resolved_path = self._resolve_outbound_path(normalized_path)
         outbound_payload = self._prepare_outbound_payload(resolved_path, payload)
 
+        if urlsplit(resolved_path).path.lower().rstrip("/") == "/system-state":
+            control_token = getattr(Config, "CONTROL_PLANE_ACCESS_TOKEN", None)
+            if not is_valid_control_plane_access_token(control_token):
+                raise BackendRequestError(
+                    kind="control_plane_auth",
+                    message="ARCANOS_CONTROL_PLANE_ACCESS_TOKEN is missing or invalid",
+                )
+            return BackendRequestContext(
+                original_path=normalized_path.split("?", 1)[0],
+                resolved_path=resolved_path.split("?", 1)[0],
+                url=f"{self._base_url}{resolved_path}",
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {control_token}",
+                },
+                payload=outbound_payload,
+                request_gpt_id=None,
+                effective_gpt_id=None,
+                has_authorization=True,
+                has_x_gpt_id=False,
+            )
+
         if self._is_daemon_plane_path(resolved_path):
             daemon_access_token = self._daemon_access_token_provider()
             if not is_valid_daemon_access_token(daemon_access_token):
@@ -434,7 +466,7 @@ class BackendApiClient:
             method=method,
             original_path=context.original_path,
             resolved_path=context.resolved_path,
-            url=context.url,
+            url=context.audit_url,
             gpt_id=context.request_gpt_id,
             effective_gpt_id=context.effective_gpt_id,
             auth_mode=context.auth_mode,
@@ -446,7 +478,7 @@ class BackendApiClient:
         )
         self._log_backend_route_request(
             method=method,
-            url=context.url,
+            url=context.audit_url,
             resolved_endpoint=context.resolved_path,
             gpt_id=context.request_gpt_id,
         )
@@ -470,7 +502,7 @@ class BackendApiClient:
             method=method,
             original_path=context.original_path,
             resolved_path=context.resolved_path,
-            url=context.url,
+            url=context.audit_url,
             gpt_id=context.request_gpt_id,
             effective_gpt_id=context.effective_gpt_id,
             status_code=status_code,
@@ -484,11 +516,11 @@ class BackendApiClient:
         )
         self._log_backend_route_response(
             method=method,
-            url=context.url,
+            url=context.audit_url,
             resolved_endpoint=context.resolved_path,
             gpt_id=context.request_gpt_id,
             status_code=status_code,
-            response_json=response_json,
+            response_json=None if context.is_system_state else response_json,
             error_kind=error_kind,
         )
 
@@ -547,10 +579,10 @@ class BackendApiClient:
                 return response
             except requests.Timeout as exc:
                 self._log_request_response(method, context, status_code=0, error_kind="timeout")
-                raise BackendRequestError(kind="timeout", message="Backend request timed out", details=str(exc))
+                raise BackendRequestError(kind="timeout", message="Backend request timed out", details=None if context.is_system_state else str(exc))
             except requests.RequestException as exc:
                 self._log_request_response(method, context, status_code=0, error_kind="network")
-                raise BackendRequestError(kind="network", message="Backend request failed", details=str(exc))
+                raise BackendRequestError(kind="network", message="Backend request failed", details=None if context.is_system_state else str(exc))
 
     def make_raw_request(self, method: str, path: str, json: Optional[Mapping[str, Any]] = None) -> requests.Response:
         """
@@ -745,6 +777,73 @@ class BackendApiClient:
             )
         return _submit_update_event(self, resolved_update_type, data, metadata)
 
+    @staticmethod
+    def _system_state_http_error(method: str, response: requests.Response) -> BackendRequestError:
+        """Classify control failures without returning untrusted response text."""
+        try:
+            parsed = response.json()
+        except ValueError:
+            parsed = None
+        body = parsed if isinstance(parsed, dict) else {}
+        error = body.get("error")
+        code = error.get("code") if isinstance(error, dict) else body.get("code")
+        status = response.status_code
+        if status == 429:
+            message = "Rate limit exceeded. Try again later."
+            retry_after = body.get("retryAfter")
+            # The largest current system-state limiter window is 15 minutes.
+            if type(retry_after) is int and 1 <= retry_after <= 15 * 60:
+                unit = "second" if retry_after == 1 else "seconds"
+                message = f"Rate limit exceeded. Try again in {retry_after} {unit}."
+            return BackendRequestError(
+                kind="rate_limit",
+                message=message,
+                status_code=status,
+            )
+        if method.lower() == "post" and status == 403 and code == "CONFIRMATION_REQUIRED":
+            challenge = body.get("confirmationChallenge")
+            challenge_id = challenge.get("id") if isinstance(challenge, dict) else None
+            try:
+                valid_challenge = isinstance(challenge_id, str) and str(UUID(challenge_id)) == challenge_id
+            except ValueError:
+                valid_challenge = False
+            if valid_challenge:
+                return BackendRequestError(
+                    kind="confirmation",
+                    message="Backend confirmation required",
+                    status_code=status,
+                    confirmation_challenge_id=challenge_id,
+                    pending_actions=[],
+                )
+        classifications = {
+            (503, "CONTROL_PLANE_AUTH_UNAVAILABLE"): (
+                "configuration", "Control-plane authentication is unavailable on the backend."
+            ),
+            (401, "CONTROL_PLANE_AUTH_REQUIRED"): (
+                "control_plane_auth", "Control-plane bearer authentication failed."
+            ),
+            (403, "CONTROL_PLANE_SCOPE_DENIED"): (
+                "control_plane_auth", "Control-plane scope is insufficient."
+            ),
+            (403, "CONTROL_PLANE_FORBIDDEN"): (
+                "control_plane_auth", "Control-plane operation is not permitted."
+            ),
+            (400, "BAD_REQUEST"): ("http", "System-state request is invalid."),
+            (409, "SYSTEM_STATE_CONFLICT"): ("http", "System-state update conflict."),
+        }
+        if isinstance(code, str) and (status, code) in classifications:
+            kind, message = classifications[(status, code)]
+            details = json.dumps({"error": {"code": code}})
+        else:
+            kind = "control_plane_auth" if status in (401, 403) else "http"
+            message = (
+                "Control-plane authorization failed"
+                if kind == "control_plane_auth"
+                else "Backend system-state request returned error"
+            )
+            details = None
+        return BackendRequestError(kind=kind, message=message, status_code=status, details=details)
+
     def _request_json(
         self,
         method: str,
@@ -782,15 +881,23 @@ class BackendApiClient:
             return self._build_logged_error_response(
                 method,
                 context,
-                BackendRequestError(kind="timeout", message="Backend request timed out", details=str(exc)),
+                BackendRequestError(kind="timeout", message="Backend request timed out", details=None if context.is_system_state else str(exc)),
                 error_kind="timeout",
             )
         except requests.RequestException as exc:
             return self._build_logged_error_response(
                 method,
                 context,
-                BackendRequestError(kind="network", message="Backend request failed", details=str(exc)),
+                BackendRequestError(kind="network", message="Backend request failed", details=None if context.is_system_state else str(exc)),
                 error_kind="network",
+            )
+
+        if context.is_system_state and response.status_code >= 300:
+            return self._build_logged_error_response(
+                method,
+                context,
+                self._system_state_http_error(method, response),
+                status_code=response.status_code,
             )
 
         if context.has_sensitive_capability_header and 300 <= response.status_code < 400:
@@ -972,7 +1079,7 @@ class BackendApiClient:
                     kind="parse",
                     message="Backend response is not valid JSON",
                     status_code=response.status_code,
-                    details=str(exc)
+                    details=None if context.is_system_state else str(exc)
                 ),
                 status_code=response.status_code,
                 error_kind="parse",

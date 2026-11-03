@@ -253,7 +253,7 @@ class ArcanosCLI:
 
     def handle_status(self) -> bool:
         """
-        Purpose: Show backend-owned governed status using the canonical daemon GPT route.
+        Purpose: Show backend-owned governed status using authenticated GET /system-state.
         Inputs/Outputs: None; renders status table and returns success flag.
         Edge cases: Returns False when backend is not configured or state fetch fails.
         """
@@ -396,7 +396,10 @@ class ArcanosCLI:
         else:
             state_payload = None
 
-        if state_payload and state.is_working_context_query(message):
+        if state.is_working_context_query(message):
+            if not state_payload:
+                self.console.print("[red]Failed to fetch backend system state.[/red]")
+                return None
             state.hydrate_session_from_backend_state(self, state_payload)
             intent_payload = state_payload.get("intent") if isinstance(state_payload.get("intent"), Mapping) else {}
             label = intent_payload.get("label")
