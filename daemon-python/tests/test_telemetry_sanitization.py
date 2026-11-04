@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import logging
 import json
+import ast
+import base64
+import io
 import time
 from types import SimpleNamespace
 
@@ -14,6 +17,148 @@ from arcanos.utils.telemetry import sanitize_sensitive_data
 
 
 JOB_READ_CAPABILITY = "v1." + "a" * 42 + "_"
+
+
+@pytest.mark.parametrize("control", [
+    "\u200b", "\u200d", "\u2060", "\u00ad", "\ufe0f", "\U000E0100",
+], ids=["zero-width-space", "joiner", "word-joiner", "soft-hyphen", "variation-selector", "supplementary-selector"])
+@pytest.mark.parametrize("sink", ["telemetry-file", "debug-json", "debug-text", "interactive-error"])
+def test_default_ignorable_capability_is_private_in_actual_consumers(
+    monkeypatch, tmp_path, control, sink,
+):
+    """Invisible decoration cannot reveal a recoverable credential at real sinks."""
+    from arcanos import cli_runner, telemetry
+    from rich.console import Console
+
+    capability = "v1." + base64.urlsafe_b64encode(bytes(range(32))).decode().rstrip("=")
+    decorated = capability[:15] + control + capability[15:]
+    message = f"Lookup failed for {decorated}; HTTP 500; no task was completed."
+    if sink == "telemetry-file":
+        monkeypatch.setattr(telemetry.Config, "TELEMETRY_DIR", tmp_path)
+        monkeypatch.setattr(telemetry, "SENTRY_AVAILABLE", False)
+        instance = telemetry.Telemetry.__new__(telemetry.Telemetry)
+        instance.enabled, instance.session_id, instance.user_id = True, "synthetic-session", "synthetic-user"
+        instance.track_event("synthetic_failure", {"error": message, "status": 500})
+        written = (tmp_path / "events.log").read_text(encoding="utf-8")
+        shown = ast.literal_eval(written)["properties"]["error"]
+    elif sink == "debug-json":
+        output = io.StringIO()
+        handler = logging.StreamHandler(output)
+        handler.setFormatter(JsonLogFormatter())
+        logger = logging.Logger("synthetic-ignorable-json")
+        logger.addHandler(handler)
+        logger.error("%s", message)
+        shown = json.loads(output.getvalue())["message"]
+    elif sink == "debug-text":
+        path = tmp_path / "debug-mode.log"
+        logger = cli_runner._build_debug_logger(path)
+        try:
+            logger.error("%s", message)
+            for handler in logger.handlers:
+                handler.flush()
+            shown = path.read_text(encoding="utf-8")
+        finally:
+            for handler in list(logger.handlers):
+                handler.close()
+                logger.removeHandler(handler)
+    else:
+        def fail_conversation(*args):
+            raise RuntimeError(message)
+
+        output = io.StringIO()
+        cli = SimpleNamespace(
+            console=Console(file=output, width=1000, color_system=None),
+            show_welcome=lambda: None, handle_ask=fail_conversation,
+            _append_activity=lambda *args: None, _stop_daemon_service=lambda: None,
+        )
+        inputs = iter(["synthetic input", "exit"])
+        monkeypatch.setattr(cli_runner, "install_completion", lambda: None)
+        monkeypatch.setattr("builtins.input", lambda *args: next(inputs))
+        monkeypatch.setattr(cli_runner.Config, "TELEMETRY_ENABLED", False)
+        cli_runner.run_interactive_mode(cli)
+        shown = output.getvalue()
+
+    assert capability not in shown.replace(control, "")
+    assert decorated not in shown
+    assert "Lookup failed for [REDACTED]; HTTP 500; no task was completed." in shown
+
+
+@pytest.mark.parametrize("control", ["\u200b", "\u200d", "\u2060", "\u00ad", "\ufe0f", "\U000E0100"])
+def test_shared_capability_redaction_preserves_benign_unicode_and_identifier_boundaries(control):
+    from arcanos.utils.text import redact_job_read_capabilities
+
+    capability = "v1." + base64.urlsafe_b64encode(bytes(range(32))).decode().rstrip("=")
+    decorated = capability[:15] + control + capability[15:]
+    prose = f"Échec 🛡️ 👨‍👩‍👧; keep a{control}b unchanged. "
+    message = prose + f"Lookup failed for {decorated}; HTTP 500."
+    assert redact_job_read_capabilities(message) == prose + "Lookup failed for [REDACTED]; HTTP 500."
+    for larger in ("prefix" + decorated, decorated + "suffix", capability + control + "x"):
+        assert redact_job_read_capabilities(prose + larger) == prose + larger
+    encoded = json.dumps({"error": message}, ensure_ascii=True)
+    assert json.loads(redact_job_read_capabilities(encoded))["error"] == prose + "Lookup failed for [REDACTED]; HTTP 500."
+
+
+@pytest.mark.parametrize("control", ["\u200b", "\u200d", "\u2060", "\u00ad", "\ufe0f", "\U000E0100"])
+@pytest.mark.parametrize("sink", ["utility", "telemetry-file", "debug-extra"])
+def test_exception_objects_cannot_hide_decorated_capabilities_in_repr(
+    monkeypatch, tmp_path, control, sink,
+):
+    """Supported exception values stay private after repr escapes their Unicode."""
+    from arcanos import telemetry
+
+    capability = "v1." + base64.urlsafe_b64encode(bytes(range(32))).decode().rstrip("=")
+    decorated = capability[:15] + control + capability[15:]
+    message = f"Lookup failed for {decorated}; HTTP 500; no task was completed."
+    error = RuntimeError(message)
+    if sink == "utility":
+        shown = sanitize_sensitive_data({"error": error})["error"]
+    elif sink == "telemetry-file":
+        monkeypatch.setattr(telemetry.Config, "TELEMETRY_DIR", tmp_path)
+        monkeypatch.setattr(telemetry, "SENTRY_AVAILABLE", False)
+        instance = telemetry.Telemetry.__new__(telemetry.Telemetry)
+        instance.enabled, instance.session_id, instance.user_id = True, "synthetic-session", "synthetic-user"
+        instance.track_event("synthetic_failure", {"error": error})
+        shown = ast.literal_eval((tmp_path / "events.log").read_text(encoding="utf-8"))["properties"]["error"]
+    else:
+        output = io.StringIO()
+        handler = logging.StreamHandler(output)
+        handler.setFormatter(JsonLogFormatter())
+        logger = logging.Logger("synthetic-exception-extra")
+        logger.addHandler(handler)
+        logger.error("Synthetic HTTP 500", extra={"diagnostic": error})
+        shown = json.loads(output.getvalue())["diagnostic"]
+
+    assert shown == repr(RuntimeError("Lookup failed for [REDACTED]; HTTP 500; no task was completed."))
+    assert str(error) == message
+
+
+@pytest.mark.parametrize("control", ["\u200b", "\u200d", "\u2060", "\u00ad", "\ufe0f", "\U000E0100"])
+def test_encoded_ignorable_redaction_retains_benign_repr_and_larger_identifiers(control):
+    from arcanos.utils.text import redact_job_read_capabilities
+
+    capability = "v1." + base64.urlsafe_b64encode(bytes(range(32))).decode().rstrip("=")
+    decorated = capability[:15] + control + capability[15:]
+    prose = f"Échec 🛡️ 👨‍👩‍👧; keep a{control}b unchanged. "
+    assert redact_job_read_capabilities(repr(RuntimeError(prose + decorated))) == repr(
+        RuntimeError(prose + "[REDACTED]")
+    )
+    for larger in ("prefix" + decorated, decorated + "suffix", capability + control + "x"):
+        literal = repr(RuntimeError(prose + larger))
+        assert redact_job_read_capabilities(literal) == literal
+
+
+@pytest.mark.parametrize("escaped", [r"\u200b", r"\U0000200D", r"\xad", r"\U000E0100"])
+def test_escaped_ignorable_spans_do_not_decode_other_diagnostic_literals(escaped):
+    from arcanos.utils.text import redact_job_read_capabilities
+
+    capability = "v1." + base64.urlsafe_b64encode(bytes(range(32))).decode().rstrip("=")
+    decorated = capability[:15] + escaped + capability[15:]
+    benign = r"Keep \u0041 \x41 \UFFFFFFFF \U00110000 \U0000D800 \uZZZZ unchanged. "
+    assert redact_job_read_capabilities(benign + decorated) == benign + "[REDACTED]"
+    for larger in ("prefix" + decorated, decorated + "suffix"):
+        assert redact_job_read_capabilities(benign + larger) == benign + larger
+    encoded_larger = '"' + capability + r'\u0041"'
+    assert redact_job_read_capabilities(encoded_larger) == encoded_larger
 
 
 def test_malformed_quoted_diagnostics_have_bounded_cpu_growth():
