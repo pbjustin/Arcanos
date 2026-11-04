@@ -64,6 +64,11 @@ def speak_to_user(
     return filtered
 
 
+def _reported_boolean(value: Any) -> str:
+    """Only backend JSON booleans can report a known boolean measurement."""
+    return str(value).lower() if type(value) is bool else "unknown"
+
+
 def build_system_status_evidence(cli: "ArcanosCLI", state_payload: Optional[Mapping[str, Any]]) -> str:
     """Separate locally observed trust, backend-reported fields, and unmeasured health."""
     registry_fresh = state.registry_cache_is_valid(cli)
@@ -73,14 +78,20 @@ def build_system_status_evidence(cli: "ArcanosCLI", state_payload: Optional[Mapp
     lines = [
         f"Daemon trust (local): {cli._trust_state.name}",
         f"Daemon registry evidence (local): {registry_status}",
+        # Keep the evidence limits before metadata, with complete sentences so
+        # bounded speech cannot drop them at a timestamp's decimal point.
+        "Backend dependency health: unknown (system-state is not a dependency health probe).",
+        "Memory availability: unknown (not measured by system-state).",
+        "Memory consistency: unknown (no consistency check performed).",
+        "Audit-safe mode: unknown (not measured by system-state).",
+        "Intent tracking correctness: unknown (no correctness check performed).",
+        "Overall stability and risk: unknown (no comprehensive health or risk assessment performed).",
     ]
     if state_payload:
         backend = state_payload.get("backend")
         backend = backend if isinstance(backend, Mapping) else {}
         freshness = state_payload.get("stateFreshness")
         freshness = freshness if isinstance(freshness, Mapping) else {}
-        def boolean(value: Any) -> str:
-            return str(value).lower() if type(value) is bool else "unknown"
         backend_freshness = freshness.get("backend")
         backend_freshness = backend_freshness if backend_freshness in ("fresh", "stale") else "unknown"
         intent_freshness = freshness.get("intent")
@@ -93,24 +104,17 @@ def build_system_status_evidence(cli: "ArcanosCLI", state_payload: Optional[Mapp
             generated_at = "unknown"
         lines.extend([
             "Backend status read (observed): authenticated GET /system-state succeeded",
-            f"Backend-reported connection: {boolean(backend.get('connected'))}",
-            f"Backend-reported registry availability: {boolean(backend.get('registryAvailable'))} (does not verify daemon registry authentication)",
+            f"Backend-reported connection: {_reported_boolean(backend.get('connected'))}",
+            f"Backend-reported registry availability: {_reported_boolean(backend.get('registryAvailable'))} (does not verify daemon registry authentication)",
             f"Backend-reported freshness: {backend_freshness}; generated at: {generated_at}",
-            f"Intent freshness (reported): {intent_freshness}; tracking correctness: unknown",
+            f"Intent freshness (reported): {intent_freshness}",
         ])
     else:
         lines.extend([
             "Backend status read: unavailable (not configured, inaccessible, or invalid response)",
             "Backend-reported freshness: unknown",
-            "Intent freshness and tracking correctness: unknown",
+            "Intent freshness (reported): unknown",
         ])
-    lines.extend([
-        "Backend dependency health: unknown (system-state is not a dependency health probe)",
-        "Memory availability: unknown (not measured by system-state)",
-        "Memory consistency: unknown (no consistency check performed)",
-        "Audit-safe mode: unknown (not measured by system-state)",
-        "Overall stability and risk: unknown (no comprehensive health or risk assessment performed)",
-    ])
     return "\n".join(lines)
 
 
@@ -142,8 +146,8 @@ def render_system_state_table(cli: "ArcanosCLI", state_payload: Mapping[str, Any
     table.add_row("routing.preferred", str(routing_payload.get("preferred", "unknown")))
     table.add_row("routing.lastUsed", str(routing_payload.get("lastUsed", "unknown")))
     table.add_row("routing.confidenceGate", str(routing_payload.get("confidenceGate", "unknown")))
-    table.add_row("reported.backend.connected", str(backend_payload.get("connected", "unknown")))
-    table.add_row("reported.backend.registryAvailable", str(backend_payload.get("registryAvailable", "unknown")))
+    table.add_row("reported.backend.connected", _reported_boolean(backend_payload.get("connected")))
+    table.add_row("reported.backend.registryAvailable", _reported_boolean(backend_payload.get("registryAvailable")))
     table.add_row("reported.backend.lastHeartbeatAt", str(backend_payload.get("lastHeartbeatAt", "unknown")))
     table.add_row("freshness.intent", str(freshness_payload.get("intent", "unknown")))
     table.add_row("freshness.backend", str(freshness_payload.get("backend", "unknown")))

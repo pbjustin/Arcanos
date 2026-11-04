@@ -258,8 +258,8 @@ class ArcanosCLI:
         Edge cases: Returns False when backend is not configured or state fetch fails.
         """
         backend_ops.refresh_registry_cache_if_stale(self)
-        self._recompute_trust_state()
         state_payload = backend_ops.request_backend_system_state_payload(self) if self.backend_client else None
+        self._recompute_trust_state()
         self.console.print(ui_ops.build_system_status_evidence(self, state_payload), markup=False)
         if not state_payload:
             # //audit assumption: failed state fetch cannot be substituted locally; risk: fabricated status; invariant: no synthetic state output; strategy: fail closed.
@@ -390,8 +390,8 @@ class ArcanosCLI:
         if is_system_health_query(route_decision.normalized_message, Config.BACKEND_DEEP_PREFIXES):
             # Operational evidence never falls back to generative self-assessment.
             backend_ops.refresh_registry_cache_if_stale(self)
-            self._recompute_trust_state()
             state_payload = backend_ops.request_backend_system_state_payload(self) if self.backend_client else None
+            self._recompute_trust_state()
             if state_payload:
                 state.hydrate_session_from_backend_state(self, state_payload)
             answer_text = ui_ops.build_system_status_evidence(self, state_payload)

@@ -152,15 +152,128 @@ def test_prefixed_ordinary_conversation_keeps_existing_route(status_cli, monkeyp
     local.assert_not_called()
 
 
-def test_missing_backend_still_reports_local_trust_and_unknown_health(status_cli):
-    cli, _, state_read, backend, local = status_cli
+@pytest.mark.parametrize("handler", ["health", "slash_status"])
+def test_missing_backend_still_reports_local_trust_and_unknown_health(status_cli, handler):
+    cli, output, state_read, backend, local = status_cli
     cli.backend_client = None
+    cli._trust_state = TrustState.FULL
+    cli._recompute_trust_state = lambda: cli_module.state.recompute_trust_state(cli)
 
-    result = cli.handle_ask("What is your trust state?", return_result=True)
+    if handler == "health":
+        result = cli.handle_ask("What is your trust state?", return_result=True)
+        text = result.response_text
+    else:
+        assert cli.handle_status() is False
+        text = output.getvalue()
 
-    assert "Daemon trust (local): DEGRADED" in result.response_text
-    assert "Backend status read: unavailable" in result.response_text
+    assert cli._trust_state is TrustState.DEGRADED
+    assert "Daemon trust (local): DEGRADED" in text
+    assert "Backend status read: unavailable" in text
     state_read.assert_not_called()
+    backend.assert_not_called()
+    local.assert_not_called()
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_slash_status_preserves_genuine_reported_booleans(status_cli, value):
+    cli, output, state_read, _, _ = status_cli
+    state_read.return_value["backend"] = {"connected": value, "registryAvailable": value}
+
+    assert cli.handle_status() is True
+
+    text = output.getvalue()
+    expected = str(value).lower()
+    assert f"Backend-reported connection: {expected}" in text
+    assert f"Backend-reported registry availability: {expected}" in text
+    for label in ("reported.backend.connected", "reported.backend.registryAvailable"):
+        row = next(line for line in text.splitlines() if label in line)
+        assert expected in row
+
+
+@pytest.mark.parametrize("state_available", [True, False])
+@pytest.mark.parametrize("speech_setting", ["explicit", "configured"])
+@pytest.mark.parametrize("generated_at", ["2026-11-04T19:30:26.000Z", "2026-11-04T19:30:26.123456Z"])
+def test_spoken_status_preserves_all_essential_unknowns(
+    status_cli, monkeypatch, state_available, speech_setting, generated_at,
+):
+    cli, _, state_read, backend, local = status_cli
+    if not state_available:
+        state_read.return_value = None
+    else:
+        state_read.return_value["generatedAt"] = generated_at
+    monkeypatch.setattr(Config, "SPEAK_RESPONSES", speech_setting == "configured")
+
+    cli.handle_ask("Is ARCANOS healthy?", speak_response=speech_setting == "explicit")
+
+    cli.audio.speak.assert_called_once()
+    spoken = cli.audio.speak.call_args.args[0]
+    assert len(spoken) <= 603  # Existing 600-character bound plus ellipsis.
+    assert "Daemon trust (local): DEGRADED" in spoken
+    assert "Daemon registry evidence (local): unavailable" in spoken
+    for unknown in (
+        "Backend dependency health: unknown", "Memory availability: unknown",
+        "Memory consistency: unknown", "Audit-safe mode: unknown",
+        "tracking correctness: unknown", "Overall stability and risk: unknown",
+    ):
+        assert unknown in spoken, spoken
+    backend.assert_not_called()
+    local.assert_not_called()
+
+
+@pytest.mark.parametrize("handler", ["health", "slash_status"])
+def test_status_recomputes_trust_when_registry_expires_during_state_read(status_cli, monkeypatch, handler):
+    cli, output, state_read, backend, local = status_cli
+    clock = [1000.0]
+    monkeypatch.setattr(cli_module.state.time, "time", lambda: clock[0])
+    cli._registry_cache = {"validated-fixture": True}
+    cli._registry_cache_updated_at = clock[0] - 1
+    cli._registry_cache_ttl_seconds = 5
+    cli._trust_state = TrustState.FULL
+    cli._recompute_trust_state = lambda: cli_module.state.recompute_trust_state(cli)
+    payload = state_read.return_value
+
+    def blocking_state_read(_cli):
+        assert cli._trust_state is TrustState.FULL
+        assert cli_module.state.registry_cache_is_valid(cli)
+        clock[0] += 6
+        return payload
+
+    state_read.side_effect = blocking_state_read
+    if handler == "health":
+        result = cli.handle_ask("What is your trust state?", return_result=True)
+        text = result.response_text
+        final_audit = cli_module.audit_record.call_args.kwargs
+        assert final_audit["trust"] == "DEGRADED"
+    else:
+        assert cli.handle_status() is True
+        text = output.getvalue()
+
+    assert cli._trust_state is TrustState.DEGRADED
+    assert "Daemon trust (local): DEGRADED" in text
+    assert "Daemon registry evidence (local): stale or invalid" in text
+    state_read.assert_called_once_with(cli)
+    cli_module.backend_ops.refresh_registry_cache_if_stale.assert_called_once_with(cli)
+    backend.assert_not_called()
+    local.assert_not_called()
+
+
+@pytest.mark.parametrize("untrusted_value", [
+    "fixture-do-not-print-credential-1234567890", "true", 1, 0, None, [], {},
+])
+def test_slash_status_allowlists_reported_booleans_in_evidence_and_table(status_cli, untrusted_value):
+    cli, output, state_read, backend, local = status_cli
+    state_read.return_value["backend"] = {"connected": untrusted_value, "registryAvailable": untrusted_value}
+
+    assert cli.handle_status() is True
+
+    text = output.getvalue()
+    assert "Backend-reported connection: unknown" in text
+    assert "Backend-reported registry availability: unknown" in text
+    for label in ("reported.backend.connected", "reported.backend.registryAvailable"):
+        row = next(line for line in text.splitlines() if label in line)
+        assert "unknown" in row, row
+    if isinstance(untrusted_value, str):
+        assert untrusted_value not in text
     backend.assert_not_called()
     local.assert_not_called()
 
@@ -177,7 +290,8 @@ def test_reported_backend_registry_cannot_override_expired_local_registry(status
     assert "Daemon registry evidence (local): stale or invalid" in result.response_text
     assert "Backend-reported registry availability: true (does not verify daemon registry authentication)" in result.response_text
     assert "Backend-reported freshness: stale" in result.response_text
-    assert "Intent freshness (reported): stale; tracking correctness: unknown" in result.response_text
+    assert "Intent freshness (reported): stale" in result.response_text
+    assert "Intent tracking correctness: unknown" in result.response_text
     cli_module.backend_ops.refresh_registry_cache_if_stale.assert_called_once_with(cli)
 
 
