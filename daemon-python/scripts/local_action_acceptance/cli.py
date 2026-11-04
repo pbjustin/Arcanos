@@ -97,7 +97,14 @@ class SyntheticBackend:
                         "core": [{"id": "HRC", "description": "Hallucination resistant core"}],
                     })
                 if path == "/system-state":
-                    return self.respond(200, {"version": 1, "routing": {"preferred": "backend"}})
+                    return self.respond(200, {
+                        "mode": "system_state",
+                        "intent": {"intentId": None},
+                        "routing": {"preferred": "backend"},
+                        "backend": {"connected": True, "registryAvailable": backend.registry_available},
+                        "stateFreshness": {"intent": "stale", "backend": "fresh"},
+                        "generatedAt": "2026-11-04T00:00:00Z",
+                    })
                 if path.startswith("/gpt/"):
                     answer = "DONE" if str(body.get("prompt", "")).startswith("Tool results:") else backend.answer
                     return self.respond(200, {

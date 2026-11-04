@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -240,3 +241,30 @@ def test_rejected_status_can_recover_on_one_subsequent_read_without_registry_tru
     assert sender.call_count == 2
     assert cli._registry_cache is None
     assert cli._trust_state is initial_trust
+
+
+def test_default_acceptance_backend_serves_valid_status_over_real_http(monkeypatch):
+    """Read the default native fixture once using only its purpose-bound control credential."""
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "scripts"))
+    from local_action_acceptance.cli import SyntheticBackend
+
+    monkeypatch.setattr(Config, "BACKEND_ALLOW_HTTP", True)
+    monkeypatch.setattr(Config, "CONTROL_PLANE_ACCESS_TOKEN", CONTROL_TOKEN)
+    unrelated = MagicMock(side_effect=AssertionError("Status must not read GPT or daemon credentials"))
+    with SyntheticBackend() as backend:
+        backend.purpose_bound_tokens["/system-state"] = CONTROL_TOKEN
+        client = BackendApiClient(
+            backend.url, unrelated, timeout_seconds=5, daemon_access_token_provider=unrelated,
+        )
+
+        response = client.request_system_state()
+
+        assert response.ok is True
+        assert response.error is None
+        assert response.value["mode"] == "system_state"
+        assert response.value["routing"]["preferred"] == "backend"
+        assert [(request["method"], request["path"], request["authenticated"], request["auth_kind"])
+                for request in backend.requests] == [
+            ("GET", "/system-state", True, "purpose-bound-bearer"),
+        ]
+        unrelated.assert_not_called()

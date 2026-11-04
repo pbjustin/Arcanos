@@ -50,8 +50,8 @@ def test_status_preserves_available_intent_confidence_and_version(diagnostic_cli
 @pytest.mark.parametrize("role", ["daemon", "control", "writing"])
 @pytest.mark.parametrize("credential", [
     "2097-03-11T07:19:23.123456+00:00",
-    "2097-03-11T07:19:23.12345678901Z",
-], ids=["offset", "zulu"])
+    "2097-03-11T07:19:23.123+00:00:00",
+], ids=["microseconds-offset", "milliseconds-offset-seconds"])
 def test_status_redacts_timestamp_shaped_credentials_before_normalization(
     diagnostic_cli, monkeypatch, capsys, role, credential,
 ):
