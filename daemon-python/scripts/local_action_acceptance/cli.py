@@ -88,8 +88,11 @@ class SyntheticBackend:
                     if not backend.registry_available:
                         return self.respond(503, {"error": "fixture registry unavailable"})
                     return self.respond(200, {
-                        "version": "local-acceptance", "endpoints": [],
-                        "modules": [], "daemonTools": [], "core": [],
+                        "version": 1, "updatedAt": "2026-11-04T00:00:00Z",
+                        "endpoints": [{"method": "POST", "path": "/gpt/arcanos-daemon", "description": "Chat"}],
+                        "modules": [],
+                        "daemonTools": [{"name": "run_command", "description": "Run command", "sensitive": True}],
+                        "core": [{"id": "HRC", "description": "Hallucination resistant core"}],
                     })
                 if path == "/system-state":
                     return self.respond(200, {"version": 1, "routing": {"preferred": "backend"}})

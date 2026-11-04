@@ -97,8 +97,8 @@ def registry_cache_is_valid(cli: "ArcanosCLI") -> bool:
         return False
 
     age_seconds = time.time() - cli._registry_cache_updated_at
-    # //audit assumption: local clock is monotonic enough for TTL checks; risk: skew; invariant: cache accepted only within configured TTL; strategy: compare age to TTL.
-    return age_seconds <= cli._registry_cache_ttl_seconds
+    # A clock rollback cannot establish freshness for a future cache timestamp.
+    return 0 <= age_seconds <= cli._registry_cache_ttl_seconds
 
 
 def apply_registry_cache(cli: "ArcanosCLI", registry_payload: Mapping[str, Any]) -> None:
@@ -177,15 +177,15 @@ def is_working_context_query(message: str) -> bool:
 
 def get_backend_connection_status(cli: "ArcanosCLI") -> str:
     """
-    Purpose: Build one-line backend connection status for the system prompt.
+    Purpose: Describe daemon registry evidence without inferring backend health.
     Inputs/Outputs: CLI instance; returns status line string.
     Edge cases: Distinguishes not-configured from stale/unavailable registry.
     """
     if not cli.backend_client:
         return "Current backend connection: not configured."
     if registry_cache_is_valid(cli):
-        return "Current backend connection: connected (registry available)."
-    return "Current backend connection: unavailable (registry fetch failed or stale)."
+        return "Backend configured; daemon registry evidence: authenticated and fresh. Backend health is not established by registry availability."
+    return "Backend configured; daemon registry evidence: unavailable or stale. Backend health is unknown from registry evidence alone."
 
 
 def get_backend_block(cli: "ArcanosCLI") -> str:

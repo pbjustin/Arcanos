@@ -231,14 +231,17 @@ def refresh_registry_cache(cli: "ArcanosCLI") -> None:
     """
     if not cli.backend_client:
         # //audit assumption: backend client required for registry fetch; risk: null dereference; invariant: no request without client; strategy: return early.
+        state.recompute_trust_state(cli)
         return
 
     response = cli.backend_client.request_registry()
     if response.ok and response.value:
         # //audit assumption: registry payload valid on ok response; risk: stale model registry; invariant: cache refreshed with timestamp; strategy: update state cache.
         state.apply_registry_cache(cli, response.value)
+        state.recompute_trust_state(cli)
         return
 
+    state.recompute_trust_state(cli)
     if not cli._registry_cache and not cli._registry_cache_warning_logged:
         # //audit assumption: first registry failure should be visible; risk: silent downgrade to fallback prompt; invariant: warn once; strategy: one-time console warning.
         cli.console.print("[yellow]Backend registry unavailable; using built-in backend prompt.[/yellow]")
@@ -259,7 +262,6 @@ def refresh_registry_cache_if_stale(cli: "ArcanosCLI") -> None:
         return
 
     refresh_registry_cache(cli)
-    state.recompute_trust_state(cli)
     if state.registry_cache_is_valid(cli):
         # //audit assumption: refreshed cache should update prompt context; risk: stale prompt using old registry; invariant: prompt rebuilt after successful refresh; strategy: rebuild prompt.
         cli.system_prompt = state.build_system_prompt(cli)
