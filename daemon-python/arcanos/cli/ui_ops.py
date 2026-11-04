@@ -10,6 +10,7 @@ from typing import Any, Mapping, Optional, TYPE_CHECKING
 
 from rich.table import Table
 from rich.segment import Segment, Segments
+from rich.text import Text
 
 from ..cli_ui import build_help_panel, build_stats_table
 from ..config import Config
@@ -135,23 +136,26 @@ def render_system_state_table(cli: "ArcanosCLI", state_payload: Mapping[str, Any
     table.add_column("Field", style="cyan", no_wrap=True)
     table.add_column("Value", style="green")
 
-    table.add_row("mode", str(state_payload.get("mode", "unknown")))
-    table.add_row("intent.intentId", str(intent_payload.get("intentId", "null")))
-    table.add_row("intent.label", str(intent_payload.get("label", "null")))
-    table.add_row("intent.status", str(intent_payload.get("status", "null")))
-    table.add_row("intent.phase", str(intent_payload.get("phase", "null")))
-    table.add_row("intent.confidence", str(intent_payload.get("confidence", 0.0)))
-    table.add_row("intent.version", str(intent_payload.get("version", 0)))
-    table.add_row("intent.lastTouchedAt", str(intent_payload.get("lastTouchedAt", "null")))
-    table.add_row("routing.preferred", str(routing_payload.get("preferred", "unknown")))
-    table.add_row("routing.lastUsed", str(routing_payload.get("lastUsed", "unknown")))
-    table.add_row("routing.confidenceGate", str(routing_payload.get("confidenceGate", "unknown")))
-    table.add_row("reported.backend.connected", _reported_boolean(backend_payload.get("connected")))
-    table.add_row("reported.backend.registryAvailable", _reported_boolean(backend_payload.get("registryAvailable")))
-    table.add_row("reported.backend.lastHeartbeatAt", str(backend_payload.get("lastHeartbeatAt", "unknown")))
-    table.add_row("freshness.intent", str(freshness_payload.get("intent", "unknown")))
-    table.add_row("freshness.backend", str(freshness_payload.get("backend", "unknown")))
-    table.add_row("generatedAt", str(state_payload.get("generatedAt", "unknown")))
+    def add_row(field: str, value: str) -> None:
+        table.add_row(field, Text(state.redact_status_text(value)))
+
+    add_row("mode", str(state_payload.get("mode", "unknown")))
+    add_row("intent.intentId", str(intent_payload.get("intentId", "null")))
+    add_row("intent.label", str(intent_payload.get("label", "null")))
+    add_row("intent.status", str(intent_payload.get("status", "null")))
+    add_row("intent.phase", str(intent_payload.get("phase", "null")))
+    add_row("intent.confidence", str(intent_payload.get("confidence", 0.0)))
+    add_row("intent.version", str(intent_payload.get("version", 0)))
+    add_row("intent.lastTouchedAt", str(intent_payload.get("lastTouchedAt", "null")))
+    add_row("routing.preferred", str(routing_payload.get("preferred", "unknown")))
+    add_row("routing.lastUsed", str(routing_payload.get("lastUsed", "unknown")))
+    add_row("routing.confidenceGate", str(routing_payload.get("confidenceGate", "unknown")))
+    add_row("reported.backend.connected", _reported_boolean(backend_payload.get("connected")))
+    add_row("reported.backend.registryAvailable", _reported_boolean(backend_payload.get("registryAvailable")))
+    add_row("reported.backend.lastHeartbeatAt", str(backend_payload.get("lastHeartbeatAt", "unknown")))
+    add_row("freshness.intent", str(freshness_payload.get("intent", "unknown")))
+    add_row("freshness.backend", str(freshness_payload.get("backend", "unknown")))
+    add_row("generatedAt", str(state_payload.get("generatedAt", "unknown")))
 
     cli.console.print(table)
 

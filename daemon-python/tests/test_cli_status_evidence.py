@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import io
+import json
+import logging
 from pathlib import Path
 import subprocess
 import sys
@@ -18,6 +20,10 @@ from arcanos.cli.context import ConversationResult
 from arcanos.cli.trust_state import TrustState
 from arcanos.cli_session import SessionContext
 from arcanos.config import Config
+from arcanos.cli_runner import _dispatch_command
+from arcanos.debug import logging as debug_logging
+from .credential_observation import assert_no_credential_material
+from .test_cli_diagnostic_audit import diagnostic_cli, DAEMON_TOKEN, CONTROL_TOKEN, GPT_TOKEN
 
 
 HEALTH_QUESTIONS = [
@@ -26,6 +32,27 @@ HEALTH_QUESTIONS = [
     "Are your backend and memory working?",
     "What is your trust state?",
     "Are you functioning normally?",
+]
+ADDITIONAL_HEALTH_QUESTIONS = [
+    "Run a system health check.",
+    "What's your backend status?",
+    "Check ARCANOS health.",
+    "Show your current operational status.",
+    "Is the daemon connected securely?",
+    "What is your current trust level?",
+    "Check whether your backend is healthy.",
+    "Give me your system status.",
+]
+CONVERSATIONAL_STATUS_CONTROLS = [
+    "Explain how health checks work.",
+    "What does DEGRADED mean?",
+    "Write a story about a healthy AI.",
+    "How do I check a Python application's status?",
+    "What is the status of my GitHub PR?",
+    "What's the weather?",
+    "Are you able to help with coding?",
+    "Hello!",
+    "How are you?",
 ]
 UNSUPPORTED_ASSESSMENT = (
     "System state: Stable\nMode: Audit-safe enabled\nMemory: Active and consistent\n"
@@ -99,6 +126,55 @@ def test_operational_questions_use_status_evidence_without_generation(status_cli
     assert UNSUPPORTED_ASSESSMENT not in result.response_text
     cli.memory.add_conversation.assert_not_called()
     cli_module.backend_ops.send_backend_update.assert_not_called()
+
+
+@pytest.mark.parametrize("question", ADDITIONAL_HEALTH_QUESTIONS)
+@pytest.mark.parametrize("variant", ["plain", "normalized", "deep", "backend"])
+def test_additional_direct_status_questions_avoid_generation(status_cli, monkeypatch, question, variant):
+    cli, _, state_read, backend, local = status_cli
+    monkeypatch.setattr(Config, "BACKEND_DEEP_PREFIXES", ["deep:", "backend:"])
+    monkeypatch.setattr(Config, "BACKEND_ROUTING_MODE", "hybrid")
+    override = None
+    if variant == "normalized":
+        question = " \t" + question.rstrip("?.!").upper() + "?!  \n"
+    elif variant == "deep":
+        question = "deep: " + question
+        monkeypatch.setattr(Config, "BACKEND_ROUTING_MODE", "local")
+        override = "local"
+    elif variant == "backend":
+        question = "backend: " + question
+        monkeypatch.setattr(Config, "BACKEND_ROUTING_MODE", "backend")
+        override = "backend"
+
+    result = cli.handle_ask(question, route_override=override, return_result=True)
+
+    assert result is not None
+    assert result.source == "diagnostic"
+    assert result.tokens_used == result.cost_usd == 0
+    assert "Daemon trust (local): DEGRADED" in result.response_text
+    assert "Memory consistency: unknown" in result.response_text
+    assert "Overall stability and risk: unknown" in result.response_text
+    state_read.assert_called_once_with(cli)
+    backend.assert_not_called()
+    local.assert_not_called()
+
+
+@pytest.mark.parametrize("question", CONVERSATIONAL_STATUS_CONTROLS)
+@pytest.mark.parametrize("prefix", ["", "deep: ", "backend: "])
+def test_status_terms_in_conversational_controls_do_not_trigger_diagnostics(
+    status_cli, monkeypatch, question, prefix,
+):
+    cli, _, _, backend, local = status_cli
+    monkeypatch.setattr(Config, "BACKEND_ROUTING_MODE", "hybrid")
+    monkeypatch.setattr(Config, "BACKEND_DEEP_PREFIXES", ["deep:", "backend:"])
+    message = prefix + question
+
+    result = cli.handle_ask(message, return_result=True)
+
+    assert not is_system_health_query(message, Config.BACKEND_DEEP_PREFIXES)
+    assert result.source == "backend"
+    backend.assert_called_once()
+    local.assert_not_called()
 
 
 @pytest.mark.parametrize("override", ["local", "backend"])
@@ -299,6 +375,7 @@ def test_unrecognized_fields_are_unknown_and_never_echo_sensitive_values(status_
     cli, _, state_read, _, _ = status_cli
     private_value = "fixture-do-not-print-credential-1234567890"
     state_read.return_value = {
+        "mode": "system_state",
         "backend": {"connected": private_value, "registryAvailable": private_value},
         "stateFreshness": {"backend": private_value, "intent": private_value},
         "generatedAt": private_value,
@@ -332,6 +409,68 @@ def test_slash_status_displays_evidence_and_labels_backend_reports(status_cli):
     local.assert_not_called()
 
 
+@pytest.mark.parametrize("decoration", ["plain", "zero_width", "terminal_control"])
+def test_status_protects_configured_credentials_in_table_and_hydrated_context(
+    diagnostic_cli, monkeypatch, capsys, decoration,
+):
+    cli, scenario, requests, _ = diagnostic_cli
+    for environment_name, attribute, token in (
+        ("ARCANOS_DAEMON_ACCESS_TOKEN", "DAEMON_ACCESS_TOKEN", DAEMON_TOKEN),
+        ("ARCANOS_CONTROL_PLANE_ACCESS_TOKEN", "CONTROL_PLANE_ACCESS_TOKEN", CONTROL_TOKEN),
+        ("BACKEND_TOKEN", "BACKEND_TOKEN", GPT_TOKEN),
+    ):
+        monkeypatch.setenv(environment_name, token)
+        monkeypatch.setattr(Config, attribute, token)
+
+    def decorate(token):
+        if decoration == "zero_width":
+            return token[:12] + "\u200b" + token[12:]
+        return "\x1b[2K" + token if decoration == "terminal_control" else token
+
+    scenario["state_payload"]["backend"]["lastHeartbeatAt"] = decorate(CONTROL_TOKEN)
+    scenario["state_payload"]["generatedAt"] = decorate(DAEMON_TOKEN)
+    scenario["state_payload"]["intent"] = {"intentId": "active-fixture-intent", "label": decorate(GPT_TOKEN)}
+    log_output = io.StringIO()
+    logger = logging.Logger("status-privacy")
+    handler = logging.StreamHandler(log_output)
+    handler.setFormatter(debug_logging.JsonLogFormatter())
+    logger.addHandler(handler)
+    monkeypatch.setattr(debug_logging, "_logger", logger)
+    capsys.readouterr()
+
+    _dispatch_command(cli, "status")
+
+    captured = capsys.readouterr()
+    observed = (
+        cli.console.file.getvalue(), captured.out, captured.err, log_output.getvalue(),
+        cli.audio.speak.call_args_list, cli.memory.mock_calls,
+        cli.session.current_intent, cli.session.conversation_goal,
+        cli_module.state.build_system_prompt(cli),
+    )
+    for token in (DAEMON_TOKEN, CONTROL_TOKEN, GPT_TOKEN):
+        assert_no_credential_material(token, *observed)
+        assert decorate(token) not in "\n".join(str(value) for value in observed)
+    assert "[REDACTED]" in cli.console.file.getvalue()
+    assert cli.session.current_intent == cli.session.conversation_goal == "[REDACTED]"
+    assert requests == [("get", "/system-state")]
+    cli.audio.speak.assert_not_called()
+    cli.memory.add_conversation.assert_not_called()
+    cli_module.memory_ops.record_conversation_turn.assert_not_called()
+
+
+def test_status_preserves_ordinary_intent_labels_as_literal_text(diagnostic_cli):
+    cli, scenario, requests, _ = diagnostic_cli
+    label = "Review Python status checks [red]draft[/red] — café"
+    scenario["state_payload"]["intent"] = {"intentId": "ordinary-fixture-intent", "label": label}
+
+    _dispatch_command(cli, "status")
+
+    assert label in cli.console.file.getvalue()
+    assert cli.session.current_intent == cli.session.conversation_goal == label
+    assert label in cli_module.state.build_system_prompt(cli)
+    assert requests == [("get", "/system-state")]
+
+
 @pytest.mark.parametrize("question", [
     "Hello!", "How are you?", "What can you do?", "Can AI systems be healthy?",
     "Explain what trust state means.", "Write a story where ARCANOS is healthy.",
@@ -358,7 +497,8 @@ def test_narrow_operational_question_variants(question):
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Native Windows CLI subprocess acceptance")
-def test_native_windows_cli_status_and_registry_recovery_without_inference(tmp_path, monkeypatch):
+@pytest.mark.parametrize("questions", [HEALTH_QUESTIONS, ADDITIONAL_HEALTH_QUESTIONS], ids=["original", "additional"])
+def test_native_windows_cli_status_and_registry_recovery_without_inference(tmp_path, monkeypatch, questions):
     source_root = Path(__file__).resolve().parents[2]
     monkeypatch.syspath_prepend(str(source_root / "daemon-python/scripts"))
     from local_action_acceptance.cli import DaemonFixture, SyntheticBackend
@@ -370,7 +510,7 @@ def test_native_windows_cli_status_and_registry_recovery_without_inference(tmp_p
         nonlocal registry_reads
         if method == "GET" and path == "/api/daemon/registry":
             registry_reads += 1
-            backend.registry_available = registry_reads > 7
+            backend.registry_available = registry_reads > len(questions) + 2
         if method == "GET" and path == "/system-state":
             return 200, {
                 "mode": "system_state",
@@ -388,25 +528,45 @@ def test_native_windows_cli_status_and_registry_recovery_without_inference(tmp_p
                                 extra_env={"ARCANOS_CONTROL_PLANE_ACCESS_TOKEN": control_token})
         # Real public CLI entry point and interactive input, with native Windows
         # pipes preserving literal output independently of terminal screen redraws.
-        commands = HEALTH_QUESTIONS + ["/status", "What is your trust state?", "Hello!", "/exit"]
+        commands = questions + ["/status", "What is your trust state?", "Hello!", "/exit"]
         process = subprocess.run(
             [sys.executable, "-u", "-m", "arcanos.cli"], cwd=fixture.repository, env=fixture.env,
             input="\n".join(commands) + "\n", capture_output=True, text=True, encoding="utf-8", timeout=40,
         )
         assert process.returncode == 0, process.stderr
         output = process.stdout
-        assert output.count("Daemon trust (local): DEGRADED") == 6
+        assert output.count("Daemon trust (local): DEGRADED") == len(questions) + 1
         assert output.count("Daemon trust (local): FULL") == 1
-        assert output.count("Memory consistency: unknown") == 7
-        assert output.count("Overall stability and risk: unknown") == 7
+        assert output.count("Memory consistency: unknown") == len(questions) + 2
+        assert output.count("Overall stability and risk: unknown") == len(questions) + 2
         assert "Daemon registry evidence (local): valid and fresh" in output
         assert "ARCANOS Reported System State" in output
         assert "Hello from ordinary conversation fixture." in output
-        assert registry_reads == 8  # startup, five health questions, /status, recovery
+        assert registry_reads == len(questions) + 3  # startup, questions, /status, recovery
         gpt_requests = [request for request in backend.requests if request["path"].startswith("/gpt/")]
         assert len(gpt_requests) == 1
         gpt_index = backend.requests.index(gpt_requests[0])
-        assert sum(request["path"] == "/system-state" for request in backend.requests[:gpt_index]) == 10
+        assert sum(request["path"] == "/system-state" for request in backend.requests[:gpt_index]) == len(questions) + 5
         assert all(request["authenticated"] for request in backend.requests)
-        assert control_token not in output
-        assert backend.daemon_token not in output
+        for credential in (control_token, backend.daemon_token, backend.token):
+            assert credential not in output
+            assert credential not in process.stderr
+        audit_events = [json.loads(line.split("[AUDIT] ", 1)[1])
+                        for line in output.splitlines() if "[AUDIT] " in line]
+        executions = [event for event in audit_events if event["event"].startswith("execute_")]
+        expected_commands = ["ask"] * len(questions) + ["status", "ask"]
+        assert len(executions) == 2 * len(expected_commands) + 3
+        for index, command in enumerate(expected_commands):
+            pair = executions[2 * index:2 * index + 2]
+            assert [(event["event"], event["command"]) for event in pair] == [
+                ("execute_attempt", command), ("execute_success", command),
+            ]
+            assert all(event["source"] == "diagnostic" and event["operation"] == "status" for event in pair)
+        # The existing agentic greeting calls handle_ask again for its provider
+        # turn: two attempts share one observed conversational outcome.
+        greeting = executions[2 * len(expected_commands):]
+        assert [(event["event"], event["command"]) for event in greeting] == [
+            ("execute_attempt", "ask"), ("execute_attempt", "ask"), ("execute_success", "ask"),
+        ]
+        assert all("operation" not in event for event in greeting)
+        assert greeting[-1]["source"] == "backend"

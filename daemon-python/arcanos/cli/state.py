@@ -11,6 +11,7 @@ from typing import Any, Mapping, TYPE_CHECKING
 from .audit import record as audit_record
 from ..voice_boundary import sanitize_tool_output
 from .trust_state import TrustState
+from .cli_policy import redact_output
 
 from ..cli_config import DEFAULT_ACTIVITY_HISTORY_LIMIT, MIN_REGISTRY_CACHE_TTL_MINUTES
 from ..config import Config
@@ -111,6 +112,17 @@ def apply_registry_cache(cli: "ArcanosCLI", registry_payload: Mapping[str, Any])
     cli._registry_cache_updated_at = time.time()
 
 
+def redact_status_text(value: str) -> str:
+    """Protect diagnostic text and hydrated labels without truncating ordinary text."""
+    safe = redact_output(value, apply_truncation=False)
+    credentials = (Config.DAEMON_ACCESS_TOKEN, Config.CONTROL_PLANE_ACCESS_TOKEN, Config.BACKEND_TOKEN)
+    for credential in sorted(
+        (token for token in credentials if isinstance(token, str) and token), key=len, reverse=True,
+    ):
+        safe = safe.replace(credential, "[REDACTED]")
+    return safe
+
+
 def hydrate_session_from_backend_state(cli: "ArcanosCLI", state_payload: Mapping[str, Any]) -> None:
     """
     Purpose: Hydrate local session cache from backend system state.
@@ -136,8 +148,9 @@ def hydrate_session_from_backend_state(cli: "ArcanosCLI", state_payload: Mapping
 
     label = intent_payload.get("label")
     if isinstance(label, str) and label.strip():
-        cli.session.current_intent = label.strip()
-        cli.session.conversation_goal = label.strip()
+        label = redact_status_text(label).strip()
+        cli.session.current_intent = label
+        cli.session.conversation_goal = label
 
     confidence = intent_payload.get("confidence")
     if isinstance(confidence, (int, float)):
@@ -259,6 +272,7 @@ __all__ = [
     "hydrate_session_from_backend_state",
     "initialize_runtime_state",
     "is_working_context_query",
+    "redact_status_text",
     "recompute_trust_state",
     "registry_cache_is_valid",
     "set_trust_state",

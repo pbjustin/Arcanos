@@ -257,17 +257,32 @@ class ArcanosCLI:
         Inputs/Outputs: None; renders status table and returns success flag.
         Edge cases: Returns False when backend is not configured or state fetch fails.
         """
+        self._recompute_trust_state()
+        audit_record(
+            "execute_attempt", command="status", trust=self._trust_state.name,
+            source="diagnostic", operation="status",
+        )
         backend_ops.refresh_registry_cache_if_stale(self)
         state_payload = backend_ops.request_backend_system_state_payload(self) if self.backend_client else None
+        if not isinstance(state_payload, Mapping) or state_payload.get("mode") != "system_state":
+            state_payload = None
         self._recompute_trust_state()
         self.console.print(ui_ops.build_system_status_evidence(self, state_payload), markup=False)
         if not state_payload:
             # //audit assumption: failed state fetch cannot be substituted locally; risk: fabricated status; invariant: no synthetic state output; strategy: fail closed.
             self.console.print("[red]Failed to fetch backend system state.[/red]")
+            audit_record(
+                "execute_failed", command="status", trust=self._trust_state.name,
+                source="diagnostic", operation="status",
+            )
             return False
 
         state.hydrate_session_from_backend_state(self, state_payload)
         ui_ops.render_system_state_table(self, state_payload)
+        audit_record(
+            "execute_success", command="status", trust=self._trust_state.name,
+            source="diagnostic", operation="status",
+        )
         return True
 
     def handle_context(self) -> None:
@@ -380,24 +395,29 @@ class ArcanosCLI:
         """
         self._append_activity("ask", message)
         self._recompute_trust_state()
-        audit_record("execute_attempt", command="ask", trust=self._trust_state.name)
 
         route_decision = determine_conversation_route(
             user_message=message,
             routing_mode=Config.BACKEND_ROUTING_MODE,
             deep_prefixes=Config.BACKEND_DEEP_PREFIXES,
         )
-        if is_system_health_query(route_decision.normalized_message, Config.BACKEND_DEEP_PREFIXES):
+        diagnostic_query = is_system_health_query(route_decision.normalized_message, Config.BACKEND_DEEP_PREFIXES)
+        diagnostic_fields = {"source": "diagnostic", "operation": "status"} if diagnostic_query else {}
+        audit_record("execute_attempt", command="ask", trust=self._trust_state.name, **diagnostic_fields)
+
+        if diagnostic_query:
             # Operational evidence never falls back to generative self-assessment.
             backend_ops.refresh_registry_cache_if_stale(self)
             state_payload = backend_ops.request_backend_system_state_payload(self) if self.backend_client else None
+            if not isinstance(state_payload, Mapping) or state_payload.get("mode") != "system_state":
+                state_payload = None
             self._recompute_trust_state()
             if state_payload:
                 state.hydrate_session_from_backend_state(self, state_payload)
             answer_text = ui_ops.build_system_status_evidence(self, state_payload)
             audit_record(
                 "execute_success" if state_payload else "execute_failed",
-                command="status", trust=self._trust_state.name, source="diagnostic",
+                command="ask", trust=self._trust_state.name, source="diagnostic", operation="status",
             )
             if return_result:
                 return ConversationResult(

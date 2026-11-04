@@ -18,11 +18,16 @@ def is_system_health_query(message: str, deep_prefixes: Sequence[str] = ()) -> b
             break
     normalized = " ".join(normalized.lower().replace("’", "'").split()).rstrip("?.!")
     patterns = (
-        r"what(?: is|'s) (?:your|the|arcanos) (?:current )?(?:system (?:status|health)|trust (?:state|level))",
-        r"(?:show|check)(?: me)? (?:your|the|arcanos) (?:current )?(?:system (?:status|health)|trust (?:state|level))",
-        r"is arcanos (?:healthy|functioning normally|working (?:normally|correctly))",
+        r"what(?: is|'s) (?:your|the|arcanos) (?:current )?"
+        r"(?:(?:system|backend|operational) (?:status|health)|trust (?:state|level))",
+        r"(?:show(?: me)?|check|give me) (?:your|the|arcanos) (?:current )?"
+        r"(?:(?:system|backend|operational) (?:status|health)|trust (?:state|level)|health)",
+        r"is (?:arcanos|(?:the|your) daemon) "
+        r"(?:healthy|functioning normally|working (?:normally|correctly)|connected(?: securely)?|securely connected)",
         r"are you (?:healthy|functioning normally|working (?:normally|correctly))",
         r"(?:is|are) your (?:backend|memory|backend and memory|memory and backend) (?:healthy|working(?: (?:normally|correctly))?)",
+        r"run (?:a |the )?(?:system )?health check",
+        r"check (?:whether|if) your (?:backend|memory|daemon) is (?:healthy|working(?: (?:normally|correctly))?)",
     )
     return any(re.fullmatch(pattern, normalized) for pattern in patterns)
 
