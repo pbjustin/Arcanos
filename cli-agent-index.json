@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-04T19:44:46.647Z",
+  "generatedAt": "2026-11-04T21:39:05.365Z",
   "scopes": [
     {
       "scope": "clients",
@@ -584,6 +584,9 @@
         },
         {
           "relativePath": "daemon-python/tests/test_clear_decision_contract.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_cli_diagnostic_audit.py"
         },
         {
           "relativePath": "daemon-python/tests/test_cli_execution_context_ux.py"

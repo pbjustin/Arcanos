@@ -169,15 +169,28 @@ remain blocked. A successful GPT response or authenticated `/system-state`
 read does not establish registry authentication. Registry refresh uses the
 existing configured TTL and does not automatically retry failed requests.
 
-If the dedicated credential is missing, an authorized operator must provision
-one distinct, purpose-bound value through the secret manager for the specific
-backend **web service** and the daemon's protected local configuration. Verify
-the two values match privately, remain distinct from every other credential,
-and meet the existing length/format requirements. Do not copy GPT Access,
-`BACKEND_TOKEN`, or control-plane credentials. Server provisioning, any required
-deployment, and restarting the installed daemon require their own authorization.
-Afterward, one authorized registry refresh can establish trust; chat success
-alone cannot verify the configuration. Never paste the value into logs or a PR.
+The three credentials serve independent purposes:
+
+| Credential | Authorized traffic | Does not establish |
+| --- | --- | --- |
+| `ARCANOS_DAEMON_ACCESS_TOKEN` | `x-arcanos-daemon-token` on `/api/daemon/*` | Control-plane or GPT access |
+| `BACKEND_TOKEN` / configured GPT credential | Generic backend/GPT conversation traffic | Daemon registry trust |
+| `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN` | Authenticated `GET /system-state` for status/intent reads | Daemon registry trust or measured dependency health |
+
+After merging the source repair, treat production activation as
+`PRODUCTION_CONFIGURATION_PENDING` until the dedicated daemon credential is
+configured and verified. An authorized operator must:
+
+1. Provision one valid, distinct daemon-purpose value through protected secret
+   configuration on the **ARCANOS V2 web service** and in the installed daemon's
+   protected local configuration. Privately verify exact matching and isolation
+   from the generic/GPT and control-plane credentials.
+2. Arrange any required server deployment or daemon restart under separate
+   operational authorization. Keep secrets out of commands, output, logs, and PRs.
+3. Perform one authorized registry read and inspect the resulting cache freshness
+   and trust. Missing, rejected, malformed, or stale registry evidence must retain
+   `DEGRADED`; only authenticated, valid, fresh registry evidence permits `FULL`.
+   A GPT response or `/system-state` success cannot replace this verification.
 
 Direct operational questions such as "Is ARCANOS healthy?" and "What is your
 trust state?" use read-only system-state/status evidence instead of GPT
