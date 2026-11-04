@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional
 from .config import Config
-from .utils.text import redact_job_read_capabilities
+from .utils.text import redact_job_read_capabilities, safe_text_repr
 
 try:
     import sentry_sdk
@@ -48,8 +48,13 @@ def _sanitize_payload(payload: Any) -> Any:
     if isinstance(payload, dict):
         sanitized: Dict[str, Any] = {}
         for key, value in payload.items():
-            safe_key = redact_job_read_capabilities(key) if isinstance(key, str) else key
-            key_lower = str(key).lower()
+            if isinstance(key, str):
+                safe_key = redact_job_read_capabilities(str.__str__(key))
+            elif type(key) in (type(None), bool, int, float):
+                safe_key = key
+            else:
+                safe_key = redact_job_read_capabilities(safe_text_repr(key))
+            key_lower = str(safe_key).lower()
             #audit Assumption: key names containing secret hints should always be redacted; risk: credential leakage; invariant: sensitive keys replaced; strategy: redact by key pattern.
             if any(hint in key_lower for hint in _SENSITIVE_KEY_PATTERNS):
                 sanitized[safe_key] = "[REDACTED]"
@@ -59,11 +64,14 @@ def _sanitize_payload(payload: Any) -> Any:
     if isinstance(payload, (list, tuple)):
         return [_sanitize_payload(item) for item in payload]
     if isinstance(payload, str):
+        payload = str.__str__(payload)
         #audit Assumption: token-like literals in strings are sensitive; risk: secret leakage in telemetry files; invariant: sensitive strings redacted; strategy: pattern-match and replace.
         if any(pattern.search(payload) for pattern in _SENSITIVE_VALUE_PATTERNS):
             return "[REDACTED]"
         return redact_job_read_capabilities(payload)
-    return payload
+    if type(payload) in (type(None), bool, int, float):
+        return payload
+    return _sanitize_payload(safe_text_repr(payload))
 
 
 class Telemetry:

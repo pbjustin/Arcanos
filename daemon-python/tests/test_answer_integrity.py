@@ -594,6 +594,42 @@ def test_encoded_credentials_are_private_across_presentation_and_both_history_ro
 
 
 @pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+@pytest.mark.parametrize("control", ["\u202e", "\x9c"], ids=["bidi", "c1-st"])
+def test_credential_redaction_never_materializes_escaped_terminal_controls(
+    presentation_cli, monkeypatch, tmp_path, agentic, control,
+):
+    """Rewriting a JSON scalar cannot inject controls after the display boundary."""
+    cli, output = presentation_cli
+    history = HistoryDB(tmp_path / "history.sqlite3") if agentic else None
+    if history is not None:
+        monkeypatch.setattr(agent_loop, "HistoryDB", lambda: history)
+    answer = json.dumps(f"Lookup failed for {FAKE_JOB_READ_CAPABILITY}; retry later.{control}")
+    assert control not in answer
+    _deliver(monkeypatch, cli, answer, agentic=agentic, speak=True)
+    cli.handle_speak()
+
+    stored = [call.args[1] for call in cli.memory.add_conversation.call_args_list]
+    surfaces = [output.getvalue(), *stored]
+    if cli._last_response is not None:
+        surfaces.append(cli._last_response)
+    surfaces.extend(call.args[0] for call in cli.audio.speak.call_args_list)
+    if history is not None:
+        audit_path = tmp_path / "audit.json"
+        history.export_audit(audit_path, session_id=cli.instance_id)
+        audit = json.loads(audit_path.read_text(encoding="utf-8"))
+        surfaces.extend(row[2] for row in audit["messages"] if row[1] == "assistant")
+    assert stored
+    if not agentic:
+        assert cli.audio.speak.called
+    for surface in surfaces:
+        assert "Lookup failed for" in surface and "retry later." in surface
+        assert FAKE_JOB_READ_CAPABILITY not in surface
+        assert "[REDACTED]" in surface
+        assert control not in surface
+        assert "\x1b" not in surface
+
+
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
 @pytest.mark.parametrize(
     "answer,presentation",
     [

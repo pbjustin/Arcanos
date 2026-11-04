@@ -73,6 +73,57 @@ def test_actual_telemetry_file_and_exception_filter_redact_capabilities(monkeypa
     assert filtered["exception"]["values"][0]["value"] == message.replace(JOB_READ_CAPABILITY, "[REDACTED]")
 
 
+def test_track_event_redacts_exception_property_without_mutating_internal_error(monkeypatch, tmp_path):
+    from arcanos import telemetry
+
+    monkeypatch.setattr(telemetry.Config, "TELEMETRY_DIR", tmp_path)
+    monkeypatch.setattr(telemetry, "SENTRY_AVAILABLE", False)
+    instance = telemetry.Telemetry.__new__(telemetry.Telemetry)
+    instance.enabled, instance.session_id, instance.user_id = True, "synthetic-session", "synthetic-user"
+    error = RuntimeError(f"lookup {JOB_READ_CAPABILITY}; HTTP 500")
+    instance.track_event("synthetic_failure", {
+        "error": error, "status": 500, "retryable": False, "version": "v1.0.0",
+    })
+
+    written = (tmp_path / "events.log").read_text(encoding="utf-8")
+    assert JOB_READ_CAPABILITY not in written
+    assert "RuntimeError" in written and "HTTP 500" in written and "v1.0.0" in written
+    assert str(error) == f"lookup {JOB_READ_CAPABILITY}; HTTP 500"
+
+
+def test_sanitizers_render_opaque_keys_values_and_str_subclasses_safely():
+    from arcanos.telemetry import _sanitize_payload
+
+    class Diagnostic:
+        def __repr__(self):
+            return f"Diagnostic(lookup {JOB_READ_CAPABILITY}; HTTP 500)"
+
+    class Unrepresentable:
+        def __repr__(self):
+            raise RuntimeError(f"cannot render {JOB_READ_CAPABILITY}")
+
+    class DiagnosticText(str):
+        def __repr__(self):
+            return f"DiagnosticText({JOB_READ_CAPABILITY})"
+
+    payload = {
+        "status": 500, "elapsed": 1.5, "retryable": False, "optional": None,
+        "text": DiagnosticText("version v1.0.0"), "opaque": Diagnostic(),
+        "unrepresentable": Unrepresentable(), Diagnostic(): "HTTP 500",
+        DiagnosticText("public-key"): "public value", Unrepresentable(): "unavailable key",
+    }
+    for sanitize in (sanitize_sensitive_data, _sanitize_payload):
+        result = sanitize(payload)
+        assert JOB_READ_CAPABILITY not in json.dumps(result)
+        assert result["status"] == 500 and type(result["status"]) is int
+        assert result["elapsed"] == 1.5 and type(result["elapsed"]) is float
+        assert result["retryable"] is False and result["optional"] is None
+        assert result["text"] == "version v1.0.0" and type(result["text"]) is str
+        assert any(type(key) is str and key == "public-key" for key in result)
+        assert result["unrepresentable"] == "<unrepresentable>"
+        assert "Diagnostic(lookup [REDACTED]; HTTP 500)" in result
+
+
 def test_actual_sentry_breadcrumb_uses_sanitized_event_name(monkeypatch, tmp_path):
     from arcanos import telemetry
 

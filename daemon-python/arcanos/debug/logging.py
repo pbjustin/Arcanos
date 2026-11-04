@@ -8,24 +8,41 @@ from typing import Any, Dict, Optional
 
 from ..config import Config
 from ..utils.telemetry import sanitize_sensitive_data
-from ..utils.text import redact_job_read_capabilities
+from ..utils.text import redact_job_read_capabilities, safe_text_repr, sanitize_utf8_text
 
 _logger_lock = threading.Lock()
 _logger: Optional[logging.Logger] = None
 _STANDARD_LOG_RECORD_FIELDS = set(logging.makeLogRecord({}).__dict__.keys())
 
 
+def _sanitize_record_text(record: logging.LogRecord) -> None:
+    """Keep logging's failure reporter from revealing original message arguments."""
+    try:
+        message = str.__str__(record.getMessage())
+    except Exception:
+        message = safe_text_repr(record.msg)
+    record.msg = sanitize_utf8_text(redact_job_read_capabilities(message))
+    record.args = ()
+    if record.exc_text:
+        record.exc_text = sanitize_utf8_text(redact_job_read_capabilities(record.exc_text))
+
+
 class RedactingTextFormatter(logging.Formatter):
     """Protect final text, including lazy arguments and formatted exception text."""
 
     def format(self, record: logging.LogRecord) -> str:
-        return redact_job_read_capabilities(super().format(record))
+        _sanitize_record_text(record)
+        rendered = super().format(record)
+        if record.exc_text:
+            record.exc_text = sanitize_utf8_text(redact_job_read_capabilities(record.exc_text))
+        return sanitize_utf8_text(redact_job_read_capabilities(rendered))
 
 
 class JsonLogFormatter(logging.Formatter):
     """Minimal JSON formatter for debug server logs."""
 
     def format(self, record: logging.LogRecord) -> str:  # type: ignore[override]
+        _sanitize_record_text(record)
         payload: Dict[str, Any] = {
             "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(record.created)),
             "level": record.levelname,
@@ -53,7 +70,7 @@ class JsonLogFormatter(logging.Formatter):
 
         #audit Assumption: structured debug logs may include credential-like values in extras; risk: secret leakage to local files; invariant: payload sanitized before serialization; handling: apply shared telemetry sanitizer.
         sanitized_payload = sanitize_sensitive_data(payload)
-        return json.dumps(sanitized_payload, ensure_ascii=False)
+        return sanitize_utf8_text(json.dumps(sanitized_payload, ensure_ascii=False))
 
 
 def _ensure_log_dir() -> Path:

@@ -7,7 +7,7 @@ import logging
 import io
 import pytest
 
-from arcanos.debug.logging import JsonLogFormatter
+from arcanos.debug.logging import JsonLogFormatter, RedactingTextFormatter
 
 
 JOB_READ_CAPABILITY = "v1." + "a" * 42 + "_"
@@ -56,6 +56,65 @@ def test_json_formatter_redacts_capability_metadata_key_and_tuple_value():
     assert JOB_READ_CAPABILITY not in json.dumps(payload)
     assert payload["[REDACTED]"] == "HTTP 500"
     assert payload["details"] == ["lookup [REDACTED]"]
+
+
+def test_json_handler_exception_extra_cannot_trigger_unredacted_logging_fallback(capsys):
+    rendered = io.StringIO()
+    handler = logging.StreamHandler(rendered)
+    handler.setFormatter(JsonLogFormatter())
+    logger = logging.Logger("synthetic-exception-extra")
+    logger.addHandler(handler)
+    error = RuntimeError(f"lookup {JOB_READ_CAPABILITY}; HTTP 500")
+
+    logger.error("Job lookup %s; version v1.0.0", JOB_READ_CAPABILITY, extra={"error": error})
+
+    stderr = capsys.readouterr().err
+    assert JOB_READ_CAPABILITY not in stderr + rendered.getvalue()
+    assert not stderr
+    payload = json.loads(rendered.getvalue())
+    assert payload["message"] == "Job lookup [REDACTED]; version v1.0.0"
+    assert "RuntimeError" in payload["error"] and "HTTP 500" in payload["error"]
+    assert str(error) == f"lookup {JOB_READ_CAPABILITY}; HTTP 500"
+
+
+@pytest.mark.parametrize("formatter", [JsonLogFormatter, RedactingTextFormatter])
+def test_log_write_failure_never_prints_original_capability_arguments(formatter, capsys):
+    class FailingStream:
+        def write(self, value):
+            raise OSError("Synthetic write failure")
+
+        def flush(self):
+            pass
+
+    handler = logging.StreamHandler(FailingStream())
+    handler.setFormatter(formatter())
+    logger = logging.Logger("synthetic-write-error")
+    logger.addHandler(handler)
+    logger.error("Job lookup %s; version v1.0.0", JOB_READ_CAPABILITY)
+
+    failure = capsys.readouterr().err
+    assert JOB_READ_CAPABILITY not in failure
+    assert "OSError: Synthetic write failure" in failure
+    assert "Job lookup [REDACTED]; version v1.0.0" in failure
+
+
+@pytest.mark.parametrize("formatter", [JsonLogFormatter, RedactingTextFormatter])
+def test_strict_utf8_log_sink_does_not_leak_capability_on_lone_surrogate(formatter, capsys):
+    raw = io.BytesIO()
+    stream = io.TextIOWrapper(raw, encoding="utf-8", errors="strict")
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(formatter())
+    logger = logging.Logger("synthetic-utf8-error")
+    logger.addHandler(handler)
+    try:
+        logger.error("Job lookup %s; version v1.0.0; %s", JOB_READ_CAPABILITY, "\ud800")
+        failure = capsys.readouterr().err
+        assert JOB_READ_CAPABILITY not in failure
+        assert not failure
+        shown = raw.getvalue().decode("utf-8")
+        assert "Job lookup [REDACTED]; version v1.0.0" in shown
+    finally:
+        stream.close()
 
 
 def test_error_handler_console_and_exception_message_protect_capability(monkeypatch):

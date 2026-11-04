@@ -12,6 +12,14 @@ _ANSI_CSI = re.compile(r"(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]")
 _JSON_STRING = re.compile(r'"(?:[^"\\\r\n]|\\.)*"')
 
 
+def safe_text_repr(value: object) -> str:
+    """Render opaque diagnostic data without truncation or a failing repr leak."""
+    try:
+        return str.__str__(repr(value))
+    except Exception:
+        return "<unrepresentable>"
+
+
 def redact_job_read_capabilities(value: str, replacement: str = "[REDACTED]") -> str:
     """Redact complete job-read capabilities while retaining surrounding text.
 
@@ -31,7 +39,7 @@ def redact_job_read_capabilities(value: str, replacement: str = "[REDACTED]") ->
         except ValueError:
             return redact_literal(match[0])
         filtered = redact_job_read_capabilities(decoded, replacement)
-        return json.dumps(filtered, ensure_ascii=False) if filtered != decoded else match[0]
+        return json.dumps(filtered, ensure_ascii=True) if filtered != decoded else match[0]
 
     if "\\" in candidate:
         # Decode quoted scalars before checking boundaries: an escaped suffix
@@ -58,4 +66,4 @@ def sanitize_utf8_text(value: str) -> str:
     return value.encode("utf-8", errors="replace").decode("utf-8")
 
 
-__all__ = ["sanitize_utf8_text", "redact_job_read_capabilities"]
+__all__ = ["sanitize_utf8_text", "redact_job_read_capabilities", "safe_text_repr"]
