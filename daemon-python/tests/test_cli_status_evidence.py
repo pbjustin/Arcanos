@@ -296,4 +296,3 @@ def test_native_windows_cli_status_and_registry_recovery_without_inference(tmp_p
         assert all(request["authenticated"] for request in backend.requests)
         assert control_token not in output
         assert backend.daemon_token not in output
-

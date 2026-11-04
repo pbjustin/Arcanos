@@ -160,6 +160,34 @@ The daemon access token proves possession of one deployment-wide credential,
 not individual daemon identity. Any holder can address known instance IDs. Keep
 it out of source control and restart the Python daemon after rotation.
 
+### Registry trust and operational status
+
+`FULL` daemon trust requires a valid registry from authenticated
+`GET /api/daemon/registry` and a fresh local cache. Missing or malformed registry
+evidence and expired caches retain `DEGRADED`; confirmation-required actions
+remain blocked. A successful GPT response or authenticated `/system-state`
+read does not establish registry authentication. Registry refresh uses the
+existing configured TTL and does not automatically retry failed requests.
+
+If the dedicated credential is missing, an authorized operator must provision
+one distinct, purpose-bound value through the secret manager for the specific
+backend **web service** and the daemon's protected local configuration. Verify
+the two values match privately, remain distinct from every other credential,
+and meet the existing length/format requirements. Do not copy GPT Access,
+`BACKEND_TOKEN`, or control-plane credentials. Server provisioning, any required
+deployment, and restarting the installed daemon require their own authorization.
+Afterward, one authorized registry refresh can establish trust; chat success
+alone cannot verify the configuration. Never paste the value into logs or a PR.
+
+Direct operational questions such as "Is ARCANOS healthy?" and "What is your
+trust state?" use read-only system-state/status evidence instead of GPT
+self-assessment. The answer separates local registry freshness and daemon trust
+from backend-reported state. `/system-state` is a structured intent/routing
+snapshot, not a dependency health probe: its reported connection, registry, and
+freshness fields do not prove memory availability or consistency, overall
+stability, or low risk. Missing, stale, or inaccessible evidence remains
+explicitly unknown. Greetings and ordinary capability discussions remain chat.
+
 See the [configuration reference](../docs/CONFIGURATION.md) for backend and
 daemon routing settings. Template assignments are explicit choices, not always
 the defaults used when a variable is absent: `arcanos/config.py` defaults

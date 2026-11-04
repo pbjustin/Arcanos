@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-03T19:05:51.579Z",
+  "generatedAt": "2026-11-04T19:44:46.647Z",
   "scopes": [
     {
       "scope": "clients",
@@ -601,6 +601,9 @@
           "relativePath": "daemon-python/tests/test_cli_runner_debug_auth.py"
         },
         {
+          "relativePath": "daemon-python/tests/test_cli_status_evidence.py"
+        },
+        {
           "relativePath": "daemon-python/tests/test_config_backend_token.py"
         },
         {
@@ -677,6 +680,9 @@
         },
         {
           "relativePath": "daemon-python/tests/test_purpose_bound_credential_isolation.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_registry_trust.py"
         },
         {
           "relativePath": "daemon-python/tests/test_request_builders.py"
@@ -897,6 +903,9 @@
     {
       "scope": "tests",
       "files": [
+        {
+          "relativePath": "tests/fixtures/daemon_registry_client.py"
+        },
         {
           "relativePath": "tests/test_daemon.py"
         }
