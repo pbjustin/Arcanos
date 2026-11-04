@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import json
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -13,6 +14,45 @@ from arcanos.utils.telemetry import sanitize_sensitive_data
 
 
 JOB_READ_CAPABILITY = "v1." + "a" * 42 + "_"
+
+
+def test_malformed_quoted_diagnostics_have_bounded_cpu_growth():
+    """Four times the input must not trigger quadratic retries of escaped quotes."""
+    from arcanos.utils.text import redact_job_read_capabilities
+
+    def measured_cpu(size):
+        value = '"' + r'\"' * ((size - 2) // 2) + "\\"
+        durations = []
+        for _ in range(3):
+            start = time.thread_time()
+            assert redact_job_read_capabilities(value) == value
+            durations.append(time.thread_time() - start)
+        return sorted(durations)[1]
+
+    small = measured_cpu(4000)
+    large = measured_cpu(16000)
+    # CPU time excludes scheduling delays; the floor allows coarse Windows clocks
+    # and tiny linear scans, while 8x permits ample overhead for 4x more input.
+    assert large <= max(8 * small, 0.1), (small, large)
+
+
+@pytest.mark.parametrize("suffix", [
+    '"' + r'\"' * 2000 + "\\",
+    '"escaped\\\n' + '"unfinished\\',
+    '"escaped\\\r' + '"unfinished\\',
+    '"raw\n' + '"unfinished\\',
+    '"raw\r' + '"unfinished\\',
+])
+def test_malformed_quoted_diagnostics_remain_safe_in_log_consumers(suffix):
+    """Malformed text retains prose and classification without leaking capabilities."""
+    message = f"Job lookup {JOB_READ_CAPABILITY}; HTTP 500; v1.0.0\n{suffix}"
+    expected = message.replace(JOB_READ_CAPABILITY, "[REDACTED]")
+    sanitized = sanitize_sensitive_data({"error": message, "status": 500})
+    record = logging.LogRecord("arcanos.test", logging.ERROR, __file__, 1, message, (), None)
+    displayed = json.loads(JsonLogFormatter().format(record))
+
+    assert sanitized == {"error": expected, "status": 500}
+    assert displayed["message"] == expected
 
 
 @pytest.mark.parametrize("escaped", [False, True])

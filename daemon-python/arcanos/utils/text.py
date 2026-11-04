@@ -4,12 +4,43 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterator
 
 _JOB_READ_CAPABILITY = re.compile(
     r"(?<![A-Za-z0-9_-])v1\.[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])"
 )
 _ANSI_CSI = re.compile(r"(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]")
-_JSON_STRING = re.compile(r'"(?:[^"\\\r\n]|\\.)*"')
+
+
+def _iter_json_string_spans(value: str) -> Iterator[tuple[int, int]]:
+    """Scan quoted scalars once, without retrying quotes inside malformed text."""
+    index = 0
+    length = len(value)
+    while index < length:
+        if value[index] != '"':
+            index += 1
+            continue
+        start = index
+        index += 1
+        while index < length:
+            character = value[index]
+            if character == '"':
+                index += 1
+                yield start, index
+                break
+            if character in "\r\n":
+                index += 1
+                break
+            if character == "\\":
+                index += 1
+                if index == length:
+                    break
+                # Match the old lexical grouping: escaped LF ends a candidate;
+                # escaped CR is consumed and left for json.loads to reject.
+                if value[index] == "\n":
+                    index += 1
+                    break
+            index += 1
 
 
 def safe_text_repr(value: object) -> str:
@@ -32,23 +63,23 @@ def redact_job_read_capabilities(value: str, replacement: str = "[REDACTED]") ->
     def redact_literal(text: str) -> str:
         return _JOB_READ_CAPABILITY.sub(lambda _match: replacement, text)
 
-    def redact_json_string(match: re.Match[str]) -> str:
+    def redact_json_string(literal: str) -> str:
         """Inspect escaped scalar contents while leaving benign literals intact."""
         try:
-            decoded = json.loads(match[0])
+            decoded = json.loads(literal)
         except ValueError:
-            return redact_literal(match[0])
+            return redact_literal(literal)
         filtered = redact_job_read_capabilities(decoded, replacement)
-        return json.dumps(filtered, ensure_ascii=True) if filtered != decoded else match[0]
+        return json.dumps(filtered, ensure_ascii=True) if filtered != decoded else literal
 
     if "\\" in candidate:
         # Decode quoted scalars before checking boundaries: an escaped suffix
         # can make an apparent 43-character token part of a longer identifier.
         parts: list[str] = []
         cursor = 0
-        for match in _JSON_STRING.finditer(candidate):
-            parts.extend((redact_literal(candidate[cursor:match.start()]), redact_json_string(match)))
-            cursor = match.end()
+        for start, end in _iter_json_string_spans(candidate):
+            parts.extend((redact_literal(candidate[cursor:start]), redact_json_string(candidate[start:end])))
+            cursor = end
         parts.append(redact_literal(candidate[cursor:]))
         redacted = "".join(parts)
     else:
