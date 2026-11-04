@@ -209,6 +209,28 @@ describe('trinityDirectAnswerMode', () => {
         'Do not simulate. Answer directly.',
         1200
       )
-    ).toBe(500);
+    ).toBe(1200);
   });
+
+  it.each([300, 1000])(
+    'preserves the existing %i-token allocation for conversation without a length contract',
+    (defaultTokenLimit) => {
+      expect(resolveTrinityDirectAnswerTokenLimit(
+        'what can you help me with?',
+        defaultTokenLimit
+      )).toBe(defaultTokenLimit);
+    }
+  );
+
+  it.each([
+    ['Answer directly in short bullets.', 1000, 320],
+    ['Answer directly in five bullets.', 1000, 400],
+    ['Answer directly in five bullets.', 300, 300]
+  ] as const)(
+    'keeps compact answer %s within its existing allocation of %i',
+    (prompt, defaultTokenLimit, expectedLimit) => {
+      expect(resolveTrinityDirectAnswerTokenLimit(prompt, defaultTokenLimit))
+        .toBe(expectedLimit);
+    }
+  );
 });

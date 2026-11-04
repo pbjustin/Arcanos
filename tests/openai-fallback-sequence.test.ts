@@ -16,6 +16,7 @@ import {
   getTelemetrySnapshot,
   resetTelemetry,
 } from '../src/platform/logging/telemetry.js';
+import { runDirectAnswerStage } from '../src/core/logic/trinityStages.js';
 
 const authority = 'ft:gpt-4.1-2025-04-14:synthetic:authority:fallback';
 const savedAuthority = process.env.FINETUNED_MODEL_ID;
@@ -138,6 +139,68 @@ describe('createChatCompletionWithFallback', () => {
       lengthTruncated: true
     });
   });
+
+  it('gives unconstrained conversation the normal final allocation through the real Responses boundary', async () => {
+    // Deterministic provider contract: this answer needs 600 output tokens.
+    // The former unsolicited 500-token allocation must fail the real completeness guard.
+    const createSpy = jest.fn().mockImplementation(async (request: { max_output_tokens: number }) => {
+      const incomplete = request.max_output_tokens < 600;
+      return {
+        id: 'resp_conversation_budget', model: authority,
+        status: incomplete ? 'incomplete' : 'completed',
+        ...(incomplete ? { incomplete_details: { reason: 'max_output_tokens' } } : {}),
+        output_text: incomplete ? 'Partial capabilities' : 'I can help explain concepts, plan work, and review code.',
+        output: [],
+        usage: {
+          input_tokens: 1007,
+          output_tokens: incomplete ? request.max_output_tokens : 600,
+          total_tokens: 1007 + (incomplete ? request.max_output_tokens : 600)
+        }
+      };
+    });
+
+    const result = await runDirectAnswerStage(
+      { responses: { create: createSpy } } as never,
+      '', 'what can you help me with?'
+    );
+
+    expect(createSpy).toHaveBeenCalledTimes(1);
+    expect(createSpy.mock.calls[0]?.[0]).toMatchObject({
+      model: authority, max_output_tokens: 1000
+    });
+    expect(createSpy.mock.calls[0]?.[0]).not.toHaveProperty('reasoning');
+    expect(result).toMatchObject({
+      output: 'I can help explain concepts, plan work, and review code.',
+      activeModel: authority, fallbackUsed: false,
+      provider: { responseStatus: 'completed', incomplete: false, truncated: false }
+    });
+  });
+
+  it.each([undefined, 500])(
+    'keeps incomplete conversation terminal without retry at requested allocation %s',
+    async (tokenLimitOverride) => {
+      const createSpy = jest.fn().mockResolvedValue({
+        id: 'resp_conversation_incomplete', model: authority,
+        status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' },
+        output_text: 'PRIVATE-PARTIAL-CONVERSATION-SENTINEL', output: [],
+        usage: { input_tokens: 1007, output_tokens: tokenLimitOverride ?? 1000 }
+      });
+
+      await expect(runDirectAnswerStage(
+        { responses: { create: createSpy } } as never,
+        '', 'what can you help me with?',
+        undefined, undefined, undefined, undefined, tokenLimitOverride
+      )).rejects.toMatchObject({
+        code: 'OPENAI_COMPLETION_INCOMPLETE',
+        providerStatus: 'incomplete', incompleteReason: 'max_output_tokens',
+        truncated: true, lengthTruncated: true
+      });
+      expect(createSpy).toHaveBeenCalledTimes(1);
+      expect(createSpy.mock.calls[0]?.[0]).toMatchObject({
+        model: authority, max_output_tokens: tokenLimitOverride ?? 1000
+      });
+    }
+  );
 
   it('emits chat reasoning effort in the Responses request shape', async () => {
     const createSpy = jest.fn().mockResolvedValue({

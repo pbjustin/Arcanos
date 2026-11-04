@@ -421,9 +421,9 @@ export function applyTrinityDirectAnswerOutputContract(
 }
 
 /**
- * Resolve a smaller token budget for Trinity direct-answer prompts.
+ * Preserve the normal allocation unless a direct-answer output shape calls for a smaller budget.
  * Inputs/outputs: original prompt + default token budget -> bounded direct-answer token limit.
- * Edge cases: generic direct-answer requests still keep a moderate floor so concise answers do not truncate.
+ * Edge cases: unrestricted answers retain the caller's bounded default instead of an unsolicited compact cap.
  */
 export function resolveTrinityDirectAnswerTokenLimit(
   prompt: string,
@@ -431,7 +431,7 @@ export function resolveTrinityDirectAnswerTokenLimit(
 ): number {
   const directAnswerContract = parseTrinityDirectAnswerOutputContract(prompt);
   if (!directAnswerContract) {
-    return Math.min(defaultTokenLimit, 500);
+    return defaultTokenLimit;
   }
 
   if (!directAnswerContract.requestedBulletCount) {
