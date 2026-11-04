@@ -98,6 +98,7 @@ def build_system_status_evidence(cli: "ArcanosCLI", state_payload: Optional[Mapp
         intent_freshness = freshness.get("intent")
         intent_freshness = intent_freshness if intent_freshness in ("fresh", "stale") else "unknown"
         generated_at = state_payload.get("generatedAt")
+        generated_at = state.redact_status_text(generated_at) if isinstance(generated_at, str) else generated_at
         try:
             generated_at = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
             generated_at = generated_at.isoformat() if generated_at.tzinfo else "unknown"
@@ -137,6 +138,7 @@ def render_system_state_table(cli: "ArcanosCLI", state_payload: Mapping[str, Any
     table.add_column("Value", style="green")
 
     def add_row(field: str, value: str) -> None:
+        """Render one complete, redacted backend value as literal text."""
         table.add_row(field, Text(state.redact_status_text(value)))
 
     add_row("mode", str(state_payload.get("mode", "unknown")))
@@ -144,8 +146,10 @@ def render_system_state_table(cli: "ArcanosCLI", state_payload: Mapping[str, Any
     add_row("intent.label", str(intent_payload.get("label", "null")))
     add_row("intent.status", str(intent_payload.get("status", "null")))
     add_row("intent.phase", str(intent_payload.get("phase", "null")))
-    add_row("intent.confidence", str(intent_payload.get("confidence", 0.0)))
-    add_row("intent.version", str(intent_payload.get("version", 0)))
+    confidence = intent_payload.get("confidence")
+    version = intent_payload.get("version")
+    add_row("intent.confidence", str(confidence) if confidence is not None else "unknown")
+    add_row("intent.version", str(version) if version is not None else "unknown")
     add_row("intent.lastTouchedAt", str(intent_payload.get("lastTouchedAt", "null")))
     add_row("routing.preferred", str(routing_payload.get("preferred", "unknown")))
     add_row("routing.lastUsed", str(routing_payload.get("lastUsed", "unknown")))

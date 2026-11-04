@@ -31,12 +31,14 @@ if sys.platform == "win32":
 
 from rich.table import Table
 from rich.console import Console
+from rich.text import Text
 
 from .audit import record as audit_record
 from .idempotency import IdempotencyGuard
 from .trust_state import TrustState
 
 from ..backend_client import BackendApiClient, BackendRequestError, BackendResponse
+from ..backend_client.chat import is_valid_system_state_payload
 from ..cli_config import (
     DOMAIN_KEYWORDS,
     ZERO_COST_USD,
@@ -264,7 +266,7 @@ class ArcanosCLI:
         )
         backend_ops.refresh_registry_cache_if_stale(self)
         state_payload = backend_ops.request_backend_system_state_payload(self) if self.backend_client else None
-        if not isinstance(state_payload, Mapping) or state_payload.get("mode") != "system_state":
+        if not is_valid_system_state_payload(state_payload):
             state_payload = None
         self._recompute_trust_state()
         self.console.print(ui_ops.build_system_status_evidence(self, state_payload), markup=False)
@@ -409,7 +411,7 @@ class ArcanosCLI:
             # Operational evidence never falls back to generative self-assessment.
             backend_ops.refresh_registry_cache_if_stale(self)
             state_payload = backend_ops.request_backend_system_state_payload(self) if self.backend_client else None
-            if not isinstance(state_payload, Mapping) or state_payload.get("mode") != "system_state":
+            if not is_valid_system_state_payload(state_payload):
                 state_payload = None
             self._recompute_trust_state()
             if state_payload:
@@ -449,8 +451,8 @@ class ArcanosCLI:
             intent_payload = state_payload.get("intent") if isinstance(state_payload.get("intent"), Mapping) else {}
             label = intent_payload.get("label")
             status_value = intent_payload.get("status")
-            answer_label = label if isinstance(label, str) and label.strip() else "No active intent"
-            answer_status = status_value if isinstance(status_value, str) and status_value.strip() else "null"
+            answer_label = state.redact_status_text(label) if isinstance(label, str) and label.strip() else "No active intent"
+            answer_status = state.redact_status_text(status_value) if isinstance(status_value, str) and status_value.strip() else "null"
             answer_text = f"{answer_label} (status: {answer_status})"
 
             if return_result:
@@ -465,8 +467,8 @@ class ArcanosCLI:
             table = Table(title="Current Work Context")
             table.add_column("Field", style="cyan")
             table.add_column("Value", style="green")
-            table.add_row("intent", answer_label)
-            table.add_row("status", answer_status)
+            table.add_row("intent", Text(answer_label))
+            table.add_row("status", Text(answer_status))
             self.console.print(table)
             return None
 

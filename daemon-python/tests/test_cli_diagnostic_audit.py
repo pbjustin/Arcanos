@@ -30,6 +30,7 @@ def _response(status, payload):
 
 @pytest.fixture
 def diagnostic_cli(monkeypatch):
+    """Build a real client with synthetic credentials, state, clock, and a controlled sender."""
     now = [1000.0]
     monkeypatch.setattr(state.time, "time", lambda: now[0])
     for name, value in {
@@ -48,6 +49,7 @@ def diagnostic_cli(monkeypatch):
     }
     system_state = {
         "mode": "system_state", "backend": {"connected": True, "registryAvailable": True},
+        "intent": {"intentId": None}, "routing": {"preferred": "backend"},
         "stateFreshness": {"backend": "fresh", "intent": "stale"},
         "generatedAt": "2026-11-04T19:30:26.000Z",
     }
@@ -55,6 +57,7 @@ def diagnostic_cli(monkeypatch):
     requests = []
 
     def sender(method, url, **kwargs):
+        """Serve deterministic responses while checking each route's credential purpose."""
         path = urlsplit(url).path
         requests.append((method, path))
         if path == "/api/daemon/registry":
@@ -111,6 +114,7 @@ def _execution_events(output):
 def test_diagnostic_audit_pairs_command_and_reports_only_observed_outcome(
     diagnostic_cli, capsys, entrypoint, condition,
 ):
+    """Keep diagnostic audit identity, outcome, trust, privacy, and request counts accurate."""
     cli, scenario, requests, now = diagnostic_cli
     if condition == "missing_backend":
         cli.backend_client = None
@@ -169,6 +173,7 @@ def test_diagnostic_audit_pairs_command_and_reports_only_observed_outcome(
 
 
 def test_ordinary_gpt_audit_keeps_ask_identity_without_diagnostic_operation(diagnostic_cli, capsys):
+    """Preserve ordinary ask audit fields and its single synthetic chat request."""
     cli, _, requests, _ = diagnostic_cli
     capsys.readouterr()
 

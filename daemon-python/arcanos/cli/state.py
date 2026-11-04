@@ -10,6 +10,7 @@ from typing import Any, Mapping, TYPE_CHECKING
 
 from .audit import record as audit_record
 from ..voice_boundary import sanitize_tool_output
+from ..utils.text import DEFAULT_IGNORABLE_CODE_POINT_PATTERN
 from .trust_state import TrustState
 from .cli_policy import redact_output
 
@@ -115,12 +116,16 @@ def apply_registry_cache(cli: "ArcanosCLI", registry_payload: Mapping[str, Any])
 def redact_status_text(value: str) -> str:
     """Protect diagnostic text and hydrated labels without truncating ordinary text."""
     safe = redact_output(value, apply_truncation=False)
+    literal = redact_output(value, apply_truncation=False, preserve_literal_unicode=True)
     credentials = (Config.DAEMON_ACCESS_TOKEN, Config.CONTROL_PLANE_ACCESS_TOKEN, Config.BACKEND_TOKEN)
-    for credential in sorted(
-        (token for token in credentials if isinstance(token, str) and token), key=len, reverse=True,
-    ):
+    variants = {token for token in credentials if isinstance(token, str) and token}
+    variants |= {DEFAULT_IGNORABLE_CODE_POINT_PATTERN.sub("", token) for token in variants}
+    for credential in sorted(variants - {""}, key=len, reverse=True):
         safe = safe.replace(credential, "[REDACTED]")
-    return safe
+        literal = literal.replace(credential, "[REDACTED]")
+    # Literal Unicode is safe only when it preserves the redacted canonical
+    # view; an invisible character cannot hide a configured credential.
+    return literal if DEFAULT_IGNORABLE_CODE_POINT_PATTERN.sub("", literal) == safe else safe
 
 
 def hydrate_session_from_backend_state(cli: "ArcanosCLI", state_payload: Mapping[str, Any]) -> None:

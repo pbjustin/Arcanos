@@ -40,7 +40,13 @@ def test_system_state_read_preserves_session_without_building_repo_index(monkeyp
     cli_stub = _make_cli_stub()
     repo_scans: list[bool] = []
     requests: list[tuple[str, str, dict]] = []
-    state_payload = {"mode": "system_state", "intent": {"version": 7}}
+    state_payload = {
+        "mode": "system_state", "intent": {"intentId": None, "version": 7},
+        "routing": {"preferred": "backend"},
+        "backend": {"connected": True, "registryAvailable": True},
+        "stateFreshness": {"intent": "stale", "backend": "fresh"},
+        "generatedAt": "2026-11-04T19:30:26.000Z",
+    }
 
     def _build_repo_index():
         repo_scans.append(True)

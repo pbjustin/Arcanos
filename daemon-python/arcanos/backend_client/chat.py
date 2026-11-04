@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Mapping, Optional, Sequence, TYPE_CHECKING
 from urllib.parse import quote, urlencode
 
@@ -358,6 +359,91 @@ def request_chat_completion(
     return client._parse_chat_response(response.value)
 
 
+def _is_system_state_timestamp(value: Any) -> bool:
+    """Accept a timezone-aware server timestamp or an explicitly unknown value."""
+    if value is None:
+        return True
+    if not isinstance(value, str):
+        return False
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).tzinfo is not None
+    except ValueError:
+        return False
+
+
+def _is_system_state_confidence(value: Any) -> bool:
+    """Accept a finite normalized measurement or an explicitly unknown value."""
+    return value is None or (
+        type(value) in (int, float) and 0 <= value <= 1
+    )
+
+
+def is_valid_system_state_payload(payload: Any) -> bool:
+    """Validate essential fields of the existing TypeScript-owned status envelope.
+
+    Unknown measurements may be null; optional and transient fields need not be
+    present. Extra server fields do not become diagnostic evidence or authority.
+    """
+    if not isinstance(payload, Mapping) or payload.get("mode") != "system_state":
+        return False
+    if any(
+        not isinstance(payload.get(key), Mapping)
+        for key in ("intent", "routing", "backend", "stateFreshness")
+    ):
+        return False
+    intent, routing = payload["intent"], payload["routing"]
+    backend, freshness = payload["backend"], payload["stateFreshness"]
+    if "intentId" not in intent or (
+        intent["intentId"] is not None and not isinstance(intent["intentId"], str)
+    ):
+        return False
+    if "preferred" not in routing or routing["preferred"] not in ("local", "backend", None):
+        return False
+    if any(
+        key not in backend or (backend[key] is not None and type(backend[key]) is not bool)
+        for key in ("connected", "registryAvailable")
+    ):
+        return False
+    if any(
+        key not in freshness or freshness[key] not in ("fresh", "stale", "unknown", None)
+        for key in ("intent", "backend")
+    ):
+        return False
+    if "generatedAt" not in payload or not _is_system_state_timestamp(payload["generatedAt"]):
+        return False
+    if intent.get("label") is not None and not isinstance(intent["label"], str):
+        return False
+    if intent.get("status") not in ("active", "paused", "completed", None):
+        return False
+    if intent.get("phase") not in ("exploration", "execution", None):
+        return False
+    if not _is_system_state_confidence(intent.get("confidence")):
+        return False
+    version = intent.get("version")
+    if version is not None and (type(version) is not int or version < 1):
+        return False
+    if not _is_system_state_timestamp(intent.get("lastTouchedAt")):
+        return False
+    if routing.get("lastUsed") not in ("local", "backend", None):
+        return False
+    if not _is_system_state_confidence(routing.get("confidenceGate")):
+        return False
+    if not _is_system_state_timestamp(backend.get("lastHeartbeatAt")) or not _is_system_state_timestamp(
+        freshness.get("lastValidatedAt")
+    ):
+        return False
+    limits = payload.get("limits")
+    if limits is not None:
+        if not isinstance(limits, Mapping) or (
+            limits.get("rateLimited") is not None and type(limits["rateLimited"]) is not bool
+        ):
+            return False
+        remaining = limits.get("remainingRequests")
+        if remaining is not None and (type(remaining) is not int or remaining < 0):
+            return False
+    return _is_system_state_confidence(payload.get("confidence"))
+
+
 def request_system_state(
     client: "BackendApiClient",
     metadata: Optional[Mapping[str, Any]] = None,
@@ -368,7 +454,8 @@ def request_system_state(
     """
     Purpose: Request governed backend system state from the direct `/system-state` endpoint.
     Inputs/Outputs: optional metadata and optimistic-lock update payload; returns raw state JSON.
-    Edge cases: update writes require both expected_version and patch fields together; gpt_id is accepted for signature compatibility but does not affect routing.
+    Edge cases: GET responses require a valid status envelope; updates require both
+    expected_version and patch. gpt_id does not affect direct control-plane routing.
     """
     payload = _build_backend_payload()
 
@@ -405,8 +492,18 @@ def request_system_state(
         response = client._request_json("get", path, None)
     else:
         response = client._request_json("post", "/system-state", payload)
-    if not response.ok or not response.value:
+    if not response.ok:
         # //audit assumption: response must be ok; risk: backend failure; invariant: ok response; strategy: return structured error.
+        return BackendResponse(ok=False, error=response.error)
+
+    if expected_version is None and not is_valid_system_state_payload(response.value):
+        return BackendResponse(
+            ok=False,
+            error=BackendRequestError(
+                kind="parse", message="Backend system-state envelope is malformed or unsupported",
+            ),
+        )
+    if not response.value:
         return BackendResponse(ok=False, error=response.error)
 
     return BackendResponse(ok=True, value=response.value)

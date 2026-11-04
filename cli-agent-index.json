@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-04T21:39:05.365Z",
+  "generatedAt": "2026-11-04T23:03:03.221Z",
   "scopes": [
     {
       "scope": "clients",
@@ -607,6 +607,15 @@
           "relativePath": "daemon-python/tests/test_cli_status_evidence.py"
         },
         {
+          "relativePath": "daemon-python/tests/test_cli_status_unknown_measurements.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_cli_system_state_validation.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_cli_work_context_privacy.py"
+        },
+        {
           "relativePath": "daemon-python/tests/test_config_backend_token.py"
         },
         {
@@ -688,10 +697,16 @@
           "relativePath": "daemon-python/tests/test_registry_trust.py"
         },
         {
+          "relativePath": "daemon-python/tests/test_remaining_operational_queries.py"
+        },
+        {
           "relativePath": "daemon-python/tests/test_request_builders.py"
         },
         {
           "relativePath": "daemon-python/tests/test_schema_memory.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_system_state_envelope_validation.py"
         },
         {
           "relativePath": "daemon-python/tests/test_system_state_transport.py"

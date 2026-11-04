@@ -154,7 +154,12 @@ def test_request_system_state_ignores_explicit_gpt_id_on_direct_route() -> None:
     client = SimpleNamespace()
     client._normalize_metadata = MagicMock(return_value=None)
     client._request_json = MagicMock(
-        return_value=BackendResponse(ok=True, value={"state": {"ok": True}})
+        return_value=BackendResponse(ok=True, value={
+            "mode": "system_state", "intent": {"intentId": None}, "routing": {"preferred": "backend"},
+            "backend": {"connected": True, "registryAvailable": True},
+            "stateFreshness": {"intent": "stale", "backend": "fresh"},
+            "generatedAt": "2026-11-04T19:30:26.000Z",
+        })
     )
 
     response = request_system_state(client, gpt_id="arcanos-gaming")

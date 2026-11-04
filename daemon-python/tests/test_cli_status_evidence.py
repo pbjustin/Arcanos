@@ -94,6 +94,7 @@ def status_cli(monkeypatch):
     monkeypatch.setattr(cli_module.memory_ops, "update_short_term_summary", MagicMock())
     state_read = MagicMock(return_value={
         "mode": "system_state",
+        "intent": {"intentId": None}, "routing": {"preferred": "backend"},
         "backend": {"connected": True, "registryAvailable": True},
         "stateFreshness": {"backend": "fresh", "intent": "stale"},
         "generatedAt": "2026-11-04T19:30:26.000Z",
@@ -131,6 +132,7 @@ def test_operational_questions_use_status_evidence_without_generation(status_cli
 @pytest.mark.parametrize("question", ADDITIONAL_HEALTH_QUESTIONS)
 @pytest.mark.parametrize("variant", ["plain", "normalized", "deep", "backend"])
 def test_additional_direct_status_questions_avoid_generation(status_cli, monkeypatch, question, variant):
+    """Route direct operational variants through evidence reads instead of either model."""
     cli, _, state_read, backend, local = status_cli
     monkeypatch.setattr(Config, "BACKEND_DEEP_PREFIXES", ["deep:", "backend:"])
     monkeypatch.setattr(Config, "BACKEND_ROUTING_MODE", "hybrid")
@@ -230,6 +232,7 @@ def test_prefixed_ordinary_conversation_keeps_existing_route(status_cli, monkeyp
 
 @pytest.mark.parametrize("handler", ["health", "slash_status"])
 def test_missing_backend_still_reports_local_trust_and_unknown_health(status_cli, handler):
+    """Recompute FULL to DEGRADED and report unknowns when no backend is configured."""
     cli, output, state_read, backend, local = status_cli
     cli.backend_client = None
     cli._trust_state = TrustState.FULL
@@ -252,6 +255,7 @@ def test_missing_backend_still_reports_local_trust_and_unknown_health(status_cli
 
 @pytest.mark.parametrize("value", [True, False])
 def test_slash_status_preserves_genuine_reported_booleans(status_cli, value):
+    """Render genuine booleans consistently in the evidence summary and status table."""
     cli, output, state_read, _, _ = status_cli
     state_read.return_value["backend"] = {"connected": value, "registryAvailable": value}
 
@@ -272,6 +276,7 @@ def test_slash_status_preserves_genuine_reported_booleans(status_cli, value):
 def test_spoken_status_preserves_all_essential_unknowns(
     status_cli, monkeypatch, state_available, speech_setting, generated_at,
 ):
+    """Retain all essential evidence caveats within explicit or configured bounded speech."""
     cli, _, state_read, backend, local = status_cli
     if not state_available:
         state_read.return_value = None
@@ -298,6 +303,7 @@ def test_spoken_status_preserves_all_essential_unknowns(
 
 @pytest.mark.parametrize("handler", ["health", "slash_status"])
 def test_status_recomputes_trust_when_registry_expires_during_state_read(status_cli, monkeypatch, handler):
+    """Recompute trust after a blocking read expires otherwise-fresh registry evidence."""
     cli, output, state_read, backend, local = status_cli
     clock = [1000.0]
     monkeypatch.setattr(cli_module.state.time, "time", lambda: clock[0])
@@ -337,17 +343,22 @@ def test_status_recomputes_trust_when_registry_expires_during_state_read(status_
     "fixture-do-not-print-credential-1234567890", "true", 1, 0, None, [], {},
 ])
 def test_slash_status_allowlists_reported_booleans_in_evidence_and_table(status_cli, untrusted_value):
+    """Treat null booleans as unknown and reject malformed non-boolean envelopes."""
     cli, output, state_read, backend, local = status_cli
     state_read.return_value["backend"] = {"connected": untrusted_value, "registryAvailable": untrusted_value}
 
-    assert cli.handle_status() is True
+    assert cli.handle_status() is (untrusted_value is None)
 
     text = output.getvalue()
-    assert "Backend-reported connection: unknown" in text
-    assert "Backend-reported registry availability: unknown" in text
-    for label in ("reported.backend.connected", "reported.backend.registryAvailable"):
-        row = next(line for line in text.splitlines() if label in line)
-        assert "unknown" in row, row
+    if untrusted_value is None:
+        assert "Backend-reported connection: unknown" in text
+        assert "Backend-reported registry availability: unknown" in text
+        for label in ("reported.backend.connected", "reported.backend.registryAvailable"):
+            row = next(line for line in text.splitlines() if label in line)
+            assert "unknown" in row, row
+    else:
+        assert "Backend status read: unavailable" in text
+        assert "ARCANOS Reported System State" not in text
     if isinstance(untrusted_value, str):
         assert untrusted_value not in text
     backend.assert_not_called()
@@ -386,8 +397,8 @@ def test_unrecognized_fields_are_unknown_and_never_echo_sensitive_values(status_
     result = cli.handle_ask("Are your backend and memory working?", return_result=True)
 
     assert private_value not in result.response_text
-    assert "Backend-reported connection: unknown" in result.response_text
-    assert "generated at: unknown" in result.response_text
+    assert "Backend status read: unavailable" in result.response_text
+    assert "authenticated GET /system-state succeeded" not in result.response_text
     assert "Memory availability: unknown" in result.response_text
     assert "Memory consistency: unknown" in result.response_text
     assert "Overall stability and risk: unknown" in result.response_text
@@ -413,6 +424,7 @@ def test_slash_status_displays_evidence_and_labels_backend_reports(status_cli):
 def test_status_protects_configured_credentials_in_table_and_hydrated_context(
     diagnostic_cli, monkeypatch, capsys, decoration,
 ):
+    """Redact configured credentials from status output, logs, and hydrated context."""
     cli, scenario, requests, _ = diagnostic_cli
     for environment_name, attribute, token in (
         ("ARCANOS_DAEMON_ACCESS_TOKEN", "DAEMON_ACCESS_TOKEN", DAEMON_TOKEN),
@@ -423,13 +435,13 @@ def test_status_protects_configured_credentials_in_table_and_hydrated_context(
         monkeypatch.setattr(Config, attribute, token)
 
     def decorate(token):
+        """Produce raw, zero-width, or terminal-control versions of a fixture credential."""
         if decoration == "zero_width":
             return token[:12] + "\u200b" + token[12:]
         return "\x1b[2K" + token if decoration == "terminal_control" else token
 
-    scenario["state_payload"]["backend"]["lastHeartbeatAt"] = decorate(CONTROL_TOKEN)
-    scenario["state_payload"]["generatedAt"] = decorate(DAEMON_TOKEN)
-    scenario["state_payload"]["intent"] = {"intentId": "active-fixture-intent", "label": decorate(GPT_TOKEN)}
+    private_label = " ".join(decorate(token) for token in (DAEMON_TOKEN, CONTROL_TOKEN, GPT_TOKEN))
+    scenario["state_payload"]["intent"] = {"intentId": "active-fixture-intent", "label": private_label}
     log_output = io.StringIO()
     logger = logging.Logger("status-privacy")
     handler = logging.StreamHandler(log_output)
@@ -451,7 +463,8 @@ def test_status_protects_configured_credentials_in_table_and_hydrated_context(
         assert_no_credential_material(token, *observed)
         assert decorate(token) not in "\n".join(str(value) for value in observed)
     assert "[REDACTED]" in cli.console.file.getvalue()
-    assert cli.session.current_intent == cli.session.conversation_goal == "[REDACTED]"
+    assert cli.session.current_intent == cli.session.conversation_goal
+    assert cli.session.current_intent == cli_module.state.redact_status_text(private_label)
     assert requests == [("get", "/system-state")]
     cli.audio.speak.assert_not_called()
     cli.memory.add_conversation.assert_not_called()
@@ -499,6 +512,7 @@ def test_narrow_operational_question_variants(question):
 @pytest.mark.skipif(sys.platform != "win32", reason="Native Windows CLI subprocess acceptance")
 @pytest.mark.parametrize("questions", [HEALTH_QUESTIONS, ADDITIONAL_HEALTH_QUESTIONS], ids=["original", "additional"])
 def test_native_windows_cli_status_and_registry_recovery_without_inference(tmp_path, monkeypatch, questions):
+    """Exercise public Windows CLI diagnostics, trust recovery, and ordinary conversation."""
     source_root = Path(__file__).resolve().parents[2]
     monkeypatch.syspath_prepend(str(source_root / "daemon-python/scripts"))
     from local_action_acceptance.cli import DaemonFixture, SyntheticBackend
@@ -507,6 +521,7 @@ def test_native_windows_cli_status_and_registry_recovery_without_inference(tmp_p
     registry_reads = 0
 
     def status_route(method, path, body):
+        """Serve canonical state and release registry evidence at the planned recovery."""
         nonlocal registry_reads
         if method == "GET" and path == "/api/daemon/registry":
             registry_reads += 1
@@ -514,6 +529,7 @@ def test_native_windows_cli_status_and_registry_recovery_without_inference(tmp_p
         if method == "GET" and path == "/system-state":
             return 200, {
                 "mode": "system_state",
+                "intent": {"intentId": None}, "routing": {"preferred": "backend"},
                 "backend": {"connected": True, "registryAvailable": True},
                 "stateFreshness": {"backend": "fresh", "intent": "stale"},
                 "generatedAt": "2026-11-04T19:30:26.000Z",

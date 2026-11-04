@@ -99,6 +99,7 @@ def test_prompt_registry_status_does_not_infer_backend_health():
     ("core", []), ("core", "HRC"),
 ])
 def test_malformed_registry_fields_never_hydrate_cache(field, value):
+    """Reject malformed fields without hydrating cache or disclosing credentials."""
     payload = registry_payload()
     payload[field] = value
     cli, sender, _ = make_cli(payload)
@@ -134,6 +135,7 @@ def test_malformed_registry_entries_never_grant_trust(field, key, value):
 
 
 def test_empty_module_catalog_and_nullable_module_fields_are_supported():
+    """Accept empty catalogs and nullable module metadata from the server contract."""
     for modules in ([], [{**registry_payload()["modules"][0], "description": None, "route": None}]):
         payload = {**registry_payload(), "modules": modules}
         cli, sender, _ = make_cli(payload)
@@ -239,6 +241,7 @@ def test_malformed_refresh_does_not_replace_or_extend_existing_evidence(monkeypa
 def test_conversation_prompt_matches_registry_evidence_after_refresh(
     monkeypatch, clock_change, refresh_status,
 ):
+    """Refresh invalidated prompt evidence once before constructing mocked chat messages."""
     now = [1000.0]
     monkeypatch.setattr(state.time, "time", lambda: now[0])
     payload = registry_payload()
@@ -306,6 +309,7 @@ def test_fresh_conversation_avoids_registry_fetch_and_prompt_rebuild(monkeypatch
 
 
 def test_successful_conversation_does_not_replace_unavailable_registry_evidence(monkeypatch):
+    """Keep trust degraded when mocked chat succeeds despite an unavailable registry."""
     cli, sender, _ = make_cli({"error": "server credential missing"}, status_code=503)
     cli.memory = SimpleNamespace(get_recent_conversations=lambda **kwargs: [])
     cli.system_prompt = "fixture prompt"
