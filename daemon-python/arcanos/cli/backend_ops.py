@@ -250,9 +250,9 @@ def refresh_registry_cache(cli: "ArcanosCLI") -> None:
 
 def refresh_registry_cache_if_stale(cli: "ArcanosCLI") -> None:
     """
-    Purpose: Refresh registry cache when stale and rebuild prompt if cache becomes valid.
+    Purpose: Refresh stale registry evidence and rebuild the prompt with the result.
     Inputs/Outputs: CLI instance; may mutate prompt and trust state.
-    Edge cases: No-op when backend is not configured or cache remains stale after refresh.
+    Edge cases: Fresh evidence avoids a fetch; failed refreshes use the fallback prompt.
     """
     if not cli.backend_client:
         # //audit assumption: backend client required; risk: unnecessary branch work; invariant: no refresh without backend; strategy: return.
@@ -262,9 +262,8 @@ def refresh_registry_cache_if_stale(cli: "ArcanosCLI") -> None:
         return
 
     refresh_registry_cache(cli)
-    if state.registry_cache_is_valid(cli):
-        # //audit assumption: refreshed cache should update prompt context; risk: stale prompt using old registry; invariant: prompt rebuilt after successful refresh; strategy: rebuild prompt.
-        cli.system_prompt = state.build_system_prompt(cli)
+    # Refresh failure must also remove any earlier fresh-registry assertion.
+    cli.system_prompt = state.build_system_prompt(cli)
 
 
 def confirm_pending_actions(cli: "ArcanosCLI", confirmation_token: str) -> Optional[ConversationResult]:

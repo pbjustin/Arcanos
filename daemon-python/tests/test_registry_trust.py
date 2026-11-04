@@ -234,6 +234,77 @@ def test_malformed_refresh_does_not_replace_or_extend_existing_evidence(monkeypa
     assert sender.call_count == 2
 
 
+@pytest.mark.parametrize("clock_change", ["expired", "rollback"])
+@pytest.mark.parametrize("refresh_status", [200, 401, 429, 503])
+def test_conversation_prompt_matches_registry_evidence_after_refresh(
+    monkeypatch, clock_change, refresh_status,
+):
+    now = [1000.0]
+    monkeypatch.setattr(state.time, "time", lambda: now[0])
+    payload = registry_payload()
+    payload["endpoints"][0]["description"] = "Fresh registry fixture marker"
+    cli, sender, _ = make_cli(payload)
+    cli.memory = SimpleNamespace(get_recent_conversations=lambda **kwargs: [])
+    cli.instance_id = "fixture-instance"
+    cli.client_id = "fixture-client"
+    backend_ops.refresh_registry_cache(cli)
+    cli.system_prompt = state.build_system_prompt(cli)
+    assert "registry evidence: authenticated and fresh" in cli.system_prompt
+    assert "Fresh registry fixture marker" in cli.system_prompt
+
+    # The prompt was prepared while the cache was fresh. It becomes invalid
+    # before perform_backend_conversation does its own freshness check.
+    now[0] += cli._registry_cache_ttl_seconds + 1 if clock_change == "expired" else -1
+    sender.return_value.status_code = refresh_status
+    monkeypatch.setattr(backend_ops, "build_backend_metadata", lambda _: {})
+    chat = MagicMock(return_value=BackendResponse(
+        ok=True, value=BackendChatResult("Hello", 0, 0.0, "fixture"),
+    ))
+    monkeypatch.setattr(cli.backend_client, "request_chat_completion", chat)
+    build_prompt = MagicMock(wraps=state.build_system_prompt)
+    monkeypatch.setattr(state, "build_system_prompt", build_prompt)
+
+    result = backend_ops.perform_backend_conversation(cli, "hello")
+
+    assert result is not None and result.source == "backend"
+    sent_prompt = chat.call_args.kwargs["messages"][0]["content"]
+    if refresh_status == 200:
+        assert cli._trust_state is TrustState.FULL
+        assert "registry evidence: authenticated and fresh" in sent_prompt
+        assert "Fresh registry fixture marker" in sent_prompt
+    else:
+        assert cli._trust_state is TrustState.DEGRADED
+        assert "registry evidence: unavailable or stale" in sent_prompt
+        assert "registry evidence: authenticated and fresh" not in sent_prompt
+        assert "Fresh registry fixture marker" not in sent_prompt
+    # One startup fetch plus one refresh; no retry or duplicate prompt rebuild.
+    assert sender.call_count == 2
+    build_prompt.assert_called_once_with(cli)
+    chat.assert_called_once()
+
+
+def test_fresh_conversation_avoids_registry_fetch_and_prompt_rebuild(monkeypatch):
+    cli, sender, _ = make_cli(registry_payload())
+    cli.memory = SimpleNamespace(get_recent_conversations=lambda **kwargs: [])
+    cli.instance_id = "fixture-instance"
+    cli.client_id = "fixture-client"
+    backend_ops.refresh_registry_cache(cli)
+    cli.system_prompt = state.build_system_prompt(cli)
+    monkeypatch.setattr(backend_ops, "build_backend_metadata", lambda _: {})
+    chat = MagicMock(return_value=BackendResponse(
+        ok=True, value=BackendChatResult("Hello", 0, 0.0, "fixture"),
+    ))
+    monkeypatch.setattr(cli.backend_client, "request_chat_completion", chat)
+    build_prompt = MagicMock(wraps=state.build_system_prompt)
+    monkeypatch.setattr(state, "build_system_prompt", build_prompt)
+
+    assert backend_ops.perform_backend_conversation(cli, "hello") is not None
+
+    sender.assert_called_once()
+    build_prompt.assert_not_called()
+    chat.assert_called_once()
+
+
 def test_successful_conversation_does_not_replace_unavailable_registry_evidence(monkeypatch):
     cli, sender, _ = make_cli({"error": "server credential missing"}, status_code=503)
     cli.memory = SimpleNamespace(get_recent_conversations=lambda **kwargs: [])
