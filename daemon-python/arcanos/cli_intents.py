@@ -8,6 +8,25 @@ import re
 from typing import Optional, Mapping, Tuple, Sequence
 
 
+def is_system_health_query(message: str, deep_prefixes: Sequence[str] = ()) -> bool:
+    """Recognize direct operational questions without capturing general AI discussion."""
+    normalized = (message or "").strip()
+    for prefix in deep_prefixes:
+        prefix = prefix.strip()
+        if prefix and normalized.lower().startswith(prefix.lower()):
+            normalized = normalized[len(prefix):].strip()
+            break
+    normalized = " ".join(normalized.lower().replace("’", "'").split()).rstrip("?.!")
+    patterns = (
+        r"what(?: is|'s) (?:your|the|arcanos) (?:current )?(?:system (?:status|health)|trust (?:state|level))",
+        r"(?:show|check)(?: me)? (?:your|the|arcanos) (?:current )?(?:system (?:status|health)|trust (?:state|level))",
+        r"is arcanos (?:healthy|functioning normally|working (?:normally|correctly))",
+        r"are you (?:healthy|functioning normally|working (?:normally|correctly))",
+        r"(?:is|are) your (?:backend|memory|backend and memory|memory and backend) (?:healthy|working(?: (?:normally|correctly))?)",
+    )
+    return any(re.fullmatch(pattern, normalized) for pattern in patterns)
+
+
 def detect_domain_intent(
     message: str,
     domain_keywords: Mapping[str, Sequence[str]],

@@ -43,7 +43,7 @@ from ..cli_config import (
     ZERO_TOKENS_USED,
 )
 from ..cli_types import DaemonCommand
-from ..cli_intents import detect_domain_intent, truncate_for_tts
+from ..cli_intents import detect_domain_intent, is_system_health_query, truncate_for_tts
 from ..cli_runner import run_debug_mode, run_interactive_mode
 from ..config import Config, validate_required_config
 from ..credential_bootstrap import CredentialBootstrapError, bootstrap_credentials
@@ -257,12 +257,10 @@ class ArcanosCLI:
         Inputs/Outputs: None; renders status table and returns success flag.
         Edge cases: Returns False when backend is not configured or state fetch fails.
         """
-        if not self.backend_client:
-            # //audit assumption: status requires backend source-of-truth; risk: stale local-only status; invariant: fail when backend missing; strategy: print error and return False.
-            self.console.print("[red]Backend is not configured.[/red]")
-            return False
-
-        state_payload = backend_ops.request_backend_system_state_payload(self)
+        backend_ops.refresh_registry_cache_if_stale(self)
+        self._recompute_trust_state()
+        state_payload = backend_ops.request_backend_system_state_payload(self) if self.backend_client else None
+        self.console.print(ui_ops.build_system_status_evidence(self, state_payload), markup=False)
         if not state_payload:
             # //audit assumption: failed state fetch cannot be substituted locally; risk: fabricated status; invariant: no synthetic state output; strategy: fail closed.
             self.console.print("[red]Failed to fetch backend system state.[/red]")
@@ -384,6 +382,33 @@ class ArcanosCLI:
         self._recompute_trust_state()
         audit_record("execute_attempt", command="ask", trust=self._trust_state.name)
 
+        route_decision = determine_conversation_route(
+            user_message=message,
+            routing_mode=Config.BACKEND_ROUTING_MODE,
+            deep_prefixes=Config.BACKEND_DEEP_PREFIXES,
+        )
+        if is_system_health_query(route_decision.normalized_message, Config.BACKEND_DEEP_PREFIXES):
+            # Operational evidence never falls back to generative self-assessment.
+            backend_ops.refresh_registry_cache_if_stale(self)
+            self._recompute_trust_state()
+            state_payload = backend_ops.request_backend_system_state_payload(self) if self.backend_client else None
+            if state_payload:
+                state.hydrate_session_from_backend_state(self, state_payload)
+            answer_text = ui_ops.build_system_status_evidence(self, state_payload)
+            audit_record(
+                "execute_success" if state_payload else "execute_failed",
+                command="status", trust=self._trust_state.name, source="diagnostic",
+            )
+            if return_result:
+                return ConversationResult(
+                    response_text=answer_text, tokens_used=ZERO_TOKENS_USED, cost_usd=ZERO_COST_USD,
+                    model="system-state", source="diagnostic",
+                )
+            self.console.print(answer_text, markup=False)
+            if speak_response or Config.SPEAK_RESPONSES:
+                self.audio.speak(truncate_for_tts(answer_text), wait=True)
+            return None
+
         can_request, deny_reason = self.rate_limiter.can_make_request()
         if not can_request:
             self.console.print(f"[red]Rate limit: {deny_reason}[/red]")
@@ -430,11 +455,6 @@ class ArcanosCLI:
 
         self.system_prompt = state.build_system_prompt(self)
 
-        route_decision = determine_conversation_route(
-            user_message=message,
-            routing_mode=Config.BACKEND_ROUTING_MODE,
-            deep_prefixes=Config.BACKEND_DEEP_PREFIXES,
-        )
         if route_override in {"local", "backend"}:
             route_decision = ConversationRouteDecision(
                 route=route_override,
