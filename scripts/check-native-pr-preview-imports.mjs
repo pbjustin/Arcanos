@@ -1062,7 +1062,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/core/logic/trinityDirectAnswerMode.ts',
-    '80060899d1ed7c1ea4304b4fdfc96ff1f7678f33736ab056ebd378487ce889af',
+    'feeef12d4a9cf133bf4ac41bad8813b9a82cad6b1dd04d9bfc2c6b3d7d6ffda7',
   ],
   [
     'src/services/directAnswerMode.ts',

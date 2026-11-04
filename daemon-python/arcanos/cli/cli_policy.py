@@ -11,21 +11,12 @@ from pathlib import Path
 from typing import Any
 
 from arcanos.debug import log_audit_event
+from arcanos.utils.text import DEFAULT_IGNORABLE_CODE_POINT_PATTERN, redact_job_read_capabilities
 
 BIDI_CONTROL_PATTERN = re.compile(r"[\u202A-\u202E\u2066-\u2069]")
-_DEFAULT_IGNORABLE_CODE_POINT_RANGES = (
-    r"\u00AD\u034F\u061C\u115F-\u1160\u17B4-\u17B5\u180B-\u180F"
-    r"\u200B-\u200F\u202A-\u202E\u2060-\u206F\u3164"
-    r"\uFE00-\uFE0F\uFEFF\uFFA0\uFFF0-\uFFF8"
-    r"\U0001BCA0-\U0001BCA3\U0001D173-\U0001D17A"
-    r"\U000E0000-\U000E0FFF"
-)
-DEFAULT_IGNORABLE_CODE_POINT_PATTERN = re.compile(
-    rf"[{_DEFAULT_IGNORABLE_CODE_POINT_RANGES}]"
-)
 UNSAFE_GIT_PATH_CONTROL_PATTERN = re.compile(
     # Preserve the established Git-path compatibility contract; output
-    # normalization separately removes the full default-ignorable set above.
+    # normalization separately removes the shared default-ignorable set.
     r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F\u202A-\u202E\u2066-\u2069]"
 )
 _C1_CONTROL_STRING_INTRODUCERS = frozenset((0x90, 0x98, 0x9D, 0x9E, 0x9F))
@@ -55,7 +46,7 @@ _JSON_FIELD_TOKEN = re.compile(
 _AUTH_TOKEN_PATTERN = r"[!#$%&'*+.^_`|~0-9A-Za-z-]+"
 _SENSITIVE_FIELD_NAME = re.compile(
     r"(?:[A-Za-z][A-Za-z0-9_]*_)?"
-    r"(?:token|secret|password|api[_-]?key|authorization|cookie)",
+    r"(?:token|secret|password|api[_-]?key|authorization|cookie|jobReadToken)",
     re.IGNORECASE | re.ASCII,
 )
 
@@ -455,6 +446,7 @@ def _redact_sanitized_output(
     policy: dict[str, Any],
     replacement: str,
 ) -> str:
+    """Redact named secrets and standalone capabilities using the current policy."""
     env_names = policy.get("redactionPolicy", {}).get("envNames") or []
     redacted = _redact_json_fields(value, env_names, replacement)
     for env_name in env_names:
@@ -463,11 +455,12 @@ def _redact_sanitized_output(
     redacted = re.sub(r"\bsk-[A-Za-z0-9_-]{12,}\b", replacement, redacted)
     redacted = re.sub(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,}\b", replacement, redacted)
     redacted = re.sub(r"\brwy_[A-Za-z0-9_=-]{20,}\b", replacement, redacted, flags=re.IGNORECASE)
+    redacted = redact_job_read_capabilities(redacted, replacement)
     redacted = re.sub(r"\b[A-Za-z][A-Za-z0-9+.-]*://[^\s\"'`]*:[^\s\"'`@]+@[^\s\"'`]+", replacement, redacted)
     sensitive_names = {
         match[1]
         for match in re.finditer(
-            r'''(?<![A-Za-z0-9_])["']?((?:[A-Za-z][A-Za-z0-9_]*_)?(?:token|secret|password|api[_-]?key|authorization|cookie))["']?\s*[:=]''',
+            rf'''(?<![A-Za-z0-9_])["']?({_SENSITIVE_FIELD_NAME.pattern})["']?\s*[:=]''',
             redacted,
             re.IGNORECASE | re.ASCII,
         )

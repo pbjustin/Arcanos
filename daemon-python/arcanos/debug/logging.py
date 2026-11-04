@@ -1,23 +1,82 @@
 import json
 import logging
 import logging.handlers
+import sys
 import threading
 import time
+import traceback
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from ..config import Config
 from ..utils.telemetry import sanitize_sensitive_data
+from ..utils.text import redact_job_read_capabilities, safe_text_repr, sanitize_utf8_text
 
 _logger_lock = threading.Lock()
 _logger: Optional[logging.Logger] = None
 _STANDARD_LOG_RECORD_FIELDS = set(logging.makeLogRecord({}).__dict__.keys())
 
 
+class _RedactingHandlerErrors:
+    """Protect logging's stderr fallback, including an active exception chain."""
+
+    def handleError(self, record: logging.LogRecord) -> None:
+        if not logging.raiseExceptions or sys.stderr is None:
+            return
+        try:
+            failure = "".join(traceback.format_exception(*sys.exc_info()))
+            diagnostic = (
+                f"--- Logging error ---\n{failure}"
+                f"Logged from {record.pathname}:{record.lineno}\n"
+                f"Message: {safe_text_repr(sanitize_sensitive_data(record.msg))}\n"
+                f"Arguments: {safe_text_repr(sanitize_sensitive_data(record.args))}\n"
+            )
+            sys.stderr.write(sanitize_utf8_text(redact_job_read_capabilities(diagnostic)))
+        except Exception:
+            # A broken fallback sink must not invoke another raw error reporter.
+            pass
+
+
+class RedactingStreamHandler(_RedactingHandlerErrors, logging.StreamHandler):
+    """Stream handler with redacted failure diagnostics."""
+
+
+class RedactingFileHandler(_RedactingHandlerErrors, logging.FileHandler):
+    """File handler with redacted failure diagnostics."""
+
+
+class RedactingRotatingFileHandler(_RedactingHandlerErrors, logging.handlers.RotatingFileHandler):
+    """Rotating file handler with redacted failure diagnostics."""
+
+
+def _sanitize_record_text(record: logging.LogRecord) -> None:
+    """Keep logging's failure reporter from revealing original message arguments."""
+    try:
+        message = str.__str__(record.getMessage())
+    except Exception:
+        message = safe_text_repr(record.msg)
+    record.msg = sanitize_utf8_text(redact_job_read_capabilities(message))
+    record.args = ()
+    if record.exc_text:
+        record.exc_text = sanitize_utf8_text(redact_job_read_capabilities(record.exc_text))
+
+
+class RedactingTextFormatter(logging.Formatter):
+    """Protect final text, including lazy arguments and formatted exception text."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        _sanitize_record_text(record)
+        rendered = super().format(record)
+        if record.exc_text:
+            record.exc_text = sanitize_utf8_text(redact_job_read_capabilities(record.exc_text))
+        return sanitize_utf8_text(redact_job_read_capabilities(rendered))
+
+
 class JsonLogFormatter(logging.Formatter):
     """Minimal JSON formatter for debug server logs."""
 
     def format(self, record: logging.LogRecord) -> str:  # type: ignore[override]
+        _sanitize_record_text(record)
         payload: Dict[str, Any] = {
             "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(record.created)),
             "level": record.levelname,
@@ -45,7 +104,7 @@ class JsonLogFormatter(logging.Formatter):
 
         #audit Assumption: structured debug logs may include credential-like values in extras; risk: secret leakage to local files; invariant: payload sanitized before serialization; handling: apply shared telemetry sanitizer.
         sanitized_payload = sanitize_sensitive_data(payload)
-        return json.dumps(sanitized_payload, ensure_ascii=False)
+        return sanitize_utf8_text(json.dumps(sanitized_payload, ensure_ascii=False))
 
 
 def _ensure_log_dir() -> Path:
@@ -79,7 +138,7 @@ def get_debug_logger() -> logging.Logger:
             level = getattr(logging, level_name, logging.INFO)
             logger.setLevel(level)
 
-            handler = logging.handlers.RotatingFileHandler(
+            handler = RedactingRotatingFileHandler(
                 log_path,
                 maxBytes=5 * 1024 * 1024,  # 5 MB
                 backupCount=getattr(Config, "DEBUG_SERVER_LOG_RETENTION_DAYS", 7),

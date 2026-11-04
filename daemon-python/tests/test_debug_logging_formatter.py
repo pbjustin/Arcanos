@@ -4,8 +4,311 @@ from __future__ import annotations
 
 import json
 import logging
+import io
+import pytest
 
-from arcanos.debug.logging import JsonLogFormatter
+from arcanos.debug.logging import JsonLogFormatter, RedactingStreamHandler, RedactingTextFormatter
+
+
+JOB_READ_CAPABILITY = "v1." + "a" * 42 + "_"
+
+
+@pytest.mark.parametrize("prefix,suffix", [
+    ("\x9b31m", "\x9b0m"),
+    ("\x1b[H", ""),
+    ("\x1b[2J", ""),
+])
+def test_json_debug_log_withholds_csi_decorated_capability(prefix, suffix):
+    from arcanos.utils.telemetry import sanitize_sensitive_string
+
+    message = f"Job lookup {prefix}{JOB_READ_CAPABILITY}{suffix}; version v1.0.0"
+    record = logging.LogRecord("synthetic", logging.ERROR, __file__, 1, "%s", (message,), None)
+    payload = json.loads(JsonLogFormatter().format(record))
+
+    for rendered in (payload["message"], sanitize_sensitive_string(message)):
+        assert JOB_READ_CAPABILITY not in rendered
+        assert rendered == "Job lookup [REDACTED]; version v1.0.0"
+
+
+def test_json_formatter_protects_lazy_message_and_cached_exception_text():
+    error = RuntimeError(f"Job failed for {JOB_READ_CAPABILITY}; status=500")
+    record = logging.LogRecord(
+        "synthetic", logging.ERROR, __file__, 1,
+        "Lookup %s; version v1.0.0", (JOB_READ_CAPABILITY,),
+        (type(error), error, error.__traceback__),
+    )
+    logging.Formatter().format(record)  # A previous handler can cache raw exception text.
+
+    payload = json.loads(JsonLogFormatter().format(record))
+
+    assert JOB_READ_CAPABILITY not in json.dumps(payload)
+    assert payload["message"] == "Lookup [REDACTED]; version v1.0.0"
+    assert "RuntimeError: Job failed for [REDACTED]; status=500" in payload["exc_info"]
+
+
+def test_json_formatter_redacts_capability_metadata_key_and_tuple_value():
+    record = logging.LogRecord("synthetic", logging.ERROR, __file__, 1, "Job lookup failed", (), None)
+    record.__dict__[JOB_READ_CAPABILITY] = "HTTP 500"
+    record.details = (f"lookup {JOB_READ_CAPABILITY}",)
+
+    payload = json.loads(JsonLogFormatter().format(record))
+
+    assert JOB_READ_CAPABILITY not in json.dumps(payload)
+    assert payload["[REDACTED]"] == "HTTP 500"
+    assert payload["details"] == ["lookup [REDACTED]"]
+
+
+def test_json_handler_exception_extra_cannot_trigger_unredacted_logging_fallback(capsys):
+    rendered = io.StringIO()
+    handler = logging.StreamHandler(rendered)
+    handler.setFormatter(JsonLogFormatter())
+    logger = logging.Logger("synthetic-exception-extra")
+    logger.addHandler(handler)
+    error = RuntimeError(f"lookup {JOB_READ_CAPABILITY}; HTTP 500")
+
+    logger.error("Job lookup %s; version v1.0.0", JOB_READ_CAPABILITY, extra={"error": error})
+
+    stderr = capsys.readouterr().err
+    assert JOB_READ_CAPABILITY not in stderr + rendered.getvalue()
+    assert not stderr
+    payload = json.loads(rendered.getvalue())
+    assert payload["message"] == "Job lookup [REDACTED]; version v1.0.0"
+    assert "RuntimeError" in payload["error"] and "HTTP 500" in payload["error"]
+    assert str(error) == f"lookup {JOB_READ_CAPABILITY}; HTTP 500"
+
+
+@pytest.mark.parametrize("formatter", [JsonLogFormatter, RedactingTextFormatter])
+def test_log_write_failure_never_prints_original_capability_arguments(formatter, capsys):
+    class FailingStream:
+        def write(self, value):
+            raise OSError("Synthetic write failure")
+
+        def flush(self):
+            pass
+
+    handler = logging.StreamHandler(FailingStream())
+    handler.setFormatter(formatter())
+    logger = logging.Logger("synthetic-write-error")
+    logger.addHandler(handler)
+    logger.error("Job lookup %s; version v1.0.0", JOB_READ_CAPABILITY)
+
+    failure = capsys.readouterr().err
+    assert JOB_READ_CAPABILITY not in failure
+    assert "OSError: Synthetic write failure" in failure
+    assert "Job lookup [REDACTED]; version v1.0.0" in failure
+
+
+@pytest.mark.parametrize("owner", ["error-file", "error-console", "debug-file", "debug-rotating"])
+@pytest.mark.parametrize("fault", ["readonly", "disk-full"])
+@pytest.mark.parametrize("explicit_cause", [False, True])
+def test_owned_log_write_failure_redacts_active_exception_chain(
+    owner, fault, explicit_cause, tmp_path, monkeypatch, capsys,
+):
+    from arcanos import error_handler
+    from arcanos.cli_runner import _build_debug_logger
+    from arcanos.debug import logging as debug_logging
+
+    monkeypatch.setattr(logging, "raiseExceptions", True)
+    close_handler = False
+    if owner.startswith("error-"):
+        logger = error_handler.logger
+        handler = next(h for h in logger.handlers if isinstance(h, logging.FileHandler) == (owner == "error-file"))
+        monkeypatch.setattr(logger, "handlers", [handler])
+    elif owner == "debug-file":
+        logger = _build_debug_logger(tmp_path / "debug.log")
+        handler = logger.handlers[0]
+        close_handler = True
+    else:
+        logger = logging.getLogger("arcanos.debug_server")
+        monkeypatch.setattr(logger, "handlers", [])
+        monkeypatch.setattr(debug_logging, "_logger", None)
+        monkeypatch.setattr(debug_logging.Config, "LOG_DIR", tmp_path)
+        logger = debug_logging.get_debug_logger()
+        handler = logger.handlers[0]
+        close_handler = True
+    monkeypatch.setattr(logger, "propagate", False)
+    path = tmp_path / "readonly.log"
+    path.write_text("", encoding="utf-8")
+    readonly = path.open("r", encoding="utf-8")
+
+    class DiskFull:
+        def write(self, value):
+            raise OSError(28, "Synthetic disk full")
+
+        def flush(self):
+            pass
+
+        def seek(self, *args):
+            return 0
+
+        def tell(self):
+            return 0
+
+    original_stream = handler.stream
+    handler.stream = readonly if fault == "readonly" else DiskFull()
+    try:
+        try:
+            try:
+                raise LookupError(f"Job lookup {JOB_READ_CAPABILITY}; HTTP 500")
+            except LookupError as cause:
+                if explicit_cause:
+                    raise RuntimeError(f"Job failed {JOB_READ_CAPABILITY}; v1.0.0") from cause
+                raise RuntimeError(f"Job failed {JOB_READ_CAPABILITY}; v1.0.0")
+        except RuntimeError as error:
+            original_context, original_cause, original_traceback = error.__context__, error.__cause__, error.__traceback__
+            if owner.startswith("error-"):
+                error_handler.ErrorHandler.log_error(error, "synthetic-job")
+            else:
+                logger.error("Job lookup %s; HTTP 500; v1.0.0", JOB_READ_CAPABILITY, exc_info=error)
+            assert error.__context__ is original_context
+            assert error.__cause__ is original_cause
+            assert error.__traceback__ is original_traceback
+            assert JOB_READ_CAPABILITY in str(error) and JOB_READ_CAPABILITY in str(original_context)
+
+        failure = capsys.readouterr().err
+        assert JOB_READ_CAPABILITY not in failure
+        assert "LookupError: Job lookup [REDACTED]; HTTP 500" in failure
+        assert "RuntimeError: Job failed [REDACTED]; v1.0.0" in failure
+        expected_fault = "Synthetic disk full" if fault == "disk-full" else "not writable"
+        assert expected_fault in failure
+        assert "Message:" in failure
+    finally:
+        handler.stream = original_stream
+        readonly.close()
+        if close_handler:
+            handler.close()
+            logger.removeHandler(handler)
+
+
+@pytest.mark.parametrize("fallback", ["disabled", "missing-stderr", "broken-stderr"])
+def test_owned_logging_failure_is_best_effort(fallback, monkeypatch, capsys):
+    import sys
+
+    class BrokenStream:
+        def write(self, value):
+            raise OSError(f"Synthetic failed sink {JOB_READ_CAPABILITY}")
+
+        def flush(self):
+            pass
+
+    handler = RedactingStreamHandler(BrokenStream())
+    handler.setFormatter(RedactingTextFormatter())
+    logger = logging.Logger("synthetic-broken-fallback")
+    logger.addHandler(handler)
+    with monkeypatch.context() as patch:
+        patch.setattr(logging, "raiseExceptions", fallback != "disabled")
+        if fallback != "disabled":
+            patch.setattr(sys, "stderr", None if fallback == "missing-stderr" else BrokenStream())
+        try:
+            raise RuntimeError(f"Job lookup {JOB_READ_CAPABILITY}; HTTP 500")
+        except RuntimeError:
+            logger.exception("Job lookup failed")
+    assert capsys.readouterr().err == ""
+
+
+def test_owned_fallback_preserves_original_record_and_exception(monkeypatch):
+    import sys
+
+    rendered = io.StringIO()
+    monkeypatch.setattr(logging, "raiseExceptions", True)
+    monkeypatch.setattr(sys, "stderr", rendered)
+    record = logging.LogRecord("synthetic", logging.ERROR, __file__, 1, "%d", (JOB_READ_CAPABILITY,), None)
+    original = record.__dict__.copy()
+    try:
+        raise RuntimeError(f"Job lookup {JOB_READ_CAPABILITY}; HTTP 500")
+    except RuntimeError as error:
+        traceback = error.__traceback__
+        RedactingStreamHandler().handleError(record)
+        assert error.__traceback__ is traceback
+        assert str(error) == f"Job lookup {JOB_READ_CAPABILITY}; HTTP 500"
+    assert record.__dict__ == original
+    assert JOB_READ_CAPABILITY not in rendered.getvalue()
+    assert "RuntimeError: Job lookup [REDACTED]; HTTP 500" in rendered.getvalue()
+    assert "Arguments: ['[REDACTED]']" in rendered.getvalue()
+
+
+def test_rotating_log_open_failure_redacts_arguments_before_repr(tmp_path, monkeypatch, capsys):
+    import ast
+    from arcanos.debug import logging as debug_logging
+
+    logger = logging.getLogger("arcanos.debug_server")
+    monkeypatch.setattr(logger, "handlers", [])
+    monkeypatch.setattr(debug_logging, "_logger", None)
+    monkeypatch.setattr(debug_logging.Config, "LOG_DIR", tmp_path)
+    monkeypatch.setattr(logging, "raiseExceptions", True)
+    logger = debug_logging.get_debug_logger()
+    handler = logger.handlers[0]
+    handler.close()
+    handler.baseFilename = str(tmp_path)  # Native reopen fails before formatter invocation.
+    decorated = JOB_READ_CAPABILITY[:15] + "\u200b" + JOB_READ_CAPABILITY[15:]
+    try:
+        logger.error("Job lookup %s; HTTP 500", decorated)
+        failure = capsys.readouterr().err
+        arguments = next(line.removeprefix("Arguments: ") for line in failure.splitlines() if line.startswith("Arguments: "))
+        assert JOB_READ_CAPABILITY not in str(ast.literal_eval(arguments)).replace("\u200b", "")
+        assert "[REDACTED]" in arguments
+        assert "PermissionError" in failure and "HTTP 500" in failure
+    finally:
+        handler.close()
+        logger.removeHandler(handler)
+
+
+@pytest.mark.parametrize("formatter", [JsonLogFormatter, RedactingTextFormatter])
+def test_strict_utf8_log_sink_does_not_leak_capability_on_lone_surrogate(formatter, capsys):
+    raw = io.BytesIO()
+    stream = io.TextIOWrapper(raw, encoding="utf-8", errors="strict")
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(formatter())
+    logger = logging.Logger("synthetic-utf8-error")
+    logger.addHandler(handler)
+    try:
+        logger.error("Job lookup %s; version v1.0.0; %s", JOB_READ_CAPABILITY, "\ud800")
+        failure = capsys.readouterr().err
+        assert JOB_READ_CAPABILITY not in failure
+        assert not failure
+        shown = raw.getvalue().decode("utf-8")
+        assert "Job lookup [REDACTED]; version v1.0.0" in shown
+    finally:
+        stream.close()
+
+
+def test_error_handler_console_and_exception_message_protect_capability(monkeypatch):
+    from arcanos.error_handler import ErrorHandler, logger
+
+    message = f"Job failed for {JOB_READ_CAPABILITY}; status=500; v1.0.0"
+    rendered = io.StringIO()
+    handler = logging.StreamHandler(rendered)
+    handler.setFormatter(logger.handlers[0].formatter)
+    monkeypatch.setattr(logger, "handlers", [handler])
+
+    error = RuntimeError(message)
+    public_error = ErrorHandler.handle_exception(error, "synthetic")
+    ErrorHandler.log_error(error, "synthetic-job")
+
+    assert JOB_READ_CAPABILITY not in public_error + rendered.getvalue()
+    assert message.replace(JOB_READ_CAPABILITY, "[REDACTED]") in public_error
+    assert "RuntimeError" in rendered.getvalue() and "status=500" in rendered.getvalue()
+
+
+def test_native_debug_runner_file_withholds_unstructured_exception_capability(tmp_path):
+    from arcanos.cli_runner import _build_debug_logger
+
+    path = tmp_path / "debug.log"
+    logger = _build_debug_logger(path)
+    try:
+        try:
+            raise RuntimeError(f"Job failed for {JOB_READ_CAPABILITY}; HTTP 500")
+        except RuntimeError:
+            logger.exception("Job lookup %s; version v1.0.0", JOB_READ_CAPABILITY)
+    finally:
+        for handler in list(logger.handlers):
+            handler.close()
+            logger.removeHandler(handler)
+
+    displayed = path.read_text(encoding="utf-8")
+    assert JOB_READ_CAPABILITY not in displayed
+    assert "Job lookup [REDACTED]; version v1.0.0" in displayed
+    assert "RuntimeError: Job failed for [REDACTED]; HTTP 500" in displayed
 
 
 def test_json_log_formatter_preserves_custom_extra_fields() -> None:

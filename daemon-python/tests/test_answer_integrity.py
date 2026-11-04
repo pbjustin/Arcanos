@@ -36,6 +36,8 @@ UNICODE_ANSWER = '```python\nmessage = "🛡️ 👨‍👩‍👧 a\u200bb"\n``
 FAKE_API_KEY = "sk-" + "fixture" * 5
 FAKE_BEARER = "fixture" * 5
 FAKE_PASSWORD = "P@" + "ssw0rd!"
+FAKE_JOB_READ_CAPABILITY = "v1." + "j" * 43
+JOB_READ_HEADER = "x-arcanos-job-read-token"
 NO_DISPLAYABLE_NOTICE = "No displayable response was returned."
 PUBLIC_ANSWER_HEADINGS = [
     "Audit Summary",
@@ -511,8 +513,45 @@ def test_short_authorization_credentials_stay_private_in_display_and_stored_hist
         ),
         ('{"\\u0054oken":"orchard"}', ["orchard"]),
         ('{"\\u0061pi_key":"meadow"}', ["meadow"]),
+        (
+            json.dumps({"jobReadToken": FAKE_JOB_READ_CAPABILITY}),
+            [FAKE_JOB_READ_CAPABILITY],
+        ),
+        (
+            '{"jobRead\\u0054oken":"' + FAKE_JOB_READ_CAPABILITY + '"}',
+            [FAKE_JOB_READ_CAPABILITY],
+        ),
+        (f"jobReadToken={FAKE_JOB_READ_CAPABILITY}", [FAKE_JOB_READ_CAPABILITY]),
+        (f"{JOB_READ_HEADER}: {FAKE_JOB_READ_CAPABILITY}", [FAKE_JOB_READ_CAPABILITY]),
+        (FAKE_JOB_READ_CAPABILITY, [FAKE_JOB_READ_CAPABILITY]),
+        (
+            f"Job lookup failed for capability\n{FAKE_JOB_READ_CAPABILITY}; try later.",
+            [FAKE_JOB_READ_CAPABILITY],
+        ),
+        (
+            json.dumps({"error": f"Lookup failed for {FAKE_JOB_READ_CAPABILITY}"}),
+            [FAKE_JOB_READ_CAPABILITY],
+        ),
+        (
+            '{"error":"Lookup failed for v1.' + r"\u006a" * 43 + '"}',
+            [FAKE_JOB_READ_CAPABILITY, r"\u006a" * 43],
+        ),
+        (
+            f"Lookup failed: \x1b[31m{FAKE_JOB_READ_CAPABILITY}\x1b[0m; try later.",
+            [FAKE_JOB_READ_CAPABILITY],
+        ),
+        (
+            "Lookup failed for v1." + "j" * 20 + "\u200b" + "j" * 23,
+            [FAKE_JOB_READ_CAPABILITY, "j" * 20 + "\u200b" + "j" * 23],
+        ),
     ],
-    ids=["quoted-auth-params", "custom-token-scheme", "auth-params", "escaped-token", "escaped-api-key"],
+    ids=[
+        "quoted-auth-params", "custom-token-scheme", "auth-params", "escaped-token",
+        "escaped-api-key", "job-read-token", "escaped-job-read-token",
+        "job-read-assignment", "job-read-header", "standalone-job-read",
+        "multiline-job-read", "generic-json-job-read", "escaped-value-job-read",
+        "ansi-job-read", "ignorable-job-read",
+    ],
 )
 def test_encoded_credentials_are_private_across_presentation_and_both_history_roles(
     presentation_cli, monkeypatch, tmp_path, agentic, credential_text, secrets
@@ -555,6 +594,42 @@ def test_encoded_credentials_are_private_across_presentation_and_both_history_ro
 
 
 @pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
+@pytest.mark.parametrize("control", ["\u202e", "\x9c"], ids=["bidi", "c1-st"])
+def test_credential_redaction_never_materializes_escaped_terminal_controls(
+    presentation_cli, monkeypatch, tmp_path, agentic, control,
+):
+    """Rewriting a JSON scalar cannot inject controls after the display boundary."""
+    cli, output = presentation_cli
+    history = HistoryDB(tmp_path / "history.sqlite3") if agentic else None
+    if history is not None:
+        monkeypatch.setattr(agent_loop, "HistoryDB", lambda: history)
+    answer = json.dumps(f"Lookup failed for {FAKE_JOB_READ_CAPABILITY}; retry later.{control}")
+    assert control not in answer
+    _deliver(monkeypatch, cli, answer, agentic=agentic, speak=True)
+    cli.handle_speak()
+
+    stored = [call.args[1] for call in cli.memory.add_conversation.call_args_list]
+    surfaces = [output.getvalue(), *stored]
+    if cli._last_response is not None:
+        surfaces.append(cli._last_response)
+    surfaces.extend(call.args[0] for call in cli.audio.speak.call_args_list)
+    if history is not None:
+        audit_path = tmp_path / "audit.json"
+        history.export_audit(audit_path, session_id=cli.instance_id)
+        audit = json.loads(audit_path.read_text(encoding="utf-8"))
+        surfaces.extend(row[2] for row in audit["messages"] if row[1] == "assistant")
+    assert stored
+    if not agentic:
+        assert cli.audio.speak.called
+    for surface in surfaces:
+        assert "Lookup failed for" in surface and "retry later." in surface
+        assert FAKE_JOB_READ_CAPABILITY not in surface
+        assert "[REDACTED]" in surface
+        assert control not in surface
+        assert "\x1b" not in surface
+
+
+@pytest.mark.parametrize("agentic", [False, True], ids=["ordinary", "agentic"])
 @pytest.mark.parametrize(
     "answer,presentation",
     [
@@ -566,6 +641,15 @@ def test_encoded_credentials_are_private_across_presentation_and_both_history_ro
         (UNICODE_ANSWER, None),
         (STRUCTURED_ANSWER, None),
         ('{"message":"Keep \\u2603 and \\u0061 exactly.","status":"pending"}', None),
+        ("Version v1.0.0; synthetic job ID job-0123. No task was completed.", None),
+        (
+            "```text\nv1." + "j" * 42 + "\nv1." + "j" * 44
+            + "\nv1." + "j" * 43 + "-\nv1." + "j" * 43 + "_\n```",
+            None,
+        ),
+        ("An identifier prefix" + FAKE_JOB_READ_CAPABILITY + "suffix is literal.", None),
+        ('{"message":"' + FAKE_JOB_READ_CAPABILITY + r'\u006a"}', None),
+        (r'{"message":"\u0061' + FAKE_JOB_READ_CAPABILITY + '"}', None),
         (
             "## Audit Summary\nRequested public report.\n\n## Failure\nThe task was not completed.",
             "public-answer-v1",
@@ -576,7 +660,9 @@ def test_encoded_credentials_are_private_across_presentation_and_both_history_ro
         "markdown-code",
         "unicode-literal",
         "structured",
-        "literal-json-escapes",
+        "literal-json-escapes", "ordinary-version-job-id", "noncanonical-literal",
+        "larger-identifier",
+        "escaped-larger-identifier-suffix", "escaped-larger-identifier-prefix",
         "public-report",
     ],
 )
@@ -1978,3 +2064,150 @@ def test_backend_error_is_complete_literal_and_credential_safe(presentation_cli)
     assert explanation in displayed
     assert "test-credential-value" not in displayed
     assert "[REDACTED]" in displayed
+
+
+@pytest.mark.parametrize("shape", ["literal", "escaped", "nested", "encoded"])
+def test_job_read_capability_stays_private_in_real_backend_error_display(
+    presentation_cli, monkeypatch, capsys, shape,
+):
+    """Keep raw transport diagnostics while protecting the actual HTTP error sink."""
+    import logging
+
+    from arcanos.cli.audit import record
+    from arcanos.debug import logging as debug_logging
+
+    cli, output = presentation_cli
+    audit_output = io.StringIO()
+    audit_logger = logging.Logger("job-capability-regression")
+    audit_handler = logging.StreamHandler(audit_output)
+    audit_handler.setFormatter(debug_logging.JsonLogFormatter())
+    audit_logger.addHandler(audit_handler)
+    monkeypatch.setattr(debug_logging, "get_debug_logger", lambda: audit_logger)
+    body = {
+        "code": "ASYNC_GPT_JOB_FAILED",
+        "error": "Synthetic background job failed; no task was completed.",
+        "jobId": "synthetic-job-id",
+        "jobReadToken": FAKE_JOB_READ_CAPABILITY,
+        "jobReadTokenHeader": JOB_READ_HEADER,
+    }
+    details = json.dumps(body)
+    if shape == "escaped":
+        details = details.replace('"jobReadToken"', '"jobRead\\u0054oken"')
+    elif shape == "nested":
+        details = json.dumps({"error": body})
+    elif shape == "encoded":
+        details = json.dumps({"error": details})
+    client = BackendApiClient(
+        "https://backend.example.com",
+        lambda: "synthetic-backend-token",
+        request_sender=lambda *args, **kwargs: SimpleNamespace(
+            status_code=500, text=details, json=lambda: json.loads(details), headers={}
+        ),
+    )
+    response = client._request_json("post", "/gpt/fixture", {"prompt": "synthetic"})
+
+    assert not response.ok and response.error is not None
+    assert response.error.details == details
+    assert response.error.kind == "http" and response.error.status_code == 500
+    assert str(response.error) == "Backend request returned error"
+    cli_module.backend_ops.report_backend_error(cli, "chat", response.error)
+    cli_module.backend_ops._emit_backend_failure_telemetry(
+        cli,
+        attempt_id="synthetic-attempt",
+        user_message="synthetic",
+        primary_payload_mode="query",
+        retry_payload_mode=None,
+        retry_outcome="not_attempted",
+        primary_error=response.error,
+        final_error=response.error,
+    )
+    debug_logging.log_audit_event(
+        "job_capability_fixture", jobReadToken=FAKE_JOB_READ_CAPABILITY,
+        code="ASYNC_GPT_JOB_FAILED",
+    )
+    record(
+        "job_capability_fixture", jobReadToken=FAKE_JOB_READ_CAPABILITY,
+        error=str(response.error), code="ASYNC_GPT_JOB_FAILED",
+    )
+
+    structured_logs = audit_output.getvalue()
+    console_audit = capsys.readouterr().out
+    assert FAKE_JOB_READ_CAPABILITY not in structured_logs + console_audit
+    telemetry = [json.loads(line) for line in structured_logs.splitlines()]
+    failure = next(row for row in telemetry if row["event_type"] == "backend_chat_failure_telemetry")
+    assert failure["final_error_status_code"] == 500
+    assert failure["final_error_kind"] == "http"
+    assert "ASYNC_GPT_JOB_FAILED" in console_audit
+
+    displayed = output.getvalue()
+    assert "Backend chat failed [500]: Backend request returned error" in displayed
+    assert FAKE_JOB_READ_CAPABILITY not in displayed
+    assert response.error.details == details
+    assert "[REDACTED]" in displayed
+    assert "ASYNC_GPT_JOB_FAILED" in displayed
+    assert "no task was completed" in displayed
+    if shape != "encoded":
+        assert '"jobId": "synthetic-job-id"' in displayed
+        assert '"jobReadTokenHeader": "' + JOB_READ_HEADER + '"' in displayed
+    else:
+        assert "synthetic-job-id" in displayed and JOB_READ_HEADER in displayed
+    cli.audio.speak.assert_not_called()
+
+
+def test_public_job_read_metadata_remains_complete_and_literal(presentation_cli):
+    from arcanos.backend_client import BackendRequestError
+
+    cli, output = presentation_cli
+    details = json.dumps({
+        "code": "ASYNC_GPT_JOB_FAILED",
+        "jobId": "synthetic-job-id",
+        "jobReadTokenHeader": JOB_READ_HEADER,
+        "error": "No task was completed.",
+    })
+    cli_module.backend_ops.report_backend_error(
+        cli, "chat", BackendRequestError(kind="http", message="Unavailable", details=details)
+    )
+
+    assert details in output.getvalue()
+    assert "internal diagnostic details were withheld" not in output.getvalue()
+
+
+@pytest.mark.parametrize("shape", ["prose", "multiline", "json", "escaped", "ansi"])
+def test_standalone_job_read_capability_is_private_in_backend_error(
+    presentation_cli, shape,
+):
+    cli, output = presentation_cli
+    capability = FAKE_JOB_READ_CAPABILITY
+    if shape == "ansi":
+        capability = f"\x1b[31m{capability}\x1b[0m"
+    separator = "\n" if shape == "multiline" else " "
+    details = f"Lookup failed for{separator}{capability}. No task was completed."
+    if shape in ("json", "escaped"):
+        details = json.dumps({
+            "code": "ASYNC_GPT_JOB_FAILED", "jobId": "synthetic-job-id",
+            "error": details,
+        })
+    if shape == "escaped":
+        details = details.replace(FAKE_JOB_READ_CAPABILITY, "v1." + r"\u006a" * 43)
+    client = BackendApiClient(
+        "https://backend.example.com", lambda: "synthetic-backend-token",
+        request_sender=lambda *args, **kwargs: SimpleNamespace(
+            status_code=500, text=details, headers={}, json=lambda: json.loads(details)
+        ),
+    )
+    response = client._request_json("post", "/gpt/fixture", {"prompt": "synthetic"})
+    assert not response.ok and response.error is not None
+    assert response.error.kind == "http" and response.error.status_code == 500
+    assert response.error.details == details
+    cli_module.backend_ops.report_backend_error(cli, "chat", response.error)
+
+    displayed = output.getvalue()
+    assert "Backend chat failed [500]: Backend request returned error" in displayed
+    assert "Lookup failed for" in displayed and "No task was completed." in displayed
+    assert FAKE_JOB_READ_CAPABILITY not in displayed
+    assert r"\u006a" * 43 not in displayed
+    assert "[REDACTED]" in displayed
+    if shape in ("json", "escaped"):
+        assert "ASYNC_GPT_JOB_FAILED" in displayed and "synthetic-job-id" in displayed
+    cli.audio.speak.assert_not_called()
+    cli.memory.add_conversation.assert_not_called()

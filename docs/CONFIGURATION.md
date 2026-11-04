@@ -659,6 +659,12 @@ outcomes require separate approved pipeline comparisons before rollout.
 
 Responses usage is observed before structured parsing, so the session token audit still records billed reasoning tokens when the provider returns incomplete, refused, malformed, or schema-invalid output. Successful pipeline telemetry and the session audit aggregate intake, structured reasoning, and final-stage usage. For response compatibility, `meta.tokens` remains the final user-visible stage's usage rather than the aggregate pipeline total.
 
+Ordinary Trinity direct answers without an explicit short or bullet output contract
+use the existing `DEFAULT_TOKEN_LIMIT` allocation of `1000`. Explicit compact
+contracts retain their smaller allocations. Caller budgets and the ordinary
+`1200` hard cap still apply; incomplete provider output remains an error and does
+not trigger an automatic retry.
+
 Backstage Booker generation, continuity and bounded recovery use the executing service's selected final authority through the existing Responses adapter path. A trusted model override must match that authority. Compatible requests retain their existing reasoning and visible-output budget handling.
 
 `BOOKER_TOKEN_LIMIT` defaults to `2400` for ordinary synchronous generation and remains bounded by the standard Backstage `2400`-token cap. Ordinary Trinity callers retain the global `1200`-token cap, while compact direct-answer prompts may use a smaller prompt-derived budget. Explicit full-show, card, or booking-state review/evaluation prompts use a six-bullet synthesis contract and `min(BOOKER_TOKEN_LIMIT, 1600)` so the review can complete before the provider-stage and HRC deadlines. The classifier uses a quote-aware scan of directive-shaped request clauses throughout the prompt; an explicit mixed request to book, rebook, rewrite, draft, or continue vetoes bounded mode and retains the ordinary generation budget. Quoted or attributed dialogue inside supplied show state is inert, while narrow decision analysis or recommendations also stay in ordinary mode. A deployment retaining an explicit historical value such as `512` or `1200` will continue to use that value; remove or update the variable to adopt the `2400` default.
