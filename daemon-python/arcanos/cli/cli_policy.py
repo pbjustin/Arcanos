@@ -55,7 +55,7 @@ _JSON_FIELD_TOKEN = re.compile(
 _AUTH_TOKEN_PATTERN = r"[!#$%&'*+.^_`|~0-9A-Za-z-]+"
 _SENSITIVE_FIELD_NAME = re.compile(
     r"(?:[A-Za-z][A-Za-z0-9_]*_)?"
-    r"(?:token|secret|password|api[_-]?key|authorization|cookie)",
+    r"(?:token|secret|password|api[_-]?key|authorization|cookie|jobReadToken)",
     re.IGNORECASE | re.ASCII,
 )
 
@@ -467,7 +467,7 @@ def _redact_sanitized_output(
     sensitive_names = {
         match[1]
         for match in re.finditer(
-            r'''(?<![A-Za-z0-9_])["']?((?:[A-Za-z][A-Za-z0-9_]*_)?(?:token|secret|password|api[_-]?key|authorization|cookie))["']?\s*[:=]''',
+            rf'''(?<![A-Za-z0-9_])["']?({_SENSITIVE_FIELD_NAME.pattern})["']?\s*[:=]''',
             redacted,
             re.IGNORECASE | re.ASCII,
         )

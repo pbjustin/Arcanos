@@ -96,6 +96,9 @@ redaction policy applies without answer-length truncation.
 Structured backend errors are also inspected after JSON decoding so escaped
 fields cannot hide private diagnostics. Unsafe or ambiguous structured error
 bodies are withheld with an explicit notice; the failure summary remains visible.
+Job-read capability values are redacted from displayed errors and answer history,
+including escaped `jobReadToken` fields. Error codes and non-sensitive job metadata
+remain available, and authenticated job polling is unchanged.
 Proposal extraction does not remove examples from the answer or grant execution
 permission; existing confirmation and policy checks still apply.
 
