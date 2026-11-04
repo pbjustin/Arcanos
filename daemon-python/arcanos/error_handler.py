@@ -7,7 +7,7 @@ from functools import wraps
 from .config import Config
 from .utils.telemetry import get_telemetry, sanitize_sensitive_string
 from .utils.text import redact_job_read_capabilities
-from .debug.logging import RedactingTextFormatter
+from .debug.logging import RedactingFileHandler, RedactingStreamHandler, RedactingTextFormatter
 
 logger = logging.getLogger("arcanos")
 if not logger.handlers:
@@ -18,10 +18,10 @@ if not logger.handlers:
     )
     if Config.LOG_DIR:
         log_file = Config.LOG_DIR / "errors.log"
-        file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        file_handler = RedactingFileHandler(log_file, encoding="utf-8")
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
-    console_handler = logging.StreamHandler()
+    console_handler = RedactingStreamHandler()
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 

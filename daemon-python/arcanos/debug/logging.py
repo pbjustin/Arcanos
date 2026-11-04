@@ -1,8 +1,10 @@
 import json
 import logging
 import logging.handlers
+import sys
 import threading
 import time
+import traceback
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -13,6 +15,38 @@ from ..utils.text import redact_job_read_capabilities, safe_text_repr, sanitize_
 _logger_lock = threading.Lock()
 _logger: Optional[logging.Logger] = None
 _STANDARD_LOG_RECORD_FIELDS = set(logging.makeLogRecord({}).__dict__.keys())
+
+
+class _RedactingHandlerErrors:
+    """Protect logging's stderr fallback, including an active exception chain."""
+
+    def handleError(self, record: logging.LogRecord) -> None:
+        if not logging.raiseExceptions or sys.stderr is None:
+            return
+        try:
+            failure = "".join(traceback.format_exception(*sys.exc_info()))
+            diagnostic = (
+                f"--- Logging error ---\n{failure}"
+                f"Logged from {record.pathname}:{record.lineno}\n"
+                f"Message: {safe_text_repr(sanitize_sensitive_data(record.msg))}\n"
+                f"Arguments: {safe_text_repr(sanitize_sensitive_data(record.args))}\n"
+            )
+            sys.stderr.write(sanitize_utf8_text(redact_job_read_capabilities(diagnostic)))
+        except Exception:
+            # A broken fallback sink must not invoke another raw error reporter.
+            pass
+
+
+class RedactingStreamHandler(_RedactingHandlerErrors, logging.StreamHandler):
+    """Stream handler with redacted failure diagnostics."""
+
+
+class RedactingFileHandler(_RedactingHandlerErrors, logging.FileHandler):
+    """File handler with redacted failure diagnostics."""
+
+
+class RedactingRotatingFileHandler(_RedactingHandlerErrors, logging.handlers.RotatingFileHandler):
+    """Rotating file handler with redacted failure diagnostics."""
 
 
 def _sanitize_record_text(record: logging.LogRecord) -> None:
@@ -104,7 +138,7 @@ def get_debug_logger() -> logging.Logger:
             level = getattr(logging, level_name, logging.INFO)
             logger.setLevel(level)
 
-            handler = logging.handlers.RotatingFileHandler(
+            handler = RedactingRotatingFileHandler(
                 log_path,
                 maxBytes=5 * 1024 * 1024,  # 5 MB
                 backupCount=getattr(Config, "DEBUG_SERVER_LOG_RETENTION_DAYS", 7),

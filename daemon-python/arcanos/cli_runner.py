@@ -22,7 +22,7 @@ from .credential_verification import (
 )
 from .env import get_env
 from .error_handler import ErrorHandler
-from .debug.logging import RedactingTextFormatter
+from .debug.logging import RedactingFileHandler, RedactingTextFormatter
 
 if TYPE_CHECKING:
     from .cli import ArcanosCLI
@@ -89,7 +89,7 @@ def _build_debug_logger(log_file_path: Path) -> logging.Logger:
         handler.close()
         logger.removeHandler(handler)
 
-    handler = logging.FileHandler(log_file_path, mode="w", encoding="utf-8")
+    handler = RedactingFileHandler(log_file_path, mode="w", encoding="utf-8")
     handler.setFormatter(RedactingTextFormatter("%(asctime)s - %(levelname)s - %(message)s"))
     logger.addHandler(handler)
     return logger
