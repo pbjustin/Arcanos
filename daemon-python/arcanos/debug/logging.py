@@ -8,10 +8,18 @@ from typing import Any, Dict, Optional
 
 from ..config import Config
 from ..utils.telemetry import sanitize_sensitive_data
+from ..utils.text import redact_job_read_capabilities
 
 _logger_lock = threading.Lock()
 _logger: Optional[logging.Logger] = None
 _STANDARD_LOG_RECORD_FIELDS = set(logging.makeLogRecord({}).__dict__.keys())
+
+
+class RedactingTextFormatter(logging.Formatter):
+    """Protect final text, including lazy arguments and formatted exception text."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        return redact_job_read_capabilities(super().format(record))
 
 
 class JsonLogFormatter(logging.Formatter):

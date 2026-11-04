@@ -6,11 +6,13 @@ T = TypeVar("T")
 from functools import wraps
 from .config import Config
 from .utils.telemetry import get_telemetry, sanitize_sensitive_string
+from .utils.text import redact_job_read_capabilities
+from .debug.logging import RedactingTextFormatter
 
 logger = logging.getLogger("arcanos")
 if not logger.handlers:
     logger.setLevel(logging.INFO)
-    formatter = logging.Formatter(
+    formatter = RedactingTextFormatter(
         fmt="%(asctime)s %(levelname)s %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S"
     )
@@ -86,7 +88,7 @@ class ErrorHandler:
             except Exception:
                 pass  # Fail silently
 
-        return full_message
+        return redact_job_read_capabilities(full_message)
 
     @staticmethod
     def log_error(error: Exception, context: str = "") -> None:

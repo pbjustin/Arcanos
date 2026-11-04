@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional
 from .config import Config
+from .utils.text import redact_job_read_capabilities
 
 try:
     import sentry_sdk
@@ -47,19 +48,21 @@ def _sanitize_payload(payload: Any) -> Any:
     if isinstance(payload, dict):
         sanitized: Dict[str, Any] = {}
         for key, value in payload.items():
+            safe_key = redact_job_read_capabilities(key) if isinstance(key, str) else key
             key_lower = str(key).lower()
             #audit Assumption: key names containing secret hints should always be redacted; risk: credential leakage; invariant: sensitive keys replaced; strategy: redact by key pattern.
             if any(hint in key_lower for hint in _SENSITIVE_KEY_PATTERNS):
-                sanitized[key] = "[REDACTED]"
+                sanitized[safe_key] = "[REDACTED]"
             else:
-                sanitized[key] = _sanitize_payload(value)
+                sanitized[safe_key] = _sanitize_payload(value)
         return sanitized
-    if isinstance(payload, list):
+    if isinstance(payload, (list, tuple)):
         return [_sanitize_payload(item) for item in payload]
     if isinstance(payload, str):
         #audit Assumption: token-like literals in strings are sensitive; risk: secret leakage in telemetry files; invariant: sensitive strings redacted; strategy: pattern-match and replace.
         if any(pattern.search(payload) for pattern in _SENSITIVE_VALUE_PATTERNS):
             return "[REDACTED]"
+        return redact_job_read_capabilities(payload)
     return payload
 
 
@@ -115,7 +118,7 @@ class Telemetry:
             })
 
         except Exception as e:
-            print(f"⚠️  Failed to initialize telemetry: {e}")
+            print(redact_job_read_capabilities(f"⚠️  Failed to initialize telemetry: {e}"))
             self.enabled = False
 
     def _filter_event(self, event: Dict[str, Any], hint: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -168,8 +171,8 @@ class Telemetry:
             # Send to Sentry as breadcrumb
             if SENTRY_AVAILABLE:
                 sentry_sdk.add_breadcrumb(
-                    category=event_name,
-                    message=f"Event: {event_name}",
+                    category=event_data["event"],
+                    message=f"Event: {event_data['event']}",
                     data=_sanitize_payload(properties or {}),
                     level="info"
                 )

@@ -523,11 +523,34 @@ def test_short_authorization_credentials_stay_private_in_display_and_stored_hist
         ),
         (f"jobReadToken={FAKE_JOB_READ_CAPABILITY}", [FAKE_JOB_READ_CAPABILITY]),
         (f"{JOB_READ_HEADER}: {FAKE_JOB_READ_CAPABILITY}", [FAKE_JOB_READ_CAPABILITY]),
+        (FAKE_JOB_READ_CAPABILITY, [FAKE_JOB_READ_CAPABILITY]),
+        (
+            f"Job lookup failed for capability\n{FAKE_JOB_READ_CAPABILITY}; try later.",
+            [FAKE_JOB_READ_CAPABILITY],
+        ),
+        (
+            json.dumps({"error": f"Lookup failed for {FAKE_JOB_READ_CAPABILITY}"}),
+            [FAKE_JOB_READ_CAPABILITY],
+        ),
+        (
+            '{"error":"Lookup failed for v1.' + r"\u006a" * 43 + '"}',
+            [FAKE_JOB_READ_CAPABILITY, r"\u006a" * 43],
+        ),
+        (
+            f"Lookup failed: \x1b[31m{FAKE_JOB_READ_CAPABILITY}\x1b[0m; try later.",
+            [FAKE_JOB_READ_CAPABILITY],
+        ),
+        (
+            "Lookup failed for v1." + "j" * 20 + "\u200b" + "j" * 23,
+            [FAKE_JOB_READ_CAPABILITY, "j" * 20 + "\u200b" + "j" * 23],
+        ),
     ],
     ids=[
         "quoted-auth-params", "custom-token-scheme", "auth-params", "escaped-token",
         "escaped-api-key", "job-read-token", "escaped-job-read-token",
-        "job-read-assignment", "job-read-header",
+        "job-read-assignment", "job-read-header", "standalone-job-read",
+        "multiline-job-read", "generic-json-job-read", "escaped-value-job-read",
+        "ansi-job-read", "ignorable-job-read",
     ],
 )
 def test_encoded_credentials_are_private_across_presentation_and_both_history_roles(
@@ -582,6 +605,15 @@ def test_encoded_credentials_are_private_across_presentation_and_both_history_ro
         (UNICODE_ANSWER, None),
         (STRUCTURED_ANSWER, None),
         ('{"message":"Keep \\u2603 and \\u0061 exactly.","status":"pending"}', None),
+        ("Version v1.0.0; synthetic job ID job-0123. No task was completed.", None),
+        (
+            "```text\nv1." + "j" * 42 + "\nv1." + "j" * 44
+            + "\nv1." + "j" * 43 + "-\nv1." + "j" * 43 + "_\n```",
+            None,
+        ),
+        ("An identifier prefix" + FAKE_JOB_READ_CAPABILITY + "suffix is literal.", None),
+        ('{"message":"' + FAKE_JOB_READ_CAPABILITY + r'\u006a"}', None),
+        (r'{"message":"\u0061' + FAKE_JOB_READ_CAPABILITY + '"}', None),
         (
             "## Audit Summary\nRequested public report.\n\n## Failure\nThe task was not completed.",
             "public-answer-v1",
@@ -592,7 +624,9 @@ def test_encoded_credentials_are_private_across_presentation_and_both_history_ro
         "markdown-code",
         "unicode-literal",
         "structured",
-        "literal-json-escapes",
+        "literal-json-escapes", "ordinary-version-job-id", "noncanonical-literal",
+        "larger-identifier",
+        "escaped-larger-identifier-suffix", "escaped-larger-identifier-prefix",
         "public-report",
     ],
 )
@@ -2073,14 +2107,14 @@ def test_job_read_capability_stays_private_in_real_backend_error_display(
     assert "Backend chat failed [500]: Backend request returned error" in displayed
     assert FAKE_JOB_READ_CAPABILITY not in displayed
     assert response.error.details == details
-    if shape == "encoded":
-        assert "internal diagnostic details were withheld" in displayed
-    else:
-        assert "[REDACTED]" in displayed
-        assert "ASYNC_GPT_JOB_FAILED" in displayed
-        assert "no task was completed" in displayed
+    assert "[REDACTED]" in displayed
+    assert "ASYNC_GPT_JOB_FAILED" in displayed
+    assert "no task was completed" in displayed
+    if shape != "encoded":
         assert '"jobId": "synthetic-job-id"' in displayed
         assert '"jobReadTokenHeader": "' + JOB_READ_HEADER + '"' in displayed
+    else:
+        assert "synthetic-job-id" in displayed and JOB_READ_HEADER in displayed
     cli.audio.speak.assert_not_called()
 
 
@@ -2100,3 +2134,44 @@ def test_public_job_read_metadata_remains_complete_and_literal(presentation_cli)
 
     assert details in output.getvalue()
     assert "internal diagnostic details were withheld" not in output.getvalue()
+
+
+@pytest.mark.parametrize("shape", ["prose", "multiline", "json", "escaped", "ansi"])
+def test_standalone_job_read_capability_is_private_in_backend_error(
+    presentation_cli, shape,
+):
+    cli, output = presentation_cli
+    capability = FAKE_JOB_READ_CAPABILITY
+    if shape == "ansi":
+        capability = f"\x1b[31m{capability}\x1b[0m"
+    separator = "\n" if shape == "multiline" else " "
+    details = f"Lookup failed for{separator}{capability}. No task was completed."
+    if shape in ("json", "escaped"):
+        details = json.dumps({
+            "code": "ASYNC_GPT_JOB_FAILED", "jobId": "synthetic-job-id",
+            "error": details,
+        })
+    if shape == "escaped":
+        details = details.replace(FAKE_JOB_READ_CAPABILITY, "v1." + r"\u006a" * 43)
+    client = BackendApiClient(
+        "https://backend.example.com", lambda: "synthetic-backend-token",
+        request_sender=lambda *args, **kwargs: SimpleNamespace(
+            status_code=500, text=details, headers={}, json=lambda: json.loads(details)
+        ),
+    )
+    response = client._request_json("post", "/gpt/fixture", {"prompt": "synthetic"})
+    assert not response.ok and response.error is not None
+    assert response.error.kind == "http" and response.error.status_code == 500
+    assert response.error.details == details
+    cli_module.backend_ops.report_backend_error(cli, "chat", response.error)
+
+    displayed = output.getvalue()
+    assert "Backend chat failed [500]: Backend request returned error" in displayed
+    assert "Lookup failed for" in displayed and "No task was completed." in displayed
+    assert FAKE_JOB_READ_CAPABILITY not in displayed
+    assert r"\u006a" * 43 not in displayed
+    assert "[REDACTED]" in displayed
+    if shape in ("json", "escaped"):
+        assert "ASYNC_GPT_JOB_FAILED" in displayed and "synthetic-job-id" in displayed
+    cli.audio.speak.assert_not_called()
+    cli.memory.add_conversation.assert_not_called()

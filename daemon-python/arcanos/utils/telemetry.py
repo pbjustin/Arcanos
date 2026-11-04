@@ -19,6 +19,7 @@ from typing import Callable, TypeVar, Optional, Dict, Any
 from datetime import datetime
 from ..telemetry import Telemetry
 from ..env import get_env
+from .text import redact_job_read_capabilities
 import logging
 
 logger = logging.getLogger("arcanos.telemetry")
@@ -65,7 +66,7 @@ def sanitize_sensitive_string(value: str) -> str:
     #audit Assumption: token/connection-string signatures in log strings are sensitive; risk: secret leakage in telemetry/debug files; invariant: sensitive literals redacted; strategy: pattern-based replacement.
     if any(pattern.search(value) for pattern in SENSITIVE_VALUE_PATTERNS):
         return "[REDACTED]"
-    return value
+    return redact_job_read_capabilities(value)
 
 
 def sanitize_sensitive_data(data: Any, depth: int = 0, max_depth: int = 10) -> Any:
@@ -89,6 +90,7 @@ def sanitize_sensitive_data(data: Any, depth: int = 0, max_depth: int = 10) -> A
     if isinstance(data, dict):
         sanitized = {}
         for key, value in data.items():
+            safe_key = redact_job_read_capabilities(key) if isinstance(key, str) else key
             key_lower = str(key).lower()
             # Check if key matches any sensitive pattern
             is_sensitive = any(re.search(pattern, key_lower, re.IGNORECASE) for pattern in SENSITIVE_PATTERNS)
@@ -96,14 +98,14 @@ def sanitize_sensitive_data(data: Any, depth: int = 0, max_depth: int = 10) -> A
             if is_sensitive:
                 # Redact sensitive values
                 if isinstance(value, str) and len(value) > 0:
-                    sanitized[key] = f"[REDACTED:{len(value)} chars]"
+                    sanitized[safe_key] = f"[REDACTED:{len(value)} chars]"
                 else:
-                    sanitized[key] = "[REDACTED]"
+                    sanitized[safe_key] = "[REDACTED]"
             else:
                 # Recursively sanitize nested structures
-                sanitized[key] = sanitize_sensitive_data(value, depth + 1, max_depth)
+                sanitized[safe_key] = sanitize_sensitive_data(value, depth + 1, max_depth)
         return sanitized
-    if isinstance(data, list):
+    if isinstance(data, (list, tuple)):
         return [sanitize_sensitive_data(item, depth + 1, max_depth) for item in data]
     if isinstance(data, str):
         return sanitize_sensitive_string(data)
@@ -239,7 +241,7 @@ def record_error(
         context: Additional context
         level: Log level ('error' or 'warn')
     """
-    error_message = str(error)
+    error_message = sanitize_sensitive_string(str(error))
     error_name = type(error).__name__
     
     # Sanitize context to prevent credential leakage
@@ -318,6 +320,8 @@ def log_railway(
         metadata: Additional metadata
     """
     import json
+
+    message = sanitize_sensitive_string(message)
     
     # Sanitize metadata to prevent credential leakage
     sanitized_metadata = sanitize_sensitive_data(metadata or {}) if metadata else {}

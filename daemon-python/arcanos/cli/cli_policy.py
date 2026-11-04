@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from arcanos.debug import log_audit_event
+from arcanos.utils.text import redact_job_read_capabilities
 
 BIDI_CONTROL_PATTERN = re.compile(r"[\u202A-\u202E\u2066-\u2069]")
 _DEFAULT_IGNORABLE_CODE_POINT_RANGES = (
@@ -455,6 +456,7 @@ def _redact_sanitized_output(
     policy: dict[str, Any],
     replacement: str,
 ) -> str:
+    """Redact named secrets and standalone capabilities using the current policy."""
     env_names = policy.get("redactionPolicy", {}).get("envNames") or []
     redacted = _redact_json_fields(value, env_names, replacement)
     for env_name in env_names:
@@ -463,6 +465,7 @@ def _redact_sanitized_output(
     redacted = re.sub(r"\bsk-[A-Za-z0-9_-]{12,}\b", replacement, redacted)
     redacted = re.sub(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,}\b", replacement, redacted)
     redacted = re.sub(r"\brwy_[A-Za-z0-9_=-]{20,}\b", replacement, redacted, flags=re.IGNORECASE)
+    redacted = redact_job_read_capabilities(redacted, replacement)
     redacted = re.sub(r"\b[A-Za-z][A-Za-z0-9+.-]*://[^\s\"'`]*:[^\s\"'`@]+@[^\s\"'`]+", replacement, redacted)
     sensitive_names = {
         match[1]
