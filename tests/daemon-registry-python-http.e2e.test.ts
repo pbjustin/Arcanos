@@ -38,7 +38,9 @@ afterAll(() => {
 
 describe('Python registry client over real Express loopback HTTP', () => {
   it('preserves dedicated auth, rejects invalid evidence, and never retries failed reads', async () => {
-    const python = process.env.PYTHON_EXECUTABLE || 'python';
+    const configuredPython = process.env.PYTHON_EXECUTABLE || 'python';
+    const python = path.isAbsolute(configuredPython) || /[\\/]/u.test(configuredPython)
+      ? path.resolve(configuredPython) : configuredPython;
     const userSite = spawnSync(python, ['-c', 'import site; print(site.getusersitepackages() if site.ENABLE_USER_SITE else "")'], {
       encoding: 'utf8', windowsHide: true, timeout: 10_000,
     });
