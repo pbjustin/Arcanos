@@ -168,6 +168,7 @@ def test_missing_or_invalid_local_daemon_credential_never_sends_request(token):
 def test_registry_ttl_boundary_expiration_and_refresh_recovery(monkeypatch):
     now = [1000.0]
     monkeypatch.setattr(state.time, "time", lambda: now[0])
+    monkeypatch.setattr(state.time, "monotonic", lambda: now[0])
     cli, sender, _ = make_cli(registry_payload())
     backend_ops.refresh_registry_cache_if_stale(cli)
     assert cli._trust_state is TrustState.FULL
@@ -205,6 +206,7 @@ def test_clock_rollback_does_not_treat_future_cache_timestamp_as_fresh(monkeypat
 def test_expired_registry_and_failed_refresh_preserve_degraded(monkeypatch):
     now = [1000.0]
     monkeypatch.setattr(state.time, "time", lambda: now[0])
+    monkeypatch.setattr(state.time, "monotonic", lambda: now[0])
     cli, sender, _ = make_cli(registry_payload())
     backend_ops.refresh_registry_cache_if_stale(cli)
     cached_at = cli._registry_cache_updated_at
@@ -221,6 +223,7 @@ def test_expired_registry_and_failed_refresh_preserve_degraded(monkeypatch):
 def test_malformed_refresh_does_not_replace_or_extend_existing_evidence(monkeypatch):
     now = [1000.0]
     monkeypatch.setattr(state.time, "time", lambda: now[0])
+    monkeypatch.setattr(state.time, "monotonic", lambda: now[0])
     cli, sender, _ = make_cli(registry_payload())
     backend_ops.refresh_registry_cache(cli)
     cached_at = cli._registry_cache_updated_at
@@ -244,6 +247,7 @@ def test_conversation_prompt_matches_registry_evidence_after_refresh(
     """Refresh invalidated prompt evidence once before constructing mocked chat messages."""
     now = [1000.0]
     monkeypatch.setattr(state.time, "time", lambda: now[0])
+    monkeypatch.setattr(state.time, "monotonic", lambda: now[0])
     payload = registry_payload()
     payload["endpoints"][0]["description"] = "Fresh registry fixture marker"
     cli, sender, _ = make_cli(payload)

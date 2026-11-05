@@ -33,6 +33,7 @@ def diagnostic_cli(monkeypatch):
     """Build a real client with synthetic credentials, state, clock, and a controlled sender."""
     now = [1000.0]
     monkeypatch.setattr(state.time, "time", lambda: now[0])
+    monkeypatch.setattr(state.time, "monotonic", lambda: now[0])
     for name, value in {
         "CONTROL_PLANE_ACCESS_TOKEN": CONTROL_TOKEN,
         "AGENTIC_ENABLED": False, "STREAM_RESPONSES": False, "SPEAK_RESPONSES": False,

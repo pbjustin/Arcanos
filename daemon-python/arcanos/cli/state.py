@@ -31,6 +31,7 @@ def initialize_runtime_state(cli: "ArcanosCLI") -> None:
     cli._activity = deque(maxlen=DEFAULT_ACTIVITY_HISTORY_LIMIT)
     cli._registry_cache = None
     cli._registry_cache_updated_at = None
+    cli._registry_cache_updated_monotonic_at = None
     cli._registry_cache_warning_logged = False
     cli._registry_cache_ttl_seconds = max(MIN_REGISTRY_CACHE_TTL_MINUTES, Config.REGISTRY_CACHE_TTL_MINUTES) * 60
     cli._last_confirmation_handled = False
@@ -87,9 +88,9 @@ def recompute_trust_state(cli: "ArcanosCLI") -> None:
 
 def registry_cache_is_valid(cli: "ArcanosCLI") -> bool:
     """
-    Purpose: Determine whether backend registry cache exists and is within TTL.
+    Purpose: Enforce registry TTL using elapsed time rather than wall-clock age.
     Inputs/Outputs: CLI instance; returns True when cache is fresh.
-    Edge cases: Missing cache or timestamp always invalidates cache.
+    Edge cases: Missing anchors or future receipt timestamps fail closed.
     """
     if not cli._registry_cache:
         # //audit assumption: empty cache cannot satisfy governance freshness; risk: stale/unknown module contracts; invariant: invalid cache; strategy: return False.
@@ -98,19 +99,24 @@ def registry_cache_is_valid(cli: "ArcanosCLI") -> bool:
         # //audit assumption: timestamp required to enforce TTL; risk: unbounded stale cache; invariant: invalid without timestamp; strategy: return False.
         return False
 
-    age_seconds = time.time() - cli._registry_cache_updated_at
-    # A clock rollback cannot establish freshness for a future cache timestamp.
+    elapsed_anchor = getattr(cli, "_registry_cache_updated_monotonic_at", None)
+    if elapsed_anchor is None or time.time() < cli._registry_cache_updated_at:
+        # Keep the future-wall guard; never reconstruct elapsed authority from wall time.
+        return False
+
+    age_seconds = time.monotonic() - elapsed_anchor
     return 0 <= age_seconds <= cli._registry_cache_ttl_seconds
 
 
 def apply_registry_cache(cli: "ArcanosCLI", registry_payload: Mapping[str, Any]) -> None:
     """
-    Purpose: Store backend registry payload and refresh freshness timestamp.
+    Purpose: Store authenticated registry evidence with receipt and elapsed-time anchors.
     Inputs/Outputs: registry payload mapping; mutates cache and updated-at fields.
     Edge cases: Accepts empty mapping to preserve deterministic cache shape.
     """
     cli._registry_cache = dict(registry_payload)
     cli._registry_cache_updated_at = time.time()
+    cli._registry_cache_updated_monotonic_at = time.monotonic()
 
 
 def redact_status_text(value: str) -> str:

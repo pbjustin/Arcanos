@@ -168,6 +168,9 @@ evidence and expired caches retain `DEGRADED`; confirmation-required actions
 remain blocked. A successful GPT response or authenticated `/system-state`
 read does not establish registry authentication. Registry refresh uses the
 existing configured TTL and does not automatically retry failed requests.
+Cache lifetime uses monotonic elapsed time, so setting the system clock back
+cannot renew expired evidence. Only a valid authenticated registry refresh
+resets that lifetime.
 
 The three credentials serve independent purposes:
 

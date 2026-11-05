@@ -77,6 +77,7 @@ def status_cli(monkeypatch):
     cli._trust_state = TrustState.DEGRADED
     cli._registry_cache = None
     cli._registry_cache_updated_at = None
+    cli._registry_cache_updated_monotonic_at = None
     cli._registry_cache_ttl_seconds = 300
     cli._backend_routing_preferred = "backend"
     cli._last_confirmation_handled = False
@@ -307,8 +308,10 @@ def test_status_recomputes_trust_when_registry_expires_during_state_read(status_
     cli, output, state_read, backend, local = status_cli
     clock = [1000.0]
     monkeypatch.setattr(cli_module.state.time, "time", lambda: clock[0])
+    monkeypatch.setattr(cli_module.state.time, "monotonic", lambda: clock[0])
     cli._registry_cache = {"validated-fixture": True}
     cli._registry_cache_updated_at = clock[0] - 1
+    cli._registry_cache_updated_monotonic_at = clock[0] - 1
     cli._registry_cache_ttl_seconds = 5
     cli._trust_state = TrustState.FULL
     cli._recompute_trust_state = lambda: cli_module.state.recompute_trust_state(cli)
