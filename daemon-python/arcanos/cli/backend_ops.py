@@ -725,12 +725,17 @@ def perform_backend_conversation(
     message: str,
     domain: Optional[str] = None,
     from_debug: bool = False,
+    *,
+    outcome: Optional[dict[str, bool]] = None,
 ) -> Optional[ConversationResult]:
     """
     Purpose: Execute backend conversation with optional domain routing.
-    Inputs/Outputs: message text, optional domain hint, debug flag; returns ConversationResult or None.
-    Edge cases: Handles confirmation-required responses through governance gates.
+    Inputs/Outputs: message and optional per-call outcome; returns ConversationResult or None.
+    Edge cases: Handles confirmation gates and marks pending responses without completing a conversation.
     """
+    if outcome is not None:
+        outcome.pop("pending", None)
+        outcome.pop("confirmation_handled", None)
     if not cli.backend_client:
         # //audit assumption: backend client optional; risk: missing backend path; invariant: explicit warning; strategy: print and return None.
         cli.console.print("[yellow]Backend is not configured.[/yellow]")
@@ -853,8 +858,17 @@ def perform_backend_conversation(
             presentation=getattr(response.value, "presentation", None),
         )
 
+    if response.error and response.error.kind == "pending":
+        state.recompute_trust_state(cli)
+        if outcome is not None:
+            outcome["pending"] = True
+        cli.console.print("Backend request is pending; no completed answer is available.", markup=False)
+        return None
+
     if response.error and response.error.kind == "confirmation":
         cli._last_confirmation_handled = True
+        if outcome is not None:
+            outcome["confirmation_handled"] = True
         # //audit assumption: backend confirmed reachability when confirmation is returned; risk: stale trust state; invariant: trust recomputed before gating; strategy: recompute.
         state.recompute_trust_state(cli)
 

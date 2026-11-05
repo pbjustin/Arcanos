@@ -851,7 +851,9 @@ class BackendApiClient:
         payload: Optional[Mapping[str, Any]],
         *,
         job_read_token: Optional[str] = None,
+        require_completed_chat: bool = False,
     ) -> BackendResponse[dict[str, Any]]:
+        """Send purpose-bound JSON requests and optionally require a completed chat response."""
         try:
             context = self._build_request_context(
                 method,
@@ -1069,6 +1071,18 @@ class BackendApiClient:
                 response_json=parsed_error if isinstance(parsed_error, dict) else None,
             )
 
+        if require_completed_chat and response.status_code == 202:
+            return self._build_logged_error_response(
+                method,
+                context,
+                BackendRequestError(
+                    kind="pending", message="Backend request is pending; no completed answer is available.",
+                    status_code=202,
+                ),
+                status_code=202,
+                error_kind="pending",
+            )
+
         try:
             parsed = response.json()
         except ValueError as exc:
@@ -1175,12 +1189,14 @@ class BackendApiClient:
         """
         Purpose: Normalize chat text from both legacy compatibility responses and `/gpt/:gptId` envelopes.
         Inputs/Outputs: arbitrary response payload; returns best-effort text string or None.
-        Edge cases: structured module responses without a canonical text field are serialized to deterministic JSON.
+        Edge cases: Nonempty structured module responses are serialized to deterministic JSON; empty objects have no answer.
         """
         if isinstance(response_payload, str):
             return response_payload
 
         if isinstance(response_payload, Mapping):
+            if not response_payload:
+                return None
             for key in (
                 "response",
                 "result",

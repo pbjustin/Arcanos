@@ -516,13 +516,21 @@ class ArcanosCLI:
 
             with self.console.status("[dim]Thinking...[/dim]", spinner="dots"):
                 if route_decision.route == "backend":
+                    backend_outcome: dict[str, bool] = {}
                     result = backend_ops.perform_backend_conversation(
                         self,
                         route_decision.normalized_message,
                         domain=domain,
                         from_debug=from_debug,
+                        outcome=backend_outcome,
                     )
-                    if result is None and Config.BACKEND_FALLBACK_TO_LOCAL and not self._last_confirmation_handled:
+                    if backend_outcome.get("pending", False):
+                        audit_record(
+                            "execute_unconfirmed", command="ask", trust=self._trust_state.name,
+                            source="backend", reason="backend_pending",
+                        )
+                        return None
+                    if result is None and Config.BACKEND_FALLBACK_TO_LOCAL and not backend_outcome.get("confirmation_handled", False):
                         try:
                             import json as _json
 

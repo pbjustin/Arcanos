@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
+import threading
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -21,10 +24,274 @@ from arcanos.backend_client.chat import (
 )
 from arcanos.backend_client import BackendApiClient
 from arcanos.backend_client_models import BackendResponse
+from arcanos.cli import backend_ops, cli as cli_module
+from arcanos.cli.context import ConversationResult
+from arcanos.config import Config
+
+from .test_cli_diagnostic_audit import GPT_TOKEN, _execution_events, diagnostic_cli
 
 
 JOB_READ_TOKEN = f"v1.{'A' * 43}"
 JOB_READ_TOKEN_HEADER = "x-arcanos-job-read-token"
+
+
+def _chat_wire_client(status: int, payload: dict[str, Any]):
+    """Build a real client with one deterministic HTTP response and no external transport."""
+    sender = MagicMock(return_value=SimpleNamespace(
+        status_code=status, json=lambda: payload, text=json.dumps(payload), headers={},
+    ))
+    client = BackendApiClient("https://chat-integrity.example.invalid", lambda: "synthetic-chat-token",
+                              request_sender=sender)
+    return client, sender
+
+
+def _request_sync_chat(client: BackendApiClient, method: str):
+    """Exercise either synchronous public chat API through its real transport and parser."""
+    if method == "completion":
+        return client.request_chat_completion([{"role": "user", "content": "Hello"}])
+    return client.request_ask_with_domain("Hello", domain="general")
+
+
+@pytest.mark.parametrize("method", ["completion", "domain"])
+@pytest.mark.parametrize("payload", [
+    {"ok": True, "result": {"status": "pending", "jobId": "synthetic-job"}},
+    {"ok": True, "result": "Accepted for background processing."},
+])
+def test_synchronous_chat_rejects_http_202_without_polling_or_body_reflection(method, payload):
+    """An accepted background response is not a completed conversational answer."""
+    client, sender = _chat_wire_client(202, payload)
+
+    response = _request_sync_chat(client, method)
+
+    assert response.ok is False and response.value is None
+    assert response.error is not None and response.error.kind == "pending"
+    assert response.error.status_code == 202 and response.error.details is None
+    assert "synthetic-job" not in repr(response)
+    sender.assert_called_once()
+
+
+@pytest.mark.parametrize("method", ["completion", "domain"])
+@pytest.mark.parametrize("payload", [{"ok": True, "result": {}}, {"response": {}}])
+def test_synchronous_chat_rejects_empty_nested_answer_objects(method, payload):
+    """An empty result or legacy response object cannot become the visible answer '{}'."""
+    client, sender = _chat_wire_client(200, payload)
+
+    response = _request_sync_chat(client, method)
+
+    assert response.ok is False and response.value is None
+    assert response.error is not None and response.error.kind == "parse"
+    sender.assert_called_once()
+
+
+@pytest.mark.parametrize("method", ["completion", "domain"])
+def test_synchronous_chat_keeps_outer_empty_object_rejected(method):
+    """Preserve rejection of an entirely empty HTTP object without inventing response text."""
+    client, sender = _chat_wire_client(200, {})
+
+    response = _request_sync_chat(client, method)
+
+    assert response.ok is False and response.value is None
+    sender.assert_called_once()
+
+
+@pytest.mark.parametrize("method", ["completion", "domain"])
+def test_synchronous_chat_preserves_nonempty_structured_module_answers(method):
+    """Retain legitimate structured content, including its false, zero, and empty-list values."""
+    structured = {"count": 0, "ready": False, "items": [], "summary": "No changes requested."}
+    client, sender = _chat_wire_client(200, {"ok": True, "result": structured})
+
+    response = _request_sync_chat(client, method)
+
+    assert response.ok is True and response.value is not None
+    assert json.loads(response.value.response_text) == structured
+    sender.assert_called_once()
+
+
+def test_typed_query_keeps_http_202_pending_job_contract():
+    """The async query API retains its typed pending response rather than chat completion rules."""
+    payload = {"ok": True, "action": "query", "jobId": "synthetic-job", "status": "pending",
+               "result": {"status": "pending", "jobId": "synthetic-job"}}
+    client, sender = _chat_wire_client(202, payload)
+
+    response = client.request_query("Generate the requested background work")
+
+    assert response.ok is True and response.value is not None
+    assert response.value.status == "pending" and response.value.job_id == "synthetic-job"
+    sender.assert_called_once()
+
+
+@pytest.fixture
+def pending_chat_cli(diagnostic_cli, monkeypatch):
+    """Keep real ask/client behavior while serving deterministic pending and later error responses."""
+    cli, _, requests, clock = diagnostic_cli
+    elapsed = [clock[0]]
+    monkeypatch.setattr(cli_module.state.time, "monotonic", lambda: elapsed[0])
+    previous_sender = cli.backend_client._request_sender
+    scenario = {"status": 202, "payload": {"ok": True, "result": {
+        "status": "pending", "jobId": "synthetic-job",
+    }}}
+
+    def sender(method, url, **kwargs):
+        """Preserve real control reads and replace only the synthetic chat response."""
+        if urlsplit(url).path == "/gpt/arcanos-daemon":
+            assert kwargs["headers"]["Authorization"] == f"Bearer {GPT_TOKEN}"
+            requests.append((method, "/gpt/arcanos-daemon"))
+            if scenario.get("expire_registry"):
+                elapsed[0] += cli._registry_cache_ttl_seconds + 1
+            return SimpleNamespace(status_code=scenario["status"], json=lambda: scenario["payload"],
+                                   text=json.dumps(scenario["payload"]), headers={})
+        return previous_sender(method, url, **kwargs)
+
+    monkeypatch.setattr(cli.backend_client, "_request_sender", sender)
+    monkeypatch.setattr(Config, "BACKEND_ROUTING_MODE", "backend")
+    monkeypatch.setattr(Config, "BACKEND_FALLBACK_TO_LOCAL", True)
+    local = MagicMock(return_value=ConversationResult("Synthetic local fallback result.", 0, 0.0, "fixture", "local"))
+    monkeypatch.setattr(cli_module.local_ops, "perform_local_conversation", local)
+    monkeypatch.setattr(backend_ops, "refresh_backend_credentials", MagicMock(return_value=False))
+    return cli, scenario, requests, local
+
+
+def test_pending_chat_does_not_generate_fallback_or_complete_history(pending_chat_cli, capsys):
+    """A pending backend job remains unconfirmed without another provider, history, or speech."""
+    cli, _, requests, local = pending_chat_cli
+    capsys.readouterr()
+
+    result = cli.handle_ask("Generate the requested background work", return_result=True)
+
+    assert result is None
+    local.assert_not_called()
+    assert requests == [("get", "/system-state"), ("post", "/gpt/arcanos-daemon")]
+    cli_module.memory_ops.update_short_term_summary.assert_not_called()
+    cli.memory.add_conversation.assert_not_called()
+    cli_module.memory_ops.record_conversation_turn.assert_not_called()
+    cli.audio.speak.assert_not_called()
+    captured = capsys.readouterr()
+    events = _execution_events(captured.out)
+    assert [(event["event"], event["command"]) for event in events] == [
+        ("execute_attempt", "ask"), ("execute_unconfirmed", "ask"),
+    ]
+    assert events[-1]["reason"] == "backend_pending"
+    assert events[-1]["source"] == "backend" and events[-1]["trust"] == "FULL"
+    assert "no completed answer is available" in cli.console.file.getvalue()
+    assert "synthetic-job" not in captured.out + captured.err + cli.console.file.getvalue()
+
+
+def test_pending_chat_outcome_recomputes_expired_trust_without_renewing_registry(pending_chat_cli, capsys):
+    """A blocking pending response cannot retain FULL in its terminal audit after TTL expiry."""
+    cli, scenario, requests, local = pending_chat_cli
+    anchors = (cli._registry_cache_updated_at, cli._registry_cache_updated_monotonic_at)
+    scenario["expire_registry"] = True
+    capsys.readouterr()
+
+    assert cli.handle_ask("Generate background work", return_result=True) is None
+
+    events = _execution_events(capsys.readouterr().out)
+    assert [(event["event"], event["trust"]) for event in events] == [
+        ("execute_attempt", "FULL"), ("execute_unconfirmed", "DEGRADED"),
+    ]
+    assert cli._trust_state.name == "DEGRADED"
+    assert cli_module.state.time.time() == anchors[0]
+    assert (cli._registry_cache_updated_at, cli._registry_cache_updated_monotonic_at) == anchors
+    assert requests == [("get", "/system-state"), ("post", "/gpt/arcanos-daemon")]
+    local.assert_not_called()
+    cli.memory.add_conversation.assert_not_called()
+    cli.audio.speak.assert_not_called()
+
+
+@pytest.mark.parametrize("next_outcome", ["unauthorized", "empty_answer", "offline"])
+def test_pending_state_does_not_suppress_later_authorized_fallback(pending_chat_cli, next_outcome):
+    """Reset pending state before later auth, parse, or offline failures use existing local fallback."""
+    cli, scenario, _, local = pending_chat_cli
+    assert cli.handle_ask("Generate background work", return_result=True) is None
+    local.assert_not_called()
+    if next_outcome == "offline":
+        cli.backend_client = None
+    else:
+        scenario["status"] = 401 if next_outcome == "unauthorized" else 200
+        scenario["payload"] = {"error": "Synthetic authorization failure"} if next_outcome == "unauthorized" else {"ok": True, "result": {}}
+
+    result = cli.handle_ask("Hello again", return_result=True)
+
+    assert result is not None and result.source == "local"
+    local.assert_called_once()
+    cli_module.memory_ops.record_conversation_turn.assert_called_once()
+
+
+@pytest.mark.parametrize("denial_kind", ["pending", "confirmation"])
+@pytest.mark.parametrize("denied_first", [True, False], ids=["denied-first", "completed-first"])
+def test_concurrent_asks_keep_noncompletion_outcomes_separate(
+    pending_chat_cli, monkeypatch, capsys, denial_kind, denied_first,
+):
+    """Interleave two real asks without generation after noncompletion or loss of the completed answer."""
+    cli, _, observed, local = pending_chat_cli
+    previous_sender = cli.backend_client._request_sender
+    denied_prompt, completed_prompt = f"Concurrent {denial_kind} request", "Concurrent completed request"
+    first_prompt, second_prompt = ((denied_prompt, completed_prompt) if denied_first
+                                   else (completed_prompt, denied_prompt))
+    first_ready, release_first = threading.Barrier(2), threading.Barrier(2)
+    first = {}
+
+    def sender(method, url, **kwargs):
+        """Serve prompt-bound results or a real confirmation error through the actual parser."""
+        if urlsplit(url).path != "/gpt/arcanos-daemon":
+            return previous_sender(method, url, **kwargs)
+        assert kwargs["headers"]["Authorization"] == f"Bearer {GPT_TOKEN}"
+        observed.append((method, "/gpt/arcanos-daemon"))
+        denied = kwargs["json"]["prompt"] == denied_prompt
+        if denied and denial_kind == "confirmation":
+            status, payload = 403, {"code": "CONFIRMATION_REQUIRED",
+                                   "confirmationChallenge": {"id": "082ce8db-8ebe-45ec-b31e-3a7c5e828f5f"},
+                                   "pending_actions": [{"summary": "Synthetic non-executing action"}]}
+        else:
+            status = 202 if denied else 200
+            payload = {"ok": True, "result": {"status": "pending", "jobId": "synthetic-job"}
+                       if denied else "Completed concurrent answer."}
+        return SimpleNamespace(status_code=status, json=lambda: payload,
+                               text=json.dumps(payload), headers={})
+
+    original = backend_ops.perform_backend_conversation
+
+    def pause_after_real_return(*args, **kwargs):
+        """Pause only scheduling after the real helper returns and before its caller observes the outcome."""
+        result = original(*args, **kwargs)
+        if args[1] == first_prompt:
+            first_ready.wait(timeout=5)
+            release_first.wait(timeout=5)
+        return result
+
+    def ask_first():
+        """Retain the first real handler's result and any exception for the test thread."""
+        try:
+            first["result"] = cli.handle_ask(first_prompt, return_result=True, from_debug=True)
+        except BaseException as error:
+            first["error"] = error
+
+    monkeypatch.setattr(cli.backend_client, "_request_sender", sender)
+    monkeypatch.setattr(backend_ops, "perform_backend_conversation", pause_after_real_return)
+    capsys.readouterr()
+    thread = threading.Thread(target=ask_first, daemon=True)
+    thread.start()
+    try:
+        first_ready.wait(timeout=5)
+        second_result = cli.handle_ask(second_prompt, return_result=True, from_debug=True)
+    finally:
+        release_first.wait(timeout=5)
+        thread.join(timeout=5)
+    assert not thread.is_alive() and "error" not in first
+    denied_result, completed_result = ((first["result"], second_result) if denied_first
+                                        else (second_result, first["result"]))
+    assert denied_result is None
+    assert completed_result is not None and completed_result.source == "backend"
+    assert completed_result.response_text == "Completed concurrent answer."
+    local.assert_not_called()
+    assert sum(path == "/gpt/arcanos-daemon" for _, path in observed) == 2
+    terminal = [event for event in _execution_events(capsys.readouterr().out) if event["event"] != "execute_attempt"]
+    expected_terminal = [("execute_success", "backend")]
+    if denial_kind == "pending":
+        expected_terminal.append(("execute_unconfirmed", "backend"))
+    assert sorted((event["event"], event["source"]) for event in terminal) == expected_terminal
+    cli_module.memory_ops.record_conversation_turn.assert_called_once()
+    cli.audio.speak.assert_not_called()
 
 
 def test_request_chat_completion_uses_daemon_gpt_route_without_body_gpt_id() -> None:

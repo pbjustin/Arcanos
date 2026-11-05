@@ -297,7 +297,7 @@ def request_ask_with_domain(
 
 
     route = resolve_backend_chat_route(gpt_id)
-    response = client._request_json("post", route.endpoint, payload)
+    response = client._request_json("post", route.endpoint, payload, require_completed_chat=True)
     if not response.ok or not response.value:
         # //audit assumption: response must be ok; risk: backend failure; invariant: ok response; strategy: return error.
         return BackendResponse(ok=False, error=response.error)
@@ -351,7 +351,7 @@ def request_chat_completion(
 
 
     route = resolve_backend_chat_route(gpt_id)
-    response = client._request_json("post", route.endpoint, payload)
+    response = client._request_json("post", route.endpoint, payload, require_completed_chat=True)
     if not response.ok or not response.value:
         # //audit assumption: response must be ok; risk: backend failure; invariant: ok response; strategy: return error.
         return BackendResponse(ok=False, error=response.error)
