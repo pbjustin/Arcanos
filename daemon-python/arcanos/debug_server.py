@@ -1,4 +1,5 @@
 import json
+from dataclasses import asdict
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -394,6 +395,7 @@ You: ptt
         self._send_response(200, {"files": files, "latest_content": sanitize_sensitive_data(latest_content)})
 
     def post_ask(self, body):
+        """Execute a debug ask and serialize the CLI's dataclass result."""
         message = body.get("message")
         if not message:
             self._send_response(400, error="Missing 'message' in request body")
@@ -403,7 +405,7 @@ You: ptt
         result = self.cli_instance.handle_ask(message, route_override=route_override, return_result=True, from_debug=True)
 
         if result:
-            self._send_response(200, result._asdict())
+            self._send_response(200, asdict(result))
         else:
             self._send_response(500, error="Failed to handle 'ask' command.")
 

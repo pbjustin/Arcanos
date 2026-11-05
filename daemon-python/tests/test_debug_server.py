@@ -8,16 +8,82 @@ from urllib.parse import urlencode
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 from arcanos.debug import DebugMetrics, get_metrics, liveness, readiness
 from arcanos.config import Config, get_automation_auth
 from arcanos.debug.middleware import handle_request as handle_debug_request
-from arcanos.debug_server import DebugAPIHandler
+from arcanos.debug_server import DebugAPIHandler, ThreadingHTTPServer
 from tests.credential_observation import assert_no_credential_material
+from .test_cli_diagnostic_audit import CONTROL_TOKEN, DAEMON_TOKEN, GPT_TOKEN, diagnostic_cli
 
 
 def _query_token_path(value: str) -> str:
     return f"/debug/status?{urlencode({'token': value})}"
+
+
+@pytest.fixture
+def diagnostic_debug_http(diagnostic_cli, monkeypatch):
+    """Run the real authenticated debug HTTP handler against an actual isolated CLI instance."""
+    cli, _, observed, _ = diagnostic_cli
+    token = "test-debug-http-token-1234567890"
+    monkeypatch.setenv("ARCANOS_AUTOMATION_SECRET", "")
+    monkeypatch.setattr(Config, "DEBUG_SERVER_TOKEN", token)
+    monkeypatch.setattr(Config, "DEBUG_SERVER_ALLOW_QUERY_TOKEN", False)
+    monkeypatch.setattr(Config, "DEBUG_SERVER_RATE_LIMIT", 0)
+    monkeypatch.setattr(Config, "DEBUG_SERVER_METRICS_ENABLED", False)
+
+    class BoundHandler(DebugAPIHandler):
+        """Bind the production debug handler to the actual controlled-client CLI fixture."""
+        cli_instance = cli
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), BoundHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    session = requests.Session()
+    session.trust_env = False
+    thread.start()
+    try:
+        yield cli, observed, session, f"http://127.0.0.1:{server.server_port}", token
+    finally:
+        session.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+
+
+def test_debug_ask_serializes_actual_diagnostic_dataclass_over_authenticated_http(
+    diagnostic_debug_http, capsys,
+):
+    """Preserve auth and unknown routes while returning the real diagnostic result as JSON."""
+    cli, observed, session, url, token = diagnostic_debug_http
+    payload = {"message": "Is ARCANOS healthy?"}
+    rejected = session.post(url + "/debug/ask", json=payload, timeout=5)
+    assert rejected.status_code == 401 and rejected.json()["ok"] is False
+    assert observed == []
+    headers = {"X-Debug-Token": token}
+    unknown = session.get(url + "/debug/unknown", headers=headers, timeout=5)
+    assert unknown.status_code == 404 and unknown.json()["ok"] is False
+
+    response = session.post(url + "/debug/ask", headers=headers, json=payload, timeout=5)
+
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["ok"] is True and result["source"] == "diagnostic"
+    # The existing debug response policy protects every token-named field.
+    assert result["tokens_used"] == "[REDACTED]"
+    assert result["cost_usd"] == 0
+    assert result["model"] == "system-state" and result["presentation"] is None
+    assert "Daemon trust (local): FULL" in result["response_text"]
+    assert "Memory consistency: unknown" in result["response_text"]
+    assert "Overall stability and risk: unknown" in result["response_text"]
+    assert observed == [("get", "/system-state")]
+    cli.memory.add_conversation.assert_not_called()
+    cli.audio.speak.assert_not_called()
+    captured = capsys.readouterr()
+    for credential in (token, CONTROL_TOKEN, DAEMON_TOKEN, GPT_TOKEN):
+        assert_no_credential_material(credential, response.text, rejected.text, unknown.text,
+                                      captured.out, captured.err, cli.console.file.getvalue())
 
 
 def make_request(
