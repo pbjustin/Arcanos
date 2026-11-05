@@ -98,6 +98,7 @@ def test_accepted_chat_without_valid_coordinates_fails_closed(override):
 
 
 def test_accepted_chat_malformed_json_stays_unconfirmed_without_body_reflection():
+    """Malformed acceptance JSON cannot expose raw bodies or create a continuation."""
     client, sender = _chat_wire_client(202, {})
     sender.return_value.json = MagicMock(side_effect=ValueError(JOB_READ_TOKEN))
     response = _request_sync_chat(client, "completion")
@@ -130,12 +131,55 @@ def test_chat_continuation_uses_one_existing_job_get_and_preserves_complete_answ
         assert call.kwargs["allow_redirects"] is False and call.kwargs["json"] is None
 
 
+@pytest.mark.parametrize("structured", [
+    {"count": 0, "ready": False, "items": [], "summary": "No changes requested."},
+    {"loadout": {"slots": ["primary", "secondary"]}},
+    {"result": {"match": {"winner": "Fixture competitor"}}},
+    {"items": []},
+])
+def test_chat_continuation_preserves_complete_structured_answers_like_direct_chat(structured):
+    """One existing-job read must preserve legitimate structured module JSON verbatim."""
+    lookup = _completed_chat_lookup()
+    lookup["result"]["result"] = structured
+    client, sender = _chat_wire_client(200, lookup)
+
+    resumed = client.request_chat_job_result(BackendChatContinuation(CHAT_JOB_ID, JOB_READ_TOKEN))
+    direct = client._parse_chat_response(lookup["result"])
+
+    assert resumed.ok and resumed.value is not None
+    assert resumed.value.response_text == direct.value.response_text
+    assert json.loads(resumed.value.response_text) == structured
+    sender.assert_called_once()
+    assert sender.call_args.args[0] == "get"
+    assert sender.call_args.args[1].endswith(f"/jobs/{CHAT_JOB_ID}/result")
+    assert sender.call_args.kwargs["headers"][JOB_READ_TOKEN_HEADER] == JOB_READ_TOKEN
+
+
+@pytest.mark.parametrize("state", [
+    {"status": "pending"}, {"status": "incomplete"}, {"ok": False},
+    {"error": {"code": "MODULE_ERROR"}}, {"truncated": True},
+    {"meta": {"incomplete": True}}, {"provider_metadata": {"finish_reason": "length"}},
+])
+def test_chat_continuation_rejects_incomplete_structured_answers(state):
+    """Structured-answer compatibility must not bypass the existing completion gates."""
+    lookup = _completed_chat_lookup()
+    lookup["result"]["result"] = {"count": 0, "items": [], **state}
+    client, sender = _chat_wire_client(200, lookup)
+
+    resumed = client.request_chat_job_result(BackendChatContinuation(CHAT_JOB_ID, JOB_READ_TOKEN))
+
+    assert not resumed.ok and resumed.value is None and resumed.error.kind == "parse"
+    sender.assert_called_once()
+    assert sender.call_args.args[0] == "get"
+
+
 @pytest.mark.parametrize("status,job_status,kind", [
     ("pending", "running", "pending"), ("failed", "failed", "failed"),
     ("failed", "cancelled", "cancelled"), ("expired", "expired", "expired"),
     ("not_found", None, "unavailable"), ("unknown", None, "parse"),
 ])
 def test_chat_continuation_distinguishes_pending_and_terminal_outcomes(status, job_status, kind):
+    """Map each authoritative job state without promoting its retained output to an answer."""
     lookup = _completed_chat_lookup()
     lookup.update(status=status, jobStatus=job_status, error={"message": JOB_READ_TOKEN})
     client, sender = _chat_wire_client(200, lookup)
@@ -150,6 +194,7 @@ def test_chat_continuation_distinguishes_pending_and_terminal_outcomes(status, j
 
 @pytest.mark.parametrize("status", [401, 403, 503, 302])
 def test_chat_continuation_transport_failure_never_refreshes_or_retries(status):
+    """An HTTP read error must not disclose its body or start a refresh or retry."""
     client, sender = _chat_wire_client(status, {"error": JOB_READ_TOKEN})
     response = client.request_chat_job_result(BackendChatContinuation(CHAT_JOB_ID, JOB_READ_TOKEN))
     assert not response.ok and response.error.status_code == status
@@ -160,6 +205,7 @@ def test_chat_continuation_transport_failure_never_refreshes_or_retries(status):
 
 @pytest.mark.parametrize("failure", [backend_client_module.requests.Timeout, backend_client_module.requests.ConnectionError])
 def test_chat_continuation_network_failure_is_one_bounded_read(failure):
+    """Network failures remain one timeout-bounded read without exposing credentials."""
     client, sender = _chat_wire_client(200, _completed_chat_lookup())
     sender.side_effect = failure(JOB_READ_TOKEN)
     response = client.request_chat_job_result(BackendChatContinuation(CHAT_JOB_ID, JOB_READ_TOKEN))
@@ -172,6 +218,7 @@ def test_chat_continuation_network_failure_is_one_bounded_read(failure):
 @pytest.mark.parametrize("handle", [None, "not-a-handle", BackendChatContinuation("invalid", JOB_READ_TOKEN),
     BackendChatContinuation(CHAT_JOB_ID, ""), BackendChatContinuation(CHAT_JOB_ID, "invalid")])
 def test_chat_continuation_invalid_handle_never_sends_http(handle):
+    """Reject malformed private coordinates before any transport or generation request."""
     client, sender = _chat_wire_client(200, _completed_chat_lookup())
     response = client.request_chat_job_result(handle)
     assert not response.ok and response.error.kind == "validation"
@@ -188,6 +235,7 @@ def test_chat_continuation_invalid_handle_never_sends_http(handle):
     {"ok": True, "result": {"result": "Partial answer", "provider_metadata": {"finish_reason": "content_filter"}}},
 ])
 def test_chat_continuation_rejects_empty_and_incomplete_completed_outputs(envelope):
+    """A completed row cannot turn an empty or explicitly partial payload into an answer."""
     lookup = _completed_chat_lookup()
     lookup["result"] = {"_route": {"gptId": "arcanos-daemon"}, **envelope}
     client, sender = _chat_wire_client(200, lookup)
@@ -197,6 +245,7 @@ def test_chat_continuation_rejects_empty_and_incomplete_completed_outputs(envelo
 
 
 def test_chat_continuation_does_not_promote_nested_presentation():
+    """Only the outer producer envelope may authorize public-answer presentation."""
     lookup = _completed_chat_lookup()
     lookup["result"]["result"]["presentation"] = "public-answer-v1"
     client, _ = _chat_wire_client(200, lookup)
@@ -209,6 +258,7 @@ def test_chat_continuation_does_not_promote_nested_presentation():
     {"error": {"code": "JOB_FAILED", "message": JOB_READ_TOKEN}},
 ])
 def test_chat_continuation_rejects_contradictory_completed_state(contradiction):
+    """Completion must agree with the job lifecycle and contain no terminal error."""
     client, sender = _chat_wire_client(200, {**_completed_chat_lookup(), **contradiction})
     response = client.request_chat_job_result(BackendChatContinuation(CHAT_JOB_ID, JOB_READ_TOKEN))
     assert not response.ok and response.error.kind == "parse"
@@ -217,6 +267,7 @@ def test_chat_continuation_rejects_contradictory_completed_state(contradiction):
 
 
 def test_chat_continuation_rejects_another_jobs_output():
+    """A response for another accepted job must not be delivered through this handle."""
     lookup = _completed_chat_lookup()
     lookup["jobId"] = "c42ab568-a993-4a85-a909-bdbfa801fa92"
     client, sender = _chat_wire_client(200, lookup)

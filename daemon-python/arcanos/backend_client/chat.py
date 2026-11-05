@@ -800,9 +800,9 @@ def _is_completed_chat_job_output(envelope: Any) -> bool:
     if isinstance(answer, str):
         has_text = bool(answer.strip())
     elif isinstance(answer, Mapping):
-        has_text = any(isinstance(answer.get(key), str) and answer[key].strip() for key in (
-            "response", "result", "arcanos_tutor", "gaming_response", "storyline", "match", "text",
-        ))
+        # Match direct chat's structured-answer support while keeping the
+        # existing empty nested result wrapper classified as no answer.
+        has_text = bool(answer) and answer != {"result": {}}
     else:
         has_text = False
     if not has_text:
