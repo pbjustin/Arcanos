@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-05T22:03:47.656Z",
+  "generatedAt": "2026-11-05T23:32:26.220Z",
   "scopes": [
     {
       "scope": "clients",
@@ -649,6 +649,9 @@
           "relativePath": "daemon-python/tests/test_conversation_continuation.py"
         },
         {
+          "relativePath": "daemon-python/tests/test_conversation_quota_admission.py"
+        },
+        {
           "relativePath": "daemon-python/tests/test_credential_bootstrap_backend_auth.py"
         },
         {
@@ -971,6 +974,9 @@
       "files": [
         {
           "relativePath": "tests/fixtures/conversation_recovery_http_faults.py"
+        },
+        {
+          "relativePath": "tests/fixtures/conversation_recovery_multiprocess.py"
         },
         {
           "relativePath": "tests/fixtures/daemon_registry_client.py"

@@ -14,8 +14,10 @@ Automatic recovery defaults on; `CONVERSATION_RECOVERY_ENABLED=false` disables
 only this monitor, without enabling or changing daemon command polling,
 self-healing, local execution, or speech.
 
-One monitor leader per Windows user, data directory and authenticated backend
-performs sequential result GETs. There are at most eight accepted/in-flight
+Each foreground monitor performs sequential result GETs for its owned jobs.
+Native per-job claims reserve delivery for the originating console until it exits;
+one leader per Windows user, data directory and authenticated backend adopts
+orphaned work. There are at most eight accepted/in-flight
 contexts, a two-second read timeout, and per-job exponential waits capped at
 30 seconds for pending work and 60 seconds for transient failures. An OS claim
 serializes manual and automatic delivery. Shutdown interrupts waits and retains

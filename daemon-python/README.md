@@ -469,13 +469,19 @@ and one-shot manual read; normal delivery does not require it.
 
 Recovery makes only `GET /jobs/<jobId>/result`, with the capability in the fixed
 `x-arcanos-job-read-token` header. It never repeats the generation POST, replaces
-the job, invokes a provider, or refreshes credentials. One process leader handles
-at most eight accepted contexts sequentially, with a 2-second HTTP timeout.
+the job, invokes a provider, or refreshes credentials. Each foreground process
+reads its own accepted jobs sequentially, with a 2-second HTTP timeout. Native
+per-job ownership keeps answers in the submitting console, even when two consoles
+share a stored session ID. One process leader adopts orphaned work after its owner
+exits or dies. The shared protected snapshot retains the eight-context limit.
 Per-job backoff starts at one second and reaches 30 seconds while pending or
 60 seconds after transient read failures. Monitoring stops when the CLI exits.
 It does not enable daemon command polling, actions, self-healing, or a Windows
 service. The terminal editor preserves unfinished input while answers appear;
 automatic delivery does not start speech over active input.
+If optional editor setup fails, ordinary input and manual recovery remain available
+with automatic terminal delivery disabled. A failure after editing begins exits
+cleanly for a restart; partial input is never submitted through another reader.
 
 Pending coordinates are stored under `Config.DATA_DIR/conversation-recovery/` in
 a current-user Windows DPAPI snapshot with restricted filesystem permissions.
@@ -507,6 +513,22 @@ audit event. Recovery receipts are bounded to 2,048 rows and 64 MiB of logical
 payload; displayed receipts remain for at least eight days. Lifetime totals survive
 receipt pruning. Capacity or persistence failures retain pending work for a later
 safe attempt.
+
+Clearing history removes acknowledged question, answer and session text from the
+active SQLite rows while retaining non-content replay, usage and audit receipts.
+Unacknowledged answers are hidden and remain available until display acknowledgement,
+then their cleared text is removed. This is logical deletion: SQLite pages, WAL
+files, independent backups and prior terminal output can retain earlier bytes.
+The legacy JSON-only `Memory.export_backup` helper does not include SQLite turns
+or their totals and is not a complete history or recovery backup.
+
+Original generation attempts reserve hourly request capacity before dispatch,
+including accepted pending work; pending does not charge tokens, cost or completed
+history. Protected pending admissions are restored within their original hour.
+Completion consumes the reservation once and charges only authoritative available
+usage. Work rejected locally before dispatch refunds its reservation; uncertain
+or failed dispatched attempts retain their hourly admission. These remain local
+CLI limits rather than a distributed backend admission policy.
 
 Terminal output and SQLite cannot commit atomically. A crash after output starts
 but before its display receipt commits can repeat terminal text after restart.
