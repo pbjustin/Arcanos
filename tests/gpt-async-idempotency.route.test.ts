@@ -2521,7 +2521,7 @@ describe('async /gpt idempotency', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
-  it('returns a sanitized recoverable 503 when an accepted job cannot be polled', async () => {
+  it('returns the accepted continuation when durable polling is temporarily unavailable', async () => {
     findOrCreateGptJobMock.mockResolvedValue({
       job: {
         id: 'job-wait-unavailable',
@@ -2542,19 +2542,14 @@ describe('async /gpt idempotency', () => {
         prompt: 'Generate a Seth Rollins promo prompt'
       });
 
-    expect(response.status).toBe(503);
+    expect(response.status).toBe(202);
     expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toMatchObject({
-      ok: false,
+      ok: true,
       action: 'query_and_wait',
       status: 'running',
       jobStatus: 'running',
       lifecycleStatus: 'running',
-      error: {
-        code: 'ASYNC_GPT_JOBS_UNAVAILABLE',
-        message:
-          'Async GPT job status is temporarily unavailable because durable job persistence is unavailable.'
-      },
       jobId: 'job-wait-unavailable',
       poll: '/jobs/job-wait-unavailable/result',
       stream: '/jobs/job-wait-unavailable/stream',
@@ -2562,10 +2557,49 @@ describe('async /gpt idempotency', () => {
       idempotencySource: 'derived'
     });
     expect(JSON.stringify(response.body)).not.toContain('internal GPT wait sentinel');
-    expect(response.body.error.code).not.toBe('ASYNC_GPT_JOB_MISSING');
+    expect(response.body).not.toHaveProperty('error');
+    expect(response.body.jobReadToken).toMatch(/^v1\.[A-Za-z0-9_-]{43}$/u);
+    expect(response.body.jobReadTokenHeader).toBe('x-arcanos-job-read-token');
     expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
     expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledTimes(1);
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('preserves an ordinary daemon conversation after its accepted job wait loses storage', async () => {
+    const acceptedJobId = '51883102-2222-4222-8222-222222222222';
+    process.env.PRIORITY_QUEUE_ENABLED = 'true';
+    const slot = { release: jest.fn() };
+    tryAcquirePriorityGptDirectExecutionSlotMock.mockReturnValueOnce(slot);
+    findOrCreateGptJobMock.mockResolvedValueOnce({
+      job: { id: acceptedJobId, status: 'running', claim_generation: '1' },
+      created: true, deduped: false, dedupeReason: 'new_job',
+    });
+    waitForQueuedGptJobCompletionMock.mockRejectedValueOnce(
+      new MockJobRepositoryUnavailableError('private accepted wait diagnostic'),
+    );
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-daemon')
+      .send({
+        prompt: 'what can u do?', messages: [{ role: 'user', content: 'what can u do?' }],
+        stream: false, sessionId: 'ordinary-daemon-wait-outage',
+        metadata: { instanceId: 'ordinary-daemon-wait-outage' },
+      });
+    expect(response.status).toBe(202);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.body).toMatchObject({
+      ok: true, action: 'query', jobId: acceptedJobId, status: 'running',
+      jobStatus: 'running', lifecycleStatus: 'running', result: {},
+      poll: `/jobs/${acceptedJobId}/result`, jobReadTokenHeader: 'x-arcanos-job-read-token',
+    });
+    expect(response.body.jobReadToken).toMatch(/^v1\.[A-Za-z0-9_-]{43}$/u);
+    expect(response.body).not.toHaveProperty('error');
+    expect(JSON.stringify(response.body)).not.toContain('private accepted wait diagnostic');
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+    expect(startReservedPriorityGptDirectExecutionMock).toHaveBeenCalledTimes(1);
+    expect(startReservedPriorityGptDirectExecutionMock).toHaveBeenCalledWith(expect.objectContaining({ jobId: acceptedJobId, slot }));
+    expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledTimes(1);
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+    expect(executeFastGptPromptMock).not.toHaveBeenCalled();
   });
 
   it('returns the accepted continuation after an unexpected polling failure', async () => {

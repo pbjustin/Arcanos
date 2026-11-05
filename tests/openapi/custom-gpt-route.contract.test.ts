@@ -316,7 +316,7 @@ describe('custom GPT route OpenAPI contract', () => {
       ...Object.values(errorResponses?.['400']?.content?.['application/json']?.examples ?? {}),
       ...Object.values(errorResponses?.['503']?.content?.['application/json']?.examples ?? {}),
     ] as Array<{ value?: Record<string, unknown> }>;
-    expect(errorExamples).toHaveLength(9);
+    expect(errorExamples).toHaveLength(8);
     for (const example of errorExamples) {
       expect(example.value).toEqual(expect.objectContaining({
         ok: false,
@@ -364,14 +364,21 @@ describe('custom GPT route OpenAPI contract', () => {
     expect(contract.components?.headers?.NoStore?.schema?.const).toBe('no-store');
 
     const acceptedUnavailable =
-      operation?.responses?.['503']?.content?.['application/json']?.examples
+      operation?.responses?.['202']?.content?.['application/json']?.examples
         ?.acceptedJobStatusUnavailable?.value;
     expect(acceptedUnavailable).toEqual(expect.objectContaining({
-      jobId: 'job_example',
-      poll: '/jobs/job_example/result',
-      stream: '/jobs/job_example/stream',
+      ok: true,
+      status: 'running',
+      result: {},
+      jobId: '51883102-2222-4222-8222-222222222222',
+      poll: '/jobs/51883102-2222-4222-8222-222222222222/result',
+      stream: '/jobs/51883102-2222-4222-8222-222222222222/stream',
       jobReadToken: expect.stringMatching(/^v1\.[A-Za-z0-9_-]{43}$/),
       jobReadTokenHeader: 'x-arcanos-job-read-token',
     }));
+    expect(acceptedUnavailable).not.toHaveProperty('error');
+    const unavailableExamples = operation?.responses?.['503']?.content?.['application/json']?.examples;
+    expect(unavailableExamples).not.toHaveProperty('acceptedJobStatusUnavailable');
+    expect(unavailableExamples.asyncJobsUnavailable.value).not.toHaveProperty('jobId');
   });
 });
