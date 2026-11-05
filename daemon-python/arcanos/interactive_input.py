@@ -56,14 +56,15 @@ def _readable_windows_console() -> Iterator[None]:
 
 @contextmanager
 def interactive_input() -> Iterator[Callable[[str], str]]:
-    """Use the terminal editor only for automatic recovery in a real TTY.
+    """Use the Windows terminal editor only for automatic recovery in a real TTY.
 
     Pipe/debug consumers retain ordinary input behavior. The stdout proxy owns
     redraws while an answer is printed by the bounded recovery worker; no custom
     cursor handling or persistent input history is introduced.
     """
     if (
-        not getattr(Config, "CONVERSATION_RECOVERY_ENABLED", True)
+        sys.platform != "win32"
+        or not getattr(Config, "CONVERSATION_RECOVERY_ENABLED", True)
         or not sys.stdin.isatty()
         or not sys.stdout.isatty()
     ):

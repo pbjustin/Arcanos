@@ -1,6 +1,6 @@
 """Interactive recovery keeps its worker inside the terminal redraw boundary."""
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import asyncio
 import io
 import sys
@@ -10,6 +10,7 @@ import pytest
 from rich.console import Console
 
 from arcanos import cli_runner
+from arcanos import interactive_input as terminal_input
 from arcanos.config import Config
 
 
@@ -68,8 +69,10 @@ def test_recovery_starts_and_stops_inside_stdout_redraw_context(monkeypatch, end
             raise RuntimeError("synthetic controller startup failure")
 
     monkeypatch.setattr(Config, "CONVERSATION_RECOVERY_ENABLED", True, raising=False)
-    monkeypatch.setattr(sys, "stdin", TtyStream())
-    monkeypatch.setattr(sys, "stdout", TtyStream())
+    monkeypatch.setattr(terminal_input, "sys", SimpleNamespace(
+        platform="win32", stdin=TtyStream(), stdout=TtyStream(), audit=sys.audit,
+    ))
+    monkeypatch.setattr(terminal_input, "_readable_windows_console", nullcontext)
     monkeypatch.setitem(sys.modules, "prompt_toolkit", SimpleNamespace(PromptSession=Session))
     monkeypatch.setitem(sys.modules, "prompt_toolkit.completion", SimpleNamespace(
         NestedCompleter=SimpleNamespace(from_nested_dict=lambda _: None),
@@ -104,3 +107,45 @@ def test_non_tty_consumers_retain_builtin_input(monkeypatch):
     monkeypatch.setattr("builtins.input", reader)
     with interactive_input() as read:
         assert read("> ") == "pipe input"
+
+
+@pytest.mark.parametrize("platform", ["linux", "darwin"])
+def test_non_windows_tty_retains_builtin_input_without_loading_editor(monkeypatch, platform):
+    """Windows DPAPI recovery must not change an ordinary Unix terminal session."""
+    reader = lambda _: "ordinary terminal input"
+    monkeypatch.setattr(Config, "CONVERSATION_RECOVERY_ENABLED", True)
+    monkeypatch.setattr(terminal_input, "sys", SimpleNamespace(
+        platform=platform, stdin=TtyStream(), stdout=TtyStream(),
+    ))
+    monkeypatch.setattr("builtins.input", reader)
+    monkeypatch.setitem(sys.modules, "prompt_toolkit", None)
+    with terminal_input.interactive_input() as read:
+        assert read is reader
+        assert read("> ") == "ordinary terminal input"
+
+
+@pytest.mark.parametrize("platform", ["linux", "darwin"])
+def test_non_windows_recovery_start_keeps_normal_cli_without_warning(monkeypatch, platform):
+    """Unsupported platforms neither construct a controller nor report storage failure."""
+    from arcanos.cli import cli as cli_module
+    from arcanos.cli import conversation_recovery
+
+    started = []
+
+    def unexpected_controller(_cli):
+        """Expose any unintended recovery startup before storage or network activity."""
+        started.append(True)
+        raise RuntimeError("Windows protected storage is unavailable here")
+
+    output = io.StringIO()
+    cli = cli_module.ArcanosCLI.__new__(cli_module.ArcanosCLI)
+    cli.console = Console(file=output)
+    cli.backend_client = object()
+    cli._conversation_recovery = None
+    monkeypatch.setattr(Config, "CONVERSATION_RECOVERY_ENABLED", True)
+    monkeypatch.setattr(cli_module, "sys", SimpleNamespace(platform=platform))
+    monkeypatch.setattr(conversation_recovery, "ConversationRecovery", unexpected_controller)
+    cli._start_conversation_recovery()
+    assert started == []
+    assert cli._conversation_recovery is None
+    assert output.getvalue() == ""

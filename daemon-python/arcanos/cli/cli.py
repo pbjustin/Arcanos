@@ -461,8 +461,12 @@ class ArcanosCLI:
         ))
 
     def _start_conversation_recovery(self) -> None:
-        """Enable only accepted-job reads in the foreground application's lifetime."""
-        if not Config.CONVERSATION_RECOVERY_ENABLED or self.backend_client is None:
+        """Enable Windows protected recovery only during the foreground application's lifetime."""
+        if (
+            sys.platform != "win32"
+            or not Config.CONVERSATION_RECOVERY_ENABLED
+            or self.backend_client is None
+        ):
             return
         from .conversation_recovery import ConversationRecovery
         try:

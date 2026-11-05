@@ -331,9 +331,12 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) where practical
 ### Fixed
 
 - Preserved accepted daemon conversation results across HTTP 202 responses.
-  `/resume [jobId]` retrieves the original answer without repeating generation
-  or enabling background polling, preserves its question and history once, and
-  retains server-approved presentation through durable result delivery.
+  The Windows CLI automatically reads the original accepted job with bounded,
+  read-only result GETs and restores protected pending work on relaunch.
+  `/resume [jobId]` remains an optional one-shot read. Recovery never submits
+  another generation request, preserves the original question and history once,
+  and retains server-approved presentation. Set
+  `CONVERSATION_RECOVERY_ENABLED=false` for manual-only operation.
 
 - Tutor MCP prompt validation now accepts ordinary and multiline prompts in
   connectors that match the entire schema pattern, preserving the existing
