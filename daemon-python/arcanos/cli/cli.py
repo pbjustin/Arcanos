@@ -486,7 +486,7 @@ class ArcanosCLI:
                     self.console.print("Backend request is still pending. Use the same /resume command later.", markup=False)
                     audit_record("execute_unconfirmed", **audit_fields, reason="backend_pending")
                 else:
-                    if error and error.kind in ("failed", "cancelled", "expired", "unavailable", "parse", "validation"):
+                    if error and error.kind in ("failed", "cancelled", "expired", "unavailable", "validation"):
                         del self._pending_backend_conversations[job_id]
                     backend_ops.report_backend_error(self, "conversation continuation", error)
                     audit_record("execute_failed", **audit_fields, reason="continuation_read_failed")
@@ -494,12 +494,22 @@ class ArcanosCLI:
             # Consume before delivery: replay cannot duplicate history, usage or an answer.
             del self._pending_backend_conversations[job_id]
             value = response.value
-            self._finish_conversation(
-                pending.message,
-                ConversationResult(value.response_text, value.tokens_used, value.cost_usd,
-                                   value.model, "backend", value.presentation),
-                continuation_job_id=job_id,
-            )
+            delivery_state: dict[str, bool] = {}
+            try:
+                self._finish_conversation(
+                    pending.message,
+                    ConversationResult(value.response_text, value.tokens_used, value.cost_usd,
+                                       value.model, "backend", value.presentation),
+                    continuation_job_id=job_id, delivery_state=delivery_state,
+                )
+            except Exception:
+                # Recording can partially account or persist before raising. Only
+                # an earlier delivery failure is safe to retry explicitly.
+                if not delivery_state.get("recording_started", False):
+                    self._pending_backend_conversations[job_id] = pending
+                if not delivery_state.get("outcome_recorded", False):
+                    audit_record("execute_failed", **audit_fields, reason="continuation_delivery_failed")
+                raise
 
     @handle_errors("processing user input")
     def handle_ask(
@@ -671,14 +681,16 @@ class ArcanosCLI:
                 self.console.print("[red]No response generated.[/red]")
             return None
 
-        return self._finish_conversation(
-            route_decision.normalized_message, result, speak_response, return_result, from_debug,
-        )
+        with self._conversation_state_lock():
+            return self._finish_conversation(
+                route_decision.normalized_message, result, speak_response, return_result, from_debug,
+            )
 
     def _finish_conversation(
         self, message: str, result: ConversationResult, speak_response: bool = False,
         return_result: bool = False, from_debug: bool = False, *,
         continuation_job_id: Optional[str] = None,
+        delivery_state: Optional[dict[str, bool]] = None,
     ) -> Optional[_ConversationResult]:
         """Apply the same presentation, privacy, history and usage rules to completed answers."""
         response_for_user: Optional[str] = None
@@ -713,6 +725,8 @@ class ArcanosCLI:
             conversation_response = translated if show else ""
         else:
             conversation_response = response_for_user or ""
+        if delivery_state is not None:
+            delivery_state["recording_started"] = True
         memory_ops.record_conversation_turn(
             self,
             message,
@@ -730,6 +744,8 @@ class ArcanosCLI:
             command="resume" if continuation_job_id else "ask", trust=self._trust_state.name,
             source=result.source, **({"job_id": continuation_job_id} if continuation_job_id else {}),
         )
+        if delivery_state is not None:
+            delivery_state["outcome_recorded"] = True
 
         if result.source == "backend" and self.backend_client and continuation_job_id is None:
             refreshed_state = backend_ops.request_backend_system_state_payload(self)

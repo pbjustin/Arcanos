@@ -468,6 +468,13 @@ It never repeats the generation POST, creates a replacement job, refreshes
 credentials, starts background polling, or automatically retries a failed read.
 The existing HTTP timeout bounds each read.
 
+A malformed result response keeps the same private handle for a later explicit
+read. Translation or rendering failures also retain it when conversation
+recording has not started. A manual retry can repeat any partial terminal output
+from a failed render; it never repeats generation. Once accounting or history
+recording starts, the handle stays consumed to avoid duplicating a partially
+recorded turn. Ordinary and resumed completions serialize their history writes.
+
 Continuation handles remain in process memory, scoped to their originating CLI
 instance and backend. At most eight contexts are retained; they are not saved to
 disk, included in prompts, printed, or placed in URLs. Exiting the CLI discards
@@ -487,6 +494,8 @@ contexts. Result reads do not renew FULL trust or authorize actions, and existin
 confirmation and action-policy checks remain in force.
 Usage and cost come only from the retrieved result's available metadata; missing
 provider accounting is not proof of zero billed usage.
+Completed usage recorded after midnight resets the previous day's counters
+before adding the retrieved usage, without requiring another admission check.
 
 Typed async query and job-result operations retain their existing pending and
 result contracts. Their job-specific bearer capability is an authorization
