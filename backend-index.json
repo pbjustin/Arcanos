@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-05T03:24:18.375Z",
+  "generatedAt": "2026-11-05T17:49:07.994Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4256,6 +4256,9 @@
         },
         {
           "relativePath": "tests/custom-gpt-bridge.route.test.ts"
+        },
+        {
+          "relativePath": "tests/daemon-conversation-continuation-http.e2e.test.ts"
         },
         {
           "relativePath": "tests/daemon-plane-http-auth.test.ts"

@@ -4,10 +4,18 @@ Backend API response models for the ARCANOS daemon.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Generic, Mapping, Optional, TypeVar
 
 T = TypeVar("T")
+
+
+@dataclass(frozen=True)
+class BackendChatContinuation:
+    """Private coordinates for reading one accepted chat job, never resubmitting it."""
+
+    job_id: str
+    job_read_token: str = field(repr=False)
 
 
 @dataclass(frozen=True)
@@ -24,6 +32,7 @@ class BackendRequestError(RuntimeError):
     details: Optional[str] = None
     confirmation_challenge_id: Optional[str] = None
     pending_actions: Optional[list[Mapping[str, Any]]] = None
+    continuation: Optional[BackendChatContinuation] = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         # //audit assumption: exception message should be initialized; risk: missing error context; invariant: message stored; strategy: init base class.

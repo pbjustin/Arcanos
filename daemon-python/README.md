@@ -87,6 +87,10 @@ Finalized backend answers may carry the server-owned outer field
 metadata retains legacy private audit/routing section protection; local provider
 responses without producer metadata retain that protection too. Heading text,
 model output, route names, and debug flags cannot confer this state.
+For completed jobs, the canonical backend dispatcher records this optional outer
+field from its existing finalization marker before storage. Retrieval preserves
+that server-owned field; raw model and nested module properties cannot supply
+it. Legacy stored results without this field keep the existing protection.
 
 Disclosure labels, private machine records, and credentials remain protected
 for every presentation format, including debug display mode. Unsafe terminal
@@ -454,8 +458,41 @@ The query methods create writing work through the GPT route. Status and result m
 Interactive chat requires a completed answer. An HTTP 202 response remains
 pending: the CLI reports that no completed answer is available, records an
 unconfirmed audit outcome, and does not start local fallback or save a completed
-conversation. Empty JSON objects are not conversational answers. Typed async
-query and job-result operations retain their existing pending and result contracts.
+conversation. When that response contains a valid accepted job ID and job-read
+capability, the CLI retains a private continuation context for that original
+question and prints the job ID. Use `/resume <jobId>` in the same CLI process to
+read the existing result once; `/resume` lists retained job IDs without making a
+network request. Each explicit retrieval makes at most one
+`GET /jobs/<jobId>/result`, with the capability in its fixed request header.
+It never repeats the generation POST, creates a replacement job, refreshes
+credentials, starts background polling, or automatically retries a failed read.
+The existing HTTP timeout bounds each read.
+
+Continuation handles remain in process memory, scoped to their originating CLI
+instance and backend. At most eight contexts are retained; they are not saved to
+disk, included in prompts, printed, or placed in URLs. Exiting the CLI discards
+them. A job ID alone cannot authorize recovery in a new process. Keep the process
+open while waiting for an accepted answer, then explicitly resume that job.
+
+Pending, failed, cancelled, expired, unavailable, and inaccessible results do not
+become completed conversations. Missing or malformed capabilities fail closed.
+The backend deliberately uses the same `not_found` response for denied job reads
+and missing results, so the CLI cannot distinguish an invalid capability from a
+removed or inaccessible job. A completed result must still pass the ordinary
+answer-validation and credential-redaction rules. Empty nested result objects
+and incomplete provider output are not answers. An accepted answer is displayed
+once and saved with its original question; repeated retrieval does not duplicate
+generation or conversation turns. Other questions keep separate continuation
+contexts. Result reads do not renew FULL trust or authorize actions, and existing
+confirmation and action-policy checks remain in force.
+Usage and cost come only from the retrieved result's available metadata; missing
+provider accounting is not proof of zero billed usage.
+
+Typed async query and job-result operations retain their existing pending and
+result contracts. Their job-specific bearer capability is an authorization
+credential; the local instance binding does not add server-side tenant ownership.
+See the [dated continuation investigation](../docs/audits/incidents/2026-11-05/daemon-conversation-continuation/README.md)
+for the incident evidence and its limits.
 
 ## Built-in CLI commands
 
@@ -465,6 +502,7 @@ query and job-result operations retain their existing pending and result contrac
 - `/rollback <rollback_id>`: restore files from backups
 - `/audit export <path> [--all]`: export audit history as JSON
 - `/intents`: show the last detected proposals
+- `/resume [jobId]`: list retained conversation jobs, or read one original accepted result once
 - `/dryrun on|off`: proposal-only mode
 - `/safemode on|off`: block patch/command execution until disabled
 - `/feedback <rollback_id> <rating 1-5> <note...>`: record patch feedback

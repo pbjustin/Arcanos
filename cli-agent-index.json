@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-05T03:24:18.375Z",
+  "generatedAt": "2026-11-05T17:49:07.994Z",
   "scopes": [
     {
       "scope": "clients",
@@ -626,6 +626,9 @@
         },
         {
           "relativePath": "daemon-python/tests/test_confirmation_trust_recheck.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_conversation_continuation.py"
         },
         {
           "relativePath": "daemon-python/tests/test_credential_bootstrap_backend_auth.py"

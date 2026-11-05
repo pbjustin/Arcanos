@@ -352,6 +352,10 @@ def _dispatch_command(cli: "ArcanosCLI", command_text: str) -> None:
             cli.handle_ask(args, route_override="backend")
         return
 
+    if command == "resume":
+        cli.handle_resume(args)
+        return
+
     if command == "run":
         # //audit assumption: slash-run is sensitive; risk: command misuse; invariant: require safety preflight + optional confirmation; strategy: guard before execution.
         if not args:
@@ -382,6 +386,10 @@ def process_input(cli: "ArcanosCLI", user_input: str) -> None:
         return
     command = parts[0].lower()
     args = parts[1] if len(parts) > 1 else ""
+
+    if command in ("resume", "/resume"):
+        cli.handle_resume(args)
+        return
 
     # //audit assumption: backend requests need arguments; risk: empty prompt; invariant: warn; strategy: check args.
     if command in ["deep", "backend"]:

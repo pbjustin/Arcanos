@@ -15,6 +15,8 @@ import requests
 from ..backend_auth_client import normalize_backend_url
 from .chat import request_ask_with_domain as _request_ask_with_domain
 from .chat import request_chat_completion as _request_chat_completion
+from .chat import request_chat_job_result as _request_chat_job_result
+from .chat import read_chat_continuation
 from .chat import request_gpt_job_result as _request_gpt_job_result
 from .chat import request_gpt_job_status as _request_gpt_job_status
 from .chat import request_job_result as _request_job_result
@@ -34,6 +36,7 @@ from .updates import submit_update_event as _submit_update_event
 from .vision import request_vision_analysis as _request_vision_analysis
 from ..backend_client_models import (
     BackendChatResult,
+    BackendChatContinuation,
     BackendGptAsyncBridgeResult,
     BackendRequestError,
     BackendResponse,
@@ -700,6 +703,13 @@ class BackendApiClient:
         """
         return _request_job_result(self, job_id, gpt_id, job_read_token)
 
+    def request_chat_job_result(
+        self,
+        continuation: BackendChatContinuation,
+    ) -> BackendResponse[BackendChatResult]:
+        """Read one accepted chat job once without another generation request."""
+        return _request_chat_job_result(self, continuation)
+
     def request_job_status(
         self,
         job_id: str,
@@ -1072,12 +1082,17 @@ class BackendApiClient:
             )
 
         if require_completed_chat and response.status_code == 202:
+            try:
+                accepted = response.json()
+            except ValueError:
+                accepted = None
             return self._build_logged_error_response(
                 method,
                 context,
                 BackendRequestError(
                     kind="pending", message="Backend request is pending; no completed answer is available.",
                     status_code=202,
+                    continuation=read_chat_continuation(accepted),
                 ),
                 status_code=202,
                 error_kind="pending",

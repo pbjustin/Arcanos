@@ -79,6 +79,7 @@ def get_help_markdown() -> str:
 Just type naturally — ask me anything, and I'll do my best to help.
 
 - **/deep <prompt>** — Send a question to the backend for deeper analysis
+- **/resume <jobId>** — Retrieve one pending conversation once; /resume lists pending IDs
 - **/help** — Show this menu
 - **exit** / **quit** / **bye** — End our conversation
 

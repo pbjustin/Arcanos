@@ -245,6 +245,17 @@ def install_native_observers() -> None:
     def after_response(response, **_kwargs):
         """Advance only the registry clocks after a real blocking status HTTP read completes."""
         nonlocal state_reads
+        if urlsplit(response.url).path.startswith("/gpt/") and response.status_code == 202:
+            payload = response.json()
+            token = payload.get("jobReadToken") if isinstance(payload, dict) else None
+            record("accepted_response", job_id=payload.get("jobId"),
+                   valid_capability=isinstance(token, str) and re.fullmatch(r"v1\.[A-Za-z0-9_-]{43}", token) is not None,
+                   capability_header=payload.get("jobReadTokenHeader") == "x-arcanos-job-read-token")
+        if urlsplit(response.url).path.startswith("/jobs/"):
+            payload = response.json()
+            record("job_read_response", status_code=response.status_code,
+                   status=payload.get("status"), job_status=payload.get("jobStatus"),
+                   job_id=payload.get("jobId"), has_result=payload.get("result") is not None)
         if urlsplit(response.url).path == "/system-state":
             state_reads += 1
             if scenario.get("fault") == "expire-after-read" and state_reads == 2:
@@ -389,6 +400,11 @@ def native_cli(daemon_root: str, base_url: str, scenario_path: str, receipt_path
                 connection.close()
         for index, step in enumerate(scenario["steps"], start=1):
             wait_input(index)
+            delay = step.get("waitBeforeMs", 0)
+            if not isinstance(delay, int) or not 0 <= delay <= 2000:
+                raise ValueError("Native input delay must be bounded to two seconds")
+            if delay:
+                time.sleep(delay / 1000)
             if step.get("faultBefore"):
                 (root / "next-input-fault.json").write_text(json.dumps({"fault": step["faultBefore"]}), encoding="utf-8")
             if scenario.get("tty"):

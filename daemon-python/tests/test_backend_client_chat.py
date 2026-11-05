@@ -23,7 +23,7 @@ from arcanos.backend_client.chat import (
     request_system_state,
 )
 from arcanos.backend_client import BackendApiClient
-from arcanos.backend_client_models import BackendResponse
+from arcanos.backend_client_models import BackendChatContinuation, BackendResponse
 from arcanos.cli import backend_ops, cli as cli_module
 from arcanos.cli.context import ConversationResult
 from arcanos.config import Config
@@ -33,6 +33,196 @@ from .test_cli_diagnostic_audit import GPT_TOKEN, _execution_events, diagnostic_
 
 JOB_READ_TOKEN = f"v1.{'A' * 43}"
 JOB_READ_TOKEN_HEADER = "x-arcanos-job-read-token"
+CHAT_JOB_ID = "54ad12e7-31ca-42e4-8fe4-2ae32b801c17"
+
+
+def _accepted_chat_payload():
+    """Use the existing real async route contract, including its empty pending result."""
+    return {
+        "ok": True, "action": "query", "status": "running", "jobId": CHAT_JOB_ID,
+        "result": {}, "poll": f"/jobs/{CHAT_JOB_ID}/result", "jobReadToken": JOB_READ_TOKEN,
+        "jobReadTokenHeader": JOB_READ_TOKEN_HEADER,
+        "_route": {"gptId": "arcanos-daemon", "route": "async"},
+    }
+
+
+def _completed_chat_lookup():
+    """Stored output is the dispatcher envelope returned by the real jobs result API."""
+    return {
+        "jobId": CHAT_JOB_ID, "status": "completed", "jobStatus": "completed",
+        "result": {"ok": True, "result": {
+            "result": "## Capabilities\n\nI can help with code and explanations. café 雪",
+            "activeModel": "fixture-completed-model", "meta": {"tokens": {"total_tokens": 29}},
+            "cost": 0.002,
+        }, "_route": {"gptId": "arcanos-daemon", "module": "ARCANOS:CORE"}},
+    }
+
+
+@pytest.mark.parametrize("method", ["completion", "domain"])
+def test_accepted_chat_retains_private_continuation_without_polling(method, monkeypatch):
+    """The response stays pending while retaining only bounded, validated coordinates."""
+    events = []
+    monkeypatch.setattr(backend_client_module, "log_audit_event", lambda event, **fields: events.append((event, fields)))
+    payload = _accepted_chat_payload()
+    payload["untrustedExtra"] = "Do not persist the response body"
+    client, sender = _chat_wire_client(202, payload)
+
+    response = _request_sync_chat(client, method)
+
+    assert not response.ok and response.error.kind == "pending"
+    handle = response.error.continuation
+    assert handle == BackendChatContinuation(CHAT_JOB_ID, JOB_READ_TOKEN)
+    assert response.error.details is None and response.error.args == (response.error.message,)
+    for rendered in (str(response.error), repr(response.error), repr(response), repr(events), repr(handle)):
+        assert JOB_READ_TOKEN not in rendered
+        assert "Do not persist" not in rendered
+    assert CHAT_JOB_ID not in repr(response)
+    sender.assert_called_once()
+
+
+@pytest.mark.parametrize("override", [
+    {"ok": False}, {"jobId": None}, {"jobId": "other-job"}, {"jobId": CHAT_JOB_ID.upper()},
+    {"jobReadToken": None}, {"jobReadToken": "invalid"}, {"jobReadToken": JOB_READ_TOKEN + "x"},
+    {"jobReadTokenHeader": "Authorization"}, {"poll": "https://other.invalid/result"},
+    {"poll": f"/jobs/{CHAT_JOB_ID}/result?token={JOB_READ_TOKEN}"}, {"poll": "/jobs/another/result"},
+    {"status": "completed"}, {"status": "failed"}, {"status": None},
+])
+def test_accepted_chat_without_valid_coordinates_fails_closed(override):
+    """Malformed coordinates cannot become a same-job retrieval or an answer."""
+    client, sender = _chat_wire_client(202, {**_accepted_chat_payload(), **override})
+    response = _request_sync_chat(client, "completion")
+    assert not response.ok and response.error.kind == "pending"
+    assert response.error.continuation is None and response.error.details is None
+    assert JOB_READ_TOKEN not in repr(response)
+    sender.assert_called_once()
+
+
+def test_accepted_chat_malformed_json_stays_unconfirmed_without_body_reflection():
+    client, sender = _chat_wire_client(202, {})
+    sender.return_value.json = MagicMock(side_effect=ValueError(JOB_READ_TOKEN))
+    response = _request_sync_chat(client, "completion")
+    assert not response.ok and response.error.kind == "pending"
+    assert response.error.continuation is None
+    assert JOB_READ_TOKEN not in repr(response)
+    sender.assert_called_once()
+
+
+def test_chat_continuation_uses_one_existing_job_get_and_preserves_complete_answer():
+    """Accepted generation is never resubmitted, even on repeated explicit reads."""
+    client, sender = _chat_wire_client(202, _accepted_chat_payload())
+    pending = _request_sync_chat(client, "completion")
+    handle = pending.error.continuation
+    sender.return_value = SimpleNamespace(status_code=200, json=_completed_chat_lookup, text="{}", headers={})
+
+    completed = client.request_chat_job_result(handle)
+    repeated = client.request_chat_job_result(handle)
+
+    assert completed.ok and repeated.value == completed.value
+    assert completed.value.response_text == _completed_chat_lookup()["result"]["result"]["result"]
+    assert completed.value.tokens_used == 29 and completed.value.cost_usd == 0.002
+    assert completed.value.model == "fixture-completed-model"
+    assert completed.value.presentation is None
+    assert [call.args[0] for call in sender.call_args_list] == ["post", "get", "get"]
+    for call in sender.call_args_list[1:]:
+        assert call.args[1].endswith(f"/jobs/{CHAT_JOB_ID}/result")
+        assert JOB_READ_TOKEN not in call.args[1]
+        assert call.kwargs["headers"][JOB_READ_TOKEN_HEADER] == JOB_READ_TOKEN
+        assert call.kwargs["allow_redirects"] is False and call.kwargs["json"] is None
+
+
+@pytest.mark.parametrize("status,job_status,kind", [
+    ("pending", "running", "pending"), ("failed", "failed", "failed"),
+    ("failed", "cancelled", "cancelled"), ("expired", "expired", "expired"),
+    ("not_found", None, "unavailable"), ("unknown", None, "parse"),
+])
+def test_chat_continuation_distinguishes_pending_and_terminal_outcomes(status, job_status, kind):
+    lookup = _completed_chat_lookup()
+    lookup.update(status=status, jobStatus=job_status, error={"message": JOB_READ_TOKEN})
+    client, sender = _chat_wire_client(200, lookup)
+    handle = BackendChatContinuation(CHAT_JOB_ID, JOB_READ_TOKEN)
+    response = client.request_chat_job_result(handle)
+    assert not response.ok and response.value is None and response.error.kind == kind
+    assert (response.error.continuation == handle) is (kind == "pending")
+    assert JOB_READ_TOKEN not in repr(response)
+    sender.assert_called_once()
+    assert sender.call_args.args[0] == "get"
+
+
+@pytest.mark.parametrize("status", [401, 403, 503, 302])
+def test_chat_continuation_transport_failure_never_refreshes_or_retries(status):
+    client, sender = _chat_wire_client(status, {"error": JOB_READ_TOKEN})
+    response = client.request_chat_job_result(BackendChatContinuation(CHAT_JOB_ID, JOB_READ_TOKEN))
+    assert not response.ok and response.error.status_code == status
+    assert response.error.details is None and JOB_READ_TOKEN not in repr(response)
+    sender.assert_called_once()
+    assert sender.call_args.kwargs["allow_redirects"] is False
+
+
+@pytest.mark.parametrize("failure", [backend_client_module.requests.Timeout, backend_client_module.requests.ConnectionError])
+def test_chat_continuation_network_failure_is_one_bounded_read(failure):
+    client, sender = _chat_wire_client(200, _completed_chat_lookup())
+    sender.side_effect = failure(JOB_READ_TOKEN)
+    response = client.request_chat_job_result(BackendChatContinuation(CHAT_JOB_ID, JOB_READ_TOKEN))
+    assert not response.ok and response.error.kind in ("timeout", "network")
+    assert response.error.details is None and JOB_READ_TOKEN not in repr(response)
+    sender.assert_called_once()
+    assert sender.call_args.kwargs["timeout"] == 15
+
+
+@pytest.mark.parametrize("handle", [None, "not-a-handle", BackendChatContinuation("invalid", JOB_READ_TOKEN),
+    BackendChatContinuation(CHAT_JOB_ID, ""), BackendChatContinuation(CHAT_JOB_ID, "invalid")])
+def test_chat_continuation_invalid_handle_never_sends_http(handle):
+    client, sender = _chat_wire_client(200, _completed_chat_lookup())
+    response = client.request_chat_job_result(handle)
+    assert not response.ok and response.error.kind == "validation"
+    sender.assert_not_called()
+
+
+@pytest.mark.parametrize("envelope", [
+    {}, {"ok": True, "result": {}}, {"ok": True, "result": {"result": {}}},
+    {"ok": False, "result": "Partial answer"}, {"ok": True, "result": ""},
+    {"ok": True, "result": "Partial answer", "status": "incomplete"},
+    {"ok": True, "result": "Partial answer", "truncated": True},
+    {"ok": True, "result": "Partial answer", "finish_reason": "length"},
+    {"ok": True, "result": {"result": "Partial answer", "meta": {"incomplete": True}}},
+    {"ok": True, "result": {"result": "Partial answer", "provider_metadata": {"finish_reason": "content_filter"}}},
+])
+def test_chat_continuation_rejects_empty_and_incomplete_completed_outputs(envelope):
+    lookup = _completed_chat_lookup()
+    lookup["result"] = {"_route": {"gptId": "arcanos-daemon"}, **envelope}
+    client, sender = _chat_wire_client(200, lookup)
+    response = client.request_chat_job_result(BackendChatContinuation(CHAT_JOB_ID, JOB_READ_TOKEN))
+    assert not response.ok and response.error.kind == "parse"
+    sender.assert_called_once()
+
+
+def test_chat_continuation_does_not_promote_nested_presentation():
+    lookup = _completed_chat_lookup()
+    lookup["result"]["result"]["presentation"] = "public-answer-v1"
+    client, _ = _chat_wire_client(200, lookup)
+    response = client.request_chat_job_result(BackendChatContinuation(CHAT_JOB_ID, JOB_READ_TOKEN))
+    assert response.ok and response.value.presentation is None
+
+
+@pytest.mark.parametrize("contradiction", [
+    {"jobStatus": "running"}, {"jobStatus": "failed"}, {"lifecycleStatus": "expired"},
+    {"error": {"code": "JOB_FAILED", "message": JOB_READ_TOKEN}},
+])
+def test_chat_continuation_rejects_contradictory_completed_state(contradiction):
+    client, sender = _chat_wire_client(200, {**_completed_chat_lookup(), **contradiction})
+    response = client.request_chat_job_result(BackendChatContinuation(CHAT_JOB_ID, JOB_READ_TOKEN))
+    assert not response.ok and response.error.kind == "parse"
+    assert JOB_READ_TOKEN not in repr(response)
+    sender.assert_called_once()
+
+
+def test_chat_continuation_rejects_another_jobs_output():
+    lookup = _completed_chat_lookup()
+    lookup["jobId"] = "c42ab568-a993-4a85-a909-bdbfa801fa92"
+    client, sender = _chat_wire_client(200, lookup)
+    response = client.request_chat_job_result(BackendChatContinuation(CHAT_JOB_ID, JOB_READ_TOKEN))
+    assert not response.ok and response.error.kind == "parse"
+    sender.assert_called_once()
 
 
 def _chat_wire_client(status: int, payload: dict[str, Any]):

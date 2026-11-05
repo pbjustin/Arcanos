@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 import uuid
+from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Callable, Mapping, Optional
 
@@ -39,6 +40,7 @@ from .trust_state import TrustState
 
 from ..backend_client import BackendApiClient, BackendRequestError, BackendResponse
 from ..backend_client.chat import is_valid_system_state_payload
+from ..backend_client_models import BackendChatContinuation
 from ..cli_config import (
     DOMAIN_KEYWORDS,
     ZERO_COST_USD,
@@ -89,6 +91,20 @@ except ImportError:
 _ConversationResult = ConversationResult
 
 
+@dataclass(frozen=True)
+class _PendingConversation:
+    """Keep an accepted answer bound to its original process, client and session."""
+
+    message: str
+    handle: BackendChatContinuation
+    client: BackendApiClient
+    instance_id: str
+    session_id: str
+
+
+MAX_PENDING_CONVERSATIONS = 8
+
+
 class ArcanosCLI:
     """Main ARCANOS CLI application orchestration shell."""
 
@@ -102,6 +118,9 @@ class ArcanosCLI:
         self.start_time = time.time()
         self._last_error: Optional[str] = None
         self._activity_lock = threading.Lock()
+        self._conversation_lock = threading.RLock()
+        self._pending_backend_conversations: dict[str, _PendingConversation] = {}
+        self._backend_conversations_inflight = 0
 
         bootstrap.ensure_startup_sequence(self)
 
@@ -393,6 +412,95 @@ class ArcanosCLI:
     def _send_backend_update(self, update_type: str, data: Mapping[str, Any]) -> None:
         return backend_ops.send_backend_update(self, update_type, data)
 
+    def _conversation_state_lock(self):
+        """Serialize foreground delivery, including callers using the debug interface."""
+        if "_conversation_lock" not in self.__dict__:
+            self._conversation_lock = threading.RLock()
+            self._pending_backend_conversations = {}
+            self._backend_conversations_inflight = 0
+        return self._conversation_lock
+
+    def _reserve_backend_conversation(self) -> bool:
+        """Bound retained and in-flight contexts without serializing generation requests."""
+        with self._conversation_state_lock():
+            if len(self._pending_backend_conversations) + self._backend_conversations_inflight >= MAX_PENDING_CONVERSATIONS:
+                return False
+            self._backend_conversations_inflight += 1
+            return True
+
+    def _release_backend_conversation(self) -> None:
+        """Release capacity even when the original HTTP request fails."""
+        with self._conversation_state_lock():
+            self._backend_conversations_inflight -= 1
+
+    def _retain_backend_conversation(
+        self, message: str, handle: BackendChatContinuation,
+        client: BackendApiClient, instance_id: str, session_id: str,
+    ) -> bool:
+        """Retain only private validated coordinates; never replace another question."""
+        with self._conversation_state_lock():
+            if client is not self.backend_client or instance_id != self.instance_id or session_id != self.session.session_id:
+                return False
+            if handle.job_id not in self._pending_backend_conversations:
+                self._pending_backend_conversations[handle.job_id] = _PendingConversation(
+                    message, handle, client, instance_id, session_id,
+                )
+            return True
+
+    @handle_errors("resuming a conversation")
+    def handle_resume(self, args: str = "") -> None:
+        """Read one accepted job once, without generation, auth refresh or action execution."""
+        with self._conversation_state_lock():
+            job_id = args.strip()
+            if not job_id:
+                jobs = ", ".join(self._pending_backend_conversations)
+                self.console.print(f"Pending conversations: {jobs or 'none'}. Use /resume <jobId>.", markup=False)
+                return
+            pending = self._pending_backend_conversations.get(job_id)
+            self._recompute_trust_state()
+            audit_fields = dict(command="resume", trust=self._trust_state.name, source="backend")
+            audit_record("execute_attempt", **audit_fields)
+            if (
+                pending is None or pending.client is not self.backend_client
+                or pending.instance_id != self.instance_id
+                or pending.session_id != self.session.session_id
+            ):
+                self.console.print("No pending conversation belongs to this client and session.", markup=False)
+                audit_record("execute_failed", **audit_fields, reason="continuation_unavailable")
+                return
+            response = pending.client.request_chat_job_result(pending.handle)
+            self._recompute_trust_state()
+            if (
+                pending.client is not self.backend_client or pending.instance_id != self.instance_id
+                or pending.session_id != self.session.session_id
+            ):
+                self.console.print("Conversation ownership changed during retrieval; no answer was delivered.", markup=False)
+                audit_record("execute_failed", command="resume", trust=self._trust_state.name,
+                             source="backend", reason="continuation_owner_changed")
+                return
+            audit_fields["trust"] = self._trust_state.name
+            audit_fields["job_id"] = job_id
+            if not response.ok or response.value is None:
+                error = response.error
+                if error and error.kind == "pending":
+                    self.console.print("Backend request is still pending. Use the same /resume command later.", markup=False)
+                    audit_record("execute_unconfirmed", **audit_fields, reason="backend_pending")
+                else:
+                    if error and error.kind in ("failed", "cancelled", "expired", "unavailable", "parse", "validation"):
+                        del self._pending_backend_conversations[job_id]
+                    backend_ops.report_backend_error(self, "conversation continuation", error)
+                    audit_record("execute_failed", **audit_fields, reason="continuation_read_failed")
+                return
+            # Consume before delivery: replay cannot duplicate history, usage or an answer.
+            del self._pending_backend_conversations[job_id]
+            value = response.value
+            self._finish_conversation(
+                pending.message,
+                ConversationResult(value.response_text, value.tokens_used, value.cost_usd,
+                                   value.model, "backend", value.presentation),
+                continuation_job_id=job_id,
+            )
+
     @handle_errors("processing user input")
     def handle_ask(
         self,
@@ -563,6 +671,16 @@ class ArcanosCLI:
                 self.console.print("[red]No response generated.[/red]")
             return None
 
+        return self._finish_conversation(
+            route_decision.normalized_message, result, speak_response, return_result, from_debug,
+        )
+
+    def _finish_conversation(
+        self, message: str, result: ConversationResult, speak_response: bool = False,
+        return_result: bool = False, from_debug: bool = False, *,
+        continuation_job_id: Optional[str] = None,
+    ) -> Optional[_ConversationResult]:
+        """Apply the same presentation, privacy, history and usage rules to completed answers."""
         response_for_user: Optional[str] = None
         translated, show = translate(
             message,
@@ -588,7 +706,7 @@ class ArcanosCLI:
             "tokens": result.tokens_used,
             "cost": result.cost_usd,
             "model": result.model,
-            "messageLength": len(route_decision.normalized_message),
+            "messageLength": len(message),
         }
 
         if return_result:
@@ -597,7 +715,7 @@ class ArcanosCLI:
             conversation_response = response_for_user or ""
         memory_ops.record_conversation_turn(
             self,
-            route_decision.normalized_message,
+            message,
             conversation_response,
             result.tokens_used,
             result.cost_usd,
@@ -605,15 +723,21 @@ class ArcanosCLI:
         if not return_result:
             memory_ops.remember_last_response(self, response_for_user)
 
-        backend_ops.send_backend_update(self, "conversation_usage", update_payload)
-        audit_record("execute_success", command="ask", trust=self._trust_state.name, source=result.source)
+        if continuation_job_id is None:
+            backend_ops.send_backend_update(self, "conversation_usage", update_payload)
+        audit_record(
+            "execute_success" if show or continuation_job_id is None else "execute_failed",
+            command="resume" if continuation_job_id else "ask", trust=self._trust_state.name,
+            source=result.source, **({"job_id": continuation_job_id} if continuation_job_id else {}),
+        )
 
-        if result.source == "backend" and self.backend_client:
+        if result.source == "backend" and self.backend_client and continuation_job_id is None:
             refreshed_state = backend_ops.request_backend_system_state_payload(self)
             if refreshed_state:
                 state.hydrate_session_from_backend_state(self, refreshed_state)
 
-        memory_ops.update_short_term_summary(self)
+        if continuation_job_id is None:
+            memory_ops.update_short_term_summary(self)
 
         if return_result:
             return result
