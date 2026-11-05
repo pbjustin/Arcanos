@@ -75,6 +75,7 @@ import {
   shouldInspectRepoPrompt,
 } from "@services/repoImplementationEvidence.js";
 import { isDiagnosticRequest } from "@shared/http/diagnosticRequest.js";
+import { getFinalizedPublicAnswerPresentation } from '@shared/http/clientResponseCommon.js';
 import { isRecord } from "@shared/typeGuards.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import {
@@ -154,7 +155,7 @@ import type {
 import { runResearchWithAbortDrain } from './researchAbortDrain.js';
 
 export type AskEnvelope =
-  | { ok: true; result: unknown; _route: RouteMeta }
+  | { ok: true; result: unknown; presentation?: ReturnType<typeof getFinalizedPublicAnswerPresentation>; _route: RouteMeta }
   | { ok: false; error: { code: string; message: string; details?: unknown }; _route: RouteMeta };
 
 export type RouteMeta = {
@@ -2054,9 +2055,13 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       selectedModule: activeEntry.module,
       responseReturned: result,
     }, suppressPromptDebugTrace || notionEnrichmentUsed);
+    // Preserve producer provenance before job storage serializes away the
+    // internal finalization Symbol. Caller/module JSON cannot assert it.
+    const presentation = getFinalizedPublicAnswerPresentation(result);
     return {
       ok: true,
       result,
+      ...(presentation ? { presentation } : {}),
       _route: {
         ...baseRoute,
         module: activeEntry.module,

@@ -35,14 +35,13 @@ function resolveLocalRef(document: unknown, ref: string): unknown {
 }
 
 describe('custom GPT route OpenAPI contract', () => {
-  it('documents optional producer-owned presentation only on in-process answer response shapes', () => {
+  it('documents optional producer-owned presentation on direct and durable answer response shapes', () => {
     const contract = JSON.parse(readFileSync(join(process.cwd(), 'contracts/custom_gpt_route.openapi.v1.json'), 'utf8'));
-    for (const name of ['GptDirectActionCompletedResponse', 'GptRouteGenericResponse']) {
+    for (const name of ['GptDirectActionCompletedResponse', 'GptRouteGenericResponse', 'GptAsyncCompletedResponse']) {
       const schema = contract.components.schemas[name];
       expect(schema.properties.presentation.const).toBe(PUBLIC_ANSWER_PRESENTATION);
       expect(schema.required).not.toContain('presentation');
     }
-    expect(contract.components.schemas.GptAsyncCompletedResponse.properties.presentation).toBeUndefined();
   });
   it('resolves every local schema reference', () => {
     const contract = JSON.parse(

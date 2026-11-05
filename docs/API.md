@@ -295,15 +295,20 @@ Writing vs control:
 - Direct control plane: capability-bound `GET /jobs/:id` and `GET /jobs/:id/result`, aggregate `GET /workers/status` and `GET /worker-helper/health`, public health alias `GET /status`, operator mutation alias `POST /status`, `GET /status/safety/self-heal`, `POST /gpt-access/diagnostics/deep`, `GET|POST /system-state`, AFOL `GET|HEAD` inspection routes, `POST /rag/*`, `POST /mcp`, and `/api/arcanos/dag/*`.
 - No public control actions are served by `POST /gpt/:gptId`; `get_status`, `get_result`, `diagnostics`, `system_state`, runtime inspection, worker status, queue inspection, self-heal status, MCP calls, and prompt-based job lookups are rejected with canonical control endpoints.
 
-Finalized in-process Trinity answers may include the optional top-level field
+Finalized Trinity answers may include the optional top-level field
 `"presentation": "public-answer-v1"`. This server-owned format state lets the
 daemon preserve public headings such as `Audit Summary`, `System Routing Details`,
 and `COMPLIANCE STATUS`. It does not establish task completion or relax credential,
 private-record, developer-output, or authorization checks. Caller fields, model
 text, and nested result properties cannot supply this state. Missing or unknown
-state retains legacy private-section protection. Unmarked module results, local
-provider output, and results restored from durable job storage retain that legacy
-behavior; the process-local provenance marker is not reconstructed from stored JSON.
+state retains legacy private-section protection. The canonical dispatcher derives
+this optional outer field from the existing process-local finalization marker
+before a completed envelope is stored as a durable job result. Result retrieval
+can therefore preserve an approved answer's presentation without reconstructing
+that marker from stored JSON. Raw model properties and nested module fields
+cannot promote themselves into this outer state. Unmarked module results, local
+provider output, and legacy stored envelopes without the field retain the legacy
+protection.
 
 Request guidance:
 - GPT identifiers are trimmed, must be non-empty, and may contain at most 256

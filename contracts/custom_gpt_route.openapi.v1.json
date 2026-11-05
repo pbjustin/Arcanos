@@ -2011,6 +2011,10 @@
             "$ref": "#/components/schemas/JobReadTokenHeader"
           },
           "result": {},
+          "presentation": {
+            "const": "public-answer-v1",
+            "description": "Optional server-owned format state retained from finalized answer text before durable job storage. It preserves public answer headings without granting disclosure or execution authority. Missing or unknown state retains legacy private-section protection."
+          },
           "idempotencyKey": {
             "type": "string"
           },
