@@ -22,7 +22,10 @@ app.use((req, res, next) => {
 });
 for (const [route, payload] of [['/api/daemon/registry', persisted.registry], ['/system-state', persisted.systemState]]) {
   app.get(route, (req, res) => {
-    if (req.get('x-arcanos-daemon-token') !== process.env.ARCANOS_DAEMON_ACCESS_TOKEN) {
+    const authorized = route === '/api/daemon/registry'
+      ? req.get('x-arcanos-daemon-token') === process.env.ARCANOS_DAEMON_ACCESS_TOKEN
+      : req.get('authorization') === `Bearer ${process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN}`;
+    if (!authorized) {
       res.sendStatus(401);
       return;
     }

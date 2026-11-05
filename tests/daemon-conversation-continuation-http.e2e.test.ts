@@ -435,6 +435,7 @@ async function runRecoveryFaultCase(
     const observed: Array<{ method: string; path: string; status?: number; capabilityBound?: boolean }> = [];
     const startupSnapshots: Record<string, unknown> = {};
     let restartedBackend: ReturnType<typeof spawn> | undefined;
+    const restartedStartupReads: Array<{ path: string; status: number }> = [];
     let alternateBackend: ReturnType<typeof app.listen> | undefined;
     let backendStartupError = '';
     let freshBackendPid: number | undefined;
@@ -575,7 +576,7 @@ async function runRecoveryFaultCase(
           ], {
             cwd: process.cwd(), windowsHide: true, stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
             env: { ...childEnvironment, NODE_ENV: 'test', ARCANOS_JOB_READ_CAPABILITY_SECRET: secret,
-              ARCANOS_DAEMON_ACCESS_TOKEN: daemonToken },
+              ARCANOS_DAEMON_ACCESS_TOKEN: daemonToken, ARCANOS_CONTROL_PLANE_ACCESS_TOKEN: peerToken },
           });
           const backend = restartedBackend;
           backend.stderr?.on('data', chunk => { backendStartupError = (backendStartupError + chunk.toString()).slice(-4000); });
@@ -589,6 +590,9 @@ async function runRecoveryFaultCase(
                 observed.push({ method: data.method, path: data.path, status: data.status,
                   ...(data.path.startsWith('/jobs/') ? { capabilityBound: data.capabilityBound } : {}) });
                 if (data.path.startsWith('/jobs/')) resultReads += 1;
+                if (data.path === '/api/daemon/registry' || data.path === '/system-state') {
+                  restartedStartupReads.push({ path: data.path, status: data.status });
+                }
               }
               if (data.event === 'closed') childFinalCounters = data;
             });
@@ -615,6 +619,10 @@ async function runRecoveryFaultCase(
             backend.send('close');
           });
           expect(childFinalCounters).toMatchObject({ generationRequests: 0, providerCalls: 0, resultReads: 1 });
+          expect(restartedStartupReads).toEqual([
+            { path: '/api/daemon/registry', status: 200 }, { path: '/system-state', status: 200 },
+            { path: '/api/daemon/registry', status: 200 }, { path: '/system-state', status: 200 },
+          ]);
         }
       } else if (terminalMessages[mode]) {
         receipt = await runAutomaticCliCase(python, userSite.stdout.trim(), sandbox, baseUrl, mode, {
