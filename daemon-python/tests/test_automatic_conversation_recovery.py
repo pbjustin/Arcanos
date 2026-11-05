@@ -5,6 +5,8 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import subprocess
+import sys
 import threading
 import time
 from types import SimpleNamespace
@@ -334,6 +336,85 @@ def test_unwritable_recovery_store_retains_process_private_manual_fallback(recov
     assert CAPABILITY not in cli.console.file.getvalue()
 
 
+def test_post_commit_unlock_fault_cannot_duplicate_history_after_process_restart(recovery_profile, monkeypatch):
+    """An ambiguously returned DPAPI commit must still use the durable delivery ledger."""
+    import msvcrt
+    from arcanos import continuation_store as storage
+    make_cli, wire = recovery_profile
+    cli = make_cli()
+    controller = cli._conversation_recovery
+    replace, native_locking = storage._atomic_replace, msvcrt.locking
+    fault = {"armed": False, "triggered": False, "fd": None}
+
+    def committed(source, destination):
+        """Commit real protected bytes before arming the one-off native unlock failure."""
+        replace(source, destination)
+        fault["armed"] = True
+
+    def locking(fd, mode, size):
+        """Simulate a cleanup error after successful acceptance persistence, once only."""
+        if mode == msvcrt.LK_UNLCK and fault["armed"] and not fault["triggered"]:
+            fault.update(triggered=True, fd=fd)
+            raise OSError("Synthetic post-commit unlock failure")
+        return native_locking(fd, mode, size)
+
+    monkeypatch.setattr(storage, "_atomic_replace", committed)
+    monkeypatch.setattr(msvcrt, "locking", locking)
+    try:
+        cli.handle_ask("original question")
+        assert fault["triggered"]
+        wire["states"][JOB] = ["completed"]
+        wire["maximum_read_timeout"] = 5  # The legacy fallback has the original client's bound.
+        cli.handle_resume(JOB)
+        _assert_saved_once(cli)
+        assert wire["posts"] == wire["providers"] == wire["gets"] == 1
+    finally:
+        # Simulate the process-exit release even on the unfixed implementation;
+        # the restarted child must observe exactly the durable on-disk evidence.
+        local = storage._THREAD_LOCKS[(str(controller.store.lock_path).casefold(), 0)]
+        if local.locked():
+            os.close(fault["fd"])
+            local.release()
+    command = r'''
+import io,json,os,sys
+from contextlib import redirect_stdout
+from pathlib import Path
+with redirect_stdout(io.StringIO()):
+    profile=Path(sys.argv[2])
+    os.environ.update(DATA_DIR=str(profile),MEMORY_FILE=str(profile/'memory.json'),LOG_DIR=str(profile/'logs'),HISTORY_DB_PATH=str(profile/'history.db'))
+    sys.path.insert(0,sys.argv[1])
+    import arcanos.env as runtime_env
+    runtime_env._BOOTSTRAPPED=True
+    runtime_env._BASE_DIR=profile
+    from pytest import MonkeyPatch
+    from tests.test_automatic_conversation_recovery import recovery_profile
+    patch=MonkeyPatch()
+    fixture=recovery_profile.__wrapped__(profile,patch)
+    make_cli,wire=next(fixture)
+    cli=make_cli(instance='actual-fresh-process-after-unlock-fault')
+    cli._conversation_recovery.tick()
+    receipt={'pid':os.getpid(),'gets':wire['gets'],'posts':wire['posts'],'providers':wire['providers'],
+             'history_count':len(cli.memory.get_recent_conversations()),'statistics':cli.memory.get_statistics(),
+             'quota_tokens':cli.rate_limiter.tokens_today,'quota_cost':cli.rate_limiter.cost_today}
+    try:
+        next(fixture)
+    except StopIteration:
+        pass
+    patch.undo()
+print(json.dumps(receipt))
+'''
+    child = subprocess.run([sys.executable, "-B", "-c", command, str(Path(__file__).resolve().parents[1]), str(Config.DATA_DIR)],
+                           capture_output=True, text=True, timeout=20, creationflags=subprocess.CREATE_NO_WINDOW)
+    assert child.returncode == 0 and child.stderr == ""
+    result = json.loads(child.stdout)
+    assert result["pid"] != os.getpid()
+    assert result["gets"] == result["posts"] == result["providers"] == 0
+    assert result["history_count"] == result["statistics"]["total_requests"] == 1
+    assert result["statistics"]["total_tokens"] == result["quota_tokens"] == 17
+    assert result["statistics"]["total_cost"] == result["quota_cost"] == pytest.approx(0.0123)
+    assert CAPABILITY not in child.stdout + child.stderr + cli.console.file.getvalue()
+
+
 @pytest.mark.parametrize("fault", ["before_commit", "after_commit", "partial_render"])
 def test_restart_after_history_or_terminal_failure_keeps_one_turn_and_one_charge(recovery_profile, monkeypatch, fault):
     """Crashes can repeat display but cannot duplicate committed history, audit or accounting."""
@@ -447,3 +528,67 @@ def test_two_pending_questions_remain_isolated_and_secrets_stay_out_of_history(r
         if path.is_file():
             assert CAPABILITY.encode() not in path.read_bytes()
     assert CAPABILITY not in cli.console.file.getvalue()
+
+
+@pytest.mark.parametrize("paused", ["identity", "stopped"])
+def test_manual_resume_reports_paused_recovery_without_reading(recovery_profile, paused):
+    """A diagnostic command must explain a denied read without revealing credentials."""
+    make_cli, wire = recovery_profile
+    cli = make_cli()
+    cli.handle_ask("original question")
+    if paused == "identity":
+        cli.backend_client._token_provider = lambda: "synthetic-changed-writing-authority-1234567890"
+    else:
+        cli._conversation_recovery.stop()
+    cli.console.file.seek(0)
+    cli.console.file.truncate(0)
+    cli.handle_resume(JOB)
+    assert "paused" in cli.console.file.getvalue().lower()
+    assert CAPABILITY not in cli.console.file.getvalue()
+    assert wire["gets"] == 0 and wire["posts"] == wire["providers"] == 1
+    assert len(cli._conversation_recovery.store.load()) == 1
+
+
+def test_manual_resume_reports_busy_job_without_duplicate_read(recovery_profile):
+    """An already claimed original job gives feedback without launching another read."""
+    make_cli, wire = recovery_profile
+    cli = make_cli()
+    cli.handle_ask("original question")
+    cli.console.file.seek(0)
+    cli.console.file.truncate(0)
+    with cli._conversation_recovery.store.claim(JOB) as claimed:
+        assert claimed
+        cli.handle_resume(JOB)
+    assert "already being recovered" in cli.console.file.getvalue()
+    assert wire["gets"] == 0 and wire["posts"] == wire["providers"] == 1
+    assert cli.memory.get_recent_conversations() == []
+
+
+def test_manual_resume_reports_record_that_disappears_after_claim(recovery_profile, monkeypatch):
+    """A retired record is not silently represented as pending or completed work."""
+    make_cli, wire = recovery_profile
+    cli = make_cli()
+    cli.handle_ask("original question")
+    monkeypatch.setattr(cli._conversation_recovery.store, "load", lambda: [])
+    cli.console.file.seek(0)
+    cli.console.file.truncate(0)
+    cli.handle_resume(JOB)
+    assert "no longer retained" in cli.console.file.getvalue()
+    assert wire["gets"] == 0 and wire["posts"] == wire["providers"] == 1
+    assert cli.memory.get_recent_conversations() == []
+
+
+def test_every_manual_resume_reports_still_pending_result(recovery_profile):
+    """Only automatic monitoring deduplicates notices; each explicit read gets a status."""
+    make_cli, wire = recovery_profile
+    cli = make_cli()
+    cli.handle_ask("original question")
+    wire["states"][JOB] = ["pending"]
+    for expected_reads in (1, 2):
+        cli.console.file.seek(0)
+        cli.console.file.truncate(0)
+        cli.handle_resume(JOB)
+        assert "still pending" in cli.console.file.getvalue()
+        assert wire["gets"] == expected_reads
+        assert cli.memory.get_recent_conversations() == []
+    assert wire["posts"] == wire["providers"] == 1

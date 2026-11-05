@@ -171,12 +171,18 @@ class ConversationRecovery:
     def recover(self, job_id: str, *, manual: bool = False) -> None:
         """Claim one accepted job before any request or delivery; never treat an arbitrary ID as work."""
         if not self._identity_matches() or self.stop_event.is_set():
+            if manual:
+                self.cli.console.print("Conversation recovery is paused for the current CLI or backend identity.", markup=False)
             return
         with self.store.claim(job_id) as claimed:
             if not claimed:
+                if manual:
+                    self.cli.console.print("This job is already being recovered or is no longer retained. Use /resume to list retained jobs.", markup=False)
                 return
             record = next((row for row in self.store.load() if row["job_id"] == job_id), None)
             if record is None:
+                if manual:
+                    self.cli.console.print("This conversation is no longer retained for recovery.", markup=False)
                 return
             delivery_id = self._delivery_id(job_id)
             completed = self.cli.memory.get_recovered_conversation(delivery_id)
@@ -185,6 +191,8 @@ class ConversationRecovery:
                     job_id, record["job_read_token"], record.get("expires_at"),
                 ))
                 if self.stop_event.is_set() or not self._identity_matches():
+                    if manual:
+                        self.cli.console.print("Conversation recovery is paused for the current CLI or backend identity.", markup=False)
                     return
                 if not response.ok or response.value is None:
                     error = response.error
@@ -198,7 +206,10 @@ class ConversationRecovery:
                         if error and error.continuation and error.continuation.expires_at is not None:
                             self.store.update(job_id, expires_at=error.continuation.expires_at)
                         self._backoff(job_id, transient=not error or error.kind != "pending")
-                        if manual or (error and error.kind != "pending"):
+                        if manual:
+                            message = "The original conversation job is still pending." if error and error.kind == "pending" else "The original job could not be read; its recovery is retained."
+                            self.cli.console.print(message, markup=False)
+                        elif error and error.kind != "pending":
                             self._notice(job_id, "Conversation recovery is waiting for the original job or backend.")
                     return
                 value = response.value

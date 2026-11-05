@@ -257,12 +257,16 @@ class ContinuationStore:
                 raise
             raise ContinuationStorageError("Recovery coordination is unavailable.") from None
         finally:
-            if fd is not None:
-                if locked:
+            try:
+                if fd is not None and locked:
                     os.lseek(fd, offset, os.SEEK_SET)
                     msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
-                os.close(fd)
-            local.release()
+            finally:
+                try:
+                    if fd is not None:
+                        os.close(fd)
+                finally:
+                    local.release()
 
     @contextmanager
     def _transaction(self) -> Iterator[list[dict[str, Any]]]:

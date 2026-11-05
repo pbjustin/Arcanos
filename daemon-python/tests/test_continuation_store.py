@@ -35,6 +35,16 @@ def store(tmp_path):
     return storage.ContinuationStore(tmp_path, BACKEND)
 
 
+def _child_environment(data_dir):
+    """Pin subprocess imports/state to this checkout without relying on pytest's sys.path."""
+    environment = dict(os.environ)
+    environment.update(PYTHONPATH=str(Path(__file__).resolve().parents[1]), DATA_DIR=str(data_dir),
+                       MEMORY_FILE=str(data_dir / "memory.json"), HISTORY_DB_PATH=str(data_dir / "history.db"),
+                       LOG_DIR=str(data_dir / "logs"), OPENAI_API_KEY="synthetic-unused-native-storage-test-key",
+                       ARCANOS_ENV_PATH=str(data_dir / "unused-native-test.env"))
+    return environment
+
+
 def test_native_dpapi_round_trip_is_ciphertext_only_and_survives_reopen(store):
     """Protect the entire record and recover it through a fresh store instance."""
     store.add(record())
@@ -53,14 +63,17 @@ def test_fresh_process_recovers_native_user_protected_records(store):
     """A new Python process under the same Windows account can decrypt retained work."""
     store.add(record())
     command = (
-        "import json,sys; from pathlib import Path; "
+        "import json,os,sys; from pathlib import Path; "
+        "import arcanos.env as runtime_env; runtime_env._BOOTSTRAPPED=True; "
+        "runtime_env._BASE_DIR=Path(os.environ['DATA_DIR']); "
         "from arcanos.continuation_store import ContinuationStore; "
         "r=ContinuationStore(Path(sys.argv[1]),sys.argv[2]).load(); "
         "print(json.dumps({'count':len(r),'original_session':r[0]['session_id']=='original-conversation',"
         "'valid_capability':len(r[0]['job_read_token'])==46}))"
     )
     child = subprocess.run([sys.executable, "-B", "-c", command, str(store.directory.parent), BACKEND],
-                           capture_output=True, text=True, timeout=15, creationflags=subprocess.CREATE_NO_WINDOW)
+                           capture_output=True, text=True, timeout=15, creationflags=subprocess.CREATE_NO_WINDOW,
+                           env=_child_environment(store.directory.parent))
     assert child.returncode == 0
     assert json.loads(child.stdout) == {"count": 1, "original_session": True, "valid_capability": True}
     assert TOKEN not in child.stdout + child.stderr
@@ -93,9 +106,12 @@ def test_dpapi_denies_anonymous_windows_principal_in_isolated_process(store):
     """Exercise actual impersonation in a disposable child, never the pytest process."""
     store.add(record())
     command = r'''
-import ctypes,json,sys
+import ctypes,json,os,sys
 from ctypes import wintypes
 from pathlib import Path
+import arcanos.env as runtime_env
+runtime_env._BOOTSTRAPPED=True
+runtime_env._BASE_DIR=Path(os.environ['DATA_DIR'])
 from arcanos.continuation_store import _dpapi,_HEADER,ContinuationStorageError
 ciphertext=Path(sys.argv[1]).read_bytes()[len(_HEADER):]
 assert _dpapi(ciphertext,decrypt=True)
@@ -119,7 +135,8 @@ finally:
 print(json.dumps({'impersonation':'available','decryption_denied':denied,'reverted':reverted}))
 '''
     child = subprocess.run([sys.executable, "-B", "-c", command, str(store.path)],
-                           capture_output=True, text=True, timeout=15, creationflags=subprocess.CREATE_NO_WINDOW)
+                           capture_output=True, text=True, timeout=15, creationflags=subprocess.CREATE_NO_WINDOW,
+                           env=_child_environment(store.directory.parent))
     assert child.returncode == 0
     assert TOKEN not in child.stdout + child.stderr
     result = json.loads(child.stdout)
@@ -212,6 +229,66 @@ def test_failed_atomic_rename_preserves_old_snapshot_and_ciphertext_temporary(st
     assert len(list(store.directory.iterdir())) == 2
 
 
+@pytest.mark.parametrize("failure", ["unlock", "lseek", "close"])
+def test_cleanup_fault_releases_native_descriptor_and_local_state_lock(store, monkeypatch, failure):
+    """A post-commit cleanup error stays visible without stranding either coordination lock."""
+    import msvcrt
+    native_locking, native_seek, native_close = msvcrt.locking, os.lseek, os.close
+    replace = storage._atomic_replace
+    fault = {"armed": False, "triggered": False, "fd": None}
+
+    def committed(source, destination):
+        """Arm the one-shot native fault only after a real DPAPI atomic commit."""
+        replace(source, destination)
+        fault["armed"] = True
+
+    def should_fail(kind, fd):
+        """Select exactly one resource-cleanup operation after the committed write."""
+        if failure == kind and fault["armed"] and not fault["triggered"]:
+            fault.update(triggered=True, fd=fd)
+            return True
+        return False
+
+    def locking(fd, mode, size):
+        """Keep the real Windows byte lock, injecting only its unlock failure."""
+        if mode == msvcrt.LK_UNLCK and should_fail("unlock", fd):
+            raise OSError("Synthetic post-commit unlock failure")
+        return native_locking(fd, mode, size)
+
+    def seek(fd, offset, whence):
+        """Exercise failure while seeking to the locked byte before unlocking."""
+        if should_fail("lseek", fd):
+            raise OSError("Synthetic post-commit lseek failure")
+        return native_seek(fd, offset, whence)
+
+    def close(fd):
+        """Model an error reported after native descriptor closure, without leaking it."""
+        if should_fail("close", fd):
+            native_close(fd)
+            raise OSError("Synthetic post-commit close failure")
+        return native_close(fd)
+
+    monkeypatch.setattr(storage, "_atomic_replace", committed)
+    monkeypatch.setattr(msvcrt, "locking", locking)
+    monkeypatch.setattr(os, "lseek", seek)
+    monkeypatch.setattr(os, "close", close)
+    local = None
+    try:
+        with pytest.raises(OSError, match="Synthetic post-commit"):
+            store.add(record())
+        assert fault["triggered"] and store.path.exists()
+        local = storage._THREAD_LOCKS[(str(store.lock_path).casefold(), 0)]
+        assert not local.locked()
+        assert store.load()[0]["job_id"] == JOB
+    finally:
+        # Also clean an unfixed implementation after its expected failing-before
+        # assertion, so a leaked test lock never prevents pytest temp cleanup.
+        if local is not None and local.locked():
+            if failure != "close":
+                native_close(fault["fd"])
+            local.release()
+
+
 @pytest.mark.parametrize("field,value", [("job_id", "not-a-job"), ("job_read_token", "invalid"),
                                        ("state", "unknown"), ("created_at", float("nan")),
                                        ("session_id", ""), ("question", "\ud800")])
@@ -265,14 +342,17 @@ def test_native_process_claim_releases_after_process_crash(store, tmp_path):
     """Windows releases a crashed monitor's lock so a later process can recover safely."""
     ready = tmp_path / "claim-ready"
     command = (
-        "import sys,time; from pathlib import Path; "
+        "import os,sys,time; from pathlib import Path; "
+        "import arcanos.env as runtime_env; runtime_env._BOOTSTRAPPED=True; "
+        "runtime_env._BASE_DIR=Path(os.environ['DATA_DIR']); "
         "from arcanos.continuation_store import ContinuationStore; "
         "s=ContinuationStore(Path(sys.argv[1]),sys.argv[2]); "
         "c=s.claim('__monitor__'); owned=c.__enter__(); "
         "Path(sys.argv[3]).write_text('owned' if owned else 'busy'); time.sleep(30)"
     )
     child = subprocess.Popen([sys.executable, "-B", "-c", command, str(store.directory.parent), BACKEND, str(ready)],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW)
+                             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW,
+                             env=_child_environment(store.directory.parent))
     try:
         deadline = time.monotonic() + 10
         while not ready.exists() and child.poll() is None and time.monotonic() < deadline:
