@@ -159,7 +159,10 @@ def install_native_observers() -> None:
     def observed_editor():
         """Observe the real editor input boundary without replacing terminal behavior."""
         with original_editor() as read:
-            yield lambda *args, **kwargs: after_input(read(*args, **kwargs))
+            def observed_read(*args, **kwargs):
+                return after_input(read(*args, **kwargs))
+            observed_read._arcanos_redraw_safe = getattr(read, "_arcanos_redraw_safe", False)
+            yield observed_read
 
     from arcanos import cli_runner
     cli_runner.interactive_input = observed_editor

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 import asyncio
 import os
 import sys
@@ -71,21 +71,32 @@ def interactive_input() -> Iterator[Callable[[str], str]]:
         yield input
         return
 
-    from prompt_toolkit import PromptSession
-    from prompt_toolkit.application import create_app_session
-    from prompt_toolkit.completion import NestedCompleter
-    from prompt_toolkit.patch_stdout import patch_stdout
+    with ExitStack() as resources:
+        try:
+            from prompt_toolkit import PromptSession
+            from prompt_toolkit.application import create_app_session
+            from prompt_toolkit.completion import NestedCompleter
+            from prompt_toolkit.patch_stdout import patch_stdout
 
-    commands = {name: None for name in (*SLASH_COMMANDS, "/resume")}
-    commands.update({name: dict.fromkeys(options) for name, options in SUBCOMMANDS.items()})
-    with _readable_windows_console(), create_app_session() as app_session:
-        session = PromptSession(
-            completer=NestedCompleter.from_nested_dict(commands),
-            # A real Windows console supports redraw even when TERM is unset
-            # or inherited as "dumb". Keep one scoped native output object for
-            # both the editor and stdout proxy, then discard its console handle.
-            output=app_session.output if sys.platform == "win32" else None,
-        )
+            commands = {name: None for name in (*SLASH_COMMANDS, "/resume")}
+            commands.update({name: dict.fromkeys(options) for name, options in SUBCOMMANDS.items()})
+            resources.enter_context(_readable_windows_console())
+            app_session = resources.enter_context(create_app_session())
+            session = PromptSession(
+                completer=NestedCompleter.from_nested_dict(commands),
+                # A real Windows console supports redraw even when TERM is unset
+                # or inherited as "dumb". Keep one scoped native output object for
+                # both the editor and stdout proxy, then discard its console handle.
+                output=app_session.output,
+            )
+            resources.enter_context(patch_stdout(raw=True))
+        except Exception:
+            # Only setup is optional. Unwind native handles/proxies before
+            # ordinary input, and never reinterpret a partly entered prompt.
+            resources.close()
+            print("Automatic conversation recovery is unavailable in this terminal; use /resume for pending answers.")
+            yield input
+            return
 
         def read(prompt: str) -> str:
             """Read real terminal input while preserving the standard input audit boundary."""
@@ -96,5 +107,6 @@ def interactive_input() -> Iterator[Callable[[str], str]]:
 
             return session.prompt(prompt, pre_run=ready)
 
-        with patch_stdout(raw=True):
-            yield read
+        # The runner must not start concurrent answer output for builtin input.
+        read._arcanos_redraw_safe = True
+        yield read

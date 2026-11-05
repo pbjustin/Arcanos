@@ -303,11 +303,24 @@ def run_interactive_mode(cli: "ArcanosCLI") -> None:
     try:
         with interactive_input() as read_input:
             try:
-                if hasattr(cli, "_start_conversation_recovery"):
+                if not getattr(read_input, "_arcanos_redraw_safe", False):
+                    # Plain input cannot redraw an active line around worker output.
+                    if hasattr(cli, "_stop_conversation_recovery"):
+                        cli._stop_conversation_recovery()
+                elif hasattr(cli, "_start_conversation_recovery"):
                     cli._start_conversation_recovery()
                 while True:
                     try:
-                        user_input = read_input("> ").strip()
+                        try:
+                            user_input = read_input("> ").strip()
+                        except (KeyboardInterrupt, EOFError):
+                            raise
+                        except Exception:
+                            # A failed reader may hold partial input. Do not
+                            # replay it, switch readers, or spin on the same fault.
+                            cli._last_error = "Interactive input failed"
+                            cli.console.print("[red]Interactive input failed; restart the CLI to continue.[/red]")
+                            break
                         if not user_input:
                             continue
 
