@@ -200,7 +200,7 @@ class Memory:
         return self.data["settings"].get(key, default)
 
     def clear_conversations(self) -> None:
-        """Clear all conversation history"""
+        """Clear saved history, deferring undisplayed recovery payloads until acknowledgement."""
         recovery_db = self._recovery_history()
         if recovery_db is not None:
             recovery_db.clear_recovered_history()

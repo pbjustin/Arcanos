@@ -192,6 +192,22 @@ class HistoryDB:
                 )
                 """
             )
+            self._scrub_cleared_recovered_content(c)
+
+    @staticmethod
+    def _scrub_cleared_recovered_content(connection: sqlite3.Connection) -> None:
+        """Remove cleared, displayed payloads while keeping delivery and audit receipts.
+
+        Undisplayed answers remain available for crash recovery until display
+        acknowledgement. This is logical content deletion, not physical erasure
+        of SQLite pages, WAL files or independently retained backups.
+        """
+        connection.execute(
+            """UPDATE conversation_deliveries
+            SET session_id='', user_text='', answer_text='', payload_bytes=length(delivery_id)+256
+            WHERE history_visible=0 AND displayed=1
+            AND (session_id<>'' OR user_text<>'' OR answer_text<>'')"""
+        )
 
     def record_recovered_conversation(
         self, delivery_id: str, session_id: str, user: str, response: str,
@@ -278,7 +294,12 @@ class HistoryDB:
         _validate_delivery_id(delivery_id)
         with closing(self._conn()) as c:
             c.row_factory = sqlite3.Row
-            row = c.execute("SELECT * FROM conversation_deliveries WHERE delivery_id=?", (delivery_id,)).fetchone()
+            row = c.execute(
+                """SELECT delivery.*, event.event AS completion_event
+                FROM conversation_deliveries AS delivery
+                LEFT JOIN policy_events AS event ON event.id='conversation-delivery:' || delivery.delivery_id
+                WHERE delivery.delivery_id=?""", (delivery_id,),
+            ).fetchone()
         return self._recovered_record(row) if row else None
 
     @staticmethod
@@ -289,6 +310,11 @@ class HistoryDB:
             "user": row["user_text"], "ai": row["answer_text"],
             "tokens": row["tokens"], "cost": row["cost"], "created_at": row["created_at"],
             "displayed": bool(row["displayed"]), "audit_emitted": bool(row["audit_emitted"]),
+            "output_accepted": (
+                row["completion_event"] == "conversation.completed"
+                if "completion_event" in row.keys() and row["completion_event"] is not None
+                else bool(row["answer_text"])
+            ),
         }
 
     def mark_recovered_displayed(self, delivery_id: str) -> None:
@@ -298,6 +324,7 @@ class HistoryDB:
             c.execute("PRAGMA synchronous=FULL")
             if not c.execute("UPDATE conversation_deliveries SET displayed=1 WHERE delivery_id=?", (delivery_id,)).rowcount:
                 raise RecoveredConversationStorageError("Completed conversation receipt is unavailable.")
+            self._scrub_cleared_recovered_content(c)
 
     def claim_recovered_audit(self, delivery_id: str) -> bool:
         """Claim at most one console audit emission; the durable event already exists."""
@@ -340,9 +367,11 @@ class HistoryDB:
         return json.loads(row[0]) if row else {"total_requests": 0, "total_tokens": 0, "total_cost": 0.0}
 
     def clear_recovered_history(self) -> None:
-        """Hide cleared turns while retaining receipts needed to reject replays."""
+        """Clear displayed content; hide undisplayed work until it can be acknowledged."""
         with closing(self._conn()) as c, c:
+            c.execute("PRAGMA synchronous=FULL")
             c.execute("UPDATE conversation_deliveries SET history_visible=0")
+            self._scrub_cleared_recovered_content(c)
 
     def reset_recovered_statistics(self) -> None:
         """Reset displayed totals without deleting delivery or limiter deduplication."""

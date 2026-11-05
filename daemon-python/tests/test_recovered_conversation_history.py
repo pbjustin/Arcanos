@@ -220,6 +220,142 @@ def test_clear_and_reset_preserve_replay_receipts(tmp_path):
     assert len(memory.get_recovered_usage()) == 1
 
 
+def test_clear_removes_acknowledged_sql_content_but_retains_receipts_usage_and_audit(tmp_path):
+    """The actual clear command must remove saved prose, rather than only hide its rows."""
+    import io
+    from contextlib import closing
+    from rich.console import Console
+    from arcanos.cli import ui_ops
+
+    memory = memory_at(tmp_path)
+    key = delivery_key()
+    question, answer = "Synthetic private question marker", "Synthetic private answer marker"
+    memory.add_conversation("legacy question", "legacy answer", 3, 0.1)
+    memory.record_recovered_conversation(key, "original-session", question, answer, 10, 0.01)
+    memory.mark_recovered_displayed(key)
+    assert memory.claim_recovered_audit(key)
+    output = io.StringIO()
+    ui_ops.handle_clear(SimpleNamespace(memory=memory, console=Console(file=output)))
+    assert "Conversation history cleared" in output.getvalue()
+    assert memory.get_recent_conversations() == []
+    assert json.loads(memory.file_path.read_text())["conversations"] == []
+    with closing(sqlite3.connect(Config.HISTORY_DB_PATH)) as connection:
+        row = connection.execute(
+            "SELECT session_id,user_text,answer_text,history_visible,displayed,audit_emitted,payload_bytes "
+            "FROM conversation_deliveries WHERE delivery_id=?", (key,),
+        ).fetchone()
+        assert row == ("", "", "", 0, 1, 1, len(key) + 256)
+        event, detail = connection.execute("SELECT event,detail_json FROM policy_events").fetchone()
+        assert event == "conversation.completed"
+        assert json.loads(detail) == {"delivery_id": key, "tokens": 10, "cost": 0.01}
+        logical_dump = "\n".join(connection.iterdump())
+    assert question not in logical_dump and answer not in logical_dump
+    assert memory.get_statistics()["total_requests"] == 2
+    assert memory.get_statistics()["total_tokens"] == 13
+    assert memory.get_statistics()["total_cost"] == pytest.approx(0.11)
+    assert len(memory.get_recovered_usage()) == 1
+    assert not memory.record_recovered_conversation(key, "original-session", question, answer, 10, 0.01)
+    assert memory.get_recovered_conversation(key)["ai"] == ""
+
+
+@pytest.mark.parametrize("audit_claimed", [False, True])
+def test_clear_defers_content_removal_only_until_display_acknowledgement(tmp_path, audit_claimed):
+    """Undisplayed content remains recoverable; display acknowledgement retires hidden prose."""
+    memory = memory_at(tmp_path)
+    key = delivery_key()
+    memory.record_recovered_conversation(key, "original-session", "original question", "complete answer", 10, 0.01)
+    if audit_claimed:
+        assert memory.claim_recovered_audit(key)
+    memory.clear_conversations()
+    assert memory.get_recent_conversations() == []
+    restarted = memory_at(tmp_path)
+    pending = restarted.get_recovered_conversation(key)
+    assert pending["user"] == "original question" and pending["ai"] == "complete answer"
+    assert restarted.get_recent_conversations() == []
+    restarted.mark_recovered_displayed(key)
+    completed = restarted.get_recovered_conversation(key)
+    assert completed["user"] == completed["ai"] == completed["session_id"] == ""
+    assert completed["displayed"] and completed["audit_emitted"] is audit_claimed
+    assert completed["output_accepted"] is True
+    assert restarted.get_statistics()["total_requests"] == 1
+    assert len(restarted.get_recovered_usage()) == 1
+    assert not restarted.record_recovered_conversation(key, "original-session", "wrong q", "wrong a", 99, 9)
+
+
+@pytest.mark.parametrize("audit_claimed", [False, True])
+def test_reopen_scrubs_legacy_hidden_acknowledged_content(tmp_path, audit_claimed):
+    """Opening an old hide-only history record completes its deferred content deletion."""
+    memory = memory_at(tmp_path)
+    key = delivery_key()
+    memory.record_recovered_conversation(key, "original-session", "cleared question", "cleared answer", 10, 0.01)
+    memory.mark_recovered_displayed(key)
+    if audit_claimed:
+        memory.claim_recovered_audit(key)
+    with sqlite3.connect(Config.HISTORY_DB_PATH) as connection:
+        connection.execute("UPDATE conversation_deliveries SET history_visible=0 WHERE delivery_id=?", (key,))
+    restarted = memory_at(tmp_path)
+    assert restarted.get_recent_conversations() == []
+    row = restarted.get_recovered_conversation(key)
+    assert row["user"] == row["ai"] == row["session_id"] == ""
+    assert restarted.get_statistics()["total_requests"] == 1
+    assert len(restarted.get_recovered_usage()) == 1
+
+
+@pytest.mark.parametrize("answer,expected_event", [("approved answer", "conversation.completed"), ("", "conversation.withheld")])
+def test_clear_between_display_and_audit_ack_retains_non_content_completion_outcome(tmp_path, answer, expected_event):
+    """A crash after display must not turn scrubbed approved output into a failed audit."""
+    from contextlib import closing
+
+    memory = memory_at(tmp_path)
+    key = delivery_key()
+    memory.record_recovered_conversation(key, "original-session", "private question", answer, 10, 0.01)
+    memory.mark_recovered_displayed(key)
+    memory.clear_conversations()
+    restarted = memory_at(tmp_path)
+    receipt = restarted.get_recovered_conversation(key)
+    assert receipt["user"] == receipt["ai"] == receipt["session_id"] == ""
+    assert receipt["displayed"] and not receipt["audit_emitted"]
+    assert receipt["output_accepted"] is (expected_event == "conversation.completed")
+    assert restarted.claim_recovered_audit(key)
+    assert not restarted.claim_recovered_audit(key)
+    with closing(sqlite3.connect(Config.HISTORY_DB_PATH)) as connection:
+        assert connection.execute("SELECT event FROM policy_events").fetchone()[0] == expected_event
+    assert restarted.get_statistics()["total_requests"] == 1
+    assert len(restarted.get_recovered_usage()) == 1
+
+
+@pytest.mark.parametrize("answer", ["legacy approved answer", ""])
+def test_missing_legacy_completion_event_does_not_invent_acceptance_after_clear(tmp_path, answer):
+    """An absent old event uses retained approved text, then fails closed after deletion."""
+    memory = memory_at(tmp_path)
+    key = delivery_key()
+    memory.record_recovered_conversation(key, "s", "question", answer, 10, 0.01)
+    with sqlite3.connect(Config.HISTORY_DB_PATH) as connection:
+        connection.execute("DELETE FROM policy_events WHERE id=?", ("conversation-delivery:" + key,))
+    assert memory.get_recovered_conversation(key)["output_accepted"] is bool(answer)
+    memory.mark_recovered_displayed(key)
+    memory.clear_conversations()
+    assert memory.get_recovered_conversation(key)["output_accepted"] is False
+
+
+def test_content_scrub_failure_rolls_back_clear_without_false_hidden_history(tmp_path):
+    """Content removal and visibility change must commit together or leave the turn intact."""
+    memory = memory_at(tmp_path)
+    key = delivery_key()
+    memory.record_recovered_conversation(key, "s", "question", "answer", 10, 0.01)
+    memory.mark_recovered_displayed(key)
+    memory.claim_recovered_audit(key)
+    with sqlite3.connect(Config.HISTORY_DB_PATH) as connection:
+        connection.execute(
+            "CREATE TRIGGER reject_content_scrub BEFORE UPDATE OF user_text ON conversation_deliveries "
+            "WHEN NEW.user_text='' BEGIN SELECT RAISE(ABORT,'synthetic scrub failure'); END"
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="synthetic scrub failure"):
+        memory.clear_conversations()
+    assert memory.get_recent_conversations()[0]["ai"] == "answer"
+    assert memory.get_statistics()["total_requests"] == 1
+
+
 @pytest.mark.parametrize("budget_name,budget", [("RECOVERED_CONVERSATION_LIMIT", 1), ("RECOVERED_CONVERSATION_BYTES", 600)])
 def test_capacity_failure_keeps_existing_receipt_and_accounting(tmp_path, monkeypatch, budget_name, budget):
     """Bounded capacity fails closed, allowing the caller to retain encrypted pending work."""
