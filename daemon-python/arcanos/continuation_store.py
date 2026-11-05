@@ -21,6 +21,7 @@ from .action_plan_execution_journal import _secure_path
 MAX_RECOVERY_RECORDS = 8
 MAX_RECOVERY_BYTES = 2 * 1024 * 1024
 MAX_QUESTION_BYTES = 128 * 1024
+MAX_COORDINATION_BYTES = 1 + 2 * MAX_RECOVERY_RECORDS
 _HEADER = b"ARCANOS-CONTINUATION-DPAPI-1\n"
 _ENTROPY = b"arcanos:conversation-recovery:v1"
 _STATES = {"pending", "ready", "recorded", "displaying", "delivered", "terminal"}
@@ -202,6 +203,8 @@ class ContinuationStore:
         self.path = self.directory / "pending.dpapi"
         self.lock_path = self.directory / "coordination.lock"
         self._temporary_path = self.directory / "pending.replace"
+        self._owners: dict[str, tuple[int, Any]] = {}
+        self._owners_lock = threading.RLock()
         try:
             _check_path(self.directory.parent, directory=True)
             _check_path(self.directory, directory=True, missing=True)
@@ -210,7 +213,7 @@ class ContinuationStore:
             for candidate in (self.path, self.lock_path, self._temporary_path):
                 _check_path(candidate, directory=False, missing=True)
                 if candidate.exists():
-                    limit = 10 if candidate == self.lock_path else MAX_RECOVERY_BYTES
+                    limit = MAX_COORDINATION_BYTES if candidate == self.lock_path else MAX_RECOVERY_BYTES
                     if candidate.stat().st_size > limit:
                         raise OSError
                     _secure_path(candidate, directory=False)
@@ -236,7 +239,7 @@ class ContinuationStore:
         body_entered = False
         try:
             _check_path(self.lock_path, directory=False)
-            if self.lock_path.stat().st_size > 10:
+            if self.lock_path.stat().st_size > MAX_COORDINATION_BYTES:
                 raise OSError
             fd = os.open(self.lock_path, os.O_RDWR | getattr(os, "O_BINARY", 0))
             deadline = time.monotonic() + (2.0 if wait else 0.0)
@@ -408,9 +411,52 @@ class ContinuationStore:
         with self._transaction() as records:
             return [dict(record) for record in records if record["backend_identity"] == self.backend_identity]
 
-    def add(self, record: dict[str, Any]) -> None:
+    def _take_owner(self, record: dict[str, Any]) -> bool:
+        """Hold this job's bounded native ownership byte; caller holds map/snapshot locks."""
+        job_id, slot = record["job_id"], record["_slot"]
+        if job_id in self._owners:
+            return self._owners[job_id][0] == slot
+        claim = self._byte_lock(MAX_RECOVERY_RECORDS + 1 + slot)
+        if not claim.__enter__():
+            claim.__exit__(None, None, None)
+            return False
+        self._owners[job_id] = (slot, claim)
+        return True
+
+    def owns(self, job_id: str) -> bool:
+        """Check this controller's live claim, independent of persisted session IDs."""
+        with self._owners_lock:
+            return job_id in self._owners
+
+    def acquire_ownership(self, job_id: str) -> bool:
+        """Adopt only a retained job whose originating foreground owner has released it."""
+        with self._owners_lock, self._transaction() as records:
+            record = next((row for row in records if row["backend_identity"] == self.backend_identity
+                           and row["job_id"] == job_id), None)
+            return record is not None and self._take_owner(record)
+
+    def release_ownership(self, job_id: str) -> None:
+        """Release the live owner after retirement or foreground shutdown; OS death also releases it."""
+        with self._owners_lock:
+            owner = self._owners.pop(job_id, None)
+            if owner is not None:
+                owner[1].__exit__(None, None, None)
+
+    def release_ownerships(self) -> None:
+        """Close all bounded native owner claims without discarding protected pending records."""
+        failure = False
+        with self._owners_lock:
+            for job_id in list(self._owners):
+                try:
+                    self.release_ownership(job_id)
+                except OSError:
+                    failure = True
+        if failure:
+            raise ContinuationStorageError("Recovery ownership could not be released cleanly.")
+
+    def add(self, record: dict[str, Any], *, claim_owner: bool = False) -> None:
         """Persist accepted coordinates once without replacing the original question."""
-        with self._transaction() as records:
+        with self._owners_lock, self._transaction() as records:
             candidate = dict(record)
             candidate.setdefault("backend_identity", self.backend_identity)
             existing = next((row for row in records if row["backend_identity"] == self.backend_identity
@@ -419,14 +465,23 @@ class ContinuationStore:
                 keys = ("job_read_token", "question", "session_id", "backend_identity")
                 if any(candidate.get(key) != existing[key] for key in keys):
                     raise ContinuationStorageError("Conflicting recovery coordinates were rejected.")
+                if claim_owner and not self._take_owner(existing):
+                    raise ContinuationStorageError("This conversation belongs to another active CLI.")
                 return
             if len(records) >= MAX_RECOVERY_RECORDS:
                 raise ContinuationStorageError("The protected recovery limit has been reached.")
             candidate["_slot"] = next(slot for slot in range(MAX_RECOVERY_RECORDS) if all(row["_slot"] != slot for row in records))
             if candidate["backend_identity"] != self.backend_identity or not _valid_record(candidate):
                 raise ContinuationStorageError("Recovery coordinates are invalid.")
+            if claim_owner and not self._take_owner(candidate):
+                raise ContinuationStorageError("Recovery ownership is busy.")
             records.append(candidate)
-            self._write(records)
+            try:
+                self._write(records)
+            except Exception:
+                if claim_owner:
+                    self.release_ownership(candidate["job_id"])
+                raise
 
     def update(self, job_id: str, **fields: Any) -> dict[str, Any]:
         """Commit lifecycle/accounting evidence without changing immutable coordinates."""
@@ -450,6 +505,7 @@ class ContinuationStore:
             remaining = [row for row in records if row["backend_identity"] != self.backend_identity or row["job_id"] != job_id]
             if len(remaining) != len(records):
                 self._write(remaining)
+        self.release_ownership(job_id)
 
     @contextmanager
     def claim(self, job_id: str) -> Iterator[bool]:

@@ -409,8 +409,56 @@ def test_existing_ciphertext_has_private_file_acl_after_reopen(store):
 
 def test_oversize_coordination_file_fails_closed(store):
     """Reject tampered coordination data instead of allowing unbounded auxiliary disk use."""
-    store.lock_path.write_bytes(b"x" * 11)
+    store.lock_path.write_bytes(b"x" * (storage.MAX_COORDINATION_BYTES + 1))
     with pytest.raises(storage.ContinuationStorageError):
         store.load()
     with pytest.raises(storage.ContinuationStorageError):
         storage.ContinuationStore(store.directory.parent, BACKEND)
+
+
+def test_origin_owns_before_snapshot_is_visible_and_hands_off_on_release(store, monkeypatch):
+    """A retained job cannot be claimed by another console before its origin owns it."""
+    other = storage.ContinuationStore(store.directory.parent, BACKEND)
+    original_write = store._write
+    observed = []
+
+    def committed(records):
+        """Inspect the actual local owner before committing the protected snapshot."""
+        observed.append(store.owns(JOB))
+        return original_write(records)
+
+    monkeypatch.setattr(store, "_write", committed)
+    store.add(record(), claim_owner=True)
+    try:
+        assert observed == [True]
+        assert store.owns(JOB)
+        assert not other.acquire_ownership(JOB)
+        store.release_ownerships()
+        assert other.acquire_ownership(JOB)
+        assert not store.acquire_ownership(JOB)
+        other.remove(JOB)
+        assert not other.owns(JOB)
+        assert store.load() == []
+    finally:
+        store.release_ownerships()
+        other.release_ownerships()
+
+
+def test_failed_owned_snapshot_releases_the_native_claim(store, monkeypatch):
+    """A failed encrypted write cannot leave an invisible live owner reservation behind."""
+    def failed(_records):
+        """Fail before committing any private coordinates."""
+        raise storage.ContinuationStorageError("Synthetic persistence failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "_write", failed)
+        with pytest.raises(storage.ContinuationStorageError):
+            store.add(record(), claim_owner=True)
+    assert not store.owns(JOB)
+    other = storage.ContinuationStore(store.directory.parent, BACKEND)
+    other.add(record(), claim_owner=True)
+    try:
+        assert other.owns(JOB)
+        assert storage.ContinuationStore(store.directory.parent, OTHER_BACKEND).acquire_ownership(JOB) is False
+    finally:
+        other.release_ownerships()

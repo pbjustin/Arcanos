@@ -146,6 +146,7 @@ def presentation_cli(monkeypatch):
     cli.memory.get_setting.return_value = 0
     cli.rate_limiter = MagicMock()
     cli.rate_limiter.can_make_request.return_value = (True, None)
+    cli.rate_limiter.reserve_request.return_value = ("test-admission", None)
     cli.audio = MagicMock()
     cli.gpt_client = MagicMock()
     cli.vision = MagicMock()

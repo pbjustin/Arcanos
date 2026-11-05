@@ -6,6 +6,7 @@ Tracks and enforces request, token, and cost limits.
 import time
 import math
 import threading
+import uuid
 from datetime import datetime, timedelta
 from typing import Optional
 from .config import Config
@@ -20,6 +21,7 @@ class RateLimiter:
         self.cost_today: float = 0.0
         self.last_reset: datetime = datetime.now()
         self._recovered_requests: dict[str, float] = {}
+        self._request_reservations: dict[str, float] = {}
         self._lock = threading.RLock()
 
     def _reset_daily_limits(self) -> None:
@@ -34,6 +36,49 @@ class RateLimiter:
         """Remove requests older than 1 hour"""
         cutoff = time.time() - 3600
         self.requests_per_hour = [t for t in self.requests_per_hour if t > cutoff]
+        self._request_reservations = {
+            key: timestamp for key, timestamp in self._request_reservations.items()
+            if timestamp > cutoff
+        }
+
+    def reserve_request(self) -> tuple[Optional[str], Optional[str]]:
+        """Atomically admit one original request without recording completed usage."""
+        with self._lock:
+            allowed, reason = self.can_make_request()
+            if not allowed:
+                return None, reason
+            reservation_id = uuid.uuid4().hex
+            timestamp = time.time()
+            self._request_reservations[reservation_id] = timestamp
+            self.requests_per_hour.append(timestamp)
+            return reservation_id, None
+
+    def transfer_request(self, reservation_id: str, delivery_id: str) -> None:
+        """Keep an accepted job's admission until its original result is accounted."""
+        with self._lock:
+            timestamp = self._request_reservations.pop(reservation_id, None)
+            if timestamp is not None:
+                self._request_reservations.setdefault(delivery_id, timestamp)
+
+    def restore_request(self, delivery_id: str, created_at: float) -> None:
+        """Restore an accepted job's hourly admission from protected recovery state."""
+        with self._lock:
+            self._clean_hourly_requests()
+            if delivery_id in self._request_reservations or delivery_id in self._recovered_requests:
+                return
+            now = time.time()
+            if not math.isfinite(created_at) or created_at > now + 60 or created_at <= now - 3600:
+                return
+            self._request_reservations[delivery_id] = created_at
+            self.requests_per_hour.append(created_at)
+            self.requests_per_hour.sort()
+
+    def release_request(self, reservation_id: str, *, refund: bool = False) -> None:
+        """Release in-flight bookkeeping; refund only work known not to be dispatched."""
+        with self._lock:
+            timestamp = self._request_reservations.pop(reservation_id, None)
+            if refund and timestamp is not None and timestamp in self.requests_per_hour:
+                self.requests_per_hour.remove(timestamp)
 
     def can_make_request(self) -> tuple[bool, Optional[str]]:
         """
@@ -59,11 +104,14 @@ class RateLimiter:
 
             return True, None
 
-    def record_request(self, tokens: int, cost: float) -> None:
+    def record_request(self, tokens: int, cost: float, *, reservation_id: Optional[str] = None) -> None:
         """Record a completed request"""
         with self._lock:
             self._reset_daily_limits()
-            self.requests_per_hour.append(time.time())
+            self._clean_hourly_requests()
+            reserved = self._request_reservations.pop(reservation_id, None)
+            if reserved is None:
+                self.requests_per_hour.append(time.time())
             self.tokens_today += tokens
             self.cost_today += cost
 
@@ -91,6 +139,7 @@ class RateLimiter:
             # Startup reconciliation replays the bounded durable usage window.
             # Known receipts need neither another charge nor an O(n) sweep.
             if delivery_id in self._recovered_requests:
+                self._request_reservations.pop(delivery_id, None)
                 return False
             self._clean_hourly_requests()
             midnight = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
@@ -106,10 +155,11 @@ class RateLimiter:
             if recorded_at < cutoff:
                 return False
             self._recovered_requests[delivery_id] = recorded_at
+            reserved = self._request_reservations.pop(delivery_id, None)
             if datetime.fromtimestamp(recorded_at).date() == datetime.now().date():
                 self.tokens_today += tokens
                 self.cost_today += cost
-            if recorded_at > now - 3600:
+            if reserved is None and recorded_at > now - 3600:
                 self.requests_per_hour.append(recorded_at)
                 self.requests_per_hour.sort()
             return True

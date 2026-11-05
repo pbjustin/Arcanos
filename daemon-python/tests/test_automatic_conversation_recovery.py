@@ -41,6 +41,39 @@ def _response(status, value):
     return SimpleNamespace(status_code=status, headers={}, text=json.dumps(value), json=lambda: value)
 
 
+@pytest.mark.parametrize("boundary", ["cache", "ownership"])
+def test_failed_startup_does_not_leave_restored_legacy_context_or_owner(recovery_profile, monkeypatch, boundary):
+    """A failed controller cannot retain native claims or expose restored work to legacy resume."""
+    make_cli, _ = recovery_profile
+    original = make_cli(instance="shared-installation")
+    original.handle_ask("what can u do?")
+    original._conversation_recovery.stop()
+    reopened = make_cli(instance="shared-installation", recovery=False)
+    stores = []
+    from arcanos.cli import conversation_recovery as module
+    real_store = module.ContinuationStore
+
+    def captured(*args, **kwargs):
+        store = real_store(*args, **kwargs)
+        stores.append(store)
+        return store
+
+    monkeypatch.setattr(module, "ContinuationStore", captured)
+    monkeypatch.setattr(ConversationRecovery, "_sync_usage", lambda self: (_ for _ in ()).throw(RuntimeError("unavailable history")))
+    try:
+        reopened._start_conversation_recovery()
+        assert reopened._conversation_recovery is None
+        if boundary == "cache":
+            assert JOB not in reopened._pending_backend_conversations
+        else:
+            contender = real_store(Config.DATA_DIR, reopened.backend_client.continuation_identity())
+            stores.append(contender)
+            assert contender.acquire_ownership(JOB)
+    finally:
+        for store in stores:
+            store.release_ownerships()
+
+
 def _completed(job_id=JOB, answer=ANSWER):
     """Use the existing jobs result envelope with server-owned presentation provenance."""
     return {"jobId": job_id, "status": "completed", "jobStatus": "completed", "lifecycleStatus": "completed",
@@ -297,7 +330,7 @@ def test_authorization_failure_never_refreshes_or_retries_generation(recovery_pr
     assert CAPABILITY not in cli.console.file.getvalue()
 
 
-def test_duplicate_controllers_share_one_monitor_claim(recovery_profile):
+def test_duplicate_controllers_cannot_read_a_live_owners_job(recovery_profile):
     """Two CLI controllers cannot both poll the same accepted job."""
     make_cli, wire = recovery_profile
     first = make_cli()
@@ -308,8 +341,8 @@ def test_duplicate_controllers_share_one_monitor_claim(recovery_profile):
     second._conversation_recovery.start()
     _wait_for(lambda: wire["gets"] == 1)
     time.sleep(0.1)
-    first._conversation_recovery.stop()
     second._conversation_recovery.stop()
+    first._conversation_recovery.stop()
     assert wire["gets"] == 1
     assert wire["posts"] == wire["providers"] == 1
     assert first.memory.get_recent_conversations() == []
@@ -415,6 +448,49 @@ print(json.dumps(receipt))
     assert CAPABILITY not in child.stdout + child.stderr + cli.console.file.getvalue()
 
 
+def test_owned_ambiguous_commit_cannot_fall_back_when_snapshot_read_fails(recovery_profile, monkeypatch):
+    """A protected native claim remains authoritative during a subsequent snapshot outage."""
+    import msvcrt
+    from arcanos import continuation_store as storage
+    make_cli, wire = recovery_profile
+    cli = make_cli()
+    controller = cli._conversation_recovery
+    replace, native_locking = storage._atomic_replace, msvcrt.locking
+    fault = {"armed": False, "triggered": False}
+
+    def committed(source, destination):
+        """Arm only after a real DPAPI snapshot has been durably replaced."""
+        replace(source, destination)
+        fault["armed"] = True
+
+    def locking(fd, mode, size):
+        """Make acceptance return ambiguously without undoing its protected owner."""
+        if mode == msvcrt.LK_UNLCK and fault["armed"] and not fault["triggered"]:
+            fault["triggered"] = True
+            raise OSError("Synthetic post-commit unlock failure")
+        return native_locking(fd, mode, size)
+
+    monkeypatch.setattr(storage, "_atomic_replace", committed)
+    monkeypatch.setattr(msvcrt, "locking", locking)
+    cli.handle_ask("original question")
+    assert fault["triggered"] and controller.store.owns(JOB)
+    assert JOB not in controller._protected_jobs
+    wire["states"][JOB] = ["completed"]
+    wire["maximum_read_timeout"] = 5  # Expose an erroneous legacy read as a history violation.
+
+    def unavailable():
+        """Reject one phase of protected reads without disclosing its private coordinates."""
+        raise ContinuationStorageError("Protected continuation storage is unavailable.")
+
+    with monkeypatch.context() as failure:
+        failure.setattr(controller.store, "load", unavailable)
+        cli.handle_resume(JOB)
+    controller.tick()
+    assert cli.memory.data["conversations"] == []
+    _assert_saved_once(cli)
+    assert wire["posts"] == wire["providers"] == wire["gets"] == 1
+
+
 @pytest.mark.parametrize("fault", ["before_commit", "after_commit", "partial_render"])
 def test_restart_after_history_or_terminal_failure_keeps_one_turn_and_one_charge(recovery_profile, monkeypatch, fault):
     """Crashes can repeat display but cannot duplicate committed history, audit or accounting."""
@@ -442,6 +518,9 @@ def test_restart_after_history_or_terminal_failure_keeps_one_turn_and_one_charge
             patch.setattr(first.memory, "record_recovered_conversation", failed_record)
         first._conversation_recovery.tick()
     assert len(first._conversation_recovery.store.load()) == 1
+    # Ending the original foreground releases its OS ownership claim. A second
+    # live controller is not a process restart until that boundary is crossed.
+    first._conversation_recovery.stop()
     restarted = make_cli(instance="fresh-process-after-crash")
     restarted._conversation_recovery.tick()
     restarted._conversation_recovery.tick()

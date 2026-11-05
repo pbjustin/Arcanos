@@ -727,10 +727,12 @@ def perform_backend_conversation(
     from_debug: bool = False,
     *,
     outcome: Optional[dict[str, bool]] = None,
+    quota_reservation_id: Optional[str] = None,
 ) -> Optional[ConversationResult]:
     """Reserve bounded continuation capacity before accepting more backend work."""
     if _parse_backend_job_lookup_intent(message) is not None:
-        return _perform_backend_conversation(cli, message, domain, from_debug, outcome=outcome)
+        return _perform_backend_conversation(cli, message, domain, from_debug, outcome=outcome,
+                                             quota_reservation_id=quota_reservation_id)
     reserve = getattr(cli, "_reserve_backend_conversation", None)
     if reserve is not None and not reserve():
         if outcome is not None:
@@ -738,7 +740,8 @@ def perform_backend_conversation(
         cli.console.print("Pending conversation limit reached. Use /resume <jobId> before submitting more questions.", markup=False)
         return None
     try:
-        return _perform_backend_conversation(cli, message, domain, from_debug, outcome=outcome)
+        return _perform_backend_conversation(cli, message, domain, from_debug, outcome=outcome,
+                                             quota_reservation_id=quota_reservation_id)
     finally:
         if reserve is not None:
             cli._release_backend_conversation()
@@ -751,6 +754,7 @@ def _perform_backend_conversation(
     from_debug: bool = False,
     *,
     outcome: Optional[dict[str, bool]] = None,
+    quota_reservation_id: Optional[str] = None,
 ) -> Optional[ConversationResult]:
     """
     Purpose: Execute backend conversation with optional domain routing.
@@ -792,6 +796,8 @@ def _perform_backend_conversation(
     retry_payload_mode: Optional[str] = None
     retry_outcome = "not_attempted"
 
+    if outcome is not None:
+        outcome["generation_started"] = True
     if domain:
         primary_payload_mode = _build_payload_mode_label(
             route="ask",
@@ -893,6 +899,7 @@ def _perform_backend_conversation(
         handle = response.error.continuation
         if handle is not None and cli._retain_backend_conversation(
             message, handle, request_client, request_instance_id, request_session_id,
+            quota_reservation_id=quota_reservation_id,
         ):
             recovery = getattr(cli, "_conversation_recovery", None)
             if recovery is not None and recovery.contains(handle.job_id):

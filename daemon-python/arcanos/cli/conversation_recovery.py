@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 
 class ConversationRecovery:
-    """One process leader reads at most eight original jobs, never a generation route."""
+    """Each foreground reads its owned jobs; one leader adopts abandoned work."""
 
     def __init__(self, cli: "ArcanosCLI", store: Any = None, *, clock=time.monotonic):
         """Bind protected records and a short-timeout reader to the authenticated backend."""
@@ -37,7 +37,20 @@ class ConversationRecovery:
         self.schedule: dict[str, tuple[float, int]] = {}
         self.notices: dict[str, str] = {}
         self._protected_jobs: set[str] = set()
-        self.restore()
+        with self.cli._conversation_state_lock():
+            existing_pending = set(self.cli._pending_backend_conversations)
+            try:
+                self.restore()
+            except BaseException:
+                # A dropped controller must not pin orphan claims or let restored
+                # protected work escape through the process-only resume path.
+                for job_id in set(self.cli._pending_backend_conversations) - existing_pending:
+                    self.cli._pending_backend_conversations.pop(job_id, None)
+                try:
+                    self.store.release_ownerships()
+                except Exception:
+                    pass  # Preserve the primary startup failure after bounded cleanup.
+                raise
 
     def _identity_matches(self) -> bool:
         """A stored session is correlation data, never authority for a different backend."""
@@ -57,14 +70,28 @@ class ConversationRecovery:
                 row["delivery_id"], row["tokens"], row["cost"], row["created_at"],
             )
 
-    def restore(self) -> list[dict]:
+    def restore(self, *, adopt: bool = True) -> list[dict]:
         """Restore matching protected work across process IDs while retaining its original question."""
+        if self.stop_event.is_set():
+            return []
         records = self.store.load()
         with self.cli._conversation_state_lock():
             active = {record["job_id"] for record in records}
+            for record in records:
+                self.cli.rate_limiter.restore_request(self._delivery_id(record["job_id"]), record["created_at"])
             for retired in self._protected_jobs - active:
                 self.cli._pending_backend_conversations.pop(retired, None)
+                self.store.release_ownership(retired)
+            owned = []
             for record in records:
+                if self.stop_event.is_set():
+                    break
+                if not self.store.owns(record["job_id"]) and (not adopt or not self.store.acquire_ownership(record["job_id"])):
+                    continue
+                if self.stop_event.is_set():
+                    self.store.release_ownership(record["job_id"])
+                    break
+                owned.append(record)
                 self.cli._restore_backend_conversation(
                     record["question"], BackendChatContinuation(
                         record["job_id"], record["job_read_token"], record.get("expires_at"),
@@ -72,7 +99,7 @@ class ConversationRecovery:
                 )
             self._sync_usage()
             self._protected_jobs = active
-        return records
+        return owned
 
     def retain(self, question: str, handle: BackendChatContinuation, session_id: str) -> None:
         """Encrypt accepted coordinates before declaring automatic restart recovery available."""
@@ -85,13 +112,15 @@ class ConversationRecovery:
             "question": question, "session_id": session_id, "created_at": time.time(),
             "expires_at": handle.expires_at, "state": "pending",
             "accounted": False, "audit_recorded": False,
-        })
+        }, claim_owner=not self.stop_event.is_set())
+        if self.stop_event.is_set():
+            self.store.release_ownership(handle.job_id)
         self._protected_jobs.add(handle.job_id)
         self.wakeup.set()
 
     def contains(self, job_id: str) -> bool:
         """Report only whether this accepted job has protected restart coordinates."""
-        if job_id in self._protected_jobs:
+        if job_id in self._protected_jobs or self.store.owns(job_id):
             return True
         try:
             return any(row["job_id"] == job_id for row in self.store.load())
@@ -111,9 +140,10 @@ class ConversationRecovery:
         self.wakeup.set()
         if self.thread is not None and self.thread is not threading.current_thread():
             self.thread.join(timeout=3)
+        self.store.release_ownerships()
 
     def _run(self) -> None:
-        """Hold one OS-released leader claim so two CLI processes never run duplicate monitors."""
+        """Monitor this foreground's work; the OS leader additionally adopts orphan jobs."""
         while not self.stop_event.is_set():
             try:
                 with self.store.claim("__monitor__") as leader:
@@ -123,7 +153,7 @@ class ConversationRecovery:
                             self.wakeup.wait(1)
                             self.wakeup.clear()
                     else:
-                        self.restore()
+                        self.tick(adopt=False)
             except Exception:
                 self._notice("storage", "Automatic conversation recovery is waiting for protected storage.")
             self.stop_event.wait(1)
@@ -134,12 +164,12 @@ class ConversationRecovery:
             self.notices[key] = text
             self.cli.console.print(text, markup=False)
 
-    def tick(self) -> None:
+    def tick(self, *, adopt: bool = True) -> None:
         """Make sequential bounded reads only for due accepted records; expiry remains server-owned."""
         if not self._identity_matches():
             self._notice("identity", "Conversation recovery paused: the authenticated backend identity changed.")
             return
-        records = self.restore()
+        records = self.restore(adopt=adopt)
         active = {record["job_id"] for record in records}
         self.schedule = {key: value for key, value in self.schedule.items() if key in active}
         self.notices = {key: value for key, value in self.notices.items() if key in active or key in ("storage", "identity")}
@@ -173,6 +203,10 @@ class ConversationRecovery:
         if not self._identity_matches() or self.stop_event.is_set():
             if manual:
                 self.cli.console.print("Conversation recovery is paused for the current CLI or backend identity.", markup=False)
+            return
+        if not self.store.acquire_ownership(job_id):
+            if manual:
+                self.cli.console.print("This conversation belongs to another active CLI or is no longer retained.", markup=False)
             return
         with self.store.claim(job_id) as claimed:
             if not claimed:
@@ -251,12 +285,14 @@ class ConversationRecovery:
                 self.cli.memory.mark_recovered_displayed(delivery_id)
             state.recompute_trust_state(self.cli)
             if self.cli.memory.claim_recovered_audit(delivery_id):
-                audit_record("execute_success" if completed["ai"] else "execute_failed",
+                accepted = completed.get("output_accepted", bool(completed["ai"]))
+                audit_record("execute_success" if accepted else "execute_failed",
                              command="conversation_recovery", source="backend", job_id=record["job_id"],
                              conversation_id=hashlib.sha256(record["session_id"].encode()).hexdigest(),
                              trust=self.cli._trust_state.name)
             self.store.remove(record["job_id"])
             self.cli._pending_backend_conversations.pop(record["job_id"], None)
+            self.cli.rate_limiter.release_request(self._delivery_id(record["job_id"]))
             self.schedule.pop(record["job_id"], None)
             self.notices.pop(record["job_id"], None)
 
@@ -271,3 +307,4 @@ class ConversationRecovery:
                          job_id=record["job_id"], trust=self.cli._trust_state.name)
             self.store.remove(record["job_id"])
             self.cli._pending_backend_conversations.pop(record["job_id"], None)
+            self.cli.rate_limiter.release_request(self._delivery_id(record["job_id"]))

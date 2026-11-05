@@ -93,7 +93,7 @@ def test_original_answer_delivered_once_with_original_history_usage_and_audit(co
     _dispatch_command(cli, "resume " + JOB)
     assert observed[before:] == [("get", f"/jobs/{JOB}/result")]
     cli.memory.add_conversation.assert_called_once_with("what can u do?", ANSWER, 17, 0.0123)
-    cli.rate_limiter.record_request.assert_called_once_with(17, 0.0123)
+    cli.rate_limiter.record_request.assert_called_once_with(17, 0.0123, reservation_id="accepted:test-admission")
     assert cli._last_response == ANSWER
     events = _execution_events(capsys.readouterr().out)
     assert [e["event"] for e in events] == ["execute_attempt", "execute_success"]
@@ -373,7 +373,7 @@ def test_delivery_failure_before_recording_retains_manual_retry(continuation_cli
     cli.handle_resume(JOB)
     assert scenario["gets"] == 2 and scenario["posts"] == 1
     cli.memory.add_conversation.assert_called_once_with("original question", ANSWER, 17, 0.0123)
-    cli.rate_limiter.record_request.assert_called_once_with(17, 0.0123)
+    cli.rate_limiter.record_request.assert_called_once_with(17, 0.0123, reservation_id="accepted:test-admission")
 
 
 @pytest.mark.parametrize("stage", ["limiter", "memory", "after_record"])
@@ -430,14 +430,14 @@ def test_ordinary_completion_and_resume_serialize_history_writes(continuation_cl
         assert release_normal.wait(5)
         return result
 
-    def record(cli_arg, message, *args):
+    def record(cli_arg, message, *args, **kwargs):
         """Keep the resumed save open to detect any overlapping ordinary memory write."""
         if message == "original question":
             resume_recording.set()
             assert release_resume.wait(5)
         else:
             ordinary_recording.set()
-        return record_actual_turn(cli_arg, message, *args)
+        return record_actual_turn(cli_arg, message, *args, **kwargs)
 
     # A real synchronous result still goes through the normal CLI completion path.
     monkeypatch.setattr(cli.backend_client, "request_chat_completion", lambda **_: cli.backend_client._parse_chat_response({"response": "ordinary answer"}))

@@ -8,7 +8,7 @@
 import express from 'express';
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -36,6 +36,8 @@ const terminalMessages: Record<string, string> = {
   different_user: 'Automatic conversation recovery is unavailable; protected storage and backend authentication are required.',
 };
 let multipleProviderAnswers = false;
+let acceptedWaitStorageOutage = false;
+let acceptedWaitStorageOutages = 0;
 let releaseProvider = () => {};
 let providerCompletion = Promise.resolve();
 let providerStatus: 'completed' | 'incomplete' = 'completed';
@@ -175,7 +177,14 @@ jest.unstable_mockModule('../src/core/db/repositories/jobRepository.js', () => (
     conversationJobs.set(job.id, job);
     return { job, created: true, deduped: false, dedupeReason: 'new_job' };
   },
-  getJobById: async (id: string) => structuredClone(conversationJobs.get(id) ?? null),
+  getJobById: async (id: string) => {
+    if (acceptedWaitStorageOutage) {
+      acceptedWaitStorageOutage = false;
+      acceptedWaitStorageOutages += 1;
+      throw new FixtureJobRepositoryUnavailableError('Synthetic accepted-job wait storage outage');
+    }
+    return structuredClone(conversationJobs.get(id) ?? null);
+  },
   createClaimedJobFence: (workerId: string, claimGeneration: string) => ({ workerId, claimGeneration }),
   recordJobHeartbeat: async (id: string) => conversationJobs.get(id) ?? null,
   updateClaimedJobTerminal: async (id: string, status: string, options: UpdateClaimedJobTerminalOptions) => {
@@ -412,13 +421,44 @@ async function runRecoveryFaultCase(
   return receipt;
 }
 
+/** Observe two actual public CLI processes sharing the same Windows protected profile. */
+async function runOwnershipCase(python: string, userSite: string, sandbox: string, baseUrl: string, mode: string) {
+  const launch = Object.fromEntries(['SystemRoot', 'WINDIR', 'PATH', 'PATHEXT', 'ACCEPTANCE_EXTRA_PYTHON_SITE']
+    .filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]!]));
+  const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+    const child = spawn(python, ['-B', fileURLToPath(new URL('./fixtures/conversation_recovery_multiprocess.py', import.meta.url)),
+      '--mode', mode, '--daemon-root', fileURLToPath(new URL('../daemon-python', import.meta.url)),
+      '--base-url', baseUrl, '--sandbox', sandbox], {
+      cwd: sandbox, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000,
+      env: { ...launch, PYTHONIOENCODING: 'utf-8', ACCEPTANCE_PYTHON_USER_SITE: userSite,
+        ARCANOS_GPT_ACCESS_TOKEN: genericToken, ARCANOS_DAEMON_ACCESS_TOKEN: daemonToken,
+        ARCANOS_CONTROL_PLANE_ACCESS_TOKEN: peerToken },
+    });
+    let stdout = '', stderr = '';
+    child.stdout.on('data', chunk => { stdout += chunk.toString(); });
+    child.stderr.on('data', chunk => { stderr += chunk.toString(); });
+    child.once('error', reject); child.once('close', code => resolve({ code, stdout, stderr }));
+  });
+  expect({ code: result.code, stderr: result.stderr }).toEqual({ code: 0, stderr: '' });
+  const receipt = JSON.parse(result.stdout);
+  const evidence = path.resolve('tmp/automatic-continuation');
+  mkdirSync(evidence, { recursive: true });
+  writeFileSync(path.join(evidence, 'process-owner-' + mode + '-receipt.json'), JSON.stringify(receipt, null, 2));
+  expect(receipt.failure).toBeNull();
+  expect(receipt.credential_leaks).toBe(false);
+  expect(JSON.stringify(receipt)).not.toContain(issueJobReadCapability(jobId, secret));
+  return receipt;
+}
+
 (process.platform === 'win32' ? it : it.skip).each([
-  'automatic', 'restart', 'temporary_503', 'backend_restart', 'multiple',
+  'automatic', 'restart', 'temporary_503', 'wait_storage_outage', 'backend_restart', 'multiple',
   'failed', 'cancelled', 'expired', 'lost_output', 'invalid_capability',
   'tampered_storage', 'different_backend',
   'duplicate_worker', 'before_commit', 'after_commit', 'partial_render',
   'synchronous', 'offline',
   'different_user',
+  'process_owner_live', 'process_owner_same_session', 'process_owner_exit', 'process_owner_crash', 'process_owner_restart',
+  'quota_pending',
 ] as const)(
   'delivers the original answer automatically with %s recovery and no resume command', async mode => {
     const python = process.env.PYTHON_EXECUTABLE || 'python';
@@ -428,6 +468,8 @@ async function runRecoveryFaultCase(
     expect(userSite.status).toBe(0);
     providerStatus = 'completed'; responsesCreate.mockClear(); conversationJobs.clear(); durableMemory.reset();
     nextJobId = jobId;
+    acceptedWaitStorageOutage = mode === 'wait_storage_outage';
+    acceptedWaitStorageOutages = 0;
     multipleProviderAnswers = mode === 'multiple';
     process.env.GPT_PRIORITY_DIRECT_EXECUTION_CONCURRENCY = mode === 'multiple' ? '2' : '1';
     providerCompletion = mode === 'synchronous' ? Promise.resolve() : new Promise<void>(resolve => { releaseProvider = resolve; });
@@ -445,6 +487,10 @@ async function runRecoveryFaultCase(
     let overlappingAcceptedJobs = false;
     let offlineRestart: ReturnType<typeof setTimeout> | undefined;
     let offlineReadOutage = false;
+    const ownershipMode = mode.startsWith('process_owner_');
+    const ownerRelease = (ownershipMode && !['process_owner_live', 'process_owner_same_session'].includes(mode)) || mode === 'quota_pending' ? setInterval(() => {
+      if (existsSync(path.join(sandbox, 'owner-provider-release'))) releaseProvider();
+    }, 20) : undefined;
     const app = express();
     app.use(requestContext); app.use(express.json());
     app.use((req, res, next) => {
@@ -474,7 +520,8 @@ async function runRecoveryFaultCase(
         row.capabilityBound = [jobId, secondJobId].includes(requestJobId)
           && req.get('x-arcanos-job-read-token') === issueJobReadCapability(requestJobId, secret)
           && req.originalUrl === `/jobs/${requestJobId}/result` && !req.get('x-arcanos-daemon-token');
-        if (!['restart', 'backend_restart', 'tampered_storage', 'different_backend', 'different_user', 'multiple'].includes(mode)) res.once('finish', releaseProvider);
+        if (!['restart', 'backend_restart', 'tampered_storage', 'different_backend', 'different_user', 'multiple',
+          'process_owner_exit', 'process_owner_crash', 'process_owner_restart', 'quota_pending'].includes(mode)) res.once('finish', releaseProvider);
         if (mode === 'temporary_503' && resultReads <= 2) {
           res.status(503).json({ error: 'JOB_REPOSITORY_UNAVAILABLE' });
           return;
@@ -505,7 +552,56 @@ async function runRecoveryFaultCase(
       let beforeRestartReads = 0;
       const recoveryBlocked = ['tampered_storage', 'different_backend', 'different_user'].includes(mode);
       const faultMode = ['duplicate_worker', 'before_commit', 'after_commit', 'partial_render'].includes(mode);
-      if (faultMode) {
+      if (mode === 'quota_pending') {
+        const quota = await runOwnershipCase(python, userSite.stdout.trim(), sandbox, baseUrl, 'quota');
+        const origin = quota.processes.origin;
+        const pending = origin.events.filter((event: { event: string }) => event.event === 'quota_observation');
+        expect(quota.actual_conpty_processes).toBe(1);
+        expect(pending).toHaveLength(2);
+        for (const observation of pending) {
+          expect(observation.usage.requests_this_hour).toBe(1);
+          expect(observation.usage.tokens_today).toBe(0);
+          expect(observation.usage.cost_today).toBe(0);
+          expect(observation.history_count).toBe(0);
+        }
+        expect(origin.stdout).toContain('Hourly request limit reached (1)');
+        expect(origin.answer_displayed).toBe(true);
+        expect(quota.history).toHaveLength(1);
+        expect(quota.durable_successes).toBe(1);
+        writeFileSync(path.resolve('tmp/automatic-continuation', mode + '-counters.json'), JSON.stringify({
+          generationRequests, providerCalls: responsesCreate.mock.calls.length, resultReads, observed,
+        }, null, 2));
+        receipt = { history: quota.history, rendered_terminal: origin.stdout, audits: origin.audits };
+      } else if (ownershipMode) {
+        const ownership = await runOwnershipCase(python, userSite.stdout.trim(), sandbox, baseUrl, mode.replace('process_owner_', ''));
+        writeFileSync(path.resolve('tmp/automatic-continuation', mode + '-counters.json'), JSON.stringify({
+          generationRequests, providerCalls: responsesCreate.mock.calls.length, resultReads, observed,
+        }, null, 2));
+        const origin = ownership.processes.origin;
+        const observer = ownership.processes.observer;
+        const originIdentity = origin.events.find((event: { event: string }) => event.event === 'owner_identity');
+        const observerIdentity = observer.events.find((event: { event: string }) => event.event === 'owner_identity');
+        expect(originIdentity.pid).not.toBe(observerIdentity.pid);
+        if (mode === 'process_owner_same_session') expect(originIdentity.session_hash).toBe(observerIdentity.session_hash);
+        else expect(originIdentity.session_hash).not.toBe(observerIdentity.session_hash);
+        expect(originIdentity.sid_hash).toBe(observerIdentity.sid_hash);
+        expect(ownership.history).toHaveLength(1);
+        expect(ownership.history[0].session_hash).toBe(originIdentity.session_hash);
+        expect(ownership.durable_successes).toBe(1);
+        const originAlive = mode === 'process_owner_live' || mode === 'process_owner_same_session';
+        expect(origin.answer_displayed).toBe(originAlive);
+        expect(observer.answer_displayed).toBe(mode === 'process_owner_exit' || mode === 'process_owner_crash');
+        if (originAlive) expect(observer.job_reads).toBe(0);
+        if (mode === 'process_owner_exit') {
+          const stopped = origin.events.find((event: { event: string }) => event.event === 'owner_stop_started');
+          expect(observer.events.filter((event: { event: string }) => event.event === 'job_read_started')
+            .every((event: { at: number }) => event.at >= stopped.at)).toBe(true);
+        }
+        if (mode === 'process_owner_restart') expect(ownership.processes.restarted.answer_displayed).toBe(true);
+        const processes = Object.values(ownership.processes) as Array<{ stdout: string; audits: Array<{ event: string; command?: string }> }>;
+        receipt = { history: ownership.history, rendered_terminal: processes.map(item => item.stdout).join('\n'),
+          audits: processes.flatMap(item => item.audits) };
+      } else if (faultMode) {
         const first = await runRecoveryFaultCase(python, userSite.stdout.trim(), sandbox, baseUrl, mode);
         expect(first.generation_posts).toBe(1);
         if (mode === 'duplicate_worker') expect(first.second_worker_gets).toBe(0);
@@ -656,6 +752,7 @@ async function runRecoveryFaultCase(
         Array.from({ length: originalRequests }, () => expect.objectContaining({ status: mode === 'synchronous' ? 200 : 202 })),
       );
       expect(responsesCreate).toHaveBeenCalledTimes(originalRequests);
+      expect(acceptedWaitStorageOutages).toBe(mode === 'wait_storage_outage' ? 1 : 0);
       expect(generationRequests).toBe(originalRequests);
       expect(observed.filter(row => row.path.startsWith('/jobs/')).every(row => row.capabilityBound)).toBe(mode !== 'invalid_capability');
       if (!faultMode) expect(receipt.audits.filter((row: { event: string; command?: string }) => row.command === 'conversation_recovery' && row.event === 'execute_success'))
@@ -672,13 +769,14 @@ async function runRecoveryFaultCase(
       mkdirSync(evidence, { recursive: true });
       writeFileSync(path.join(evidence, mode + '-proof.json'), JSON.stringify({
         mode, observed, generationRequests, providerCalls: responsesCreate.mock.calls.length, overlappingAcceptedJobs,
-        resultReads, beforeRestartReads, offlineReadOutage, history: receipt.history, noLeaks: true,
+        resultReads, beforeRestartReads, offlineReadOutage, acceptedWaitStorageOutages, history: receipt.history, noLeaks: true,
         actualConPTY: !faultMode, realPythonHttp: true, automatic: true, resumeCommands: 0,
         freshProcessIdentity: mode === 'restart' || mode === 'backend_restart', freshBackendPid, childFinalCounters,
         ...(mode === 'different_user' ? { isolationEvidence: 'Injected different recovery-owner SID; real Windows account unchanged' } : {}),
       }, null, 2));
     } finally {
       releaseProvider(); server.closeAllConnections();
+      if (ownerRelease) clearInterval(ownerRelease);
       if (offlineRestart) clearTimeout(offlineRestart);
       if (server.listening) await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
       if (restartedBackend && restartedBackend.exitCode === null) restartedBackend.kill();

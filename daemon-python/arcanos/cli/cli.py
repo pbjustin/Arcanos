@@ -100,6 +100,7 @@ class _PendingConversation:
     client: BackendApiClient
     instance_id: str
     session_id: str
+    reservation_id: Optional[str] = None
 
 
 MAX_PENDING_CONVERSATIONS = 8
@@ -437,16 +438,23 @@ class ArcanosCLI:
     def _retain_backend_conversation(
         self, message: str, handle: BackendChatContinuation,
         client: BackendApiClient, instance_id: str, session_id: str,
+        *, quota_reservation_id: Optional[str] = None,
     ) -> bool:
         """Retain only private validated coordinates; never replace another question."""
         with self._conversation_state_lock():
             if client is not self.backend_client or instance_id != self.instance_id or session_id != self.session.session_id:
                 return False
+            recovery = getattr(self, "_conversation_recovery", None)
+            reservation_id = (
+                recovery._delivery_id(handle.job_id) if recovery is not None
+                else f"accepted:{quota_reservation_id}"
+            ) if quota_reservation_id else None
+            if quota_reservation_id:
+                self.rate_limiter.transfer_request(quota_reservation_id, reservation_id)
             if handle.job_id not in self._pending_backend_conversations:
                 self._pending_backend_conversations[handle.job_id] = _PendingConversation(
-                    message, handle, client, instance_id, session_id,
+                    message, handle, client, instance_id, session_id, reservation_id,
                 )
-            recovery = getattr(self, "_conversation_recovery", None)
             if recovery is not None:
                 try:
                     recovery.retain(message, handle, session_id)
@@ -530,6 +538,8 @@ class ArcanosCLI:
                 else:
                     if error and error.kind in ("failed", "cancelled", "expired", "unavailable", "validation"):
                         del self._pending_backend_conversations[job_id]
+                        if pending.reservation_id:
+                            self.rate_limiter.release_request(pending.reservation_id)
                     backend_ops.report_backend_error(self, "conversation continuation", error)
                     audit_record("execute_failed", **audit_fields, reason="continuation_read_failed")
                 return
@@ -543,6 +553,7 @@ class ArcanosCLI:
                     ConversationResult(value.response_text, value.tokens_used, value.cost_usd,
                                        value.model, "backend", value.presentation),
                     continuation_job_id=job_id, delivery_state=delivery_state,
+                    reservation_id=pending.reservation_id,
                 )
             except Exception:
                 # Recording can partially account or persist before raising. Only
@@ -662,70 +673,84 @@ class ArcanosCLI:
 
         domain = detect_domain_intent(message, DOMAIN_KEYWORDS) if route_decision.route == "backend" else None
 
-        result: Optional[ConversationResult] = None
-        use_streaming = Config.STREAM_RESPONSES and route_decision.route == "local" and not return_result
-
-        if use_streaming:
-            result = local_ops.perform_local_conversation_streaming(self, route_decision.normalized_message)
-        else:
-            # Agentic loop: allow backend to propose patches/commands inline; prompt for approval in CLI.
-            if route_decision.route == "backend" and Config.AGENTIC_ENABLED and not return_result:
-                from ..agentic.agent_loop import run_agentic_loop
-                run_agentic_loop(self, route_decision.normalized_message, domain=domain, from_debug=from_debug)
-                return None
-
-            with self.console.status("[dim]Thinking...[/dim]", spinner="dots"):
-                if route_decision.route == "backend":
-                    backend_outcome: dict[str, bool] = {}
-                    result = backend_ops.perform_backend_conversation(
-                        self,
-                        route_decision.normalized_message,
-                        domain=domain,
-                        from_debug=from_debug,
-                        outcome=backend_outcome,
-                    )
-                    if backend_outcome.get("pending", False):
-                        audit_record(
-                            "execute_unconfirmed", command="ask", trust=self._trust_state.name,
-                            source="backend", reason="backend_pending",
-                        )
-                        return None
-                    if result is None and Config.BACKEND_FALLBACK_TO_LOCAL and not backend_outcome.get("confirmation_handled", False):
-                        try:
-                            import json as _json
-
-                            _debug_log_path = Config.DEBUG_LOG_PATH
-                            _debug_log_path.parent.mkdir(parents=True, exist_ok=True)
-                            with _debug_log_path.open("a", encoding="utf-8") as _lf:
-                                _lf.write(
-                                    _json.dumps(
-                                        {
-                                            "kind": "suspicious",
-                                            "location": "cli.py:handle_ask:fallback",
-                                            "message": "Backend unavailable; falling back to local",
-                                            "data": {"message_length": len(route_decision.normalized_message)},
-                                            "timestamp": int(time.time() * 1000),
-                                            "sessionId": "debug-session",
-                                            "hypothesisId": "FALLBACK",
-                                        }
-                                    )
-                                    + "\n"
-                                )
-                        except (OSError, IOError) as write_error:
-                            error_logger.debug("Debug log write failed: %s", write_error)
-                        self._set_trust_state(TrustState.DEGRADED)
-                        self.console.print("[yellow]Backend unavailable; falling back to local model.[/yellow]")
-                        result = local_ops.perform_local_conversation(self, route_decision.normalized_message)
-                else:
-                    result = local_ops.perform_local_conversation(self, route_decision.normalized_message)
-        if not result:
-            if not return_result:
-                self.console.print("[red]No response generated.[/red]")
+        # The agentic loop admits its individual handle_ask(return_result=True) calls.
+        if route_decision.route == "backend" and Config.AGENTIC_ENABLED and not return_result:
+            from ..agentic.agent_loop import run_agentic_loop
+            run_agentic_loop(self, route_decision.normalized_message, domain=domain, from_debug=from_debug)
             return None
 
-        with self._conversation_state_lock():
-            return self._finish_conversation(
-                route_decision.normalized_message, result, speak_response, return_result, from_debug,
+        reservation_id, deny_reason = self.rate_limiter.reserve_request()
+        if reservation_id is None:
+            self.console.print(f"[red]Rate limit: {deny_reason}[/red]")
+            return None
+        generation_started = False
+        backend_outcome: dict[str, bool] = {}
+        try:
+            result: Optional[ConversationResult] = None
+            use_streaming = Config.STREAM_RESPONSES and route_decision.route == "local" and not return_result
+
+            if use_streaming:
+                generation_started = True
+                result = local_ops.perform_local_conversation_streaming(self, route_decision.normalized_message)
+            else:
+                with self.console.status("[dim]Thinking...[/dim]", spinner="dots"):
+                    if route_decision.route == "backend":
+                        result = backend_ops.perform_backend_conversation(
+                            self,
+                            route_decision.normalized_message,
+                            domain=domain,
+                            from_debug=from_debug,
+                            outcome=backend_outcome, quota_reservation_id=reservation_id,
+                        )
+                        if backend_outcome.get("pending", False):
+                            audit_record(
+                                "execute_unconfirmed", command="ask", trust=self._trust_state.name,
+                                source="backend", reason="backend_pending",
+                            )
+                            return None
+                        if result is None and Config.BACKEND_FALLBACK_TO_LOCAL and not backend_outcome.get("confirmation_handled", False):
+                            try:
+                                import json as _json
+
+                                _debug_log_path = Config.DEBUG_LOG_PATH
+                                _debug_log_path.parent.mkdir(parents=True, exist_ok=True)
+                                with _debug_log_path.open("a", encoding="utf-8") as _lf:
+                                    _lf.write(
+                                        _json.dumps(
+                                            {
+                                                "kind": "suspicious",
+                                                "location": "cli.py:handle_ask:fallback",
+                                                "message": "Backend unavailable; falling back to local",
+                                                "data": {"message_length": len(route_decision.normalized_message)},
+                                                "timestamp": int(time.time() * 1000),
+                                                "sessionId": "debug-session",
+                                                "hypothesisId": "FALLBACK",
+                                            }
+                                        )
+                                        + "\n"
+                                    )
+                            except (OSError, IOError) as write_error:
+                                error_logger.debug("Debug log write failed: %s", write_error)
+                            self._set_trust_state(TrustState.DEGRADED)
+                            self.console.print("[yellow]Backend unavailable; falling back to local model.[/yellow]")
+                            generation_started = True
+                            result = local_ops.perform_local_conversation(self, route_decision.normalized_message)
+                    else:
+                        generation_started = True
+                        result = local_ops.perform_local_conversation(self, route_decision.normalized_message)
+            if not result:
+                if not return_result:
+                    self.console.print("[red]No response generated.[/red]")
+                return None
+
+            with self._conversation_state_lock():
+                return self._finish_conversation(
+                    route_decision.normalized_message, result, speak_response, return_result, from_debug,
+                    reservation_id=reservation_id,
+                )
+        finally:
+            self.rate_limiter.release_request(
+                reservation_id, refund=not (generation_started or backend_outcome.get("generation_started", False)),
             )
 
     def _finish_conversation(
@@ -733,6 +758,7 @@ class ArcanosCLI:
         return_result: bool = False, from_debug: bool = False, *,
         continuation_job_id: Optional[str] = None,
         delivery_state: Optional[dict[str, bool]] = None,
+        reservation_id: Optional[str] = None,
     ) -> Optional[_ConversationResult]:
         """Apply the same presentation, privacy, history and usage rules to completed answers."""
         response_for_user: Optional[str] = None
@@ -775,6 +801,7 @@ class ArcanosCLI:
             conversation_response,
             result.tokens_used,
             result.cost_usd,
+            reservation_id=reservation_id,
         )
         if not return_result:
             memory_ops.remember_last_response(self, response_for_user)
