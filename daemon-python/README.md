@@ -451,6 +451,12 @@ Python clients use structured writing and control-plane operations:
 
 The query methods create writing work through the GPT route. Status and result methods read the job through direct control-plane endpoints. These wrappers normalize fields such as `ok`, `action`, `jobId`, `status`, and `result`/`output` when available. Flat job payloads retain object, scalar, and null outputs exactly; only explicitly identified compatibility envelopes are unwrapped. Requests carrying bearer, GPT-ID, daemon, cookie, or job-read capability headers do not follow redirects.
 
+Interactive chat requires a completed answer. An HTTP 202 response remains
+pending: the CLI reports that no completed answer is available, records an
+unconfirmed audit outcome, and does not start local fallback or save a completed
+conversation. Empty JSON objects are not conversational answers. Typed async
+query and job-result operations retain their existing pending and result contracts.
+
 ## Built-in CLI commands
 
 - `/open <path>`: print a file
@@ -487,6 +493,22 @@ native commands are fixed local workloads, not an operating-system network
 sandbox. Linux/container checks and ordinary mocked regressions remain separate
 evidence. Elevated/UAC acceptance is not run. No production backend or provider
 credential is used.
+
+The native Windows Express acceptance below uses the activated daemon development
+environment, the actual public CLI, and real registry, system-state, heartbeat,
+and confirmation routes. Run from a clean checkout without operator `.env` files:
+
+```powershell
+$env:PYTHON_EXECUTABLE = python -c "import sys; print(sys.executable)"
+node scripts/run-jest.mjs --runTestsByPath tests/daemon-registry-python-http.e2e.test.ts tests/system-state-http-boundary.test.ts --coverage=false --runInBand
+```
+
+The native group requires Windows; the original direct-client registry matrix
+remains cross-platform. Provider dispatch and physical speech are synthetic;
+confirmation challenges are seeded through the real pending-action store because
+the canonical GPT route does not produce daemon challenges. Authentication,
+confirmation consumption, replay checks, queue mutation, and client trust logic
+remain real. Queued fixture actions are inert, with background polling disabled.
 
 ## Troubleshooting
 
