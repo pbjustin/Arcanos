@@ -19,6 +19,7 @@ from ..cli_midlayer import translate
 from ..voice_boundary import Persona
 from ..cli_intents import truncate_for_tts
 from .context import _UNSET_FILTER
+from .trust_state import TrustState
 from .cli_policy import load_cli_policy, resolve_workspace_root
 from . import state
 
@@ -70,14 +71,12 @@ def _reported_boolean(value: Any) -> str:
     return str(value).lower() if type(value) is bool else "unknown"
 
 
-def build_system_status_evidence(cli: "ArcanosCLI", state_payload: Optional[Mapping[str, Any]]) -> str:
-    """Separate locally observed trust, backend-reported fields, and unmeasured health."""
-    registry_fresh = state.registry_cache_is_valid(cli)
-    registry_status = "valid and fresh" if registry_fresh else (
-        "stale or invalid" if cli._registry_cache else "unavailable"
-    )
+def build_system_status_evidence(
+    cli: "ArcanosCLI", state_payload: Optional[Mapping[str, Any]], *, trust: TrustState, registry_status: str,
+) -> str:
+    """Render captured local trust/freshness, backend reports, and unmeasured health."""
     lines = [
-        f"Daemon trust (local): {cli._trust_state.name}",
+        f"Daemon trust (local): {trust.name}",
         f"Daemon registry evidence (local): {registry_status}",
         # Keep the evidence limits before metadata, with complete sentences so
         # bounded speech cannot drop them at a timestamp's decimal point.

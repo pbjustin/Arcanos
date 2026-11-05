@@ -172,6 +172,11 @@ Cache lifetime uses monotonic elapsed time, so setting the system clock back
 cannot renew expired evidence. Only a valid authenticated registry refresh
 resets that lifetime.
 
+Confirmation submission rechecks cached registry trust after the approval prompt
+and before every existing authentication retry. Expired authority blocks the
+request without refreshing the registry or falling back to local generation.
+Backend action summaries use credential redaction and literal console rendering.
+
 The three credentials serve independent purposes:
 
 | Credential | Authorized traffic | Does not establish |
@@ -203,6 +208,9 @@ snapshot, not a dependency health probe: its reported connection, registry, and
 freshness fields do not prove memory availability or consistency, overall
 stability, or low risk. Missing, stale, or inaccessible evidence remains
 explicitly unknown. Greetings and ordinary capability discussions remain chat.
+Each diagnostic captures local trust and freshness together after the backend
+read; its displayed evidence, speech, and terminal audit use that same observation.
+This observation does not authorize a later sensitive action.
 
 See the [configuration reference](../docs/CONFIGURATION.md) for backend and
 daemon routing settings. Template assignments are explicit choices, not always

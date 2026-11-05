@@ -69,21 +69,21 @@ def set_trust_state(cli: "ArcanosCLI", new_state: TrustState) -> None:
         audit_record("trust_state_change", old=old_state.name, new=new_state.name)
 
 
-def recompute_trust_state(cli: "ArcanosCLI") -> None:
+def recompute_trust_state(cli: "ArcanosCLI") -> tuple[TrustState, bool | None]:
     """
     Purpose: Derive trust state from backend reachability and registry freshness.
-    Inputs/Outputs: CLI instance; updates trust state via set_trust_state.
-    Edge cases: Missing backend always degrades trust.
+    Inputs/Outputs: Updates trust and returns its enum and observed registry freshness.
+    Edge cases: Missing backend degrades trust without inspecting registry evidence.
     """
     if not cli.backend_client:
         # //audit assumption: trust requires backend authority; risk: false FULL trust offline; invariant: offline trust is DEGRADED; strategy: hard-set degraded.
         set_trust_state(cli, TrustState.DEGRADED)
-        return
+        return TrustState.DEGRADED, None
 
-    if registry_cache_is_valid(cli):
-        set_trust_state(cli, TrustState.FULL)
-    else:
-        set_trust_state(cli, TrustState.DEGRADED)
+    registry_fresh = registry_cache_is_valid(cli)
+    trust = TrustState.FULL if registry_fresh else TrustState.DEGRADED
+    set_trust_state(cli, trust)
+    return trust, registry_fresh
 
 
 def registry_cache_is_valid(cli: "ArcanosCLI") -> bool:

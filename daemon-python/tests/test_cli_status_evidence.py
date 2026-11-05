@@ -73,7 +73,7 @@ def status_cli(monkeypatch):
     cli.rate_limiter.can_make_request.return_value = (True, None)
     cli.audio = MagicMock()
     cli._append_activity = MagicMock()
-    cli._recompute_trust_state = MagicMock()
+    cli._recompute_trust_state = lambda: cli_module.state.recompute_trust_state(cli)
     cli._trust_state = TrustState.DEGRADED
     cli._registry_cache = None
     cli._registry_cache_updated_at = None

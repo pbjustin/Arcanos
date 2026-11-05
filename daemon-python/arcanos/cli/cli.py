@@ -185,7 +185,7 @@ class ArcanosCLI:
     def _set_trust_state(self, new_state: TrustState) -> None:
         return state.set_trust_state(self, new_state)
 
-    def _recompute_trust_state(self) -> None:
+    def _recompute_trust_state(self) -> tuple[TrustState, bool | None]:
         return state.recompute_trust_state(self)
 
     def speak_to_user(
@@ -253,14 +253,19 @@ class ArcanosCLI:
     def _is_working_context_query(self, message: str) -> bool:
         return state.is_working_context_query(message)
 
-    def _read_diagnostic_state(self) -> Optional[Mapping[str, Any]]:
-        """Read validated status evidence, then recompute trust after the blocking read."""
+    def _read_diagnostic_state(self) -> tuple[Optional[Mapping[str, Any]], TrustState, str]:
+        """Read validated status and capture one local trust/freshness observation afterward."""
         backend_ops.refresh_registry_cache_if_stale(self)
         state_payload = backend_ops.request_backend_system_state_payload(self) if self.backend_client else None
         if not is_valid_system_state_payload(state_payload):
             state_payload = None
-        self._recompute_trust_state()
-        return state_payload
+        trust, registry_fresh = self._recompute_trust_state()
+        if registry_fresh is None:
+            registry_fresh = state.registry_cache_is_valid(self)
+        registry_status = "valid and fresh" if registry_fresh else (
+            "stale or invalid" if self._registry_cache else "unavailable"
+        )
+        return state_payload, trust, registry_status
 
     def handle_status(self) -> bool:
         """
@@ -273,13 +278,15 @@ class ArcanosCLI:
             "execute_attempt", command="status", trust=self._trust_state.name,
             source="diagnostic", operation="status",
         )
-        state_payload = self._read_diagnostic_state()
-        self.console.print(ui_ops.build_system_status_evidence(self, state_payload), markup=False)
+        state_payload, diagnostic_trust, registry_status = self._read_diagnostic_state()
+        self.console.print(ui_ops.build_system_status_evidence(
+            self, state_payload, trust=diagnostic_trust, registry_status=registry_status,
+        ), markup=False)
         if not state_payload:
             # //audit assumption: failed state fetch cannot be substituted locally; risk: fabricated status; invariant: no synthetic state output; strategy: fail closed.
             self.console.print("[red]Failed to fetch backend system state.[/red]")
             audit_record(
-                "execute_failed", command="status", trust=self._trust_state.name,
+                "execute_failed", command="status", trust=diagnostic_trust.name,
                 source="diagnostic", operation="status",
             )
             return False
@@ -287,7 +294,7 @@ class ArcanosCLI:
         state.hydrate_session_from_backend_state(self, state_payload)
         ui_ops.render_system_state_table(self, state_payload)
         audit_record(
-            "execute_success", command="status", trust=self._trust_state.name,
+            "execute_success", command="status", trust=diagnostic_trust.name,
             source="diagnostic", operation="status",
         )
         return True
@@ -414,13 +421,15 @@ class ArcanosCLI:
 
         if diagnostic_query:
             # Operational evidence never falls back to generative self-assessment.
-            state_payload = self._read_diagnostic_state()
+            state_payload, diagnostic_trust, registry_status = self._read_diagnostic_state()
             if state_payload:
                 state.hydrate_session_from_backend_state(self, state_payload)
-            answer_text = ui_ops.build_system_status_evidence(self, state_payload)
+            answer_text = ui_ops.build_system_status_evidence(
+                self, state_payload, trust=diagnostic_trust, registry_status=registry_status,
+            )
             audit_record(
                 "execute_success" if state_payload else "execute_failed",
-                command="ask", trust=self._trust_state.name, source="diagnostic", operation="status",
+                command="ask", trust=diagnostic_trust.name, source="diagnostic", operation="status",
             )
             if return_result:
                 return ConversationResult(
