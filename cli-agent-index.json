@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-04T23:25:42.232Z",
+  "generatedAt": "2026-11-05T01:43:36.510Z",
   "scopes": [
     {
       "scope": "clients",
@@ -640,6 +640,9 @@
           "relativePath": "daemon-python/tests/test_debug_server.py"
         },
         {
+          "relativePath": "daemon-python/tests/test_direct_diagnostic_questions.py"
+        },
+        {
           "relativePath": "daemon-python/tests/test_history_db_utf8.py"
         },
         {
@@ -692,6 +695,9 @@
         },
         {
           "relativePath": "daemon-python/tests/test_purpose_bound_credential_isolation.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_registry_monotonic_ttl.py"
         },
         {
           "relativePath": "daemon-python/tests/test_registry_trust.py"
