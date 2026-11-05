@@ -56,3 +56,5 @@ b37f8ae9cf249fbdeb58cf9e8614214bf5e11ae4:tests/live-validation-gaming-adapter.te
 # Public native OAuth client identifier and its mutation-test fixture; neither is a credential.
 7843242c26475a4830cd26f51b4f2bbd78a4ae7d:src/bookerMcpRealAuthPreview.ts:generic-api-key:9
 7843242c26475a4830cd26f51b4f2bbd78a4ae7d:tests/native-pr-preview-import-boundary.test.js:generic-api-key:795
+# Public SQLite kv_state row name for recovered usage totals; no credential or capability.
+d4c4b9e2752a542d6983022e4cd45c56661556f3:daemon-python/arcanos/agentic/history_db.py:generic-api-key:26
