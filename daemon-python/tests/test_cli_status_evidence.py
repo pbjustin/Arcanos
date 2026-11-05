@@ -368,10 +368,14 @@ def test_slash_status_allowlists_reported_booleans_in_evidence_and_table(status_
     local.assert_not_called()
 
 
-def test_reported_backend_registry_cannot_override_expired_local_registry(status_cli):
+def test_reported_backend_registry_cannot_override_expired_local_registry(status_cli, monkeypatch):
+    """Reported availability cannot renew local registry evidence past its elapsed TTL."""
     cli, _, state_read, _, _ = status_cli
+    monkeypatch.setattr(cli_module.state.time, "time", lambda: 1000.0)
+    monkeypatch.setattr(cli_module.state.time, "monotonic", lambda: 500.0)
     cli._registry_cache = {"fixture": "invalid"}
     cli._registry_cache_updated_at = time.time() - 301
+    cli._registry_cache_updated_monotonic_at = time.monotonic() - 301
     state_read.return_value["stateFreshness"] = {"backend": "stale", "intent": "stale"}
 
     result = cli.handle_ask("What is your trust state?", return_result=True)

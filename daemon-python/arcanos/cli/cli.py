@@ -253,6 +253,15 @@ class ArcanosCLI:
     def _is_working_context_query(self, message: str) -> bool:
         return state.is_working_context_query(message)
 
+    def _read_diagnostic_state(self) -> Optional[Mapping[str, Any]]:
+        """Read validated status evidence, then recompute trust after the blocking read."""
+        backend_ops.refresh_registry_cache_if_stale(self)
+        state_payload = backend_ops.request_backend_system_state_payload(self) if self.backend_client else None
+        if not is_valid_system_state_payload(state_payload):
+            state_payload = None
+        self._recompute_trust_state()
+        return state_payload
+
     def handle_status(self) -> bool:
         """
         Purpose: Show backend-owned governed status using authenticated GET /system-state.
@@ -264,11 +273,7 @@ class ArcanosCLI:
             "execute_attempt", command="status", trust=self._trust_state.name,
             source="diagnostic", operation="status",
         )
-        backend_ops.refresh_registry_cache_if_stale(self)
-        state_payload = backend_ops.request_backend_system_state_payload(self) if self.backend_client else None
-        if not is_valid_system_state_payload(state_payload):
-            state_payload = None
-        self._recompute_trust_state()
+        state_payload = self._read_diagnostic_state()
         self.console.print(ui_ops.build_system_status_evidence(self, state_payload), markup=False)
         if not state_payload:
             # //audit assumption: failed state fetch cannot be substituted locally; risk: fabricated status; invariant: no synthetic state output; strategy: fail closed.
@@ -409,11 +414,7 @@ class ArcanosCLI:
 
         if diagnostic_query:
             # Operational evidence never falls back to generative self-assessment.
-            backend_ops.refresh_registry_cache_if_stale(self)
-            state_payload = backend_ops.request_backend_system_state_payload(self) if self.backend_client else None
-            if not is_valid_system_state_payload(state_payload):
-                state_payload = None
-            self._recompute_trust_state()
+            state_payload = self._read_diagnostic_state()
             if state_payload:
                 state.hydrate_session_from_backend_state(self, state_payload)
             answer_text = ui_ops.build_system_status_evidence(self, state_payload)
