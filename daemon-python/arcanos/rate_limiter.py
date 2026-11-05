@@ -20,7 +20,7 @@ class RateLimiter:
         self.cost_today: float = 0.0
         self.last_reset: datetime = datetime.now()
         self._recovered_requests: dict[str, float] = {}
-        self._recovered_lock = threading.Lock()
+        self._lock = threading.RLock()
 
     def _reset_daily_limits(self) -> None:
         """Reset daily limits if it's a new day"""
@@ -40,30 +40,32 @@ class RateLimiter:
         Check if request is allowed under rate limits
         Returns: (allowed, reason_if_denied)
         """
-        self._reset_daily_limits()
-        self._clean_hourly_requests()
+        with self._lock:
+            self._reset_daily_limits()
+            self._clean_hourly_requests()
 
-        # Check hourly request limit
-        if len(self.requests_per_hour) >= Config.MAX_REQUESTS_PER_HOUR:
-            wait_time = int(3600 - (time.time() - self.requests_per_hour[0]))
-            return False, f"Hourly request limit reached ({Config.MAX_REQUESTS_PER_HOUR}). Try again in {wait_time // 60}m {wait_time % 60}s."
+            # Check hourly request limit
+            if len(self.requests_per_hour) >= Config.MAX_REQUESTS_PER_HOUR:
+                wait_time = int(3600 - (time.time() - self.requests_per_hour[0]))
+                return False, f"Hourly request limit reached ({Config.MAX_REQUESTS_PER_HOUR}). Try again in {wait_time // 60}m {wait_time % 60}s."
 
-        # Check daily token limit
-        if self.tokens_today >= Config.MAX_TOKENS_PER_DAY:
-            return False, f"Daily token limit reached ({Config.MAX_TOKENS_PER_DAY:,}). Resets at midnight."
+            # Check daily token limit
+            if self.tokens_today >= Config.MAX_TOKENS_PER_DAY:
+                return False, f"Daily token limit reached ({Config.MAX_TOKENS_PER_DAY:,}). Resets at midnight."
 
-        # Check daily cost limit
-        if self.cost_today >= Config.MAX_COST_PER_DAY:
-            return False, f"Daily cost limit reached (${Config.MAX_COST_PER_DAY:.2f}). Resets at midnight."
+            # Check daily cost limit
+            if self.cost_today >= Config.MAX_COST_PER_DAY:
+                return False, f"Daily cost limit reached (${Config.MAX_COST_PER_DAY:.2f}). Resets at midnight."
 
-        return True, None
+            return True, None
 
     def record_request(self, tokens: int, cost: float) -> None:
         """Record a completed request"""
-        self._reset_daily_limits()
-        self.requests_per_hour.append(time.time())
-        self.tokens_today += tokens
-        self.cost_today += cost
+        with self._lock:
+            self._reset_daily_limits()
+            self.requests_per_hour.append(time.time())
+            self.tokens_today += tokens
+            self.cost_today += cost
 
     def record_recovered_request(
         self, delivery_id: str, tokens: int, cost: float, recorded_at: float,
@@ -81,10 +83,10 @@ class RateLimiter:
                 or isinstance(recorded_at, bool) or not isinstance(recorded_at, (int, float))
                 or not math.isfinite(recorded_at)):
             raise ValueError("Invalid recovered request accounting.")
-        now = time.time()
-        if recorded_at > now + 60:
-            raise ValueError("Invalid recovered request accounting.")
-        with self._recovered_lock:
+        with self._lock:
+            now = time.time()
+            if recorded_at > now + 60:
+                raise ValueError("Invalid recovered request accounting.")
             self._reset_daily_limits()
             # Startup reconciliation replays the bounded durable usage window.
             # Known receipts need neither another charge nor an O(n) sweep.
@@ -114,18 +116,19 @@ class RateLimiter:
 
     def get_usage_stats(self) -> dict:
         """Get current usage statistics"""
-        self._reset_daily_limits()
-        self._clean_hourly_requests()
+        with self._lock:
+            self._reset_daily_limits()
+            self._clean_hourly_requests()
 
-        return {
-            "requests_this_hour": len(self.requests_per_hour),
-            "requests_remaining_this_hour": Config.MAX_REQUESTS_PER_HOUR - len(self.requests_per_hour),
-            "tokens_today": self.tokens_today,
-            "tokens_remaining_today": Config.MAX_TOKENS_PER_DAY - self.tokens_today,
-            "cost_today": self.cost_today,
-            "cost_remaining_today": Config.MAX_COST_PER_DAY - self.cost_today,
-            "reset_time": (self.last_reset + timedelta(days=1)).replace(hour=0, minute=0, second=0).isoformat()
-        }
+            return {
+                "requests_this_hour": len(self.requests_per_hour),
+                "requests_remaining_this_hour": Config.MAX_REQUESTS_PER_HOUR - len(self.requests_per_hour),
+                "tokens_today": self.tokens_today,
+                "tokens_remaining_today": Config.MAX_TOKENS_PER_DAY - self.tokens_today,
+                "cost_today": self.cost_today,
+                "cost_remaining_today": Config.MAX_COST_PER_DAY - self.cost_today,
+                "reset_time": (self.last_reset + timedelta(days=1)).replace(hour=0, minute=0, second=0).isoformat()
+            }
 
     def format_usage_stats(self) -> str:
         """Format usage statistics for display"""
