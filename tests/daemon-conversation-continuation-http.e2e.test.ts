@@ -220,6 +220,9 @@ afterAll(() => {
 
 (process.platform === 'win32' ? it : it.skip).each(['completed', 'incomplete'] as const)(
   'handles a %s real CORE DIRECT_ANSWER over HTTP 202 continuation in native Windows', async status => {
+  const python = process.env.PYTHON_EXECUTABLE || 'python';
+  const userSite = spawnSync(python, ['-c', 'import site; print(site.getusersitepackages())'], { encoding: 'utf8', windowsHide: true, timeout: 10_000 });
+  expect(userSite.status).toBe(0);
   providerStatus = status; responsesCreate.mockClear(); conversationJobs.clear(); durableMemory.reset();
   providerCompletion = new Promise<void>(resolve => { releaseProvider = resolve; });
   const sandbox = mkdtempSync(path.join(tmpdir(), 'arcanos-real-continuation-'));
@@ -260,9 +263,6 @@ afterAll(() => {
       { input: `/resume ${jobId}` }, { input: '/exit' }],
     extraEnv: { BACKEND_FALLBACK_TO_LOCAL: 'true' },
   }));
-  const python = process.env.PYTHON_EXECUTABLE || 'python';
-  const userSite = spawnSync(python, ['-c', 'import site; print(site.getusersitepackages())'], { encoding: 'utf8', windowsHide: true, timeout: 10_000 });
-  expect(userSite.status).toBe(0);
   const launch = Object.fromEntries(['SystemRoot', 'WINDIR', 'PATH', 'PATHEXT'].filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]!]));
   const fetchSpy = jest.spyOn(globalThis, 'fetch').mockImplementation(forbiddenIO);
   try {
