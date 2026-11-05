@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-05T17:49:07.994Z",
+  "generatedAt": "2026-11-05T18:39:32.183Z",
   "scopes": [
     {
       "scope": "clients",
@@ -707,6 +707,9 @@
         },
         {
           "relativePath": "daemon-python/tests/test_purpose_bound_credential_isolation.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_rate_limiter_rollover.py"
         },
         {
           "relativePath": "daemon-python/tests/test_registry_monotonic_ttl.py"

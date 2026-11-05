@@ -56,6 +56,7 @@ class RateLimiter:
 
     def record_request(self, tokens: int, cost: float) -> None:
         """Record a completed request"""
+        self._reset_daily_limits()
         self.requests_per_hour.append(time.time())
         self.tokens_today += tokens
         self.cost_today += cost
