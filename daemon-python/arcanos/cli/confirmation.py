@@ -11,6 +11,7 @@ from ..backend_client import BackendRequestError
 from ..config import Config
 from ..error_handler import logger as error_logger
 from .context import ConversationResult
+from . import state
 
 if TYPE_CHECKING:
     from .cli import ArcanosCLI
@@ -53,7 +54,7 @@ def handle_confirmation_required(
                 summary = action.get("summary")
             if not isinstance(summary, str) or not summary:
                 summary = str(action)
-            cli.console.print(f"  [dim]{summary}[/dim]")
+            cli.console.print("  " + state.redact_status_text(summary), style="dim", markup=False)
 
         response = cli.console.input("Confirm? [y/N]: ").strip().lower()
         if response not in ("y", "yes"):
