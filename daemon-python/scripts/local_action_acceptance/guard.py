@@ -10,6 +10,32 @@ import sys
 import time
 
 
+def _is_asyncio_wakeup(event: str, args: tuple, host: str, port: int) -> bool:
+    """Recognize only Windows asyncio's actual stdlib socketpair self-wakeup."""
+    if os.name != "nt" or host != "127.0.0.1":
+        return False
+    socket_module = sys.modules.get("socket")
+    proactor_module = sys.modules.get("asyncio.proactor_events")
+    socketpair = getattr(socket_module, "socketpair", None)
+    proactor = getattr(proactor_module, "BaseProactorEventLoop", None)
+    make_pipe = getattr(proactor, "_make_self_pipe", None)
+    frame = sys._getframe(2)
+    if (
+        frame.f_code is not getattr(socketpair, "__code__", None)
+        or frame.f_back is None
+        or frame.f_back.f_code is not getattr(make_pipe, "__code__", None)
+    ):
+        return False
+    listener = frame.f_locals.get("lsock")
+    if event == "socket.bind":
+        return port == 0 and listener is args[0]
+    client = frame.f_locals.get("csock")
+    return (
+        event == "socket.connect" and client is args[0] and listener is not None
+        and listener.getsockname()[:2] == (host, port)
+    )
+
+
 def install() -> None:
     log = Path(os.environ["ACCEPTANCE_NETWORK_LOG"])
     ports = {int(item) for item in os.environ.get("ACCEPTANCE_ALLOWED_PORTS", "").split(",") if item}
@@ -26,8 +52,10 @@ def install() -> None:
         elif event in {"socket.connect", "socket.bind"}:
             address = args[1]
             host, port = (str(address[0]), int(address[1])) if isinstance(address, tuple) else ("non-IP", -1)
-            allowed = host == "127.0.0.1" and port in ports
-            record({"event": event, "host": host, "port": port, "allowed": allowed})
+            wakeup = _is_asyncio_wakeup(event, args, host, port)
+            allowed = (host == "127.0.0.1" and port in ports) or wakeup
+            record({"event": event, "host": host, "port": port, "allowed": allowed,
+                    **({"purpose": "asyncio_wakeup"} if wakeup else {})})
             if not allowed:
                 raise PermissionError("Acceptance fixture blocked a non-fixture socket")
         elif event == "socket.getaddrinfo":

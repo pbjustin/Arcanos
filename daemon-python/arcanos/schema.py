@@ -4,6 +4,8 @@ JSON-based persistent storage for conversations and user preferences.
 """
 
 import json
+import sqlite3
+from contextlib import closing
 from pathlib import Path
 from typing import Any, Optional, Union, Dict, List
 from datetime import datetime
@@ -18,6 +20,66 @@ class Memory:
     def __init__(self, file_path: Optional[Path] = None):
         self.file_path = file_path or Config.MEMORY_FILE
         self.data = self._load()
+        self._recovery_db = None
+        self._recovery_profile_matches = (
+            file_path is None or self.file_path.resolve() == Config.MEMORY_FILE.resolve()
+            or self.file_path.parent.resolve() == Config.HISTORY_DB_PATH.parent.resolve()
+        )
+
+    def _recovery_history(self, create: bool = False):
+        """Lazily attach existing approved history independently of job monitoring.
+
+        A read-only schema probe keeps JSON-only callers from creating SQLite
+        state. Custom memory files must belong to the configured history profile
+        before ordinary getters consult it; an explicit recovery write binds it.
+        """
+        if self._recovery_db is not None:
+            return self._recovery_db
+        if not create:
+            if not self._recovery_profile_matches or not Config.HISTORY_DB_PATH.is_file():
+                return None
+            uri = Config.HISTORY_DB_PATH.resolve().as_uri() + "?mode=ro"
+            with closing(sqlite3.connect(uri, uri=True)) as connection:
+                table = connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_deliveries'"
+                ).fetchone()
+            if table is None:
+                return None
+        from .agentic.history_db import HistoryDB
+        self._recovery_db = HistoryDB(Config.HISTORY_DB_PATH)
+        return self._recovery_db
+
+    def record_recovered_conversation(
+        self, delivery_id: str, session_id: str, user: str, response: str,
+        tokens: int, cost: float,
+    ) -> bool:
+        """Commit approved same-job history, accounting, and audit once without JSON mirroring."""
+        return self._recovery_history(create=True).record_recovered_conversation(
+            delivery_id, session_id, user, response, tokens, cost
+        )
+
+    def get_recovered_conversation(self, delivery_id: str) -> Optional[dict[str, Any]]:
+        """Read a previously committed answer and its terminal-delivery receipts."""
+        db = self._recovery_history()
+        return db.get_recovered_conversation(delivery_id) if db else None
+
+    def mark_recovered_displayed(self, delivery_id: str) -> None:
+        """Persist successful terminal output after the approved answer was displayed."""
+        from .agentic.history_db import RecoveredConversationStorageError
+        db = self._recovery_history()
+        if db is None:
+            raise RecoveredConversationStorageError("Completed conversation receipt is unavailable.")
+        db.mark_recovered_displayed(delivery_id)
+
+    def claim_recovered_audit(self, delivery_id: str) -> bool:
+        """Claim one console completion event while keeping the durable SQL audit intact."""
+        db = self._recovery_history()
+        return db.claim_recovered_audit(delivery_id) if db else False
+
+    def get_recovered_usage(self) -> list[dict[str, Any]]:
+        """Load recent authoritative usage once at recovery startup, without creating state."""
+        db = self._recovery_history()
+        return db.get_recovered_usage() if db else []
 
     def _load(self) -> dict[str, Any]:
         """Load memory from file"""
@@ -91,11 +153,27 @@ class Memory:
 
     def get_recent_conversations(self, limit: int = 10) -> list[dict]:
         """Get recent conversations for context"""
-        return self.data["conversations"][-limit:]
+        conversations = list(self.data["conversations"])
+        recovery_db = self._recovery_history()
+        if recovery_db is not None:
+            for record in recovery_db.get_recent_recovered_conversations(max(100, limit)):
+                conversations.append({
+                    "timestamp": datetime.fromtimestamp(record["created_at"]).isoformat(),
+                    "user": record["user"], "ai": record["ai"],
+                    "tokens": record["tokens"], "cost": record["cost"],
+                    "delivery_id": record["delivery_id"],
+                })
+            conversations.sort(key=lambda record: record.get("timestamp", ""))
+        return conversations[-limit:]
 
     def get_statistics(self) -> dict[str, Any]:
         """Get usage statistics"""
-        return self.data["statistics"]
+        statistics = dict(self.data["statistics"])
+        recovery_db = self._recovery_history()
+        if recovery_db is not None:
+            for key, value in recovery_db.get_recovered_statistics().items():
+                statistics[key] = statistics.get(key, 0) + value
+        return statistics
 
     def increment_stat(self, stat_name: str, amount: int = 1) -> None:
         """Increment a statistic counter"""
@@ -123,11 +201,17 @@ class Memory:
 
     def clear_conversations(self) -> None:
         """Clear all conversation history"""
+        recovery_db = self._recovery_history()
+        if recovery_db is not None:
+            recovery_db.clear_recovered_history()
         self.data["conversations"] = []
         self.save()
 
     def reset_statistics(self) -> None:
         """Reset all statistics"""
+        recovery_db = self._recovery_history()
+        if recovery_db is not None:
+            recovery_db.reset_recovered_statistics()
         self.data["statistics"] = self._default_data()["statistics"]
         self.save()
 

@@ -315,6 +315,7 @@ class Config:
     ]
     BACKEND_FALLBACK_TO_LOCAL: bool = get_env_bool("BACKEND_FALLBACK_TO_LOCAL", True)
     BACKEND_REQUEST_TIMEOUT: int = get_env_int("BACKEND_REQUEST_TIMEOUT", 15)
+    CONVERSATION_RECOVERY_ENABLED: bool = get_env_bool("CONVERSATION_RECOVERY_ENABLED", True)
     BACKEND_SEND_UPDATES: bool = get_env_bool("BACKEND_SEND_UPDATES", True)
     BACKEND_CHAT_MODEL: Optional[str] = get_env("BACKEND_CHAT_MODEL") or None
     BACKEND_VISION_MODEL: Optional[str] = get_env("BACKEND_VISION_MODEL") or None

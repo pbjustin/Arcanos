@@ -195,7 +195,14 @@ class DaemonFixture:
         self.wait_input(count + 1)
 
     def send_line(self, text):
-        self.console.send_line(text)
+        if self.env.get("CONVERSATION_RECOVERY_ENABLED", "true").lower() == "true":
+            # Send Enter as its own real key event: the Windows editor treats
+            # a text/newline batch as pasted content rather than a submission.
+            self.console.send(text)
+            time.sleep(0.1)
+            self.console.send("\r")
+        else:
+            self.console.send_line(text)
 
     def expect(self, pattern, timeout=20):
         return self.console.expect(pattern, timeout)
@@ -204,7 +211,7 @@ class DaemonFixture:
         if self.console:
             try:
                 if self.console.returncode is None:
-                    self.console.send_line("/exit")
+                    self.send_line("/exit")
                     self.console.wait(timeout=8)
             except (OSError, TimeoutError):
                 pass

@@ -1,5 +1,8 @@
 # Windows daemon conversation continuation
 
+The [automatic recovery follow-up](AUTOMATIC_RECOVERY.md) supersedes this
+capture's manual-only delivery and process-local retention limitations.
+
 This is a dated incident investigation and local acceptance record, not a
 production runbook or deployment approval. Its canonical behavior owner is the
 [Python daemon guide](../../../../../daemon-python/README.md#async-backend-client-flow).

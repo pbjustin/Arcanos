@@ -1,6 +1,7 @@
 """Provider-free registry and public CLI acceptance against a loopback Express server."""
 
 from dataclasses import is_dataclass
+from contextlib import contextmanager
 import hashlib
 import http.client
 import json
@@ -63,6 +64,7 @@ def install_native_observers() -> None:
     from arcanos.audio import AudioSystem
     from arcanos.cli import backend_ops, local_ops, state, ui_ops
     from arcanos.cli.cli import ArcanosCLI
+    from arcanos import interactive_input as terminal_input
 
     root = Path(os.environ["ACCEPTANCE_CASE_ROOT"])
     scenario = json.loads(Path(os.environ["ACCEPTANCE_NATIVE_SCENARIO"]).read_text(encoding="utf-8"))
@@ -71,15 +73,17 @@ def install_native_observers() -> None:
     audit_observation = root / "audit-producer-output.txt"
     clock = {"wall": 0.0, "mono": 0.0}
     cli_holder = []
+    original_stdout_handle = []
     markers = [value for value in scenario["credentials"].values() if value] + scenario.get("sensitiveMarkers", [])
     real_time, real_monotonic = time.time, time.monotonic
 
     class ObservedStdout:
         """Tee real stdout before ConPTY redraws, preserving its stream and TTY interfaces."""
 
-        def __init__(self, original):
+        def __init__(self, original, destination=stdout_observation):
             """Retain the native stream; never replace its terminal identity."""
             self.original = original
+            self.destination = destination
 
         def __getattr__(self, name):
             """Delegate encoding, fileno, isatty, buffer, and other native stream attributes."""
@@ -87,7 +91,7 @@ def install_native_observers() -> None:
 
         def write(self, value):
             """Observe exactly the emitted bytes-as-text, then perform the original write."""
-            with stdout_observation.open("a", encoding="utf-8") as stream:
+            with self.destination.open("a", encoding="utf-8") as stream:
                 stream.write(value)
             return self.original.write(value)
 
@@ -96,6 +100,7 @@ def install_native_observers() -> None:
             return self.original.flush()
 
     sys.stdout = ObservedStdout(sys.stdout)
+    sys.stderr = ObservedStdout(sys.stderr, root / "printed-stderr.txt")
     # Scope offsets to the registry clock owner; network deadlines/JWT/audit clocks stay real.
     state.time = SimpleNamespace(
         time=lambda: real_time() + clock["wall"],
@@ -107,6 +112,11 @@ def install_native_observers() -> None:
         """Append observations without altering actual return values or output arguments."""
         with observation.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps({"event": event, **fields}, ensure_ascii=False, default=str) + "\n")
+
+    if scenario.get("differentRecoveryOwner") is True:
+        import arcanos.continuation_store as protected_recovery
+        protected_recovery._current_user_sid = lambda: "S-1-5-21-111111111-222222222-333333333-4242"
+        record("injected_fault", kind="different-recovery-owner-sid", native_windows_user_unchanged=True)
 
     def fault(kind: str) -> None:
         """Change elapsed inputs or explicitly invalidate authority; never grant trusted evidence."""
@@ -129,9 +139,8 @@ def install_native_observers() -> None:
 
     original_input = builtins.input
 
-    def observed_input(*args, **kwargs):
-        """Retain OS stdin and its TTY check, applying a scheduled fault after real input."""
-        value = original_input(*args, **kwargs)
+    def after_input(value):
+        """Apply an explicitly scheduled fault only after real terminal input returns."""
         control = root / "next-input-fault.json"
         if control.exists():
             kind = json.loads(control.read_text(encoding="utf-8"))["fault"]
@@ -139,7 +148,21 @@ def install_native_observers() -> None:
             fault(kind)
         return value
 
+    def observed_input(*args, **kwargs):
+        """Retain OS stdin and its TTY check, applying a scheduled fault after real input."""
+        return after_input(original_input(*args, **kwargs))
+
     builtins.input = observed_input
+    original_editor = terminal_input.interactive_input
+
+    @contextmanager
+    def observed_editor():
+        """Observe the real editor input boundary without replacing terminal behavior."""
+        with original_editor() as read:
+            yield lambda *args, **kwargs: after_input(read(*args, **kwargs))
+
+    from arcanos import cli_runner
+    cli_runner.interactive_input = observed_editor
     original_print = builtins.print
 
     def observed_print(*args, **kwargs):
@@ -169,6 +192,25 @@ def install_native_observers() -> None:
         record("initialized", trust=cli._trust_state.name, stdin_isatty=sys.stdin.isatty(),
                source_file=str(Path(sys.modules[ArcanosCLI.__module__].__file__).resolve()),
                python_executable=sys.executable)
+        if sys.platform == "win32":
+            import ctypes
+            from ctypes import wintypes
+            import msvcrt
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel.GetStdHandle.argtypes, kernel.GetStdHandle.restype = [wintypes.DWORD], wintypes.HANDLE
+            kernel.GetConsoleMode.argtypes, kernel.GetConsoleMode.restype = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)], wintypes.BOOL
+            for name, identifier, stream in (("stdin", -10, sys.stdin), ("stdout", -11, sys.stdout)):
+                std = kernel.GetStdHandle(identifier)
+                if name == "stdout":
+                    original_stdout_handle.append(std)
+                crt = msvcrt.get_osfhandle(stream.fileno())
+                mode = wintypes.DWORD()
+                standard_ok = bool(kernel.GetConsoleMode(std, ctypes.byref(mode)))
+                standard_error = 0 if standard_ok else ctypes.get_last_error()
+                record("terminal_handle", stream=name, is_tty=stream.isatty(),
+                       standard_console=standard_ok, standard_error=standard_error,
+                       crt_console=bool(kernel.GetConsoleMode(crt, ctypes.byref(mode))),
+                       standard_matches_crt=std == crt)
 
     ArcanosCLI.__init__ = observed_init
     original_ask = ArcanosCLI.handle_ask
@@ -273,7 +315,15 @@ def install_native_observers() -> None:
         """Record final local evidence without recomputing, refreshing, or changing trust."""
         if cli_holder:
             cli = cli_holder[0]
+            restored = None
+            if original_stdout_handle:
+                import ctypes
+                from ctypes import wintypes
+                kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+                kernel.GetStdHandle.argtypes, kernel.GetStdHandle.restype = [wintypes.DWORD], wintypes.HANDLE
+                restored = kernel.GetStdHandle(-11) == original_stdout_handle[0]
             record("final_state", trust=cli._trust_state.name, registry_valid=state.registry_cache_is_valid(cli),
+                   terminal_handle_restored=restored,
                    wall_anchor=cli._registry_cache_updated_at,
                    mono_anchor=cli._registry_cache_updated_monotonic_at,
                    prompt_claims_fresh="daemon registry evidence: authenticated and fresh" in cli.system_prompt,
@@ -281,7 +331,8 @@ def install_native_observers() -> None:
                    prompt_sha256=hashlib.sha256(cli.system_prompt.encode()).hexdigest(),
                    last_confirmation_handled=cli._last_confirmation_handled,
                    current_intent=cli.session.current_intent, conversation_goal=cli.session.conversation_goal,
-                   last_response=cli._last_response)
+                   last_response=cli._last_response,
+                   history=cli.memory.get_recent_conversations(limit=100))
 
     atexit.register(final_state)
 
@@ -320,10 +371,19 @@ def native_cli(daemon_root: str, base_url: str, scenario_path: str, receipt_path
         "TERM": "dumb", "NO_COLOR": "1", "COLUMNS": "240",
         "SPEAK_RESPONSES": str(bool(scenario.get("speak"))).lower(),
         "REGISTRY_CACHE_TTL_MINUTES": "1", "BACKEND_REQUEST_TIMEOUT": "5",
+        "CONVERSATION_RECOVERY_ENABLED": "false",
         "ACCEPTANCE_NATIVE_SCENARIO": str(scenario_file),
         **scenario.get("extraEnv", {}),
         **debug_env,
     })
+    profile = scenario.get("persistentProfile")
+    if profile is not None:
+        if not isinstance(profile, str) or re.fullmatch(r"[A-Za-z0-9_-]{1,64}", profile) is None:
+            raise ValueError("Expected a bounded isolated persistence profile name")
+        shared = receipt_file.parent / ("native-profile-" + profile)
+        shared.mkdir(parents=True, exist_ok=True)
+        env.update(DATA_DIR=str(shared), MEMORY_FILE=str(shared / "memory.json"),
+                   HISTORY_DB_PATH=str(shared / "history.db"))
     if sys.platform != "win32":
         # The reused native helper seeds Windows config. Other public entrypoint
         # platforms also need their isolated user config before resolving BASE_DIR.
@@ -335,6 +395,9 @@ def native_cli(daemon_root: str, base_url: str, scenario_path: str, receipt_path
     dependency_site = os.environ.get("ACCEPTANCE_PYTHON_USER_SITE")
     if dependency_site:
         env["PYTHONPATH"] += os.pathsep + dependency_site
+    extra_site = os.environ.get("ACCEPTANCE_EXTRA_PYTHON_SITE")
+    if extra_site:
+        env["PYTHONPATH"] += os.pathsep + extra_site
     bootstrap = root / "native-bootstrap.py"
     bootstrap.write_text("from daemon_registry_client import install_native_observers\ninstall_native_observers()\n", encoding="utf-8")
     env["ACCEPTANCE_FAULT_BOOTSTRAP"] = str(bootstrap)
@@ -407,8 +470,36 @@ def native_cli(daemon_root: str, base_url: str, scenario_path: str, receipt_path
                 time.sleep(delay / 1000)
             if step.get("faultBefore"):
                 (root / "next-input-fault.json").write_text(json.dumps({"fault": step["faultBefore"]}), encoding="utf-8")
+            if step.get("typeBeforeWait") is not None:
+                if not scenario.get("tty") or not isinstance(step["typeBeforeWait"], str):
+                    raise ValueError("Partial input requires a native TTY and text")
+                child.send(step["typeBeforeWait"])
+            if step.get("waitForText") is not None:
+                expected = step["waitForText"]
+                expected_texts = expected if isinstance(expected, list) else [expected]
+                if not 1 <= len(expected_texts) <= 8 or any(not isinstance(text, str) or len(text) > 4096 for text in expected_texts):
+                    raise ValueError("Expected a bounded completion marker")
+                deadline = time.monotonic() + 15
+                stdout_file = root / "printed-stdout.txt"
+                while not all(text in (stdout_file.read_text(encoding="utf-8") if stdout_file.exists() else "") or text in child.transcript for text in expected_texts):
+                    if time.monotonic() >= deadline or child.returncode is not None:
+                        raise TimeoutError("Automatic answer did not reach the actual terminal")
+                    time.sleep(0.02)
             if scenario.get("tty"):
-                child.send_line(step["input"])
+                if scenario.get("extraEnv", {}).get("CONVERSATION_RECOVERY_ENABLED") == "true":
+                    # The Windows editor recognizes text + Enter in one input
+                    # batch as pasted content. Type text, observe it on the real
+                    # terminal, then press Enter as a separate key event.
+                    child.send(step["input"])
+                    deadline = time.monotonic() + 5
+                    while step["input"] and step["input"] not in child.transcript:
+                        if time.monotonic() >= deadline or child.returncode is not None:
+                            raise TimeoutError("Typed input did not reach the actual terminal")
+                        time.sleep(0.02)
+                    time.sleep(0.1)
+                    child.send("\r")
+                else:
+                    child.send_line(step["input"])
             else:
                 child.stdin.write(step["input"] + "\n")
                 child.stdin.flush()
@@ -448,24 +539,31 @@ def native_cli(daemon_root: str, base_url: str, scenario_path: str, receipt_path
     events = read_jsonl(root / "observations.jsonl")
     stdout_file = root / "printed-stdout.txt"
     printed_output = stdout_file.read_text(encoding="utf-8") if stdout_file.exists() else terminal
+    stderr_file = root / "printed-stderr.txt"
+    captured_stderr = stderr_file.read_text(encoding="utf-8") if stderr_file.exists() else ""
     audit_file = root / "audit-producer-output.txt"
     audit_output = audit_file.read_text(encoding="utf-8") if audit_file.exists() else ""
     speech = [row["text"] for row in events if row["event"] == "speech"]
     results = [row for row in events if row["event"] in ("ask_result", "conversation_result", "diagnostic_result")]
     persisted = []
-    memory_file = root / "data/memory.json"
-    history = json.loads(memory_file.read_text(encoding="utf-8")).get("conversations", []) if memory_file.exists() else []
-    for file in (root / "data").rglob("*"):
+    memory_file = Path(env["MEMORY_FILE"])
+    final_observation = next((row for row in reversed(events) if row["event"] == "final_state"), None)
+    history = (final_observation or {}).get("history")
+    if history is None:
+        history = json.loads(memory_file.read_text(encoding="utf-8")).get("conversations", []) if memory_file.exists() else []
+    for file in Path(env["DATA_DIR"]).rglob("*"):
         if file.is_file() and file.suffix in (".json", ".jsonl", ".txt"):
             persisted.append(file.read_text(encoding="utf-8", errors="replace"))
         elif file.is_file() and file.suffix == ".db":
             with sqlite3.connect(file) as connection:
                 for (table,) in connection.execute("SELECT name FROM sqlite_master WHERE type='table'"):
                     persisted.append(repr(connection.execute('SELECT * FROM "' + table.replace('"', '""') + '"').fetchall()))
+        elif file.is_file():
+            persisted.append(file.read_bytes().decode("utf-8", errors="ignore"))
     logs = [file.read_text(encoding="utf-8", errors="replace") for file in (root / "logs").rglob("*") if file.is_file()]
     markers = [value for value in credentials.values() if value] + scenario.get("sensitiveMarkers", [])
 
-    sinks = {"terminal": terminal + printed_output + stderr, "audit": audit_output,
+    sinks = {"terminal": terminal + printed_output + stderr + captured_stderr, "audit": audit_output,
              "logs": "\n".join(logs), "history": "\n".join(persisted),
              "speech": "\n".join(speech), "results": json.dumps(results, ensure_ascii=False),
              "debug_json": json.dumps(debug_response, ensure_ascii=False),
@@ -497,7 +595,9 @@ def native_cli(daemon_root: str, base_url: str, scenario_path: str, receipt_path
     receipt = {
         "name": scenario["name"], "entrypoint": argv, "public_entrypoint": True,
         "transport": "Windows ConPTY" if scenario.get("tty") else "native stdin/stdout pipes",
-        "exit_code": exit_code, "terminal": terminal, "stderr": stderr, "audits": audits,
+        "exit_code": exit_code, "terminal": terminal, "rendered_terminal": child.transcript if scenario.get("tty") and child is not None else terminal,
+        "stderr": stderr, "audits": audits,
+        "captured_stderr": captured_stderr,
         "printed_output": printed_output,
         "audit_capture": "actual serialized producer output before Rich terminal wrapping",
         "failure": failure,

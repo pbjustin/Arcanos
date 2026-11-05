@@ -4,6 +4,8 @@ Tracks and enforces request, token, and cost limits.
 """
 
 import time
+import math
+import threading
 from datetime import datetime, timedelta
 from typing import Optional
 from .config import Config
@@ -17,6 +19,8 @@ class RateLimiter:
         self.tokens_today: int = 0
         self.cost_today: float = 0.0
         self.last_reset: datetime = datetime.now()
+        self._recovered_requests: dict[str, float] = {}
+        self._recovered_lock = threading.Lock()
 
     def _reset_daily_limits(self) -> None:
         """Reset daily limits if it's a new day"""
@@ -60,6 +64,53 @@ class RateLimiter:
         self.requests_per_hour.append(time.time())
         self.tokens_today += tokens
         self.cost_today += cost
+
+    def record_recovered_request(
+        self, delivery_id: str, tokens: int, cost: float, recorded_at: float,
+    ) -> bool:
+        """Hydrate an authoritative completion once, charging its actual day and hour.
+
+        This method records local limit usage only; it never submits inference.
+        SQLite remains the durable deduplication source across process restarts.
+        """
+        if (not isinstance(delivery_id, str) or len(delivery_id) != 64
+                or any(char not in "0123456789abcdef" for char in delivery_id)
+                or isinstance(tokens, bool) or not isinstance(tokens, int) or tokens < 0
+                or isinstance(cost, bool) or not isinstance(cost, (int, float))
+                or not math.isfinite(cost) or cost < 0
+                or isinstance(recorded_at, bool) or not isinstance(recorded_at, (int, float))
+                or not math.isfinite(recorded_at)):
+            raise ValueError("Invalid recovered request accounting.")
+        now = time.time()
+        if recorded_at > now + 60:
+            raise ValueError("Invalid recovered request accounting.")
+        with self._recovered_lock:
+            self._reset_daily_limits()
+            # Startup reconciliation replays the bounded durable usage window.
+            # Known receipts need neither another charge nor an O(n) sweep.
+            if delivery_id in self._recovered_requests:
+                return False
+            self._clean_hourly_requests()
+            midnight = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+            cutoff = min(now - 24 * 60 * 60, midnight)
+            self._recovered_requests = {
+                key: timestamp for key, timestamp in self._recovered_requests.items()
+                if timestamp >= cutoff
+            }
+            # Recovery history has the same bound. Refuse excess accounting
+            # rather than silently losing deduplication in a running process.
+            if len(self._recovered_requests) >= 2048:
+                raise ValueError("Recovered request accounting is at capacity.")
+            if recorded_at < cutoff:
+                return False
+            self._recovered_requests[delivery_id] = recorded_at
+            if datetime.fromtimestamp(recorded_at).date() == datetime.now().date():
+                self.tokens_today += tokens
+                self.cost_today += cost
+            if recorded_at > now - 3600:
+                self.requests_per_hour.append(recorded_at)
+                self.requests_per_hour.sort()
+            return True
 
     def get_usage_stats(self) -> dict:
         """Get current usage statistics"""

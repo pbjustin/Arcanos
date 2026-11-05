@@ -2140,6 +2140,7 @@ The semantic planner can only propose one registered action plus a JSON-object p
 | `BACKEND_ALLOW_GPT_ID_AUTH` | `false` | Compatibility client flag that permits requests without a generic bearer and adds `x-gpt-id` in `daemon-python/arcanos/backend_client/__init__.py`. It does not authenticate current protected backend routes or replace `ARCANOS_DAEMON_ACCESS_TOKEN`. |
 | `BACKEND_ROUTING_MODE` | `hybrid` | `local`, `backend`, or `hybrid`. |
 | `BACKEND_REQUEST_TIMEOUT` | `15` | Python daemon timeout, in seconds, used by its main backend API and protocol clients. |
+| `CONVERSATION_RECOVERY_ENABLED` | `true` | Foreground Python CLI recovery of original accepted conversation jobs. Windows DPAPI protects at most eight pending records under `DATA_DIR`; sequential GET reads use a maximum two-second timeout and 1–30 second pending / 1–60 second error backoff. It does not enable command polling, actions or self-healing. `false` preserves manual `/resume`; unavailable protected storage fails closed. |
 | `REQUEST_TIMEOUT` | `30` | Python daemon timeout, in seconds, supplied to non-streaming chat, fallback chat streaming, vision, transcription, and inline agentic confirmed command execution. It is not a Node/backend HTTP-server deadline. |
 | `AGENTIC_ENABLED` | `true` | Enables multi-step reasoning loop (ask → propose → approve → apply/run → continue). |
 | `AGENT_MAX_STEPS` | `6` | Max loop iterations per user request. |

@@ -8,10 +8,10 @@
 import express from 'express';
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { JobData } from '../src/core/db/schema.js';
 import type { FindOrCreateGptJobOptions, UpdateClaimedJobTerminalOptions } from '../src/core/db/repositories/jobRepository.js';
 import { PURPOSE_BOUND_CREDENTIAL_ENV_NAMES } from '../src/shared/security/purposeBoundCredential.js';
@@ -25,13 +25,26 @@ import {
 
 const durableMemory = createSyntheticDurableMemory();
 const answer = 'I can explain ideas and help you plan.\n\n### Audit Summary\nRequested public report — café 雪.\n\n### COMPLIANCE STATUS\nThe supplied draft remains under review.';
+const secondQuestion = 'What can you do with a second question?';
+const secondAnswer = 'This answer belongs to the second original conversation.';
+const terminalMessages: Record<string, string> = {
+  failed: 'The original conversation job failed.',
+  cancelled: 'The original conversation job was cancelled.',
+  expired: 'The original conversation job has expired.',
+  lost_output: 'The completed job has no retained output. The original answer is unavailable.',
+  invalid_capability: 'The original conversation job is unavailable or inaccessible.',
+  tampered_storage: 'Automatic conversation recovery is unavailable; protected storage and backend authentication are required.',
+  different_backend: 'Automatic conversation recovery is unavailable; protected storage and backend authentication are required.',
+  different_user: 'Automatic conversation recovery is unavailable; protected storage and backend authentication are required.',
+};
+let multipleProviderAnswers = false;
 let releaseProvider = () => {};
 let providerCompletion = Promise.resolve();
 let providerStatus: 'completed' | 'incomplete' = 'completed';
 const responsesCreate = jest.fn(async (input: SyntheticResponsesRequest) => {
   await providerCompletion;
   return { id: 'synthetic-continuation-response', model: input.model, created_at: 1_790_000_000,
-    status: providerStatus, output_text: answer, output: [],
+    status: providerStatus, output_text: multipleProviderAnswers && JSON.stringify(input.input).includes(secondQuestion) ? secondAnswer : answer, output: [],
     ...(providerStatus === 'incomplete' ? { incomplete_details: { reason: 'max_output_tokens' } } : {}),
     usage: { input_tokens: 120, output_tokens: 24, total_tokens: 144 } };
 });
@@ -49,6 +62,7 @@ const environmentKeys = [
   'SAFETY_EXPECTED_HASH_GPT_ROUTER_CONFIG', 'PUBLIC_PROVIDER_RATE_LIMIT_MAX',
   'PUBLIC_PROVIDER_CLIENT_RATE_LIMIT_MAX', 'OPENAI_STORE',
   'FINETUNED_MODEL_ID',
+  'GPT_PRIORITY_DIRECT_EXECUTION_CONCURRENCY',
 ] as const;
 const originalEnvironment = new Map(environmentKeys.map(key => [key, process.env[key]]));
 const accessToken = `synthetic-memory-${'q'.repeat(48)}`;
@@ -57,6 +71,8 @@ const peerToken = 'synthetic-real-chain-control-token-1234567890';
 const genericToken = 'synthetic-real-chain-writing-token-1234567890';
 const secret = randomBytes(32).toString('hex');
 const jobId = '51883102-2222-4222-8222-222222222222';
+const secondJobId = '51883102-3333-4333-8333-333333333333';
+let nextJobId = jobId;
 for (const name of PURPOSE_BOUND_CREDENTIAL_ENV_NAMES) delete process.env[name];
 process.env.ARCANOS_MEMORY_ACCESS_TOKEN = accessToken;
 process.env.GPT_ASYNC_HEAVY_PROMPT_CHARS = '1200';
@@ -146,7 +162,7 @@ jest.unstable_mockModule('../src/core/db/repositories/jobRepository.js', () => (
   findOrCreateGptJob: async (options: FindOrCreateGptJobOptions) => {
     const now = new Date();
     const job: JobData = {
-      id: jobId, worker_id: options.workerId, job_type: 'gpt',
+      id: nextJobId, worker_id: options.workerId, job_type: 'gpt',
       status: options.createOptions.status ?? 'pending', claim_generation: '1',
       input: structuredClone(options.input), output: null, created_at: now, updated_at: now,
       last_worker_id: options.createOptions.lastWorkerId,
@@ -257,7 +273,8 @@ afterAll(() => {
   writeFileSync(scenarioPath, JSON.stringify({
     name: 'real dispatcher CORE Trinity Responses continuation', tty: true, heartbeat: false,
     credentials: { daemon: daemonToken, control: peerToken, gpt: genericToken },
-    sensitiveMarkers: [issueJobReadCapability(jobId, secret)],
+    sensitiveMarkers: [issueJobReadCapability(jobId, secret), issueJobReadCapability(secondJobId, secret),
+      issueJobReadCapability(jobId, 'synthetic-invalid-job-read-key')],
     steps: [{ input: 'what can u do?' }, { input: `/resume ${jobId}` },
       { input: `/resume ${jobId}`, waitBeforeMs: 150, faultBefore: 'expire' },
       { input: `/resume ${jobId}` }, { input: '/exit' }],
@@ -320,3 +337,343 @@ afterAll(() => {
     rmSync(sandbox, { recursive: true, force: true });
   }
 }, 70_000);
+
+/** Launch the existing guarded public CLI fixture without replacing HTTP, input or recovery. */
+async function runAutomaticCliCase(
+  python: string, userSite: string, sandbox: string, baseUrl: string,
+  label: string, scenario: Record<string, unknown>,
+) {
+  const scenarioPath = path.join(sandbox, label + '-scenario.json');
+  const receiptPath = path.join(sandbox, label + '-receipt.json');
+  writeFileSync(scenarioPath, JSON.stringify({
+    name: label, tty: true, heartbeat: false,
+    credentials: { daemon: daemonToken, control: peerToken, gpt: genericToken },
+    sensitiveMarkers: [issueJobReadCapability(jobId, secret)],
+    extraEnv: { CONVERSATION_RECOVERY_ENABLED: 'true', BACKEND_FALLBACK_TO_LOCAL: 'true' },
+    ...scenario,
+  }));
+  const launch = Object.fromEntries(
+    ['SystemRoot', 'WINDIR', 'PATH', 'PATHEXT', 'ACCEPTANCE_EXTRA_PYTHON_SITE']
+      .filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]!]),
+  );
+  const result = await new Promise<{ code: number | null; stderr: string }>((resolve, reject) => {
+    const child = spawn(python, ['-B', fileURLToPath(new URL('./fixtures/daemon_registry_client.py', import.meta.url)),
+      '--native', fileURLToPath(new URL('../daemon-python', import.meta.url)), baseUrl, scenarioPath, receiptPath], {
+      cwd: sandbox, env: { ...launch, PYTHONIOENCODING: 'utf-8', ACCEPTANCE_PYTHON_USER_SITE: userSite },
+      windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'], timeout: 55_000,
+    });
+    let stderr = '';
+    child.stderr.on('data', chunk => { stderr += chunk.toString(); });
+    child.once('error', reject); child.once('close', code => resolve({ code, stderr }));
+  });
+  const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
+  const receiptEvidence = path.resolve('tmp/automatic-continuation');
+  mkdirSync(receiptEvidence, { recursive: true });
+  writeFileSync(path.join(receiptEvidence, label + '-receipt.json'), JSON.stringify(receipt, null, 2));
+  expect({ label, ...result, failure: receipt.failure }).toEqual({ label, code: 0, stderr: '', failure: null });
+  expect(receipt.public_entrypoint).toBe(true);
+  expect(receipt.transport).toBe('Windows ConPTY');
+  expect(Object.values(receipt.leaks).every(value => value === false)).toBe(true);
+  expect(receipt.cleanup.forced_termination).toBe(false);
+  expect(receipt.final_state.terminal_handle_restored).toBe(true);
+  expect(receipt.observations.filter((row: { event: string }) => row.event === 'local_generation_attempt')).toHaveLength(0);
+  expect(receipt.speech).toHaveLength(0);
+  return receipt;
+}
+
+/** Exercise local crash boundaries with real HTTP, DPAPI and history in fresh processes. */
+async function runRecoveryFaultCase(
+  python: string, userSite: string, sandbox: string, baseUrl: string, mode: string,
+) {
+  const launch = Object.fromEntries(['SystemRoot', 'WINDIR', 'PATH', 'PATHEXT', 'ACCEPTANCE_EXTRA_PYTHON_SITE']
+    .filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]!]));
+  const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+    const child = spawn(python, ['-B', fileURLToPath(new URL('./fixtures/conversation_recovery_http_faults.py', import.meta.url)),
+      '--mode', mode, '--daemon-root', fileURLToPath(new URL('../daemon-python', import.meta.url)),
+      '--base-url', baseUrl, '--data-dir', path.join(sandbox, 'fault-profile')], {
+      cwd: sandbox, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000,
+      env: { ...launch, PYTHONIOENCODING: 'utf-8', ACCEPTANCE_PYTHON_USER_SITE: userSite,
+        ARCANOS_GPT_ACCESS_TOKEN: genericToken, ARCANOS_DAEMON_ACCESS_TOKEN: daemonToken,
+        ARCANOS_CONTROL_PLANE_ACCESS_TOKEN: peerToken },
+    });
+    let stdout = '', stderr = '';
+    child.stdout.on('data', chunk => { stdout += chunk.toString(); });
+    child.stderr.on('data', chunk => { stderr += chunk.toString(); });
+    child.once('error', reject); child.once('close', code => resolve({ code, stdout, stderr }));
+  });
+  expect({ code: result.code, stderr: result.stderr }).toEqual({ code: 0, stderr: '' });
+  const receipt = JSON.parse(result.stdout);
+  const evidence = path.resolve('tmp/automatic-continuation');
+  mkdirSync(evidence, { recursive: true });
+  writeFileSync(path.join(evidence, mode + '-fault-receipt.json'), JSON.stringify(receipt, null, 2));
+  expect(receipt.no_capability_leaks).toBe(true);
+  return receipt;
+}
+
+(process.platform === 'win32' ? it : it.skip).each([
+  'automatic', 'restart', 'temporary_503', 'backend_restart', 'multiple',
+  'failed', 'cancelled', 'expired', 'lost_output', 'invalid_capability',
+  'tampered_storage', 'different_backend',
+  'duplicate_worker', 'before_commit', 'after_commit', 'partial_render',
+  'synchronous', 'offline',
+  'different_user',
+] as const)(
+  'delivers the original answer automatically with %s recovery and no resume command', async mode => {
+    const python = process.env.PYTHON_EXECUTABLE || 'python';
+    const userSite = spawnSync(python, ['-c', 'import site; print(site.getusersitepackages())'], {
+      encoding: 'utf8', windowsHide: true, timeout: 10_000,
+    });
+    expect(userSite.status).toBe(0);
+    providerStatus = 'completed'; responsesCreate.mockClear(); conversationJobs.clear(); durableMemory.reset();
+    nextJobId = jobId;
+    multipleProviderAnswers = mode === 'multiple';
+    process.env.GPT_PRIORITY_DIRECT_EXECUTION_CONCURRENCY = mode === 'multiple' ? '2' : '1';
+    providerCompletion = mode === 'synchronous' ? Promise.resolve() : new Promise<void>(resolve => { releaseProvider = resolve; });
+    const sandbox = mkdtempSync(path.join(tmpdir(), 'arcanos-automatic-continuation-'));
+    const observed: Array<{ method: string; path: string; status?: number; capabilityBound?: boolean }> = [];
+    const startupSnapshots: Record<string, unknown> = {};
+    let restartedBackend: ReturnType<typeof spawn> | undefined;
+    let alternateBackend: ReturnType<typeof app.listen> | undefined;
+    let backendStartupError = '';
+    let freshBackendPid: number | undefined;
+    let childFinalCounters: { generationRequests: number; providerCalls: number; resultReads: number } | undefined;
+    let resultReads = 0;
+    let generationRequests = 0;
+    let overlappingAcceptedJobs = false;
+    let offlineRestart: ReturnType<typeof setTimeout> | undefined;
+    let offlineReadOutage = false;
+    const app = express();
+    app.use(requestContext); app.use(express.json());
+    app.use((req, res, next) => {
+      const row: (typeof observed)[number] = { method: req.method, path: req.path };
+      observed.push(row);
+      if (req.method === 'POST' && req.path.startsWith('/gpt/')) {
+        generationRequests += 1;
+        nextJobId = generationRequests === 2 ? secondJobId : jobId;
+        if (mode === 'multiple' && generationRequests === 2) res.once('finish', () => {
+          overlappingAcceptedJobs = [jobId, secondJobId].every(id => conversationJobs.get(id)?.status === 'running');
+          releaseProvider();
+        });
+        if (mode === 'invalid_capability') {
+          const json = res.json.bind(res);
+          res.json = body => json(res.statusCode === 202
+            ? { ...body, jobReadToken: issueJobReadCapability(jobId, 'synthetic-invalid-job-read-key') } : body);
+        }
+      }
+      if (req.path === '/api/daemon/registry' || req.path === '/system-state') {
+        const json = res.json.bind(res);
+        res.json = body => { startupSnapshots[req.path] = structuredClone(body); return json(body); };
+      }
+      res.once('finish', () => { row.status = res.statusCode; });
+      if (req.path.startsWith('/jobs/')) {
+        resultReads += 1;
+        const requestJobId = req.path.split('/')[2];
+        row.capabilityBound = [jobId, secondJobId].includes(requestJobId)
+          && req.get('x-arcanos-job-read-token') === issueJobReadCapability(requestJobId, secret)
+          && req.originalUrl === `/jobs/${requestJobId}/result` && !req.get('x-arcanos-daemon-token');
+        if (!['restart', 'backend_restart', 'tampered_storage', 'different_backend', 'different_user', 'multiple'].includes(mode)) res.once('finish', releaseProvider);
+        if (mode === 'temporary_503' && resultReads <= 2) {
+          res.status(503).json({ error: 'JOB_REPOSITORY_UNAVAILABLE' });
+          return;
+        }
+        const stored = conversationJobs.get(requestJobId);
+        if (stored?.status === 'completed' && terminalMessages[mode]) {
+          if (mode === 'failed' || mode === 'cancelled' || mode === 'expired') stored.status = mode;
+          if (mode === 'lost_output') stored.output = null;
+        }
+        if (mode === 'offline' && resultReads === 1) res.once('finish', () => {
+          server.closeAllConnections();
+          server.close(() => {
+            offlineReadOutage = true;
+            offlineRestart = setTimeout(() => server.listen(address.port, '127.0.0.1'), 4_000);
+          });
+        });
+      }
+      next();
+    });
+    app.use(apiDaemonRouter); app.use(systemStateRouter); app.use('/gpt', gptRouter); app.use(jobsRouter); app.use(errorHandler);
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise<void>((resolve, reject) => { server.once('listening', resolve); server.once('error', reject); });
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Expected loopback address');
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    try {
+      let receipt;
+      let beforeRestartReads = 0;
+      const recoveryBlocked = ['tampered_storage', 'different_backend', 'different_user'].includes(mode);
+      const faultMode = ['duplicate_worker', 'before_commit', 'after_commit', 'partial_render'].includes(mode);
+      if (faultMode) {
+        const first = await runRecoveryFaultCase(python, userSite.stdout.trim(), sandbox, baseUrl, mode);
+        expect(first.generation_posts).toBe(1);
+        if (mode === 'duplicate_worker') expect(first.second_worker_gets).toBe(0);
+        else expect(first.fault_triggered).toBe(true);
+        const recovered = mode === 'duplicate_worker' ? first
+          : await runRecoveryFaultCase(python, userSite.stdout.trim(), sandbox, baseUrl, 'recover');
+        expect(recovered.generation_posts).toBe(mode === 'duplicate_worker' ? 1 : 0);
+        expect(recovered.history).toHaveLength(1);
+        expect(recovered.pending_count).toBe(0);
+        expect(recovered.durable_completion_audits).toBe(1);
+        expect(recovered.limiter_tokens_today).toBe(144);
+        expect(recovered.limiter_cost_today).toBe(0);
+        if (mode !== 'duplicate_worker') expect(recovered.process_id).not.toBe(first.process_id);
+        receipt = { ...recovered, rendered_terminal: mode === 'duplicate_worker' ? first.rendered_output
+          : first.rendered_output + '\n' + recovered.rendered_output };
+      } else if (mode === 'restart' || mode === 'backend_restart' || recoveryBlocked) {
+        const first = await runAutomaticCliCase(python, userSite.stdout.trim(), sandbox, baseUrl, mode + '-before', {
+          persistentProfile: 'restart', steps: [{ input: 'what can u do?' }, { input: '/exit' }],
+        });
+        expect(first.history).toHaveLength(0);
+        beforeRestartReads = resultReads;
+        const profile = path.join(sandbox, 'native-profile-restart');
+        const files = readdirSync(profile);
+        expect(files.length).toBeGreaterThan(0);
+        const memoryPath = path.join(profile, 'memory.json');
+        const memory = JSON.parse(readFileSync(memoryPath, 'utf8'));
+        memory.settings.instance_id = 'fresh-process-instance-after-system-restart';
+        writeFileSync(memoryPath, JSON.stringify(memory));
+        releaseProvider();
+        for (let attempt = 0; attempt < 50 && conversationJobs.get(jobId)?.status !== 'completed'; attempt += 1) {
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        expect(conversationJobs.get(jobId)?.status).toBe('completed');
+        let recoveryBaseUrl = baseUrl;
+        if (mode === 'tampered_storage') {
+          const encryptedPath = path.join(profile, 'conversation-recovery/pending.dpapi');
+          const encrypted = readFileSync(encryptedPath);
+          encrypted[encrypted.length - 1] ^= 1;
+          writeFileSync(encryptedPath, encrypted);
+        }
+        if (mode === 'different_backend') {
+          alternateBackend = app.listen(0, '127.0.0.1');
+          await new Promise<void>((resolve, reject) => { alternateBackend!.once('listening', resolve); alternateBackend!.once('error', reject); });
+          const alternateAddress = alternateBackend.address();
+          if (!alternateAddress || typeof alternateAddress === 'string') throw new Error('Expected alternate loopback backend');
+          recoveryBaseUrl = `http://127.0.0.1:${alternateAddress.port}`;
+          expect(recoveryBaseUrl).not.toBe(baseUrl);
+        }
+        if (mode === 'backend_restart') {
+          // Persist only the controlled repository row and synthetic startup
+          // responses. Bearer capabilities remain solely in the CLI DPAPI file.
+          const storagePath = path.join(sandbox, 'persisted-backend-job.json');
+          const persisted = {
+            job: conversationJobs.get(jobId), registry: startupSnapshots['/api/daemon/registry'],
+            systemState: startupSnapshots['/system-state'],
+          };
+          expect(JSON.stringify(persisted)).not.toContain(issueJobReadCapability(jobId, secret));
+          writeFileSync(storagePath, JSON.stringify(persisted));
+          server.closeAllConnections();
+          await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+          conversationJobs.clear();
+          const childEnvironment = Object.fromEntries(['SystemRoot', 'WINDIR', 'PATH', 'PATHEXT']
+            .filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]!]));
+          restartedBackend = spawn(process.execPath, [
+            '--import', pathToFileURL(path.resolve('scripts/register-esm-loader.mjs')).href,
+            fileURLToPath(new URL('./fixtures/continuation-result-backend-child.mjs', import.meta.url)),
+            storagePath, String(address.port),
+          ], {
+            cwd: process.cwd(), windowsHide: true, stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+            env: { ...childEnvironment, NODE_ENV: 'test', ARCANOS_JOB_READ_CAPABILITY_SECRET: secret,
+              ARCANOS_DAEMON_ACCESS_TOKEN: daemonToken },
+          });
+          const backend = restartedBackend;
+          backend.stderr?.on('data', chunk => { backendStartupError = (backendStartupError + chunk.toString()).slice(-4000); });
+          await new Promise<void>((resolve, reject) => {
+            const deadline = setTimeout(() => reject(new Error('Fresh backend process readiness timed out')), 15_000);
+            backend.on('message', message => {
+              const data = message as { event: string; pid?: number; method: string; path: string; status: number;
+                capabilityBound?: boolean; generationRequests: number; providerCalls: number; resultReads: number };
+              if (data.event === 'ready') { freshBackendPid = data.pid; clearTimeout(deadline); resolve(); }
+              if (data.event === 'request') {
+                observed.push({ method: data.method, path: data.path, status: data.status,
+                  ...(data.path.startsWith('/jobs/') ? { capabilityBound: data.capabilityBound } : {}) });
+                if (data.path.startsWith('/jobs/')) resultReads += 1;
+              }
+              if (data.event === 'closed') childFinalCounters = data;
+            });
+            backend.once('error', error => { clearTimeout(deadline); reject(error); });
+            backend.once('exit', code => { clearTimeout(deadline); if (code !== 0) reject(new Error('Fresh backend process failed: ' + backendStartupError)); });
+          });
+          expect(freshBackendPid).not.toBe(process.pid);
+        }
+        receipt = await runAutomaticCliCase(python, userSite.stdout.trim(), sandbox, recoveryBaseUrl, mode + '-after', {
+          persistentProfile: 'restart', differentRecoveryOwner: mode === 'different_user',
+          steps: [{ input: '/exit', ...(recoveryBlocked ? {} : { waitForText: answer }) }],
+        });
+        const readsAfterDelivery = resultReads;
+        const replay = await runAutomaticCliCase(python, userSite.stdout.trim(), sandbox, recoveryBaseUrl, mode + '-replay', {
+          persistentProfile: 'restart', differentRecoveryOwner: mode === 'different_user', steps: [{ input: '/exit' }],
+        });
+        expect(replay.history).toHaveLength(recoveryBlocked ? 0 : 1);
+        expect(resultReads).toBe(readsAfterDelivery);
+        if (restartedBackend) {
+          const backend = restartedBackend;
+          await new Promise<void>((resolve, reject) => {
+            const deadline = setTimeout(() => reject(new Error('Fresh backend process shutdown timed out')), 10_000);
+            backend.once('exit', code => { clearTimeout(deadline); code === 0 ? resolve() : reject(new Error('Fresh backend process failed')); });
+            backend.send('close');
+          });
+          expect(childFinalCounters).toMatchObject({ generationRequests: 0, providerCalls: 0, resultReads: 1 });
+        }
+      } else if (terminalMessages[mode]) {
+        receipt = await runAutomaticCliCase(python, userSite.stdout.trim(), sandbox, baseUrl, mode, {
+          persistentProfile: mode,
+          steps: [{ input: 'what can u do?' }, { input: '/exit', waitForText: terminalMessages[mode] }],
+        });
+      } else if (mode === 'multiple') {
+        receipt = await runAutomaticCliCase(python, userSite.stdout.trim(), sandbox, baseUrl, mode, {
+          persistentProfile: mode,
+          steps: [{ input: 'what can u do?' }, { input: secondQuestion },
+            { typeBeforeWait: '/sta', waitForText: [answer, secondAnswer], input: 'tus' }, { input: '/exit' }],
+        });
+        expect(overlappingAcceptedJobs).toBe(true);
+        expect(receipt.rendered_terminal).toContain(secondAnswer);
+      } else {
+        receipt = await runAutomaticCliCase(python, userSite.stdout.trim(), sandbox, baseUrl, mode, {
+          persistentProfile: mode,
+          // The user starts typing a real slash command before recovery prints;
+          // completing it afterward proves the active input line remains intact.
+          steps: [{ input: 'what can u do?' }, { typeBeforeWait: '/sta', waitForText: answer, input: 'tus' }, { input: '/exit' }],
+        });
+        expect(receipt.rendered_terminal).toContain('Daemon trust (local):');
+      }
+      if (terminalMessages[mode]) expect(receipt.rendered_terminal).not.toContain(answer);
+      else expect(receipt.rendered_terminal).toContain(answer);
+      const originalRequests = mode === 'multiple' ? 2 : 1;
+      expect(receipt.history).toHaveLength(terminalMessages[mode] ? 0 : originalRequests);
+      if (!terminalMessages[mode]) expect(receipt.history).toEqual(expect.arrayContaining([expect.objectContaining({ user: 'what can u do?', ai: answer })]));
+      if (mode === 'multiple') expect(receipt.history).toEqual(expect.arrayContaining([expect.objectContaining({ user: secondQuestion, ai: secondAnswer })]));
+      expect(observed.filter(row => row.method === 'POST' && row.path.startsWith('/gpt/'))).toEqual(
+        Array.from({ length: originalRequests }, () => expect.objectContaining({ status: mode === 'synchronous' ? 200 : 202 })),
+      );
+      expect(responsesCreate).toHaveBeenCalledTimes(originalRequests);
+      expect(generationRequests).toBe(originalRequests);
+      expect(observed.filter(row => row.path.startsWith('/jobs/')).every(row => row.capabilityBound)).toBe(mode !== 'invalid_capability');
+      if (!faultMode) expect(receipt.audits.filter((row: { event: string; command?: string }) => row.command === 'conversation_recovery' && row.event === 'execute_success'))
+        .toHaveLength(terminalMessages[mode] || mode === 'synchronous' ? 0 : originalRequests);
+      if (recoveryBlocked || mode === 'synchronous') expect(resultReads).toBe(beforeRestartReads);
+      else expect(resultReads).toBeGreaterThan(beforeRestartReads);
+      expect(resultReads).toBeLessThanOrEqual(8);
+      if (mode === 'temporary_503') expect(observed.filter(row => row.status === 503)).toHaveLength(2);
+      if (mode === 'offline') {
+        expect(offlineReadOutage).toBe(true);
+        expect(receipt.rendered_terminal).toContain('Conversation recovery is waiting');
+      }
+      const evidence = path.resolve('tmp/automatic-continuation');
+      mkdirSync(evidence, { recursive: true });
+      writeFileSync(path.join(evidence, mode + '-proof.json'), JSON.stringify({
+        mode, observed, generationRequests, providerCalls: responsesCreate.mock.calls.length, overlappingAcceptedJobs,
+        resultReads, beforeRestartReads, offlineReadOutage, history: receipt.history, noLeaks: true,
+        actualConPTY: !faultMode, realPythonHttp: true, automatic: true, resumeCommands: 0,
+        freshProcessIdentity: mode === 'restart' || mode === 'backend_restart', freshBackendPid, childFinalCounters,
+        ...(mode === 'different_user' ? { isolationEvidence: 'Injected different recovery-owner SID; real Windows account unchanged' } : {}),
+      }, null, 2));
+    } finally {
+      releaseProvider(); server.closeAllConnections();
+      if (offlineRestart) clearTimeout(offlineRestart);
+      if (server.listening) await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+      if (restartedBackend && restartedBackend.exitCode === null) restartedBackend.kill();
+      if (alternateBackend) await new Promise<void>((resolve, reject) => alternateBackend!.close(error => error ? reject(error) : resolve()));
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  }, 100_000,
+);

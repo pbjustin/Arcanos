@@ -48,7 +48,21 @@ def read_chat_continuation(payload: Any) -> Optional[BackendChatContinuation]:
         return None
     if payload.get("poll", f"/jobs/{job_id}/result") != f"/jobs/{job_id}/result":
         return None
-    return BackendChatContinuation(job_id=job_id, job_read_token=token)
+    return BackendChatContinuation(job_id=job_id, job_read_token=token, expires_at=_job_expiry(payload))
+
+
+def _job_expiry(payload: Mapping[str, Any]) -> Optional[float]:
+    """Retain server expiry metadata without guessing a recovery deadline from acceptance."""
+    for key in ("retentionUntil", "expiresAt"):
+        value = payload.get(key)
+        if isinstance(value, str):
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                if parsed.tzinfo is not None:
+                    return parsed.timestamp()
+            except (ValueError, OverflowError):
+                pass
+    return None
 
 
 def _build_backend_payload(**fields: Any) -> dict[str, Any]:
@@ -738,7 +752,7 @@ def request_chat_job_result(
     if not response.ok:
         error = response.error
         return BackendResponse(ok=False, error=BackendRequestError(
-            kind=error.kind if error else "unavailable",
+            kind=error.kind if error else "parse",
             message="The stored conversation answer could not be retrieved.",
             status_code=error.status_code if error else None,
         ))
@@ -758,13 +772,17 @@ def request_chat_job_result(
             kind, message = "cancelled", "The original conversation job was cancelled."
         elif status == "failed":
             kind, message = "failed", "The original conversation job failed."
+            if isinstance(payload.get("error"), Mapping) and payload["error"].get("code") == "JOB_RESULT_UNAVAILABLE":
+                message = "The completed job has no retained output. The original answer is unavailable."
         elif status == "not_found":
             kind, message = "unavailable", "The original conversation job is unavailable or inaccessible."
         else:
             kind, message = "parse", "The conversation job returned an unsupported result state."
         return BackendResponse(ok=False, error=BackendRequestError(
             kind=kind, message=message,
-            continuation=continuation if kind == "pending" else None,
+            continuation=BackendChatContinuation(
+                continuation.job_id, continuation.job_read_token, _job_expiry(payload),
+            ) if kind == "pending" else None,
         ))
 
     envelope = payload.get("result")
@@ -787,7 +805,14 @@ def request_chat_job_result(
         for key in ("tokens", "cost", "meta", "model", "activeModel"):
             if key not in chat_payload and key in result:
                 chat_payload[key] = result[key]
-    return client._parse_chat_response(chat_payload)
+    parsed = client._parse_chat_response(chat_payload)
+    if parsed.ok and parsed.value is not None:
+        value = parsed.value
+        return BackendResponse(ok=True, value=BackendChatResult(
+            value.response_text, value.tokens_used, value.cost_usd, value.model,
+            value.presentation, _job_expiry(payload),
+        ))
+    return parsed
 
 
 def _is_completed_chat_job_output(envelope: Any) -> bool:
@@ -796,20 +821,37 @@ def _is_completed_chat_job_output(envelope: Any) -> bool:
         return False
     if not isinstance(envelope.get("_route"), Mapping):
         return False
-    answer = envelope.get("result")
-    if isinstance(answer, str):
-        has_text = bool(answer.strip())
-    elif isinstance(answer, Mapping):
-        # Match direct chat's structured-answer support while keeping the
-        # existing empty nested result wrapper classified as no answer.
-        has_text = bool(answer) and answer != {"result": {}}
-    else:
-        has_text = False
-    if not has_text:
-        return False
     records = [envelope]
-    if isinstance(answer, Mapping):
+    metadata_fields = {
+        "ok", "_route", "presentation", "tokens", "cost", "meta", "model", "activeModel",
+        "status", "error", "incomplete", "truncated", "length_truncated", "lengthTruncated",
+        "content_filtered", "contentFiltered", "finish_reason", "finishReason",
+        "response_status", "responseStatus", "provider_metadata",
+    }
+    answer = envelope.get("result")
+    for _ in range(8):
+        if isinstance(answer, str):
+            if not answer.strip():
+                return False
+            break
+        if not isinstance(answer, Mapping) or not answer:
+            return False
         records.append(answer)
+        # Follow only canonical result wrappers with known execution metadata.
+        # Other module fields remain structured answer content, including zero,
+        # false and empty collections; do not recursively inspect arbitrary data.
+        if "result" in answer and answer.keys() <= metadata_fields | {"result"}:
+            nested = answer["result"]
+            if nested is None:
+                return False
+            if isinstance(nested, (Mapping, str)):
+                answer = nested
+                continue
+        if answer.keys() <= metadata_fields:
+            return False
+        break
+    else:
+        return False
     # Inspect only contract metadata, within a fixed depth; never interpret
     # ordinary answer prose or arbitrary nested user data as completion state.
     for record in list(records):

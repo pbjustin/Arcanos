@@ -3,10 +3,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+import re
 import sqlite3
 import time
 import uuid
+from contextlib import closing
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
@@ -14,6 +18,22 @@ from ..config import Config
 from ..cli.cli_policy import redact_output, redact_patch_preview
 from ..utils.text import sanitize_utf8_text
 from ..voice_boundary import sanitize_tool_output
+
+
+RECOVERED_CONVERSATION_LIMIT = 2048
+RECOVERED_CONVERSATION_BYTES = 64 * 1024 * 1024
+RECOVERED_DEDUP_RETENTION_SECONDS = 8 * 24 * 60 * 60
+_RECOVERED_TOTALS_KEY = "conversation-delivery-totals-v1"
+
+
+class RecoveredConversationStorageError(RuntimeError):
+    """A recovered answer could not be committed; its pending receipt must remain."""
+
+
+def _validate_delivery_id(delivery_id: str) -> None:
+    """Accept only the non-secret SHA-256 identity of an originating backend job."""
+    if not isinstance(delivery_id, str) or re.fullmatch(r"[a-f0-9]{64}", delivery_id) is None:
+        raise RecoveredConversationStorageError("Invalid conversation delivery identity.")
 
 
 def _now_ms() -> int:
@@ -154,6 +174,182 @@ class HistoryDB:
                     note TEXT
                 )
                 """
+            )
+            c.execute(
+                """
+                CREATE TABLE IF NOT EXISTS conversation_deliveries (
+                    delivery_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    user_text TEXT NOT NULL,
+                    answer_text TEXT NOT NULL,
+                    tokens INTEGER NOT NULL,
+                    cost REAL NOT NULL,
+                    created_at REAL NOT NULL,
+                    displayed INTEGER NOT NULL DEFAULT 0,
+                    audit_emitted INTEGER NOT NULL DEFAULT 0,
+                    history_visible INTEGER NOT NULL DEFAULT 1,
+                    payload_bytes INTEGER NOT NULL
+                )
+                """
+            )
+
+    def record_recovered_conversation(
+        self, delivery_id: str, session_id: str, user: str, response: str,
+        tokens: int, cost: float,
+    ) -> bool:
+        """Atomically retain one approved turn, usage, and completion audit per job.
+
+        Only display-approved text belongs here. The job-read capability and raw
+        provider response must stay in the protected pending store, never SQLite.
+        A false return means this job was already committed. Storage failures use
+        fixed messages so database diagnostics cannot expose conversation data.
+        """
+        _validate_delivery_id(delivery_id)
+        if (not isinstance(session_id, str) or not session_id or len(session_id) > 256
+                or not isinstance(user, str) or not isinstance(response, str)
+                or isinstance(tokens, bool) or not isinstance(tokens, int) or tokens < 0
+                or isinstance(cost, bool) or not isinstance(cost, (int, float))
+                or not math.isfinite(cost) or cost < 0):
+            raise RecoveredConversationStorageError("Invalid completed conversation accounting.")
+        normalized_user = sanitize_utf8_text(redact_output(
+            user, apply_truncation=False, preserve_literal_unicode=True
+        ))
+        normalized_answer = sanitize_utf8_text(redact_output(
+            response, apply_truncation=False, preserve_literal_unicode=True
+        ))
+        normalized_session = sanitize_utf8_text(redact_output(
+            session_id, apply_truncation=False, preserve_literal_unicode=True
+        ))
+        payload_bytes = sum(len(value.encode("utf-8")) for value in (
+            delivery_id, normalized_session, normalized_user, normalized_answer
+        )) + 256
+        if payload_bytes > RECOVERED_CONVERSATION_BYTES:
+            raise RecoveredConversationStorageError("Conversation recovery history is at capacity.")
+        now = time.time()
+        try:
+            with closing(self._conn()) as c, c:
+                c.execute("PRAGMA synchronous=FULL")
+                c.execute("BEGIN IMMEDIATE")
+                if c.execute("SELECT 1 FROM conversation_deliveries WHERE delivery_id=?", (delivery_id,)).fetchone():
+                    return False
+                # Retained results have a server maximum of seven days. Keep
+                # receipts longer, and never evict an answer awaiting display.
+                c.execute(
+                    "DELETE FROM conversation_deliveries WHERE displayed=1 AND created_at<?",
+                    (now - RECOVERED_DEDUP_RETENTION_SECONDS,),
+                )
+                count, stored_bytes = c.execute(
+                    "SELECT COUNT(*), COALESCE(SUM(payload_bytes),0) FROM conversation_deliveries"
+                ).fetchone()
+                if count >= RECOVERED_CONVERSATION_LIMIT or stored_bytes + payload_bytes > RECOVERED_CONVERSATION_BYTES:
+                    raise RecoveredConversationStorageError("Conversation recovery history is at capacity.")
+                c.execute(
+                    """INSERT INTO conversation_deliveries
+                    (delivery_id,session_id,user_text,answer_text,tokens,cost,created_at,payload_bytes)
+                    VALUES(?,?,?,?,?,?,?,?)""",
+                    (delivery_id, normalized_session, normalized_user, normalized_answer,
+                     tokens, float(cost), now, payload_bytes),
+                )
+                totals_row = c.execute("SELECT value_json FROM kv_state WHERE key=?", (_RECOVERED_TOTALS_KEY,)).fetchone()
+                totals = json.loads(totals_row[0]) if totals_row else {"total_requests": 0, "total_tokens": 0, "total_cost": 0.0}
+                totals["total_requests"] += 1
+                totals["total_tokens"] += tokens
+                totals["total_cost"] += cost
+                if not math.isfinite(totals["total_cost"]):
+                    raise RecoveredConversationStorageError("Invalid completed conversation accounting.")
+                c.execute(
+                    "INSERT OR REPLACE INTO kv_state(key,value_json,ts_ms) VALUES(?,?,?)",
+                    (_RECOVERED_TOTALS_KEY, json.dumps(totals), int(now * 1000)),
+                )
+                c.execute(
+                    "INSERT INTO policy_events(id,session_id,ts_ms,event,detail_json) VALUES(?,?,?,?,?)",
+                    ("conversation-delivery:" + delivery_id, normalized_session, int(now * 1000),
+                     "conversation.completed" if normalized_answer else "conversation.withheld",
+                     json.dumps({"delivery_id": delivery_id, "tokens": tokens, "cost": cost})),
+                )
+            return True
+        except RecoveredConversationStorageError:
+            raise
+        except (sqlite3.Error, OSError, TypeError, ValueError, KeyError):
+            raise RecoveredConversationStorageError("Conversation recovery history could not be saved.") from None
+
+    def get_recovered_conversation(self, delivery_id: str) -> Optional[dict[str, Any]]:
+        """Read a committed, sanitized turn and its delivery receipts by job identity."""
+        _validate_delivery_id(delivery_id)
+        with closing(self._conn()) as c:
+            c.row_factory = sqlite3.Row
+            row = c.execute("SELECT * FROM conversation_deliveries WHERE delivery_id=?", (delivery_id,)).fetchone()
+        return self._recovered_record(row) if row else None
+
+    @staticmethod
+    def _recovered_record(row: sqlite3.Row) -> dict[str, Any]:
+        """Expose approved history fields, without database implementation metadata."""
+        return {
+            "delivery_id": row["delivery_id"], "session_id": row["session_id"],
+            "user": row["user_text"], "ai": row["answer_text"],
+            "tokens": row["tokens"], "cost": row["cost"], "created_at": row["created_at"],
+            "displayed": bool(row["displayed"]), "audit_emitted": bool(row["audit_emitted"]),
+        }
+
+    def mark_recovered_displayed(self, delivery_id: str) -> None:
+        """Acknowledge terminal display after output succeeds, without altering usage."""
+        _validate_delivery_id(delivery_id)
+        with closing(self._conn()) as c, c:
+            c.execute("PRAGMA synchronous=FULL")
+            if not c.execute("UPDATE conversation_deliveries SET displayed=1 WHERE delivery_id=?", (delivery_id,)).rowcount:
+                raise RecoveredConversationStorageError("Completed conversation receipt is unavailable.")
+
+    def claim_recovered_audit(self, delivery_id: str) -> bool:
+        """Claim at most one console audit emission; the durable event already exists."""
+        _validate_delivery_id(delivery_id)
+        with closing(self._conn()) as c, c:
+            c.execute("PRAGMA synchronous=FULL")
+            return bool(c.execute(
+                "UPDATE conversation_deliveries SET audit_emitted=1 WHERE delivery_id=? AND audit_emitted=0",
+                (delivery_id,),
+            ).rowcount)
+
+    def get_recovered_usage(self) -> list[dict[str, Any]]:
+        """Return today's or the last 24 hours' receipts for limiter hydration.
+
+        Local midnight can be over 24 hours ago during a daylight-saving change.
+        """
+        now = time.time()
+        midnight = datetime.fromtimestamp(now).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+        with closing(self._conn()) as c:
+            c.row_factory = sqlite3.Row
+            return [dict(row) for row in c.execute(
+                "SELECT delivery_id,tokens,cost,created_at FROM conversation_deliveries WHERE created_at>=? ORDER BY created_at",
+                (min(now - 24 * 60 * 60, midnight),),
+            )]
+
+    def get_recent_recovered_conversations(self, limit: int = 100) -> list[dict[str, Any]]:
+        """Read the newest visible recovered turns for the ordinary history view."""
+        with closing(self._conn()) as c:
+            c.row_factory = sqlite3.Row
+            rows = c.execute(
+                "SELECT * FROM conversation_deliveries WHERE history_visible=1 ORDER BY created_at DESC,delivery_id LIMIT ?",
+                (max(0, min(limit, RECOVERED_CONVERSATION_LIMIT)),),
+            ).fetchall()
+        return [self._recovered_record(row) for row in reversed(rows)]
+
+    def get_recovered_statistics(self) -> dict[str, Any]:
+        """Read cumulative totals, which survive safe pruning of old delivery receipts."""
+        with closing(self._conn()) as c:
+            row = c.execute("SELECT value_json FROM kv_state WHERE key=?", (_RECOVERED_TOTALS_KEY,)).fetchone()
+        return json.loads(row[0]) if row else {"total_requests": 0, "total_tokens": 0, "total_cost": 0.0}
+
+    def clear_recovered_history(self) -> None:
+        """Hide cleared turns while retaining receipts needed to reject replays."""
+        with closing(self._conn()) as c, c:
+            c.execute("UPDATE conversation_deliveries SET history_visible=0")
+
+    def reset_recovered_statistics(self) -> None:
+        """Reset displayed totals without deleting delivery or limiter deduplication."""
+        with closing(self._conn()) as c, c:
+            c.execute(
+                "INSERT OR REPLACE INTO kv_state(key,value_json,ts_ms) VALUES(?,?,?)",
+                (_RECOVERED_TOTALS_KEY, json.dumps({"total_requests": 0, "total_tokens": 0, "total_cost": 0.0}), _now_ms()),
             )
 
     # -----------------------

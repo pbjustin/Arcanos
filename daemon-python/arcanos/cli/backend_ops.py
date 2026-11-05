@@ -894,7 +894,11 @@ def _perform_backend_conversation(
         if handle is not None and cli._retain_backend_conversation(
             message, handle, request_client, request_instance_id, request_session_id,
         ):
-            cli.console.print(f"Use /resume {handle.job_id} to retrieve this answer once. No background polling is enabled.", markup=False)
+            recovery = getattr(cli, "_conversation_recovery", None)
+            if recovery is not None and recovery.contains(handle.job_id):
+                cli.console.print("The original answer will appear automatically when ready. You can keep typing.", markup=False)
+            else:
+                cli.console.print(f"Use /resume {handle.job_id} to retrieve this answer once.", markup=False)
         else:
             cli.console.print("A valid continuation handle was not supplied; the answer cannot be retrieved safely.", markup=False)
         return None

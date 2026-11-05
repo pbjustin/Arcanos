@@ -121,6 +121,7 @@ class ArcanosCLI:
         self._conversation_lock = threading.RLock()
         self._pending_backend_conversations: dict[str, _PendingConversation] = {}
         self._backend_conversations_inflight = 0
+        self._conversation_recovery = None
 
         bootstrap.ensure_startup_sequence(self)
 
@@ -445,11 +446,48 @@ class ArcanosCLI:
                 self._pending_backend_conversations[handle.job_id] = _PendingConversation(
                     message, handle, client, instance_id, session_id,
                 )
+            recovery = getattr(self, "_conversation_recovery", None)
+            if recovery is not None:
+                try:
+                    recovery.retain(message, handle, session_id)
+                except Exception:
+                    self.console.print("Restart recovery could not be secured; this process retains manual /resume recovery.", markup=False)
             return True
+
+    def _restore_backend_conversation(self, message: str, handle: BackendChatContinuation, session_id: str) -> None:
+        """Restore protected work using current backend authority and original conversation correlation."""
+        self._pending_backend_conversations.setdefault(handle.job_id, _PendingConversation(
+            message, handle, self.backend_client, self.instance_id, session_id,
+        ))
+
+    def _start_conversation_recovery(self) -> None:
+        """Enable only accepted-job reads in the foreground application's lifetime."""
+        if not Config.CONVERSATION_RECOVERY_ENABLED or self.backend_client is None:
+            return
+        from .conversation_recovery import ConversationRecovery
+        try:
+            previous = getattr(self, "_conversation_recovery", None)
+            if previous is not None and previous.thread is not None and previous.thread.is_alive():
+                return
+            self._conversation_recovery = ConversationRecovery(self)
+            self._conversation_recovery.start()
+        except Exception:
+            self._conversation_recovery = None
+            self.console.print("Automatic conversation recovery is unavailable; protected storage and backend authentication are required.", markup=False)
+
+    def _stop_conversation_recovery(self) -> None:
+        """Stop accepted-job monitoring without deleting protected restart recovery records."""
+        recovery = getattr(self, "_conversation_recovery", None)
+        if recovery is not None:
+            recovery.stop()
 
     @handle_errors("resuming a conversation")
     def handle_resume(self, args: str = "") -> None:
         """Read one accepted job once, without generation, auth refresh or action execution."""
+        recovery = getattr(self, "_conversation_recovery", None)
+        if recovery is not None and args.strip() and recovery.contains(args.strip()):
+            recovery.resume(args)
+            return
         with self._conversation_state_lock():
             job_id = args.strip()
             if not job_id:

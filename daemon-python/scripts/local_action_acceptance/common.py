@@ -54,6 +54,11 @@ def clean_env(case_root: Path, source_root: Path, backend_url: str | None = None
         "ACCEPTANCE_ALLOWED_PORTS": str(urlsplit(backend_url).port) if backend_url else "",
         "ACCEPTANCE_CASE_ROOT": str(case_root),
     })
+    extra_python_site = os.environ.get("ACCEPTANCE_EXTRA_PYTHON_SITE")
+    if extra_python_site:
+        # Explicit task-local dependency installs must remain available after
+        # replacing USERPROFILE; operator app configuration is still excluded.
+        env["PYTHONPATH"] += os.pathsep + extra_python_site
     if extra:
         extras = {str(key): str(value) for key, value in extra.items()}
         ports = set(filter(None, env["ACCEPTANCE_ALLOWED_PORTS"].split(",")))

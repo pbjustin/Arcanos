@@ -5,6 +5,7 @@ Backend API client for ARCANOS daemon.
 from __future__ import annotations
 
 import json
+import hashlib
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional, Sequence
 from urllib.parse import urlsplit
@@ -149,6 +150,22 @@ class BackendApiClient:
         )
         self._timeout_seconds = timeout_seconds
         self._request_sender = request_sender
+
+    def continuation_identity(self) -> str:
+        """Bind recovery to this normalized backend and its configured writing credential."""
+        credential = self._token_provider()
+        if not isinstance(credential, str) or not credential.strip():
+            raise BackendRequestError(kind="auth", message="Authenticated backend recovery is unavailable.")
+        return hashlib.sha256(
+            ("arcanos-conversation-recovery-v1\0" + self._base_url + "\0" + credential).encode("utf-8")
+        ).hexdigest()
+
+    def continuation_reader(self) -> "BackendApiClient":
+        """Reuse the existing transport with a bounded read timeout and no credential refresh."""
+        return BackendApiClient(
+            self._base_url, self._token_provider, min(self._timeout_seconds, 2),
+            self._request_sender, self._daemon_access_token_provider,
+        )
 
     @staticmethod
     def _normalize_metadata(metadata: Optional[Mapping[str, Any]]) -> Optional[dict[str, Any]]:

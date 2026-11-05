@@ -16,6 +16,7 @@ class BackendChatContinuation:
 
     job_id: str
     job_read_token: str = field(repr=False)
+    expires_at: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,7 @@ class BackendChatResult:
     cost_usd: float
     model: str
     presentation: Optional[str] = None
+    continuation_expires_at: Optional[float] = None
 
 
 @dataclass(frozen=True)

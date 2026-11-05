@@ -135,6 +135,8 @@ def test_chat_continuation_uses_one_existing_job_get_and_preserves_complete_answ
     {"count": 0, "ready": False, "items": [], "summary": "No changes requested."},
     {"loadout": {"slots": ["primary", "secondary"]}},
     {"result": {"match": {"winner": "Fixture competitor"}}},
+    {"result": 0}, {"result": False}, {"result": []},
+    {"result": {}, "summary": "No matching entries."},
     {"items": []},
 ])
 def test_chat_continuation_preserves_complete_structured_answers_like_direct_chat(structured):
@@ -242,6 +244,28 @@ def test_chat_continuation_rejects_empty_and_incomplete_completed_outputs(envelo
     response = client.request_chat_job_result(BackendChatContinuation(CHAT_JOB_ID, JOB_READ_TOKEN))
     assert not response.ok and response.error.kind == "parse"
     sender.assert_called_once()
+
+
+@pytest.mark.parametrize("answer", [
+    {"result": {}, "tokens": 17, "cost": 0.0123},
+    {"result": {"result": {}, "model": "fixture"}, "tokens": 17},
+    {"result": "   ", "model": "fixture", "meta": {"tokens": {"total_tokens": 17}}},
+    {"tokens": 17, "cost": 0.0123, "model": "fixture"},
+    {"result": {"result": "Partial answer", "status": "incomplete"}, "tokens": 17},
+    {"result": {"result": "Partial answer", "provider_metadata": {"finish_reason": "length"}}, "cost": 0.0123},
+], ids=["empty-with-usage", "nested-empty-with-model", "blank-with-metadata", "metadata-only",
+        "nested-incomplete", "nested-provider-truncation"])
+def test_chat_continuation_rejects_answerless_or_incomplete_wrappers_with_metadata(answer):
+    """Usage metadata cannot turn empty or incomplete nested output into a completed answer."""
+    lookup = _completed_chat_lookup()
+    lookup["result"]["result"] = answer
+    client, sender = _chat_wire_client(200, lookup)
+
+    response = client.request_chat_job_result(BackendChatContinuation(CHAT_JOB_ID, JOB_READ_TOKEN))
+
+    assert not response.ok and response.value is None and response.error.kind == "parse"
+    sender.assert_called_once()
+    assert sender.call_args.args[0] == "get"
 
 
 def test_chat_continuation_does_not_promote_nested_presentation():
