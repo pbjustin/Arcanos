@@ -15,8 +15,6 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { JobData } from '../src/core/db/schema.js';
 import type { FindOrCreateGptJobOptions, UpdateClaimedJobTerminalOptions } from '../src/core/db/repositories/jobRepository.js';
 import { PURPOSE_BOUND_CREDENTIAL_ENV_NAMES } from '../src/shared/security/purposeBoundCredential.js';
-import { issueJobReadCapability } from '../src/shared/jobs/jobReadCapability.js';
-import { createDaemonStore } from '../src/routes/daemonStore.js';
 import { afterAll, expect, it, jest } from '@jest/globals';
 import {
   createSyntheticDurableMemory,
@@ -96,6 +94,10 @@ delete process.env.GPT_MODULE_MAP;
 delete process.env.GPTID_CORE;
 delete process.env.SAFETY_EXPECTED_HASH_GPT_ROUTER_CONFIG;
 
+// Apply this fixture's supported admission configuration before importing any
+// backend module that snapshots runtime configuration.
+const { issueJobReadCapability } = await import('../src/shared/jobs/jobReadCapability.js');
+const { createDaemonStore } = await import('../src/routes/daemonStore.js');
 const { AUDITED_TRANSIENT_READ_QUERIES } = await import('../src/core/db/transientReadRegistry.js');
 jest.unstable_mockModule('@core/db/index.js', () => ({
   AUDITED_TRANSIENT_READ_QUERIES,
