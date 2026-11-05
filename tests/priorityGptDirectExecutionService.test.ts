@@ -284,6 +284,53 @@ describe('priorityGptDirectExecutionService', () => {
     );
   });
 
+  it('does not report a completed model answer until its fenced output write resolves', async () => {
+    const slot = { release: jest.fn() };
+    const envelope = { ok: true, result: { text: 'one generated answer' } };
+    const persistence = createDeferred<Record<string, unknown> | null>();
+    routeGptRequestMock.mockResolvedValue(envelope);
+    updateClaimedJobTerminalMock.mockReturnValue(persistence.promise);
+    startReservedPriorityGptDirectExecution({
+      jobId: 'job-priority-persist-before-success', claimGeneration: '1',
+      workerId: 'api-priority-worker', slot,
+      rawInput: { gptId: 'arcanos-daemon', body: { prompt: 'Original question' } },
+    });
+    await waitForMockCall(() => updateClaimedJobTerminalMock.mock.calls.length === 1, 'terminal output write');
+    expect(routeGptRequestMock).toHaveBeenCalledTimes(1);
+    expect(updateClaimedJobTerminalMock).toHaveBeenCalledWith(
+      'job-priority-persist-before-success', 'completed', expect.objectContaining({ output: envelope }),
+    );
+    expect(recordGptJobEventMock).not.toHaveBeenCalled();
+    expect(slot.release).not.toHaveBeenCalled();
+    persistence.resolve(createJob({ status: 'completed', output: envelope }));
+    await waitForMockCall(() => slot.release.mock.calls.length === 1, 'persisted completion release');
+    expect(recordGptJobEventMock).toHaveBeenCalledWith(expect.objectContaining({ event: 'completed' }));
+    expect(routeGptRequestMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports lost unpersisted model output as failure without another provider attempt', async () => {
+    const slot = { release: jest.fn() };
+    const envelope = { ok: true, result: { text: 'successful but unretained answer' } };
+    routeGptRequestMock.mockResolvedValue(envelope);
+    updateClaimedJobTerminalMock
+      .mockRejectedValueOnce(new Error('synthetic terminal storage outage'))
+      .mockResolvedValueOnce(createJob({ status: 'failed', output: null }));
+    startReservedPriorityGptDirectExecution({
+      jobId: 'job-priority-lost-output', claimGeneration: '1',
+      workerId: 'api-priority-worker', slot,
+      rawInput: { gptId: 'arcanos-daemon', body: { prompt: 'Original question' } },
+    });
+    await waitForMockCall(() => slot.release.mock.calls.length === 1, 'lost output failure release');
+    expect(routeGptRequestMock).toHaveBeenCalledTimes(1);
+    expect(updateClaimedJobTerminalMock.mock.calls.map(call => call[1])).toEqual(['completed', 'failed']);
+    expect(updateClaimedJobTerminalMock).toHaveBeenLastCalledWith(
+      'job-priority-lost-output', 'failed', expect.objectContaining({
+        output: null, errorMessage: 'synthetic terminal storage outage',
+      }),
+    );
+    expect(recordGptJobEventMock).not.toHaveBeenCalledWith(expect.objectContaining({ event: 'completed' }));
+  });
+
   it('forwards the exact persisted Backstage mutation admission to direct execution', async () => {
     const slot = { release: jest.fn() };
     const backstageMutationAdmission = {

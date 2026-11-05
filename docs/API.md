@@ -398,6 +398,11 @@ Pipeline timeout fallback detection:
 Job status routes:
 - `GET /jobs/:id`: requires `x-arcanos-job-read-token` and returns `{ id, jobId, job_type, status, lifecycle_status, created_at, updated_at, completed_at, cancel_requested_at, cancel_reason, retention_until, idempotency_until, expires_at, poll, stream, error_message, output, result }`.
 - `GET /jobs/:id/result`: requires `x-arcanos-job-read-token` and returns the canonical result lookup envelope, including `jobId`, job/lifecycle status, polling links, result, and a typed error when applicable. A missing job returns HTTP `200` with `status: "not_found"` for compatibility.
+- A stored completed job with no retained output returns a failed result lookup
+  (`status: "failed"`, `error.code: "JOB_RESULT_UNAVAILABLE"`, `result: null`).
+  Its `jobStatus` and `lifecycleStatus` still report the persisted `completed`
+  state; the read does not rewrite that row or start another generation. A
+  successful model invocation cannot reconstruct an answer that was not retained.
 - `GET /jobs/:id/stream`: requires `x-arcanos-job-read-token` and emits an SSE stream of status changes. The event name is `terminal` when the payload status is `completed`, `failed`, `cancelled`, or `expired`; nonterminal changes use the `status` event.
 - `POST /jobs/:id/cancel`: requires the matching
   `x-arcanos-job-read-token`, confirmation, and the creation surface's
@@ -443,6 +448,15 @@ GPT job lifecycle:
 - Running stale jobs are recovered through oldest-first, server-bounded worker
   lease-inspector passes. Overlapping passes skip rows already locked by another
   recovery transaction; overflow remains eligible for later passes.
+- Accepted GPT coordinates are returned only after the job-creation transaction
+  commits. Execution persists terminal status and output together behind the
+  exact worker, claim generation and live lease before reporting completion.
+  Result reads use that stored output, not a process-local generation promise.
+- A backend restart preserves committed accepted/completed rows. A stale running
+  row follows the existing retry/dead-letter policy; this execution policy is
+  separate from read-only client recovery and is not a global exactly-once
+  provider guarantee. An answer lost before terminal persistence is unavailable;
+  recovering a retained result never submits another generation request.
 - Old terminal GPT jobs transition to `expired`, then are compacted after an additional grace window
 
 Retention defaults:
@@ -451,6 +465,9 @@ Retention defaults:
 - Cancelled GPT jobs: 1h retention
 - Idempotency reuse window: 24h, capped by the terminal state retention window
 - Pending GPT jobs that sit unclaimed for too long are expired by lifecycle maintenance
+- Unclaimed pending GPT jobs default to a 30-minute maximum age; expired GPT rows
+  remain visible for an additional 24-hour compaction grace by default. Terminal
+  retention starts when terminal output is persisted, not when HTTP 202 is sent.
 
 Generic queue result retention:
 - Completed and cancelled `ask` jobs remain readable for 24h by default.
