@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-03T19:05:51.579Z",
+  "generatedAt": "2026-11-05T03:24:18.375Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4259,6 +4259,9 @@
         },
         {
           "relativePath": "tests/daemon-plane-http-auth.test.ts"
+        },
+        {
+          "relativePath": "tests/daemon-registry-python-http.e2e.test.ts"
         },
         {
           "relativePath": "tests/daemon-store-credential-contract.test.ts"

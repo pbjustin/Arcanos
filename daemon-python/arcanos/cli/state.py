@@ -10,7 +10,9 @@ from typing import Any, Mapping, TYPE_CHECKING
 
 from .audit import record as audit_record
 from ..voice_boundary import sanitize_tool_output
+from ..utils.text import DEFAULT_IGNORABLE_CODE_POINT_PATTERN
 from .trust_state import TrustState
+from .cli_policy import redact_output
 
 from ..cli_config import DEFAULT_ACTIVITY_HISTORY_LIMIT, MIN_REGISTRY_CACHE_TTL_MINUTES
 from ..config import Config
@@ -29,6 +31,7 @@ def initialize_runtime_state(cli: "ArcanosCLI") -> None:
     cli._activity = deque(maxlen=DEFAULT_ACTIVITY_HISTORY_LIMIT)
     cli._registry_cache = None
     cli._registry_cache_updated_at = None
+    cli._registry_cache_updated_monotonic_at = None
     cli._registry_cache_warning_logged = False
     cli._registry_cache_ttl_seconds = max(MIN_REGISTRY_CACHE_TTL_MINUTES, Config.REGISTRY_CACHE_TTL_MINUTES) * 60
     cli._last_confirmation_handled = False
@@ -66,28 +69,28 @@ def set_trust_state(cli: "ArcanosCLI", new_state: TrustState) -> None:
         audit_record("trust_state_change", old=old_state.name, new=new_state.name)
 
 
-def recompute_trust_state(cli: "ArcanosCLI") -> None:
+def recompute_trust_state(cli: "ArcanosCLI") -> tuple[TrustState, bool | None]:
     """
     Purpose: Derive trust state from backend reachability and registry freshness.
-    Inputs/Outputs: CLI instance; updates trust state via set_trust_state.
-    Edge cases: Missing backend always degrades trust.
+    Inputs/Outputs: Updates trust and returns its enum and observed registry freshness.
+    Edge cases: Missing backend degrades trust without inspecting registry evidence.
     """
     if not cli.backend_client:
         # //audit assumption: trust requires backend authority; risk: false FULL trust offline; invariant: offline trust is DEGRADED; strategy: hard-set degraded.
         set_trust_state(cli, TrustState.DEGRADED)
-        return
+        return TrustState.DEGRADED, None
 
-    if registry_cache_is_valid(cli):
-        set_trust_state(cli, TrustState.FULL)
-    else:
-        set_trust_state(cli, TrustState.DEGRADED)
+    registry_fresh = registry_cache_is_valid(cli)
+    trust = TrustState.FULL if registry_fresh else TrustState.DEGRADED
+    set_trust_state(cli, trust)
+    return trust, registry_fresh
 
 
 def registry_cache_is_valid(cli: "ArcanosCLI") -> bool:
     """
-    Purpose: Determine whether backend registry cache exists and is within TTL.
+    Purpose: Enforce registry TTL using elapsed time rather than wall-clock age.
     Inputs/Outputs: CLI instance; returns True when cache is fresh.
-    Edge cases: Missing cache or timestamp always invalidates cache.
+    Edge cases: Missing anchors or future receipt timestamps fail closed.
     """
     if not cli._registry_cache:
         # //audit assumption: empty cache cannot satisfy governance freshness; risk: stale/unknown module contracts; invariant: invalid cache; strategy: return False.
@@ -96,19 +99,39 @@ def registry_cache_is_valid(cli: "ArcanosCLI") -> bool:
         # //audit assumption: timestamp required to enforce TTL; risk: unbounded stale cache; invariant: invalid without timestamp; strategy: return False.
         return False
 
-    age_seconds = time.time() - cli._registry_cache_updated_at
-    # //audit assumption: local clock is monotonic enough for TTL checks; risk: skew; invariant: cache accepted only within configured TTL; strategy: compare age to TTL.
-    return age_seconds <= cli._registry_cache_ttl_seconds
+    elapsed_anchor = getattr(cli, "_registry_cache_updated_monotonic_at", None)
+    if elapsed_anchor is None or time.time() < cli._registry_cache_updated_at:
+        # Keep the future-wall guard; never reconstruct elapsed authority from wall time.
+        return False
+
+    age_seconds = time.monotonic() - elapsed_anchor
+    return 0 <= age_seconds <= cli._registry_cache_ttl_seconds
 
 
 def apply_registry_cache(cli: "ArcanosCLI", registry_payload: Mapping[str, Any]) -> None:
     """
-    Purpose: Store backend registry payload and refresh freshness timestamp.
+    Purpose: Store authenticated registry evidence with receipt and elapsed-time anchors.
     Inputs/Outputs: registry payload mapping; mutates cache and updated-at fields.
     Edge cases: Accepts empty mapping to preserve deterministic cache shape.
     """
     cli._registry_cache = dict(registry_payload)
     cli._registry_cache_updated_at = time.time()
+    cli._registry_cache_updated_monotonic_at = time.monotonic()
+
+
+def redact_status_text(value: str) -> str:
+    """Protect diagnostic text and hydrated labels without truncating ordinary text."""
+    safe = redact_output(value, apply_truncation=False)
+    literal = redact_output(value, apply_truncation=False, preserve_literal_unicode=True)
+    credentials = (Config.DAEMON_ACCESS_TOKEN, Config.CONTROL_PLANE_ACCESS_TOKEN, Config.BACKEND_TOKEN)
+    variants = {token for token in credentials if isinstance(token, str) and token}
+    variants |= {DEFAULT_IGNORABLE_CODE_POINT_PATTERN.sub("", token) for token in variants}
+    for credential in sorted(variants - {""}, key=len, reverse=True):
+        safe = safe.replace(credential, "[REDACTED]")
+        literal = literal.replace(credential, "[REDACTED]")
+    # Literal Unicode is safe only when it preserves the redacted canonical
+    # view; an invisible character cannot hide a configured credential.
+    return literal if DEFAULT_IGNORABLE_CODE_POINT_PATTERN.sub("", literal) == safe else safe
 
 
 def hydrate_session_from_backend_state(cli: "ArcanosCLI", state_payload: Mapping[str, Any]) -> None:
@@ -136,8 +159,9 @@ def hydrate_session_from_backend_state(cli: "ArcanosCLI", state_payload: Mapping
 
     label = intent_payload.get("label")
     if isinstance(label, str) and label.strip():
-        cli.session.current_intent = label.strip()
-        cli.session.conversation_goal = label.strip()
+        label = redact_status_text(label).strip()
+        cli.session.current_intent = label
+        cli.session.conversation_goal = label
 
     confidence = intent_payload.get("confidence")
     if isinstance(confidence, (int, float)):
@@ -177,15 +201,15 @@ def is_working_context_query(message: str) -> bool:
 
 def get_backend_connection_status(cli: "ArcanosCLI") -> str:
     """
-    Purpose: Build one-line backend connection status for the system prompt.
+    Purpose: Describe daemon registry evidence without inferring backend health.
     Inputs/Outputs: CLI instance; returns status line string.
     Edge cases: Distinguishes not-configured from stale/unavailable registry.
     """
     if not cli.backend_client:
         return "Current backend connection: not configured."
     if registry_cache_is_valid(cli):
-        return "Current backend connection: connected (registry available)."
-    return "Current backend connection: unavailable (registry fetch failed or stale)."
+        return "Backend configured; daemon registry evidence: authenticated and fresh. Backend health is not established by registry availability."
+    return "Backend configured; daemon registry evidence: unavailable or stale. Backend health is unknown from registry evidence alone."
 
 
 def get_backend_block(cli: "ArcanosCLI") -> str:
@@ -259,6 +283,7 @@ __all__ = [
     "hydrate_session_from_backend_state",
     "initialize_runtime_state",
     "is_working_context_query",
+    "redact_status_text",
     "recompute_trust_state",
     "registry_cache_is_valid",
     "set_trust_state",

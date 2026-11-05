@@ -8,6 +8,33 @@ import re
 from typing import Optional, Mapping, Tuple, Sequence
 
 
+def is_system_health_query(message: str, deep_prefixes: Sequence[str] = ()) -> bool:
+    """Recognize direct operational questions without capturing general AI discussion."""
+    normalized = (message or "").strip()
+    for prefix in deep_prefixes:
+        prefix = prefix.strip()
+        if prefix and normalized.lower().startswith(prefix.lower()):
+            normalized = normalized[len(prefix):].strip()
+            break
+    normalized = " ".join(normalized.lower().replace("’", "'").split()).rstrip("?.!")
+    patterns = (
+        r"what(?: is|'s) (?:your|the|arcanos) (?:current )?"
+        r"(?:(?:system|backend|operational) (?:status|health)|trust (?:state|level))",
+        r"(?:show(?: me)?|(?:can you )?check|give me) (?:your|the|arcanos) (?:current )?"
+        r"(?:(?:system|backend|operational) (?:status|health)|trust (?:state|level)|health)",
+        r"is (?:arcanos|(?:the|your) (?:daemon|backend)) "
+        r"(?:healthy|operational|functioning normally|working (?:normally|correctly)|connected(?: securely)?|securely connected)",
+        r"how healthy is (?:the|your) backend",
+        r"is (?:my|your|the) system stable",
+        r"how is arcanos doing operationally",
+        r"are you (?:healthy|up and running|functioning normally|working (?:normally|correctly))",
+        r"(?:is|are) your (?:backend|memory|backend and memory|memory and backend) (?:healthy|working(?: (?:normally|correctly))?)",
+        r"run (?:a |the )?(?:system )?health check",
+        r"check (?:whether|if) your (?:backend|memory|daemon) is (?:healthy|working(?: (?:normally|correctly))?)",
+    )
+    return any(re.fullmatch(pattern, normalized) for pattern in patterns)
+
+
 def detect_domain_intent(
     message: str,
     domain_keywords: Mapping[str, Sequence[str]],

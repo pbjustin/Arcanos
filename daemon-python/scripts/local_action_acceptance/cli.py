@@ -34,6 +34,7 @@ class SyntheticBackend:
     """Authenticated fixture transport; no model/provider implementation exists."""
 
     def __init__(self, *, extra_routes: Callable | None = None):
+        """Start an authenticated loopback fixture with optional synthetic route overrides."""
         self.token = _jwt()
         self.daemon_token = "acpt-daemon-" + secrets.token_urlsafe(30)
         self.requests: list[dict] = []
@@ -53,6 +54,7 @@ class SyntheticBackend:
                 self.handle_request("POST")
 
             def handle_request(self, method):
+                """Record traffic, enforce fixture credentials, and serve provider-free responses."""
                 path = urlsplit(self.path).path
                 raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
                 body = json.loads(raw) if raw else {}
@@ -88,11 +90,21 @@ class SyntheticBackend:
                     if not backend.registry_available:
                         return self.respond(503, {"error": "fixture registry unavailable"})
                     return self.respond(200, {
-                        "version": "local-acceptance", "endpoints": [],
-                        "modules": [], "daemonTools": [], "core": [],
+                        "version": 1, "updatedAt": "2026-11-04T00:00:00Z",
+                        "endpoints": [{"method": "POST", "path": "/gpt/arcanos-daemon", "description": "Chat"}],
+                        "modules": [],
+                        "daemonTools": [{"name": "run_command", "description": "Run command", "sensitive": True}],
+                        "core": [{"id": "HRC", "description": "Hallucination resistant core"}],
                     })
                 if path == "/system-state":
-                    return self.respond(200, {"version": 1, "routing": {"preferred": "backend"}})
+                    return self.respond(200, {
+                        "mode": "system_state",
+                        "intent": {"intentId": None},
+                        "routing": {"preferred": "backend"},
+                        "backend": {"connected": True, "registryAvailable": backend.registry_available},
+                        "stateFreshness": {"intent": "stale", "backend": "fresh"},
+                        "generatedAt": "2026-11-04T00:00:00Z",
+                    })
                 if path.startswith("/gpt/"):
                     answer = "DONE" if str(body.get("prompt", "")).startswith("Tool results:") else backend.answer
                     return self.respond(200, {

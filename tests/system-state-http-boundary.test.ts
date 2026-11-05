@@ -276,7 +276,10 @@ describe('system-state HTTP ingress boundary', () => {
   it('retrieves state through the real Python HTTP client while preserving authorization failures', async () => {
     // Resolve dependencies before opening the fixture server or isolating the
     // child from operator data. Python user sites need not be installation-local.
-    const userSite = spawnSync('python', ['-c', 'import site; print(site.getusersitepackages() if site.ENABLE_USER_SITE else "")'], {
+    const configuredPython = process.env.PYTHON_EXECUTABLE || 'python';
+    const python = path.isAbsolute(configuredPython) || /[\\/]/u.test(configuredPython)
+      ? path.resolve(configuredPython) : configuredPython;
+    const userSite = spawnSync(python, ['-c', 'import site; print(site.getusersitepackages() if site.ENABLE_USER_SITE else "")'], {
       encoding: 'utf8', windowsHide: true, timeout: 10_000,
     });
     expect(userSite.status).toBe(0);
@@ -349,7 +352,7 @@ print(json.dumps({"ok": result.ok, "kind": error.kind if error else None,
         }
         const beforeCount = observed.length;
         const output = await new Promise<{ stdout: string; stderr: string; exitCode: number | null }>((resolve, reject) => {
-          const child = spawn('python', ['-c', code, daemonPath, `http://127.0.0.1:${address.port}`, scenario.name], {
+          const child = spawn(python, ['-c', code, daemonPath, `http://127.0.0.1:${address.port}`, scenario.name], {
             cwd: sandbox,
             env: {
               ...launchEnvironment,

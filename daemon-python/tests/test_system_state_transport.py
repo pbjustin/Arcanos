@@ -24,7 +24,13 @@ CHALLENGE_ID = "082ce8db-8ebe-45ec-b31e-3a7c5e828f5f"
 
 
 def _response(status=200, payload=None):
-    body = payload if payload is not None else {"ok": True, "state": {"version": 1}}
+    """Build an HTTP fixture with a valid read envelope unless a body is supplied."""
+    body = payload if payload is not None else {
+        "mode": "system_state", "intent": {"intentId": None}, "routing": {"preferred": "backend"},
+        "backend": {"connected": True, "registryAvailable": True},
+        "stateFreshness": {"intent": "stale", "backend": "fresh"},
+        "generatedAt": "2026-11-04T19:30:26.000Z",
+    }
     return SimpleNamespace(
         status_code=status, json=lambda: body, text=json.dumps(body), headers={}
     )

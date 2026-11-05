@@ -31,19 +31,21 @@ if sys.platform == "win32":
 
 from rich.table import Table
 from rich.console import Console
+from rich.text import Text
 
 from .audit import record as audit_record
 from .idempotency import IdempotencyGuard
 from .trust_state import TrustState
 
 from ..backend_client import BackendApiClient, BackendRequestError, BackendResponse
+from ..backend_client.chat import is_valid_system_state_payload
 from ..cli_config import (
     DOMAIN_KEYWORDS,
     ZERO_COST_USD,
     ZERO_TOKENS_USED,
 )
 from ..cli_types import DaemonCommand
-from ..cli_intents import detect_domain_intent, truncate_for_tts
+from ..cli_intents import detect_domain_intent, is_system_health_query, truncate_for_tts
 from ..cli_runner import run_debug_mode, run_interactive_mode
 from ..config import Config, validate_required_config
 from ..credential_bootstrap import CredentialBootstrapError, bootstrap_credentials
@@ -183,7 +185,7 @@ class ArcanosCLI:
     def _set_trust_state(self, new_state: TrustState) -> None:
         return state.set_trust_state(self, new_state)
 
-    def _recompute_trust_state(self) -> None:
+    def _recompute_trust_state(self) -> tuple[TrustState, bool | None]:
         return state.recompute_trust_state(self)
 
     def speak_to_user(
@@ -251,25 +253,50 @@ class ArcanosCLI:
     def _is_working_context_query(self, message: str) -> bool:
         return state.is_working_context_query(message)
 
+    def _read_diagnostic_state(self) -> tuple[Optional[Mapping[str, Any]], TrustState, str]:
+        """Read validated status and capture one local trust/freshness observation afterward."""
+        backend_ops.refresh_registry_cache_if_stale(self)
+        state_payload = backend_ops.request_backend_system_state_payload(self) if self.backend_client else None
+        if not is_valid_system_state_payload(state_payload):
+            state_payload = None
+        trust, registry_fresh = self._recompute_trust_state()
+        if registry_fresh is None:
+            registry_fresh = state.registry_cache_is_valid(self)
+        registry_status = "valid and fresh" if registry_fresh else (
+            "stale or invalid" if self._registry_cache else "unavailable"
+        )
+        return state_payload, trust, registry_status
+
     def handle_status(self) -> bool:
         """
         Purpose: Show backend-owned governed status using authenticated GET /system-state.
         Inputs/Outputs: None; renders status table and returns success flag.
         Edge cases: Returns False when backend is not configured or state fetch fails.
         """
-        if not self.backend_client:
-            # //audit assumption: status requires backend source-of-truth; risk: stale local-only status; invariant: fail when backend missing; strategy: print error and return False.
-            self.console.print("[red]Backend is not configured.[/red]")
-            return False
-
-        state_payload = backend_ops.request_backend_system_state_payload(self)
+        self._recompute_trust_state()
+        audit_record(
+            "execute_attempt", command="status", trust=self._trust_state.name,
+            source="diagnostic", operation="status",
+        )
+        state_payload, diagnostic_trust, registry_status = self._read_diagnostic_state()
+        self.console.print(ui_ops.build_system_status_evidence(
+            self, state_payload, trust=diagnostic_trust, registry_status=registry_status,
+        ), markup=False)
         if not state_payload:
             # //audit assumption: failed state fetch cannot be substituted locally; risk: fabricated status; invariant: no synthetic state output; strategy: fail closed.
             self.console.print("[red]Failed to fetch backend system state.[/red]")
+            audit_record(
+                "execute_failed", command="status", trust=diagnostic_trust.name,
+                source="diagnostic", operation="status",
+            )
             return False
 
         state.hydrate_session_from_backend_state(self, state_payload)
         ui_ops.render_system_state_table(self, state_payload)
+        audit_record(
+            "execute_success", command="status", trust=diagnostic_trust.name,
+            source="diagnostic", operation="status",
+        )
         return True
 
     def handle_context(self) -> None:
@@ -382,7 +409,37 @@ class ArcanosCLI:
         """
         self._append_activity("ask", message)
         self._recompute_trust_state()
-        audit_record("execute_attempt", command="ask", trust=self._trust_state.name)
+
+        route_decision = determine_conversation_route(
+            user_message=message,
+            routing_mode=Config.BACKEND_ROUTING_MODE,
+            deep_prefixes=Config.BACKEND_DEEP_PREFIXES,
+        )
+        diagnostic_query = is_system_health_query(route_decision.normalized_message, Config.BACKEND_DEEP_PREFIXES)
+        diagnostic_fields = {"source": "diagnostic", "operation": "status"} if diagnostic_query else {}
+        audit_record("execute_attempt", command="ask", trust=self._trust_state.name, **diagnostic_fields)
+
+        if diagnostic_query:
+            # Operational evidence never falls back to generative self-assessment.
+            state_payload, diagnostic_trust, registry_status = self._read_diagnostic_state()
+            if state_payload:
+                state.hydrate_session_from_backend_state(self, state_payload)
+            answer_text = ui_ops.build_system_status_evidence(
+                self, state_payload, trust=diagnostic_trust, registry_status=registry_status,
+            )
+            audit_record(
+                "execute_success" if state_payload else "execute_failed",
+                command="ask", trust=diagnostic_trust.name, source="diagnostic", operation="status",
+            )
+            if return_result:
+                return ConversationResult(
+                    response_text=answer_text, tokens_used=ZERO_TOKENS_USED, cost_usd=ZERO_COST_USD,
+                    model="system-state", source="diagnostic",
+                )
+            self.console.print(answer_text, markup=False)
+            if speak_response or Config.SPEAK_RESPONSES:
+                self.audio.speak(truncate_for_tts(answer_text), wait=True)
+            return None
 
         can_request, deny_reason = self.rate_limiter.can_make_request()
         if not can_request:
@@ -404,8 +461,8 @@ class ArcanosCLI:
             intent_payload = state_payload.get("intent") if isinstance(state_payload.get("intent"), Mapping) else {}
             label = intent_payload.get("label")
             status_value = intent_payload.get("status")
-            answer_label = label if isinstance(label, str) and label.strip() else "No active intent"
-            answer_status = status_value if isinstance(status_value, str) and status_value.strip() else "null"
+            answer_label = state.redact_status_text(label) if isinstance(label, str) and label.strip() else "No active intent"
+            answer_status = state.redact_status_text(status_value) if isinstance(status_value, str) and status_value.strip() else "null"
             answer_text = f"{answer_label} (status: {answer_status})"
 
             if return_result:
@@ -420,8 +477,8 @@ class ArcanosCLI:
             table = Table(title="Current Work Context")
             table.add_column("Field", style="cyan")
             table.add_column("Value", style="green")
-            table.add_row("intent", answer_label)
-            table.add_row("status", answer_status)
+            table.add_row("intent", Text(answer_label))
+            table.add_row("status", Text(answer_status))
             self.console.print(table)
             return None
 
@@ -430,11 +487,6 @@ class ArcanosCLI:
 
         self.system_prompt = state.build_system_prompt(self)
 
-        route_decision = determine_conversation_route(
-            user_message=message,
-            routing_mode=Config.BACKEND_ROUTING_MODE,
-            deep_prefixes=Config.BACKEND_DEEP_PREFIXES,
-        )
         if route_override in {"local", "backend"}:
             route_decision = ConversationRouteDecision(
                 route=route_override,
@@ -464,13 +516,21 @@ class ArcanosCLI:
 
             with self.console.status("[dim]Thinking...[/dim]", spinner="dots"):
                 if route_decision.route == "backend":
+                    backend_outcome: dict[str, bool] = {}
                     result = backend_ops.perform_backend_conversation(
                         self,
                         route_decision.normalized_message,
                         domain=domain,
                         from_debug=from_debug,
+                        outcome=backend_outcome,
                     )
-                    if result is None and Config.BACKEND_FALLBACK_TO_LOCAL and not self._last_confirmation_handled:
+                    if backend_outcome.get("pending", False):
+                        audit_record(
+                            "execute_unconfirmed", command="ask", trust=self._trust_state.name,
+                            source="backend", reason="backend_pending",
+                        )
+                        return None
+                    if result is None and Config.BACKEND_FALLBACK_TO_LOCAL and not backend_outcome.get("confirmation_handled", False):
                         try:
                             import json as _json
 

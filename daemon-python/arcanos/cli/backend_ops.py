@@ -231,14 +231,17 @@ def refresh_registry_cache(cli: "ArcanosCLI") -> None:
     """
     if not cli.backend_client:
         # //audit assumption: backend client required for registry fetch; risk: null dereference; invariant: no request without client; strategy: return early.
+        state.recompute_trust_state(cli)
         return
 
     response = cli.backend_client.request_registry()
     if response.ok and response.value:
         # //audit assumption: registry payload valid on ok response; risk: stale model registry; invariant: cache refreshed with timestamp; strategy: update state cache.
         state.apply_registry_cache(cli, response.value)
+        state.recompute_trust_state(cli)
         return
 
+    state.recompute_trust_state(cli)
     if not cli._registry_cache and not cli._registry_cache_warning_logged:
         # //audit assumption: first registry failure should be visible; risk: silent downgrade to fallback prompt; invariant: warn once; strategy: one-time console warning.
         cli.console.print("[yellow]Backend registry unavailable; using built-in backend prompt.[/yellow]")
@@ -247,9 +250,9 @@ def refresh_registry_cache(cli: "ArcanosCLI") -> None:
 
 def refresh_registry_cache_if_stale(cli: "ArcanosCLI") -> None:
     """
-    Purpose: Refresh registry cache when stale and rebuild prompt if cache becomes valid.
+    Purpose: Refresh stale registry evidence and rebuild the prompt with the result.
     Inputs/Outputs: CLI instance; may mutate prompt and trust state.
-    Edge cases: No-op when backend is not configured or cache remains stale after refresh.
+    Edge cases: Fresh evidence avoids a fetch; failed refreshes use the fallback prompt.
     """
     if not cli.backend_client:
         # //audit assumption: backend client required; risk: unnecessary branch work; invariant: no refresh without backend; strategy: return.
@@ -259,25 +262,35 @@ def refresh_registry_cache_if_stale(cli: "ArcanosCLI") -> None:
         return
 
     refresh_registry_cache(cli)
-    state.recompute_trust_state(cli)
-    if state.registry_cache_is_valid(cli):
-        # //audit assumption: refreshed cache should update prompt context; risk: stale prompt using old registry; invariant: prompt rebuilt after successful refresh; strategy: rebuild prompt.
-        cli.system_prompt = state.build_system_prompt(cli)
+    # Refresh failure must also remove any earlier fresh-registry assertion.
+    cli.system_prompt = state.build_system_prompt(cli)
 
 
 def confirm_pending_actions(cli: "ArcanosCLI", confirmation_token: str) -> Optional[ConversationResult]:
     """
     Purpose: Confirm pending daemon actions with the backend.
     Inputs/Outputs: confirmation token string; returns ConversationResult or None.
-    Edge cases: Returns None when backend rejects token or is unavailable.
+    Edge cases: Rechecks cached trust before each submission, without refreshing registry authority.
     """
-    if not cli.backend_client:
-        # //audit assumption: backend required for confirmation exchange; risk: false positive confirmation; invariant: return None offline; strategy: reject.
-        return None
+    def request_confirmation() -> BackendResponse[Any]:
+        """Require current FULL trust immediately before each confirmation request."""
+        state.recompute_trust_state(cli)
+        if cli._trust_state != TrustState.FULL or not cli.backend_client:
+            state.set_trust_state(cli, TrustState.UNSAFE)
+            audit_record(
+                "governance_denial", command="backend_confirm",
+                reason="confirmation requires FULL trust; registry stale",
+                trust=cli._trust_state.name,
+            )
+            return BackendResponse(
+                ok=False,
+                error=BackendRequestError(kind="governance", message="Confirmation requires fresh FULL trust."),
+            )
+        return cli.backend_client.request_confirm_daemon_actions(confirmation_token, cli.instance_id)
 
     response = request_with_auth_retry(
         cli,
-        lambda: cli.backend_client.request_confirm_daemon_actions(confirmation_token, cli.instance_id),
+        request_confirmation,
         "confirm actions",
     )
     if not response.ok or not response.value:
@@ -712,12 +725,17 @@ def perform_backend_conversation(
     message: str,
     domain: Optional[str] = None,
     from_debug: bool = False,
+    *,
+    outcome: Optional[dict[str, bool]] = None,
 ) -> Optional[ConversationResult]:
     """
     Purpose: Execute backend conversation with optional domain routing.
-    Inputs/Outputs: message text, optional domain hint, debug flag; returns ConversationResult or None.
-    Edge cases: Handles confirmation-required responses through governance gates.
+    Inputs/Outputs: message and optional per-call outcome; returns ConversationResult or None.
+    Edge cases: Handles confirmation gates and marks pending responses without completing a conversation.
     """
+    if outcome is not None:
+        outcome.pop("pending", None)
+        outcome.pop("confirmation_handled", None)
     if not cli.backend_client:
         # //audit assumption: backend client optional; risk: missing backend path; invariant: explicit warning; strategy: print and return None.
         cli.console.print("[yellow]Backend is not configured.[/yellow]")
@@ -840,7 +858,17 @@ def perform_backend_conversation(
             presentation=getattr(response.value, "presentation", None),
         )
 
+    if response.error and response.error.kind == "pending":
+        state.recompute_trust_state(cli)
+        if outcome is not None:
+            outcome["pending"] = True
+        cli.console.print("Backend request is pending; no completed answer is available.", markup=False)
+        return None
+
     if response.error and response.error.kind == "confirmation":
+        cli._last_confirmation_handled = True
+        if outcome is not None:
+            outcome["confirmation_handled"] = True
         # //audit assumption: backend confirmed reachability when confirmation is returned; risk: stale trust state; invariant: trust recomputed before gating; strategy: recompute.
         state.recompute_trust_state(cli)
 
@@ -856,7 +884,6 @@ def perform_backend_conversation(
             cli.console.print("[red]Action requires FULL trust for confirmation; registry stale.[/red]")
             return None
 
-        cli._last_confirmation_handled = True
         from .confirmation import handle_confirmation_required
 
         if primary_error is not None:

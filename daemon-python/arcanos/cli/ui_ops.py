@@ -5,10 +5,12 @@ User-interface rendering and speech operations for the CLI.
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from typing import Any, Mapping, Optional, TYPE_CHECKING
 
 from rich.table import Table
 from rich.segment import Segment, Segments
+from rich.text import Text
 
 from ..cli_ui import build_help_panel, build_stats_table
 from ..config import Config
@@ -17,7 +19,9 @@ from ..cli_midlayer import translate
 from ..voice_boundary import Persona
 from ..cli_intents import truncate_for_tts
 from .context import _UNSET_FILTER
+from .trust_state import TrustState
 from .cli_policy import load_cli_policy, resolve_workspace_root
+from . import state
 
 if TYPE_CHECKING:
     from .cli import ArcanosCLI
@@ -62,6 +66,59 @@ def speak_to_user(
     return filtered
 
 
+def _reported_boolean(value: Any) -> str:
+    """Only backend JSON booleans can report a known boolean measurement."""
+    return str(value).lower() if type(value) is bool else "unknown"
+
+
+def build_system_status_evidence(
+    cli: "ArcanosCLI", state_payload: Optional[Mapping[str, Any]], *, trust: TrustState, registry_status: str,
+) -> str:
+    """Render captured local trust/freshness, backend reports, and unmeasured health."""
+    lines = [
+        f"Daemon trust (local): {trust.name}",
+        f"Daemon registry evidence (local): {registry_status}",
+        # Keep the evidence limits before metadata, with complete sentences so
+        # bounded speech cannot drop them at a timestamp's decimal point.
+        "Backend dependency health: unknown (system-state is not a dependency health probe).",
+        "Memory availability: unknown (not measured by system-state).",
+        "Memory consistency: unknown (no consistency check performed).",
+        "Audit-safe mode: unknown (not measured by system-state).",
+        "Intent tracking correctness: unknown (no correctness check performed).",
+        "Overall stability and risk: unknown (no comprehensive health or risk assessment performed).",
+    ]
+    if state_payload:
+        backend = state_payload.get("backend")
+        backend = backend if isinstance(backend, Mapping) else {}
+        freshness = state_payload.get("stateFreshness")
+        freshness = freshness if isinstance(freshness, Mapping) else {}
+        backend_freshness = freshness.get("backend")
+        backend_freshness = backend_freshness if backend_freshness in ("fresh", "stale") else "unknown"
+        intent_freshness = freshness.get("intent")
+        intent_freshness = intent_freshness if intent_freshness in ("fresh", "stale") else "unknown"
+        generated_at = state_payload.get("generatedAt")
+        generated_at = state.redact_status_text(generated_at) if isinstance(generated_at, str) else generated_at
+        try:
+            generated_at = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
+            generated_at = generated_at.isoformat() if generated_at.tzinfo else "unknown"
+        except (AttributeError, TypeError, ValueError):
+            generated_at = "unknown"
+        lines.extend([
+            "Backend status read (observed): authenticated GET /system-state succeeded",
+            f"Backend-reported connection: {_reported_boolean(backend.get('connected'))}",
+            f"Backend-reported registry availability: {_reported_boolean(backend.get('registryAvailable'))} (does not verify daemon registry authentication)",
+            f"Backend-reported freshness: {backend_freshness}; generated at: {generated_at}",
+            f"Intent freshness (reported): {intent_freshness}",
+        ])
+    else:
+        lines.extend([
+            "Backend status read: unavailable (not configured, inaccessible, or invalid response)",
+            "Backend-reported freshness: unknown",
+            "Intent freshness (reported): unknown",
+        ])
+    return "\n".join(lines)
+
+
 def render_system_state_table(cli: "ArcanosCLI", state_payload: Mapping[str, Any]) -> None:
     """
     Purpose: Render backend system state in deterministic table-only format.
@@ -75,27 +132,33 @@ def render_system_state_table(cli: "ArcanosCLI", state_payload: Mapping[str, Any
         state_payload.get("stateFreshness") if isinstance(state_payload.get("stateFreshness"), Mapping) else {}
     )
 
-    table = Table(title="ARCANOS System State")
+    table = Table(title="ARCANOS Reported System State")
     table.add_column("Field", style="cyan", no_wrap=True)
     table.add_column("Value", style="green")
 
-    table.add_row("mode", str(state_payload.get("mode", "unknown")))
-    table.add_row("intent.intentId", str(intent_payload.get("intentId", "null")))
-    table.add_row("intent.label", str(intent_payload.get("label", "null")))
-    table.add_row("intent.status", str(intent_payload.get("status", "null")))
-    table.add_row("intent.phase", str(intent_payload.get("phase", "null")))
-    table.add_row("intent.confidence", str(intent_payload.get("confidence", 0.0)))
-    table.add_row("intent.version", str(intent_payload.get("version", 0)))
-    table.add_row("intent.lastTouchedAt", str(intent_payload.get("lastTouchedAt", "null")))
-    table.add_row("routing.preferred", str(routing_payload.get("preferred", "unknown")))
-    table.add_row("routing.lastUsed", str(routing_payload.get("lastUsed", "unknown")))
-    table.add_row("routing.confidenceGate", str(routing_payload.get("confidenceGate", "unknown")))
-    table.add_row("backend.connected", str(backend_payload.get("connected", False)))
-    table.add_row("backend.registryAvailable", str(backend_payload.get("registryAvailable", False)))
-    table.add_row("backend.lastHeartbeatAt", str(backend_payload.get("lastHeartbeatAt", "unknown")))
-    table.add_row("freshness.intent", str(freshness_payload.get("intent", "unknown")))
-    table.add_row("freshness.backend", str(freshness_payload.get("backend", "unknown")))
-    table.add_row("generatedAt", str(state_payload.get("generatedAt", "unknown")))
+    def add_row(field: str, value: str) -> None:
+        """Render one complete, redacted backend value as literal text."""
+        table.add_row(field, Text(state.redact_status_text(value)))
+
+    add_row("mode", str(state_payload.get("mode", "unknown")))
+    add_row("intent.intentId", str(intent_payload.get("intentId", "null")))
+    add_row("intent.label", str(intent_payload.get("label", "null")))
+    add_row("intent.status", str(intent_payload.get("status", "null")))
+    add_row("intent.phase", str(intent_payload.get("phase", "null")))
+    confidence = intent_payload.get("confidence")
+    version = intent_payload.get("version")
+    add_row("intent.confidence", str(confidence) if confidence is not None else "unknown")
+    add_row("intent.version", str(version) if version is not None else "unknown")
+    add_row("intent.lastTouchedAt", str(intent_payload.get("lastTouchedAt", "null")))
+    add_row("routing.preferred", str(routing_payload.get("preferred", "unknown")))
+    add_row("routing.lastUsed", str(routing_payload.get("lastUsed", "unknown")))
+    add_row("routing.confidenceGate", str(routing_payload.get("confidenceGate", "unknown")))
+    add_row("reported.backend.connected", _reported_boolean(backend_payload.get("connected")))
+    add_row("reported.backend.registryAvailable", _reported_boolean(backend_payload.get("registryAvailable")))
+    add_row("reported.backend.lastHeartbeatAt", str(backend_payload.get("lastHeartbeatAt", "unknown")))
+    add_row("freshness.intent", str(freshness_payload.get("intent", "unknown")))
+    add_row("freshness.backend", str(freshness_payload.get("backend", "unknown")))
+    add_row("generatedAt", str(state_payload.get("generatedAt", "unknown")))
 
     cli.console.print(table)
 
@@ -339,6 +402,7 @@ def handle_reset(cli: "ArcanosCLI") -> None:
 
 
 __all__ = [
+    "build_system_status_evidence",
     "build_execution_context_summary",
     "handle_clear",
     "handle_context",

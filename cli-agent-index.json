@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-03T19:05:51.579Z",
+  "generatedAt": "2026-11-05T03:24:18.375Z",
   "scopes": [
     {
       "scope": "clients",
@@ -586,6 +586,9 @@
           "relativePath": "daemon-python/tests/test_clear_decision_contract.py"
         },
         {
+          "relativePath": "daemon-python/tests/test_cli_diagnostic_audit.py"
+        },
+        {
           "relativePath": "daemon-python/tests/test_cli_execution_context_ux.py"
         },
         {
@@ -601,10 +604,28 @@
           "relativePath": "daemon-python/tests/test_cli_runner_debug_auth.py"
         },
         {
+          "relativePath": "daemon-python/tests/test_cli_status_evidence.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_cli_status_unknown_measurements.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_cli_system_state_validation.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_cli_work_context_privacy.py"
+        },
+        {
           "relativePath": "daemon-python/tests/test_config_backend_token.py"
         },
         {
           "relativePath": "daemon-python/tests/test_config_data_dir.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_confirmation_summary_privacy.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_confirmation_trust_recheck.py"
         },
         {
           "relativePath": "daemon-python/tests/test_credential_bootstrap_backend_auth.py"
@@ -623,6 +644,12 @@
         },
         {
           "relativePath": "daemon-python/tests/test_debug_server.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_diagnostic_observation.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_direct_diagnostic_questions.py"
         },
         {
           "relativePath": "daemon-python/tests/test_history_db_utf8.py"
@@ -679,10 +706,22 @@
           "relativePath": "daemon-python/tests/test_purpose_bound_credential_isolation.py"
         },
         {
+          "relativePath": "daemon-python/tests/test_registry_monotonic_ttl.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_registry_trust.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_remaining_operational_queries.py"
+        },
+        {
           "relativePath": "daemon-python/tests/test_request_builders.py"
         },
         {
           "relativePath": "daemon-python/tests/test_schema_memory.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_system_state_envelope_validation.py"
         },
         {
           "relativePath": "daemon-python/tests/test_system_state_transport.py"
@@ -897,6 +936,9 @@
     {
       "scope": "tests",
       "files": [
+        {
+          "relativePath": "tests/fixtures/daemon_registry_client.py"
+        },
         {
           "relativePath": "tests/test_daemon.py"
         }

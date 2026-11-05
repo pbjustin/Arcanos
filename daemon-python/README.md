@@ -160,6 +160,58 @@ The daemon access token proves possession of one deployment-wide credential,
 not individual daemon identity. Any holder can address known instance IDs. Keep
 it out of source control and restart the Python daemon after rotation.
 
+### Registry trust and operational status
+
+`FULL` daemon trust requires a valid registry from authenticated
+`GET /api/daemon/registry` and a fresh local cache. Missing or malformed registry
+evidence and expired caches retain `DEGRADED`; confirmation-required actions
+remain blocked. A successful GPT response or authenticated `/system-state`
+read does not establish registry authentication. Registry refresh uses the
+existing configured TTL and does not automatically retry failed requests.
+Cache lifetime uses monotonic elapsed time, so setting the system clock back
+cannot renew expired evidence. Only a valid authenticated registry refresh
+resets that lifetime.
+
+Confirmation submission rechecks cached registry trust after the approval prompt
+and before every existing authentication retry. Expired authority blocks the
+request without refreshing the registry or falling back to local generation.
+Backend action summaries use credential redaction and literal console rendering.
+
+The three credentials serve independent purposes:
+
+| Credential | Authorized traffic | Does not establish |
+| --- | --- | --- |
+| `ARCANOS_DAEMON_ACCESS_TOKEN` | `x-arcanos-daemon-token` on `/api/daemon/*` | Control-plane or GPT access |
+| `BACKEND_TOKEN` / configured GPT credential | Generic backend/GPT conversation traffic | Daemon registry trust |
+| `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN` | Authenticated `GET /system-state` for status/intent reads | Daemon registry trust or measured dependency health |
+
+After merging the source repair, treat production activation as
+`PRODUCTION_CONFIGURATION_PENDING` until the dedicated daemon credential is
+configured and verified. An authorized operator must:
+
+1. Provision one valid, distinct daemon-purpose value through protected secret
+   configuration on the **ARCANOS V2 web service** and in the installed daemon's
+   protected local configuration. Privately verify exact matching and isolation
+   from the generic/GPT and control-plane credentials.
+2. Arrange any required server deployment or daemon restart under separate
+   operational authorization. Keep secrets out of commands, output, logs, and PRs.
+3. Perform one authorized registry read and inspect the resulting cache freshness
+   and trust. Missing, rejected, malformed, or stale registry evidence must retain
+   `DEGRADED`; only authenticated, valid, fresh registry evidence permits `FULL`.
+   A GPT response or `/system-state` success cannot replace this verification.
+
+Direct operational questions such as "Is ARCANOS healthy?" and "What is your
+trust state?" use read-only system-state/status evidence instead of GPT
+self-assessment. The answer separates local registry freshness and daemon trust
+from backend-reported state. `/system-state` is a structured intent/routing
+snapshot, not a dependency health probe: its reported connection, registry, and
+freshness fields do not prove memory availability or consistency, overall
+stability, or low risk. Missing, stale, or inaccessible evidence remains
+explicitly unknown. Greetings and ordinary capability discussions remain chat.
+Each diagnostic captures local trust and freshness together after the backend
+read; its displayed evidence, speech, and terminal audit use that same observation.
+This observation does not authorize a later sensitive action.
+
 See the [configuration reference](../docs/CONFIGURATION.md) for backend and
 daemon routing settings. Template assignments are explicit choices, not always
 the defaults used when a variable is absent: `arcanos/config.py` defaults
@@ -399,6 +451,12 @@ Python clients use structured writing and control-plane operations:
 
 The query methods create writing work through the GPT route. Status and result methods read the job through direct control-plane endpoints. These wrappers normalize fields such as `ok`, `action`, `jobId`, `status`, and `result`/`output` when available. Flat job payloads retain object, scalar, and null outputs exactly; only explicitly identified compatibility envelopes are unwrapped. Requests carrying bearer, GPT-ID, daemon, cookie, or job-read capability headers do not follow redirects.
 
+Interactive chat requires a completed answer. An HTTP 202 response remains
+pending: the CLI reports that no completed answer is available, records an
+unconfirmed audit outcome, and does not start local fallback or save a completed
+conversation. Empty JSON objects are not conversational answers. Typed async
+query and job-result operations retain their existing pending and result contracts.
+
 ## Built-in CLI commands
 
 - `/open <path>`: print a file
@@ -435,6 +493,22 @@ native commands are fixed local workloads, not an operating-system network
 sandbox. Linux/container checks and ordinary mocked regressions remain separate
 evidence. Elevated/UAC acceptance is not run. No production backend or provider
 credential is used.
+
+The native Windows Express acceptance below uses the activated daemon development
+environment, the actual public CLI, and real registry, system-state, heartbeat,
+and confirmation routes. Run from a clean checkout without operator `.env` files:
+
+```powershell
+$env:PYTHON_EXECUTABLE = python -c "import sys; print(sys.executable)"
+node scripts/run-jest.mjs --runTestsByPath tests/daemon-registry-python-http.e2e.test.ts tests/system-state-http-boundary.test.ts --coverage=false --runInBand
+```
+
+The native group requires Windows; the original direct-client registry matrix
+remains cross-platform. Provider dispatch and physical speech are synthetic;
+confirmation challenges are seeded through the real pending-action store because
+the canonical GPT route does not produce daemon challenges. Authentication,
+confirmation consumption, replay checks, queue mutation, and client trust logic
+remain real. Queued fixture actions are inert, with background polling disabled.
 
 ## Troubleshooting
 
