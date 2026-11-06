@@ -10,6 +10,7 @@ import { classifyGamingQuestionFreshness, evaluateGamingFreshness, type GamingFr
 import type { GamingStoredKnowledgeContext, GamingStoredKnowledgeSource } from './gamingStoredEvidenceCore.js';
 import { assessGamingStructuralUsability, gamingCrossSourceStructuralConflict, gamingStructuralCoverageTerms } from './gamingStructuralEvidence.js';
 import { gamingClearIntactProseText } from './gamingClearSource.js';
+import { isGamingDocumentOverviewOnly } from './gamingDocumentIngestionCore.js';
 import { resolveGamingFreshnessDisposition } from './gamingFreshnessDisposition.js';
 
 export interface GamingClearEvidenceOptions {
@@ -115,6 +116,7 @@ export function assessGamingClearEvidence(
     const item = relevantMetadata.find(entry => entry.id === chunk.sourceId || entry.url === chunk.publicUrl);
     const role = source?.clearSourceAssessment?.sourceRole;
     if (chunk.recordId.endsWith(':verification') || role === 'currentness_index' || item?.currentness === 'current_index') return false;
+    if (isGamingDocumentOverviewOnly(chunk.text, { title: source?.title, headings: chunk.headingPath?.at(-1) }, input.game)) return false;
     return !['current_build', 'advisory_recommendation'].includes(questionProfile) || (role !== 'patch_authority' && source?.sourceType !== 'official_updates'
       && source?.sourceType !== 'patch_notes' && item?.category !== 'official_updates');
   });
@@ -233,7 +235,11 @@ export function assessGamingRequestCoverage(input: GamingRetrievalPolicyInput,
   const chunks = (knowledge.evidence ?? []).filter(chunk => {
     const source = knowledge.sources.find(item => item.sourceId === chunk.sourceId && item.url === chunk.publicUrl);
     const role = source?.clearSourceAssessment?.sourceRole;
-    return Boolean(source) && !chunk.recordId.endsWith(':verification') && role !== 'currentness_index'
+    // Stored passages must meet the same description-only boundary as fresh
+    // acquisitions; display-redacted metadata cannot restore gameplay coverage.
+    const overviewOnly = isGamingDocumentOverviewOnly(chunk.text,
+      { title: source?.title, headings: chunk.headingPath?.at(-1) }, input.game);
+    return Boolean(source) && !overviewOnly && !chunk.recordId.endsWith(':verification') && role !== 'currentness_index'
       && (!['current_build', 'advisory_recommendation'].includes(questionProfile)
         || role !== 'patch_authority' && !['official_updates', 'official_status', 'patch_notes'].includes(source!.sourceType));
   });
