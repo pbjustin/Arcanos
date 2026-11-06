@@ -501,6 +501,31 @@ interface ScoredExtractionCandidate {
   primaryContent?: boolean;
 }
 
+/** Score each navigation subtree once. Nested sidebar wrappers must not copy
+ * the same long article repeatedly into a score-only, bounded text window. */
+function navigationTextLength($: ReturnType<typeof load>, element: cheerio.Element, maxChars: number): number {
+  const navigation = $(element).find(NAVIGATION_CONTAINER_SELECTOR).toArray();
+  const matchingNodes = new Set(navigation);
+  const ancestorMembership = new Map<cheerio.Element, boolean>();
+  let textLength = 0;
+  for (const node of navigation) {
+    let insideNavigation = false;
+    const uninspected: cheerio.Element[] = [];
+    for (let parent = node.parent; parent && parent !== element; parent = parent.parent) {
+      if (matchingNodes.has(parent)) { insideNavigation = true; break; }
+      const cached = ancestorMembership.get(parent);
+      if (cached !== undefined) { insideNavigation = cached; break; }
+      uninspected.push(parent);
+    }
+    for (const ancestor of uninspected) ancestorMembership.set(ancestor, insideNavigation);
+    if (insideNavigation) continue;
+    const length = normalizeExtractedText($(node).text()).length;
+    if (length) textLength += length + (textLength ? 1 : 0);
+    if (textLength >= maxChars) return maxChars;
+  }
+  return textLength;
+}
+
 function scoreExtractionCandidate(
   $: ReturnType<typeof load>,
   element: cheerio.Element,
@@ -541,8 +566,7 @@ function scoreExtractionCandidate(
 
   const semanticNavigationTextLength = candidate.is(NAVIGATION_CONTAINER_SELECTOR)
     ? scoringTextLength
-    : normalizeExtractedText(candidate.find(NAVIGATION_CONTAINER_SELECTOR).text())
-      .slice(0, MAX_CANDIDATE_SCORE_CHARS).length;
+    : navigationTextLength($, element, scoringTextLength);
   const semanticNavigationDensity = clampUnitMetric(
     Math.min(scoringTextLength, semanticNavigationTextLength) / Math.max(1, scoringTextLength)
   );
