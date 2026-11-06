@@ -59,6 +59,10 @@ const POSTGRES_SUITES = [
     path: 'tests/dag-accounting-e2e.test.ts',
     databaseEnvironment: 'JOB_CLAIM_FENCING_TEST_DATABASE_URL',
   },
+  {
+    path: 'tests/daemon-conversation-continuation-pg18.e2e.test.ts',
+    databaseEnvironment: 'JOB_CLAIM_FENCING_TEST_DATABASE_URL',
+  },
 ];
 
 function buildDatabaseFreeEnvironment() {
