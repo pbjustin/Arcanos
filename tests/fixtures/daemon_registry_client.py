@@ -290,18 +290,29 @@ def install_native_observers() -> None:
     def after_response(response, **_kwargs):
         """Advance only the registry clocks after a real blocking status HTTP read completes."""
         nonlocal state_reads
-        if urlsplit(response.url).path.startswith("/gpt/") and response.status_code == 202:
-            payload = response.json()
-            token = payload.get("jobReadToken") if isinstance(payload, dict) else None
-            record("accepted_response", job_id=payload.get("jobId"),
-                   valid_capability=isinstance(token, str) and re.fullmatch(r"v1\.[A-Za-z0-9_-]{43}", token) is not None,
-                   capability_header=payload.get("jobReadTokenHeader") == "x-arcanos-job-read-token")
-        if urlsplit(response.url).path.startswith("/jobs/"):
-            payload = response.json()
-            record("job_read_response", status_code=response.status_code,
-                   status=payload.get("status"), job_status=payload.get("jobStatus"),
-                   job_id=payload.get("jobId"), has_result=payload.get("result") is not None)
-        if urlsplit(response.url).path == "/system-state":
+        path = urlsplit(response.url).path
+        accepted = path.startswith("/gpt/") and response.status_code == 202
+        job_read = path.startswith("/jobs/")
+        if accepted or job_read:
+            try:
+                payload = response.json()
+            except ValueError:
+                payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
+            try:
+                if accepted:
+                    token = payload.get("jobReadToken")
+                    record("accepted_response", job_id=payload.get("jobId"),
+                           valid_capability=isinstance(token, str) and re.fullmatch(r"v1\.[A-Za-z0-9_-]{43}", token) is not None,
+                           capability_header=payload.get("jobReadTokenHeader") == "x-arcanos-job-read-token")
+                if job_read:
+                    record("job_read_response", status_code=response.status_code,
+                           status=payload.get("status"), job_status=payload.get("jobStatus"),
+                           job_id=payload.get("jobId"), has_result=payload.get("result") is not None)
+            except Exception:
+                pass  # Observation storage must not change the actual HTTP/client outcome.
+        if path == "/system-state":
             state_reads += 1
             if scenario.get("fault") == "expire-after-read" and state_reads == 2:
                 fault("expire-after-read")
