@@ -12,6 +12,18 @@ Validation results must identify actual execution separately from source review.
 No production request, provider call, credential change, or deployment is part
 of this investigation.
 
+## Evidence artifacts and lifecycle
+
+These captures share the canonical [Python daemon guide](../../../../../daemon-python/README.md#async-backend-client-flow).
+They record authorized local work already executed; they do not authorize any
+production operation. Later PR comments identify subsequent exact-head validation.
+
+| Artifact | Lifecycle, purpose and capture boundary | Validation status | Canonical owner | Action status |
+| --- | --- | --- | --- | --- |
+| [This incident capture](README.md) | Historical investigation and manual-continuation acceptance, starting at `f72a5043`; superseded for automatic delivery and persistence. Original production job availability remains unproven. | Local failing-before/passing-after evidence below; no production acceptance. | Python daemon guide | Authorized local repair/tests executed; no deployment. |
+| [Automatic recovery acceptance](AUTOMATIC_RECOVERY.md) | Historical automatic/restart-recovery acceptance starting at `d574d210`, with maintained delivery-boundary notes; synthetic provider and controlled storage. | Local HTTP/ConPTY acceptance and limitations recorded in that capture. | Python daemon guide | Authorized local implementation/tests executed; no production or paid inference. |
+| [Independent defect audit](INDEPENDENT_AUDIT.md) | Latest independent audit capture, starting at `2f7e7cfb` and published at `746aaf78`; privacy, console ownership, quota and failure-path repairs. | 3,123 Python, 28 HTTP and 630 backend tests passed locally; exact-head CI status belongs to the linked PR audit comment. | Python daemon guide | Authorized fixes/tests and draft-PR publication executed; no merge/deployment. |
+
 ## Incident correlation and limits
 
 Existing Windows daemon transport records independently correlate the supplied

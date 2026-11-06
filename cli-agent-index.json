@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-05T23:32:26.220Z",
+  "generatedAt": "2026-11-06T00:44:21.841Z",
   "scopes": [
     {
       "scope": "clients",
@@ -652,6 +652,9 @@
           "relativePath": "daemon-python/tests/test_conversation_quota_admission.py"
         },
         {
+          "relativePath": "daemon-python/tests/test_conversation_recovery_fixture.py"
+        },
+        {
           "relativePath": "daemon-python/tests/test_credential_bootstrap_backend_auth.py"
         },
         {
@@ -707,6 +710,9 @@
         },
         {
           "relativePath": "daemon-python/tests/test_memory_ops.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_native_acceptance_observers.py"
         },
         {
           "relativePath": "daemon-python/tests/test_openai_adapter.py"
