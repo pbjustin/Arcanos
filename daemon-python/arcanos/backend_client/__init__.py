@@ -14,6 +14,9 @@ from uuid import UUID
 
 import requests
 
+from .continuation_transport import get_response as _get_continuation_response
+from .continuation_transport import MAX_RESPONSE_BYTES as MAX_CONTINUATION_RESPONSE_BYTES
+
 from ..backend_auth_client import normalize_backend_url
 from .chat import request_ask_with_domain as _request_ask_with_domain
 from .chat import request_chat_completion as _request_chat_completion
@@ -49,7 +52,7 @@ from ..config import Config, is_valid_control_plane_access_token, is_valid_daemo
 from arcanos.debug import log_audit_event
 
 DAEMON_ACCESS_TOKEN_HEADER_NAME = "x-arcanos-daemon-token"
-MAX_CONTINUATION_RESPONSE_BYTES = 512 * 1024  # Backend absolute JSON/Storyline response ceiling.
+_DEFAULT_REQUEST_SENDER = requests.request
 SENSITIVE_CAPABILITY_HEADER_NAMES = frozenset(
     {
         "authorization",
@@ -173,13 +176,11 @@ class BackendApiClient:
         return reader
 
     def _read_continuation_response(self, method: str, url: str, options: dict[str, Any]) -> requests.Response:
-        """Bound original-job response bodies without changing ordinary API transport.
-
-        The body budget includes time already spent connecting/receiving headers.
-        It is checked between bytes and can overshoot by one inactivity wait.
-        Requests still owns DNS and header reads; their inactivity semantics are
-        not an absolute wall-clock deadline. No reader thread is detached.
-        """
+        """Cancel/reap production GETs; preserve explicit injected transport contracts."""
+        if self._request_sender is _DEFAULT_REQUEST_SENDER:
+            return _get_continuation_response(
+                url, options["headers"], self._timeout_seconds, self._continuation_cancelled or (lambda: False),
+            )
         cancelled = self._continuation_cancelled
         started = time.monotonic()
 
