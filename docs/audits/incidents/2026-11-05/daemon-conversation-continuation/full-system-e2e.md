@@ -117,6 +117,7 @@ SQL/process-restart tests do not prove survival of hardware or fsync failure.
 | Fixture: shared rate budget | Reused synthetic control-plane identity exhausted the existing rate budget, producing five failures. Per-scenario fixture identity preserves the real limit; all 37 HTTP cases now pass with zero HTTP 429 responses. |
 | Fixture: known-job nonowner | Idle-observer coverage did not exercise a second live CLI explicitly resuming a known accepted job ID. The real nonowner attempt now verifies denial without a result GET or wrong-console delivery. |
 | Fixture: full-suite readiness control | A fake console's observations no longer satisfied the extended ownership readiness check, so its intended SQL-error assertion was not reached. The fixture control was corrected and the final full Python suite passed. |
+| Fixture: Docker address assumption | Exact-head CI at `dba06fac` failed ten PostgreSQL cases during setup: the server reported its Docker bridge address behind the loopback port forward. The fixture now validates the actual database/version and retains the existing strict loopback client-URL/disposable-database guard; it no longer confuses the server's internal address with the configured client target. This does not admit remote or arbitrary database URLs. |
 
 ## Crash and delivery boundaries
 
@@ -142,6 +143,7 @@ terminal output. Legacy JSON backup is not a complete SQLite/recovery backup.
 | --- | --- |
 | PostgreSQL/full application | **15 passed**; with six CI truth checks, **21 passed**. |
 | Existing PostgreSQL/strict guard matrix | **68 passed, one skipped**; that optional owned-cluster restart was separately executed successfully. |
+| Docker-fixture follow-up guards | **25 passed** across the existing disposable-URL, required-database and CI truth-contract suites; no target allowlist was broadened. |
 | Native HTTP matrix | **37 passed**: 33 ConPTY scenarios and four object-fault HTTP scenarios; controlled repository, not PostgreSQL. |
 | Native HTTP counters | 262 requests, 37 original POSTs/providers, 63 result GETs, zero replacement POSTs/paid calls. Separate from the PostgreSQL ledger. |
 | Combined acceptance counters | **331 HTTP requests, 44 original POST attempts, 43 controlled provider invocations, 104 result GETs; zero replacement POSTs/paid calls.** One PostgreSQL attempt failed before acceptance, explaining 44 versus 43. |
@@ -152,7 +154,7 @@ terminal output. Legacy JSON backup is not a complete SQLite/recovery backup.
 | Focused fake-terminal fixture control | **Five passed** in 0.12 s; the intended SQL-error control is reached. |
 | Type check / ESLint / production build | **Passed**; lint has 77 existing warnings and zero errors. |
 | Backend/CLI contract, offline validation and repository sync | **Passed** in the lead's final validation. |
-| Documentation / indexes | Documentation audit **1,197/1,197 passed**; generated indexes current. Final publication checks belong to the lead. |
+| Documentation / indexes | Documentation audit **1,201/1,201 passed** after the new acceptance record was tracked; generated indexes current. Final publication checks belong to the lead. |
 | Exact-head CI / reviews / mergeability | **PENDING_FINAL_HEAD_VERIFICATION** in the final PR receipt; old-head CI cannot validate these working changes. No new CodeRabbit review requested. |
 
 Local evidence is retained under ignored `tmp/`; paths identify reproducible
@@ -165,7 +167,9 @@ captures, not published attachments. Primary records are
 `full-system-contention-before.log` / `-after.log`,
 `full-system-connection-before.log` / `-after.log`,
 `full-system-slow-read-before.log` / `-final.log`, and
-`full-system-slow-headers-final.log`. Captured values are synthetic and receipts
+`full-system-slow-headers-final.log`. The Docker setup failure is preserved in
+`full-system-pg-ci-failed.log`; the final PR receipt identifies its follow-up
+validation and exact-head CI. Captured values are synthetic and receipts
 must remain free of raw bearer credentials or personal data.
 
 Physical Windows reboot, a second named-account logon, production PostgreSQL

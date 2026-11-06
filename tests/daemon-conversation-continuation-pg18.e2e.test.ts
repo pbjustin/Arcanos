@@ -191,8 +191,10 @@ beforeAll(async () => {
   if (!connectionString) return;
   administrator = new Client({ connectionString, connectionTimeoutMillis: 3_000 });
   await administrator.connect();
-  const verified = await administrator.query("SELECT current_database() AS database, host(inet_server_addr()) AS host, current_setting('server_version_num')::int AS version");
-  expect(verified.rows[0]).toMatchObject({ database: 'arcanos_audit_pg18_20260727', host: '127.0.0.1' });
+  // The guarded client URL is loopback. Docker port forwarding can give the
+  // server a bridge address, so it is not evidence of the client's target.
+  const verified = await administrator.query("SELECT current_database() AS database, current_setting('server_version_num')::int AS version");
+  expect(verified.rows[0]).toMatchObject({ database: 'arcanos_audit_pg18_20260727' });
   expect(verified.rows[0].version).toBeGreaterThanOrEqual(180_000);
   expect(verified.rows[0].version).toBeLessThan(190_000);
   await administrator.query(`CREATE SCHEMA "${schemaName}"`);
