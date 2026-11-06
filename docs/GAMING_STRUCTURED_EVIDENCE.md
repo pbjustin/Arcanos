@@ -99,6 +99,11 @@ publisher profiles. Profile primary classes receive the same protection as the
 generic primary catalog, while the profile's existing sidebar and navigation
 exclusions apply to HTML records, embedded JSON and prose. These are extraction
 hints, not publisher authority or exceptions to source-use and security policy.
+Blank optional selector hints use the ordinary fallback after the existing
+24-selector cap; they cannot suppress legitimate primary content. Shared-fetch
+navigation scoring counts overlapping navigation subtrees once within its
+existing score window. This prevents deep sidebar layouts from repeatedly
+copying the same long article while retaining default text/link serialization.
 
 Supported HTML structures are headered tables with captions, nearby headings,
 row/column headers and explicit header associations; bounded unambiguous spans;

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-06T21:03:57.065Z",
+  "generatedAt": "2026-11-06T22:46:42.409Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4867,7 +4867,13 @@
           "relativePath": "tests/gaming-publisher-extraction-regressions.test.ts"
         },
         {
+          "relativePath": "tests/gaming-publisher-incident-fixtures.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-publisher-primary-layout.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-punctuated-scope.test.ts"
         },
         {
           "relativePath": "tests/gaming-rag-local-fetch.integration.test.ts"
@@ -4946,6 +4952,9 @@
         },
         {
           "relativePath": "tests/gaming-stored-knowledge.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-stored-overview-coverage.test.ts"
         },
         {
           "relativePath": "tests/gaming-structural-sufficiency.test.ts"
@@ -5288,6 +5297,9 @@
         },
         {
           "relativePath": "tests/integration/gaming-durable-rag.pg18.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/integration/gaming-historical-status.pg18.integration.test.ts"
         },
         {
           "relativePath": "tests/integration/gpt-access-device-auth.pg18.integration.test.ts"
@@ -6107,6 +6119,12 @@
         },
         {
           "relativePath": "tests/shared-utility-characterization.test.ts"
+        },
+        {
+          "relativePath": "tests/shared-web-fetcher-consumer-regressions.test.ts"
+        },
+        {
+          "relativePath": "tests/shared-web-fetcher-performance.test.ts"
         },
         {
           "relativePath": "tests/startup-health-routes.test.ts"

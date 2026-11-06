@@ -196,6 +196,18 @@ supply gameplay coverage. Fresh plain-text chunks are checked with their exact
 acquired headings and nominal game context before display metadata is redacted.
 The original document and structural provenance remain intact; complete records
 and independent declarative gameplay facts keep their existing selection rules.
+The same overview boundary applies to stored request coverage and the full CLEAR
+evidence assessment. Page-description wording does not become claim support by
+being persisted, and factual values or qualifications in acquired headings remain
+evidence rather than metadata boilerplate.
+
+Periods internal to acquired titles, such as decimal release names, are not
+sentence boundaries. The existing 160-character subject window and 512-character
+comparison window remain bounded, with a non-authoritative lookahead for edge
+inspection. Plain-text derivatives can establish ownership through an exact,
+independently acquired `in the game FULL NAME` scope. A URL, separate Archive item
+title, bare mention or comparison cannot replace that evidence; contradictions,
+edition applicability and incomplete-inspection checks still bind the document.
 
 Deployment identity and live acceptance remain separate gates:
 `DEPLOYED_SHA_UNVERIFIED` and `LIVE_ACCEPTANCE_NOT_RUN`.

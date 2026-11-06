@@ -1,5 +1,112 @@
 # Gaming discovery and evidence reliability — 2026-11-06
 
+## Comprehensive acceptance from 25a78ea7
+
+Starting head: `25a78ea7cf5a4ea279dbe97a2abd742c378f0e2d`; base:
+`0be1134658195a27353a07b5ca6f86d6e3222546`. The final source and acceptance-test
+commit is `ab98e1e6404c90dfd8b1cde2587603c3a0c5bb78`; the following audit/index
+commit changes documentation only. The exact published receipt head and CI links
+are recorded in PR #1591. The original checkout was preserved.
+
+Baseline reproduction passed the existing HTTP/quality 51 cases, shared/layout
+145 cases and discovery/Archive/CLEAR 198 cases before source edits. Starting-head
+required `docs:check` and `All Checks Complete` were green. That CI observation is
+not evidence for a subsequent head.
+
+| Reproduced defect | Before | Root-cause repair and permanent regression |
+| --- | --- | --- |
+| Varied source-description wording supplied coverage without a gameplay fact | Expanded wording matrix: 21 failures / 12 controls passed; ten HTTP cases had false positive coverage | Reuse the closed overview classifier for bounded nominal descriptions, with factual values, relations, predicates and qualifications preserved. HTTP before counters were not all reached, so those ten failures are coverage evidence, not proof of ten inference charges. |
+| Stored topic prose regained coverage and verified CLEAR claim support | Three direct stored-coverage failures; real SQL retrieval had coverage false but full-assessor claim support verified | Apply the same overview exclusion to both request coverage and full CLEAR gameplay chunks. SQL retrieval and declarative positive controls now pass. |
+| Exact acquired-heading removal could discard the actual fact | Two heading-fact controls failed | Strip only clearly nominal document/catalog labels; retain factual and unfamiliar-predicate headings. A real HTTP positive now supports the answer solely from acquired H1 facts, with four deterministic Trinity/audit stages and the bound citation. |
+| Periods inside decimal game titles were scope boundaries | Exact decimal-title and comparison positives failed; the continuous Archive path returned false game mismatch | Share punctuation-aware nominal boundaries and retain the existing 160-character scope and 512-character comparison bounds. A non-authoritative lookahead prevents scan-edge completion. Known/unknown contradictions and truncated controls remain enforced. |
+| Body identity could remain verified despite unfinished comparison inspection | Two incomplete/over-budget scope controls failed | The body scanner uses the existing applicability scanner's completeness result without discarding retained declarations. |
+| Plain-text Archive guides with acquired full named-game scope required nonexistent HTML metadata | Decimal correction exposed a separate identity-unverified refusal | Permit the existing independently acquired exact named-body scope when HTML metadata is absent. Item metadata, URLs, bare mentions and comparisons still cannot establish derivative ownership; all contradiction and edition gates remain. |
+| Nested navigation score text copied the same long article repeatedly | Both base and reviewed head exceeded an eight-second contained child deadline; a smaller 504-element probe took about 2.5 seconds | Score non-overlapping navigation roots with cached ancestor membership and the existing score window. The 184KB/2,006-element regression completes extraction in about 0.5 seconds, retaining default 9K text/links and full opted-in content. This was an existing related defect, not introduced by this PR. |
+| Blank optional primary selectors suppressed article preservation | Empty-string and whitespace hints both lost legitimate article content | Trim/filter after the unchanged 24-selector cap, then apply the normal fallback. Mixed valid hints, malformed hints, the 25th-selector ceiling and genuine furniture controls pass. |
+
+### Real PostgreSQL acceptance
+
+An official portable PostgreSQL 18.6 runtime was used only under the task's work
+directory. The EDB ZIP and its published SHA-256 matched
+`e2246ba91d22345bc3d017586c09ede52d9df180b1eeb480f050445f1cad84e2`.
+No installer, global PATH/configuration, OS service or production database was
+used. The cluster listened only on loopback; tests used the existing strict
+disposable database-name/URL guard and required-database mode.
+
+The new historical/status suite passes **66 real SQL cases**, plus **nine existing
+durable-RAG SQL cases**, with no skips. Original v1–v5 producer-derived bodies and
+current v6 bodies are actually persisted through application repository paths.
+Coverage includes six job states, actor-bound retrieval, cross-actor rejection,
+malformed/oversized/future/tampered rows, approval stripping, historical execution
+and reapproval refusal, current source persistence, concurrent idempotency,
+changed-body conflict, terminal reuse, expiry cleanup, catalog/lexical retrieval,
+and overview-versus-declarative evidence authority. The current worker handler is
+invoked directly; a background worker claim/lease loop is not claimed. Assessments
+and source bytes are deterministic fixtures. These are real SQL operations on
+synthetic rows, not production records or exported historical customer data.
+
+The suite is wired into the existing `test:postgres-fencing` job. After the final
+post-heading-fix rerun, all **75/75** SQL tests passed; owned test schemas were
+absent, the server was stopped, and its PID, listener and owned processes were
+verified gone. Portable files remain outside the repository for reproduction.
+
+### Continuous HTTP, shared callers and publisher boundaries
+
+The **56-case authenticated loopback MCP suite** now includes actual existing
+host-side Brave adapter/discovery processing followed by URL admission,
+deduplication, protected redirect or Archive metadata/derivative acquisition,
+extraction, identity, CLEAR, selection, Trinity, audit and citation delivery.
+MCP search remains host-delegated; no backend search path was inserted into MCP.
+External search/source transport and SDK responses are deterministic boundaries.
+Cancellation, provider failure, insufficient evidence, unqualified Archive text,
+actor authorization and replay check actual downstream counters. Rejected cases
+perform zero unintended model validation, inference, source ingestion or memory
+writes. Positive answers perform the existing four SDK fixture stages.
+
+Nineteen real-consumer regressions exercise Research, URL-RAG ingestion, browser
+search source packets and the separate state JSON wrapper, plus the contained
+deep-navigation worker test. Existing shared-fetch defaults, links, cancellation,
+deadlines, headers and primary content remain covered. Seven permanent synthetic
+publisher incident cases preserve the 4,096-character structured-state bound,
+layout recovery, partial/deep qualifiers, JSON-only provenance and full-response
+instruction/source-use restrictions.
+
+Offline replays of separately captured public samples recover 3,714 Zelda shops
+and 10,573 Zelda items prose characters; all 64/34 structural rows respectively
+remain partial under existing qualifier limits. The IGN sample remains integrity
+exhausted; the 4,097/8,919-character inert-state cases are bounded negatives.
+These samples are not the unavailable original incident response bytes and do not
+establish current publisher availability. G2A timeout, 403 access restriction and
+bounded alternate-source recovery remain intentional controlled outcomes. Real
+SQL tests establish missing-catalog versus matching lexical retrieval behavior.
+
+### Validation and unavailable acceptance
+
+Exact Node 24.18.1 / npm 11.16.0: the complete supported Gaming sweep passes
+**195 suites / 6,638 tests**. Additional checks pass **75 SQL tests**, **741 tests
+across 12 shared-fetch/import/workflow/native-Windows suites** (including 496
+import-boundary cases), and **103 Windows-receipt/preview-runner contract tests**.
+Type-check, build, lint (zero errors / 77 existing warnings), maintained docs,
+generated indexes and 812 local documentation links pass. External-link network
+validation and the unrelated full-root environment suite are not claimed.
+
+Railway project/environment inventory found no owned PR #1591 environment. The
+PR remains draft with no preview label; the existing controller recorded
+`action: noop`, `reason: not-opted-in`, and skipped deployed preview execution.
+No unrelated preview was adopted and no labels, draft state, deployments,
+credentials, production configuration or privileged networking were changed.
+Deployed authenticated Gaming/SQL acceptance is therefore blocked. Offline
+preview-runner tests are not deployed evidence. Live-provider acceptance is also
+blocked by the absence of paid-provider authorization and budget; application
+provider usage/cost is **zero / $0**.
+
+Independent review examined the full source/test diff, negative effects,
+cleanup/provenance and factual-retention cases. No remaining reproduced code
+defect is asserted in this scope; closed language recognition is not a universal
+semantic proof. The PR stays draft and unmerged. New exact-head required CI must
+be assessed at the published head; prior green checks cannot substitute for it.
+CI completion is not awaited under the user's standing instruction.
+
 ## Independent remediation from c60b7380
 
 The remote PR head and merge base were verified at
