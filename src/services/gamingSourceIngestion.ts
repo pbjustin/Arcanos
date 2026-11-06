@@ -214,6 +214,8 @@ const retainedGamingSourceAssessmentSchema = gamingClearAssessmentRecordSchema.r
 // after validating the strict wire shape so this read cannot supply execution authority.
 const retainedQueuedGamingSourceSchema = queuedSourceSchema.extend({
   hybridApproval: queuedSourceSchema.shape.hybridApproval.unwrap().extend({
+    // Original retained v1 producers used source-policy v1; this is read-only compatibility.
+    sourcePolicyVersion: z.enum(['gaming-hybrid-source-policy-v1', GAMING_SOURCE_POLICY_VERSION]),
     gamingClear: retainedGamingSourceAssessmentSchema.optional()
   }).optional()
 }).transform(({ hybridApproval: _historicalApproval, ...source }) => source);
