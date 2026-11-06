@@ -1,5 +1,13 @@
 import type { load } from 'cheerio';
 
+/** Reviewed primary-content hints shared by layout normalization and prose selection. */
+export const GAMING_PRIMARY_CONTENT_SELECTORS = Object.freeze([
+  '#article-body', '.article-content', '.article-body', "[class*='article-content']", "[class*='article-body']",
+  '.entry-content', '.post-content', '.mw-parser-output', '.main-content', '#main-content', '.page-content',
+  'article', 'main', "[role='main']"
+] as const);
+export const GAMING_PRIMARY_CONTENT_SELECTOR = GAMING_PRIMARY_CONTENT_SELECTORS.join(',');
+
 /** Normalize scanner characters while preserving real whitespace in either inspection view. */
 export function normalizeGamingDocumentInstructionCharacters(text: string, replacement: ' ' | '' = ' '): string {
   return text.normalize('NFKC')
@@ -8,10 +16,10 @@ export function normalizeGamingDocumentInstructionCharacters(text: string, repla
 }
 
 /** Layout modifiers are not sidebar furniture. Normalize parser-owned class hints
- * on semantic primary regions and their containers; source text is unchanged. */
+ * on reviewed semantic/class primary regions and their containers; source text is unchanged. */
 export function preservePrimaryContentSidebarLayouts($: ReturnType<typeof load>): void {
   const primaryAncestors = new Set<unknown>();
-  $('article,main,[role="main"]').each((_, element) => {
+  $(GAMING_PRIMARY_CONTENT_SELECTOR).each((_, element) => {
     primaryAncestors.add(element);
     // Share ancestry work across nested layouts and primary regions. Looking
     // through every candidate's descendants would repeat a quadratic DOM walk.

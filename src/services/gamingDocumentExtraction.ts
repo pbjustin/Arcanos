@@ -1,6 +1,6 @@
 import type { FetchAndCleanOptions } from "@shared/webFetcher.js";
 import { GAMING_PUBLISHER_EXTRACTION_PROFILES } from '@shared/gaming/gamingPublisherExtractionProfileData.js';
-import { normalizeGamingDocumentInstructionCharacters } from '@shared/gaming/gamingDocumentTextNormalization.js';
+import { GAMING_PRIMARY_CONTENT_SELECTORS, normalizeGamingDocumentInstructionCharacters } from '@shared/gaming/gamingDocumentTextNormalization.js';
 
 /** Preserve the existing tag-budget scan, advancing past each complete span without backtracking. */
 export function countGamingHtmlElements(body: string, maxElements: number): number {
@@ -53,12 +53,6 @@ const GENERIC_CONTENT_SELECTORS = [
   ".post-content",
   "#content",
   ".content"
-] as const;
-
-const PRIMARY_CONTENT_SELECTORS = [
-  '#article-body', '.article-content', '.article-body', "[class*='article-content']", "[class*='article-body']",
-  '.entry-content', '.post-content', '.mw-parser-output', '.main-content', '#main-content', '.page-content',
-  'article', 'main', "[role='main']"
 ] as const;
 
 const COMMON_JUNK_SELECTORS = [
@@ -212,7 +206,7 @@ export function gamingDocumentFetchOptions(url: string, options: FetchAndCleanOp
     preferredContentSelectors: options.preferredContentSelectors ?? [
       ...(profile?.contentSelectors ?? []), ...GENERIC_CONTENT_SELECTORS
     ],
-    primaryContentSelectors: options.primaryContentSelectors ?? [...(profile?.contentSelectors ?? []), ...PRIMARY_CONTENT_SELECTORS],
+    primaryContentSelectors: options.primaryContentSelectors ?? [...(profile?.contentSelectors ?? []), ...GAMING_PRIMARY_CONTENT_SELECTORS],
     removeSelectors: options.removeSelectors ?? [...COMMON_JUNK_SELECTORS, ...(profile?.removeSelectors ?? [])]
   };
 }

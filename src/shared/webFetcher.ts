@@ -1,4 +1,4 @@
-import { preservePrimaryContentSidebarLayouts } from './gaming/gamingDocumentTextNormalization.js';
+import { GAMING_PRIMARY_CONTENT_SELECTOR, preservePrimaryContentSidebarLayouts } from './gaming/gamingDocumentTextNormalization.js';
 import axios from 'axios';
 import { contains, load } from 'cheerio';
 import { Resolver } from 'node:dns/promises';
@@ -787,9 +787,9 @@ export function extractFetchAndCleanDocument(
           throwIfFetchCancelled(options);
           const node = $(header);
           const scope = node.parent();
-          const heading = scope.is('article,main,[role="main"]') && !headingDenied(header)
+          const heading = scope.is(GAMING_PRIMARY_CONTENT_SELECTOR) && !headingDenied(header)
             ? node.find('h1').slice(0, 6).filter((__, element) => !headingDenied(element)
-              && $(element).closest('article,main,[role="main"]').get(0) === scope.get(0)).first() : undefined;
+              && $(element).closest(GAMING_PRIMARY_CONTENT_SELECTOR).get(0) === scope.get(0)).first() : undefined;
           if (heading?.length) node.replaceWith(heading);
           else node.remove();
         });
@@ -894,14 +894,19 @@ export function extractFetchAndCleanDocument(
     const selectedElement = selectedCandidate.element;
     type LocatedElement = cheerio.Element & { sourceCodeLocation?: { startOffset: number; endTag?: unknown } };
     const selectedLocation = (selectedElement as LocatedElement).sourceCodeLocation;
-    let scope = $(selectedElement).closest('article,main,[role="main"]');
+    let scope = $(selectedElement).closest(GAMING_PRIMARY_CONTENT_SELECTOR);
     // Search nearest scopes only; an independent article's own subject wins.
-    for (let depth = 0; depth < 6 && scope.length; depth++, scope = scope.parent().closest('article,main,[role="main"]')) {
+    for (let depth = 0; depth < 6 && scope.length; depth++, scope = scope.parent().closest(GAMING_PRIMARY_CONTENT_SELECTOR)) {
       throwIfFetchCancelled(options);
       const heading = scope.children('h1').slice(0, 6).filter((_, element) => !headingDenied(element)).first();
       if (!heading.length) continue;
       const headingElement = heading.get(0)!;
-      if (headingElement === selectedElement || contains(selectedElement, headingElement)) break;
+      if (headingElement === selectedElement || contains(selectedElement, headingElement)) {
+        // A class body is not an independent article boundary: its own heading
+        // must not conceal an earlier enclosing article's acquired subject.
+        if (scope.is('article,main,[role="main"]')) break;
+        continue;
+      }
       const location = (headingElement as LocatedElement).sourceCodeLocation;
       // A later recommendation cannot become the acquired article opening.
       if (!location || !selectedLocation || location.startOffset >= selectedLocation.startOffset) break;

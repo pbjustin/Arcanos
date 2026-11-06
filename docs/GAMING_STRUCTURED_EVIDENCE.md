@@ -83,8 +83,12 @@ Resolver `gaming-document-v5` separates the current extraction decisions from
 older cached resolutions and durable revision identity.
 
 Class tokens such as `has-game-sidebar` describe a layout containing a sidebar.
-When they enclose a semantic primary article, they no longer discard that article
-as sidebar furniture. Explicit sidebars, hidden content and complementary roles
+When they enclose a reviewed primary article, they no longer discard that article
+as sidebar furniture. Layout normalization, content selection and primary-heading
+preservation share the existing semantic, class and ID selector catalog, including
+`.article-body` and `.entry-content`. A contained class-body heading does not hide
+an earlier enclosing article subject; independent semantic article boundaries
+retain their existing scope behavior. Explicit sidebars, hidden content and complementary roles
 remain excluded. The six-level qualifier context bound is unchanged; a record
 whose context cannot be fully inspected remains partial even when independent
 article prose is available. Full-response instruction and source-use inspection

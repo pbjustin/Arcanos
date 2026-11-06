@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-06T17:30:10.636Z",
+  "generatedAt": "2026-11-06T18:49:42.880Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4826,6 +4826,9 @@
         },
         {
           "relativePath": "tests/gaming-primary-heading-preface.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-primary-selector-layout.test.ts"
         },
         {
           "relativePath": "tests/gaming-progress-recovery-preview-failure.test.ts"
