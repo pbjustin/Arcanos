@@ -332,14 +332,17 @@ describe('Intelligent discovery through authenticated loopback Gaming MCP and re
 
   it('stops without inference when two sources lack the requested gameplay claim', async () => {
     await serve(); const started = await query();
-    acquire.mockImplementation(async () => ({ status: 200, headers: { 'content-type': 'text/html' }, data:
-      `<html><title>${active.game}</title><body><article><p>In the game ${active.game}, players explore the village.</p><p>This page describes village scenery and background music. It contains no equipment acquisition instructions.</p></article></body></html>` }));
+    sourceHtml = `<html><title>${active.game}</title><body><article><p>In the game ${active.game}, players explore the village.</p><p>This page describes village scenery and background music. It contains no equipment acquisition instructions.</p></article></body></html>`;
     const first = await submit(started.result);
     expect(first.result.answer).toBeUndefined(); expect(first.result.nextAction).toBe('search');
+    expect(acquire).toHaveBeenCalledTimes(1);
     const last = await submit(first.result, ['https://second.example.org/scenery'], 'intelligent-http-insufficient');
     expect(last.result.nextAction).toBe('stop'); expect(last.result.answer).toBeUndefined();
     expect(last.result.evidenceSelected).toBe(false); expect(responsesCreate).not.toHaveBeenCalled();
-    expect(ingest).not.toHaveBeenCalled();
+    expect(acquire).toHaveBeenCalledTimes(2);
+    expect(acquire.mock.calls.map(([, options]) => (options as { headers: { Host: string } }).headers.Host))
+      .toEqual(['guides.example.org', 'second.example.org']);
+    expect(modelsRetrieve).not.toHaveBeenCalled(); expect(ingest).not.toHaveBeenCalled(); expect(memoryWrite).not.toHaveBeenCalled();
   });
 
   it('rejects an invented citation after real Trinity without another inference attempt', async () => {
