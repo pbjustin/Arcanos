@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-06T01:51:13.224Z",
+  "generatedAt": "2026-11-06T02:33:29.578Z",
   "scopes": [
     {
       "scope": "clients",
@@ -125,6 +125,9 @@
         },
         {
           "relativePath": "daemon-python/arcanos/backend_client/chat.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/backend_client/continuation_transport.py"
         },
         {
           "relativePath": "daemon-python/arcanos/backend_client/daemon.py"
@@ -647,6 +650,9 @@
         },
         {
           "relativePath": "daemon-python/tests/test_continuation_store.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_continuation_transport.py"
         },
         {
           "relativePath": "daemon-python/tests/test_conversation_continuation.py"

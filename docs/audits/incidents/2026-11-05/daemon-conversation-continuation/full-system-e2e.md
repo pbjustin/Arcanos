@@ -1,12 +1,12 @@
 # Full-system continuation acceptance
 
-**Verdict: PARTIAL.** Automatic delivery, protected restart recovery and real
-PostgreSQL persistence passed the recorded local scenarios. The requested hard
-read/shutdown bound is not established: slow streamed HTTP headers left the
-recovery worker alive when `stop()` returned after **3.000 seconds**; the worker
-finished **6.031 seconds** after stop began. DNS timing remains **NOT_PROVEN**.
-One encrypted pending record remained, with no completed history, false success
-or capability disclosure. Passing delivery tests do not remove this blocker.
+**Verdict: PARTIAL pending final-head CI.** Automatic delivery, protected restart
+recovery and real PostgreSQL persistence passed the recorded local scenarios.
+The subsequently authorized cancellation transport repairs the slow-header
+shutdown blocker: the final native ConPTY case stopped its active worker in **0.016 s**,
+retained one encrypted pending record, and delivered the original answer on
+relaunch with one history turn and 144 tokens. Earlier failing measurements below
+remain historical evidence. Final-head required CI is a separate acceptance gate.
 
 This is a maintained acceptance dashboard for PR #1589, not a production
 runbook or merge approval. The [Python daemon guide](../../../../../daemon-python/README.md#async-backend-client-flow)
@@ -109,7 +109,7 @@ SQL/process-restart tests do not prove survival of hardware or fsync failure.
 | Product: lazy SQLite reader wait | An exclusive lock blocked the schema probe beyond stop. The same bounded recovery wait produces a 0.609 s stop, no live worker and no result GET. |
 | Product: connection cleanup | Corrupt-database setup left a native SQLite handle open in the traceback. Explicit cleanup now permits the native file operation while the traceback remains alive. |
 | Product: slow response body | A dribbled body outlasted the previous inactivity timeout. Streaming consumption now has a size/deadline/cancellation boundary; the real slow-body stop probe completed in 0.812 s with the pending record retained. |
-| Remaining product boundary | Slow streamed headers still outlast the requested shutdown bound. Header trickling is a confirmed overrun; DNS timing is unproven. No universal two-second wall-clock or three-second worker-termination claim is justified. |
+| Product: header acquisition (repaired follow-up) | Earlier slow headers overran shutdown: stop returned at 3.000 s with a live worker, finishing at 6.031 s. The authorized contained transport now cancels and reaps the entire Requests GET, including acquisition, with no late completion; see the follow-up below. |
 | Fixture: synthetic storage | An in-memory job map could not prove commits, fencing or restarts across PostgreSQL. The guarded real PostgreSQL suite now covers those boundaries. |
 | Fixture: crash simulation | Raised-exception recovery cases are identified separately from new actual CLI `os._exit(97)` cases and the abrupt SQLite transaction child. |
 | Previously repaired fixture (verified): early diagnostics | The starting revision already preserves early primary failure receipts despite uninitialized SQLite. Available history remains best effort and unknown counts remain null; this is verified prior work, not a new repair. |
@@ -130,14 +130,14 @@ SQL/process-restart tests do not prove survival of hardware or fsync failure.
 | During SQLite transaction | Abrupt child exit rolls back partial turn/totals/event writes; fresh connection commits once. This is distinct from raised exceptions. |
 | After SQLite commit | The existing delivery receipt prevents duplicate stored history, usage and durable completion events. |
 | During display / before display acknowledgement | A fresh process can repeat display; terminal output and SQLite cannot commit atomically. Stored turns and accounting remain idempotent. |
-| Slow headers during shutdown | Stop can return before the worker ends. Recorded probe: no post-stop history, one encrypted pending record, one original generation and one result GET. |
+| Slow headers during shutdown | Before the cancellation follow-up, stop returned before the worker ended. The repaired native case now stops/reaps the worker and retains the encrypted record for fresh-process recovery; no late history or extra generation. |
 
 Exactly-once durable history/accounting does not imply an absolute exactly-once
 terminal display or console-audit guarantee across arbitrary process death.
 Logical clear is not physical erasure of SQLite pages, WAL, backups or prior
 terminal output. Legacy JSON backup is not a complete SQLite/recovery backup.
 
-## Validation ledger and publication hold
+## Earlier validation ledger (before cancellation follow-up)
 
 | Check | Recorded result / final update |
 | --- | --- |
@@ -178,8 +178,53 @@ anonymous-principal DPAPI/ACL denial and fresh-process restart simulations are
 separately identified evidence. File/directory symlink tests were unavailable
 without additional Windows privilege; no privilege or account changes were made.
 
-No second job repository, persistent service, background action loop or generic
-encrypted database framework was added. Command polling and self-healing remain
-disabled in acceptance. **FULL_SYSTEM_E2E remains PARTIAL** while the confirmed
-header/shutdown overrun, DNS bound and final validation/publication checks remain
-unresolved; local delivery success is not merge or deployment authorization.
+## Authorized cancellation follow-up
+
+Starting from `6b71111c`, five new real-HTTP regressions failed before repair:
+dripped headers/status could bypass the elapsed budget, and silent headers/body
+could delay shutdown until socket inactivity. The replacement is scoped to
+production conversation-recovery GETs. Ordinary synchronous/typed API transport,
+job authorization, pending ownership and generation paths are unchanged.
+
+One temporary Python child runs the existing Requests library with a two-second
+parent deadline and its own hard lifetime. Cancellation kills and reaps it and
+joins the pipe reader. If the parent exits abruptly, the child timer bounds the
+orphan lifetime. No persistent service or resolver/reader thread is left behind.
+The fixed helper permits only a canonical original-job result GET, disables
+redirects, bounds decoded output to 512 KiB, and reads at most 4 KiB of anonymous
+stdin. Job/writing credentials never enter arguments, environment or disk.
+Existing proxy/CA settings are retained, but provider/backend environment secrets
+and arbitrary Python startup hooks are excluded. Installed Requests dependencies
+are resolved from the parent; `-S` prevents daemon/site startup in the helper.
+
+Real tests verify cancellation, elapsed deadlines, socket closure, helper cleanup
+after abrupt parent death, TLS default trust/custom CA/hostname validation,
+redirect rejection and credential isolation. A real native slow-header case
+exits without forced termination, then a fresh CLI retrieves the same accepted
+answer automatically: one generation POST/provider invocation, two job GETs,
+one saved turn, 144 tokens, no manual resume and no late history/display.
+
+The final PR receipt records rerun counts and exact-head CI. Earlier local logs
+remain retained; new evidence uses `tmp/cancel-transport-*` and
+`tmp/cancellation-transport-boundaries.log`. A cold-CI evidence-directory setup
+failure and the migrated native observer timestamp were corrected without
+weakening target, ownership or HTTP assertions.
+
+| Cancellation follow-up validation | Executed result |
+| --- | --- |
+| Full Windows Python / coverage | **3,168 passed, 20 platform skips**, 194.88 s. |
+| Native HTTP matrix | **38 passed**, 259.04 s: 34 ConPTY scenarios and four object-level HTTP fault scenarios. |
+| Header/body/status cancellation and deadline cases | **13 passed**; with six existing fixture controls, **19 passed**. Five new cases failed before the repair. |
+| Helper process/security boundaries | **12 passed**: actual parent death, pipe/process cleanup, credentials, input failure, redirect, TLS trust/hostname and proxy routing. |
+| Full-app PostgreSQL / native acceptance | **15 passed plus six CI truth checks: 21 passed**; cold missing-evidence-directory case also passed separately. Owned PostgreSQL stopped afterward. |
+| Native acceptance counters | 264 HTTP requests, 38 original POSTs/provider invocations, 59 result GETs, zero replacement or paid calls. Two interrupted responses are recorded as cancelled rather than completed. |
+| PostgreSQL acceptance counters | 67 HTTP requests, seven original POST attempts, six provider invocations and 39 result GETs; one POST rejected before acceptance. |
+| Combined primary acceptance counters | **331 HTTP requests, 45 original POST attempts, 44 controlled provider invocations, 98 result GETs; zero replacement generation or paid calls.** Separate focused/security traffic is excluded. |
+| Native slow-header shutdown and restart | Active worker exited in **0.016 s**, one encrypted record retained; restart delivered one original 144-token turn with one POST/provider and two GETs. |
+| Type check / lint / production build | **Passed**; lint zero errors, 77 existing warnings. |
+| Documentation / indexes / contract / offline / sync | **Passed**; 1,201 documentation checks, 812 local targets, all four indexes current. |
+
+No second job repository, persistent service, background action loop, dependency
+or generic encrypted database framework was added. Command polling and
+self-healing remain disabled. Full-system acceptance remains **PARTIAL** until
+required final-head CI completes; local success is not merge/deployment approval.

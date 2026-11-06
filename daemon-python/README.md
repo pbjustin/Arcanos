@@ -470,20 +470,25 @@ and one-shot manual read; normal delivery does not require it.
 Recovery makes only `GET /jobs/<jobId>/result`, with the capability in the fixed
 `x-arcanos-job-read-token` header. It never repeats the generation POST, replaces
 the job, invokes a provider, or refreshes credentials. Each foreground process
-reads its own accepted jobs sequentially, with a 2-second connect/read inactivity
-timeout. Response bodies have a 512 KiB limit and a two-second elapsed budget
-checked between bytes, including cancellation checks; a blocked read can overshoot
-that budget by one inactivity wait. Native
+reads its own accepted jobs sequentially. Each production recovery GET runs in
+one short-lived Python helper using the existing Requests transport, with a
+two-second elapsed deadline including startup and result acquisition. Cancellation
+terminates and reaps that helper, including blocked DNS, TLS, header and body reads.
+The helper also has its own hard lifetime in case the foreground crashes. Native
 per-job ownership keeps answers in the submitting console, even when two consoles
 share a stored session ID. One process leader adopts orphaned work after its owner
 exits or dies. The shared protected snapshot retains the eight-context limit.
 Per-job backoff starts at one second and reaches 30 seconds while pending or
-60 seconds after transient read failures. Shutdown signals monitoring to stop.
-Requests still owns DNS and header acquisition: slowly arriving HTTP headers can
-keep a read alive beyond the three-second shutdown join. This confirmed limitation
-blocks full clean-shutdown acceptance; the protected job remains available for
-restart, and the stopped controller does not commit or display that late result.
-The timeout is not an absolute end-to-end deadline.
+60 seconds after transient read failures. Shutdown cancels the active helper and
+joins the recovery worker. A cancelled or deadline-expired read keeps the original
+protected job for a later same-job attempt; it does not commit or display a late
+result. Responses are bounded to 512 KiB and the anonymous request pipe to 4 KiB;
+oversized input fails closed. Job/writing credentials travel only through that
+pipe, never command arguments, environment variables or temporary files. The
+helper retains Requests' TLS verification, configured CA and proxy behavior, and
+loads only resolved installed transport libraries without daemon startup hooks.
+It performs one GET with no redirect or retry, exits after each read, and is not
+a persistent service. Ordinary API requests keep their existing transport.
 It does not enable daemon command polling, actions, self-healing, or a Windows
 service. The terminal editor preserves unfinished input while answers appear;
 automatic delivery does not start speech over active input.
