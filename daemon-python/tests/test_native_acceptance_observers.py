@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import threading
+import time
 
 
 def test_native_response_observer_preserves_malformed_http_responses(monkeypatch, tmp_path):
@@ -43,7 +44,16 @@ def test_native_response_observer_preserves_malformed_http_responses(monkeypatch
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(body)
+            if self.path == "/jobs/slow-observer/result":
+                for chunk in body:
+                    try:
+                        self.wfile.write(bytes([chunk]))
+                        self.wfile.flush()
+                    except OSError:
+                        break
+                    time.sleep(0.06)
+            else:
+                self.wfile.write(body)
 
         def log_message(self, *_args):
             pass
@@ -63,7 +73,7 @@ def test_native_response_observer_preserves_malformed_http_responses(monkeypatch
     env["ACCEPTANCE_NATIVE_SCENARIO"] = str(scenario)
     child = r'''
 from contextlib import redirect_stdout
-import io, json, os
+import io, json, os, time
 from pathlib import Path
 from urllib.parse import urlsplit
 import arcanos.env as runtime_env
@@ -105,6 +115,11 @@ with redirect_stdout(io.StringIO()):
             except Exception as error:
                 parsed.append({"operation": operation, "index": index, "raised": type(error).__name__})
     requests.get(base + "/unobserved")
+    started = time.monotonic()
+    streamed = requests.get(base + "/jobs/slow-observer/result", stream=True)
+    stream_header_seconds = time.monotonic() - started
+    stream_json_calls = json_calls.get("/jobs/slow-observer/result", 0)
+    streamed.close()
     observations = Path(os.environ["ACCEPTANCE_CASE_ROOT"]) / "observations.jsonl"
     observed = [json.loads(line) for line in observations.read_text(encoding="utf-8").splitlines()]
     observations.unlink()
@@ -115,7 +130,8 @@ with redirect_stdout(io.StringIO()):
     except Exception as error:
         observation_write_error = type(error).__name__
 print(json.dumps({"direct": direct, "parsed": parsed, "json_calls": json_calls,
-                  "observed": observed, "observation_write_error": observation_write_error}))
+                  "observed": observed, "observation_write_error": observation_write_error,
+                  "stream_header_seconds": stream_header_seconds, "stream_json_calls": stream_json_calls}))
 '''
     try:
         result = subprocess.run([sys.executable, "-B", "-c", child], env=env, cwd=case,
@@ -134,6 +150,8 @@ print(json.dumps({"direct": direct, "parsed": parsed, "json_calls": json_calls,
     assert receipt["json_calls"] == {"/gpt/arcanos-daemon": 15, f"/jobs/{job_id}/result": 15,
                                       "/jobs/metadata-fixture/result": 1}
     assert receipt["observation_write_error"] is None
+    assert receipt["stream_header_seconds"] < 1
+    assert receipt["stream_json_calls"] == 0
     assert sum(row["event"] == "accepted_response" and row["valid_capability"] for row in receipt["observed"]) == 2
     assert capability not in result.stdout
     assert counters == {"/gpt/arcanos-daemon": 10, f"/jobs/{job_id}/result": 10}

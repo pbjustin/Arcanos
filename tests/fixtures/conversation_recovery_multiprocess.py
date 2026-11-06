@@ -152,6 +152,7 @@ ArcanosCLI._stop_conversation_recovery=stopped
         exits[label] = consoles[label].wait(timeout=10)
 
     failure = None
+    denied_known_job = False
     try:
         if args.mode != "quota":
             launch("observer")
@@ -161,6 +162,11 @@ ArcanosCLI._stop_conversation_recovery=stopped
         enter("origin", question)
         wait(lambda: any(event.get("event") == "accepted_response" for event in events("origin")))
         wait(lambda: sum(event.get("event") == "builtins.input" for event in read_jsonl(roots["origin"] / "logs/network.jsonl")) >= 2)
+        if args.mode in ("live", "same_session"):
+            enter("observer", "/resume 51883102-2222-4222-8222-222222222222")
+            wait(lambda: "This conversation belongs to another active CLI" in output("observer"))
+            denied_known_job = True
+            (sandbox / "owner-provider-release").write_text("release", encoding="utf-8")
         if args.mode == "quota":
             enter("origin", "a second question while the original job is pending")
             wait(lambda: len([event for event in events("origin") if event.get("event") == "quota_observation"]) >= 2)
@@ -194,7 +200,8 @@ ArcanosCLI._stop_conversation_recovery=stopped
                 child.close()
 
     receipt = {"mode": args.mode, "failure": failure, "actual_public_entrypoint": True,
-               "actual_conpty_processes": len(consoles), "exits": exits, "processes": {}}
+               "actual_conpty_processes": len(consoles), "exits": exits, "processes": {},
+               "nonowner_resume_attempts": int(denied_known_job), "known_job_access_denied": denied_known_job}
     for label, child in consoles.items():
         process_events = events(label)
         audit_path = roots[label] / "audit-producer-output.txt"

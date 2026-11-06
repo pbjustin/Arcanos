@@ -160,7 +160,12 @@ def install_native_observers() -> None:
         """Observe the real editor input boundary without replacing terminal behavior."""
         with original_editor() as read:
             def observed_read(*args, **kwargs):
-                return after_input(read(*args, **kwargs))
+                value = read(*args, **kwargs)
+                if scenario.get("activeReaderFailure") is True:
+                    record("active_reader_failure", real_input_read=True,
+                           editor_redraw_safe=getattr(read, "_arcanos_redraw_safe", False))
+                    raise RuntimeError("Synthetic active editor read failure.")
+                return after_input(value)
             observed_read._arcanos_redraw_safe = getattr(read, "_arcanos_redraw_safe", False)
             yield observed_read
 
@@ -293,11 +298,8 @@ def install_native_observers() -> None:
         path = urlsplit(response.url).path
         accepted = path.startswith("/gpt/") and response.status_code == 202
         job_read = path.startswith("/jobs/")
-        if accepted or job_read:
-            try:
-                payload = response.json()
-            except ValueError:
-                payload = {}
+        def observe_payload(payload):
+            """Observe parsed metadata without consuming a streamed recovery body."""
             if not isinstance(payload, dict):
                 payload = {}
             try:
@@ -312,6 +314,32 @@ def install_native_observers() -> None:
                            job_id=payload.get("jobId"), has_result=payload.get("result") is not None)
             except Exception:
                 pass  # Observation storage must not change the actual HTTP/client outcome.
+        if accepted or job_read:
+            if _kwargs.get("stream") is True:
+                original_json = response.json
+                observed = False
+
+                def parsed_response(*args, **kwargs):
+                    nonlocal observed
+                    try:
+                        payload = original_json(*args, **kwargs)
+                    except ValueError:
+                        if not observed:
+                            observe_payload({})
+                            observed = True
+                        raise
+                    if not observed:
+                        observe_payload(payload)
+                        observed = True
+                    return payload
+
+                response.json = parsed_response
+            else:
+                try:
+                    payload = response.json()
+                except ValueError:
+                    payload = {}
+                observe_payload(payload)
         if path == "/system-state":
             state_reads += 1
             if scenario.get("fault") == "expire-after-read" and state_reads == 2:
@@ -324,6 +352,89 @@ def install_native_observers() -> None:
         session.hooks["response"].append(after_response)
 
     requests.Session.__init__ = observed_session_init
+
+    boundary = scenario.get("crashBoundary")
+    if boundary is not None:
+        if boundary not in ("before_persistence", "after_persistence", "during_get", "after_result",
+                            "before_sql", "after_sql", "during_display", "before_ack"):
+            raise ValueError("Unsupported native crash boundary")
+
+        def crash() -> None:
+            """Terminate the real CLI without Python cleanup at an observed runtime boundary."""
+            record("crash_boundary", boundary=boundary, abrupt_process_exit=True)
+            os._exit(97)
+
+        if boundary in ("before_persistence", "after_persistence"):
+            from arcanos.continuation_store import ContinuationStore
+            original_add = ContinuationStore.add
+
+            def interrupted_add(store, *args, **kwargs):
+                if boundary == "before_persistence":
+                    crash()
+                result = original_add(store, *args, **kwargs)
+                crash()
+                return result
+
+            ContinuationStore.add = interrupted_add
+        elif boundary == "during_get":
+            original_chunks = requests.Response.iter_content
+
+            def interrupted_chunks(response, *args, **kwargs):
+                for chunk in original_chunks(response, *args, **kwargs):
+                    if urlsplit(response.url).path.startswith("/jobs/"):
+                        crash()
+                    yield chunk
+
+            requests.Response.iter_content = interrupted_chunks
+        elif boundary == "after_result":
+            from arcanos.backend_client import BackendApiClient
+            original_result = BackendApiClient.request_chat_job_result
+
+            def interrupted_result(client, *args, **kwargs):
+                result = original_result(client, *args, **kwargs)
+                if result.ok:
+                    crash()
+                return result
+
+            BackendApiClient.request_chat_job_result = interrupted_result
+        elif boundary in ("before_sql", "after_sql"):
+            from arcanos.schema import Memory
+            original_commit = Memory.record_recovered_conversation
+
+            def interrupted_commit(memory, *args, **kwargs):
+                if boundary == "before_sql":
+                    crash()
+                result = original_commit(memory, *args, **kwargs)
+                crash()
+                return result
+
+            Memory.record_recovered_conversation = interrupted_commit
+        elif boundary == "during_display":
+            from rich.console import Console
+            from rich.segment import Segments
+            original_console_print = Console.print
+
+            def interrupted_print(console, *args, **kwargs):
+                # The ordinary presenter already validated these literal segments.
+                # Force the first bytes into the real console before process death;
+                # the redraw proxy's queued writes are deliberately not acknowledged.
+                for value in args:
+                    if isinstance(value, Segments) and isinstance(value.segments, list):
+                        for segment in value.segments:
+                            if "I can explain ideas and help you plan." in segment.text:
+                                sys.__stdout__.write(segment.text[:20])
+                                sys.__stdout__.flush()
+                                crash()
+                return original_console_print(console, *args, **kwargs)
+
+            Console.print = interrupted_print
+        else:
+            from arcanos.schema import Memory
+
+            def interrupted_ack(_memory, _delivery_id):
+                crash()
+
+            Memory.mark_recovered_displayed = interrupted_ack
 
     def final_state() -> None:
         """Record final local evidence without recomputing, refreshing, or changing trust."""
@@ -346,6 +457,7 @@ def install_native_observers() -> None:
                    last_confirmation_handled=cli._last_confirmation_handled,
                    current_intent=cli.session.current_intent, conversation_goal=cli.session.conversation_goal,
                    last_response=cli._last_response,
+                   statistics=cli.memory.get_statistics(), usage=cli.rate_limiter.get_usage_stats(),
                    history=cli.memory.get_recent_conversations(limit=100))
 
     atexit.register(final_state)

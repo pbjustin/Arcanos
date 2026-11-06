@@ -98,12 +98,15 @@ def test_successful_console_path_still_rejects_missing_history(ownership_fixture
 
         returncode = 0
         transcript = "I can explain ideas and help you plan."
+        resume_attempts = 0
 
         def __init__(self, *args, **kwargs):
             pass
 
         def send(self, text):
-            pass
+            if text.startswith("/resume "):
+                type(self).resume_attempts += 1
+                self.transcript += "\nThis conversation belongs to another active CLI"
 
         def wait(self, timeout):
             return 0
@@ -122,6 +125,7 @@ def test_successful_console_path_still_rejects_missing_history(ownership_fixture
     monkeypatch.setattr(module.time, "sleep", lambda _: None)
     with pytest.raises(sqlite3.OperationalError, match="no such table"):
         module.main()
+    assert ObservedConsole.resume_attempts == 1
     assert capsys.readouterr().out == ""
 
 

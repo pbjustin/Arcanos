@@ -100,7 +100,9 @@ def main(startup_diagnostics: io.StringIO) -> dict:
                 elif method.lower() == "get" and parsed.path.startswith("/jobs/"):
                     request_counts["result_gets"] += 1
                     request_counts["second_worker_gets"] += int(label == "second")
-                    if options.get("timeout", 100) > 2 or parsed.query:
+                    timeout = options.get("timeout", 100)
+                    timeouts = timeout if isinstance(timeout, tuple) else (timeout,)
+                    if any(value > 2 for value in timeouts) or parsed.query:
                         raise AssertionError("Recovery read exceeded its supported bounds.")
                 elif parsed.path not in ("/system-state", "/api/daemon/registry"):
                     raise AssertionError("Recovery attempted an unexpected operation.")

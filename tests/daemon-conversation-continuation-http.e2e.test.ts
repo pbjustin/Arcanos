@@ -251,6 +251,7 @@ afterAll(() => {
   const userSite = spawnSync(python, ['-c', 'import site; print(site.getusersitepackages())'], { encoding: 'utf8', windowsHide: true, timeout: 10_000 });
   expect(userSite.status).toBe(0);
   providerStatus = status; responsesCreate.mockClear(); conversationJobs.clear(); durableMemory.reset();
+  process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'real-chain-manual-' + status;
   providerCompletion = new Promise<void>(resolve => { releaseProvider = resolve; });
   const sandbox = mkdtempSync(path.join(tmpdir(), 'arcanos-real-continuation-'));
   const evidence = path.resolve('tmp/conversation-continuation');
@@ -386,7 +387,14 @@ async function runAutomaticCliCase(
   expect(receipt.transport).toBe('Windows ConPTY');
   expect(Object.values(receipt.leaks).every(value => value === false)).toBe(true);
   expect(receipt.cleanup.forced_termination).toBe(false);
-  expect(receipt.final_state.terminal_handle_restored).toBe(true);
+  if (typeof scenario.crashBoundary === 'string') {
+    expect(receipt.exit_code).toBe(97);
+    expect(receipt.final_state).toBeNull();
+    expect(receipt.observations.filter((row: { event: string }) => row.event === 'crash_boundary'))
+      .toEqual([expect.objectContaining({ boundary: scenario.crashBoundary, abrupt_process_exit: true })]);
+  } else {
+    expect(receipt.final_state.terminal_handle_restored).toBe(true);
+  }
   expect(receipt.observations.filter((row: { event: string }) => row.event === 'local_generation_attempt')).toHaveLength(0);
   expect(receipt.speech).toHaveLength(0);
   return receipt;
@@ -459,6 +467,8 @@ async function runOwnershipCase(python: string, userSite: string, sandbox: strin
   'different_user',
   'process_owner_live', 'process_owner_same_session', 'process_owner_exit', 'process_owner_crash', 'process_owner_restart',
   'quota_pending',
+  'crash_before_persistence', 'crash_after_persistence', 'crash_during_get', 'crash_after_result',
+  'crash_before_sql', 'crash_after_sql', 'crash_during_display', 'crash_before_ack', 'active_reader_failure',
 ] as const)(
   'delivers the original answer automatically with %s recovery and no resume command', async mode => {
     const python = process.env.PYTHON_EXECUTABLE || 'python';
@@ -467,13 +477,16 @@ async function runOwnershipCase(python: string, userSite: string, sandbox: strin
     });
     expect(userSite.status).toBe(0);
     providerStatus = 'completed'; responsesCreate.mockClear(); conversationJobs.clear(); durableMemory.reset();
+    // Each isolated server scenario represents a distinct configured operator;
+    // retain the real limiter without sharing one principal's budget across cases.
+    process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'real-chain-' + mode;
     nextJobId = jobId;
     acceptedWaitStorageOutage = mode === 'wait_storage_outage';
     acceptedWaitStorageOutages = 0;
     multipleProviderAnswers = mode === 'multiple';
     process.env.GPT_PRIORITY_DIRECT_EXECUTION_CONCURRENCY = mode === 'multiple' ? '2' : '1';
     providerCompletion = mode === 'synchronous' ? Promise.resolve() : new Promise<void>(resolve => { releaseProvider = resolve; });
-    const sandbox = mkdtempSync(path.join(tmpdir(), 'arcanos-automatic-continuation-'));
+    const sandbox = mkdtempSync(path.join(tmpdir(), 'arcanos automatic continuation '));
     const observed: Array<{ method: string; path: string; status?: number; capabilityBound?: boolean }> = [];
     const startupSnapshots: Record<string, unknown> = {};
     let restartedBackend: ReturnType<typeof spawn> | undefined;
@@ -488,7 +501,7 @@ async function runOwnershipCase(python: string, userSite: string, sandbox: strin
     let offlineRestart: ReturnType<typeof setTimeout> | undefined;
     let offlineReadOutage = false;
     const ownershipMode = mode.startsWith('process_owner_');
-    const ownerRelease = (ownershipMode && !['process_owner_live', 'process_owner_same_session'].includes(mode)) || mode === 'quota_pending' ? setInterval(() => {
+    const ownerRelease = ownershipMode || mode === 'quota_pending' ? setInterval(() => {
       if (existsSync(path.join(sandbox, 'owner-provider-release'))) releaseProvider();
     }, 20) : undefined;
     const app = express();
@@ -521,7 +534,7 @@ async function runOwnershipCase(python: string, userSite: string, sandbox: strin
           && req.get('x-arcanos-job-read-token') === issueJobReadCapability(requestJobId, secret)
           && req.originalUrl === `/jobs/${requestJobId}/result` && !req.get('x-arcanos-daemon-token');
         if (!['restart', 'backend_restart', 'tampered_storage', 'different_backend', 'different_user', 'multiple',
-          'process_owner_exit', 'process_owner_crash', 'process_owner_restart', 'quota_pending'].includes(mode)) res.once('finish', releaseProvider);
+          'process_owner_live', 'process_owner_same_session', 'process_owner_exit', 'process_owner_crash', 'process_owner_restart', 'quota_pending'].includes(mode)) res.once('finish', releaseProvider);
         if (mode === 'temporary_503' && resultReads <= 2) {
           res.status(503).json({ error: 'JOB_REPOSITORY_UNAVAILABLE' });
           return;
@@ -552,7 +565,72 @@ async function runOwnershipCase(python: string, userSite: string, sandbox: strin
       let beforeRestartReads = 0;
       const recoveryBlocked = ['tampered_storage', 'different_backend', 'different_user'].includes(mode);
       const faultMode = ['duplicate_worker', 'before_commit', 'after_commit', 'partial_render'].includes(mode);
-      if (mode === 'quota_pending') {
+      if (mode === 'active_reader_failure') {
+        receipt = await runAutomaticCliCase(python, userSite.stdout.trim(), sandbox, baseUrl, mode, {
+          activeReaderFailure: true, steps: [{ input: 'unfinished text must not become a question' }],
+        });
+        expect(receipt.exit_code).toBe(0);
+        expect(receipt.rendered_terminal).toContain('Interactive input failed; restart the CLI to continue.');
+        expect(receipt.observations.filter((row: { event: string }) => row.event === 'active_reader_failure'))
+          .toEqual([expect.objectContaining({ real_input_read: true, editor_redraw_safe: true })]);
+        expect(receipt.history).toHaveLength(0);
+        expect(generationRequests).toBe(0);
+        expect(resultReads).toBe(0);
+        expect(responsesCreate).not.toHaveBeenCalled();
+        writeFileSync(path.resolve('tmp/automatic-continuation', mode + '-proof.json'), JSON.stringify({
+          mode, observed, actualConPTY: true, realPythonHttp: true, readerFailures: 1,
+          generationRequests, resultReads, providerCalls: 0, history: receipt.history, noLeaks: true,
+        }, null, 2));
+        return;
+      } else if (mode.startsWith('crash_')) {
+        const boundary = mode.slice('crash_'.length);
+        const first = await runAutomaticCliCase(python, userSite.stdout.trim(), sandbox, baseUrl, mode + '-before', {
+          crashBoundary: boundary, persistentProfile: mode, steps: [{ input: 'what can u do?' }],
+        });
+        beforeRestartReads = resultReads;
+        releaseProvider();
+        for (let attempt = 0; attempt < 100 && conversationJobs.get(jobId)?.status !== 'completed'; attempt += 1) {
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        expect(conversationJobs.get(jobId)?.status).toBe('completed');
+        const persisted = boundary !== 'before_persistence';
+        const second = await runAutomaticCliCase(python, userSite.stdout.trim(), sandbox, baseUrl, mode + '-after', {
+          persistentProfile: mode,
+          steps: [{ input: '/exit', ...(persisted ? { waitForText: answer } : { waitBeforeMs: 1000 }) }],
+        });
+        const firstPid = first.network.find((row: { event: string }) => row.event === 'guard_installed').pid;
+        const secondPid = second.network.find((row: { event: string }) => row.event === 'guard_installed').pid;
+        expect(secondPid).not.toBe(firstPid);
+        expect(second.history).toHaveLength(persisted ? 1 : 0);
+        expect(second.final_state.statistics.total_requests).toBe(persisted ? 1 : 0);
+        expect(second.final_state.usage.tokens_today).toBe(persisted ? 144 : 0);
+        expect(second.final_state.usage.cost_today).toBe(0);
+        if (persisted) expect(second.history[0]).toMatchObject({ user: 'what can u do?', ai: answer, tokens: 144 });
+        else {
+          expect(second.printed_output).not.toContain(answer);
+          expect(resultReads).toBe(0);
+        }
+        if (boundary === 'during_display') expect(first.rendered_terminal).toContain(answer.slice(0, 20));
+        if (boundary === 'before_ack') expect(resultReads).toBe(beforeRestartReads);
+        expect(observed.filter(row => row.method === 'POST' && row.path.startsWith('/gpt/')))
+          .toEqual([expect.objectContaining({ status: 202 })]);
+        expect(generationRequests).toBe(1);
+        expect(responsesCreate).toHaveBeenCalledTimes(1);
+        expect(resultReads).toBeLessThanOrEqual(4);
+        expect(observed.filter(row => row.path.startsWith('/jobs/')).every(row => row.capabilityBound)).toBe(true);
+        expect(second.audits.filter((row: { event: string; command?: string }) => row.command === 'conversation_recovery' && row.event === 'execute_success'))
+          .toHaveLength(persisted ? 1 : 0);
+        expect(observed.filter(row => row.path === '/system-state' && row.status !== 200)).toEqual([]);
+        writeFileSync(path.resolve('tmp/automatic-continuation', mode + '-proof.json'), JSON.stringify({
+          mode, observed, actualConPTY: true, realPythonHttp: true, abruptExit: first.exit_code,
+          firstPid, secondPid, encryptedCoordinatesPersisted: persisted,
+          generationRequests, resultReads, beforeRestartReads, providerCalls: responsesCreate.mock.calls.length,
+          history: second.history, noLeaks: true, replacementGenerationPosts: 0,
+          terminalAtomicity: 'A crash may repeat terminal output; stored turns and usage remain idempotent.',
+          ...(persisted ? {} : { limitation: 'Crash before encrypted coordinates exist cannot recover the handle; no replacement inference is attempted.' }),
+        }, null, 2));
+        return;
+      } else if (mode === 'quota_pending') {
         const quota = await runOwnershipCase(python, userSite.stdout.trim(), sandbox, baseUrl, 'quota');
         const origin = quota.processes.origin;
         const pending = origin.events.filter((event: { event: string }) => event.event === 'quota_observation');
@@ -591,7 +669,11 @@ async function runOwnershipCase(python: string, userSite: string, sandbox: strin
         const originAlive = mode === 'process_owner_live' || mode === 'process_owner_same_session';
         expect(origin.answer_displayed).toBe(originAlive);
         expect(observer.answer_displayed).toBe(mode === 'process_owner_exit' || mode === 'process_owner_crash');
-        if (originAlive) expect(observer.job_reads).toBe(0);
+        if (originAlive) {
+          expect(observer.job_reads).toBe(0);
+          expect(observer.stdout).not.toContain('what can u do?');
+          expect(ownership).toMatchObject({ nonowner_resume_attempts: 1, known_job_access_denied: true });
+        }
         if (mode === 'process_owner_exit') {
           const stopped = origin.events.find((event: { event: string }) => event.event === 'owner_stop_started');
           expect(observer.events.filter((event: { event: string }) => event.event === 'job_read_started')
@@ -754,6 +836,7 @@ async function runOwnershipCase(python: string, userSite: string, sandbox: strin
       expect(responsesCreate).toHaveBeenCalledTimes(originalRequests);
       expect(acceptedWaitStorageOutages).toBe(mode === 'wait_storage_outage' ? 1 : 0);
       expect(generationRequests).toBe(originalRequests);
+      expect(observed.filter(row => row.path === '/system-state' && row.status !== 200)).toEqual([]);
       expect(observed.filter(row => row.path.startsWith('/jobs/')).every(row => row.capabilityBound)).toBe(mode !== 'invalid_capability');
       if (!faultMode) expect(receipt.audits.filter((row: { event: string; command?: string }) => row.command === 'conversation_recovery' && row.event === 'execute_success'))
         .toHaveLength(terminalMessages[mode] || mode === 'synchronous' ? 0 : originalRequests);
@@ -770,7 +853,9 @@ async function runOwnershipCase(python: string, userSite: string, sandbox: strin
       writeFileSync(path.join(evidence, mode + '-proof.json'), JSON.stringify({
         mode, observed, generationRequests, providerCalls: responsesCreate.mock.calls.length, overlappingAcceptedJobs,
         resultReads, beforeRestartReads, offlineReadOutage, acceptedWaitStorageOutages, history: receipt.history, noLeaks: true,
-        actualConPTY: !faultMode, realPythonHttp: true, automatic: true, resumeCommands: 0,
+        actualConPTY: !faultMode, realPythonHttp: true, automatic: true,
+        resumeCommands: ['process_owner_live', 'process_owner_same_session'].includes(mode) ? 1 : 0,
+        ownerResumeCommands: 0,
         freshProcessIdentity: mode === 'restart' || mode === 'backend_restart', freshBackendPid, childFinalCounters,
         ...(mode === 'different_user' ? { isolationEvidence: 'Injected different recovery-owner SID; real Windows account unchanged' } : {}),
       }, null, 2));
