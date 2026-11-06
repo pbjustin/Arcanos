@@ -232,14 +232,14 @@ export function gamingApplicabilityAssertionText(value: string, game?: string, r
 }
 
 /** Closed local qualifiers prevent references from becoming applicability assertions.
- * Comma-framed comparisons require a complete sentence inside the existing scan
+ * Explicit comparison frames require a complete sentence inside the existing scan
  * bound; an unfinished comparison cannot hide conflicting edition evidence. */
 export function gamingApplicabilityAssertionContext(text: string, index: number): { reference: boolean; complete: boolean } {
   const before = text.slice(Math.max(0, index - APPLICABILITY_SCOPE_LIMITS.contextChars), index);
   const prefix = before.slice(Math.max(...['.', '!', '?', ';', ',', '\n'].map(boundary => before.lastIndexOf(boundary))) + 1);
   const following = text.slice(index, index + APPLICABILITY_SCOPE_LIMITS.contextChars + 1);
   const comparison = /^in(?:\s+the\s+game)?\s+/iu.test(following)
-    && /(?:^|[.!?;\n])\s*(?:for|by)\s+comparison\s*,\s*$/iu.test(before);
+    && /(?:^|[.!?;\n])\s*(?:for|by)\s+comparison\s*[,:]\s*$/iu.test(before);
   // Retain one lookahead character so the scan edge cannot manufacture the
   // boundary after punctuation in a longer, unfinished comparison.
   const comparisonEnd = /[.!?](?=\s|$)/u.exec(following);

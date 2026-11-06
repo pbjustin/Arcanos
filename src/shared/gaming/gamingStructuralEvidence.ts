@@ -5,6 +5,7 @@ import { resolveGamingAnswerPolicy } from './gamingAnswerPolicy.js';
 import { buildGamingRetrievalTerms, gamingLexicalTokens, gamingTermCoverage } from './gamingRetrievalPolicy.js';
 import { GAMING_HYBRID_V2_LIMITS } from './gamingHybridContract.js';
 import { normalizeGamingEditionIdentity } from './gamingGameIdentity.js';
+import { isGamingAcquiredGameSurface } from './gamingAcquiredIdentity.js';
 import { detectGamingRegistryAlias, gamingRegistryEditionKind, gamingRegistryExpansionNames, gamingRegistryLiteralPattern, gamingRegistryRelatedScopeNames,
   gamingRegistrySourceGameMatchesRequest } from './gamingGameRegistry.js';
 
@@ -78,10 +79,20 @@ function hasUnquotedPrimarySourceDeclaration(text: string): boolean {
  */
 function hasAdditionalGamingReferenceScope(reference: string): boolean {
   const scopes = [...reference.matchAll(/\bin(?:\s+the\s+game)?\s+/giu)];
+  const quotations = [...reference.matchAll(/"[^"]*"|“[^”]*”|`[^`]*`|(?:^|\s)'(?:[^']|(?<=\w)'(?=\w))*'|‘[^’]*’/gu)];
   return scopes.slice(1).some(scope => {
-    if (/^in\s+the\s+game\s+/iu.test(scope[0])) return true;
-    const subject = reference.slice(scope.index + scope[0].length).split(/[,;.!?\n]/u, 1)[0].trim()
-      .replace(/^["“`'‘]+|["”`'’]+$/gu, '');
+    // A whole quoted clause is local reference content; quoting only a title
+    // does not move its surrounding acquired scope inside that quotation.
+    if (quotations.some(quote => scope.index >= quote.index
+      && scope.index + scope[0].length <= quote.index + quote[0].length)) return false;
+    const rawSubject = reference.slice(scope.index + scope[0].length).split(/[,;.!?\n]/u, 1)[0].trim();
+    const subject = rawSubject.replace(/^["“`'‘]+|["”`'’]+$/gu, '');
+    if (/^in\s+the\s+game\s+/iu.test(scope[0])) {
+      if (/^["“`'‘]/u.test(rawSubject)) return true;
+      // Only a positively recognized ordinary game surface can be dropped.
+      // Unknown or ambiguous named subjects stay available for contradiction checks.
+      return !isGamingAcquiredGameSurface(subject);
+    }
     return Boolean(detectGamingRegistryAlias(subject, true))
       || /^[^,;.!?\n]{1,120}\s+(?:guide|build|loadout|meta|walkthrough|wiki|tips?)\b/iu.test(subject);
   });
@@ -93,7 +104,7 @@ function withoutBoundedGamingReferences(text: string, units: readonly GamingEvid
   text: string; excludedReferenceCount: number;
 } {
   let excludedReferenceCount = 0;
-  const projected = text.replace(/(?:^|(?<=[.!?])\s+)(?:(?:historically|previously)[,:]?\s+in(?:\s+the\s+game)?\s+|(?:for|by)\s+comparison\s*,\s+in(?:\s+the\s+game)?\s+|(?:historical references?|related articles?|recommended(?:\s+(?:articles?|guides?|reading))?|read next|references?)\s*:\s*)[^.!?\n]{1,512}[.!?](?=\s|$)/giu,
+  const projected = text.replace(/(?:^|(?<=[.!?])\s+)(?:(?:historically|previously)[,:]?\s+in(?:\s+the\s+game)?\s+|(?:for|by)\s+comparison\s*[,:]\s+in(?:\s+the\s+game)?\s+|(?:historical references?|related articles?|recommended(?:\s+(?:articles?|guides?|reading))?|read next|references?)\s*:\s*)[^.!?\n]{1,512}[.!?](?=\s|$)/giu,
     reference => {
       if (hasUnquotedPrimarySourceDeclaration(reference) || /\b(?:game|edition)\s*:/iu.test(reference)
         // The comparison frame owns only its first scope. A subsequent acquired

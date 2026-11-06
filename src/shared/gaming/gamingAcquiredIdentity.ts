@@ -5,11 +5,19 @@ import { isGamingAcquiredTopicTitle } from '@services/gamingGameDetection.js';
 export type GamingIdentityResolutionState = 'IDENTITY_VERIFIED' | 'IDENTITY_UNVERIFIED'
   | 'IDENTITY_CONFLICT' | 'INSUFFICIENT_EVIDENCE';
 
+/** Closed lowercase game surfaces are locations; title-like continuations remain inspectable. */
+export function isGamingAcquiredGameSurface(value: string): boolean {
+  return /^(?:shop|world|menu)(?:$|\s+(?:in|on|at|near|inside|outside|to|for)\b)/u.test(value);
+}
+
 /** A prepositional scope ends before its independent gameplay subject/predicate.
  * Without a nominal prefix, "in the game" refers to the established article game;
  * the following player instructions are not a newly named title. Keep case and
  * complete nominal suffixes so titles such as "Minecraft Has Fallen" stay intact. */
 export function gamingAcquiredNominalScope(value: string, commaDelimited = false, namedGameScope = false): string | undefined {
+  // Lowercase game surfaces are ordinary locations, not independently named
+  // titles. Keep capitalized names and unfamiliar nominal continuations binding.
+  if (namedGameScope && isGamingAcquiredGameSurface(value)) return '';
   // Registry recognition protects a complete leading name regardless of case;
   // lowercasing a wrong game must not turn it into an ordinary sentence subject.
   const known = detectGamingRegistryAlias(value, true);
