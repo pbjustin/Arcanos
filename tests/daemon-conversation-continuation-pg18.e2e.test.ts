@@ -197,6 +197,7 @@ beforeAll(async () => {
   expect(verified.rows[0]).toMatchObject({ database: 'arcanos_audit_pg18_20260727' });
   expect(verified.rows[0].version).toBeGreaterThanOrEqual(180_000);
   expect(verified.rows[0].version).toBeLessThan(190_000);
+  mkdirSync(path.resolve('tmp/full-system-postgres'), { recursive: true });
   await administrator.query(`CREATE SCHEMA "${schemaName}"`);
   schemaCreated = true;
   await administrator.query(`SET search_path TO "${schemaName}"`);
