@@ -463,3 +463,31 @@ def test_ordinary_completion_and_resume_serialize_history_writes(continuation_cl
     assert [call.args[:2] for call in cli.memory.add_conversation.call_args_list] == [
         ("original question", ANSWER), ("ordinary question", "ordinary answer"),
     ]
+
+
+def test_capacity_denial_reports_current_trust_after_status_read_expires_registry(
+    diagnostic_cli, monkeypatch, capsys,
+):
+    """A local rejection cannot report stale FULL trust after its preceding authenticated read."""
+    cli, scenario, observed, _clock = diagnostic_cli
+    monkeypatch.setattr(Config, "BACKEND_FALLBACK_TO_LOCAL", True)
+    cli._conversation_state_lock()
+    cli._backend_conversations_inflight = cli_module.MAX_PENDING_CONVERSATIONS
+    scenario["expire_during_read"] = True
+    anchors = (cli._registry_cache_updated_at, cli._registry_cache_updated_monotonic_at)
+    capsys.readouterr()
+
+    cli.handle_ask("ordinary conversation")
+
+    events = _execution_events(capsys.readouterr().out)
+    assert [(event["event"], event["trust"]) for event in events] == [
+        ("execute_attempt", "FULL"), ("execute_failed", "DEGRADED"),
+    ]
+    assert events[-1]["reason"] == "pending_capacity_reached"
+    assert cli._trust_state.name == "DEGRADED"
+    assert observed == [("get", "/system-state")]
+    assert (cli._registry_cache_updated_at, cli._registry_cache_updated_monotonic_at) == anchors
+    cli.rate_limiter.release_request.assert_called_once_with("test-admission", refund=True)
+    cli_module.local_ops.perform_local_conversation.assert_not_called()
+    cli_module.memory_ops.record_conversation_turn.assert_not_called()
+    cli.memory.add_conversation.assert_not_called()

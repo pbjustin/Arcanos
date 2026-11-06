@@ -736,7 +736,7 @@ def perform_backend_conversation(
     reserve = getattr(cli, "_reserve_backend_conversation", None)
     if reserve is not None and not reserve():
         if outcome is not None:
-            outcome["pending"] = True
+            outcome["capacity_denied"] = True
         cli.console.print("Pending conversation limit reached. Use /resume <jobId> before submitting more questions.", markup=False)
         return None
     try:

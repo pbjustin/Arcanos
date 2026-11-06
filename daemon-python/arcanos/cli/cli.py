@@ -702,6 +702,13 @@ class ArcanosCLI:
                             from_debug=from_debug,
                             outcome=backend_outcome, quota_reservation_id=reservation_id,
                         )
+                        if backend_outcome.get("capacity_denied", False):
+                            self._recompute_trust_state()
+                            audit_record(
+                                "execute_failed", command="ask", trust=self._trust_state.name,
+                                source="backend", reason="pending_capacity_reached",
+                            )
+                            return None
                         if backend_outcome.get("pending", False):
                             audit_record(
                                 "execute_unconfirmed", command="ask", trust=self._trust_state.name,

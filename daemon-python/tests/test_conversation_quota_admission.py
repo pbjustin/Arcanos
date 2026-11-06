@@ -1,17 +1,67 @@
 """Pending backend work must occupy admission capacity before completion."""
 
 from concurrent.futures import ThreadPoolExecutor
+import json
 import os
 import threading
 
 import pytest
 
 from arcanos.config import Config
+from arcanos.cli import cli as cli_module
 from arcanos.rate_limiter import RateLimiter
 from tests.test_automatic_conversation_recovery import recovery_profile, JOB
 
 
 pytestmark = pytest.mark.skipif(os.name != "nt", reason="Actual protected Windows recovery context required")
+
+
+@pytest.mark.parametrize("stage", ["accepted", "inflight"])
+def test_local_continuation_capacity_denial_has_its_own_audit_and_refunds_quota(
+    recovery_profile, monkeypatch, capsys, stage,
+):
+    """Local admission denial must not claim a nonexistent accepted backend job."""
+    make_cli, wire = recovery_profile
+    monkeypatch.setattr(cli_module, "MAX_PENDING_CONVERSATIONS", 1)
+    monkeypatch.setattr(Config, "MAX_REQUESTS_PER_HOUR", 2)
+    cli = make_cli()
+    wire["states"][JOB] = ["pending"]
+    entered, release = threading.Event(), threading.Event()
+    original = cli.backend_client.request_chat_completion
+
+    def held_request(*args, **kwargs):
+        """Hold only the first actual generation boundary for the overlap case."""
+        entered.set()
+        assert release.wait(5), "Original generation was not released"
+        return original(*args, **kwargs)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        first = None
+        if stage == "accepted":
+            cli.handle_ask("original accepted question")
+        else:
+            monkeypatch.setattr(cli.backend_client, "request_chat_completion", held_request)
+            first = pool.submit(cli.handle_ask, "original in-flight question")
+            assert entered.wait(5), "Original generation did not reach dispatch"
+        capsys.readouterr()
+        try:
+            cli.handle_ask("must be denied locally")
+            events = [json.loads(line[len("[AUDIT] "):]) for line in capsys.readouterr().out.splitlines()
+                      if line.startswith("[AUDIT] ")]
+            executions = [event for event in events if event["event"].startswith("execute_")]
+            assert [event["event"] for event in executions] == ["execute_attempt", "execute_failed"]
+            assert executions[-1]["reason"] == "pending_capacity_reached"
+            assert not any(event.get("reason") == "backend_pending" for event in executions)
+            assert cli.rate_limiter.get_usage_stats()["requests_this_hour"] == 1
+        finally:
+            release.set()
+            if first is not None:
+                first.result(timeout=5)
+    assert wire["posts"] == wire["providers"] == 1 and wire["gets"] == 0
+    assert cli.memory.get_recent_conversations() == []
+    assert cli.memory.get_statistics()["total_requests"] == 0
+    assert cli.rate_limiter.tokens_today == cli.rate_limiter.cost_today == 0
+    assert "Pending conversation limit reached" in cli.console.file.getvalue()
 
 
 def test_sequential_pending_acceptances_respect_hourly_limit(recovery_profile, monkeypatch):
