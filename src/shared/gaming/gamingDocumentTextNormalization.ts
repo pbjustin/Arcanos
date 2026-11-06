@@ -8,10 +8,11 @@ export function normalizeGamingDocumentInstructionCharacters(text: string, repla
 }
 
 /** Layout modifiers are not sidebar furniture. Normalize parser-owned class hints
- * only when a semantic primary region is enclosed; source text is unchanged. */
+ * on semantic primary regions and their containers; source text is unchanged. */
 export function preservePrimaryContentSidebarLayouts($: ReturnType<typeof load>): void {
   const primaryAncestors = new Set<unknown>();
   $('article,main,[role="main"]').each((_, element) => {
+    primaryAncestors.add(element);
     // Share ancestry work across nested layouts and primary regions. Looking
     // through every candidate's descendants would repeat a quadratic DOM walk.
     for (let parent = element.parent; parent && !primaryAncestors.has(parent); parent = parent.parent) {

@@ -1203,6 +1203,13 @@ provide that proof. Older unapproved stored revisions without current
 server-written identity proof remain readable but cannot authorize generation
 until reassessed. These checks do not automatically write or migrate stored data.
 
+Status polling separately accepts strictly shaped retained ingestion envelopes
+from known earlier CLEAR policies, so completed and failed historical operations
+remain readable by their owning actor. Historical approvals are removed from the
+status projection; queue admission, worker execution and generation still require
+the current policy and its normal binding checks. A readable retained result does
+not authorize replay, refresh or another source write.
+
 Rollback must use a reviewed private release and invalidate reusable decision
 artifacts or force reassessment. An old binary may recognize historical v1
 assessments; restoring it is not evidence that those assessments satisfy the

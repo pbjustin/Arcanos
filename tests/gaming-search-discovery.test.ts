@@ -318,6 +318,18 @@ describe('gaming open-web source discovery', () => {
     expect(result.candidates.every(candidate => candidate.characteristics.guideLikely)).toBe(true);
   });
 
+  it('honors an exclusion after the provider rank ceiling before filling fetch slots', async () => {
+    process.env.ARCANOS_GAMING_DISCOVERY_FETCH_CANDIDATE_LIMIT = '1';
+    const attempted = makeResult();
+    const alternative = makeResult({ url: 'https://other.example/moonring/beginner-progression', providerRank: 2 });
+    const { provider } = makeProvider(async () => [attempted, alternative]);
+    const excludedUrls = [...Array.from({ length: 100 }, (_, index) => `https://previous.example/guide-${index}`),
+      `${attempted.url}?utm_source=previous-search`];
+    const result = await discoverGamingSources({ ...guideInput({ provider }), excludedUrls });
+    expect(result.candidates.map(candidate => candidate.url)).toEqual([alternative.url]);
+    expect(result.rejectedCandidateCount).toBe(1);
+  });
+
   it('keeps stronger topic support ahead of domain diversity and never promotes snippets to authority', async () => {
     process.env.ARCANOS_GAMING_DISCOVERY_FETCH_CANDIDATE_LIMIT = '2';
     const { provider } = makeProvider(async () => [

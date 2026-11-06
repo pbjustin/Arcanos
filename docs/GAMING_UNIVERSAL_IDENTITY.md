@@ -175,6 +175,11 @@ hashes and provenance. Original games, remakes, remasters and sequels still need
 matching complete acquired identity; no publisher or game-specific exception is
 introduced.
 
+An ordinary location inside a comparison does not introduce a second game scope.
+Independent named-game clauses and explicit `Game:` or `Edition:` declarations
+remain inspectable. An unfinished or over-budget comparison cannot hide an
+edition assertion or preserve earlier verified compatibility.
+
 Bare location clauses must own their leading nominal subject before metadata
 title inference can assert another game. A price or purpose after a nested
 “for/in/on” phrase cannot rename the acquired location. Explicit named-game

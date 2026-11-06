@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 import { load } from 'cheerio';
 import { preservePrimaryContentSidebarLayouts } from '../src/shared/gaming/gamingDocumentTextNormalization.js';
 import { extractGamingDocumentEvidence } from '../src/services/gamingDocumentEvidence.js';
+import { extractGamingJsonEvidence } from '../src/services/gamingJsonEvidence.js';
 import { gamingDocumentFetchOptions } from '../src/services/gamingDocumentExtraction.js';
 import { extractFetchAndCleanDocument } from '../src/shared/webFetcher.js';
 
@@ -11,6 +12,7 @@ const record = '<table><tr><th>Item</th><th>Location</th><th>Cost</th></tr>'
 const prose = 'In Copper Vale, collect 25 tokens along the training route and open the Training Market. '
   + 'Equip the Practice Shield before leaving the tutorial area.';
 
+/** Run synthetic fixtures through the structural and prose boundaries without acquisition. */
 function extract(body: string) {
   const structure = extractGamingDocumentEvidence({ body, contentType: 'text/html', sourceUrl });
   const document = extractFetchAndCleanDocument(sourceUrl, structure.proseBody, 'text/html', 100_000,
@@ -19,6 +21,31 @@ function extract(body: string) {
 }
 
 describe('Gaming layout containers and sidebar furniture', () => {
+  it.each([
+    ['main', ''], ['article', ''], ['div', ' role="main"']
+  ])('retains a sidebar layout modifier on the semantic primary element itself (%s%s)', (tag, attributes) => {
+    const { structure, document } = extract(`<${tag}${attributes} class="has-guide-sidebar">`
+      + `<h1>Copper Vale tutorial</h1><p>${prose}</p>${record}</${tag}>`);
+    expect(document.text).toContain(prose);
+    expect(structure.units).toHaveLength(1);
+    expect(structure.units[0].fields).toContainEqual({ label: 'Item', value: 'Practice Shield' });
+  });
+
+  it('retains inert JSON records inside an article carrying a sidebar layout modifier', () => {
+    const body = '<article class="has-game-sidebar"><script type="application/json">'
+      + JSON.stringify({ item: 'Practice Shield', stat: 'cost', value: '25', unit: 'tokens' })
+      + '</script></article>';
+    const result = extractGamingJsonEvidence({ body, contentType: 'text/html', sourceUrl });
+    expect(result.units).toHaveLength(1);
+    expect(result.units[0].fields).toEqual([
+      { label: 'item', value: 'Practice Shield' }, { label: 'stat', value: 'cost' },
+      { label: 'unit', value: 'tokens' }, { label: 'value', value: '25' }
+    ]);
+    expect(result.units[0].provenance).toMatchObject({ sourceUrl, strategy: 'application_json',
+      representation: 'json_pointer', locator: 'script[1]#', jsonOnly: true });
+    expect(result.units[0].integrity).toEqual({ status: 'complete', reasons: [] });
+  });
+
   it.each(['has-game-sidebar', 'has-right-sidebar', 'with-guide-sidebar'])(
     'retains independent primary article inside a %s layout', modifier => {
       const body = `<main><div class="content-grid ${modifier}"><article><h1>Copper Vale tutorial</h1>`

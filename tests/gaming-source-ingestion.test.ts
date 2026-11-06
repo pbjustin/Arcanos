@@ -27,6 +27,43 @@ function sourceApproval(subjectHash: string, freshness: 'verified' | 'not_applic
     dimensions: { clarity: dimension, leverage: dimension, efficiency: dimension, alignment: dimension, resilience: dimension } });
 }
 
+/** Build an actor-bound historical job to distinguish readable status from current execution approval. */
+function retainedPolicyV5Job(status: 'completed' | 'failed' | 'pending' | 'running' | 'cancelled' | 'expired' = 'completed') {
+  const ingestionId = '019fe3cd-8c01-7f01-8d2d-caa951bc4b9b';
+  const gamingClear = sourceApproval('b'.repeat(64));
+  gamingClear.policyProfile = 'gaming-clear-policy/v5:walkthrough:source';
+  const failed = status === 'failed';
+  return {
+    id: ingestionId, job_type: 'gpt', status,
+    idempotency_scope_hash: gamingSourceActorScopeHash('actor-a'),
+    created_at: new Date('2026-08-08T12:00:00.000Z'),
+    updated_at: new Date('2026-08-08T12:01:00.000Z'),
+    completed_at: new Date('2026-08-08T12:01:00.000Z'),
+    input: {
+      gptId: 'arcanos-gaming', requestPath: '/gpt-access/gaming/sources/ingestions', executionModeReason: 'gaming_source_ingestion',
+      body: {
+        action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [], sources: [{
+          submittedIndex: 0, canonicalUrl: 'https://example.com/retained-guide', game: 'Borderlands 4', gameKey: 'borderlands-4',
+          origin: 'gpt_web_search', hybridApproval: {
+            actorScopeHash: 'a'.repeat(64), contentHash: 'b'.repeat(64), policyVersion: 'gaming-hybrid-candidates/v1',
+            freshnessPolicyVersion: 'gaming-hybrid-freshness-v1', sourcePolicyVersion: 'gaming-hybrid-source-policy-v2',
+            recordType: 'guide', freshness: {}, gamingClear
+          }
+        }]
+      }
+    },
+    output: {
+      ok: true, action: 'ingest', ingestionId, status: failed ? 'completed_with_errors' : 'completed',
+      counts: { total: 1, queued: 0, succeeded: failed ? 0 : 1, rejected: 0, failed: failed ? 1 : 0,
+        recordsCreated: failed ? 0 : 1, recordsUpdated: 0 },
+      sources: [{ submittedIndex: 0, canonicalUrl: 'https://example.com/retained-guide', status: failed ? 'failed' : 'stored',
+        recordsCreated: failed ? 0 : 1, recordsUpdated: 0,
+        ...(failed ? { error: { code: 'SOURCE_FETCH_FAILED', message: 'The source fetch failed.', retryable: true } } : {}) }],
+      createdAt: '2026-08-08T12:00:00.000Z', updatedAt: '2026-08-08T12:01:00.000Z'
+    }
+  };
+}
+
 function resolvedDocument(url: string, text: string, overrides: Record<string, unknown> = {}) {
   return {
     requestedUrl: url,
@@ -1306,6 +1343,60 @@ describe('gaming source ingestion', () => {
     expect(persisted.records[0]?.normalized).not.toHaveProperty('patch');
     expect(JSON.stringify(persisted)).not.toContain(overlongPatch);
     expect(execution.output.sources[0]).not.toHaveProperty('patchVersion');
+  });
+
+  it.each(['completed', 'failed'] as const)('reads a retained v5 %s result without granting current execution authority', async status => {
+    const job = retainedPolicyV5Job(status);
+    getJobByIdMock.mockResolvedValue(job);
+    const response = await getGamingSourceIngestionStatus(job.id, { actorKey: 'actor-a' });
+    expect(response.statusCode).toBe(200);
+    expect(response.payload).toMatchObject({ ok: true, action: 'status', ingestionId: job.id, status,
+      sources: [{ status: status === 'failed' ? 'failed' : 'stored' }], counts: job.output.counts });
+    expect(JSON.stringify(response.payload)).not.toContain('hybridApproval');
+    await expect(executeQueuedGamingSourceIngestion(job.id, job.input.body)).rejects.toMatchObject({ code: 'GAMING_SOURCE_JOB_INVALID' });
+    expect(resolveGamingDocumentMock).not.toHaveBeenCalled();
+    expect(persistGamingSourceRevisionMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['pending', 'running', 'cancelled', 'expired'] as const)('reads retained v5 %s status without a saved result', async status => {
+    const job = { ...retainedPolicyV5Job(status), output: null };
+    getJobByIdMock.mockResolvedValue(job);
+    const response = await getGamingSourceIngestionStatus(job.id, { actorKey: 'actor-a' });
+    expect(response.statusCode).toBe(200);
+    expect(response.payload).toMatchObject({ ok: true, action: 'status', status: status === 'pending' ? 'queued' : status });
+    expect(resolveGamingDocumentMock).not.toHaveBeenCalled();
+    expect(persistGamingSourceRevisionMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps retained v5 status bound to the original actor', async () => {
+    const job = retainedPolicyV5Job();
+    getJobByIdMock.mockResolvedValue(job);
+    const response = await getGamingSourceIngestionStatus(job.id, { actorKey: 'another-actor' });
+    expect(response).toMatchObject({ statusCode: 404, payload: { ok: false, error: { code: 'GAMING_SOURCE_INGESTION_NOT_FOUND' } } });
+    expect(persistGamingSourceRevisionMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['invalid dimension', (job: ReturnType<typeof retainedPolicyV5Job>) => {
+      Object.assign(job.input.body.sources[0].hybridApproval.gamingClear.dimensionScores.clarity, { status: 'unrecognized' });
+    }],
+    ['unknown policy', (job: ReturnType<typeof retainedPolicyV5Job>) => {
+      job.input.body.sources[0].hybridApproval.gamingClear.policyProfile = 'gaming-clear-policy/v999:walkthrough:source';
+    }],
+    ['unknown approval field', (job: ReturnType<typeof retainedPolicyV5Job>) => {
+      Object.assign(job.input.body.sources[0].hybridApproval, { unreviewedAuthority: true });
+    }],
+    ['unknown body field', (job: ReturnType<typeof retainedPolicyV5Job>) => {
+      Object.assign(job.input.body, { executeAutomatically: true });
+    }]
+  ] as const)('rejects a malformed historical status envelope: %s', async (_label, mutate) => {
+    const job = retainedPolicyV5Job(); mutate(job);
+    getJobByIdMock.mockResolvedValue(job);
+    const response = await getGamingSourceIngestionStatus(job.id, { actorKey: 'actor-a' });
+    expect(response).toMatchObject({ statusCode: 404, payload: { ok: false, error: { code: 'GAMING_SOURCE_INGESTION_NOT_FOUND' } } });
+    expect(resolveGamingDocumentMock).not.toHaveBeenCalled();
+    expect(persistGamingSourceRevisionMock).not.toHaveBeenCalled();
   });
 
   it('does not project arbitrary generic jobs through the domain status route', async () => {

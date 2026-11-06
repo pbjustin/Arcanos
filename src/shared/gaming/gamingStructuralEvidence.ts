@@ -5,7 +5,7 @@ import { resolveGamingAnswerPolicy } from './gamingAnswerPolicy.js';
 import { buildGamingRetrievalTerms, gamingLexicalTokens, gamingTermCoverage } from './gamingRetrievalPolicy.js';
 import { GAMING_HYBRID_V2_LIMITS } from './gamingHybridContract.js';
 import { normalizeGamingEditionIdentity } from './gamingGameIdentity.js';
-import { gamingRegistryEditionKind, gamingRegistryExpansionNames, gamingRegistryLiteralPattern, gamingRegistryRelatedScopeNames,
+import { detectGamingRegistryAlias, gamingRegistryEditionKind, gamingRegistryExpansionNames, gamingRegistryLiteralPattern, gamingRegistryRelatedScopeNames,
   gamingRegistrySourceGameMatchesRequest } from './gamingGameRegistry.js';
 
 export const GAMING_STRUCTURAL_SUFFICIENCY_VERSION = 'gaming-structural-sufficiency/v1';
@@ -59,11 +59,32 @@ export function gamingPrimarySourceDeclarationPattern(): RegExp {
 }
 
 /** A complete quoted passage is a reference. Quoting only the subject name
- * leaves the affirmative declaration outside that quotation and still binding. */
+ * leaves the affirmative declaration outside that quotation and still binding.
+ * Source-wide applicability requirements also prevent local projection, without
+ * interpreting their edition values as declared game names. */
 function hasUnquotedPrimarySourceDeclaration(text: string): boolean {
   const passages = [...text.matchAll(/"[^"]*"|“[^”]*”|`[^`]*`|(?:^|\s)'(?:[^']|(?<=\w)'(?=\w))*'|‘[^’]*’/gu)];
-  return [...text.matchAll(gamingPrimarySourceDeclarationPattern())].some(declaration => !passages.some(passage =>
+  const declarations = [...text.matchAll(gamingPrimarySourceDeclarationPattern()),
+    ...text.matchAll(/\bthis\s+(?:guide|build|walkthrough|article|source|page|document)\s+(?:requires?|needs?|only\s+works\s+(?:in|on))\s+/giu)];
+  return declarations.some(declaration => !passages.some(passage =>
     declaration.index >= passage.index && declaration.index + declaration[0].length <= passage.index + passage[0].length));
+}
+
+/** Identify an independently named game scope after a comparison's first scope.
+ * Bare gameplay locations do not assert another game; explicit named-game
+ * clauses, recognized titles and guide-framed unfamiliar names remain binding.
+ * @param reference A complete sentence already bounded by the reference matcher.
+ * @returns Whether projecting the sentence could hide another acquired game scope.
+ */
+function hasAdditionalGamingReferenceScope(reference: string): boolean {
+  const scopes = [...reference.matchAll(/\bin(?:\s+the\s+game)?\s+/giu)];
+  return scopes.slice(1).some(scope => {
+    if (/^in\s+the\s+game\s+/iu.test(scope[0])) return true;
+    const subject = reference.slice(scope.index + scope[0].length).split(/[,;.!?\n]/u, 1)[0].trim()
+      .replace(/^["“`'‘]+|["”`'’]+$/gu, '');
+    return Boolean(detectGamingRegistryAlias(subject, true))
+      || /^[^,;.!?\n]{1,120}\s+(?:guide|build|loadout|meta|walkthrough|wiki|tips?)\b/iu.test(subject);
+  });
 }
 
 /** Explicit sentence-local references cannot become primary identity or selected
@@ -74,10 +95,10 @@ function withoutBoundedGamingReferences(text: string, units: readonly GamingEvid
   let excludedReferenceCount = 0;
   const projected = text.replace(/(?:^|(?<=[.!?])\s+)(?:(?:historically|previously)[,:]?\s+in(?:\s+the\s+game)?\s+|(?:for|by)\s+comparison\s*,\s+in(?:\s+the\s+game)?\s+|(?:historical references?|related articles?|recommended(?:\s+(?:articles?|guides?|reading))?|read next|references?)\s*:\s*)[^.!?\n]{1,512}[.!?](?=\s|$)/giu,
     reference => {
-      if (hasUnquotedPrimarySourceDeclaration(reference) || /\bgame\s*:/iu.test(reference)
+      if (hasUnquotedPrimarySourceDeclaration(reference) || /\b(?:game|edition)\s*:/iu.test(reference)
         // The comparison frame owns only its first scope. A subsequent acquired
         // game clause may be an independent contradiction, not a reference.
-        || /^\s*(?:for|by)\s+comparison\b/iu.test(reference) && [...reference.matchAll(/\bin(?:\s+the\s+game)?\s+/giu)].length !== 1
+        || /^\s*(?:for|by)\s+comparison\b/iu.test(reference) && hasAdditionalGamingReferenceScope(reference)
         || units.some(unit => unit.text.includes(reference.trim()))) return reference;
       excludedReferenceCount++;
       return ' ';

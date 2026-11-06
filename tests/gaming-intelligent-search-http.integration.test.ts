@@ -146,6 +146,7 @@ afterEach(async () => {
   jest.restoreAllMocks(); resetSafetyRuntimeStateForTests();
 });
 
+/** Serve the real MCP workflow on loopback with empty stored knowledge and isolated effects. */
 async function serve() {
   const retrieve = jest.fn(async () => ({ context: '', sources: [], evidence: [], sourceKnown: false }));
   const workflow = createGamingHybridWorkflow({ retrieve, ingest: ingest as never, now: () => Date.now() + workflowOffsetMs });
@@ -159,6 +160,7 @@ async function serve() {
   endpoint = `http://127.0.0.1:${address.port}${GAMING_MCP_PATH}`;
   return { retrieve };
 }
+/** Send a signed MCP request and check its public response schema; optionally omit auth. */
 async function call(name: string, input: unknown, authenticated = true): Promise<any> {
   const now = Math.floor(Date.now() / 1000);
   const token = await new SignJWT({ iss: configuration.issuer, aud: configuration.resource, sub: configuration.ownerSubject,
@@ -172,11 +174,13 @@ async function call(name: string, input: unknown, authenticated = true): Promise
   if (body.result?.structuredContent) expect(isGamingMcpOutput(name as never, body.result.structuredContent)).toBe(true);
   return body.result;
 }
+/** Start the active synthetic gameplay request without granting source-storage permission. */
 async function query(key = 'intelligent-http-query') {
   const output = await call('arcanos_gaming_hybrid_query', { contractVersion: 'gaming-hybrid-v2', idempotencyKey: key,
     game: active.game, question: active.question, storagePolicy: 'transient_only' });
   return output.structuredContent as { statusCode: number; result: GamingHybridResponse };
 }
+/** Continue only the backend-granted discovery operation at its latest workflow revision. */
 async function submit(state: GamingHybridResponse, urls = [active.url], key = 'intelligent-http-candidates') {
   const output = await call('arcanos_gaming_submit_candidates', { contractVersion: 'gaming-hybrid-v2', workflowId: state.workflowId,
     expectedRevision: state.revision, idempotencyKey: key, discoveryType: state.discovery?.type ?? 'gameplay_evidence',

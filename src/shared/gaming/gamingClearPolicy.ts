@@ -123,9 +123,8 @@ export function parseGamingClearModelAssessment(value: unknown, allowedEvidenceR
   return parsed.data;
 }
 
-/** Validates persisted audit provenance; reuse still requires caller/content/context binding. */
-export function parseGamingClearAssessment(value: unknown): GamingClearAssessment | null {
-  const parsed = z.object({
+/** Persisted wire shape only. Historical status reads do not establish current quality or approval authority. */
+export const gamingClearAssessmentRecordSchema = z.object({
     rubricVersion: z.literal(GAMING_CLEAR_VERSION), profile: z.enum(['source', 'evidence', 'answer']),
     policyProfile: z.string().max(100).check(utf16MaxLength(100)), sourceRole: z.enum(['gameplay_guide', 'build_analysis', 'patch_authority', 'currentness_index', 'live_status', 'community_observation', 'corroboration']).optional(),
     subjectId: reference, subjectHash: z.string().regex(/^[a-f0-9]{64}$/u), contextFingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
@@ -133,7 +132,11 @@ export function parseGamingClearAssessment(value: unknown): GamingClearAssessmen
     dimensionScores: dimensionsSchema, gates: gatesSchema, overall: z.number().finite().min(0).max(5).nullable(),
     findings: z.array(findingSchema).max(32), blockingFindings: z.array(findingSchema).max(32),
     decision: z.enum(['accept', 'partial', 'reject', 'clarify', 'unavailable']), qualityEligible: z.boolean(), evaluatedAt: z.string().check(legacyDatetime())
-  }).strict().safeParse(value);
+  }).strict();
+
+/** Validates current persisted audit provenance; reuse still requires caller/content/context binding. */
+export function parseGamingClearAssessment(value: unknown): GamingClearAssessment | null {
+  const parsed = gamingClearAssessmentRecordSchema.safeParse(value);
   if (!parsed.success) return null;
   const result = parsed.data;
   const profile = result.policyProfile.split(':');

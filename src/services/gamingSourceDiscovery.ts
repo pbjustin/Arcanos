@@ -587,6 +587,11 @@ function emptyDiscoveryResult(
   };
 }
 
+/** Discover bounded public URL hints, applying URL policy and prior-attempt exclusions
+ * before ranking fetch candidates. Search metadata never becomes acquired evidence.
+ * @param input Sanitized gameplay intent, optional provider and cancellation scope.
+ * @returns Ranked candidate hints or a controlled discovery failure within existing budgets.
+ */
 export async function discoverGamingSources(input: GamingDiscoveryInput): Promise<GamingDiscoveryResult> {
   const startedAt = Date.now();
   if (!getGamingDiscoveryEnabled()) {
@@ -685,7 +690,7 @@ export async function discoverGamingSources(input: GamingDiscoveryInput): Promis
   const rankingStartedAt = Date.now();
   const topicTerms = buildQueryTopicTerms(input);
   const deduped = new Map<string, GamingSearchResult>();
-  const excludedUrls = new Set((input.excludedUrls ?? []).slice(0, MAX_PROVIDER_RANK).flatMap(url => {
+  const excludedUrls = new Set((input.excludedUrls ?? []).flatMap(url => {
     const admission = sanitizeGamingDiscoveryCandidateUrl(url);
     return admission.url && !admission.rejected ? [admission.url] : [];
   }));

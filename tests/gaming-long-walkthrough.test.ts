@@ -11,6 +11,7 @@ const walkthrough = Array.from({ length: 400 }, (_, index) =>
   `<section class="quest-step"><div class="article-stage"><h2>Checkpoint ${index}</h2>`
   + `<p>In The Witcher 3, follow the marked path to checkpoint ${index} and inspect the practice sign before the next quest step. Wait for the blue lamp before crossing the training bridge.</p>`
   + '</div></section>').join('');
+/** Build synthetic long-form article HTML, optionally appending untrusted footer content. */
 function document(tail = '') {
   return '<html><title>The Witcher 3 long walkthrough</title><body><nav>Publisher navigation offers</nav>'
     + '<main><div class="content-grid has-guide-sidebar"><article><h1>The Witcher 3 long walkthrough</h1>'

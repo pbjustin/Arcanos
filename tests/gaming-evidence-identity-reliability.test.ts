@@ -8,6 +8,7 @@ const url = 'https://guides.example.org/synthetic-route';
 // Invented exercise mechanics test identity, not the gameplay facts of these games.
 const passage = 'players collect the practice token at the marked gate, inspect the practice route, '
   + 'and keep the practice token until the exercise ends.';
+/** Assess synthetic acquired scope while keeping real game names separate from invented mechanics. */
 function assess(game: string, reference = '', sourceGame = game, edition?: string) {
   const title = `${sourceGame} walkthrough`;
   return assessGamingClearSourceIdentity({ publicUrl: url, metadata: { title, headings: title },
@@ -124,4 +125,72 @@ describe('independent acquired identity with bounded local comparisons', () => {
     expect(readGamingRegistryEditionScope({ text: `${comparison} Edition: Bedrock. Edition: Java.` }, 'Minecraft'))
       .toMatchObject({ status: 'conflict' });
   });
+
+  it.each([
+    'For comparison, in Minecraft Bedrock',
+    'By comparison, in Minecraft Bedrock, this exercise',
+    `For comparison, ${'in Minecraft Bedrock, '.padEnd(511, 'x')}.x`,
+    `For comparison, in Minecraft Bedrock, ${'practice '.repeat(70)}the exercise differs.`
+  ])('keeps incomplete or over-budget comparison edition inspection unresolved: %s', comparison => {
+    expect(readGamingRegistryEditionScope({ text: `Edition: Java. ${comparison}` }, 'Minecraft').status)
+      .not.toBe('verified');
+  });
+
+  it.each(['For comparison, Edition: Bedrock.', 'For comparison, in Minecraft Java, Edition: Bedrock.',
+    'Historically, in Minecraft Java, Edition: Bedrock.',
+    'Related article: Minecraft Java, Edition: Bedrock.'])(
+    'retains explicit source-global edition declarations within a reference: %s', comparison => {
+      const document = { publicUrl: url, text: `Edition: Java. ${comparison}` };
+      const projected = selectGamingGameScopedDocument(document, 'Minecraft');
+      expect(projected.document.text).toContain('Edition: Bedrock.');
+      expect(projected.excludedReferenceCount).toBe(0);
+      expect(readGamingRegistryEditionScope(projected.document, 'Minecraft'))
+        .toMatchObject({ status: 'conflict' });
+      expect(assess('Minecraft', comparison, 'Minecraft', 'Java'))
+        .toMatchObject({ status: 'conflict', reasonCodes: ['EDITION_CONFLICT'] });
+    });
+
+  it.each(['this page requires Bedrock', 'this guide only works in Bedrock', 'this source only works on Bedrock'])(
+    'retains an unquoted source-global requirement inside a comparison: %s', requirement => {
+      const document = { publicUrl: url, text: `Edition: Java. For comparison, in Minecraft Java, ${requirement}.` };
+      expect(readGamingRegistryEditionScope(document, 'Minecraft')).toMatchObject({ status: 'conflict', exclusive: true });
+      const projected = selectGamingGameScopedDocument(document, 'Minecraft');
+      expect(projected).toMatchObject({ status: 'unchanged', excludedReferenceCount: 0 });
+      expect(readGamingRegistryEditionScope(projected.document, 'Minecraft')).toMatchObject({ status: 'conflict', exclusive: true });
+    });
+
+  it('retains an explicit source-global needs requirement without inferring a new game', () => {
+    const document = { publicUrl: url, text: 'For comparison, in Minecraft Java, this article needs Bedrock.' };
+    expect(selectGamingGameScopedDocument(document, 'Minecraft'))
+      .toMatchObject({ status: 'unchanged', excludedReferenceCount: 0, document });
+  });
+
+  it.each(['this local mechanic requires Bedrock', 'the quoted source says "this page requires Bedrock"'])(
+    'keeps a local mechanic or whole-quoted source requirement within its comparison: %s', requirement => {
+      const document = { publicUrl: url, text: `Edition: Java. For comparison, in Minecraft Java, ${requirement}.` };
+      const projected = selectGamingGameScopedDocument(document, 'Minecraft');
+      expect(projected).toMatchObject({ status: 'projected', excludedReferenceCount: 1 });
+      expect(projected.document.text).not.toContain(requirement);
+      expect(readGamingRegistryEditionScope(projected.document, 'Minecraft'))
+        .toMatchObject({ status: 'verified', edition: 'Java' });
+    });
+
+  it.each(['For comparison, in Fallout 4, collect the practice token in Diamond City.',
+    'By comparison, in Fallout 4, collect the practice token in Amber Village near the river.'])(
+    'excludes a complete local comparison containing a gameplay location: %s', comparison => {
+      const document = { publicUrl: url, text: `In Fallout 76, ${passage} ${comparison}` };
+      const projected = selectGamingGameScopedDocument(document, 'Fallout 76');
+      expect(projected).toMatchObject({ status: 'projected', excludedReferenceCount: 1 });
+      expect(projected.document.text).not.toContain(comparison);
+      expect(assess('Fallout 76', comparison)).toMatchObject({ status: 'verified', gameIdentityVerified: true });
+    });
+
+  it.each(['For comparison, in Fallout 4, collect a token, but in Fallout 76, collect another token.',
+    'For comparison, in Fallout 4, collect a token, but in the game Copper Vale, collect another token.',
+    'For comparison, in Fallout 4, collect a token, but in Copper Vale guide, collect another token.'])(
+    'retains a genuinely independent second game scope inside a comparison: %s', comparison => {
+      const projected = selectGamingGameScopedDocument({ publicUrl: url, text: comparison }, 'Lantern Voyage');
+      expect(projected).toMatchObject({ status: 'unchanged', excludedReferenceCount: 0 });
+      expect(assess('Lantern Voyage', comparison)).toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
+    });
 });

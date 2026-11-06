@@ -18,7 +18,9 @@ credentials, account identifiers and unrelated conversation history.
 
 The separately configured backend discovery adapter keeps its existing provider
 interface and permissions. It excludes already attempted source URLs before
-filling fetch slots, including cached search results, and applies a small
+filling fetch slots, including verified redirect destinations and cached search
+results. All supplied exclusions are checked independently of the provider's
+rank ceiling. Discovery applies a small
 repeated-domain ranking penalty to similarly relevant pages. Stronger topic
 matches retain priority. These discovery hints never establish accessibility,
 game identity, edition compatibility or claim support. The MCP workflow still

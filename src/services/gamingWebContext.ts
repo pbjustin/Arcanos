@@ -2809,6 +2809,10 @@ export function clearGamingRagCache(): void {
   clearGamingDiscoveryCache();
 }
 
+/** Acquire and select bounded gameplay evidence using the existing source and
+ * discovery budgets. Supplied URLs and verified redirect destinations remain
+ * excluded from subsequent discovery; acquired text still requires validation.
+ */
 export async function buildGamingRagContext(
   input: GamingRagInput,
   logContext?: GamingWebContextLogContext,
@@ -3022,6 +3026,8 @@ export async function buildGamingRagContext(
         discoveryReason
       });
     }
+    const attemptedSourceUrls = Array.from(new Set([...candidates.map(candidate => candidate.fetchUrl),
+      ...documents.map(document => document.candidate.fetchUrl)]));
     const discoveryResult = await discoverGamingSources({
       prompt: input.prompt,
       currentArea: input.currentArea, class: input.class, constraints: input.constraints,
@@ -3029,7 +3035,7 @@ export async function buildGamingRagContext(
       game,
       mode: input.mode,
       patchSensitive,
-      excludedUrls: candidates.map(candidate => candidate.fetchUrl),
+      excludedUrls: attemptedSourceUrls,
       ...(requestSignal ? { signal: requestSignal } : {})
     });
     searchProvider = discoveryResult.searchProvider;
@@ -3041,7 +3047,7 @@ export async function buildGamingRagContext(
     candidateRankingElapsedMs = discoveryResult.candidateRankingElapsedMs;
     discoveryFailureReason = discoveryResult.discoveryFailureReason;
 
-    const existingCandidateUrls = new Set(candidates.map((candidate) => gamingSourceDedupeKey(candidate.fetchUrl)));
+    const existingCandidateUrls = new Set(attemptedSourceUrls.map(gamingSourceDedupeKey));
     const discoveredCandidatesBeforeDedupe = discoveryResult.candidates.map((result) =>
       makeDiscoveredSourceCandidate(result, input)
     );
