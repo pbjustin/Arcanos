@@ -203,11 +203,23 @@ ArcanosCLI._stop_conversation_recovery=stopped
             "answer_displayed": answer_marker in output(label), "audits": audits,
             "job_reads": sum(event.get("event") == "job_read_started" for event in process_events),
             "recovery_successes": sum(event.get("event") == "execute_success" and event.get("command") == "conversation_recovery" for event in audits)}
-    with sqlite3.connect(profile / "history.db") as connection:
-        rows = connection.execute("SELECT session_id,user_text,answer_text,tokens,cost,displayed FROM conversation_deliveries").fetchall()
-        receipt["history"] = [{"session_hash": hashlib.sha256(row[0].encode()).hexdigest(),
-            "user": row[1], "ai": row[2], "tokens": row[3], "cost": row[4], "displayed": bool(row[5])} for row in rows]
-        receipt["durable_successes"] = connection.execute("SELECT COUNT(*) FROM policy_events WHERE event='conversation.completed'").fetchone()[0]
+    # Early console failures can precede SQLite initialization. Preserve that
+    # primary failure; unavailable history is not evidence of zero saved turns.
+    receipt["history"] = None
+    receipt["durable_successes"] = None
+    receipt["history_failure"] = None
+    history_path = profile / "history.db"
+    if failure is None or history_path.exists():
+        try:
+            with sqlite3.connect(history_path) as connection:
+                rows = connection.execute("SELECT session_id,user_text,answer_text,tokens,cost,displayed FROM conversation_deliveries").fetchall()
+                receipt["history"] = [{"session_hash": hashlib.sha256(row[0].encode()).hexdigest(),
+                    "user": row[1], "ai": row[2], "tokens": row[3], "cost": row[4], "displayed": bool(row[5])} for row in rows]
+                receipt["durable_successes"] = connection.execute("SELECT COUNT(*) FROM policy_events WHERE event='conversation.completed'").fetchone()[0]
+        except sqlite3.Error as error:
+            if failure is None:
+                raise
+            receipt["history_failure"] = {"type": type(error).__name__, "message": "Recovery history evidence is unavailable."}
     combined = json.dumps(receipt, ensure_ascii=False)
     receipt["credential_leaks"] = any(value in combined for value in credentials.values())
     print(json.dumps(receipt, ensure_ascii=False))
