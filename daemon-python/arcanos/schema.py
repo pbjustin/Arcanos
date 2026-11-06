@@ -39,14 +39,14 @@ class Memory:
             if not self._recovery_profile_matches or not Config.HISTORY_DB_PATH.is_file():
                 return None
             uri = Config.HISTORY_DB_PATH.resolve().as_uri() + "?mode=ro"
-            with closing(sqlite3.connect(uri, uri=True)) as connection:
+            with closing(sqlite3.connect(uri, uri=True, timeout=0.25)) as connection:
                 table = connection.execute(
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_deliveries'"
                 ).fetchone()
             if table is None:
                 return None
         from .agentic.history_db import HistoryDB
-        self._recovery_db = HistoryDB(Config.HISTORY_DB_PATH)
+        self._recovery_db = HistoryDB(Config.HISTORY_DB_PATH, recovery=True)
         return self._recovery_db
 
     def record_recovered_conversation(

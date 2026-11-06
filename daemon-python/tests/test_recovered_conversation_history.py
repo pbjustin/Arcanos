@@ -10,6 +10,7 @@ from pathlib import Path
 import sqlite3
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -28,6 +29,60 @@ def delivery_key(number=1):
 def memory_at(tmp_path):
     """Create isolated normal memory, with conftest providing isolated SQLite."""
     return Memory(tmp_path / "memory.json")
+
+
+def test_recovery_busy_timeout_bounds_real_writer_contention_and_preserves_legacy_timeout(tmp_path):
+    """Only recovery opts into short SQLite waits, including its lazy schema opening."""
+    database = HistoryDB(Config.HISTORY_DB_PATH)
+    with database._conn() as connection:
+        assert connection.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
+    memory = memory_at(tmp_path)
+    recovery_database = memory._recovery_history(create=True)
+    with recovery_database._conn() as connection:
+        assert connection.execute("PRAGMA busy_timeout").fetchone()[0] == 250
+
+    blocker = sqlite3.connect(str(Config.HISTORY_DB_PATH))
+    blocker.execute("BEGIN IMMEDIATE")
+    try:
+        started = time.monotonic()
+        with pytest.raises(RecoveredConversationStorageError, match="could not be saved"):
+            memory.record_recovered_conversation(delivery_key(), "s", "q", "a", 10, 0.01)
+        assert time.monotonic() - started < 1.5
+        # Reopening recovery invokes real schema/content cleanup, which is also
+        # a writer operation; it must not inherit the legacy five-second wait.
+        reopened = memory_at(tmp_path)
+        started = time.monotonic()
+        with pytest.raises(sqlite3.OperationalError):
+            reopened.get_recovered_usage()
+        assert time.monotonic() - started < 1.5
+        assert database.get_recovered_statistics()["total_requests"] == 0
+    finally:
+        blocker.rollback()
+        blocker.close()
+    assert reopened.record_recovered_conversation(delivery_key(), "s", "q", "a", 10, 0.01)
+    assert not memory.record_recovered_conversation(delivery_key(), "s", "q", "a", 10, 0.01)
+    assert database.get_recovered_statistics() == {"total_requests": 1, "total_tokens": 10, "total_cost": 0.01}
+
+
+def test_corrupt_database_setup_closes_native_handle_before_propagating_failure(tmp_path):
+    """A retained SQLite exception traceback must not pin an opened corrupt database."""
+    database = HistoryDB(Config.HISTORY_DB_PATH, recovery=True)
+    corrupted = tmp_path / "corrupt-recovery.db"
+    corrupted.write_bytes(b"Synthetic invalid SQLite database" * 10)
+    database.path = corrupted
+    with pytest.raises(sqlite3.DatabaseError) as failure:
+        database._conn()
+    frame = failure.value.__traceback__
+    while frame is not None and frame.tb_frame.f_code.co_name != "_conn":
+        frame = frame.tb_next
+    assert frame is not None
+    connection = frame.tb_frame.f_locals["conn"]
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        connection.execute("SELECT 1")
+    # Windows refuses this operation while the failed connection holds its
+    # native file handle; keep the original exception alive through the check.
+    corrupted.unlink()
+    assert failure.value.__traceback__ is not None
 
 
 def test_plain_memory_remains_lazy_and_does_not_create_history(tmp_path):

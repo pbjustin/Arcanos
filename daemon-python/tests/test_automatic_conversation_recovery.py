@@ -1,6 +1,7 @@
 """Actual protected recovery controller, HTTP client and idempotent history boundaries."""
 
 import io
+import gc
 import json
 import os
 from pathlib import Path
@@ -89,6 +90,114 @@ def _wait_for(predicate, seconds=5):
     assert predicate()
 
 
+def test_real_sqlite_writer_contention_cannot_commit_after_worker_shutdown(recovery_profile, monkeypatch):
+    """A real held WAL writer cannot outlive stop and later persist in the exited foreground."""
+    make_cli, wire = recovery_profile
+    cli = make_cli(monitor_clock=time.monotonic)
+    cli.handle_ask("original question")
+    wire["states"][JOB] = ["completed"]
+    database = cli.memory._recovery_history(create=True)
+    entered_write = threading.Event()
+    original_connection = database._conn
+
+    def observed_connection():
+        """Observe the real BEGIN before SQLite waits for the other writer's lock."""
+        connection = original_connection()
+        connection.set_trace_callback(
+            lambda sql: entered_write.set() if sql == "BEGIN IMMEDIATE" else None
+        )
+        return connection
+
+    monkeypatch.setattr(database, "_conn", observed_connection)
+    blocker = sqlite3.connect(str(Config.HISTORY_DB_PATH))
+    blocker.execute("BEGIN IMMEDIATE")
+    controller = cli._conversation_recovery
+    controller.start()
+    try:
+        assert entered_write.wait(5), "The worker never reached the actual SQLite writer contention"
+        started = time.monotonic()
+        controller.stop()
+        stop_seconds = time.monotonic() - started
+        stopped_at_return = not controller.thread.is_alive()
+        assert cli.memory.get_statistics()["total_requests"] == 0
+    finally:
+        blocker.rollback()
+        blocker.close()
+        controller.thread.join(6)
+
+    assert stopped_at_return, f"Recovery worker remained alive after stop returned ({stop_seconds:.3f}s)"
+    assert stop_seconds < 3
+    assert cli.memory.get_statistics()["total_requests"] == 0
+    assert cli.rate_limiter.tokens_today == 0
+    assert ANSWER not in cli.console.file.getvalue()
+    assert len(controller.store.load()) == 1
+    assert wire["posts"] == wire["providers"] == wire["gets"] == 1
+
+    # Once contention ends, a fresh foreground may recover only this accepted job.
+    restarted = make_cli(instance="fresh-after-contention")
+    restarted._conversation_recovery.tick()
+    _assert_saved_once(restarted)
+    assert wire["posts"] == wire["providers"] == 1
+    assert wire["gets"] == 2
+
+
+def test_real_sqlite_exclusive_reader_contention_cannot_outlive_shutdown(recovery_profile, monkeypatch):
+    """The lazy read-only schema probe uses the same bounded recovery busy wait."""
+    from arcanos import schema
+    from arcanos.agentic.history_db import HistoryDB
+
+    make_cli, wire = recovery_profile
+    cli = make_cli(monitor_clock=time.monotonic)
+    cli.handle_ask("original question")
+    wire["states"][JOB] = ["completed"]
+    HistoryDB(Config.HISTORY_DB_PATH)
+    gc.collect()
+    assert cli.memory._recovery_db is None
+    blocker = sqlite3.connect(str(Config.HISTORY_DB_PATH))
+    blocker.execute("PRAGMA locking_mode=EXCLUSIVE")
+    blocker.execute("BEGIN EXCLUSIVE")
+    entered_read = threading.Event()
+    original_connect = sqlite3.connect
+
+    class ObservedReadConnection(sqlite3.Connection):
+        """Signal immediately before the real schema prepare/read can wait on the exclusive owner."""
+
+        def execute(self, sql, parameters=()):
+            if "FROM sqlite_master" in sql:
+                entered_read.set()
+            return super().execute(sql, parameters)
+
+    def observed_connection(*args, **kwargs):
+        """Observe only the actual read-only schema SELECT, retaining the real connection."""
+        if kwargs.get("uri"):
+            kwargs["factory"] = ObservedReadConnection
+        return original_connect(*args, **kwargs)
+
+    monkeypatch.setattr(schema.sqlite3, "connect", observed_connection)
+    controller = cli._conversation_recovery
+    controller.start()
+    try:
+        assert entered_read.wait(5), "The worker never attempted the actual read-only schema probe"
+        started = time.monotonic()
+        controller.stop()
+        stop_seconds = time.monotonic() - started
+        stopped_at_return = not controller.thread.is_alive()
+    finally:
+        blocker.rollback()
+        blocker.close()
+        controller.thread.join(6)
+    assert stopped_at_return, f"Recovery reader remained alive after stop returned ({stop_seconds:.3f}s)"
+    assert stop_seconds < 3
+    assert cli.memory.get_statistics()["total_requests"] == 0
+    assert wire["posts"] == wire["providers"] == 1
+    assert wire["gets"] == 0
+    assert len(controller.store.load()) == 1
+    restarted = make_cli(instance="fresh-after-reader-contention")
+    restarted._conversation_recovery.tick()
+    _assert_saved_once(restarted)
+    assert wire["posts"] == wire["providers"] == wire["gets"] == 1
+
+
 @pytest.fixture
 def recovery_profile(tmp_path, monkeypatch):
     """Isolate actual history/protection paths and all provider/action-adjacent configuration."""
@@ -139,7 +248,10 @@ def recovery_profile(tmp_path, monkeypatch):
                                        "jobReadTokenHeader": "x-arcanos-job-read-token"})
             if path.startswith("/jobs/"):
                 assert method == "get" and options["json"] is None
-                assert 0 < options["timeout"] <= wire["maximum_read_timeout"]
+                timeouts = options["timeout"] if isinstance(options["timeout"], tuple) else (options["timeout"],)
+                assert all(0 < value <= wire["maximum_read_timeout"] for value in timeouts)
+                if "stream" in options:
+                    assert options["stream"] is True
                 assert options["headers"].get("x-arcanos-job-read-token") == CAPABILITY
                 assert not options["headers"].get("x-arcanos-daemon-token")
                 assert CAPABILITY not in url

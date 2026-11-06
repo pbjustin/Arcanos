@@ -76,14 +76,22 @@ class PatchLog:
 class HistoryDB:
     """SQLite-backed history for messages, patches, commands, snapshots, and policy events."""
 
-    def __init__(self, db_path: Optional[Path] = None) -> None:
+    def __init__(self, db_path: Optional[Path] = None, *, recovery: bool = False) -> None:
         self.path = db_path or Config.HISTORY_DB_PATH
+        # Recovery must release its foreground worker within the shutdown join
+        # budget even while another process owns SQLite's WAL writer slot.
+        # Other history callers retain sqlite3's existing five-second timeout.
+        self._connection_timeout = 0.25 if recovery else 5.0
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._init()
 
     def _conn(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.path))
-        conn.execute("PRAGMA journal_mode=WAL;")
+        conn = sqlite3.connect(str(self.path), timeout=self._connection_timeout)
+        try:
+            conn.execute("PRAGMA journal_mode=WAL;")
+        except sqlite3.Error:
+            conn.close()
+            raise
         return conn
 
     def _init(self) -> None:
