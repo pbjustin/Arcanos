@@ -5,6 +5,9 @@ import { isGamingAcquiredTopicTitle } from '@services/gamingGameDetection.js';
 export type GamingIdentityResolutionState = 'IDENTITY_VERIFIED' | 'IDENTITY_UNVERIFIED'
   | 'IDENTITY_CONFLICT' | 'INSUFFICIENT_EVIDENCE';
 
+/** Internal decimal/title punctuation is not a completed scope boundary. */
+export const GAMING_ACQUIRED_SCOPE_BOUNDARY = /[,;!?\n]|\.(?=\s|$)/u;
+
 /** Closed lowercase game surfaces are locations; title-like continuations remain inspectable. */
 export function isGamingAcquiredGameSurface(value: string): boolean {
   return /^(?:shop|world|menu)(?:$|\s+(?:in|on|at|near|inside|outside|to|for)\b)/u.test(value);
