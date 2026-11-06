@@ -304,6 +304,86 @@ describe('gaming open-web source discovery', () => {
     expect(result.rejectedCandidateCount).toBe(1);
   });
 
+  describe.each([['fresh', false], ['cached', true]] as const)('Archive acquisition exclusions with %s results', (_label, warmCache) => {
+    it.each([
+      'https://archive.org/details/CaseSensitiveItem/page/n7/mode/2up',
+      'https://www.archive.org/details/CaseSensitiveItem',
+      'https://www.archive.org/details/CaseSensitiveItem/page/n3/mode/1up?utm_source=fixture'
+    ])('excludes a previously acquired item before allocating a slot to %s', async url => {
+      process.env.ARCANOS_GAMING_DISCOVERY_FETCH_CANDIDATE_LIMIT = '1';
+      const attempted = makeResult({ url });
+      const alternative = makeResult({ url: 'https://other.example/UntriedResource', providerRank: 2 });
+      const { provider, search } = makeProvider(async () => [attempted, alternative]);
+      if (warmCache) {
+        const initial = await discoverGamingSources(guideInput({ provider }));
+        expect(initial.candidates[0]?.url).toBe(url.replace('?utm_source=fixture', ''));
+      }
+      const result = await discoverGamingSources(guideInput({ provider,
+        excludedUrls: ['https://archive.org/details/CaseSensitiveItem'] }));
+      expect(result.discoveryCacheHit).toBe(warmCache);
+      expect(search).toHaveBeenCalledTimes(1);
+      expect(result.candidates.map(candidate => candidate.url)).toEqual([alternative.url]);
+      expect(result.rejectedCandidateCount).toBe(1);
+    });
+  });
+
+  it('matches an Archive reader exclusion to its details result without changing item case', async () => {
+    process.env.ARCANOS_GAMING_DISCOVERY_FETCH_CANDIDATE_LIMIT = '1';
+    const lowerCaseItem = 'https://archive.org/details/casesensitiveitem';
+    const { provider } = makeProvider(async () => [
+      makeResult({ url: 'https://archive.org/details/CaseSensitiveItem' }),
+      makeResult({ url: lowerCaseItem, providerRank: 2 })
+    ]);
+    const result = await discoverGamingSources(guideInput({ provider,
+      excludedUrls: ['https://www.archive.org/details/CaseSensitiveItem/page/n2/mode/2up?utm_source=fixture'] }));
+    expect(result.candidates.map(candidate => candidate.url)).toEqual([lowerCaseItem]);
+    expect(result.rejectedCandidateCount).toBe(1);
+  });
+
+  it('deduplicates Archive acquisition identities while retaining different and differently cased items', async () => {
+    process.env.ARCANOS_GAMING_DISCOVERY_FETCH_CANDIDATE_LIMIT = '3';
+    process.env.ARCANOS_GAMING_DISCOVERY_SEARCH_RESULT_LIMIT = '5';
+    const canonical = 'https://archive.org/details/CaseSensitiveItem';
+    const lowerCaseItem = 'https://archive.org/details/casesensitiveitem';
+    const otherItem = 'https://archive.org/details/DifferentItem';
+    const { provider } = makeProvider(async () => [
+      makeResult({ url: `${canonical}/page/n7/mode/2up?utm_source=fixture`, providerRank: 3 }),
+      makeResult({ url: 'https://www.archive.org/details/CaseSensitiveItem', providerRank: 2 }),
+      makeResult({ url: canonical, providerRank: 1 }),
+      makeResult({ url: lowerCaseItem, providerRank: 4 }),
+      makeResult({ url: otherItem, providerRank: 5 })
+    ]);
+    const result = await discoverGamingSources(guideInput({ provider }));
+    expect(result.candidates.map(candidate => candidate.url).sort()).toEqual([canonical, lowerCaseItem, otherItem].sort());
+    expect(result.rejectedCandidateCount).toBe(2);
+  });
+
+  it.each([
+    'https://archive.org/details/CaseSensitiveItem?access_token=fixture-private-value',
+    'https://archive.org/details/CaseSensitiveItem/page/n2/mode/2up#access_token=fixture-private-value',
+    'https://user:password@archive.org/details/CaseSensitiveItem',
+    'https://archive.org:444/details/CaseSensitiveItem'
+  ])('does not derive an Archive exclusion identity from an unsafe URL: %s', async excluded => {
+    process.env.ARCANOS_GAMING_DISCOVERY_FETCH_CANDIDATE_LIMIT = '1';
+    const canonical = 'https://archive.org/details/CaseSensitiveItem';
+    expect(sanitizeGamingDiscoveryCandidateUrl(excluded).rejected).toBe(true);
+    const { provider } = makeProvider(async () => [makeResult({ url: canonical })]);
+    const result = await discoverGamingSources(guideInput({ provider, excludedUrls: [excluded] }));
+    expect(result.candidates.map(candidate => candidate.url)).toEqual([canonical]);
+    expect(result.rejectedCandidateCount).toBe(0);
+  });
+
+  it('does not let Archive recognition admit an unsafe candidate before filling the fetch slot', async () => {
+    process.env.ARCANOS_GAMING_DISCOVERY_FETCH_CANDIDATE_LIMIT = '1';
+    const unsafe = 'https://www.archive.org/details/CaseSensitiveItem/page/n2/mode/2up?access_token=fixture-private-value';
+    const alternative = 'https://other.example/UntriedResource';
+    const { provider } = makeProvider(async () => [makeResult({ url: unsafe }), makeResult({ url: alternative, providerRank: 2 })]);
+    const result = await discoverGamingSources(guideInput({ provider }));
+    expect(result.candidates.map(candidate => candidate.url)).toEqual([alternative]);
+    expect(result.rejectedCandidateCount).toBe(1);
+    expect(JSON.stringify(result)).not.toContain('fixture-private-value');
+  });
+
   it('diversifies similarly relevant guides without displacing a clearly stronger mechanic match', async () => {
     process.env.ARCANOS_GAMING_DISCOVERY_FETCH_CANDIDATE_LIMIT = '2';
     const { provider } = makeProvider(async () => [

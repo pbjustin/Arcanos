@@ -1,4 +1,5 @@
 import { splitGamingDocumentIntoChunks as splitIntoChunks } from "@services/gamingDocumentChunks.js";
+import { gamingSourceAcquisitionIdentity as gamingSourceDedupeKey } from "@shared/gaming/gamingSourceAcquisitionCore.js";
 import { createHash } from "node:crypto";
 import { GAMEPLAY_CONTENT_PATTERN, GAMING_MARKDOWN_ROLE_HEADING_PATTERN, filterGamingDocumentInstructions, isGamingCatalogMetadataOnly } from "@services/gamingDocumentExtraction.js";
 import type { GamingPlayerContext } from '@shared/gaming/gamingPlayerContext.js';
@@ -57,10 +58,7 @@ import {
   extractExplicitGamingVersions,
   textContainsExactGamingVersion
 } from "@services/gamingVersion.js";
-import {
-  recognizeGamingArchiveItem,
-  type GamingArchiveResolutionTelemetry
-} from "@services/gamingArchiveResources.js";
+import type { GamingArchiveResolutionTelemetry } from "@services/gamingArchiveResources.js";
 import {
   GAMING_BUILD_RESOURCE_HARD_LIMITS,
   classifyGamingResource,
@@ -1003,13 +1001,6 @@ function normalizeCacheUrl(url: string): string {
   } catch {
     return url;
   }
-}
-
-function gamingSourceDedupeKey(url: string): string {
-  const normalized = normalizeCacheUrl(url);
-  // Archive identifiers are case sensitive; preserve their identity through deduplication.
-  const archiveIdentifier = recognizeGamingArchiveItem(url);
-  return archiveIdentifier ? `https://archive.org/details/${archiveIdentifier}` : normalized;
 }
 
 function detectGameFromRagInput(input: GamingRagInput): GamingGameDetection {

@@ -1,5 +1,6 @@
 import {
-  sanitizeGamingSourceUrl, normalizeGamingSourceDomain as normalizeDomain, gamingSourceDomainMatches as domainMatches,
+  sanitizeGamingSourceUrl, gamingSourceAcquisitionIdentity,
+  normalizeGamingSourceDomain as normalizeDomain, gamingSourceDomainMatches as domainMatches,
   type GamingSourceAdmissionResult
 } from "@shared/gaming/gamingSourceAcquisitionCore.js";
 export { GAMING_SOURCE_ADMISSION_POLICY_VERSION } from "@shared/gaming/gamingSourceAcquisitionCore.js";
@@ -692,7 +693,7 @@ export async function discoverGamingSources(input: GamingDiscoveryInput): Promis
   const deduped = new Map<string, GamingSearchResult>();
   const excludedUrls = new Set((input.excludedUrls ?? []).flatMap(url => {
     const admission = sanitizeGamingDiscoveryCandidateUrl(url);
-    return admission.url && !admission.rejected ? [admission.url] : [];
+    return admission.url && !admission.rejected ? [gamingSourceAcquisitionIdentity(admission.url)] : [];
   }));
   let rejectedCandidateCount = 0;
   for (const result of searchResults) {
@@ -701,11 +702,12 @@ export async function discoverGamingSources(input: GamingDiscoveryInput): Promis
       rejectedCandidateCount += 1;
       continue;
     }
-    if (excludedUrls.has(normalizedUrl.url)) {
+    const acquisitionIdentity = gamingSourceAcquisitionIdentity(normalizedUrl.url);
+    if (excludedUrls.has(acquisitionIdentity)) {
       rejectedCandidateCount += 1;
       continue;
     }
-    const canonicalKey = createHash("sha256").update(normalizedUrl.url).digest("hex");
+    const canonicalKey = createHash("sha256").update(acquisitionIdentity).digest("hex");
     const normalizedResult = { ...result, url: normalizedUrl.url };
     const existing = deduped.get(canonicalKey);
     if (!existing || normalizedResult.providerRank < existing.providerRank) {
