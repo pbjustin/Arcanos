@@ -267,9 +267,14 @@ function runDocumentationSummary(status, hasUpdates) {
     .replaceAll('${{ github.run_attempt }}', '1');
   const directory = mkdtempSync(path.join(tmpdir(), 'arcanos-doc-summary-'));
   try {
-    return spawnSync('bash', ['-e', '-c', script], { encoding: 'utf8', timeout: 5_000,
+    // Native Windows CI exhausted the former five-second Bash startup bound.
+    const result = spawnSync('bash', ['-e', '-c', script], { encoding: 'utf8',
+      timeout: process.platform === 'win32' ? 30_000 : 5_000,
       env: { PATH: process.env.PATH, LANG: 'C', LC_ALL: 'C',
         GITHUB_STEP_SUMMARY: path.join(directory, 'summary.md') } });
+    if (result.error) throw result.error;
+    if (result.signal) throw new Error(`Documentation summary Bash terminated by ${result.signal}`);
+    return result;
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -390,13 +395,13 @@ describe('authorized documentation patch boundary', () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('Documentation analysis or validation failed.');
     expect(result.stdout).not.toContain('A validated documentation patch is available');
-  });
+  }, 35_000);
 
   it('requires a human-authored branch and review for a successful patch', () => {
     const result = runDocumentationSummary('success', true);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('Download and review it, then apply it on a human-authored branch and open a pull request.');
-  });
+  }, 35_000);
 });
 
 describe('supplemental exact-head preview workflow', () => {
