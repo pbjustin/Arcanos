@@ -1,5 +1,25 @@
 # Gaming discovery and evidence reliability — 2026-11-06
 
+## CI and review follow-up after 55aa6c8c
+
+CI/CD unit and PR CI `build-test` at
+`55aa6c8c523e6ed4e7a0b76862ca0d2784416d7b` each reported one failed test and
+23,707 passing tests. Both failures were the same exact-command assertion in
+`tests/postgres-ci-truth-contract.test.js`: the expected required-suite inventory
+omitted the newly registered historical Gaming SQL suite. The actual package
+command and required PostgreSQL job already included and executed that suite.
+This was an introduced contract-inventory omission, not an environment failure.
+
+Commit `8a8061e3619d0e003515b7348c4f15a99d83c512` adds that path in the existing
+command order. The unmodified six-case truth contract failed one assertion;
+after the correction, all 136 cases across five truth/target-guard/required-mode/
+aggregate/workflow suites pass on Node 24.18.1 / npm 11.16.0. No runtime,
+workflow, package command, resource limit or security policy changed. No SQL
+server or provider was started for this inventory-only correction. A separate
+historical capture boundary below identifies the original audit revision while
+preserving its captured results. New-head CI is inspected after publication;
+completion is not awaited under the user's standing instruction.
+
 ## Comprehensive acceptance from 25a78ea7
 
 Starting head: `25a78ea7cf5a4ea279dbe97a2abd742c378f0e2d`; base:
@@ -145,6 +165,13 @@ The PR remains draft and unmerged for independent review. Exact-head CI is
 inspected after publication without waiting for its completion. No merge,
 deployment, production configuration change, paid provider call or Gaming source
 persistence is authorized or claimed by this remediation.
+
+## Historical audit captured at 1de7e16c
+
+The sections below preserve the original audit captured at implementation
+`1de7e16cdcedc7c6f4b08f041fe1190aa1ba9f93`. Their results and limitations apply to
+that revision; the newer remediation and comprehensive acceptance records above
+describe later work.
 
 This audit accompanies the draft implementation based on
 `0be1134658195a27353a07b5ca6f86d6e3222546`. Deterministic fixture acceptance,
