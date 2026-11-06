@@ -1,4 +1,5 @@
-import { GAMING_PRIMARY_CONTENT_SELECTOR, preservePrimaryContentSidebarLayouts } from './gaming/gamingDocumentTextNormalization.js';
+import { GAMING_PRIMARY_CONTENT_SELECTORS, GAMING_PRIMARY_CONTENT_SELECTOR_LIMIT as MAX_EXTRACTION_SELECTORS,
+  preservePrimaryContentSidebarLayouts } from './gaming/gamingDocumentTextNormalization.js';
 import axios from 'axios';
 import { contains, load } from 'cheerio';
 import { Resolver } from 'node:dns/promises';
@@ -28,7 +29,6 @@ const HARD_MAX_FETCH_BYTES = 5_000_000;
 const HARD_MAX_FETCH_TIMEOUT_MS = 30_000;
 const HARD_MAX_LINKS = 100;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
-const MAX_EXTRACTION_SELECTORS = 24;
 const MAX_EXTRACTION_CANDIDATES = 48;
 const MAX_CANDIDATE_SCORE_CHARS = 24000;
 const MAX_REPETITION_SEGMENTS = 96;
@@ -769,7 +769,18 @@ export function extractFetchAndCleanDocument(
   const extractionStartedAt = Date.now();
   const parserOptions = options.preservePrimaryContentHeading ? { sourceCodeLocationInfo: true } : undefined;
   const $ = load(responseText, parserOptions as Parameters<typeof load>[1]);
-  if (options.preservePrimaryContentHeading) preservePrimaryContentSidebarLayouts($);
+  let primaryScopeSelectors = (options.primaryContentSelectors?.length ? options.primaryContentSelectors : GAMING_PRIMARY_CONTENT_SELECTORS)
+    .slice(0, MAX_EXTRACTION_SELECTORS);
+  if (options.preservePrimaryContentHeading) {
+    try { $(primaryScopeSelectors.join(',')); } catch {
+      primaryScopeSelectors = primaryScopeSelectors.filter(selector => {
+        try { $(selector); return true; } catch { return false; }
+      });
+    }
+  }
+  if (!primaryScopeSelectors.length) primaryScopeSelectors = [...GAMING_PRIMARY_CONTENT_SELECTORS];
+  const primaryScopeSelector = primaryScopeSelectors.join(',');
+  if (options.preservePrimaryContentHeading) preservePrimaryContentSidebarLayouts($, primaryScopeSelectors);
   $('script, style, noscript').remove();
   const rawTextLength = normalizeExtractedText($('body').text()).length;
   const removeSelectors = (options.removeSelectors ?? []).slice(0, MAX_EXTRACTION_SELECTORS * 4);
@@ -787,9 +798,9 @@ export function extractFetchAndCleanDocument(
           throwIfFetchCancelled(options);
           const node = $(header);
           const scope = node.parent();
-          const heading = scope.is(GAMING_PRIMARY_CONTENT_SELECTOR) && !headingDenied(header)
+          const heading = scope.is(primaryScopeSelector) && !headingDenied(header)
             ? node.find('h1').slice(0, 6).filter((__, element) => !headingDenied(element)
-              && $(element).closest(GAMING_PRIMARY_CONTENT_SELECTOR).get(0) === scope.get(0)).first() : undefined;
+              && $(element).closest(primaryScopeSelector).get(0) === scope.get(0)).first() : undefined;
           if (heading?.length) node.replaceWith(heading);
           else node.remove();
         });
@@ -894,9 +905,9 @@ export function extractFetchAndCleanDocument(
     const selectedElement = selectedCandidate.element;
     type LocatedElement = cheerio.Element & { sourceCodeLocation?: { startOffset: number; endTag?: unknown } };
     const selectedLocation = (selectedElement as LocatedElement).sourceCodeLocation;
-    let scope = $(selectedElement).closest(GAMING_PRIMARY_CONTENT_SELECTOR);
+    let scope = $(selectedElement).closest(primaryScopeSelector);
     // Search nearest scopes only; an independent article's own subject wins.
-    for (let depth = 0; depth < 6 && scope.length; depth++, scope = scope.parent().closest(GAMING_PRIMARY_CONTENT_SELECTOR)) {
+    for (let depth = 0; depth < 6 && scope.length; depth++, scope = scope.parent().closest(primaryScopeSelector)) {
       throwIfFetchCancelled(options);
       const heading = scope.children('h1').slice(0, 6).filter((_, element) => !headingDenied(element)).first();
       if (!heading.length) continue;

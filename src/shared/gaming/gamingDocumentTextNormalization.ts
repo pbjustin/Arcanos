@@ -7,6 +7,8 @@ export const GAMING_PRIMARY_CONTENT_SELECTORS = Object.freeze([
   'article', 'main', "[role='main']"
 ] as const);
 export const GAMING_PRIMARY_CONTENT_SELECTOR = GAMING_PRIMARY_CONTENT_SELECTORS.join(',');
+/** Existing shared-fetcher selector ceiling; layout normalization uses the same bound. */
+export const GAMING_PRIMARY_CONTENT_SELECTOR_LIMIT = 24;
 
 /** Normalize scanner characters while preserving real whitespace in either inspection view. */
 export function normalizeGamingDocumentInstructionCharacters(text: string, replacement: ' ' | '' = ' '): string {
@@ -17,16 +19,26 @@ export function normalizeGamingDocumentInstructionCharacters(text: string, repla
 
 /** Layout modifiers are not sidebar furniture. Normalize parser-owned class hints
  * on reviewed semantic/class primary regions and their containers; source text is unchanged. */
-export function preservePrimaryContentSidebarLayouts($: ReturnType<typeof load>): void {
+export function preservePrimaryContentSidebarLayouts($: ReturnType<typeof load>,
+  primaryContentSelectors: readonly string[] = GAMING_PRIMARY_CONTENT_SELECTORS): void {
   const primaryAncestors = new Set<unknown>();
-  $(GAMING_PRIMARY_CONTENT_SELECTOR).each((_, element) => {
+  const rememberPrimary = (_: number, element: cheerio.Element) => {
     primaryAncestors.add(element);
     // Share ancestry work across nested layouts and primary regions. Looking
     // through every candidate's descendants would repeat a quadratic DOM walk.
     for (let parent = element.parent; parent && !primaryAncestors.has(parent); parent = parent.parent) {
       primaryAncestors.add(parent);
     }
-  });
+  };
+  const activeSelectors = primaryContentSelectors.length ? primaryContentSelectors : GAMING_PRIMARY_CONTENT_SELECTORS;
+  const boundedSelectors = activeSelectors.slice(0, GAMING_PRIMARY_CONTENT_SELECTOR_LIMIT);
+  try { $(boundedSelectors.join(',')).each(rememberPrimary); } catch {
+    // Reviewed profiles use one combined selection. Isolate malformed optional
+    // hints only on the exceptional path so valid siblings remain usable.
+    for (const selector of boundedSelectors) {
+      try { $(selector).each(rememberPrimary); } catch { /* Invalid optional hints do not disable valid siblings. */ }
+    }
+  }
   $("[class$='-sidebar'],[class$='__sidebar']").each((_, element) => {
     const node = $(element);
     const classes = (node.attr('class') ?? '').split(/\s+/u).filter(Boolean);

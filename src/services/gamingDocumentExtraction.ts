@@ -193,12 +193,17 @@ const SOURCE_ROLE_ASSIGNMENT_PATTERN = new RegExp(
 export const GAMING_MARKDOWN_ROLE_HEADING_PATTERN = /#{1,6}[^\S\r\n]*(?:system|developer|assistant)\b(?![^\S\r\n]+(?:requirements?|resources?|settings?)\b)/gi;
 const SOURCE_INSTRUCTION_LINE_PATTERN = new RegExp(String.raw`^\s*(?:\[(?:system|developer|assistant|instructions?|mode|request|output)\]|<(?:system|developer|assistant)>|${GAMING_MARKDOWN_ROLE_HEADING_PATTERN.source}).*$`, 'gim');
 
-/** Shared acquisition profiles: downstream query ranking does not select a different document transport. */
-export function gamingDocumentFetchOptions(url: string, options: FetchAndCleanOptions = {}): FetchAndCleanOptions {
+/** Existing URL-scoped layout policy, shared by prose and structured extraction. */
+export function gamingDocumentExtractionProfile(url: string) {
   const domain = new URL(url).hostname.toLowerCase();
-  const profile = GAMING_PUBLISHER_EXTRACTION_PROFILES.find((entry) =>
+  return GAMING_PUBLISHER_EXTRACTION_PROFILES.find((entry) =>
     entry.domains.some((candidate) => domain === candidate || domain.endsWith(`.${candidate}`))
   );
+}
+
+/** Shared acquisition profiles: downstream query ranking does not select a different document transport. */
+export function gamingDocumentFetchOptions(url: string, options: FetchAndCleanOptions = {}): FetchAndCleanOptions {
+  const profile = gamingDocumentExtractionProfile(url);
   return {
     ...options,
     includeLinks: false,
