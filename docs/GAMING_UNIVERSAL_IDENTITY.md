@@ -145,7 +145,7 @@ acquired identities remain bounded negative paths. Additional acquired-document
 tests cover Journey, Silver Harbor, Slate Meridian, localized titles, novel
 guide-framed topics, incomplete statistics and durable consent.
 
-Internal CLEAR policy v5 invalidates prior v1/v2/v3/v4 assessments while preserving
+Internal CLEAR policy v6 invalidates prior v1/v2/v3/v4/v5 assessments while preserving
 the public `gaming-clear/v1` schema. Context fingerprints include the policy
 revision, and approved hybrid ingestion revisions bind that revision. Existing
 extraction caches may reuse bounded acquired bytes; approval decisions require
@@ -164,6 +164,22 @@ Source-local aliases can establish prose ownership, but an alias-valued structur
 Game field is conservatively excluded. It is not promoted into a canonical
 record or shared across sources; supporting it throughout storage and selection
 would require a separately designed provenance contract.
+
+Complete, bounded sentences introduced by “For comparison, in ...” or
+“By comparison, in ...” use the existing local-reference projection. Their game
+mentions cannot establish article identity, edition applicability, or gameplay
+claim support. Independent source-global declarations and a second affirmative
+game clause remain inspectable; incomplete or over-budget references are never
+discarded to obtain acceptance. The acquired document remains unchanged for
+hashes and provenance. Original games, remakes, remasters and sequels still need
+matching complete acquired identity; no publisher or game-specific exception is
+introduced.
+
+Bare location clauses must own their leading nominal subject before metadata
+title inference can assert another game. A price or purpose after a nested
+“for/in/on” phrase cannot rename the acquired location. Explicit named-game
+declarations, known game aliases, guide-framed unfamiliar names and full
+sequel/remake qualifiers retain their existing contradiction checks.
 
 Deployment identity and live acceptance remain separate gates:
 `DEPLOYED_SHA_UNVERIFIED` and `LIVE_ACCEPTANCE_NOT_RUN`.

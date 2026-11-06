@@ -3029,6 +3029,7 @@ export async function buildGamingRagContext(
       game,
       mode: input.mode,
       patchSensitive,
+      excludedUrls: candidates.map(candidate => candidate.fetchUrl),
       ...(requestSignal ? { signal: requestSignal } : {})
     });
     searchProvider = discoveryResult.searchProvider;

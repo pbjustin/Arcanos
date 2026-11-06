@@ -83,6 +83,8 @@ export interface GamingDiscoveryInput extends Pick<GamingPlayerContext, "class" 
   requestedVersion?: string;
   signal?: AbortSignal;
   provider?: GamingSearchProvider;
+  /** Already attempted candidates stay excluded even when search results are cached. */
+  excludedUrls?: readonly string[];
 }
 
 export interface GamingDiscoveryResult {
@@ -683,10 +685,18 @@ export async function discoverGamingSources(input: GamingDiscoveryInput): Promis
   const rankingStartedAt = Date.now();
   const topicTerms = buildQueryTopicTerms(input);
   const deduped = new Map<string, GamingSearchResult>();
+  const excludedUrls = new Set((input.excludedUrls ?? []).slice(0, MAX_PROVIDER_RANK).flatMap(url => {
+    const admission = sanitizeGamingDiscoveryCandidateUrl(url);
+    return admission.url && !admission.rejected ? [admission.url] : [];
+  }));
   let rejectedCandidateCount = 0;
   for (const result of searchResults) {
     const normalizedUrl = sanitizeGamingDiscoveryCandidateUrl(result.url);
     if (normalizedUrl.rejected || !normalizedUrl.url) {
+      rejectedCandidateCount += 1;
+      continue;
+    }
+    if (excludedUrls.has(normalizedUrl.url)) {
       rejectedCandidateCount += 1;
       continue;
     }
@@ -726,7 +736,21 @@ export async function discoverGamingSources(input: GamingDiscoveryInput): Promis
     || left.providerRank - right.providerRank
     || left.url.localeCompare(right.url)
   );
-  const candidates = scoredCandidates.slice(0, getGamingDiscoveryFetchCandidateLimit());
+  // A modest repeated-host penalty diversifies similarly suitable pages. Strong
+  // topic matches still win; this ranking never establishes evidence authority.
+  const candidates: GamingDiscoveredCandidate[] = [];
+  const domainCounts = new Map<string, number>();
+  const remaining = [...scoredCandidates];
+  const adjustedScore = (candidate: GamingDiscoveredCandidate) => candidate.score
+    - 0.08 * (domainCounts.get(normalizeDomain(new URL(candidate.url).hostname)) ?? 0);
+  while (remaining.length && candidates.length < getGamingDiscoveryFetchCandidateLimit()) {
+    remaining.sort((left, right) => adjustedScore(right) - adjustedScore(left)
+      || right.score - left.score || left.providerRank - right.providerRank || left.url.localeCompare(right.url));
+    const candidate = remaining.shift()!;
+    candidates.push(candidate);
+    const domain = normalizeDomain(new URL(candidate.url).hostname);
+    domainCounts.set(domain, (domainCounts.get(domain) ?? 0) + 1);
+  }
   const rankingElapsedMs = Date.now() - rankingStartedAt;
   if (candidates.length === 0) {
     return emptyDiscoveryResult(startedAt, "DISCOVERY_LOW_QUALITY", {

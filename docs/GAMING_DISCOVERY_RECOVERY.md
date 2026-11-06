@@ -16,6 +16,15 @@ not evidence. Frontend readability is preliminary because ARCANOS may be unable
 to acquire the same page. Search queries exclude private player information,
 credentials, account identifiers and unrelated conversation history.
 
+The separately configured backend discovery adapter keeps its existing provider
+interface and permissions. It excludes already attempted source URLs before
+filling fetch slots, including cached search results, and applies a small
+repeated-domain ranking penalty to similarly relevant pages. Stronger topic
+matches retain priority. These discovery hints never establish accessibility,
+game identity, edition compatibility or claim support. The MCP workflow still
+delegates search to the host; enabling a hosted Responses `web_search` adapter
+requires a separately authorized route and provider budget.
+
 ARCANOS independently acquires source content and checks identity, integrity,
 relevance, applicability and provenance through the existing document resolver,
 selection, coverage and CLEAR path. The backend selects a compact evidence set

@@ -33,7 +33,7 @@ import { extractGamingDocumentEvidence } from './gamingDocumentEvidence.js';
 import { extractGamingCurrentnessDocument } from './gamingCurrentnessDocument.js';
 import type { GamingCurrentnessDocumentMetadata } from '@shared/gaming/gamingCurrentnessAdapters.js';
 
-export const GAMING_DOCUMENT_RESOLVER_VERSION = "gaming-document-v4";
+export const GAMING_DOCUMENT_RESOLVER_VERSION = "gaming-document-v5";
 const acquisitionAttestations = new WeakMap<GamingDocumentAcquisition, string>();
 const documentBinding = (document: ResolvedGamingDocument): string => createHash("sha256")
   .update(JSON.stringify({ requestedUrl: document.requestedUrl, canonicalUrl: document.canonicalUrl,

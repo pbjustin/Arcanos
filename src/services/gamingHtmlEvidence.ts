@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { load } from 'cheerio';
+import { preservePrimaryContentSidebarLayouts } from '@shared/gaming/gamingDocumentTextNormalization.js';
 import { countGamingHtmlElements, filterGamingDocumentInstructions, hasGamingActionableProse, GAMING_DOCUMENT_FURNITURE_SELECTOR } from '@services/gamingDocumentExtraction.js';
 import {
   GAMING_EVIDENCE_UNIT_POLICY_VERSION,
@@ -106,6 +107,7 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
   // Runtime Cheerio uses parse5; the repository's legacy ambient types omit its location option.
   const parseOptions = { sourceCodeLocationInfo: true };
   const $ = load(input.body, parseOptions as Parameters<typeof load>[1]);
+  preservePrimaryContentSidebarLayouts($);
   if (deadlineExpired()) return result;
   const visibleBody = $('body').clone();
   visibleBody.find('script,style,template,noscript').remove();

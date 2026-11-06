@@ -439,8 +439,16 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
       && /^(?:guide|build)$/iu.test(firstInstructionMarker[0])
       && /^\s+(?:a|an|the|your|our|their|my|his|her|its|them|him|us|me)\b/iu.test(
         bodySubject.slice(firstInstructionMarker.index + firstInstructionMarker[0].length)));
-    const detected = leading.game ? leading : metadataSubject.source !== 'alias' && !instructionalClause ? metadataSubject : leading;
     const subjectIdentity = normalizeGamingGameIdentity(bodySubject);
+    const metadataIdentity = metadataSubject.game ? normalizeGamingGameIdentity(metadataSubject.game) : '';
+    // Metadata discovery can find a title after "for/in/on" anywhere in text.
+    // A bare acquired location scope must own its leading subject: a price in
+    // "in Amber Woods for 25 tokens" cannot become the game "25 tokens".
+    // Explicit game declarations and guide-framed unknown names remain binding.
+    const ownsMetadataSubject = explicitGameScope || Boolean(firstInstructionMarker)
+      || Boolean(metadataIdentity && (subjectIdentity === metadataIdentity || subjectIdentity.startsWith(`${metadataIdentity}-`)));
+    const detected = leading.game ? leading : metadataSubject.source !== 'alias' && !instructionalClause && ownsMetadataSubject
+      ? metadataSubject : leading;
     const expectedSubject = [...expected].some(game => subjectIdentity === game || subjectIdentity.startsWith(`${game}-`));
     for (const game of expected) {
       if (!subjectIdentity.startsWith(`${game}-`) || sourceGameMatches(bodySubject)) continue;

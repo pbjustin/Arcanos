@@ -79,8 +79,16 @@ Player-facing instructions such as following a mission walkthrough are normal
 evidence. Assistant control instructions remain a document-level rejection,
 including instructions in acquired title/heading metadata or text omitted by
 the context projection budget. Sanitization is not approval of the remainder.
-Resolver `gaming-document-v4` separates these extraction decisions from cached
-v3 resolutions and durable revision identity.
+Resolver `gaming-document-v5` separates the current extraction decisions from
+older cached resolutions and durable revision identity.
+
+Class tokens such as `has-game-sidebar` describe a layout containing a sidebar.
+When they enclose a semantic primary article, they no longer discard that article
+as sidebar furniture. Explicit sidebars, hidden content and complementary roles
+remain excluded. The six-level qualifier context bound is unchanged; a record
+whose context cannot be fully inspected remains partial even when independent
+article prose is available. Full-response instruction and source-use inspection
+still precedes acceptance.
 
 Supported HTML structures are headered tables with captions, nearby headings,
 row/column headers and explicit header associations; bounded unambiguous spans;

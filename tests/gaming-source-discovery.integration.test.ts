@@ -648,6 +648,7 @@ describe('Gaming RAG discovery integration', () => {
       guideUrl: suppliedUrl
     }));
 
+    expect(mockDiscoverGamingSources).toHaveBeenCalledWith(expect.objectContaining({ excludedUrls: [suppliedUrl] }));
     expect(result.sources).toEqual([
       expect.objectContaining({ url: discoveredUrl, snippet: expect.any(String) }),
       { url: suppliedUrl, error: 'Source access was blocked.' }

@@ -1,3 +1,4 @@
+import { preservePrimaryContentSidebarLayouts } from './gaming/gamingDocumentTextNormalization.js';
 import axios from 'axios';
 import { contains, load } from 'cheerio';
 import { Resolver } from 'node:dns/promises';
@@ -768,6 +769,7 @@ export function extractFetchAndCleanDocument(
   const extractionStartedAt = Date.now();
   const parserOptions = options.preservePrimaryContentHeading ? { sourceCodeLocationInfo: true } : undefined;
   const $ = load(responseText, parserOptions as Parameters<typeof load>[1]);
+  if (options.preservePrimaryContentHeading) preservePrimaryContentSidebarLayouts($);
   $('script, style, noscript').remove();
   const rawTextLength = normalizeExtractedText($('body').text()).length;
   const removeSelectors = (options.removeSelectors ?? []).slice(0, MAX_EXTRACTION_SELECTORS * 4);

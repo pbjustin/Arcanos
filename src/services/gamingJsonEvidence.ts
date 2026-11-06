@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { load } from 'cheerio';
 import { countGamingHtmlElements, filterGamingDocumentInstructions, GAMING_DOCUMENT_FURNITURE_SELECTOR } from '@services/gamingDocumentExtraction.js';
-import { normalizeGamingDocumentInstructionCharacters } from '@shared/gaming/gamingDocumentTextNormalization.js';
+import { normalizeGamingDocumentInstructionCharacters, preservePrimaryContentSidebarLayouts } from '@shared/gaming/gamingDocumentTextNormalization.js';
 import {
   GAMING_EVIDENCE_UNIT_POLICY_VERSION,
   type GamingEvidenceExtractionInput,
@@ -379,6 +379,7 @@ export function extractGamingJsonEvidence(input: GamingEvidenceExtractionInput):
     // The installed parser supports source locations; the repository also includes older ambient Cheerio types.
     const parserOptions = { xmlMode: false, sourceCodeLocationInfo: true };
     const $ = load(input.body, parserOptions);
+    preservePrimaryContentSidebarLayouts($);
     if (deadlineExpired()) return result;
     $('template, noscript').remove();
     const scripts = $('script');

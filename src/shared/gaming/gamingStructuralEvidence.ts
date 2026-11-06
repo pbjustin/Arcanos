@@ -72,9 +72,12 @@ function withoutBoundedGamingReferences(text: string, units: readonly GamingEvid
   text: string; excludedReferenceCount: number;
 } {
   let excludedReferenceCount = 0;
-  const projected = text.replace(/(?:^|(?<=[.!?])\s+)(?:(?:historically|previously)[,:]?\s+in(?:\s+the\s+game)?\s+|(?:historical references?|related articles?|recommended(?:\s+(?:articles?|guides?|reading))?|read next|references?)\s*:\s*)[^.!?\n]{1,512}[.!?](?=\s|$)/giu,
+  const projected = text.replace(/(?:^|(?<=[.!?])\s+)(?:(?:historically|previously)[,:]?\s+in(?:\s+the\s+game)?\s+|(?:for|by)\s+comparison\s*,\s+in(?:\s+the\s+game)?\s+|(?:historical references?|related articles?|recommended(?:\s+(?:articles?|guides?|reading))?|read next|references?)\s*:\s*)[^.!?\n]{1,512}[.!?](?=\s|$)/giu,
     reference => {
       if (hasUnquotedPrimarySourceDeclaration(reference) || /\bgame\s*:/iu.test(reference)
+        // The comparison frame owns only its first scope. A subsequent acquired
+        // game clause may be an independent contradiction, not a reference.
+        || /^\s*(?:for|by)\s+comparison\b/iu.test(reference) && [...reference.matchAll(/\bin(?:\s+the\s+game)?\s+/giu)].length !== 1
         || units.some(unit => unit.text.includes(reference.trim()))) return reference;
       excludedReferenceCount++;
       return ' ';

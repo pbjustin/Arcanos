@@ -1184,7 +1184,7 @@ currentness adapters and durable storage eligibility require their separate
 existing source-policy review. Runtime submissions cannot mutate the registry.
 
 CLEAR policy v3 introduced rejection of persisted v1/v2 assessments. The
-current v4 policy also rejects v3 assessments until sources are reassessed.
+current v6 policy also rejects v3/v4/v5 assessments until sources are reassessed.
 Both preserve the public `gaming-clear/v1` rubric and wire shape.
 Context fingerprints bind the registry schema, revision and a hash of its exact
 reviewed data. Existing bounded extraction caches can reuse acquired bytes, but

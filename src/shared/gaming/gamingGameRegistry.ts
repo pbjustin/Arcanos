@@ -236,7 +236,8 @@ export function gamingApplicabilityAssertionContext(text: string, index: number)
   const before = text.slice(Math.max(0, index - APPLICABILITY_SCOPE_LIMITS.contextChars), index);
   const prefix = before.slice(Math.max(...['.', '!', '?', ';', ',', '\n'].map(boundary => before.lastIndexOf(boundary))) + 1);
   return { complete: index <= APPLICABILITY_SCOPE_LIMITS.contextChars || !/^\s*$/u.test(before),
-    reference: /\b(?:unlike|compared(?:\s+(?:to|with))?|comparison(?:\s+(?:to|with))?|contrast(?:\s+(?:to|with))?|similar(?:ly)?|rather\s+than|instead\s+of|as(?:\s+is\s+the\s+case)?|like)\s*$/iu.test(prefix)
+    reference: /(?:^|[.!?;\n])\s*(?:for|by)\s+comparison\s*,\s*$/iu.test(before)
+      || /\b(?:unlike|compared(?:\s+(?:to|with))?|comparison(?:\s+(?:to|with))?|contrast(?:\s+(?:to|with))?|similar(?:ly)?|rather\s+than|instead\s+of|as(?:\s+is\s+the\s+case)?|like)\s*$/iu.test(prefix)
       || /\b(?:not(?:\s+(?:apply|applicable|valid|available|supported|used|found|present|exist|included|be|for|require|requires)){0,4}|(?:doesn|isn|aren|don|didn)['’]?t(?:\s+(?:apply|exist|work|require))?|without|except|excluding|unavailable|unsupported)\s*$/iu.test(prefix) };
 }
 

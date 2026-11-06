@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-06T02:33:29.578Z",
+  "generatedAt": "2026-11-06T16:50:42.357Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4591,6 +4591,9 @@
           "relativePath": "tests/gaming-durable-rag-preview.test.ts"
         },
         {
+          "relativePath": "tests/gaming-evidence-identity-reliability.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-execution-budget.test.ts"
         },
         {
@@ -4726,6 +4729,9 @@
           "relativePath": "tests/gaming-instruction-normalization.test.ts"
         },
         {
+          "relativePath": "tests/gaming-intelligent-search-http.integration.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-json-evidence-preflight.test.ts"
         },
         {
@@ -4739,6 +4745,9 @@
         },
         {
           "relativePath": "tests/gaming-large-source-preview.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-layout-extraction.test.ts"
         },
         {
           "relativePath": "tests/gaming-legacy-instruction-boundary.test.ts"
@@ -4760,6 +4769,9 @@
         },
         {
           "relativePath": "tests/gaming-location-scope.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-long-walkthrough.test.ts"
         },
         {
           "relativePath": "tests/gaming-mcp-preview-fixture.test.ts"
