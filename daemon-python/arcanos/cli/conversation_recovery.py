@@ -28,10 +28,10 @@ class ConversationRecovery:
         self.cli = cli
         self.client = cli.backend_client
         self.identity = self.client.continuation_identity()
-        self.reader = self.client.continuation_reader()
+        self.stop_event = threading.Event()
+        self.reader = self.client.continuation_reader(self.stop_event.is_set)
         self.store = store if store is not None else ContinuationStore(Config.DATA_DIR, self.identity)
         self.clock = clock
-        self.stop_event = threading.Event()
         self.wakeup = threading.Event()
         self.thread: threading.Thread | None = None
         self.schedule: dict[str, tuple[float, int]] = {}

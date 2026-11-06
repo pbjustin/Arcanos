@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import time
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional, Sequence
 from urllib.parse import urlsplit
@@ -48,6 +49,7 @@ from ..config import Config, is_valid_control_plane_access_token, is_valid_daemo
 from arcanos.debug import log_audit_event
 
 DAEMON_ACCESS_TOKEN_HEADER_NAME = "x-arcanos-daemon-token"
+MAX_CONTINUATION_RESPONSE_BYTES = 512 * 1024  # Backend absolute JSON/Storyline response ceiling.
 SENSITIVE_CAPABILITY_HEADER_NAMES = frozenset(
     {
         "authorization",
@@ -150,6 +152,7 @@ class BackendApiClient:
         )
         self._timeout_seconds = timeout_seconds
         self._request_sender = request_sender
+        self._continuation_cancelled: Optional[Callable[[], bool]] = None
 
     def continuation_identity(self) -> str:
         """Bind recovery to this normalized backend and its configured writing credential."""
@@ -160,12 +163,68 @@ class BackendApiClient:
             ("arcanos-conversation-recovery-v1\0" + self._base_url + "\0" + credential).encode("utf-8")
         ).hexdigest()
 
-    def continuation_reader(self) -> "BackendApiClient":
+    def continuation_reader(self, cancelled: Optional[Callable[[], bool]] = None) -> "BackendApiClient":
         """Reuse the existing transport with a bounded read timeout and no credential refresh."""
-        return BackendApiClient(
+        reader = BackendApiClient(
             self._base_url, self._token_provider, min(self._timeout_seconds, 2),
             self._request_sender, self._daemon_access_token_provider,
         )
+        reader._continuation_cancelled = cancelled or (lambda: False)
+        return reader
+
+    def _read_continuation_response(self, method: str, url: str, options: dict[str, Any]) -> requests.Response:
+        """Bound original-job response bodies without changing ordinary API transport.
+
+        The body budget includes time already spent connecting/receiving headers.
+        It is checked between bytes and can overshoot by one inactivity wait.
+        Requests still owns DNS and header reads; their inactivity semantics are
+        not an absolute wall-clock deadline. No reader thread is detached.
+        """
+        cancelled = self._continuation_cancelled
+        started = time.monotonic()
+
+        def check_budget() -> None:
+            if (cancelled is not None and cancelled()) or time.monotonic() - started >= self._timeout_seconds:
+                raise requests.Timeout("Conversation recovery read stopped or exceeded its body budget.")
+
+        check_budget()
+        response = self._request_sender(method, url, **{
+            **options, "stream": True,
+        })
+        # Injectable transports may already return materialized JSON responses.
+        # Real Requests responses always take the bounded streaming path below.
+        if not isinstance(response, requests.Response):
+            return response
+        closed = False
+        try:
+            if response.status_code in (401, 403):
+                # Authorization failure is authoritative without reading an
+                # untrusted/slow body. Close it before hydrating an empty cache.
+                response.close()
+                closed = True
+                response._content = b""
+                response._content_consumed = True
+                return response
+            check_budget()
+            length = response.headers.get("Content-Length", "").lstrip("0") or "0"
+            if length.isdecimal() and (len(length) > len(str(MAX_CONTINUATION_RESPONSE_BYTES))
+                                       or int(length) > MAX_CONTINUATION_RESPONSE_BYTES):
+                raise requests.RequestException("Conversation recovery result exceeds its byte limit.")
+            body = bytearray()
+            for chunk in response.iter_content(chunk_size=1):
+                check_budget()
+                if len(body) + len(chunk) > MAX_CONTINUATION_RESPONSE_BYTES:
+                    raise requests.RequestException("Conversation recovery result exceeds its byte limit.")
+                body.extend(chunk)
+            check_budget()
+            # Hydrate Requests' normal body cache only after complete bounded
+            # consumption. Existing JSON/status parsing remains authoritative.
+            response._content = bytes(body)
+            response._content_consumed = True
+            return response
+        finally:
+            if not closed:
+                response.close()
 
     @staticmethod
     def _normalize_metadata(metadata: Optional[Mapping[str, Any]]) -> Optional[dict[str, Any]]:
@@ -901,11 +960,10 @@ class BackendApiClient:
             }
             if context.has_sensitive_capability_header:
                 request_options["allow_redirects"] = False
-            response = self._request_sender(
-                method,
-                context.url,
-                **request_options,
-            )
+            if self._continuation_cancelled is not None and context.has_job_read_token and method.lower() == "get":
+                response = self._read_continuation_response(method, context.url, request_options)
+            else:
+                response = self._request_sender(method, context.url, **request_options)
         except requests.Timeout as exc:
             return self._build_logged_error_response(
                 method,
