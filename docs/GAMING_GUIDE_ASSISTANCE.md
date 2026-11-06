@@ -1209,6 +1209,12 @@ remain readable by their owning actor. Historical approvals are removed from the
 status projection; queue admission, worker execution and generation still require
 the current policy and its normal binding checks. A readable retained result does
 not authorize replay, refresh or another source write.
+Original retained v1 approvals used `gaming-hybrid-source-policy-v1`; the status
+reader accepts that closed historical value as well as the current source policy.
+Execution admission still requires the current policy. Source-derived v1–v5
+fixtures record their committed producer and blob identities in
+`tests/fixtures/gaming-historical-status/README.md`; they are synthetic records,
+not exported production rows or PostgreSQL acceptance evidence.
 
 Rollback must use a reviewed private release and invalidate reusable decision
 artifacts or force reassessment. An old binary may recognize historical v1

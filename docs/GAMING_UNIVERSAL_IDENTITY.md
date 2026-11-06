@@ -166,7 +166,8 @@ record or shared across sources; supporting it throughout storage and selection
 would require a separately designed provenance contract.
 
 Complete, bounded sentences introduced by “For comparison, in ...” or
-“By comparison, in ...” use the existing local-reference projection. Their game
+“By comparison, in ...”, with either a comma or colon after “comparison”, use
+the existing local-reference projection. Their game
 mentions cannot establish article identity, edition applicability, or gameplay
 claim support. Independent source-global declarations and a second affirmative
 game clause remain inspectable; incomplete or over-budget references are never
@@ -176,6 +177,10 @@ matching complete acquired identity; no publisher or game-specific exception is
 introduced.
 
 An ordinary location inside a comparison does not introduce a second game scope.
+Closed lowercase phrases such as “in the game shop”, “in the game world” and
+“in the game menu” remain locations. Quoting a whole reference clause differs
+from quoting only an independently declared game name; named, unfamiliar and
+ambiguous game declarations remain inspectable.
 Independent named-game clauses and explicit `Game:` or `Edition:` declarations
 remain inspectable. An unfinished or over-budget comparison cannot hide an
 edition assertion or preserve earlier verified compatibility.
@@ -185,6 +190,12 @@ title inference can assert another game. A price or purpose after a nested
 “for/in/on” phrase cannot rename the acquired location. Explicit named-game
 declarations, known game aliases, guide-framed unfamiliar names and full
 sequel/remake qualifiers retain their existing contradiction checks.
+
+A closed page description that merely lists or indexes topic records cannot
+supply gameplay coverage. Fresh plain-text chunks are checked with their exact
+acquired headings and nominal game context before display metadata is redacted.
+The original document and structural provenance remain intact; complete records
+and independent declarative gameplay facts keep their existing selection rules.
 
 Deployment identity and live acceptance remain separate gates:
 `DEPLOYED_SHA_UNVERIFIED` and `LIVE_ACCEPTANCE_NOT_RUN`.

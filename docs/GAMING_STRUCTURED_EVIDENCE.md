@@ -79,7 +79,7 @@ Player-facing instructions such as following a mission walkthrough are normal
 evidence. Assistant control instructions remain a document-level rejection,
 including instructions in acquired title/heading metadata or text omitted by
 the context projection budget. Sanitization is not approval of the remainder.
-Resolver `gaming-document-v5` separates the current extraction decisions from
+Resolver `gaming-document-v6` separates the current extraction decisions from
 older cached resolutions and durable revision identity.
 
 Class tokens such as `has-game-sidebar` describe a layout containing a sidebar.
@@ -93,6 +93,12 @@ remain excluded. The six-level qualifier context bound is unchanged; a record
 whose context cannot be fully inspected remains partial even when independent
 article prose is available. Full-response instruction and source-use inspection
 still precedes acceptance.
+
+Layout normalization and structured extraction also use the existing bounded
+publisher profiles. Profile primary classes receive the same protection as the
+generic primary catalog, while the profile's existing sidebar and navigation
+exclusions apply to HTML records, embedded JSON and prose. These are extraction
+hints, not publisher authority or exceptions to source-use and security policy.
 
 Supported HTML structures are headered tables with captions, nearby headings,
 row/column headers and explicit header associations; bounded unambiguous spans;

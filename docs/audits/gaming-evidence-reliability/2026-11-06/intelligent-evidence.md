@@ -1,5 +1,44 @@
 # Gaming discovery and evidence reliability — 2026-11-06
 
+## Independent remediation from c60b7380
+
+The remote PR head and merge base were verified at
+`c60b738039b5c08efb541e17839be7370a0fc908` and
+`0be1134658195a27353a07b5ca6f86d6e3222546`. Independent reproduction found and
+repaired the following defects; prior review conclusions were not acceptance proof.
+
+| Defect | Before | Repair and regression evidence |
+| --- | --- | --- |
+| Ordinary `in the game shop/world/menu` locations and whole-quoted secondary clauses kept unrelated comparisons live | Initial comparison matrix: 28 failures / 17 passes | One shared closed surface predicate and quote-aware secondary-scope inspection; final comparison suite: 55 passes. Explicit names, quoted names, global declarations and ambiguous/unfinished references stay inspectable. |
+| Colon comparison framing disagreed with comma framing in projection and edition parsing | Direct body/edition matrix: 5 failures / 9 passes; HTTP comparisons: 6 failures / 2 controls passed | Comma and colon share the existing bounded projection and edition context grammar; all 14 direct-parser cases pass. |
+| Genuine v1 retained jobs were rejected by the current source-policy literal | Six v1 state failures / 52 other cases passed | The private status schema accepts the original source-policy v1 value and strips approval. Final historical matrix: 63 passes, including source-derived v1–v5 records, ownership, malformed payloads, execution refusal and current idempotency. |
+| Reviewed publisher primary classes were absent from layout normalization; profile furniture could become structured evidence | Publisher matrix: 12 failures / 4 controls passed | Existing profile selectors and exclusions are shared across prose, HTML and embedded JSON; final matrix: 27 passes. The 24-selector and six-scope bounds remain unchanged. Resolver v6 separates these extraction decisions from prior revisions. |
+| Topic-only page descriptions beside incomplete records could start inference | Two real loopback HTTP cases invoked two SDK stages despite having no gameplay claim | Closed overview-only prose chunks are excluded before metadata redaction, preserving original document hashes, offsets and structured tuples. Both cases now perform zero inference/model validation/storage writes; a separate declarative gameplay fact still completes all four normal deterministic SDK stages. |
+
+The complete supported Gaming sweep passes **192 suites / 6,557 tests** on exact
+Node 24.18.1 / npm 11.16.0. Separate validation passes **496 import-boundary
+tests**, **99 workflow-safety tests**, **43 shared-fetch tests**, type-check,
+build, lint (zero errors / 77 existing warnings), generated-index checks and
+all 812 local documentation links. The 34-case authenticated loopback HTTP suite
+retains the original/remake, base/DLC/Nightreign, Fallout 76/4, Elite Dangerous
+and unregistered-title controls. Full-response instruction/source-use checks,
+URL admission, redirects, actor isolation, CLEAR, Trinity admission and citation
+validation remain enforced. No production resource limit was raised.
+
+The historical fixtures are synthetic outputs derived from the committed
+producers listed in `tests/fixtures/gaming-historical-status/README.md`; they are
+not real retained-row exports. No disposable PostgreSQL server or running local
+Docker engine was available, so PostgreSQL persistence acceptance remains
+unverified. HTTP acquisition/provider boundaries are deterministic fixtures,
+not live-provider or deployed acceptance. Closed overview recognition is not a
+universal semantic proof of every possible prose claim. Existing deep-table
+qualifier limits and external publisher availability remain unchanged.
+
+The PR remains draft and unmerged for independent review. Exact-head CI is
+inspected after publication without waiting for its completion. No merge,
+deployment, production configuration change, paid provider call or Gaming source
+persistence is authorized or claimed by this remediation.
+
 This audit accompanies the draft implementation based on
 `0be1134658195a27353a07b5ca6f86d6e3222546`. Deterministic fixture acceptance,
 live public-source measurements, and production log observations are separate
