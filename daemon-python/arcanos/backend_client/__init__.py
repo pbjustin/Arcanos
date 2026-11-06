@@ -1177,18 +1177,28 @@ class BackendApiClient:
         return _block_plan(self, plan_id)
 
     def _parse_chat_response(self, response_json: Mapping[str, Any]) -> BackendResponse[BackendChatResult]:
+        metadata = dict(response_json)
+        result = response_json.get("result")
+        if (response_json.get("ok") is True and isinstance(response_json.get("_route"), Mapping)
+                and isinstance(result, Mapping)):
+            # Immediate job completion retains the dispatcher envelope. Read its
+            # execution metadata as for result GETs; never promote presentation
+            # or recursively inspect answer content for usage.
+            for key in ("tokens", "cost", "meta", "model", "activeModel"):
+                if key not in metadata and key in result:
+                    metadata[key] = result[key]
         if response_json.get("ok") is True and "result" in response_json:
             response_text = self._extract_chat_text(response_json.get("result"))
             route_meta = response_json.get("_route")
             route_module = route_meta.get("module") if isinstance(route_meta, dict) else None
-            model_hint = response_json.get("model") or response_json.get("activeModel") or route_module
+            model_hint = metadata.get("model") or metadata.get("activeModel") or route_module
         else:
             # Support both "result" (production backend) and "response" (legacy) field names
             response_text = self._extract_chat_text(response_json.get("result") or response_json.get("response"))
             model_hint = response_json.get("model") or response_json.get("activeModel")
 
-        tokens = self._extract_tokens_used(response_json)
-        cost = response_json.get("cost")
+        tokens = self._extract_tokens_used(metadata)
+        cost = metadata.get("cost")
         model = model_hint
 
         if not isinstance(response_text, str):

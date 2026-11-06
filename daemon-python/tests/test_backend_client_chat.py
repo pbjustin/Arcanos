@@ -59,6 +59,47 @@ def _completed_chat_lookup():
 
 
 @pytest.mark.parametrize("method", ["completion", "domain"])
+def test_completed_http200_preserves_authoritative_dispatcher_usage(method):
+    """The real immediate-return envelope carries CORE usage inside its result."""
+    payload = _completed_chat_lookup()["result"]
+    payload["status"] = "completed"
+    client, sender = _chat_wire_client(200, payload)
+    response = _request_sync_chat(client, method)
+    assert response.ok
+    assert response.value.tokens_used == 29
+    assert response.value.cost_usd == 0.002
+    assert response.value.model == "fixture-completed-model"
+    assert response.value.response_text == payload["result"]["result"]
+    assert response.value.presentation is None
+    assert sender.call_count == 1 and sender.call_args.args[0] == "post"
+
+
+def test_immediate_dispatcher_usage_preserves_outer_precedence_and_presentation():
+    """Nested execution metrics cannot replace explicit outer values or assert presentation."""
+    payload = _completed_chat_lookup()["result"]
+    payload.update(tokens=7, cost=0.5, model="outer-model")
+    payload["result"]["presentation"] = "public-answer-v1"
+    client, _ = _chat_wire_client(200, payload)
+    response = _request_sync_chat(client, "completion")
+    assert response.ok
+    assert (response.value.tokens_used, response.value.cost_usd, response.value.model) == (7, 0.5, "outer-model")
+    assert response.value.presentation is None
+
+
+@pytest.mark.parametrize("payload", [
+    {"ok": True, "result": {"text": "Structured answer", "tokens": 900, "cost": 10, "model": "nested"}},
+    {"ok": True, "_route": {"gptId": "arcanos-daemon"},
+     "result": {"result": {"text": "Structured answer", "tokens": 900, "cost": 10, "model": "nested"}}},
+])
+def test_immediate_usage_does_not_walk_unmarked_or_deep_answer_content(payload):
+    """Only the server dispatcher's immediate execution metadata supplies missing metrics."""
+    client, _ = _chat_wire_client(200, payload)
+    response = _request_sync_chat(client, "completion")
+    assert response.ok
+    assert (response.value.tokens_used, response.value.cost_usd, response.value.model) == (0, 0.0, "unknown")
+
+
+@pytest.mark.parametrize("method", ["completion", "domain"])
 def test_accepted_chat_retains_private_continuation_without_polling(method, monkeypatch):
     """The response stays pending while retaining only bounded, validated coordinates."""
     events = []
