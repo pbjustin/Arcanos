@@ -221,6 +221,27 @@ def install_native_observers() -> None:
                        standard_matches_crt=std == crt)
 
     ArcanosCLI.__init__ = observed_init
+    if scenario.get("observeRecoveryShutdown") is True:
+        from arcanos.cli.conversation_recovery import ConversationRecovery
+        original_stop = ConversationRecovery.stop
+
+        def observed_stop(controller):
+            """Measure actual foreground shutdown without cancelling or replacing its worker."""
+            was_alive = controller.thread is not None and controller.thread.is_alive()
+            started = real_monotonic()
+            result = original_stop(controller)
+            elapsed = real_monotonic() - started
+            try:
+                protected_count = len(controller.store.load())
+            except Exception:
+                protected_count = None  # Unavailable evidence is never a zero-count claim.
+            record("recovery_shutdown", elapsed_seconds=elapsed,
+                   worker_was_alive=was_alive,
+                   worker_alive_after=controller.thread is not None and controller.thread.is_alive(),
+                   protected_record_count=protected_count)
+            return result
+
+        ConversationRecovery.stop = observed_stop
     original_ask = ArcanosCLI.handle_ask
 
     def result_metadata(value):
@@ -315,6 +336,7 @@ def install_native_observers() -> None:
             except Exception:
                 pass  # Observation storage must not change the actual HTTP/client outcome.
         if accepted or job_read:
+            response._native_payload_observed = True
             if _kwargs.get("stream") is True:
                 original_json = response.json
                 observed = False
@@ -353,6 +375,24 @@ def install_native_observers() -> None:
 
     requests.Session.__init__ = observed_session_init
 
+    from arcanos.backend_client import BackendApiClient
+    original_continuation_response = BackendApiClient._read_continuation_response
+
+    def observed_continuation_response(client, method, url, options):
+        """Observe the parent transport boundary after the real helper HTTP read."""
+        try:
+            record("job_read_started", pid=os.getpid(), at=real_monotonic())
+        except Exception:
+            pass  # An observation failure must not change an accepted-job read.
+        response = original_continuation_response(client, method, url, options)
+        # Synthetic sender seams can still use the local Requests session hook;
+        # the production child has no fixture monkeypatches or profile imports.
+        if not getattr(response, "_native_payload_observed", False):
+            return after_response(response, stream=True)
+        return response
+
+    BackendApiClient._read_continuation_response = observed_continuation_response
+
     boundary = scenario.get("crashBoundary")
     if boundary is not None:
         if boundary not in ("before_persistence", "after_persistence", "during_get", "after_result",
@@ -377,15 +417,26 @@ def install_native_observers() -> None:
 
             ContinuationStore.add = interrupted_add
         elif boundary == "during_get":
-            original_chunks = requests.Response.iter_content
+            def crash_while_get_is_active():
+                """Observe a real server marker before killing the native foreground."""
+                marker = root.parent / "recovery-get-active"
+                deadline = real_monotonic() + 5
+                while not marker.is_file():
+                    if real_monotonic() >= deadline:
+                        record("crash_boundary_unreached", boundary=boundary)
+                        os._exit(98)
+                    time.sleep(0.02)
+                crash()
 
-            def interrupted_chunks(response, *args, **kwargs):
-                for chunk in original_chunks(response, *args, **kwargs):
-                    if urlsplit(response.url).path.startswith("/jobs/"):
-                        crash()
-                    yield chunk
+            original_inflight_read = BackendApiClient._read_continuation_response
 
-            requests.Response.iter_content = interrupted_chunks
+            def interrupted_inflight_read(client, *args, **kwargs):
+                """Start fault observation only when the real result transport begins."""
+                threading.Thread(target=crash_while_get_is_active, name="acceptance-get-crash",
+                                 daemon=True).start()
+                return original_inflight_read(client, *args, **kwargs)
+
+            BackendApiClient._read_continuation_response = interrupted_inflight_read
         elif boundary == "after_result":
             from arcanos.backend_client import BackendApiClient
             original_result = BackendApiClient.request_chat_job_result
@@ -589,6 +640,17 @@ def native_cli(daemon_root: str, base_url: str, scenario_path: str, receipt_path
                 connection.close()
         for index, step in enumerate(scenario["steps"], start=1):
             wait_input(index)
+            if step.get("waitForFile") is not None:
+                marker_name = step["waitForFile"]
+                if not isinstance(marker_name, str) or re.fullmatch(r"[A-Za-z0-9_-]{1,64}", marker_name) is None:
+                    raise ValueError("Expected a bounded local acceptance marker name")
+                marker = receipt_file.parent / marker_name
+                deadline = time.monotonic() + 5
+                while not marker.is_file():
+                    code = child.returncode if scenario.get("tty") else child.poll()
+                    if time.monotonic() >= deadline or code is not None:
+                        raise TimeoutError("The real HTTP boundary marker was not reached")
+                    time.sleep(0.02)
             delay = step.get("waitBeforeMs", 0)
             if not isinstance(delay, int) or not 0 <= delay <= 2000:
                 raise ValueError("Native input delay must be bounded to two seconds")

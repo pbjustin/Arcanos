@@ -469,6 +469,7 @@ async function runOwnershipCase(python: string, userSite: string, sandbox: strin
   'quota_pending',
   'crash_before_persistence', 'crash_after_persistence', 'crash_during_get', 'crash_after_result',
   'crash_before_sql', 'crash_after_sql', 'crash_during_display', 'crash_before_ack', 'active_reader_failure',
+  'slow_headers_shutdown',
 ] as const)(
   'delivers the original answer automatically with %s recovery and no resume command', async mode => {
     const python = process.env.PYTHON_EXECUTABLE || 'python';
@@ -500,6 +501,7 @@ async function runOwnershipCase(python: string, userSite: string, sandbox: strin
     let overlappingAcceptedJobs = false;
     let offlineRestart: ReturnType<typeof setTimeout> | undefined;
     let offlineReadOutage = false;
+    let cancelledSlowHeaders = false;
     const ownershipMode = mode.startsWith('process_owner_');
     const ownerRelease = ownershipMode || mode === 'quota_pending' ? setInterval(() => {
       if (existsSync(path.join(sandbox, 'owner-provider-release'))) releaseProvider();
@@ -533,6 +535,23 @@ async function runOwnershipCase(python: string, userSite: string, sandbox: strin
         row.capabilityBound = [jobId, secondJobId].includes(requestJobId)
           && req.get('x-arcanos-job-read-token') === issueJobReadCapability(requestJobId, secret)
           && req.originalUrl === `/jobs/${requestJobId}/result` && !req.get('x-arcanos-daemon-token');
+        if (resultReads === 1 && ['crash_during_get', 'slow_headers_shutdown'].includes(mode)) {
+          const json = res.json.bind(res);
+          // The real job router must authorize and construct its response first.
+          res.json = body => {
+            if (mode === 'crash_during_get') {
+              writeFileSync(path.join(sandbox, 'recovery-get-active'), 'active');
+              setTimeout(() => { if (!res.destroyed) json(body); }, 700);
+            } else {
+              const socket = res.socket!;
+              socket.write('HTTP/1.1 200 OK\r\nX-Controlled-Slow-Header: ');
+              writeFileSync(path.join(sandbox, 'slow-headers-active'), 'active');
+              const progress = setInterval(() => { if (!socket.destroyed) socket.write('x'); }, 100);
+              socket.once('close', () => { clearInterval(progress); cancelledSlowHeaders = true; });
+            }
+            return res;
+          };
+        }
         if (!['restart', 'backend_restart', 'tampered_storage', 'different_backend', 'different_user', 'multiple',
           'process_owner_live', 'process_owner_same_session', 'process_owner_exit', 'process_owner_crash', 'process_owner_restart', 'quota_pending'].includes(mode)) res.once('finish', releaseProvider);
         if (mode === 'temporary_503' && resultReads <= 2) {
@@ -580,6 +599,46 @@ async function runOwnershipCase(python: string, userSite: string, sandbox: strin
         writeFileSync(path.resolve('tmp/automatic-continuation', mode + '-proof.json'), JSON.stringify({
           mode, observed, actualConPTY: true, realPythonHttp: true, readerFailures: 1,
           generationRequests, resultReads, providerCalls: 0, history: receipt.history, noLeaks: true,
+        }, null, 2));
+        return;
+      } else if (mode === 'slow_headers_shutdown') {
+        const first = await runAutomaticCliCase(python, userSite.stdout.trim(), sandbox, baseUrl, mode + '-before', {
+          observeRecoveryShutdown: true, persistentProfile: mode,
+          steps: [{ input: 'what can u do?' }, { input: '/exit', waitForFile: 'slow-headers-active' }],
+        });
+        expect(first.exit_code).toBe(0);
+        expect(first.history).toHaveLength(0);
+        expect(first.final_state.statistics.total_requests).toBe(0);
+        expect(first.observations.filter((row: { event: string }) => row.event === 'accepted_response'))
+          .toEqual([expect.objectContaining({ job_id: jobId, valid_capability: true })]);
+        const shutdowns = first.observations.filter((row: { event: string; worker_was_alive?: boolean }) =>
+          row.event === 'recovery_shutdown' && row.worker_was_alive);
+        expect(shutdowns).toHaveLength(1);
+        expect(shutdowns[0].worker_alive_after).toBe(false);
+        expect(shutdowns[0].elapsed_seconds).toBeLessThan(1);
+        expect(shutdowns[0].protected_record_count).toBe(1);
+        expect(cancelledSlowHeaders).toBe(true);
+        expect(resultReads).toBe(1);
+        releaseProvider();
+        for (let attempt = 0; attempt < 100 && conversationJobs.get(jobId)?.status !== 'completed'; attempt += 1) {
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        expect(conversationJobs.get(jobId)?.status).toBe('completed');
+        const second = await runAutomaticCliCase(python, userSite.stdout.trim(), sandbox, baseUrl, mode + '-after', {
+          persistentProfile: mode, steps: [{ input: '/exit', waitForText: answer }],
+        });
+        expect(second.history).toHaveLength(1);
+        expect(second.history[0]).toMatchObject({ user: 'what can u do?', ai: answer, tokens: 144 });
+        expect(second.final_state.statistics.total_requests).toBe(1);
+        expect(second.final_state.usage.tokens_today).toBe(144);
+        expect(generationRequests).toBe(1);
+        expect(responsesCreate).toHaveBeenCalledTimes(1);
+        expect(resultReads).toBe(2);
+        expect(observed.filter(row => row.path.startsWith('/jobs/')).every(row => row.capabilityBound)).toBe(true);
+        writeFileSync(path.resolve('tmp/automatic-continuation', mode + '-proof.json'), JSON.stringify({
+          mode, observed, generationRequests, providerCalls: responsesCreate.mock.calls.length, resultReads,
+          shutdown: shutdowns[0], cancelledSlowHeaders, history: second.history,
+          actualConPTY: true, realPythonHttp: true, resumeCommands: 0, noLeaks: true,
         }, null, 2));
         return;
       } else if (mode.startsWith('crash_')) {
