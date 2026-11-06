@@ -5,6 +5,8 @@ Backend API client for ARCANOS daemon.
 from __future__ import annotations
 
 import json
+import hashlib
+import time
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional, Sequence
 from urllib.parse import urlsplit
@@ -12,9 +14,14 @@ from uuid import UUID
 
 import requests
 
+from .continuation_transport import get_response as _get_continuation_response
+from .continuation_transport import MAX_RESPONSE_BYTES as MAX_CONTINUATION_RESPONSE_BYTES
+
 from ..backend_auth_client import normalize_backend_url
 from .chat import request_ask_with_domain as _request_ask_with_domain
 from .chat import request_chat_completion as _request_chat_completion
+from .chat import request_chat_job_result as _request_chat_job_result
+from .chat import read_chat_continuation
 from .chat import request_gpt_job_result as _request_gpt_job_result
 from .chat import request_gpt_job_status as _request_gpt_job_status
 from .chat import request_job_result as _request_job_result
@@ -34,6 +41,7 @@ from .updates import submit_update_event as _submit_update_event
 from .vision import request_vision_analysis as _request_vision_analysis
 from ..backend_client_models import (
     BackendChatResult,
+    BackendChatContinuation,
     BackendGptAsyncBridgeResult,
     BackendRequestError,
     BackendResponse,
@@ -44,6 +52,7 @@ from ..config import Config, is_valid_control_plane_access_token, is_valid_daemo
 from arcanos.debug import log_audit_event
 
 DAEMON_ACCESS_TOKEN_HEADER_NAME = "x-arcanos-daemon-token"
+_DEFAULT_REQUEST_SENDER = requests.request
 SENSITIVE_CAPABILITY_HEADER_NAMES = frozenset(
     {
         "authorization",
@@ -146,6 +155,77 @@ class BackendApiClient:
         )
         self._timeout_seconds = timeout_seconds
         self._request_sender = request_sender
+        self._continuation_cancelled: Optional[Callable[[], bool]] = None
+
+    def continuation_identity(self) -> str:
+        """Bind recovery to this normalized backend and its configured writing credential."""
+        credential = self._token_provider()
+        if not isinstance(credential, str) or not credential.strip():
+            raise BackendRequestError(kind="auth", message="Authenticated backend recovery is unavailable.")
+        return hashlib.sha256(
+            ("arcanos-conversation-recovery-v1\0" + self._base_url + "\0" + credential).encode("utf-8")
+        ).hexdigest()
+
+    def continuation_reader(self, cancelled: Optional[Callable[[], bool]] = None) -> "BackendApiClient":
+        """Reuse the existing transport with a bounded read timeout and no credential refresh."""
+        reader = BackendApiClient(
+            self._base_url, self._token_provider, min(self._timeout_seconds, 2),
+            self._request_sender, self._daemon_access_token_provider,
+        )
+        reader._continuation_cancelled = cancelled or (lambda: False)
+        return reader
+
+    def _read_continuation_response(self, method: str, url: str, options: dict[str, Any]) -> requests.Response:
+        """Cancel/reap production GETs; preserve explicit injected transport contracts."""
+        if self._request_sender is _DEFAULT_REQUEST_SENDER:
+            return _get_continuation_response(
+                url, options["headers"], self._timeout_seconds, self._continuation_cancelled or (lambda: False),
+            )
+        cancelled = self._continuation_cancelled
+        started = time.monotonic()
+
+        def check_budget() -> None:
+            if (cancelled is not None and cancelled()) or time.monotonic() - started >= self._timeout_seconds:
+                raise requests.Timeout("Conversation recovery read stopped or exceeded its body budget.")
+
+        check_budget()
+        response = self._request_sender(method, url, **{
+            **options, "stream": True,
+        })
+        # Injectable transports may already return materialized JSON responses.
+        # Real Requests responses always take the bounded streaming path below.
+        if not isinstance(response, requests.Response):
+            return response
+        closed = False
+        try:
+            if response.status_code in (401, 403):
+                # Authorization failure is authoritative without reading an
+                # untrusted/slow body. Close it before hydrating an empty cache.
+                response.close()
+                closed = True
+                response._content = b""
+                response._content_consumed = True
+                return response
+            check_budget()
+            length = response.headers.get("Content-Length", "").lstrip("0") or "0"
+            if length.isdecimal() and (len(length) > len(str(MAX_CONTINUATION_RESPONSE_BYTES))
+                                       or int(length) > MAX_CONTINUATION_RESPONSE_BYTES):
+                raise requests.RequestException("Conversation recovery result exceeds its byte limit.")
+            body = bytearray()
+            for chunk in response.iter_content(chunk_size=1):
+                check_budget()
+                if len(body) + len(chunk) > MAX_CONTINUATION_RESPONSE_BYTES:
+                    raise requests.RequestException("Conversation recovery result exceeds its byte limit.")
+                body.extend(chunk)
+            check_budget()
+            # Hydrate Requests' normal body cache only after complete bounded
+            # consumption. Existing JSON/status parsing remains authoritative.
+            response._content = bytes(body)
+            response._content_consumed = True
+            return response
+        finally:
+            if not closed:
+                response.close()
 
     @staticmethod
     def _normalize_metadata(metadata: Optional[Mapping[str, Any]]) -> Optional[dict[str, Any]]:
@@ -700,6 +780,13 @@ class BackendApiClient:
         """
         return _request_job_result(self, job_id, gpt_id, job_read_token)
 
+    def request_chat_job_result(
+        self,
+        continuation: BackendChatContinuation,
+    ) -> BackendResponse[BackendChatResult]:
+        """Read one accepted chat job once without another generation request."""
+        return _request_chat_job_result(self, continuation)
+
     def request_job_status(
         self,
         job_id: str,
@@ -874,11 +961,10 @@ class BackendApiClient:
             }
             if context.has_sensitive_capability_header:
                 request_options["allow_redirects"] = False
-            response = self._request_sender(
-                method,
-                context.url,
-                **request_options,
-            )
+            if self._continuation_cancelled is not None and context.has_job_read_token and method.lower() == "get":
+                response = self._read_continuation_response(method, context.url, request_options)
+            else:
+                response = self._request_sender(method, context.url, **request_options)
         except requests.Timeout as exc:
             return self._build_logged_error_response(
                 method,
@@ -1072,12 +1158,17 @@ class BackendApiClient:
             )
 
         if require_completed_chat and response.status_code == 202:
+            try:
+                accepted = response.json()
+            except ValueError:
+                accepted = None
             return self._build_logged_error_response(
                 method,
                 context,
                 BackendRequestError(
                     kind="pending", message="Backend request is pending; no completed answer is available.",
                     status_code=202,
+                    continuation=read_chat_continuation(accepted),
                 ),
                 status_code=202,
                 error_kind="pending",
@@ -1145,18 +1236,28 @@ class BackendApiClient:
         return _block_plan(self, plan_id)
 
     def _parse_chat_response(self, response_json: Mapping[str, Any]) -> BackendResponse[BackendChatResult]:
+        metadata = dict(response_json)
+        result = response_json.get("result")
+        if (response_json.get("ok") is True and isinstance(response_json.get("_route"), Mapping)
+                and isinstance(result, Mapping)):
+            # Immediate job completion retains the dispatcher envelope. Read its
+            # execution metadata as for result GETs; never promote presentation
+            # or recursively inspect answer content for usage.
+            for key in ("tokens", "cost", "meta", "model", "activeModel"):
+                if key not in metadata and key in result:
+                    metadata[key] = result[key]
         if response_json.get("ok") is True and "result" in response_json:
             response_text = self._extract_chat_text(response_json.get("result"))
             route_meta = response_json.get("_route")
             route_module = route_meta.get("module") if isinstance(route_meta, dict) else None
-            model_hint = response_json.get("model") or response_json.get("activeModel") or route_module
+            model_hint = metadata.get("model") or metadata.get("activeModel") or route_module
         else:
             # Support both "result" (production backend) and "response" (legacy) field names
             response_text = self._extract_chat_text(response_json.get("result") or response_json.get("response"))
             model_hint = response_json.get("model") or response_json.get("activeModel")
 
-        tokens = self._extract_tokens_used(response_json)
-        cost = response_json.get("cost")
+        tokens = self._extract_tokens_used(metadata)
+        cost = metadata.get("cost")
         model = model_hint
 
         if not isinstance(response_text, str):

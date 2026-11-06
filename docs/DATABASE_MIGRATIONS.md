@@ -130,6 +130,19 @@ running `--plan` does not connect to a database or apply a migration.
   collation state.
 - The dedicated worker process requires database connectivity before it can claim queued jobs.
 - GPT and worker job state is stored in database-backed job tables, not Redis.
+- GPT job acceptance commits its row before HTTP 202 exposes its coordinates.
+  Priority/direct and queued execution write terminal status and output in the
+  same fenced update, requiring the exact worker, claim generation and live
+  lease. Completion events follow a successful terminal write. A model response
+  that never reached that write is not durable result evidence.
+- Job-result GETs do not enqueue or regenerate work. A committed completed row
+  survives process restart while retained. If a completed row has no output,
+  the result read reports `JOB_RESULT_UNAVAILABLE` as a failed lookup while
+  preserving its stored completed lifecycle; missing and unauthorized rows stay
+  indistinguishable, and unavailable storage remains a retryable HTTP failure.
+  Stale running rows still follow the existing retry/dead-letter policy. That
+  worker policy can repeat an attempt after a crash and is separate from client
+  result recovery; no universal exactly-once provider guarantee is implied.
 - Completed/cancelled `ask` and `dag-node` rows receive explicit per-type
   `retention_until` deadlines at terminal persistence. Worker inspection
   deletes only expired, non-idempotency-protected rows from that exact

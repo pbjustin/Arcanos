@@ -18,6 +18,7 @@ import {
   parseBackstageStorylinePayload,
 } from '../src/shared/backstage/backstageStoryline.js';
 import { BackstageCanonDomainError } from '../src/core/db/repositories/backstageBookerRepository.js';
+import { markFinalizedPublicAnswer } from '../src/shared/http/clientResponseCommon.js';
 import {
   BackstageCanonUnavailableError,
 } from '../src/services/backstageBookerContracts.js';
@@ -280,6 +281,32 @@ describe('gpt dispatch compatibility', () => {
       defaultAction: 'query'
     });
     mockDispatchModuleAction.mockResolvedValue({ ok: true });
+  });
+
+  it('retains producer-owned answer presentation through durable job JSON serialization', async () => {
+    const answer = '## Audit Summary\nThe requested audit found a failure.\n\n## COMPLIANCE STATUS\nNot completed.';
+    mockDispatchModuleAction.mockResolvedValue(markFinalizedPublicAnswer({ result: answer }));
+    const envelope = await routeGptRequest({
+      gptId: 'arcanos-core', body: { prompt: 'Explain the requested audit.' },
+      runtimeExecutionMode: 'background',
+    });
+    const stored = JSON.parse(JSON.stringify(envelope));
+    expect(stored.presentation).toBe('public-answer-v1');
+    expect(stored.result.result).toBe(answer);
+  });
+
+  it.each(['unmarked', 'modified'] as const)('does not persist %s module presentation claims', async state => {
+    let result = { result: '## Audit Summary\nprivate legacy tail', presentation: 'public-answer-v1' };
+    if (state === 'modified') {
+      result = markFinalizedPublicAnswer(result);
+      result.result += '\nchanged after finalization';
+    }
+    mockDispatchModuleAction.mockResolvedValue(result);
+    const envelope = await routeGptRequest({
+      gptId: 'arcanos-core', body: { prompt: 'Explain the requested audit.', presentation: 'public-answer-v1' },
+      runtimeExecutionMode: 'background',
+    });
+    expect(JSON.parse(JSON.stringify(envelope)).presentation).toBeUndefined();
   });
 
   it('accepts nested payload prompts for canonical gpt routes', async () => {

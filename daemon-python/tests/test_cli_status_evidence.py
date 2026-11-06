@@ -71,6 +71,7 @@ def status_cli(monkeypatch):
     cli.memory = MagicMock()
     cli.rate_limiter = MagicMock()
     cli.rate_limiter.can_make_request.return_value = (True, None)
+    cli.rate_limiter.reserve_request.return_value = ("test-admission", None)
     cli.audio = MagicMock()
     cli._append_activity = MagicMock()
     cli._recompute_trust_state = lambda: cli_module.state.recompute_trust_state(cli)

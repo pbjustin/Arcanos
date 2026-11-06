@@ -295,15 +295,20 @@ Writing vs control:
 - Direct control plane: capability-bound `GET /jobs/:id` and `GET /jobs/:id/result`, aggregate `GET /workers/status` and `GET /worker-helper/health`, public health alias `GET /status`, operator mutation alias `POST /status`, `GET /status/safety/self-heal`, `POST /gpt-access/diagnostics/deep`, `GET|POST /system-state`, AFOL `GET|HEAD` inspection routes, `POST /rag/*`, `POST /mcp`, and `/api/arcanos/dag/*`.
 - No public control actions are served by `POST /gpt/:gptId`; `get_status`, `get_result`, `diagnostics`, `system_state`, runtime inspection, worker status, queue inspection, self-heal status, MCP calls, and prompt-based job lookups are rejected with canonical control endpoints.
 
-Finalized in-process Trinity answers may include the optional top-level field
+Finalized Trinity answers may include the optional top-level field
 `"presentation": "public-answer-v1"`. This server-owned format state lets the
 daemon preserve public headings such as `Audit Summary`, `System Routing Details`,
 and `COMPLIANCE STATUS`. It does not establish task completion or relax credential,
 private-record, developer-output, or authorization checks. Caller fields, model
 text, and nested result properties cannot supply this state. Missing or unknown
-state retains legacy private-section protection. Unmarked module results, local
-provider output, and results restored from durable job storage retain that legacy
-behavior; the process-local provenance marker is not reconstructed from stored JSON.
+state retains legacy private-section protection. The canonical dispatcher derives
+this optional outer field from the existing process-local finalization marker
+before a completed envelope is stored as a durable job result. Result retrieval
+can therefore preserve an approved answer's presentation without reconstructing
+that marker from stored JSON. Raw model properties and nested module fields
+cannot promote themselves into this outer state. Unmarked module results, local
+provider output, and legacy stored envelopes without the field retain the legacy
+protection.
 
 Request guidance:
 - GPT identifiers are trimmed, must be non-empty, and may contain at most 256
@@ -354,7 +359,7 @@ Job-backed `POST /gpt/:gptId` response shapes:
 - `200 OK` completed direct action: `{ ok:true, action:"query_and_wait", status:"completed", result:"...", directAction:{ inline:true, queueBypassed:true }, _route }`
 - `200 OK` completed async write for non-core durable jobs: `{ ok:true, action:"query_and_wait", jobId, status:"completed", result:{ text }, poll, stream, jobReadToken, jobReadTokenHeader:"x-arcanos-job-read-token", jobStatus, lifecycleStatus, deduped?, idempotencyKey, idempotencySource, _route }`
 - Error shape: `{ ok:false, action, error:{ code, message } }`
-- A repository outage after a job is accepted returns HTTP `503` with `error.code: "ASYNC_GPT_JOBS_UNAVAILABLE"` and the stable message `Async GPT job status is temporarily unavailable because durable job persistence is unavailable.` The response keeps the accepted `jobId`, `poll`, `stream`, `jobReadToken`, and `jobReadTokenHeader`; creation-stage outages cannot include job coordinates.
+- A repository outage while waiting after durable acceptance returns HTTP `202` with the existing pending envelope and accepted `jobId`, `poll`, `stream`, `jobReadToken`, and `jobReadTokenHeader`. The status read could not establish completion; clients can recover the same accepted work without another generation POST. Creation-stage outages still fail with HTTP `503`, `error.code: "ASYNC_GPT_JOBS_UNAVAILABLE"`, and no job coordinates.
 - If the dedicated current job-read signing key is absent or invalid, job-backed creation fails before enqueueing with HTTP `503`, `error.code: "JOB_READ_AUTH_UNAVAILABLE"`, and `Async job reads are temporarily unavailable.`
 - Duplicate submissions on reusable authenticated scopes set `deduped: true`
   and return the canonical `jobId`; anonymous public submissions never do.
@@ -393,6 +398,11 @@ Pipeline timeout fallback detection:
 Job status routes:
 - `GET /jobs/:id`: requires `x-arcanos-job-read-token` and returns `{ id, jobId, job_type, status, lifecycle_status, created_at, updated_at, completed_at, cancel_requested_at, cancel_reason, retention_until, idempotency_until, expires_at, poll, stream, error_message, output, result }`.
 - `GET /jobs/:id/result`: requires `x-arcanos-job-read-token` and returns the canonical result lookup envelope, including `jobId`, job/lifecycle status, polling links, result, and a typed error when applicable. A missing job returns HTTP `200` with `status: "not_found"` for compatibility.
+- A stored completed job with no retained output returns a failed result lookup
+  (`status: "failed"`, `error.code: "JOB_RESULT_UNAVAILABLE"`, `result: null`).
+  Its `jobStatus` and `lifecycleStatus` still report the persisted `completed`
+  state; the read does not rewrite that row or start another generation. A
+  successful model invocation cannot reconstruct an answer that was not retained.
 - `GET /jobs/:id/stream`: requires `x-arcanos-job-read-token` and emits an SSE stream of status changes. The event name is `terminal` when the payload status is `completed`, `failed`, `cancelled`, or `expired`; nonterminal changes use the `status` event.
 - `POST /jobs/:id/cancel`: requires the matching
   `x-arcanos-job-read-token`, confirmation, and the creation surface's
@@ -438,6 +448,15 @@ GPT job lifecycle:
 - Running stale jobs are recovered through oldest-first, server-bounded worker
   lease-inspector passes. Overlapping passes skip rows already locked by another
   recovery transaction; overflow remains eligible for later passes.
+- Accepted GPT coordinates are returned only after the job-creation transaction
+  commits. Execution persists terminal status and output together behind the
+  exact worker, claim generation and live lease before reporting completion.
+  Result reads use that stored output, not a process-local generation promise.
+- A backend restart preserves committed accepted/completed rows. A stale running
+  row follows the existing retry/dead-letter policy; this execution policy is
+  separate from read-only client recovery and is not a global exactly-once
+  provider guarantee. An answer lost before terminal persistence is unavailable;
+  recovering a retained result never submits another generation request.
 - Old terminal GPT jobs transition to `expired`, then are compacted after an additional grace window
 
 Retention defaults:
@@ -446,6 +465,9 @@ Retention defaults:
 - Cancelled GPT jobs: 1h retention
 - Idempotency reuse window: 24h, capped by the terminal state retention window
 - Pending GPT jobs that sit unclaimed for too long are expired by lifecycle maintenance
+- Unclaimed pending GPT jobs default to a 30-minute maximum age; expired GPT rows
+  remain visible for an additional 24-hour compaction grace by default. Terminal
+  retention starts when terminal output is persisted, not when HTTP 202 is sent.
 
 Generic queue result retention:
 - Completed and cancelled `ask` jobs remain readable for 24h by default.

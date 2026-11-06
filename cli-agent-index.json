@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-05T03:24:18.375Z",
+  "generatedAt": "2026-11-06T02:33:29.578Z",
   "scopes": [
     {
       "scope": "clients",
@@ -127,6 +127,9 @@
           "relativePath": "daemon-python/arcanos/backend_client/chat.py"
         },
         {
+          "relativePath": "daemon-python/arcanos/backend_client/continuation_transport.py"
+        },
+        {
           "relativePath": "daemon-python/arcanos/backend_client/daemon.py"
         },
         {
@@ -211,6 +214,9 @@
           "relativePath": "daemon-python/arcanos/cli/context.py"
         },
         {
+          "relativePath": "daemon-python/arcanos/cli/conversation_recovery.py"
+        },
+        {
           "relativePath": "daemon-python/arcanos/cli/daemon_ops.py"
         },
         {
@@ -254,6 +260,9 @@
         },
         {
           "relativePath": "daemon-python/arcanos/config.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/continuation_store.py"
         },
         {
           "relativePath": "daemon-python/arcanos/contract_versions.py"
@@ -311,6 +320,9 @@
         },
         {
           "relativePath": "daemon-python/arcanos/gpt_client.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/interactive_input.py"
         },
         {
           "relativePath": "daemon-python/arcanos/local_agent/__init__.py"
@@ -535,6 +547,9 @@
           "relativePath": "daemon-python/tests/credential_observation.py"
         },
         {
+          "relativePath": "daemon-python/tests/test_acceptance_asyncio_guard.py"
+        },
+        {
           "relativePath": "daemon-python/tests/test_action_plan_dispatch_disclosure.py"
         },
         {
@@ -569,6 +584,9 @@
         },
         {
           "relativePath": "daemon-python/tests/test_assistant_translator.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_automatic_conversation_recovery.py"
         },
         {
           "relativePath": "daemon-python/tests/test_backend_client_chat.py"
@@ -628,6 +646,24 @@
           "relativePath": "daemon-python/tests/test_confirmation_trust_recheck.py"
         },
         {
+          "relativePath": "daemon-python/tests/test_continuation_read_deadline.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_continuation_store.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_continuation_transport.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_conversation_continuation.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_conversation_quota_admission.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_conversation_recovery_fixture.py"
+        },
+        {
           "relativePath": "daemon-python/tests/test_credential_bootstrap_backend_auth.py"
         },
         {
@@ -653,6 +689,9 @@
         },
         {
           "relativePath": "daemon-python/tests/test_history_db_utf8.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_interactive_recovery_input.py"
         },
         {
           "relativePath": "daemon-python/tests/test_local_action_audit.py"
@@ -682,6 +721,9 @@
           "relativePath": "daemon-python/tests/test_memory_ops.py"
         },
         {
+          "relativePath": "daemon-python/tests/test_native_acceptance_observers.py"
+        },
+        {
           "relativePath": "daemon-python/tests/test_openai_adapter.py"
         },
         {
@@ -704,6 +746,15 @@
         },
         {
           "relativePath": "daemon-python/tests/test_purpose_bound_credential_isolation.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_rate_limiter_concurrency.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_rate_limiter_rollover.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_recovered_conversation_history.py"
         },
         {
           "relativePath": "daemon-python/tests/test_registry_monotonic_ttl.py"
@@ -936,6 +987,12 @@
     {
       "scope": "tests",
       "files": [
+        {
+          "relativePath": "tests/fixtures/conversation_recovery_http_faults.py"
+        },
+        {
+          "relativePath": "tests/fixtures/conversation_recovery_multiprocess.py"
+        },
         {
           "relativePath": "tests/fixtures/daemon_registry_client.py"
         },

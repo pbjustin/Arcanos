@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 import uuid
+from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Callable, Mapping, Optional
 
@@ -39,6 +40,7 @@ from .trust_state import TrustState
 
 from ..backend_client import BackendApiClient, BackendRequestError, BackendResponse
 from ..backend_client.chat import is_valid_system_state_payload
+from ..backend_client_models import BackendChatContinuation
 from ..cli_config import (
     DOMAIN_KEYWORDS,
     ZERO_COST_USD,
@@ -89,6 +91,21 @@ except ImportError:
 _ConversationResult = ConversationResult
 
 
+@dataclass(frozen=True)
+class _PendingConversation:
+    """Keep an accepted answer bound to its original process, client and session."""
+
+    message: str
+    handle: BackendChatContinuation
+    client: BackendApiClient
+    instance_id: str
+    session_id: str
+    reservation_id: Optional[str] = None
+
+
+MAX_PENDING_CONVERSATIONS = 8
+
+
 class ArcanosCLI:
     """Main ARCANOS CLI application orchestration shell."""
 
@@ -102,6 +119,10 @@ class ArcanosCLI:
         self.start_time = time.time()
         self._last_error: Optional[str] = None
         self._activity_lock = threading.Lock()
+        self._conversation_lock = threading.RLock()
+        self._pending_backend_conversations: dict[str, _PendingConversation] = {}
+        self._backend_conversations_inflight = 0
+        self._conversation_recovery = None
 
         bootstrap.ensure_startup_sequence(self)
 
@@ -393,6 +414,156 @@ class ArcanosCLI:
     def _send_backend_update(self, update_type: str, data: Mapping[str, Any]) -> None:
         return backend_ops.send_backend_update(self, update_type, data)
 
+    def _conversation_state_lock(self):
+        """Serialize foreground delivery, including callers using the debug interface."""
+        if "_conversation_lock" not in self.__dict__:
+            self._conversation_lock = threading.RLock()
+            self._pending_backend_conversations = {}
+            self._backend_conversations_inflight = 0
+        return self._conversation_lock
+
+    def _reserve_backend_conversation(self) -> bool:
+        """Bound retained and in-flight contexts without serializing generation requests."""
+        with self._conversation_state_lock():
+            if len(self._pending_backend_conversations) + self._backend_conversations_inflight >= MAX_PENDING_CONVERSATIONS:
+                return False
+            self._backend_conversations_inflight += 1
+            return True
+
+    def _release_backend_conversation(self) -> None:
+        """Release capacity even when the original HTTP request fails."""
+        with self._conversation_state_lock():
+            self._backend_conversations_inflight -= 1
+
+    def _retain_backend_conversation(
+        self, message: str, handle: BackendChatContinuation,
+        client: BackendApiClient, instance_id: str, session_id: str,
+        *, quota_reservation_id: Optional[str] = None,
+    ) -> bool:
+        """Retain only private validated coordinates; never replace another question."""
+        with self._conversation_state_lock():
+            if client is not self.backend_client or instance_id != self.instance_id or session_id != self.session.session_id:
+                return False
+            recovery = getattr(self, "_conversation_recovery", None)
+            reservation_id = (
+                recovery._delivery_id(handle.job_id) if recovery is not None
+                else f"accepted:{quota_reservation_id}"
+            ) if quota_reservation_id else None
+            if quota_reservation_id:
+                self.rate_limiter.transfer_request(quota_reservation_id, reservation_id)
+            if handle.job_id not in self._pending_backend_conversations:
+                self._pending_backend_conversations[handle.job_id] = _PendingConversation(
+                    message, handle, client, instance_id, session_id, reservation_id,
+                )
+            if recovery is not None:
+                try:
+                    recovery.retain(message, handle, session_id)
+                except Exception:
+                    self.console.print("Restart recovery could not be secured; this process retains manual /resume recovery.", markup=False)
+            return True
+
+    def _restore_backend_conversation(self, message: str, handle: BackendChatContinuation, session_id: str) -> None:
+        """Restore protected work using current backend authority and original conversation correlation."""
+        self._pending_backend_conversations.setdefault(handle.job_id, _PendingConversation(
+            message, handle, self.backend_client, self.instance_id, session_id,
+        ))
+
+    def _start_conversation_recovery(self) -> None:
+        """Enable Windows protected recovery only during the foreground application's lifetime."""
+        if (
+            sys.platform != "win32"
+            or not Config.CONVERSATION_RECOVERY_ENABLED
+            or self.backend_client is None
+        ):
+            return
+        from .conversation_recovery import ConversationRecovery
+        try:
+            previous = getattr(self, "_conversation_recovery", None)
+            if previous is not None and previous.thread is not None and previous.thread.is_alive():
+                return
+            self._conversation_recovery = ConversationRecovery(self)
+            self._conversation_recovery.start()
+        except Exception:
+            self._conversation_recovery = None
+            self.console.print("Automatic conversation recovery is unavailable; protected storage and backend authentication are required.", markup=False)
+
+    def _stop_conversation_recovery(self) -> None:
+        """Stop accepted-job monitoring without deleting protected restart recovery records."""
+        recovery = getattr(self, "_conversation_recovery", None)
+        if recovery is not None:
+            recovery.stop()
+
+    @handle_errors("resuming a conversation")
+    def handle_resume(self, args: str = "") -> None:
+        """Read one accepted job once, without generation, auth refresh or action execution."""
+        recovery = getattr(self, "_conversation_recovery", None)
+        if recovery is not None and args.strip() and recovery.contains(args.strip()):
+            recovery.resume(args)
+            return
+        with self._conversation_state_lock():
+            job_id = args.strip()
+            if not job_id:
+                jobs = ", ".join(self._pending_backend_conversations)
+                self.console.print(f"Pending conversations: {jobs or 'none'}. Use /resume <jobId>.", markup=False)
+                return
+            pending = self._pending_backend_conversations.get(job_id)
+            self._recompute_trust_state()
+            audit_fields = dict(command="resume", trust=self._trust_state.name, source="backend")
+            audit_record("execute_attempt", **audit_fields)
+            if (
+                pending is None or pending.client is not self.backend_client
+                or pending.instance_id != self.instance_id
+                or pending.session_id != self.session.session_id
+            ):
+                self.console.print("No pending conversation belongs to this client and session.", markup=False)
+                audit_record("execute_failed", **audit_fields, reason="continuation_unavailable")
+                return
+            response = pending.client.request_chat_job_result(pending.handle)
+            self._recompute_trust_state()
+            if (
+                pending.client is not self.backend_client or pending.instance_id != self.instance_id
+                or pending.session_id != self.session.session_id
+            ):
+                self.console.print("Conversation ownership changed during retrieval; no answer was delivered.", markup=False)
+                audit_record("execute_failed", command="resume", trust=self._trust_state.name,
+                             source="backend", reason="continuation_owner_changed")
+                return
+            audit_fields["trust"] = self._trust_state.name
+            audit_fields["job_id"] = job_id
+            if not response.ok or response.value is None:
+                error = response.error
+                if error and error.kind == "pending":
+                    self.console.print("Backend request is still pending. Use the same /resume command later.", markup=False)
+                    audit_record("execute_unconfirmed", **audit_fields, reason="backend_pending")
+                else:
+                    if error and error.kind in ("failed", "cancelled", "expired", "unavailable", "validation"):
+                        del self._pending_backend_conversations[job_id]
+                        if pending.reservation_id:
+                            self.rate_limiter.release_request(pending.reservation_id)
+                    backend_ops.report_backend_error(self, "conversation continuation", error)
+                    audit_record("execute_failed", **audit_fields, reason="continuation_read_failed")
+                return
+            # Consume before delivery: replay cannot duplicate history, usage or an answer.
+            del self._pending_backend_conversations[job_id]
+            value = response.value
+            delivery_state: dict[str, bool] = {}
+            try:
+                self._finish_conversation(
+                    pending.message,
+                    ConversationResult(value.response_text, value.tokens_used, value.cost_usd,
+                                       value.model, "backend", value.presentation),
+                    continuation_job_id=job_id, delivery_state=delivery_state,
+                    reservation_id=pending.reservation_id,
+                )
+            except Exception:
+                # Recording can partially account or persist before raising. Only
+                # an earlier delivery failure is safe to retry explicitly.
+                if not delivery_state.get("recording_started", False):
+                    self._pending_backend_conversations[job_id] = pending
+                if not delivery_state.get("outcome_recorded", False):
+                    audit_record("execute_failed", **audit_fields, reason="continuation_delivery_failed")
+                raise
+
     @handle_errors("processing user input")
     def handle_ask(
         self,
@@ -502,67 +673,101 @@ class ArcanosCLI:
 
         domain = detect_domain_intent(message, DOMAIN_KEYWORDS) if route_decision.route == "backend" else None
 
-        result: Optional[ConversationResult] = None
-        use_streaming = Config.STREAM_RESPONSES and route_decision.route == "local" and not return_result
-
-        if use_streaming:
-            result = local_ops.perform_local_conversation_streaming(self, route_decision.normalized_message)
-        else:
-            # Agentic loop: allow backend to propose patches/commands inline; prompt for approval in CLI.
-            if route_decision.route == "backend" and Config.AGENTIC_ENABLED and not return_result:
-                from ..agentic.agent_loop import run_agentic_loop
-                run_agentic_loop(self, route_decision.normalized_message, domain=domain, from_debug=from_debug)
-                return None
-
-            with self.console.status("[dim]Thinking...[/dim]", spinner="dots"):
-                if route_decision.route == "backend":
-                    backend_outcome: dict[str, bool] = {}
-                    result = backend_ops.perform_backend_conversation(
-                        self,
-                        route_decision.normalized_message,
-                        domain=domain,
-                        from_debug=from_debug,
-                        outcome=backend_outcome,
-                    )
-                    if backend_outcome.get("pending", False):
-                        audit_record(
-                            "execute_unconfirmed", command="ask", trust=self._trust_state.name,
-                            source="backend", reason="backend_pending",
-                        )
-                        return None
-                    if result is None and Config.BACKEND_FALLBACK_TO_LOCAL and not backend_outcome.get("confirmation_handled", False):
-                        try:
-                            import json as _json
-
-                            _debug_log_path = Config.DEBUG_LOG_PATH
-                            _debug_log_path.parent.mkdir(parents=True, exist_ok=True)
-                            with _debug_log_path.open("a", encoding="utf-8") as _lf:
-                                _lf.write(
-                                    _json.dumps(
-                                        {
-                                            "kind": "suspicious",
-                                            "location": "cli.py:handle_ask:fallback",
-                                            "message": "Backend unavailable; falling back to local",
-                                            "data": {"message_length": len(route_decision.normalized_message)},
-                                            "timestamp": int(time.time() * 1000),
-                                            "sessionId": "debug-session",
-                                            "hypothesisId": "FALLBACK",
-                                        }
-                                    )
-                                    + "\n"
-                                )
-                        except (OSError, IOError) as write_error:
-                            error_logger.debug("Debug log write failed: %s", write_error)
-                        self._set_trust_state(TrustState.DEGRADED)
-                        self.console.print("[yellow]Backend unavailable; falling back to local model.[/yellow]")
-                        result = local_ops.perform_local_conversation(self, route_decision.normalized_message)
-                else:
-                    result = local_ops.perform_local_conversation(self, route_decision.normalized_message)
-        if not result:
-            if not return_result:
-                self.console.print("[red]No response generated.[/red]")
+        # The agentic loop admits its individual handle_ask(return_result=True) calls.
+        if route_decision.route == "backend" and Config.AGENTIC_ENABLED and not return_result:
+            from ..agentic.agent_loop import run_agentic_loop
+            run_agentic_loop(self, route_decision.normalized_message, domain=domain, from_debug=from_debug)
             return None
 
+        reservation_id, deny_reason = self.rate_limiter.reserve_request()
+        if reservation_id is None:
+            self.console.print(f"[red]Rate limit: {deny_reason}[/red]")
+            return None
+        generation_started = False
+        backend_outcome: dict[str, bool] = {}
+        try:
+            result: Optional[ConversationResult] = None
+            use_streaming = Config.STREAM_RESPONSES and route_decision.route == "local" and not return_result
+
+            if use_streaming:
+                generation_started = True
+                result = local_ops.perform_local_conversation_streaming(self, route_decision.normalized_message)
+            else:
+                with self.console.status("[dim]Thinking...[/dim]", spinner="dots"):
+                    if route_decision.route == "backend":
+                        result = backend_ops.perform_backend_conversation(
+                            self,
+                            route_decision.normalized_message,
+                            domain=domain,
+                            from_debug=from_debug,
+                            outcome=backend_outcome, quota_reservation_id=reservation_id,
+                        )
+                        if backend_outcome.get("capacity_denied", False):
+                            self._recompute_trust_state()
+                            audit_record(
+                                "execute_failed", command="ask", trust=self._trust_state.name,
+                                source="backend", reason="pending_capacity_reached",
+                            )
+                            return None
+                        if backend_outcome.get("pending", False):
+                            audit_record(
+                                "execute_unconfirmed", command="ask", trust=self._trust_state.name,
+                                source="backend", reason="backend_pending",
+                            )
+                            return None
+                        if result is None and Config.BACKEND_FALLBACK_TO_LOCAL and not backend_outcome.get("confirmation_handled", False):
+                            try:
+                                import json as _json
+
+                                _debug_log_path = Config.DEBUG_LOG_PATH
+                                _debug_log_path.parent.mkdir(parents=True, exist_ok=True)
+                                with _debug_log_path.open("a", encoding="utf-8") as _lf:
+                                    _lf.write(
+                                        _json.dumps(
+                                            {
+                                                "kind": "suspicious",
+                                                "location": "cli.py:handle_ask:fallback",
+                                                "message": "Backend unavailable; falling back to local",
+                                                "data": {"message_length": len(route_decision.normalized_message)},
+                                                "timestamp": int(time.time() * 1000),
+                                                "sessionId": "debug-session",
+                                                "hypothesisId": "FALLBACK",
+                                            }
+                                        )
+                                        + "\n"
+                                    )
+                            except (OSError, IOError) as write_error:
+                                error_logger.debug("Debug log write failed: %s", write_error)
+                            self._set_trust_state(TrustState.DEGRADED)
+                            self.console.print("[yellow]Backend unavailable; falling back to local model.[/yellow]")
+                            generation_started = True
+                            result = local_ops.perform_local_conversation(self, route_decision.normalized_message)
+                    else:
+                        generation_started = True
+                        result = local_ops.perform_local_conversation(self, route_decision.normalized_message)
+            if not result:
+                if not return_result:
+                    self.console.print("[red]No response generated.[/red]")
+                return None
+
+            with self._conversation_state_lock():
+                return self._finish_conversation(
+                    route_decision.normalized_message, result, speak_response, return_result, from_debug,
+                    reservation_id=reservation_id,
+                )
+        finally:
+            self.rate_limiter.release_request(
+                reservation_id, refund=not (generation_started or backend_outcome.get("generation_started", False)),
+            )
+
+    def _finish_conversation(
+        self, message: str, result: ConversationResult, speak_response: bool = False,
+        return_result: bool = False, from_debug: bool = False, *,
+        continuation_job_id: Optional[str] = None,
+        delivery_state: Optional[dict[str, bool]] = None,
+        reservation_id: Optional[str] = None,
+    ) -> Optional[_ConversationResult]:
+        """Apply the same presentation, privacy, history and usage rules to completed answers."""
         response_for_user: Optional[str] = None
         translated, show = translate(
             message,
@@ -588,32 +793,43 @@ class ArcanosCLI:
             "tokens": result.tokens_used,
             "cost": result.cost_usd,
             "model": result.model,
-            "messageLength": len(route_decision.normalized_message),
+            "messageLength": len(message),
         }
 
         if return_result:
             conversation_response = translated if show else ""
         else:
             conversation_response = response_for_user or ""
+        if delivery_state is not None:
+            delivery_state["recording_started"] = True
         memory_ops.record_conversation_turn(
             self,
-            route_decision.normalized_message,
+            message,
             conversation_response,
             result.tokens_used,
             result.cost_usd,
+            reservation_id=reservation_id,
         )
         if not return_result:
             memory_ops.remember_last_response(self, response_for_user)
 
-        backend_ops.send_backend_update(self, "conversation_usage", update_payload)
-        audit_record("execute_success", command="ask", trust=self._trust_state.name, source=result.source)
+        if continuation_job_id is None:
+            backend_ops.send_backend_update(self, "conversation_usage", update_payload)
+        audit_record(
+            "execute_success" if show or continuation_job_id is None else "execute_failed",
+            command="resume" if continuation_job_id else "ask", trust=self._trust_state.name,
+            source=result.source, **({"job_id": continuation_job_id} if continuation_job_id else {}),
+        )
+        if delivery_state is not None:
+            delivery_state["outcome_recorded"] = True
 
-        if result.source == "backend" and self.backend_client:
+        if result.source == "backend" and self.backend_client and continuation_job_id is None:
             refreshed_state = backend_ops.request_backend_system_state_payload(self)
             if refreshed_state:
                 state.hydrate_session_from_backend_state(self, refreshed_state)
 
-        memory_ops.update_short_term_summary(self)
+        if continuation_job_id is None:
+            memory_ops.update_short_term_summary(self)
 
         if return_result:
             return result

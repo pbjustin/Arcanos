@@ -81,6 +81,33 @@ describe('gpt job result helpers', () => {
     });
   });
 
+  it.each([null, undefined])('reports missing durable completed output (%s) as a failed result read', (output) => {
+    const job = {
+      id: 'job-completed-output-lost', job_type: 'gpt', status: 'completed', output,
+      input: { gptId: 'arcanos-daemon', body: { prompt: 'Original question' } },
+      error_message: 'private stale repository diagnostic',
+      created_at: '2026-11-05T10:00:00.000Z',
+      updated_at: '2026-11-05T10:00:02.000Z',
+      completed_at: '2026-11-05T10:00:02.000Z',
+      retention_until: '2026-11-06T10:00:02.000Z',
+    } as any;
+    const lookup = buildGptJobResultLookupPayload(job.id, job);
+    expect(lookup).toMatchObject({
+      status: 'failed', jobStatus: 'completed', lifecycleStatus: 'completed', result: null,
+      retentionUntil: job.retention_until,
+      error: {
+        code: 'JOB_RESULT_UNAVAILABLE',
+        message: 'The completed job has no retained output. The original answer is unavailable.',
+      },
+    });
+    expect(JSON.stringify(lookup)).not.toContain('private stale repository diagnostic');
+    expect(buildGptJobResultBridgePayload(job.id, job)).toMatchObject({
+      status: 'failed', jobStatus: 'completed', output: null,
+      error: { code: 'JOB_RESULT_UNAVAILABLE' },
+    });
+    expect(job.status).toBe('completed');
+  });
+
   it.each(['completed', 'failed'])(
     'preserves a generic %s result that happens to share protected source fields',
     (status) => {

@@ -88,6 +88,7 @@ def diagnostic_cli(monkeypatch):
     cli.memory.get_recent_conversations.return_value = []
     cli.rate_limiter = MagicMock()
     cli.rate_limiter.can_make_request.return_value = (True, None)
+    cli.rate_limiter.reserve_request.return_value = ("test-admission", None)
     cli._append_activity = MagicMock()
     cli.audio = MagicMock()
     monkeypatch.setattr(cli_module.local_ops, "perform_local_conversation", MagicMock(

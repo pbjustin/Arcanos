@@ -147,9 +147,12 @@ function buildPendingJobLookupPayload(job: JobData): GptJobResultLookupPayload {
 }
 
 function buildCompletedJobLookupPayload(job: JobData): GptJobResultLookupPayload {
+  // A completed model call is not a recoverable answer when no output was
+  // retained. Preserve the stored lifecycle while failing this result read.
+  const outputUnavailable = job.output === null || job.output === undefined;
   return {
     jobId: job.id,
-    status: 'completed',
+    status: outputUnavailable ? 'failed' : 'completed',
     jobStatus: job.status,
     lifecycleStatus: resolveGptJobLifecycleStatus(job.status),
     createdAt: serializeJobTimestamp(job.created_at),
@@ -161,7 +164,12 @@ function buildCompletedJobLookupPayload(job: JobData): GptJobResultLookupPayload
     poll: buildJobResultPollPath(job.id),
     stream: `/jobs/${job.id}/stream`,
     result: projectPublicJobOutput(job),
-    error: null
+    error: outputUnavailable
+      ? buildJobFailurePayload(
+          'JOB_RESULT_UNAVAILABLE',
+          'The completed job has no retained output. The original answer is unavailable.'
+        )
+      : null
   };
 }
 

@@ -176,7 +176,7 @@
             }
           },
           "202": {
-            "description": "Async job accepted or still pending after bounded wait. The response is `no-store`; retain the returned job-read capability with the job id.",
+            "description": "Async job accepted or still pending after bounded wait, including when status storage is temporarily unavailable after durable acceptance. The response is `no-store`; retain the returned job-read capability with the job id.",
             "headers": {
               "Cache-Control": {
                 "$ref": "#/components/headers/NoStore"
@@ -186,6 +186,24 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/GptAsyncPendingResponse"
+                },
+                "examples": {
+                  "acceptedJobStatusUnavailable": {
+                    "summary": "Durably accepted work remains recoverable when its bounded status wait is unavailable",
+                    "value": {
+                      "ok": true,
+                      "action": "query_and_wait",
+                      "status": "running",
+                      "jobStatus": "running",
+                      "lifecycleStatus": "running",
+                      "jobId": "51883102-2222-4222-8222-222222222222",
+                      "result": {},
+                      "poll": "/jobs/51883102-2222-4222-8222-222222222222/result",
+                      "stream": "/jobs/51883102-2222-4222-8222-222222222222/stream",
+                      "jobReadToken": "v1.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                      "jobReadTokenHeader": "x-arcanos-job-read-token"
+                    }
+                  }
                 }
               }
             }
@@ -385,7 +403,7 @@
             }
           },
           "503": {
-            "description": "Durable async GPT jobs are unavailable because job-read capability signing is not configured, creation storage is unavailable, or post-enqueue status lookup failed for canonical bridge operations. Missing or invalid signing configuration returns `JOB_READ_AUTH_UNAVAILABLE` before enqueueing.",
+            "description": "Durable async GPT jobs are unavailable because job-read capability signing is not configured or creation storage is unavailable. Missing or invalid signing configuration returns `JOB_READ_AUTH_UNAVAILABLE` before enqueueing. A status-storage outage after durable acceptance returns the existing HTTP 202 continuation instead.",
             "headers": {
               "Cache-Control": {
                 "$ref": "#/components/headers/NoStore"
@@ -407,27 +425,6 @@
                       "error": {
                         "code": "ASYNC_GPT_JOBS_UNAVAILABLE",
                         "message": "query requires durable GPT job persistence, but the jobs backend is unavailable."
-                      }
-                    }
-                  },
-                  "acceptedJobStatusUnavailable": {
-                    "summary": "An accepted query_and_wait job cannot be read while durable persistence is unavailable",
-                    "value": {
-                      "ok": false,
-                      "requestId": "req_example",
-                      "traceId": "trace_example",
-                      "action": "query_and_wait",
-                      "status": "running",
-                      "jobStatus": "running",
-                      "lifecycleStatus": "running",
-                      "jobId": "job_example",
-                      "poll": "/jobs/job_example/result",
-                      "stream": "/jobs/job_example/stream",
-                      "jobReadToken": "v1.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-                      "jobReadTokenHeader": "x-arcanos-job-read-token",
-                      "error": {
-                        "code": "ASYNC_GPT_JOBS_UNAVAILABLE",
-                        "message": "Async GPT job status is temporarily unavailable because durable job persistence is unavailable."
                       }
                     }
                   }
@@ -2011,6 +2008,10 @@
             "$ref": "#/components/schemas/JobReadTokenHeader"
           },
           "result": {},
+          "presentation": {
+            "const": "public-answer-v1",
+            "description": "Optional server-owned format state retained from finalized answer text before durable job storage. It preserves public answer headings without granting disclosure or execution authority. Missing or unknown state retains legacy private-section protection."
+          },
           "idempotencyKey": {
             "type": "string"
           },

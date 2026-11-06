@@ -122,6 +122,54 @@ describe('jobRepository initial claim generations', () => {
     expect(params[24]).toBe(0);
   });
 
+  it('does not expose accepted GPT coordinates before the creation commit resolves', async () => {
+    let releaseCommit!: () => void;
+    let enteredCommit!: () => void;
+    const commitWait = new Promise<void>(resolve => { releaseCommit = resolve; });
+    const commitEntered = new Promise<void>(resolve => { enteredCommit = resolve; });
+    clientQueryMock.mockImplementation(async (sql: unknown, params?: unknown[]) => {
+      if (sql === 'COMMIT') {
+        enteredCommit();
+        await commitWait;
+      }
+      return {
+        rows: typeof sql === 'string' && sql.includes('INSERT INTO job_data')
+          ? [returnedJob('pending', String(params?.[22]))] : [],
+      };
+    });
+    let accepted = false;
+    const creation = findOrCreateGptJob({
+      workerId: 'api', input: { gptId: 'arcanos-daemon', body: { prompt: 'Original question' } },
+      requestFingerprintHash: 'd'.repeat(64), idempotencyScopeHash: 'e'.repeat(64),
+      idempotencyOrigin: 'derived',
+    }).then(result => { accepted = true; return result; });
+    await commitEntered;
+    expect(accepted).toBe(false);
+    expect(recordJobEventMock).not.toHaveBeenCalled();
+    releaseCommit();
+    await expect(creation).resolves.toMatchObject({ created: true, job: { id: 'job-pending' } });
+    expect(accepted).toBe(true);
+    expect(clientReleaseMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not expose accepted GPT coordinates when the creation commit fails', async () => {
+    clientQueryMock.mockImplementation(async (sql: unknown, params?: unknown[]) => {
+      if (sql === 'COMMIT') throw new Error('synthetic acceptance commit failure');
+      return {
+        rows: typeof sql === 'string' && sql.includes('INSERT INTO job_data')
+          ? [returnedJob('pending', String(params?.[22]))] : [],
+      };
+    });
+    await expect(findOrCreateGptJob({
+      workerId: 'api', input: { gptId: 'arcanos-daemon', body: { prompt: 'Original question' } },
+      requestFingerprintHash: 'd'.repeat(64), idempotencyScopeHash: 'e'.repeat(64),
+      idempotencyOrigin: 'derived',
+    })).rejects.toThrow('synthetic acceptance commit failure');
+    expect(recordJobEventMock).not.toHaveBeenCalled();
+    expect(clientQueryMock).toHaveBeenCalledWith('ROLLBACK');
+    expect(clientReleaseMock).toHaveBeenCalledTimes(1);
+  });
+
   it('starts a direct running GPT creation at generation one', async () => {
     clientQueryMock.mockImplementation(async (sql: unknown, params?: unknown[]) => {
       if (typeof sql === 'string' && sql.includes('INSERT INTO job_data')) {

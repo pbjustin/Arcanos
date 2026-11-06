@@ -283,6 +283,37 @@ describe('/jobs routes', () => {
     });
   });
 
+  it('reports a completed job with lost durable output without claiming completion or starting work', async () => {
+    const stored = {
+      id: COMPLETED_JOB_ID, job_type: 'gpt', status: 'completed', output: null,
+      created_at: '2026-11-05T10:00:00.000Z',
+      updated_at: '2026-11-05T10:00:02.000Z',
+      completed_at: '2026-11-05T10:00:02.000Z',
+      retention_until: '2026-11-06T10:00:02.000Z',
+      error_message: 'private lost-output diagnostic',
+    };
+    getJobByIdMock.mockResolvedValue(stored);
+    const unauthorized = await request(buildApp()).get(`/jobs/${COMPLETED_JOB_ID}/result`);
+    expect(unauthorized.body).toMatchObject({ status: 'not_found', result: null });
+    expect(getJobByIdMock).not.toHaveBeenCalled();
+    const response = await getWithJobReadToken(`/jobs/${COMPLETED_JOB_ID}/result`, COMPLETED_JOB_ID);
+    expect(response.status).toBe(200);
+    expectNoStore(response);
+    expect(response.body).toMatchObject({
+      jobId: COMPLETED_JOB_ID, status: 'failed', jobStatus: 'completed',
+      lifecycleStatus: 'completed', result: null,
+      error: {
+        code: 'JOB_RESULT_UNAVAILABLE',
+        message: 'The completed job has no retained output. The original answer is unavailable.',
+      },
+    });
+    expect(JSON.stringify(response.body)).not.toContain('private lost-output diagnostic');
+    expect(getJobByIdMock).toHaveBeenCalledTimes(1);
+    expect(requestJobCancellationMock).not.toHaveBeenCalled();
+    expect(sleepMock).not.toHaveBeenCalled();
+    expect(stored.status).toBe('completed');
+  });
+
   it('decrypts a protected Booker result only after the existing job-read capability succeeds', async () => {
     const privatePrompt = 'private-job-route-prompt-sentinel';
     const privateResult = 'private-job-route-result-sentinel';

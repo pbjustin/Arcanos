@@ -3720,35 +3720,17 @@ router.post(
                   requestId,
                   jobId: job.id
                 });
-                if (protectedBackstageJobExecution) {
-                  return sendGuardedGptJsonResponse(
-                    req,
-                    res,
-                    projectAsyncJobResponseForRequest(req, queuedPendingResponse),
-                    'gpt.response.backstage_initial_acceptance_continuation_unavailable',
-                    202
-                  );
-                }
-                return sendGuardedGptJsonResponse(req, res, {
-                  ok: false,
-                  error: {
-                    code: 'ASYNC_GPT_JOBS_UNAVAILABLE',
-                    message: ASYNC_GPT_JOBS_UNAVAILABLE_MESSAGE
-                  },
-                  ...buildAsyncJobResponseMetadata({
-                    action: asyncBridgeAction,
-                    jobId: job.id,
-                    jobStatus: job.status,
-                    deduped: createResult.deduped,
-                    idempotencyKey: idempotencyDescriptor.publicIdempotencyKey,
-                    idempotencySource: idempotencyDescriptor.source
-                  }),
-                  _route: {
-                    requestId,
-                    gptId: incomingGptId,
-                    timestamp: new Date().toISOString()
-                  }
-                }, 'gpt.response.async_jobs_unavailable', 503);
+                // Acceptance is already durable. A temporary wait outage must
+                // preserve its original continuation instead of inviting a new write.
+                return sendGuardedGptJsonResponse(
+                  req,
+                  res,
+                  projectAsyncJobResponseForRequest(req, queuedPendingResponse),
+                  protectedBackstageJobExecution
+                    ? 'gpt.response.backstage_initial_acceptance_continuation_unavailable'
+                    : 'gpt.response.async_continuation_unavailable',
+                  202
+                );
               }
 
               if (waitedJob.state === 'completed') {

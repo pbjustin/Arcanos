@@ -62,6 +62,8 @@ def record_conversation_turn(
     response_for_memory: str,
     tokens_used: int,
     cost_usd: float,
+    *,
+    reservation_id: Optional[str] = None,
 ) -> None:
     """
     Purpose: Persist one conversation turn and update rate-limit counters.
@@ -69,7 +71,10 @@ def record_conversation_turn(
     Edge cases: Response may be empty when voice boundary suppresses content.
     """
     # //audit assumption: limiter must track every billed request; risk: quota drift; invariant: request usage recorded before persistence; strategy: record then persist.
-    cli.rate_limiter.record_request(tokens_used, cost_usd)
+    if reservation_id is None:
+        cli.rate_limiter.record_request(tokens_used, cost_usd)
+    else:
+        cli.rate_limiter.record_request(tokens_used, cost_usd, reservation_id=reservation_id)
     # //audit assumption: persisted conversation text must be UTF-8 encodable; risk: runtime crash on malformed surrogate input; invariant: stored messages are serialization-safe; handling strategy: sanitize both user and assistant text before persistence.
     normalized_user_message = sanitize_utf8_text(redact_output(
         user_message, apply_truncation=False, preserve_literal_unicode=True

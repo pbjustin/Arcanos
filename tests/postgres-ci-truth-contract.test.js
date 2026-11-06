@@ -44,6 +44,7 @@ const POSTGRES_TEST_FILES = [
   'tests/integration/gpt-access-device-auth.pg18.integration.test.ts',
   'tests/integration/dag-token-accounting.pg18.integration.test.ts',
   'tests/dag-accounting-e2e.test.ts',
+  'tests/daemon-conversation-continuation-pg18.e2e.test.ts',
 ];
 
 function readNormalized(path) {

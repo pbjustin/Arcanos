@@ -87,6 +87,10 @@ Finalized backend answers may carry the server-owned outer field
 metadata retains legacy private audit/routing section protection; local provider
 responses without producer metadata retain that protection too. Heading text,
 model output, route names, and debug flags cannot confer this state.
+For completed jobs, the canonical backend dispatcher records this optional outer
+field from its existing finalization marker before storage. Retrieval preserves
+that server-owned field; raw model and nested module properties cannot supply
+it. Legacy stored results without this field keep the existing protection.
 
 Disclosure labels, private machine records, and credentials remain protected
 for every presentation format, including debug display mode. Unsafe terminal
@@ -100,8 +104,9 @@ Job-read capability values are redacted from displayed errors, answer history,
 speech/replay, audit logs, and telemetry. This includes standalone `v1.` values
 with exactly 43 Base64URL characters, escaped JSON values, and named
 `jobReadToken` fields. Surrounding prose, error codes, ordinary version strings,
-and non-sensitive job metadata remain available. Authenticated job polling is
-unchanged.
+and non-sensitive job metadata remain available. Job-read authentication is
+unchanged; ordinary Windows conversations can now monitor their accepted jobs
+automatically as described below.
 Proposal extraction does not remove examples from the answer or grant execution
 permission; existing confirmation and policy checks still apply.
 
@@ -265,6 +270,9 @@ Keep orchestration and side effects in their existing owners:
 | `arcanos/cli/local_ops.py` | Local GPT, vision, voice, and multimodal flows; backend calls delegate to `backend_ops.py`. |
 | `arcanos/cli/confirmation.py` | Confirmation prompts and approval/rejection flow. |
 | `arcanos/cli/memory_ops.py` | Conversation persistence and summary state. |
+| `arcanos/cli/conversation_recovery.py` | Bounded original-job reads and idempotent automatic delivery. |
+| `arcanos/continuation_store.py` | User-bound Windows protection and atomic pending recovery records. |
+| `arcanos/interactive_input.py` | Interactive prompt redraw while completed answers arrive. |
 | `arcanos/cli/daemon_ops.py` | Daemon thread lifecycle, polling, and command dispatch. |
 | `arcanos/cli/ui_ops.py` | Rendering, tables/Markdown output, and speech replay. |
 | `arcanos/cli/run_ops.py` | Terminal-command orchestration under governance and idempotency controls. |
@@ -451,11 +459,130 @@ Python clients use structured writing and control-plane operations:
 
 The query methods create writing work through the GPT route. Status and result methods read the job through direct control-plane endpoints. These wrappers normalize fields such as `ok`, `action`, `jobId`, `status`, and `result`/`output` when available. Flat job payloads retain object, scalar, and null outputs exactly; only explicitly identified compatibility envelopes are unwrapped. Requests carrying bearer, GPT-ID, daemon, cookie, or job-read capability headers do not follow redirects.
 
-Interactive chat requires a completed answer. An HTTP 202 response remains
-pending: the CLI reports that no completed answer is available, records an
-unconfirmed audit outcome, and does not start local fallback or save a completed
-conversation. Empty JSON objects are not conversational answers. Typed async
-query and job-result operations retain their existing pending and result contracts.
+Interactive chat requires a completed answer. HTTP 200 answers follow the normal
+presentation path. HTTP 202 remains pending: the CLI records an unconfirmed audit
+outcome and does not start fallback inference or save a completed conversation.
+When acceptance includes a valid original job ID and job-read capability, the
+foreground Windows CLI automatically monitors that same job and displays its
+validated answer when available. `/resume [jobId]` remains an optional diagnostic
+and one-shot manual read; normal delivery does not require it.
+
+Recovery makes only `GET /jobs/<jobId>/result`, with the capability in the fixed
+`x-arcanos-job-read-token` header. It never repeats the generation POST, replaces
+the job, invokes a provider, or refreshes credentials. Each foreground process
+reads its own accepted jobs sequentially. Each production recovery GET runs in
+one short-lived Python helper using the existing Requests transport, with a
+two-second elapsed deadline including startup and result acquisition. Cancellation
+terminates and reaps that helper, including blocked DNS, TLS, header and body reads.
+The helper also has its own hard lifetime in case the foreground crashes. Native
+per-job ownership keeps answers in the submitting console, even when two consoles
+share a stored session ID. One process leader adopts orphaned work after its owner
+exits or dies. The shared protected snapshot retains the eight-context limit.
+Per-job backoff starts at one second and reaches 30 seconds while pending or
+60 seconds after transient read failures. Shutdown cancels the active helper and
+joins the recovery worker. A cancelled or deadline-expired read keeps the original
+protected job for a later same-job attempt; it does not commit or display a late
+result. Responses are bounded to 512 KiB and the anonymous request pipe to 4 KiB;
+oversized input fails closed. Job/writing credentials travel only through that
+pipe, never command arguments, environment variables or temporary files. The
+helper retains Requests' TLS verification, configured CA and proxy behavior, and
+loads only resolved installed transport libraries without daemon startup hooks.
+It performs one GET with no redirect or retry, exits after each read, and is not
+a persistent service. Ordinary API requests keep their existing transport.
+It does not enable daemon command polling, actions, self-healing, or a Windows
+service. The terminal editor preserves unfinished input while answers appear;
+automatic delivery does not start speech over active input.
+If optional editor setup fails, ordinary input and manual recovery remain available
+with automatic terminal delivery disabled. A failure after editing begins exits
+cleanly for a restart; partial input is never submitted through another reader.
+
+Pending coordinates are stored under `Config.DATA_DIR/conversation-recovery/` in
+a current-user Windows DPAPI snapshot with restricted filesystem permissions.
+Only ciphertext reaches the replacement file or disk; atomic write-through
+replacement protects interrupted updates. The snapshot is bounded to eight
+records and 2 MiB, with a 128 KiB question limit. It contains the original question,
+session correlation, accepted job/capability, authenticated backend fingerprint,
+timestamps, and recovery state. Capabilities never enter URLs, prompts, ordinary
+SQLite/JSON history, logs, or memory backups. Corruption, another Windows user,
+or a different backend/credential identity fails closed without generating work.
+
+On the next normal launch, including after a Windows restart, the CLI restores
+valid protected records and resumes same-job reads. A new process instance ID
+does not invalidate legitimate recovery. Stored session IDs identify the original
+conversation and do not grant server authentication. Missing protected storage
+disables restart recovery; a still-running process retains the existing guarded
+manual fallback. Set `CONVERSATION_RECOVERY_ENABLED=false` to retain manual-only
+operation. No plaintext migration or replacement generation is attempted when
+old process-only state or protected data is unavailable.
+
+Before display, approved question/answer text, authoritative available usage,
+and one durable completion audit event commit together in the existing SQLite
+history database. The originating backend/job hash is the unique delivery key.
+Normal history and statistics merge those rows with legacy JSON history without
+mirroring or double-counting them. Receipt flags protect display and audit replay;
+usage hydration charges each committed receipt once in the current process and
+to its recorded day/hour. Withheld output is stored as empty text with a withheld
+audit event. Recovery receipts are bounded to 2,048 rows and 64 MiB of logical
+payload; displayed receipts remain for at least eight days. Lifetime totals survive
+receipt pruning. Capacity or persistence failures retain pending work for a later
+safe attempt.
+
+Private recovery SQLite connections and read-only schema probes use a 250 ms
+lock wait so database contention releases the recovery worker promptly. Other
+history callers retain their existing five-second lock wait. A failed connection
+setup closes its native handle before propagating the storage error.
+
+Clearing history removes acknowledged question, answer and session text from the
+active SQLite rows while retaining non-content replay, usage and audit receipts.
+Unacknowledged answers are hidden and remain available until display acknowledgement,
+then their cleared text is removed. This is logical deletion: SQLite pages, WAL
+files, independent backups and prior terminal output can retain earlier bytes.
+The legacy JSON-only `Memory.export_backup` helper does not include SQLite turns
+or their totals and is not a complete history or recovery backup.
+
+Original generation attempts reserve hourly request capacity before dispatch,
+including accepted pending work; pending does not charge tokens, cost or completed
+history. Protected pending admissions are restored within their original hour.
+Completion consumes the reservation once and charges only authoritative available
+usage. Work rejected locally before dispatch refunds its reservation; uncertain
+or failed dispatched attempts retain their hourly admission. These remain local
+CLI limits rather than a distributed backend admission policy.
+
+Terminal output and SQLite cannot commit atomically. A crash after output starts
+but before its display receipt commits can repeat terminal text after restart.
+It does not duplicate generation, durable conversation turns, or accounting.
+The reverse boundary can lose a queued terminal write after its receipt commits;
+the approved answer remains in normal history. Successful display is acknowledged
+before protected recovery records are removed.
+
+Pending, failed, cancelled, expired, unavailable, and inaccessible results do not
+become completed conversations. Missing or malformed capabilities fail closed.
+The backend deliberately uses the same `not_found` response for denied job reads
+and missing results, so the CLI cannot distinguish an invalid capability from a
+removed or inaccessible job. A completed result must still pass the ordinary
+answer-validation and credential-redaction rules. Empty nested result objects
+and incomplete provider output are not answers. During normal operation, an
+accepted answer is displayed once and saved with its original question; repeated retrieval does not duplicate
+generation or conversation turns. Other questions keep separate continuation
+contexts. Result reads do not renew FULL trust or authorize actions, and existing
+confirmation and action-policy checks remain in force.
+Usage and cost come only from the retrieved result's available metadata; missing
+provider accounting is not proof of zero billed usage.
+Completed usage recorded after midnight resets the previous day's counters
+before adding the retrieved usage, without requiring another admission check.
+Transient backend/storage failures retain the original job and back off. A
+completed backend row whose output was never retained reports an unavailable
+answer; recovery cannot reconstruct it. Committed results survive backend process
+restart while retained. Default completed GPT retention is 24 hours, failed
+retention six hours, and cancelled retention one hour. The existing server worker
+may retry a stale execution under its own durable-job policy; read-only recovery
+does not change that policy or establish a universal exactly-once provider guarantee.
+
+Typed async query and job-result operations retain their existing pending and
+result contracts. Their job-specific bearer capability is an authorization
+credential; the local instance binding does not add server-side tenant ownership.
+See the [dated continuation investigation](../docs/audits/incidents/2026-11-05/daemon-conversation-continuation/README.md)
+for the incident evidence and its limits.
 
 ## Built-in CLI commands
 
@@ -465,6 +592,7 @@ query and job-result operations retain their existing pending and result contrac
 - `/rollback <rollback_id>`: restore files from backups
 - `/audit export <path> [--all]`: export audit history as JSON
 - `/intents`: show the last detected proposals
+- `/resume [jobId]`: optionally list retained conversations or read one accepted result once; automatic Windows recovery runs without it
 - `/dryrun on|off`: proposal-only mode
 - `/safemode on|off`: block patch/command execution until disabled
 - `/feedback <rollback_id> <rating 1-5> <note...>`: record patch feedback

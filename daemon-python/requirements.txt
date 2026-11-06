@@ -19,6 +19,7 @@ pynput>=1.7.6
 webrtcvad>=2.0.10; platform_system != "Windows"
 pystray>=0.19.5
 rich>=13.7.0
+prompt_toolkit>=3.0.51,<4
 psycopg2-binary>=2.9.9
 argcomplete>=3.1.0
 jsonschema>=4.23.0,<5

@@ -727,6 +727,34 @@ def perform_backend_conversation(
     from_debug: bool = False,
     *,
     outcome: Optional[dict[str, bool]] = None,
+    quota_reservation_id: Optional[str] = None,
+) -> Optional[ConversationResult]:
+    """Reserve bounded continuation capacity before accepting more backend work."""
+    if _parse_backend_job_lookup_intent(message) is not None:
+        return _perform_backend_conversation(cli, message, domain, from_debug, outcome=outcome,
+                                             quota_reservation_id=quota_reservation_id)
+    reserve = getattr(cli, "_reserve_backend_conversation", None)
+    if reserve is not None and not reserve():
+        if outcome is not None:
+            outcome["capacity_denied"] = True
+        cli.console.print("Pending conversation limit reached. Use /resume <jobId> before submitting more questions.", markup=False)
+        return None
+    try:
+        return _perform_backend_conversation(cli, message, domain, from_debug, outcome=outcome,
+                                             quota_reservation_id=quota_reservation_id)
+    finally:
+        if reserve is not None:
+            cli._release_backend_conversation()
+
+
+def _perform_backend_conversation(
+    cli: "ArcanosCLI",
+    message: str,
+    domain: Optional[str] = None,
+    from_debug: bool = False,
+    *,
+    outcome: Optional[dict[str, bool]] = None,
+    quota_reservation_id: Optional[str] = None,
 ) -> Optional[ConversationResult]:
     """
     Purpose: Execute backend conversation with optional domain routing.
@@ -759,12 +787,17 @@ def perform_backend_conversation(
     )
 
     metadata = build_backend_metadata(cli)
+    request_client = cli.backend_client
+    request_instance_id = cli.instance_id
+    request_session_id = getattr(getattr(cli, "session", None), "session_id", None)
     backend_gpt_id = _resolve_backend_gpt_id(domain)
     telemetry_attempt_id = str(uuid.uuid4())
     primary_error: Optional[BackendRequestError] = None
     retry_payload_mode: Optional[str] = None
     retry_outcome = "not_attempted"
 
+    if outcome is not None:
+        outcome["generation_started"] = True
     if domain:
         primary_payload_mode = _build_payload_mode_label(
             route="ask",
@@ -773,7 +806,7 @@ def perform_backend_conversation(
         )
         response = request_with_auth_retry(
             cli,
-            lambda: cli.backend_client.request_ask_with_domain(
+            lambda: request_client.request_ask_with_domain(
                 message=message,
                 domain=domain,
                 metadata=metadata,
@@ -790,7 +823,7 @@ def perform_backend_conversation(
         )
         response = request_with_auth_retry(
             cli,
-            lambda: cli.backend_client.request_chat_completion(
+            lambda: request_client.request_chat_completion(
                 messages=messages,
                 temperature=Config.TEMPERATURE,
                 model=Config.BACKEND_CHAT_MODEL or None,
@@ -822,7 +855,7 @@ def perform_backend_conversation(
         )
         response = request_with_auth_retry(
             cli,
-                lambda: cli.backend_client.request_ask_with_domain(
+                lambda: request_client.request_ask_with_domain(
                     message=message,
                     domain=domain,
                     metadata=None,
@@ -863,6 +896,18 @@ def perform_backend_conversation(
         if outcome is not None:
             outcome["pending"] = True
         cli.console.print("Backend request is pending; no completed answer is available.", markup=False)
+        handle = response.error.continuation
+        if handle is not None and cli._retain_backend_conversation(
+            message, handle, request_client, request_instance_id, request_session_id,
+            quota_reservation_id=quota_reservation_id,
+        ):
+            recovery = getattr(cli, "_conversation_recovery", None)
+            if recovery is not None and recovery.contains(handle.job_id):
+                cli.console.print("The original answer will appear automatically when ready. You can keep typing.", markup=False)
+            else:
+                cli.console.print(f"Use /resume {handle.job_id} to retrieve this answer once.", markup=False)
+        else:
+            cli.console.print("A valid continuation handle was not supplied; the answer cannot be retrieved safely.", markup=False)
         return None
 
     if response.error and response.error.kind == "confirmation":

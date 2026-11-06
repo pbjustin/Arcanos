@@ -22,6 +22,7 @@ from .credential_verification import (
 )
 from .env import get_env
 from .error_handler import ErrorHandler
+from .interactive_input import interactive_input
 from .debug.logging import RedactingFileHandler, RedactingTextFormatter
 
 if TYPE_CHECKING:
@@ -300,37 +301,57 @@ def run_interactive_mode(cli: "ArcanosCLI") -> None:
     install_completion()
     cli.show_welcome()
     try:
-        while True:
+        with interactive_input() as read_input:
             try:
-                user_input = input("> ").strip()
-                if not user_input:
-                    continue
-
-                lower_input = user_input.lower()
-                if lower_input in ("exit", "quit", "bye") or lower_input in ("/exit", "/quit", "/bye"):
-                    cli.console.print("[cyan]See you later![/cyan]")
-                    break
-
-                if user_input.startswith("/"):
-                    # Slash command: strip the "/" and dispatch
-                    command_text = user_input[1:]
-                    if command_text:
+                if not getattr(read_input, "_arcanos_redraw_safe", False):
+                    # Plain input cannot redraw an active line around worker output.
+                    if hasattr(cli, "_stop_conversation_recovery"):
+                        cli._stop_conversation_recovery()
+                elif hasattr(cli, "_start_conversation_recovery"):
+                    cli._start_conversation_recovery()
+                while True:
+                    try:
                         try:
-                            _dispatch_command(cli, command_text)
-                        except UnknownSlashCommandError:
-                            # Unknown slash command — fall back to chat
+                            user_input = read_input("> ").strip()
+                        except (KeyboardInterrupt, EOFError):
+                            raise
+                        except Exception:
+                            # A failed reader may hold partial input. Do not
+                            # replay it, switch readers, or spin on the same fault.
+                            cli._last_error = "Interactive input failed"
+                            cli.console.print("[red]Interactive input failed; restart the CLI to continue.[/red]")
+                            break
+                        if not user_input:
+                            continue
+
+                        lower_input = user_input.lower()
+                        if lower_input in ("exit", "quit", "bye") or lower_input in ("/exit", "/quit", "/bye"):
+                            cli.console.print("[cyan]See you later![/cyan]")
+                            break
+
+                        if user_input.startswith("/"):
+                            # Slash command: strip the "/" and dispatch
+                            command_text = user_input[1:]
+                            if command_text:
+                                try:
+                                    _dispatch_command(cli, command_text)
+                                except UnknownSlashCommandError:
+                                    # Unknown slash command — fall back to chat
+                                    cli.handle_ask(user_input)
+                        else:
+                            # Chat-first: everything without "/" goes straight to conversation
                             cli.handle_ask(user_input)
-                else:
-                    # Chat-first: everything without "/" goes straight to conversation
-                    cli.handle_ask(user_input)
-            except (KeyboardInterrupt, EOFError):
-                cli.console.print("\n[cyan]See you later![/cyan]")
-                break
-            except Exception as exc:
-                cli._last_error = str(exc) or type(exc).__name__
-                cli._append_activity("error", cli._last_error)
-                error_msg = ErrorHandler.handle_exception(exc, "main loop")
-                cli.console.print(f"[red]{error_msg}[/red]")
+                    except (KeyboardInterrupt, EOFError):
+                        cli.console.print("\n[cyan]See you later![/cyan]")
+                        break
+                    except Exception as exc:
+                        cli._last_error = str(exc) or type(exc).__name__
+                        cli._append_activity("error", cli._last_error)
+                        error_msg = ErrorHandler.handle_exception(exc, "main loop")
+                        cli.console.print(f"[red]{error_msg}[/red]")
+            finally:
+                if hasattr(cli, "_stop_conversation_recovery"):
+                    cli._stop_conversation_recovery()
     finally:
         cli._stop_daemon_service()
 
@@ -350,6 +371,10 @@ def _dispatch_command(cli: "ArcanosCLI", command_text: str) -> None:
             cli.console.print("[red]No prompt provided for backend request.[/red]")
         else:
             cli.handle_ask(args, route_override="backend")
+        return
+
+    if command == "resume":
+        cli.handle_resume(args)
         return
 
     if command == "run":
@@ -382,6 +407,10 @@ def process_input(cli: "ArcanosCLI", user_input: str) -> None:
         return
     command = parts[0].lower()
     args = parts[1] if len(parts) > 1 else ""
+
+    if command in ("resume", "/resume"):
+        cli.handle_resume(args)
+        return
 
     # //audit assumption: backend requests need arguments; risk: empty prompt; invariant: warn; strategy: check args.
     if command in ["deep", "backend"]:
