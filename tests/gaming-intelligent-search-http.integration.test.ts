@@ -4,6 +4,7 @@ import { once } from 'node:events';
 import express from 'express';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
+import { gamingArchiveGuideUrl, gamingArchiveStorageHost, gamingArchiveDerivativePath, gamingArchiveMetadata } from './testUtils/gamingArchiveFixtures.js';
 import { GAMING_CLEAR_DIMENSIONS } from '../src/shared/gaming/gamingClearPolicy.js';
 import type { GamingHybridResponse } from '../src/shared/gaming/gamingHybridContract.js';
 
@@ -36,6 +37,8 @@ jest.unstable_mockModule('@services/selfImprove/selfHealingV2.js', () => ({
 
 const { createGamingHybridWorkflow } = await import('../src/services/gamingHybridKnowledge.js');
 const { evaluateGamingHybridCandidates } = await import('../src/services/gamingHybridCandidates.js');
+const { resolveGamingDocument } = await import('../src/services/gamingDocumentResolution.js');
+const { createBraveGamingSearchProvider, discoverGamingSources, clearGamingDiscoveryCache } = await import('../src/services/gamingSourceDiscovery.js');
 const { createGamingMcpExecutor } = await import('../src/chatgpt/gaming.js');
 const { createChatGptGamingMcpRouter } = await import('../src/routes/chatgptGamingMcp.js');
 const { readGamingAuthConfiguration } = await import('../src/chatgpt/gamingAuth.js');
@@ -61,7 +64,7 @@ const env = {
   FINETUNED_MODEL_ID: authority,
   ARCANOS_GAMING_RAG_ENABLED: 'false', ARCANOS_GAMING_DISCOVERY_ENABLED: 'false',
   ARCANOS_GAMING_CURATED_SOURCES_JSON: '[]', ARCANOS_GAMING_WEB_CONTEXT_CHARS: '12000',
-  ARCANOS_GAMING_RAG_CHUNK_CHARS: '1200'
+  ARCANOS_GAMING_RAG_CHUNK_CHARS: '1200', BRAVE_SEARCH_API_KEY: ''
 };
 type Fixture = { game: string; question: string; url: string; passage: string; answer: string };
 // Synthetic gameplay material, not captured publisher pages or independent live
@@ -82,6 +85,9 @@ const fixtures: Fixture[] = [
 let active = fixtures[0];
 let invalidCitation = false;
 let sourceHtml: string | undefined;
+type AcquisitionResponse = { status: number; headers: Record<string, string>; data: string };
+let acquisitionResponse: ((url: URL, headers: Record<string, string>) => AcquisitionResponse) | undefined;
+let acquisitionResponseType: 'stream' | 'text' = 'stream';
 const providerStages: string[] = [];
 
 /** Model a publisher's class-based primary body without semantic article/main tags. */
@@ -100,15 +106,18 @@ beforeEach(() => {
   previousEnv = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]));
   Object.assign(process.env, env);
   sequence = 0; workflowOffsetMs = 0; invalidCitation = false; sourceHtml = undefined; active = fixtures[0]; providerStages.length = 0;
+  acquisitionResponse = undefined; acquisitionResponseType = 'stream'; clearGamingDiscoveryCache();
   for (const log of [logger, aiLogger]) for (const level of ['info', 'warn', 'error', 'debug'] as const)
     jest.spyOn(log, level).mockImplementation(() => undefined);
   jest.spyOn(console, 'log').mockImplementation(() => undefined);
   modelsRetrieve.mockImplementation(async (id: string) => ({ id }));
   acquire.mockImplementation(async (url: string, options: any) => {
     expect(new URL(url).hostname).toBe('93.184.216.34');
-    expect(options).toMatchObject({ maxRedirects: 0, proxy: false, responseType: 'stream', signal: expect.any(Object) });
+    expect(options).toMatchObject({ maxRedirects: 0, proxy: false, responseType: acquisitionResponseType, signal: expect.any(Object) });
     expect(options.headers).not.toHaveProperty('Authorization');
     expect(options.headers).not.toHaveProperty('Cookie');
+    expect(new Headers(options.headers).has('x-subscription-token')).toBe(false);
+    if (acquisitionResponse) return acquisitionResponse(new URL(url), options.headers);
     return { status: 200, headers: { 'content-type': 'text/html' }, data: sourceHtml ?? `<html><title>${active.game} walkthrough</title><body><article>
       <h1>${active.game} gameplay guide</h1><p>In the game ${active.game}, players follow these acquired gameplay instructions.</p>
       <p>${active.passage}</p></article></body></html>` };
@@ -155,12 +164,19 @@ afterEach(async () => {
   jest.restoreAllMocks(); resetSafetyRuntimeStateForTests();
 });
 
-/** Serve the real MCP workflow with isolated effects and optional read-only candidate observation. */
-async function serve(observeCandidates?: (value: Awaited<ReturnType<typeof evaluateGamingHybridCandidates>>) => void) {
+/** Serve the real MCP workflow with isolated effects and optional read-only evidence observation. */
+async function serve(observeCandidates?: (value: Awaited<ReturnType<typeof evaluateGamingHybridCandidates>>) => void,
+  observeDocument?: (value: Awaited<ReturnType<typeof resolveGamingDocument>>) => void) {
   const retrieve = jest.fn(async () => ({ context: '', sources: [], evidence: [], sourceKnown: false }));
   const workflow = createGamingHybridWorkflow({ retrieve, ingest: ingest as never, now: () => Date.now() + workflowOffsetMs,
-    ...(observeCandidates ? { evaluateCandidates: async (...args: Parameters<typeof evaluateGamingHybridCandidates>) => {
-      const value = await evaluateGamingHybridCandidates(...args); observeCandidates(value); return value;
+    ...(observeCandidates || observeDocument ? { evaluateCandidates: async (...args: Parameters<typeof evaluateGamingHybridCandidates>) => {
+      const [submission, context, dependencies] = args;
+      const value = await evaluateGamingHybridCandidates(submission, context, { ...dependencies,
+        ...(observeDocument ? { resolveDocument: async (...parameters: Parameters<typeof resolveGamingDocument>) => {
+          const document = await (dependencies?.resolveDocument ?? resolveGamingDocument)(...parameters);
+          observeDocument(document); return document;
+        } } : {}) });
+      observeCandidates?.(value); return value;
     } } : {}) });
   const execute = createGamingMcpExecutor({ hybridQuery: workflow.query, candidates: workflow.candidates, ingestCandidates: workflow.ingest });
   const app = express();
@@ -201,6 +217,119 @@ async function submit(state: GamingHybridResponse, urls = [active.url], key = 'i
 }
 
 describe('Intelligent discovery through authenticated loopback Gaming MCP and real Trinity', () => {
+  it.each(['cancelled', 'failed'] as const)('keeps a %s host-side search read-only before candidate submission', async outcome => {
+    await serve(); const started = await query();
+    process.env.ARCANOS_GAMING_DISCOVERY_ENABLED = 'true';
+    process.env.BRAVE_SEARCH_API_KEY = 'synthetic-search-fixture-only';
+    const nativeFetch = globalThis.fetch;
+    const searchFetch = jest.fn();
+    jest.spyOn(globalThis, 'fetch').mockImplementation(async (input, options) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      if (url.origin === 'https://api.search.brave.com' && url.pathname === '/res/v1/web/search') {
+        searchFetch();
+        expect(options?.redirect).toBe('error'); expect(options?.signal).toBeDefined();
+        expect(new Headers(options?.headers).get('x-subscription-token')).toBe('synthetic-search-fixture-only');
+        return new Response('Search temporarily unavailable.', { status: 503 });
+      }
+      expect(url.origin).toBe(new URL(endpoint).origin);
+      return nativeFetch(input, options);
+    });
+    const controller = new AbortController();
+    if (outcome === 'cancelled') controller.abort();
+    const discovered = await discoverGamingSources({ prompt: active.question, game: active.game, mode: 'guide',
+      provider: createBraveGamingSearchProvider(), signal: controller.signal });
+    expect(discovered.candidates).toEqual([]);
+    expect(discovered.discoveryFailureReason).toBe(outcome === 'cancelled' ? 'DISCOVERY_PROVIDER_TIMEOUT' : 'DISCOVERY_PROVIDER_ERROR');
+    expect(searchFetch).toHaveBeenCalledTimes(outcome === 'cancelled' ? 0 : 1);
+    const replay = await query();
+    expect(replay.result).toEqual(started.result);
+    expect(acquire).not.toHaveBeenCalled(); expect(responsesCreate).not.toHaveBeenCalled();
+    expect(modelsRetrieve).not.toHaveBeenCalled(); expect(ingest).not.toHaveBeenCalled(); expect(memoryWrite).not.toHaveBeenCalled();
+  });
+
+  it.each(['admitted same-origin redirect', 'metadata-attested Archive derivative', 'Archive derivative without an exact named game scope'] as const)(
+    'joins real host-side Brave discovery to OAuth MCP and Trinity using %s', async resource => {
+      const archive = resource !== 'admitted same-origin redirect';
+      if (archive) active = {
+        game: 'Kingdom Hearts HD 1.5 Remix', question: 'How should I prepare for the first boss at the lantern checkpoint?',
+        url: gamingArchiveGuideUrl,
+        passage: 'In the game Kingdom Hearts HD 1.5 Remix, prepare for the first boss by equipping a suitable weapon and assigning a healing item before leaving the lantern checkpoint. Save at the lantern checkpoint before entering the courtyard.',
+        answer: 'Equip a suitable weapon, assign a healing item, and save at the lantern checkpoint before entering the courtyard for the first boss. [1]'
+      };
+      let acquiredDocument: Awaited<ReturnType<typeof resolveGamingDocument>> | undefined;
+      await serve(undefined, document => { acquiredDocument = document; }); const started = await query();
+      expect(started.result.nextAction).toBe('search');
+      expect(acquire).not.toHaveBeenCalled(); expect(responsesCreate).not.toHaveBeenCalled();
+      // The host invokes the existing search adapter. MCP remains a host-search
+      // handoff; the external search response and source transport are fixtures.
+      process.env.ARCANOS_GAMING_DISCOVERY_ENABLED = 'true';
+      process.env.BRAVE_SEARCH_API_KEY = 'synthetic-search-fixture-only';
+      const nativeFetch = globalThis.fetch;
+      const searchFetch = jest.fn();
+      jest.spyOn(globalThis, 'fetch').mockImplementation(async (input, options) => {
+        const url = new URL(input instanceof Request ? input.url : String(input));
+        if (url.origin === 'https://api.search.brave.com' && url.pathname === '/res/v1/web/search') {
+          searchFetch();
+          expect(options?.redirect).toBe('error'); expect(options?.signal).toBeDefined();
+          expect(new Headers(options?.headers).get('x-subscription-token')).toBe('synthetic-search-fixture-only');
+          expect(url.searchParams.get('q')).toContain(active.game);
+          return new Response(JSON.stringify({ web: { results: [
+            { url: 'https://127.0.0.1/private-guide', title: `${active.game} gameplay guide`, description: active.question },
+            { url: active.url, title: `${active.game} gameplay walkthrough`, description: active.question }
+          ] } }), { headers: { 'content-type': 'application/json' } });
+        }
+        expect(url.origin).toBe(new URL(endpoint).origin);
+        return nativeFetch(input, options);
+      });
+      const discovered = await discoverGamingSources({ prompt: active.question, game: active.game, mode: 'guide',
+        provider: createBraveGamingSearchProvider() });
+      expect(discovered).toMatchObject({ searchProvider: 'brave', searchResultCount: 2, candidateCount: 1, rejectedCandidateCount: 1 });
+      expect(discovered.candidates.map(candidate => candidate.url)).toEqual([active.url]);
+      expect(searchFetch).toHaveBeenCalledTimes(1); expect(acquire).not.toHaveBeenCalled();
+      if (archive) {
+        acquisitionResponseType = 'text';
+        const derivativeText = resource === 'metadata-attested Archive derivative'
+          ? `${active.game} walkthrough\n\n${active.passage}` : active.passage.replace('In the game ', 'In ');
+        acquisitionResponse = (url, headers) => {
+          if (headers.Host === 'archive.org' && url.pathname === '/metadata/KH1.5_guide')
+            return { status: 200, headers: { 'content-type': 'application/json' }, data: JSON.stringify(gamingArchiveMetadata(derivativeText)) };
+          expect(headers.Host).toBe(gamingArchiveStorageHost); expect(url.pathname).toBe(gamingArchiveDerivativePath);
+          return { status: 200, headers: { 'content-type': 'text/plain' }, data: derivativeText };
+        };
+      } else acquisitionResponse = (url, headers) => {
+        expect(headers.Host).toBe(new URL(active.url).hostname);
+        if (url.pathname === new URL(active.url).pathname)
+          return { status: 302, headers: { location: `${new URL(active.url).pathname}/current` }, data: '' };
+        expect(url.pathname).toBe(`${new URL(active.url).pathname}/current`);
+        return { status: 200, headers: { 'content-type': 'text/html' }, data: classBasedSource(
+          `<p>In the game ${active.game}, players follow these acquired gameplay instructions.</p><p>${active.passage}</p>`) };
+      };
+      const answered = await submit(started.result, discovered.candidates.map(candidate => candidate.url));
+      if (resource === 'Archive derivative without an exact named game scope') {
+        expect(acquiredDocument?.metadata).toEqual({});
+        expect(answered.result.answer).toBeUndefined(); expect(answered.result.coverageSatisfied).toBe(false);
+        expect(answered.result.candidates).toEqual([expect.objectContaining({ decision: 'rejected', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] })]);
+        expect(providerStages).toEqual([]); expect(responsesCreate).not.toHaveBeenCalled(); expect(modelsRetrieve).not.toHaveBeenCalled();
+        expect(acquire).toHaveBeenCalledTimes(2); expect(ingest).not.toHaveBeenCalled(); expect(memoryWrite).not.toHaveBeenCalled();
+        return;
+      }
+      if (archive) expect(acquiredDocument?.text).toContain(`${active.game} walkthrough`);
+      expect(answered.result.candidates).toEqual([expect.objectContaining({ decision: 'eligible_for_ingestion' })]);
+      await Promise.all(responsesCreate.mock.results.map(result => result.value));
+      expect(answered).toMatchObject({ statusCode: 200, result: { state: 'answer_ready', coverageSatisfied: true,
+        answer: { response: active.answer, provenance: 'arcanos-trinity' } } });
+      expect(answered.result.answer?.sources.map(source => source.url)).toEqual([
+        resource === 'admitted same-origin redirect' ? `${active.url}/current` : active.url
+      ]);
+      expect(providerStages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
+      expect(acquire).toHaveBeenCalledTimes(2); expect(responsesCreate).toHaveBeenCalledTimes(4);
+      expect(ingest).not.toHaveBeenCalled(); expect(memoryWrite).not.toHaveBeenCalled();
+      const replay = await submit(started.result, discovered.candidates.map(candidate => candidate.url));
+      expect(replay.result.answer).toEqual(answered.result.answer);
+      expect(searchFetch).toHaveBeenCalledTimes(1); expect(acquire).toHaveBeenCalledTimes(2);
+      expect(responsesCreate).toHaveBeenCalledTimes(4); expect(ingest).not.toHaveBeenCalled();
+    });
+
   it.each(fixtures)('delivers source-grounded $game evidence through every real stage with one generation', async fixture => {
     active = fixture;
     const { retrieve } = await serve();
@@ -337,6 +466,58 @@ describe('Intelligent discovery through authenticated loopback Gaming MCP and re
     expect(ingest).not.toHaveBeenCalled(); expect(memoryWrite).not.toHaveBeenCalled();
   });
 
+  it('answers from independently sufficient acquired heading facts followed only by a subject description', async () => {
+    active = { ...fixtures[0], passage: 'The tutorial-area shield is the Deku Shield. The Deku Shield is sold to Child Link at the Kokiri Shop in Kokiri Forest for 40 Rupees.' };
+    sourceHtml = `<html><title>${active.game} walkthrough</title><body><div class="content-grid has-game-sidebar">`
+      + `<div class="article-body"><h1>${active.passage}</h1>`
+      + `<p>In the game ${active.game}, this page lists a tutorial shield record.</p></div></div></body></html>`;
+    let evaluated: Awaited<ReturnType<typeof evaluateGamingHybridCandidates>> | undefined;
+    await serve(value => { evaluated = value; }); const started = await query();
+    const answered = await submit(started.result);
+    expect(answered).toMatchObject({ statusCode: 200, result: { state: 'answer_ready', nextAction: 'answer',
+      evidenceSelected: true, coverageSatisfied: true, answer: { response: active.answer, provenance: 'arcanos-trinity' } } });
+    expect(evaluated?.knowledge.evidence?.some(chunk => chunk.text.includes(active.passage))).toBe(true);
+    expect(answered.result.answer?.sources.map(source => source.url)).toEqual([active.url]);
+    expect(providerStages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
+    expect(acquire).toHaveBeenCalledTimes(1); expect(responsesCreate).toHaveBeenCalledTimes(4);
+    expect(ingest).not.toHaveBeenCalled(); expect(memoryWrite).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'This page explains that the tutorial-area shield is the Deku Shield, which is sold to Child Link at the Kokiri Shop in Kokiri Forest for 40 Rupees.',
+    'This page provides an overview of tutorial shield acquisition, but the Deku Shield is sold only to Child Link at the Kokiri Shop in Kokiri Forest for 40 Rupees.'
+  ])('preserves an embedded gameplay claim rather than treating its page frame as metadata: %s', async passage => {
+    active = { ...fixtures[0], passage };
+    sourceHtml = classBasedSource(`<p>In the game ${active.game}, players follow these acquired gameplay instructions.</p><p>${passage}</p>`);
+    await serve(); const started = await query(); const answered = await submit(started.result);
+    expect(answered.result).toMatchObject({ state: 'answer_ready', coverageSatisfied: true, answer: { response: active.answer } });
+    expect(providerStages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
+    expect(acquire).toHaveBeenCalledTimes(1); expect(responsesCreate).toHaveBeenCalledTimes(4);
+    expect(ingest).not.toHaveBeenCalled(); expect(memoryWrite).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'this page provides an overview of tutorial shield acquisition.',
+    'this article describes tutorial shield acquisition.',
+    'this guide covers tutorial shield locations.',
+    'this article explains how to acquire the tutorial shield.',
+    'this page provides information about tutorial shield acquisition.',
+    'this guide contains an overview of the shield locations.',
+    'the following section describes the tutorial shield acquisition.'
+  ].flatMap(description => [
+    { description, kind: 'incomplete table', record: '<table><tr><th>Item</th><th>Cost</th></tr><tr><td>Deku Shield</td></tr></table>' },
+    { description, kind: 'incomplete JSON claim', record: '<script type="application/json">{"records":[{"item":"Deku Shield","stat":"defense"}]}</script>' }
+  ]))('does not infer from "$description" and an $kind', async ({ description, record }) => {
+    sourceHtml = classBasedSource(`<p>In the game ${active.game}, ${description}</p>${record}`);
+    await serve(); const started = await query();
+    const insufficient = await submit(started.result);
+    expect(insufficient.result.answer).toBeUndefined(); expect(insufficient.result.coverageSatisfied).toBe(false);
+    expect(['search', 'stop']).toContain(insufficient.result.nextAction);
+    expect(providerStages).toEqual([]); expect(responsesCreate).not.toHaveBeenCalled();
+    expect(modelsRetrieve).not.toHaveBeenCalled(); expect(acquire).toHaveBeenCalledTimes(1);
+    expect(ingest).not.toHaveBeenCalled(); expect(memoryWrite).not.toHaveBeenCalled();
+  });
+
   it.each(fixtures)('keeps class-only primary $game prose eligible while excluding genuine sidebar furniture', async fixture => {
     active = fixture;
     sourceHtml = classBasedSource(`<p>In the game ${active.game}, players follow these acquired gameplay instructions.</p>`
@@ -426,16 +607,18 @@ describe('Intelligent discovery through authenticated loopback Gaming MCP and re
 
   it('recovers from publisher 403 using a different source without inferring or retrying the blocked publisher', async () => {
     await serve(); const started = await query();
-    acquire.mockResolvedValueOnce({ status: 403, headers: { 'content-type': 'text/html' }, data: 'Access forbidden.' });
+    acquisitionResponse = () => ({ status: 403, headers: { 'content-type': 'text/html' }, data: 'Access forbidden.' });
     const blocked = await submit(started.result);
     expect(blocked.result.answer).toBeUndefined(); expect(blocked.result.nextAction).toBe('search');
     expect(blocked.result.candidates).toEqual([expect.objectContaining({ decision: 'rejected', reasonCodes: ['SOURCE_INACCESSIBLE'] })]);
     expect(responsesCreate).not.toHaveBeenCalled();
+    acquisitionResponse = undefined;
     const alternative = 'https://second.example.org/ocarina/shield-guide';
     const recovered = await submit(blocked.result, [alternative], 'intelligent-http-recovery');
     expect(recovered.result).toMatchObject({ state: 'answer_ready', answer: { response: active.answer } });
     expect(recovered.result.answer?.sources[0].url).toBe(alternative);
     expect(acquire).toHaveBeenCalledTimes(2); expect(responsesCreate).toHaveBeenCalledTimes(4);
+    expect(ingest).not.toHaveBeenCalled(); expect(memoryWrite).not.toHaveBeenCalled();
   });
 
   it('stops without inference when two sources lack the requested gameplay claim', async () => {

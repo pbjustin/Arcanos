@@ -59,6 +59,11 @@ const postgresSuites = [
     commandPath: 'tests/integration/job-claim-fencing.pg18.integration.test.ts',
   },
   {
+    databaseEnvironment: 'JOB_CLAIM_FENCING_TEST_DATABASE_URL',
+    command: 'test:postgres-fencing',
+    commandPath: 'tests/integration/gaming-historical-status.pg18.integration.test.ts',
+  },
+  {
     databaseEnvironment: 'DAG_SNAPSHOT_GENERATION_TEST_DATABASE_URL',
     command: 'test:postgres-fencing',
     commandPath: 'tests/integration/dag-snapshot-generation.pg18.integration.test.ts',
