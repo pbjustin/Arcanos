@@ -79,6 +79,65 @@ def test_fresh_process_recovers_native_user_protected_records(store):
     assert TOKEN not in child.stdout + child.stderr
 
 
+def test_native_concurrent_process_updates_preserve_all_encrypted_records(store, tmp_path):
+    """Independent real Python writers share the fixed native transaction lock without lost jobs."""
+    command = r'''
+import json,os,sys,time
+from pathlib import Path
+import arcanos.env as runtime_env
+runtime_env._BOOTSTRAPPED=True
+runtime_env._BASE_DIR=Path(os.environ['DATA_DIR'])
+from arcanos.continuation_store import ContinuationStore
+root=Path(sys.argv[1])
+start=int(sys.argv[2])
+store=ContinuationStore(root,'a'*64)
+(root/('writer-ready-'+str(start))).write_text('ready')
+deadline=time.monotonic()+10
+while not (root/'writers-start').exists():
+    if time.monotonic()>deadline:
+        raise RuntimeError('Synthetic writer start deadline elapsed')
+    time.sleep(0.01)
+for number in range(start,9,2):
+    store.add({'job_id':f'00000000-0000-4000-8000-{number:012d}',
+               'job_read_token':'v1.'+'D'*43,'question':'Synthetic concurrent original question',
+               'session_id':'original-conversation','created_at':1793900000.0,'state':'pending'})
+print(json.dumps({'writes':4}))
+'''
+    children = [subprocess.Popen(
+        [sys.executable, "-B", "-c", command, str(tmp_path), str(start)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        creationflags=subprocess.CREATE_NO_WINDOW, env=_child_environment(tmp_path),
+    ) for start in (1, 2)]
+    try:
+        deadline = time.monotonic() + 10
+        while not all((tmp_path / f"writer-ready-{start}").exists() for start in (1, 2)):
+            assert all(child.poll() is None for child in children), "A native writer exited before the concurrency barrier"
+            assert time.monotonic() < deadline
+            time.sleep(0.025)
+        (tmp_path / "writers-start").write_text("start")
+        for child in children:
+            output, errors = child.communicate(timeout=15)
+            assert child.returncode == 0
+            assert json.loads(output) == {"writes": 4}
+            assert TOKEN not in output + errors
+        records = store.load()
+        assert len(records) == 8
+        assert {value["job_id"] for value in records} == {record(number)["job_id"] for number in range(1, 9)}
+        assert len({value["_slot"] for value in records}) == 8
+        assert store.path.stat().st_size < storage.MAX_RECOVERY_BYTES
+        for path in tmp_path.rglob("*"):
+            if path.is_file():
+                assert TOKEN.encode() not in path.read_bytes()
+    finally:
+        for child in children:
+            if child.poll() is None:
+                child.kill()
+                child.wait(timeout=5)
+            for stream in (child.stdout, child.stderr):
+                if stream is not None:
+                    stream.close()
+
+
 def test_backend_partition_cannot_read_or_delete_other_backend(store):
     """A different authenticated backend fingerprint never exposes retained capabilities."""
     store.add(record())
@@ -125,14 +184,20 @@ if not advapi32.ImpersonateAnonymousToken(kernel32.GetCurrentThread()):
     print(json.dumps({'impersonation':'unavailable'}))
     sys.exit(0)
 denied=False
+file_read_denied=False
 try:
+    try:
+        Path(sys.argv[1]).read_bytes()
+    except PermissionError:
+        file_read_denied=True
     try:
         _dpapi(ciphertext,decrypt=True)
     except ContinuationStorageError:
         denied=True
 finally:
     reverted=bool(advapi32.RevertToSelf())
-print(json.dumps({'impersonation':'available','decryption_denied':denied,'reverted':reverted}))
+print(json.dumps({'impersonation':'available','decryption_denied':denied,
+                  'file_read_denied':file_read_denied,'reverted':reverted}))
 '''
     child = subprocess.run([sys.executable, "-B", "-c", command, str(store.path)],
                            capture_output=True, text=True, timeout=15, creationflags=subprocess.CREATE_NO_WINDOW,
@@ -142,7 +207,8 @@ print(json.dumps({'impersonation':'available','decryption_denied':denied,'revert
     result = json.loads(child.stdout)
     if result == {"impersonation": "unavailable"}:
         pytest.skip("Windows denied anonymous-principal impersonation in the isolated child")
-    assert result == {"impersonation": "available", "decryption_denied": True, "reverted": True}
+    assert result == {"impersonation": "available", "decryption_denied": True,
+                      "file_read_denied": True, "reverted": True}
 
 
 def test_dpapi_rejects_corruption_without_overwriting_original_data(store):
@@ -381,6 +447,65 @@ def test_reparse_point_or_hardlink_storage_is_rejected(store, tmp_path):
         store.load()
     linked.unlink()
     assert len(store.load()) == 1
+
+
+def test_native_junction_ancestor_is_rejected_without_touching_protected_target(store, tmp_path):
+    """Create a real Windows junction; the existing hardlink test alone proves no reparse behavior."""
+    store.add(record())
+    original = store.path.read_bytes()
+    junction = tmp_path / "junction profile with spaces"
+    command = subprocess.run(
+        ["cmd.exe", "/d", "/c", "mklink", "/J", str(junction), str(store.directory.parent)],
+        capture_output=True, text=True, timeout=10, creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    assert command.returncode == 0, "Could not create the isolated native junction fixture"
+    try:
+        assert junction.lstat().st_file_attributes & 0x400
+        with pytest.raises(storage.ContinuationStorageError):
+            storage.ContinuationStore(junction, BACKEND)
+        assert store.path.read_bytes() == original
+        assert store.load()[0]["job_read_token"] == TOKEN
+    finally:
+        # Remove only this reparse entry, never recurse into the protected target.
+        os.rmdir(junction)
+
+
+@pytest.mark.parametrize("kind", ["file", "directory"])
+def test_native_symbolic_link_is_rejected_without_target_changes(store, tmp_path, kind):
+    """Exercise native symlinks when Windows permits creation; never elevate privileges."""
+    store.add(record())
+    original = store.path.read_bytes()
+    symbolic = tmp_path / ("symbolic profile" if kind == "directory" else "symbolic state")
+    target = store.directory.parent if kind == "directory" else store.path
+    try:
+        os.symlink(target, symbolic, target_is_directory=kind == "directory")
+    except OSError as error:
+        if getattr(error, "winerror", None) == 1314:
+            pytest.skip("Native symlink creation requires a privilege unavailable to this Windows account")
+        raise
+    try:
+        assert symbolic.lstat().st_file_attributes & 0x400
+        if kind == "directory":
+            with pytest.raises(storage.ContinuationStorageError):
+                storage.ContinuationStore(symbolic, BACKEND)
+        else:
+            # Put the actual link at the sensitive snapshot filename. Moving
+            # only this ciphertext file keeps the original target verifiable.
+            replacement = tmp_path / "original-ciphertext.dpapi"
+            symbolic.unlink()
+            store.path.replace(replacement)
+            try:
+                os.symlink(replacement, store.path)
+                with pytest.raises(storage.ContinuationStorageError):
+                    store.load()
+                assert replacement.read_bytes() == original
+            finally:
+                store.path.unlink(missing_ok=True)
+                replacement.replace(store.path)
+        assert store.path.read_bytes() == original
+        assert store.load()[0]["job_read_token"] == TOKEN
+    finally:
+        symbolic.unlink(missing_ok=True)
 
 
 def test_protected_directory_acl_uses_only_current_windows_identity(store):
