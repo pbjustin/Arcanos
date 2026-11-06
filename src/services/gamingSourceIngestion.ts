@@ -1215,6 +1215,8 @@ async function ingestOneSource(
     const documentTruncated = document.metrics.truncated || chunked.documentTruncated;
     const documentQuality = classifyGamingDocumentQuality({
       cleanedText,
+      metadata: document.metadata,
+      game: source.game,
       navigationDensity: document.extraction.navigationDensity,
       truncated: documentTruncated,
       minUsefulTextChars: MIN_USEFUL_TEXT_CHARS,

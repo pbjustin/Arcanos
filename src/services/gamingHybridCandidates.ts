@@ -4,7 +4,7 @@ import { gamingRegistryRecognizesEdition } from '@shared/gaming/gamingGameRegist
 import { createHash, randomUUID } from 'node:crypto';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { normalizeGamingGameIdentity, resolveGamingGuideIdentity } from '@shared/gaming/gamingGameIdentity.js';
-import { classifyGamingDocumentQuality, selectGamingSourceAdmissionUrl } from '@shared/gaming/gamingDocumentIngestionCore.js';
+import { classifyGamingDocumentQuality, isGamingDocumentOverviewOnly, selectGamingSourceAdmissionUrl } from '@shared/gaming/gamingDocumentIngestionCore.js';
 import { buildGamingRetrievalTerms, buildGamingRequestRequirements, hasGamingRelevantGuideContribution, gamingTermCoverage } from '@shared/gaming/gamingRetrievalPolicy.js';
 import {
   assessGamingSourcePolicy, extractGamingFreshnessMetadata, classifyGamingQuestionFreshness, gamingSeasonalPatchRequired,
@@ -231,7 +231,7 @@ export async function evaluateGamingHybridCandidates(
       }
       const evidenceDocument = gameScoped.document;
       const intactText = gamingClearIntactSourceText(evidenceDocument);
-      const quality = classifyGamingDocumentQuality({ cleanedText: intactText,
+      const quality = classifyGamingDocumentQuality({ cleanedText: intactText, metadata: document.metadata, game: input.game,
         navigationDensity: document.extraction.navigationDensity, truncated: document.metrics.truncated, minUsefulTextChars: 120 });
       const structural = assessGamingStructuralUsability({ units: evidenceDocument.evidenceUnits, ...input });
       missingClaimFields = structural.missingFields;
@@ -377,7 +377,11 @@ export async function evaluateGamingHybridCandidates(
         { signal, evidenceUnits: scoped.status === 'verified' ? scoped.units : evidenceDocument.evidenceUnits });
       callerSignal?.throwIfAborted();
       if (v2 && (acquisitionSignal?.aborted || Date.now() >= deadlineAt)) { reject('SOURCE_TIMEOUT'); continue; }
-      const records = chunks.chunks.map(chunk => ({
+      // Use the original acquired headings before display metadata is redacted.
+      // Overview-only prose cannot supply claim coverage; intact records and
+      // independently stated gameplay facts retain their existing selection.
+      const records = chunks.chunks.filter(chunk => chunk.evidenceUnits?.length
+        || !isGamingDocumentOverviewOnly(chunk.text, document.metadata, input.game)).map(chunk => ({
         recordId: `${candidateId}:${chunk.ordinal}`, recordType: input.mode === 'guide' ? 'guide' as const : input.mode === 'build' ? 'build' as const : 'meta' as const,
         title: document.metadata.title ?? null, searchText: chunk.text,
         normalized: { text: chunk.text, ...(chunk.evidenceUnits?.length ? { evidenceUnits: chunk.evidenceUnits } : {}), chunk: { ordinal: chunk.ordinal, totalChunks: chunk.totalChunks,
