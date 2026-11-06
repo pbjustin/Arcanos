@@ -470,12 +470,20 @@ and one-shot manual read; normal delivery does not require it.
 Recovery makes only `GET /jobs/<jobId>/result`, with the capability in the fixed
 `x-arcanos-job-read-token` header. It never repeats the generation POST, replaces
 the job, invokes a provider, or refreshes credentials. Each foreground process
-reads its own accepted jobs sequentially, with a 2-second HTTP timeout. Native
+reads its own accepted jobs sequentially, with a 2-second connect/read inactivity
+timeout. Response bodies have a 512 KiB limit and a two-second elapsed budget
+checked between bytes, including cancellation checks; a blocked read can overshoot
+that budget by one inactivity wait. Native
 per-job ownership keeps answers in the submitting console, even when two consoles
 share a stored session ID. One process leader adopts orphaned work after its owner
 exits or dies. The shared protected snapshot retains the eight-context limit.
 Per-job backoff starts at one second and reaches 30 seconds while pending or
-60 seconds after transient read failures. Monitoring stops when the CLI exits.
+60 seconds after transient read failures. Shutdown signals monitoring to stop.
+Requests still owns DNS and header acquisition: slowly arriving HTTP headers can
+keep a read alive beyond the three-second shutdown join. This confirmed limitation
+blocks full clean-shutdown acceptance; the protected job remains available for
+restart, and the stopped controller does not commit or display that late result.
+The timeout is not an absolute end-to-end deadline.
 It does not enable daemon command polling, actions, self-healing, or a Windows
 service. The terminal editor preserves unfinished input while answers appear;
 automatic delivery does not start speech over active input.
@@ -513,6 +521,11 @@ audit event. Recovery receipts are bounded to 2,048 rows and 64 MiB of logical
 payload; displayed receipts remain for at least eight days. Lifetime totals survive
 receipt pruning. Capacity or persistence failures retain pending work for a later
 safe attempt.
+
+Private recovery SQLite connections and read-only schema probes use a 250 ms
+lock wait so database contention releases the recovery worker promptly. Other
+history callers retain their existing five-second lock wait. A failed connection
+setup closes its native handle before propagating the storage error.
 
 Clearing history removes acknowledged question, answer and session text from the
 active SQLite rows while retaining non-content replay, usage and audit receipts.

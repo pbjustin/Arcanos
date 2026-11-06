@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-06T00:44:21.841Z",
+  "generatedAt": "2026-11-06T01:51:13.224Z",
   "scopes": [
     {
       "scope": "clients",
@@ -641,6 +641,9 @@
         },
         {
           "relativePath": "daemon-python/tests/test_confirmation_trust_recheck.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_continuation_read_deadline.py"
         },
         {
           "relativePath": "daemon-python/tests/test_continuation_store.py"
