@@ -30,8 +30,9 @@ export function preservePrimaryContentSidebarLayouts($: ReturnType<typeof load>,
       primaryAncestors.add(parent);
     }
   };
-  const activeSelectors = primaryContentSelectors.length ? primaryContentSelectors : GAMING_PRIMARY_CONTENT_SELECTORS;
-  const boundedSelectors = activeSelectors.slice(0, GAMING_PRIMARY_CONTENT_SELECTOR_LIMIT);
+  const optionalSelectors = primaryContentSelectors.slice(0, GAMING_PRIMARY_CONTENT_SELECTOR_LIMIT)
+    .map(selector => selector.trim()).filter(Boolean);
+  const boundedSelectors = optionalSelectors.length ? optionalSelectors : GAMING_PRIMARY_CONTENT_SELECTORS;
   try { $(boundedSelectors.join(',')).each(rememberPrimary); } catch {
     // Reviewed profiles use one combined selection. Isolate malformed optional
     // hints only on the exceptional path so valid siblings remain usable.

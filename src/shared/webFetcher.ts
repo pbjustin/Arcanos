@@ -794,7 +794,7 @@ export function extractFetchAndCleanDocument(
   const parserOptions = options.preservePrimaryContentHeading ? { sourceCodeLocationInfo: true } : undefined;
   const $ = load(responseText, parserOptions as Parameters<typeof load>[1]);
   let primaryScopeSelectors = (options.primaryContentSelectors?.length ? options.primaryContentSelectors : GAMING_PRIMARY_CONTENT_SELECTORS)
-    .slice(0, MAX_EXTRACTION_SELECTORS);
+    .slice(0, MAX_EXTRACTION_SELECTORS).map(selector => selector.trim()).filter(Boolean);
   if (options.preservePrimaryContentHeading) {
     try { $(primaryScopeSelectors.join(',')); } catch {
       primaryScopeSelectors = primaryScopeSelectors.filter(selector => {
