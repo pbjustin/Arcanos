@@ -2,7 +2,7 @@ import type { GamingExtractionQuality } from "@services/gamingBuildResourceSchem
 import { hasGamingActionableProse, isGamingCatalogMetadataOnly } from "@services/gamingDocumentExtraction.js";
 import { detectGamingGame, type GamingGameDetection } from "@services/gamingGameDetection.js";
 import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
-import { assessGamingStructuralUsability } from './gamingStructuralEvidence.js';
+import { assessGamingStructuralUsability, isGamingDocumentMetadataUnit } from './gamingStructuralEvidence.js';
 import { gamingRegistryLiteralPattern } from './gamingGameRegistry.js';
 
 /** Keep generic page parameters after admission; document-only sources own their public identity. */
@@ -143,12 +143,46 @@ export function classifyGamingDocumentQuality(input: {
   minUsefulTextChars: number;
   evidenceUnits?: readonly GamingEvidenceUnit[];
 }): 'unusable' | 'metadata-only' | 'partial' | 'complete' {
-  if (assessGamingStructuralUsability({ units: input.evidenceUnits }).hasIntactUsableUnit) return input.truncated ? 'partial' : 'complete';
-  const metadataOnly = isGamingDocumentOverviewOnly(input.cleanedText, input.metadata, input.game) || isGamingCatalogMetadataOnly(input.cleanedText)
-    || (input.navigationDensity ?? 0) >= 0.62 && !hasGamingActionableProse(input.cleanedText);
-  return input.cleanedText.length < input.minUsefulTextChars
-    ? 'unusable'
-    : metadataOnly ? 'metadata-only' : input.truncated ? 'partial' : 'complete';
+  if (assessGamingStructuralUsability({ units: input.evidenceUnits?.filter(unit => !isGamingDocumentMetadataUnit(unit)) }).hasIntactUsableUnit) return input.truncated ? 'partial' : 'complete';
+  // Parser-owned metadata remains available for identity/applicability but
+  // cannot supply gameplay length or prevent a catalog classification.
+  const prose = (input.evidenceUnits ?? []).filter(isGamingDocumentMetadataUnit)
+    .reduce((text, unit) => {
+      // The extractor appends serialized records on their own lines. An equal
+      // inline prose assertion remains intact, including its punctuation.
+      const index = text.lastIndexOf(unit.text);
+      const after = index + unit.text.length;
+      return index >= 0 && (index === 0 || text[index - 1] === '\n')
+        && (after === text.length || text[after] === '\n')
+        ? text.slice(0, index) + text.slice(after) : text;
+    }, input.cleanedText).trim();
+  const metadataOnly = isGamingDocumentOverviewOnly(prose, input.metadata, input.game)
+    || isGamingWikiReferenceOnly({ ...input, cleanedText: prose }) || isGamingCatalogMetadataOnly(prose)
+    || (input.navigationDensity ?? 0) >= 0.62 && !hasGamingActionableProse(prose);
+  const shortGameplay = !input.truncated && !metadataOnly && hasGamingActionableProse(prose);
+  return metadataOnly ? 'metadata-only' : prose.length < input.minUsefulTextChars && !shortGameplay
+    ? 'unusable' : input.truncated ? 'partial' : 'complete';
+}
+
+/** Closed catalog/identity prose is useful reference material, not gameplay.
+ * Any unmatched sentence preserves ordinary gameplay classification. */
+function isGamingWikiReferenceOnly(input: { cleanedText: string; metadata?: { title?: string; headings?: string }; game?: string }): boolean {
+  if (!input.game || !/\b(?:wiki|catalog|index|reference links|linked walkthrough)\b/iu.test(input.cleanedText)) return false;
+  let text = input.cleanedText.trim();
+  const labels = [input.metadata?.title, ...(input.metadata?.headings?.split('\n') ?? []), input.game]
+    .filter((label): label is string => Boolean(label)).sort((left, right) => right.length - left.length);
+  for (let count = 0; count < 4; count++) {
+    const label = labels.find(value => text === value || text.startsWith(value) && /\s/u.test(text[value.length])
+      && !/^\s+(?:is|are|has|have|can|must|should|starts?|contains?|requires?)\b/iu.test(text.slice(value.length)));
+    if (!label) break;
+    text = text.slice(label.length).trim();
+  }
+  const game = gamingRegistryLiteralPattern(input.game);
+  const identity = new RegExp(`^(?:Game:\\s*${game}\\s*\\.?|${game}\\s+is\\s+(?:an?\\s+)?[\\p{L} -]{0,100}\\bgame\\.)$`, 'iu');
+  const metadata = /^(?:edition|platform):\s*[\p{L}\p{N} -]{1,80}\.?$/iu;
+  const catalog = /^(?:welcome to (?:the )?(?:community )?wiki(?: catalog)?|[\p{L} -]{1,80} catalog overview|browse the (?:index of|linked) [^.!?]{1,240}|this (?:landing )?page (?:provides an index of|contains reference links for readers)[^.!?]{1,360}|individual walkthrough|[\p{L} -]{1,80} walkthrough)\.?$/iu;
+  const sentences = text.split(/(?<=[.!?])\s+|\n+/u).filter(Boolean);
+  return sentences.length > 0 && sentences.every(sentence => identity.test(sentence) || metadata.test(sentence) || catalog.test(sentence));
 }
 
 export function classifyGamingStructuredExtractionQuality(input: {

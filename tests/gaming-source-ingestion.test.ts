@@ -993,6 +993,37 @@ describe('gaming source ingestion', () => {
     }));
   });
 
+  it.each([
+    { text: 'Unreadable gameplay association remains uncertain.', classification: 'stored_unverified', reason: 'GAME_IDENTITY_UNVERIFIED' },
+    { text: 'Borderlands 4. Identifier synthetic. Publisher Synthetic Fixtures. Publication date 2026. Download options.', classification: 'reference_only', reason: 'INSUFFICIENT_GAMEPLAY_EVIDENCE' }
+  ])('retains safe $classification material separately from generation authority', async ({ text, classification, reason }) => {
+    resolveGamingDocumentMock.mockResolvedValueOnce(resolvedDocument('https://example.com/catalog', text));
+    ingestGamingBuildResourceMock.mockResolvedValueOnce(genericNormalizedGamingSource(''));
+    const result = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: 'https://example.com/catalog',
+        game: 'Borderlands 4', gameKey: 'borderlands-4', origin: 'user_supplied' }]
+    });
+    expect(result.output.sources[0]).toMatchObject({ status: 'stored', classification, generationEligible: false,
+      reasonCodes: expect.arrayContaining([reason]) });
+    expect(persistGamingSourceRevisionMock).toHaveBeenCalledWith(expect.objectContaining({
+      provenance: expect.objectContaining({ classification, generationEligible: false,
+        acquiredApplicability: expect.objectContaining({ metadataUnverified: true }) })
+    }));
+  });
+
+  it('reports a sanitized storage failure separately from acquisition', async () => {
+    persistGamingSourceRevisionMock.mockRejectedValueOnce(new Error('postgres://private-credential/source Publisher raw content'));
+    const result = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: 'https://example.com/guide',
+        game: 'Borderlands 4', gameKey: 'borderlands-4', origin: 'user_supplied' }]
+    });
+    expect(result.output.sources[0]).toMatchObject({ status: 'failed', classification: 'rejected', generationEligible: false,
+      error: { code: 'STORAGE_FAILED', retryable: true } });
+    expect(JSON.stringify(result)).not.toMatch(/private-credential|Publisher raw content/u);
+  });
+
   it('retains partial extraction warnings for catalog metadata even when the bounded response is complete', async () => {
     const text = 'Borderlands 4. Identifier test-guide. Publisher Synthetic Fixtures. Publication date 2026. Download options. Scanner synthetic. Addeddate today. '.repeat(3);
     resolveGamingDocumentMock.mockResolvedValueOnce(resolvedDocument('https://example.com/catalog', text));
@@ -1209,8 +1240,8 @@ describe('gaming source ingestion', () => {
     ['SOURCE_FETCH_FAILED', 'UNSUPPORTED_CONTENT_TYPE', undefined, 'UNSUPPORTED_CONTENT_TYPE', false],
     ['UNSUPPORTED_SOURCE_FORMAT', 'UNSUPPORTED_ENCODING', undefined, 'UNSUPPORTED_CONTENT_TYPE', false],
     ['UNSUPPORTED_SOURCE_FORMAT', 'UNSUPPORTED_CONTENT_TYPE', undefined, 'UNSUPPORTED_CONTENT_TYPE', false],
-    ['SOURCE_EXTRACTION_FAILED', 'DOCUMENT_EXTRACTION_FAILED', undefined, 'UNSUPPORTED_CONTENT_TYPE', false],
-    ['SOURCE_EXTRACTION_FAILED', 'EXTRACTION_BUDGET_EXHAUSTED', undefined, 'UNSUPPORTED_CONTENT_TYPE', false],
+    ['SOURCE_EXTRACTION_FAILED', 'DOCUMENT_EXTRACTION_FAILED', undefined, 'EXTRACTION_FAILED', false],
+    ['SOURCE_EXTRACTION_FAILED', 'EXTRACTION_BUDGET_EXHAUSTED', undefined, 'EXTRACTION_FAILED', false],
     ['SOURCE_FETCH_FAILED', 'CONDITIONAL_CONTENT_UNAVAILABLE', 304, 'FETCH_FAILED', false],
     ['SOURCE_INACCESSIBLE', 'HTTP_RESPONSE_UNUSABLE', 401, 'AUTHENTICATION_REQUIRED', false],
     ['SOURCE_INACCESSIBLE', 'HTTP_RESPONSE_UNUSABLE', 403, 'ACCESS_DENIED', false],

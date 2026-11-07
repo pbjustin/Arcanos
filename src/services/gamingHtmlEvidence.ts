@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { load } from 'cheerio';
 import { preservePrimaryContentSidebarLayouts } from '@shared/gaming/gamingDocumentTextNormalization.js';
+import { normalizeGamingComparableIdentity } from '@shared/gaming/gamingGameRegistry.js';
 import { countGamingHtmlElements, filterGamingDocumentInstructions, hasGamingActionableProse, GAMING_DOCUMENT_FURNITURE_SELECTOR,
   gamingDocumentExtractionProfile, gamingDocumentFetchOptions } from '@services/gamingDocumentExtraction.js';
 import {
@@ -24,6 +25,8 @@ type LocatedElement = Element & { sourceCodeLocation?: SourceLocation };
 export interface GamingHtmlEvidenceExtractionResult extends GamingEvidenceExtractionResult {
   /** Original accepted HTML with structural candidates removed from the prose fallback. */
   proseBody?: string;
+  /** Parser-owned local article references; the resolver retains only bound spans. */
+  localTopicReferences?: Array<{ text: string; paragraphText: string; gameHash: string }>;
 }
 const EXCLUDED = `aside,[role="menu"],${GAMING_DOCUMENT_FURNITURE_SELECTOR}`;
 const DISCUSSION = '[itemtype="https://schema.org/DiscussionForumPosting"],[itemtype="http://schema.org/DiscussionForumPosting"]';
@@ -128,10 +131,68 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
     filterGamingDocumentInstructions(raw) !== normalized)) fail('source_instruction_filtered');
   if (deadlineExpired()) return result;
   if (!htmlContent) return result;
+  // A label-only linked article is catalog navigation, not a source-wide game
+  // declaration or a structured gameplay record. Inspect the complete response
+  // above first; omission cannot erase source instructions or use restrictions.
+  for (const item of $('li').toArray()) {
+    if (deadlineExpired()) return result;
+    const node = $(item);
+    if (!closed(item) || node.children('ul,ol,dl,table').length || node.find('ul,ol,dl,table').length) continue;
+    const anchors = node.find('a[href]');
+    if (!anchors.length || anchors.length > 16 || anchors.toArray().some(anchor => !closed(anchor))) continue;
+    const structuredLabel = listElementText($, item);
+    const label = text(structuredLabel);
+    if (!label || label.length > GAMING_HTML_EVIDENCE_LIMITS.unitChars
+      || [...structuredLabel.matchAll(/(?:^|[;|\n])\s*([^:;|\n]{1,80}):/gu)].some(match => RECORD_FIELD_LABEL.test(match[1])
+        || /^(?:platforms?|regions?|effective(?: from| until)?|published(?: at)?|source updated(?: at)?|last updated|season|current (?:patch|build|season)|valid (?:from|until))$/iu.test(match[1]))
+      // Linked facts, short steps and version/date-bearing release entries are
+      // authored evidence even if their entire visible text is a single link.
+      || /[.!?](?:\s|$)|\p{N}/u.test(label)
+      || /\b(?:patch(?:es)?|builds?|updates?|releases?|versions?|seasons?|platforms?|regions?|effective|published|updated|baseline|supersedes)\b/iu.test(label)
+      || /^(?:(?:first|next|then)[,:]?\s+)?(?:to\s+|attack\b|avoid\b|block\b|collect\b|defeat\b|dodge\b|equip\b|explore\b|follow\b|gather\b|heal\b|jump\b|move\b|open\b|press\b|restore\b|save\b|select\b|spend\b|upgrade\b|use\b|wait\b|this\s+(?:guide|article|page|document|source)\b)/iu.test(label)
+      || /\b(?:is|are|was|were|has|have|only|not|no|without|except|requires?|costs?|grants?|unlocks?|available|must|should)\b/iu.test(label)
+      || hasGamingActionableProse(label)) continue;
+    const remainder = node.clone();
+    remainder.find('a[href]').remove();
+    if (/^[\s|/,:;.!?()[\]{}•–—-]*$/u.test(remainder.text())) node.remove();
+  }
+  if (deadlineExpired()) return result;
   // Inspect the complete visible response above before omitting existing
   // publisher furniture from either structured records or the prose fallback.
   for (const selector of gamingDocumentExtractionProfile(input.sourceUrl)?.removeSelectors ?? []) $(selector).remove();
   if (deadlineExpired()) return result;
+  // A named article topic linked after a spaced editorial separator is a local
+  // reference, rather than a new source-wide game title. Preserve the paragraph
+  // here; request projection can exclude only that frame after matching game
+  // identity. Never annotate declarations, requirements, edition or record fields.
+  const localTopicReferences: NonNullable<GamingHtmlEvidenceExtractionResult['localTopicReferences']> = [];
+  for (const anchor of $('p > a[href]').toArray().slice(0, 256)) {
+    if (deadlineExpired()) return result;
+    const paragraph = $(anchor).parent().get(0)!;
+    const paragraphText = text($(paragraph).text());
+    const topic = text($(anchor).text());
+    const preceding = anchor.prev?.type === 'text' ? text($(anchor.prev).text()) : '';
+    if (!closed(anchor) || !closed(paragraph) || !eligible($, paragraph)
+      || paragraphText.length > 512 || !topic || topic.length > 120
+      || /\bthis\s+(?:guide|build|walkthrough|article|source|page|document)\s+(?:covers|is\s+(?:for|about)|requires?|needs?|only\s+works)\b/iu.test(paragraphText)
+      || /\b(?:game|edition|scope|applicability|patch|platforms?)\s*:/iu.test(paragraphText)
+      || /\b(?:only|requires?|needs?|exclusiv\w*|not|never|without|except|edition|dlc|expansion|remake|remaster(?:ed)?)\b/iu.test(paragraphText)
+      || hasGamingActionableProse(paragraphText)
+      || /\b(?:attack|avoid|block|collect|defeat|dodge|equip|explore|follow|gather|heal|jump|move|open|press|restore|save|select|spend|upgrade|use|wait|costs?|grants?|unlocks?|deals?|inflicts?)\b/iu.test(paragraphText)
+      || /^(?:ii|iii|iv|\d+|classic)\b/iu.test(topic)) continue;
+    const scopes = [...preceding.matchAll(/\bin\s+/giu)];
+    const scope = scopes.at(-1);
+    const match = scope && /^in\s+(?!the\s+game\b)([^.!?;,\n]{1,120}?)\s+[-–—]$/iu.exec(preceding.slice(scope.index));
+    if (!match || `${match[1]} - ${topic}`.length > 160) continue;
+    // Only the linked nominal frame is projected. Other sentences, named-game
+    // scopes and contradictory assertions in the paragraph remain inspectable.
+    const frame = `${preceding.slice(scope!.index)} ${topic}`;
+    const reference = { text: frame, paragraphText, gameHash: createHash('sha256')
+      .update(normalizeGamingComparableIdentity(match[1].trim())).digest('hex') };
+    if (!localTopicReferences.some(item => item.text === reference.text && item.gameHash === reference.gameHash)) localTopicReferences.push(reference);
+    if (localTopicReferences.length >= 64) break;
+  }
+  if (localTopicReferences.length) result.localTopicReferences = localTopicReferences;
   if (visibleText.length <= 300 && /\b(?:verify (?:that )?you are human|checking your browser|enable javascript and cookies to continue|sign in to continue|log in to continue)\b/iu.test(visibleText)) {
     result.proseBody = ''; fail('access_challenge'); return result;
   }
@@ -526,6 +587,13 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
       }
       removedProseElements.add(item);
       const reasons = !closed(item) || !closed(list) || !intactTransportScope(list) ? ['content_truncated'] : [];
+      // A leading unlabelled line cannot invalidate and erase later explicit
+      // scope fields. Preserve it under a non-semantic parser label while the
+      // incomplete integrity flag prevents any promotion to gameplay evidence.
+      if (fields.some(field => !field.label)) {
+        reasons.push('incomplete_record');
+        fields = fields.map(field => field.label ? field : { label: 'Unlabelled content', value: field.value });
+      }
       if ($(item).find('table,ul,ol,dl').length > (nested.length ? 1 : 0)) reasons.push('ambiguous_field_mapping', 'required_context_missing');
       if (nested.children('li').toArray().some((child) => !closed(child))) reasons.push('content_truncated');
       addUnit('list_item', fields, item, 'html_list', { ...unitContext, scope: `${scope}/item:${itemIndex}` }, reasons);

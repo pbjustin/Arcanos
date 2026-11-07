@@ -137,5 +137,6 @@ describe('semantic Gaming freshness disposition', () => {
   it('allows only non-conflicting inability to verify and requires an actual completed outcome', () => {
     expect(isGamingAdvisoryCurrentnessOperation({ decisions: [] })).toBe(false);
     expect(isGamingAdvisoryCurrentnessOperation({ decisions: [{ decision: 'rejected', reasonCodes: ['INSUFFICIENT_EXTRACTION'] }] })).toBe(true);
+    expect(isGamingAdvisoryCurrentnessOperation({ decisions: [{ decision: 'rejected', reasonCodes: ['INSUFFICIENT_GAMEPLAY_EVIDENCE'] }] })).toBe(true);
   });
 });

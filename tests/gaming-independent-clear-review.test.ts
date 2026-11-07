@@ -29,6 +29,7 @@ const { assessGamingClearEvidence } = await import('../src/shared/gaming/gamingC
 const { selectGamingHybridEvidence } = await import('../src/services/gamingHybridCandidates.js');
 const { createApprovedGamingSourceIngestion, executeQueuedGamingSourceIngestion, hashGamingApprovedDocument,
   buildStoredGamingKnowledgeContext, refreshGamingSources } = await import('../src/services/gamingSourceIngestion.js');
+const { searchActiveGamingKnowledge } = await import('../src/core/db/repositories/gamingSourceRepository.js');
 const { logger } = await import('../src/platform/logging/structuredLogging.js');
 
 const url = 'https://guides.example.org/independent-clear-review';
@@ -66,6 +67,19 @@ async function approvedIngestion(fixture: Awaited<ReturnType<typeof acquired>>, 
   const body = (enqueue.mock.calls[0][0] as any).input.body;
   if (refetch) http.mockResolvedValue({ status: 200, headers: { 'content-type': 'text/html' }, data: html(refetch.title, refetch.text) });
   return executeQueuedGamingSourceIngestion('independent-clear-ingestion', body);
+}
+
+async function assertRetainedWithoutGeneration(knowledge: Awaited<ReturnType<typeof buildStoredGamingKnowledgeContext>>,
+  classification: 'stored_unverified' | 'needs_reassessment') {
+  const rows = await searchActiveGamingKnowledge({ gameKey: 'slate-meridian', query: 'tidal', mode: 'guide' });
+  expect(rows.length).toBeGreaterThan(0);
+  expect(rows.some(row => String(row.normalized.text).includes('tidal prism'))).toBe(true);
+  expect(rows.every(row => row.provenance.classification === classification && row.provenance.generationEligible === false)).toBe(true);
+  expect(rows.every(row => (row.provenance.acquiredApplicability as any).metadataUnverified === true)).toBe(true);
+  expect(knowledge.context).toBe('');
+  expect(knowledge.sources).toEqual([]);
+  expect(knowledge.evidence).toBeUndefined();
+  expect(knowledge.clearEvidenceAssessment?.decision).not.toBe('accept');
 }
 
 beforeEach(() => {
@@ -139,14 +153,14 @@ describe('independent CLEAR review through acquired synthetic documents', () => 
       sources: [{ submittedIndex: 0, canonicalUrl: url, game, gameKey: 'slate-meridian', origin: 'user_supplied' }]
     });
     expect(result.output.sources[0].status).toBe('stored');
-    expect(database.revisions[0].provenance.sourceIdentityPolicyVersion).toBe('gaming-clear-policy/v6');
+    expect(database.revisions[0].provenance.sourceIdentityPolicyVersion).toBe('gaming-clear-policy/v7');
     const knowledge = await buildStoredGamingKnowledgeContext({ ...fixture.input, hybridRetrieval: true, requireRequestCoverage: true });
-    expect(knowledge.context).toContain('tidal prism');
     if (proof) {
+      expect(knowledge.context).toContain('tidal prism');
       expect(knowledge.clearEvidenceAssessment?.decision).toBe('accept');
     } else {
-      expect(knowledge.clearEvidenceAssessment?.decision).not.toBe('accept');
-      expect(knowledge.sources[0].freshnessMetadata).toMatchObject({ metadataUnverified: true });
+      expect(result.output.sources[0]).toMatchObject({ classification: 'stored_unverified', generationEligible: false });
+      await assertRetainedWithoutGeneration(knowledge, 'stored_unverified');
     }
   });
 
@@ -196,6 +210,11 @@ describe('independent CLEAR review through acquired synthetic documents', () => 
     database.revisions[0].extractor_version = 'historic-unapproved-identity-policy';
     delete database.revisions[0].provenance.sourceIdentityPolicyVersion;
     delete database.revisions[0].provenance.acquiredApplicability.metadataUnverified;
+    // This fixture predates the explicit retention classification as well as
+    // acquired identity policy; retain its legacy readability/CLEAR assertions.
+    delete database.revisions[0].provenance.classification;
+    delete database.revisions[0].provenance.generationEligible;
+    delete database.revisions[0].provenance.classificationReasons;
     const historical = await buildStoredGamingKnowledgeContext({ ...fixture.input, hybridRetrieval: true });
     expect(historical.context).toContain('tidal prism');
     expect(historical.clearEvidenceAssessment?.decision).not.toBe('accept');
@@ -357,10 +376,9 @@ describe('independent CLEAR review through acquired synthetic documents', () => 
     const result = await executeQueuedGamingSourceIngestion('independent-generic-refresh', body);
     expect(['stored', 'updated', 'unchanged']).toContain(result.output.sources[0].status);
     const knowledge = await buildStoredGamingKnowledgeContext(request);
-    expect(knowledge.context).toContain('tidal prism');
-    expect(knowledge.clearEvidenceAssessment?.decision).not.toBe('accept');
-    expect(knowledge.clearEvidenceAssessment?.gates.compatibility).toBe('unknown');
-    expect(knowledge.sources[0].clearSourceAssessment).toBeUndefined();
+    expect(result.output.sources[0]).toMatchObject({ classification: 'needs_reassessment', generationEligible: false });
+    await assertRetainedWithoutGeneration(knowledge, 'needs_reassessment');
+    expect(assessGamingClearEvidence(request, knowledge, { requireRequestCoverage: true }).decision).not.toBe('accept');
     expect(database.revisions.at(-1)!.provenance.clearReassessmentRequired).toBe(true);
 
     enqueue.mockClear();
@@ -382,7 +400,7 @@ describe('independent CLEAR review through acquired synthetic documents', () => 
     expect((await approvedIngestion(reapproved)).output.sources[0].status).toBe('updated');
     const restored = await buildStoredGamingKnowledgeContext(request);
     expect(restored.clearEvidenceAssessment?.decision).toBe('accept');
-    expect(restored.sources[0].clearSourceAssessment?.policyProfile).toContain('gaming-clear-policy/v6:');
+    expect(restored.sources[0].clearSourceAssessment?.policyProfile).toContain('gaming-clear-policy/v7:');
     const activeRevision = database.revisions.find(revision => revision.id === restored.evidence![0].revisionId)!;
     expect(activeRevision.provenance.clearReassessmentRequired).toBeUndefined();
   });

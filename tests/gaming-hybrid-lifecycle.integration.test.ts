@@ -131,6 +131,74 @@ async function discoverCurrent(mode: 'build' | 'meta', extras: Record<string, un
  * This is not PostgreSQL FTS evidence or proof of ChatGPT's real web-tool sequencing.
  */
 describe('Gaming hybrid durable lifecycle', () => {
+  function respondWithReferenceCatalog(metadataRecord = false) {
+    mockHttp.mockResolvedValue({ data: `<html><title>${SOURCE_GAME} Wiki Guide</title><article><h1>${SOURCE_GAME} Wiki Guide</h1>`
+      + `<p>${SOURCE_GAME} is an open-world role-playing game.</p><p>This page provides an index of walkthrough entries. `
+      + 'Browse the linked walkthrough entries and introductory reference articles for this game.</p>'
+      + '<a href="https://guides.example.org/unacquired-chapter">Individual walkthrough</a>'
+      + (metadataRecord ? `<dl><dt>Game</dt><dd>${SOURCE_GAME}</dd><dt>Edition</dt><dd>base game</dd><dt>Patch</dt><dd>1.0</dd></dl>` : '')
+      + '</article></html>',
+    headers: { 'content-type': 'text/html' } });
+  }
+
+  it.each([false, true])('retains a v2 reference candidate only after explicit consent without supplying answer evidence (metadata record=%s)', async metadataRecord => {
+    respondWithReferenceCatalog(metadataRecord);
+    const workflow = createGamingHybridWorkflow();
+    const version = 'gaming-hybrid-v2';
+    const queried = await workflow.query({ contractVersion: version, idempotencyKey: 'retained-reference-query',
+      game: SOURCE_GAME, question: input.prompt, storagePolicy: 'ask_before_store' }, context);
+    const found = await workflow.candidates({ contractVersion: version, workflowId: queried.body.workflowId,
+      expectedRevision: queried.body.revision, idempotencyKey: 'retained-reference-submit', candidates: [{ url: URL }] }, context);
+    const candidateId = found.body.candidates?.[0].candidateId;
+    expect(found.body.candidates?.[0]).toMatchObject({ candidateId: expect.any(String), decision: 'requires_confirmation',
+      reasonCodes: expect.arrayContaining(['REFERENCE_ONLY_REQUIRES_CONFIRMATION']) });
+    expect(found.body.evidenceSelected).toBe(false);
+    expect(found.body.answer).toBeUndefined();
+    expect(mockTrinity).not.toHaveBeenCalled();
+    expect(jobs.size).toBe(0);
+    const storage = { contractVersion: version, workflowId: queried.body.workflowId, idempotencyKey: 'retained-reference-store',
+      candidateIds: [candidateId], storagePolicy: 'ask_before_store' };
+    expect((await workflow.ingest({ ...storage, confirmStore: false }, context)).status).toBe(403);
+    expect(jobs.size).toBe(0);
+    const stored = await workflow.ingest({ ...storage, idempotencyKey: 'retained-reference-confirmed', confirmStore: true }, context);
+    expect(stored.body.ingestion?.status).toBe('queued');
+    const completed = await complete(stored.body.ingestion!.ingestionId);
+    expect(completed.sources[0]).toMatchObject({ status: 'stored', classification: 'reference_only', generationEligible: false });
+    expect(database.revisions[0].provenance).toMatchObject({ classification: 'reference_only', generationEligible: false });
+    const fetchCount = mockHttp.mock.calls.length;
+    const later = await createGamingHybridWorkflow().query({ contractVersion: version, idempotencyKey: 'retained-new-session',
+      game: SOURCE_GAME, question: input.prompt }, context);
+    expect(later.body.answer).toBeUndefined();
+    expect(later.body.evidenceSelected).toBe(false);
+    expect(mockHttp).toHaveBeenCalledTimes(fetchCount);
+    expect(mockHttp.mock.calls.every(([url]) => !String(url).includes('unacquired-chapter'))).toBe(true);
+  });
+
+  it('keeps retained candidate actor, hash, expiry and automatic-storage controls', async () => {
+    respondWithReferenceCatalog();
+    const evaluated = await evaluateGamingHybridCandidates({ ...input, protocolVersion: 'gaming-hybrid-v2', candidates: [{ url: URL }] },
+      { ...context, retainUnverified: true });
+    expect(evaluated.accepted).toEqual([]);
+    expect(evaluated.retained).toHaveLength(1);
+    const retained = evaluated.retained![0];
+    const submit = (candidate = retained, overrides: Record<string, unknown> = {}, caller = context) =>
+      createApprovedGamingHybridIngestion({ candidates: [candidate], storagePolicy: 'ask_before_store', confirmed: true,
+        idempotencyKey: 'reference-controls', ...overrides }, caller);
+    expect((await submit(retained, { storagePolicy: 'auto_store_approved' }, { ...context, canAutoStore: true })).statusCode).toBe(403);
+    expect((await submit(retained, {}, { ...context, actorKey: 'different-owner' })).statusCode).toBe(403);
+    expect((await submit({ ...retained, expiresAt: Date.now() - 1 })).statusCode).toBe(403);
+    expect((await submit({ ...retained, document: { ...retained.document, text: 'changed text' } })).statusCode).toBe(403);
+    expect(jobs.size).toBe(0);
+    const queued = await submit();
+    expect(queued.statusCode).toBe(202);
+    respondWithReferenceCatalog();
+    mockHttp.mockResolvedValueOnce({ data: `<html><title>${SOURCE_GAME} Wiki Guide</title><article>Changed document.</article></html>`,
+      headers: { 'content-type': 'text/html' } });
+    const completed = await complete((queued.payload as any).ingestionId);
+    expect(completed.sources[0]).toMatchObject({ status: 'rejected', error: { code: 'APPROVED_CONTENT_CHANGED' } });
+    expect(database.revisions).toHaveLength(0);
+  });
+
   it.each(['gaming-hybrid-v1', 'gaming-hybrid-v2'] as const)('returns a sanitized oversized-source decision under %s while the decoded limit still fires', async protocolVersion => {
     const previousByteLimit = process.env.WEB_FETCH_MAX_BYTES;
     process.env.WEB_FETCH_MAX_BYTES = '128';

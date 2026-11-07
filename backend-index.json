@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-07T06:11:37.933Z",
+  "generatedAt": "2026-11-07T08:36:57.590Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4447,6 +4447,9 @@
           "relativePath": "tests/fixtures/gaming-universal-identity.ts"
         },
         {
+          "relativePath": "tests/fixtures/gaming-wiki-identity.ts"
+        },
+        {
           "relativePath": "tests/fixtures/gamingClearCalibration.ts"
         },
         {
@@ -4771,6 +4774,9 @@
           "relativePath": "tests/gaming-legacy-instruction-boundary.test.ts"
         },
         {
+          "relativePath": "tests/gaming-linked-catalog-extraction.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-live-runtime.test.ts"
         },
         {
@@ -4921,6 +4927,9 @@
           "relativePath": "tests/gaming-semantic-reasons.test.ts"
         },
         {
+          "relativePath": "tests/gaming-short-guide-acquisition.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-skill-composition.test.ts"
         },
         {
@@ -5024,6 +5033,9 @@
         },
         {
           "relativePath": "tests/gaming-web-context-quality.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-wiki-identity-regression.test.ts"
         },
         {
           "relativePath": "tests/gaming.direct-answer.test.ts"

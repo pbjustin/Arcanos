@@ -196,6 +196,10 @@ function projectCandidate<RecordType extends GamingStoredEvidenceRecord>(record:
     .includes(normalizeGamingEvidenceGameIdentity(record.gameName))) return null;
   const normalized = record.normalized ?? {};
   const provenance = record.provenance ?? {};
+  // Owner consent permits retention independently of evidence authority. These
+  // explicit server-written restrictions survive later requests and sessions.
+  if (provenance.generationEligible === false || provenance.classification !== undefined
+    && provenance.classification !== 'verified') return null;
   const metadata = chunkMetadata(normalized);
   if (!metadata) return null;
   if (normalized.chunk !== undefined && typeof normalized.text !== 'string') return null;

@@ -12,9 +12,10 @@ import { assessGamingStructuralUsability, classifyGamingEditionRequirements, rea
 import { createGamingClearAssessment, classifyGamingClearQuestion, gamingClearContextFingerprint,
   type GamingClearSourceRole } from './gamingClearPolicy.js';
 import { detectGamingLeadingGameAlias, isGamingAcquiredTopicTitle } from '@services/gamingGameDetection.js';
+import { hasGamingActionableProse } from '@services/gamingDocumentExtraction.js';
 import { gamingAcquiredGameDeclarationPattern, withoutGamingAcquiredGameDeclarations } from './gamingGameDeclaration.js';
 import { gamingIdentityNeedsExplicitContext, readGamingAcquiredAliasDeclarations,
-  resolveGamingAcquiredIdentity, hasGamingAffirmativeIdentityProse, gamingAcquiredNominalScope, GAMING_ACQUIRED_SCOPE_BOUNDARY } from './gamingAcquiredIdentity.js';
+  resolveGamingAcquiredIdentity, hasGamingAffirmativeIdentityProse, readGamingPrimaryGameDefinition, gamingAcquiredNominalScope, GAMING_ACQUIRED_SCOPE_BOUNDARY } from './gamingAcquiredIdentity.js';
 import { normalizeGamingComparableIdentity } from './gamingGameRegistry.js';
 
 const containsIdentity = (text: string, expected: string): boolean => (`-${normalizeGamingGameIdentity(text)}-`)
@@ -253,6 +254,11 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     && /^(?:\s|[.!?:;]|$)/u.test(aliasStart.slice(aliasHeading.length)) ? aliasStart.slice(aliasHeading.length) : bodyScopes.unquotedText;
   const acquiredAliases = readGamingAcquiredAliasDeclarations(aliasProse);
   const aliasOffset = bodyScopes.unquotedText.length - aliasProse.length;
+  const definitionProse = aliasProse.replace(/^[\s.!|•–—]+/u, '');
+  const primaryDefinition = readGamingPrimaryGameDefinition(definitionProse);
+  const primaryDefinitionScope = primaryDefinition ? { text: primaryDefinition,
+    index: aliasOffset + aliasProse.length - definitionProse.length, explicitGameScope: true, namedGameScope: true } : undefined;
+  if (primaryDefinitionScope) bodyScopes.subjects.push(primaryDefinitionScope);
   const aliasOwners = new Map<string, Set<string>>();
   for (const declaration of acquiredAliases.declarations) {
     const alias = normalizeGamingComparableIdentity(declaration.alias);
@@ -453,8 +459,14 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     // A bare acquired location scope must own its leading subject: a price in
     // "in Amber Woods for 25 tokens" cannot become the game "25 tokens".
     // Explicit game declarations and guide-framed unknown names remain binding.
-    const ownsMetadataSubject = explicitGameScope || Boolean(firstInstructionMarker)
-      || Boolean(metadataIdentity && (subjectIdentity === metadataIdentity || subjectIdentity.startsWith(`${metadataIdentity}-`)));
+    // An implicit in-clause can introduce a location or a page link. A later
+    // guide marker in concatenated navigation does not name its leading game.
+    // Require a complete nominal guide frame; explicit game declarations and
+    // recognized leading game aliases retain their separate contradiction rules.
+    const nominalGuideFrame = firstInstructionMarker && /^(?:\s+(?:guide|build|loadout|meta|walkthrough|wiki|tips?))*\s*$/iu.test(
+      bodySubject.slice(firstInstructionMarker.index + firstInstructionMarker[0].length));
+    const ownsMetadataSubject = explicitGameScope || Boolean(firstInstructionMarker ? nominalGuideFrame
+      : metadataIdentity && (subjectIdentity === metadataIdentity || subjectIdentity.startsWith(`${metadataIdentity}-`)));
     const detected = leading.game ? leading : metadataSubject.source !== 'alias' && !instructionalClause && ownsMetadataSubject
       ? metadataSubject : leading;
     const expectedSubject = [...expected].some(game => subjectIdentity === game || subjectIdentity.startsWith(`${game}-`));
@@ -537,7 +549,8 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     return declaredGame || acquiredGlobalGame || acquiredCaption || acquiredRecordHeading;
   });
   const primaryProse = withoutGamingAcquiredGameDeclarations(document.text.slice(0, PRIMARY_IDENTITY_SCOPE_CHARS));
-  const primarySubjects = acquiredBodySubjects(primaryProse).subjects;
+  const primarySubjects = [...acquiredBodySubjects(primaryProse).subjects,
+    ...(primaryDefinitionScope && primaryDefinitionScope.index < PRIMARY_IDENTITY_SCOPE_CHARS ? [primaryDefinitionScope] : [])];
   const independentBodyScope = primarySubjects.some(subject => sourceGameMatches(subject.text)
     && (resolveGamingAcquiredIdentity({ sourceGame: subject.text, requestedGame: expected.has(normalizeGamingGameIdentity(subject.text))
       ? subject.text : input.game,
@@ -667,9 +680,12 @@ export function assessGamingClearSource(input: GamingStoredKnowledgeInput & { re
   const proseText = gamingClearIntactProseText(evidenceDocument);
   const structural = assessGamingStructuralUsability({ units: evidenceDocument.evidenceUnits, ...input, proseText });
   const structuredClaim = Boolean(evidenceDocument.evidenceUnits?.length) && structural.claimShape !== 'none';
+  // A complete short player action can be intelligible without padding. This
+  // does not establish identity, applicability, or support for other claims.
+  const completeShortProse = !document.metrics.truncated && hasGamingActionableProse(proseText);
   const independentProse = !structural.hasRelevantClaimUnit && structural.hasIndependentProseAnchors
-    && proseText.length >= 120 && gamingTermCoverage(proseText, buildGamingRetrievalTerms(input).focusTerms) >= 0.25;
-  const usable = structural.hasIntactUsableUnit || intactText.trim().length >= 120;
+    && (proseText.length >= 120 || completeShortProse) && gamingTermCoverage(proseText, buildGamingRetrievalTerms(input).focusTerms) >= 0.25;
+  const usable = structural.hasIntactUsableUnit || intactText.trim().length >= 120 || completeShortProse;
   const partialTopic = options.allowPartialCoverage === true
     && buildGamingRequestRequirements(input).some(requirement => gamingTermCoverage(intactText, requirement.terms) === 1);
   const contribution = options.allowPartialCoverage === true && hasGamingRelevantGuideContribution(intactText, input);

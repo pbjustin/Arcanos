@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -38,7 +39,8 @@ const configuredConnectionString = resolvePostgresTestDatabaseUrl(TEST_DATABASE_
 if (configuredConnectionString) {
   assertDisposablePostgresTestDatabaseUrl(configuredConnectionString, TEST_DATABASE_ENV);
 }
-const describeWithDatabase = configuredConnectionString ? describe : describe.skip;
+const freshProcessRead = process.env.ARCANOS_GAMING_FRESH_PROCESS_RAG_INPUT;
+const describeWithDatabase = configuredConnectionString && !freshProcessRead ? describe : describe.skip;
 const schemaName = `gaming_durable_rag_${randomUUID().replaceAll('-', '')}`;
 const quotedSchema = `"${schemaName}"`;
 const migration = readFileSync(join(process.cwd(), 'migrations', '20260808_gaming_knowledge_sources.sql'), 'utf8');
@@ -109,6 +111,63 @@ async function prepareDocument(text: string, gameKey: string): Promise<PersistGa
 async function query(gameKey: string, prompt: string) {
   const { query: lexicalQuery } = buildStoredGamingLexicalQuery(prompt, game);
   return searchActiveGamingKnowledge({ gameKey, query: lexicalQuery, mode: 'guide', limit: 20 }, { queryTimeoutMs: 1000 });
+}
+
+// The writer launches this isolated Jest process with no workflow, resolver cache,
+// or in-memory knowledge carried over. Only the disposable SQL rows survive.
+if (freshProcessRead) {
+  test('fresh process reads retained Gaming revisions without discovery', async () => {
+    const read = JSON.parse(freshProcessRead) as {
+      schema: string; sourceId: string; revisionId: string; game: string; prompt: string;
+      expectedText: string; generationEligible: boolean;
+    };
+    if (!configuredConnectionString || !/^gaming_durable_rag_[a-f0-9]{32}$/u.test(read.schema)) {
+      throw new Error('A guarded disposable schema is required for the fresh-process read.');
+    }
+    databasePool = new Pool({ connectionString: configuredConnectionString, ssl: false, max: 2,
+      options: `-c search_path=${read.schema},pg_catalog`, connectionTimeoutMillis: 5000, statement_timeout: 10000 });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = jest.fn(() => { throw new Error('Fresh-process stored retrieval must not discover sources.'); }) as typeof fetch;
+    try {
+      const rows = await searchActiveGamingKnowledge({ gameKey: read.game, sourceIds: [read.sourceId],
+        query: 'platinum', mode: 'guide' });
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows.every(row => row.sourceId === read.sourceId && row.revisionId === read.revisionId)).toBe(true);
+      expect(rows.some(row => JSON.stringify(row.normalized).includes(read.expectedText))).toBe(true);
+      const { buildStoredGamingKnowledgeContext } = await import('../../src/services/gamingSourceIngestion.js');
+      const knowledge = await buildStoredGamingKnowledgeContext({ game: read.game, prompt: read.prompt, mode: 'guide',
+        requireRequestCoverage: true, failOnUnavailable: true });
+      expect(knowledge.sourceKnown).toBe(true);
+      if (read.generationEligible) {
+        expect(knowledge.context).toContain(read.expectedText);
+        expect(knowledge.evidence?.some(chunk => chunk.sourceId === read.sourceId && chunk.revisionId === read.revisionId)).toBe(true);
+        expect(assessGamingRequestCoverage({ game: read.game, prompt: read.prompt, mode: 'guide' }, knowledge).coverageSatisfied).toBe(true);
+        expect(knowledge.clearEvidenceAssessment?.decision).toBe('accept');
+      } else {
+        expect((knowledge.evidence ?? []).some(chunk => chunk.sourceId === read.sourceId)).toBe(false);
+        expect(knowledge.context).not.toContain(read.expectedText);
+      }
+      expect(mockSourceHttpGet).not.toHaveBeenCalled();
+      expect(mockSourceEnqueue).not.toHaveBeenCalled();
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    } finally {
+      globalThis.fetch = originalFetch;
+      await databasePool.end();
+    }
+  }, 30000);
+}
+
+function assertFreshProcessRetrieval(read: {
+  sourceId: string; revisionId: string; game: string; prompt: string; expectedText: string; generationEligible: boolean;
+}): void {
+  const result = spawnSync(process.execPath, ['scripts/run-jest.mjs', '--runTestsByPath',
+    'tests/integration/gaming-durable-rag.pg18.integration.test.ts', '--coverage=false', '--runInBand',
+    '--testNamePattern=^fresh process reads retained Gaming revisions without discovery$'], {
+    cwd: process.cwd(), encoding: 'utf8', timeout: 45000, maxBuffer: 2_000_000,
+    env: { ...process.env, ARCANOS_GAMING_FRESH_PROCESS_RAG_INPUT: JSON.stringify({ ...read, schema: schemaName }) }
+  });
+  if (result.status !== 0) throw new Error(`Fresh-process Gaming retrieval failed: ${result.error?.message ?? ''}\n${result.stdout}\n${result.stderr}`);
+  expect(result.status).toBe(0);
 }
 
 describeWithDatabase('durable Gaming chunk storage and retrieval on PostgreSQL 18', () => {
@@ -286,6 +345,8 @@ describeWithDatabase('durable Gaming chunk storage and retrieval on PostgreSQL 1
     expect(retrieved.sources.some(source => source.url === publicUrl)).toBe(true);
     expect(retrieved.evidence?.some(evidence => evidence.sourceId === sourceId && evidence.revisionId === firstRevision
       && evidence.evidenceUnits?.some(unit => unit.provenance.sourceUrl === publicUrl && unit.provenance.strategy === 'html_table'))).toBe(true);
+    assertFreshProcessRetrieval({ sourceId, revisionId: firstRevision, game: structuredGame, prompt,
+      expectedText: 'PML 7', generationEligible: true });
     const refresh = async () => {
       const admittedRefresh = await refreshGamingSources({ action: 'refresh', payload: { sourceIds: [sourceId], idempotencyKey: `refresh-${randomUUID()}` } }, gateway);
       expect(admittedRefresh.statusCode).toBe(202);
@@ -305,7 +366,67 @@ describeWithDatabase('durable Gaming chunk storage and retrieval on PostgreSQL 1
     expect(statuses.rows.filter(row => row.status === 'active')).toHaveLength(firstRecordCount);
     expect(statuses.rows.filter(row => row.status === 'superseded')).toHaveLength(firstRecordCount);
     mockSourceHttpGet.mockReset(); mockSourceEnqueue.mockReset();
-  }, 30000);
+  }, 60000);
+
+  test('retains an owner-submitted wiki catalog without granting gameplay authority or acquiring linked pages', async () => {
+    const { createGamingSourceIngestion, executeQueuedGamingSourceIngestion, buildStoredGamingKnowledgeContext } =
+      await import('../../src/services/gamingSourceIngestion.js');
+    const itemGame = 'Platinum Frontier';
+    const publicUrl = `https://guides.example.org/platinum-catalog/${randomUUID()}`;
+    const linkedUrl = `${publicUrl}/walkthrough`;
+    const marker = 'Platinum catalog overview';
+    // Authored synthetic HTML: this is neither an IGN capture nor evidence of
+    // publisher availability. The production transport and extractor consume it.
+    const page = `<html><head><title>${itemGame} Wiki</title></head><body><main><h1>${itemGame}</h1>`
+      + `<p>Game: ${itemGame}. Edition: base game.</p><p>${marker}. Welcome to the community wiki catalog. `
+      + 'Browse the index of locations, items and walkthrough chapters. This landing page contains reference links for readers '
+      + 'to choose an individual article; it does not explain gameplay steps or item acquisition.</p>'
+      + `<a href="${linkedUrl}">Platinum walkthrough</a></main></body></html>`;
+    mockSourceHttpGet.mockReset(); mockSourceEnqueue.mockReset();
+    mockSourceHttpGet.mockImplementation(async (url: string, options: any) => {
+      expect(new URL(url).hostname).toBe('93.184.216.34');
+      expect(options).toMatchObject({ maxRedirects: 0, proxy: false, headers: { Host: 'guides.example.org' } });
+      expect(new URL(url).pathname).toBe(new URL(publicUrl).pathname);
+      return { data: page, headers: { 'content-type': 'text/html' } };
+    });
+    mockSourceEnqueue.mockImplementation(async (input: any) => ({
+      job: { id: randomUUID(), status: 'pending', created_at: new Date(), input: input.input }, created: true, deduped: false
+    }));
+    try {
+      const admitted = await createGamingSourceIngestion({ action: 'ingest', payload: { game: itemGame,
+        sourceUrls: [publicUrl], idempotencyKey: `catalog-${randomUUID()}` } },
+      { actorKey: 'disposable-catalog-owner', requestId: 'catalog-request', traceId: 'catalog-trace' });
+      expect(admitted.statusCode).toBe(202);
+      const queued = (mockSourceEnqueue.mock.calls.at(-1)![0] as any).input.body;
+      const completed = await executeQueuedGamingSourceIngestion(randomUUID(), queued);
+      const source = completed.output.sources[0];
+      expect(source).toMatchObject({ status: 'stored', classification: 'reference_only', generationEligible: false });
+      expect(source.recordsCreated).toBeGreaterThan(0);
+      const rows = await searchActiveGamingKnowledge({ gameKey: itemGame, sourceIds: [source.sourceId!], query: 'platinum', mode: 'guide' });
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows[0].provenance).toMatchObject({ classification: 'reference_only', generationEligible: false });
+      expect(rows.some(row => JSON.stringify(row.normalized).includes(marker))).toBe(true);
+      const retrieved = await buildStoredGamingKnowledgeContext({ game: itemGame, prompt: 'Where is Platinum?', mode: 'guide',
+        requireRequestCoverage: true, failOnUnavailable: true });
+      expect(retrieved.sourceKnown).toBe(true);
+      expect(retrieved.context).not.toContain(marker);
+      expect((retrieved.evidence ?? []).some(chunk => chunk.sourceId === source.sourceId)).toBe(false);
+      expect(assessGamingRequestCoverage({ game: itemGame, prompt: 'Where is Platinum?', mode: 'guide' }, retrieved).coverageSatisfied).toBe(false);
+      assertFreshProcessRetrieval({ sourceId: source.sourceId!, revisionId: rows[0].revisionId, game: itemGame,
+        prompt: 'Where is Platinum?', expectedText: marker, generationEligible: false });
+      const duplicate = await executeQueuedGamingSourceIngestion(randomUUID(), queued);
+      expect(duplicate.output.sources[0]).toMatchObject({ status: 'unchanged', sourceId: source.sourceId,
+        classification: 'reference_only', generationEligible: false, recordsCreated: 0, recordsUpdated: 0 });
+      const revisions = await databasePool.query<{ id: string }>(
+        'SELECT id FROM gaming_source_revisions WHERE source_id = $1', [source.sourceId]);
+      expect(revisions.rows).toEqual([{ id: rows[0].revisionId }]);
+      const linked = await databasePool.query('SELECT id FROM gaming_sources WHERE canonical_url = $1', [linkedUrl]);
+      expect(linked.rows).toEqual([]);
+      expect(mockSourceHttpGet).toHaveBeenCalledTimes(2);
+    } finally {
+      mockSourceHttpGet.mockReset(); mockSourceEnqueue.mockReset();
+    }
+  }, 60000);
 
   test('persists acquired official currentness through SQL JSONB and reuses only bound, unexpired proof', async () => {
     const { createGamingHybridWorkflow } = await import('../../src/services/gamingHybridKnowledge.js');

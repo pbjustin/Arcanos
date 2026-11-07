@@ -3,6 +3,7 @@ import { createGamingHybridWorkflow } from '../src/services/gamingHybridKnowledg
 import { GAMING_HYBRID_CONTRACT_VERSION as contractVersion, GAMING_HYBRID_LIMITS } from '../src/shared/gaming/gamingHybridContract.js';
 import type { GamingStoredKnowledgeContext } from '../src/services/gamingStoredKnowledge.js';
 import { GAMING_SOURCE_POLICY_VERSION } from '../src/shared/gaming/gamingFreshnessCore.js';
+import { projectGamingHybridCandidateRetention, GAMING_HYBRID_RETAINED_ARTIFACT_CHARS } from '../src/shared/gaming/gamingHybridPolicyCore.js';
 
 const now = Date.now();
 const context = { actorKey: 'synthetic-gaming-caller', requestId: 'synthetic-request' };
@@ -26,6 +27,21 @@ function setup(initial = empty) {
 }
 
 describe('Gaming hybrid authenticated handoff', () => {
+  it('never projects capacity-excluded reference artifacts as accepted gameplay evidence', () => {
+    const decisions = [{ candidateId: '30000000-0000-4000-8000-000000000001', decision: 'requires_confirmation',
+      reasonCodes: ['REFERENCE_ONLY_REQUIRES_CONFIRMATION'], classification: 'reference_only' as const, generationEligible: false }];
+    const retained = projectGamingHybridCandidateRetention({ retainedChars: 0, candidateChars: 100, decisions });
+    expect(retained.decisions[0]).toMatchObject({ candidateId: decisions[0].candidateId, decision: 'requires_confirmation' });
+    expect(retained.decisions[0]).not.toHaveProperty('classification');
+    expect(retained.decisions[0]).not.toHaveProperty('generationEligible');
+    const overflow = projectGamingHybridCandidateRetention({ retainedChars: GAMING_HYBRID_RETAINED_ARTIFACT_CHARS,
+      candidateChars: 100, decisions });
+    expect(overflow.retainArtifacts).toBe(false);
+    expect(overflow.decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: [
+      'ARTIFACT_CAPACITY_REACHED', 'REFERENCE_ONLY_REQUIRES_CONFIRMATION' ] });
+    expect(overflow.decisions[0]).not.toHaveProperty('candidateId');
+  });
+
   it('reports failed acquisition without asserting absence and preserves the one-round stop on replay', async () => {
     const { workflow, evaluateCandidates, generate } = setup();
     evaluateCandidates.mockResolvedValue({ decisions: [{ decision: 'rejected', reasonCodes: ['URL_BLOCKED'] }],

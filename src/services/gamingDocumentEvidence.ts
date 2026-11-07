@@ -13,7 +13,8 @@ const normalize = (value: string) => normalizeGamingDocumentInstructionCharacter
 export function extractGamingDocumentEvidence(input: GamingEvidenceExtractionInput & {
   receivedBytes?: number; acceptedBytes?: number; declaredBytes?: number;
 }): { units: GamingEvidenceUnit[]; proseBody: string; instructionFiltered: boolean;
-  sourceUseRestricted: boolean; diagnostics: GamingStructureDiagnostics } {
+  sourceUseRestricted: boolean; diagnostics: GamingStructureDiagnostics;
+  localTopicReferences?: Array<{ text: string; paragraphText: string; gameHash: string }> } {
   const startedAt = Date.now();
   const html = extractGamingHtmlEvidence(input);
   const json = extractGamingJsonEvidence(input);
@@ -52,7 +53,8 @@ export function extractGamingDocumentEvidence(input: GamingEvidenceExtractionInp
   const proseBody = input.contentType === 'application/json' ? '' : html.proseBody ?? input.body;
   const sourceUseRestricted = SOURCE_USE_RESTRICTION.test(stripGamingHtmlTags(input.body));
   const truncated = html.truncated || json.truncated || capped;
-  return { units, proseBody, instructionFiltered, sourceUseRestricted, diagnostics: {
+  return { units, proseBody, instructionFiltered, sourceUseRestricted,
+    ...(html.localTopicReferences?.length ? { localTopicReferences: html.localTopicReferences } : {}), diagnostics: {
     policyVersion: GAMING_EVIDENCE_UNIT_POLICY_VERSION,
     strategies: [...new Set(['prose', ...html.attempts, ...json.attempts])].slice(0, 8),
     contentType: input.contentType || 'unknown',
