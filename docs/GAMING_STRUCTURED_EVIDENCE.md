@@ -87,8 +87,11 @@ When they enclose a reviewed primary article, they no longer discard that articl
 as sidebar furniture. Layout normalization, content selection and primary-heading
 preservation share the existing semantic, class and ID selector catalog, including
 `.article-body` and `.entry-content`. A contained class-body heading does not hide
-an earlier enclosing article subject; independent semantic article boundaries
-retain their existing scope behavior. Explicit sidebars, hidden content and complementary roles
+an earlier enclosing article subject; independent semantic articles stop heading
+inheritance even when their own heading is H2 or they have no H1. A reviewed
+class wrapper wholly owned by an independent article has the same boundary.
+Quoted articles and incidental cards cannot hide a genuine enclosing heading.
+Explicit sidebars, hidden content and complementary roles
 remain excluded. The six-level qualifier context bound is unchanged; a record
 whose context cannot be fully inspected remains partial even when independent
 article prose is available. Full-response instruction and source-use inspection

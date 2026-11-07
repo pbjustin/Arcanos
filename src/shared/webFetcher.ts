@@ -929,17 +929,31 @@ export function extractFetchAndCleanDocument(
     const selectedElement = selectedCandidate.element;
     type LocatedElement = cheerio.Element & { sourceCodeLocation?: { startOffset: number; endTag?: unknown } };
     const selectedLocation = (selectedElement as LocatedElement).sourceCodeLocation;
+    const semanticScopeSelector = 'article,main,[role="main"]';
+    const selectedScope = $(selectedElement);
+    const containedScope = selectedScope.find(semanticScopeSelector).first();
+    // A reviewed class container may wrap the independent article rather than
+    // sit inside it. Incidental cards or surrounding prose cannot supply this boundary.
+    const containedArticleOwnsText = !selectedScope.is(semanticScopeSelector) && containedScope.length > 0
+      && !headingDenied(containedScope.get(0)!)
+      && normalizeExtractedText(containedScope.text()) === normalizeExtractedText(selectedScope.text());
     let scope = $(selectedElement).closest(primaryScopeSelector);
     // Search nearest scopes only; an independent article's own subject wins.
     for (let depth = 0; depth < 6 && scope.length; depth++, scope = scope.parent().closest(primaryScopeSelector)) {
       throwIfFetchCancelled(options);
       const heading = scope.children('h1').slice(0, 6).filter((_, element) => !headingDenied(element)).first();
-      if (!heading.length) continue;
+      if (!heading.length) {
+        // A missing H1 does not make an independent semantic article inherit
+        // the subject of its enclosing page or another article.
+        if (scope.is(semanticScopeSelector) && !headingDenied(scope.get(0)!)
+          || scope.get(0) === selectedElement && containedArticleOwnsText) break;
+        continue;
+      }
       const headingElement = heading.get(0)!;
       if (headingElement === selectedElement || contains(selectedElement, headingElement)) {
         // A class body is not an independent article boundary: its own heading
         // must not conceal an earlier enclosing article's acquired subject.
-        if (scope.is('article,main,[role="main"]')) break;
+        if (scope.is(semanticScopeSelector)) break;
         continue;
       }
       const location = (headingElement as LocatedElement).sourceCodeLocation;
