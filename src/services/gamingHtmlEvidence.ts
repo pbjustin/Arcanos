@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { load } from 'cheerio';
 import { preservePrimaryContentSidebarLayouts } from '@shared/gaming/gamingDocumentTextNormalization.js';
 import { normalizeGamingComparableIdentity } from '@shared/gaming/gamingGameRegistry.js';
+import { gamingAttributableClaimText } from '@shared/gaming/gamingRetrievalPolicy.js';
 import { countGamingHtmlElements, filterGamingDocumentInstructions, hasGamingActionableProse, GAMING_DOCUMENT_FURNITURE_SELECTOR,
   gamingDocumentExtractionProfile, gamingDocumentFetchOptions } from '@services/gamingDocumentExtraction.js';
 import {
@@ -207,7 +208,7 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
       || /\b(?:patch(?:es)?|builds?|updates?|releases?|versions?|seasons?|platforms?|regions?|effective|published|updated|baseline|supersedes)\b/iu.test(label)
       || /^(?:(?:first|next|then)[,:]?\s+)?(?:to\s+|attack\b|avoid\b|block\b|collect\b|defeat\b|dodge\b|equip\b|explore\b|follow\b|gather\b|heal\b|jump\b|move\b|open\b|press\b|restore\b|save\b|select\b|spend\b|upgrade\b|use\b|wait\b|this\s+(?:guide|article|page|document|source)\b)/iu.test(label)
       || /\b(?:is|are|was|were|has|have|only|not|no|without|except|requires?|costs?|grants?|unlocks?|available|must|should)\b/iu.test(label)
-      || hasGamingActionableProse(label)) continue;
+      || hasGamingActionableProse(label) || gamingAttributableClaimText(label)) continue;
     const remainder = node.clone();
     remainder.find('a[href]').remove();
     if (/^[\s|/,:;.!?()[\]{}•–—-]*$/u.test(remainder.text())) node.remove();
@@ -678,6 +679,10 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
       // incomplete integrity flag prevents any promotion to gameplay evidence.
       if (fields.some(field => !field.label)) {
         reasons.push('incomplete_record');
+        if (fields.some(field => /^(?:game|edition|scope|applicability|patch|version|platforms?|regions?)$/iu.test(field.label))) {
+          result.applicabilityUnverified = true;
+          fail('applicability_scope_unverified');
+        }
         fields = fields.map(field => field.label ? field : { label: 'Unlabelled content', value: field.value });
       }
       if ($(item).find('table,ul,ol,dl').length > (nested.length ? 1 : 0)) reasons.push('ambiguous_field_mapping', 'required_context_missing');

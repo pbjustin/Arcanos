@@ -364,7 +364,8 @@ function collectObjectStrings(value: unknown, wantedKeys?: ReadonlySet<string>):
   return output;
 }
 
-function metadataFromHtml(html: string | undefined, deadline = Number.POSITIVE_INFINITY, onInstructions?: () => void): GamingResourceMetadata {
+function metadataFromHtml(html: string | undefined, deadline = Number.POSITIVE_INFINITY, onInstructions?: () => void,
+  onSourceUseRestricted?: () => void): GamingResourceMetadata {
   if (!html || html.length > LIMITS.maxHtmlChars || Date.now() > deadline) {
     return {};
   }
@@ -375,6 +376,7 @@ function metadataFromHtml(html: string | undefined, deadline = Number.POSITIVE_I
     const property = safeString($(element).attr("property"), 80)?.toLowerCase();
     const rawContent = $(element).attr("content");
     if ((property === "og:title" || property === "og:description") && hasBuildSourceInstructions(rawContent)) onInstructions?.();
+    if ((property === "og:title" || property === "og:description") && hasBuildSourceUseRestriction(rawContent)) onSourceUseRestricted?.();
     const content = safeString(rawContent, 240);
     if (property && content && !DANGEROUS_KEYS.has(property.toLowerCase())) {
       openGraph[property.toLowerCase()] = content;
@@ -384,6 +386,7 @@ function metadataFromHtml(html: string | undefined, deadline = Number.POSITIVE_I
   const rawTitle = $("title").first().text();
   const rawDescription = $("meta[name='description']").first().attr("content");
   if (hasBuildSourceInstructions(rawTitle) || hasBuildSourceInstructions(rawDescription)) onInstructions?.();
+  if (hasBuildSourceUseRestriction(rawTitle) || hasBuildSourceUseRestriction(rawDescription)) onSourceUseRestricted?.();
   const title = safeString(rawTitle, 240);
   const description = safeString(rawDescription, 500);
   const canonicalUrl = safeString($("link[rel='canonical']").first().attr("href"), LIMITS.maxUrlChars);
@@ -1710,6 +1713,14 @@ function genericExtract(params: {
       state.terminalFailure = "STRUCTURED_PAYLOAD_TOO_LARGE";
       break;
     }
+    // Ranking selects a build, not which supported source fields may veto use.
+    const rejectedFields = inspectRejectedBuildFields(candidate.value, params.deadline);
+    if (rejectedFields === "SOURCE_INSTRUCTIONS_REJECTED") state.instructionFiltered = true;
+    else if (rejectedFields) state.terminalFailure = rejectedFields;
+    if (state.instructionFiltered) return { build: null,
+      validation: rejectedInstructionValidation(), state, classification: effectiveClassification };
+    if (state.terminalFailure) return { build: null,
+      validation: emptyValidation(state.terminalFailure), state, classification: effectiveClassification };
     const effectiveType = structuredType(params.classification.type) ? params.classification.type : "build_planner";
     const normalized = normalizeBuildCandidate({
       value: candidate.value,
@@ -1787,11 +1798,12 @@ export async function ingestGamingBuildResource(
   const prepared = prepareGamingResourceUrl(input.url);
   if (!prepared) return invalidResult(input);
   let metadataInstructions = false;
+  let metadataSourceUseRestricted = false;
   const metadata = mergeMetadata(input.metadata, metadataFromHtml(input.html, deadline,
-    () => { metadataInstructions = true; }));
+    () => { metadataInstructions = true; }, () => { metadataSourceUseRestricted = true; }));
   metadataInstructions ||= [metadata.title, metadata.description,
     metadata.openGraph?.["og:title"], metadata.openGraph?.["og:description"]].some(hasBuildSourceInstructions);
-  const metadataSourceUseRestricted = [metadata.title, metadata.description,
+  metadataSourceUseRestricted ||= [metadata.title, metadata.description,
     metadata.openGraph?.["og:title"], metadata.openGraph?.["og:description"]].some(hasBuildSourceUseRestriction);
   let classification = classifyGamingResource({ ...input, preparedUrl: prepared, metadata });
   const adapterInput = boundedAdapterInput(input, prepared, metadata);
@@ -1842,7 +1854,12 @@ export async function ingestGamingBuildResource(
     adapterElapsedMs += Date.now() - adapterStartedAt;
     if (extracted) {
       const inspection = inspectStructure(extracted, deadline);
-      if (inspection.ok) {
+      const rejectedFields = inspection.ok ? inspectRejectedBuildFields(extracted, deadline) : undefined;
+      if (rejectedFields) {
+        adapterInstructions ||= rejectedFields === "SOURCE_INSTRUCTIONS_REJECTED";
+        adapterFailure = rejectedFields;
+        validation = emptyValidation(rejectedFields);
+      } else if (inspection.ok) {
         build = normalizeBuildCandidate({
           value: extracted,
           metadata,

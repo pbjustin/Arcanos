@@ -420,7 +420,7 @@ export async function resolveGamingDocument(
       ...(acquisition ? { acquisition } : {}),
       ...(evidenceUnits?.length ? { evidenceUnits } : {}),
       ...(structureDiagnostics ? { structureDiagnostics } : {}),
-      ...(acquired.structure?.sourceUseRestricted ? { sourceUseRestricted: true } : {})
+      ...(acquired.structure?.sourceUseRestricted || rawEvidence?.sourceUseRestricted ? { sourceUseRestricted: true } : {})
     };
     if (acquisition) acquisitionAttestations.set(acquisition, documentBinding(document));
     if (Date.now() >= deadlineAt) throw new GamingDocumentAcquisitionError("SOURCE_TIMEOUT", "extraction", "DEADLINE_EXCEEDED", acquisition?.redirectCount);
