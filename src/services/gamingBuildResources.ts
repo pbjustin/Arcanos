@@ -367,11 +367,11 @@ function collectObjectStrings(value: unknown, wantedKeys?: ReadonlySet<string>):
 }
 
 function metadataFromHtml(html: string | undefined, deadline = Number.POSITIVE_INFINITY, onInstructions?: () => void,
-  onSourceUseRestricted?: () => void): GamingResourceMetadata {
+  onSourceUseRestricted?: () => void, parsedHtml?: ReturnType<typeof load>): GamingResourceMetadata {
   if (!html || html.length > LIMITS.maxHtmlChars || Date.now() > deadline) {
     return {};
   }
-  const $ = load(html);
+  const $ = parsedHtml ?? load(html);
   if (Date.now() > deadline) return {};
   const openGraph: Record<string, string> = {};
   $("meta[property^='og:']").slice(0, 32).each((_, element) => {
@@ -728,7 +728,8 @@ function extractBalancedJson(script: string): string | undefined {
 }
 
 function collectEmbeddedCandidates(input: GamingResourceInput, metadata: GamingResourceMetadata, deadline: number,
-  onRejected?: (reason: GamingStructuredFailureReason) => void, onSourceUseRestricted?: () => void): unknown[] {
+  onRejected?: (reason: GamingStructuredFailureReason) => void, onSourceUseRestricted?: () => void,
+  parsedHtml?: ReturnType<typeof load>): unknown[] {
   const output: unknown[] = [];
   const addValue = (value: unknown): void => {
     if (value === undefined || output.length >= LIMITS.maxPayloadCandidates) return;
@@ -761,7 +762,7 @@ function collectEmbeddedCandidates(input: GamingResourceInput, metadata: GamingR
     if (parsed.terminalFailure) onRejected?.(parsed.terminalFailure);
     if (parsed.value !== undefined) output.push(parsed.value);
   }
-  const $ = load(html);
+  const $ = parsedHtml ?? load(html);
   let cumulativeChars = 0;
   $("script").slice(0, LIMITS.maxScripts).each((_, element) => {
     if (Date.now() > deadline || output.length >= LIMITS.maxPayloadCandidates) return false;
@@ -1309,7 +1310,10 @@ export function inspectGamingBuildResourceSourceUse(input: GamingResourceInput):
   if (!prepared) return false;
   let restricted = false;
   const observe = () => { restricted = true; };
-  const metadata = mergeMetadata(input.metadata, metadataFromHtml(input.html, deadline, undefined, observe));
+  // Both readers inspect the same accepted HTML without mutating its tree.
+  // Keep reuse local to this pure observation; no DOM or result enters a cache.
+  const parsedHtml = input.html && input.html.length <= LIMITS.maxHtmlChars && Date.now() <= deadline ? load(input.html) : undefined;
+  const metadata = mergeMetadata(input.metadata, metadataFromHtml(input.html, deadline, undefined, observe, parsedHtml));
   for (const field of [metadata.title, metadata.description, metadata.openGraph?.["og:title"], metadata.openGraph?.["og:description"]]) {
     if (typeof field === "string" && field.length <= LIMITS.maxHtmlChars && hasBuildSourceUseRestriction(field)) observe();
   }
@@ -1322,7 +1326,7 @@ export function inspectGamingBuildResourceSourceUse(input: GamingResourceInput):
     inspect(decodePayloadCandidate(payload, deadline));
   }
   if (Date.now() <= deadline && !restricted) {
-    for (const value of collectEmbeddedCandidates(input, metadata, deadline, undefined, observe)) {
+    for (const value of collectEmbeddedCandidates(input, metadata, deadline, undefined, observe, parsedHtml)) {
       if (Date.now() > deadline || restricted) break;
       inspectRejectedBuildFields(value, deadline, observe);
     }
