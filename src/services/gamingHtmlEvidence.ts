@@ -24,11 +24,15 @@ type CheerioAPI = ReturnType<typeof load>;
 type Fields = GamingEvidenceUnit['fields'];
 interface SourceLocation { startOffset: number; endOffset: number; endTag?: { endOffset: number } }
 type LocatedElement = Element & { sourceCodeLocation?: SourceLocation };
+export interface GamingHtmlLocalTopicReference {
+  text: string; paragraphText: string; gameHash: string;
+  paragraphOccurrence: number; paragraphCount: number; frameStart: number;
+}
 export interface GamingHtmlEvidenceExtractionResult extends GamingEvidenceExtractionResult {
   /** Original accepted HTML with structural candidates removed from the prose fallback. */
   proseBody?: string;
   /** Parser-owned local article references; the resolver retains only bound spans. */
-  localTopicReferences?: Array<{ text: string; paragraphText: string; gameHash: string }>;
+  localTopicReferences?: GamingHtmlLocalTopicReference[];
   /** Layout search exhaustion cannot establish unrestricted source scope. */
   applicabilityUnverified?: true;
   sourceUseRestricted?: true;
@@ -223,10 +227,32 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
   // here; request projection can exclude only that frame after matching game
   // identity. Never annotate declarations, requirements, edition or record fields.
   const localTopicReferences: NonNullable<GamingHtmlEvidenceExtractionResult['localTopicReferences']> = [];
-  for (const anchor of $('p > a[href]').toArray().slice(0, 256)) {
+  const referenceAnchors = $('p > a[href]').toArray().slice(0, 256);
+  const paragraphTexts = new Map<Element, string>();
+  const paragraphTextFor = (paragraph: Element): string => {
+    let value = paragraphTexts.get(paragraph);
+    if (value === undefined) { value = text($(paragraph).text()); paragraphTexts.set(paragraph, value); }
+    return value;
+  };
+  const matchingParagraphs = new Map<string, Element[]>();
+  for (const anchor of referenceAnchors) {
+    const value = paragraphTextFor($(anchor).parent().get(0)!);
+    if (value.length <= 512) matchingParagraphs.set(value, []);
+  }
+  // Count plain as well as linked equal paragraphs. A textual copy cannot move
+  // a parser annotation onto an unlinked scope at an earlier occurrence.
+  for (const paragraph of matchingParagraphs.size ? $('p').toArray() : []) {
+    if (deadlineExpired()) return result;
+    const matches = matchingParagraphs.get(paragraphTextFor(paragraph));
+    if (matches && eligible($, paragraph)) matches.push(paragraph);
+  }
+  const paragraphOccurrences = new Map<Element, { occurrence: number; count: number }>();
+  for (const matches of matchingParagraphs.values()) for (const [occurrence, paragraph] of matches.entries())
+    paragraphOccurrences.set(paragraph, { occurrence, count: matches.length });
+  for (const anchor of referenceAnchors) {
     if (deadlineExpired()) return result;
     const paragraph = $(anchor).parent().get(0)!;
-    const paragraphText = text($(paragraph).text());
+    const paragraphText = paragraphTextFor(paragraph);
     const topic = text($(anchor).text());
     const preceding = anchor.prev?.type === 'text' ? text($(anchor.prev).text()) : '';
     if (!closed(anchor) || !closed(paragraph) || !eligible($, paragraph)
@@ -243,10 +269,17 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
     if (!match || `${match[1]} - ${topic}`.length > 160) continue;
     // Only the linked nominal frame is projected. Other sentences, named-game
     // scopes and contradictory assertions in the paragraph remain inspectable.
-    const frame = `${preceding.slice(scope!.index)} ${topic}`;
-    const reference = { text: frame, paragraphText, gameHash: createHash('sha256')
+    const framePrefix = preceding.slice(scope!.index);
+    const frame = `${framePrefix} ${topic}`;
+    const occurrence = paragraphOccurrences.get(paragraph);
+    const children = $(paragraph).contents().toArray();
+    const prefix = text(children.slice(0, children.indexOf(anchor)).map(child => $(child).text()).join(''));
+    const frameStart = prefix.length - framePrefix.length;
+    if (!occurrence || frameStart < 0 || paragraphText.slice(frameStart, frameStart + frame.length) !== frame) continue;
+    const reference = { text: frame, paragraphText, paragraphOccurrence: occurrence.occurrence,
+      paragraphCount: occurrence.count, frameStart, gameHash: createHash('sha256')
       .update(normalizeGamingComparableIdentity(match[1].trim())).digest('hex') };
-    if (!localTopicReferences.some(item => item.text === reference.text && item.gameHash === reference.gameHash)) localTopicReferences.push(reference);
+    localTopicReferences.push(reference);
     if (localTopicReferences.length >= 64) break;
   }
   if (localTopicReferences.length) result.localTopicReferences = localTopicReferences;

@@ -230,6 +230,8 @@ export interface GamingBuildResourceResult {
   metrics: GamingBuildExtractionMetrics;
   cacheHit: boolean;
   failureReason?: GamingStructuredFailureReason;
+  /** Internal source-use finding, independent of the primary extraction error. */
+  sourceUseRestricted?: true;
 }
 
 export interface GamingBuildResourceAdapter {

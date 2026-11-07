@@ -1777,7 +1777,9 @@ async function fetchGamingRagDocument(
         }
         assertGamingDocumentUseAllowed(document);
         evidenceUnits = readGamingEvidenceUnits(document.evidenceUnits, document.publicUrl, document.text);
-        if (evidenceUnits.length) resolvedDocument = { ...document, rawDocument: undefined };
+        // Prose-only sources still carry parser-owned applicability and local
+        // reference metadata. Absence of structured units cannot erase it.
+        resolvedDocument = { ...document, rawDocument: undefined };
         redirected = (document.acquisition?.redirectCount ?? 0) > 0;
         acquiredCanonicalUrl = document.canonicalUrl;
         effectiveCandidate = { ...candidate, url: document.publicUrl, fetchUrl: document.canonicalUrl };
@@ -1888,7 +1890,8 @@ async function fetchGamingRagDocument(
       extraction: effectiveExtraction,
       ...(archiveResolution ? { archiveResolution } : {}),
       ...(structured ? { structured } : {}),
-      ...(!evidenceUsed && evidenceUnits.length ? { evidenceUnits, resolvedDocument } : {})
+      ...(!evidenceUsed && evidenceUnits.length ? { evidenceUnits } : {}),
+      ...(resolvedDocument ? { resolvedDocument } : {})
     });
     if (logContext) {
       logger.info("gaming.retrieval.source.end", {
@@ -1932,7 +1935,8 @@ async function fetchGamingRagDocument(
       extraction: effectiveExtraction,
       ...(archiveResolution ? { archiveResolution } : {}),
       ...(structured ? { structured } : {}),
-      ...(!evidenceUsed && evidenceUnits.length ? { evidenceUnits, resolvedDocument } : {})
+      ...(!evidenceUsed && evidenceUnits.length ? { evidenceUnits } : {}),
+      ...(resolvedDocument ? { resolvedDocument } : {})
     };
   } catch (error) {
     if (requestSignal?.aborted) {
@@ -3181,7 +3185,8 @@ export async function buildGamingRagContext(
     const metadata = effectiveInput.game ? extractGamingFreshnessMetadata({ publicUrl: source.url,
       canonicalUrl: document.candidate.fetchUrl, text: document.text,
       evidenceUnits: document.evidenceUnits,
-      metadata: { title: document.extraction.documentTitle, headings: document.extraction.headingText } },
+      metadata: { ...document.resolvedDocument?.metadata,
+        title: document.extraction.documentTitle, headings: document.extraction.headingText } },
       { game: effectiveInput.game, edition: effectiveInput.edition, platform: effectiveInput.platform }, new Date(document.fetchedAt)) : undefined;
     const sourceAssessment = renderedContext.selectedEvidence.find(item => item.chunk.candidate.url === source.url && item.chunk.sourceAssessment)?.chunk.sourceAssessment;
     clearKnowledge.sources.push({ sourceId, url: source.url, snippet: source.snippet ?? '',

@@ -1,7 +1,7 @@
 import { GAMING_EVIDENCE_UNIT_POLICY_VERSION, type GamingEvidenceExtractionInput,
   type GamingEvidenceUnit, type GamingStructureDiagnostics } from '@shared/gaming/gamingEvidenceUnits.js';
 import { filterGamingDocumentInstructions, stripGamingHtmlTags } from './gamingDocumentExtraction.js';
-import { extractGamingHtmlEvidence, GAMING_SOURCE_USE_RESTRICTION } from './gamingHtmlEvidence.js';
+import { extractGamingHtmlEvidence, GAMING_SOURCE_USE_RESTRICTION, type GamingHtmlLocalTopicReference } from './gamingHtmlEvidence.js';
 import { extractGamingJsonEvidence } from './gamingJsonEvidence.js';
 import { markGamingEvidenceUnitConflicts } from '@shared/gaming/gamingStructuralEvidence.js';
 import { normalizeGamingDocumentInstructionCharacters } from '@shared/gaming/gamingDocumentTextNormalization.js';
@@ -14,7 +14,7 @@ export function extractGamingDocumentEvidence(input: GamingEvidenceExtractionInp
 }): { units: GamingEvidenceUnit[]; proseBody: string; instructionFiltered: boolean;
   sourceUseRestricted: boolean; diagnostics: GamingStructureDiagnostics;
   applicabilityUnverified?: true;
-  localTopicReferences?: Array<{ text: string; paragraphText: string; gameHash: string }> } {
+  localTopicReferences?: GamingHtmlLocalTopicReference[] } {
   const startedAt = Date.now();
   const html = extractGamingHtmlEvidence(input);
   const json = extractGamingJsonEvidence(input);
