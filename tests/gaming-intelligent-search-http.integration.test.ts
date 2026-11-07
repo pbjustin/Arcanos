@@ -531,6 +531,19 @@ describe('Intelligent discovery through authenticated loopback Gaming MCP and re
     expect(acquire).toHaveBeenCalledTimes(1); expect(ingest).not.toHaveBeenCalled(); expect(memoryWrite).not.toHaveBeenCalled();
   });
 
+  it.each(['wooden shields', 'Smithing Stone', 'Somber Smithing Stones'])('refuses nominal %s overviews before model validation over authenticated HTTP', async topic => {
+    const title = `Elden Ring ${topic} location guide`;
+    const description = `In the game Elden Ring, this article explains how to acquire the ${topic}. This article explains how to acquire the ${topic}.`;
+    active = { game: 'Elden Ring', question: `How do I acquire the ${topic} in Elden Ring?`,
+      url: 'https://guides.example.org/elden-ring/acquisition', passage: description, answer: 'The fixture supplies no acquisition instructions. [1]' };
+    sourceHtml = `<html><title>${title}</title><body><article><h1>${title}</h1><p>${description}</p></article></body></html>`;
+    await serve(); const started = await query(); const refused = await submit(started.result);
+    expect(modelsRetrieve).not.toHaveBeenCalled(); expect(responsesCreate).not.toHaveBeenCalled();
+    expect(refused.result.answer).toBeUndefined(); expect(refused.result.coverageSatisfied).toBe(false);
+    expect(['search', 'stop']).toContain(refused.result.nextAction); expect(providerStages).toEqual([]);
+    expect(acquire).toHaveBeenCalledTimes(1); expect(ingest).not.toHaveBeenCalled(); expect(memoryWrite).not.toHaveBeenCalled();
+  });
+
   it.each(['PS5', 'PC'])('enforces the global %s platform declaration inside a comparison over authenticated HTTP', async platform => {
     active = { game: 'Elden Ring', question: 'Which katana do Samurai attacks use in Elden Ring on PC?',
       url: 'https://guides.example.org/elden-ring/samurai',

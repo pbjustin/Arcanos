@@ -211,6 +211,11 @@ evidence rather than metadata boilerplate.
 An exact nominal topic heading such as `Elden Ring Uchigatana location guide`
 cannot turn a description of that topic into acquisition instructions. The same
 boundary applies before fresh generation and after stored-source retrieval.
+Plural nouns and nominal modifiers, such as `wooden shields`, `Smithing Stone`
+and `Golden Seed`, remain topics rather than gameplay predicates. Closed
+description recognition preserves explicit relations, values, qualifications
+and supported subject-owned gameplay predicates; suffixes alone do not establish
+a fact. This bounded English rule is not a general natural-language parser.
 
 Periods internal to acquired titles, such as decimal release names, are not
 sentence boundaries. The existing 160-character subject window and 512-character

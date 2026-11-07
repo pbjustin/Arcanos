@@ -1,5 +1,78 @@
 # Gaming discovery and evidence reliability — 2026-11-06
 
+## Codex Cloud plural-heading follow-up — 2026-11-07
+
+The [independent Cloud finding](https://github.com/pbjustin/Arcanos/pull/1591#issuecomment-6702869840)
+was reproduced at the unchanged remote head
+`a30970581b59b6e58fa2176a22463c358f670a3a`, base
+`0be1134658195a27353a07b5ca6f86d6e3222546`. The implementation checkout was
+clean. Both required checks were green at that starting head; that result is
+not evidence for the subsequent repair.
+
+Two suffix heuristics in `gamingDocumentIngestionCore.ts` treated nominal words
+ending in `s`, `ed` or `ing` as predicates. `wooden shields` bypassed heading
+removal; `Smithing Stone` and `Golden Seed` also bypassed body-only description
+recognition. The permanent initial regression matrix failed **10/34 cases**
+before repair: eight nominal cases and two factual-description controls that
+exposed the opposite classification error. Three authenticated loopback HTTP
+cases also failed their zero-model/SDK-call assertions before repair. The
+wooden-shields case entered model validation once; the two Smithing cases each
+entered four deterministic SDK stages. This establishes unnecessary provider
+boundary entry, not independently verified acceptance of a real generated answer.
+
+The localized correction shares a bounded, subject-owned predicate guard across
+body, nominal-heading and catalog-label recognition. Inflection alone does not
+prove a predicate; leading nominal modifiers remain descriptive. Explicit
+relations, values, qualifications and supported factual predicates are retained.
+Independent review of the intermediate correction added further action/effect
+controls, including reflecting spells and restoring health. The existing closed
+description forms, exact same-topic matching, 240-character label bound,
+eight-label cap, source provenance and runtime limits remain intact. This is a
+closed English quality rule, not a general part-of-speech or semantic parser.
+
+External HTTP/DNS/provider responses are deterministic substitutes in the
+application-path fixtures. Provider usage is zero/$0. No merge, deployment,
+production mutation, credential change, safety-limit increase or manual
+CodeRabbit review request is authorized or performed by this follow-up. Final
+local validation, publication identity and exact-head CI are recorded below and
+in the accompanying PR receipt.
+
+Permanent coverage adds **30 cases**: 25 nominal/factual controls, three
+authenticated HTTP refusals and two real-SQL retained-source cases. The existing
+contained performance fixture also covers a 100KB alternating letter/hyphen
+subject. An intermediate subject matcher exceeded its three-second containment
+deadline; matching the token's real Unicode left boundary removes interior
+rescans. The corrected 250KB probe completed in13ms. These are local wall-clock
+observations, not a new production limit or universal performance guarantee.
+
+Validation on pinned Node24.18.1/npm11.16.0 passes **200 Gaming suites /
+6,759 tests** in466.482seconds, with no skips. Focused overview/performance checks
+pass111 tests, and all63 authenticated HTTP cases pass. Each of the three new
+HTTP negatives performs zero model-validation, SDK inference, ingestion and
+memory-write calls. An independent external matrix also retains42 factual
+headings and22 material-predicate cases while excluding60 nominal cases and10
+leading-modifier controls. Those external probes supplement the permanent tests.
+
+Real disposable PostgreSQL18.6 passes **77/77 tests**:66 historical/status and11
+durable-RAG cases. The new cases persist and retrieve headed, title-redacted and
+body-only synthetic overviews through the real application SQL path. All remain
+insufficient; independent factual locations regain verified support and exact
+record/revision/public-URL citations. No provider fetch, acquisition or ingestion
+enqueue occurs during these retained reads. This is a real local database with
+synthetic records, not production-record or live-provider acceptance. The first
+SQL attempt rejected two new fixture assessments before persistence because
+their dimension references were not declared; correcting the synthetic bindings
+made the full rerun pass without changing application policy or assertions.
+Teardown confirms zero owned schemas, no listener, no owned processes or PID
+file, and the server stopped. Type-check and build pass against the frozen source.
+
+The separate shared-fetch/import/workflow gate passes **eight suites /641 tests**.
+Lint passes with zero errors and the same77 existing warnings. Generated indexes,
+documentation checks and all812 local documentation links pass. No remaining
+failure was reproduced in the reviewed scope. The published commit and exact-head
+CI snapshot belong to the PR receipt; CI completion is intentionally not awaited.
+Independent Codex Cloud re-review remains required before merge readiness.
+
 ## Independent Codex Cloud remediation from a9357480
 
 Starting head: `a93574804842e6a9c27846f19d4b84996d11fe02`; base:

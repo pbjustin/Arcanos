@@ -37,6 +37,70 @@ beforeEach(() => {
 });
 
 describe('nominal topic headings cannot promote overview text into gameplay evidence', () => {
+  it.each([
+    { game: 'Elden Ring', topic: 'wooden shields' },
+    { game: 'Elden Ring', topic: 'Smithing Stone' },
+    { game: 'Elden Ring', topic: 'Golden Seed' },
+    { game: 'Elden Ring', topic: 'gleaming stones' },
+    { game: 'Elden Ring', topic: 'deflecting shield' },
+    { game: 'Elden Ring', topic: 'reflecting shield' },
+    { game: 'Lantern Voyage', topic: 'nestling token' },
+    { game: 'Fallout 76', topic: 'small weathered tokens' },
+    { game: 'Lantern Voyage', topic: 'Blue Smithing Charms' }
+  ])('keeps plural nouns and nominal modifiers descriptive: $game $topic', async ({ game, topic }) => {
+    const heading = `${game} ${topic} location guide`;
+    const description = body(topic);
+    expect(isGamingDocumentOverviewOnly(description, undefined, game)).toBe(true);
+    for (const metadata of [{ title: heading, headings: heading }, undefined]) {
+      const text = `${heading} ${description}`;
+      expect(isGamingDocumentOverviewOnly(text, metadata, game)).toBe(true);
+      expect(classifyGamingDocumentQuality({ cleanedText: text, metadata, game, truncated: false, minUsefulTextChars: 40 }))
+        .toBe('metadata-only');
+    }
+    const input = { game, mode: 'guide' as const, prompt: `Where is the ${topic} location?` };
+    for (const title of [heading, undefined]) {
+      const selected = knowledge(game, `${heading} ${description}`, title);
+      expect(assessGamingRequestCoverage(input, selected).coverageSatisfied).toBe(false);
+      expect(assessGamingClearEvidence(input, selected, { identityVerified: true }).gates.claimSupport).toBe('unknown');
+    }
+    http.mockResolvedValue({ status: 200, headers: { 'content-type': 'text/html' }, data:
+      `<html><title>${heading}</title><article><h1>${heading}</h1><p>In the game ${game}, this article explains how to acquire the ${topic}.</p>`
+      + `<p>${description}</p></article></html>` });
+    const candidate = await evaluateGamingHybridCandidates({ ...input, protocolVersion: 'gaming-hybrid-v2', candidates: [{ url }] },
+      { actorKey: 'nominal-plural-overview-reader' });
+    expect(candidate.accepted).toEqual([]);
+    expect(candidate.decisions[0].reasonCodes).toContain('INSUFFICIENT_EXTRACTION');
+  });
+
+  it.each(['shield deflects projectiles', 'shield deflecting projectiles', 'gate glowing red', 'Uchigatana gleams',
+    'shield reflects spells', 'shield reflecting spells', 'shield absorbing damage', 'blade inflicting poison'])(
+    'preserves material predicates inside a body-only description frame: %s', topic => {
+      expect(isGamingDocumentOverviewOnly(body(topic), undefined, 'Elden Ring')).toBe(false);
+      const heading = `Elden Ring ${topic} guide`;
+      expect(isGamingDocumentOverviewOnly(`${heading} ${body(topic)}`, { title: heading, headings: heading }, 'Elden Ring')).toBe(false);
+    });
+
+  it.each([
+    { topic: 'shield reducing weight', modifier: 'reducing' },
+    { topic: 'shield restoring health', modifier: 'restoring' },
+    { topic: 'blade dealing frost', modifier: 'dealing' },
+    { topic: 'shield increasing stamina', modifier: 'increasing' },
+    { topic: 'blade stunning foes', modifier: 'stunning' },
+    { topic: 'blade triggering bleed', modifier: 'triggering' },
+    { topic: 'shield preventing poison', modifier: 'preventing' },
+    { topic: 'blade changing damage type', modifier: 'changing' }
+  ])('distinguishes a subject-owned predicate from a leading $modifier modifier', ({ topic, modifier }) => {
+    expect(isGamingDocumentOverviewOnly(body(topic), undefined, 'Elden Ring')).toBe(false);
+    const materialHeading = `Elden Ring ${topic} guide`;
+    expect(isGamingDocumentOverviewOnly(`${materialHeading} ${body(topic)}`, { title: materialHeading }, 'Elden Ring')).toBe(false);
+    const nominal = `${modifier} charm`;
+    const nominalHeading = `Elden Ring ${nominal} location guide`;
+    expect(isGamingDocumentOverviewOnly(body(nominal), undefined, 'Elden Ring')).toBe(true);
+    for (const metadata of [{ title: nominalHeading }, undefined]) {
+      expect(isGamingDocumentOverviewOnly(`${nominalHeading} ${body(nominal)}`, metadata, 'Elden Ring')).toBe(true);
+    }
+  });
+
   it('keeps the exact Uchigatana description insufficient after its acquired location-guide heading is prepended', () => {
     const { game, topic, heading } = fixtures[0];
     const description = body(topic);

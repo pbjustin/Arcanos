@@ -33,5 +33,7 @@ const multipleSeparators = {
   describedTopicAttack: overview(`${multipleHeading} This article explains how to acquire the Practice${separators}X.`, multipleMetadata, 'Elden Ring'),
   validOverview: overview(`${multipleHeading} ${multipleDescription}`, multipleMetadata, 'Elden Ring')
 };
+// Interior hyphens are part of one nominal token, not fresh subject starts.
+const alternatingSubject = overview(`This article explains how to acquire the ${'a-'.repeat(50000)}X.`, undefined, 'Elden Ring');
 process.stdout.write(JSON.stringify({ elapsedMs: Math.round(performance.now() - started),
-  repeatedLabelAttack, describedTopicAttack, validOverview, multipleSeparators }));
+  repeatedLabelAttack, describedTopicAttack, validOverview, multipleSeparators, alternatingSubject }));

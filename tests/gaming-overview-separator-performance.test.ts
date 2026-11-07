@@ -17,7 +17,7 @@ describe('bounded overview label matching', () => {
     expect(child.error).toBeUndefined();
     expect(child.status).toBe(0);
     expect(JSON.parse(child.stdout)).toMatchObject({ repeatedLabelAttack: false, describedTopicAttack: false, validOverview: true,
-      multipleSeparators: { repeatedLabelAttack: false, describedTopicAttack: false, validOverview: true } });
+      multipleSeparators: { repeatedLabelAttack: false, describedTopicAttack: false, validOverview: true }, alternatingSubject: true });
   }, 12000);
 
   it.each([240, 241])('does not manufacture guidebook completion at label offset %i', offset => {

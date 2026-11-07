@@ -55,13 +55,19 @@ export function isGamingDocumentOverviewOnly(text: string, metadata?: { title?: 
   // A nominal subject can establish a topic. Relations, predicates, values and
   // qualifications can carry the answer even inside a page-description frame.
   const materialTopic = /\b(?:at|in|from|for|after|before|until|when|where|with|without|only|through|via|during|under|over|beneath|above|below|beside|behind|near|between|inside|outside|into|onto|within|while|unless|except|if|because|although|but|as|how|that|to|is|are|was|were|be|being|been|has|have|had|can|could|may|might|must|should|will|would|does|do|did|cost(?:s|ing)?|requir(?:es?|ed|ing)|sold|sells?|available|opens?|grants?|unlocks?|blocks?|protects?|one|two|three|four|five|six|seven|eight|nine|ten|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand)\b/iu;
-  const predicateTopic = /\b[\p{L}]+(?:s|ed|ing)\b/iu;
+  // Inflected nouns and modifiers are not predicates merely because they end
+  // in s/ed/ing. This closed gameplay predicate grammar requires a preceding subject;
+  // an initial modifier, including one after a determiner, remains nominal.
+  // The subject boundary cannot restart inside a long letter/hyphen token.
+  const hasMaterialPredicate = (topic: string): boolean =>
+    /(?<![\p{L}'’-])[\p{L}'’-]+\s+(?:(?:deflect|reflect|absorb|inflict|glow|gleam|trigger|prevent)(?:s|ed|ing)?|(?:reduc|restor|increas|chang)(?:e|es|ed|ing)|deal(?:s|ing)?|dealt|stun(?:s|ned|ning)?|nestl(?:e|es|ed|ing))\b/iu
+      .test(topic.replace(/^(?:an?|the)\s+/iu, ''));
   const overviewTopic = (sentence: string): string | undefined => {
     const candidate = nominalGamePrefix ? sentence.replace(nominalGamePrefix, '') : sentence;
     const topic = description.exec(candidate)?.[1];
     const closedTopic = topic && (/\b(?:records?|entries|index|overview|summary|acquisition|locations?)$/iu.test(topic)
-      || /\bhow\s+to\s+/iu.test(candidate) && !/\b[\p{L}]+(?:ing|ed)\b/iu.test(topic));
-    return topic && closedTopic && !materialTopic.test(topic) ? topic : undefined;
+      || /\bhow\s+to\s+/iu.test(candidate));
+    return topic && closedTopic && !materialTopic.test(topic) && !hasMaterialPredicate(topic) ? topic : undefined;
   };
   const canonicalNominal = (value: string): string => value.normalize('NFKC').toLowerCase().replace(/[\s-]+/gu, ' ').trim();
   const canonicalGame = game ? canonicalNominal(game) : '';
@@ -71,7 +77,7 @@ export function isGamingDocumentOverviewOnly(text: string, metadata?: { title?: 
     const withoutGame = canonicalGame && canonical.startsWith(`${canonicalGame} `) ? canonical.slice(canonicalGame.length + 1) : canonical;
     const withoutArticle = withoutGame.replace(/^(?:an?|the) /u, '');
     const topic = withoutArticle.replace(/ (?:(?:locations?|acquisition) )?(?:guide|walkthrough)$/u, '');
-    return topic && topic !== withoutArticle && !materialTopic.test(topic) && !predicateTopic.test(topic) ? topic : undefined;
+    return topic && topic !== withoutArticle && !materialTopic.test(topic) && !hasMaterialPredicate(topic) ? topic : undefined;
   };
   const nominalHeadingPrefix = (body: string, expectedTopic?: string, requireGame = false) => {
     for (const match of body.slice(0, 241).matchAll(/\b(?:guide|walkthrough)(?=\s|$)/giu)) {
@@ -86,7 +92,7 @@ export function isGamingDocumentOverviewOnly(text: string, metadata?: { title?: 
     return undefined;
   };
   /** Remove at most eight closed labels naming the same descriptive object.
-   * Material predicates remain facts even when a template repeats their text. */
+   * Inspected material predicates remain facts when a template repeats them. */
   const nominalTopicHeadingRemainder = (label: string, remainder: string): string | undefined => {
     const topic = nominalHeadingTopic(label);
     if (!topic) return undefined;
@@ -107,9 +113,9 @@ export function isGamingDocumentOverviewOnly(text: string, metadata?: { title?: 
     const catalogTopic = label.match(/^([\p{L}'’-]+(?:\s+[\p{L}'’-]+){0,9})\s+(?:records?|entries|index|overview|summary)$/iu)?.[1];
     const topicRemainder = nominalTopicHeadingRemainder(heading, remainder);
     // Acquired headings may themselves contain the gameplay fact. Strip only
-    // closed nominal labels, preserving unfamiliar predicates conservatively.
+    // closed nominal labels; qualifiers and unmatched heading topics stay intact.
     const nominalLabel = /^(?:gameplay\s+)?(?:guide|walkthrough)$/iu.test(label)
-      || Boolean(catalogTopic && !materialTopic.test(label) && !predicateTopic.test(catalogTopic));
+      || Boolean(catalogTopic && !materialTopic.test(label) && !hasMaterialPredicate(catalogTopic));
     if (topicRemainder !== undefined) prose = topicRemainder;
     else if (nominalLabel) prose = remainder;
   }

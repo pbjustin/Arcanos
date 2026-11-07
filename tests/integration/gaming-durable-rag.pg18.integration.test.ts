@@ -22,6 +22,9 @@ import { gamingAcquisitionAxios } from '../testUtils/gamingAcquisitionFixtures.j
 import { gamingDurableCurrentnessGuideHtml } from '../fixtures/gaming-universal-identity.js';
 import { extractGamingJsonEvidence } from '../../src/services/gamingJsonEvidence.js';
 import { assessGamingClearSource } from '../../src/shared/gaming/gamingClearSource.js';
+import { assessGamingRequestCoverage } from '../../src/shared/gaming/gamingClearEvidence.js';
+import { createGamingClearAssessment, GAMING_CLEAR_POLICY_VERSION, GAMING_CLEAR_DIMENSIONS,
+  type GamingClearDimensions, type GamingClearFinding } from '../../src/shared/gaming/gamingClearPolicy.js';
 import { assessGamingSourcePolicy, extractGamingFreshnessMetadata } from '../../src/shared/gaming/gamingFreshnessCore.js';
 import {
   assertDisposablePostgresTestDatabaseUrl,
@@ -144,6 +147,90 @@ describeWithDatabase('durable Gaming chunk storage and retrieval on PostgreSQL 1
       } finally {
         await setupClient.end();
       }
+    }
+  });
+
+  test.each([
+    { topic: 'wooden shields', fact: 'The wooden shields are sold at the training shop for 25 coins.' },
+    { topic: 'Smithing Stone', fact: 'The Smithing Stone is inside the blue chest beneath the northern stairs.' }
+  ])('does not promote a retained $topic overview to SQL-backed gameplay support', async ({ topic, fact }) => {
+    const { buildStoredGamingKnowledgeContext } = await import('../../src/services/gamingSourceIngestion.js');
+    const itemGame = 'Elden Ring';
+    const heading = `${itemGame} ${topic} location guide`;
+    const description = `In the game ${itemGame}, this article explains how to acquire the ${topic}. `
+      + `This article explains how to acquire the ${topic}.`;
+    const gameKey = `retained-nominal-${randomUUID()}`;
+    const publicUrl = `https://guides.example.org/${gameKey}`;
+    const input = { game: itemGame, mode: 'guide' as const, prompt: `What is the ${topic} location in ${itemGame}?`,
+      requireRequestCoverage: true, failOnUnavailable: true };
+    const legacy = JSON.parse(readFileSync(new URL('../fixtures/gaming-historical-status/records.json', import.meta.url), 'utf8'))[4]
+      .body.sources[0].hybridApproval.gamingClear;
+    let sourceId: string | undefined;
+    const originalFetch = globalThis.fetch;
+    const providerTrap = jest.fn(() => { throw new Error('No provider fetch belongs to retained SQL evidence acceptance.'); });
+    globalThis.fetch = providerTrap as typeof fetch;
+    mockSourceHttpGet.mockReset(); mockSourceEnqueue.mockReset();
+    /** Model a retained, backend-bound revision; this does not approve a fresh overview for ingestion. */
+    const seed = async (text: string, title?: string) => {
+      const contentHash = hashGamingDocumentRevision(text, JSON.stringify({ game: itemGame, title }));
+      const evidenceRefs = ['retained-nominal-fixture'];
+      const dimensions = Object.fromEntries(GAMING_CLEAR_DIMENSIONS.map(name =>
+        [name, { ...legacy.dimensionScores[name], evidenceRefs }])) as GamingClearDimensions;
+      const assessment = createGamingClearAssessment({ ...legacy, subjectHash: contentHash,
+        contextFingerprint: hash(`synthetic retained nominal corpus ${topic}`), questionProfile: 'walkthrough',
+        dimensions, findings: legacy.findings.map((finding: GamingClearFinding) => ({ ...finding, evidenceRefs })),
+        evidenceRefs, evaluatedAt: new Date().toISOString() });
+      const normalized = { text, game: itemGame, chunk: { ordinal: 0, totalChunks: 1, startChar: 0, endChar: text.length } };
+      const saved = await persistGamingSourceRevision({ gameKey, gameName: itemGame, canonicalUrl: publicUrl, publicUrl,
+        sourceType: 'supplied', trustScore: 0.5, contentHash, cleanedContent: text, fetchedAt: new Date().toISOString(),
+        extractor: 'synthetic-retained-corpus', extractorVersion: 'pg18-retained-fixture-v1', normalizerSchemaVersion: '1',
+        provenance: { gameName: itemGame, sourceIdentityPolicyVersion: GAMING_CLEAR_POLICY_VERSION,
+          gamingClear: assessment, approvedContentHash: contentHash,
+          acquiredApplicability: { extractorVersion: 'gaming-hybrid-freshness-v1', contentHash, game: itemGame },
+          resolverId: 'synthetic-retained-corpus', resolverVersion: 'pg18-retained-fixture-v1', resolutionStrategy: 'retained_text' },
+        extractionMetrics: { coverageStatus: 'complete', documentCharsIndexed: text.length, chunkCount: 1 },
+        records: [{ recordType: 'guide', semanticKey: 'retained-nominal', payloadHash: hash(JSON.stringify(normalized)),
+          title, searchText: text, normalized }] });
+      if (sourceId) expect(saved.sourceId).toBe(sourceId);
+      sourceId = saved.sourceId;
+      const { query: lexicalQuery } = buildStoredGamingLexicalQuery(input.prompt, itemGame);
+      const rows = await searchActiveGamingKnowledge({ gameKey, query: lexicalQuery, mode: 'guide', sourceIds: [sourceId] });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ sourceId, revisionId: saved.revisionId, title: title ?? null, normalized: { text } });
+      return { saved, recordId: rows[0].recordId };
+    };
+    try {
+      // Both display-title preservation and redaction must keep the same text
+      // descriptive. The final variant has no heading to hide the modifier case.
+      for (const [text, title] of [[`${heading} ${description}`, heading], [`${heading} ${description}`, undefined],
+        [description, undefined]] as const) {
+        await seed(text, title);
+        const knowledge = await buildStoredGamingKnowledgeContext(input);
+        expect(knowledge.sourceKnown).toBe(true);
+        expect(assessGamingRequestCoverage(input, knowledge).coverageSatisfied).toBe(false);
+        expect(knowledge.clearEvidenceAssessment?.gates.claimSupport).toBe('unknown');
+        expect(knowledge.clearEvidenceAssessment?.decision).not.toBe('accept');
+      }
+      // This independent declarative location is invented fixture material,
+      // not a claim about a live Elden Ring source or in-game location.
+      const { saved, recordId } = await seed(`${heading} ${description} ${fact}`, heading);
+      const knowledge = await buildStoredGamingKnowledgeContext(input);
+      expect(knowledge.sourceKnown).toBe(true);
+      expect(assessGamingRequestCoverage(input, knowledge).coverageSatisfied).toBe(true);
+      expect(knowledge.clearEvidenceAssessment?.gates.claimSupport).toBe('verified');
+      expect(knowledge.clearEvidenceAssessment?.decision).toBe('accept');
+      expect(knowledge.context).toContain(fact);
+      expect(knowledge.sources.some(source => source.sourceId === saved.sourceId && source.url === publicUrl)).toBe(true);
+      expect(knowledge.evidence?.some(chunk => chunk.recordId === recordId && chunk.revisionId === saved.revisionId
+        && chunk.publicUrl === publicUrl && chunk.text.includes(fact))).toBe(true);
+      expect(mockSourceHttpGet).not.toHaveBeenCalled(); expect(mockSourceEnqueue).not.toHaveBeenCalled();
+      expect(providerTrap).not.toHaveBeenCalled();
+    } finally {
+      globalThis.fetch = originalFetch;
+      // Keep these owned legacy rows from contaminating later Elden Ring cases.
+      try {
+        if (sourceId) await databasePool.query("UPDATE gaming_sources SET status = 'disabled' WHERE id = $1", [sourceId]);
+      } finally { mockSourceHttpGet.mockReset(); mockSourceEnqueue.mockReset(); }
     }
   });
 
