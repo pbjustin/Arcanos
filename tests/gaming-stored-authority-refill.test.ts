@@ -4,9 +4,10 @@ import { GAMING_CLEAR_POLICY_VERSION } from '../src/shared/gaming/gamingClearPol
 import { GAMING_FRESHNESS_POLICY_VERSION } from '../src/shared/gaming/gamingFreshnessCore.js';
 
 const search = jest.fn<(...args: any[]) => Promise<GamingKnowledgeProvenanceRecord[]>>();
+const findSources = jest.fn<(...args: any[]) => Promise<Array<{ sourceId: string; gameKey: string; gameName: string }>>>();
 const logInfo = jest.fn();
 jest.unstable_mockModule('@core/db/repositories/gamingSourceRepository.js', () => ({ searchActiveGamingKnowledge: search,
-  findActiveGamingSourceIdentities: async () => [{ sourceId: 'source-one', gameKey: 'platinum-lantern', gameName: 'Platinum Lantern' }] }));
+  findActiveGamingSourceIdentities: findSources }));
 jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({ logger: { info: logInfo, warn: jest.fn() } }));
 const { retrieveStoredGamingKnowledge } = await import('../src/services/gamingStoredKnowledge.js');
 
@@ -25,7 +26,8 @@ function row(id: string, held = false): GamingKnowledgeProvenanceRecord {
       acquiredApplicability: { extractorVersion: GAMING_FRESHNESS_POLICY_VERSION, contentHash: 'c'.repeat(64), game: input.game,
         metadataConflict: false, metadataUnverified: false } } };
 }
-beforeEach(() => { search.mockReset(); logInfo.mockClear(); });
+beforeEach(() => { search.mockReset(); logInfo.mockClear(); findSources.mockReset();
+  findSources.mockResolvedValue([{ sourceId: 'source-one', gameKey: 'platinum-lantern', gameName: 'Platinum Lantern' }]); });
 
 describe('stored Gaming authority refill bounds', () => {
   test('deduplicates overlapping pages without returning held rows as evidence', async () => {
@@ -93,5 +95,70 @@ describe('stored Gaming authority refill bounds', () => {
     expect(result.evidence ?? []).toEqual([]);
     expect(logInfo).toHaveBeenCalledWith('gaming.stored_retrieval.completed', expect.objectContaining({ lexicalCandidateCount: 21,
       mergedCandidateCount: 21, selectedChunkCount: 0 }));
+  });
+
+  test('preserves collected authoritative evidence when only a later refill reaches its deadline', async () => {
+    search.mockImplementation(async (query, options) => {
+      if (!query.offset) return [row('eligible-one'), ...Array.from({ length: 19 }, (_, index) => row(`held-${index}`, true))];
+      return new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true }));
+    });
+    const result = await retrieveStoredGamingKnowledge({ ...input, queryTimeoutMs: 30 }, { resolveVerifiedPatch: () => undefined });
+    expect(result.evidence?.map(chunk => chunk.recordId)).toEqual(['eligible-one']);
+    expect(result.clearEvidenceAssessment?.decision).toBe('accept');
+    expect(search).toHaveBeenCalledTimes(2);
+    expect(search.mock.calls[1][1].signal.aborted).toBe(true);
+  });
+
+  test('caller cancellation still rejects when an earlier page supplied usable evidence', async () => {
+    const controller = new AbortController();
+    search.mockImplementation(async (query, options) => {
+      if (!query.offset) return [row('eligible-one'), ...Array.from({ length: 19 }, (_, index) => row(`held-${index}`, true))];
+      queueMicrotask(() => controller.abort(new Error('owner cancelled')));
+      return new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true }));
+    });
+    await expect(retrieveStoredGamingKnowledge({ ...input, signal: controller.signal }, { resolveVerifiedPatch: () => undefined }))
+      .rejects.toThrow('owner cancelled');
+    expect(logInfo.mock.calls.some(([event]) => event === 'gaming.stored_retrieval.completed')).toBe(false);
+  });
+
+  test('a later observed hold cannot return earlier authority when subsequent refill times out', async () => {
+    const held = Array.from({ length: 19 }, (_, index) => row(`held-${index}`, true));
+    search.mockImplementation(async (query, options) => {
+      if (!query.offset) return [row('eligible-one'), ...held];
+      if (query.offset === 20) return [{ ...row('new-held'), sourceId: 'source-one', revisionId: 'new-revision', authorityReassessmentRequired: true }, ...held];
+      return new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true }));
+    });
+    await expect(retrieveStoredGamingKnowledge({ ...input, queryTimeoutMs: 30 }, { resolveVerifiedPatch: () => undefined }))
+      .rejects.toMatchObject({ name: 'TimeoutError' });
+    expect(logInfo.mock.calls.some(([event]) => event === 'gaming.stored_retrieval.completed')).toBe(false);
+  });
+
+  test('continues past twenty held source identities to a lower-ranked eligible source', async () => {
+    const identities = Array.from({ length: 20 }, (_, index) => ({ sourceId: `held-source-${index}`, gameKey: 'platinum-lantern', gameName: input.game }));
+    findSources.mockImplementation(async query => query.offset ? [{ sourceId: 'source-one', gameKey: 'platinum-lantern', gameName: input.game }] : identities);
+    search.mockImplementation(async query => query.sourceIds.includes('source-one') ? [row('eligible-one')]
+      : query.offset ? [] : identities.map((source, index) => ({ ...row(`held-${index}`, true), sourceId: source.sourceId })));
+    const result = await retrieveStoredGamingKnowledge(input, { resolveVerifiedPatch: () => undefined });
+    expect(result.evidence?.map(chunk => chunk.recordId)).toEqual(['eligible-one']);
+    expect(result.clearEvidenceAssessment?.decision).toBe('accept');
+    expect(findSources.mock.calls.map(([query]) => query.offset ?? 0)).toEqual([0, 20]);
+    expect(search.mock.calls.every(([query]) => query.sourceIds.length <= 20)).toBe(true);
+    expect(search.mock.calls.every(([, options]) => options.signal === search.mock.calls[0][1].signal)).toBe(true);
+  });
+
+  test('preserves authoritative records for PostgreSQL statement timeout while other SQL failures still fail closed', async () => {
+    for (const statementTimeout of [true, false]) {
+      search.mockReset();
+      search.mockResolvedValueOnce([row('eligible-one'), ...Array.from({ length: 19 }, (_, index) => row(`held-${index}`, true))]);
+      const error = Object.assign(new Error(statementTimeout ? 'canceling statement due to statement timeout' : 'connection lost'),
+        { code: statementTimeout ? '57014' : '08006' });
+      search.mockRejectedValueOnce(error);
+      const pending = retrieveStoredGamingKnowledge(input, { resolveVerifiedPatch: () => undefined });
+      if (statementTimeout) {
+        const result = await pending;
+        expect(result.evidence?.map(chunk => chunk.recordId)).toEqual(['eligible-one']);
+        expect(result.clearEvidenceAssessment?.decision).toBe('accept');
+      } else await expect(pending).rejects.toBe(error);
+    }
   });
 });

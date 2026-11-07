@@ -94,6 +94,8 @@ export async function retrieveStoredGamingKnowledge(input: GamingStoredKnowledge
   let sourceKnown = false;
   let lexicalCandidateCount = 0;
   const lexicalRecordIds = new Set<string>();
+  const eligible: GamingKnowledgeProvenanceRecord[] = [];
+  let refillDeadlineReached = false;
   let records: GamingKnowledgeProvenanceRecord[];
   try {
     if (activeLookups >= MAX_CONCURRENT_LOOKUPS) throw Object.assign(new Error('Stored Gaming knowledge lookup capacity is busy.'), { name: 'GamingStoredKnowledgeLookupBusyError' });
@@ -113,17 +115,18 @@ export async function retrieveStoredGamingKnowledge(input: GamingStoredKnowledge
       // actual pool waiter/query settles. Its aborted signal forbids stale DB work.
       const pending = Promise.resolve().then(async () => {
         const lookupStartedAt = Date.now();
+        const identityInput = { game: input.game, ...((input.mode === 'guide' || input.hybridRetrieval) && input.edition ? { edition: input.edition } : {}), mode: input.hybridRetrieval ? undefined : input.mode };
         const identities = resolveSourceIdentity
-          ? await findActiveGamingSourceIdentities({ game: input.game, ...((input.mode === 'guide' || input.hybridRetrieval) && input.edition ? { edition: input.edition } : {}), mode: input.hybridRetrieval ? undefined : input.mode }, { queryTimeoutMs, signal: controller.signal })
+          ? await findActiveGamingSourceIdentities(identityInput, { queryTimeoutMs, signal: controller.signal })
           : undefined;
         // Newly ingested precise titles can differ from the historical build/meta
         // alias key. Prefer their exact catalog scope, retaining the legacy fallback.
-        const sources = input.mode === 'guide' || input.hybridRetrieval || identities?.length ? identities : undefined;
+        let sources = input.mode === 'guide' || input.hybridRetrieval || identities?.length ? identities : undefined;
+        let identityOffset = 0;
         sourceKnown = (input.mode === 'guide' || input.hybridRetrieval === true) && Boolean(sources?.length);
         controller.signal.throwIfAborted();
         // Catalog presence never substitutes for positively relevant gameplay evidence.
         if (!query || (sources && !sources.length)) return [];
-        const eligible: GamingKnowledgeProvenanceRecord[] = [];
         const sourceRevisions = new Map<string, string>();
         const invalidatedSources = new Set<string>();
         let offset = 0;
@@ -138,6 +141,7 @@ export async function retrieveStoredGamingKnowledge(input: GamingStoredKnowledge
             mode: input.hybridRetrieval ? undefined : input.mode, limit: MAX_STORED_GAMING_CANDIDATES,
             ...(offset ? { offset } : {}), ...(sources ? { sourceIds: sources.map(source => source.sourceId) } : {}) },
           { queryTimeoutMs: remainingMs, signal: controller.signal });
+          controller.signal.throwIfAborted();
           lexicalCandidateCount += page.length;
           for (const record of page) {
             const duplicate = lexicalRecordIds.has(record.recordId);
@@ -157,12 +161,34 @@ export async function retrieveStoredGamingKnowledge(input: GamingStoredKnowledge
             sourceRevisions.set(record.sourceId, record.revisionId);
             eligible.push(record);
           }
-          if (page.length < MAX_STORED_GAMING_CANDIDATES) break;
+          if (page.length < MAX_STORED_GAMING_CANDIDATES) {
+            if (sources?.length === MAX_STORED_GAMING_CANDIDATES && eligible.length < MAX_STORED_GAMING_CANDIDATES) {
+              identityOffset += sources.length;
+              const identityRemainingMs = queryTimeoutMs - (Date.now() - lookupStartedAt);
+              if (identityRemainingMs <= 0) throw Object.assign(new Error('Stored Gaming knowledge lookup timed out.'), { name: 'TimeoutError' });
+              sources = await findActiveGamingSourceIdentities({ ...identityInput, offset: identityOffset },
+                { queryTimeoutMs: identityRemainingMs, signal: controller.signal });
+              controller.signal.throwIfAborted();
+              if (sources.length) { offset = 0; continue; }
+            }
+            break;
+          }
           offset += page.length;
         }
         return eligible.slice(0, MAX_STORED_GAMING_CANDIDATES);
       }).finally(() => { activeLookups -= 1; });
-      records = await Promise.race([pending, aborted]);
+      try {
+        records = await Promise.race([pending, aborted]);
+      } catch (error) {
+        const timedOut = error instanceof Error && error.name === 'TimeoutError'
+          || error !== null && typeof error === 'object' && 'code' in error && error.code === '57014'
+            && error instanceof Error && /statement timeout/iu.test(error.message);
+        if (input.signal?.aborted || !timedOut || !eligible.length) throw error;
+        // Preserve only records whose authority survived every completed page.
+        // Late query results cannot mutate this snapshot after deadline abort.
+        records = eligible.slice(0, MAX_STORED_GAMING_CANDIDATES);
+        refillDeadlineReached = true;
+      }
     } finally {
       clearTimeout(timer);
       input.signal?.removeEventListener('abort', relayAbort);
@@ -198,6 +224,7 @@ export async function retrieveStoredGamingKnowledge(input: GamingStoredKnowledge
       effectiveSpoilerMode: input.spoilerMode ?? 'none' } : {}),
     lexicalCandidateCount, semanticCandidateCount: 0,
     mergedCandidateCount: lexicalRecordIds.size,
+    ...(refillDeadlineReached ? { refillDeadlineReached: true } : {}),
     selectedChunkCount: result.evidence?.length ?? 0, selectedContextChars: result.context.length,
     ...(input.mode === 'guide' ? { sourceKnown } : {}),
     retrievalElapsedMs: Date.now() - startedAt

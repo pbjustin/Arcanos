@@ -146,4 +146,26 @@ describeWithDatabase('durable Gaming read authority on PostgreSQL 18', () => {
     expect(retained).toHaveLength(50);
     expect(retained.every(row => row.normalized.text === text)).toBe(true);
   });
+
+  test('refills the source identity window after twenty higher-ranked held sources', async () => {
+    const ids: string[] = [];
+    for (let index = 0; index < 20; index += 1) {
+      const stored = await persistGamingSourceRevision({ ...inputFor(`https://guides.example.org/held-identity-${randomUUID()}`,
+        { ...approvedProvenance(), classification: 'reference_only', generationEligible: false }), trustScore: 1 });
+      ids.push(stored.sourceId);
+    }
+    const provenance = approvedProvenance();
+    const item = { ...inputFor(`https://guides.example.org/eligible-identity-${randomUUID()}`, provenance), trustScore: 0.1 };
+    const good = await persistGamingSourceRevision({ ...item, authorityAuthorization: { revisionContentHash: item.contentHash,
+      approvedDocumentHash: provenance.approvedContentHash, assessment: provenance.gamingClear, restrictedRevisionCount: 0 } });
+    ids.push(good.sourceId);
+    await pool.query("UPDATE gaming_sources SET status='disabled' WHERE id <> ALL($1::uuid[])", [ids]);
+    const found = await retrieveStoredGamingKnowledge(request, { resolveVerifiedPatch: () => undefined });
+    expect(found.evidence?.map(chunk => chunk.sourceId)).toEqual([good.sourceId]);
+    expect(found.sources).toHaveLength(1);
+    expect(found.clearEvidenceAssessment?.decision).toBe('accept');
+    const held = await searchActiveGamingKnowledge({ gameKey: item.gameKey, query: 'crystal', sourceIds: ids.slice(0, 20), limit: 50 });
+    expect(held).toHaveLength(20);
+    expect(held.every(row => row.authorityReassessmentRequired)).toBe(true);
+  });
 });

@@ -72,6 +72,15 @@ export interface PersistGamingSourceRevisionResult {
   requiresReassessment?: true;
 }
 
+/** Private, metadata-only observation of a restriction on an existing source. */
+export interface GamingSourceAuthorityHoldInput {
+  sourceId?: string;
+  gameKey: string;
+  canonicalUrl: string;
+  reason: 'SOURCE_USE_RESTRICTED';
+  observedAt?: GamingDateInput;
+}
+
 export interface GamingSourceLatestRevision {
   id: string;
   contentHash: string;
@@ -130,6 +139,8 @@ export interface FindActiveGamingSourceIdentitiesInput {
   game: string;
   edition?: string;
   mode?: GamingKnowledgeRecordType;
+  /** Internal continuation under the original retrieval deadline. */
+  offset?: number;
 }
 
 export interface QueryActiveGamingKnowledgeOptions {
@@ -730,6 +741,8 @@ export class PostgresGamingSourceRepository {
     const lookupTitle = identity === normalizeGamingGameIdentity(game) ? game : `${game} ${edition}`;
     if (!identity) return [];
     if (input.mode !== undefined && !RECORD_TYPE_SET.has(input.mode)) throw new TypeError('mode is not supported.');
+    const offset = input.offset ?? 0;
+    if (!Number.isSafeInteger(offset) || offset < 0) throw new TypeError('offset must be a nonnegative safe integer.');
     // The builtin Unicode collation exists in PostgreSQL 17 and 18. Normalize
     // both raw titles in SQL, then apply the shared strict identity check below:
     // PostgreSQL's simple case mapping is not JavaScript's full case mapping.
@@ -747,10 +760,62 @@ export class PostgresGamingSourceRepository {
              AND ($2::text IS NULL OR knowledge.record_type = $2)
          )
        ORDER BY source.trust_score DESC, source.priority DESC, source.id ASC
-       LIMIT 20`, [lookupTitle, input.mode ?? null], options);
+       LIMIT 20${offset ? ' OFFSET $3' : ''}`, [lookupTitle, input.mode ?? null, ...(offset ? [offset] : [])], options);
     // Recheck using the shared Unicode policy before IDs can scope a knowledge query.
     return result.rows.filter(row => normalizeGamingGameIdentity(row.game_name) === identity)
       .map(row => ({ sourceId: row.source_id, gameKey: row.game_key, gameName: row.game_name }));
+  }
+
+  async recordGamingSourceAuthorityHold(input: GamingSourceAuthorityHoldInput): Promise<{ sourceId: string; revisionId: string } | null> {
+    const requestedSourceId = input.sourceId === undefined ? null : assertUuid(input.sourceId, 'sourceId');
+    const gameKey = requiredString(input.gameKey, 'gameKey', 120).toLowerCase();
+    const canonicalUrl = normalizePublicHttpUrl(input.canonicalUrl, 'canonicalUrl');
+    const reason = input.reason;
+    if (reason !== 'SOURCE_USE_RESTRICTED') throw new TypeError('Unsupported source authority hold reason.');
+    const observedAt = normalizeDate(input.observedAt, 'observedAt', new Date());
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const source = await client.query<{ id: string }>(
+        `SELECT id FROM gaming_sources
+         WHERE ($1::uuid IS NULL OR id = $1) AND game_key = $2 AND canonical_url_hash = $3 AND canonical_url = $4
+         FOR UPDATE`, [requestedSourceId, gameKey, sha256(canonicalUrl), canonicalUrl]);
+      const sourceId = source.rows[0]?.id;
+      if (!sourceId) { await client.query('COMMIT'); return null; }
+      // A separate statement after the lock observes newly committed grants.
+      // Repeated observations in one grant epoch share an idempotent hold row;
+      // a new restriction after fresh authority must create another boundary.
+      const grants = await client.query<{ authority_grant_revision_count: string }>(
+        `SELECT COUNT(*) AS authority_grant_revision_count FROM gaming_source_revisions
+         WHERE source_id = $1 AND provenance ? 'authorityAssessment'`, [sourceId]);
+      const version = `gaming-source-authority-hold/v1:${sha256(JSON.stringify({ reason,
+        grants: Number(grants.rows[0]?.authority_grant_revision_count ?? 0) }))}`;
+      const contentHash = sha256('gaming-source-authority-hold/v1:SOURCE_USE_RESTRICTED');
+      const provenance = { classification: 'rejected', generationEligible: false, clearReassessmentRequired: true,
+        classificationReasons: [reason], authorityHold: { version: 'gaming-source-authority-hold/v1', reason } };
+      const inserted = await client.query<{ id: string }>(
+        `INSERT INTO gaming_source_revisions (source_id, content_hash, cleaned_content, etag, last_modified,
+           fetched_at, published_at, patch, extractor, extractor_version, normalizer_schema_version, provenance, extraction_metrics)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13::jsonb)
+         ON CONFLICT (source_id, content_hash, extractor, extractor_version, normalizer_schema_version) DO NOTHING RETURNING id`,
+        [sourceId, contentHash, 'SOURCE_AUTHORITY_HOLD', null, null, observedAt, null, null,
+          'gaming-source-authority-hold', version, '1', JSON.stringify(provenance), JSON.stringify({ authorityHold: true, chunkCount: 0 })]);
+      let revisionId = inserted.rows[0]?.id;
+      if (!revisionId) {
+        const previous = await client.query<{ id: string }>(
+          `SELECT id FROM gaming_source_revisions WHERE source_id = $1 AND content_hash = $2
+           AND extractor = $3 AND extractor_version = $4 AND normalizer_schema_version = $5 LIMIT 1`,
+          [sourceId, contentHash, 'gaming-source-authority-hold', version, '1']);
+        revisionId = previous.rows[0]?.id;
+      }
+      if (!revisionId) throw new Error('The source authority hold could not be recorded.');
+      await client.query(`UPDATE gaming_sources SET last_checked_at = $2, last_error_code = 'SOURCE_USE_RESTRICTED', updated_at = NOW() WHERE id = $1`, [sourceId, observedAt]);
+      await client.query('COMMIT');
+      return { sourceId, revisionId };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally { client.release(); }
   }
 
   async persistGamingSourceRevision(
@@ -1325,6 +1390,10 @@ export async function persistGamingSourceRevision(
   input: PersistGamingSourceRevisionInput
 ): Promise<PersistGamingSourceRevisionResult> {
   return createGamingSourceRepository().persistGamingSourceRevision(input);
+}
+
+export async function recordGamingSourceAuthorityHold(input: GamingSourceAuthorityHoldInput): Promise<{ sourceId: string; revisionId: string } | null> {
+  return createGamingSourceRepository().recordGamingSourceAuthorityHold(input);
 }
 
 export async function readGamingSourceAuthorityRestrictionCount(input: { gameKey: string; canonicalUrl: string },

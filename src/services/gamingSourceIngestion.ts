@@ -34,7 +34,7 @@ import { GAMING_GAME_REGISTRY } from '@shared/gaming/gamingGameRegistry.js';
 import { truncateTextByCharacters } from '@shared/http/clientResponseCommon.js';
 import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
 
-import { ingestGamingBuildResource } from './gamingBuildResources.js';
+import { ingestGamingBuildResource, inspectGamingBuildResourceSourceUse } from './gamingBuildResources.js';
 import {
   GAMING_DOCUMENT_RESOLVER_VERSION,
   GamingDocumentAcquisitionError,
@@ -138,7 +138,8 @@ const queuedSourceSchema = z.object({
   retainedApproval: z.object({
     actorScopeHash: z.string().regex(/^[a-f0-9]{64}$/u),
     contentHash: z.string().regex(/^[a-f0-9]{64}$/u),
-    policyVersion: z.literal('gaming-hybrid-candidates/v1')
+    policyVersion: z.literal('gaming-hybrid-candidates/v1'),
+    recordType: z.enum(['guide', 'build', 'meta']).optional()
   }).strict().optional(),
   // Server-created only. The public ingest/refresh schemas deliberately cannot submit this authority.
   hybridApproval: z.object({
@@ -904,7 +905,7 @@ export async function createApprovedGamingSourceIngestion(
       origin: 'gpt_web_search', sourceTrustType: source.sourceTrustType,
       trustScore: source.sourceTrustType === 'official' || source.sourceTrustType === 'patch_notes' ? 0.9 : 0.5,
       ...(source.retainUnverified ? { retainedApproval: { actorScopeHash: source.actorScopeHash, contentHash: source.contentHash,
-        policyVersion: source.policyVersion } } : { hybridApproval: { actorScopeHash: source.actorScopeHash, contentHash: source.contentHash,
+        policyVersion: source.policyVersion, recordType: source.recordType ?? 'guide' } } : { hybridApproval: { actorScopeHash: source.actorScopeHash, contentHash: source.contentHash,
         policyVersion: source.policyVersion, freshness: source.freshness,
         gamingClear: source.sourceAssessment,
         authorityRestrictionCount: source.authorityRestrictionCount,
@@ -1170,6 +1171,13 @@ async function ingestOneSource(
   };
   logger.info('gaming.source.fetch_started', logContext);
   let failureStage: 'fetch' | 'extract' | 'store' = 'fetch';
+  const holdRestrictedSource = async (canonicalUrl: string) => {
+    signal?.throwIfAborted();
+    failureStage = 'store';
+    await gamingSourceRepository.recordGamingSourceAuthorityHold({ sourceId: source.sourceId, gameKey: source.gameKey,
+      canonicalUrl, reason: 'SOURCE_USE_RESTRICTED' });
+    signal?.throwIfAborted();
+  };
   try {
     signal?.throwIfAborted();
     if (source.origin === 'refresh' && source.sourceId && !source.hybridApproval && !source.clearReassessmentRequired) {
@@ -1201,13 +1209,26 @@ async function ingestOneSource(
         recordsCreated: 0, recordsUpdated: 0, completedAt: new Date().toISOString(),
         error: { code: 'RESOLVED_SOURCE_IDENTITY_MISMATCH', message: 'The acquired source identity could not be verified.', retryable: false } };
     }
+    const storageCanonicalUrl = source.origin === 'refresh' ? source.canonicalUrl : document.canonicalUrl;
     const policyGame = source.hybridApproval?.applicabilityContext?.game ?? source.policyGame ?? source.game;
     const finalPolicy = assessGamingSourcePolicy(document.canonicalUrl, policyGame);
-    if (!finalPolicy.durableAllowed || document.sourceUseRestricted || /\b(?:no (?:automated|machine) (?:access|use)|automated (?:access|use) (?:is )?prohibited|do not (?:store|redistribute) (?:this|our) content)\b/iu.test(document.text)) {
+    if (!finalPolicy.durableAllowed || document.sourceUseRestricted && !document.decodedSourceUseRestricted
+      || /\b(?:no (?:automated|machine) (?:access|use)|automated (?:access|use) (?:is )?prohibited|do not (?:store|redistribute) (?:this|our) content)\b/iu.test(document.text)) {
+      await holdRestrictedSource(storageCanonicalUrl);
       return { submittedIndex: source.submittedIndex, status: 'rejected', canonicalUrl: source.canonicalUrl,
         recordsCreated: 0, recordsUpdated: 0, completedAt: new Date().toISOString(),
         error: { code: 'SOURCE_USE_RESTRICTED', message: 'The final source does not permit this durable source use.', retryable: false } };
     }
+    // Permission observations are independent of artifact validity. Inspect only
+    // bounded supported fields, without adapters, build admission or caching,
+    // so even a stale queued approval cannot skip a newly observed restriction.
+    const decodedSourceUseRestricted = document.decodedSourceUseRestricted === true || inspectGamingBuildResourceSourceUse({ url: document.canonicalUrl, requestedGame: source.game,
+      contentType: document.contentType,
+      html: document.rawDocument?.contentType.includes('html') ? document.rawDocument.body : undefined,
+      text: document.rawDocument?.contentType.includes('json') ? document.rawDocument.body : document.text,
+      metadata: { title: document.metadata.title, headings: document.metadata.headings }, signal });
+    signal?.throwIfAborted();
+    if (decodedSourceUseRestricted) await holdRestrictedSource(storageCanonicalUrl);
     // A queued worker has its own process/lifetime. Reacquire safely, then require the exact
     // complete artifact approved by the caller; a changed or newly truncated page
     // needs a new evaluation even when its retained prefix has the approved hash.
@@ -1228,6 +1249,11 @@ async function ingestOneSource(
       return { submittedIndex: source.submittedIndex, status: 'rejected', canonicalUrl: source.canonicalUrl,
         recordsCreated: 0, recordsUpdated: 0, completedAt: new Date().toISOString(),
         error: { code: 'SOURCE_INSTRUCTIONS_REJECTED', message: 'Source instructions were rejected.', retryable: false } };
+    }
+    if (decodedSourceUseRestricted) {
+      return { submittedIndex: source.submittedIndex, status: 'rejected', canonicalUrl: source.canonicalUrl,
+        recordsCreated: 0, recordsUpdated: 0, completedAt: new Date().toISOString(),
+        error: { code: 'SOURCE_USE_RESTRICTED', message: 'Source use is restricted.', retryable: false } };
     }
     const approvedAssessment = source.hybridApproval?.gamingClear;
     if (source.hybridApproval && (!approvedAssessment || approvedAssessment.subjectHash !== source.hybridApproval.contentHash
@@ -1381,10 +1407,12 @@ async function ingestOneSource(
     }, { useCache: false });
     // A rejected consumed build field taints the source even when sanitized
     // article prose remains. Never persist that remainder as a fallback record.
-    if (normalized.failureReason === 'SOURCE_INSTRUCTIONS_REJECTED' || normalized.failureReason === 'SOURCE_USE_RESTRICTED') {
+    if (normalized.sourceUseRestricted || normalized.failureReason === 'SOURCE_INSTRUCTIONS_REJECTED' || normalized.failureReason === 'SOURCE_USE_RESTRICTED') {
+      if (normalized.sourceUseRestricted || normalized.failureReason === 'SOURCE_USE_RESTRICTED') await holdRestrictedSource(storageCanonicalUrl);
+      const rejection = normalized.failureReason === 'SOURCE_INSTRUCTIONS_REJECTED' ? 'SOURCE_INSTRUCTIONS_REJECTED' : 'SOURCE_USE_RESTRICTED';
       return { submittedIndex: source.submittedIndex, status: 'rejected', canonicalUrl: source.canonicalUrl,
         recordsCreated: 0, recordsUpdated: 0, completedAt: new Date().toISOString(),
-        error: { code: normalized.failureReason, message: normalized.failureReason === 'SOURCE_USE_RESTRICTED'
+        error: { code: rejection, message: rejection === 'SOURCE_USE_RESTRICTED'
           ? 'Source use is restricted.' : 'Source instructions were rejected.', retryable: false } };
     }
     // Discovered artifacts retain the established document/chunk pipeline. Their
@@ -1490,7 +1518,7 @@ async function ingestOneSource(
         || !generationEligible
         ? { metadataUnverified: true } : {})
     };
-    const recordType = source.hybridApproval?.recordType ?? sourceTypeToRecordType(sourceType);
+    const recordType = source.hybridApproval?.recordType ?? source.retainedApproval?.recordType ?? sourceTypeToRecordType(sourceType);
     // Revision identity includes acquisition policy so refreshing an older
     // extraction can replace stale provenance/quality even if its prose matches.
     const extractorVersion = `${GAMING_DOCUMENT_RESOLVER_VERSION}:${sha256(stableJson({
@@ -1502,6 +1530,7 @@ async function ingestOneSource(
       acquiredApplicabilityVersion: GAMING_FRESHNESS_POLICY_VERSION,
       sourceIdentityPolicyVersion: GAMING_CLEAR_POLICY_VERSION,
       classification, generationEligible,
+      ...(source.retainedApproval ? { retainedRecordType: recordType } : {}),
       gameRegistryVersion: GAMING_GAME_REGISTRY.version,
       gameRegistryRevision: GAMING_GAME_REGISTRY.revision,
       gameRegistryHash: sha256(stableJson(GAMING_GAME_REGISTRY)),
@@ -1553,7 +1582,7 @@ async function ingestOneSource(
       gameName: source.game,
       // An observed approved redirect proves final document identity for new-source deduplication.
       // Refresh keeps the existing source key; a changed destination becomes a new revision/citation.
-      canonicalUrl: source.origin === 'refresh' ? source.canonicalUrl : document.canonicalUrl,
+      canonicalUrl: storageCanonicalUrl,
       publicUrl: document.acquisition ? document.publicUrl
         : selectGamingSourcePublicUrl(source.canonicalUrl, document.publicUrl, supportsStructuredExtraction),
       sourceType: document.acquisition ? finalPolicy.authority === 'official' ? 'official'

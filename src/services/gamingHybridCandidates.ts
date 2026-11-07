@@ -331,7 +331,25 @@ export async function evaluateGamingHybridCandidates(
       // They share acquisition, owner, TTL, hash and source-use controls, while
       // explicit consent is checked again by the ingestion operation.
       const retainForInspection = (reason: string) => {
-        reject(reason);
+        const observedAt = now();
+        const regionConflict = input.region && freshness.regions?.length
+          && !freshness.regions.some(region => ['all', input.region!.normalize('NFKC').trim().toLowerCase()]
+            .includes(region.normalize('NFKC').trim().toLowerCase()));
+        const patchConflict = input.requestedVersion && freshness.patch
+          && normalizeGamingGameIdentity(input.requestedVersion) !== normalizeGamingGameIdentity(freshness.patch)
+          && !freshness.baselineForPatches?.some(patch => patch.normalize('NFKC').trim().toLowerCase()
+            === input.requestedVersion!.normalize('NFKC').trim().toLowerCase());
+        const future = [freshness.effectiveFrom, freshness.publishedAt].some(value => value && Date.parse(value) > observedAt.getTime());
+        const expired = !gamingClearHistoricalSourceVerified(input, freshness, observedAt)
+          && freshness.effectiveUntil && Date.parse(freshness.effectiveUntil) <= observedAt.getTime();
+        const conflict = freshness.metadataConflict ? 'CONTRADICTORY_SOURCE_METADATA'
+          : normalizeGamingGameIdentity(freshness.game) !== normalizeGamingGameIdentity(input.game) ? 'GAME_MISMATCH'
+          : input.edition && freshness.edition && !gamingEditionEvidenceMatchesRequest(freshness.edition, input.edition, input) ? 'EDITION_CONFLICT'
+          : input.platform && freshness.platforms?.length && !gamingPlatformEvidenceMatchesRequest(freshness.platforms, input.platform) ? 'PLATFORM_MISMATCH'
+          : regionConflict ? 'REGION_MISMATCH' : patchConflict ? 'PATCH_MISMATCH'
+          : future ? 'NOT_YET_EFFECTIVE' : expired ? 'NO_LONGER_EFFECTIVE' : undefined;
+        reject(conflict ?? reason);
+        if (conflict) return;
         if (!v2 || context.retainUnverified !== true || input.discoveryType === 'currentness_verification' || !policy.durableAllowed
           || document.sourceUseRestricted || !document.text.trim()
           || acquiredIdentity.status === 'conflict'

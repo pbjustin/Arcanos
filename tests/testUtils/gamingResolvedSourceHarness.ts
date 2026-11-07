@@ -27,6 +27,19 @@ export class GamingResolvedSourceHarness {
       return result([{ restricted_revision_count: String(matches
         ? this.revisions.filter(revision => gamingSourceHasAuthorityRestriction(revision.provenance)).length : 0) }]);
     }
+    if (sql.startsWith('SELECT COUNT(*) AS authority_grant_revision_count')) {
+      return result([{ authority_grant_revision_count: String(this.revisions.filter(revision => revision.source_id === values[0]
+        && revision.provenance.authorityAssessment !== undefined).length) }]);
+    }
+    if (sql.startsWith('SELECT id FROM gaming_sources WHERE ($1::uuid IS NULL OR id = $1)')) {
+      return result(this.source && (values[0] === null || this.source.id === values[0]) && this.source.game_key === values[1]
+        && this.source.canonical_url_hash === values[2] && this.source.canonical_url === values[3] ? [{ id: this.source.id }] : []);
+    }
+    if (sql.startsWith("UPDATE gaming_sources SET last_checked_at = $2, last_error_code = 'SOURCE_USE_RESTRICTED'")) {
+      if (this.source?.id === values[0]) Object.assign(this.source, { last_checked_at: values[1],
+        last_error_code: 'SOURCE_USE_RESTRICTED' });
+      return result(this.source?.id === values[0] ? [this.source] : []);
+    }
     if (sql.startsWith('INSERT INTO gaming_sources')) {
       if (this.source) return result();
       this.source = {
@@ -126,13 +139,13 @@ export class GamingResolvedSourceHarness {
         && (disjunction
           ? words.some(word => record.search_text.toLowerCase().includes(word))
           : words.every(word => record.search_text.toLowerCase().includes(word))))
-        .slice(0, values[3]).map(record => {
+        .slice(values[5] ?? 0, (values[5] ?? 0) + values[3]).map(record => {
           const revision = this.revisions.find(item => item.id === record.source_revision_id)!;
           return {
             ...this.source, ...record, ...revision, record_id: record.id,
             record_patch: record.patch, record_created_at: record.created_at,
             source_id: this.source?.id, revision_id: revision.id, revision_patch: revision.patch,
-            source_has_non_authoritative_history: this.revisions.some(item => gamingSourceHasAuthorityRestriction(item.provenance)),
+            source_has_non_authoritative_history: this.revisions.some(item => gamingSourceRequiresAuthorityReassessment(item.provenance)),
             source_restricted_revision_count: String(this.revisions.filter(item => gamingSourceHasAuthorityRestriction(item.provenance)).length),
             relevance: 1
           };
@@ -144,6 +157,7 @@ export class GamingResolvedSourceHarness {
         && this.records.some(record => record.status === 'active' && record.game_key === this.source?.game_key
           && this.revisions.some(revision => revision.id === record.source_revision_id && revision.source_id === this.source?.id)
           && (!values[1] || record.record_type === values[1]))
+        && !(values[2] > 0)
         ? [{ source_id: this.source.id, game_key: this.source.game_key, game_name: this.source.game_name }] : []);
     }
     throw new Error('Unexpected SQL operation in Gaming fixture');

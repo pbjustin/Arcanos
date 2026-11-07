@@ -478,12 +478,22 @@ describe('independent CLEAR review through acquired synthetic documents', () => 
     const request = { ...fixture.input, hybridRetrieval: true, requireRequestCoverage: true };
     const knowledge = await buildStoredGamingKnowledgeContext(request);
     expect(knowledge.clearEvidenceAssessment?.decision).not.toBe('accept');
-    expect(knowledge.sources[0].clearSourceAssessment).toBeUndefined();
+    // The truthful SQL history predicate holds an invalid durable stamp before
+    // compaction. Owner inspection still sees the unchanged historical text.
+    const retained = await searchActiveGamingKnowledge({ gameKey: 'slate-meridian', query: 'tidal', mode: 'guide' });
+    expect(retained.length).toBeGreaterThan(0);
+    expect(retained.every(row => row.authorityReassessmentRequired)).toBe(true);
+    expect(retained.some(row => String(row.normalized.text).includes('tidal prism'))).toBe(true);
+    expect(retained[0].provenance.gamingClear).toMatchObject({ policyProfile: 'gaming-clear-policy/v3:explanation:source' });
+    expect(knowledge.sources).toEqual([]);
+    expect(knowledge.context).toBe('');
+    expect(knowledge.evidence ?? []).toEqual([]);
     const compact = selectGamingHybridEvidence(request, knowledge);
-    expect(compact.knowledge.context).toContain('tidal prism');
-    expect(compact.knowledge.sources[0].freshnessMetadata).toMatchObject({ metadataUnverified: true });
+    expect(compact.knowledge.context).toBe('');
+    expect(compact.knowledge.sources).toEqual([]);
+    expect(compact.knowledge.evidence ?? []).toEqual([]);
     expect(assessGamingClearEvidence(request, compact.knowledge, { requireRequestCoverage: true }))
-      .toMatchObject({ gates: { compatibility: 'unknown' }, decision: 'clarify' });
+      .toMatchObject({ gates: { claimSupport: 'unknown' }, decision: 'reject', qualityEligible: false });
     expect(database.revisions).toHaveLength(1);
     expect(http).toHaveBeenCalledTimes(2);
   });
