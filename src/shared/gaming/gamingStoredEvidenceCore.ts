@@ -12,6 +12,7 @@ import { gamingPlatformEvidenceMatchesRequest } from './gamingPlatformIdentity.j
 import { assessGamingStructuralUsability, readGamingEvidenceUnits, selectGamingGameScopedDocument,
   selectGamingSourceEditionScopedEvidence, GAMING_STRUCTURAL_EVIDENCE_LIMITS } from './gamingStructuralEvidence.js';
 import { GAMING_HYBRID_V2_LIMITS } from './gamingHybridContract.js';
+import { gamingSourceHasAuthorityRestriction } from './gamingSourceAuthority.js';
 
 export const MAX_STORED_GAMING_CANDIDATES = 20;
 // Six gameplay and three currentness artifacts, each with at most 500 indexed
@@ -50,6 +51,7 @@ export interface GamingStoredEvidenceRecord {
   publishedAt: Date | null;
   provenance: Record<string, unknown>;
   relevance: number;
+  authorityReassessmentRequired?: boolean;
 }
 
 export interface GamingStoredKnowledgeInput extends GamingPlayerContext {
@@ -198,8 +200,7 @@ function projectCandidate<RecordType extends GamingStoredEvidenceRecord>(record:
   const provenance = record.provenance ?? {};
   // Owner consent permits retention independently of evidence authority. These
   // explicit server-written restrictions survive later requests and sessions.
-  if (provenance.generationEligible === false || provenance.classification !== undefined
-    && provenance.classification !== 'verified') return null;
+  if (record.authorityReassessmentRequired === true || gamingSourceHasAuthorityRestriction(provenance)) return null;
   const metadata = chunkMetadata(normalized);
   if (!metadata) return null;
   if (normalized.chunk !== undefined && typeof normalized.text !== 'string') return null;

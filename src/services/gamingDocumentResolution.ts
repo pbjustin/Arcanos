@@ -82,7 +82,7 @@ export interface ResolvedGamingDocument {
   text: string;
   contentType?: string;
   rawDocument?: FetchAndCleanRawDocument;
-  metadata: { title?: string; headings?: string;
+  metadata: { title?: string; headings?: string; applicabilityUnverified?: true;
     localTopicReferences?: Array<{ start: number; length: number; contentHash: string; gameHash: string }> };
   extraction: FetchAndCleanExtractionMetrics;
   resolution: {
@@ -333,6 +333,7 @@ export async function resolveGamingDocument(
     const safeMetadata = {
       ...(effectiveExtraction.documentTitle ? { title: filterGamingDocumentInstructions(effectiveExtraction.documentTitle).slice(0, 240) } : {}),
       ...(effectiveExtraction.headingText ? { headings: filterGamingDocumentInstructions(effectiveExtraction.headingText).slice(0, 240) } : {}),
+      ...(acquired.structure?.applicabilityUnverified ? { applicabilityUnverified: true as const } : {}),
       ...(acquired.structure?.localTopicReferences?.length ? { localTopicReferences:
         acquired.structure.localTopicReferences.slice(0, 64).flatMap(reference => {
           const paragraphStart = projection.text.indexOf(reference.paragraphText);

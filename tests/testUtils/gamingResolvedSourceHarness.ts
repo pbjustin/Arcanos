@@ -1,5 +1,6 @@
 import type { Pool } from 'pg';
 import { normalizeGamingGameIdentity } from '../../src/shared/gaming/gamingGameIdentity.js';
+import { gamingSourceHasAuthorityRestriction, gamingSourceRequiresAuthorityReassessment } from '../../src/shared/gaming/gamingSourceAuthority.js';
 
 export const resolvedSourceId = '10000000-0000-4000-8000-000000000001';
 
@@ -20,6 +21,12 @@ export class GamingResolvedSourceHarness {
     const result = (rows: Array<Record<string, any>> = []) => ({ rows, rowCount: rows.length });
     if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)) return result();
     if (sql.startsWith("SELECT set_config('statement_timeout'")) return result();
+    if (sql.startsWith('SELECT COUNT(*) AS restricted_revision_count')) {
+      const matches = this.source?.game_key === values[0] && this.source?.canonical_url_hash === values[1]
+        && this.source?.canonical_url === values[2];
+      return result([{ restricted_revision_count: String(matches
+        ? this.revisions.filter(revision => gamingSourceHasAuthorityRestriction(revision.provenance)).length : 0) }]);
+    }
     if (sql.startsWith('INSERT INTO gaming_sources')) {
       if (this.source) return result();
       this.source = {
@@ -35,7 +42,11 @@ export class GamingResolvedSourceHarness {
       if (this.source) Object.assign(this.source, { game_name: values[1] ?? this.source.game_name,
         public_url: values[2], host: values[3], source_type: values[4], trust_score: values[5], priority: values[6],
         status: 'active', last_checked_at: values[7], last_success_at: values[7], last_error_code: null });
-      return result(this.source ? [this.source] : []);
+      return result(this.source ? [{ ...this.source,
+        authority_history_requires_reassessment: this.revisions.some(revision => gamingSourceRequiresAuthorityReassessment(revision.provenance)),
+        restricted_revision_count: String(this.revisions.filter(revision => gamingSourceHasAuthorityRestriction(revision.provenance)).length),
+        authority_grant_revision_count: String(this.revisions.filter(revision => revision.provenance.authorityAssessment !== undefined).length),
+      }] : []);
     }
     if (sql.endsWith('FOR UPDATE') || sql.startsWith('UPDATE gaming_sources')) {
       return result(this.source ? [this.source] : []);
@@ -121,6 +132,8 @@ export class GamingResolvedSourceHarness {
             ...this.source, ...record, ...revision, record_id: record.id,
             record_patch: record.patch, record_created_at: record.created_at,
             source_id: this.source?.id, revision_id: revision.id, revision_patch: revision.patch,
+            source_has_non_authoritative_history: this.revisions.some(item => gamingSourceHasAuthorityRestriction(item.provenance)),
+            source_restricted_revision_count: String(this.revisions.filter(item => gamingSourceHasAuthorityRestriction(item.provenance)).length),
             relevance: 1
           };
         }));

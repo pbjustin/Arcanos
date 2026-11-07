@@ -78,7 +78,8 @@ jest.unstable_mockModule('@services/openai/chatFallbacks.js', () => ({
 const { createGamingHybridWorkflow } = await import('../src/services/gamingHybridKnowledge.js');
 const { evaluateGamingHybridCandidates, createApprovedGamingHybridIngestion } = await import('../src/services/gamingHybridCandidates.js');
 const { executeQueuedGamingSourceIngestion, getGamingSourceIngestionStatus, hashGamingApprovedDocument, refreshGamingSources } = await import('../src/services/gamingSourceIngestion.js');
-const { assessGamingSourcePolicy, extractGamingFreshnessMetadata } = await import('../src/shared/gaming/gamingFreshnessCore.js');
+const { assessGamingSourcePolicy, extractGamingFreshnessMetadata, evaluateGamingFreshness } = await import('../src/shared/gaming/gamingFreshnessCore.js');
+const { assessGamingClearEvidence } = await import('../src/shared/gaming/gamingClearEvidence.js');
 const { resolveGamingDocument, isResolvedGamingDocumentIdentityVerified } = await import('../src/services/gamingDocumentResolution.js');
 const { logger } = await import('../src/platform/logging/structuredLogging.js');
 // Load the real router before timed lifecycle tests so registration cannot outlive a test's fixture scope.
@@ -664,6 +665,19 @@ describe('Gaming hybrid durable lifecycle', () => {
     expect((await workflow.candidates({ ...officialRequest, idempotencyKey: 'failed-index-extra-round' }, context)).status).toBe(409);
     expect(mockTrinity).toHaveBeenCalledTimes(1);
     expect(database.queries.some(sql => /^(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b/iu.test(sql))).toBe(false);
+  });
+
+  it('uses a reviewed acquired index for applicability without granting it gameplay claim support', async () => {
+    const { indexUrl, articleUrl } = await mageCurrentnessLifecycle();
+    const request = { game: 'Elden Ring', mode: 'build' as const, prompt: 'What is a good mage build now?', platform: 'PC' };
+    const result = await evaluateGamingHybridCandidates({ ...request, discoveryType: 'currentness_verification',
+      candidates: [{ url: indexUrl }, { url: articleUrl }] }, context);
+    expect(result.accepted.some(candidate => candidate.sourceAssessment.sourceRole === 'currentness_index')).toBe(true);
+    expect(evaluateGamingFreshness({ game: request.game, question: 'What patch is currently active?',
+      platform: request.platform, evidence: result.accepted.map(candidate => candidate.freshness), now: new Date() }).usable).toBe(true);
+    const assessment = assessGamingClearEvidence(request, result.knowledge, { identityVerified: true });
+    expect(assessment.gates.claimSupport).not.toBe('verified');
+    expect(assessment.decision).not.toBe('accept');
   });
 
   it('continues the registry-directed HTTP lifecycle through a required official article before exactly one answer', async () => {

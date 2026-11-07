@@ -73,11 +73,20 @@ jest.unstable_mockModule('@core/db/client.js', () => ({
   getPool: () => databasePool,
   isDatabaseConnected: () => Boolean(databasePool)
 }));
-const { persistGamingSourceRevision, searchActiveGamingKnowledge, findActiveGamingSourceIdentities } =
+const { persistGamingSourceRevision, searchActiveGamingKnowledge, findActiveGamingSourceIdentities, PostgresGamingSourceRepository } =
   await import('../../src/core/db/repositories/gamingSourceRepository.js');
 
 function hash(value: string): string {
   return createHash('sha256').update(value).digest('hex');
+}
+
+function authorityRepositoryInput(gameName: string, publicUrl: string, provenance: Record<string, unknown>, revision = 'A'): PersistGamingSourceRevisionInput {
+  const text = `In the game ${gameName}, align the platinum prism with the ${revision === 'A' ? 'eastern' : 'western'} notch before rotating the relay. Preserve charge for the return crossing.`;
+  return { gameKey: gameName, gameName, canonicalUrl: publicUrl, publicUrl, sourceType: 'supplied', trustScore: 0.5,
+    contentHash: hash(text), cleanedContent: text, fetchedAt: new Date().toISOString(), extractor: 'synthetic-authority',
+    extractorVersion: 'authority-fixture-v1', normalizerSchemaVersion: '1', provenance,
+    extractionMetrics: { coverageStatus: 'complete', chunkCount: 1 }, records: [{ recordType: 'guide', semanticKey: 'platinum-prism',
+      payloadHash: hash(text), searchText: text, normalized: { text, game: gameName } }] };
 }
 
 async function prepareDocument(text: string, gameKey: string): Promise<PersistGamingSourceRevisionInput> {
@@ -170,6 +179,63 @@ function assertFreshProcessRetrieval(read: {
   expect(result.status).toBe(0);
 }
 
+async function authorityFixture(itemGame: string) {
+  const service = await import('../../src/services/gamingSourceIngestion.js');
+  const { resolveGamingDocument } = await import('../../src/services/gamingDocumentResolution.js');
+  const publicUrl = `https://guides.example.org/authority/${randomUUID()}`;
+  const actorKey = 'disposable-authority-owner';
+  const input = { game: itemGame, mode: 'guide' as const, prompt: 'How do I align the platinum prism?' };
+  let text = `In the game ${itemGame}, align the platinum prism with the eastern notch before rotating the relay. `
+    + 'Preserve charge for the return crossing and inspect the prism after each rotation. Reverse the relay if the prism loses its glow.';
+  const originalText = text;
+  mockSourceHttpGet.mockReset(); mockSourceEnqueue.mockReset();
+  mockSourceHttpGet.mockImplementation(async (url: string, options: any) => {
+    expect(new URL(url).hostname).toBe('93.184.216.34');
+    expect(options).toMatchObject({ maxRedirects: 0, proxy: false, headers: { Host: 'guides.example.org' } });
+    expect(new URL(url).pathname).toBe(new URL(publicUrl).pathname);
+    return { data: `<html><title>${itemGame} guide</title><main><p>${text}</p></main></html>`, headers: { 'content-type': 'text/html' } };
+  });
+  mockSourceEnqueue.mockImplementation(async (input: any) => ({
+    job: { id: randomUUID(), status: 'pending', created_at: new Date(), input: input.input }, created: true, deduped: false
+  }));
+  const executeLatest = () => service.executeQueuedGamingSourceIngestion(randomUUID(), (mockSourceEnqueue.mock.calls.at(-1)![0] as any).input.body);
+  return { service, input, publicUrl, originalText, actorKey, setText(value: string) { text = value; }, executeLatest,
+    async approved(retainUnverified: boolean, question = input.prompt, assessmentNow = new Date()) {
+      const document = await resolveGamingDocument(publicUrl, 1_000_000, { documentPurpose: 'durable' });
+      const authorityRestrictionCount = await service.captureGamingSourceAuthorityRestrictionCount(itemGame, document.canonicalUrl);
+      const contentHash = service.hashGamingApprovedDocument(document);
+      const freshness = extractGamingFreshnessMetadata(document, input, new Date());
+      const assessment = assessGamingClearSource({ ...input, prompt: question }, document, { subjectId: publicUrl, subjectHash: contentHash,
+        actorScopeHash: hash(actorKey), sourcePolicy: assessGamingSourcePolicy(publicUrl, itemGame), freshness, now: assessmentNow });
+      expect(assessment).toMatchObject({ qualityEligible: true, gates: { identity: 'verified' } });
+      const admitted = await service.createApprovedGamingSourceIngestion([{ url: publicUrl, game: itemGame,
+        contentHash, actorScopeHash: hash(actorKey), policyVersion: 'gaming-hybrid-candidates/v1', sourceTrustType: 'supplied',
+        freshness: { ...freshness }, ...(retainUnverified ? { retainUnverified: true } : { sourceAssessment: assessment,
+          authorityRestrictionCount,
+          applicabilityContext: { game: itemGame, mode: 'guide', classification: 'stable', historical: false,
+            seasonalPatchRequired: false, contextFingerprint: assessment.contextFingerprint } }) }],
+      randomUUID(), { actorKey, canStore: true });
+      expect(admitted.statusCode).toBe(202);
+      return { result: await executeLatest(), assessment };
+    },
+    async direct() {
+      const admitted = await service.createGamingSourceIngestion({ action: 'ingest', payload: {
+        game: itemGame, sourceUrls: [publicUrl], idempotencyKey: randomUUID()
+      } }, { actorKey });
+      expect(admitted.statusCode).toBe(202);
+      return executeLatest();
+    },
+    async refresh(sourceId: string) {
+      const admitted = await service.refreshGamingSources({ action: 'refresh', payload: {
+        sourceIds: [sourceId], idempotencyKey: randomUUID()
+      } }, { actorKey });
+      expect(admitted.statusCode).toBe(202);
+      return executeLatest();
+    },
+    rows(sourceId: string) { return searchActiveGamingKnowledge({ gameKey: itemGame, sourceIds: [sourceId], query: 'platinum', mode: 'guide' }); }
+  };
+}
+
 describeWithDatabase('durable Gaming chunk storage and retrieval on PostgreSQL 18', () => {
   let setupClient: Client;
   let schemaCreated = false;
@@ -210,6 +276,285 @@ describeWithDatabase('durable Gaming chunk storage and retrieval on PostgreSQL 1
   });
 
   test.each([
+    ['stored_unverified', 'Alpha'], ['reference_only', 'Beta'], ['needs_reassessment', 'Gamma'],
+    ['rejected', 'Delta'], ['generationEligible:false', 'Epsilon']
+  ])('keeps durable %s history nonauthoritative across duplicate writes, refresh and restart', async (classification, suffix) => {
+    const fixture = await authorityFixture(`Platinum Meridian ${suffix}`);
+    const initial = (await fixture.approved(true)).result.output.sources[0];
+    expect(initial).toMatchObject({ classification: 'stored_unverified', generationEligible: false });
+    const sourceId = initial.sourceId!;
+    const firstRows = await fixture.rows(sourceId);
+    const firstRevision = firstRows[0].revisionId;
+    // Historical states are server-persisted fixtures, not a public input label.
+    await databasePool.query(`UPDATE gaming_source_revisions SET provenance = (provenance - 'classification') || $2::jsonb WHERE id=$1`,
+      [firstRevision, JSON.stringify({ generationEligible: false, ...(classification === 'generationEligible:false' ? {} : { classification }) })]);
+    const before = (await databasePool.query('SELECT provenance FROM gaming_source_revisions WHERE id=$1', [firstRevision])).rows[0].provenance;
+    const duplicate = await fixture.direct();
+    expect(duplicate.output.sources[0]).toMatchObject({ classification: 'needs_reassessment', generationEligible: false });
+    const refresh = await fixture.refresh(sourceId);
+    expect(refresh.output.sources[0]).toMatchObject({ classification: 'needs_reassessment', generationEligible: false });
+    const queued = (mockSourceEnqueue.mock.calls.at(-1)![0] as any).input.body;
+    const concurrent = await Promise.all([fixture.service.executeQueuedGamingSourceIngestion(randomUUID(), queued),
+      fixture.service.executeQueuedGamingSourceIngestion(randomUUID(), queued)]);
+    expect(concurrent.every(result => result.output.sources[0].generationEligible === false)).toBe(true);
+    await databasePool.end();
+    databasePool = new Pool({ connectionString: configuredConnectionString, ssl: false, max: 2,
+      options: `-c search_path=${schemaName},pg_catalog`, connectionTimeoutMillis: 5000, statement_timeout: 10000 });
+    const rows = await fixture.rows(sourceId);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every(row => row.authorityReassessmentRequired && row.provenance.generationEligible === false)).toBe(true);
+    for (const hybridRetrieval of [false, true]) {
+      const knowledge = await fixture.service.buildStoredGamingKnowledgeContext({ ...fixture.input,
+        hybridRetrieval, requireRequestCoverage: true, failOnUnavailable: true });
+      expect(knowledge.context).toBe('');
+      expect(knowledge.evidence).toBeUndefined();
+    }
+    expect((await databasePool.query('SELECT provenance FROM gaming_source_revisions WHERE id=$1', [firstRevision])).rows[0].provenance).toEqual(before);
+    if (suffix === 'Alpha') assertFreshProcessRetrieval({ sourceId, revisionId: rows[0].revisionId, game: fixture.input.game,
+      prompt: fixture.input.prompt, expectedText: 'platinum prism', generationEligible: false });
+  }, 60000);
+
+  test('binds new explicit authority to held history and never reuses an obsolete A approval in A-B-A', async () => {
+    const fixture = await authorityFixture('Platinum Meridian Zeta');
+    const approvedA = await fixture.approved(false);
+    const sourceId = approvedA.result.output.sources[0].sourceId!;
+    expect(approvedA.result.output.sources[0]).toMatchObject({ classification: 'verified', generationEligible: true });
+    const oldA = (await fixture.rows(sourceId))[0];
+    const oldProvenance = structuredClone(oldA.provenance);
+    fixture.setText(fixture.originalText.replace('eastern notch', 'western notch'));
+    expect((await fixture.approved(true)).result.output.sources[0]).toMatchObject({ classification: 'stored_unverified', generationEligible: false });
+    const originalHeldB = (await fixture.rows(sourceId))[0];
+    fixture.setText(fixture.originalText);
+    expect((await fixture.direct()).output.sources[0]).toMatchObject({ classification: 'needs_reassessment', generationEligible: false });
+    const heldA = (await fixture.rows(sourceId))[0];
+    expect(heldA.contentHash).toBe(oldA.contentHash);
+    expect(heldA.revisionId).not.toBe(oldA.revisionId);
+    // Even a historical active-row repair cannot reuse the old valid stamp.
+    await databasePool.query(`UPDATE gaming_knowledge_records SET status='superseded', superseded_at=NOW() WHERE source_revision_id IN
+      (SELECT id FROM gaming_source_revisions WHERE source_id=$1)`, [sourceId]);
+    await databasePool.query("UPDATE gaming_knowledge_records SET status='active', superseded_at=NULL WHERE source_revision_id=$1", [oldA.revisionId]);
+    const reactivated = await fixture.rows(sourceId);
+    expect(reactivated.every(row => row.authorityReassessmentRequired)).toBe(true);
+    expect(selectStoredGamingEvidence(reactivated, fixture.input, () => undefined)).toEqual([]);
+    // A genuinely new current assessment clears the hold, in a distinct revision.
+    const freshA = await fixture.approved(false);
+    expect(freshA.result.output.sources[0]).toMatchObject({ classification: 'verified', generationEligible: true });
+    const currentA = (await fixture.rows(sourceId))[0];
+    expect(currentA.revisionId).not.toBe(oldA.revisionId);
+    expect(currentA.provenance.gamingClear).toEqual(freshA.assessment);
+    expect(currentA.authorityReassessmentRequired).toBeUndefined();
+    expect((await databasePool.query('SELECT provenance FROM gaming_source_revisions WHERE id=$1', [oldA.revisionId])).rows[0].provenance).toEqual(oldProvenance);
+    assertFreshProcessRetrieval({ sourceId, revisionId: currentA.revisionId, game: fixture.input.game,
+      prompt: fixture.input.prompt, expectedText: 'platinum prism', generationEligible: true });
+    const previousApprovalBody = structuredClone((mockSourceEnqueue.mock.calls.at(-1)![0] as any).input.body);
+    // Reusing the same retained B bytes must create another hold boundary;
+    // reactivating its old revision cannot revive A's prior approval afterward.
+    fixture.setText(fixture.originalText.replace('eastern notch', 'western notch'));
+    expect((await fixture.approved(true)).result.output.sources[0]).toMatchObject({ generationEligible: false });
+    expect((await fixture.rows(sourceId))[0].revisionId).not.toBe(originalHeldB.revisionId);
+    expect((await fixture.approved(true)).result.output.sources[0]).toMatchObject({ status: 'unchanged', generationEligible: false,
+      recordsCreated: 0, recordsUpdated: 0 });
+    expect((await databasePool.query('SELECT provenance FROM gaming_source_revisions WHERE id=$1', [originalHeldB.revisionId])).rows[0].provenance)
+      .toEqual(originalHeldB.provenance);
+    fixture.setText(fixture.originalText);
+    const obsoleteReplay = await fixture.service.executeQueuedGamingSourceIngestion(randomUUID(), previousApprovalBody);
+    expect(obsoleteReplay.output.sources[0]).toMatchObject({ classification: 'needs_reassessment', generationEligible: false });
+  }, 60000);
+
+  test('keeps an approved unchanged source revision when a new question has the same authority boundary', async () => {
+    const fixture = await authorityFixture('Platinum Meridian Eta');
+    const first = await fixture.approved(false);
+    const sourceId = first.result.output.sources[0].sourceId!;
+    const original = (await fixture.rows(sourceId))[0];
+    const second = await fixture.approved(false, 'How do I preserve charge at the platinum prism?');
+    expect(second.assessment.contextFingerprint).not.toBe(first.assessment.contextFingerprint);
+    expect(second.result.output.sources[0]).toMatchObject({ status: 'unchanged', recordsCreated: 0, recordsUpdated: 0,
+      classification: 'verified', generationEligible: true });
+    const rows = await fixture.rows(sourceId);
+    expect(rows.map(row => [row.revisionId, row.recordId, row.contentHash])).toEqual([[original.revisionId, original.recordId, original.contentHash]]);
+    const { hybridFreshness: originalFreshness, ...originalAuthority } = original.provenance;
+    const { hybridFreshness: latestFreshness, ...latestAuthority } = rows[0].provenance;
+    expect(latestAuthority).toEqual(originalAuthority);
+    // Existing unchanged writes may advance only their resource-check times.
+    expect({ ...(latestFreshness as Record<string, unknown>), fetchedAt: (originalFreshness as any).fetchedAt,
+      verifiedAt: (originalFreshness as any).verifiedAt }).toEqual(originalFreshness);
+    expect(Date.parse((latestFreshness as any).verifiedAt)).toBeGreaterThanOrEqual(Date.parse((originalFreshness as any).verifiedAt));
+    expect(rows[0].authorityReassessmentRequired).toBeUndefined();
+  }, 60000);
+
+  test('does not replay an assessment across a held transaction that began before that assessment', async () => {
+    const fixture = await authorityFixture('Platinum Meridian Theta');
+    const initial = await fixture.approved(false);
+    const sourceId = initial.result.output.sources[0].sourceId!;
+    const sourceGameKey = (await fixture.rows(sourceId))[0].gameKey;
+    let begun!: () => void;
+    let resume!: () => void;
+    const started = new Promise<void>(resolve => { begun = resolve; });
+    const releaseBegin = new Promise<void>(resolve => { resume = resolve; });
+    const repository = new PostgresGamingSourceRepository({ connect: async () => {
+      const client = await databasePool.connect();
+      return { release: () => client.release(), query: async (sql: string, values?: unknown[]) => {
+        const result = await client.query(sql, values);
+        if (sql === 'BEGIN') { begun(); await releaseBegin; }
+        return result;
+      } };
+    } } as unknown as Pool);
+    const heldWrite = repository.persistGamingSourceRevision({ ...authorityRepositoryInput(fixture.input.game, fixture.publicUrl,
+      { classification: 'stored_unverified', generationEligible: false }, 'B'), gameKey: sourceGameKey });
+    try {
+      await started;
+      await new Promise(resolve => setTimeout(resolve, 15));
+      await fixture.approved(false, 'How do I preserve charge at the platinum prism?');
+      const oldApproval = structuredClone((mockSourceEnqueue.mock.calls.at(-1)![0] as any).input.body);
+      resume();
+      expect((await heldWrite).sourceId).toBe(sourceId);
+      const replay = await fixture.service.executeQueuedGamingSourceIngestion(randomUUID(), oldApproval);
+      expect(replay.output.sources[0]).toMatchObject({ classification: 'needs_reassessment', generationEligible: false });
+    } finally {
+      resume();
+      await heldWrite;
+    }
+  }, 20000);
+
+  test('does not let a server assessment clock offset clear a later source hold', async () => {
+    const fixture = await authorityFixture('Platinum Meridian Iota');
+    // Model the assessment server clock ahead of the database. The artifact is
+    // still generated by actual source CLEAR from protected acquired bytes.
+    const initial = await fixture.approved(false, fixture.input.prompt, new Date(Date.now() + 60_000));
+    const oldApproval = structuredClone((mockSourceEnqueue.mock.calls.at(-1)![0] as any).input.body);
+    fixture.setText(fixture.originalText.replace('eastern notch', 'western notch'));
+    expect((await fixture.approved(true)).result.output.sources[0]).toMatchObject({ generationEligible: false,
+      sourceId: initial.result.output.sources[0].sourceId });
+    fixture.setText(fixture.originalText);
+    const replay = await fixture.service.executeQueuedGamingSourceIngestion(randomUUID(), oldApproval);
+    expect(replay.output.sources[0]).toMatchObject({ classification: 'needs_reassessment', generationEligible: false });
+  }, 20000);
+
+  test('binds captured source history to the server-owned candidate and denies epoch substitution', async () => {
+    const fixture = await authorityFixture('Platinum Meridian Kappa');
+    const retained = await fixture.approved(true);
+    const sourceId = retained.result.output.sources[0].sourceId!;
+    const { evaluateGamingHybridCandidates, createApprovedGamingHybridIngestion } = await import('../../src/services/gamingHybridCandidates.js');
+    const { gamingClearHash } = await import('../../src/shared/gaming/gamingClearPolicy.js');
+    for (const mutation of ['changed-count', 'removed-count', 'copied-artifact', 'changed-game']) {
+      const evaluated = await evaluateGamingHybridCandidates({ ...fixture.input, candidates: [{ url: fixture.publicUrl }] },
+        { actorKey: fixture.actorKey, workflowId: randomUUID() });
+      const original = evaluated.accepted[0];
+      expect(original.authorityRestrictionCount).toBe(1);
+      const candidate = mutation === 'copied-artifact' ? { ...original } : original;
+      if (mutation === 'changed-game') candidate.game = 'Platinum Meridian Foreign';
+      else if (mutation === 'removed-count') delete candidate.authorityRestrictionCount;
+      else candidate.authorityRestrictionCount = 2;
+      candidate.assessmentBinding = gamingClearHash({ sourceAssessment: candidate.sourceAssessment, sourceContext: candidate.sourceContext,
+        ...(candidate.authorityRestrictionCount === undefined ? {} : { authorityRestrictionCount: candidate.authorityRestrictionCount }) });
+      const enqueued = mockSourceEnqueue.mock.calls.length;
+      const denied = await createApprovedGamingHybridIngestion({ candidates: [candidate], storagePolicy: 'ask_before_store',
+        confirmed: true, idempotencyKey: randomUUID() }, { actorKey: fixture.actorKey, canStore: true, canAutoStore: false });
+      expect(denied.statusCode).toBe(403);
+      expect(mockSourceEnqueue).toHaveBeenCalledTimes(enqueued);
+    }
+    expect((await fixture.rows(sourceId))[0].provenance.generationEligible).toBe(false);
+    // Disabled history is still a source authority boundary, not an absent source.
+    await databasePool.query("UPDATE gaming_sources SET status='disabled' WHERE id=$1", [sourceId]);
+    expect(await fixture.service.captureGamingSourceAuthorityRestrictionCount(fixture.input.game, fixture.publicUrl)).toBe(1);
+    await databasePool.query("UPDATE gaming_sources SET status='active' WHERE id=$1", [sourceId]);
+  }, 20000);
+
+  test('allows transient acquired facts on unknown history without granting held storage authority', async () => {
+    const fixture = await authorityFixture('Platinum Meridian Lambda');
+    const retained = await fixture.approved(true);
+    const sourceId = retained.result.output.sources[0].sourceId!;
+    const { evaluateGamingHybridCandidates, createApprovedGamingHybridIngestion } = await import('../../src/services/gamingHybridCandidates.js');
+    const connectedPool = databasePool;
+    let evaluated: Awaited<ReturnType<typeof evaluateGamingHybridCandidates>>;
+    try {
+      databasePool = undefined as unknown as Pool;
+      evaluated = await evaluateGamingHybridCandidates({ ...fixture.input, candidates: [{ url: fixture.publicUrl }] },
+        { actorKey: fixture.actorKey, workflowId: randomUUID() });
+    } finally { databasePool = connectedPool; }
+    expect(evaluated.accepted).toHaveLength(1);
+    expect(evaluated.accepted[0].authorityRestrictionCount).toBeUndefined();
+    expect(evaluated.knowledge.evidence?.length).toBeGreaterThan(0);
+    const queued = await createApprovedGamingHybridIngestion({ candidates: evaluated.accepted, storagePolicy: 'ask_before_store',
+      confirmed: true, idempotencyKey: randomUUID() }, { actorKey: fixture.actorKey, canStore: true, canAutoStore: false });
+    expect(queued.statusCode).toBe(202);
+    const result = await fixture.executeLatest();
+    expect(result.output.sources[0]).toMatchObject({ sourceId, classification: 'needs_reassessment', generationEligible: false });
+  }, 20000);
+
+  test.each(['missing', 'caller-labels', 'forged-stamp', 'obsolete-v6', 'invalid-v7'])(
+    'keeps source-owned history authoritative over %s persistence provenance', async variant => {
+      const publicUrl = `https://guides.example.org/authority-forgery/${randomUUID()}`;
+      const itemGame = 'Platinum Meridian Forgery';
+      const initial = await persistGamingSourceRevision(authorityRepositoryInput(itemGame, publicUrl,
+        { classification: 'stored_unverified', generationEligible: false }));
+      const input = authorityRepositoryInput(itemGame, publicUrl, variant === 'missing' ? {} : {
+        classification: 'verified', generationEligible: true,
+        ...(variant === 'forged-stamp' ? { authorityAssessment: { version: 'gaming-stored-source-authority/v1',
+          revisionContentHash: hash('forged'), approvedDocumentHash: hash('forged'), assessmentHash: hash('forged'), restrictedRevisionCount: 1 } } : {}),
+        ...(variant === 'obsolete-v6' || variant === 'invalid-v7' ? {
+          sourceIdentityPolicyVersion: variant === 'obsolete-v6' ? 'gaming-clear-policy/v6' : GAMING_CLEAR_POLICY_VERSION,
+          gamingClear: { profile: 'source', qualityEligible: true, policyProfile: `${variant === 'obsolete-v6' ? 'gaming-clear-policy/v6' : GAMING_CLEAR_POLICY_VERSION}:walkthrough:source` }
+        } : {})
+      }, 'B');
+      if (variant === 'obsolete-v6' || variant === 'invalid-v7') input.authorityAuthorization = {
+        revisionContentHash: input.contentHash, approvedDocumentHash: hash('forged'), assessment: input.provenance.gamingClear
+      };
+      const saved = await persistGamingSourceRevision(input);
+      expect(saved.sourceId).toBe(initial.sourceId);
+      const rows = await searchActiveGamingKnowledge({ gameKey: itemGame, sourceIds: [initial.sourceId], query: 'platinum', mode: 'guide' });
+      expect(rows).toHaveLength(1);
+      expect(rows[0].provenance).toMatchObject({ classification: 'needs_reassessment', generationEligible: false });
+      expect(saved.requiresReassessment).toBe(true);
+      expect(rows[0]).toMatchObject({ authorityReassessmentRequired: true,
+        provenance: { classification: 'needs_reassessment', generationEligible: false, clearReassessmentRequired: true } });
+      expect(rows[0].provenance.authorityAssessment).toBeUndefined();
+      expect(selectStoredGamingEvidence(rows, { game: itemGame, mode: 'guide', prompt: 'How do I align the platinum prism?' }, () => undefined)).toEqual([]);
+    });
+
+  test('reads held revision history after a competing source lock commits', async () => {
+    const publicUrl = `https://guides.example.org/authority-lock/${randomUUID()}`;
+    const itemGame = 'Platinum Meridian Lock';
+    const initialInput = authorityRepositoryInput(itemGame, publicUrl, { classification: 'verified', generationEligible: true });
+    const initial = await persistGamingSourceRevision(initialInput);
+    const locker = await databasePool.connect();
+    let competing: ReturnType<typeof persistGamingSourceRevision> | undefined;
+    let committed = false;
+    try {
+      await locker.query('BEGIN');
+      await locker.query('SELECT id FROM gaming_sources WHERE id=$1 FOR UPDATE', [initial.sourceId]);
+      competing = persistGamingSourceRevision(authorityRepositoryInput(itemGame, publicUrl,
+        { classification: 'verified', generationEligible: true }, 'B'));
+      let blocked = false;
+      for (let attempt = 0; attempt < 100 && !blocked; attempt++) {
+        const activity = await setupClient.query(`SELECT 1 FROM pg_stat_activity WHERE datname=current_database()
+          AND wait_event_type='Lock' AND query LIKE '%FOR UPDATE%' AND query NOT LIKE '%pg_stat_activity%'`);
+        blocked = activity.rows.length > 0;
+        if (!blocked) await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      expect(blocked).toBe(true);
+      await locker.query('UPDATE gaming_sources SET updated_at=clock_timestamp() WHERE id=$1', [initial.sourceId]);
+      await locker.query(`INSERT INTO gaming_source_revisions
+        (source_id,content_hash,cleaned_content,fetched_at,extractor,extractor_version,normalizer_schema_version,provenance,extraction_metrics)
+        SELECT source_id,$2,cleaned_content,NOW(),extractor,'concurrent-retention-v1',normalizer_schema_version,
+          '{"classification":"reference_only","generationEligible":false}'::jsonb,extraction_metrics
+        FROM gaming_source_revisions WHERE id=$1`, [initial.revisionId, hash('concurrent held revision')]);
+      await locker.query('COMMIT');
+      committed = true;
+      const saved = await competing;
+      const rows = await searchActiveGamingKnowledge({ gameKey: itemGame, sourceIds: [initial.sourceId], query: 'platinum', mode: 'guide' });
+      expect(rows.map(row => row.provenance.generationEligible)).toEqual([false]);
+      expect(saved.requiresReassessment).toBe(true);
+      expect(rows.every(row => row.provenance.generationEligible === false && row.authorityReassessmentRequired)).toBe(true);
+      expect(selectStoredGamingEvidence(rows, { game: itemGame, mode: 'guide', prompt: 'How do I align the platinum prism?' }, () => undefined)).toEqual([]);
+    } finally {
+      if (!committed) await locker.query('ROLLBACK');
+      locker.release();
+      await competing;
+    }
+  }, 20000);
+
+  test.each([
     { topic: 'wooden shields', fact: 'The wooden shields are sold at the training shop for 25 coins.' },
     { topic: 'Smithing Stone', fact: 'The Smithing Stone is inside the blue chest beneath the northern stairs.' }
   ])('does not promote a retained $topic overview to SQL-backed gameplay support', async ({ topic, fact }) => {
@@ -243,7 +588,9 @@ describeWithDatabase('durable Gaming chunk storage and retrieval on PostgreSQL 1
       const saved = await persistGamingSourceRevision({ gameKey, gameName: itemGame, canonicalUrl: publicUrl, publicUrl,
         sourceType: 'supplied', trustScore: 0.5, contentHash, cleanedContent: text, fetchedAt: new Date().toISOString(),
         extractor: 'synthetic-retained-corpus', extractorVersion: 'pg18-retained-fixture-v1', normalizerSchemaVersion: '1',
+        authorityAuthorization: { revisionContentHash: contentHash, approvedDocumentHash: contentHash, assessment },
         provenance: { gameName: itemGame, sourceIdentityPolicyVersion: GAMING_CLEAR_POLICY_VERSION,
+          classification: 'verified', generationEligible: true,
           gamingClear: assessment, approvedContentHash: contentHash,
           acquiredApplicability: { extractorVersion: 'gaming-hybrid-freshness-v1', contentHash, game: itemGame },
           resolverId: 'synthetic-retained-corpus', resolverVersion: 'pg18-retained-fixture-v1', resolutionStrategy: 'retained_text' },

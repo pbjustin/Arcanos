@@ -3,6 +3,8 @@ import type { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
 
 import { getPool, isDatabaseConnected } from '../client.js';
 import { normalizeGamingGameIdentity, resolveGamingGuideIdentity } from '@shared/gaming/gamingGameIdentity.js';
+import { createGamingStoredAuthorityAssessment, hasGamingStoredAuthorityAssessment, gamingSourceHasAuthorityRestriction, GAMING_STORED_AUTHORITY_VERSION,
+  type GamingSourceAuthorityAuthorization } from '@shared/gaming/gamingSourceAuthority.js';
 
 export const GAMING_SOURCE_TYPES = [
   'official',
@@ -56,6 +58,8 @@ export interface PersistGamingSourceRevisionInput {
   provenance?: Record<string, unknown>;
   extractionMetrics?: Record<string, unknown>;
   records: readonly PersistGamingKnowledgeRecordInput[];
+  /** Private worker authorization; public inputs cannot submit persistence authority. */
+  authorityAuthorization?: GamingSourceAuthorityAuthorization;
 }
 
 export interface PersistGamingSourceRevisionResult {
@@ -65,6 +69,7 @@ export interface PersistGamingSourceRevisionResult {
   recordsCreated: number;
   /** Number of records from prior revisions atomically marked superseded. */
   recordsUpdated: number;
+  requiresReassessment?: true;
 }
 
 export interface GamingSourceLatestRevision {
@@ -160,6 +165,8 @@ export interface GamingKnowledgeProvenanceRecord {
   provenance: Record<string, unknown>;
   extractionMetrics: Record<string, unknown>;
   relevance: number;
+  /** Independently projected from durable source history, never a caller label. */
+  authorityReassessmentRequired?: boolean;
 }
 
 interface PreparedGamingKnowledgeRecord {
@@ -196,6 +203,7 @@ interface PreparedPersistInput {
   provenanceJson: string;
   extractionMetricsJson: string;
   records: PreparedGamingKnowledgeRecord[];
+  authorityAuthorizationJson?: string;
 }
 
 type TimestampValue = Date | string;
@@ -229,6 +237,9 @@ interface GamingSourceRow {
   latest_extractor_version?: string | null;
   latest_normalizer_schema_version?: string | null;
   latest_provenance?: unknown;
+  authority_history_requires_reassessment?: boolean;
+  restricted_revision_count?: string;
+  authority_grant_revision_count?: string;
 }
 
 interface GamingRevisionIdentityRow {
@@ -263,6 +274,8 @@ interface GamingKnowledgeQueryRow {
   extractor_version: string;
   normalizer_schema_version: string;
   provenance: unknown;
+  source_has_non_authoritative_history?: boolean;
+  source_restricted_revision_count?: string;
   extraction_metrics: unknown;
   relevance: number | string;
 }
@@ -296,6 +309,13 @@ const MAX_RECORDS_PER_REVISION = 500;
 const DEFAULT_QUERY_LIMIT = 12;
 const MAX_QUERY_LIMIT = 50;
 const MAX_QUERY_TIMEOUT_MS = 30_000;
+// The alias is fixed at both call sites. Historical restrictions are immutable;
+// making another revision active cannot erase the source's retention boundary.
+const NON_AUTHORITATIVE_HISTORY_SQL = `(
+  (authority_revision.provenance ? 'generationEligible' AND authority_revision.provenance->'generationEligible' IS DISTINCT FROM 'true'::jsonb)
+  OR (authority_revision.provenance ? 'classification' AND authority_revision.provenance->'classification' IS DISTINCT FROM '"verified"'::jsonb)
+  OR authority_revision.provenance->'clearReassessmentRequired' = 'true'::jsonb
+)`;
 
 export class GamingSourceCanonicalHashCollisionError extends Error {
   constructor() {
@@ -576,6 +596,9 @@ function preparePersistInput(input: PersistGamingSourceRevisionInput): PreparedP
       input.extractionMetrics ?? {},
       'extractionMetrics'
     ),
+    ...(input.authorityAuthorization === undefined ? {} : {
+      authorityAuthorizationJson: serializeJsonObject(input.authorityAuthorization, 'authorityAuthorization')
+    }),
     records: deduplicatedRecords
   };
 }
@@ -640,6 +663,22 @@ function assertUuid(value: string, label: string): string {
 
 export class PostgresGamingSourceRepository {
   constructor(private readonly pool: Pool) {}
+
+  async readGamingSourceAuthorityRestrictionCount(input: { gameKey: string; canonicalUrl: string },
+    options: QueryActiveGamingKnowledgeOptions = {}): Promise<number> {
+    const gameKey = requiredString(input.gameKey, 'gameKey', 120).toLowerCase();
+    const canonicalUrl = normalizePublicHttpUrl(input.canonicalUrl, 'canonicalUrl');
+    const result = await this.queryWithDeadline<{ restricted_revision_count: string }>(
+      `SELECT COUNT(*) AS restricted_revision_count
+       FROM gaming_source_revisions AS authority_revision
+       JOIN gaming_sources AS source ON source.id = authority_revision.source_id
+       WHERE source.game_key = $1 AND source.canonical_url_hash = $2 AND source.canonical_url = $3
+         AND ${NON_AUTHORITATIVE_HISTORY_SQL}`,
+      [gameKey, sha256(canonicalUrl), canonicalUrl], options);
+    const count = Number(result.rows[0]?.restricted_revision_count);
+    if (!Number.isSafeInteger(count) || count < 0) throw new GamingSourceRepositoryUnavailableError();
+    return count;
+  }
 
   /** Bounded reads share the same stale-pool-waiter and transaction cancellation guard. */
   private async queryWithDeadline<Row extends QueryResultRow>(queryText: string, queryValues: unknown[],
@@ -765,6 +804,9 @@ export class PostgresGamingSourceRepository {
 
     let source = insertedSource.rows[0];
     const sourceCreated = Boolean(source);
+    let authorityHistoryRequiresReassessment = false;
+    let restrictedRevisionCount = 0;
+    let authorityGrantRevisionCount = 0;
     if (!source) {
       const lockedSource = await client.query<GamingSourceRow>(
         `SELECT ${SOURCE_COLUMNS}
@@ -781,6 +823,8 @@ export class PostgresGamingSourceRepository {
       if (source.canonical_url !== input.canonicalUrl) {
         throw new GamingSourceCanonicalHashCollisionError();
       }
+      // This statement starts after the row lock is acquired. A projection in
+      // the locking SELECT could use a snapshot from before a competing writer.
       const updatedSource = await client.query<GamingSourceRow>(
         `UPDATE gaming_sources
          SET game_name = COALESCE($2, game_name),
@@ -795,7 +839,19 @@ export class PostgresGamingSourceRepository {
              last_error_code = NULL,
              updated_at = NOW()
          WHERE id = $1
-         RETURNING ${SOURCE_COLUMNS}`,
+         RETURNING ${SOURCE_COLUMNS}, EXISTS (
+           SELECT 1 FROM gaming_source_revisions AS authority_revision
+           WHERE authority_revision.source_id = gaming_sources.id
+             AND (${NON_AUTHORITATIVE_HISTORY_SQL}
+               OR authority_revision.provenance ? 'gamingClear'
+               OR authority_revision.provenance ? 'approvedContentHash'
+               OR authority_revision.provenance ? 'hybridPolicyVersion'
+               OR authority_revision.provenance ? 'authorityAssessment')
+         ) AS authority_history_requires_reassessment,
+         (SELECT COUNT(*) FROM gaming_source_revisions AS authority_revision
+           WHERE authority_revision.source_id = gaming_sources.id AND ${NON_AUTHORITATIVE_HISTORY_SQL}) AS restricted_revision_count,
+         (SELECT COUNT(*) FROM gaming_source_revisions AS authority_revision
+           WHERE authority_revision.source_id = gaming_sources.id AND authority_revision.provenance ? 'authorityAssessment') AS authority_grant_revision_count`,
         [
           source.id,
           input.explicitGameName,
@@ -811,7 +867,50 @@ export class PostgresGamingSourceRepository {
       if (!source) {
         throw new Error('Gaming source update did not return a source row.');
       }
+      authorityHistoryRequiresReassessment = source.authority_history_requires_reassessment === true;
+      restrictedRevisionCount = Number(source.restricted_revision_count ?? 0);
+      authorityGrantRevisionCount = Number(source.authority_grant_revision_count ?? 0);
     }
+
+    const provenance = JSON.parse(input.provenanceJson) as Record<string, unknown>;
+    const authorization = input.authorityAuthorizationJson
+      ? JSON.parse(input.authorityAuthorizationJson) as GamingSourceAuthorityAuthorization : undefined;
+    const authorityAssessment = createGamingStoredAuthorityAssessment(provenance, input.contentHash, authorization, restrictedRevisionCount);
+    const requiresReassessment = !authorityAssessment && (authorityHistoryRequiresReassessment || authorization !== undefined);
+    // Provenance labels alone cannot mint authority. Only the separately supplied,
+    // current and exact-content worker assessment can write the durable grant.
+    delete provenance.authorityAssessment;
+    let authorityChanged = false;
+    if (authorityAssessment) provenance.authorityAssessment = authorityAssessment;
+    else if (requiresReassessment && !gamingSourceHasAuthorityRestriction(provenance)) {
+      authorityChanged = provenance.generationEligible !== false;
+      provenance.generationEligible = false;
+      if (!['stored_unverified', 'reference_only', 'needs_reassessment', 'rejected'].includes(String(provenance.classification))) {
+        provenance.classification = 'needs_reassessment';
+      }
+      provenance.clearReassessmentRequired = true;
+      provenance.classificationReasons = ['SOURCE_REASSESSMENT_REQUIRED'];
+      if (provenance.acquiredApplicability && typeof provenance.acquiredApplicability === 'object'
+        && !Array.isArray(provenance.acquiredApplicability)) {
+        provenance.acquiredApplicability = { ...provenance.acquiredApplicability, metadataUnverified: true };
+      }
+    }
+    if (authorityAssessment || gamingSourceHasAuthorityRestriction(provenance)) {
+      // An unchanged eligible source can answer another question without a new
+      // revision. Keep the exact assessment in its immutable provenance, while
+      // revision identity follows content, policy and the retained-history epoch.
+      input.extractorVersion = `gaming-source-authority-v1:${sha256(JSON.stringify({
+        policyVersion: GAMING_STORED_AUTHORITY_VERSION, extractorVersion: input.extractorVersion,
+        authority: authorityAssessment ? { version: authorityAssessment.version,
+          revisionContentHash: authorityAssessment.revisionContentHash,
+          approvedDocumentHash: authorityAssessment.approvedDocumentHash,
+          restrictedRevisionCount: authorityAssessment.restrictedRevisionCount }
+          // Reusing held bytes after a later grant is a new hold. This prevents
+          // old B reactivation from leaving A's earlier grant current forever.
+          : { disposition: 'requires_reassessment', authorityGrantRevisionCount }
+      }))}`;
+    }
+    input.provenanceJson = serializeJsonObject(provenance, 'provenance');
 
     const existingRevision = await client.query<GamingRevisionIdentityRow>(
       `SELECT id
@@ -854,7 +953,8 @@ export class PostgresGamingSourceRepository {
         revisionId: existingRevision.rows[0].id,
         state: 'unchanged',
         recordsCreated: 0,
-        recordsUpdated: 0
+        recordsUpdated: 0,
+        ...(authorityChanged ? { requiresReassessment: true as const } : {})
       };
     }
 
@@ -1003,7 +1103,8 @@ export class PostgresGamingSourceRepository {
       revisionId,
       state: sourceCreated ? 'created' : 'updated',
       recordsCreated,
-      recordsUpdated: supersededRecords.rowCount ?? supersededRecords.rows.length
+      recordsUpdated: supersededRecords.rowCount ?? supersededRecords.rows.length,
+      ...(authorityChanged ? { requiresReassessment: true as const } : {})
     };
   }
 
@@ -1121,6 +1222,12 @@ export class PostgresGamingSourceRepository {
          revision.normalizer_schema_version,
          revision.provenance,
          revision.extraction_metrics,
+         EXISTS (
+           SELECT 1 FROM gaming_source_revisions AS authority_revision
+           WHERE authority_revision.source_id = source.id AND ${NON_AUTHORITATIVE_HISTORY_SQL}
+         ) AS source_has_non_authoritative_history,
+         (SELECT COUNT(*) FROM gaming_source_revisions AS authority_revision
+           WHERE authority_revision.source_id = source.id AND ${NON_AUTHORITATIVE_HISTORY_SQL}) AS source_restricted_revision_count,
          COALESCE(
            ts_rank_cd(
              to_tsvector('simple'::regconfig, knowledge.search_text),
@@ -1153,37 +1260,43 @@ export class PostgresGamingSourceRepository {
     const queryValues = [gameKey, input.query, input.mode ?? null, limit, sourceIds];
     const result = await this.queryWithDeadline<GamingKnowledgeQueryRow>(queryText, queryValues, options);
 
-    return result.rows.map(row => ({
-      recordId: row.record_id,
-      recordType: row.record_type,
-      semanticKey: row.semantic_key,
-      payloadHash: row.payload_hash,
-      title: row.title,
-      patch: row.record_patch,
-      searchText: row.search_text,
-      normalized: parseJsonObject(row.normalized),
-      recordCreatedAt: parseDate(row.record_created_at),
-      sourceId: row.source_id,
-      gameKey: row.game_key,
-      gameName: row.game_name,
-      canonicalUrl: row.canonical_url,
-      canonicalUrlHash: row.canonical_url_hash,
-      publicUrl: row.public_url,
-      host: row.host,
-      sourceType: row.source_type,
-      trustScore: Number(row.trust_score),
-      revisionId: row.revision_id,
-      contentHash: row.content_hash,
-      fetchedAt: parseDate(row.fetched_at),
-      publishedAt: parseOptionalDate(row.published_at),
-      revisionPatch: row.revision_patch,
-      extractor: row.extractor,
-      extractorVersion: row.extractor_version,
-      normalizerSchemaVersion: row.normalizer_schema_version,
-      provenance: parseJsonObject(row.provenance),
-      extractionMetrics: parseJsonObject(row.extraction_metrics),
-      relevance: Number(row.relevance)
-    }));
+    return result.rows.map(row => {
+      const provenance = parseJsonObject(row.provenance);
+      const authorityReassessmentRequired = row.source_has_non_authoritative_history === true
+        && !hasGamingStoredAuthorityAssessment(provenance, row.content_hash, Number(row.source_restricted_revision_count ?? 0));
+      return {
+        recordId: row.record_id,
+        recordType: row.record_type,
+        semanticKey: row.semantic_key,
+        payloadHash: row.payload_hash,
+        title: row.title,
+        patch: row.record_patch,
+        searchText: row.search_text,
+        normalized: parseJsonObject(row.normalized),
+        recordCreatedAt: parseDate(row.record_created_at),
+        sourceId: row.source_id,
+        gameKey: row.game_key,
+        gameName: row.game_name,
+        canonicalUrl: row.canonical_url,
+        canonicalUrlHash: row.canonical_url_hash,
+        publicUrl: row.public_url,
+        host: row.host,
+        sourceType: row.source_type,
+        trustScore: Number(row.trust_score),
+        revisionId: row.revision_id,
+        contentHash: row.content_hash,
+        fetchedAt: parseDate(row.fetched_at),
+        publishedAt: parseOptionalDate(row.published_at),
+        revisionPatch: row.revision_patch,
+        extractor: row.extractor,
+        extractorVersion: row.extractor_version,
+        normalizerSchemaVersion: row.normalizer_schema_version,
+        provenance,
+        extractionMetrics: parseJsonObject(row.extraction_metrics),
+        relevance: Number(row.relevance),
+        ...(authorityReassessmentRequired ? { authorityReassessmentRequired: true } : {})
+      };
+    });
   }
 }
 
@@ -1206,6 +1319,11 @@ export async function persistGamingSourceRevision(
   input: PersistGamingSourceRevisionInput
 ): Promise<PersistGamingSourceRevisionResult> {
   return createGamingSourceRepository().persistGamingSourceRevision(input);
+}
+
+export async function readGamingSourceAuthorityRestrictionCount(input: { gameKey: string; canonicalUrl: string },
+  options: QueryActiveGamingKnowledgeOptions = {}): Promise<number> {
+  return createGamingSourceRepository().readGamingSourceAuthorityRestrictionCount(input, options);
 }
 
 export async function findGamingSourceById(id: string): Promise<GamingSourceRecord | null> {

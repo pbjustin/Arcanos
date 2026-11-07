@@ -20,7 +20,8 @@ import { describeGamingDocumentSource, resolveGamingDocument, isResolvedGamingDo
 import { chunkGamingDocument, GAMING_DURABLE_DOCUMENT_LIMITS } from './gamingDurableDocumentChunks.js';
 import { sanitizeGamingDiscoveryCandidateUrl } from './gamingSourceDiscovery.js';
 import { getGamingRagChunkChars, getGamingRagMaxChunks, getGamingRagMaxSources, getGamingWebContextMaxChars, getGamingWebContextFetchTimeoutMs } from './gamingConfig.js';
-import { createApprovedGamingSourceIngestion, hashGamingApprovedDocument, type GamingSourceGatewayContext } from './gamingSourceIngestion.js';
+import { createApprovedGamingSourceIngestion, hashGamingApprovedDocument, captureGamingSourceAuthorityRestrictionCount,
+  type GamingSourceGatewayContext } from './gamingSourceIngestion.js';
 import { assessGamingClearSource, assessGamingClearSourceIdentity, gamingClearHistoricalSourceVerified, gamingClearIntactSourceText,
   type GamingSourceIdentityDiagnostic } from '@shared/gaming/gamingClearSource.js';
 import { GAMING_CLEAR_VERSION, gamingClearHash, type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
@@ -103,6 +104,8 @@ export interface GamingHybridAcceptedCandidate {
   sourcePolicy: ReturnType<typeof assessGamingSourcePolicy>;
   sourceAssessment: GamingClearAssessment;
   assessmentBinding: string;
+  /** Server snapshot captured before source assessment, never a caller hint. */
+  authorityRestrictionCount?: number;
   sourceContext: GamingStoredKnowledgeInput & { region?: string };
   sourceMetadataBinding: string;
   /** Server-created content-bound records retained for v2 recovery selection. */
@@ -118,6 +121,15 @@ interface GamingHybridCandidateDependencies {
 }
 
 const actorHash = (actorKey: string) => createHash('sha256').update(actorKey, 'utf8').digest('hex');
+const acceptedAuthorityRestrictions = new WeakMap<GamingHybridAcceptedCandidate,
+  { count: number | undefined; game: string; canonicalUrl: string }>();
+const sourceAssessmentBinding = (sourceAssessment: GamingClearAssessment, sourceContext: unknown, authorityRestrictionCount?: number) =>
+  gamingClearHash({ sourceAssessment, sourceContext, ...(authorityRestrictionCount === undefined ? {} : { authorityRestrictionCount }) });
+const authorityRestrictionBound = (candidate: GamingHybridAcceptedCandidate) => {
+  const snapshot = acceptedAuthorityRestrictions.get(candidate);
+  return snapshot !== undefined && snapshot.count === candidate.authorityRestrictionCount
+    && snapshot.game === candidate.game && snapshot.canonicalUrl === candidate.document.canonicalUrl;
+};
 const sourceMetadataBinding = (freshness: GamingFreshnessEvidence, policy: ReturnType<typeof assessGamingSourcePolicy>): string => {
   const metadata = { ...freshness } as Record<string, unknown>;
   // Only the workflow's separately artifact-bound official index attestation is additive.
@@ -346,7 +358,25 @@ export async function evaluateGamingHybridCandidates(
         identitySubjectKind: identityDiagnostic.subjectKind, identityScope: identityDiagnostic.scope,
         identityDetermination: identityDiagnostic.determination, contentHash
       });
-      if (acquiredIdentity.status !== 'conflict' && !structural.hasIntactUsableUnit && (quality === 'unusable' || quality === 'metadata-only')) {
+      // Reviewed official applicability sources need not contain gameplay claims.
+      // Their existing identity, adapter and CLEAR role gates still apply; the
+      // evidence selector cannot use an index/status role as gameplay support.
+      const officialApplicability = isReviewedOfficialCurrentnessSource(policy) && gameIdentityVerified
+        && (freshness.metadataConflict === true || freshness.currentnessMetadata?.status === 'verified'
+          || Boolean(freshness.currentnessMetadata?.requiredArticlePatch)
+          || policy.currentness !== 'current_index' && Boolean(freshness.patch || freshness.sourceUpdatedAt));
+      // An official listing whose adapter found no release links is unreadable
+      // for this role. A nominal news heading supplies neither gameplay nor a
+      // contrary identity claim; other accepted guides retain qualified advice.
+      if (isReviewedOfficialCurrentnessSource(policy) && policy.currentness === 'current_index'
+        && acquiredIdentity.status !== 'conflict' && !freshness.metadataConflict
+        && freshness.currentnessMetadata?.status === 'incomplete'
+        && freshness.currentnessMetadata.reasons.includes('OFFICIAL_INDEX_LINKS_REQUIRED')) {
+        reject('INSUFFICIENT_EXTRACTION'); continue;
+      }
+      if (!officialApplicability && acquiredIdentity.status !== 'conflict'
+        && !structural.hasIntactUsableUnit && (quality === 'unusable' || quality === 'metadata-only')) {
+        retainOfficialMetadataConflict();
         retainForInspection(quality === 'metadata-only' ? 'INSUFFICIENT_GAMEPLAY_EVIDENCE' : 'INSUFFICIENT_EXTRACTION'); continue;
       }
       if (acquiredIdentity.status !== 'verified' && !editionOnlyIdentityOutcome) {
@@ -400,6 +430,11 @@ export async function evaluateGamingHybridCandidates(
       }
       const candidateId = randomUUID();
       freshness.id = candidateId;
+      const storageGame = input.edition && resolveGamingGuideIdentity(input.game, input.edition) !== normalizeGamingGameIdentity(input.game)
+        ? `${input.game} ${input.edition}` : input.game;
+      const remainingMs = deadlineAt - Date.now();
+      const authorityRestrictionCount = remainingMs > 0
+        ? await captureGamingSourceAuthorityRestrictionCount(storageGame, document.canonicalUrl, signal, remainingMs) : undefined;
       const sourceAssessment = assessGamingClearSource(input, document, { subjectId: candidateId, subjectHash: contentHash,
         actorScopeHash: actorHash(context.actorKey), sourcePolicy: policy, freshness, now: now(),
         onIdentityAssessment: identity => { identityDiagnostic = identity.diagnostic; }, ...(v2 ? { allowPartialCoverage: true } : {}) });
@@ -462,12 +497,13 @@ export async function evaluateGamingHybridCandidates(
       const artifact: GamingHybridAcceptedCandidate = { candidateId, actorScopeHash: actorHash(context.actorKey),
         ...(context.workflowId ? { workflowId: context.workflowId } : {}), contentHash,
         policyVersion: GAMING_HYBRID_CANDIDATE_POLICY_VERSION, expiresAt: now().getTime() + GAMING_HYBRID_CANDIDATE_LIMITS.artifactTtlMs,
-        game: input.edition && resolveGamingGuideIdentity(input.game, input.edition) !== normalizeGamingGameIdentity(input.game)
-          ? `${input.game} ${input.edition}` : input.game,
+        game: storageGame,
         recordType: input.mode,
         publicUrl, document: { ...document, rawDocument: undefined }, freshness, sourcePolicy: policy,
-        sourceAssessment, assessmentBinding: gamingClearHash({ sourceAssessment, sourceContext }), sourceContext,
+        sourceAssessment, assessmentBinding: sourceAssessmentBinding(sourceAssessment, sourceContext, authorityRestrictionCount), sourceContext,
+        ...(authorityRestrictionCount === undefined ? {} : { authorityRestrictionCount }),
         sourceMetadataBinding: sourceMetadataBinding(freshness, policy), ...(v2 ? { evidenceRecords: records } : {}) };
+      acceptedAuthorityRestrictions.set(artifact, { count: authorityRestrictionCount, game: storageGame, canonicalUrl: document.canonicalUrl });
       accepted.push(artifact);
       evaluationCandidateIds.set(evaluation, candidateId);
       allRecords.push(...records);
@@ -556,7 +592,8 @@ function validGamingHybridArtifact(candidate: GamingHybridAcceptedCandidate,
     && candidate.contentHash === hashGamingApprovedDocument(candidate.document)
     && candidate.sourceAssessment?.rubricVersion === GAMING_CLEAR_VERSION
     && candidate.sourceAssessment.subjectHash === candidate.contentHash
-    && candidate.assessmentBinding === gamingClearHash({ sourceAssessment: candidate.sourceAssessment, sourceContext: candidate.sourceContext })
+    && authorityRestrictionBound(candidate)
+    && candidate.assessmentBinding === sourceAssessmentBinding(candidate.sourceAssessment, candidate.sourceContext, candidate.authorityRestrictionCount)
     && candidate.sourceMetadataBinding === sourceMetadataBinding(candidate.freshness, candidate.sourcePolicy);
 }
 
@@ -751,7 +788,8 @@ export async function createApprovedGamingHybridIngestion(input: {
       || candidate.contentHash !== hashGamingApprovedDocument(candidate.document)
       || candidate.sourceAssessment?.rubricVersion !== GAMING_CLEAR_VERSION
       || candidate.sourceAssessment.subjectHash !== candidate.contentHash
-      || candidate.assessmentBinding !== gamingClearHash({ sourceAssessment: candidate.sourceAssessment, sourceContext: candidate.sourceContext })
+      || !authorityRestrictionBound(candidate)
+      || candidate.assessmentBinding !== sourceAssessmentBinding(candidate.sourceAssessment, candidate.sourceContext, candidate.authorityRestrictionCount)
       || candidate.sourceMetadataBinding !== sourceMetadataBinding(candidate.freshness, candidate.sourcePolicy)) {
       return denied('GAMING_HYBRID_APPROVAL_INVALID', 'The source approval expired or does not belong to this caller.');
     }
@@ -764,7 +802,7 @@ export async function createApprovedGamingHybridIngestion(input: {
     // check time, so retrying an unchanged enqueue keeps existing idempotency.
     if (gamingClearHash({ ...reassessed, evaluatedAt: candidate.sourceAssessment.evaluatedAt }) !== gamingClearHash(candidate.sourceAssessment)) {
       candidate.sourceAssessment = reassessed;
-      candidate.assessmentBinding = gamingClearHash({ sourceAssessment: reassessed, sourceContext: candidate.sourceContext });
+      candidate.assessmentBinding = sourceAssessmentBinding(reassessed, candidate.sourceContext, candidate.authorityRestrictionCount);
     }
     if (!candidate.sourcePolicy.durableAllowed || !candidate.sourceAssessment.qualityEligible || candidate.document.metrics.truncated
       || (input.storagePolicy === 'auto_store_approved' && !candidate.sourcePolicy.autoStoreAllowed)) {
@@ -784,6 +822,7 @@ export async function createApprovedGamingHybridIngestion(input: {
     sourceTrustType: candidate.sourcePolicy.authority === 'official' ? 'official' as const
       : candidate.sourcePolicy.authority === 'specialist' ? 'curated' as const : 'supplied' as const,
     freshness: { ...candidate.freshness }, sourceAssessment: candidate.sourceAssessment,
+    authorityRestrictionCount: candidate.authorityRestrictionCount,
     applicabilityContext: { game: candidate.sourceContext.game, mode: candidate.sourceContext.mode,
       classification: classifyGamingQuestionFreshness(candidate.sourceContext),
       seasonalPatchRequired: gamingSeasonalPatchRequired({ ...candidate.sourceContext, question: candidate.sourceContext.prompt }),

@@ -11,11 +11,7 @@ import {
   IdempotencyKeyConflictError,
   JobRepositoryUnavailableError
 } from '@core/db/repositories/jobRepository.js';
-import {
-  GamingSourceRepositoryUnavailableError,
-  getGamingSourceById,
-  persistGamingSourceRevision
-} from '@core/db/repositories/gamingSourceRepository.js';
+import * as gamingSourceRepository from '@core/db/repositories/gamingSourceRepository.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { buildQueuedGptJobInput } from '@shared/gpt/asyncGptJob.js';
 import {
@@ -26,6 +22,7 @@ import {
   selectGamingSourcePublicUrl
 } from '@shared/gaming/gamingDocumentIngestionCore.js';
 import { normalizeGamingGameIdentity } from '@shared/gaming/gamingGameIdentity.js';
+import { gamingSourceRequiresAuthorityReassessment } from '@shared/gaming/gamingSourceAuthority.js';
 import { assessGamingSourcePolicy, evaluateGamingFreshness, extractGamingFreshnessMetadata, GAMING_FRESHNESS_POLICY_VERSION, GAMING_SOURCE_POLICY_VERSION, type GamingFreshnessEvidence } from '@shared/gaming/gamingFreshnessCore.js';
 import { assessGamingClearSourceIdentity, gamingClearHistoricalSourceVerified } from '@shared/gaming/gamingClearSource.js';
 import { assessGamingStructuralUsability } from '@shared/gaming/gamingStructuralEvidence.js';
@@ -53,6 +50,7 @@ import {
   GAMING_DURABLE_DOCUMENT_LIMITS,
   hashGamingDocumentRevision
 } from './gamingDurableDocumentChunks.js';
+
 import {
   GAMING_BUILD_RESOURCE_SCHEMA_VERSION,
   GAMING_BUILD_RESOURCE_HARD_LIMITS,
@@ -67,6 +65,7 @@ import {
   type GamingStoredKnowledgeContext,
   type GamingStoredKnowledgeInput
 } from './gamingStoredKnowledge.js';
+const { GamingSourceRepositoryUnavailableError, getGamingSourceById, persistGamingSourceRevision } = gamingSourceRepository;
 export type { GamingStoredKnowledgeContext } from './gamingStoredKnowledge.js';
 export const GAMING_SOURCE_INGESTION_REQUEST_PATH = '/gpt-access/gaming/sources/ingestions';
 export const GAMING_SOURCE_REFRESH_REQUEST_PATH = '/gpt-access/gaming/sources/refreshes';
@@ -171,6 +170,7 @@ const queuedSourceSchema = z.object({
       region: z.string().trim().min(1).max(80).check(utf16MaxLength(80)).optional()
     }).strict().optional(),
     applicabilityBinding: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
+    authorityRestrictionCount: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
     freshness: z.record(z.string(), z.unknown()).refine(value => JSON.stringify(value).length <= 8_000)
   }).strict().optional()
 }).strict();
@@ -320,6 +320,36 @@ function stableJson(value: unknown): string {
     return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(',')}}`;
   }
   return JSON.stringify(value) ?? 'null';
+}
+
+function approvalApplicabilityBinding(context: unknown, assessment: unknown, authorityRestrictionCount?: number): string {
+  // The durable queue stores JSON. Absent optional fields must have the same
+  // binding before persistence and after another process reads that JSON.
+  return sha256(stableJson(JSON.parse(JSON.stringify({ context, assessment,
+    ...(authorityRestrictionCount === undefined ? {} : { authorityRestrictionCount }) }))));
+}
+
+/** Capture before source CLEAR; unavailable history cannot clear a later hold. */
+export async function captureGamingSourceAuthorityRestrictionCount(game: string, canonicalUrl: string,
+  signal?: AbortSignal, timeoutMs = 1_000): Promise<number | undefined> {
+  const budgetMs = Math.max(1, Math.min(1_000, Math.floor(timeoutMs)));
+  const deadline = AbortSignal.timeout(budgetMs);
+  const readSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
+  let rejectAbort!: () => void;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectAbort = () => reject(readSignal.reason);
+    if (readSignal.aborted) rejectAbort();
+    else readSignal.addEventListener('abort', rejectAbort, { once: true });
+  });
+  try {
+    return await Promise.race([gamingSourceRepository.readGamingSourceAuthorityRestrictionCount({ gameKey: canonicalGameKey(game), canonicalUrl },
+      { queryTimeoutMs: budgetMs, signal: readSignal }), aborted]);
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    return undefined;
+  } finally {
+    readSignal.removeEventListener('abort', rejectAbort);
+  }
 }
 
 function canonicalGameKey(game: string): string {
@@ -846,6 +876,7 @@ export async function createApprovedGamingSourceIngestion(
     freshness: Record<string, unknown>;
     sourceAssessment?: GamingClearAssessment;
     retainUnverified?: boolean;
+    authorityRestrictionCount?: number;
     applicabilityContext?: { game: string; mode: 'guide' | 'build' | 'meta'; classification: 'stable' | 'patch_sensitive' | 'seasonal' | 'live_status'; historical: boolean; seasonalPatchRequired: boolean;
       requestedVersion?: string; contextFingerprint: string; edition?: string; platform?: string; region?: string };
   }[],
@@ -876,13 +907,16 @@ export async function createApprovedGamingSourceIngestion(
         policyVersion: source.policyVersion } } : { hybridApproval: { actorScopeHash: source.actorScopeHash, contentHash: source.contentHash,
         policyVersion: source.policyVersion, freshness: source.freshness,
         gamingClear: source.sourceAssessment,
+        authorityRestrictionCount: source.authorityRestrictionCount,
         applicabilityContext: source.applicabilityContext,
-        ...(source.applicabilityContext ? { applicabilityBinding: sha256(stableJson({
-          context: source.applicabilityContext, assessment: source.sourceAssessment })) } : {}),
         freshnessPolicyVersion: GAMING_FRESHNESS_POLICY_VERSION, sourcePolicyVersion: GAMING_SOURCE_POLICY_VERSION,
         recordType: source.recordType ?? 'guide' } })
     });
     if (!parsedSource.success) return buildGatewayValidationError('The approved source artifact is invalid.');
+    const approval = parsedSource.data.hybridApproval;
+    if (approval && (approval.applicabilityContext || approval.authorityRestrictionCount !== undefined)) {
+      approval.applicabilityBinding = approvalApplicabilityBinding(approval.applicabilityContext, approval.gamingClear, approval.authorityRestrictionCount);
+    }
     approved.push(parsedSource.data);
   }
   return enqueueGamingIngestion({ action: 'ingest', schemaVersion: '1', sources: approved,
@@ -890,8 +924,7 @@ export async function createApprovedGamingSourceIngestion(
 }
 
 function gamingSourceRequiresClearReassessment(provenance: Record<string, unknown> | undefined): boolean {
-  return provenance?.gamingClear !== undefined || provenance?.approvedContentHash !== undefined
-    || provenance?.hybridPolicyVersion !== undefined || provenance?.clearReassessmentRequired === true;
+  return gamingSourceRequiresAuthorityReassessment(provenance);
 }
 
 export async function refreshGamingSources(
@@ -1209,7 +1242,9 @@ async function ingestOneSource(
       if (!approval) return true;
       const applicability = approval.applicabilityContext;
       if (applicability && (applicability.contextFingerprint !== approvedAssessment?.contextFingerprint
-        || approval.applicabilityBinding !== sha256(stableJson({ context: applicability, assessment: approvedAssessment })))) return false;
+        || approval.applicabilityBinding !== approvalApplicabilityBinding(applicability, approvedAssessment, approval.authorityRestrictionCount))) return false;
+      if (!applicability && approval.authorityRestrictionCount !== undefined
+        && approval.applicabilityBinding !== approvalApplicabilityBinding(undefined, approvedAssessment, approval.authorityRestrictionCount)) return false;
       const freshness = approval.freshness as unknown as GamingFreshnessEvidence;
       if (document.acquisition && (freshness.url !== document.publicUrl || freshness.policyVersion !== finalPolicy.policyVersion
         || freshness.authority !== finalPolicy.authority || freshness.category !== finalPolicy.category
@@ -1346,10 +1381,11 @@ async function ingestOneSource(
     }, { useCache: false });
     // A rejected consumed build field taints the source even when sanitized
     // article prose remains. Never persist that remainder as a fallback record.
-    if (normalized.failureReason === 'SOURCE_INSTRUCTIONS_REJECTED') {
+    if (normalized.failureReason === 'SOURCE_INSTRUCTIONS_REJECTED' || normalized.failureReason === 'SOURCE_USE_RESTRICTED') {
       return { submittedIndex: source.submittedIndex, status: 'rejected', canonicalUrl: source.canonicalUrl,
         recordsCreated: 0, recordsUpdated: 0, completedAt: new Date().toISOString(),
-        error: { code: 'SOURCE_INSTRUCTIONS_REJECTED', message: 'Source instructions were rejected.', retryable: false } };
+        error: { code: normalized.failureReason, message: normalized.failureReason === 'SOURCE_USE_RESTRICTED'
+          ? 'Source use is restricted.' : 'Source instructions were rejected.', retryable: false } };
     }
     // Discovered artifacts retain the established document/chunk pipeline. Their
     // durable records cannot acquire unseen structured fields after approval.
@@ -1526,6 +1562,10 @@ async function ingestOneSource(
         : finalPolicy.authority === 'specialist' ? 0.5 : 0.25 : source.trustScore ?? 0.25,
       priority: 100,
       contentHash,
+      ...(source.hybridApproval && approvedAssessment && generationEligible ? { authorityAuthorization: {
+        revisionContentHash: contentHash, approvedDocumentHash: source.hybridApproval.contentHash, assessment: approvedAssessment,
+        restrictedRevisionCount: source.hybridApproval.authorityRestrictionCount
+      } } : {}),
       cleanedContent: cleanedText.slice(0, GAMING_DURABLE_DOCUMENT_LIMITS.revisionPreviewChars)
         .replace(/[\uD800-\uDBFF]$/u, ''),
       fetchedAt,
@@ -1573,6 +1613,11 @@ async function ingestOneSource(
       : persisted.state === 'created'
         ? 'stored'
         : 'updated';
+    // The repository rechecks immutable source history under its row lock. A
+    // queued snapshot, duplicate submission or concurrent refresh cannot undo it.
+    const storedClassification = persisted.requiresReassessment ? 'needs_reassessment' : classification;
+    const storedGenerationEligible = persisted.requiresReassessment ? false : generationEligible;
+    const storedReasonCodes = persisted.requiresReassessment ? ['SOURCE_REASSESSMENT_REQUIRED'] : classificationReasons;
     logger.info('gaming.source.chunking_completed', {
       ...logContext,
       sourceId: persisted.sourceId,
@@ -1590,7 +1635,7 @@ async function ingestOneSource(
       ...logContext,
       sourceId: persisted.sourceId,
       status,
-      classification, generationEligible, reasonCodes: classificationReasons,
+      classification: storedClassification, generationEligible: storedGenerationEligible, reasonCodes: storedReasonCodes,
       sourceType,
       extractionQuality: documentQuality,
       structuredExtractionQuality,
@@ -1601,7 +1646,7 @@ async function ingestOneSource(
     return {
       submittedIndex: source.submittedIndex,
       status,
-      classification, generationEligible, reasonCodes: classificationReasons,
+      classification: storedClassification, generationEligible: storedGenerationEligible, reasonCodes: storedReasonCodes,
       canonicalUrl: source.canonicalUrl,
       sourceId: persisted.sourceId,
       sourceType,

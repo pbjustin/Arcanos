@@ -2098,6 +2098,14 @@ sources. The worker reacquires the exact source and rejects changed content,
 source-use restrictions and contradictory game identity. Storage does not create
 a source assessment. Later retrieval excludes every stored non-authoritative
 classification until a separately authorized reassessment writes an eligible revision.
+The persistence transaction checks immutable source history after acquiring its
+source lock. Generic refresh, duplicate submissions and historical reactivation
+preserve that restriction. A new current assessment must follow the latest held
+revision and binds its authority to the exact document, revision and retained
+history; older approvals cannot clear a later hold. The same check applies after
+a worker or retrieval process restarts. History is captured before assessment,
+so clock differences cannot renew an earlier approval, while raw retained records
+remain readable for inspection.
 Sanitized `EXTRACTION_FAILED` and `STORAGE_FAILED` errors distinguish document
 processing and persistence failures from acquisition failures.
 

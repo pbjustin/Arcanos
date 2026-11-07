@@ -2,6 +2,7 @@ import { filterGamingDocumentInstructions } from '@services/gamingDocumentExtrac
 import type { GamingPlayerContext } from './gamingPlayerContext.js';
 import { assessGamingProgressionRequest, filterGamingNonAffirmativeStateClauses, hasUsefulGamingProgressValue } from './gamingProgressionPolicy.js';
 import { GAMING_PLAYER_DECISION_CHOICES } from './gamingPreferenceData.js';
+import { gamingRegistryLiteralPattern } from './gamingGameRegistry.js';
 
 export const GAMING_RETRIEVAL_POLICY_VERSION = 'gaming-player-retrieval/v1';
 const STOP_WORDS = new Set('a an and are as at be by can do does for from how i in is it me my of on or should that the this to was what when where which who why with you about after before finishing completing completed finished defeated get go help please tell use using want would guide next now then need proceed continue current objective checkpoint step steps walkthrough explain detailed detail concise briefly spoiler spoilers spoilerfree beat defeat boss strategy game look up newly released beginner route supplied source opening simple summary summarize overview linked guides direct answer both am im m supposed stuck has have user major first'.split(' '));
@@ -102,6 +103,79 @@ export function gamingTermCoverage(text: string, terms: readonly string[]): numb
     });
   const available = new Set(gamingLexicalTokens(supportingText));
   return terms.length ? terms.filter(term => available.has(term)).length / terms.length : 0;
+}
+
+/** Intelligible acquired gameplay assertions, not an authority or truth verdict.
+ * Catalog speech acts, game identity and topic labels supply no claim text.
+ * Both declarative relations and player actions remain eligible for the normal
+ * identity, applicability, coverage and final semantic CLEAR assessments. */
+export function gamingAttributableClaimText(text: string, game?: string, metadata?: { title?: string; headings?: string }): string {
+  const scope = game ? new RegExp(`\\bin(?: the game)?\\s+${gamingRegistryLiteralPattern(game)},\\s*`, 'iu') : undefined;
+  const gamePrefix = game ? new RegExp(`^${gamingRegistryLiteralPattern(game)}\\s+`, 'iu') : undefined;
+  const metaHead = /\b(?:wiki|catalog|index|glossary|encyclopedia|entry|entries|article|articles|page|pages|topic|topics|directory|collection|heading|headings|guide|document|source|section|sections|overview|summary|content|gameplay|evidence|information|news|record|records|table|tables|titles|labels|names)\s*$/iu;
+  const referenceObject = /\b(?:wiki|catalog|index|encyclopedia|directory|articles?|pages?|headings?|titles?|topics?|glossary)\b/iu;
+  const action = /\b(?:activate|allocate|attack|avoid|block|buy|choose|collect|compare|complete|craft|cross|defeat|dodge|enter|equip|exit|explore|find|finish|focus|follow|gather|heal|improve|inspect|jump|keep|leave|move|open|place|plan|plant|practice|prepare|preserve|press|prioritize|raise|reach|read|reduce|remove|repair|restore|return|rotate|save|select|spend|take|trade|travel|turn|unlock|upgrade|use|visit|wait)\b/iu;
+  const relation = /\b(?:is|are|was|were|has|have|uses?|costs?|requires?|needs?|opens?|unlocks?|grants?|blocks?|protects?|deflects?|reflects?|absorbs?|inflicts?|deals?|reduces?|restores?|increases?|changes?|stuns?|sells?|spawns?|drops?|equals?|provides?|supports?|contains?|includes?|prevents?|allows?|follows?|begins?|starts?|ends?|waits?|leaves?|progress(?:es)?|prioritizes?|retains?|favors?|combines?|improves?|determines?|depends?|gives?|causes?)\s+\S/giu;
+  // A plural noun is not a finite verb merely because it ends in s or is
+  // capitalized. Retain productive verb forms without admitting label bags.
+  const finiteRelation = /\b[\p{L}][\p{L}'’-]*(?:ates|ifies|izes|ises|ects|uces|ores|ows|cks|ches|shes|rms|rns|nks|lds|nts)\s+(?!(?:and|or|plus|as|is|are|was|were|has|have|can|could|must|should|may|will|would)\b)\S/giu;
+  const location = /\b(?:at|in|on|from|near|beside|behind|inside|outside|under|beneath|above|below|between|within)\s+\S/giu;
+  // A flattened heading can precede a source-description sentence without a
+  // full stop. Keep its material assertion separate from the description.
+  let prose = text.trim().replace(/\s+(?=(?:this|the)\s+(?:page|article|guide|walkthrough|document|source|section)\s+(?:explains?|describes?|covers?|lists?|provides?|contains?|includes?|offers?|presents?)\b)/giu, '\n');
+  for (const heading of [metadata?.title, metadata?.headings?.split(/\s+\|\s+|\n/u, 1)[0]]
+    .filter((value): value is string => Boolean(value)).sort((left, right) => right.length - left.length)) {
+    const topic = gamePrefix ? heading.replace(gamePrefix, '') : heading;
+    if (prose.startsWith(heading) && /^\s/u.test(prose.slice(heading.length))
+      && ![...topic.matchAll(relation), ...topic.matchAll(finiteRelation), ...topic.matchAll(location)].length && !action.test(topic.split(/\s+/u, 1)[0])
+      && !/^\s+(?:is|are|was|were|has|have|can|must|should|uses?|costs?|requires?|opens?|grants?|blocks?)\b/iu.test(prose.slice(heading.length)))
+      prose = prose.slice(heading.length).trim();
+  }
+  return prose.split(/\n+|(?<=[.!?])\s+|;\s*/u).filter(original => {
+    let clause = original.trim();
+    if (!clause || /\b(?:at|in|for|from|to|with|and|but|after|before|until|when|where|if|unless|only)\s*[.!?]?$/iu.test(clause)) return false;
+    const acquiredScope = scope?.exec(clause);
+    const actionClause = (acquiredScope ? clause.slice(acquiredScope.index + acquiredScope[0].length).trim() : clause)
+      .replace(/^(?:do\s+not|don['’]t)\s+/iu, '');
+    if (acquiredScope) clause = `${clause.slice(0, acquiredScope.index)} ${actionClause}`.trim();
+    // A nominal game definition establishes identity, never a mechanic itself.
+    if (game && new RegExp(`^${gamingRegistryLiteralPattern(game)}\\s+is\\s+(?:an?\\s+)?[^.!?]{0,120}\\bgame[.!?]?$`, 'iu').test(clause)) return false;
+    // A title's leading game name may itself contain a preposition or verb.
+    // Evaluate its following topic; preserve a game that is the actual subject
+    // of an explicit finite relation rather than a heading prefix.
+    if (gamePrefix) {
+      const topic = clause.replace(gamePrefix, '');
+      const directPredicate = [...topic.matchAll(relation), ...topic.matchAll(finiteRelation)].some(match => match.index === 0)
+        || /^(?:can|could|must|should|may|will|would)\b/iu.test(topic);
+      if (topic !== clause && !directPredicate) clause = topic;
+    }
+    // Typed build serialization binds a named slot, ranked skill or stat value;
+    // a list of unbound item/topic names does not satisfy these relations.
+    if (/^(?:Equipment\s+\(\d+\):\s+[^:,\n]{1,80}:\s+\S|Skills\s+\(\d+\):\s+[^,\n]{1,160}\s+rank\s+\d|Stats\s+\(\d+\):\s+[^:,\n]{1,80}:\s+(?:[-+]?\d|yes\b|no\b))/iu.test(clause)) return true;
+    clause = clause.replace(/\b(?:does|do)\s+not\s+(?!(?:explain|cover|describe|document|address|support|verify|establish|prove)\b)/giu, '');
+    const attributed = (index: number): boolean => {
+      const subject = clause.slice(0, index).split(/[,;:]/u).at(-1)?.trim() ?? '';
+      return Boolean(subject && /\p{L}/u.test(subject) && !metaHead.test(subject)
+        && !/^(?:the|a|an|these|those|this|our|your|their)$/iu.test(subject));
+    };
+    if ([...clause.matchAll(relation)].some(match => attributed(match.index)
+      && (!referenceObject.test(clause) || /^(?:(?:is|are|was|were)\s+(?:sold|found|located|available)|costs?|requires?|needs?|opens?|unlocks?|grants?|blocks?|protects?|deflects?|reflects?|absorbs?|inflicts?|deals?|reduces?|restores?|increases?|changes?|stuns?|sells?|spawns?|drops?|equals?|prevents?|follows?)\b/iu.test(clause.slice(match.index))))) return true;
+    if (!referenceObject.test(clause) && [...clause.matchAll(finiteRelation)].some(match => attributed(match.index))) return true;
+    // Generic imperative syntax preserves unfamiliar procedure verbs such as
+    // "align the prism" without admitting an instruction to follow a catalog.
+    const mechanicalResult = /\b(?:to\s+(?:unlock|open|activate|restore|repair|cross|defeat)|grants?|unlocks?|costs?|inflicts?|deals?)\s+(?!(?:the\s+)?(?:wiki|catalog|index|article|page|directory)\b)\S/iu.test(clause);
+    const browsingOnly = referenceObject.test(clause) && !mechanicalResult;
+    const instruction = /^(?:(?:first|next|then)[,:]?\s+)?(?:to\s+)?([\p{L}][\p{L}'’-]*)\s+\S/iu.exec(actionClause);
+    const localInstruction = /(?:^|[,:])\s*(?:(?:first|next|then)[,:]?\s+)?(?:to\s+)?([\p{L}][\p{L}'’-]*)\s+\S/giu;
+    const imperative = /(?:^|[,:])\s*(?:(?:first|next|then)[,:]?\s+)?[\p{L}][\p{L}'’-]*\s+(?:the|a|an|your|our|their|its|this|that)\s+\p{L}/iu.test(actionClause);
+    if (!browsingOnly && (imperative || instruction && action.test(instruction[1])
+      || [...actionClause.matchAll(localInstruction)].some(match => action.test(match[1])))) return true;
+    const modal = /\b(?:can|could|must|should|may|will|would)\s+[\p{L}][\p{L}'’-]*\s+\S/giu;
+    if (!browsingOnly && [...clause.matchAll(modal)].some(match => attributed(match.index))) return true;
+    if (/\b(?:you|players?|characters?|commanders?)\s+(?:(?:can|could|must|should|may|will|typically|usually|often)\s+){0,2}[\p{L}][\p{L}'’-]*\s+\S/iu.test(clause)
+      && !referenceObject.test(clause)) return true;
+    return !referenceObject.test(clause) && [...clause.matchAll(location)].some(match => attributed(match.index));
+  }).join('\n');
 }
 
 /** Source admission asks for a useful contribution; aggregate answer coverage remains separate. */

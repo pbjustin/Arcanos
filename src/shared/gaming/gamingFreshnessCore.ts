@@ -141,7 +141,7 @@ const dateValue = (value: string | undefined): string | undefined => {
  * Reads only fetched text. Dates from footers, HTTP Last-Modified, and frontend hints
  * cannot establish current applicability. Unsupported page layouts stay unverified.
  */
-export function extractGamingFreshnessMetadata(document: { publicUrl: string; canonicalUrl?: string; text: string; metadata?: { title?: string; headings?: string }; evidenceUnits?: readonly GamingEvidenceUnit[]; metrics?: { truncated?: boolean; instructionFiltered?: boolean }; currentnessDocument?: GamingCurrentnessDocumentMetadata },
+export function extractGamingFreshnessMetadata(document: { publicUrl: string; canonicalUrl?: string; text: string; metadata?: { title?: string; headings?: string; applicabilityUnverified?: true }; evidenceUnits?: readonly GamingEvidenceUnit[]; metrics?: { truncated?: boolean; instructionFiltered?: boolean }; currentnessDocument?: GamingCurrentnessDocumentMetadata },
   context: GamingEditionRequestContext & { game: string; platform?: string; region?: string }, now = new Date(),
   rules: readonly GamingReviewedSourceRule[] = REVIEWED_GAMING_SOURCE_RULES): GamingFreshnessEvidence {
   context = { ...context, edition: resolveGamingRequestEdition(context) };
@@ -181,7 +181,7 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
     ? selectGamingEditionScopedEvidence(document, { game: context.game, edition: inspectionEdition }) : undefined;
   // Local edition proof must not hide global restrictions outside the metadata
   // parser's bounds. Such labels remain uncertainty, never additional proof.
-  let invalidMetadata = !applicabilityScope.complete;
+  let invalidMetadata = !applicabilityScope.complete || acquiredDocument.metadata?.applicabilityUnverified === true;
   if (editionScoped?.status === 'verified') {
     // Inspect bounded local values rather than repeatedly slicing the remaining
     // document. The full negative field scan below retains actual conflicts.
@@ -479,6 +479,8 @@ export function evaluateGamingFreshness(input: GamingFreshnessEvaluationInput): 
       return false;
     }
     if (item.metadataUnverified) { reasons.add('APPLICABILITY_METADATA_UNVERIFIED'); return false; }
+    if (!historical && input.requestedVersion && item.currentness !== 'current_index' && item.patch && !same(item.patch, input.requestedVersion)
+      && !item.baselineForPatches?.some(patch => same(patch, input.requestedVersion))) { reasons.add('PATCH_MISMATCH'); return false; }
     if (item.policyVersion !== GAMING_SOURCE_POLICY_VERSION) { reasons.add('SOURCE_POLICY_REVALIDATION_REQUIRED'); return false; }
     return true;
   });

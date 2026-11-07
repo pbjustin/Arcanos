@@ -2,9 +2,9 @@ import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest } from
 import { gamingRegistryDistinctScopeQualifier, gamingRegistryExpansionNames, gamingRegistrySourceGameMatchesRequest,
   normalizeGamingRegistryEdition, readGamingRegistryEditionScope, resolveGamingRegistryGame, gamingApplicabilityAssertionContext } from './gamingGameRegistry.js';
 import { resolveGamingFreshnessDisposition } from './gamingFreshnessDisposition.js';
-import { detectGamingDocumentGame } from './gamingDocumentIngestionCore.js';
+import { classifyGamingDocumentQuality, detectGamingDocumentGame } from './gamingDocumentIngestionCore.js';
 import { normalizeGamingGameIdentity, normalizeGamingEditionIdentity, resolveGamingGuideIdentity } from './gamingGameIdentity.js';
-import { buildGamingRetrievalTerms, buildGamingRequestRequirements, hasGamingRelevantGuideContribution, gamingTermCoverage } from './gamingRetrievalPolicy.js';
+import { buildGamingRetrievalTerms, buildGamingRequestRequirements, hasGamingRelevantGuideContribution, gamingTermCoverage, gamingAttributableClaimText } from './gamingRetrievalPolicy.js';
 import { assessGamingSourcePolicy, classifyGamingQuestionFreshness, extractGamingFreshnessMetadata, evaluateGamingFreshness, type GamingFreshnessEvidence, type GamingSourcePolicyAssessment } from './gamingFreshnessCore.js';
 import type { GamingStoredKnowledgeInput } from './gamingStoredEvidenceCore.js';
 import type { ResolvedGamingDocument } from '@services/gamingDocumentResolution.js';
@@ -12,7 +12,7 @@ import { assessGamingStructuralUsability, classifyGamingEditionRequirements, rea
 import { createGamingClearAssessment, classifyGamingClearQuestion, gamingClearContextFingerprint,
   type GamingClearSourceRole } from './gamingClearPolicy.js';
 import { detectGamingLeadingGameAlias, isGamingAcquiredTopicTitle } from '@services/gamingGameDetection.js';
-import { hasGamingActionableProse } from '@services/gamingDocumentExtraction.js';
+import { gamingPlatformEvidenceMatchesRequest } from './gamingPlatformIdentity.js';
 import { gamingAcquiredGameDeclarationPattern, withoutGamingAcquiredGameDeclarations } from './gamingGameDeclaration.js';
 import { gamingIdentityNeedsExplicitContext, readGamingAcquiredAliasDeclarations,
   resolveGamingAcquiredIdentity, hasGamingAffirmativeIdentityProse, readGamingPrimaryGameDefinition, gamingAcquiredNominalScope, GAMING_ACQUIRED_SCOPE_BOUNDARY } from './gamingAcquiredIdentity.js';
@@ -676,19 +676,23 @@ export function assessGamingClearSource(input: GamingStoredKnowledgeInput & { re
   const evidenceDocument = scoped.status === 'verified' ? { ...selectedDocument, text: scoped.text, evidenceUnits: scoped.units } : selectedDocument;
   const supporting = ['patch_authority', 'currentness_index', 'live_status'].includes(role);
   const intactText = gamingClearIntactSourceText(evidenceDocument);
-  const coverage = gamingTermCoverage(intactText, buildGamingRetrievalTerms(input).focusTerms);
-  const proseText = gamingClearIntactProseText(evidenceDocument);
+  const proseText = gamingAttributableClaimText(gamingClearIntactProseText(evidenceDocument), input.game, evidenceDocument.metadata);
   const structural = assessGamingStructuralUsability({ units: evidenceDocument.evidenceUnits, ...input, proseText });
+  const supportText = structural.hasIntactUsableUnit ? intactText : proseText;
+  const coverage = gamingTermCoverage(supportText, buildGamingRetrievalTerms(input).focusTerms);
   const structuredClaim = Boolean(evidenceDocument.evidenceUnits?.length) && structural.claimShape !== 'none';
   // A complete short player action can be intelligible without padding. This
   // does not establish identity, applicability, or support for other claims.
-  const completeShortProse = !document.metrics.truncated && hasGamingActionableProse(proseText);
+  const documentQuality = classifyGamingDocumentQuality({ cleanedText: intactText, metadata: evidenceDocument.metadata,
+    game: input.game, evidenceUnits: evidenceDocument.evidenceUnits, truncated: document.metrics.truncated, minUsefulTextChars: 120 });
+  const completeShortProse = !document.metrics.truncated && documentQuality === 'complete';
   const independentProse = !structural.hasRelevantClaimUnit && structural.hasIndependentProseAnchors
     && (proseText.length >= 120 || completeShortProse) && gamingTermCoverage(proseText, buildGamingRetrievalTerms(input).focusTerms) >= 0.25;
-  const usable = structural.hasIntactUsableUnit || intactText.trim().length >= 120 || completeShortProse;
+  const referenceOnly = !supporting && (documentQuality === 'metadata-only' || documentQuality === 'unusable');
+  const usable = !referenceOnly && (structural.hasIntactUsableUnit || intactText.trim().length >= 120 || completeShortProse);
   const partialTopic = options.allowPartialCoverage === true
-    && buildGamingRequestRequirements(input).some(requirement => gamingTermCoverage(intactText, requirement.terms) === 1);
-  const contribution = options.allowPartialCoverage === true && hasGamingRelevantGuideContribution(intactText, input);
+    && buildGamingRequestRequirements(input).some(requirement => gamingTermCoverage(supportText, requirement.terms) === 1);
+  const contribution = options.allowPartialCoverage === true && hasGamingRelevantGuideContribution(supportText, input);
   const partial = options.allowPartialCoverage === true && usable && (coverage >= 0.25 || partialTopic || contribution)
     && !structural.reasonCodes.includes('CONTRADICTORY_STRUCTURAL_RECORDS');
   const relevant = supporting || (structuredClaim ? structural.claimSupported || independentProse || partial : coverage >= 0.25 || partialTopic || contribution);
@@ -715,7 +719,12 @@ export function assessGamingClearSource(input: GamingStoredKnowledgeInput & { re
     && normalizeGamingGameIdentity(input.requestedVersion) !== normalizeGamingGameIdentity(options.freshness.patch)
     && !options.freshness.baselineForPatches?.some(patch => patch.normalize('NFKC').trim().toLowerCase()
       === input.requestedVersion!.normalize('NFKC').trim().toLowerCase()));
-  const compatibility = options.freshness.metadataConflict || future || expired || wrongPatch || editionIssue && identity.status === 'conflict' ? 'conflict' as const
+  const wrongPlatform = Boolean(input.platform && options.freshness.platforms?.length
+    && !gamingPlatformEvidenceMatchesRequest(options.freshness.platforms, input.platform));
+  const wrongRegion = Boolean(input.region && options.freshness.regions?.length
+    && !options.freshness.regions.some(region => [input.region!.normalize('NFKC').trim().toLowerCase(), 'all']
+      .includes(region.normalize('NFKC').trim().toLowerCase())));
+  const compatibility = options.freshness.metadataConflict || future || expired || wrongPatch || wrongPlatform || wrongRegion || editionIssue && identity.status === 'conflict' ? 'conflict' as const
     : options.freshness.metadataUnverified || invalidInterval || editionIssue && identity.status === 'unknown' ? 'unknown' as const : 'verified' as const;
   const substantiveFreshness = stable || historical || combinedCurrent ? 'verified' as const : role === 'live_status'
     ? evaluateGamingFreshness({ question: input.prompt, game: input.game, evidence: [options.freshness], now: options.now }).usable
@@ -741,6 +750,8 @@ export function assessGamingClearSource(input: GamingStoredKnowledgeInput & { re
         unresolvedFacts: ['INDEPENDENT_CORROBORATION_NOT_ESTABLISHED', ...(!stable && !historical && !combinedCurrent ? ['COMBINED_APPLICABILITY_REQUIRED'] : [])] }
     }, findings: [...(qualifiedSourceEdition ? [{ code: 'SOURCE_EDITION_QUALIFIED', severity: 'warning' as const, evidenceRefs: refs }] : []), ...(options.freshness.metadataWarnings ?? []).map(code => ({ code, severity: 'warning' as const, evidenceRefs: refs })), ...(!supporting && structuredClaim && !structural.claimSupported && !independentProse && !partial ? structural.reasonCodes.map(code => ({ code, severity: 'blocking' as const, evidenceRefs: refs })) : []),
       ...(future || expired || wrongPatch ? [{ code: future ? 'NOT_YET_EFFECTIVE' : expired ? 'NO_LONGER_EFFECTIVE' : 'PATCH_MISMATCH', severity: 'blocking' as const, evidenceRefs: refs }] : []),
+      ...(wrongPlatform ? [{ code: 'PLATFORM_MISMATCH', severity: 'blocking' as const, evidenceRefs: refs }] : []),
+      ...(wrongRegion ? [{ code: 'REGION_MISMATCH', severity: 'blocking' as const, evidenceRefs: refs }] : []),
       ...identity.reasonCodes.filter(() => identity.status !== 'verified').map(code => ({ code, severity: identity.status === 'conflict'
       ? 'blocking' as const : 'warning' as const, evidenceRefs: refs })), ...(document.metrics.truncated
       ? [{ code: 'EXTRACTION_PARTIAL', severity: 'warning' as const, evidenceRefs: refs }] : [])], evaluatedAt: options.now.toISOString()

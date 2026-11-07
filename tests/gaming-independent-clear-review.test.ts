@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
 import { GamingResolvedSourceHarness } from './testUtils/gamingResolvedSourceHarness.js';
+import { gamingCatalogAuthorityFixture } from './fixtures/gaming-catalog-authority.js';
+import { gamingStructuredResourceFixtures } from './testUtils/gamingStructuredResourceFixtures.js';
 
 const http = jest.fn();
 const enqueue = jest.fn();
@@ -28,7 +30,7 @@ const { resolveGamingRegistryGame } = await import('../src/shared/gaming/gamingG
 const { assessGamingClearEvidence } = await import('../src/shared/gaming/gamingClearEvidence.js');
 const { selectGamingHybridEvidence } = await import('../src/services/gamingHybridCandidates.js');
 const { createApprovedGamingSourceIngestion, executeQueuedGamingSourceIngestion, hashGamingApprovedDocument,
-  buildStoredGamingKnowledgeContext, refreshGamingSources } = await import('../src/services/gamingSourceIngestion.js');
+  buildStoredGamingKnowledgeContext, refreshGamingSources, captureGamingSourceAuthorityRestrictionCount } = await import('../src/services/gamingSourceIngestion.js');
 const { searchActiveGamingKnowledge } = await import('../src/core/db/repositories/gamingSourceRepository.js');
 const { logger } = await import('../src/platform/logging/structuredLogging.js');
 
@@ -49,9 +51,10 @@ async function acquired(title: string, text: string, requestedGame = game, extra
   const sourcePolicy = assessGamingSourcePolicy(url, requestedGame);
   const freshness = extractGamingFreshnessMetadata(document, input, new Date());
   const contentHash = hashGamingApprovedDocument(document);
+  const authorityRestrictionCount = await captureGamingSourceAuthorityRestrictionCount(requestedGame, document.canonicalUrl);
   const assessment = assessGamingClearSource(input, document, { subjectId: 'independent-clear-source', subjectHash: contentHash,
     actorScopeHash, sourcePolicy, freshness, now: new Date() });
-  return { document, input, sourcePolicy, freshness, contentHash, assessment };
+  return { document, input, sourcePolicy, freshness, contentHash, assessment, authorityRestrictionCount };
 }
 async function approvedIngestion(fixture: Awaited<ReturnType<typeof acquired>>, refetch?: { title: string; text: string }) {
   const { input, assessment, freshness, contentHash } = fixture;
@@ -60,6 +63,7 @@ async function approvedIngestion(fixture: Awaited<ReturnType<typeof acquired>>, 
   const queued = await createApprovedGamingSourceIngestion([{
     url, game: input.game, contentHash, actorScopeHash, policyVersion: 'gaming-hybrid-candidates/v1',
     sourceTrustType: 'supplied', freshness: { ...freshness }, sourceAssessment: assessment,
+    authorityRestrictionCount: fixture.authorityRestrictionCount,
     applicabilityContext: { game: input.game, mode: input.mode, classification: 'stable', historical: false,
       seasonalPatchRequired: false, contextFingerprint: assessment.contextFingerprint }
   }], 'independent-clear-approval', { actorKey, canStore: true });
@@ -94,6 +98,123 @@ beforeEach(() => {
 afterEach(() => { jest.restoreAllMocks(); });
 
 describe('independent CLEAR review through acquired synthetic documents', () => {
+  it.each([false, true])('rejects restricted decoded URL-build fields before source persistence, escaped=%s', async escaped => {
+    const fixture = gamingStructuredResourceFixtures[0];
+    const sourceUrl = new URL(fixture.jsonUrl);
+    sourceUrl.search = '';
+    const payload = JSON.stringify({ ...fixture.payload, notes: ['No automated use.'] });
+    sourceUrl.searchParams.set('build', escaped ? payload.replace('automated', 'autom\\u0061ted') : payload);
+    http.mockResolvedValue({ status: 200, headers: { 'content-type': 'text/html' }, data: html(`${fixture.game} guide`,
+      `In the game ${fixture.game}, equip Light Ion Blaster II before approaching the enemy. Preserve charge before crossing the channel.`) });
+    const result = await executeQueuedGamingSourceIngestion('restricted-decoded-worker', {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [], sources: [{ submittedIndex: 0,
+        canonicalUrl: sourceUrl.toString(), game: fixture.game, gameKey: fixture.game.toLowerCase(), origin: 'user_supplied' }]
+    });
+    expect(result.output.sources[0]).toMatchObject({ status: 'rejected', classification: 'rejected', generationEligible: false,
+      error: { code: 'SOURCE_USE_RESTRICTED', retryable: false } });
+    expect(database.revisions).toEqual([]);
+    expect(database.records).toEqual([]);
+    expect(database.queries.filter(query => /^(?:INSERT|UPDATE|DELETE) /u.test(query))).toEqual([]);
+  });
+
+  it('bounds epoch pool waits and prevents late canceled waiters from issuing SQL', async () => {
+    for (const callerCancelled of [false, true]) {
+      let provideClient!: (client: unknown) => void;
+      const release = jest.fn();
+      const connect = jest.spyOn(database.pool, 'connect').mockImplementation((() => new Promise(resolve => { provideClient = resolve; })) as any);
+      try {
+        const controller = new AbortController();
+        const snapshot = captureGamingSourceAuthorityRestrictionCount(game, url, controller.signal, 10);
+        if (callerCancelled) {
+          controller.abort();
+          await expect(snapshot).rejects.toMatchObject({ name: 'AbortError' });
+        } else expect(await snapshot).toBeUndefined();
+        expect(database.queries).toEqual([]);
+        provideClient({ query: database.query.bind(database), release });
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(release).toHaveBeenCalledTimes(1);
+        expect(database.queries).toEqual([]);
+      } finally { connect.mockRestore(); }
+    }
+  });
+
+  it('preserves applicability approval through the real queue JSON representation', async () => {
+    const fixture = await acquired(`${game} guide`, `In the game ${game}, ${guidance}`);
+    expect(fixture.assessment.qualityEligible).toBe(true);
+    const admitted = await createApprovedGamingSourceIngestion([{
+      url, game, contentHash: fixture.contentHash, actorScopeHash, policyVersion: 'gaming-hybrid-candidates/v1',
+      sourceTrustType: 'supplied', freshness: { ...fixture.freshness }, sourceAssessment: fixture.assessment,
+      applicabilityContext: { game, mode: 'guide', classification: 'stable', historical: false, seasonalPatchRequired: false,
+        contextFingerprint: fixture.assessment.contextFingerprint, requestedVersion: undefined, edition: undefined,
+        platform: undefined, region: undefined }
+    }], 'json-applicability-approval', { actorKey, canStore: true });
+    expect(admitted.statusCode).toBe(202);
+    const queued = JSON.parse(JSON.stringify((enqueue.mock.calls.at(-1)![0] as any).input.body));
+    const result = await executeQueuedGamingSourceIngestion('json-applicability-approval', queued);
+    expect(result.output.sources[0]).toMatchObject({ status: 'stored', classification: 'verified', generationEligible: true });
+    const persistedRevisions = structuredClone(database.revisions);
+    for (const variant of ['changed-context', 'expired', 'invalid-expiry']) {
+      const changed = structuredClone(queued);
+      if (variant === 'changed-context') changed.sources[0].hybridApproval.applicabilityContext.region = 'EU';
+      else changed.sources[0].hybridApproval.freshness.effectiveUntil = variant === 'expired'
+        ? new Date(Date.now() - 60_000).toISOString() : 'invalid-date';
+      const rejected = await executeQueuedGamingSourceIngestion(`json-applicability-${variant}`, changed);
+      expect(rejected.output.sources[0]).toMatchObject({ status: 'rejected', generationEligible: false,
+        error: { code: 'APPROVED_APPLICABILITY_EXPIRED' } });
+    }
+    expect(database.revisions).toEqual(persistedRevisions);
+  });
+
+  it.each(gamingCatalogAuthorityFixture.cases)('retains acquired $id as reference material through direct ingestion and refresh', async ({ text }) => {
+    const fixture = gamingCatalogAuthorityFixture;
+    http.mockResolvedValue({ status: 200, headers: { 'content-type': 'text/html' }, data: fixture.html(text) });
+    const body = { action: 'ingest' as const, schemaVersion: '1' as const, submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: fixture.url, game: fixture.game, gameKey: 'portal-2', origin: 'user_supplied' as const }] };
+    const result = await executeQueuedGamingSourceIngestion('catalog-direct-authority', body);
+    expect(result.output.sources[0]).toMatchObject({ status: 'stored', classification: 'reference_only', generationEligible: false });
+    const original = structuredClone(database.revisions[0].provenance);
+    const refresh = await refreshGamingSources({ action: 'refresh', payload: {
+      sourceIds: [database.source!.id], idempotencyKey: 'catalog-authority-refresh'
+    } }, { actorKey });
+    expect(refresh.statusCode).toBe(202);
+    const refreshed = await executeQueuedGamingSourceIngestion('catalog-refresh-authority', (enqueue.mock.calls.at(-1)![0] as any).input.body);
+    expect(refreshed.output.sources[0]).toMatchObject({ classification: 'needs_reassessment', generationEligible: false });
+    expect(database.revisions[0].provenance).toEqual(original);
+    for (const hybridRetrieval of [false, true]) {
+      const knowledge = await buildStoredGamingKnowledgeContext({ game: fixture.game, mode: 'guide', prompt: fixture.question,
+        hybridRetrieval, requireRequestCoverage: true });
+      expect(knowledge.context).toBe('');
+      expect(knowledge.evidence).toBeUndefined();
+      expect(knowledge.clearEvidenceAssessment?.decision).not.toBe('accept');
+    }
+  });
+
+  it('cannot promote a server-retained complete guide through an ordinary refresh', async () => {
+    const fixture = await acquired(`${game} guide`, `In the game ${game}, ${guidance}`);
+    const retained = await createApprovedGamingSourceIngestion([{
+      url, game, contentHash: fixture.contentHash, actorScopeHash, policyVersion: 'gaming-hybrid-candidates/v1',
+      sourceTrustType: 'supplied', freshness: {}, retainUnverified: true
+    }], 'retained-authority-original', { actorKey, canStore: true });
+    expect(retained.statusCode).toBe(202);
+    const initialBody = (enqueue.mock.calls.at(-1)![0] as any).input.body;
+    expect((await executeQueuedGamingSourceIngestion('retained-authority-original', initialBody)).output.sources[0])
+      .toMatchObject({ classification: 'stored_unverified', generationEligible: false });
+    expect(database.revisions[0].provenance.gamingClear).toBeUndefined();
+    const before = await buildStoredGamingKnowledgeContext({ ...fixture.input, hybridRetrieval: true, requireRequestCoverage: true });
+    expect(before.context).toBe('');
+    const refresh = await refreshGamingSources({ action: 'refresh', payload: {
+      sourceIds: [database.source!.id], idempotencyKey: 'retained-authority-refresh'
+    } }, { actorKey });
+    expect(refresh.statusCode).toBe(202);
+    const body = (enqueue.mock.calls.at(-1)![0] as any).input.body;
+    const result = await executeQueuedGamingSourceIngestion('retained-authority-refresh', body);
+    const after = await buildStoredGamingKnowledgeContext({ ...fixture.input, hybridRetrieval: true, requireRequestCoverage: true });
+    expect({ classification: result.output.sources[0].classification, generationEligible: result.output.sources[0].generationEligible,
+      selectedEvidenceCount: after.evidence?.length ?? 0, evidenceDecision: after.clearEvidenceAssessment?.decision })
+      .toMatchObject({ classification: 'needs_reassessment', generationEligible: false, selectedEvidenceCount: 0 });
+    await assertRetainedWithoutGeneration(after, 'needs_reassessment');
+  });
+
   it.each([
     [game, game, 'Tidal Prism Alignment guide'],
     ['Slate Meridian 3', 'Slate Meridian III', 'Slate Meridian III guide']
@@ -119,7 +240,7 @@ describe('independent CLEAR review through acquired synthetic documents', () => 
     const fixture = await acquired('Tidal Prism Alignment guide', `In the game ${game}, ${guidance}`);
     const result = await approvedIngestion(fixture, { title: 'Tidal Prism Alignment guide', text });
     expect(result.output.sources[0]).toMatchObject({ status: 'rejected', error: { code: 'APPROVED_CONTENT_CHANGED' } });
-    expect(database.queries).toEqual([]);
+    expect(database.queries.filter(query => /^(?:INSERT|UPDATE|DELETE) /u.test(query))).toEqual([]);
     expect(database.records).toEqual([]);
     expect(http).toHaveBeenCalledTimes(2);
   });
@@ -131,7 +252,7 @@ describe('independent CLEAR review through acquired synthetic documents', () => 
       sources: [{ submittedIndex: 0, canonicalUrl: url, game, gameKey: 'slate-meridian', origin: 'user_supplied' }]
     });
     expect(result.output.sources[0]).toMatchObject({ status: 'rejected', error: { code: 'GAME_MISMATCH' } });
-    expect(database.queries).toEqual([]);
+    expect(database.queries.filter(query => /^(?:INSERT|UPDATE|DELETE) /u.test(query))).toEqual([]);
     expect(database.records).toEqual([]);
   });
 
@@ -142,7 +263,7 @@ describe('independent CLEAR review through acquired synthetic documents', () => 
       sources: [{ submittedIndex: 0, canonicalUrl: url, game, gameKey: 'slate-meridian', origin: 'user_supplied' }]
     });
     expect(result.output.sources[0]).toMatchObject({ status: 'rejected', error: { code: 'GAME_MISMATCH' } });
-    expect(database.queries).toEqual([]);
+    expect(database.queries.filter(query => /^(?:INSERT|UPDATE|DELETE) /u.test(query))).toEqual([]);
     expect(database.records).toEqual([]);
   });
 
@@ -196,7 +317,7 @@ describe('independent CLEAR review through acquired synthetic documents', () => 
       sources: [{ submittedIndex: 0, canonicalUrl: url, game: 'Elden Ring', gameKey: 'elden-ring', origin: 'user_supplied' }]
     });
     expect(result.output.sources[0]).toMatchObject({ status: 'rejected', error: { code: 'EDITION_CONFLICT' } });
-    expect(database.queries).toEqual([]);
+    expect(database.queries.filter(query => /^(?:INSERT|UPDATE|DELETE) /u.test(query))).toEqual([]);
     expect(database.records).toEqual([]);
   });
 
@@ -318,7 +439,7 @@ describe('independent CLEAR review through acquired synthetic documents', () => 
     }], 'independent-clear-no-consent', { actorKey, canStore: false });
     expect(response.statusCode).toBe(403);
     expect(enqueue).not.toHaveBeenCalled();
-    expect(database.queries).toEqual([]);
+    expect(database.queries.filter(query => /^(?:INSERT|UPDATE|DELETE) /u.test(query))).toEqual([]);
     expect(gamingClearHash(fixture.document.text)).toMatch(/^[a-f0-9]{64}$/u);
   });
 

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-07T08:36:57.590Z",
+  "generatedAt": "2026-11-07T11:35:37.973Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2948,6 +2948,9 @@
           "relativePath": "src/shared/gaming/gamingSourceAcquisitionPreviewFixture.ts"
         },
         {
+          "relativePath": "src/shared/gaming/gamingSourceAuthority.ts"
+        },
+        {
           "relativePath": "src/shared/gaming/gamingSourceCatalogData.ts"
         },
         {
@@ -4432,6 +4435,9 @@
           "relativePath": "tests/fixtures/environmentBooleanCases.ts"
         },
         {
+          "relativePath": "tests/fixtures/gaming-catalog-authority.ts"
+        },
+        {
           "relativePath": "tests/fixtures/gaming-currentness/second-publisher.ts"
         },
         {
@@ -4502,6 +4508,9 @@
         },
         {
           "relativePath": "tests/gaming-body-identity.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-catalog-evidence-authority.test.ts"
         },
         {
           "relativePath": "tests/gaming-claim-corroboration.test.ts"
@@ -4580,6 +4589,9 @@
         },
         {
           "relativePath": "tests/gaming-currentness-workflow.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-decoded-source-use-review.test.ts"
         },
         {
           "relativePath": "tests/gaming-discovery-recovery.integration.test.ts"
@@ -4822,6 +4834,12 @@
           "relativePath": "tests/gaming-mixed-candidate-failures.test.ts"
         },
         {
+          "relativePath": "tests/gaming-navigation-applicability-regression.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-navigation-independent-review.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-ordinary-gameplay-acceptance.integration.test.ts"
         },
         {
@@ -4946,6 +4964,9 @@
         },
         {
           "relativePath": "tests/gaming-source-acquisition-preview.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-source-authority.test.ts"
         },
         {
           "relativePath": "tests/gaming-source-discovery.integration.test.ts"
@@ -5321,6 +5342,9 @@
         },
         {
           "relativePath": "tests/integration/dag-worker-metrics.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/integration/gaming-authority-http.pg18.integration.test.ts"
         },
         {
           "relativePath": "tests/integration/gaming-durable-rag.pg18.integration.test.ts"

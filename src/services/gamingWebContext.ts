@@ -1739,8 +1739,9 @@ async function fetchGamingRagDocument(
 
   let redirected = false;
   try {
-    if (urlStructuredResult?.failureReason === "SOURCE_INSTRUCTIONS_REJECTED") {
-      throw new GamingDocumentAcquisitionError('SOURCE_EXTRACTION_FAILED', 'extraction', 'SOURCE_INSTRUCTIONS_REJECTED');
+    if (urlStructuredResult?.failureReason === "SOURCE_INSTRUCTIONS_REJECTED"
+      || urlStructuredResult?.failureReason === "SOURCE_USE_RESTRICTED") {
+      throw new GamingDocumentAcquisitionError('SOURCE_EXTRACTION_FAILED', 'extraction', urlStructuredResult.failureReason);
     }
     let extraction: FetchAndCleanExtractionMetrics = {
       strategy: "body",
@@ -1841,8 +1842,9 @@ async function fetchGamingRagDocument(
     } catch {
       structuredResult = redirected ? undefined : urlStructuredResult;
     }
-    if (structuredResult?.failureReason === "SOURCE_INSTRUCTIONS_REJECTED") {
-      throw new GamingDocumentAcquisitionError('SOURCE_EXTRACTION_FAILED', 'extraction', 'SOURCE_INSTRUCTIONS_REJECTED');
+    if (structuredResult?.failureReason === "SOURCE_INSTRUCTIONS_REJECTED"
+      || structuredResult?.failureReason === "SOURCE_USE_RESTRICTED") {
+      throw new GamingDocumentAcquisitionError('SOURCE_EXTRACTION_FAILED', 'extraction', structuredResult.failureReason);
     }
     const structuredRelevant = Boolean(
       structuredResult
