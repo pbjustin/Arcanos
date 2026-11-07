@@ -115,7 +115,7 @@ export function gamingAttributableClaimText(text: string, game?: string, metadat
   const metaHead = /\b(?:wiki|catalog|index|glossary|encyclopedia|entry|entries|article|articles|page|pages|topic|topics|directory|collection|heading|headings|guide|document|source|section|sections|overview|summary|content|gameplay|evidence|information|news|record|records|table|tables|titles|labels|names)\s*$/iu;
   const referenceObject = /\b(?:wiki|catalog|index|encyclopedia|directory|articles?|pages?|headings?|titles?|topics?|glossary)\b/iu;
   const action = /\b(?:activate|allocate|attack|avoid|block|buy|choose|collect|compare|complete|craft|cross|defeat|dodge|enter|equip|exit|explore|find|finish|focus|follow|gather|heal|improve|inspect|jump|keep|leave|move|open|place|plan|plant|practice|prepare|preserve|press|prioritize|raise|reach|read|reduce|remove|repair|restore|return|rotate|save|select|spend|take|trade|travel|turn|unlock|upgrade|use|visit|wait)\b/iu;
-  const relation = /\b(?:is|are|was|were|has|have|uses?|costs?|requires?|needs?|opens?|unlocks?|grants?|blocks?|protects?|deflects?|reflects?|absorbs?|inflicts?|deals?|reduces?|restores?|increases?|changes?|stuns?|sells?|spawns?|drops?|equals?|provides?|supports?|contains?|includes?|prevents?|allows?|follows?|begins?|starts?|ends?|waits?|leaves?|progress(?:es)?|prioritizes?|retains?|favors?|combines?|improves?|determines?|depends?|gives?|causes?)\s+\S/giu;
+  const relation = /\b(?:is|are|was|were|has|have|uses?|costs?|requires?|needs?|opens?|unlocks?|grants?|blocks?|protects?|deflects?|reflects?|absorbs?|inflicts?|deals?|reduces?|restores?|increases?|changes?|stuns?|sells?|spawns?|drops?|equals?|provides?|supports?|contains?|includes?|prevents?|allows?|follows?|begins?|starts?|ends?|waits?|leaves?|progress(?:es)?|prioritizes?|retains?|favors?|combines?|improves?|determines?|depends?|gives?|causes?|offers?)\s+\S/giu;
   // A plural noun is not a finite verb merely because it ends in s or is
   // capitalized. Retain productive verb forms without admitting label bags.
   const finiteRelation = /\b[\p{L}][\p{L}'’-]*(?:ates|ifies|izes|ises|ects|uces|ores|ows|cks|ches|shes|rms|rns|nks|lds|nts)\s+(?!(?:and|or|plus|as|is|are|was|were|has|have|can|could|must|should|may|will|would)\b)\S/giu;
@@ -159,6 +159,9 @@ export function gamingAttributableClaimText(text: string, game?: string, metadat
         && !/^(?:the|a|an|these|those|this|our|your|their)$/iu.test(subject));
     };
     if ([...clause.matchAll(relation)].some(match => attributed(match.index)
+      // Offering a guide/build is a description until it binds the actual
+      // configuration used. Catalog/document subjects remain excluded above.
+      && (!/^offers?\b/iu.test(match[0]) || /\busing\s+\S/iu.test(clause.slice(match.index)))
       && (!referenceObject.test(clause) || /^(?:(?:is|are|was|were)\s+(?:sold|found|located|available)|costs?|requires?|needs?|opens?|unlocks?|grants?|blocks?|protects?|deflects?|reflects?|absorbs?|inflicts?|deals?|reduces?|restores?|increases?|changes?|stuns?|sells?|spawns?|drops?|equals?|prevents?|follows?)\b/iu.test(clause.slice(match.index))))) return true;
     if (!referenceObject.test(clause) && [...clause.matchAll(finiteRelation)].some(match => attributed(match.index))) return true;
     // Generic imperative syntax preserves unfamiliar procedure verbs such as

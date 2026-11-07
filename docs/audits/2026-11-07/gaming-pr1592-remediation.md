@@ -31,6 +31,8 @@ snapshot is captured from exact canonical source identity before source CLEAR,
 bound into the server artifact and durable queue, and compared with current
 history after the persistence lock. Public source/refresh and MCP inputs cannot
 supply this authorization. Missing legacy epochs cannot clear held history.
+The owned workflow's storage intent controls this additional read: transient-only
+workflows do not acquire a storage epoch or add a database dependency.
 
 [Persistence and SQL retrieval](../../../src/core/db/repositories/gamingSourceRepository.ts)
 derive restrictions from immutable source history. A separate source lock is
@@ -115,6 +117,10 @@ is preserved.
   and assessment. Tampered region, expired and malformed approvals still reject.
 - Broad positive controls caught intermediate overly narrow claim syntax. The
   genuine original procedure and factual assertions remain enforced.
+- An existing disclaimer test previously allowed a coverage disclaimer to be
+  selected while prohibiting generation. Its negative assertions now require no
+  selected evidence or evidence IDs, preserving the no-provider/no-write checks.
+  The stronger regression fails on unchanged original base and passes here.
 - Split inline and entity-encoded publisher restrictions could disappear during
   footer cleanup. The complete parser-visible body is inspected before omission,
   alongside the existing raw scan. Layout, list-inventory and ancestry exhaustion

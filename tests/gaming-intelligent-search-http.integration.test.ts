@@ -632,12 +632,13 @@ describe('Intelligent discovery through authenticated loopback Gaming MCP and re
     let evaluated: Awaited<ReturnType<typeof evaluateGamingHybridCandidates>> | undefined;
     await serve(value => { evaluated = value; }); const started = await query();
     const incomplete = await submit(started.result);
-    // V2 can retain a valid selected passage while requesting complementary
-    // coverage. Selection alone never grants permission to generate the answer.
+    // A coverage disclaimer supplies no gameplay fact. It must stay outside
+    // selected generation evidence while the workflow requests useful coverage.
     expect(incomplete.result).toMatchObject({ state: 'discovery_required', nextAction: 'search',
-      reason: 'QUESTION_COVERAGE_INSUFFICIENT', evidenceSelected: true, coverageSatisfied: false });
+      reason: 'QUESTION_COVERAGE_INSUFFICIENT', evidenceSelected: false, coverageSatisfied: false });
     expect(incomplete.result.answer).toBeUndefined();
-    expect(evaluated?.knowledge.evidence?.map(chunk => chunk.text)).toEqual(['It does not explain any shield acquisition instructions.']);
+    expect(incomplete.result.selectedEvidenceIds).toEqual([]);
+    expect(evaluated?.knowledge.evidence ?? []).toEqual([]);
     expect(jest.mocked(logger.info).mock.calls.some(([event]) => event === 'gaming.clear.evidence.completed')).toBe(false);
     expect(acquire).toHaveBeenCalledTimes(1); expect(responsesCreate).not.toHaveBeenCalled();
     expect(modelsRetrieve).not.toHaveBeenCalled(); expect(ingest).not.toHaveBeenCalled(); expect(memoryWrite).not.toHaveBeenCalled();

@@ -154,6 +154,8 @@ export async function evaluateGamingHybridCandidates(
   submission: GamingStoredKnowledgeInput & { candidates: readonly GamingHybridCandidateInput[]; region?: string;
     discoveryType?: 'gameplay_evidence' | 'currentness_verification'; protocolVersion?: 'gaming-hybrid-v1' | 'gaming-hybrid-v2' },
   context: { actorKey: string; requestId?: string; traceId?: string; workflowId?: string; signal?: AbortSignal; maxElapsedMs?: number;
+    /** Owned workflow intent; an absent policy stays transient and database-free. */
+    storagePolicy?: GamingHybridStoragePolicy;
     /** Server-derived from the owned workflow's explicit storage policy. */
     retainUnverified?: boolean },
   dependencies: GamingHybridCandidateDependencies = {}
@@ -434,6 +436,7 @@ export async function evaluateGamingHybridCandidates(
         ? `${input.game} ${input.edition}` : input.game;
       const remainingMs = deadlineAt - Date.now();
       const authorityRestrictionCount = remainingMs > 0
+        && (context.storagePolicy === 'ask_before_store' || context.storagePolicy === 'auto_store_approved')
         ? await captureGamingSourceAuthorityRestrictionCount(storageGame, document.canonicalUrl, signal, remainingMs) : undefined;
       const sourceAssessment = assessGamingClearSource(input, document, { subjectId: candidateId, subjectHash: contentHash,
         actorScopeHash: actorHash(context.actorKey), sourcePolicy: policy, freshness, now: now(),

@@ -1010,7 +1010,8 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
           evaluated = await deps.evaluateCandidates({ ...workflow.pipeline, game: workflow.input.game,
             region: workflow.input.region, candidates: input.candidates, discoveryType,
             ...(v2 ? { protocolVersion: GAMING_HYBRID_V2_CONTRACT_VERSION } : {}) },
-          { ...context, workflowId: workflow.id, retainUnverified: workflow.input.storagePolicy === 'ask_before_store',
+          { ...context, workflowId: workflow.id, storagePolicy: workflow.input.storagePolicy,
+            retainUnverified: workflow.input.storagePolicy === 'ask_before_store',
             ...(v2 ? { maxElapsedMs: acquisitionAllowanceMs } : {}) });
           chargedAcquisitionMs = Math.max(0, evaluated.acquisitionWorkMs ?? deps.now() - acquisitionStartedAt);
         } finally {

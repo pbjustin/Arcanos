@@ -204,13 +204,13 @@ try {
       res.end(pages.get(req.url));
     });
     await new Promise(done => publisher.listen(0, '127.0.0.1', done));
-    Resolver.prototype.resolve4 = async function(host) { assert.ok(['guides.example.org', 'swtor.com'].includes(host)); return ['93.184.216.34']; };
-    Resolver.prototype.resolve6 = async function(host) { assert.ok(['guides.example.org', 'swtor.com'].includes(host)); return []; };
+    Resolver.prototype.resolve4 = async function(host) { assert.ok(['guides.example.org', 'swtor.com', 'bg3.wiki'].includes(host)); return ['93.184.216.34']; };
+    Resolver.prototype.resolve6 = async function(host) { assert.ok(['guides.example.org', 'swtor.com', 'bg3.wiki'].includes(host)); return []; };
     // Mock only the external publisher transport: preserve the protected request
     // checks and stream actual HTTP bytes through all production meters/parsers.
     axios.Axios.prototype.get = async function(url, options) {
       assert.equal(new URL(url).hostname, '93.184.216.34');
-      assert.ok(['guides.example.org', 'swtor.com'].includes(options.headers.Host));
+      assert.ok(['guides.example.org', 'swtor.com', 'bg3.wiki'].includes(options.headers.Host));
       assert.equal(options.maxRedirects, 0); assert.equal(options.proxy, false);
       assert.equal(options.httpsAgent.options.rejectUnauthorized, true);
       return new Promise((done, reject) => {
@@ -238,7 +238,16 @@ try {
       verification: { keyResolver, readEnvironmentValue: () => undefined } }));
     server = application.listen(0, '127.0.0.1');
     await new Promise(done => server.on('listening', done));
+    let ownerWindowStartedAt = Date.now();
+    let ownerWindowRequests = 0;
     async function rpc(name, args, signed = bearer, method = 'tools/call') {
+      // Keep the expanded authored transcript within the real 30/minute owner
+      // admission limit. No limiter, clock, execution or provider guard is mocked.
+      if (ownerWindowRequests >= 30) {
+        await new Promise(done => setTimeout(done, Math.max(0, 60_000 - (Date.now() - ownerWindowStartedAt)) + 50));
+        ownerWindowStartedAt = Date.now(); ownerWindowRequests = 0;
+      }
+      ownerWindowRequests += 1;
       const body = JSON.stringify({ jsonrpc: '2.0', id: randomUUID(), method, ...(method === 'tools/call' ? { params: { name, arguments: args } } : {}) });
       return new Promise((done, reject) => {
         const outgoing = request({ hostname: '127.0.0.1', port: server.address().port, path: GAMING_MCP_PATH, method: 'POST',
@@ -340,6 +349,43 @@ try {
       check(`${version} reference invokes no generation`, () => assert.equal(providerRequests.length, beforeReferenceProviders));
       states.push({ ...result, eligible: false, game: hybridGame });
     }
+    // Authored synthetic bytes exercise the existing reviewed community policy;
+    // no real publisher is contacted and no real-game accuracy is claimed.
+    const confirmedGame = "Baldur's Gate 3";
+    const confirmedPath = '/wiki/Synthetic_observatory_1592';
+    const confirmedUrl = `https://bg3.wiki${confirmedPath}`;
+    pages.set(confirmedPath, html(PASSAGE, '', confirmedGame));
+    const confirmedProviderStart = providerRequests.length;
+    const confirmedQuery = unwrap(await rpc('arcanos_gaming_hybrid_query', { contractVersion: 'gaming-hybrid-v2',
+      game: confirmedGame, edition: 'base-game', question: PROMPT, storagePolicy: 'ask_before_store', idempotencyKey: randomUUID() })).result;
+    const confirmedFound = unwrap(await rpc('arcanos_gaming_submit_candidates', { contractVersion: 'gaming-hybrid-v2',
+      workflowId: confirmedQuery.workflowId, expectedRevision: confirmedQuery.revision,
+      candidates: [{ url: confirmedUrl }], idempotencyKey: randomUUID() })).result;
+    check('owner-confirmed verified hybrid selects grounded evidence', () => {
+      assert.equal(confirmedFound.state, 'answer_ready', JSON.stringify(confirmedFound));
+      assert.equal(confirmedFound.evidenceSelected, true);
+      assert.equal(confirmedFound.answer?.provenance, 'arcanos-trinity');
+      assert.ok(confirmedFound.answer.sources.some(source => source.url === confirmedUrl));
+      assert.ok(confirmedFound.answer.response.includes('silver telescope'));
+    });
+    const confirmedStored = unwrap(await rpc('arcanos_gaming_ingest_candidates', { contractVersion: 'gaming-hybrid-v2',
+      workflowId: confirmedQuery.workflowId, candidateIds: [confirmedFound.candidates[0].candidateId],
+      storagePolicy: 'ask_before_store', confirmStore: true, idempotencyKey: randomUUID() }));
+    assert.ok(confirmedStored.result.ingestion, JSON.stringify(confirmedStored));
+    const confirmed = (await work(confirmedStored.result.ingestion.ingestionId)).output.sources[0];
+    check('owner-confirmed verified hybrid persists through queued worker', () => {
+      assert.equal(confirmed.classification, 'verified');
+      assert.equal(confirmed.generationEligible, true);
+      assert.equal(confirmed.canonicalUrl, confirmedUrl);
+      assert.ok(confirmed.sourceId);
+    });
+    check('owner-confirmed verified hybrid uses real provider stages', () => {
+      const requests = providerRequests.slice(confirmedProviderStart);
+      assert.ok(requests.some(item => item.lane === 'structured-reasoning'));
+      assert.ok(requests.some(item => item.model === process.env.FINETUNED_MODEL_ID));
+      assert.equal(requests.filter(item => item.lane === 'gaming-answer-audit').length, 1);
+    });
+    states.push({ ...confirmed, eligible: true, game: confirmedGame, request: { edition: 'base-game' } });
     const autoGame = 'Star Wars: The Old Republic';
     const autoPath = '/patchnotes/synthetic-1592-authority';
     pages.set(autoPath, html(PASSAGE, '<p>Patch: 2.1. Published at: 2026-11-07. Platforms: all. Regions: all.</p>', autoGame)

@@ -94,7 +94,8 @@ const environment = { ARCANOS_GAMING_RAG_ENABLED: 'true', ARCANOS_GAMING_DISCOVE
 let prior: Record<string, string | undefined>;
 
 async function evaluate(overrides: Record<string, unknown> = {}) {
-  return evaluateGamingHybridCandidates({ ...input, candidates: [{ url: URL }], ...overrides }, context);
+  return evaluateGamingHybridCandidates({ ...input, candidates: [{ url: URL }], ...overrides },
+    { ...context, storagePolicy: 'ask_before_store' });
 }
 async function store(candidates: Awaited<ReturnType<typeof evaluate>>['accepted'], key = 'store-operation-1') {
   return createApprovedGamingHybridIngestion({ candidates, storagePolicy: 'ask_before_store', confirmed: true, idempotencyKey: key }, context);

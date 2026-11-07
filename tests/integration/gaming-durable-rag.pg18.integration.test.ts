@@ -438,7 +438,7 @@ describeWithDatabase('durable Gaming chunk storage and retrieval on PostgreSQL 1
     const { gamingClearHash } = await import('../../src/shared/gaming/gamingClearPolicy.js');
     for (const mutation of ['changed-count', 'removed-count', 'copied-artifact', 'changed-game']) {
       const evaluated = await evaluateGamingHybridCandidates({ ...fixture.input, candidates: [{ url: fixture.publicUrl }] },
-        { actorKey: fixture.actorKey, workflowId: randomUUID() });
+        { actorKey: fixture.actorKey, workflowId: randomUUID(), storagePolicy: 'ask_before_store' });
       const original = evaluated.accepted[0];
       expect(original.authorityRestrictionCount).toBe(1);
       const candidate = mutation === 'copied-artifact' ? { ...original } : original;
@@ -470,7 +470,7 @@ describeWithDatabase('durable Gaming chunk storage and retrieval on PostgreSQL 1
     try {
       databasePool = undefined as unknown as Pool;
       evaluated = await evaluateGamingHybridCandidates({ ...fixture.input, candidates: [{ url: fixture.publicUrl }] },
-        { actorKey: fixture.actorKey, workflowId: randomUUID() });
+        { actorKey: fixture.actorKey, workflowId: randomUUID(), storagePolicy: 'ask_before_store' });
     } finally { databasePool = connectedPool; }
     expect(evaluated.accepted).toHaveLength(1);
     expect(evaluated.accepted[0].authorityRestrictionCount).toBeUndefined();

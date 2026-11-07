@@ -24,7 +24,9 @@ export const gamingCatalogAuthorityFixture = {
     { id: 'keyword-titlecase', text: 'In the game Portal 2, Copper shield locations and Copper shield upgrades '
       + 'and Copper shield skills and Copper shield equipment categories.' },
     { id: 'keyword-lowercase', text: 'In the game Portal 2, copper shield locations and copper shield upgrades '
-      + 'and copper shield skills and copper shield equipment categories.' }
+      + 'and copper shield skills and copper shield equipment categories.' },
+    { id: 'vague-offer', text: 'In the game Portal 2, Portal 2 offers a good copper shield build. '
+      + 'Copper shield locations and copper shield upgrades and copper shield skills and copper shield equipment categories.' }
   ] as const,
   html(text: string) {
     return `<html><title>${this.title}</title><article><h1>${this.title}</h1><p>${text}</p></article></html>`;

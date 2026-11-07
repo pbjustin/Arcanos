@@ -18,9 +18,19 @@ databaseTest('compiled authenticated MCP, real SQL queue/worker, protected loopb
   expect(receipt.sourceIdentity.commit).toBe(execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim());
   expect(receipt.sourceIdentity.buildIdentity.artifactStatus).toBe('matches_build_receipt');
   expect(receipt.freshProcess.sourceIdentity).toEqual(receipt.sourceIdentity);
-  expect(receipt.checks).toEqual(expect.arrayContaining(['refresh cannot grant authority', 'real compiled grounded response', 'no unauthorized network attempted']));
+  expect(receipt.checks).toEqual(expect.arrayContaining(['refresh cannot grant authority', 'real compiled grounded response', 'no unauthorized network attempted',
+    'owner-confirmed verified hybrid selects grounded evidence', 'owner-confirmed verified hybrid persists through queued worker',
+    'owner-confirmed verified hybrid uses real provider stages']));
   expect(receipt.freshProcess.freshProcess).toBe(true);
   expect(receipt.freshProcess.checks).toContain('fresh no external network');
+  expect(receipt.freshProcess.checks).toContain("fresh normal retrieval CLEAR Baldur's Gate 3");
+  expect(receipt.states).toEqual(expect.arrayContaining([expect.objectContaining({ game: "Baldur's Gate 3",
+    classification: 'verified', generationEligible: true, eligible: true, revisionId: expect.any(String) })]));
   expect(receipt.checks).toContain('real structured reasoning reached provider transport');
   expect(receipt.provider).toBe('synthetic loopback HTTP; real SDK/adapter/Trinity');
+  expect(receipt.providerRequests).toHaveLength(receipt.generated + receipt.audited);
+  expect(receipt.audited).toBe(2);
+  console.info('GAMING_HTTP_TEST_RECEIPT ' + JSON.stringify({ sourceIdentity: receipt.sourceIdentity,
+    checks: receipt.checks.length, freshChecks: receipt.freshProcess.checks.length,
+    generated: receipt.generated, audited: receipt.audited, providerRequests: receipt.providerRequests }));
 }, 100_000);
