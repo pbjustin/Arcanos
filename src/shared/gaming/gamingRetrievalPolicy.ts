@@ -152,7 +152,25 @@ export function gamingAttributableClaimText(text: string, game?: string, metadat
   // primary heading precedes it. Evaluate that prefix independently instead of
   // borrowing its words or losing the following procedure without display metadata.
   const claimProse = scope ? prose.replace(new RegExp(scope.source, 'giu'), (_match: string, offset: number) => {
-    const prefix = prose.slice(0, offset).split(/[.!?;\n]/u).at(-1) ?? '';
+    // The suffix rules below need at most two words. Inspect them directly
+    // instead of copying/splitting the entire preceding document per scope.
+    // Keep arbitrary whitespace intact and stop at the original clause boundary.
+    let prefixStart = offset;
+    let completedWords = 0;
+    let withinWord = false;
+    while (prefixStart > 0) {
+      const character = prose.charAt(prefixStart - 1);
+      if (/[.!?;\n]/u.test(character)) break;
+      if (/\s/u.test(character)) {
+        if (withinWord) {
+          completedWords += 1;
+          withinWord = false;
+          if (completedWords === 2) break;
+        }
+      } else withinWord = true;
+      prefixStart -= 1;
+    }
+    const prefix = prose.slice(prefixStart, offset);
     // A parenthetical scope cannot sever a prohibition or conditional prefix
     // from its action and turn negative gameplay advice into a positive claim.
     return /,\s*$/u.test(prefix) || /\b(?:do\s+not|don['’]t|does\s+not|doesn['’]t|never|cannot|can['’]t|must\s+not|should\s+not|unless|only\s+if)\s*$/iu.test(prefix)
