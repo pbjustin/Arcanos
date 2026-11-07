@@ -7,14 +7,14 @@ export const GAMING_MCP_PATH = '/chatgpt/gaming/mcp';
 export const GAMING_METADATA_PATH = '/.well-known/oauth-protected-resource/chatgpt/gaming/mcp';
 const writes = new Set<ChatGptGamingToolName>(['arcanos_gaming_ingest_sources', 'arcanos_gaming_refresh_sources', 'arcanos_gaming_ingest_candidates']);
 const descriptions: Record<ChatGptGamingToolName, string> = {
-  arcanos_gaming_query: 'Ask ARCANOS for gameplay guide, build or meta guidance with player progress and spoiler constraints. May use providers and bounded public sources. Does not save sources or player progress.',
-  arcanos_gaming_canary: 'Check the fixed public Gaming pipeline fixture. Does not call providers or inspect infrastructure; success does not prove live generation or storage.',
-  arcanos_gaming_hybrid_query: 'Query stored Gaming evidence and start a bounded, temporary owner workflow. Normal guide/build/meta traffic selects released gaming-hybrid-v2; explicit v1 is legacy-compatible. For v2 clarify, repeat the original query with resolved context, returned workflowId and expectedRevision, and a new operation key; accepted evidence and budgets persist. Preserve state, nextAction, freshness and provenance. No durable source storage.',
-  arcanos_gaming_submit_candidates: 'Independently acquire up to three candidate public URLs per backend-granted submission in the same owned workflow. Released v2 permits one bounded recovery with the returned expectedRevision; explicit v1 permits one gameplay submission. Frontend hints never approve evidence. May fetch sources and generate a grounded answer. Retains temporary evidence only; never stores sources durably.',
-  arcanos_gaming_ingestion_status: 'Read the sanitized status and per-source outcomes for this OAuth owner\'s Gaming ingestion. At most three polls per interaction. Legacy Action jobs are not accessible.',
-  arcanos_gaming_ingest_sources: 'Durably ingest up to four explicitly requested public Gaming source URLs. Requires separate write permission, explicit storage policy, confirmStore=true and a stable idempotency key. Poll status after acceptance.',
-  arcanos_gaming_refresh_sources: 'Refresh up to four known sources in the private owner\'s Gaming corpus. Changes stored revisions. Requires separate write permission, storage policy, confirmStore=true and a stable idempotency key.',
-  arcanos_gaming_ingest_candidates: 'Durably ingest selected backend-approved candidates from this owned workflow. Requires separate write permission, matching storage policy, confirmStore=true and a stable idempotency key. Candidate approval and eligibility are checked again.',
+  arcanos_gaming_query: 'Gaming guidance with progress/spoiler limits. May use providers/sources. Saves nothing.',
+  arcanos_gaming_canary: 'Synthetic fixture; no providers/infrastructure/live proof.',
+  arcanos_gaming_hybrid_query: 'Bounded owner workflow; released gaming-hybrid-v2, explicit v1 supported. V2 clarify: original query + resolved context, workflowId, expectedRevision, new key. Keeps evidence/budgets. Follow state/nextAction/freshness/provenance. No storage.',
+  arcanos_gaming_submit_candidates: 'Acquire 1-3 public URLs/granted owner submission. Hints untrusted. V2 recovery: expectedRevision; v1 one round. May generate; no storage.',
+  arcanos_gaming_ingestion_status: 'Owner ingestion outcomes; at most 3 polls. Excludes legacy Action jobs.',
+  arcanos_gaming_ingest_sources: 'Store 1-4 explicit public URLs: write scope, storagePolicy, confirmStore=true, stable key. Poll status.',
+  arcanos_gaming_refresh_sources: 'Refresh 1-4 owner revisions: write scope, storagePolicy, confirmStore=true, stable key.',
+  arcanos_gaming_ingest_candidates: 'Store owned IDs: write scope, matching policy, confirmStore=true, stable key. Recheck approval. References require ask_before_store.',
 };
 const ajv = new Ajv({ allErrors: false, strict: true });
 ajv.addFormat('uuid', /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu);

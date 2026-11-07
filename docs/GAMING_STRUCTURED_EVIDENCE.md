@@ -79,8 +79,15 @@ Player-facing instructions such as following a mission walkthrough are normal
 evidence. Assistant control instructions remain a document-level rejection,
 including instructions in acquired title/heading metadata or text omitted by
 the context projection budget. Sanitization is not approval of the remainder.
-Resolver `gaming-document-v6` separates the current extraction decisions from
+Resolver `gaming-document-v7` separates the current extraction decisions from
 older cached resolutions and durable revision identity.
+
+Label-only linked article list items are catalog navigation rather than game
+declarations or gameplay records. Complete authored gameplay, explicit record
+fields and applicability restrictions remain intact. The complete visible
+response is inspected for source instructions and use restrictions before
+catalog-only elements are omitted; links do not acquire their destination
+articles or grant evidence authority.
 
 Class tokens such as `has-game-sidebar` describe a layout containing a sidebar.
 When they enclose a reviewed primary article, they no longer discard that article

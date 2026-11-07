@@ -64,6 +64,8 @@ export interface GamingHybridPublicCandidateDecision {
   reasonCodes: string[];
   sourceCategory?: string;
   origin?: 'submitted' | 'required_official_article';
+  classification?: 'verified' | 'stored_unverified' | 'reference_only';
+  generationEligible?: boolean;
 }
 
 /** Retention capacity does not decide whether bounded transient evidence can answer. */
@@ -73,9 +75,9 @@ export function projectGamingHybridCandidateRetention(input: {
   decisions: readonly GamingHybridPublicCandidateDecision[];
 }): { retainArtifacts: boolean; decisions: GamingHybridPublicCandidateDecision[] } {
   const retainArtifacts = input.retainedChars + input.candidateChars <= GAMING_HYBRID_RETAINED_ARTIFACT_CHARS;
-  const decisions = input.decisions.map(({ candidateId, url, decision, reasonCodes, sourceCategory, origin }) => ({
+  const decisions = input.decisions.map(({ candidateId, url, decision, reasonCodes, sourceCategory, origin, generationEligible }) => ({
     ...(retainArtifacts && candidateId ? { candidateId } : {}), url,
-    decision: !retainArtifacts && candidateId ? 'accepted_transient' : decision,
+    decision: !retainArtifacts && candidateId ? generationEligible === false ? 'rejected' : 'accepted_transient' : decision,
     reasonCodes: (!retainArtifacts && candidateId ? ['ARTIFACT_CAPACITY_REACHED', ...reasonCodes] : reasonCodes).slice(0, 8),
     sourceCategory, ...(origin ? { origin } : {})
   }));

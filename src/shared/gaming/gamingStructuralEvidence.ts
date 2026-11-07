@@ -1,4 +1,5 @@
 import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest, type GamingEditionRequestContext } from './gamingGameIdentity.js';
+import { createHash } from 'node:crypto';
 import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
 import { GAMING_EVIDENCE_UNIT_POLICY_VERSION } from './gamingEvidenceUnits.js';
 import { resolveGamingAnswerPolicy } from './gamingAnswerPolicy.js';
@@ -7,7 +8,7 @@ import { GAMING_HYBRID_V2_LIMITS } from './gamingHybridContract.js';
 import { normalizeGamingEditionIdentity } from './gamingGameIdentity.js';
 import { isGamingAcquiredGameSurface, GAMING_ACQUIRED_SCOPE_BOUNDARY } from './gamingAcquiredIdentity.js';
 import { detectGamingRegistryAlias, gamingRegistryEditionKind, gamingRegistryExpansionNames, gamingRegistryLiteralPattern, gamingRegistryRelatedScopeNames,
-  gamingRegistrySourceGameMatchesRequest } from './gamingGameRegistry.js';
+  gamingRegistrySourceGameMatchesRequest, normalizeGamingComparableIdentity, resolveGamingRegistryGame } from './gamingGameRegistry.js';
 
 export const GAMING_STRUCTURAL_SUFFICIENCY_VERSION = 'gaming-structural-sufficiency/v1';
 export const GAMING_STRUCTURAL_EVIDENCE_LIMITS = Object.freeze({ units: 2_048, unitChars: 4_096, usableUnitChars: 2_000, fields: 32, valueChars: 1_024 });
@@ -104,7 +105,7 @@ function withoutBoundedGamingReferences(text: string, units: readonly GamingEvid
   text: string; excludedReferenceCount: number;
 } {
   let excludedReferenceCount = 0;
-  const projected = text.replace(/(?:^|(?<=[.!?])\s+)(?:(?:historically|previously)[,:]?\s+in(?:\s+the\s+game)?\s+|(?:for|by)\s+comparison\s*[,:]\s+in(?:\s+the\s+game)?\s+|(?:historical references?|related articles?|recommended(?:\s+(?:articles?|guides?|reading))?|read next|references?)\s*:\s*)(?:(?![.!?](?=\s|$))[^\n]){1,512}[.!?](?=\s|$)/giu,
+  const projected = text.replace(/(?:^|(?<=[.!?])\s+)(?:(?:historically|previously)[,:]?\s+in(?:\s+the\s+game)?\s+|(?:for|by)\s+comparison\s*[,:]\s+in(?:\s+the\s+game)?\s+|(?:historical references?|related (?:articles?|guides?)|recommended(?:\s+(?:articles?|guides?|reading))?|read next|references?)\s*:\s*)(?:(?![.!?](?=\s|$))[^\n]){1,512}[.!?](?=\s|$)/giu,
     reference => {
       if (hasUnquotedPrimarySourceDeclaration(reference) || /\b(?:game|edition)\s*:/iu.test(reference)
         // The comparison frame owns only its first scope. A subsequent acquired
@@ -124,8 +125,29 @@ function withoutBoundedGamingReferences(text: string, units: readonly GamingEvid
  */
 export function selectGamingGameScopedDocument<T extends {
   text: string; publicUrl: string; evidenceUnits?: readonly GamingEvidenceUnit[];
+  metadata?: { title?: string; headings?: string;
+    localTopicReferences?: readonly { start: number; length: number; contentHash: string; gameHash: string }[] };
 }>(document: T, game: string): GamingGameScopedDocument<T> {
-  const references = withoutBoundedGamingReferences(document.text, document.evidenceUnits);
+  const suppliedReferences = document.metadata?.localTopicReferences ?? [];
+  const boundedReferences = suppliedReferences.length <= 64 ? suppliedReferences : [];
+  const registry = boundedReferences.length ? resolveGamingRegistryGame(game) : undefined;
+  const gameHashes = new Set((boundedReferences.length ? [game, ...(registry ? [registry.name, ...registry.aliases] : [])] : [])
+    .map(name => createHash('sha256').update(normalizeGamingComparableIdentity(name)).digest('hex')));
+  const validReferences = boundedReferences.filter(reference =>
+    Number.isSafeInteger(reference.start) && reference.start >= 0 && Number.isSafeInteger(reference.length)
+    && reference.length > 0 && reference.length <= 512 && reference.start + reference.length <= document.text.length
+    && gameHashes.has(reference.gameHash) && /^[a-f0-9]{64}$/u.test(reference.contentHash)
+    && createHash('sha256').update(document.text.slice(reference.start, reference.start + reference.length)).digest('hex') === reference.contentHash);
+  const uniqueReferences = [...new Map(validReferences.map(reference =>
+    [`${reference.start}:${reference.length}:${reference.contentHash}`, reference])).values()];
+  // Alias-equivalent duplicates must never remove following text twice. Reject
+  // all partially overlapping spans rather than selecting a favorable order.
+  const localReferences = uniqueReferences.filter((reference, index) => !uniqueReferences.some((other, otherIndex) =>
+    index !== otherIndex && reference.start < other.start + other.length && other.start < reference.start + reference.length));
+  const localText = [...localReferences].sort((left, right) => right.start - left.start)
+    .reduce((value, reference) => `${value.slice(0, reference.start)} ${value.slice(reference.start + reference.length)}`, document.text);
+  const references = withoutBoundedGamingReferences(localText, document.evidenceUnits);
+  references.excludedReferenceCount += localReferences.length;
   const result = (status: GamingGameScopedDocument<T>['status'], reasonCodes: string[] = [],
     excluded: GamingEvidenceUnit[] = []): GamingGameScopedDocument<T> => ({
     document: status !== 'conflict' && status !== 'unverified' && (excluded.length || references.excludedReferenceCount) ? { ...document,
@@ -496,7 +518,9 @@ export function assessGamingStructuralUsability(input: {
   // The caller retains the original question and source URLs for provenance.
   input = { ...input, prompt: input.prompt?.replace(/https?:\/\/[^\s)]+/giu, '') };
   const units = readGamingEvidenceUnits(input.units);
-  const usable = units.filter(intact);
+  // Complete applicability metadata can verify identity or patch scope, but it
+  // does not become gameplay evidence by having two recognized field labels.
+  const usable = units.filter(unit => !isGamingDocumentMetadataUnit(unit) && intact(unit));
   const claimShape = shape(input, units);
   const terms = input.prompt ? buildGamingRetrievalTerms({ prompt: input.prompt, game: input.game }).focusTerms : [];
   const requestedValues = terms.filter(term => !REQUEST_FORMAT_TERMS.has(term));

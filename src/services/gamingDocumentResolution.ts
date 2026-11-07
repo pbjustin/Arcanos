@@ -33,7 +33,7 @@ import { extractGamingDocumentEvidence } from './gamingDocumentEvidence.js';
 import { extractGamingCurrentnessDocument } from './gamingCurrentnessDocument.js';
 import type { GamingCurrentnessDocumentMetadata } from '@shared/gaming/gamingCurrentnessAdapters.js';
 
-export const GAMING_DOCUMENT_RESOLVER_VERSION = "gaming-document-v6";
+export const GAMING_DOCUMENT_RESOLVER_VERSION = "gaming-document-v7";
 const acquisitionAttestations = new WeakMap<GamingDocumentAcquisition, string>();
 const documentBinding = (document: ResolvedGamingDocument): string => createHash("sha256")
   .update(JSON.stringify({ requestedUrl: document.requestedUrl, canonicalUrl: document.canonicalUrl,
@@ -82,7 +82,8 @@ export interface ResolvedGamingDocument {
   text: string;
   contentType?: string;
   rawDocument?: FetchAndCleanRawDocument;
-  metadata: { title?: string; headings?: string };
+  metadata: { title?: string; headings?: string; applicabilityUnverified?: true;
+    localTopicReferences?: Array<{ start: number; length: number; contentHash: string; gameHash: string }> };
   extraction: FetchAndCleanExtractionMetrics;
   resolution: {
     resolverId: string;
@@ -331,7 +332,16 @@ export async function resolveGamingDocument(
     } : undefined;
     const safeMetadata = {
       ...(effectiveExtraction.documentTitle ? { title: filterGamingDocumentInstructions(effectiveExtraction.documentTitle).slice(0, 240) } : {}),
-      ...(effectiveExtraction.headingText ? { headings: filterGamingDocumentInstructions(effectiveExtraction.headingText).slice(0, 240) } : {})
+      ...(effectiveExtraction.headingText ? { headings: filterGamingDocumentInstructions(effectiveExtraction.headingText).slice(0, 240) } : {}),
+      ...(acquired.structure?.applicabilityUnverified ? { applicabilityUnverified: true as const } : {}),
+      ...(acquired.structure?.localTopicReferences?.length ? { localTopicReferences:
+        acquired.structure.localTopicReferences.slice(0, 64).flatMap(reference => {
+          const paragraphStart = projection.text.indexOf(reference.paragraphText);
+          const frameStart = reference.paragraphText.indexOf(reference.text);
+          const start = paragraphStart + frameStart;
+          return paragraphStart < 0 || frameStart < 0 ? [] : [{ start, length: reference.text.length, gameHash: reference.gameHash,
+            contentHash: createHash('sha256').update(reference.text).digest('hex') }];
+        }) } : {})
     };
     const metadataInstructionFiltered = [effectiveExtraction.documentTitle, effectiveExtraction.headingText]
       .some(value => value !== undefined && filterGamingDocumentInstructions(value)

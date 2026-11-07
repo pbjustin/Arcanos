@@ -24,11 +24,11 @@ export function gamingAnswerClaimsVerifiedCurrentness(answer: string): boolean {
     || /\b(?:is|are|remains?)\s+(?:the\s+)?(?:current|latest)\s+(?:best|meta|optimal|strongest|build|guide|recommendation)\b/iu.test(text);
 }
 
-/** Only these non-security acquisition failures permit a qualified recommendation. */
+/** Only these non-security source availability outcomes permit a qualified recommendation. */
 export function isGamingAdvisoryCurrentnessOperation(input: {
   decisions: readonly { decision: string; reasonCodes: readonly string[] }[];
 }): boolean {
-  const unavailable = new Set(['INSUFFICIENT_EXTRACTION', 'SOURCE_FETCH_FAILED', 'SOURCE_TIMEOUT', 'FETCH_BUDGET_EXHAUSTED']);
+  const unavailable = new Set(['INSUFFICIENT_EXTRACTION', 'INSUFFICIENT_GAMEPLAY_EVIDENCE', 'SOURCE_FETCH_FAILED', 'SOURCE_TIMEOUT', 'FETCH_BUDGET_EXHAUSTED']);
   return input.decisions.length > 0 && input.decisions.every(item => item.decision !== 'rejected'
     || item.reasonCodes.length > 0 && item.reasonCodes.every(reason => unavailable.has(reason)));
 }

@@ -11,6 +11,9 @@ const TOPIC = 'obsidian observatory';
 const PASSAGE = 'At the obsidian observatory, rotate the silver telescope toward the eastern beacon before crossing the crystal bridge.';
 const GUIDE = [
   `${GAME} strategy guide.`,
+  // Acquired prose independently establishes this authored document's complete
+  // game identity; catalog metadata and a title alone are insufficient.
+  `In the game ${GAME}, this synthetic guide describes invented practice routes.`,
   ...Array.from({ length: 200 }, (_, index) => `Chapter ${index + 1}: ${GAME} travelers should save at the village checkpoint, prepare healing supplies, follow the marked forest path and defend during the practice encounter.`),
   PASSAGE,
   'Activate the amber elevator after opening the observatory gate and save before the final encounter.'
@@ -118,7 +121,8 @@ describe('shared resolved Gaming documents reach durable stored retrieval', () =
     expect(resolveDocument).toHaveBeenCalledTimes(1);
     const stored = await ingest();
     expect(resolveDocument).toHaveBeenCalledTimes(2);
-    expect(stored.output.sources[0]).toMatchObject({ status: 'stored', sourceId: resolvedSourceId, canonicalUrl: gamingArchiveGuideUrl });
+    expect(stored.output.sources[0]).toMatchObject({ status: 'stored', sourceId: resolvedSourceId, canonicalUrl: gamingArchiveGuideUrl,
+      classification: 'verified', generationEligible: true });
     expect(stored.output.sources[0].warnings).toBeUndefined();
     const revision = database.revisions[0];
     expect(revision.cleaned_content.length).toBeLessThanOrEqual(16_000);

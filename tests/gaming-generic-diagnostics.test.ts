@@ -12,6 +12,7 @@ describe('generic source rejection diagnostics', () => {
     ['SOURCE_FETCH_FAILED', 'acquisition', 'source_access'],
     ['SOURCE_EXTRACTION_FAILED', 'extraction', 'extraction'],
     ['INSUFFICIENT_EXTRACTION', 'extraction', 'gameplay_quality'],
+    ['INSUFFICIENT_GAMEPLAY_EVIDENCE', 'relevance', 'gameplay_quality'],
     ['GAME_IDENTITY_UNVERIFIED', 'identity', 'gameplay_quality']
   ] as const)('classifies %s without article text', (reason, stage, failureClass) => {
     const trace = createGamingSourceEvaluation({ submittedIndex: 0 });

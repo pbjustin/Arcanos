@@ -11,7 +11,9 @@ describe('Gaming MCP contracts preserve the service contract', () => {
     expect(GAMING_HYBRID_RELEASED_CONTRACT_VERSION).toBe('gaming-hybrid-v2');
     expect(openapi['x-arcanos-gaming-hybrid-contract-version']).toBe(GAMING_HYBRID_RELEASED_CONTRACT_VERSION);
     expect(gamingMcpTools.find(tool => tool.name === 'arcanos_gaming_hybrid_query')?.description)
-      .toContain('Normal guide/build/meta traffic selects released gaming-hybrid-v2');
+      .toContain('released gaming-hybrid-v2');
+    expect(gamingMcpTools.find(tool => tool.name === 'arcanos_gaming_hybrid_query')?.description)
+      .toContain('explicit v1 supported');
     for (const contractVersion of ['gaming-hybrid-v1', GAMING_HYBRID_RELEASED_CONTRACT_VERSION]) {
       expect(gamingHybridQuerySchema.safeParse({ contractVersion, game: 'Elden Ring',
         mode: 'build', question: 'Samurai build', idempotencyKey: 'released-contract-fixture' }).success).toBe(true);
@@ -50,6 +52,35 @@ describe('Gaming MCP contracts preserve the service contract', () => {
       const schema = chatGptGamingSchemas[name].input;
       expect(schema.required).toEqual(expect.arrayContaining(['idempotencyKey', 'storagePolicy', 'confirmStore']));
       expect((schema.properties as Record<string, unknown>).confirmStore).toEqual({ type: 'boolean', const: true });
+    }
+  });
+  it('accepts optional storage classifications while preserving historical outputs and closed inputs', () => {
+    const source = { submittedIndex: 0, status: 'stored', recordsCreated: 1, recordsUpdated: 0 };
+    const output = { statusCode: 200, result: { ok: true, action: 'status',
+      ingestionId: '30000000-0000-4000-8000-000000000001', status: 'completed',
+      counts: { total: 1, queued: 0, succeeded: 1, rejected: 0, failed: 0, recordsCreated: 1, recordsUpdated: 0 },
+      sources: [source], createdAt: '2026-11-07T12:00:00.000Z', updatedAt: '2026-11-07T12:00:01.000Z' } };
+    expect(isGamingMcpOutput('arcanos_gaming_ingestion_status', output)).toBe(true);
+    for (const classification of ['verified', 'stored_unverified', 'reference_only', 'needs_reassessment', 'rejected']) {
+      expect(isGamingMcpOutput('arcanos_gaming_ingestion_status', { ...output, result: { ...output.result,
+        sources: [{ ...source, classification, generationEligible: classification === 'verified', reasonCodes: ['SOURCE_CLASSIFIED'] }] } })).toBe(true);
+    }
+    for (const extra of [{ classification: 'trusted_by_caller' }, { generationEligible: 'true' }, { reasonCodes: Array(9).fill('SOURCE_CLASSIFIED') }]) {
+      expect(isGamingMcpOutput('arcanos_gaming_ingestion_status', { ...output, result: { ...output.result,
+        sources: [{ ...source, ...extra }] } })).toBe(false);
+    }
+    for (const code of ['RESOLVED_SOURCE_IDENTITY_MISMATCH', 'SOURCE_USE_RESTRICTED', 'SOURCE_INSTRUCTIONS_REJECTED',
+      'APPROVED_CONTENT_CHANGED', 'APPROVED_ASSESSMENT_REQUIRED', 'APPROVED_APPLICABILITY_EXPIRED', 'EDITION_CONFLICT',
+      'EXTRACTION_FAILED', 'STORAGE_FAILED']) {
+      expect(isGamingMcpOutput('arcanos_gaming_ingestion_status', { ...output, result: { ...output.result,
+        sources: [{ ...source, status: 'rejected', classification: 'rejected', generationEligible: false,
+          reasonCodes: [code], error: { code, message: 'Sanitized source rejection.', retryable: false } }] } })).toBe(true);
+    }
+    const input = { game: 'Fixture Game', sourceUrls: ['https://guides.example.org/reference'],
+      storagePolicy: 'ask_before_store', confirmStore: true, idempotencyKey: 'classification-input-fixture' };
+    expect(isGamingMcpInput('arcanos_gaming_ingest_sources', input)).toBe(true);
+    for (const key of ['classification', 'generationEligible', 'retainedApproval', 'hybridApproval', 'retainUnverified']) {
+      expect(isGamingMcpInput('arcanos_gaming_ingest_sources', { ...input, [key]: true })).toBe(false);
     }
   });
   it('keeps catalog bounded and distinct from private instructions or registration', () => {

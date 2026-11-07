@@ -1,9 +1,10 @@
 import type { GamingExtractionQuality } from "@services/gamingBuildResourceSchema.js";
-import { hasGamingActionableProse, isGamingCatalogMetadataOnly } from "@services/gamingDocumentExtraction.js";
+import { isGamingCatalogMetadataOnly } from "@services/gamingDocumentExtraction.js";
 import { detectGamingGame, type GamingGameDetection } from "@services/gamingGameDetection.js";
 import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
-import { assessGamingStructuralUsability } from './gamingStructuralEvidence.js';
+import { assessGamingStructuralUsability, isGamingDocumentMetadataUnit } from './gamingStructuralEvidence.js';
 import { gamingRegistryLiteralPattern } from './gamingGameRegistry.js';
+import { gamingAttributableClaimText } from './gamingRetrievalPolicy.js';
 
 /** Keep generic page parameters after admission; document-only sources own their public identity. */
 export function selectGamingSourceAdmissionUrl(
@@ -143,12 +144,29 @@ export function classifyGamingDocumentQuality(input: {
   minUsefulTextChars: number;
   evidenceUnits?: readonly GamingEvidenceUnit[];
 }): 'unusable' | 'metadata-only' | 'partial' | 'complete' {
-  if (assessGamingStructuralUsability({ units: input.evidenceUnits }).hasIntactUsableUnit) return input.truncated ? 'partial' : 'complete';
-  const metadataOnly = isGamingDocumentOverviewOnly(input.cleanedText, input.metadata, input.game) || isGamingCatalogMetadataOnly(input.cleanedText)
-    || (input.navigationDensity ?? 0) >= 0.62 && !hasGamingActionableProse(input.cleanedText);
-  return input.cleanedText.length < input.minUsefulTextChars
-    ? 'unusable'
-    : metadataOnly ? 'metadata-only' : input.truncated ? 'partial' : 'complete';
+  if (assessGamingStructuralUsability({ units: input.evidenceUnits?.filter(unit => !isGamingDocumentMetadataUnit(unit)) }).hasIntactUsableUnit) return input.truncated ? 'partial' : 'complete';
+  // Parser-owned metadata remains available for identity/applicability but
+  // cannot supply gameplay length or prevent a catalog classification.
+  const prose = (input.evidenceUnits ?? []).filter(isGamingDocumentMetadataUnit)
+    .reduce((text, unit) => {
+      // The extractor appends serialized records on their own lines. An equal
+      // inline prose assertion remains intact, including its punctuation.
+      const index = text.lastIndexOf(unit.text);
+      const after = index + unit.text.length;
+      return index >= 0 && (index === 0 || text[index - 1] === '\n')
+        && (after === text.length || text[after] === '\n')
+        ? text.slice(0, index) + text.slice(after) : text;
+    }, input.cleanedText).trim();
+  const hasClaims = gamingAttributableClaimText(prose, input.game, input.metadata).trim().length > 0;
+  const referenceContext = /\b(?:wiki|catalog|index|glossary|encyclopedia|directory|article titles?|topics?|keywords?|linked walkthrough)\b/iu
+    .test([prose, input.metadata?.title, input.metadata?.headings].filter(Boolean).join('\n'));
+  const metadataOnly = isGamingDocumentOverviewOnly(prose, input.metadata, input.game)
+    || !hasClaims && (referenceContext || isGamingCatalogMetadataOnly(prose) || (input.navigationDensity ?? 0) >= 0.62);
+  const shortGameplay = !input.truncated && !metadataOnly && hasClaims;
+  // A bounded excerpt can lose the claim-bearing tail. Preserve partial
+  // extraction state; request coverage still receives no invented claim text.
+  return metadataOnly ? 'metadata-only' : !hasClaims && !input.truncated || prose.length < input.minUsefulTextChars && !shortGameplay
+    ? 'unusable' : input.truncated ? 'partial' : 'complete';
 }
 
 export function classifyGamingStructuredExtractionQuality(input: {

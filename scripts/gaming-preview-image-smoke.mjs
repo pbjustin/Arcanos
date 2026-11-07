@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Local disposable image validation only. It has no Railway or publication authority.
+// Local disposable validation of the frozen Gaming image admitted by
+// validateGamingBuildReceipt. It has no Railway or publication authority.
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { lstatSync, readFileSync, writeFileSync } from 'node:fs';
@@ -7,6 +8,8 @@ import { pathToFileURL } from 'node:url';
 import { validateGamingBuildReceipt, verifyImageArchive } from './stacked-draft-preview-build.mjs';
 import { buildGamingScopedPreviewAssertionInventory, runGamingScopedPreviewE2e } from './gaming-scoped-preview-e2e.mjs';
 import { resolveNativePrPreviewOrThrow } from './start-railway-service.mjs';
+import { GitReadAdapter } from './stacked-draft-preview-contract.mjs';
+import { resolveGamingMcpCatalogSha256 } from './gaming-mcp-preview-e2e.mjs';
 
 const requireCondition = (value, code) => { if (!value) throw new Error(`GAMING_IMAGE_SMOKE_${code}`); };
 const nativeFetch = globalThis.fetch;
@@ -35,6 +38,7 @@ function readJson(file) {
 export async function runGamingImageSmoke({ authorizationFile, buildFile, imageFile, outputFile,
   environment = process.env, execute = executeDocker, fetchLocal = nativeFetch,
   verify = runGamingScopedPreviewE2e, monotonicNow = () => performance.now(),
+  git = new GitReadAdapter({ cwd: process.cwd(), canonicalArchive: true }),
   delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)) }) {
   const evidence = { kind: 'gaming_local_image_synthetic_smoke', GAMING_SCOPED_PREVIEW: 'NOT_RUN',
     hostedExecuted: false, status: 'FAIL', executedAssertions: 0, requestsAttempted: 0, kernelEntrypointVerified: {},
@@ -53,6 +57,11 @@ export async function runGamingImageSmoke({ authorizationFile, buildFile, imageF
     const authorization = readJson(authorizationFile), build = readJson(buildFile);
     validateGamingBuildReceipt(build, authorization);
     verifyImageArchive(imageFile, build, authorization);
+    requireCondition(await git.treeSha(build.candidateSha) === build.treeSha
+      && await git.archiveSha256(build.candidateSha) === build.sourceArchiveSha256, 'SOURCE_IDENTITY_MISMATCH');
+    const frozenImageContract = { candidateSha: build.candidateSha, treeSha: build.treeSha,
+      sourceArchiveSha256: build.sourceArchiveSha256, catalogSha256: await git.gamingCatalogSha256(build.candidateSha) };
+    resolveGamingMcpCatalogSha256(build.candidateSha, frozenImageContract);
     requireCondition(Object.values(authorization.target).every(value => NATIVE_UUID.test(value)), 'RUNTIME_IDENTITY_INVALID');
     evidence.imageId = build.imageId; evidence.candidateSha = build.candidateSha;
     const origins = {}, loopback = {};
@@ -143,7 +152,7 @@ export async function runGamingImageSmoke({ authorizationFile, buildFile, imageF
     const report = await verify({ args: ['--pr-number', '1558', '--commit-sha', build.candidateSha,
       '--web-base-url', origins.web, '--worker-base-url', origins.worker, '--execute', '--allow-network'],
     localGitState: { repository: 'pbjustin/Arcanos', head: build.candidateSha, clean: true, sourceTreeSha: build.treeSha },
-    fetchImpl: fetchMapped });
+    fetchImpl: fetchMapped, frozenImageContract });
     requireCondition(report.GAMING_SCOPED_PREVIEW === 'NOT_RUN' && report.hostedExecuted !== true
       && report.summary.requestsMade === 84 && requests === 84
       && report.assertionInventory.plannedCaseIds.length === 84 && report.assertionInventory.executedCaseIds.length === 84

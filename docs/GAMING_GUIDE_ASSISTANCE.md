@@ -828,7 +828,7 @@ automatically false; fetching an old document does not make its facts current.
 ### Server-owned policy and decisions
 
 The server-owned CLEAR policy separates audit profile, question profile and
-source role. The current internal version is `gaming-clear-policy/v4`.
+source role. The current internal version is `gaming-clear-policy/v7`.
 Requests and source text cannot supply policy weights, floors or approval.
 These initial hypotheses are conservative rubric judgments, not calibrated
 probabilities or accuracy percentages.
@@ -1184,7 +1184,7 @@ currentness adapters and durable storage eligibility require their separate
 existing source-policy review. Runtime submissions cannot mutate the registry.
 
 CLEAR policy v3 introduced rejection of persisted v1/v2 assessments. The
-current v6 policy also rejects v3/v4/v5 assessments until sources are reassessed.
+current v7 policy also rejects v3/v4/v5/v6 assessments until sources are reassessed.
 Both preserve the public `gaming-clear/v1` rubric and wire shape.
 Context fingerprints bind the registry schema, revision and a hash of its exact
 reviewed data. Existing bounded extraction caches can reuse acquired bytes, but

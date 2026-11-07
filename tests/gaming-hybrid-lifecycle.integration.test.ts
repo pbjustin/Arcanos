@@ -78,7 +78,8 @@ jest.unstable_mockModule('@services/openai/chatFallbacks.js', () => ({
 const { createGamingHybridWorkflow } = await import('../src/services/gamingHybridKnowledge.js');
 const { evaluateGamingHybridCandidates, createApprovedGamingHybridIngestion } = await import('../src/services/gamingHybridCandidates.js');
 const { executeQueuedGamingSourceIngestion, getGamingSourceIngestionStatus, hashGamingApprovedDocument, refreshGamingSources } = await import('../src/services/gamingSourceIngestion.js');
-const { assessGamingSourcePolicy, extractGamingFreshnessMetadata } = await import('../src/shared/gaming/gamingFreshnessCore.js');
+const { assessGamingSourcePolicy, extractGamingFreshnessMetadata, evaluateGamingFreshness } = await import('../src/shared/gaming/gamingFreshnessCore.js');
+const { assessGamingClearEvidence } = await import('../src/shared/gaming/gamingClearEvidence.js');
 const { resolveGamingDocument, isResolvedGamingDocumentIdentityVerified } = await import('../src/services/gamingDocumentResolution.js');
 const { logger } = await import('../src/platform/logging/structuredLogging.js');
 // Load the real router before timed lifecycle tests so registration cannot outlive a test's fixture scope.
@@ -93,7 +94,8 @@ const environment = { ARCANOS_GAMING_RAG_ENABLED: 'true', ARCANOS_GAMING_DISCOVE
 let prior: Record<string, string | undefined>;
 
 async function evaluate(overrides: Record<string, unknown> = {}) {
-  return evaluateGamingHybridCandidates({ ...input, candidates: [{ url: URL }], ...overrides }, context);
+  return evaluateGamingHybridCandidates({ ...input, candidates: [{ url: URL }], ...overrides },
+    { ...context, storagePolicy: 'ask_before_store' });
 }
 async function store(candidates: Awaited<ReturnType<typeof evaluate>>['accepted'], key = 'store-operation-1') {
   return createApprovedGamingHybridIngestion({ candidates, storagePolicy: 'ask_before_store', confirmed: true, idempotencyKey: key }, context);
@@ -131,6 +133,74 @@ async function discoverCurrent(mode: 'build' | 'meta', extras: Record<string, un
  * This is not PostgreSQL FTS evidence or proof of ChatGPT's real web-tool sequencing.
  */
 describe('Gaming hybrid durable lifecycle', () => {
+  function respondWithReferenceCatalog(metadataRecord = false) {
+    mockHttp.mockResolvedValue({ data: `<html><title>${SOURCE_GAME} Wiki Guide</title><article><h1>${SOURCE_GAME} Wiki Guide</h1>`
+      + `<p>${SOURCE_GAME} is an open-world role-playing game.</p><p>This page provides an index of walkthrough entries. `
+      + 'Browse the linked walkthrough entries and introductory reference articles for this game.</p>'
+      + '<a href="https://guides.example.org/unacquired-chapter">Individual walkthrough</a>'
+      + (metadataRecord ? `<dl><dt>Game</dt><dd>${SOURCE_GAME}</dd><dt>Edition</dt><dd>base game</dd><dt>Patch</dt><dd>1.0</dd></dl>` : '')
+      + '</article></html>',
+    headers: { 'content-type': 'text/html' } });
+  }
+
+  it.each([false, true])('retains a v2 reference candidate only after explicit consent without supplying answer evidence (metadata record=%s)', async metadataRecord => {
+    respondWithReferenceCatalog(metadataRecord);
+    const workflow = createGamingHybridWorkflow();
+    const version = 'gaming-hybrid-v2';
+    const queried = await workflow.query({ contractVersion: version, idempotencyKey: 'retained-reference-query',
+      game: SOURCE_GAME, question: input.prompt, storagePolicy: 'ask_before_store' }, context);
+    const found = await workflow.candidates({ contractVersion: version, workflowId: queried.body.workflowId,
+      expectedRevision: queried.body.revision, idempotencyKey: 'retained-reference-submit', candidates: [{ url: URL }] }, context);
+    const candidateId = found.body.candidates?.[0].candidateId;
+    expect(found.body.candidates?.[0]).toMatchObject({ candidateId: expect.any(String), decision: 'requires_confirmation',
+      reasonCodes: expect.arrayContaining(['REFERENCE_ONLY_REQUIRES_CONFIRMATION']) });
+    expect(found.body.evidenceSelected).toBe(false);
+    expect(found.body.answer).toBeUndefined();
+    expect(mockTrinity).not.toHaveBeenCalled();
+    expect(jobs.size).toBe(0);
+    const storage = { contractVersion: version, workflowId: queried.body.workflowId, idempotencyKey: 'retained-reference-store',
+      candidateIds: [candidateId], storagePolicy: 'ask_before_store' };
+    expect((await workflow.ingest({ ...storage, confirmStore: false }, context)).status).toBe(403);
+    expect(jobs.size).toBe(0);
+    const stored = await workflow.ingest({ ...storage, idempotencyKey: 'retained-reference-confirmed', confirmStore: true }, context);
+    expect(stored.body.ingestion?.status).toBe('queued');
+    const completed = await complete(stored.body.ingestion!.ingestionId);
+    expect(completed.sources[0]).toMatchObject({ status: 'stored', classification: 'reference_only', generationEligible: false });
+    expect(database.revisions[0].provenance).toMatchObject({ classification: 'reference_only', generationEligible: false });
+    const fetchCount = mockHttp.mock.calls.length;
+    const later = await createGamingHybridWorkflow().query({ contractVersion: version, idempotencyKey: 'retained-new-session',
+      game: SOURCE_GAME, question: input.prompt }, context);
+    expect(later.body.answer).toBeUndefined();
+    expect(later.body.evidenceSelected).toBe(false);
+    expect(mockHttp).toHaveBeenCalledTimes(fetchCount);
+    expect(mockHttp.mock.calls.every(([url]) => !String(url).includes('unacquired-chapter'))).toBe(true);
+  });
+
+  it('keeps retained candidate actor, hash, expiry and automatic-storage controls', async () => {
+    respondWithReferenceCatalog();
+    const evaluated = await evaluateGamingHybridCandidates({ ...input, protocolVersion: 'gaming-hybrid-v2', candidates: [{ url: URL }] },
+      { ...context, retainUnverified: true });
+    expect(evaluated.accepted).toEqual([]);
+    expect(evaluated.retained).toHaveLength(1);
+    const retained = evaluated.retained![0];
+    const submit = (candidate = retained, overrides: Record<string, unknown> = {}, caller = context) =>
+      createApprovedGamingHybridIngestion({ candidates: [candidate], storagePolicy: 'ask_before_store', confirmed: true,
+        idempotencyKey: 'reference-controls', ...overrides }, caller);
+    expect((await submit(retained, { storagePolicy: 'auto_store_approved' }, { ...context, canAutoStore: true })).statusCode).toBe(403);
+    expect((await submit(retained, {}, { ...context, actorKey: 'different-owner' })).statusCode).toBe(403);
+    expect((await submit({ ...retained, expiresAt: Date.now() - 1 })).statusCode).toBe(403);
+    expect((await submit({ ...retained, document: { ...retained.document, text: 'changed text' } })).statusCode).toBe(403);
+    expect(jobs.size).toBe(0);
+    const queued = await submit();
+    expect(queued.statusCode).toBe(202);
+    respondWithReferenceCatalog();
+    mockHttp.mockResolvedValueOnce({ data: `<html><title>${SOURCE_GAME} Wiki Guide</title><article>Changed document.</article></html>`,
+      headers: { 'content-type': 'text/html' } });
+    const completed = await complete((queued.payload as any).ingestionId);
+    expect(completed.sources[0]).toMatchObject({ status: 'rejected', error: { code: 'APPROVED_CONTENT_CHANGED' } });
+    expect(database.revisions).toHaveLength(0);
+  });
+
   it.each(['gaming-hybrid-v1', 'gaming-hybrid-v2'] as const)('returns a sanitized oversized-source decision under %s while the decoded limit still fires', async protocolVersion => {
     const previousByteLimit = process.env.WEB_FETCH_MAX_BYTES;
     process.env.WEB_FETCH_MAX_BYTES = '128';
@@ -596,6 +666,19 @@ describe('Gaming hybrid durable lifecycle', () => {
     expect((await workflow.candidates({ ...officialRequest, idempotencyKey: 'failed-index-extra-round' }, context)).status).toBe(409);
     expect(mockTrinity).toHaveBeenCalledTimes(1);
     expect(database.queries.some(sql => /^(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b/iu.test(sql))).toBe(false);
+  });
+
+  it('uses a reviewed acquired index for applicability without granting it gameplay claim support', async () => {
+    const { indexUrl, articleUrl } = await mageCurrentnessLifecycle();
+    const request = { game: 'Elden Ring', mode: 'build' as const, prompt: 'What is a good mage build now?', platform: 'PC' };
+    const result = await evaluateGamingHybridCandidates({ ...request, discoveryType: 'currentness_verification',
+      candidates: [{ url: indexUrl }, { url: articleUrl }] }, context);
+    expect(result.accepted.some(candidate => candidate.sourceAssessment.sourceRole === 'currentness_index')).toBe(true);
+    expect(evaluateGamingFreshness({ game: request.game, question: 'What patch is currently active?',
+      platform: request.platform, evidence: result.accepted.map(candidate => candidate.freshness), now: new Date() }).usable).toBe(true);
+    const assessment = assessGamingClearEvidence(request, result.knowledge, { identityVerified: true });
+    expect(assessment.gates.claimSupport).not.toBe('verified');
+    expect(assessment.decision).not.toBe('accept');
   });
 
   it('continues the registry-directed HTTP lifecycle through a required official article before exactly one answer', async () => {

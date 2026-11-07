@@ -8,6 +8,13 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) where practical
 
 ### Added
 
+- Gaming owner ingestion reports storage classification independently of answer
+  eligibility. Explicitly confirmed reference and incomplete material can be
+  retained without becoming authoritative gameplay evidence.
+- Gaming wiki identity separates primary game definitions, related-guide
+  references and linked catalog labels while retaining game/edition conflicts,
+  source-use restrictions and final CLEAR validation.
+
 - Gaming-only opt-in hybrid knowledge Actions: stored-evidence handoff, bounded
   frontend URL discovery, independent source/freshness validation, approved
   durable ingestion, and reusable patch/build verification provenance. Includes

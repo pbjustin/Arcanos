@@ -17,6 +17,7 @@ describe('Gaming source evaluation decision trace', () => {
 
   it.each([
     ['SOURCE_INACCESSIBLE', 'acquisition'], ['INSUFFICIENT_EXTRACTION', 'extraction'],
+    ['INSUFFICIENT_GAMEPLAY_EVIDENCE', 'relevance'],
     ['GAME_IDENTITY_UNVERIFIED', 'identity'], ['EDITION_CONFLICT', 'applicability'],
     ['QUESTION_COVERAGE_INSUFFICIENT', 'relevance'], ['SOURCE_USE_RESTRICTED', 'provenance'],
     ['SOURCE_INSTRUCTIONS_REJECTED', 'extraction']

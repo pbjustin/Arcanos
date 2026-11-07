@@ -18,8 +18,13 @@ const quotedSchema = `"${schemaName}"`;
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const actorScope = (actor: string) => hash(`${actor}\ngaming-source-ingestion`);
 const retained = JSON.parse(readFileSync(new URL('../fixtures/gaming-historical-status/records.json', import.meta.url), 'utf8'));
+// Authored wire-compatibility fixture for the immediately prior policy. Its
+// envelope uses the unchanged source-approval shape, not a captured live job.
+const priorPolicy: any = { provenance: { commit: 'synthetic-policy-v6-compatibility' },
+  actorKey: `prior-policy-status-${randomUUID()}`, body: undefined };
 const current: any = { actorKey: `current-status-${randomUUID()}`, body: undefined };
-const fixtures: Array<[string, any]> = [...retained.map((fixture: any, index: number) => [`v${index + 1}`, fixture]), ['v6', current]];
+const fixtures: Array<[string, any]> = [...retained.map((fixture: any, index: number) => [`v${index + 1}`, fixture]),
+  ['prior v6', priorPolicy], ['current', current]];
 const statuses = ['pending', 'running', 'completed', 'failed', 'cancelled', 'expired'];
 let databasePool: Pool;
 let administrator: Client;
@@ -134,6 +139,9 @@ withDatabase('retained Gaming status and current execution on real PostgreSQL 18
     const row = await jobs.getJobById((admitted.payload as any).ingestionId);
     current.body = (row!.input as any).body;
     expect(current.body.sources[0].hybridApproval.gamingClear.policyProfile).toBe(`${GAMING_CLEAR_POLICY_VERSION}:walkthrough:source`);
+    priorPolicy.body = structuredClone(current.body);
+    priorPolicy.body.sources[0].hybridApproval.actorScopeHash = hash(priorPolicy.actorKey);
+    priorPolicy.body.sources[0].hybridApproval.gamingClear.policyProfile = 'gaming-clear-policy/v6:walkthrough:source';
     // The producer-body seed is not part of the later explicit-key concurrency lineage.
     await databasePool.query('DELETE FROM job_data WHERE id = $1', [row!.id]);
   }, 30_000);
@@ -190,7 +198,8 @@ withDatabase('retained Gaming status and current execution on real PostgreSQL 18
   });
 
   const malformed: Array<[string, (body: any) => void]> = [
-    ['future CLEAR policy', body => { body.sources[0].hybridApproval.gamingClear.policyProfile = 'gaming-clear-policy/v7:walkthrough:source'; }],
+    ['future CLEAR policy', body => { body.sources[0].hybridApproval.gamingClear.policyProfile =
+      `${GAMING_CLEAR_POLICY_VERSION.replace(/\d+$/u, version => String(Number(version) + 1))}:walkthrough:source`; }],
     ['future rubric', body => { body.sources[0].hybridApproval.gamingClear.rubricVersion = 'gaming-clear/v2'; }],
     ['profile mismatch', body => { body.sources[0].hybridApproval.gamingClear.policyProfile = 'gaming-clear-policy/v1:walkthrough:answer'; }],
     ['extra version tuple', body => { body.sources[0].hybridApproval.gamingClear.policyProfile += ':extra'; }],
@@ -214,7 +223,7 @@ withDatabase('retained Gaming status and current execution on real PostgreSQL 18
     expect(http).not.toHaveBeenCalled(); expect(providerTrap).not.toHaveBeenCalled();
   });
 
-  test.each(retained)('refuses execution and reapproval of SQL-retained producer $provenance.commit', async fixture => {
+  test.each([...retained, priorPolicy])('refuses execution and reapproval of SQL-retained producer $provenance.commit', async fixture => {
     const row = await persistJob(fixture, 'completed');
     const body = (await jobs.getJobById(row.id))!.input.body as any;
     const writes = await sourceWrites();

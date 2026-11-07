@@ -1,5 +1,6 @@
 import { filterGamingDocumentInstructions } from "@services/gamingDocumentExtraction.js";
 import { normalizeGamingDocumentInstructionCharacters } from "@shared/gaming/gamingDocumentTextNormalization.js";
+import { GAMING_SOURCE_USE_RESTRICTION } from "@services/gamingHtmlEvidence.js";
 import { createHash } from "node:crypto";
 import { gunzipSync, inflateRawSync, inflateSync } from "node:zlib";
 import { load } from "cheerio";
@@ -140,6 +141,11 @@ function hasBuildSourceInstructions(value: unknown): boolean {
   const withoutLinks = value.replace(/\[LINKS\]/gi, " ");
   const normalized = normalizeGamingDocumentInstructionCharacters(withoutLinks).replace(/\s+/gu, " ").trim();
   return filterGamingDocumentInstructions(withoutLinks) !== normalized;
+}
+
+function hasBuildSourceUseRestriction(value: unknown): boolean {
+  return typeof value === "string" && GAMING_SOURCE_USE_RESTRICTION.test(
+    normalizeGamingDocumentInstructionCharacters(value).replace(/\s+/gu, " "));
 }
 
 function safeString(value: unknown, maxChars: number = LIMITS.maxStringLength): string | undefined {
@@ -789,7 +795,7 @@ function visibleHtmlCandidate(input: GamingResourceInput, deadline = Number.POSI
     const consumed = new Set<unknown>();
     const normalized = normalizeBuildRecord(item, { value: item, metadata: {}, publicUrl: "", resourceType: "build_planner",
       extractor: "visible-field-inspection", confidence: 0, onInstructions,
-      onFieldRead: value => consumed.add(value) });
+      onFieldRead: value => { consumed.add(value); if (hasBuildSourceUseRestriction(value)) onInvalid?.("SOURCE_USE_RESTRICTED"); } });
     const fields = normalized ? Object.keys(normalized).flatMap(key => key === "source" ? []
       : key === "character" || key === "stats" ? Object.keys(normalized[key] ?? {}).map(field => `${key}.${field}`) : [key]) : [];
     return { consumed, fields };
@@ -1207,6 +1213,7 @@ function inspectRejectedBuildFields(value: unknown, deadline: number): GamingStr
   if (!inspectStructure(value, deadline, Number.POSITIVE_INFINITY).ok) return undefined;
   const pending: unknown[] = [value];
   let instructions = false;
+  let sourceUseRestricted = false;
   let uninspectable = false;
   while (pending.length > 0) {
     if (Date.now() > deadline) return "STRUCTURED_PAYLOAD_TOO_LARGE";
@@ -1221,8 +1228,12 @@ function inspectRejectedBuildFields(value: unknown, deadline: number): GamingStr
       normalizeBuildRecord(current, { value: current, metadata: {}, publicUrl: "", resourceType: "build_planner",
         extractor: "rejected-field-inspection", confidence: 0, maxSourceStringChars: LIMITS.maxDecodedBytes,
         onInstructions: () => { instructions = true; },
-        onFieldRead: field => { if (typeof field === "string" && field.length > LIMITS.maxDecodedBytes) uninspectable = true; } });
+        onFieldRead: field => {
+          if (typeof field === "string" && field.length > LIMITS.maxDecodedBytes) uninspectable = true;
+          else if (hasBuildSourceUseRestriction(field)) sourceUseRestricted = true;
+        } });
       if (instructions) return "SOURCE_INSTRUCTIONS_REJECTED";
+      if (sourceUseRestricted) return "SOURCE_USE_RESTRICTED";
     }
     for (const [, nested] of ownEntries(current)) {
       if (nested && typeof nested === "object") pending.push(nested);
@@ -1395,7 +1406,7 @@ function emptyValidation(failureReason: GamingStructuredFailureReason): GamingBu
     equipmentCount: 0,
     skillCount: 0,
     statCount: 0,
-    issues: [],
+    issues: failureReason === "SOURCE_USE_RESTRICTED" ? [failureReason] : [],
     failureReason
   };
 }
@@ -1707,10 +1718,13 @@ function genericExtract(params: {
       resourceType: effectiveType,
       extractor: `generic-${candidate.strategy}`,
       confidence: Math.max(params.classification.confidence, candidate.confidence),
-      onInstructions: () => { state.instructionFiltered = true; }
+      onInstructions: () => { state.instructionFiltered = true; },
+      onFieldRead: field => { if (hasBuildSourceUseRestriction(field)) state.terminalFailure = "SOURCE_USE_RESTRICTED"; }
     });
     if (state.instructionFiltered) return { build: null,
       validation: rejectedInstructionValidation(), state, classification: effectiveClassification };
+    if (state.terminalFailure) return { build: null,
+      validation: emptyValidation(state.terminalFailure), state, classification: effectiveClassification };
     if (!normalized || candidateIndex >= LIMITS.maxPayloadCandidates) continue;
     const validation = validateNormalizedGamingBuild(normalized, {
       requestedGame: params.input.requestedGame,
@@ -1733,10 +1747,13 @@ function genericExtract(params: {
       resourceType: params.classification.type,
       extractor: "generic-metadata",
       confidence: params.classification.confidence,
-      onInstructions: () => { state.instructionFiltered = true; }
+      onInstructions: () => { state.instructionFiltered = true; },
+      onFieldRead: field => { if (hasBuildSourceUseRestriction(field)) state.terminalFailure = "SOURCE_USE_RESTRICTED"; }
     });
     if (state.instructionFiltered) return { build: null,
       validation: rejectedInstructionValidation(), state, classification: effectiveClassification };
+    if (state.terminalFailure) return { build: null,
+      validation: emptyValidation(state.terminalFailure), state, classification: effectiveClassification };
     if (metadataBuild) {
       bestBuild = metadataBuild;
       bestValidation = validateNormalizedGamingBuild(metadataBuild, { requestedGame: params.input.requestedGame });
@@ -1774,6 +1791,8 @@ export async function ingestGamingBuildResource(
     () => { metadataInstructions = true; }));
   metadataInstructions ||= [metadata.title, metadata.description,
     metadata.openGraph?.["og:title"], metadata.openGraph?.["og:description"]].some(hasBuildSourceInstructions);
+  const metadataSourceUseRestricted = [metadata.title, metadata.description,
+    metadata.openGraph?.["og:title"], metadata.openGraph?.["og:description"]].some(hasBuildSourceUseRestriction);
   let classification = classifyGamingResource({ ...input, preparedUrl: prepared, metadata });
   const adapterInput = boundedAdapterInput(input, prepared, metadata);
   const registered = options.adapters
@@ -1798,7 +1817,7 @@ export async function ingestGamingBuildResource(
     adapterVersion,
     sha256(`${sourcePayloadHash}\n${requestScopeHash}`)
   );
-  if (!metadataInstructions && options.useCache !== false) {
+  if (!metadataInstructions && !metadataSourceUseRestricted && options.useCache !== false) {
     const cached = buildCache.get(key);
     if (cached) return { ...cloneResult(cached), cacheHit: true };
   }
@@ -1808,12 +1827,12 @@ export async function ingestGamingBuildResource(
   let adapterElapsedMs = adapterSelection.elapsedMs;
   // Source admission is independent of adapter output: an adapter may omit a tainted
   // supported field, but that cannot turn the original source into trusted evidence.
-  const generic = metadataInstructions ? undefined : genericExtract({ input, prepared, metadata, classification, deadline });
+  const generic = metadataInstructions || metadataSourceUseRestricted ? undefined : genericExtract({ input, prepared, metadata, classification, deadline });
   const genericState = generic?.state;
   const decodedSize = genericState?.decodedSize ?? 0;
   let adapterInstructions = metadataInstructions || genericState?.instructionFiltered === true;
-  let adapterFailure: GamingStructuredFailureReason | undefined;
-  if (adapterSelection.adapter && !adapterInstructions && !genericState?.terminalFailure) {
+  let adapterFailure: GamingStructuredFailureReason | undefined = metadataSourceUseRestricted ? "SOURCE_USE_RESTRICTED" : undefined;
+  if (adapterSelection.adapter && !adapterInstructions && !adapterFailure && !genericState?.terminalFailure) {
     const adapterStartedAt = Date.now();
     const extracted = await withTimeout(
       Promise.resolve().then(() => adapterSelection.adapter!.extract(adapterInput)),
@@ -1831,7 +1850,8 @@ export async function ingestGamingBuildResource(
           resourceType: structuredType(classification.type) ? classification.type : extracted.source?.resourceType ?? "build_planner",
           extractor: adapterId,
           confidence: Math.max(classification.confidence, adapterSelection.confidence),
-          onInstructions: () => { adapterInstructions = true; }
+          onInstructions: () => { adapterInstructions = true; },
+          onFieldRead: field => { if (hasBuildSourceUseRestriction(field)) adapterFailure = "SOURCE_USE_RESTRICTED"; }
         });
         if (build) {
           validation = validateNormalizedGamingBuild(build, {
@@ -1852,6 +1872,7 @@ export async function ingestGamingBuildResource(
     }
   }
   if (adapterInstructions) validation = rejectedInstructionValidation();
+  else if (adapterFailure === "SOURCE_USE_RESTRICTED") { build = null; validation = emptyValidation(adapterFailure); }
   else if (genericState?.terminalFailure) validation = generic!.validation;
   if (!adapterInstructions && !adapterFailure && generic && (!build || !validation.accepted)) {
     if (generic.state.instructionFiltered || !build || qualityRank(generic.validation.quality) >= qualityRank(validation.quality)) {
@@ -1906,7 +1927,8 @@ export async function ingestGamingBuildResource(
     adapterVersion,
     extractionStrategy,
     evidenceText,
-    publicSnippet: failureReason === "SOURCE_INSTRUCTIONS_REJECTED" ? "" : publicSnippetFor(build, quality, structuredDetected),
+    publicSnippet: failureReason === "SOURCE_INSTRUCTIONS_REJECTED" || failureReason === "SOURCE_USE_RESTRICTED"
+      ? "" : publicSnippetFor(build, quality, structuredDetected),
     metrics: {
       payloadLength: prepared.payloadLength,
       payloadHash: sourcePayloadHash,
@@ -1921,7 +1943,7 @@ export async function ingestGamingBuildResource(
     cacheHit: false,
     ...(failureReason ? { failureReason } : {})
   };
-  if (failureReason !== "SOURCE_INSTRUCTIONS_REJECTED" && options.useCache !== false) {
+  if (failureReason !== "SOURCE_INSTRUCTIONS_REJECTED" && failureReason !== "SOURCE_USE_RESTRICTED" && options.useCache !== false) {
     const ttlMs = Math.max(1, Math.min(options.cacheTtlMs ?? LIMITS.cacheTtlMs, 24 * 60 * 60_000));
     buildCache.set(key, cloneResult(result), ttlMs);
   }

@@ -69,7 +69,7 @@ describe('nominal topic headings cannot promote overview text into gameplay evid
     const candidate = await evaluateGamingHybridCandidates({ ...input, protocolVersion: 'gaming-hybrid-v2', candidates: [{ url }] },
       { actorKey: 'nominal-plural-overview-reader' });
     expect(candidate.accepted).toEqual([]);
-    expect(candidate.decisions[0].reasonCodes).toContain('INSUFFICIENT_EXTRACTION');
+    expect(candidate.decisions[0].reasonCodes).toContain('INSUFFICIENT_GAMEPLAY_EVIDENCE');
   });
 
   it.each(['shield deflects projectiles', 'shield deflecting projectiles', 'gate glowing red', 'Uchigatana gleams',
@@ -143,7 +143,7 @@ describe('nominal topic headings cannot promote overview text into gameplay evid
     const result = await evaluateGamingHybridCandidates({ game, mode: 'guide', protocolVersion: 'gaming-hybrid-v2',
       prompt: `What is the ${topic} location in ${game}?`, candidates: [{ url }] }, { actorKey: 'nominal-overview-reader' });
     expect(result.accepted).toEqual([]);
-    expect(result.decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: ['INSUFFICIENT_EXTRACTION'] });
+    expect(result.decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: ['INSUFFICIENT_GAMEPLAY_EVIDENCE'] });
     expect(result.knowledge.evidence ?? []).toEqual([]);
   });
 

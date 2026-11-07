@@ -6,7 +6,7 @@ import {
   parseNativePrPreviewE2eArguments,
   runNativePrPreviewE2e,
 } from './native-pr-preview-e2e.mjs';
-import { buildGamingMcpPreviewRequestPlan, runGamingMcpPreviewE2e } from './gaming-mcp-preview-e2e.mjs';
+import { buildGamingMcpPreviewRequestPlan, runGamingMcpPreviewE2e, resolveGamingMcpCatalogSha256 } from './gaming-mcp-preview-e2e.mjs';
 import {
   assertTrustedGamingPreviewConfiguration,
   resolveTrustedGamingPreviewConfiguration,
@@ -167,11 +167,13 @@ export async function runGamingScopedPreviewE2e({
   args = [], fetchImpl = globalThis.fetch, localGitState,
   monotonicNow = () => performance.now(),
   hostedReceipt,
+  frozenImageContract,
 } = {}) {
   const policy = resolveTrustedGamingPreviewConfiguration();
   assertTrustedGamingPreviewConfiguration(policy);
   const options = parseNativePrPreviewE2eArguments(args,
     { ...(localGitState === undefined ? {} : { localGitState }), includeSourceTree: true });
+  resolveGamingMcpCatalogSha256(options.commitSha, frozenImageContract);
   const plannedCaseIds = buildGamingScopedPreviewAssertionInventory();
   const callerSuppliedTransport = fetchImpl !== globalThis.fetch;
   let controlPlaneProvenance;
@@ -231,7 +233,7 @@ export async function runGamingScopedPreviewE2e({
   if (options.execute && remainingMs < 10_000) fail('GAMING_SCOPED_PREVIEW_TOTAL_TIMEOUT');
   const mcp = await runGamingMcpPreviewE2e({
     args: boundedArguments(args, options, options.execute ? remainingMs : totalTimeoutMs),
-    localGitState, fetchImpl: boundedFetch,
+    localGitState, fetchImpl: boundedFetch, frozenImageContract,
   });
   const executedCaseIds = [...native.checks.map(item => `native:${item.caseId}`),
     ...mcp.checks.map(item => `mcp:${item.caseId}`)];

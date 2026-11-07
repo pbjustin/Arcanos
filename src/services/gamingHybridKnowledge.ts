@@ -31,7 +31,8 @@ import type { runGameplayPipeline, GamingPipelineInput } from './gamingPipeline.
 import { getGamingWebContextMaxChars } from './gamingConfig.js';
 import { buildGamingDiscoveryQuery, sanitizeGamingDiscoveryCandidateUrl } from './gamingSourceDiscovery.js';
 import { evaluateGamingHybridCandidates, createApprovedGamingHybridIngestion, selectGamingHybridEvidence,
-  selectGamingHybridAcceptedEvidence, assertGamingHybridEvidenceMembership, type GamingHybridAcceptedCandidate } from './gamingHybridCandidates.js';
+  selectGamingHybridAcceptedEvidence, assertGamingHybridEvidenceMembership, type GamingHybridAcceptedCandidate,
+  type GamingHybridRetainedCandidate } from './gamingHybridCandidates.js';
 
 export interface GamingHybridCallContext extends GamingSourceGatewayContext { signal?: AbortSignal; canStore?: boolean; canAutoStore?: boolean }
 export interface GamingHybridResult { status: number; body: GamingHybridResponse }
@@ -55,6 +56,7 @@ type Workflow = {
   revision: number; closed?: boolean; activeOperationKey?: string;
   acquisitionWorkMs: number; submittedUrls: Set<string>;
   round: number; currentnessRound: number; accepted: GamingHybridAcceptedCandidate[]; operations: Map<string, Operation>;
+  retained?: GamingHybridRetainedCandidate[];
   pendingDiscovery?: DiscoveryType;
   budgetKey: string;
   last?: GamingHybridResponse;
@@ -313,6 +315,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       const labels: Record<string, string> = {
         SOURCE_TOO_LARGE: 'source too large', SOURCE_FETCH_FAILED: 'source acquisition failed', SOURCE_INACCESSIBLE: 'source inaccessible',
         SOURCE_TIMEOUT: 'source timed out', SOURCE_EXTRACTION_FAILED: 'source extraction failed', INSUFFICIENT_EXTRACTION: 'source extraction insufficient',
+        INSUFFICIENT_GAMEPLAY_EVIDENCE: 'readable source contains no actionable gameplay evidence',
         UNSUPPORTED_SOURCE_FORMAT: 'unsupported source format', URL_BLOCKED: 'URL blocked', GAME_MISMATCH: 'wrong-game source',
         GAME_IDENTITY_UNVERIFIED: 'source game identity unverified', EDITION_REQUIRED: 'source edition scope unresolved',
         EDITION_CONFLICT: 'source edition conflicts with the request', EDITION_UNVERIFIED: 'source edition unverified',
@@ -333,7 +336,10 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
         result.body.qualification = 'The submitted guide could not provide usable evidence. Submit a different readable public guide; this does not establish that public evidence does not exist.';
         return result;
       }
-      if (decisions.every(item => item.reasonCodes.includes('INSUFFICIENT_EXTRACTION'))) {
+      if (decisions.every(item => item.reasonCodes.includes('INSUFFICIENT_GAMEPLAY_EVIDENCE'))) {
+        result.body.reason = 'INSUFFICIENT_GAMEPLAY_EVIDENCE';
+        result.body.qualification = 'The supplied sources were extracted but contain only reference or catalog material, without gameplay evidence for the request. Catalog links alone do not establish acquired article evidence.';
+      } else if (decisions.every(item => item.reasonCodes.includes('INSUFFICIENT_EXTRACTION'))) {
         result.body.reason = 'SOURCE_EXTRACTION_INSUFFICIENT';
         result.body.qualification = 'Could not extract intact usable evidence from the supplied sources. This does not establish that no public guide or location exists.';
       } else if (decisions.some(item => item.reasonCodes.includes('QUESTION_COVERAGE_INSUFFICIENT'))) {
@@ -1004,17 +1010,23 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
           evaluated = await deps.evaluateCandidates({ ...workflow.pipeline, game: workflow.input.game,
             region: workflow.input.region, candidates: input.candidates, discoveryType,
             ...(v2 ? { protocolVersion: GAMING_HYBRID_V2_CONTRACT_VERSION } : {}) },
-          { ...context, workflowId: workflow.id, ...(v2 ? { maxElapsedMs: acquisitionAllowanceMs } : {}) });
+          { ...context, workflowId: workflow.id, storagePolicy: workflow.input.storagePolicy,
+            retainUnverified: workflow.input.storagePolicy === 'ask_before_store',
+            ...(v2 ? { maxElapsedMs: acquisitionAllowanceMs } : {}) });
           chargedAcquisitionMs = Math.max(0, evaluated.acquisitionWorkMs ?? deps.now() - acquisitionStartedAt);
         } finally {
           if (v2 && !currentness) workflow.acquisitionWorkMs += Math.max(chargedAcquisitionMs, deps.now() - acquisitionStartedAt);
         }
         if (v2) context.signal?.throwIfAborted();
         evaluated.knowledge.sources.forEach(source => { source.origin = 'live'; });
-        const retainedChars = [...workflows.values()].flatMap(item => item.accepted).reduce((total, item) => total + item.document.text.length, 0);
+        const retainedChars = [...workflows.values()].flatMap(item => [...item.accepted, ...(item.retained ?? [])])
+          .reduce((total, item) => total + item.document.text.length, 0);
         const { retainArtifacts, decisions } = projectGamingHybridCandidateRetention({ retainedChars,
-          candidateChars: evaluated.accepted.reduce((total, item) => total + item.document.text.length, 0), decisions: evaluated.decisions });
-        if (retainArtifacts) workflow.accepted = [...workflow.accepted, ...evaluated.accepted];
+          candidateChars: [...evaluated.accepted, ...(evaluated.retained ?? [])].reduce((total, item) => total + item.document.text.length, 0), decisions: evaluated.decisions });
+        if (retainArtifacts) {
+          workflow.accepted = [...workflow.accepted, ...evaluated.accepted];
+          workflow.retained = [...(workflow.retained ?? []), ...(evaluated.retained ?? [])];
+        }
         const artifacts = retainArtifacts ? workflow.accepted : [...workflow.accepted, ...evaluated.accepted];
         const prior = v2 ? workflow.currentnessSubmission?.knowledge ?? workflow.candidateSubmission?.knowledge ?? workflow.knowledge
           : currentness ? workflow.candidateSubmission?.knowledge ?? workflow.knowledge : workflow.knowledge;
@@ -1074,7 +1086,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       return runOnce(workflow, `ingest:${input.idempotencyKey}`, input, context, async () => {
         if (workflow.input.storagePolicy === 'transient_only' || input.storagePolicy === 'transient_only') return failure(context, 'STORAGE_POLICY_DENIED', 403, workflow);
         if (input.storagePolicy !== workflow.input.storagePolicy) return failure(context, 'STORAGE_POLICY_MISMATCH', 403, workflow);
-        const candidates = workflow.accepted.filter(item => input.candidateIds.includes(item.candidateId));
+        const candidates = [...workflow.accepted, ...(workflow.retained ?? [])].filter(item => input.candidateIds.includes(item.candidateId));
         if (candidates.length !== new Set(input.candidateIds).size) return failure(context, 'CANDIDATE_UNAVAILABLE', 404, workflow);
         const result = await deps.ingest({ candidates, storagePolicy: input.storagePolicy, confirmed: input.confirmStore,
           idempotencyKey: input.idempotencyKey }, { ...context, canStore: context.canStore === true,
