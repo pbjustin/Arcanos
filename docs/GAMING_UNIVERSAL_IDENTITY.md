@@ -184,6 +184,14 @@ ambiguous game declarations remain inspectable.
 Independent named-game clauses and explicit `Game:` or `Edition:` declarations
 remain inspectable. An unfinished or over-budget comparison cannot hide an
 edition assertion or preserve earlier verified compatibility.
+Unquoted source-global `Platform:`/`Platforms:` and `Region:`/`Regions:` labels
+also remain inspectable inside comparison framing. A completely quoted example
+stays local; quoting only the value of an unquoted label leaves its restriction
+binding. Parser-owned gameplay record fields retain their existing local scope.
+Applicability reads the original acquired page before reference projection;
+comparison gameplay and arbitrary field-value tails cannot become selected claim
+support. Fresh and retained-record callers pass the original source to this
+existing applicability parser.
 
 Bare location clauses must own their leading nominal subject before metadata
 title inference can assert another game. A price or purpose after a nested
@@ -200,6 +208,9 @@ The same overview boundary applies to stored request coverage and the full CLEAR
 evidence assessment. Page-description wording does not become claim support by
 being persisted, and factual values or qualifications in acquired headings remain
 evidence rather than metadata boilerplate.
+An exact nominal topic heading such as `Elden Ring Uchigatana location guide`
+cannot turn a description of that topic into acquisition instructions. The same
+boundary applies before fresh generation and after stored-source retrieval.
 
 Periods internal to acquired titles, such as decimal release names, are not
 sentence boundaries. The existing 160-character subject window and 512-character

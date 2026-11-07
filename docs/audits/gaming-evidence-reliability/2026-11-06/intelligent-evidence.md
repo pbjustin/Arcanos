@@ -1,5 +1,75 @@
 # Gaming discovery and evidence reliability — 2026-11-06
 
+## Independent Codex Cloud remediation from a9357480
+
+Starting head: `a93574804842e6a9c27846f19d4b84996d11fe02`; base:
+`0be1134658195a27353a07b5ca6f86d6e3222546`. Local and remote matched with a clean
+implementation checkout. Existing required CI was green at that head. The PR
+was already open and non-draft; this work preserves that state without merging.
+The Cloud review's uncommitted files were not assumed available. Equivalent
+permanent fixtures were reconstructed against the actual implementation.
+Runtime repairs and acceptance tests are committed at
+`8a17cd758e9e6227b4ca3bc5a19db3e4fc5fd636`; the following documentation-only
+commit records this audit. The exact published head and CI links are in the PR
+receipt, so this file does not claim its own commit hash.
+
+| Finding | Before | Correction and permanent evidence |
+| --- | --- | --- |
+| P1 source-global platform restriction lost in comparison projection | Platform matrix: 11 failures / five controls; the same adjacent region path failed one case / two controls. Two retained-record cases also failed before the caller correction. | Applicability reads original acquired prose, excluding every original parser-owned record before interpreting global labels; selected record fields stay scoped. Fresh and stored callers pass original documents. The existing strict comparison projection is unchanged. The 23-case matrix covers PC/PS5, edition/game conflicts, regions, quotes, compatible foreign comparisons and comparison-only field tails. |
+| P1 enclosing heading crossed an independent article without H1 | Initial heading matrix: nine failures / nine controls; surrounding class-wrapper and quoted-inner-article cases failed separately. | Semantic article/main boundaries stop inheritance with H2 or missing H1; a surrounding class wrapper must be wholly owned by its independent article. Quoted or denied elements cannot supply that boundary. All 29 new heading cases pass, including dependent class scopes, nested articles and furniture controls. |
+| P1 nominal topic heading restored description-only authority | Initial overview matrix: nine failures / seven controls; independent pooled-heading and factual-heading checks reproduced six further controls before their corrections. The real HTTP negative reached model validation once before correction. | Reuse the same closed overview rule for fresh/stored evidence. Match only exact descriptive objects with bounded nominal heading sequences; retain material predicates, values and location qualifiers. All 22 new overview cases pass. Description-only HTTP execution now performs zero model validation, SDK inference, ingestion and memory writes. |
+| P2 failed redirect destination consumed the only discovery slot | Real discovery/acquisition fixture fetched A → B → B after B returned403; C was never acquired. | The existing protected-hop callback collects admitted, sanitized attempted URLs in a request-local negative set, including failures. Discovery applies them before its existing cap. The same one-slot fixture fetches A → B → C; eight controls cover unsafe/sensitive destinations, cancellation, loops, budgets and provenance. |
+
+Independent cross-checks rejected an intermediate platform-field retention
+approach: keeping a whole comparison, or a field with gameplay in its comma tail,
+could restore claim support. That approach is not in the final implementation.
+Global applicability and selected claims now use their existing separate paths,
+with original source bytes retained for hashes and provenance. No parallel field
+parser, new public contract, provider path, resource-limit increase or storage
+permission was introduced.
+The nominal-heading implementation was also challenged with long single- and
+multiple-separator topics. A contained child exceeded its eight-second deadline
+before the correction. The final local matcher uses bounded literal comparisons
+and original source boundaries instead of dynamic topic regexes; all four250KB
+attack controls complete in about10ms, with valid nominal labels still detected.
+The existing240-character metadata window and all production limits are intact.
+
+The authenticated loopback suite now has 60 cases. New negative fixtures assert
+zero model/SDK/storage effects; compatible platform and independent H2 article
+positives complete all four deterministic Trinity/audit stages with bound
+citations. Comparison-projected content remains transient rather than acquiring
+durable-storage eligibility. External HTTP/SDK responses are deterministic
+fixtures, not live-provider acceptance; application provider usage is zero/$0.
+
+Focused validation passes six suites / 181 tests, plus five contained matcher
+and boundary controls. The complete supported Gaming sweep passes **200 suites /
+6,731 tests** in330.834seconds; separate shared-fetch/import/workflow checks pass
+**eight suites / 641 tests**. There are **93 added permanent cases** in this pass.
+Node24.18.1 / npm11.16.0 type-check, build, lint (zero errors / 77 existing
+warnings), generated indexes and all812local documentation links pass.
+
+Real disposable PostgreSQL18.6 validation passes **75/75 tests**, no skips:
+historical/status66 plus durable-RAG9. These are actual application SQL operations
+using source-derived historical and deterministic current synthetic rows, not
+production exports or live-provider acceptance. The guarded loopback target was
+reused without installation or configuration changes. Teardown confirms zero
+owned schemas, the server stopped, and PID/listener/owned processes absent.
+An initial shared-check invocation named a nonexistent test path; the corrected
+invocation is the reported gate. An intermediate Gaming run was stopped after
+source changes invalidated it; progress instrumentation also isolated a slow
+existing selector case whose full68-case suite passes. Restoring the earlier
+overview function also exceeded the contained eight-second selector probe; that
+probe is not presented as a newly introduced production failure. The final
+complete sweep above passed without exclusions, raised limits or weakened
+assertions. Temporary diagnostic reporters remain outside the repository.
+
+Publication identity and exact-head CI links accompany the PR receipt. Required
+checks are `docs:check` and `All Checks Complete`; previous-head success is not
+final-head evidence. CI completion is not awaited under the standing instruction.
+Independent Codex Cloud re-review remains required before claiming merge
+readiness. No merge, deployment, production operation or manual CodeRabbit
+review request is part of this remediation.
+
 ## CI and review follow-up after 55aa6c8c
 
 CI/CD unit and PR CI `build-test` at
