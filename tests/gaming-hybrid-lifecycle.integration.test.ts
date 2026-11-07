@@ -6,6 +6,7 @@ import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js
 import express from 'express';
 import request from 'supertest';
 import { GamingResolvedSourceHarness } from './testUtils/gamingResolvedSourceHarness.js';
+import { createGamingLifecycleDrain } from './testUtils/gamingLifecycleDrain.js';
 import { GAMING_CLEAR_DIMENSIONS } from '../src/shared/gaming/gamingClearPolicy.js';
 import type { GamingHybridResult } from '../src/services/gamingHybridKnowledge.js';
 
@@ -85,6 +86,7 @@ const { logger } = await import('../src/platform/logging/structuredLogging.js');
 // Load the real router before timed lifecycle tests so registration cannot outlive a test's fixture scope.
 const { default: gamingHttpRouter } = await import('../src/routes/gpt-access.js');
 const context = { actorKey: 'synthetic-hybrid-reader', requestId: 'hybrid-request', canStore: true, canAutoStore: false };
+const lifecycle = createGamingLifecycleDrain();
 const input = { game: SOURCE_GAME, mode: 'guide' as const, prompt: 'How do I cross the obsidian observatory?', spoilerMode: 'none' as const };
 const contractVersion = 'gaming-hybrid-v1';
 const environment = { ARCANOS_GAMING_RAG_ENABLED: 'true', ARCANOS_GAMING_DISCOVERY_ENABLED: 'false',
@@ -408,7 +410,8 @@ describe('Gaming hybrid durable lifecycle', () => {
       expect(jest.mocked(logger.info).mock.calls.some(([event]) => event === 'gaming.clear.source.completed')).toBe(true);
     } finally { if (savedToken === undefined) delete process.env[tokenKey]; else process.env[tokenKey] = savedToken; }
   });
-  beforeEach(() => {
+  beforeEach(async () => {
+    await lifecycle.drain();
     database = new GamingResolvedSourceHarness(); jobs.clear(); operations.clear(); jobSequence = 0;
     documentText = PASSAGE; documentGame = SOURCE_GAME; documentTitle = undefined; includeIndependentGameScope = true;
     privateDns = false; queueUnavailable = false;
@@ -445,7 +448,8 @@ describe('Gaming hybrid durable lifecycle', () => {
       return { data: `<html><title>${documentTitle ?? `${documentGame} guide`}</title><body><article><p>${documentGame} gameplay reference.</p>${gameScope}${paragraphs}</article></body></html>`, headers: { 'content-type': 'text/html' } };
     });
   });
-  afterEach(() => {
+  afterEach(async () => {
+    await lifecycle.drain();
     for (const [key, value] of Object.entries(prior)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
     jest.restoreAllMocks();
     jest.useRealTimers();
@@ -1261,7 +1265,7 @@ describe('Gaming hybrid durable lifecycle', () => {
     expect(mockTrinity).not.toHaveBeenCalled();
   });
 
-  it('retains late rows beyond the diagnostic preview, hashes substantive changes and preserves last-good records on approval failure', async () => {
+  it('retains late rows beyond the diagnostic preview, hashes substantive changes and preserves last-good records on approval failure', lifecycle.track(async () => {
     // This exercises content preservation, not elapsed acquisition time. Keep
     // CPU scheduling from spending the mocked source's extraction deadline.
     setClock('2026-01-01T00:00:00Z');
@@ -1285,9 +1289,9 @@ describe('Gaming hybrid durable lifecycle', () => {
     expect((await complete(((await store(changed.accepted, 'structured-refresh-3')).payload as any).ingestionId)).sources[0].status).toBe('updated');
     expect(database.records.some(record => record.status === 'active' && record.search_text.includes('PML 8'))).toBe(true);
     expect(database.records.some(record => record.status === 'active' && record.search_text.includes('PML 7'))).toBe(false);
-  });
+  }));
 
-  it('selects late content beyond 100K, hashes the full artifact, and rejects changed late content before storage', async () => {
+  it('selects late content beyond 100K, hashes the full artifact, and rejects changed late content before storage', lifecycle.track(async () => {
     documentText = `${'Village traders exchange copper coins for canvas and wood. '.repeat(2_400)}\n\n${PASSAGE}`;
     expect(documentText.indexOf(PASSAGE)).toBeGreaterThan(100_000);
     const first = await evaluate();
@@ -1308,6 +1312,87 @@ describe('Gaming hybrid durable lifecycle', () => {
     const newRefresh = await store(third.accepted, 'new-logical-refresh-3');
     expect((await complete((newRefresh.payload as { ingestionId: string }).ingestionId)).sources[0].status).toBe('updated');
     expect(database.revisions).toHaveLength(2);
+  }));
+
+  it('drains the whole prior scenario before resetting fixtures for current-index ingestion', async () => {
+    let releaseWorker!: () => void;
+    let workerEntered!: () => void;
+    let releaseContinuation!: () => void;
+    let continuationEntered!: () => void;
+    const entered = new Promise<void>(resolve => { workerEntered = resolve; });
+    const workerGate = new Promise<void>(resolve => { releaseWorker = resolve; });
+    const tailEntered = new Promise<void>(resolve => { continuationEntered = resolve; });
+    const continuationGate = new Promise<void>(resolve => { releaseContinuation = resolve; });
+    let workerFinished = false;
+    let wholeScenarioFinished = false;
+    let fixtureReset = false;
+    const priorScenario = lifecycle.track(async () => {
+      const accepted = (await evaluate()).accepted;
+      const oldQueued = await store(accepted, 'drained-prior-source');
+      const priorHttp = mockHttp.getMockImplementation()!;
+      mockHttp.mockImplementationOnce(async (...args: any[]) => {
+        const response = await priorHttp(...args);
+        workerEntered(); await workerGate; return response;
+      });
+      const old = await complete((oldQueued.payload as any).ingestionId);
+      expect(old.sources[0].status).toBe('stored');
+      workerFinished = true; continuationEntered();
+      await continuationGate;
+      expect(database.source?.canonical_url).toBe(URL);
+      wholeScenarioFinished = true;
+    })();
+    // Ensure an unexpected scenario failure cannot strand the diagnostic gates.
+    priorScenario.then(() => { workerEntered(); continuationEntered(); }, () => { workerEntered(); continuationEntered(); });
+    let reset: Promise<void> | undefined;
+    try {
+      await entered;
+      reset = (async () => {
+        await lifecycle.drain();
+        database = new GamingResolvedSourceHarness(); jobs.clear(); operations.clear(); jobSequence = 0;
+        mockHttp.mockReset(); fixtureReset = true;
+      })();
+      releaseWorker(); await tailEntered; await Promise.resolve();
+      expect(workerFinished).toBe(true);
+      expect(wholeScenarioFinished).toBe(false);
+      expect(fixtureReset).toBe(false);
+      releaseContinuation(); await priorScenario; await reset;
+      expect(wholeScenarioFinished).toBe(true);
+      expect(fixtureReset).toBe(true);
+      // The URLs exercise reviewed ownership policy; every byte is synthetic controlled HTTP.
+      const game = 'Star Wars: The Old Republic';
+      const indexUrl = 'https://swtor.com/patchnotes';
+      const patchUrl = 'https://swtor.com/patchnotes/synthetic-test-update';
+      const guideUrl = 'https://guides.example.org/swtor-telescope-build';
+      const indexText = `Game: ${game}. Current patch: 2.1. Current build: 2.1.1. Effective from: 2026-09-08. Platforms: all. Regions: all. Official synthetic update release index for the disposable Gaming test. This index identifies the applicable update and hotfix only.`;
+      const patchText = `Game: ${game}. Patch: 2.1. Build: 2.1.1. Effective from: 2026-09-08. Published at: 2026-09-08. Platforms: all. Regions: all. In ${game}, these acquired records describe telescope compatibility. ${PASSAGE}`;
+      mockHttp.mockImplementation(async (url: string, options: any) => {
+        expect(options).toMatchObject({ maxRedirects: 0, proxy: false });
+        const index = new globalThis.URL(url).pathname === '/patchnotes';
+        const guide = new globalThis.URL(url).pathname === '/swtor-telescope-build';
+        const distinctPatch = patchText.replace(PASSAGE, 'The telescope balance at the obsidian observatory changes under this synthetic update. These notes verify only the update, without recommending a build.');
+        return { data: `<html><title>${game} ${guide ? 'build guide' : 'patch notes'}</title><body><article>${index ? indexText : guide ? patchText : distinctPatch}</article></body></html>`, headers: { 'content-type': 'text/html' } };
+      });
+      const workflow = createGamingHybridWorkflow();
+      const query = { contractVersion, idempotencyKey: 'dynamic-query-1', game, mode: 'build',
+        question: 'Which current telescope build works at the obsidian observatory?', storagePolicy: 'ask_before_store' };
+      const missing = await workflow.query(query, context);
+      const found = await workflow.candidates({ contractVersion, workflowId: missing.body.workflowId,
+        idempotencyKey: 'dynamic-candidates-1', candidates: [{ url: guideUrl }, { url: patchUrl }, { url: indexUrl }] }, context);
+      expect(found.body).toMatchObject({ state: 'answer_ready', freshnessStatus: 'current', effectivePatch: '2.1', effectiveBuild: '2.1.1' });
+      expect(found.body.answer?.sources).toEqual(expect.arrayContaining([expect.objectContaining({ url: indexUrl })]));
+      const candidateId = found.body.candidates!.find(candidate => candidate.url === guideUrl)!.candidateId!;
+      const queued = await workflow.ingest({ contractVersion, workflowId: missing.body.workflowId,
+        idempotencyKey: 'dynamic-store-1', candidateIds: [candidateId], storagePolicy: 'ask_before_store', confirmStore: true }, context);
+      expect(queued.body.state).toBe('ingestion_pending');
+
+      const current = await complete(queued.body.ingestion!.ingestionId);
+      expect(current.sources[0].status).toBe('stored');
+      expect(current.sources[0].error).toBeUndefined();
+      expect(database.source?.canonical_url).toBe(guideUrl);
+    } finally {
+      releaseWorker(); releaseContinuation();
+      await Promise.allSettled([priorScenario, ...(reset ? [reset] : [])]);
+    }
   });
 
   it('reuses a bounded official current-index attestation for a later no-URL build query after ingestion', async () => {
