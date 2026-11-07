@@ -56,7 +56,15 @@ jobs:
         # The wrapper retains its existing worker memory limit and full coverage.
         env:
           JEST_MAX_WORKERS: '1'
-        run: npm test
+        run: npm test -- --json --outputFile="$RUNNER_TEMP/jest-result.json"
+
+      - name: Retain Jest assertion results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: jest-results-pr-${{ github.event.pull_request.head.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/jest-result.json
+          retention-days: 30
 
       - name: Offline live validation security contracts
         run: npm run test:live-pr-preview:offline && npm run test:live-validation:offline

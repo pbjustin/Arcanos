@@ -43,6 +43,23 @@ function receipt(kind) {
 }
 
 describe('CI Jest counter checkout provenance', () => {
+  it('retains the full matrix assertion result even after a failed test step', () => {
+    const upload = workflow.jobs.test.steps.find(candidate => candidate.with?.name?.startsWith('jest-counts-'));
+    expect(upload.if).toBe('always()');
+    expect(upload.with.path.trim().split(/\r?\n/u).map(line => line.trim())).toEqual(expect.arrayContaining([
+      '${{ runner.temp }}/jest-counts.json', '${{ runner.temp }}/jest-result.json'
+    ]));
+  });
+  it('produces and retains full PR CI assertions even when tests fail', () => {
+    const pr = yaml.load(readFileSync('.github/workflows/pr-ci.yml', 'utf8'));
+    const steps = pr.jobs['build-test'].steps;
+    const tests = steps.find(candidate => candidate.name === 'Tests');
+    expect(tests.run).toContain('--json');
+    expect(tests.run).toContain('--outputFile="$RUNNER_TEMP/jest-result.json"');
+    const upload = steps.find(candidate => candidate.with?.name?.startsWith('jest-results-pr-'));
+    expect(upload.if).toBe('always()');
+    expect(upload.with.path).toBe('${{ runner.temp }}/jest-result.json');
+  });
   it('independently records a merge checkout and proves equal source trees', () => {
     const value = receipt('equal');
     expect(value.headSha).not.toBe(value.testedSha);
