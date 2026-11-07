@@ -78,9 +78,9 @@ export function resolveGamingAcquiredIdentity(input: {
  * and mask quotations first; later descriptions and comparison frames are not
  * promoted to document-wide identity. Complete names retain edition qualifiers. */
 export function readGamingPrimaryGameDefinition(unquotedProse: string): string | undefined {
-  const match = /^\s*(?:the\s+game\s+)?([^.!?;,\n]{1,120}?)\s+is\s+an?\s+(?:[\p{L}][\p{L}'’-]{0,31}\s+){1,8}game(?=\s|[.!?;,]|$)/iu.exec(unquotedProse);
+  const match = /^\s*(?:the\s+game\s+)?((?:[^.!?;,\n]|(?<=\d)\.(?=\d)){1,120}?)\s+is\s+an?\s+(?:[\p{L}][\p{L}'’-]{0,31}\s+){1,8}game(?=\s|[.!?;,]|$)/iu.exec(unquotedProse);
   const subject = match?.[1].trim();
-  const sentence = unquotedProse.slice(0, 513).split(/[.!?;\n]/u, 1)[0];
+  const sentence = unquotedProse.slice(0, 513).split(/[!?;\n]|\.(?=\s|$)/u, 1)[0];
   if (sentence.length > 512 || /\b(?:not|never|no|only|merely|solely|just|request(?:s|ed)?|asked|reader|quot(?:ed|ation)|comparison|reference)\b/iu.test(sentence)) return undefined;
   return subject && !/^(?:this|that|it|they|these|those)(?:\s+game)?$/iu.test(subject)
     && !/^(?:unlike|compared|comparison|contrast|rather\s+than|instead\s+of|like|not|recommended|related|read\s+next)\b/iu.test(subject)
