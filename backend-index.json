@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-07T21:07:59.707Z",
+  "generatedAt": "2026-11-07T21:24:52.418Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4580,6 +4580,9 @@
         },
         {
           "relativePath": "tests/gaming-cr2-claim-identity.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-cr2-equipment-cap.test.ts"
         },
         {
           "relativePath": "tests/gaming-cr2-extraction.test.ts"

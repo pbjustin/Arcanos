@@ -1238,8 +1238,19 @@ function inspectSupportedBuildRecordFields(record: PlainRecord, inspectField: (v
   const character = isPlainRecord(characterValue) ? characterValue : record;
   for (const aliases of [["class", "className", "profession"], ["subclass", "subClass", "advancedClass"],
     ["specialization", "spec", "discipline"], ["level", "characterLevel"]]) read(findValue(character, aliases, read));
-  for (const aliases of [["equipment", "gear", "items", "loadout"], ["weapons"], ["armor"], ["deck", "cards"], ["army", "units", "roster"]])
-    equipmentEntries(findValue(record, aliases), undefined, read);
+  for (const aliases of [["equipment", "gear", "items", "loadout"], ["weapons"], ["armor"], ["deck", "cards"], ["army", "units", "roster"]]) {
+    const equipment = findValue(record, aliases);
+    // Security inspection covers every structurally admitted source entry;
+    // the independent 128-entry build admission cap must not hide later fields.
+    if (Array.isArray(equipment)) {
+      for (let offset = 0; offset < equipment.length; offset += LIMITS.maxEquipmentEntries)
+        equipmentEntries(equipment.slice(offset, offset + LIMITS.maxEquipmentEntries), undefined, read);
+    } else if (isPlainRecord(equipment)) {
+      const entries = ownEntries(equipment);
+      for (let offset = 0; offset < entries.length; offset += LIMITS.maxEquipmentEntries)
+        equipmentEntries(Object.fromEntries(entries.slice(offset, offset + LIMITS.maxEquipmentEntries)), undefined, read);
+    } else equipmentEntries(equipment, undefined, read);
+  }
   for (const aliases of [["skills", "abilities", "spells"], ["skillTree", "nodes"]]) skillEntries(findValue(record, aliases), read);
   statEntries(findValue(record, ["stats", "attributes", "ratings", "setup", "settings", "tuning"]), read);
   for (const aliases of [["talents", "talentChoices"], ["perks"], ["traits"], ["rotation", "sequence", "priority"],

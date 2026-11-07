@@ -56,6 +56,13 @@ remains bound in the approval hash; a newly detected permission change can
 therefore reject a previously accepted artifact as changed. No permission field
 is removed from hashing to preserve a former error code.
 
+Security inspection also covers accepted equipment entries beyond the normal
+128-item output cap, including primitive arrays and slot-map keys/values.
+[Count-boundary fixtures](../../../../tests/gaming-cr2-equipment-cap.test.ts)
+reproduced three restriction misses before the repair. The existing structural
+ceiling remains 256 entries and admitted build output remains capped at 128;
+unknown telemetry still cannot supply a consumed source-use field.
+
 The same observed-restriction rule covers authorized duplicate ingestion of an
 existing canonical source, including protected redirects. A missing refresh ID
 cannot preserve obsolete authority. Unknown restricted sources retain no
@@ -66,6 +73,15 @@ Claim projection controls also preserve procedure facts when a parser-owned
 heading precedes an explicit game clause, including parenthetical prohibitions
 and procedures before that scope. They do not waive independent source identity
 or genuine conflicting-game checks.
+
+The broad regression run exposed two compatibility defects in the combined
+change: ordinary extraction forwarded the full reference-mapping ceiling instead
+of the requested context size, and retention checks replaced primary identity
+errors with applicability errors. Code repairs restore the original limits and
+identity-stage ordering. All existing argument, timeout, reason-code and stage
+assertions remain unchanged. Full selected-prose mapping is needed only for
+parser-owned local references; permission inspection always sees the full
+accepted body independently of that context size.
 
 ## Historical verifier coverage
 

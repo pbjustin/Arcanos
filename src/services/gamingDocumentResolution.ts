@@ -262,7 +262,8 @@ async function acquireGenericGamingDocument(url: string, maxChars: number, optio
             GAMING_BUILD_RESOURCE_HARD_LIMITS.maxHtmlChars);
           options.onRawDocument?.({ body: response.body.slice(0, rawLimit), contentType: response.contentType,
             truncated: response.body.length > rawLimit });
-          const selectedTextChars = options.retainFullSelectedText ? options.maxSelectedTextChars ?? maxChars : maxChars;
+          const selectedTextChars = options.retainFullSelectedText && structure.localTopicReferences?.length
+            ? options.maxSelectedTextChars ?? maxChars : maxChars;
           extracted = webFetcher.extractFetchAndCleanDocument(currentUrl, structure.proseBody, response.contentType, selectedTextChars,
             gamingDocumentFetchOptions(currentUrl, { ...options, onRawDocument: undefined }), Date.now() - startedAt);
         } catch {

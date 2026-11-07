@@ -331,6 +331,13 @@ export async function evaluateGamingHybridCandidates(
       // They share acquisition, owner, TTL, hash and source-use controls, while
       // explicit consent is checked again by the ingestion operation.
       const retainForInspection = (reason: string) => {
+        if (!v2 || context.retainUnverified !== true || input.discoveryType === 'currentness_verification' || !policy.durableAllowed
+          || document.sourceUseRestricted || !document.text.trim()
+          || acquiredIdentity.status === 'conflict'
+          || ['GAME_MISMATCH', 'EDITION_CONFLICT', 'PLATFORM_MISMATCH', 'CONTRADICTORY_SOURCE_METADATA'].includes(reason)
+          || /\b(?:sign in|log in|login required|enable javascript|verify you are human|captcha|access denied)\b/iu.test(document.text.slice(0, 2_000))) {
+          reject(reason); return;
+        }
         const observedAt = now();
         const regionConflict = input.region && freshness.regions?.length
           && !freshness.regions.some(region => ['all', input.region!.normalize('NFKC').trim().toLowerCase()]
@@ -348,13 +355,11 @@ export async function evaluateGamingHybridCandidates(
           : input.platform && freshness.platforms?.length && !gamingPlatformEvidenceMatchesRequest(freshness.platforms, input.platform) ? 'PLATFORM_MISMATCH'
           : regionConflict ? 'REGION_MISMATCH' : patchConflict ? 'PATCH_MISMATCH'
           : future ? 'NOT_YET_EFFECTIVE' : expired ? 'NO_LONGER_EFFECTIVE' : undefined;
-        reject(conflict ?? reason);
+        // Compatibility still forbids retention, but cannot replace the
+        // independently established identity outcome with a freshness label.
+        const identityOutcome = ['GAME_MISMATCH', 'GAME_IDENTITY_UNVERIFIED', 'EDITION_CONFLICT', 'EDITION_UNVERIFIED', 'EDITION_REQUIRED'].includes(reason);
+        reject(identityOutcome ? reason : conflict ?? reason);
         if (conflict) return;
-        if (!v2 || context.retainUnverified !== true || input.discoveryType === 'currentness_verification' || !policy.durableAllowed
-          || document.sourceUseRestricted || !document.text.trim()
-          || acquiredIdentity.status === 'conflict'
-          || ['GAME_MISMATCH', 'EDITION_CONFLICT', 'PLATFORM_MISMATCH', 'CONTRADICTORY_SOURCE_METADATA'].includes(reason)
-          || /\b(?:sign in|log in|login required|enable javascript|verify you are human|captcha|access denied)\b/iu.test(document.text.slice(0, 2_000))) return;
         const item: Omit<GamingHybridRetainedCandidate, 'retentionBinding'> = {
           candidateId: randomUUID(), actorScopeHash: actorHash(context.actorKey),
           ...(context.workflowId ? { workflowId: context.workflowId } : {}), contentHash,
