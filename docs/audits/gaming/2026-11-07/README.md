@@ -9,6 +9,7 @@ approval, deployment authorization, or current production-state documentation.
 | [Phase 1 modernization](gaming-phase1-modernization.md) | Historical architecture, incident and identity investigation, initial acceptance, and scoped later-phase plans. Historical publisher bytes were unavailable; synthetic regressions do not establish byte equivalence. |
 | [Independent review remediation](gaming-pr1592-remediation.md) | Historical finding attribution, durable authority design, regression map, and isolated PostgreSQL/HTTP acceptance boundaries. Final commit and CI receipts are identified in the PR acceptance report. |
 | [CodeRabbit follow-up](gaming-pr1592-coderabbit-followup.md) | Reproduced authority, extraction, claim/identity and contract findings after the earlier acceptance capture, including independent pagination-race controls. |
+| [CodeRabbit second follow-up](gaming-pr1592-coderabbit-round2.md) | Supported-field restrictions, durable source-use holds, live applicability/reference projections, claim text, identity-window refill and truthful harness boundaries. |
 
 Preserve captured results when maintaining these records. Correct navigation and
 add clearly dated follow-up evidence instead of rewriting an earlier result as

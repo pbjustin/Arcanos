@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-07T19:13:21.296Z",
+  "generatedAt": "2026-11-07T21:07:59.707Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4579,6 +4579,18 @@
           "relativePath": "tests/gaming-cr-extraction-regressions.test.ts"
         },
         {
+          "relativePath": "tests/gaming-cr2-claim-identity.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-cr2-extraction.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-cr2-retention.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-cr2-source-harness.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-currentness-adapters.test.ts"
         },
         {
@@ -5360,6 +5372,9 @@
         },
         {
           "relativePath": "tests/integration/gaming-authority-read.pg18.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/integration/gaming-cr2-source-hold.pg18.integration.test.ts"
         },
         {
           "relativePath": "tests/integration/gaming-durable-rag.pg18.integration.test.ts"
