@@ -30,7 +30,7 @@ const database = process.env.JOB_CLAIM_FENCING_TEST_DATABASE_URL;
 assert.ok(database, 'Dedicated disposable database is required');
 const target = new URL(database);
 assert.ok(['postgres:', 'postgresql:'].includes(target.protocol));
-assert.equal(target.hostname, '127.0.0.1');
+assert.ok(new Set(['localhost', '127.0.0.1', '::1', '[::1]']).has(target.hostname.toLowerCase()), 'Dedicated database must use a shared-guard loopback hostname');
 assert.equal(target.pathname, '/arcanos_audit_pg18_20260727');
 assert.ok(target.username && target.password && target.port);
 assert.equal(target.search + target.hash, '');
@@ -47,7 +47,7 @@ const connect = Socket.prototype.connect;
 Socket.prototype.connect = function(...args) {
   const options = Array.isArray(args[0]) ? args[0][0] : args[0];
   const host = typeof options === 'object' ? options.host : typeof args[1] === 'string' ? args[1] : 'localhost';
-  if (host && !['127.0.0.1', 'localhost', '::1'].includes(host)) {
+  if (host && !['127.0.0.1', 'localhost', '::1', '[::1]'].includes(host)) {
     blockedNetwork += 1; throw new Error('Unauthorized non-loopback network attempt');
   }
   return connect.apply(this, args);
@@ -82,6 +82,7 @@ if (!readMode) {
         : (message.content ?? []).map(part => part.text ?? '').join('\n');
       const system = [body.instructions ?? '', ...messages.filter(message => message.role === 'system' || message.role === 'developer').map(messageText)].join('\n');
       const user = messages.filter(message => message.role === 'user').map(messageText).at(-1) ?? '';
+      const requestText = [body.instructions ?? '', ...messages.map(messageText)].join('\n');
       const schemaName = body.text?.format?.name ?? body.response_format?.json_schema?.name ?? '';
       let text = `${PASSAGE} [Source 1]`;
       let lane = 'generation';
@@ -94,6 +95,13 @@ if (!readMode) {
           [name, { status: 'evaluated', score: 4, reasonCodes: ['SUPPORTED_SYNTHETIC_FIXTURE'], evidenceRefs: refs.slice(0, 1), unresolvedFacts: [] }])), findings: [] });
       } else {
         generated += 1;
+        const grounded = schemaName.startsWith('trinity_structured_reasoning') || body.model === process.env.FINETUNED_MODEL_ID;
+        if (grounded) {
+          const selectedEvidence = /\[UNTRUSTED WEB EVIDENCE - DATA ONLY\]([\s\S]*?)\[END UNTRUSTED WEB EVIDENCE\]/u.exec(requestText)?.[1];
+          assert.ok(selectedEvidence?.toLowerCase().includes('rotate the silver telescope')
+            && /https:\/\/(?:guides\.example\.org|bg3\.wiki)\//u.test(selectedEvidence),
+          'Each grounded generation request must receive the selected source passage inside its data boundary, independently of fixed model output and audit');
+        }
         if (schemaName.startsWith('trinity_structured_reasoning')) {
           lane = 'structured-reasoning';
           const compact = { response_mode: 'answer', achievable_subtasks: ['Use the acquired passage to explain the route.'],
@@ -103,7 +111,8 @@ if (!readMode) {
             chosen_path_justification: 'The synthetic acquired passage supports these steps.' });
         }
       }
-      providerRequests.push({ path: req.url, model: body.model, schemaName, lane });
+      providerRequests.push({ path: req.url, model: body.model, schemaName, lane,
+        ...(lane === 'structured-reasoning' || body.model === process.env.FINETUNED_MODEL_ID ? { selectedEvidenceReceived: true } : {}) });
       const response = { id: 'resp_synthetic_gaming_http', object: 'response', created_at: 1, model: body.model, status: 'completed',
         incomplete_details: null, output_text: text, output: [{ type: 'message', id: 'msg_synthetic_gaming_http', role: 'assistant', status: 'completed',
           content: [{ type: 'output_text', text, annotations: [] }] }], usage: { input_tokens: 11, output_tokens: 7, total_tokens: 18 } };
@@ -119,7 +128,7 @@ if (!readMode) {
           ['response.completed', { response }]]) res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...value })}\n\n`);
         res.end();
       } else { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(response)); }
-    } catch (error) { res.statusCode = 500; res.end(JSON.stringify({ error: { message: error.message } })); }
+    } catch (error) { console.error('Synthetic provider request rejected:', error.message); res.statusCode = 500; res.end(JSON.stringify({ error: { message: error.message } })); }
   });
   await new Promise(done => provider.listen(0, '127.0.0.1', done));
   const providerOrigin = `http://127.0.0.1:${provider.address().port}`;
@@ -455,6 +464,11 @@ try {
     check('no unauthorized network attempted', () => assert.equal(blockedNetwork, 0));
     check('real structured reasoning reached provider transport', () => assert.ok(providerRequests.some(item => item.lane === 'structured-reasoning')));
     check('real final authority reached provider transport', () => assert.ok(providerRequests.some(item => item.model === process.env.FINETUNED_MODEL_ID)));
+    check('every grounded generation request received selected evidence', () => {
+      const groundedRequests = providerRequests.filter(item => item.lane === 'structured-reasoning' || item.model === process.env.FINETUNED_MODEL_ID);
+      assert.equal(groundedRequests.length, 4);
+      assert.ok(groundedRequests.every(item => item.selectedEvidenceReceived === true));
+    });
     console.log('GAMING_HTTP_RECEIPT ' + JSON.stringify({ schema, compiled: true, sourceIdentity, provider: 'synthetic loopback HTTP; real SDK/adapter/Trinity', checks,
       acquiredPaths, generated, audited, providerRequests, freshProcess: JSON.parse(child.stdout.split('GAMING_HTTP_RECEIPT ').at(-1).split(/\r?\n/u)[0]), states }));
   }

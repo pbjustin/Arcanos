@@ -80,6 +80,7 @@ describe('Gaming MCP contracts preserve the service contract', () => {
       storagePolicy: 'ask_before_store', confirmStore: true, idempotencyKey: 'classification-input-fixture' };
     expect(isGamingMcpInput('arcanos_gaming_ingest_sources', input)).toBe(true);
     for (const key of ['classification', 'generationEligible', 'retainedApproval', 'hybridApproval', 'retainUnverified']) {
+      expect(chatGptGamingSchemas.arcanos_gaming_ingest_sources.input.properties).not.toHaveProperty(key);
       expect(isGamingMcpInput('arcanos_gaming_ingest_sources', { ...input, [key]: true })).toBe(false);
     }
   });

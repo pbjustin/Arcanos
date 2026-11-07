@@ -2081,9 +2081,12 @@ Processing acceptance, durable storage, and gameplay authority are separate.
 Existing per-source `status` values remain unchanged. Additive `classification`
 values distinguish `verified`, `stored_unverified`, `reference_only`,
 `needs_reassessment`, and `rejected`; `generationEligible: false` excludes retained
-content from generation retrieval. The stored revision preserves its exact text,
-content hash, classification and applicability restrictions for owner inspection
-or reassessment. `verified` only permits consideration: request-specific
+content from generation retrieval. A revision retains its content hash,
+classification, applicability restrictions, a preview of up to 16,000 characters,
+and bounded chunks. Partial chunk coverage can omit source text beyond that
+preview. The ingestion-status response exposes sanitized metadata rather than
+revision text; retained content must not be treated as an exact-text archive for
+inspection or reassessment. `verified` only permits consideration: request-specific
 applicability, evidence CLEAR, spoiler controls, Trinity citations and final answer
 CLEAR still apply. A catalog/index can be stored as reference material; its links
 are never acquired or represented as ingested by that operation.

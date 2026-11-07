@@ -42,6 +42,7 @@ const POSTGRES_TEST_FILES = [
   'tests/integration/non-gpt-terminal-retention.pg18.integration.test.ts',
   'tests/integration/gaming-historical-status.pg18.integration.test.ts',
   'tests/integration/gaming-durable-rag.pg18.integration.test.ts',
+  'tests/integration/gaming-authority-read.pg18.integration.test.ts',
   'tests/integration/gaming-authority-http.pg18.integration.test.ts',
   'tests/integration/gpt-access-device-auth.pg18.integration.test.ts',
   'tests/integration/dag-token-accounting.pg18.integration.test.ts',
@@ -127,6 +128,13 @@ describe('required PostgreSQL CI truth contract', () => {
     for (const command of ['test:local-agent-postgres', 'test:postgres-fencing']) {
       expect(postgresJob.indexOf(`run: npm run ${command}`)).toBeGreaterThan(packageBuild);
     }
+  });
+
+  it('builds the complete backend and its receipt before the standalone integration command', () => {
+    const packageJson = JSON.parse(readNormalized('package.json'));
+    expect(packageJson.scripts['test:integration']).toBe(
+      'npm run build && node scripts/run-jest.mjs --testPathPatterns=integration --coverage=false'
+    );
   });
 
   it('requires the literal self-heal ownership SQL suite against the dedicated disposable service', () => {

@@ -27,6 +27,11 @@ databaseTest('compiled authenticated MCP, real SQL queue/worker, protected loopb
   expect(receipt.states).toEqual(expect.arrayContaining([expect.objectContaining({ game: "Baldur's Gate 3",
     classification: 'verified', generationEligible: true, eligible: true, revisionId: expect.any(String) })]));
   expect(receipt.checks).toContain('real structured reasoning reached provider transport');
+  expect(receipt.checks).toContain('every grounded generation request received selected evidence');
+  const groundedRequests = receipt.providerRequests.filter((request: { lane: string; model: string }) =>
+    request.lane === 'structured-reasoning' || request.model === 'ft:gpt-4.1:synthetic:gaming-http-authority');
+  expect(groundedRequests).toHaveLength(4);
+  expect(groundedRequests.every((request: { selectedEvidenceReceived?: boolean }) => request.selectedEvidenceReceived === true)).toBe(true);
   expect(receipt.provider).toBe('synthetic loopback HTTP; real SDK/adapter/Trinity');
   expect(receipt.providerRequests).toHaveLength(receipt.generated + receipt.audited);
   expect(receipt.audited).toBe(2);

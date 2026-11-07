@@ -23,7 +23,7 @@ No runner is relabeled and no failed assertion is waived, skipped or deleted.
 
 ## Durable authority boundary
 
-[Source authority validation](../../../src/shared/gaming/gamingSourceAuthority.ts)
+[Source authority validation](../../../../src/shared/gaming/gamingSourceAuthority.ts)
 accepts only a separately supplied, current worker authorization bound to the
 exact acquired document, persisted revision and current source CLEAR assessment.
 The repository removes caller authority stamps. A private restriction-epoch
@@ -34,7 +34,7 @@ supply this authorization. Missing legacy epochs cannot clear held history.
 The owned workflow's storage intent controls this additional read: transient-only
 workflows do not acquire a storage epoch or add a database dependency.
 
-[Persistence and SQL retrieval](../../../src/core/db/repositories/gamingSourceRepository.ts)
+[Persistence and SQL retrieval](../../../../src/core/db/repositories/gamingSourceRepository.ts)
 derive restrictions from immutable source history. A separate source lock is
 acquired before reading history in a fresh PostgreSQL statement snapshot. This
 matters when another transaction commits retained content while a writer waits
@@ -48,16 +48,16 @@ to the same B after a new A grant creates a new immutable restriction boundary.
 Repeated B retries within one grant remain idempotent. An unchanged current
 source does not create another revision solely because its question changed.
 
-[Refresh admission and worker](../../../src/services/gamingSourceIngestion.ts)
+[Refresh admission and worker](../../../../src/services/gamingSourceIngestion.ts)
 recognize every non-authoritative classification and explicit false generation
 eligibility. The final public result reflects the atomic repository decision.
-[Generation selection](../../../src/shared/gaming/gamingStoredEvidenceCore.ts)
+[Generation selection](../../../../src/shared/gaming/gamingStoredEvidenceCore.ts)
 independently excludes explicit and durable-history holds even when SQL text
 search returns those records.
 
 ## Claim support and applicability
 
-[Attributable claim extraction](../../../src/shared/gaming/gamingRetrievalPolicy.ts)
+[Attributable claim extraction](../../../../src/shared/gaming/gamingRetrievalPolicy.ts)
 separates topic labels and catalog speech from gameplay assertions. It supports
 declarative facts, unfamiliar player actions, short guides and complete
 structural records; an imperative is not universally required. Source quality,
@@ -65,10 +65,10 @@ selected evidence and request support use the same boundary. Game identity,
 storage success, indexing and page length do not supply claim support. Final
 answer CLEAR remains a separate requirement.
 
-[HTML extraction](../../../src/services/gamingHtmlEvidence.ts) preserves
+[HTML extraction](../../../../src/services/gamingHtmlEvidence.ts) preserves
 parser-owned applicability headings and linked values without treating metadata
-as gameplay. [Freshness assessment](../../../src/shared/gaming/gamingFreshnessCore.ts)
-and [source CLEAR](../../../src/shared/gaming/gamingClearSource.ts) retain global
+as gameplay. [Freshness assessment](../../../../src/shared/gaming/gamingFreshnessCore.ts)
+and [source CLEAR](../../../../src/shared/gaming/gamingClearSource.ts) retain global
 platform, region, edition, version and source-use restrictions. Conflicting
 platforms/regions and explicit incompatible versions cannot become absent facts
 through navigation cleanup.
@@ -77,15 +77,15 @@ through navigation cleanup.
 
 | Route/control | Permanent evidence |
 | --- | --- |
-| Direct retained refresh; direct catalog retention and retrieval exclusion | [Independent CLEAR review](../../../tests/gaming-independent-clear-review.test.ts) |
-| Current authorization, exact content/context, strict stamp shape, stale assessment | [Source authority unit regressions](../../../tests/gaming-source-authority.test.ts) |
-| All retained classifications, false eligibility without classification, duplicates, restart, concurrent writers, source-lock barrier, missing/forged/v6/v7 provenance, immutable A-B-A | [Real PostgreSQL durable matrix](../../../tests/integration/gaming-durable-rag.pg18.integration.test.ts) |
-| Catalog direct pipeline, hybrid candidate selection, request support, final generation gate and genuine factual/short/structured positives | [Catalog authority regressions](../../../tests/gaming-catalog-evidence-authority.test.ts), [synthetic fixtures](../../../tests/fixtures/gaming-catalog-authority.ts) |
-| Actual protected HTML linked scope, global conflicts, malformed layouts, restrictions and ordinary navigation | [Applicability regressions](../../../tests/gaming-navigation-applicability-regression.test.ts) |
-| Changed bytes/hash, candidate substitution, owner binding, TTL, policy/score/context mutation and queued applicability expiry | [Hybrid lifecycle integration](../../../tests/gaming-hybrid-lifecycle.integration.test.ts) |
-| v2 expected revision, idempotency and cross-actor continuation | [Hybrid v2 lifecycle](../../../tests/gaming-hybrid-v2-lifecycle.test.ts) |
-| v6 owner-readable status and denied execution | [Historical PostgreSQL compatibility](../../../tests/integration/gaming-historical-status.pg18.integration.test.ts) |
-| Real compiled OAuth/MCP, protected loopback HTTP, actual queue/worker transactions, retry/cancel/duplicates, automatic approved source storage, fresh-process SQL selection/CLEAR and grounded response | [Compiled HTTP PostgreSQL integration](../../../tests/integration/gaming-authority-http.pg18.integration.test.ts), [compiled fixture](../../../tests/fixtures/gaming-authority-compiled-http.mjs) |
+| Direct retained refresh; direct catalog retention and retrieval exclusion | [Independent CLEAR review](../../../../tests/gaming-independent-clear-review.test.ts) |
+| Current authorization, exact content/context, strict stamp shape, stale assessment | [Source authority unit regressions](../../../../tests/gaming-source-authority.test.ts) |
+| All retained classifications, false eligibility without classification, duplicates, restart, concurrent writers, source-lock barrier, missing/forged/v6/v7 provenance, immutable A-B-A | [Real PostgreSQL durable matrix](../../../../tests/integration/gaming-durable-rag.pg18.integration.test.ts) |
+| Catalog direct pipeline, hybrid candidate selection, request support, final generation gate and genuine factual/short/structured positives | [Catalog authority regressions](../../../../tests/gaming-catalog-evidence-authority.test.ts), [synthetic fixtures](../../../../tests/fixtures/gaming-catalog-authority.ts) |
+| Actual protected HTML linked scope, global conflicts, malformed layouts, restrictions and ordinary navigation | [Applicability regressions](../../../../tests/gaming-navigation-applicability-regression.test.ts) |
+| Changed bytes/hash, candidate substitution, owner binding, TTL, policy/score/context mutation and queued applicability expiry | [Hybrid lifecycle integration](../../../../tests/gaming-hybrid-lifecycle.integration.test.ts) |
+| v2 expected revision, idempotency and cross-actor continuation | [Hybrid v2 lifecycle](../../../../tests/gaming-hybrid-v2-lifecycle.test.ts) |
+| v6 owner-readable status and denied execution | [Historical PostgreSQL compatibility](../../../../tests/integration/gaming-historical-status.pg18.integration.test.ts) |
+| Real compiled OAuth/MCP, protected loopback HTTP, actual queue/worker transactions, retry/cancel/duplicates, automatic approved source storage, fresh-process SQL selection/CLEAR and grounded response | [Compiled HTTP PostgreSQL integration](../../../../tests/integration/gaming-authority-http.pg18.integration.test.ts), [compiled fixture](../../../../tests/fixtures/gaming-authority-compiled-http.mjs) |
 
 The matrix composes the same production gates across applicable routes. It does
 not claim an exhaustive Cartesian enumeration of every source status, route and
