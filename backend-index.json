@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-07T21:24:52.418Z",
+  "generatedAt": "2026-11-07T23:49:18.763Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4519,6 +4519,9 @@
           "relativePath": "tests/gaming-claim-corroboration.test.ts"
         },
         {
+          "relativePath": "tests/gaming-claim-scope-linear-scan.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-clarification-context.test.ts"
         },
         {
@@ -4810,6 +4813,9 @@
           "relativePath": "tests/gaming-legacy-instruction-boundary.test.ts"
         },
         {
+          "relativePath": "tests/gaming-lifecycle-drain.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-linked-catalog-extraction.test.ts"
         },
         {
@@ -5018,6 +5024,9 @@
         },
         {
           "relativePath": "tests/gaming-source-scope-negation.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-source-use-parser-reuse.test.ts"
         },
         {
           "relativePath": "tests/gaming-stored-authority-refill.test.ts"
@@ -6290,6 +6299,9 @@
         },
         {
           "relativePath": "tests/testUtils/gamingLargeGuideFixture.ts"
+        },
+        {
+          "relativePath": "tests/testUtils/gamingLifecycleDrain.ts"
         },
         {
           "relativePath": "tests/testUtils/gamingResolvedSourceHarness.ts"

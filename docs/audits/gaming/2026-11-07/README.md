@@ -10,6 +10,7 @@ approval, deployment authorization, or current production-state documentation.
 | [Independent review remediation](gaming-pr1592-remediation.md) | Historical finding attribution, durable authority design, regression map, and isolated PostgreSQL/HTTP acceptance boundaries. Final commit and CI receipts are identified in the PR acceptance report. |
 | [CodeRabbit follow-up](gaming-pr1592-coderabbit-followup.md) | Reproduced authority, extraction, claim/identity and contract findings after the earlier acceptance capture, including independent pagination-race controls. |
 | [CodeRabbit second follow-up](gaming-pr1592-coderabbit-round2.md) | Supported-field restrictions, durable source-use holds, live applicability/reference projections, claim text, identity-window refill and truthful harness boundaries. |
+| [Final CI investigation](gaming-pr1592-ci-final.md) | Exact failing-run provenance, parsing and scope-scan work, deterministic timeout-cascade reproduction, fixture isolation and acceptance boundaries. |
 
 Preserve captured results when maintaining these records. Correct navigation and
 add clearly dated follow-up evidence instead of rewriting an earlier result as
