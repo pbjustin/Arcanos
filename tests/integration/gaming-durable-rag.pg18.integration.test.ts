@@ -713,7 +713,7 @@ describeWithDatabase('durable Gaming chunk storage and retrieval on PostgreSQL 1
     expect(statuses.rows.filter(row => row.status === 'active')).toHaveLength(firstRecordCount);
     expect(statuses.rows.filter(row => row.status === 'superseded')).toHaveLength(firstRecordCount);
     mockSourceHttpGet.mockReset(); mockSourceEnqueue.mockReset();
-  }, 60000);
+  }, 30000);
 
   test('retains an owner-submitted wiki catalog without granting gameplay authority or acquiring linked pages', async () => {
     const { createGamingSourceIngestion, executeQueuedGamingSourceIngestion, buildStoredGamingKnowledgeContext } =
