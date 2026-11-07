@@ -256,7 +256,7 @@ export async function evaluateGamingHybridCandidates(
       updateGamingSourceEvaluation(evaluation, 'provenance', 'passed', 'PROVENANCE_ACQUIRED', {
         authority: policy.authority === 'official' ? 'official' : policy.authority === 'unreviewed' ? 'unknown' : 'reviewed_secondary'
       });
-      const freshness = (dependencies.extractFreshness ?? extractGamingFreshnessMetadata)(evidenceDocument, input, now());
+      const freshness = (dependencies.extractFreshness ?? extractGamingFreshnessMetadata)(document, input, now());
       if (policy.authority === 'official' && (policy.category === 'official_updates'
         || policy.category === 'official_status' && policy.currentness === 'live_status')) {
         logger.info('gaming.currentness.candidate_evaluated', {

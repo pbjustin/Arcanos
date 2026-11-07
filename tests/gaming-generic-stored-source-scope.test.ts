@@ -22,6 +22,18 @@ function record(game: string, scope = 'base-game', applicability?: { label: stri
 }
 
 describe('generic stored source scope after durable ingestion', () => {
+  it.each(['Platform: PS5.', 'Region: EU.'])(
+    'keeps original comparison-framed global restrictions binding on stored rows: %s', field => {
+      const stored = record(input.game);
+      const comparison = `For comparison: in Fallout 4, this page has source-specific applicability; ${field}`;
+      const restricted = { ...stored, normalized: { ...stored.normalized,
+        text: `${stored.normalized.text}.\n${comparison}` } };
+      expect(selectStoredGamingEvidence([restricted], { ...input, platform: 'PC', region: 'US' }, limits)).toEqual([]);
+      const compatible = { ...stored, normalized: { ...stored.normalized,
+        text: `${stored.normalized.text}.\nFor comparison: in Fallout 4, this page has source-specific applicability; Platform: PC. Region: US.` } };
+      expect(selectStoredGamingEvidence([compatible], { ...input, platform: 'PC', region: 'US' }, limits)).toHaveLength(1);
+    });
+
   it('does not select a foreign local gameplay row under the inherited requested source catalog identity', () => {
     const selected = selectStoredGamingEvidence([record('Hades')], input, limits);
     const knowledge = formatStoredGamingEvidence(selected, input, limits);

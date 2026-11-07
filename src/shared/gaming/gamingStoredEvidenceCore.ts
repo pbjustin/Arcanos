@@ -208,7 +208,8 @@ function projectCandidate<RecordType extends GamingStoredEvidenceRecord>(record:
   // Durable revisions preserve the acquired source, including independently
   // scoped records excluded from a transient request. Catalog identity belongs
   // to the source; it cannot turn a foreign gameplay row into requested evidence.
-  const gameScoped = selectGamingGameScopedDocument({ text: documentText, publicUrl: record.publicUrl, evidenceUnits }, input.game);
+  const acquiredDocument = { text: documentText, publicUrl: record.publicUrl, evidenceUnits };
+  const gameScoped = selectGamingGameScopedDocument(acquiredDocument, input.game);
   if (gameScoped.status === 'conflict' || gameScoped.status === 'unverified') return null;
   const freshnessMetadata = provenance.hybridFreshness && typeof provenance.hybridFreshness === 'object'
     && !Array.isArray(provenance.hybridFreshness) ? provenance.hybridFreshness as Record<string, unknown> : undefined;
@@ -252,11 +253,11 @@ function projectCandidate<RecordType extends GamingStoredEvidenceRecord>(record:
   evidenceUnits = editionScoped.status === 'verified' ? editionScoped.units : [...gameScoped.document.evidenceUnits];
   // An excluded structural record never falls back as flattened source prose.
   if (normalized.evidenceUnits !== undefined && !evidenceUnits.length) return null;
-  if (gameScoped.document.evidenceUnits.some(unit => unit.fields.some(field => /^(?:platforms?|regions?)$/iu
-    .test(field.label.split(/\s+\/\s+/u).at(-1)!))) || /(?:^|\s)(?:Platforms?|Regions?):\s*/iu.test(gameScoped.document.text)) {
+  if (acquiredDocument.evidenceUnits.some(unit => unit.fields.some(field => /^(?:platforms?|regions?)$/iu
+    .test(field.label.split(/\s+\/\s+/u).at(-1)!))) || /(?:^|\s)(?:Platforms?|Regions?):\s*/iu.test(acquiredDocument.text)) {
     // Inspect acquired restrictions with no publisher/currentness authority and
     // the original fetch time. Preserve global metadata outside selected rows.
-    const applicability = extractGamingFreshnessMetadata(gameScoped.document,
+    const applicability = extractGamingFreshnessMetadata(acquiredDocument,
       { ...input, ...(editionScoped.status === 'verified' ? { edition: 'base-game' } : {}) }, record.fetchedAt, []);
     if (applicability.metadataUnverified || !compatibleScope(applicability)) return null;
   }
