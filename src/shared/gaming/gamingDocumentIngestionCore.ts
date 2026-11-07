@@ -41,6 +41,9 @@ export function detectGamingDocumentGame(input: {
 /** A closed source description establishes a topic, not a gameplay claim. */
 export function isGamingDocumentOverviewOnly(text: string, metadata?: { title?: string; headings?: string }, game?: string): boolean {
   let prose = text.trim();
+  // Every supported overview contains this closed description frame. Ordinary
+  // gameplay chunks must not construct heading/identity matchers per assessment.
+  if (!/\b(?:this|the)\s+(?:following\s+)?(?:page|article|guide|walkthrough|document|source|section)\s+/iu.test(prose)) return false;
   const headings = [...new Set([metadata?.title, metadata?.headings])]
     .filter((heading): heading is string => Boolean(heading)).sort((left, right) => right.length - left.length);
   // Strip only the known nominal identity, never an arbitrary clause that may
@@ -51,28 +54,78 @@ export function isGamingDocumentOverviewOnly(text: string, metadata?: { title?: 
   const description = /^(?:this|the)\s+(?:following\s+)?(?:page|article|guide|walkthrough|document|source|section)\s+(?:(?:explains?|describes?)\s+how\s+to\s+(?:acquire|obtain|get|find|unlock|activate|use|build|craft|complete|buy|collect|reach)\s+|(?:provides?|contains?|includes?|offers?|presents?)\s+(?:(?:an?|the)\s+)?(?:overview|summary|index)\s+of\s+|(?:provides?|contains?)\s+information\s+about\s+|(?:lists?|index(?:es)?|catalogues?|catalogs?|describes?|covers?)\s+)([\p{L}'’-]+(?:\s+[\p{L}'’-]+){0,10})\s*[.!?]$/iu;
   // A nominal subject can establish a topic. Relations, predicates, values and
   // qualifications can carry the answer even inside a page-description frame.
-  const materialTopic = /\b(?:at|in|from|for|after|before|until|when|where|with|without|only|through|via|during|under|over|beside|behind|near|between|inside|outside|into|onto|within|while|unless|except|if|because|although|but|as|how|that|to|is|are|was|were|be|being|been|has|have|had|can|could|may|might|must|should|will|would|does|do|did|cost(?:s|ing)?|requir(?:es?|ed|ing)|sold|sells?|available|opens?|grants?|unlocks?|blocks?|protects?|one|two|three|four|five|six|seven|eight|nine|ten|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand)\b/iu;
-  const gameHeadingPrefix = gameLiteral ? new RegExp(`^${gameLiteral}(?=\\s|$)\\s*`, 'iu') : undefined;
-  for (const heading of headings) {
-    const label = gameHeadingPrefix ? heading.replace(gameHeadingPrefix, '') : heading;
-    const catalogTopic = label.match(/^([\p{L}'’-]+(?:\s+[\p{L}'’-]+){0,9})\s+(?:records?|entries|index|overview|summary)$/iu)?.[1];
-    // Acquired headings may themselves contain the gameplay fact. Strip only
-    // closed nominal labels, preserving unfamiliar predicates conservatively.
-    const nominalLabel = /^(?:gameplay\s+)?(?:guide|walkthrough)$/iu.test(label)
-      || Boolean(catalogTopic && !materialTopic.test(label) && !/\b[\p{L}]+(?:s|ed|ing)\b/iu.test(catalogTopic));
-    if (nominalLabel && (prose === heading || prose.startsWith(heading) && /^\s/u.test(prose.slice(heading.length))))
-      prose = prose.slice(heading.length).trim();
-  }
-  // Retained chunks can lack display metadata. This exact generic heading is
-  // only a negative quality signal; it does not establish source identity.
-  if (gameLiteral) prose = prose.replace(new RegExp(`^${gameLiteral}\\s+(?:gameplay\\s+guide|guide|walkthrough)(?=\\s|$)\\s*`, 'iu'), '');
-  return prose.split(/(?<=[.!?])\s+/u).every(sentence => {
+  const materialTopic = /\b(?:at|in|from|for|after|before|until|when|where|with|without|only|through|via|during|under|over|beneath|above|below|beside|behind|near|between|inside|outside|into|onto|within|while|unless|except|if|because|although|but|as|how|that|to|is|are|was|were|be|being|been|has|have|had|can|could|may|might|must|should|will|would|does|do|did|cost(?:s|ing)?|requir(?:es?|ed|ing)|sold|sells?|available|opens?|grants?|unlocks?|blocks?|protects?|one|two|three|four|five|six|seven|eight|nine|ten|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand)\b/iu;
+  const predicateTopic = /\b[\p{L}]+(?:s|ed|ing)\b/iu;
+  const overviewTopic = (sentence: string): string | undefined => {
     const candidate = nominalGamePrefix ? sentence.replace(nominalGamePrefix, '') : sentence;
     const topic = description.exec(candidate)?.[1];
     const closedTopic = topic && (/\b(?:records?|entries|index|overview|summary|acquisition|locations?)$/iu.test(topic)
       || /\bhow\s+to\s+/iu.test(candidate) && !/\b[\p{L}]+(?:ing|ed)\b/iu.test(topic));
-    return Boolean(topic && closedTopic && !materialTopic.test(topic));
-  });
+    return topic && closedTopic && !materialTopic.test(topic) ? topic : undefined;
+  };
+  const canonicalNominal = (value: string): string => value.normalize('NFKC').toLowerCase().replace(/[\s-]+/gu, ' ').trim();
+  const canonicalGame = game ? canonicalNominal(game) : '';
+  const nominalHeadingTopic = (label: string): string | undefined => {
+    if (label.length > 240) return undefined;
+    const canonical = canonicalNominal(label);
+    const withoutGame = canonicalGame && canonical.startsWith(`${canonicalGame} `) ? canonical.slice(canonicalGame.length + 1) : canonical;
+    const withoutArticle = withoutGame.replace(/^(?:an?|the) /u, '');
+    const topic = withoutArticle.replace(/ (?:(?:locations?|acquisition) )?(?:guide|walkthrough)$/u, '');
+    return topic && topic !== withoutArticle && !materialTopic.test(topic) && !predicateTopic.test(topic) ? topic : undefined;
+  };
+  const nominalHeadingPrefix = (body: string, expectedTopic?: string, requireGame = false) => {
+    for (const match of body.slice(0, 241).matchAll(/\b(?:guide|walkthrough)(?=\s|$)/giu)) {
+      const end = match.index + match[0].length;
+      // A bounded scan cannot manufacture the end of a longer source label.
+      if (end > 240 || !/^(?:\s|$)/u.test(body.slice(end, end + 1))) continue;
+      const label = body.slice(0, end);
+      if (requireGame && (!canonicalGame || !canonicalNominal(label).startsWith(`${canonicalGame} `))) continue;
+      const topic = nominalHeadingTopic(label);
+      if (topic && (expectedTopic === undefined || topic === expectedTopic)) return { label, end };
+    }
+    return undefined;
+  };
+  /** Remove at most eight closed labels naming the same descriptive object.
+   * Material predicates remain facts even when a template repeats their text. */
+  const nominalTopicHeadingRemainder = (label: string, remainder: string): string | undefined => {
+    const topic = nominalHeadingTopic(label);
+    if (!topic) return undefined;
+    let body = remainder;
+    for (let count = 1; count < 8; count++) {
+      const repeated = nominalHeadingPrefix(body, topic);
+      if (!repeated) break;
+      body = body.slice(repeated.end).trimStart();
+    }
+    const describedTopic = overviewTopic(body.split(/(?<=[.!?])\s+/u, 1)[0])?.replace(/^(?:an?|the)\s+/iu, '');
+    return describedTopic && describedTopic.length <= 240 && canonicalNominal(describedTopic) === topic ? body : undefined;
+  };
+  const gameHeadingPrefix = gameLiteral ? new RegExp(`^${gameLiteral}(?=\\s|$)\\s*`, 'iu') : undefined;
+  for (const heading of headings) {
+    if (!(prose === heading || prose.startsWith(heading) && /^\s/u.test(prose.slice(heading.length)))) continue;
+    const remainder = prose.slice(heading.length).trim();
+    const label = gameHeadingPrefix ? heading.replace(gameHeadingPrefix, '') : heading;
+    const catalogTopic = label.match(/^([\p{L}'’-]+(?:\s+[\p{L}'’-]+){0,9})\s+(?:records?|entries|index|overview|summary)$/iu)?.[1];
+    const topicRemainder = nominalTopicHeadingRemainder(heading, remainder);
+    // Acquired headings may themselves contain the gameplay fact. Strip only
+    // closed nominal labels, preserving unfamiliar predicates conservatively.
+    const nominalLabel = /^(?:gameplay\s+)?(?:guide|walkthrough)$/iu.test(label)
+      || Boolean(catalogTopic && !materialTopic.test(label) && !predicateTopic.test(catalogTopic));
+    if (topicRemainder !== undefined) prose = topicRemainder;
+    else if (nominalLabel) prose = remainder;
+  }
+  // Retained chunks can lack display metadata. This exact generic heading is
+  // only a negative quality signal; it does not establish source identity.
+  if (gameLiteral) prose = prose.replace(new RegExp(`^${gameLiteral}\\s+(?:gameplay\\s+guide|guide|walkthrough)(?=\\s|$)\\s*`, 'iu'), '');
+  if (canonicalGame) {
+    // A retained nominal heading can lack display metadata. Require the exact
+    // requested game and the same descriptive object, within the metadata bound.
+    const retained = nominalHeadingPrefix(prose, undefined, true);
+    if (retained) {
+      const topicRemainder = nominalTopicHeadingRemainder(retained.label, prose.slice(retained.end).trimStart());
+      if (topicRemainder !== undefined) prose = topicRemainder;
+    }
+  }
+  return prose.split(/(?<=[.!?])\s+/u).every(sentence => overviewTopic(sentence) !== undefined);
 }
 
 export function classifyGamingDocumentQuality(input: {

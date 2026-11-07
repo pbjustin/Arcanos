@@ -1031,7 +1031,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['src/services/gamingGameDetection.ts', '6659850800aa7166cb41a855d19e86b7e39482490f70f525924b2faedcb91d80'],
   ['src/shared/gaming/gamingDocumentProjectionCore.ts', 'a9b65b7068631763b479d066eb9f0bced507c9c2eb4d40f4ebe0f79ad4edcc68'],
   ['src/shared/gaming/gamingDocumentTextNormalization.ts', '6bafa5dbb9309754c81affa8227f16a3aab77d754bc411d002d110ac67d36cb2'], // gitleaks:allow -- public source semantic SHA-256
-  ['src/shared/gaming/gamingDocumentIngestionCore.ts', '8888e16f78d5ab60ca8b35c9f9214598caff23ca7c570c23dee64b02199f9d45'],
+  ['src/shared/gaming/gamingDocumentIngestionCore.ts', '99ac973c30ac0f1c2c660969f6cf200a20754789d668af08ad356516a9ad1e59'],
   ['src/shared/gaming/gamingGameDeclaration.ts', '305d3e072b842cba314386db5d95ed6e67beeedc369ed4c761f3890a42eea2f3'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gaming/gamingEvidenceUnits.ts', '6d1d4e90297a1e454202c175bbc75eea45accd446e5417f4715d7a6adf95f33c'],
   ['src/shared/gaming/gamingStructuralEvidence.ts', '9170cb8ba2fded33160feeb981f9aa54d03b28929b3b00c9dd273eeebde3e6db'],
