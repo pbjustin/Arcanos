@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-06T22:46:42.409Z",
+  "generatedAt": "2026-11-07T03:49:55.058Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4549,6 +4549,9 @@
           "relativePath": "tests/gaming-colonisation-workflow.integration.test.ts"
         },
         {
+          "relativePath": "tests/gaming-comparison-global-applicability.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-comparison-scope-regressions.test.ts"
         },
         {
@@ -4601,6 +4604,9 @@
         },
         {
           "relativePath": "tests/gaming-execution-budget.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-failed-redirect-discovery.test.ts"
         },
         {
           "relativePath": "tests/gaming-freshness-disposition.test.ts"
@@ -4723,6 +4729,9 @@
           "relativePath": "tests/gaming-hybrid-workflow.test.ts"
         },
         {
+          "relativePath": "tests/gaming-independent-article-heading.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-independent-clear-review.test.ts"
         },
         {
@@ -4816,7 +4825,13 @@
           "relativePath": "tests/gaming-ordinary-request-coverage.test.ts"
         },
         {
+          "relativePath": "tests/gaming-overview-nominal-heading-regressions.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-overview-quality.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-overview-separator-performance.test.ts"
         },
         {
           "relativePath": "tests/gaming-partial-guide-admission.test.ts"

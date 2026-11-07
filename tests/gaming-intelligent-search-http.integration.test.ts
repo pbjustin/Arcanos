@@ -518,6 +518,57 @@ describe('Intelligent discovery through authenticated loopback Gaming MCP and re
     expect(ingest).not.toHaveBeenCalled(); expect(memoryWrite).not.toHaveBeenCalled();
   });
 
+  it('refuses nominal topic headings with description-only bodies before any model validation or inference', async () => {
+    const title = 'Elden Ring Uchigatana location guide';
+    const description = 'In the game Elden Ring, this article explains how to acquire the Uchigatana. This article explains how to acquire the Uchigatana.';
+    active = { game: 'Elden Ring', question: 'How do I acquire the Uchigatana in Elden Ring?',
+      url: 'https://guides.example.org/elden-ring/uchigatana', passage: description, answer: 'The fixture supplies no acquisition instructions. [1]' };
+    sourceHtml = `<html><title>${title}</title><body><article><h1>${title}</h1><p>${description}</p></article></body></html>`;
+    await serve(); const started = await query(); const refused = await submit(started.result);
+    expect(modelsRetrieve).not.toHaveBeenCalled(); expect(responsesCreate).not.toHaveBeenCalled();
+    expect(refused.result.answer).toBeUndefined(); expect(refused.result.coverageSatisfied).toBe(false);
+    expect(['search', 'stop']).toContain(refused.result.nextAction); expect(providerStages).toEqual([]);
+    expect(acquire).toHaveBeenCalledTimes(1); expect(ingest).not.toHaveBeenCalled(); expect(memoryWrite).not.toHaveBeenCalled();
+  });
+
+  it.each(['PS5', 'PC'])('enforces the global %s platform declaration inside a comparison over authenticated HTTP', async platform => {
+    active = { game: 'Elden Ring', question: 'Which katana do Samurai attacks use in Elden Ring on PC?',
+      url: 'https://guides.example.org/elden-ring/samurai',
+      passage: 'In the game Elden Ring, Samurai katana attacks on PC use the starting Uchigatana. The Samurai starting katana on PC is the Uchigatana.',
+      answer: 'On PC, Samurai katana attacks use the starting Uchigatana. [1]' };
+    const title = 'Elden Ring Samurai guide';
+    sourceHtml = `<html><title>${title}</title><body><article><h1>${title}</h1><p>${active.passage}</p>`
+      + `<p>For comparison: in Elden Ring, this page is platform-specific; Platform: ${platform}.</p></article></body></html>`;
+    let evaluated: Awaited<ReturnType<typeof evaluateGamingHybridCandidates>> | undefined;
+    await serve(value => { evaluated = value; }); const started = await query(); const outcome = await submit(started.result);
+    if (platform === 'PS5') {
+      expect(modelsRetrieve).not.toHaveBeenCalled(); expect(responsesCreate).not.toHaveBeenCalled();
+      expect(outcome.result.answer).toBeUndefined(); expect(outcome.result.coverageSatisfied).toBe(false);
+      expect(providerStages).toEqual([]);
+    } else {
+      expect(outcome.result.candidates).toEqual([expect.objectContaining({ decision: 'accepted_transient' })]);
+      expect(evaluated?.knowledge.evidence).toEqual(expect.arrayContaining([expect.objectContaining({ text: expect.stringContaining(active.passage) })]));
+      expect(providerStages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
+      expect(outcome.result).toMatchObject({ state: 'answer_ready', coverageSatisfied: true, answer: { response: active.answer } });
+      expect(outcome.result.answer?.sources.map(source => source.url)).toEqual([active.url]);
+    }
+    expect(acquire).toHaveBeenCalledTimes(1); expect(ingest).not.toHaveBeenCalled(); expect(memoryWrite).not.toHaveBeenCalled();
+  });
+
+  it('answers from an independent H2 article without inheriting an enclosing foreign-game H1', async () => {
+    active = { game: 'Elden Ring', question: 'How do I prepare for the first boss in Elden Ring?',
+      url: 'https://guides.example.org/elden-ring/first-boss',
+      passage: 'In the game Elden Ring, prepare for the first boss by equipping the training blade before leaving the practice checkpoint. Save at the practice checkpoint and carry a healing item before entering the first boss courtyard.',
+      answer: 'Equip the training blade, save at the practice checkpoint, and carry a healing item before entering the first boss courtyard. [1]' };
+    sourceHtml = `<html><title>Elden Ring first boss guide</title><body><main><h1>Dark Souls III walkthrough</h1>`
+      + `<article><div class="page-content"><h2>Elden Ring first boss guide</h2><p>${active.passage}</p></div></article></main></body></html>`;
+    await serve(); const started = await query(); const answered = await submit(started.result);
+    expect(answered.result).toMatchObject({ state: 'answer_ready', coverageSatisfied: true, answer: { response: active.answer } });
+    expect(providerStages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
+    expect(answered.result.answer?.sources.map(source => source.url)).toEqual([active.url]);
+    expect(ingest).not.toHaveBeenCalled(); expect(memoryWrite).not.toHaveBeenCalled();
+  });
+
   it.each(fixtures)('keeps class-only primary $game prose eligible while excluding genuine sidebar furniture', async fixture => {
     active = fixture;
     sourceHtml = classBasedSource(`<p>In the game ${active.game}, players follow these acquired gameplay instructions.</p>`
