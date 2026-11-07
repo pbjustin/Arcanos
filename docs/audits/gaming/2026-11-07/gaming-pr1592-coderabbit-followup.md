@@ -44,6 +44,14 @@ writes its artifact receipt before compiled acceptance. The dedicated required
 PostgreSQL job includes the new read-authority suite, and the CI truth contract
 asserts both registrations.
 
+The existing selected-chunk coverage fixture now independently assesses a whole
+synthetic source before persisting its nominal or factual chunks with current
+durable proof. Its old manually seeded hybrid markers became ineligible under
+the repaired read boundary. All original coverage, citation and no-fetch
+assertions remain; whole-source approval cannot substitute for selected-chunk
+support. The loopback compiled fixture explicitly selects plaintext transport
+after target validation, matching its disposable admin connection on IPv6 too.
+
 The API documentation now describes the bounded 16,000-character revision
 preview and bounded chunks, including possible omissions; historical status
 does not return document text. Audit records now use the required topic/date

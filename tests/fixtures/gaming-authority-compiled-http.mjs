@@ -37,6 +37,8 @@ assert.equal(target.search + target.hash, '');
 const schema = readMode ? process.argv[3] : `gaming_http_${randomUUID().replaceAll('-', '')}`;
 assert.match(schema, /^gaming_http_[a-f0-9]{32}$/u);
 target.searchParams.set('options', `-c search_path=${schema},pg_catalog`);
+// The guarded disposable cluster uses plaintext on every accepted loopback form.
+target.searchParams.set('sslmode', 'disable');
 assert.equal(existsSync(resolve(root, '.env')), false, 'Compiled acceptance requires an isolated checkout without a private .env');
 const operatingSystemEnvironment = new Set(['PATH', 'Path', 'SystemRoot', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP', 'USERPROFILE', 'COMSPEC', 'PATHEXT']);
 for (const key of Object.keys(process.env)) if (!operatingSystemEnvironment.has(key)) delete process.env[key];
