@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -235,6 +235,34 @@ test('git adapter uses exact object IDs and distinguishes reverse or missing anc
   await assert.rejects(git.archiveSha256(`${heads[3]}; touch forbidden`), errorCode('STACKED_PREVIEW_SHA_INVALID'));
   await assert.rejects(git.treeSha('0'.repeat(40)), errorCode('STACKED_PREVIEW_GIT_READ_FAILED'));
   assert.equal(typeof git.readObject, 'undefined');
+});
+
+test('Gaming catalog reads one committed literal as bounded data without evaluating candidate code', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'arcanos-gaming-catalog-object-'));
+  const run = args => execute('git', args, { cwd: root });
+  try {
+    await run(['init', '--initial-branch=main']);
+    await mkdir(join(root, 'scripts'));
+    const sourcePath = join(root, 'scripts', 'native-pr-preview-contract.mjs');
+    const literal = `    catalogSha256: '${'a'.repeat(64)}', // public synthetic fixture\n`;
+    const reader = new GitReadAdapter({ cwd: root, canonicalArchive: true });
+    const commit = async source => {
+      await writeFile(sourcePath, source);
+      await run(['add', 'scripts/native-pr-preview-contract.mjs']);
+      await run(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-m', 'catalog fixture']);
+      return (await run(['rev-parse', 'HEAD'])).stdout.trim();
+    };
+    const head = await commit(`throw new Error('candidate code must never run');\nconst fixture = {\n${literal}};\n`);
+    await writeFile(sourcePath, 'uncommitted substitution');
+    assert.equal(await reader.gamingCatalogSha256(head), 'a'.repeat(64));
+    for (const source of [`const fixture = {\n${literal}${literal}};\n`,
+      `const fixture = { catalogSha256: computeDigest() };\n`, 'x'.repeat(70_000)]) {
+      const changed = await commit(source);
+      await assert.rejects(reader.gamingCatalogSha256(changed), error =>
+        ['STACKED_PREVIEW_GAMING_CATALOG_LITERAL_INVALID', 'STACKED_PREVIEW_GIT_READ_FAILED'].includes(error.code));
+    }
+    await assert.rejects(reader.gamingCatalogSha256('--help'), errorCode('STACKED_PREVIEW_SHA_INVALID'));
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test('canonical Gaming archive digest ignores owner autocrlf while historical adapter preserves its default', async () => {

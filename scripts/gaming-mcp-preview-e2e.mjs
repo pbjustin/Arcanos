@@ -10,7 +10,23 @@ const migration = NATIVE_PR_PREVIEW_E2E_CONTRACT.pluginMigration;
 const hash = value => createHash('sha256').update(value).digest('hex');
 const rpc = (method, params = {}) => ({ jsonrpc: '2.0', id: 'gaming-preview', method, params });
 const call = (name, args) => rpc('tools/call', { name, arguments: args });
-const assert = (condition, code, id) => { if (!condition) throw new Error(`${code}:${id}`); };
+const assert = (condition, code, id) => {
+  if (!condition) throw Object.assign(new Error(`${code}:${id}`), { code, caseId: id });
+};
+// This is the one reviewed historical image built by the infrastructure smoke.
+// It is not an alternate catalog acceptance policy for ordinary exact-head checks.
+const FROZEN_IMAGE_CONTRACT = Object.freeze({
+  candidateSha: '848d6be5fc7d73936bb7921bd496d3051e30752d',
+  treeSha: 'd78ffd0a423e9755008784b6c244cafc131d1acf',
+  sourceArchiveSha256: '5bc4713eb4842f5927354bebc9ae82f43f9c32516dd7f32b61a8c446db684123',
+  catalogSha256: 'd43aa08b59e003f447bbb2e24e9bc116f67c0e66778cd3d9de1e6f1785de4953',
+});
+export function resolveGamingMcpCatalogSha256(commitSha, frozenImageContract) {
+  if (frozenImageContract === undefined) return contract.catalogSha256;
+  assert(commitSha === FROZEN_IMAGE_CONTRACT.candidateSha && isDeepStrictEqual(frozenImageContract, FROZEN_IMAGE_CONTRACT),
+    'GAMING_PREVIEW_FROZEN_CONTRACT_INVALID', 'catalog');
+  return frozenImageContract.catalogSha256;
+}
 const sourceWrite = { game: contract.game, sourceUrls: ['https://example.com/synthetic-guide'],
   idempotencyKey: 'gaming-preview-write', storagePolicy: 'ask_before_store', confirmStore: true };
 
@@ -44,9 +60,10 @@ export function buildGamingMcpPreviewRequestPlan() {
   ];
 }
 
-export async function runGamingMcpPreviewE2e({ args = [], localGitState, fetchImpl = globalThis.fetch } = {}) {
+export async function runGamingMcpPreviewE2e({ args = [], localGitState, fetchImpl = globalThis.fetch, frozenImageContract } = {}) {
   // Reuse the maintained canonical-repository, clean exact-head and isolated HTTPS-origin guards.
   const options = parseNativePrPreviewE2eArguments(args, localGitState === undefined ? {} : { localGitState });
+  const catalogSha256 = resolveGamingMcpCatalogSha256(options.commitSha, frozenImageContract);
   const plan = buildGamingMcpPreviewRequestPlan();
   const target = { repository: options.repository, prNumber: options.prNumber, commitSha: options.commitSha,
     webHost: new URL(options.webBaseUrl).hostname, workerHost: new URL(options.workerBaseUrl).hostname };
@@ -95,7 +112,7 @@ export async function runGamingMcpPreviewE2e({ args = [], localGitState, fetchIm
             assert(body.jsonrpc === '2.0' && body.id === 'gaming-preview', 'GAMING_PREVIEW_RPC_ENVELOPE', item.id);
             if (item.id === 'initialize') assert(isDeepStrictEqual(body.result, { protocolVersion: contract.protocolVersion, capabilities: { tools: {} },
               serverInfo: { name: 'arcanos-gaming-sealed-preview', version: '1.0.0' }, instructions: contract.instructions }), 'GAMING_PREVIEW_INITIALIZE', item.id);
-            else if (item.id === 'catalog') assert(hash(JSON.stringify(body.result?.tools)) === contract.catalogSha256, 'GAMING_PREVIEW_EXACT_CATALOG', item.id);
+            else if (item.id === 'catalog') assert(hash(JSON.stringify(body.result?.tools)) === catalogSha256, 'GAMING_PREVIEW_EXACT_CATALOG', item.id);
             else if (item.proof) {
               const output = item.id === 'query' ? contract.queryOutput : contract.hybridOutput;
               assert(isDeepStrictEqual(body.result, { structuredContent: output, content: [{ type: 'text', text: JSON.stringify(output) }] }), 'GAMING_PREVIEW_SYNTHETIC_OUTPUT', item.id);

@@ -95,6 +95,19 @@ Independent Codex Cloud review and required exact-head CI remain merge gates.
 No merge, deployment, production write, Railway configuration change, paid
 provider call or durable IGN ingestion is part of this work.
 
+The supplemental image smoke builds a deliberately frozen historical candidate.
+The additive MCP catalog exposed its comparison against the current controller's
+catalog instead of that image's source contract. The repair verifies the exact
+reviewed historical commit/tree/archive/catalog tuple before transport, retaining
+all 84 assertions and ordinary current-head catalog equality. Candidate code is
+read only as bounded literal data; it is not executed by the controller. This
+frozen-image smoke is separate from current application or hosted acceptance.
+The broad controller test group has 19 failures and one platform skip in this
+Windows environment; all 19 also reproduce on unchanged base `52d859c2`.
+Focused image/scoped, real Git-reader and MCP verification regressions pass.
+These results do not replace the actual Linux image smoke check in CI; no
+assertion or platform requirement was weakened to hide the baseline failures.
+
 The existing 1,024 acquired-scope inspection limit remains fail-closed. A highly
 repetitive long document can be retained as unverified while its raw indexed text
 remains inspectable; it cannot supply generation context. Positive large-guide

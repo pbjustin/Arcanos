@@ -420,6 +420,15 @@ export class GitReadAdapter {
     return result === '';
   }
 
+  async gamingCatalogSha256(headSha) {
+    requireSha(headSha);
+    // Read one bounded, fixed-path blob as data; never import candidate code.
+    const source = await this.#readObject(['show', `${headSha}:scripts/native-pr-preview-contract.mjs`]);
+    const matches = [...source.matchAll(/^    catalogSha256: '([a-f0-9]{64})',(?:[ \t]*\/\/[^\r\n]*)?$/gmu)];
+    requireCondition(matches.length === 1, 'STACKED_PREVIEW_GAMING_CATALOG_LITERAL_INVALID');
+    return matches[0][1];
+  }
+
   async archiveSha256(headSha) {
     requireSha(headSha);
     await this.#readObject(['rev-parse', '--verify', `${headSha}^{commit}`]);
