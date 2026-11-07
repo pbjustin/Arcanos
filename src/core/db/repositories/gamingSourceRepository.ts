@@ -115,6 +115,8 @@ export interface QueryActiveGamingKnowledgeInput {
   sourceIds?: readonly string[];
   query: string;
   limit?: number;
+  /** Internal bounded-deadline refill, in the same deterministic lexical order. */
+  offset?: number;
   mode?: GamingKnowledgeRecordType;
 }
 
@@ -315,6 +317,12 @@ const NON_AUTHORITATIVE_HISTORY_SQL = `(
   (authority_revision.provenance ? 'generationEligible' AND authority_revision.provenance->'generationEligible' IS DISTINCT FROM 'true'::jsonb)
   OR (authority_revision.provenance ? 'classification' AND authority_revision.provenance->'classification' IS DISTINCT FROM '"verified"'::jsonb)
   OR authority_revision.provenance->'clearReassessmentRequired' = 'true'::jsonb
+)`;
+const AUTHORITY_REASSESSMENT_HISTORY_SQL = `(${NON_AUTHORITATIVE_HISTORY_SQL}
+  OR authority_revision.provenance ? 'gamingClear'
+  OR authority_revision.provenance ? 'approvedContentHash'
+  OR authority_revision.provenance ? 'hybridPolicyVersion'
+  OR authority_revision.provenance ? 'authorityAssessment'
 )`;
 
 export class GamingSourceCanonicalHashCollisionError extends Error {
@@ -842,11 +850,7 @@ export class PostgresGamingSourceRepository {
          RETURNING ${SOURCE_COLUMNS}, EXISTS (
            SELECT 1 FROM gaming_source_revisions AS authority_revision
            WHERE authority_revision.source_id = gaming_sources.id
-             AND (${NON_AUTHORITATIVE_HISTORY_SQL}
-               OR authority_revision.provenance ? 'gamingClear'
-               OR authority_revision.provenance ? 'approvedContentHash'
-               OR authority_revision.provenance ? 'hybridPolicyVersion'
-               OR authority_revision.provenance ? 'authorityAssessment')
+             AND ${AUTHORITY_REASSESSMENT_HISTORY_SQL}
          ) AS authority_history_requires_reassessment,
          (SELECT COUNT(*) FROM gaming_source_revisions AS authority_revision
            WHERE authority_revision.source_id = gaming_sources.id AND ${NON_AUTHORITATIVE_HISTORY_SQL}) AS restricted_revision_count,
@@ -1185,6 +1189,8 @@ export class PostgresGamingSourceRepository {
       throw new TypeError('limit must be a positive integer.');
     }
     const limit = Math.min(requestedLimit, MAX_QUERY_LIMIT);
+    const offset = input.offset ?? 0;
+    if (!Number.isSafeInteger(offset) || offset < 0) throw new TypeError('offset must be a nonnegative safe integer.');
     const sourceIds = input.sourceIds === undefined ? null : [...new Set(input.sourceIds.map(id => assertUuid(id, 'sourceId')))];
     if (sourceIds && sourceIds.length > 20) throw new TypeError('sourceIds cannot exceed 20.');
     const queryText = `WITH search_input AS (
@@ -1224,7 +1230,7 @@ export class PostgresGamingSourceRepository {
          revision.extraction_metrics,
          EXISTS (
            SELECT 1 FROM gaming_source_revisions AS authority_revision
-           WHERE authority_revision.source_id = source.id AND ${NON_AUTHORITATIVE_HISTORY_SQL}
+           WHERE authority_revision.source_id = source.id AND ${AUTHORITY_REASSESSMENT_HISTORY_SQL}
          ) AS source_has_non_authoritative_history,
          (SELECT COUNT(*) FROM gaming_source_revisions AS authority_revision
            WHERE authority_revision.source_id = source.id AND ${NON_AUTHORITATIVE_HISTORY_SQL}) AS source_restricted_revision_count,
@@ -1256,8 +1262,8 @@ export class PostgresGamingSourceRepository {
           revision.fetched_at DESC,
           knowledge.created_at DESC,
           knowledge.id ASC
-        LIMIT $4`;
-    const queryValues = [gameKey, input.query, input.mode ?? null, limit, sourceIds];
+        LIMIT $4${offset ? ' OFFSET $6' : ''}`;
+    const queryValues = [gameKey, input.query, input.mode ?? null, limit, sourceIds, ...(offset ? [offset] : [])];
     const result = await this.queryWithDeadline<GamingKnowledgeQueryRow>(queryText, queryValues, options);
 
     return result.rows.map(row => {

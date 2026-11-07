@@ -462,6 +462,13 @@ export async function evaluateGamingHybridCandidates(
       const identityReasons = sourceAssessment.dimensionScores.alignment.reasonCodes;
       if (!['accept', 'partial'].includes(sourceAssessment.decision)
         || identityReasons.some(reason => ['GAME_MISMATCH', 'GAME_IDENTITY_UNVERIFIED', 'EDITION_CONFLICT', 'EDITION_UNVERIFIED', 'EDITION_REQUIRED'].includes(reason))) {
+        // Unknown applicability can be retained for later owner reassessment;
+        // every other required gate and all acquired conflict guards still pass.
+        if (sourceAssessment.gates.compatibility === 'unknown'
+          && Object.entries(sourceAssessment.gates).every(([gate, state]) => gate === 'compatibility' || state === 'verified' || gate === 'freshness' && state === 'not_applicable')
+          && sourceAssessment.blockingFindings.every(finding => finding.code === 'COMPATIBILITY_UNVERIFIED')) {
+          retainForInspection('COMPATIBILITY_UNVERIFIED'); continue;
+        }
         reject(identityReasons.find(reason => ['GAME_MISMATCH', 'EDITION_CONFLICT'].includes(reason))
           ?? identityReasons.find(reason => ['GAME_IDENTITY_UNVERIFIED', 'EDITION_UNVERIFIED', 'EDITION_REQUIRED'].includes(reason))
           ?? sourceAssessment.dimensionScores.leverage.reasonCodes.find(reason => reason === 'QUESTION_COVERAGE_INSUFFICIENT')

@@ -444,9 +444,15 @@ describeWithDatabase('durable Gaming chunk storage and retrieval on PostgreSQL 1
       const candidate = mutation === 'copied-artifact' ? { ...original } : original;
       if (mutation === 'changed-game') candidate.game = 'Platinum Meridian Foreign';
       else if (mutation === 'removed-count') delete candidate.authorityRestrictionCount;
-      else candidate.authorityRestrictionCount = 2;
+      else if (mutation === 'changed-count') candidate.authorityRestrictionCount = 2;
       candidate.assessmentBinding = gamingClearHash({ sourceAssessment: candidate.sourceAssessment, sourceContext: candidate.sourceContext,
         ...(candidate.authorityRestrictionCount === undefined ? {} : { authorityRestrictionCount: candidate.authorityRestrictionCount }) });
+      if (mutation === 'copied-artifact') {
+        expect(candidate).not.toBe(original);
+        expect(candidate).toEqual(original);
+        expect(candidate.authorityRestrictionCount).toBe(1);
+        expect(candidate.assessmentBinding).toBe(original.assessmentBinding);
+      }
       const enqueued = mockSourceEnqueue.mock.calls.length;
       const denied = await createApprovedGamingHybridIngestion({ candidates: [candidate], storagePolicy: 'ask_before_store',
         confirmed: true, idempotencyKey: randomUUID() }, { actorKey: fixture.actorKey, canStore: true, canAutoStore: false });
