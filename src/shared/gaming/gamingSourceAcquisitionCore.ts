@@ -1,5 +1,6 @@
 import { isIP } from "node:net";
 import { redactString } from "@arcanos/runtime/redaction";
+import { recognizeGamingArchiveItemCore } from './gamingArchiveResourceCore.js';
 import { GAMING_LOW_SIGNAL_DOMAINS, GAMING_REVIEWED_PUBLISHER_REDIRECT_PAIRS,
   GAMING_SEARCH_ENGINE_DOMAINS, GAMING_URL_SHORTENER_DOMAINS } from './gamingSourceTransportData.js';
 
@@ -29,6 +30,20 @@ const CONTENT_FARM_DOMAIN_PATTERN = /(?:^|[.-])(?:clickbait|content-?farm|scrape
 
 export function normalizeGamingSourceDomain(hostname: string): string {
   return hostname.toLowerCase().replace(/^www\./, "").replace(/^\[|\]$/g, "").replace(/\.$/, "");
+}
+
+/** Identity only: callers must admit the URL before using it for acquisition or discovery. */
+export function gamingSourceAcquisitionIdentity(admittedUrl: string): string {
+  const archiveIdentifier = recognizeGamingArchiveItemCore(admittedUrl, privateFetchUrl => ({ privateFetchUrl }));
+  // Archive reader positions and its reviewed www alias resolve to the same case-sensitive item.
+  if (archiveIdentifier) return `https://archive.org/details/${archiveIdentifier}`;
+  try {
+    const parsed = new URL(admittedUrl);
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return admittedUrl;
+  }
 }
 
 export function gamingSourceDomainMatches(domain: string, candidate: string): boolean {

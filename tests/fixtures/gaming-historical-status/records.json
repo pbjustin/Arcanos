@@ -1,0 +1,739 @@
+[
+  {
+    "provenance": {
+      "commit": "ca45f623686b1cd24a6c49a3fd935d85dcdfb045",
+      "blobs": {
+        "policy": {
+          "path": "src/shared/gaming/gamingClearPolicy.ts",
+          "blob": "1c39aef40c08de4ce6538122407504e76a6ea55b"
+        },
+        "ingestion": {
+          "path": "src/services/gamingSourceIngestion.ts",
+          "blob": "9176368d6598ea93c52da72bbab7d3312093929f"
+        },
+        "freshness": {
+          "path": "src/shared/gaming/gamingFreshnessCore.ts",
+          "blob": "b0636a16606dadebfb49950b79b623469ff6f183"
+        },
+        "resources": {
+          "path": "src/services/gamingBuildResourceSchema.ts",
+          "blob": "be12ac87fba6c8bd3f3a7f8ca2f33ccbea94bb91"
+        },
+        "identity": {
+          "path": "src/shared/gaming/gamingGameIdentity.ts",
+          "blob": "f8bbb0671a3d57785293c52762729bdc92764202"
+        }
+      },
+      "generation": "Committed CLEAR factory and original approved-ingestion producer, validated by their original schemas; synthetic inputs and capture-only admission/enqueue."
+    },
+    "actorKey": "history-fixture-owner",
+    "body": {
+      "action": "ingest",
+      "schemaVersion": "1",
+      "sources": [
+        {
+          "submittedIndex": 0,
+          "canonicalUrl": "https://example.com/copper-vale-guide",
+          "game": "Copper Vale",
+          "gameKey": "copper-vale",
+          "sourceTrustType": "supplied",
+          "trustScore": 0.5,
+          "origin": "gpt_web_search",
+          "hybridApproval": {
+            "actorScopeHash": "754f69275e6d177c42258c312cbd6a6d277a45dfdcb427bc22ff5d4cefab5d3c",
+            "contentHash": "e0f822283cda8fc258e93f65d1a9812979f017408a2f4fb6a84fb81e61ca6ab8",
+            "policyVersion": "gaming-hybrid-candidates/v1",
+            "freshnessPolicyVersion": "gaming-hybrid-freshness-v1",
+            "sourcePolicyVersion": "gaming-hybrid-source-policy-v1",
+            "recordType": "guide",
+            "gamingClear": {
+              "rubricVersion": "gaming-clear/v1",
+              "profile": "source",
+              "policyProfile": "gaming-clear-policy/v1:walkthrough:source",
+              "sourceRole": "gameplay_guide",
+              "subjectId": "history-fixture-source",
+              "subjectHash": "e0f822283cda8fc258e93f65d1a9812979f017408a2f4fb6a84fb81e61ca6ab8",
+              "contextFingerprint": "33c8b337f34b18cad827e9a6a18869c0f8e950af677f2bd6317631a475c234ad",
+              "assessmentMethod": "deterministic",
+              "assessmentStatus": "completed",
+              "dimensionScores": {
+                "clarity": {
+                  "status": "evaluated",
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "SYNTHETIC_SUPPORTED_SOURCE"
+                  ],
+                  "evidenceRefs": [
+                    "history-fixture-source"
+                  ],
+                  "unresolvedFacts": []
+                },
+                "leverage": {
+                  "status": "evaluated",
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "SYNTHETIC_SUPPORTED_SOURCE"
+                  ],
+                  "evidenceRefs": [
+                    "history-fixture-source"
+                  ],
+                  "unresolvedFacts": []
+                },
+                "efficiency": {
+                  "status": "evaluated",
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "SYNTHETIC_SUPPORTED_SOURCE"
+                  ],
+                  "evidenceRefs": [
+                    "history-fixture-source"
+                  ],
+                  "unresolvedFacts": []
+                },
+                "alignment": {
+                  "status": "evaluated",
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "SYNTHETIC_SUPPORTED_SOURCE"
+                  ],
+                  "evidenceRefs": [
+                    "history-fixture-source"
+                  ],
+                  "unresolvedFacts": []
+                },
+                "resilience": {
+                  "status": "evaluated",
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "SYNTHETIC_SUPPORTED_SOURCE"
+                  ],
+                  "evidenceRefs": [
+                    "history-fixture-source"
+                  ],
+                  "unresolvedFacts": []
+                }
+              },
+              "gates": {
+                "identity": "verified",
+                "compatibility": "verified",
+                "claimSupport": "verified",
+                "freshness": "not_applicable",
+                "provenance": "verified",
+                "security": "verified"
+              },
+              "overall": 4.5,
+              "findings": [],
+              "blockingFindings": [],
+              "decision": "accept",
+              "qualityEligible": true,
+              "evaluatedAt": "2026-09-09T12:00:00.000Z"
+            },
+            "freshness": {}
+          }
+        }
+      ],
+      "rejectedSources": [],
+      "submittedCount": 1
+    }
+  },
+  {
+    "provenance": {
+      "commit": "8186e253bf02d2f0d0a0dc32a7bf7bb769c75f15",
+      "blobs": {
+        "policy": {
+          "path": "src/shared/gaming/gamingClearPolicy.ts",
+          "blob": "7aeb037544fb5bf69dd4b1ed5ed00548c29300db"
+        },
+        "ingestion": {
+          "path": "src/services/gamingSourceIngestion.ts",
+          "blob": "433d5c55a1be643ae1aad931781e7f8ebad4648c"
+        },
+        "freshness": {
+          "path": "src/shared/gaming/gamingFreshnessCore.ts",
+          "blob": "fd5996eedbaa345e0c5d7f61600d04e855a79d8f"
+        },
+        "resources": {
+          "path": "src/services/gamingBuildResourceSchema.ts",
+          "blob": "be12ac87fba6c8bd3f3a7f8ca2f33ccbea94bb91"
+        },
+        "identity": {
+          "path": "src/shared/gaming/gamingGameIdentity.ts",
+          "blob": "cb5a602ad5f2535fcec25791d8e5eebd2d6fd244"
+        },
+        "registry": {
+          "path": "src/shared/gaming/gamingGameRegistry.ts",
+          "blob": "6ccad85519cf4868bf647230b3595fe545f85d9e"
+        }
+      },
+      "generation": "Committed CLEAR factory and original approved-ingestion producer, validated by their original schemas; synthetic inputs and capture-only admission/enqueue."
+    },
+    "actorKey": "history-fixture-owner",
+    "body": {
+      "action": "ingest",
+      "schemaVersion": "1",
+      "sources": [
+        {
+          "submittedIndex": 0,
+          "canonicalUrl": "https://example.com/copper-vale-guide",
+          "game": "Copper Vale",
+          "gameKey": "copper-vale",
+          "sourceTrustType": "supplied",
+          "trustScore": 0.5,
+          "origin": "gpt_web_search",
+          "hybridApproval": {
+            "actorScopeHash": "754f69275e6d177c42258c312cbd6a6d277a45dfdcb427bc22ff5d4cefab5d3c",
+            "contentHash": "e0f822283cda8fc258e93f65d1a9812979f017408a2f4fb6a84fb81e61ca6ab8",
+            "policyVersion": "gaming-hybrid-candidates/v1",
+            "freshnessPolicyVersion": "gaming-hybrid-freshness-v1",
+            "sourcePolicyVersion": "gaming-hybrid-source-policy-v2",
+            "recordType": "guide",
+            "gamingClear": {
+              "rubricVersion": "gaming-clear/v1",
+              "profile": "source",
+              "policyProfile": "gaming-clear-policy/v2:walkthrough:source",
+              "sourceRole": "gameplay_guide",
+              "subjectId": "history-fixture-source",
+              "subjectHash": "e0f822283cda8fc258e93f65d1a9812979f017408a2f4fb6a84fb81e61ca6ab8",
+              "contextFingerprint": "33c8b337f34b18cad827e9a6a18869c0f8e950af677f2bd6317631a475c234ad",
+              "assessmentMethod": "deterministic",
+              "assessmentStatus": "completed",
+              "dimensionScores": {
+                "clarity": {
+                  "status": "evaluated",
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "SYNTHETIC_SUPPORTED_SOURCE"
+                  ],
+                  "evidenceRefs": [
+                    "history-fixture-source"
+                  ],
+                  "unresolvedFacts": []
+                },
+                "leverage": {
+                  "status": "evaluated",
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "SYNTHETIC_SUPPORTED_SOURCE"
+                  ],
+                  "evidenceRefs": [
+                    "history-fixture-source"
+                  ],
+                  "unresolvedFacts": []
+                },
+                "efficiency": {
+                  "status": "evaluated",
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "SYNTHETIC_SUPPORTED_SOURCE"
+                  ],
+                  "evidenceRefs": [
+                    "history-fixture-source"
+                  ],
+                  "unresolvedFacts": []
+                },
+                "alignment": {
+                  "status": "evaluated",
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "SYNTHETIC_SUPPORTED_SOURCE"
+                  ],
+                  "evidenceRefs": [
+                    "history-fixture-source"
+                  ],
+                  "unresolvedFacts": []
+                },
+                "resilience": {
+                  "status": "evaluated",
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "SYNTHETIC_SUPPORTED_SOURCE"
+                  ],
+                  "evidenceRefs": [
+                    "history-fixture-source"
+                  ],
+                  "unresolvedFacts": []
+                }
+              },
+              "gates": {
+                "identity": "verified",
+                "compatibility": "verified",
+                "claimSupport": "verified",
+                "freshness": "not_applicable",
+                "provenance": "verified",
+                "security": "verified"
+              },
+              "overall": 4.5,
+              "findings": [],
+              "blockingFindings": [],
+              "decision": "accept",
+              "qualityEligible": true,
+              "evaluatedAt": "2026-09-09T12:00:00.000Z"
+            },
+            "applicabilityContext": {
+              "game": "Copper Vale",
+              "mode": "guide",
+              "classification": "stable",
+              "seasonalPatchRequired": false,
+              "historical": false,
+              "contextFingerprint": "33c8b337f34b18cad827e9a6a18869c0f8e950af677f2bd6317631a475c234ad"
+            },
+            "applicabilityBinding": "b0e4f25059a316f1d4c09c90b9015f89252ea52b2e97fbe40856c6702a9d013d",
+            "freshness": {}
+          }
+        }
+      ],
+      "rejectedSources": [],
+      "submittedCount": 1
+    }
+  },
+  {
+    "provenance": {
+      "commit": "e5c88eae1a2a860dc98384eb61ff30275f9ad00d",
+      "blobs": {
+        "policy": {
+          "path": "src/shared/gaming/gamingClearPolicy.ts",
+          "blob": "89d4caea18d1abccc9cab8bfdf071b736db19ad3"
+        },
+        "ingestion": {
+          "path": "src/services/gamingSourceIngestion.ts",
+          "blob": "9751fb422fd52762848f29747f06bb1d39651b96"
+        },
+        "freshness": {
+          "path": "src/shared/gaming/gamingFreshnessCore.ts",
+          "blob": "18661a7ff0b0490bb2246534a29a122f15dec976"
+        },
+        "resources": {
+          "path": "src/services/gamingBuildResourceSchema.ts",
+          "blob": "be12ac87fba6c8bd3f3a7f8ca2f33ccbea94bb91"
+        },
+        "identity": {
+          "path": "src/shared/gaming/gamingGameIdentity.ts",
+          "blob": "355a3c320629e354ce1cc4c3c255fab0b4b523f2"
+        },
+        "registry": {
+          "path": "src/shared/gaming/gamingGameRegistry.ts",
+          "blob": "df98c8781b8be0b1059afd3820d3578a78bb3ed2"
+        }
+      },
+      "generation": "Committed CLEAR factory and original approved-ingestion producer, validated by their original schemas; synthetic inputs and capture-only admission/enqueue."
+    },
+    "actorKey": "history-fixture-owner",
+    "body": {
+      "action": "ingest",
+      "schemaVersion": "1",
+      "sources": [
+        {
+          "submittedIndex": 0,
+          "canonicalUrl": "https://example.com/copper-vale-guide",
+          "game": "Copper Vale",
+          "gameKey": "copper-vale",
+          "sourceTrustType": "supplied",
+          "trustScore": 0.5,
+          "origin": "gpt_web_search",
+          "hybridApproval": {
+            "actorScopeHash": "754f69275e6d177c42258c312cbd6a6d277a45dfdcb427bc22ff5d4cefab5d3c",
+            "contentHash": "e0f822283cda8fc258e93f65d1a9812979f017408a2f4fb6a84fb81e61ca6ab8",
+            "policyVersion": "gaming-hybrid-candidates/v1",
+            "freshnessPolicyVersion": "gaming-hybrid-freshness-v1",
+            "sourcePolicyVersion": "gaming-hybrid-source-policy-v2",
+            "recordType": "guide",
+            "gamingClear": {
+              "rubricVersion": "gaming-clear/v1",
+              "profile": "source",
+              "policyProfile": "gaming-clear-policy/v3:walkthrough:source",
+              "sourceRole": "gameplay_guide",
+              "subjectId": "history-fixture-source",
+              "subjectHash": "e0f822283cda8fc258e93f65d1a9812979f017408a2f4fb6a84fb81e61ca6ab8",
+              "contextFingerprint": "33c8b337f34b18cad827e9a6a18869c0f8e950af677f2bd6317631a475c234ad",
+              "assessmentMethod": "deterministic",
+              "assessmentStatus": "completed",
+              "dimensionScores": {
+                "clarity": {
+                  "status": "evaluated",
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "SYNTHETIC_SUPPORTED_SOURCE"
+                  ],
+                  "evidenceRefs": [
+                    "history-fixture-source"
+                  ],
+                  "unresolvedFacts": []
+                },
+                "leverage": {
+                  "status": "evaluated",
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "SYNTHETIC_SUPPORTED_SOURCE"
+                  ],
+                  "evidenceRefs": [
+                    "history-fixture-source"
+                  ],
+                  "unresolvedFacts": []
+                },
+                "efficiency": {
+                  "status": "evaluated",
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "SYNTHETIC_SUPPORTED_SOURCE"
+                  ],
+                  "evidenceRefs": [
+                    "history-fixture-source"
+                  ],
+                  "unresolvedFacts": []
+                },
+                "alignment": {
+                  "status": "evaluated",
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "SYNTHETIC_SUPPORTED_SOURCE"
+                  ],
+                  "evidenceRefs": [
+                    "history-fixture-source"
+                  ],
+                  "unresolvedFacts": []
+                },
+                "resilience": {
+                  "status": "evaluated",
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "SYNTHETIC_SUPPORTED_SOURCE"
+                  ],
+                  "evidenceRefs": [
+                    "history-fixture-source"
+                  ],
+                  "unresolvedFacts": []
+                }
+              },
+              "gates": {
+                "identity": "verified",
+                "compatibility": "verified",
+                "claimSupport": "verified",
+                "freshness": "not_applicable",
+                "provenance": "verified",
+                "security": "verified"
+              },
+              "overall": 4.5,
+              "findings": [],
+              "blockingFindings": [],
+              "decision": "accept",
+              "qualityEligible": true,
+              "evaluatedAt": "2026-09-09T12:00:00.000Z"
+            },
+            "applicabilityContext": {
+              "game": "Copper Vale",
+              "mode": "guide",
+              "classification": "stable",
+              "seasonalPatchRequired": false,
+              "historical": false,
+              "contextFingerprint": "33c8b337f34b18cad827e9a6a18869c0f8e950af677f2bd6317631a475c234ad"
+            },
+            "applicabilityBinding": "abd77e02cd77635a4358bf6f4ff8b51951ac3025763bf695f4bdc2da2fad850d",
+            "freshness": {}
+          }
+        }
+      ],
+      "rejectedSources": [],
+      "submittedCount": 1
+    }
+  },
+  {
+    "provenance": {
+      "commit": "741b00a8236f66c02beec700f68a9e1aa42e95b7",
+      "blobs": {
+        "policy": {
+          "path": "src/shared/gaming/gamingClearPolicy.ts",
+          "blob": "56a96828032bfb2f8817dfa606741066e8dbd629"
+        },
+        "ingestion": {
+          "path": "src/services/gamingSourceIngestion.ts",
+          "blob": "9a67277e23357aecbeb7a65941a5408abade1f5b"
+        },
+        "freshness": {
+          "path": "src/shared/gaming/gamingFreshnessCore.ts",
+          "blob": "18661a7ff0b0490bb2246534a29a122f15dec976"
+        },
+        "resources": {
+          "path": "src/services/gamingBuildResourceSchema.ts",
+          "blob": "be12ac87fba6c8bd3f3a7f8ca2f33ccbea94bb91"
+        },
+        "identity": {
+          "path": "src/shared/gaming/gamingGameIdentity.ts",
+          "blob": "355a3c320629e354ce1cc4c3c255fab0b4b523f2"
+        },
+        "registry": {
+          "path": "src/shared/gaming/gamingGameRegistry.ts",
+          "blob": "5285b2c866ea2b19788845a53f7002de4797fc54"
+        }
+      },
+      "generation": "Committed CLEAR factory and original approved-ingestion producer, validated by their original schemas; synthetic inputs and capture-only admission/enqueue."
+    },
+    "actorKey": "history-fixture-owner",
+    "body": {
+      "action": "ingest",
+      "schemaVersion": "1",
+      "sources": [
+        {
+          "submittedIndex": 0,
+          "canonicalUrl": "https://example.com/copper-vale-guide",
+          "game": "Copper Vale",
+          "gameKey": "copper-vale",
+          "sourceTrustType": "supplied",
+          "trustScore": 0.5,
+          "origin": "gpt_web_search",
+          "hybridApproval": {
+            "actorScopeHash": "754f69275e6d177c42258c312cbd6a6d277a45dfdcb427bc22ff5d4cefab5d3c",
+            "contentHash": "e0f822283cda8fc258e93f65d1a9812979f017408a2f4fb6a84fb81e61ca6ab8",
+            "policyVersion": "gaming-hybrid-candidates/v1",
+            "freshnessPolicyVersion": "gaming-hybrid-freshness-v1",
+            "sourcePolicyVersion": "gaming-hybrid-source-policy-v2",
+            "recordType": "guide",
+            "gamingClear": {
+              "rubricVersion": "gaming-clear/v1",
+              "profile": "source",
+              "policyProfile": "gaming-clear-policy/v4:walkthrough:source",
+              "sourceRole": "gameplay_guide",
+              "subjectId": "history-fixture-source",
+              "subjectHash": "e0f822283cda8fc258e93f65d1a9812979f017408a2f4fb6a84fb81e61ca6ab8",
+              "contextFingerprint": "33c8b337f34b18cad827e9a6a18869c0f8e950af677f2bd6317631a475c234ad",
+              "assessmentMethod": "deterministic",
+              "assessmentStatus": "completed",
+              "dimensionScores": {
+                "clarity": {
+                  "status": "evaluated",
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "SYNTHETIC_SUPPORTED_SOURCE"
+                  ],
+                  "evidenceRefs": [
+                    "history-fixture-source"
+                  ],
+                  "unresolvedFacts": []
+                },
+                "leverage": {
+                  "status": "evaluated",
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "SYNTHETIC_SUPPORTED_SOURCE"
+                  ],
+                  "evidenceRefs": [
+                    "history-fixture-source"
+                  ],
+                  "unresolvedFacts": []
+                },
+                "efficiency": {
+                  "status": "evaluated",
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "SYNTHETIC_SUPPORTED_SOURCE"
+                  ],
+                  "evidenceRefs": [
+                    "history-fixture-source"
+                  ],
+                  "unresolvedFacts": []
+                },
+                "alignment": {
+                  "status": "evaluated",
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "SYNTHETIC_SUPPORTED_SOURCE"
+                  ],
+                  "evidenceRefs": [
+                    "history-fixture-source"
+                  ],
+                  "unresolvedFacts": []
+                },
+                "resilience": {
+                  "status": "evaluated",
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "SYNTHETIC_SUPPORTED_SOURCE"
+                  ],
+                  "evidenceRefs": [
+                    "history-fixture-source"
+                  ],
+                  "unresolvedFacts": []
+                }
+              },
+              "gates": {
+                "identity": "verified",
+                "compatibility": "verified",
+                "claimSupport": "verified",
+                "freshness": "not_applicable",
+                "provenance": "verified",
+                "security": "verified"
+              },
+              "overall": 4.5,
+              "findings": [],
+              "blockingFindings": [],
+              "decision": "accept",
+              "qualityEligible": true,
+              "evaluatedAt": "2026-09-09T12:00:00.000Z"
+            },
+            "applicabilityContext": {
+              "game": "Copper Vale",
+              "mode": "guide",
+              "classification": "stable",
+              "seasonalPatchRequired": false,
+              "historical": false,
+              "contextFingerprint": "33c8b337f34b18cad827e9a6a18869c0f8e950af677f2bd6317631a475c234ad"
+            },
+            "applicabilityBinding": "480d9b9f84b30a0b3ab56142154ecf6bc5ef36e693a6edd6fdcd26d9fdda1048",
+            "freshness": {}
+          }
+        }
+      ],
+      "rejectedSources": [],
+      "submittedCount": 1
+    }
+  },
+  {
+    "provenance": {
+      "commit": "cd8da15369421119f5d836e6eef7f7c18dff7e0f",
+      "blobs": {
+        "policy": {
+          "path": "src/shared/gaming/gamingClearPolicy.ts",
+          "blob": "dba77ce6fceb085c4b00e1bdcd16dae6ac0dee18"
+        },
+        "ingestion": {
+          "path": "src/services/gamingSourceIngestion.ts",
+          "blob": "b452b3d6dcc50104a3914a7a61d032fa19db04e1"
+        },
+        "freshness": {
+          "path": "src/shared/gaming/gamingFreshnessCore.ts",
+          "blob": "18661a7ff0b0490bb2246534a29a122f15dec976"
+        },
+        "resources": {
+          "path": "src/services/gamingBuildResourceSchema.ts",
+          "blob": "be12ac87fba6c8bd3f3a7f8ca2f33ccbea94bb91"
+        },
+        "identity": {
+          "path": "src/shared/gaming/gamingGameIdentity.ts",
+          "blob": "355a3c320629e354ce1cc4c3c255fab0b4b523f2"
+        },
+        "registry": {
+          "path": "src/shared/gaming/gamingGameRegistry.ts",
+          "blob": "cb07708a82ca06b9c69f941098f0678be7fde742"
+        }
+      },
+      "generation": "Committed CLEAR factory and original approved-ingestion producer, validated by their original schemas; synthetic inputs and capture-only admission/enqueue."
+    },
+    "actorKey": "history-fixture-owner",
+    "body": {
+      "action": "ingest",
+      "schemaVersion": "1",
+      "sources": [
+        {
+          "submittedIndex": 0,
+          "canonicalUrl": "https://example.com/copper-vale-guide",
+          "game": "Copper Vale",
+          "gameKey": "copper-vale",
+          "sourceTrustType": "supplied",
+          "trustScore": 0.5,
+          "origin": "gpt_web_search",
+          "hybridApproval": {
+            "actorScopeHash": "754f69275e6d177c42258c312cbd6a6d277a45dfdcb427bc22ff5d4cefab5d3c",
+            "contentHash": "e0f822283cda8fc258e93f65d1a9812979f017408a2f4fb6a84fb81e61ca6ab8",
+            "policyVersion": "gaming-hybrid-candidates/v1",
+            "freshnessPolicyVersion": "gaming-hybrid-freshness-v1",
+            "sourcePolicyVersion": "gaming-hybrid-source-policy-v2",
+            "recordType": "guide",
+            "gamingClear": {
+              "rubricVersion": "gaming-clear/v1",
+              "profile": "source",
+              "policyProfile": "gaming-clear-policy/v5:walkthrough:source",
+              "sourceRole": "gameplay_guide",
+              "subjectId": "history-fixture-source",
+              "subjectHash": "e0f822283cda8fc258e93f65d1a9812979f017408a2f4fb6a84fb81e61ca6ab8",
+              "contextFingerprint": "33c8b337f34b18cad827e9a6a18869c0f8e950af677f2bd6317631a475c234ad",
+              "assessmentMethod": "deterministic",
+              "assessmentStatus": "completed",
+              "dimensionScores": {
+                "clarity": {
+                  "status": "evaluated",
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "SYNTHETIC_SUPPORTED_SOURCE"
+                  ],
+                  "evidenceRefs": [
+                    "history-fixture-source"
+                  ],
+                  "unresolvedFacts": []
+                },
+                "leverage": {
+                  "status": "evaluated",
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "SYNTHETIC_SUPPORTED_SOURCE"
+                  ],
+                  "evidenceRefs": [
+                    "history-fixture-source"
+                  ],
+                  "unresolvedFacts": []
+                },
+                "efficiency": {
+                  "status": "evaluated",
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "SYNTHETIC_SUPPORTED_SOURCE"
+                  ],
+                  "evidenceRefs": [
+                    "history-fixture-source"
+                  ],
+                  "unresolvedFacts": []
+                },
+                "alignment": {
+                  "status": "evaluated",
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "SYNTHETIC_SUPPORTED_SOURCE"
+                  ],
+                  "evidenceRefs": [
+                    "history-fixture-source"
+                  ],
+                  "unresolvedFacts": []
+                },
+                "resilience": {
+                  "status": "evaluated",
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "SYNTHETIC_SUPPORTED_SOURCE"
+                  ],
+                  "evidenceRefs": [
+                    "history-fixture-source"
+                  ],
+                  "unresolvedFacts": []
+                }
+              },
+              "gates": {
+                "identity": "verified",
+                "compatibility": "verified",
+                "claimSupport": "verified",
+                "freshness": "not_applicable",
+                "provenance": "verified",
+                "security": "verified"
+              },
+              "overall": 4.5,
+              "findings": [],
+              "blockingFindings": [],
+              "decision": "accept",
+              "qualityEligible": true,
+              "evaluatedAt": "2026-09-09T12:00:00.000Z"
+            },
+            "applicabilityContext": {
+              "game": "Copper Vale",
+              "mode": "guide",
+              "classification": "stable",
+              "seasonalPatchRequired": false,
+              "historical": false,
+              "contextFingerprint": "33c8b337f34b18cad827e9a6a18869c0f8e950af677f2bd6317631a475c234ad"
+            },
+            "applicabilityBinding": "b952109c5889f28479bd1b0c1b82b539c7be8209e1fbbd932f3b491bff8e29b1",
+            "freshness": {}
+          }
+        }
+      ],
+      "rejectedSources": [],
+      "submittedCount": 1
+    }
+  }
+]

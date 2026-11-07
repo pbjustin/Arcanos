@@ -1184,7 +1184,7 @@ currentness adapters and durable storage eligibility require their separate
 existing source-policy review. Runtime submissions cannot mutate the registry.
 
 CLEAR policy v3 introduced rejection of persisted v1/v2 assessments. The
-current v4 policy also rejects v3 assessments until sources are reassessed.
+current v6 policy also rejects v3/v4/v5 assessments until sources are reassessed.
 Both preserve the public `gaming-clear/v1` rubric and wire shape.
 Context fingerprints bind the registry schema, revision and a hash of its exact
 reviewed data. Existing bounded extraction caches can reuse acquired bytes, but
@@ -1202,6 +1202,19 @@ identity is verified; matching request, URL or page title metadata does not
 provide that proof. Older unapproved stored revisions without current
 server-written identity proof remain readable but cannot authorize generation
 until reassessed. These checks do not automatically write or migrate stored data.
+
+Status polling separately accepts strictly shaped retained ingestion envelopes
+from known earlier CLEAR policies, so completed and failed historical operations
+remain readable by their owning actor. Historical approvals are removed from the
+status projection; queue admission, worker execution and generation still require
+the current policy and its normal binding checks. A readable retained result does
+not authorize replay, refresh or another source write.
+Original retained v1 approvals used `gaming-hybrid-source-policy-v1`; the status
+reader accepts that closed historical value as well as the current source policy.
+Execution admission still requires the current policy. Source-derived v1–v5
+fixtures record their committed producer and blob identities in
+`tests/fixtures/gaming-historical-status/README.md`; they are synthetic records,
+not exported production rows or PostgreSQL acceptance evidence.
 
 Rollback must use a reviewed private release and invalidate reusable decision
 artifacts or force reassessment. An old binary may recognize historical v1

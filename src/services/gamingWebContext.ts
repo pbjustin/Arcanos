@@ -1,4 +1,5 @@
 import { splitGamingDocumentIntoChunks as splitIntoChunks } from "@services/gamingDocumentChunks.js";
+import { gamingSourceAcquisitionIdentity as gamingSourceDedupeKey } from "@shared/gaming/gamingSourceAcquisitionCore.js";
 import { createHash } from "node:crypto";
 import { GAMEPLAY_CONTENT_PATTERN, GAMING_MARKDOWN_ROLE_HEADING_PATTERN, filterGamingDocumentInstructions, isGamingCatalogMetadataOnly } from "@services/gamingDocumentExtraction.js";
 import type { GamingPlayerContext } from '@shared/gaming/gamingPlayerContext.js';
@@ -57,10 +58,7 @@ import {
   extractExplicitGamingVersions,
   textContainsExactGamingVersion
 } from "@services/gamingVersion.js";
-import {
-  recognizeGamingArchiveItem,
-  type GamingArchiveResolutionTelemetry
-} from "@services/gamingArchiveResources.js";
+import type { GamingArchiveResolutionTelemetry } from "@services/gamingArchiveResources.js";
 import {
   GAMING_BUILD_RESOURCE_HARD_LIMITS,
   classifyGamingResource,
@@ -1005,13 +1003,6 @@ function normalizeCacheUrl(url: string): string {
   }
 }
 
-function gamingSourceDedupeKey(url: string): string {
-  const normalized = normalizeCacheUrl(url);
-  // Archive identifiers are case sensitive; preserve their identity through deduplication.
-  const archiveIdentifier = recognizeGamingArchiveItem(url);
-  return archiveIdentifier ? `https://archive.org/details/${archiveIdentifier}` : normalized;
-}
-
 function detectGameFromRagInput(input: GamingRagInput): GamingGameDetection {
   const detection = detectGamingGame({
     explicitGame: input.game,
@@ -1613,7 +1604,8 @@ async function fetchGamingRagDocument(
   logContext: GamingWebContextLogContext | undefined,
   sourceIndex: number,
   sourceCount: number,
-  requestSignal?: AbortSignal
+  requestSignal?: AbortSignal,
+  attemptedAcquisitionUrls?: Set<string>
 ): Promise<GamingFetchedDocument | GamingWebSource> {
   const fetchUrl = candidate.fetchUrl;
   const sourceUrl = candidate.url;
@@ -1770,7 +1762,14 @@ async function fetchGamingRagDocument(
             signal,
             timeoutMs: fetchTimeoutMs,
             preferredContentTerms: contentTerms,
-            rawDocumentMaxChars: GAMING_BUILD_RESOURCE_HARD_LIMITS.maxHtmlChars
+            rawDocumentMaxChars: GAMING_BUILD_RESOURCE_HARD_LIMITS.maxHtmlChars,
+            ...(attemptedAcquisitionUrls ? { onRequestUrl: (url: string) => {
+              // The resolver has admitted each hop. Retain only admitted
+              // identities for this request's negative discovery deduplication,
+              // including hops whose transport or extraction later fails.
+              const admission = sanitizeGamingDiscoveryCandidateUrl(url);
+              if (admission.url && !admission.rejected) attemptedAcquisitionUrls.add(admission.url);
+            } } : {})
           });
         if (!isResolvedGamingDocumentIdentityVerified(document, fetchUrl)) {
           throw new GamingDocumentAcquisitionError('URL_BLOCKED', 'extraction', 'SOURCE_IDENTITY_MISMATCH');
@@ -2809,6 +2808,10 @@ export function clearGamingRagCache(): void {
   clearGamingDiscoveryCache();
 }
 
+/** Acquire and select bounded gameplay evidence using the existing source and
+ * discovery budgets. Supplied URLs and admitted acquisition attempts remain
+ * excluded from subsequent discovery; acquired text still requires validation.
+ */
 export async function buildGamingRagContext(
   input: GamingRagInput,
   logContext?: GamingWebContextLogContext,
@@ -2910,6 +2913,7 @@ export async function buildGamingRagContext(
     });
   }
 
+  const attemptedAcquisitionUrls = new Set<string>();
   const fetchCandidateBatch = (batch: GamingSourceCandidate[]): Promise<Array<GamingFetchedDocument | GamingWebSource>> => Promise.all(
     batch.map((candidate, index) =>
       fetchGamingRagDocument(
@@ -2922,7 +2926,8 @@ export async function buildGamingRagContext(
         logContext,
         index + 1,
         batch.length,
-        requestSignal
+        requestSignal,
+        attemptedAcquisitionUrls
       )
     )
   );
@@ -3022,6 +3027,8 @@ export async function buildGamingRagContext(
         discoveryReason
       });
     }
+    const attemptedSourceUrls = Array.from(new Set([...candidates.map(candidate => candidate.fetchUrl),
+      ...documents.map(document => document.candidate.fetchUrl), ...attemptedAcquisitionUrls]));
     const discoveryResult = await discoverGamingSources({
       prompt: input.prompt,
       currentArea: input.currentArea, class: input.class, constraints: input.constraints,
@@ -3029,6 +3036,7 @@ export async function buildGamingRagContext(
       game,
       mode: input.mode,
       patchSensitive,
+      excludedUrls: attemptedSourceUrls,
       ...(requestSignal ? { signal: requestSignal } : {})
     });
     searchProvider = discoveryResult.searchProvider;
@@ -3040,7 +3048,7 @@ export async function buildGamingRagContext(
     candidateRankingElapsedMs = discoveryResult.candidateRankingElapsedMs;
     discoveryFailureReason = discoveryResult.discoveryFailureReason;
 
-    const existingCandidateUrls = new Set(candidates.map((candidate) => gamingSourceDedupeKey(candidate.fetchUrl)));
+    const existingCandidateUrls = new Set(attemptedSourceUrls.map(gamingSourceDedupeKey));
     const discoveredCandidatesBeforeDedupe = discoveryResult.candidates.map((result) =>
       makeDiscoveredSourceCandidate(result, input)
     );
@@ -3067,7 +3075,8 @@ export async function buildGamingRagContext(
             logContext,
             index + 1,
             discoveryCandidates.length,
-            requestSignal
+            requestSignal,
+            attemptedAcquisitionUrls
           )
         )
       );

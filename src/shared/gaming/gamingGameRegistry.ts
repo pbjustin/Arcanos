@@ -231,12 +231,22 @@ export function gamingApplicabilityAssertionText(value: string, game?: string, r
   return { text, complete };
 }
 
-/** Closed local qualifiers prevent references from becoming applicability assertions. */
+/** Closed local qualifiers prevent references from becoming applicability assertions.
+ * Explicit comparison frames require a complete sentence inside the existing scan
+ * bound; an unfinished comparison cannot hide conflicting edition evidence. */
 export function gamingApplicabilityAssertionContext(text: string, index: number): { reference: boolean; complete: boolean } {
   const before = text.slice(Math.max(0, index - APPLICABILITY_SCOPE_LIMITS.contextChars), index);
   const prefix = before.slice(Math.max(...['.', '!', '?', ';', ',', '\n'].map(boundary => before.lastIndexOf(boundary))) + 1);
-  return { complete: index <= APPLICABILITY_SCOPE_LIMITS.contextChars || !/^\s*$/u.test(before),
-    reference: /\b(?:unlike|compared(?:\s+(?:to|with))?|comparison(?:\s+(?:to|with))?|contrast(?:\s+(?:to|with))?|similar(?:ly)?|rather\s+than|instead\s+of|as(?:\s+is\s+the\s+case)?|like)\s*$/iu.test(prefix)
+  const following = text.slice(index, index + APPLICABILITY_SCOPE_LIMITS.contextChars + 1);
+  const comparison = /^in(?:\s+the\s+game)?\s+/iu.test(following)
+    && /(?:^|[.!?;\n])\s*(?:for|by)\s+comparison\s*[,:]\s*$/iu.test(before);
+  // Retain one lookahead character so the scan edge cannot manufacture the
+  // boundary after punctuation in a longer, unfinished comparison.
+  const comparisonEnd = /[.!?](?=\s|$)/u.exec(following);
+  const completeComparison = !comparison || Boolean(comparisonEnd && comparisonEnd.index < APPLICABILITY_SCOPE_LIMITS.contextChars);
+  return { complete: (index <= APPLICABILITY_SCOPE_LIMITS.contextChars || !/^\s*$/u.test(before)) && completeComparison,
+    reference: comparison && completeComparison
+      || /\b(?:unlike|compared(?:\s+(?:to|with))?|comparison(?:\s+(?:to|with))?|contrast(?:\s+(?:to|with))?|similar(?:ly)?|rather\s+than|instead\s+of|as(?:\s+is\s+the\s+case)?|like)\s*$/iu.test(prefix)
       || /\b(?:not(?:\s+(?:apply|applicable|valid|available|supported|used|found|present|exist|included|be|for|require|requires)){0,4}|(?:doesn|isn|aren|don|didn)['’]?t(?:\s+(?:apply|exist|work|require))?|without|except|excluding|unavailable|unsupported)\s*$/iu.test(prefix) };
 }
 

@@ -1,6 +1,6 @@
 import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest } from './gamingGameIdentity.js';
 import { gamingRegistryDistinctScopeQualifier, gamingRegistryExpansionNames, gamingRegistrySourceGameMatchesRequest,
-  normalizeGamingRegistryEdition, readGamingRegistryEditionScope, resolveGamingRegistryGame } from './gamingGameRegistry.js';
+  normalizeGamingRegistryEdition, readGamingRegistryEditionScope, resolveGamingRegistryGame, gamingApplicabilityAssertionContext } from './gamingGameRegistry.js';
 import { resolveGamingFreshnessDisposition } from './gamingFreshnessDisposition.js';
 import { detectGamingDocumentGame } from './gamingDocumentIngestionCore.js';
 import { normalizeGamingGameIdentity, normalizeGamingEditionIdentity, resolveGamingGuideIdentity } from './gamingGameIdentity.js';
@@ -14,7 +14,7 @@ import { createGamingClearAssessment, classifyGamingClearQuestion, gamingClearCo
 import { detectGamingLeadingGameAlias, isGamingAcquiredTopicTitle } from '@services/gamingGameDetection.js';
 import { gamingAcquiredGameDeclarationPattern, withoutGamingAcquiredGameDeclarations } from './gamingGameDeclaration.js';
 import { gamingIdentityNeedsExplicitContext, readGamingAcquiredAliasDeclarations,
-  resolveGamingAcquiredIdentity, hasGamingAffirmativeIdentityProse, gamingAcquiredNominalScope } from './gamingAcquiredIdentity.js';
+  resolveGamingAcquiredIdentity, hasGamingAffirmativeIdentityProse, gamingAcquiredNominalScope, GAMING_ACQUIRED_SCOPE_BOUNDARY } from './gamingAcquiredIdentity.js';
 import { normalizeGamingComparableIdentity } from './gamingGameRegistry.js';
 
 const containsIdentity = (text: string, expected: string): boolean => (`-${normalizeGamingGameIdentity(text)}-`)
@@ -103,6 +103,9 @@ function acquiredBodySubjects(prose: string): { subjects: Array<{ text: string; 
   let acquiredScopes = 0;
   for (const match of unquoted.matchAll(new RegExp(`(?:${gamingPrimarySourceDeclarationPattern().source}|\\bin(?: the game)?\\s+)`, 'giu'))) {
     if (++acquiredScopes > IDENTITY_SCOPE_SCAN_LIMITS.assertions) { complete = false; break; }
+    // The edition and acquired-body scanners share the same completeness rule.
+    // Retaining an unfinished comparison cannot establish verified authority.
+    if (!gamingApplicabilityAssertionContext(unquoted, match.index).complete) complete = false;
     const before = unquoted.slice(Math.max(0, match.index - IDENTITY_SCOPE_SCAN_LIMITS.prefixChars), match.index);
     const prefixStart = Math.max(...['.', '!', '?', ';', ',', '\n'].map(boundary => before.lastIndexOf(boundary))) + 1;
     const prefix = before.slice(prefixStart);
@@ -110,8 +113,13 @@ function acquiredBodySubjects(prose: string): { subjects: Array<{ text: string; 
     const subjectStart = match.index + match[0].length;
     const subjectWindow = unquoted.slice(subjectStart, subjectStart + IDENTITY_SCOPE_SCAN_LIMITS.subjectChars);
     const explicitGameScope = /^(?:this|in the game)\b/iu.test(match[0]);
-    if (explicitGameScope && subjectStart + subjectWindow.length < unquoted.length && !/[,;.!?\n]/u.test(subjectWindow)) complete = false;
-    const subjectClause = subjectWindow.split(/[,;.!?\n]/u, 1)[0].trim();
+    // One lookahead character prevents the scan edge from manufacturing a
+    // boundary after a period; the acquired subject bound remains unchanged.
+    const boundary = GAMING_ACQUIRED_SCOPE_BOUNDARY.exec(unquoted.slice(subjectStart,
+      subjectStart + IDENTITY_SCOPE_SCAN_LIMITS.subjectChars + 1));
+    if (explicitGameScope && subjectStart + subjectWindow.length < unquoted.length
+      && (!boundary || boundary.index >= subjectWindow.length)) complete = false;
+    const subjectClause = subjectWindow.slice(0, boundary?.index ?? subjectWindow.length).trim();
     let ambiguousNominalScope = false;
     const nominalScope = (value: string, commaDelimited = false): string => {
       const subject = gamingAcquiredNominalScope(value, commaDelimited, /^in the game\b/iu.test(match[0]));
@@ -126,7 +134,7 @@ function acquiredBodySubjects(prose: string): { subjects: Array<{ text: string; 
     // source-global declaration owns its entire nominal subject, including
     // sentence-like titles regardless of capitalization.
     const subject = /^this\b/iu.test(match[0]) ? subjectClause : quotedName ? [unquoted.slice(subjectStart, quotedName.end).trim(),
-      nominalScope(unquoted.slice(quotedName.end, subjectStart + subjectWindow.length).split(/[,;.!?\n]/u, 1)[0].trim())].filter(Boolean).join(' ')
+      nominalScope(unquoted.slice(quotedName.end, subjectStart + subjectWindow.length).split(GAMING_ACQUIRED_SCOPE_BOUNDARY, 1)[0].trim())].filter(Boolean).join(' ')
       : nominalScope(subjectClause, subjectWindow.trimStart().slice(subjectClause.length).startsWith(','));
     // Reference qualifiers apply locally, so a later affirmative clause after
     // a comma or sentence boundary is still independently inspected.
@@ -439,8 +447,16 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
       && /^(?:guide|build)$/iu.test(firstInstructionMarker[0])
       && /^\s+(?:a|an|the|your|our|their|my|his|her|its|them|him|us|me)\b/iu.test(
         bodySubject.slice(firstInstructionMarker.index + firstInstructionMarker[0].length)));
-    const detected = leading.game ? leading : metadataSubject.source !== 'alias' && !instructionalClause ? metadataSubject : leading;
     const subjectIdentity = normalizeGamingGameIdentity(bodySubject);
+    const metadataIdentity = metadataSubject.game ? normalizeGamingGameIdentity(metadataSubject.game) : '';
+    // Metadata discovery can find a title after "for/in/on" anywhere in text.
+    // A bare acquired location scope must own its leading subject: a price in
+    // "in Amber Woods for 25 tokens" cannot become the game "25 tokens".
+    // Explicit game declarations and guide-framed unknown names remain binding.
+    const ownsMetadataSubject = explicitGameScope || Boolean(firstInstructionMarker)
+      || Boolean(metadataIdentity && (subjectIdentity === metadataIdentity || subjectIdentity.startsWith(`${metadataIdentity}-`)));
+    const detected = leading.game ? leading : metadataSubject.source !== 'alias' && !instructionalClause && ownsMetadataSubject
+      ? metadataSubject : leading;
     const expectedSubject = [...expected].some(game => subjectIdentity === game || subjectIdentity.startsWith(`${game}-`));
     for (const game of expected) {
       if (!subjectIdentity.startsWith(`${game}-`) || sourceGameMatches(bodySubject)) continue;
@@ -540,7 +556,9 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
   // A generic acquired topic title still needs an affirmative acquired game
   // declaration. Neither matching player/topic terms nor a reference mention
   // can supply that proof, and all acquired contradictions above still bind.
-  const acquiredBodyScope = !metadataAnchor && (metadata.some(acquiredTopicSubject) || metadata.some(acquiredUnknownTopicTitle)
+  const plainNamedBodyScope = !metadata.length && independentBodyScope
+    && primarySubjects.some(subject => subject.namedGameScope && sourceGameMatches(subject.text));
+  const acquiredBodyScope = plainNamedBodyScope || !metadataAnchor && (metadata.some(acquiredTopicSubject) || metadata.some(acquiredUnknownTopicTitle)
     || metadata.some(value => isGamingAcquiredTopicTitle(value) || !detectGamingDocumentGame({ canonicalUrl: '', pageTitle: value }).game)
       && independentBodyScope);
   const ordinaryWordProof = !gamingIdentityNeedsExplicitContext(input.game)

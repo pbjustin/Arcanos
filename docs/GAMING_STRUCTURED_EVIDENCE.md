@@ -79,8 +79,34 @@ Player-facing instructions such as following a mission walkthrough are normal
 evidence. Assistant control instructions remain a document-level rejection,
 including instructions in acquired title/heading metadata or text omitted by
 the context projection budget. Sanitization is not approval of the remainder.
-Resolver `gaming-document-v4` separates these extraction decisions from cached
-v3 resolutions and durable revision identity.
+Resolver `gaming-document-v6` separates the current extraction decisions from
+older cached resolutions and durable revision identity.
+
+Class tokens such as `has-game-sidebar` describe a layout containing a sidebar.
+When they enclose a reviewed primary article, they no longer discard that article
+as sidebar furniture. Layout normalization, content selection and primary-heading
+preservation share the existing semantic, class and ID selector catalog, including
+`.article-body` and `.entry-content`. A contained class-body heading does not hide
+an earlier enclosing article subject; independent semantic articles stop heading
+inheritance even when their own heading is H2 or they have no H1. A reviewed
+class wrapper wholly owned by an independent article has the same boundary.
+Quoted articles and incidental cards cannot hide a genuine enclosing heading.
+Explicit sidebars, hidden content and complementary roles
+remain excluded. The six-level qualifier context bound is unchanged; a record
+whose context cannot be fully inspected remains partial even when independent
+article prose is available. Full-response instruction and source-use inspection
+still precedes acceptance.
+
+Layout normalization and structured extraction also use the existing bounded
+publisher profiles. Profile primary classes receive the same protection as the
+generic primary catalog, while the profile's existing sidebar and navigation
+exclusions apply to HTML records, embedded JSON and prose. These are extraction
+hints, not publisher authority or exceptions to source-use and security policy.
+Blank optional selector hints use the ordinary fallback after the existing
+24-selector cap; they cannot suppress legitimate primary content. Shared-fetch
+navigation scoring counts overlapping navigation subtrees once within its
+existing score window. This prevents deep sidebar layouts from repeatedly
+copying the same long article while retaining default text/link serialization.
 
 Supported HTML structures are headered tables with captions, nearby headings,
 row/column headers and explicit header associations; bounded unambiguous spans;

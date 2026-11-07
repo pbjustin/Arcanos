@@ -145,7 +145,7 @@ acquired identities remain bounded negative paths. Additional acquired-document
 tests cover Journey, Silver Harbor, Slate Meridian, localized titles, novel
 guide-framed topics, incomplete statistics and durable consent.
 
-Internal CLEAR policy v5 invalidates prior v1/v2/v3/v4 assessments while preserving
+Internal CLEAR policy v6 invalidates prior v1/v2/v3/v4/v5 assessments while preserving
 the public `gaming-clear/v1` schema. Context fingerprints include the policy
 revision, and approved hybrid ingestion revisions bind that revision. Existing
 extraction caches may reuse bounded acquired bytes; approval decisions require
@@ -164,6 +164,66 @@ Source-local aliases can establish prose ownership, but an alias-valued structur
 Game field is conservatively excluded. It is not promoted into a canonical
 record or shared across sources; supporting it throughout storage and selection
 would require a separately designed provenance contract.
+
+Complete, bounded sentences introduced by “For comparison, in ...” or
+“By comparison, in ...”, with either a comma or colon after “comparison”, use
+the existing local-reference projection. Their game
+mentions cannot establish article identity, edition applicability, or gameplay
+claim support. Independent source-global declarations and a second affirmative
+game clause remain inspectable; incomplete or over-budget references are never
+discarded to obtain acceptance. The acquired document remains unchanged for
+hashes and provenance. Original games, remakes, remasters and sequels still need
+matching complete acquired identity; no publisher or game-specific exception is
+introduced.
+
+An ordinary location inside a comparison does not introduce a second game scope.
+Closed lowercase phrases such as “in the game shop”, “in the game world” and
+“in the game menu” remain locations. Quoting a whole reference clause differs
+from quoting only an independently declared game name; named, unfamiliar and
+ambiguous game declarations remain inspectable.
+Independent named-game clauses and explicit `Game:` or `Edition:` declarations
+remain inspectable. An unfinished or over-budget comparison cannot hide an
+edition assertion or preserve earlier verified compatibility.
+Unquoted source-global `Platform:`/`Platforms:` and `Region:`/`Regions:` labels
+also remain inspectable inside comparison framing. A completely quoted example
+stays local; quoting only the value of an unquoted label leaves its restriction
+binding. Parser-owned gameplay record fields retain their existing local scope.
+Applicability reads the original acquired page before reference projection;
+comparison gameplay and arbitrary field-value tails cannot become selected claim
+support. Fresh and retained-record callers pass the original source to this
+existing applicability parser.
+
+Bare location clauses must own their leading nominal subject before metadata
+title inference can assert another game. A price or purpose after a nested
+“for/in/on” phrase cannot rename the acquired location. Explicit named-game
+declarations, known game aliases, guide-framed unfamiliar names and full
+sequel/remake qualifiers retain their existing contradiction checks.
+
+A closed page description that merely lists or indexes topic records cannot
+supply gameplay coverage. Fresh plain-text chunks are checked with their exact
+acquired headings and nominal game context before display metadata is redacted.
+The original document and structural provenance remain intact; complete records
+and independent declarative gameplay facts keep their existing selection rules.
+The same overview boundary applies to stored request coverage and the full CLEAR
+evidence assessment. Page-description wording does not become claim support by
+being persisted, and factual values or qualifications in acquired headings remain
+evidence rather than metadata boilerplate.
+An exact nominal topic heading such as `Elden Ring Uchigatana location guide`
+cannot turn a description of that topic into acquisition instructions. The same
+boundary applies before fresh generation and after stored-source retrieval.
+Plural nouns and nominal modifiers, such as `wooden shields`, `Smithing Stone`
+and `Golden Seed`, remain topics rather than gameplay predicates. Closed
+description recognition preserves explicit relations, values, qualifications
+and supported subject-owned gameplay predicates; suffixes alone do not establish
+a fact. This bounded English rule is not a general natural-language parser.
+
+Periods internal to acquired titles, such as decimal release names, are not
+sentence boundaries. The existing 160-character subject window and 512-character
+comparison window remain bounded, with a non-authoritative lookahead for edge
+inspection. Plain-text derivatives can establish ownership through an exact,
+independently acquired `in the game FULL NAME` scope. A URL, separate Archive item
+title, bare mention or comparison cannot replace that evidence; contradictions,
+edition applicability and incomplete-inspection checks still bind the document.
 
 Deployment identity and live acceptance remain separate gates:
 `DEPLOYED_SHA_UNVERIFIED` and `LIVE_ACCEPTANCE_NOT_RUN`.

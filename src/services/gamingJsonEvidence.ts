@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { load } from 'cheerio';
-import { countGamingHtmlElements, filterGamingDocumentInstructions, GAMING_DOCUMENT_FURNITURE_SELECTOR } from '@services/gamingDocumentExtraction.js';
-import { normalizeGamingDocumentInstructionCharacters } from '@shared/gaming/gamingDocumentTextNormalization.js';
+import { countGamingHtmlElements, filterGamingDocumentInstructions, GAMING_DOCUMENT_FURNITURE_SELECTOR,
+  gamingDocumentExtractionProfile, gamingDocumentFetchOptions } from '@services/gamingDocumentExtraction.js';
+import { normalizeGamingDocumentInstructionCharacters, preservePrimaryContentSidebarLayouts } from '@shared/gaming/gamingDocumentTextNormalization.js';
 import {
   GAMING_EVIDENCE_UNIT_POLICY_VERSION,
   type GamingEvidenceExtractionInput,
@@ -379,8 +380,11 @@ export function extractGamingJsonEvidence(input: GamingEvidenceExtractionInput):
     // The installed parser supports source locations; the repository also includes older ambient Cheerio types.
     const parserOptions = { xmlMode: false, sourceCodeLocationInfo: true };
     const $ = load(input.body, parserOptions);
+    preservePrimaryContentSidebarLayouts($, gamingDocumentFetchOptions(input.sourceUrl).primaryContentSelectors);
     if (deadlineExpired()) return result;
     $('template, noscript').remove();
+    for (const selector of gamingDocumentExtractionProfile(input.sourceUrl)?.removeSelectors ?? []) $(selector).remove();
+    if (deadlineExpired()) return result;
     const scripts = $('script');
     const qualifierValues = new Map<cheerio.Element, string>();
     const qualifierSelector = 'p,figcaption,small,[role="note"],div,span';

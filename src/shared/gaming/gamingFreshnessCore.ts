@@ -145,14 +145,19 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
   context: GamingEditionRequestContext & { game: string; platform?: string; region?: string }, now = new Date(),
   rules: readonly GamingReviewedSourceRule[] = REVIEWED_GAMING_SOURCE_RULES): GamingFreshnessEvidence {
   context = { ...context, edition: resolveGamingRequestEdition(context) };
+  const acquiredDocument = document;
   const gameScoped = selectGamingGameScopedDocument(document, context.game);
   document = gameScoped.document;
   // Citation redaction may shorten a path; only the acquired identity grants publisher policy.
   const policy = assessGamingSourcePolicy(document.canonicalUrl ?? document.publicUrl, context.game, rules);
   const evidenceUnits = readGamingEvidenceUnits(document.evidenceUnits, undefined, document.text);
-  let proseText = document.text;
+  // Global restrictions belong to the acquired page, even when its comparison
+  // gameplay is excluded from claim support. Local record fields remain scoped.
+  const acquiredUnits = acquiredDocument === document ? evidenceUnits
+    : readGamingEvidenceUnits(acquiredDocument.evidenceUnits, undefined, acquiredDocument.text);
+  let proseText = acquiredDocument.text;
   // Shared label prefixes must not leave gameplay record fragments in prose.
-  for (const unit of [...evidenceUnits].sort((left, right) => right.text.length - left.text.length)) proseText = proseText.replace(unit.text, '');
+  for (const unit of [...acquiredUnits].sort((left, right) => right.text.length - left.text.length)) proseText = proseText.replace(unit.text, '');
   const applicabilityScope = gamingApplicabilityAssertionText(proseText, context.game);
   const metadataText = applicabilityScope.text.slice(0, GAMING_FRESHNESS_DEFAULTS.maxMetadataChars);
   // The shared document instruction filter normalizes whitespace. Recover only

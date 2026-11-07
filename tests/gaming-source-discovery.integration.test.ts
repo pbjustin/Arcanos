@@ -44,6 +44,7 @@ const TEST_ENV_KEYS = [
   'ARCANOS_GAMING_CURATED_SOURCES_JSON',
   'ARCANOS_GAMING_DISCOVERY_BUDGET_MS',
   'ARCANOS_GAMING_DISCOVERY_ENABLED',
+  'ARCANOS_GAMING_DISCOVERY_FETCH_CANDIDATE_LIMIT',
   'ARCANOS_GAMING_DISCOVERY_MIN_EVIDENCE_QUALITY',
   'ARCANOS_GAMING_RAG_CHUNK_CHARS',
   'ARCANOS_GAMING_RAG_MAX_CHUNKS',
@@ -573,6 +574,35 @@ describe('Gaming RAG discovery integration', () => {
     expect(mockPageContent).toHaveBeenCalledTimes(1);
   });
 
+  it('excludes an acquired redirect destination before discovery fills its fetch slot', async () => {
+    process.env.ARCANOS_GAMING_DISCOVERY_MIN_EVIDENCE_QUALITY = '0.99';
+    process.env.ARCANOS_GAMING_DISCOVERY_FETCH_CANDIDATE_LIMIT = '1';
+    const suppliedUrl = 'https://guides.example/start';
+    const canonicalUrl = 'https://guides.example/caves-of-qud/early-progression';
+    const alternativeUrl = 'https://other.example/caves-of-qud/early-progression';
+    mockPageContent.mockImplementation(async (url: string) => url === canonicalUrl
+      ? 'Players can progress safely. Upgrade gear before difficult encounters.'
+      : guideEvidence('Caves of Qud', 'early progression route equipment combat'));
+    const defaultTransport = mockAxiosGet.getMockImplementation()!;
+    mockAxiosGet.mockImplementation(async (url: string, options: any) => new URL(url).pathname === '/start'
+      ? { status: 302, headers: { location: canonicalUrl }, data: '' }
+      : defaultTransport(url, options));
+    mockDiscoverGamingSources.mockImplementation(async (input: Parameters<typeof discovery.discoverGamingSources>[0]) =>
+      discovery.discoverGamingSources({ ...input, provider: {
+        id: 'redirect-exclusion-fixture', version: 'v1', isConfigured: () => true,
+        search: async () => [canonicalUrl, alternativeUrl].map((url, index) => ({ url,
+          title: 'Caves of Qud early progression guide', snippet: 'Caves of Qud early progression route and equipment guide.',
+          provider: 'redirect-exclusion-fixture', providerRank: index + 1 }))
+      } }));
+    const result = await buildGamingRagContext(baseInput({ guideUrl: suppliedUrl }));
+    expect(result.discoveryTriggered).toBe(true);
+    expect(mockDiscoverGamingSources).toHaveBeenCalledWith(expect.objectContaining({
+      excludedUrls: expect.arrayContaining([suppliedUrl, canonicalUrl]) }));
+    const paths = mockAxiosGet.mock.calls.map(([url]) => new URL(url as string).pathname);
+    expect(paths.filter(path => path === '/caves-of-qud/early-progression')).toHaveLength(2);
+    expect(mockAxiosGet.mock.calls.some(([, options]) => (options as any).headers.Host === 'other.example')).toBe(true);
+  });
+
   it.each([
     'DISCOVERY_PROVIDER_TIMEOUT',
     'DISCOVERY_PROVIDER_ERROR',
@@ -648,6 +678,7 @@ describe('Gaming RAG discovery integration', () => {
       guideUrl: suppliedUrl
     }));
 
+    expect(mockDiscoverGamingSources).toHaveBeenCalledWith(expect.objectContaining({ excludedUrls: [suppliedUrl] }));
     expect(result.sources).toEqual([
       expect.objectContaining({ url: discoveredUrl, snippet: expect.any(String) }),
       { url: suppliedUrl, error: 'Source access was blocked.' }

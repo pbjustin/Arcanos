@@ -1,3 +1,5 @@
+import { GAMING_PRIMARY_CONTENT_SELECTORS, GAMING_PRIMARY_CONTENT_SELECTOR_LIMIT as MAX_EXTRACTION_SELECTORS,
+  preservePrimaryContentSidebarLayouts } from './gaming/gamingDocumentTextNormalization.js';
 import axios from 'axios';
 import { contains, load } from 'cheerio';
 import { Resolver } from 'node:dns/promises';
@@ -27,7 +29,6 @@ const HARD_MAX_FETCH_BYTES = 5_000_000;
 const HARD_MAX_FETCH_TIMEOUT_MS = 30_000;
 const HARD_MAX_LINKS = 100;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
-const MAX_EXTRACTION_SELECTORS = 24;
 const MAX_EXTRACTION_CANDIDATES = 48;
 const MAX_CANDIDATE_SCORE_CHARS = 24000;
 const MAX_REPETITION_SEGMENTS = 96;
@@ -500,6 +501,31 @@ interface ScoredExtractionCandidate {
   primaryContent?: boolean;
 }
 
+/** Score each navigation subtree once. Nested sidebar wrappers must not copy
+ * the same long article repeatedly into a score-only, bounded text window. */
+function navigationTextLength($: ReturnType<typeof load>, element: cheerio.Element, maxChars: number): number {
+  const navigation = $(element).find(NAVIGATION_CONTAINER_SELECTOR).toArray();
+  const matchingNodes = new Set(navigation);
+  const ancestorMembership = new Map<cheerio.Element, boolean>();
+  let textLength = 0;
+  for (const node of navigation) {
+    let insideNavigation = false;
+    const uninspected: cheerio.Element[] = [];
+    for (let parent = node.parent; parent && parent !== element; parent = parent.parent) {
+      if (matchingNodes.has(parent)) { insideNavigation = true; break; }
+      const cached = ancestorMembership.get(parent);
+      if (cached !== undefined) { insideNavigation = cached; break; }
+      uninspected.push(parent);
+    }
+    for (const ancestor of uninspected) ancestorMembership.set(ancestor, insideNavigation);
+    if (insideNavigation) continue;
+    const length = normalizeExtractedText($(node).text()).length;
+    if (length) textLength += length + (textLength ? 1 : 0);
+    if (textLength >= maxChars) return maxChars;
+  }
+  return textLength;
+}
+
 function scoreExtractionCandidate(
   $: ReturnType<typeof load>,
   element: cheerio.Element,
@@ -540,8 +566,7 @@ function scoreExtractionCandidate(
 
   const semanticNavigationTextLength = candidate.is(NAVIGATION_CONTAINER_SELECTOR)
     ? scoringTextLength
-    : normalizeExtractedText(candidate.find(NAVIGATION_CONTAINER_SELECTOR).text())
-      .slice(0, MAX_CANDIDATE_SCORE_CHARS).length;
+    : navigationTextLength($, element, scoringTextLength);
   const semanticNavigationDensity = clampUnitMetric(
     Math.min(scoringTextLength, semanticNavigationTextLength) / Math.max(1, scoringTextLength)
   );
@@ -768,6 +793,18 @@ export function extractFetchAndCleanDocument(
   const extractionStartedAt = Date.now();
   const parserOptions = options.preservePrimaryContentHeading ? { sourceCodeLocationInfo: true } : undefined;
   const $ = load(responseText, parserOptions as Parameters<typeof load>[1]);
+  let primaryScopeSelectors = (options.primaryContentSelectors?.length ? options.primaryContentSelectors : GAMING_PRIMARY_CONTENT_SELECTORS)
+    .slice(0, MAX_EXTRACTION_SELECTORS).map(selector => selector.trim()).filter(Boolean);
+  if (options.preservePrimaryContentHeading) {
+    try { $(primaryScopeSelectors.join(',')); } catch {
+      primaryScopeSelectors = primaryScopeSelectors.filter(selector => {
+        try { $(selector); return true; } catch { return false; }
+      });
+    }
+  }
+  if (!primaryScopeSelectors.length) primaryScopeSelectors = [...GAMING_PRIMARY_CONTENT_SELECTORS];
+  const primaryScopeSelector = primaryScopeSelectors.join(',');
+  if (options.preservePrimaryContentHeading) preservePrimaryContentSidebarLayouts($, primaryScopeSelectors);
   $('script, style, noscript').remove();
   const rawTextLength = normalizeExtractedText($('body').text()).length;
   const removeSelectors = (options.removeSelectors ?? []).slice(0, MAX_EXTRACTION_SELECTORS * 4);
@@ -785,9 +822,9 @@ export function extractFetchAndCleanDocument(
           throwIfFetchCancelled(options);
           const node = $(header);
           const scope = node.parent();
-          const heading = scope.is('article,main,[role="main"]') && !headingDenied(header)
+          const heading = scope.is(primaryScopeSelector) && !headingDenied(header)
             ? node.find('h1').slice(0, 6).filter((__, element) => !headingDenied(element)
-              && $(element).closest('article,main,[role="main"]').get(0) === scope.get(0)).first() : undefined;
+              && $(element).closest(primaryScopeSelector).get(0) === scope.get(0)).first() : undefined;
           if (heading?.length) node.replaceWith(heading);
           else node.remove();
         });
@@ -892,14 +929,33 @@ export function extractFetchAndCleanDocument(
     const selectedElement = selectedCandidate.element;
     type LocatedElement = cheerio.Element & { sourceCodeLocation?: { startOffset: number; endTag?: unknown } };
     const selectedLocation = (selectedElement as LocatedElement).sourceCodeLocation;
-    let scope = $(selectedElement).closest('article,main,[role="main"]');
+    const semanticScopeSelector = 'article,main,[role="main"]';
+    const selectedScope = $(selectedElement);
+    const containedScope = selectedScope.find(semanticScopeSelector).first();
+    // A reviewed class container may wrap the independent article rather than
+    // sit inside it. Incidental cards or surrounding prose cannot supply this boundary.
+    const containedArticleOwnsText = !selectedScope.is(semanticScopeSelector) && containedScope.length > 0
+      && !headingDenied(containedScope.get(0)!)
+      && normalizeExtractedText(containedScope.text()) === normalizeExtractedText(selectedScope.text());
+    let scope = $(selectedElement).closest(primaryScopeSelector);
     // Search nearest scopes only; an independent article's own subject wins.
-    for (let depth = 0; depth < 6 && scope.length; depth++, scope = scope.parent().closest('article,main,[role="main"]')) {
+    for (let depth = 0; depth < 6 && scope.length; depth++, scope = scope.parent().closest(primaryScopeSelector)) {
       throwIfFetchCancelled(options);
       const heading = scope.children('h1').slice(0, 6).filter((_, element) => !headingDenied(element)).first();
-      if (!heading.length) continue;
+      if (!heading.length) {
+        // A missing H1 does not make an independent semantic article inherit
+        // the subject of its enclosing page or another article.
+        if (scope.is(semanticScopeSelector) && !headingDenied(scope.get(0)!)
+          || scope.get(0) === selectedElement && containedArticleOwnsText) break;
+        continue;
+      }
       const headingElement = heading.get(0)!;
-      if (headingElement === selectedElement || contains(selectedElement, headingElement)) break;
+      if (headingElement === selectedElement || contains(selectedElement, headingElement)) {
+        // A class body is not an independent article boundary: its own heading
+        // must not conceal an earlier enclosing article's acquired subject.
+        if (scope.is(semanticScopeSelector)) break;
+        continue;
+      }
       const location = (headingElement as LocatedElement).sourceCodeLocation;
       // A later recommendation cannot become the acquired article opening.
       if (!location || !selectedLocation || location.startOffset >= selectedLocation.startOffset) break;

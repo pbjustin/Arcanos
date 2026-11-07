@@ -40,6 +40,7 @@ const POSTGRES_TEST_FILES = [
   'tests/integration/backstage-notion-authority-http.pg18.integration.test.ts',
   'tests/integration/backstage-notion-partition-storage.pg18.integration.test.ts',
   'tests/integration/non-gpt-terminal-retention.pg18.integration.test.ts',
+  'tests/integration/gaming-historical-status.pg18.integration.test.ts',
   'tests/integration/gaming-durable-rag.pg18.integration.test.ts',
   'tests/integration/gpt-access-device-auth.pg18.integration.test.ts',
   'tests/integration/dag-token-accounting.pg18.integration.test.ts',

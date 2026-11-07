@@ -31,7 +31,8 @@ import { assessGamingClearSourceIdentity, gamingClearHistoricalSourceVerified } 
 import { assessGamingStructuralUsability } from '@shared/gaming/gamingStructuralEvidence.js';
 import { GAMING_EVIDENCE_UNIT_POLICY_VERSION } from '@shared/gaming/gamingEvidenceUnits.js';
 import { isGamingApprovedArtifactCurrent } from '@shared/gaming/gamingHybridPolicyCore.js';
-import { GAMING_CLEAR_VERSION, GAMING_CLEAR_POLICY_VERSION, parseGamingClearAssessment, type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
+import { GAMING_CLEAR_VERSION, GAMING_CLEAR_POLICY_VERSION, GAMING_CLEAR_WEIGHTS,
+  gamingClearAssessmentRecordSchema, parseGamingClearAssessment, type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
 import { GAMING_GAME_REGISTRY } from '@shared/gaming/gamingGameRegistry.js';
 import { truncateTextByCharacters } from '@shared/http/clientResponseCommon.js';
 import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
@@ -197,6 +198,30 @@ const queuedGamingIngestionBodySchema = z.object({
   submittedCount: z.number().check(...legacyInteger()).min(1).max(MAX_SOURCE_URLS),
   refreshReason: z.enum(['user_requested', 'stale', 'patch_update']).optional()
 }).strict();
+
+const retainedGamingClearPolicies = new Set([
+  'gaming-clear-policy/v1', 'gaming-clear-policy/v2', 'gaming-clear-policy/v3',
+  'gaming-clear-policy/v4', 'gaming-clear-policy/v5', GAMING_CLEAR_POLICY_VERSION
+]);
+const retainedGamingSourceAssessmentSchema = gamingClearAssessmentRecordSchema.refine(assessment => {
+  const [policy, questionProfile, profile, extra] = assessment.policyProfile.split(':');
+  return assessment.profile === 'source' && assessment.qualityEligible && profile === 'source' && extra === undefined
+    && retainedGamingClearPolicies.has(policy)
+    && Object.hasOwn(GAMING_CLEAR_WEIGHTS, questionProfile)
+    && JSON.stringify(assessment).length <= 12_000;
+});
+// Status projects an already retained operation. Strip its historical approval
+// after validating the strict wire shape so this read cannot supply execution authority.
+const retainedQueuedGamingSourceSchema = queuedSourceSchema.extend({
+  hybridApproval: queuedSourceSchema.shape.hybridApproval.unwrap().extend({
+    // Original retained v1 producers used source-policy v1; this is read-only compatibility.
+    sourcePolicyVersion: z.enum(['gaming-hybrid-source-policy-v1', GAMING_SOURCE_POLICY_VERSION]),
+    gamingClear: retainedGamingSourceAssessmentSchema.optional()
+  }).optional()
+}).transform(({ hybridApproval: _historicalApproval, ...source }) => source);
+const retainedGamingIngestionBodySchema = queuedGamingIngestionBodySchema.extend({
+  sources: z.array(retainedQueuedGamingSourceSchema).min(1).max(MAX_SOURCE_URLS)
+});
 
 type QueuedGamingSource = z.infer<typeof queuedSourceSchema>;
 type RejectedGamingSource = z.infer<typeof rejectedSourceSchema>;
@@ -543,23 +568,23 @@ function mapStoredJobStatus(status: string): GamingSourceIngestionOutput['status
   }
 }
 
-function isGamingIngestionQueuedInput(input: unknown): input is {
-  gptId: string;
+/** Read a known Gaming job envelope without treating a historical approval as current admission. */
+function parseGamingIngestionStatusInput(input: unknown): {
   body: QueuedGamingIngestionBody;
-  requestPath: string;
-  executionModeReason: string;
   requestId?: string;
   traceId?: string;
-} {
+} | null {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    return false;
+    return null;
   }
   const record = input as Record<string, unknown>;
-  return record.gptId === GAMING_SOURCE_INGESTION_GPT_ID
-    && record.executionModeReason === GAMING_SOURCE_INGESTION_REASON
-    && (record.requestPath === GAMING_SOURCE_INGESTION_REQUEST_PATH
-      || record.requestPath === GAMING_SOURCE_REFRESH_REQUEST_PATH)
-    && queuedGamingIngestionBodySchema.safeParse(record.body).success;
+  if (record.gptId !== GAMING_SOURCE_INGESTION_GPT_ID || record.executionModeReason !== GAMING_SOURCE_INGESTION_REASON
+    || record.requestPath !== GAMING_SOURCE_INGESTION_REQUEST_PATH && record.requestPath !== GAMING_SOURCE_REFRESH_REQUEST_PATH) return null;
+  const parsed = retainedGamingIngestionBodySchema.safeParse(record.body);
+  if (!parsed.success) return null;
+  return { body: parsed.data,
+    ...(typeof record.requestId === 'string' ? { requestId: record.requestId } : {}),
+    ...(typeof record.traceId === 'string' ? { traceId: record.traceId } : {}) };
 }
 
 export function parseQueuedGamingSourceIngestionBody(body: unknown):
@@ -1190,6 +1215,8 @@ async function ingestOneSource(
     const documentTruncated = document.metrics.truncated || chunked.documentTruncated;
     const documentQuality = classifyGamingDocumentQuality({
       cleanedText,
+      metadata: document.metadata,
+      game: source.game,
       navigationDensity: document.extraction.navigationDensity,
       truncated: documentTruncated,
       minUsefulTextChars: MIN_USEFUL_TEXT_CHARS,
@@ -1625,10 +1652,11 @@ export async function getGamingSourceIngestionStatus(
   }
   try {
     const job = await getJobById(ingestionId);
+    const input = job ? parseGamingIngestionStatusInput(job.input) : null;
     if (
       !job
       || job.job_type !== 'gpt'
-      || !isGamingIngestionQueuedInput(job.input)
+      || !input
       || job.idempotency_scope_hash !== gamingSourceActorScopeHash(context.actorKey)
     ) {
       return {
@@ -1642,8 +1670,7 @@ export async function getGamingSourceIngestionStatus(
         }
       };
     }
-    const input = job.input;
-    const parsedBody = queuedGamingIngestionBodySchema.parse(input.body);
+    const parsedBody = input.body;
     const createdAt = new Date(job.created_at).toISOString();
     const updatedAt = new Date(job.updated_at).toISOString();
     const status = mapStoredJobStatus(job.status);

@@ -1,6 +1,6 @@
 import type { FetchAndCleanOptions } from "@shared/webFetcher.js";
 import { GAMING_PUBLISHER_EXTRACTION_PROFILES } from '@shared/gaming/gamingPublisherExtractionProfileData.js';
-import { normalizeGamingDocumentInstructionCharacters } from '@shared/gaming/gamingDocumentTextNormalization.js';
+import { GAMING_PRIMARY_CONTENT_SELECTORS, normalizeGamingDocumentInstructionCharacters } from '@shared/gaming/gamingDocumentTextNormalization.js';
 
 /** Preserve the existing tag-budget scan, advancing past each complete span without backtracking. */
 export function countGamingHtmlElements(body: string, maxElements: number): number {
@@ -53,12 +53,6 @@ const GENERIC_CONTENT_SELECTORS = [
   ".post-content",
   "#content",
   ".content"
-] as const;
-
-const PRIMARY_CONTENT_SELECTORS = [
-  '#article-body', '.article-content', '.article-body', "[class*='article-content']", "[class*='article-body']",
-  '.entry-content', '.post-content', '.mw-parser-output', '.main-content', '#main-content', '.page-content',
-  'article', 'main', "[role='main']"
 ] as const;
 
 const COMMON_JUNK_SELECTORS = [
@@ -199,12 +193,17 @@ const SOURCE_ROLE_ASSIGNMENT_PATTERN = new RegExp(
 export const GAMING_MARKDOWN_ROLE_HEADING_PATTERN = /#{1,6}[^\S\r\n]*(?:system|developer|assistant)\b(?![^\S\r\n]+(?:requirements?|resources?|settings?)\b)/gi;
 const SOURCE_INSTRUCTION_LINE_PATTERN = new RegExp(String.raw`^\s*(?:\[(?:system|developer|assistant|instructions?|mode|request|output)\]|<(?:system|developer|assistant)>|${GAMING_MARKDOWN_ROLE_HEADING_PATTERN.source}).*$`, 'gim');
 
-/** Shared acquisition profiles: downstream query ranking does not select a different document transport. */
-export function gamingDocumentFetchOptions(url: string, options: FetchAndCleanOptions = {}): FetchAndCleanOptions {
+/** Existing URL-scoped layout policy, shared by prose and structured extraction. */
+export function gamingDocumentExtractionProfile(url: string) {
   const domain = new URL(url).hostname.toLowerCase();
-  const profile = GAMING_PUBLISHER_EXTRACTION_PROFILES.find((entry) =>
+  return GAMING_PUBLISHER_EXTRACTION_PROFILES.find((entry) =>
     entry.domains.some((candidate) => domain === candidate || domain.endsWith(`.${candidate}`))
   );
+}
+
+/** Shared acquisition profiles: downstream query ranking does not select a different document transport. */
+export function gamingDocumentFetchOptions(url: string, options: FetchAndCleanOptions = {}): FetchAndCleanOptions {
+  const profile = gamingDocumentExtractionProfile(url);
   return {
     ...options,
     includeLinks: false,
@@ -212,7 +211,7 @@ export function gamingDocumentFetchOptions(url: string, options: FetchAndCleanOp
     preferredContentSelectors: options.preferredContentSelectors ?? [
       ...(profile?.contentSelectors ?? []), ...GENERIC_CONTENT_SELECTORS
     ],
-    primaryContentSelectors: options.primaryContentSelectors ?? [...(profile?.contentSelectors ?? []), ...PRIMARY_CONTENT_SELECTORS],
+    primaryContentSelectors: options.primaryContentSelectors ?? [...(profile?.contentSelectors ?? []), ...GAMING_PRIMARY_CONTENT_SELECTORS],
     removeSelectors: options.removeSelectors ?? [...COMMON_JUNK_SELECTORS, ...(profile?.removeSelectors ?? [])]
   };
 }
