@@ -42,6 +42,7 @@ const POSTGRES_TEST_FILES = [
   'tests/integration/non-gpt-terminal-retention.pg18.integration.test.ts',
   'tests/integration/gaming-historical-status.pg18.integration.test.ts',
   'tests/integration/gaming-durable-rag.pg18.integration.test.ts',
+  'tests/integration/gaming-authority-http.pg18.integration.test.ts',
   'tests/integration/gpt-access-device-auth.pg18.integration.test.ts',
   'tests/integration/dag-token-accounting.pg18.integration.test.ts',
   'tests/dag-accounting-e2e.test.ts',
