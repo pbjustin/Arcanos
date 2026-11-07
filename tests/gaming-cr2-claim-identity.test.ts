@@ -51,7 +51,7 @@ describe('CodeRabbit round 2 acquired identity and attributable claims', () => {
     expect(assessGamingClearSourceIdentity(document, request, assessGamingSourcePolicy(url, decimalGame)).status).toBe('verified');
     expect(readGamingPrimaryGameDefinition(`${decimalGame} is an action role-playing game.`)).toBe(decimalGame);
     const result = await evaluateGamingHybridCandidates({ ...request, protocolVersion: 'gaming-hybrid-v2', candidates: [{ url }] },
-      { actorKey: 'synthetic-cr2-decimal' });
+      { actorKey: 'cr2-1' });
     expect(result.accepted).toHaveLength(1);
     expect(assessGamingRequestCoverage(request, result.knowledge).coverageSatisfied).toBe(true);
   });
@@ -78,7 +78,7 @@ describe('CodeRabbit round 2 acquired identity and attributable claims', () => {
       evidenceUnits: document.evidenceUnits, truncated: false, minUsefulTextChars: 120 })).not.toBe('complete');
     expect(gamingAttributableClaimText('Diablo IV is an action role-playing game.', request.game)).toBe('');
     const result = await evaluateGamingHybridCandidates({ ...request, protocolVersion: 'gaming-hybrid-v2', candidates: [{ url }] },
-      { actorKey: 'synthetic-cr2-alias' });
+      { actorKey: 'cr2-2' });
     expect(result.accepted).toEqual([]);
     expect(assessGamingClearEvidence(request, await acquiredKnowledge(request.game), { identityVerified: true }).gates.claimSupport).toBe('unknown');
   });
@@ -87,7 +87,7 @@ describe('CodeRabbit round 2 acquired identity and attributable claims', () => {
     publish(`In the game ${game}, the copper shield weighs seven units.`);
     const request = { game, mode: 'guide' as const, prompt: 'Explain copper shield weight.' };
     const result = await evaluateGamingHybridCandidates({ ...request, protocolVersion: 'gaming-hybrid-v2', candidates: [{ url }] },
-      { actorKey: 'synthetic-cr2-weight' });
+      { actorKey: 'cr2-3' });
     expect(result.accepted).toHaveLength(1);
     expect(gamingAttributableClaimText('The copper shield weighs seven units.', game)).toBe('The copper shield weighs seven units.');
     expect(assessGamingRequestCoverage({ ...request, prompt: 'Explain the copper shield.' }, result.knowledge).coverageSatisfied).toBe(true);
@@ -137,7 +137,7 @@ describe('CodeRabbit round 2 acquired identity and attributable claims', () => {
     expect(assessGamingRequestCoverage(request, knowledge).coverageSatisfied).toBe(false);
     expect(assessGamingClearEvidence(request, knowledge, { identityVerified: true }).gates.claimSupport).toBe('unknown');
     const result = await evaluateGamingHybridCandidates({ ...request, protocolVersion: 'gaming-hybrid-v2', candidates: [{ url }] },
-      { actorKey: 'synthetic-cr2-navigation' });
+      { actorKey: 'cr2-4' });
     expect(result.accepted).toEqual([]);
     await runGameplayPipeline({ ...request, guideUrls: [], auditEnabled: false }, { knowledge, current: true, qualification: '' });
     expect(trinity).not.toHaveBeenCalled();
