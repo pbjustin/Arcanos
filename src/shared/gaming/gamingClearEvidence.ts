@@ -5,7 +5,7 @@ import { createGamingClearAssessment, classifyGamingClearQuestion, gamingClearCo
   type GamingClearAssessment } from './gamingClearPolicy.js';
 import { gamingEditionIdentitiesMatch, normalizeGamingEvidenceGameIdentity, resolveGamingGuideIdentity } from './gamingGameIdentity.js';
 import { assessGamingProgressionRequest } from './gamingProgressionPolicy.js';
-import { buildGamingRetrievalTerms, buildGamingRequestRequirements, gamingRequestRequirementLimitExceeded, gamingTermCoverage, gamingAttributableClaimText, resolveGamingUserDecisionGap, type GamingRetrievalPolicyInput } from './gamingRetrievalPolicy.js';
+import { buildGamingClaimCoverageTerms, buildGamingRequestRequirements, gamingRequestRequirementLimitExceeded, gamingTermCoverage, gamingAttributableClaimText, resolveGamingUserDecisionGap, type GamingRetrievalPolicyInput } from './gamingRetrievalPolicy.js';
 import { classifyGamingQuestionFreshness, evaluateGamingFreshness, type GamingFreshnessEvaluation, type GamingFreshnessEvidence } from './gamingFreshnessCore.js';
 import type { GamingStoredKnowledgeContext, GamingStoredKnowledgeSource } from './gamingStoredEvidenceCore.js';
 import { assessGamingStructuralUsability, gamingCrossSourceStructuralConflict, gamingStructuralCoverageTerms } from './gamingStructuralEvidence.js';
@@ -44,14 +44,6 @@ function chunkClaimText(chunk: NonNullable<GamingStoredKnowledgeContext['evidenc
     metrics: { truncated: false } }), game, { title: source?.title, headings: chunk.headingPath?.at(-1) });
   const records = (chunk.evidenceUnits ?? []).filter(unit => assessGamingStructuralUsability({ units: [unit] }).hasIntactUsableUnit);
   return [prose, ...records.map(unit => unit.text)].filter(Boolean).join('\n');
-}
-
-/** Recommendation style and a contextual current-patch qualifier belong to
- * request/freshness policy, not literal gameplay facts the guide must repeat. */
-function gameplayFocusTerms(input: GamingRetrievalPolicyInput): string[] {
-  const prompt = input.prompt.replace(/\b(?:on|for|at|as of)\s+(?:the\s+)?(?:latest|current|newest|live)\s+(?:patch|version|build|season)\b(?!\s+(?:changes|updates|notes|differences|effects)\b)/giu, '');
-  return buildGamingRetrievalTerms({ ...input, prompt }).focusTerms
-    .filter(term => !['recommend', 'recommended', 'recommendation', 'recommendations', 'best', 'good'].includes(term));
 }
 
 /**
@@ -125,7 +117,7 @@ export function assessGamingClearEvidence(
     && [chunk.sourceId, chunk.revisionId, chunk.recordId].every(id => typeof id === 'string' && id.length > 0 && id.length <= 240)
     && sources.some(source => source.sourceId === chunk.sourceId && source.url === chunk.publicUrl)
     && Number.isFinite(Date.parse(chunk.provenance.fetchedAt)));
-  const focusTerms = gameplayFocusTerms(input);
+  const focusTerms = buildGamingClaimCoverageTerms(input);
   const gameplayChunks = selected.filter(chunk => {
     const source = sources.find(item => item.sourceId === chunk.sourceId);
     const item = relevantMetadata.find(entry => entry.id === chunk.sourceId || entry.url === chunk.publicUrl);
@@ -259,7 +251,7 @@ export function assessGamingRequestCoverage(input: GamingRetrievalPolicyInput,
   });
   const progression = assessGamingProgressionRequest(input);
   if (progression.clarificationNeeded) return { coverageSatisfied: false, missingCoverage: [], gapAssessmentStatus: 'not_assessed', requirementSupport: [] };
-  const focusTerms = gameplayFocusTerms(input);
+  const focusTerms = buildGamingClaimCoverageTerms(input);
   if (!focusTerms.length || input.mode === 'build' && focusTerms.every(term => ['best', 'good', 'build', 'recommend', 'recommended', 'recommendations'].includes(term))
     && !input.class && !input.role && !input.constraints?.length) return { coverageSatisfied: false, missingCoverage: [],
     gapAssessmentStatus: 'not_assessed', requirementSupport: [],

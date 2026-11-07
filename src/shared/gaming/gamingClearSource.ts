@@ -463,8 +463,12 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     // guide marker in concatenated navigation does not name its leading game.
     // Require a complete nominal guide frame; explicit game declarations and
     // recognized leading game aliases retain their separate contradiction rules.
-    const nominalGuideFrame = firstInstructionMarker && /^(?:\s+(?:guide|build|loadout|meta|walkthrough|wiki|tips?))*\s*$/iu.test(
-      bodySubject.slice(firstInstructionMarker.index + firstInstructionMarker[0].length));
+    const guideTail = firstInstructionMarker
+      ? bodySubject.slice(firstInstructionMarker.index + firstInstructionMarker[0].length) : '';
+    const scopedGuideInstruction = /^\s+[\p{L}][\p{L}'’-]*\s+(?:the|a|an|your|our|their|its|this|that)\s+\p{L}/iu.test(guideTail)
+      && Boolean(gamingAttributableClaimText(guideTail));
+    const nominalGuideFrame = firstInstructionMarker && (/^(?:\s+(?:guide|build|loadout|meta|walkthrough|wiki|tips?))*\s*$/iu.test(guideTail)
+      || scopedGuideInstruction);
     const ownsMetadataSubject = explicitGameScope || Boolean(firstInstructionMarker ? nominalGuideFrame
       : metadataIdentity && (subjectIdentity === metadataIdentity || subjectIdentity.startsWith(`${metadataIdentity}-`)));
     const detected = leading.game ? leading : metadataSubject.source !== 'alias' && !instructionalClause && ownsMetadataSubject
@@ -472,6 +476,10 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     const expectedSubject = [...expected].some(game => subjectIdentity === game || subjectIdentity.startsWith(`${game}-`));
     for (const game of expected) {
       if (!subjectIdentity.startsWith(`${game}-`) || sourceGameMatches(bodySubject)) continue;
+      // A same-game nominal guide followed by its own instruction is not an
+      // unrecognized edition suffix. Foreign/qualified names remain binding.
+      if (scopedGuideInstruction && firstInstructionMarker
+        && sourceGameMatches(bodySubject.slice(0, firstInstructionMarker.index).trim())) continue;
       const qualifier = subjectIdentity.slice(game.length + 1);
       // An otherwise unrecognized complete family name is neither a reviewed
       // alias nor evidence for its parent. Narrative clauses and independently

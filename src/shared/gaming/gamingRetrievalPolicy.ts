@@ -105,6 +105,14 @@ export function gamingTermCoverage(text: string, terms: readonly string[]): numb
   return terms.length ? terms.filter(term => available.has(term)).length / terms.length : 0;
 }
 
+/** Claim coverage excludes request style and contextual freshness qualifiers.
+ * The original request remains intact for identity, applicability and freshness. */
+export function buildGamingClaimCoverageTerms(input: GamingRetrievalPolicyInput): string[] {
+  const prompt = input.prompt.replace(/\b(?:on|for|at|as of)\s+(?:the\s+)?(?:latest|current|newest|live)\s+(?:patch|version|build|season)\b(?!\s+(?:changes|updates|notes|differences|effects)\b)/giu, '');
+  return buildGamingRetrievalTerms({ ...input, prompt }).focusTerms
+    .filter(term => !['recommend', 'recommended', 'recommendation', 'recommendations', 'best', 'good'].includes(term));
+}
+
 /** Intelligible acquired gameplay assertions, not an authority or truth verdict.
  * Catalog speech acts, game identity and topic labels supply no claim text.
  * Both declarative relations and player actions remain eligible for the normal
@@ -112,10 +120,15 @@ export function gamingTermCoverage(text: string, terms: readonly string[]): numb
 export function gamingAttributableClaimText(text: string, game?: string, metadata?: { title?: string; headings?: string }): string {
   const scope = game ? new RegExp(`\\bin(?: the game)?\\s+${gamingRegistryLiteralPattern(game)},\\s*`, 'iu') : undefined;
   const gamePrefix = game ? new RegExp(`^${gamingRegistryLiteralPattern(game)}\\s+`, 'iu') : undefined;
+  const definition = game ? new RegExp(`^${gamingRegistryLiteralPattern(game)}\\s+is\\s+an?\\s+(?:[\\p{L}][\\p{L}'’-]{0,31}\\s+){0,8}game(?=\\s|[.!?,;]|$)`, 'iu') : undefined;
+  const authorship = /^(?:(?:it|this\s+game|the\s+game)\s+(?:is|was|were|has\s+been)\s+)?(?:developed|published|created|produced)\s+by\b/iu;
+  const nominalSection = String.raw`(?:about\s+(?:the\s+)?game|(?:overview|summary|details|information)\s+(?:of|about)\s+(?:the\s+)?game)`;
+  const sectionPrefix = new RegExp(`^${nominalSection}(?:\\s*[:.!?])?(?:\\s+|$)`, 'iu');
+  const nominalPagePrefix = game ? new RegExp(`^${gamingRegistryLiteralPattern(game)}\\s+(?:wiki(?:\\s+guide)?|guide|walkthrough|index)\\s+(?=${nominalSection}\\b|${gamingRegistryLiteralPattern(game)}\\s+is\\b)`, 'iu') : undefined;
   const metaHead = /\b(?:wiki|catalog|index|glossary|encyclopedia|entry|entries|article|articles|page|pages|topic|topics|directory|collection|heading|headings|guide|document|source|section|sections|overview|summary|content|gameplay|evidence|information|news|record|records|table|tables|titles|labels|names)\s*$/iu;
   const referenceObject = /\b(?:wiki|catalog|index|encyclopedia|directory|articles?|pages?|headings?|titles?|topics?|glossary)\b/iu;
   const action = /\b(?:activate|allocate|attack|avoid|block|buy|choose|collect|compare|complete|craft|cross|defeat|dodge|enter|equip|exit|explore|find|finish|focus|follow|gather|heal|improve|inspect|jump|keep|leave|move|open|place|plan|plant|practice|prepare|preserve|press|prioritize|raise|reach|read|reduce|remove|repair|restore|return|rotate|save|select|spend|take|trade|travel|turn|unlock|upgrade|use|visit|wait)\b/iu;
-  const relation = /\b(?:is|are|was|were|has|have|uses?|costs?|requires?|needs?|opens?|unlocks?|grants?|blocks?|protects?|deflects?|reflects?|absorbs?|inflicts?|deals?|reduces?|restores?|increases?|changes?|stuns?|sells?|spawns?|drops?|equals?|provides?|supports?|contains?|includes?|prevents?|allows?|follows?|begins?|starts?|ends?|waits?|leaves?|progress(?:es)?|prioritizes?|retains?|favors?|combines?|improves?|determines?|depends?|gives?|causes?|offers?)\s+\S/giu;
+  const relation = /\b(?:is|are|was|were|has|have|uses?|costs?|requires?|needs?|opens?|unlocks?|grants?|blocks?|protects?|deflects?|reflects?|absorbs?|inflicts?|deals?|reduces?|restores?|increases?|changes?|stuns?|sells?|spawns?|drops?|equals?|provides?|supports?|contains?|includes?|prevents?|allows?|follows?|begins?|starts?|ends?|waits?|leaves?|progress(?:es)?|prioritizes?|retains?|favors?|combines?|improves?|determines?|depends?|gives?|causes?|offers?|halves?|staggers?)\s+\S/giu;
   // A plural noun is not a finite verb merely because it ends in s or is
   // capitalized. Retain productive verb forms without admitting label bags.
   const finiteRelation = /\b[\p{L}][\p{L}'’-]*(?:ates|ifies|izes|ises|ects|uces|ores|ows|cks|ches|shes|rms|rns|nks|lds|nts)\s+(?!(?:and|or|plus|as|is|are|was|were|has|have|can|could|must|should|may|will|would)\b)\S/giu;
@@ -138,8 +151,20 @@ export function gamingAttributableClaimText(text: string, game?: string, metadat
     const actionClause = (acquiredScope ? clause.slice(acquiredScope.index + acquiredScope[0].length).trim() : clause)
       .replace(/^(?:do\s+not|don['’]t)\s+/iu, '');
     if (acquiredScope) clause = `${clause.slice(0, acquiredScope.index)} ${actionClause}`.trim();
-    // A nominal game definition establishes identity, never a mechanic itself.
-    if (game && new RegExp(`^${gamingRegistryLiteralPattern(game)}\\s+is\\s+(?:an?\\s+)?[^.!?]{0,120}\\bgame[.!?]?$`, 'iu').test(clause)) return false;
+    // Flattened parser headings can precede the definition without punctuation.
+    // Remove only closed nominal page/section labels, never a factual heading.
+    if (nominalPagePrefix) clause = clause.replace(nominalPagePrefix, '');
+    clause = clause.replace(sectionPrefix, '').trim();
+    // Identity/authorship is metadata even when the same sentence names a
+    // developer or publisher. Inspect a separate gameplay continuation intact.
+    const definitionMatch = definition?.exec(clause);
+    if (definitionMatch) clause = clause.slice(definitionMatch[0].length).trim();
+    if (authorship.test(clause)) {
+      const continuation = /,\s*(?:(?:and|while|but|whereas)\s+)?|\s+(?:while|but|whereas)\s+/iu.exec(clause);
+      clause = continuation ? clause.slice(continuation.index + continuation[0].length).trim() : '';
+    }
+    if (definitionMatch) clause = clause.replace(/^(?:and|while|but|where|whereas)\s+/iu, '');
+    if (!clause || /^[.!?]+$/u.test(clause)) return false;
     // A title's leading game name may itself contain a preposition or verb.
     // Evaluate its following topic; preserve a game that is the actual subject
     // of an explicit finite relation rather than a heading prefix.
@@ -170,7 +195,7 @@ export function gamingAttributableClaimText(text: string, game?: string, metadat
     const browsingOnly = referenceObject.test(clause) && !mechanicalResult;
     const instruction = /^(?:(?:first|next|then)[,:]?\s+)?(?:to\s+)?([\p{L}][\p{L}'’-]*)\s+\S/iu.exec(actionClause);
     const localInstruction = /(?:^|[,:])\s*(?:(?:first|next|then)[,:]?\s+)?(?:to\s+)?([\p{L}][\p{L}'’-]*)\s+\S/giu;
-    const imperative = /(?:^|[,:])\s*(?:(?:first|next|then)[,:]?\s+)?[\p{L}][\p{L}'’-]*\s+(?:the|a|an|your|our|their|its|this|that)\s+\p{L}/iu.test(actionClause);
+    const imperative = /(?:^|[,:])\s*(?:(?:first|next|then)[,:]?\s+)?(?!(?:about|above|below|under|over|at|in|on|of|with|without|for|from|as|through|during|after|before|unless|because|while|where|when|if|that|this|the|an?|and|or|plus|but|its|their|these|those|your|our|my|we|you|they|he|she|is|are|was|were|has|does)\b)[\p{L}][\p{L}'’-]*\s+(?:the|a|an|your|our|their|its|this|that)\s+\p{L}/iu.test(actionClause);
     if (!browsingOnly && (imperative || instruction && action.test(instruction[1])
       || [...actionClause.matchAll(localInstruction)].some(match => action.test(match[1])))) return true;
     const modal = /\b(?:can|could|must|should|may|will|would)\s+[\p{L}][\p{L}'’-]*\s+\S/giu;
@@ -293,7 +318,7 @@ export function buildGamingRequestRequirements(input: GamingRetrievalPolicyInput
     // Relational question framing describes the requested facts; it is not a
     // word that an independently acquired passage must repeat verbatim.
     const topicalClause = clause.replace(new RegExp(`\\b(?:${GENERIC_RELATIONSHIP_HEADS})\\s+of\\s+`, 'giu'), '');
-    const terms = buildGamingRetrievalTerms({ game: input.game, prompt: topicalClause }).requestTerms
+    const terms = buildGamingClaimCoverageTerms({ game: input.game, prompt: topicalClause })
       .filter(term => !['recommend', 'recommended', 'recommendation', 'recommendations', 'provide', 'describe', 'including', 'include', 'cover', 'covering'].includes(term))
       .filter(term => !/[0-9]{6,}/u.test(term));
     // This finite diagnostic vocabulary supplies labels only when explicitly
