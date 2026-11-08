@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import * as gamingSourceRepository from '@core/db/repositories/gamingSourceRepository.js';
 import type { GamingSourceAuthoritySnapshot } from '@core/db/repositories/gamingSourceRepository.js';
 import { normalizeGamingGameIdentity, resolveGamingGuideIdentity } from '@shared/gaming/gamingGameIdentity.js';
-import { gamingSourceAuthorityGameKeys } from '@shared/gaming/gamingSourceAuthority.js';
+import { gamingSourceAuthorityGameKeys, sameGamingSourceAuthoritySnapshot } from '@shared/gaming/gamingSourceAuthority.js';
 import { GAMEPLAY_CONTENT_PATTERN, GAMING_MARKDOWN_ROLE_HEADING_PATTERN, filterGamingDocumentInstructions, isGamingCatalogMetadataOnly } from "@services/gamingDocumentExtraction.js";
 import type { GamingPlayerContext } from '@shared/gaming/gamingPlayerContext.js';
 import type { GamingStoredKnowledgeContext } from '@shared/gaming/gamingStoredEvidenceCore.js';
@@ -1663,10 +1663,6 @@ async function fetchGamingRagDocument(
     return gamingSourceRepository.readGamingSourceAuthoritySnapshot({ gameKey: authorityGameKey,
       gameKeys: authorityGameKeys, canonicalUrl }, { signal, queryTimeoutMs: remainingMs });
   };
-  const sameAuthority = (left: GamingSourceAuthoritySnapshot, right: GamingSourceAuthoritySnapshot) =>
-    left.status === right.status && (left.status === 'unconfigured'
-      || right.status === 'available' && left.restrictedRevisionCount === right.restrictedRevisionCount
-        && left.requiresReassessment === right.requiresReassessment && left.stateFingerprint === right.stateFingerprint);
   const heldAuthority = (value: GamingSourceAuthoritySnapshot) => value.status === 'available'
     && (value.restrictedRevisionCount > 0 || value.requiresReassessment);
   const requestedCanonicalUrl = documentSource.publicUrl;
@@ -1684,7 +1680,7 @@ async function fetchGamingRagDocument(
   // same hold row. Always reacquire held sources and reassess source authority.
   const reuseAuthority = cached?.authority && cached.authority.gameScope === authorityGameScope
     && cached.authority.canonicalUrl === requestedCanonicalUrl
-    && sameAuthority(cached.authority.snapshot, initialAuthority) && !heldAuthority(initialAuthority);
+    && sameGamingSourceAuthoritySnapshot(cached.authority.snapshot, initialAuthority) && !heldAuthority(initialAuthority);
   if (cached && !reuseAuthority) documentCache.delete(cacheKey);
   if (cached && reuseAuthority && cached.expiresAt > now) {
     if (logContext) {
@@ -1925,8 +1921,8 @@ async function fetchGamingRagDocument(
       effectiveCandidate = { ...effectiveCandidate, url: structured.result.publicUrl };
     }
     const finalAuthority = await readAuthority(acquiredCanonicalUrl);
-    if (!sameAuthority(acquiredAuthority, finalAuthority)
-      || acquiredCanonicalUrl !== requestedCanonicalUrl && !sameAuthority(initialAuthority, await readAuthority(requestedCanonicalUrl))) {
+    if (!sameGamingSourceAuthoritySnapshot(acquiredAuthority, finalAuthority)
+      || acquiredCanonicalUrl !== requestedCanonicalUrl && !sameGamingSourceAuthoritySnapshot(initialAuthority, await readAuthority(requestedCanonicalUrl))) {
       documentCache.delete(cacheKey);
       return authorityError();
     }
@@ -2035,7 +2031,7 @@ async function fetchGamingRagDocument(
       let fallbackAuthority: GamingSourceAuthoritySnapshot;
       try { fallbackAuthority = await readAuthority(requestedCanonicalUrl); }
       catch { requestSignal?.throwIfAborted(); return authorityError(); }
-      if (!sameAuthority(initialAuthority, fallbackAuthority) || heldAuthority(fallbackAuthority)) return authorityError();
+      if (!sameGamingSourceAuthoritySnapshot(initialAuthority, fallbackAuthority) || heldAuthority(fallbackAuthority)) return authorityError();
       const text = urlStructuredResult.evidenceText || urlStructuredResult.publicSnippet;
       const extraction = structuredExtractionMetrics(urlStructuredResult);
       const fetchedAt = new Date().toISOString();
