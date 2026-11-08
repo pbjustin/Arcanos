@@ -34,7 +34,9 @@ assert.ok(new Set(['localhost', '127.0.0.1', '::1', '[::1]']).has(target.hostnam
 assert.equal(target.pathname, '/arcanos_audit_pg18_20260727');
 assert.ok(target.username && target.password && target.port);
 assert.equal(target.search + target.hash, '');
-const schema = readMode ? process.argv[3] : `gaming_http_${randomUUID().replaceAll('-', '')}`;
+const schemaArgument = process.argv.indexOf('--schema');
+const schema = readMode ? process.argv[3] : schemaArgument >= 0 ? process.argv[schemaArgument + 1]
+  : `gaming_http_${randomUUID().replaceAll('-', '')}`;
 assert.match(schema, /^gaming_http_[a-f0-9]{32}$/u);
 target.searchParams.set('options', `-c search_path=${schema},pg_catalog`);
 // The guarded disposable cluster uses plaintext on every accepted loopback form.
@@ -57,7 +59,9 @@ Socket.prototype.connect = function(...args) {
 const nativeFetch = globalThis.fetch.bind(globalThis);
 globalThis.fetch = () => { blockedNetwork += 1; throw new Error('Unexpected fetch'); };
 const checks = [];
-const check = (name, fn) => { fn(); checks.push(name); };
+const phaseStartedAt = Date.now();
+const phase = name => process.stderr.write('GAMING_HTTP_PHASE ' + JSON.stringify({ name, schema, elapsedMs: Date.now() - phaseStartedAt, readMode }) + '\n');
+const check = (name, fn) => { fn(); checks.push(name); phase(name); };
 const PASSAGE = 'At the obsidian observatory, rotate the silver telescope toward the eastern beacon before crossing the crystal bridge. Open the amber gate after aligning the telescope.';
 const GAME = 'Amber Pilgrim';
 const PROMPT = 'How do I cross the obsidian observatory?';
@@ -156,6 +160,11 @@ let server;
 try {
   if (!readMode) {
     await admin.query(`CREATE SCHEMA "${schema}"`);
+    if (process.argv.includes('--exit-after-schema')) {
+      phase('synthetic abrupt child failure');
+      // Exercise the parent's cleanup after a killed/failed child bypasses finally.
+      process.exit(17);
+    }
     await admin.query(`SET search_path TO "${schema}", pg_catalog`);
     const { TABLE_DEFINITIONS } = await load('core/db/schema.js');
     for (const table of ['job_data', 'job_events']) {
@@ -182,6 +191,14 @@ try {
         { game: item.game ?? GAME, prompt: PROMPT, mode: 'guide', ...item.request }, scopedKnowledge, { identityVerified: true });
       check(`fresh CLEAR ${item.classification}`, () => assert.equal(scopedAssessment.decision === 'accept', item.eligible && item.answerEligible !== false,
         JSON.stringify({ item, assessment: scopedAssessment })));
+      if (item.heldHybridSource) {
+        check('fresh held hybrid source exact SQL identity', () => assert.ok(rows.every(row => row.gameKey === item.storageGameKey
+          && row.canonicalUrl === item.canonicalUrl)));
+        check('fresh held hybrid source requires reassessment', () => assert.ok(rows.every(row => row.authorityReassessmentRequired)));
+        const authority = await repository.readGamingSourceAuthoritySnapshot({ gameKey: item.storageGameKey, canonicalUrl: item.canonicalUrl });
+        check('fresh held hybrid source exact restriction epoch', () => assert.equal(authority.restrictedRevisionCount, item.restrictedRevisionCount));
+        check('fresh held hybrid source excluded', () => assert.equal(selected.length, 0));
+      }
       if (item.eligible) check('fresh exact citation', () => assert.ok(selected.every(row => row.evidence.sourceId === item.sourceId
         && row.evidence.revisionId === item.revisionId && rows.some(sql => sql.recordId === row.evidence.recordId))));
     }
@@ -255,8 +272,10 @@ try {
       // Keep the expanded authored transcript within the real 30/minute owner
       // admission limit. No limiter, clock, execution or provider guard is mocked.
       if (ownerWindowRequests >= 30) {
+        phase('owner admission window wait');
         await new Promise(done => setTimeout(done, Math.max(0, 60_000 - (Date.now() - ownerWindowStartedAt)) + 50));
         ownerWindowStartedAt = Date.now(); ownerWindowRequests = 0;
+        phase('owner admission window resumed');
       }
       ownerWindowRequests += 1;
       const body = JSON.stringify({ jsonrpc: '2.0', id: randomUUID(), method, ...(method === 'tools/call' ? { params: { name, arguments: args } } : {}) });
@@ -360,6 +379,97 @@ try {
       check(`${version} reference invokes no generation`, () => assert.equal(providerRequests.length, beforeReferenceProviders));
       states.push({ ...result, eligible: false, game: hybridGame });
     }
+    // The exact original candidate is accepted transiently before its owner-
+    // approved source is stored. A later real worker observation revokes that
+    // same storage identity before a complementary HTTP submission can answer.
+    const revocationGame = 'EVE Online';
+    const revocationRequest = { edition: 'base-game' };
+    const revocationQuestion = 'Explain how to align the platinum prism and preserve charge.';
+    const revocationFirstPath = '/hybrid-revocation-prism';
+    const revocationSecondPath = '/hybrid-revocation-charge';
+    const revocationFirstUrl = `https://guides.example.org${revocationFirstPath}`;
+    const revocationSecondUrl = `https://guides.example.org${revocationSecondPath}`;
+    const revocationFirstText = 'At the obsidian observatory in EVE Online, align the platinum prism with the eastern notch before rotating the relay. '
+      + 'Rotate the platinum prism until the amber latch opens. Inspect the platinum prism before each relay rotation.';
+    const revocationSecondText = 'In EVE Online, preserve charge for the return crossing. Charge drains while the relay glows. '
+      + 'Close the bronze switch to preserve charge after opening the crossing. Wait by the relay before using the remaining charge.';
+    pages.set(revocationFirstPath, html(revocationFirstText, '', revocationGame));
+    pages.set(revocationSecondPath, html(revocationSecondText, '', revocationGame));
+    const revocationProviderStart = { requests: providerRequests.length, generated, audited };
+    const revocationQuery = unwrap(await rpc('arcanos_gaming_hybrid_query', { contractVersion: 'gaming-hybrid-v2',
+      game: revocationGame, ...revocationRequest, question: revocationQuestion,
+      storagePolicy: 'ask_before_store', idempotencyKey: randomUUID() })).result;
+    const revocationPartial = unwrap(await rpc('arcanos_gaming_submit_candidates', { contractVersion: 'gaming-hybrid-v2',
+      workflowId: revocationQuery.workflowId, expectedRevision: revocationQuery.revision,
+      candidates: [{ url: revocationFirstUrl }], idempotencyKey: randomUUID() })).result;
+    check('authenticated hybrid revocation begins with partial accepted evidence', () => {
+      assert.equal(revocationPartial.nextAction, 'search', JSON.stringify(revocationPartial));
+      assert.equal(revocationPartial.coverageSatisfied, false);
+      assert.equal(revocationPartial.evidenceSelected, true);
+      assert.equal(revocationPartial.selectedCandidateIds.length, 1);
+      assert.equal(revocationPartial.answer, undefined);
+    });
+    const revocationCandidateId = revocationPartial.selectedCandidateIds[0];
+    const revocationQueued = unwrap(await rpc('arcanos_gaming_ingest_candidates', { contractVersion: 'gaming-hybrid-v2',
+      workflowId: revocationQuery.workflowId, candidateIds: [revocationCandidateId], storagePolicy: 'ask_before_store',
+      confirmStore: true, idempotencyKey: randomUUID() }));
+    assert.equal(revocationQueued.statusCode, 202);
+    const revocationStored = (await work(revocationQueued.result.ingestion.ingestionId)).output.sources[0];
+    check('authenticated hybrid revocation source persists through real queued worker', () => {
+      assert.equal(revocationStored.classification, 'verified');
+      assert.equal(revocationStored.generationEligible, true);
+      assert.equal(revocationStored.canonicalUrl, revocationFirstUrl);
+      assert.ok(revocationStored.sourceId);
+    });
+    const revocationSource = await repository.getGamingSourceById(revocationStored.sourceId);
+    check('authenticated hybrid revocation binds the exact approved game and URL', () => {
+      assert.equal(revocationSource.game, `${revocationGame} ${revocationRequest.edition}`);
+      assert.equal(revocationSource.gameKey, 'eve-online-base-game');
+      assert.equal(revocationSource.canonicalUrl, revocationFirstUrl);
+    });
+    pages.set(revocationFirstPath, html(revocationFirstText, '<p>No automated use.</p>', revocationGame));
+    const revocationRefresh = unwrap(await rpc('arcanos_gaming_refresh_sources', { sourceIds: [revocationSource.id],
+      idempotencyKey: randomUUID(), storagePolicy: 'ask_before_store', confirmStore: true }));
+    assert.equal(revocationRefresh.statusCode, 202);
+    const revocationHeld = (await work(revocationRefresh.result.ingestionId)).output.sources[0];
+    check('authenticated hybrid revocation worker commits source-use rejection', () => {
+      assert.equal(revocationHeld.status, 'rejected');
+      assert.equal(revocationHeld.error?.code, 'SOURCE_USE_RESTRICTED');
+    });
+    const revocationAuthority = await repository.readGamingSourceAuthoritySnapshot({
+      gameKey: revocationSource.gameKey, canonicalUrl: revocationSource.canonicalUrl });
+    const revocationRows = await repository.searchActiveGamingKnowledge({ gameKey: revocationSource.gameKey,
+      sourceIds: [revocationSource.id], query: 'observatory', mode: 'guide' });
+    check('authenticated hybrid revocation observes exact SQL restriction epoch one', () => {
+      assert.equal(revocationAuthority.status, 'available');
+      assert.equal(revocationAuthority.restrictedRevisionCount, 1);
+      assert.ok(revocationRows.length);
+      assert.ok(revocationRows.every(row => row.gameKey === revocationSource.gameKey && row.canonicalUrl === revocationFirstUrl
+        && row.authorityReassessmentRequired));
+    });
+    const revocationCompletion = unwrap(await rpc('arcanos_gaming_submit_candidates', { contractVersion: 'gaming-hybrid-v2',
+      workflowId: revocationQuery.workflowId, expectedRevision: revocationPartial.revision,
+      candidates: [{ url: revocationSecondUrl }], idempotencyKey: randomUUID() }));
+    check('authenticated hybrid revocation withholds recovery evidence and answer', () => {
+      assert.equal(revocationCompletion.statusCode, 409, JSON.stringify(revocationCompletion));
+      assert.equal(revocationCompletion.result.reason, 'EVIDENCE_REVALIDATION_REQUIRED');
+      assert.equal(revocationCompletion.result.answer, undefined);
+      assert.equal(revocationCompletion.result.evidenceSelected, false);
+      assert.ok(!revocationCompletion.result.selectedCandidateIds.includes(revocationCandidateId));
+      assert.ok(!revocationCompletion.result.selectedEvidenceIds.some(id => id.startsWith(`${revocationCandidateId}:`)));
+    });
+    check('authenticated hybrid revocation invokes no provider', () => {
+      assert.equal(providerRequests.length, revocationProviderStart.requests);
+      assert.equal(generated, revocationProviderStart.generated);
+      assert.equal(audited, revocationProviderStart.audited);
+    });
+    states.push({ ...revocationStored, eligible: false, game: revocationGame, request: revocationRequest,
+      heldHybridSource: true, storageGameKey: revocationSource.gameKey, restrictedRevisionCount: revocationAuthority.restrictedRevisionCount });
+    const hybridRevocation = { game: revocationGame, edition: revocationRequest.edition, sourceId: revocationSource.id,
+      storageGameKey: revocationSource.gameKey, canonicalUrl: revocationFirstUrl, candidateId: revocationCandidateId,
+      storedClassification: revocationStored.classification, heldOutcome: revocationHeld,
+      restrictedRevisionCount: revocationAuthority.restrictedRevisionCount, retainedSqlRows: revocationRows.length,
+      recovery: revocationCompletion.result, providerRequestsAdded: providerRequests.length - revocationProviderStart.requests };
     // Authored synthetic bytes exercise the existing reviewed community policy;
     // no real publisher is contacted and no real-game accuracy is claimed.
     const confirmedGame = "Baldur's Gate 3";
@@ -472,13 +582,19 @@ try {
       assert.ok(groundedRequests.every(item => item.selectedEvidenceReceived === true));
     });
     console.log('GAMING_HTTP_RECEIPT ' + JSON.stringify({ schema, compiled: true, sourceIdentity, provider: 'synthetic loopback HTTP; real SDK/adapter/Trinity', checks,
-      acquiredPaths, generated, audited, providerRequests, freshProcess: JSON.parse(child.stdout.split('GAMING_HTTP_RECEIPT ').at(-1).split(/\r?\n/u)[0]), states }));
+      acquiredPaths, generated, audited, providerRequests, hybridRevocation,
+      freshProcess: JSON.parse(child.stdout.split('GAMING_HTTP_RECEIPT ').at(-1).split(/\r?\n/u)[0]), states }));
   }
 } finally {
+  phase('cleanup started');
   if (server) await new Promise(done => server.close(done));
+  phase('application server closed');
   if (publisher) await new Promise(done => publisher.close(done));
+  phase('publisher fixture closed');
   if (provider) await new Promise(done => provider.close(done));
+  phase('provider fixture closed');
   if (db) await db.close();
   if (!readMode) await admin.query(`DROP SCHEMA "${schema}" CASCADE`);
   await admin.end();
+  phase('database and schema closed');
 }
