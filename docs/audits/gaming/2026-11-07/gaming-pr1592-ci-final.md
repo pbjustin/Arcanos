@@ -62,6 +62,40 @@ The transcription is explicitly not represented as original Jest output.
    the existing checkout-bound counters. PR CI requests Jest JSON explicitly.
    Regression checks require the result path and unconditional artifact retention.
 
+## Additional live-cache authority defect
+
+Independent PostgreSQL acceptance found a distinct P1 defect after the CI repairs.
+An owner-approved source A populated the live prose cache. A later restricted B
+created a durable source hold and correctly excluded stored SQL evidence, but a
+live cache hit could still select old A without any current SOURCE assessment.
+Request/evidence CLEAR did not supply the missing source-authority assessment.
+The held-source API is new to this PR; the legacy live prose path predates it.
+This is not attributed to PostgreSQL pool contention or to the CI timeouts.
+
+Live acquisition now reads bounded server-owned authority history for the exact
+canonical source and applicable game identities. Any durable revision history
+requires fresh protected acquisition and current whole-document SOURCE
+CLEAR. These bytes and authority decisions are not reused from the cache. Current
+source assessments travel into selected evidence; SQL holds and historical
+approval epochs remain unchanged. Configured database failures withhold the
+source, while genuinely unconfigured operation preserves its database-free path.
+
+Deterministic real PostgreSQL regressions cover old cached A, fresh clean A,
+repeated restricted B in the same hold epoch, a hold during transport, failed
+authority reads, separate base/edition storage keys, registered aliases, legacy
+v6/missing-stamp approvals and redirect destination races. Alias expansion uses
+only one exact registry entry and supplies restrictions; it grants no identity or
+generation authority. A redirect destination with durable history and no
+pre-acquisition authority witness is withheld. Before/after reads detect observed
+authority changes; they are query boundaries, not a global publisher snapshot or
+an external content-change oracle.
+
+The existing monotonic restriction count remains the approval epoch boundary.
+The presence of durable history is carried separately, so unmarked legacy history
+cannot be mistaken for a reusable authority grant at restriction epoch zero. The
+final exported receipts bind each failing-before/passing-after fixture, actual
+SQL transaction, final source tree and compiled application acceptance.
+
 ## Security and attribution boundaries
 
 The SQL errors above use in-memory SQL boundaries, so real PostgreSQL pool

@@ -1,6 +1,10 @@
 import { splitGamingDocumentIntoChunks as splitIntoChunks } from "@services/gamingDocumentChunks.js";
 import { gamingSourceAcquisitionIdentity as gamingSourceDedupeKey } from "@shared/gaming/gamingSourceAcquisitionCore.js";
 import { createHash } from "node:crypto";
+import * as gamingSourceRepository from '@core/db/repositories/gamingSourceRepository.js';
+import type { GamingSourceAuthoritySnapshot } from '@core/db/repositories/gamingSourceRepository.js';
+import { normalizeGamingGameIdentity, resolveGamingGuideIdentity } from '@shared/gaming/gamingGameIdentity.js';
+import { resolveGamingRegistryGame } from '@shared/gaming/gamingGameRegistry.js';
 import { GAMEPLAY_CONTENT_PATTERN, GAMING_MARKDOWN_ROLE_HEADING_PATTERN, filterGamingDocumentInstructions, isGamingCatalogMetadataOnly } from "@services/gamingDocumentExtraction.js";
 import type { GamingPlayerContext } from '@shared/gaming/gamingPlayerContext.js';
 import type { GamingStoredKnowledgeContext } from '@shared/gaming/gamingStoredEvidenceCore.js';
@@ -182,6 +186,7 @@ type GamingFetchedDocument = {
   extraction: FetchAndCleanExtractionMetrics;
   evidenceUnits?: GamingEvidenceUnit[];
   resolvedDocument?: ResolvedGamingDocument;
+  sourceAssessment?: GamingClearAssessment;
   archiveResolution?: GamingArchiveResolutionTelemetry;
   structured?: {
     result: GamingBuildResourceResult;
@@ -213,7 +218,10 @@ export function isCitableGamingWebSource(source: GamingWebSource): boolean {
   return isCitableGamingEvidenceSource(source);
 }
 
+type GamingCachedSourceAuthority = { gameScope: string; canonicalUrl: string; snapshot: GamingSourceAuthoritySnapshot };
+
 const documentCache = new Map<string, {
+  authority: GamingCachedSourceAuthority;
   verifiedPublicUrl?: string;
   partialExtraction?: boolean;
   text: string;
@@ -1634,12 +1642,54 @@ async function fetchGamingRagDocument(
     ? createHash("sha256").update(resolvedIdentity).digest("hex").slice(0, 24)
     : preparedResource?.payloadHash.slice(0, 24) ?? "invalid-resource";
   const resolverCachePolicy = documentSource ? `:resolver:${documentSource.resolverId}:${documentSource.resolverVersion}:${GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION}:${GAMING_EVIDENCE_UNIT_POLICY_VERSION}` : "";
-  const cacheKey = `${cacheUrlKey}#gaming-rag:${contentTermKey}:payload:${payloadCacheKey}:origin:${strictEvidenceCandidate ? "current-candidate" : untrustedEvidenceCandidate ? "supplied" : "curated"}${resolverCachePolicy}`;
+  const authorityGame = input.game ?? normalizeGameName(input) ?? '';
+  const storageGame = input.edition && resolveGamingGuideIdentity(authorityGame, input.edition) !== normalizeGamingGameIdentity(authorityGame)
+    ? `${authorityGame} ${input.edition}` : authorityGame;
+  const authorityGameKey = normalizeGamingGameIdentity(storageGame).slice(0, 160);
+  // Revocation follows only exact names in one reviewed registry identity,
+  // never a franchise/related game. Direct and separate-edition storage keys
+  // can each carry restrictions; neither can grant source authority here.
+  const registryGame = resolveGamingRegistryGame(authorityGame);
+  const authorityNames = registryGame ? [authorityGame, registryGame.id, registryGame.name, ...registryGame.aliases] : [authorityGame];
+  const authorityGameKeys = [...new Set(authorityNames.flatMap(name => {
+    const key = normalizeGamingGameIdentity(name).slice(0, 160);
+    const editionKey = input.edition ? resolveGamingGuideIdentity(name, input.edition).slice(0, 160) : key;
+    return [key, editionKey];
+  }))];
+  const authorityGameScope = authorityGameKeys.join('\n');
+  const gameScopeKey = createHash("sha256").update(authorityGameScope).digest("hex").slice(0, 24);
+  const cacheKey = `${cacheUrlKey}#gaming-rag:${contentTermKey}:game:${gameScopeKey}:payload:${payloadCacheKey}:origin:${strictEvidenceCandidate ? "current-candidate" : untrustedEvidenceCandidate ? "supplied" : "curated"}${resolverCachePolicy}`;
   const cached = documentCache.get(cacheKey);
   const now = Date.now();
   const sourceStartedAt = now;
   const sourceLogTarget = buildSafeSourceLogTarget(fetchUrl);
-  if (cached && cached.expiresAt > now) {
+  const authorityError = () => ({ url: sourceUrl, error: 'Source authority could not be verified; reacquire this source.' });
+  const readAuthority = (canonicalUrl: string, signal = requestSignal): Promise<GamingSourceAuthoritySnapshot> => {
+    const remainingMs = Math.max(1, fetchTimeoutMs - (Date.now() - sourceStartedAt));
+    return gamingSourceRepository.readGamingSourceAuthoritySnapshot({ gameKey: authorityGameKey,
+      gameKeys: authorityGameKeys, canonicalUrl }, { signal, queryTimeoutMs: remainingMs });
+  };
+  const sameAuthority = (left: GamingSourceAuthoritySnapshot, right: GamingSourceAuthoritySnapshot) =>
+    left.status === right.status && (left.status === 'unconfigured'
+      || right.status === 'available' && left.restrictedRevisionCount === right.restrictedRevisionCount
+        && left.requiresReassessment === right.requiresReassessment);
+  const heldAuthority = (value: GamingSourceAuthoritySnapshot) => value.status === 'available'
+    && (value.restrictedRevisionCount > 0 || value.requiresReassessment);
+  const requestedCanonicalUrl = documentSource.publicUrl;
+  let initialAuthority: GamingSourceAuthoritySnapshot;
+  try { initialAuthority = await readAuthority(requestedCanonicalUrl); }
+  catch {
+    documentCache.delete(cacheKey);
+    requestSignal?.throwIfAborted();
+    return authorityError();
+  }
+  // A held epoch is not an event sequence: another restriction can reuse its
+  // same hold row. Always reacquire held sources and reassess source authority.
+  const reuseAuthority = cached?.authority && cached.authority.gameScope === authorityGameScope
+    && cached.authority.canonicalUrl === requestedCanonicalUrl
+    && sameAuthority(cached.authority.snapshot, initialAuthority) && !heldAuthority(initialAuthority);
+  if (cached && !reuseAuthority) documentCache.delete(cacheKey);
+  if (cached && reuseAuthority && cached.expiresAt > now) {
     if (logContext) {
       logger.info("gaming.retrieval.source.end", {
         ...logContext,
@@ -1756,6 +1806,7 @@ async function fetchGamingRagDocument(
     let acquiredCanonicalUrl = fetchUrl;
     let evidenceUnits: GamingEvidenceUnit[] = [];
     let resolvedDocument: ResolvedGamingDocument | undefined;
+    let acquiredAuthority = initialAuthority;
     const fetchedArticleText = await runWithLocalTimeout(
       async (signal) => {
         const document = await resolveGamingDocument(fetchUrl,
@@ -1782,6 +1833,7 @@ async function fetchGamingRagDocument(
         resolvedDocument = { ...document, rawDocument: undefined };
         redirected = (document.acquisition?.redirectCount ?? 0) > 0;
         acquiredCanonicalUrl = document.canonicalUrl;
+        if (acquiredCanonicalUrl !== requestedCanonicalUrl) acquiredAuthority = await readAuthority(acquiredCanonicalUrl, signal);
         effectiveCandidate = { ...candidate, url: document.publicUrl, fetchUrl: document.canonicalUrl };
         if (redirected) {
           const policy = assessGamingSourcePolicy(document.canonicalUrl, input.game ?? '');
@@ -1875,11 +1927,38 @@ async function fetchGamingRagDocument(
     } else if (structured && evidenceUsed) {
       effectiveCandidate = { ...effectiveCandidate, url: structured.result.publicUrl };
     }
+    const finalAuthority = await readAuthority(acquiredCanonicalUrl);
+    if (!sameAuthority(acquiredAuthority, finalAuthority)
+      || acquiredCanonicalUrl !== requestedCanonicalUrl && !sameAuthority(initialAuthority, await readAuthority(requestedCanonicalUrl))) {
+      documentCache.delete(cacheKey);
+      return authorityError();
+    }
+    // A newly discovered destination has no pre-transport witness. Its held
+    // source cannot use an already in-flight clean body as reassessment.
+    if (acquiredCanonicalUrl !== requestedCanonicalUrl && (heldAuthority(finalAuthority) || heldAuthority(initialAuthority))) {
+      return authorityError();
+    }
+    let sourceAssessment: GamingClearAssessment | undefined;
+    if (heldAuthority(finalAuthority) || heldAuthority(initialAuthority)) {
+      if (!resolvedDocument || !authorityGame) return authorityError();
+      sourceAssessment = assessGamingClearSource({ ...input, game: authorityGame }, resolvedDocument, {
+        subjectId: `live:${hashChunk(effectiveCandidate.url)}`,
+        subjectHash: gamingClearHash({ text: resolvedDocument.text, evidenceUnits: resolvedDocument.evidenceUnits,
+          policyVersion: GAMING_EVIDENCE_UNIT_POLICY_VERSION }),
+        actorScopeHash: gamingClearHash('request-scoped-supplied-retrieval'),
+        sourcePolicy: assessGamingSourcePolicy(acquiredCanonicalUrl, authorityGame),
+        freshness: extractGamingFreshnessMetadata(resolvedDocument, { game: authorityGame, edition: input.edition,
+          platform: input.platform }, new Date()), now: new Date()
+      });
+      if (!sourceAssessment.qualityEligible) return authorityError();
+    }
+    const authority = { gameScope: authorityGameScope, canonicalUrl: acquiredCanonicalUrl, snapshot: finalAuthority };
     const fetchedAt = new Date().toISOString();
     const fetchedPageDate = strictEvidenceCandidate ? extractFetchedPageDate(rawDocument, effectiveCandidate.url) : undefined;
     pruneDocumentCache(now);
     // A redirect destination is not a reusable acquisition permission. Revalidate its chain next time.
-    if (!redirected) documentCache.set(cacheKey, {
+    if (!redirected && !heldAuthority(finalAuthority)) documentCache.set(cacheKey, {
+      authority,
       verifiedPublicUrl: effectiveCandidate.url,
       partialExtraction,
       text,
@@ -1936,13 +2015,14 @@ async function fetchGamingRagDocument(
       ...(archiveResolution ? { archiveResolution } : {}),
       ...(structured ? { structured } : {}),
       ...(!evidenceUsed && evidenceUnits.length ? { evidenceUnits } : {}),
-      ...(resolvedDocument ? { resolvedDocument } : {})
+      ...(resolvedDocument ? { resolvedDocument } : {}),
+      ...(sourceAssessment ? { sourceAssessment } : {})
     };
   } catch (error) {
     if (requestSignal?.aborted) {
       throw requestSignal.reason instanceof Error ? requestSignal.reason : error;
     }
-    const directPayloadFallbackAllowed = !redirected
+    const directPayloadFallbackAllowed = !redirected && !heldAuthority(initialAuthority)
       && error instanceof GamingDocumentAcquisitionError
       && error.code === 'SOURCE_FETCH_FAILED'
       && error.acquisition.redirectCount === 0
@@ -1955,12 +2035,17 @@ async function fetchGamingRagDocument(
         || isStructuredGamingResourceType(urlStructuredResult.classification.type)
       )
     ) {
+      let fallbackAuthority: GamingSourceAuthoritySnapshot;
+      try { fallbackAuthority = await readAuthority(requestedCanonicalUrl); }
+      catch { requestSignal?.throwIfAborted(); return authorityError(); }
+      if (!sameAuthority(initialAuthority, fallbackAuthority) || heldAuthority(fallbackAuthority)) return authorityError();
       const text = urlStructuredResult.evidenceText || urlStructuredResult.publicSnippet;
       const extraction = structuredExtractionMetrics(urlStructuredResult);
       const fetchedAt = new Date().toISOString();
       const structured = { result: urlStructuredResult, evidenceUsed: true };
       pruneDocumentCache(now);
       documentCache.set(cacheKey, {
+        authority: { gameScope: authorityGameScope, canonicalUrl: requestedCanonicalUrl, snapshot: fallbackAuthority },
         text,
         fetchedAt,
         expiresAt: now + getGamingRagTtlMs(input.mode, patchSensitive),
@@ -2327,7 +2412,7 @@ function rankChunks(documents: GamingFetchedDocument[], terms: string[], input: 
     if (structuredClaim && !structural.claimSupported && !independentProse) continue;
     if (structural.hasIntactUsableUnit && document.resolvedDocument && input.game) {
       const assessedAt = new Date();
-      const sourceAssessment = assessGamingClearSource({ ...input, game: input.game }, document.resolvedDocument, {
+      const sourceAssessment = document.sourceAssessment ?? assessGamingClearSource({ ...input, game: input.game }, document.resolvedDocument, {
         subjectId: `live:${hashChunk(document.candidate.url)}`,
         subjectHash: gamingClearHash({ text: document.text, evidenceUnits: acquiredUnits, policyVersion: GAMING_EVIDENCE_UNIT_POLICY_VERSION }),
         actorScopeHash: gamingClearHash('request-scoped-supplied-retrieval'),
@@ -2363,7 +2448,8 @@ function rankChunks(documents: GamingFetchedDocument[], terms: string[], input: 
             - index * 0.01,
           hash: hashChunk(safeChunk),
           snippetQualityScore: 1,
-          navigationPenalty: 0
+          navigationPenalty: 0,
+          ...(document.sourceAssessment ? { sourceAssessment: document.sourceAssessment } : {})
         });
       }
       continue;
@@ -2428,7 +2514,8 @@ function rankChunks(documents: GamingFetchedDocument[], terms: string[], input: 
           - duplicatePenalty,
         hash: hashChunk(safeChunk),
         snippetQualityScore,
-        navigationPenalty
+        navigationPenalty,
+        ...(document.sourceAssessment ? { sourceAssessment: document.sourceAssessment } : {})
       });
     }
   }

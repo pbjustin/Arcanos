@@ -1203,6 +1203,17 @@ provide that proof. Older unapproved stored revisions without current
 server-written identity proof remain readable but cannot authorize generation
 until reassessed. These checks do not automatically write or migrate stored data.
 
+Live extraction caches also respect durable source history. If any revision is
+known for the exact source and applicable game identity, retrieval reacquires its
+bytes and performs current whole-document source CLEAR before selecting evidence.
+This includes unmarked historical revisions, legacy assessments and source holds;
+an unchanged restriction count does not authorize cache reuse. Exact registered
+aliases and applicable base/edition keys carry restrictions without granting game
+identity. Failed configured database reads withhold evidence. A redirect
+destination with durable history and no pre-acquisition authority witness is
+withheld. Fresh source validation does not reactivate SQL revisions or historical
+owner approvals.
+
 Status polling separately accepts strictly shaped retained ingestion envelopes
 from known earlier CLEAR policies, so completed and failed historical operations
 remain readable by their owning actor. Historical approvals are removed from the

@@ -31,7 +31,7 @@ const repository = await import('../../src/core/db/repositories/gamingSourceRepo
 const service = await import('../../src/services/gamingSourceIngestion.js');
 const { resolveGamingDocument } = await import('../../src/services/gamingDocumentResolution.js');
 const { assessGamingClearSource } = await import('../../src/shared/gaming/gamingClearSource.js');
-const { assessGamingSourcePolicy, extractGamingFreshnessMetadata } = await import('../../src/shared/gaming/gamingFreshnessCore.js');
+const { assessGamingSourcePolicy, extractGamingFreshnessMetadata, GAMING_FRESHNESS_POLICY_VERSION } = await import('../../src/shared/gaming/gamingFreshnessCore.js');
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
 const game = 'EVE Online';
 const request = { game, mode: 'guide' as const, prompt: 'How do I align the platinum prism?', requireRequestCoverage: true, failOnUnavailable: true };
@@ -107,6 +107,19 @@ async function fixture() {
   };
 }
 
+async function withConfiguredLiveCache(run: (web: typeof import('../../src/services/gamingWebContext.js')) => Promise<void>) {
+  const web = await import('../../src/services/gamingWebContext.js');
+  const settings = { DATABASE_URL: connectionString!, ARCANOS_GAMING_RAG_ENABLED: 'true', ARCANOS_GAMING_DISCOVERY_ENABLED: 'false',
+    ARCANOS_GAMING_CURATED_SOURCES_JSON: '[]', ARCANOS_GAMING_WEB_CONTEXT_CHARS: '5000', ARCANOS_GAMING_RAG_CHUNK_CHARS: '1200' };
+  const prior = Object.fromEntries(Object.keys(settings).map(key => [key, process.env[key]]));
+  Object.assign(process.env, settings); web.clearGamingRagCache();
+  try { await run(web); }
+  finally {
+    web.clearGamingRagCache();
+    for (const [key, value] of Object.entries(prior)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+  }
+}
+
 withDatabase('CR2 source-use authority holds on PostgreSQL18', () => {
   let setup: Client;
   let created = false;
@@ -122,6 +135,225 @@ withDatabase('CR2 source-use authority holds on PostgreSQL18', () => {
       options: `-c search_path=${schema},pg_catalog`, connectionTimeoutMillis: 5000, statement_timeout: 10000 });
   }, 30000);
   afterAll(async () => { await pool?.end(); if (created) await setup.query(`DROP SCHEMA "${schema}" CASCADE`); await setup?.end(); });
+
+  test('fences pre-hold live cache bytes and reassesses fresh sources on every held epoch request', async () => {
+    await withConfiguredLiveCache(async ({ buildGamingRagContext, isCitableGamingWebSource }) => {
+      const source = await fixture();
+      const input = { ...request, guideUrl: source.url, guideUrls: [] };
+      const prime = await buildGamingRagContext(input);
+      expect(prime.sources.filter(isCitableGamingWebSource)).toHaveLength(1);
+      const ordinary = await buildGamingRagContext(input);
+      expect(ordinary.cacheHit).toBe(true);
+      const approved = await source.approve();
+      const initial = await service.executeQueuedGamingSourceIngestion(randomUUID(), approved);
+      expect(initial.output.sources[0]).toMatchObject({ classification: 'verified', generationEligible: true });
+      const sourceId = initial.output.sources[0].sourceId!;
+      const verified = await buildGamingRagContext(input);
+      expect(verified.cacheHit).toBe(false);
+      expect(verified.sources.filter(isCitableGamingWebSource)).toHaveLength(1);
+      expect(verified.clearKnowledge?.sources[0].clearSourceAssessment).toMatchObject({ profile: 'source', qualityEligible: true });
+      source.setRestriction('visible'); await source.refresh(sourceId);
+      expect(await service.captureGamingSourceAuthorityRestrictionCount(game, source.url)).toBe(1);
+      const fetchesBeforeHeld = http.mock.calls.length;
+      const held = await buildGamingRagContext(input);
+      expect(held.cacheHit).toBe(false);
+      expect(http.mock.calls.length).toBeGreaterThan(fetchesBeforeHeld);
+      expect(held.sources.filter(isCitableGamingWebSource)).toEqual([]);
+      expect(held.clearKnowledge?.evidence ?? []).toEqual([]);
+      source.setRestriction('none');
+      const freshAfter = new Date().toISOString();
+      const fresh = await buildGamingRagContext(input);
+      expect(fresh.cacheHit).toBe(false);
+      expect(fresh.sources.filter(isCitableGamingWebSource)).toHaveLength(1);
+      expect(fresh.clearKnowledge?.sources[0].clearSourceAssessment).toMatchObject({ profile: 'source', qualityEligible: true });
+      expect(fresh.clearKnowledge!.sources[0].clearSourceAssessment!.evaluatedAt >= freshAfter).toBe(true);
+      expect((await service.buildStoredGamingKnowledgeContext(request)).evidence ?? []).toEqual([]);
+      // Retrying the restriction in the same durable grant epoch is idempotent.
+      // A transient source assessment must not make cached A hide later B again.
+      source.setRestriction('visible'); await source.refresh(sourceId);
+      expect(await service.captureGamingSourceAuthorityRestrictionCount(game, source.url)).toBe(1);
+      const repeated = await buildGamingRagContext(input);
+      expect(repeated.cacheHit).toBe(false);
+      expect(repeated.sources.filter(isCitableGamingWebSource)).toEqual([]);
+      expect(repeated.clearKnowledge?.evidence ?? []).toEqual([]);
+    });
+  }, 30000);
+
+  test('does not hide a base catalog hold behind a separate requested base-game edition', async () => {
+    await withConfiguredLiveCache(async ({ buildGamingRagContext, isCitableGamingWebSource }) => {
+      const source = await fixture();
+      const original = http.getMockImplementation()!;
+      http.mockImplementation(async (...args: any[]) => {
+        const response = await original(...args);
+        return { ...response, data: response.data.replace('</article>', '<p>Edition: base game.</p></article>') };
+      });
+      const input = { ...request, edition: 'base-game', guideUrl: source.url, guideUrls: [] };
+      expect((await buildGamingRagContext(input)).sources.filter(isCitableGamingWebSource)).toHaveLength(1);
+      const admitted = await service.createGamingSourceIngestion({ action: 'ingest', payload: {
+        game, sourceUrls: [source.url], idempotencyKey: randomUUID() } }, { actorKey });
+      expect(admitted.statusCode).toBe(202);
+      const initial = await service.executeQueuedGamingSourceIngestion((admitted.payload as any).ingestionId, source.latestBody());
+      const sourceId = initial.output.sources[0].sourceId!;
+      expect((await pool.query('SELECT game_key FROM gaming_sources WHERE id=$1', [sourceId])).rows[0].game_key).toBe('eve-online');
+      source.setRestriction('visible'); await source.refresh(sourceId);
+      const result = await buildGamingRagContext(input);
+      expect(result.cacheHit).toBe(false);
+      expect(result.sources.filter(isCitableGamingWebSource)).toEqual([]);
+      expect(result.clearKnowledge?.evidence ?? []).toEqual([]);
+    });
+  }, 30000);
+
+  test.each(['legacy-v6', 'missing-current-stamp', 'legacy-unapproved'] as const)('reassesses fresh live bytes instead of reusing %s authority history', async variant => {
+    await withConfiguredLiveCache(async ({ buildGamingRagContext, isCitableGamingWebSource }) => {
+      const source = await fixture(); const input = { ...request, guideUrl: source.url, guideUrls: [] };
+      expect((await buildGamingRagContext(input)).sources.filter(isCitableGamingWebSource)).toHaveLength(1);
+      const approval = await source.approve();
+      const current = approval.sources[0].hybridApproval.gamingClear;
+      const assessment = variant === 'legacy-v6' ? { ...current,
+        policyProfile: current.policyProfile.replace('gaming-clear-policy/v7', 'gaming-clear-policy/v6') } : current;
+      const provenance = variant === 'legacy-unapproved'
+        ? { acquiredApplicability: { extractorVersion: GAMING_FRESHNESS_POLICY_VERSION, game, contentHash: hash(guidance) } }
+        : { gamingClear: assessment, approvedContentHash: approval.sources[0].hybridApproval.contentHash };
+      const seeded = await repository.persistGamingSourceRevision({ gameKey: 'eve-online', gameName: game,
+        canonicalUrl: source.url, publicUrl: source.url, sourceType: 'supplied', contentHash: hash(guidance),
+        cleanedContent: guidance, fetchedAt: new Date().toISOString(), extractor: 'legacy-source-fixture',
+        extractorVersion: '1', normalizerSchemaVersion: '1',
+        provenance,
+        records: [{ recordType: 'guide', semanticKey: 'legacy-prism', payloadHash: hash(guidance), title: `${game} guide`, searchText: guidance, normalized: { text: guidance,
+          chunk: { ordinal: 0, totalChunks: 1, startChar: 0, endChar: guidance.length, headingPath: [] } } }] });
+      try {
+        expect(await service.captureGamingSourceAuthorityRestrictionCount(game, source.url)).toBe(0);
+        const raw = await repository.searchActiveGamingKnowledge({ gameKey: 'eve-online', query: 'platinum', sourceIds: [seeded.sourceId] });
+        expect(raw).toHaveLength(1);
+        if (variant === 'legacy-unapproved') {
+          expect(raw[0].provenance).toEqual(provenance);
+          const stored = await service.buildStoredGamingKnowledgeContext(request);
+          expect(stored.context).toContain('platinum prism');
+          expect(stored.clearEvidenceAssessment?.decision).not.toBe('accept');
+          expect(stored.sources[0].freshnessMetadata?.metadataUnverified).toBe(true);
+        } else expect(raw.every(row => row.authorityReassessmentRequired)).toBe(true);
+        const fresh = await buildGamingRagContext(input);
+        expect(fresh.cacheHit).toBe(false);
+        expect(fresh.sources.filter(isCitableGamingWebSource)).toHaveLength(1);
+        expect(fresh.clearKnowledge?.sources[0].clearSourceAssessment).toMatchObject({ profile: 'source', qualityEligible: true });
+        expect((await pool.query('SELECT provenance FROM gaming_source_revisions WHERE id=$1', [seeded.revisionId])).rows[0].provenance)
+          .toEqual(provenance);
+      } finally {
+        // This deliberately readable legacy source must not leak into later
+        // whole-game fresh-process assertions in the shared disposable schema.
+        await pool.query('DELETE FROM gaming_sources WHERE id=$1', [seeded.sourceId]);
+      }
+    });
+  }, 30000);
+
+  test.each([['Diablo IV', 'Diablo 4'], ['Diablo 4', 'Diablo IV']] as const)
+    ('carries a direct %s source hold into its registered %s live request', async (storedName, requestedName) => {
+      await withConfiguredLiveCache(async ({ buildGamingRagContext, isCitableGamingWebSource }) => {
+        const source = await fixture(); const original = http.getMockImplementation()!;
+        http.mockImplementation(async (...args: any[]) => {
+          const response = await original(...args); return { ...response, data: response.data.replaceAll(game, 'Diablo 4') };
+        });
+        const input = { ...request, game: requestedName, guideUrl: source.url, guideUrls: [] };
+        expect((await buildGamingRagContext(input)).sources.filter(isCitableGamingWebSource)).toHaveLength(1);
+        const admitted = await service.createGamingSourceIngestion({ action: 'ingest', payload: {
+          game: storedName, sourceUrls: [source.url], idempotencyKey: randomUUID() } }, { actorKey });
+        expect(admitted.statusCode).toBe(202);
+        const initial = await service.executeQueuedGamingSourceIngestion((admitted.payload as any).ingestionId, source.latestBody());
+        expect(initial.output.sources[0]).toMatchObject({ classification: 'verified', generationEligible: true });
+        source.setRestriction('visible'); await source.refresh(initial.output.sources[0].sourceId!);
+        expect(await service.captureGamingSourceAuthorityRestrictionCount(storedName, source.url)).toBe(1);
+        const result = await buildGamingRagContext(input);
+        expect(result.cacheHit).toBe(false);
+        expect(result.sources.filter(isCitableGamingWebSource)).toEqual([]);
+        expect(result.clearKnowledge?.evidence ?? []).toEqual([]);
+      });
+    }, 30000);
+
+  test.each(['Diablo II', 'Diablo Immortal'])('does not extend a %s hold to a different registered Diablo 4 identity', async otherGame => {
+    await withConfiguredLiveCache(async ({ buildGamingRagContext, isCitableGamingWebSource }) => {
+      const source = await fixture(); const original = http.getMockImplementation()!;
+      http.mockImplementation(async (...args: any[]) => {
+        const response = await original(...args); return { ...response, data: response.data.replaceAll(game, 'Diablo 4') };
+      });
+      const input = { ...request, game: 'Diablo 4', guideUrl: source.url, guideUrls: [] };
+      expect((await buildGamingRagContext(input)).sources.filter(isCitableGamingWebSource)).toHaveLength(1);
+      const text = guidance.replaceAll(game, otherGame);
+      const otherKey = otherGame.toLowerCase().replaceAll(' ', '-');
+      const seeded = await repository.persistGamingSourceRevision({ gameKey: otherKey, gameName: otherGame,
+        canonicalUrl: source.url, publicUrl: source.url, sourceType: 'supplied', contentHash: hash(text), cleanedContent: text,
+        fetchedAt: new Date().toISOString(), extractor: 'unrelated-source-fixture', extractorVersion: '1', normalizerSchemaVersion: '1',
+        provenance: { classification: 'needs_reassessment', generationEligible: false }, records: [{ recordType: 'guide',
+          semanticKey: 'other-prism', payloadHash: hash(text), searchText: text, normalized: { text } }] });
+      const raw = await repository.searchActiveGamingKnowledge({ gameKey: otherKey, query: 'platinum', sourceIds: [seeded.sourceId] });
+      expect(raw).toHaveLength(1);
+      expect(raw.every(row => row.authorityReassessmentRequired)).toBe(true);
+      const fetches = http.mock.calls.length;
+      const cached = await buildGamingRagContext(input);
+      expect(cached.cacheHit).toBe(true); expect(http.mock.calls.length).toBe(fetches);
+      expect(cached.sources.filter(isCitableGamingWebSource)).toHaveLength(1);
+      expect(cached.clearKnowledge?.sources[0].game).toBe('Diablo 4');
+    });
+  }, 30000);
+
+  test('withholds a held redirect destination that lacked a pre-transport authority witness', async () => {
+    await withConfiguredLiveCache(async ({ buildGamingRagContext, isCitableGamingWebSource }) => {
+      const source = await fixture();
+      const initial = await service.executeQueuedGamingSourceIngestion(randomUUID(), await source.approve());
+      let release!: () => void; let entered!: () => void; let pauseDestination = true;
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      const started = new Promise<void>(resolve => { entered = resolve; });
+      const original = http.getMockImplementation()!; const alias = `${source.url}/redirect`;
+      http.mockImplementation(async (target: string, options: any) => {
+        if (new URL(target).pathname === new URL(alias).pathname) return { status: 302, headers: { location: source.url }, data: '' };
+        const captured = await original(target, options);
+        if (pauseDestination) { pauseDestination = false; entered(); await gate; }
+        return captured;
+      });
+      const pending = buildGamingRagContext({ ...request, guideUrl: alias, guideUrls: [] });
+      try {
+        await started; source.setRestriction('visible'); await source.refresh(initial.output.sources[0].sourceId!);
+        release(); const result = await pending;
+        expect(result.sources.filter(isCitableGamingWebSource)).toEqual([]);
+        expect(result.clearKnowledge?.evidence ?? []).toEqual([]);
+      } finally { release(); await Promise.allSettled([pending]); }
+    });
+  }, 30000);
+
+  test('discards a clean live acquisition when its source becomes held during transport', async () => {
+    await withConfiguredLiveCache(async ({ buildGamingRagContext, clearGamingRagCache, isCitableGamingWebSource }) => {
+      const source = await fixture();
+      const initial = await service.executeQueuedGamingSourceIngestion(randomUUID(), await source.approve());
+      const sourceId = initial.output.sources[0].sourceId!; clearGamingRagCache();
+      let release!: () => void; let entered!: () => void;
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      const started = new Promise<void>(resolve => { entered = resolve; });
+      const original = http.getMockImplementation()!;
+      http.mockImplementationOnce(async (...args: any[]) => {
+        const captured = await original(...args); entered(); await gate; return captured;
+      });
+      const pending = buildGamingRagContext({ ...request, guideUrl: source.url, guideUrls: [] });
+      try {
+        await started; source.setRestriction('visible'); await source.refresh(sourceId);
+        release(); const result = await pending;
+        expect(result.sources.filter(isCitableGamingWebSource)).toEqual([]);
+        expect(result.clearKnowledge?.evidence ?? []).toEqual([]);
+      } finally { release(); await Promise.allSettled([pending]); }
+    });
+  }, 30000);
+
+  test('withholds old live cache authority when the configured durable snapshot query fails', async () => {
+    await withConfiguredLiveCache(async ({ buildGamingRagContext, isCitableGamingWebSource }) => {
+      const source = await fixture(); const input = { ...request, guideUrl: source.url, guideUrls: [] };
+      expect((await buildGamingRagContext(input)).sources.filter(isCitableGamingWebSource)).toHaveLength(1);
+      await setup.query('ALTER TABLE gaming_source_revisions RENAME TO cache_unavailable_revisions');
+      try {
+        const result = await buildGamingRagContext(input);
+        expect(result.cacheHit).toBe(false);
+        expect(result.sources.filter(isCitableGamingWebSource)).toEqual([]);
+        expect(result.clearKnowledge?.evidence ?? []).toEqual([]);
+      } finally { await setup.query('ALTER TABLE cache_unavailable_revisions RENAME TO gaming_source_revisions'); }
+    });
+  }, 30000);
 
   test.each(['visible', 'decoded', 'decoded-injection'] as const)('durably holds a previously approved source on %s restriction and fences queued old approvals', async kind => {
     const source = await fixture();

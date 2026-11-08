@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
 
 import { getPool, isDatabaseConnected } from '../client.js';
+import { getEnv } from '@platform/runtime/env.js';
 import { normalizeGamingGameIdentity, resolveGamingGuideIdentity } from '@shared/gaming/gamingGameIdentity.js';
 import { createGamingStoredAuthorityAssessment, hasGamingStoredAuthorityAssessment, gamingSourceHasAuthorityRestriction, GAMING_STORED_AUTHORITY_VERSION,
   type GamingSourceAuthorityAuthorization } from '@shared/gaming/gamingSourceAuthority.js';
@@ -146,6 +147,17 @@ export interface FindActiveGamingSourceIdentitiesInput {
 export interface QueryActiveGamingKnowledgeOptions {
   queryTimeoutMs?: number;
   signal?: AbortSignal;
+}
+
+/** A history count is not a reusable source-authority grant, including when it is unchanged. */
+export type GamingSourceAuthoritySnapshot = { status: 'unconfigured' }
+  | { status: 'available'; restrictedRevisionCount: number; requiresReassessment: boolean };
+
+export interface GamingSourceAuthoritySnapshotInput {
+  gameKey: string;
+  /** Server-derived exact registry aliases/edition variants, never a related-game expansion. */
+  gameKeys?: readonly string[];
+  canonicalUrl: string;
 }
 
 export interface GamingKnowledgeProvenanceRecord {
@@ -697,6 +709,28 @@ export class PostgresGamingSourceRepository {
     const count = Number(result.rows[0]?.restricted_revision_count);
     if (!Number.isSafeInteger(count) || count < 0) throw new GamingSourceRepositoryUnavailableError();
     return count;
+  }
+
+  async readGamingSourceAuthoritySnapshot(input: GamingSourceAuthoritySnapshotInput,
+    options: QueryActiveGamingKnowledgeOptions = {}): Promise<{ restrictedRevisionCount: number; requiresReassessment: boolean }> {
+    if (input.gameKeys !== undefined && (!Array.isArray(input.gameKeys) || input.gameKeys.length > 36))
+      throw new TypeError('gameKeys must contain at most 36 exact source keys.');
+    const gameKeys = [...new Set([input.gameKey, ...(input.gameKeys ?? [])]
+      .map(value => requiredString(value, 'gameKey', 120).toLowerCase()))];
+    if (gameKeys.length > 36) throw new TypeError('gameKeys must contain at most 36 exact source keys.');
+    const canonicalUrl = normalizePublicHttpUrl(input.canonicalUrl, 'canonicalUrl');
+    const result = await this.queryWithDeadline<{ restricted_revision_count: string; requires_reassessment: boolean }>(
+      `SELECT COUNT(*) FILTER (WHERE ${NON_AUTHORITATIVE_HISTORY_SQL}) AS restricted_revision_count,
+         COUNT(*) > 0 AS requires_reassessment
+       FROM gaming_source_revisions AS authority_revision
+       JOIN gaming_sources AS source ON source.id = authority_revision.source_id
+       WHERE source.game_key = ANY($1::text[]) AND source.canonical_url_hash = $2 AND source.canonical_url = $3`,
+      [gameKeys, sha256(canonicalUrl), canonicalUrl], options);
+    const count = Number(result.rows[0]?.restricted_revision_count);
+    const requiresReassessment = result.rows[0]?.requires_reassessment;
+    if (!Number.isSafeInteger(count) || count < 0 || typeof requiresReassessment !== 'boolean')
+      throw new GamingSourceRepositoryUnavailableError();
+    return { restrictedRevisionCount: count, requiresReassessment };
   }
 
   /** Bounded reads share the same stale-pool-waiter and transaction cancellation guard. */
@@ -1399,6 +1433,33 @@ export async function recordGamingSourceAuthorityHold(input: GamingSourceAuthori
 export async function readGamingSourceAuthorityRestrictionCount(input: { gameKey: string; canonicalUrl: string },
   options: QueryActiveGamingKnowledgeOptions = {}): Promise<number> {
   return createGamingSourceRepository().readGamingSourceAuthorityRestrictionCount(input, options);
+}
+
+/** A missing database differs from unavailable durable authority; never turn a failed read into epoch zero. */
+export async function readGamingSourceAuthoritySnapshot(input: GamingSourceAuthoritySnapshotInput,
+  options: QueryActiveGamingKnowledgeOptions = {}): Promise<GamingSourceAuthoritySnapshot> {
+  options.signal?.throwIfAborted();
+  const configured = ['DATABASE_URL', 'DATABASE_PRIVATE_URL', 'DATABASE_PUBLIC_URL',
+    'PGUSER', 'PGPASSWORD', 'PGHOST', 'PGPORT', 'PGDATABASE'].some(name => {
+    const value = getEnv(name)?.trim();
+    return Boolean(value && !['undefined', 'null'].includes(value.toLowerCase()));
+  });
+  if (!configured) return { status: 'unconfigured' };
+  const queryTimeoutMs = Math.min(1_000, normalizeQueryTimeoutMs(options.queryTimeoutMs) ?? 1_000);
+  const deadline = AbortSignal.timeout(queryTimeoutMs);
+  const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
+  let rejectAbort!: () => void;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectAbort = () => reject(signal.reason);
+    if (signal.aborted) rejectAbort();
+    else signal.addEventListener('abort', rejectAbort, { once: true });
+  });
+  try {
+    const snapshot = await Promise.race([
+      createGamingSourceRepository().readGamingSourceAuthoritySnapshot(input, { queryTimeoutMs, signal }), aborted
+    ]);
+    return { status: 'available', ...snapshot };
+  } finally { signal.removeEventListener('abort', rejectAbort); }
 }
 
 export async function findGamingSourceById(id: string): Promise<GamingSourceRecord | null> {
