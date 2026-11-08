@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, it, expect, jest } from '@jest/globals';
 import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
+import { createGamingAcquisitionStages } from './testUtils/gamingAcquisitionStages.js';
 import { GAMING_HYBRID_CONTRACT_VERSION as contractVersion, GAMING_HYBRID_LIMITS } from '../src/shared/gaming/gamingHybridContract.js';
 import type { GamingStoredKnowledgeContext } from '../src/services/gamingStoredKnowledge.js';
 import { GAMING_SOURCE_POLICY_VERSION } from '../src/shared/gaming/gamingFreshnessCore.js';
@@ -20,6 +21,7 @@ const now = Date.now();
 const context = { actorKey: 'synthetic-gaming-caller', requestId: 'synthetic-request' };
 const query = { contractVersion, idempotencyKey: 'synthetic-query-1', question: 'How do I open the copper gate?', game: 'Lantern Voyage' };
 const empty: GamingStoredKnowledgeContext = { context: '', sources: [], sourceKnown: false };
+let acquisitionStages: ReturnType<typeof createGamingAcquisitionStages> | undefined;
 function acquiredGuide(chars?: number, effectiveUntil?: string) {
   const prose = `In the game ${query.game}, open the copper gate using the copper key. `;
   const text = chars === undefined ? prose : prose + 'x'.repeat(chars - prose.length);
@@ -27,12 +29,13 @@ function acquiredGuide(chars?: number, effectiveUntil?: string) {
     data: `<html><title>${query.game} guide</title><article><p>${text}</p>`
       + (effectiveUntil ? `<p>Effective until: ${effectiveUntil}.</p>` : '') + '</article></html>' });
 }
-beforeEach(() => {
+beforeEach(async () => {
+  await acquisitionStages?.dispose(); acquisitionStages = undefined;
   acceptedHttp.mockReset(); acquiredGuide();
   jest.spyOn(logger, 'info').mockImplementation(() => undefined);
   jest.spyOn(logger, 'warn').mockImplementation(() => undefined);
 });
-afterEach(() => { jest.restoreAllMocks(); });
+afterEach(async () => { await acquisitionStages?.dispose(); jest.restoreAllMocks(); });
 const knowledge = (): GamingStoredKnowledgeContext => ({ context: '', sourceKnown: true,
   sources: [{ sourceId: 'source-1', url: 'https://example.com/lantern', title: 'Lantern Voyage', sourceType: 'supplied',
     fetchedAt: new Date(now).toISOString(), snippet: 'Open the copper gate using the copper key.' }],
@@ -473,6 +476,7 @@ describe('Gaming hybrid authenticated handoff', () => {
     let results: Awaited<ReturnType<typeof workflow.candidates>>[];
     beforeEach(() => {
       fixture = setup(); acquiredGuide(1_000_000); results = [];
+      acquisitionStages = createGamingAcquisitionStages(acceptedHttp);
       evaluateCandidates = jest.fn<typeof evaluateGamingHybridCandidates>(async (input, callContext) => {
         const evaluated = await evaluateGamingHybridCandidates(input, callContext);
         expect(evaluated.accepted).toHaveLength(3);
@@ -483,16 +487,21 @@ describe('Gaming hybrid authenticated handoff', () => {
         ingestionId: '20000000-0000-4000-8000-000000000001', status: 'queued' } } as any));
       workflow = createGamingHybridWorkflow({ retrieve: async () => empty, evaluateCandidates, generate: fixture.generate, ingest: ingest as never });
     });
-    // Each real three-document acquisition keeps the standard test deadline.
-    // The complete 15m-character scenario awaits every stage before cleanup.
+    // Keep all five real three-document submissions and the full 15m boundary;
+    // each hook advances one acquired document within the unchanged deadline.
     for (let index = 0; index < 5; index += 1) {
+      let batch: { advance(): Promise<unknown>; result: Promise<Awaited<ReturnType<typeof workflow.candidates>>> };
       beforeEach(async () => {
         const first = await workflow.query({ ...query, currentArea: `Copper Quay ${index}`,
           idempotencyKey: `capacity-query-${index}`, storagePolicy: 'ask_before_store' }, context);
-        results.push(await workflow.candidates({ contractVersion, workflowId: first.body.workflowId,
+        const urls = [1, 2, 3].map(candidate => `https://example.com/lantern-capacity-${candidate}`);
+        batch = acquisitionStages!.begin(urls, signal => workflow.candidates({ contractVersion, workflowId: first.body.workflowId,
           idempotencyKey: `capacity-candidates-${index}`, candidates: [1, 2, 3].map(candidate => ({
-            url: `https://example.com/lantern-capacity-${candidate}` })) }, context));
+            url: `https://example.com/lantern-capacity-${candidate}` })) }, { ...context, signal }));
+        await batch.advance();
       });
+      beforeEach(async () => { await batch.advance(); });
+      beforeEach(async () => { await batch.advance(); results.push(await batch.result); });
     }
     it('keeps overflow artifacts transient without invalidating previously retained storage handles', async () => {
       expect(results[3].body.candidates?.every(candidate => candidate.candidateId)).toBe(true);

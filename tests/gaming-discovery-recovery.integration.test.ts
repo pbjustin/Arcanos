@@ -4,6 +4,7 @@ import request from 'supertest';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { Readable } from 'node:stream';
 import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
+import { createGamingAcquisitionStages } from './testUtils/gamingAcquisitionStages.js';
 import { GAMING_CLEAR_DIMENSIONS } from '../src/shared/gaming/gamingClearPolicy.js';
 import { resolveGamingFreshnessDisposition } from '../src/shared/gaming/gamingFreshnessDisposition.js';
 import type { GamingHybridResponse } from '../src/shared/gaming/gamingHybridContract.js';
@@ -57,11 +58,13 @@ if (configuration.status !== 'ready') throw new Error('Expected local Gaming OAu
 let keys: Awaited<ReturnType<typeof generateKeyPair>>;
 let keyResolver: ReturnType<typeof createLocalJWKSet>;
 let previousEnv: Record<string, string | undefined>;
+let acquisitionStages: ReturnType<typeof createGamingAcquisitionStages> | undefined;
 beforeAll(async () => {
   keys = await generateKeyPair('RS256');
   keyResolver = createLocalJWKSet({ keys: [{ ...await exportJWK(keys.publicKey), kid: 'recovery-fixture', alg: 'RS256' }] });
 });
-beforeEach(() => {
+beforeEach(async () => {
+  await acquisitionStages?.dispose(); acquisitionStages = undefined;
   pages.clear(); jest.clearAllMocks(); resetSafetyRuntimeStateForTests();
   previousEnv = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]));
   Object.assign(process.env, env);
@@ -113,7 +116,8 @@ beforeEach(() => {
     return { result, gamingClearAudit: assessment, meta: { provider: { finishReason: 'stop' } } };
   });
 });
-afterEach(() => {
+afterEach(async () => {
+  await acquisitionStages?.dispose();
   for (const [key, value] of Object.entries(previousEnv)) {
     if (value === undefined) delete process.env[key]; else process.env[key] = value;
   }
@@ -333,8 +337,11 @@ describe('backend-authoritative Gaming discovery recovery through served MCP', (
     let run: ReturnType<typeof harness>;
     beforeEach(() => {
       seedSequence = 0;
+      acquisitionStages = createGamingAcquisitionStages(mockHttp);
       run = harness({ evaluateCandidates: async (input, context) => {
-        const evaluated = await evaluateGamingHybridCandidates(input, context);
+        const signal = acquisitionStages?.signal;
+        const evaluated = await evaluateGamingHybridCandidates(input, { ...context,
+          signal: signal ? context.signal ? AbortSignal.any([signal, context.signal]) : signal : context.signal });
         if (input.protocolVersion !== v2) {
           expect(evaluated.accepted).toHaveLength(3);
           expect(evaluated.accepted.map(candidate => candidate.document.text.length)).toEqual([1_000_000, 1_000_000, 1_000_000]);
@@ -354,9 +361,10 @@ describe('backend-authoritative Gaming discovery recovery through served MCP', (
         return evaluated;
       } });
     });
-    // Await each genuine three-document acquisition before the next stage.
-    // The four bounded stages retain exactly twelve million acquired characters.
+    // Preserve each real three-document submission and the full 12m retention
+    // boundary. Each hook processes one document before the next HTTP gate.
     for (let index = 0; index < 4; index += 1) {
+      let batch: { advance(): Promise<unknown>; result: Promise<Awaited<ReturnType<typeof run.submit>>> };
       beforeEach(async () => {
         const urls = [0, 1, 2].map(candidate => `https://seed.example.org/${index}/${candidate}`);
         const prose = `In the game ${game}, ${gateText} Fixture objective ${index} follows this route. `;
@@ -366,7 +374,13 @@ describe('backend-authoritative Gaming discovery recovery through served MCP', (
         });
         const seed = await run.query({ contractVersion: 'gaming-hybrid-v1',
           question: `How do I activate amber gate at fixture objective ${index}?`, idempotencyKey: `capacity-seed-query-${index}` });
-        const seeded = await run.submit(seed.result, urls, `capacity-seed-candidates-${index}`);
+        batch = acquisitionStages!.begin(urls, () => run.submit(seed.result, urls, `capacity-seed-candidates-${index}`));
+        await batch.advance();
+      });
+      beforeEach(async () => { await batch.advance(); });
+      beforeEach(async () => {
+        await batch.advance();
+        const seeded = await batch.result;
         expect(seeded.result.candidates!.every(candidate => candidate.candidateId)).toBe(true);
       });
     }

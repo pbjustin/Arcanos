@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-08T05:39:52.172Z",
+  "generatedAt": "2026-11-08T08:22:19.972Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4474,6 +4474,9 @@
           "relativePath": "tests/gaming-acquired-topic-identity.test.ts"
         },
         {
+          "relativePath": "tests/gaming-acquisition-stages.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-advisory-strictness.test.ts"
         },
         {
@@ -6296,6 +6299,9 @@
         },
         {
           "relativePath": "tests/testUtils/gamingAcquisitionFixtures.ts"
+        },
+        {
+          "relativePath": "tests/testUtils/gamingAcquisitionStages.ts"
         },
         {
           "relativePath": "tests/testUtils/gamingArchiveFixtures.ts"
