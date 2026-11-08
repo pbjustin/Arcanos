@@ -1214,6 +1214,18 @@ destination with durable history and no pre-acquisition authority witness is
 withheld. Fresh source validation does not reactivate SQL revisions or historical
 owner approvals.
 
+Hybrid accepted evidence also carries a private durable-authority snapshot,
+captured before acquisition and checked after source assessment, before and after
+generation, and on cached or idempotent response reuse. Exact source state includes
+server update identity as well as restriction counts, so repeated observations of
+the same source-use hold revoke older artifacts. Only small authority receipts
+survive full-document eviction. Stored evidence, including legacy sources without
+an explicit origin label, must still match freshly retrieved source, revision,
+record, URL and text before reuse. All reads share a bounded cancellation deadline;
+unavailable or changed authority withholds the answer and selected evidence with
+`EVIDENCE_REVALIDATION_REQUIRED`. Storage policy never exempts transient evidence
+from this read-only authority check or authorizes a write.
+
 Status polling separately accepts strictly shaped retained ingestion envelopes
 from known earlier CLEAR policies, so completed and failed historical operations
 remain readable by their owning actor. Historical approvals are removed from the

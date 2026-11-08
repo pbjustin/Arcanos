@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import * as gamingSourceRepository from '@core/db/repositories/gamingSourceRepository.js';
 import type { GamingSourceAuthoritySnapshot } from '@core/db/repositories/gamingSourceRepository.js';
 import { normalizeGamingGameIdentity, resolveGamingGuideIdentity } from '@shared/gaming/gamingGameIdentity.js';
-import { resolveGamingRegistryGame } from '@shared/gaming/gamingGameRegistry.js';
+import { gamingSourceAuthorityGameKeys } from '@shared/gaming/gamingSourceAuthority.js';
 import { GAMEPLAY_CONTENT_PATTERN, GAMING_MARKDOWN_ROLE_HEADING_PATTERN, filterGamingDocumentInstructions, isGamingCatalogMetadataOnly } from "@services/gamingDocumentExtraction.js";
 import type { GamingPlayerContext } from '@shared/gaming/gamingPlayerContext.js';
 import type { GamingStoredKnowledgeContext } from '@shared/gaming/gamingStoredEvidenceCore.js';
@@ -1649,13 +1649,7 @@ async function fetchGamingRagDocument(
   // Revocation follows only exact names in one reviewed registry identity,
   // never a franchise/related game. Direct and separate-edition storage keys
   // can each carry restrictions; neither can grant source authority here.
-  const registryGame = resolveGamingRegistryGame(authorityGame);
-  const authorityNames = registryGame ? [authorityGame, registryGame.id, registryGame.name, ...registryGame.aliases] : [authorityGame];
-  const authorityGameKeys = [...new Set(authorityNames.flatMap(name => {
-    const key = normalizeGamingGameIdentity(name).slice(0, 160);
-    const editionKey = input.edition ? resolveGamingGuideIdentity(name, input.edition).slice(0, 160) : key;
-    return [key, editionKey];
-  }))];
+  const authorityGameKeys = gamingSourceAuthorityGameKeys(authorityGame, input.edition);
   const authorityGameScope = authorityGameKeys.join('\n');
   const gameScopeKey = createHash("sha256").update(authorityGameScope).digest("hex").slice(0, 24);
   const cacheKey = `${cacheUrlKey}#gaming-rag:${contentTermKey}:game:${gameScopeKey}:payload:${payloadCacheKey}:origin:${strictEvidenceCandidate ? "current-candidate" : untrustedEvidenceCandidate ? "supplied" : "curated"}${resolverCachePolicy}`;
@@ -1672,7 +1666,7 @@ async function fetchGamingRagDocument(
   const sameAuthority = (left: GamingSourceAuthoritySnapshot, right: GamingSourceAuthoritySnapshot) =>
     left.status === right.status && (left.status === 'unconfigured'
       || right.status === 'available' && left.restrictedRevisionCount === right.restrictedRevisionCount
-        && left.requiresReassessment === right.requiresReassessment);
+        && left.requiresReassessment === right.requiresReassessment && left.stateFingerprint === right.stateFingerprint);
   const heldAuthority = (value: GamingSourceAuthoritySnapshot) => value.status === 'available'
     && (value.restrictedRevisionCount > 0 || value.requiresReassessment);
   const requestedCanonicalUrl = documentSource.publicUrl;

@@ -58,25 +58,34 @@ describe('server-owned Gaming cache authority snapshots', () => {
   it('uses the existing exact canonical URL/hash/game count and bounded transaction', async () => {
     configuredConnection();
     const query = jest.fn(async (sql: string, _values?: unknown[]) => ({ rows: sql.startsWith('SELECT COUNT(*)')
-      ? [{ restricted_revision_count: '2', requires_reassessment: true }] : [] }));
+      ? [{ restricted_revision_count: '2', requires_reassessment: true, state_fingerprint: '0123456789abcdef0123456789abcdef' }] : [] }));
     const release = jest.fn();
     const connect = jest.fn(async () => ({ query, release }));
     getPool.mockReturnValue({ connect } as unknown as Pool);
-    expect(await readGamingSourceAuthoritySnapshot(input)).toEqual({ status: 'available', restrictedRevisionCount: 2, requiresReassessment: true });
+    expect(await readGamingSourceAuthoritySnapshot(input)).toEqual({ status: 'available', restrictedRevisionCount: 2, requiresReassessment: true, stateFingerprint: '0123456789abcdef0123456789abcdef' });
     expect(query).toHaveBeenCalledWith(expect.stringContaining('canonical_url_hash = $2 AND source.canonical_url = $3'),
       [[input.gameKey], createHash('sha256').update(input.canonicalUrl).digest('hex'), input.canonicalUrl]);
     expect(query).toHaveBeenCalledWith("SELECT set_config('statement_timeout', $1, true)", ['1000ms']);
     expect(query.mock.calls[0][0]).toBe('BEGIN'); expect(query.mock.calls.at(-1)?.[0]).toBe('COMMIT');
+    expect(query).toHaveBeenCalledWith(expect.stringContaining('EXTRACT(EPOCH FROM source.updated_at)'), expect.any(Array));
     expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([undefined, '', 'forged', '0'.repeat(64)])('rejects a missing or invalid durable state fingerprint: %s', async fingerprint => {
+    configuredConnection();
+    const query = jest.fn(async (sql: string) => ({ rows: sql.startsWith('SELECT COUNT(*)')
+      ? [{ restricted_revision_count: '0', requires_reassessment: false, state_fingerprint: fingerprint }] : [] }));
+    getPool.mockReturnValue({ connect: async () => ({ query, release: jest.fn() }) } as unknown as Pool);
+    await expect(readGamingSourceAuthoritySnapshot(input)).rejects.toBeInstanceOf(GamingSourceRepositoryUnavailableError);
   });
 
   it('requires reassessment for any persisted revision without a current grant, even at restriction count zero', async () => {
     configuredConnection();
     const query = jest.fn(async (sql: string) => ({ rows: sql.startsWith('SELECT COUNT(*)')
-      ? [{ restricted_revision_count: '0', requires_reassessment: true }] : [] }));
+      ? [{ restricted_revision_count: '0', requires_reassessment: true, state_fingerprint: '0123456789abcdef0123456789abcdef' }] : [] }));
     getPool.mockReturnValue({ connect: async () => ({ query, release: jest.fn() }) } as unknown as Pool);
     expect(await readGamingSourceAuthoritySnapshot(input)).toEqual({ status: 'available',
-      restrictedRevisionCount: 0, requiresReassessment: true });
+      restrictedRevisionCount: 0, requiresReassessment: true, stateFingerprint: '0123456789abcdef0123456789abcdef' });
     // The SQL boundary must observe history itself, including legacy rows whose
     // optional classification/approval metadata is absent or obsolete.
     expect(query).toHaveBeenCalledWith(expect.stringContaining('COUNT(*) > 0 AS requires_reassessment'), expect.any(Array));
@@ -85,12 +94,12 @@ describe('server-owned Gaming cache authority snapshots', () => {
   it('aggregates a bounded deduplicated exact key collection in one query without expanding related games', async () => {
     configuredConnection();
     const query = jest.fn(async (sql: string, _values?: unknown[]) => ({ rows: sql.startsWith('SELECT COUNT(*)')
-      ? [{ restricted_revision_count: '0', requires_reassessment: false }] : [] }));
+      ? [{ restricted_revision_count: '0', requires_reassessment: false, state_fingerprint: '0123456789abcdef0123456789abcdef' }] : [] }));
     const connect = jest.fn(async () => ({ query, release: jest.fn() }));
     getPool.mockReturnValue({ connect } as unknown as Pool);
     const gameKeys = Array.from({ length: 35 }, (_, index) => `exact-source-${index}`);
     const source = { ...input, gameKeys: [input.gameKey, ...gameKeys] };
-    expect(await readGamingSourceAuthoritySnapshot(source)).toEqual({ status: 'available', restrictedRevisionCount: 0, requiresReassessment: false });
+    expect(await readGamingSourceAuthoritySnapshot(source)).toEqual({ status: 'available', restrictedRevisionCount: 0, requiresReassessment: false, stateFingerprint: '0123456789abcdef0123456789abcdef' });
     expect(connect).toHaveBeenCalledTimes(1);
     const statement = query.mock.calls.find(([sql]) => sql.startsWith('SELECT COUNT(*)'))!;
     expect(statement[0]).toContain('source.game_key = ANY($1::text[])');
@@ -108,7 +117,7 @@ describe('server-owned Gaming cache authority snapshots', () => {
   it('deduplicates repeated primary keys before the bounded lookup', async () => {
     configuredConnection();
     const query = jest.fn(async (sql: string, _values?: unknown[]) => ({ rows: sql.startsWith('SELECT COUNT(*)')
-      ? [{ restricted_revision_count: '0', requires_reassessment: false }] : [] }));
+      ? [{ restricted_revision_count: '0', requires_reassessment: false, state_fingerprint: '0123456789abcdef0123456789abcdef' }] : [] }));
     getPool.mockReturnValue({ connect: async () => ({ query, release: jest.fn() }) } as unknown as Pool);
     await readGamingSourceAuthoritySnapshot({ ...input, gameKeys: [input.gameKey, input.gameKey] });
     expect(query.mock.calls.find(([sql]) => sql.startsWith('SELECT COUNT(*)'))?.[1]?.[0]).toEqual([input.gameKey]);

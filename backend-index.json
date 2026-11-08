@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-08T01:23:44.641Z",
+  "generatedAt": "2026-11-08T05:39:52.172Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4747,6 +4747,9 @@
           "relativePath": "tests/gaming-html-scan.test.ts"
         },
         {
+          "relativePath": "tests/gaming-hybrid-authority-revocation.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-hybrid-corroboration.test.ts"
         },
         {
@@ -5396,6 +5399,9 @@
         },
         {
           "relativePath": "tests/integration/gaming-historical-status.pg18.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/integration/gaming-hybrid-authority-revocation.pg18.integration.test.ts"
         },
         {
           "relativePath": "tests/integration/gpt-access-device-auth.pg18.integration.test.ts"
@@ -6299,6 +6305,9 @@
         },
         {
           "relativePath": "tests/testUtils/gamingGenericBenchmarkMetrics.ts"
+        },
+        {
+          "relativePath": "tests/testUtils/gamingHybridAcceptedFixtures.ts"
         },
         {
           "relativePath": "tests/testUtils/gamingLargeGuideFixture.ts"

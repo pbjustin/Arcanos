@@ -1,9 +1,23 @@
-import { describe, expect, it, jest } from '@jest/globals';
-import { createGamingHybridWorkflow } from '../src/services/gamingHybridKnowledge.js';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
 import { GAMING_HYBRID_CONTRACT_VERSION as contractVersion } from '../src/shared/gaming/gamingHybridContract.js';
 import { GAMING_SOURCE_POLICY_VERSION, type GamingFreshnessEvidence } from '../src/shared/gaming/gamingFreshnessCore.js';
 import { gamingAnswerClaimsVerifiedCurrentness, resolveGamingFreshnessDisposition } from '../src/shared/gaming/gamingFreshnessDisposition.js';
 import type { GamingStoredKnowledgeContext } from '../src/services/gamingStoredKnowledge.js';
+
+const http = jest.fn();
+jest.unstable_mockModule('axios', () => ({ default: gamingAcquisitionAxios(http) }));
+jest.unstable_mockModule('node:dns/promises', () => ({ Resolver: class {
+  async resolve4() { return ['93.184.216.34']; }
+  async resolve6() { return []; }
+  cancel() {}
+} }));
+const { createGamingHybridWorkflow } = await import('../src/services/gamingHybridKnowledge.js');
+const { gamingHybridAcceptedFixtureMaterializer } = await import('./testUtils/gamingHybridAcceptedFixtures.js');
+const { logger } = await import('../src/platform/logging/structuredLogging.js');
+const materialize = gamingHybridAcceptedFixtureMaterializer(http);
+beforeEach(() => { http.mockReset(); jest.spyOn(logger, 'info').mockImplementation(() => undefined); });
+afterEach(() => { jest.restoreAllMocks(); });
 
 const now = Date.now();
 const actor = { actorKey: 'synthetic-advisory-strictness', requestId: 'advisory-strictness-test' };
@@ -42,7 +56,8 @@ function setup(rejection = 'INSUFFICIENT_EXTRACTION') {
       sources: prepared.knowledge.sources, grounding: { groundingStatus: 'grounded' } } } as any));
   const ingest = jest.fn();
   const workflow = createGamingHybridWorkflow({ retrieve: async () => empty,
-    evaluateCandidates: evaluateCandidates as any, generate, ingest: ingest as any, now: () => now });
+    evaluateCandidates: async (input, callContext) => materialize(await evaluateCandidates(input), input, callContext),
+    generate, ingest: ingest as any, now: () => now });
   const submit = (workflowId: string, discoveryType: 'gameplay_evidence' | 'currentness_verification') => ({
     contractVersion, workflowId, discoveryType, idempotencyKey: `strictness-${discoveryType}`,
     candidates: [{ url: discoveryType === 'gameplay_evidence' ? guideUrl : indexUrl }] });

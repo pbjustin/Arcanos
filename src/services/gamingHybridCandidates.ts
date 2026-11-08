@@ -4,6 +4,8 @@ import { gamingRegistryRecognizesEdition } from '@shared/gaming/gamingGameRegist
 import { createHash, randomUUID } from 'node:crypto';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { normalizeGamingGameIdentity, resolveGamingGuideIdentity } from '@shared/gaming/gamingGameIdentity.js';
+import { gamingSourceAuthorityGameKeys } from '@shared/gaming/gamingSourceAuthority.js';
+import { readGamingSourceAuthoritySnapshot, type GamingSourceAuthoritySnapshot } from '@core/db/repositories/gamingSourceRepository.js';
 import { classifyGamingDocumentQuality, isGamingDocumentOverviewOnly, selectGamingSourceAdmissionUrl } from '@shared/gaming/gamingDocumentIngestionCore.js';
 import { buildGamingRetrievalTerms, buildGamingRequestRequirements, hasGamingRelevantGuideContribution, gamingTermCoverage } from '@shared/gaming/gamingRetrievalPolicy.js';
 import {
@@ -130,6 +132,41 @@ const authorityRestrictionBound = (candidate: GamingHybridAcceptedCandidate) => 
   return snapshot !== undefined && snapshot.count === candidate.authorityRestrictionCount
     && snapshot.game === candidate.game && snapshot.canonicalUrl === candidate.document.canonicalUrl;
 };
+
+/** Small server-owned receipts survive artifact eviction without retaining document bytes. */
+export interface GamingHybridAuthorityBinding { readonly candidateId: string }
+type AuthorityObservation = { input: { gameKey: string; gameKeys: string[]; canonicalUrl: string }; snapshot: GamingSourceAuthoritySnapshot };
+const authorityObservations = new WeakMap<object, readonly AuthorityObservation[]>();
+const authorityBindings = new WeakMap<GamingHybridAcceptedCandidate, GamingHybridAuthorityBinding>();
+const authorityInvalid = () => Object.assign(new Error('Source authority must be revalidated.'), { code: 'EVIDENCE_REVALIDATION_REQUIRED' });
+const sameAuthority = (left: GamingSourceAuthoritySnapshot, right: GamingSourceAuthoritySnapshot) =>
+  left.status === right.status && (left.status === 'unconfigured' || right.status === 'available'
+    && left.restrictedRevisionCount === right.restrictedRevisionCount && left.requiresReassessment === right.requiresReassessment
+    && left.stateFingerprint === right.stateFingerprint);
+
+export function gamingHybridAuthorityBindings(candidates: readonly GamingHybridAcceptedCandidate[]): GamingHybridAuthorityBinding[] {
+  return candidates.map(candidate => {
+    const binding = authorityBindings.get(candidate);
+    if (!binding) throw authorityInvalid();
+    return binding;
+  });
+}
+
+/** One shared deadline bounds all independent reads, including late pool waiters. */
+export async function assertGamingHybridAuthorityCurrent(bindings: readonly GamingHybridAuthorityBinding[], signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
+  const deadline = AbortSignal.timeout(1_000);
+  const readSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
+  await Promise.all(bindings.map(async binding => {
+    const observations = authorityObservations.get(binding);
+    if (!observations) throw authorityInvalid();
+    for (const observation of observations) {
+      const current = await readGamingSourceAuthoritySnapshot(observation.input, { signal: readSignal, queryTimeoutMs: 1_000 });
+      if (!sameAuthority(observation.snapshot, current)) throw authorityInvalid();
+    }
+  }));
+  readSignal.throwIfAborted();
+}
 const sourceMetadataBinding = (freshness: GamingFreshnessEvidence, policy: ReturnType<typeof assessGamingSourcePolicy>): string => {
   const metadata = { ...freshness } as Record<string, unknown>;
   // Only the workflow's separately artifact-bound official index attestation is additive.
@@ -249,6 +286,16 @@ export async function evaluateGamingHybridCandidates(
       if (seen.has(publicUrl)) { reject('DUPLICATE_URL'); continue; }
       seen.add(publicUrl);
       if (Date.now() >= deadlineAt) { reject('FETCH_BUDGET_EXHAUSTED'); continue; }
+      const gameKeys = gamingSourceAuthorityGameKeys(input.game, input.edition);
+      const observeAuthority = async (canonicalUrl: string): Promise<AuthorityObservation> => {
+        const authorityInput = { gameKey: gameKeys[0], gameKeys, canonicalUrl };
+        try {
+          const snapshot = await readGamingSourceAuthoritySnapshot(authorityInput,
+            { signal, queryTimeoutMs: Math.max(1, Math.min(1_000, deadlineAt - Date.now())) });
+          return { input: authorityInput, snapshot };
+        } catch { callerSignal?.throwIfAborted(); throw authorityInvalid(); }
+      };
+      const initialAuthority = await observeAuthority(publicUrl);
       const document = await (dependencies.resolveDocument ?? resolveGamingDocument)(publicUrl,
         GAMING_DURABLE_DOCUMENT_LIMITS.documentChars, { documentPurpose: 'durable', signal, deadlineAt,
           timeoutMs: Math.min(5_000, getGamingWebContextFetchTimeoutMs(), Math.max(1, deadlineAt - Date.now())), includeLinks: false });
@@ -258,6 +305,15 @@ export async function evaluateGamingHybridCandidates(
       acquisitionDiagnostic = { stage: 'extraction', policyVersion: document.acquisition?.policyVersion ?? GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION,
         redirectCount: document.acquisition?.redirectCount ?? 0, failingHop: document.acquisition?.redirectCount ?? 0 };
       if (!isResolvedGamingDocumentIdentityVerified(document, publicUrl)) { reject('RESOLVED_SOURCE_IDENTITY_MISMATCH'); continue; }
+      const observations = [initialAuthority];
+      if (document.canonicalUrl !== publicUrl) {
+        const destination = await observeAuthority(document.canonicalUrl);
+        // A newly discovered held destination has no pre-acquisition witness.
+        if (destination.snapshot.status === 'available' && destination.snapshot.requiresReassessment) {
+          reject('EVIDENCE_REVALIDATION_REQUIRED'); continue;
+        }
+        observations.push(destination);
+      }
       updateGamingSourceEvaluation(evaluation, 'acquisition', 'passed', 'SOURCE_ACQUIRED');
       // Only the trusted resolver can establish the final publisher and citation identity.
       publicUrl = document.publicUrl;
@@ -536,6 +592,10 @@ export async function evaluateGamingHybridCandidates(
         sourceAssessment, assessmentBinding: sourceAssessmentBinding(sourceAssessment, sourceContext, authorityRestrictionCount), sourceContext,
         ...(authorityRestrictionCount === undefined ? {} : { authorityRestrictionCount }),
         sourceMetadataBinding: sourceMetadataBinding(freshness, policy), ...(v2 ? { evidenceRecords: records } : {}) };
+      const binding = Object.freeze({ candidateId });
+      authorityObservations.set(binding, observations);
+      await assertGamingHybridAuthorityCurrent([binding], signal);
+      authorityBindings.set(artifact, binding);
       acceptedAuthorityRestrictions.set(artifact, { count: authorityRestrictionCount, game: storageGame, canonicalUrl: document.canonicalUrl });
       accepted.push(artifact);
       evaluationCandidateIds.set(evaluation, candidateId);
@@ -566,6 +626,10 @@ export async function evaluateGamingHybridCandidates(
       if (callerSignal?.aborted) throw error;
       if (error instanceof GamingDocumentAcquisitionError) acquisitionDiagnostic = { ...error.acquisition };
       if (acquisitionSignal?.aborted) { reject('SOURCE_TIMEOUT'); continue; }
+      if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'EVIDENCE_REVALIDATION_REQUIRED') {
+        currentnessFailureBlocksAdvisory = true;
+        reject('EVIDENCE_REVALIDATION_REQUIRED'); continue;
+      }
       if (error instanceof GamingDocumentAcquisitionError) {
         // Public acquisition reasons remain bounded. Preserve the internal
         // integrity/security distinction so an unavailable index cannot hide it.

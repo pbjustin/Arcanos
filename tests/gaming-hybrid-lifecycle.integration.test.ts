@@ -7,7 +7,7 @@ import express from 'express';
 import request from 'supertest';
 import { GamingResolvedSourceHarness } from './testUtils/gamingResolvedSourceHarness.js';
 import { createGamingLifecycleDrain } from './testUtils/gamingLifecycleDrain.js';
-import { GAMING_CLEAR_DIMENSIONS } from '../src/shared/gaming/gamingClearPolicy.js';
+import { GAMING_CLEAR_DIMENSIONS, gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
 import type { GamingHybridResult } from '../src/services/gamingHybridKnowledge.js';
 
 const URL = 'https://guides.example.org/amber-vault';
@@ -1395,7 +1395,7 @@ describe('Gaming hybrid durable lifecycle', () => {
     }
   });
 
-  it('reuses a bounded official current-index attestation for a later no-URL build query after ingestion', async () => {
+  it.each(['unchanged', 'context', 'policy', 'role', 'missing-canonical'] as const)('reuses a bounded official current-index attestation after ingestion and rejects changed proof: %s', async mutation => {
     // The URLs exercise reviewed ownership policy; every byte is synthetic controlled HTTP.
     const game = 'Star Wars: The Old Republic';
     const indexUrl = 'https://swtor.com/patchnotes';
@@ -1433,6 +1433,19 @@ describe('Gaming hybrid durable lifecycle', () => {
     const staleWorkflow = createGamingHybridWorkflow({ now: () => Date.now() + 7 * 60 * 60_000 });
     const stale = await staleWorkflow.query({ ...query, idempotencyKey: 'dynamic-query-stale' }, context);
     expect(stale.body).toMatchObject({ state: 'discovery_required', freshnessStatus: 'stale' });
+    if (mutation !== 'unchanged') {
+      const proof = database.revisions[0].provenance.hybridFreshness.currentVerification;
+      if (mutation === 'context') proof.contextHash = 'f'.repeat(64);
+      if (mutation === 'policy') proof.policyVersion = 'obsolete-policy';
+      if (mutation === 'role') proof.evidence.currentness = 'stable';
+      if (mutation === 'missing-canonical') delete proof.canonicalUrl;
+      // A freshly recomputed checksum cannot substitute for the original authority predicate.
+      proof.bindingHash = gamingClearHash({ ...proof, bindingHash: undefined });
+      const withheld = await workflow.query({ ...query, idempotencyKey: 'dynamic-query-2' }, context);
+      expect(withheld).toMatchObject({ status: 409, body: { reason: 'EVIDENCE_REVALIDATION_REQUIRED', evidenceSelected: false } });
+      expect(withheld.body.answer).toBeUndefined();
+      expect(mockHttp).toHaveBeenCalledTimes(calls);
+    }
   });
 
   it('uses caller/logical-operation idempotency while allowing a new unchanged revalidation', async () => {

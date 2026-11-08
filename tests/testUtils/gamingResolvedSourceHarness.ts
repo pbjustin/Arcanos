@@ -1,4 +1,5 @@
 import type { Pool } from 'pg';
+import { createHash } from 'node:crypto';
 import { normalizeGamingGameIdentity } from '../../src/shared/gaming/gamingGameIdentity.js';
 import { gamingSourceHasAuthorityRestriction, gamingSourceRequiresAuthorityReassessment } from '../../src/shared/gaming/gamingSourceAuthority.js';
 
@@ -10,6 +11,7 @@ export class GamingResolvedSourceHarness {
   revisions: Array<Record<string, any>> = [];
   records: Array<Record<string, any>> = [];
   queries: string[] = [];
+  private sourceVersion = 0;
   readonly pool = {
     connect: async () => ({ query: this.query.bind(this), release: () => undefined }),
     query: this.query.bind(this)
@@ -21,6 +23,16 @@ export class GamingResolvedSourceHarness {
     const result = (rows: Array<Record<string, any>> = []) => ({ rows, rowCount: rows.length });
     if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)) return result();
     if (sql.startsWith("SELECT set_config('statement_timeout'")) return result();
+    if (sql.startsWith('UPDATE gaming_sources')) this.sourceVersion += 1;
+    if (sql.startsWith('SELECT COUNT(*) FILTER')) {
+      const matches = this.source && values[0].includes(this.source.game_key)
+        && this.source.canonical_url_hash === values[1] && this.source.canonical_url === values[2];
+      return result([{ restricted_revision_count: String(matches
+        ? this.revisions.filter(revision => gamingSourceHasAuthorityRestriction(revision.provenance)).length : 0),
+        requires_reassessment: Boolean(matches && this.revisions.length),
+        state_fingerprint: createHash('md5').update(matches ? JSON.stringify([this.source!.id, this.sourceVersion,
+          this.revisions.map(revision => revision.id)]) : '').digest('hex') }]);
+    }
     if (sql.startsWith('SELECT COUNT(*) AS restricted_revision_count')) {
       const matches = this.source?.game_key === values[0] && this.source?.canonical_url_hash === values[1]
         && this.source?.canonical_url === values[2];

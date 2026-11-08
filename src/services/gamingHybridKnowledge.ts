@@ -23,6 +23,8 @@ import { assessGamingClearEvidence } from '@shared/gaming/gamingClearEvidence.js
 import { assessGamingClaimCorroboration } from '@shared/gaming/gamingClaimCorroboration.js';
 import { GAMING_CLEAR_APPROVED_ANSWER, hasBoundGamingClearAnswer, type GamingClearAnswerCarrier } from '@shared/gaming/gamingClearAnswerBinding.js';
 import { gamingClearHash } from '@shared/gaming/gamingClearPolicy.js';
+import { gamingSourceAuthorityGameKeys } from '@shared/gaming/gamingSourceAuthority.js';
+import { readGamingSourceAuthoritySnapshot } from '@core/db/repositories/gamingSourceRepository.js';
 import { resolveGamingFreshnessDisposition, selectGamingAdvisoryGameplayEvidence, isGamingAdvisoryCurrentnessOperation,
   gamingAnswerClaimsVerifiedCurrentness } from '@shared/gaming/gamingFreshnessDisposition.js';
 import { buildStoredGamingKnowledgeContext, type GamingSourceGatewayContext } from './gamingSourceIngestion.js';
@@ -32,7 +34,8 @@ import { getGamingWebContextMaxChars } from './gamingConfig.js';
 import { buildGamingDiscoveryQuery, sanitizeGamingDiscoveryCandidateUrl } from './gamingSourceDiscovery.js';
 import { evaluateGamingHybridCandidates, createApprovedGamingHybridIngestion, selectGamingHybridEvidence,
   selectGamingHybridAcceptedEvidence, assertGamingHybridEvidenceMembership, type GamingHybridAcceptedCandidate,
-  type GamingHybridRetainedCandidate } from './gamingHybridCandidates.js';
+  type GamingHybridRetainedCandidate, gamingHybridAuthorityBindings, assertGamingHybridAuthorityCurrent,
+  type GamingHybridAuthorityBinding } from './gamingHybridCandidates.js';
 
 export interface GamingHybridCallContext extends GamingSourceGatewayContext { signal?: AbortSignal; canStore?: boolean; canAutoStore?: boolean }
 export interface GamingHybridResult { status: number; body: GamingHybridResponse }
@@ -43,6 +46,7 @@ type CandidateSubmission = { key: string; knowledge: GamingStoredKnowledgeContex
 interface CurrentVerification {
   artifactHash: string;
   indexHash: string;
+  canonicalUrl?: string;
   evidence: GamingFreshnessEvidence;
   snippet: string;
   workflowId?: string;
@@ -67,6 +71,9 @@ type Workflow = {
   currentnessOperationKey?: string;
   currentnessSubmission?: CandidateSubmission;
   answer?: GamingHybridResponse['answer'];
+  authorityBindings?: GamingHybridAuthorityBinding[];
+  answerKnowledge?: GamingStoredKnowledgeContext;
+  authorityInvalid?: boolean;
   /** Earliest expiry of the actual applicability proof, not the workflow creation time. */
   evidenceExpiresAt?: number;
 };
@@ -150,7 +157,75 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       terminal: body.nextAction === 'stop', generationReady: false, recoveryGranted: false });
     return { status, body: { ...body, ...projectGamingGuideOutcome(body) } };
   }
-  function currentResponse(context: GamingHybridCallContext, workflow: Workflow, result: GamingHybridResult): GamingHybridResult {
+  function storedIndexVerification(source: GamingStoredKnowledgeContext['sources'][number], workflow: Workflow): CurrentVerification | undefined {
+    const verification = source.freshnessMetadata?.currentVerification as CurrentVerification | undefined;
+    const input = workflow.input;
+    const originContextHash = verification && hash([workflow.actor, verification.workflowId, input.game,
+      input.edition, input.platform, input.region, input.requestedVersion, GAMING_HYBRID_CONTRACT_VERSION]);
+    return verification && source.approvedContentHash === verification.artifactHash
+      && typeof verification.workflowId === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(verification.workflowId)
+      && verification.actorScopeHash === workflow.actor && verification.contextHash === originContextHash
+      && verification.policyVersion === GAMING_HYBRID_CONTRACT_VERSION
+      && verification.bindingHash === gamingClearHash({ ...verification, bindingHash: undefined })
+      && /^[a-f0-9]{64}$/u.test(verification.indexHash) && verification.snippet?.length <= 600
+      && verification.evidence?.currentness === 'current_index'
+      && (!verification.evidence.currentnessMetadata
+        || verification.evidence.currentnessMetadata.adapterVersion === GAMING_CURRENTNESS_ADAPTER_VERSION)
+      && assessGamingSourcePolicy(verification.evidence.url, input.game).ruleId === verification.evidence.ruleId ? verification : undefined;
+  }
+  async function validateAuthority(context: GamingHybridCallContext, workflow: Workflow, knowledge?: GamingStoredKnowledgeContext): Promise<void> {
+    const deadline = AbortSignal.timeout(1_000);
+    const signal = context.signal ? AbortSignal.any([context.signal, deadline]) : deadline;
+    let rejectAbort!: () => void;
+    const aborted = new Promise<never>((_resolve, reject) => {
+      rejectAbort = () => reject(signal.reason);
+      if (signal.aborted) rejectAbort(); else signal.addEventListener('abort', rejectAbort, { once: true });
+    });
+    const check = async () => {
+      const liveIds = new Set(knowledge?.sources.filter(source => source.origin === 'live').map(source => source.sourceId));
+      await assertGamingHybridAuthorityCurrent((workflow.authorityBindings ?? []).filter(binding => liveIds.has(binding.candidateId)), signal);
+      const storedIds = new Set(knowledge?.sources.filter(source => source.origin !== 'live').map(source => source.sourceId));
+      if (storedIds.size) {
+        const current = await deps.retrieve({ ...workflow.pipeline, game: workflow.input.game,
+          failOnUnavailable: true, hybridRetrieval: true, signal });
+        const references = (knowledge?.evidence ?? []).filter(chunk => storedIds.has(chunk.sourceId));
+        if (!references.length) throw new Error('Stored evidence has no record identity.');
+        for (const chunk of references) {
+          if ((current.evidence ?? []).some(record => record.sourceId === chunk.sourceId && record.revisionId === chunk.revisionId
+            && record.recordId === chunk.recordId && record.publicUrl === chunk.publicUrl && record.text === chunk.text)) continue;
+          // An applicability-only index record is reconstructed from a still-bound
+          // stored guide attestation. It is not an independently stored gameplay row.
+          const verification = current.sources.map(source => storedIndexVerification(source, workflow))
+            .find(proof => proof && proof.evidence.id === chunk.sourceId
+              && proof.evidence.url === chunk.publicUrl && proof.indexHash === chunk.revisionId
+              && chunk.recordId === `${chunk.sourceId}:verification` && proof.snippet === chunk.text);
+          if (!verification?.canonicalUrl) throw new Error('Stored evidence no longer matches its source.');
+          const gameKeys = gamingSourceAuthorityGameKeys(workflow.input.game, workflow.pipeline.edition);
+          const authority = await readGamingSourceAuthoritySnapshot({ gameKey: gameKeys[0], gameKeys,
+            canonicalUrl: verification.canonicalUrl }, { signal, queryTimeoutMs: 1_000 });
+          // Historical index proof cannot clear any independently observed hold.
+          if (authority.status === 'available' && authority.requiresReassessment) throw new Error('Stored index needs reacquisition.');
+        }
+      }
+      signal.throwIfAborted();
+    };
+    try { await Promise.race([check(), aborted]); }
+    catch (error) {
+      context.signal?.throwIfAborted();
+      throw Object.assign(new Error('Source authority must be revalidated.', { cause: error }), { code: 'EVIDENCE_REVALIDATION_REQUIRED' });
+    } finally { signal.removeEventListener('abort', rejectAbort); }
+  }
+  async function currentResponse(context: GamingHybridCallContext, workflow: Workflow, result: GamingHybridResult): Promise<GamingHybridResult> {
+    if (workflow.authorityInvalid) return failure(context, 'EVIDENCE_REVALIDATION_REQUIRED', 409, workflow);
+    if (result.body.answer || result.body.evidenceSelected) {
+      try { await validateAuthority(context, workflow, workflow.answerKnowledge ?? workflow.knowledge); }
+      catch {
+        workflow.authorityInvalid = true; workflow.answer = undefined; workflow.closed = true; workflow.pendingDiscovery = undefined;
+        const invalid = failure(context, context.signal?.aborted ? 'REQUEST_CANCELLED' : 'EVIDENCE_REVALIDATION_REQUIRED', 409, workflow);
+        workflow.last = invalid.body;
+        return invalid;
+      }
+    }
     if (result.body.answer && workflow.evidenceExpiresAt !== undefined && deps.now() >= workflow.evidenceExpiresAt) {
       workflow.answer = undefined;
       const expired = failure(context, 'EVIDENCE_REVALIDATION_REQUIRED', 409, workflow);
@@ -192,7 +267,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       if (workflow.input.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION) context.signal?.throwIfAborted();
       const freshnessClass = classifyGamingQuestionFreshness(workflow.pipeline);
       const expired = deps.now() - workflow.createdAt >= Math.min(LIMITS.workflowTtlMs, GAMING_FRESHNESS_DEFAULTS[freshnessClass]);
-      const result = currentResponse(context, workflow, expired && workflow.input.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION
+      const result = await currentResponse(context, workflow, expired && workflow.input.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION
         ? failure(context, 'WORKFLOW_EXPIRED', 409, workflow) : outcome);
       if (workflow.input.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION) {
         result.body.revision = workflow.revision;
@@ -213,6 +288,11 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
         elapsedMs: Math.max(0, deps.now() - workflow.createdAt) });
       return result;
     } catch (error) {
+      if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'EVIDENCE_REVALIDATION_REQUIRED') {
+        workflow.authorityInvalid = true; workflow.answer = undefined; workflow.closed = true; workflow.pendingDiscovery = undefined;
+        const invalid = failure(context, 'EVIDENCE_REVALIDATION_REQUIRED', 409, workflow);
+        workflow.last = invalid.body; return invalid;
+      }
       if (workflow.input.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION && context.signal?.aborted) {
         workflow.closed = true; workflow.pendingDiscovery = undefined;
         const cancelled = failure(context, 'REQUEST_CANCELLED', 409, workflow);
@@ -365,6 +445,8 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     candidateFreshness: GamingFreshnessEvidence[] = [], acceptedCandidates: readonly GamingHybridAcceptedCandidate[] = workflow.accepted): Promise<GamingHybridResult> {
     const evaluationStartedAt = deps.now();
     const input = workflow.input;
+    workflow.answerKnowledge = knowledge;
+    await validateAuthority(context, workflow, knowledge);
     const v2 = input.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION;
     if (v2) context.signal?.throwIfAborted();
     if (v2 && deps.now() - workflow.createdAt >= Math.min(LIMITS.workflowTtlMs,
@@ -454,21 +536,10 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     // Reuse only an internally persisted index attestation bound to this exact accepted artifact.
     // Its own checked time still expires under the ordinary freshness policy.
     for (const source of knowledge.sources) {
-      const verification = source.freshnessMetadata?.currentVerification as CurrentVerification | undefined;
+      const verification = storedIndexVerification(source, workflow);
       // Durable cache readers preserve the creating workflow as proof provenance;
       // they do not pretend a new request created or refreshed that attestation.
-      const originContextHash = verification && hash([workflow.actor, verification.workflowId, input.game,
-        input.edition, input.platform, input.region, input.requestedVersion, GAMING_HYBRID_CONTRACT_VERSION]);
-      if (verification && source.approvedContentHash === verification.artifactHash
-        && typeof verification.workflowId === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(verification.workflowId)
-        && verification.actorScopeHash === workflow.actor && verification.contextHash === originContextHash
-        && verification.policyVersion === GAMING_HYBRID_CONTRACT_VERSION
-        && verification.bindingHash === gamingClearHash({ ...verification, bindingHash: undefined })
-        && /^[a-f0-9]{64}$/u.test(verification.indexHash) && verification.snippet?.length <= 600
-        && verification.evidence?.currentness === 'current_index'
-        && (!verification.evidence.currentnessMetadata
-          || verification.evidence.currentnessMetadata.adapterVersion === GAMING_CURRENTNESS_ADAPTER_VERSION)
-        && assessGamingSourcePolicy(verification.evidence.url, input.game).ruleId === verification.evidence.ruleId) {
+      if (verification) {
         if (!evidence.some(item => item.url === verification.evidence.url)) evidence.push(verification.evidence);
         if (!knowledge.sources.some(item => item.url === verification.evidence.url)) {
           const index = verification.evidence;
@@ -526,6 +597,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
         ].filter(Boolean).join(' ').slice(0, 600);
         for (const candidate of acceptedCandidates) if (selected.has(candidate.candidateId) && candidate !== index) {
           const verification: CurrentVerification = { artifactHash: candidate.contentHash, indexHash: index.contentHash,
+            canonicalUrl: index.document.canonicalUrl,
             evidence: { ...completedIndex }, snippet, workflowId: workflow.id, actorScopeHash: workflow.actor,
             contextHash: verificationContextHash, policyVersion: GAMING_HYBRID_CONTRACT_VERSION };
           // JSONB may reorder every object's keys. Use the shared canonical hash
@@ -711,7 +783,10 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       GAMING_FRESHNESS_DEFAULTS[classifyGamingQuestionFreshness(workflow.pipeline)]))
       return failure(context, 'WORKFLOW_EXPIRED', 409, workflow);
     workflow.pendingDiscovery = undefined;
+    workflow.answerKnowledge = usable;
+    await validateAuthority(context, workflow, usable);
     const generated = await deps.generate(workflow.pipeline, preparedKnowledge);
+    await validateAuthority(context, workflow, usable);
     const response = !v2 && advisoryAllowed && !generated.data.response.includes(advisory!.qualification)
       ? `${advisory!.qualification}\n\n${generated.data.response}` : generated.data.response;
     if (generated.data.fallbackReason || generated.data.grounding?.groundingStatus !== 'grounded'
@@ -1018,6 +1093,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
           if (v2 && !currentness) workflow.acquisitionWorkMs += Math.max(chargedAcquisitionMs, deps.now() - acquisitionStartedAt);
         }
         if (v2) context.signal?.throwIfAborted();
+        workflow.authorityBindings = [...(workflow.authorityBindings ?? []), ...gamingHybridAuthorityBindings(evaluated.accepted)];
         evaluated.knowledge.sources.forEach(source => { source.origin = 'live'; });
         const retainedChars = [...workflows.values()].flatMap(item => [...item.accepted, ...(item.retained ?? [])])
           .reduce((total, item) => total + item.document.text.length, 0);

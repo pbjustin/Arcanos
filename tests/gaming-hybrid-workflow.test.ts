@@ -1,14 +1,38 @@
-import { describe, it, expect, jest } from '@jest/globals';
-import { createGamingHybridWorkflow } from '../src/services/gamingHybridKnowledge.js';
+import { afterEach, beforeEach, describe, it, expect, jest } from '@jest/globals';
+import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
 import { GAMING_HYBRID_CONTRACT_VERSION as contractVersion, GAMING_HYBRID_LIMITS } from '../src/shared/gaming/gamingHybridContract.js';
 import type { GamingStoredKnowledgeContext } from '../src/services/gamingStoredKnowledge.js';
 import { GAMING_SOURCE_POLICY_VERSION } from '../src/shared/gaming/gamingFreshnessCore.js';
 import { projectGamingHybridCandidateRetention, GAMING_HYBRID_RETAINED_ARTIFACT_CHARS } from '../src/shared/gaming/gamingHybridPolicyCore.js';
 
+const acceptedHttp = jest.fn();
+jest.unstable_mockModule('axios', () => ({ default: gamingAcquisitionAxios(acceptedHttp) }));
+jest.unstable_mockModule('node:dns/promises', () => ({ Resolver: class {
+  async resolve4() { return ['93.184.216.34']; }
+  async resolve6() { return []; }
+  cancel() {}
+} }));
+const { createGamingHybridWorkflow } = await import('../src/services/gamingHybridKnowledge.js');
+const { evaluateGamingHybridCandidates } = await import('../src/services/gamingHybridCandidates.js');
+const { logger } = await import('../src/platform/logging/structuredLogging.js');
+
 const now = Date.now();
 const context = { actorKey: 'synthetic-gaming-caller', requestId: 'synthetic-request' };
 const query = { contractVersion, idempotencyKey: 'synthetic-query-1', question: 'How do I open the copper gate?', game: 'Lantern Voyage' };
 const empty: GamingStoredKnowledgeContext = { context: '', sources: [], sourceKnown: false };
+function acquiredGuide(chars?: number, effectiveUntil?: string) {
+  const prose = `In the game ${query.game}, open the copper gate using the copper key. `;
+  const text = chars === undefined ? prose : prose + 'x'.repeat(chars - prose.length);
+  acceptedHttp.mockResolvedValue({ status: 200, headers: { 'content-type': 'text/html' },
+    data: `<html><title>${query.game} guide</title><article><p>${text}</p>`
+      + (effectiveUntil ? `<p>Effective until: ${effectiveUntil}.</p>` : '') + '</article></html>' });
+}
+beforeEach(() => {
+  acceptedHttp.mockReset(); acquiredGuide();
+  jest.spyOn(logger, 'info').mockImplementation(() => undefined);
+  jest.spyOn(logger, 'warn').mockImplementation(() => undefined);
+});
+afterEach(() => { jest.restoreAllMocks(); });
 const knowledge = (): GamingStoredKnowledgeContext => ({ context: '', sourceKnown: true,
   sources: [{ sourceId: 'source-1', url: 'https://example.com/lantern', title: 'Lantern Voyage', sourceType: 'supplied',
     fetchedAt: new Date(now).toISOString(), snippet: 'Open the copper gate using the copper key.' }],
@@ -84,7 +108,8 @@ describe('Gaming hybrid authenticated handoff', () => {
     const restricted = await workflow.query({ ...query, spoilerTolerance: 'none', idempotencyKey: 'restricted-query' }, context);
     expect(restricted).toMatchObject({ status: 409, body: { nextAction: 'stop', reason: 'QUERY_CONTEXT_CONFLICT' } });
     expect(restricted.body.answer).toBeUndefined();
-    expect(retrieve).toHaveBeenCalledTimes(1);
+    // Initial lookup plus entry, pre/post-generation and return authority checks.
+    expect(retrieve).toHaveBeenCalledTimes(5);
     expect(generate).toHaveBeenCalledTimes(1);
     expect(evaluateCandidates).not.toHaveBeenCalled();
   });
@@ -94,7 +119,7 @@ describe('Gaming hybrid authenticated handoff', () => {
     const build = await workflow.query({ ...query, mode: 'build', idempotencyKey: 'changed-build-query' }, context);
     expect(build).toMatchObject({ status: 409, body: { reason: 'QUERY_CONTEXT_CONFLICT' } });
     expect(build.body.answer).toBeUndefined();
-    expect(retrieve).toHaveBeenCalledTimes(1);
+    expect(retrieve).toHaveBeenCalledTimes(5);
     expect(generate).toHaveBeenCalledTimes(1);
   });
   it('preserves equivalent effective preferences and the original response after a rejected change', async () => {
@@ -106,7 +131,7 @@ describe('Gaming hybrid authenticated handoff', () => {
     const equivalent = await workflow.query({ ...query, spoilerTolerance: 'avoid', answerDepth: 'auto', idempotencyKey: 'equivalent-query' }, context);
     expect(equivalent).toEqual(first);
     expect(await workflow.query({ ...query, spoilerTolerance: 'none' }, context)).toEqual(first);
-    expect(retrieve).toHaveBeenCalledTimes(1);
+    expect(retrieve).toHaveBeenCalledTimes(7);
     expect(generate).toHaveBeenCalledTimes(1);
   });
   it('rejects a preference change while discovery is pending without granting another workflow', async () => {
@@ -204,7 +229,7 @@ describe('Gaming hybrid authenticated handoff', () => {
     const expired = await workflow.query(query, context);
     expect(expired).toMatchObject({ status: 409, body: { reason: 'EVIDENCE_REVALIDATION_REQUIRED', nextAction: 'stop', sourceKnown: true } });
     expect(expired.body.answer).toBeUndefined();
-    expect(retrieve).toHaveBeenCalledTimes(1);
+    expect(retrieve).toHaveBeenCalledTimes(6);
     expect(generate).toHaveBeenCalledTimes(1);
   });
   it('withholds a newly generated answer if its applicability proof expired during generation', async () => {
@@ -220,19 +245,18 @@ describe('Gaming hybrid authenticated handoff', () => {
     expect(generate).toHaveBeenCalledTimes(1);
   });
   it('does not attach an expired earlier answer when an ingestion operation throws', async () => {
-    let clock = now;
-    const checked = new Date(now - (30 * 24 * 60 * 60 * 1_000) + 1_000).toISOString();
-    const candidateId = '10000000-0000-4000-8000-000000000001';
-    const data = knowledge();
+    let clockOffset = 0;
+    acquiredGuide(undefined, new Date(Date.now() + 1_000).toISOString());
     const { generate } = setup();
-    const workflow = createGamingHybridWorkflow({ now: () => clock, retrieve: async () => empty, generate,
-      evaluateCandidates: async () => ({ decisions: [], knowledge: data, accepted: [{ candidateId, document: { text: '' },
-        freshness: { id: candidateId, game: query.game, url: data.sources[0].url, fetchedAt: checked, verifiedAt: checked } }] } as any),
-      ingest: async () => { clock += 1_000; throw new Error('Synthetic ingestion failure'); } });
+    const workflow = createGamingHybridWorkflow({ now: () => Date.now() + clockOffset, retrieve: async () => empty, generate,
+      evaluateCandidates: evaluateGamingHybridCandidates,
+      ingest: async () => { clockOffset += 1_000; throw new Error('Synthetic ingestion failure'); } });
     const first = await workflow.query({ ...query, storagePolicy: 'ask_before_store' }, context);
     const accepted = await workflow.candidates({ contractVersion, workflowId: first.body.workflowId,
-      idempotencyKey: 'expiring-candidate-1', candidates: [{ url: data.sources[0].url }] }, context);
+      idempotencyKey: 'expiring-candidate-1', candidates: [{ url: 'https://example.com/lantern' }] }, context);
+    expect(accepted.body.candidates?.[0].reasonCodes).toContain('VALIDATED_RELEVANT_CONTENT');
     expect(accepted.body.state).toBe('answer_ready');
+    const candidateId = accepted.body.candidates![0].candidateId!;
     const failed = await workflow.ingest({ contractVersion, workflowId: first.body.workflowId, idempotencyKey: 'expiring-storage-1',
       candidateIds: [candidateId], storagePolicy: 'ask_before_store', confirmStore: true }, context);
     expect(failed).toMatchObject({ status: 409, body: { reason: 'EVIDENCE_REVALIDATION_REQUIRED' } });
@@ -289,13 +313,13 @@ describe('Gaming hybrid authenticated handoff', () => {
     expect(failed.body.qualification).toBeTruthy();
     expect(failed.body.answer).toBeUndefined();
     expect(generate).toHaveBeenCalledTimes(1);
-    expect(retrieve).toHaveBeenCalledTimes(1);
+    expect(retrieve).toHaveBeenCalledTimes(5);
     expect((await workflow.query({ ...query, question: 'Substituted question' }, context)).status).toBe(409);
     expect(generate).toHaveBeenCalledTimes(1);
     const [recovered, replay] = await Promise.all([workflow.query(query, context), workflow.query(query, context)]);
     expect(recovered.body).toMatchObject({ workflowId: failed.body.workflowId, state: 'answer_ready', evidenceSelected: true });
     expect(replay).toEqual(recovered);
-    expect(retrieve).toHaveBeenCalledTimes(1);
+    expect(retrieve).toHaveBeenCalledTimes(10);
     expect(generate).toHaveBeenCalledTimes(2);
   });
   it('reassesses aged evidence before a same-workflow client retry after a provider timeout', async () => {
@@ -313,7 +337,7 @@ describe('Gaming hybrid authenticated handoff', () => {
     const retry = await workflow.query(query, context);
     expect(retry.body).toMatchObject({ workflowId: failed.body.workflowId, state: 'discovery_required', evidenceSelected: false });
     expect(retry.body.answer).toBeUndefined();
-    expect(retrieve).toHaveBeenCalledTimes(1);
+    expect(retrieve).toHaveBeenCalledTimes(6);
     expect(generate).toHaveBeenCalledTimes(1);
   });
   it('binds retained-evidence timeout retry to the original operation after another workflow response', async () => {
@@ -329,7 +353,7 @@ describe('Gaming hybrid authenticated handoff', () => {
     const [retry, replay] = await Promise.all([workflow.query(query, context), workflow.query(query, context)]);
     expect(retry.body).toMatchObject({ workflowId: failed.body.workflowId, state: 'answer_ready', evidenceSelected: true });
     expect(replay).toEqual(retry);
-    expect(retrieve).toHaveBeenCalledTimes(1);
+    expect(retrieve).toHaveBeenCalledTimes(10);
     expect(evaluateCandidates).not.toHaveBeenCalled();
     expect(generate).toHaveBeenCalledTimes(2);
   });
@@ -441,57 +465,70 @@ describe('Gaming hybrid authenticated handoff', () => {
       candidateIds: ['10000000-0000-4000-8000-000000000001'], storagePolicy: 'ask_before_store', confirmStore: true }, { ...context, canStore: true });
     expect(result.status).toBe(403);
   });
-  it('keeps overflow artifacts transient without invalidating previously retained storage handles', async () => {
-    const { generate } = setup();
-    const documentText = 'x'.repeat(1_000_000);
-    const candidateIds = [1, 2, 3].map(index => `10000000-0000-4000-8000-00000000000${index}`);
-    const evaluateCandidates = jest.fn(async () => ({ knowledge: knowledge(),
-      accepted: candidateIds.map(candidateId => ({ candidateId, document: { text: documentText },
-        freshness: { id: candidateId, game: query.game, url: 'https://example.com/lantern',
-          fetchedAt: new Date(now).toISOString(), verifiedAt: new Date(now).toISOString() } })),
-      decisions: candidateIds.map(candidateId => ({ candidateId, url: 'https://example.com/lantern',
-        decision: 'eligible_for_ingestion', reasonCodes: ['VALIDATED_RELEVANT_CONTENT'] })) } as any));
-    const ingest = jest.fn(async () => ({ statusCode: 202, payload: { ok: true,
-      ingestionId: '20000000-0000-4000-8000-000000000001', status: 'queued' } } as any));
-    const workflow = createGamingHybridWorkflow({ retrieve: async () => empty, evaluateCandidates, generate, ingest });
-    const results: Awaited<ReturnType<typeof workflow.candidates>>[] = [];
+  describe('real acquired-artifact retention capacity', () => {
+    let fixture: ReturnType<typeof setup>;
+    let workflow: ReturnType<typeof createGamingHybridWorkflow>;
+    let ingest: jest.Mock;
+    let evaluateCandidates: jest.Mock<typeof evaluateGamingHybridCandidates>;
+    let results: Awaited<ReturnType<typeof workflow.candidates>>[];
+    beforeEach(() => {
+      fixture = setup(); acquiredGuide(1_000_000); results = [];
+      evaluateCandidates = jest.fn<typeof evaluateGamingHybridCandidates>(async (input, callContext) => {
+        const evaluated = await evaluateGamingHybridCandidates(input, callContext);
+        expect(evaluated.accepted).toHaveLength(3);
+        expect(evaluated.accepted.map(candidate => candidate.document.text.length)).toEqual([1_000_000, 1_000_000, 1_000_000]);
+        return evaluated;
+      });
+      ingest = jest.fn(async () => ({ statusCode: 202, payload: { ok: true,
+        ingestionId: '20000000-0000-4000-8000-000000000001', status: 'queued' } } as any));
+      workflow = createGamingHybridWorkflow({ retrieve: async () => empty, evaluateCandidates, generate: fixture.generate, ingest: ingest as never });
+    });
+    // Each real three-document acquisition keeps the standard test deadline.
+    // The complete 15m-character scenario awaits every stage before cleanup.
     for (let index = 0; index < 5; index += 1) {
-      const first = await workflow.query({ ...query, currentArea: `Copper Quay ${index}`,
-        idempotencyKey: `capacity-query-${index}`, storagePolicy: 'ask_before_store' }, context);
-      results.push(await workflow.candidates({ contractVersion, workflowId: first.body.workflowId,
-        idempotencyKey: `capacity-candidates-${index}`, candidates: [{ url: 'https://example.com/lantern' }] }, context));
+      beforeEach(async () => {
+        const first = await workflow.query({ ...query, currentArea: `Copper Quay ${index}`,
+          idempotencyKey: `capacity-query-${index}`, storagePolicy: 'ask_before_store' }, context);
+        results.push(await workflow.candidates({ contractVersion, workflowId: first.body.workflowId,
+          idempotencyKey: `capacity-candidates-${index}`, candidates: [1, 2, 3].map(candidate => ({
+            url: `https://example.com/lantern-capacity-${candidate}` })) }, context));
+      });
     }
-    expect(results[3].body.candidates?.every(candidate => candidate.candidateId)).toBe(true);
-    const overflow = results[4];
-    expect(overflow.body.state).toBe('answer_ready');
-    expect(overflow.body.candidates).toHaveLength(3);
-    for (const candidate of overflow.body.candidates!) {
-      expect(candidate).toMatchObject({ decision: 'accepted_transient', reasonCodes: expect.arrayContaining(['ARTIFACT_CAPACITY_REACHED']) });
-      expect(candidate).not.toHaveProperty('candidateId');
-    }
-    const storage = { contractVersion, idempotencyKey: 'capacity-storage-1', candidateIds: [candidateIds[0]],
-      storagePolicy: 'ask_before_store', confirmStore: true };
-    expect((await workflow.ingest({ ...storage, workflowId: overflow.body.workflowId }, context)).status).toBe(404);
-    expect(ingest).not.toHaveBeenCalled();
-    expect((await workflow.ingest({ ...storage, workflowId: results[0].body.workflowId }, context)).body.state).toBe('ingestion_pending');
-    expect(ingest).toHaveBeenCalledTimes(1);
+    it('keeps overflow artifacts transient without invalidating previously retained storage handles', async () => {
+      expect(results[3].body.candidates?.every(candidate => candidate.candidateId)).toBe(true);
+      const overflow = results[4];
+      expect(overflow.body.state).toBe('answer_ready');
+      expect(overflow.body.candidates).toHaveLength(3);
+      for (const candidate of overflow.body.candidates!) {
+        expect(candidate).toMatchObject({ decision: 'accepted_transient', reasonCodes: expect.arrayContaining(['ARTIFACT_CAPACITY_REACHED']) });
+        expect(candidate).not.toHaveProperty('candidateId');
+      }
+      const storage = { contractVersion, idempotencyKey: 'capacity-storage-1', candidateIds: [results[0].body.candidates![0].candidateId!],
+        storagePolicy: 'ask_before_store', confirmStore: true };
+      expect((await workflow.ingest({ ...storage, workflowId: overflow.body.workflowId }, context)).status).toBe(404);
+      expect(ingest).not.toHaveBeenCalled();
+      expect((await workflow.ingest({ ...storage, workflowId: results[0].body.workflowId }, context)).body.state).toBe('ingestion_pending');
+      expect(ingest).toHaveBeenCalledTimes(1);
+      expect(evaluateCandidates).toHaveBeenCalledTimes(5); expect(acceptedHttp).toHaveBeenCalledTimes(15);
+    });
   });
   it.each(([true, false] as const).flatMap(supported => [
     ['queued', 'INGESTION_QUEUED'], ['running', 'INGESTION_PROCESSING'],
     ['completed', 'INGESTION_RESULT_REQUIRED'], ['completed_with_errors', 'INGESTION_RESULT_REQUIRED'],
     ['failed', 'INGESTION_FAILED'], ['cancelled', 'INGESTION_CANCELLED'], ['expired', 'INGESTION_EXPIRED']
   ].map(([status, reason]) => ({ supported, status, reason }))))('reports existing ingestion $status with supported answer $supported truthfully', async ({ supported, status, reason }) => {
-    const candidateId = '10000000-0000-4000-8000-000000000001';
     const ingestionId = '20000000-0000-4000-8000-000000000001';
     const { generate } = setup();
     const workflow = createGamingHybridWorkflow({ retrieve: async () => empty, generate,
-      evaluateCandidates: async () => ({ decisions: [], knowledge: supported ? knowledge() : empty,
-        accepted: [{ candidateId, document: { text: '' }, freshness: { id: candidateId, game: query.game,
-          url: 'https://example.com/lantern', fetchedAt: new Date(now).toISOString(), verifiedAt: new Date(now).toISOString() } }] } as any),
+      evaluateCandidates: async (input, callContext) => {
+        const evaluated = await evaluateGamingHybridCandidates(input, callContext);
+        return { ...evaluated, knowledge: supported ? evaluated.knowledge : empty };
+      },
       ingest: async () => ({ statusCode: 202, payload: { ok: true, ingestionId, status, deduplicated: true } } as any) });
     const first = await workflow.query({ ...query, storagePolicy: 'ask_before_store' }, context);
     const evaluated = await workflow.candidates({ contractVersion, workflowId: first.body.workflowId,
       idempotencyKey: 'terminal-candidate-1', candidates: [{ url: 'https://example.com/lantern' }] }, context);
+    const candidateId = evaluated.body.candidates![0].candidateId!;
     const result = await workflow.ingest({ contractVersion, workflowId: first.body.workflowId,
       idempotencyKey: 'terminal-ingestion-1', candidateIds: [candidateId], storagePolicy: 'ask_before_store', confirmStore: true }, context);
     const failed = ['failed', 'cancelled', 'expired'].includes(status);

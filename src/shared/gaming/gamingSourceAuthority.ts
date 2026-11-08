@@ -1,6 +1,18 @@
 import { GAMING_CLEAR_POLICY_VERSION, gamingClearHash, parseGamingClearAssessment } from './gamingClearPolicy.js';
+import { normalizeGamingGameIdentity, resolveGamingGuideIdentity } from './gamingGameIdentity.js';
+import { resolveGamingRegistryGame } from './gamingGameRegistry.js';
 
 export const GAMING_STORED_AUTHORITY_VERSION = 'gaming-stored-source-authority/v1';
+
+/** Revocations share exact registry aliases and their requested edition, never related games. */
+export function gamingSourceAuthorityGameKeys(game: string, edition?: string): string[] {
+  const registryGame = resolveGamingRegistryGame(game);
+  const names = registryGame ? [game, registryGame.id, registryGame.name, ...registryGame.aliases] : [game];
+  return [...new Set(names.flatMap(name => {
+    const key = normalizeGamingGameIdentity(name).slice(0, 120);
+    return [key, edition ? resolveGamingGuideIdentity(name, edition).slice(0, 120) : key];
+  }))];
+}
 
 /** Private persistence authorization, supplied only after worker approval checks. */
 export interface GamingSourceAuthorityAuthorization {

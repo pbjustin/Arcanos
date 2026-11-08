@@ -151,7 +151,7 @@ export interface QueryActiveGamingKnowledgeOptions {
 
 /** A history count is not a reusable source-authority grant, including when it is unchanged. */
 export type GamingSourceAuthoritySnapshot = { status: 'unconfigured' }
-  | { status: 'available'; restrictedRevisionCount: number; requiresReassessment: boolean };
+  | { status: 'available'; restrictedRevisionCount: number; requiresReassessment: boolean; stateFingerprint: string };
 
 export interface GamingSourceAuthoritySnapshotInput {
   gameKey: string;
@@ -712,25 +712,29 @@ export class PostgresGamingSourceRepository {
   }
 
   async readGamingSourceAuthoritySnapshot(input: GamingSourceAuthoritySnapshotInput,
-    options: QueryActiveGamingKnowledgeOptions = {}): Promise<{ restrictedRevisionCount: number; requiresReassessment: boolean }> {
+    options: QueryActiveGamingKnowledgeOptions = {}): Promise<Omit<Extract<GamingSourceAuthoritySnapshot, { status: 'available' }>, 'status'>> {
     if (input.gameKeys !== undefined && (!Array.isArray(input.gameKeys) || input.gameKeys.length > 36))
       throw new TypeError('gameKeys must contain at most 36 exact source keys.');
     const gameKeys = [...new Set([input.gameKey, ...(input.gameKeys ?? [])]
       .map(value => requiredString(value, 'gameKey', 120).toLowerCase()))];
     if (gameKeys.length > 36) throw new TypeError('gameKeys must contain at most 36 exact source keys.');
     const canonicalUrl = normalizePublicHttpUrl(input.canonicalUrl, 'canonicalUrl');
-    const result = await this.queryWithDeadline<{ restricted_revision_count: string; requires_reassessment: boolean }>(
+    const result = await this.queryWithDeadline<{ restricted_revision_count: string; requires_reassessment: boolean; state_fingerprint: string }>(
       `SELECT COUNT(*) FILTER (WHERE ${NON_AUTHORITATIVE_HISTORY_SQL}) AS restricted_revision_count,
-         COUNT(*) > 0 AS requires_reassessment
+         COUNT(*) > 0 AS requires_reassessment,
+         md5(COALESCE(string_agg(DISTINCT source.id::text || ':' || EXTRACT(EPOCH FROM source.updated_at)::text,
+           ',' ORDER BY source.id::text || ':' || EXTRACT(EPOCH FROM source.updated_at)::text), '')) AS state_fingerprint
        FROM gaming_source_revisions AS authority_revision
        JOIN gaming_sources AS source ON source.id = authority_revision.source_id
        WHERE source.game_key = ANY($1::text[]) AND source.canonical_url_hash = $2 AND source.canonical_url = $3`,
       [gameKeys, sha256(canonicalUrl), canonicalUrl], options);
     const count = Number(result.rows[0]?.restricted_revision_count);
     const requiresReassessment = result.rows[0]?.requires_reassessment;
-    if (!Number.isSafeInteger(count) || count < 0 || typeof requiresReassessment !== 'boolean')
+    const stateFingerprint = result.rows[0]?.state_fingerprint;
+    if (!Number.isSafeInteger(count) || count < 0 || typeof requiresReassessment !== 'boolean'
+      || typeof stateFingerprint !== 'string' || !/^[a-f0-9]{32}$/u.test(stateFingerprint))
       throw new GamingSourceRepositoryUnavailableError();
-    return { restrictedRevisionCount: count, requiresReassessment };
+    return { restrictedRevisionCount: count, requiresReassessment, stateFingerprint };
   }
 
   /** Bounded reads share the same stale-pool-waiter and transaction cancellation guard. */

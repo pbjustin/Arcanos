@@ -1,11 +1,25 @@
-import { describe, expect, it, jest } from '@jest/globals';
-import { createGamingHybridWorkflow } from '../src/services/gamingHybridKnowledge.js';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
 import { GAMING_HYBRID_CONTRACT_VERSION as contractVersion } from '../src/shared/gaming/gamingHybridContract.js';
 import { extractGamingFreshnessMetadata, GAMING_SOURCE_POLICY_VERSION } from '../src/shared/gaming/gamingFreshnessCore.js';
 import { GAMING_CURRENTNESS_ADAPTER_VERSION } from '../src/shared/gaming/gamingCurrentnessAdapters.js';
 import { gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
 import { resolveGamingHybridCurrentnessReason } from '../src/shared/gaming/gamingHybridPolicyCore.js';
 import type { GamingStoredKnowledgeContext } from '../src/services/gamingStoredKnowledge.js';
+
+const http = jest.fn();
+jest.unstable_mockModule('axios', () => ({ default: gamingAcquisitionAxios(http) }));
+jest.unstable_mockModule('node:dns/promises', () => ({ Resolver: class {
+  async resolve4() { return ['93.184.216.34']; }
+  async resolve6() { return []; }
+  cancel() {}
+} }));
+const { createGamingHybridWorkflow } = await import('../src/services/gamingHybridKnowledge.js');
+const { gamingHybridAcceptedFixtureMaterializer } = await import('./testUtils/gamingHybridAcceptedFixtures.js');
+const { logger } = await import('../src/platform/logging/structuredLogging.js');
+const materialize = gamingHybridAcceptedFixtureMaterializer(http);
+beforeEach(() => { http.mockReset(); jest.spyOn(logger, 'info').mockImplementation(() => undefined); });
+afterEach(() => { jest.restoreAllMocks(); });
 
 const now = Date.now();
 const context = { actorKey: 'synthetic-official-corroboration', requestId: 'official-corroboration-test' };
@@ -46,7 +60,8 @@ function setup(patch: string | undefined = '1.10', clock = () => now) {
     data: { response: 'Use the mage build with the verified patch qualification. [1]', sources: prepared.knowledge.sources,
       grounding: { groundingStatus: 'grounded' } } } as any));
   const ingest = jest.fn();
-  const workflow = createGamingHybridWorkflow({ retrieve, evaluateCandidates: evaluateCandidates as any, generate, ingest: ingest as any, now: clock });
+  const workflow = createGamingHybridWorkflow({ retrieve, evaluateCandidates: async (input, callContext) =>
+    materialize(await evaluateCandidates(input), input, callContext), generate, ingest: ingest as any, now: clock });
   const submit = (workflowId: string, discoveryType: 'gameplay_evidence' | 'currentness_verification', key = discoveryType) => ({
     contractVersion, workflowId, discoveryType, idempotencyKey: `operation-${key}`,
     candidates: [{ url: discoveryType === 'gameplay_evidence' ? guideUrl : indexUrl }] });
@@ -95,9 +110,12 @@ describe('bounded official currentness corroboration', () => {
   it('continues missing build verification when an official patch index is already retained', async () => {
     const test = setup();
     Object.assign(test.guide.freshness, { build: '1.10.1' });
-    test.retrieve.mockResolvedValueOnce({ ...empty, sourceKnown: true, sources: [{ sourceId: 'stored-official-index',
+    test.retrieve.mockResolvedValue({ ...empty, sourceKnown: true, sources: [{ sourceId: 'stored-official-index',
       url: indexUrl, sourceType: 'official_updates', fetchedAt: test.index.freshness.fetchedAt,
-      snippet: 'Official current patch index.', freshnessMetadata: { ...test.index.freshness, id: 'stored-official-index' } }] });
+      snippet: 'Official current patch index.', freshnessMetadata: { ...test.index.freshness, id: 'stored-official-index' } }],
+    evidence: [{ sourceId: 'stored-official-index', revisionId: 'stored-index-revision', recordId: 'stored-index-record',
+      recordType: 'build', publicUrl: indexUrl, text: 'Official current patch index.', lexicalScore: 1, combinedScore: 1,
+      provenance: { fetchedAt: test.index.freshness.fetchedAt } }] });
     const first = await test.workflow.query(query, context);
     const found = await test.workflow.candidates(test.submit(first.body.workflowId!, 'gameplay_evidence'), context);
     expect(found.body).toMatchObject({ nextAction: 'verify_currentness', reason: 'CURRENT_BUILD_UNVERIFIED',
@@ -118,9 +136,14 @@ describe('bounded official currentness corroboration', () => {
     const test = setup('1.10', () => currentNow);
     const game = 'Star Wars: The Old Republic';
     const officialUrl = 'https://www.swtor.com/patchnotes';
+    const healerGuideUrl = 'https://guides.example.org/swtor-healer';
     const text = passage.replaceAll('Elden Ring', game).replaceAll('mage', 'healer');
     Object.assign(test.guide.freshness, { game, patch: '7.0', build: '7.0.1' });
+    test.guide.publicUrl = healerGuideUrl;
+    test.guide.freshness.url = healerGuideUrl;
     test.guide.document.text = text;
+    test.knowledge.sources[0].url = healerGuideUrl;
+    test.knowledge.evidence![0].publicUrl = healerGuideUrl;
     test.knowledge.sources[0].snippet = text;
     test.knowledge.evidence![0].text = text;
     const indexText = `Game: ${game}\nCurrent patch: 7.0\nEffective from: ${new Date(now - 86_400_000).toISOString()}\nPlatforms: all\nRegions: all`;
@@ -163,7 +186,7 @@ describe('bounded official currentness corroboration', () => {
       decisions: [{ candidateId: refreshedId, decision: 'accepted_transient', reasonCodes: ['VALIDATED_APPLICABILITY_SOURCE'] }] } as any);
     const first = await test.workflow.query({ ...query, game, platform: 'PC', question: 'What is a good healer build now?' }, context);
     const found = await test.workflow.candidates({ ...test.submit(first.body.workflowId!, 'gameplay_evidence'),
-      candidates: [{ url: guideUrl }, { url: officialUrl }] }, context);
+      candidates: [{ url: healerGuideUrl }, { url: officialUrl }] }, context);
     expect(found.body).toMatchObject({ nextAction: 'verify_currentness', reason: 'CURRENT_BUILD_UNVERIFIED',
       discovery: { round: 0, continuationRequired: true } });
     currentNow = now + 2_000;
@@ -181,10 +204,10 @@ describe('bounded official currentness corroboration', () => {
     expect(test.evaluateCandidates).toHaveBeenCalledTimes(2);
     expect(test.generate).toHaveBeenCalledTimes(1);
     const prepared = test.generate.mock.calls[0][1].knowledge;
-    expect(prepared.sources.some((source: { sourceId: string }) => source.sourceId === indexId)).toBe(false);
+    expect(prepared.sources.some((source: { sourceId: string }) => source.sourceId === oldIndex.candidateId)).toBe(false);
     expect(prepared.evidence.some((chunk: { recordId: string }) => chunk.recordId === oldChunk.recordId)).toBe(false);
-    expect(prepared.sources.find((source: { sourceId: string }) => source.sourceId === refreshedId)?.freshnessMetadata)
-      .toMatchObject({ id: refreshedId, currentBuild: '7.0.1' });
+    expect(prepared.sources.find((source: { sourceId: string }) => source.sourceId === refreshedIndex.candidateId)?.freshnessMetadata)
+      .toMatchObject({ id: refreshedIndex.candidateId, currentBuild: '7.0.1' });
     expect(JSON.stringify(prepared)).not.toContain(oldSnippet);
   });
   it('provides seasonal discovery queries and verifies the retained guide against the official season', async () => {
@@ -371,7 +394,7 @@ describe('bounded official currentness corroboration', () => {
   it('prioritizes missing official currentness after an accepted guide even when retained old policy evidence was excluded', async () => {
     const test = setup();
     const oldUrl = 'https://guides.example.org/old-mage';
-    test.retrieve.mockResolvedValueOnce({ ...test.knowledge,
+    test.retrieve.mockResolvedValue({ ...test.knowledge,
       sources: [{ ...test.knowledge.sources[0], sourceId: 'old-source', url: oldUrl,
         freshnessMetadata: { ...test.guide.freshness, id: 'old-source', url: oldUrl, policyVersion: 'gaming-hybrid-source-policy-v1' } }],
       evidence: [{ ...test.knowledge.evidence![0], sourceId: 'old-source', publicUrl: oldUrl }] });
@@ -397,9 +420,9 @@ describe('bounded official currentness corroboration', () => {
     const verification = (test.guide.freshness as any).currentVerification;
     expect(verification.workflowId).toBe(first.body.workflowId);
     const stored = (): GamingStoredKnowledgeContext => ({ context: '', sourceKnown: true,
-      sources: [{ ...test.knowledge.sources.find(source => source.sourceId === guideId)!,
+      sources: [{ ...test.knowledge.sources.find(source => source.sourceId === test.guide.candidateId)!,
         approvedContentHash: test.guide.contentHash, freshnessMetadata: structuredClone(test.guide.freshness) }],
-      evidence: structuredClone(test.knowledge.evidence!.filter(chunk => chunk.sourceId === guideId)) });
+      evidence: structuredClone(test.knowledge.evidence!.filter(chunk => chunk.sourceId === test.guide.candidateId)) });
     const reader = (ageMs = 0) => createGamingHybridWorkflow({ retrieve: async () => stored(),
       generate: test.generate, now: () => now + ageMs });
     const fresh = await reader().query({ ...query, idempotencyKey: 'new-workflow-cached-proof' }, context);
