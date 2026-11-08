@@ -18,8 +18,13 @@ const quotedSchema = `"${schemaName}"`;
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const actorScope = (actor: string) => hash(`${actor}\ngaming-source-ingestion`);
 const retained = JSON.parse(readFileSync(new URL('../fixtures/gaming-historical-status/records.json', import.meta.url), 'utf8'));
+// Authored wire-compatibility fixture for the immediately prior policy. Its
+// envelope uses the unchanged source-approval shape, not a captured live job.
+const priorPolicy: any = { provenance: { commit: 'synthetic-policy-v6-compatibility' },
+  actorKey: `prior-policy-status-${randomUUID()}`, body: undefined };
 const current: any = { actorKey: `current-status-${randomUUID()}`, body: undefined };
-const fixtures: Array<[string, any]> = [...retained.map((fixture: any, index: number) => [`v${index + 1}`, fixture]), ['v6', current]];
+const fixtures: Array<[string, any]> = [...retained.map((fixture: any, index: number) => [`v${index + 1}`, fixture]),
+  ['prior v6', priorPolicy], ['current', current]];
 const statuses = ['pending', 'running', 'completed', 'failed', 'cancelled', 'expired'];
 let databasePool: Pool;
 let administrator: Client;
@@ -55,7 +60,8 @@ const jobs = await import('../../src/core/db/repositories/jobRepository.js');
 const { persistGamingSourceRevision, searchActiveGamingKnowledge } = await import('../../src/core/db/repositories/gamingSourceRepository.js');
 const service = await import('../../src/services/gamingSourceIngestion.js');
 const { resolveGamingDocument } = await import('../../src/services/gamingDocumentResolution.js');
-const { extractGamingFreshnessMetadata } = await import('../../src/shared/gaming/gamingFreshnessCore.js');
+const { assessGamingSourcePolicy, extractGamingFreshnessMetadata } = await import('../../src/shared/gaming/gamingFreshnessCore.js');
+const { assessGamingClearSource } = await import('../../src/shared/gaming/gamingClearSource.js');
 const { createGamingClearAssessment, GAMING_CLEAR_POLICY_VERSION } = await import('../../src/shared/gaming/gamingClearPolicy.js');
 const { assessGamingRequestCoverage } = await import('../../src/shared/gaming/gamingClearEvidence.js');
 const sourceUrl = `https://guides.example.org/copper-vale/real-pg18-${randomUUID()}`;
@@ -64,6 +70,8 @@ const page = '<html><title>Copper Vale guide</title><main><h1>Copper Vale guide<
   + 'Collect the practice coins before buying the Amber Token and following the marked gate route. '
   + 'Keep the Amber Token until the training gate opens, then follow the marked route into the next practice area.</p></main></html>';
 let currentSource: any;
+const coverageApprovals: Array<{ document: Awaited<ReturnType<typeof resolveGamingDocument>>;
+  assessment: ReturnType<typeof assessGamingClearSource>; approvedDocumentHash: string; restrictedRevisionCount: number }> = [];
 
 /** Persist source-derived historical JSON through the real repository and terminal writer. */
 async function persistJob(fixture: any, status: string, body = fixture.body) {
@@ -134,8 +142,40 @@ withDatabase('retained Gaming status and current execution on real PostgreSQL 18
     const row = await jobs.getJobById((admitted.payload as any).ingestionId);
     current.body = (row!.input as any).body;
     expect(current.body.sources[0].hybridApproval.gamingClear.policyProfile).toBe(`${GAMING_CLEAR_POLICY_VERSION}:walkthrough:source`);
+    priorPolicy.body = structuredClone(current.body);
+    priorPolicy.body.sources[0].hybridApproval.actorScopeHash = hash(priorPolicy.actorKey);
+    priorPolicy.body.sources[0].hybridApproval.gamingClear.policyProfile = 'gaming-clear-policy/v6:walkthrough:source';
     // The producer-body seed is not part of the later explicit-key concurrency lineage.
     await databasePool.query('DELETE FROM job_data WHERE id = $1', [row!.id]);
+
+    // Approve complete acquired guides before testing selected-chunk claim support.
+    // A valid whole-source grant cannot substitute for the actual selected text.
+    const coverageGame = 'Silver Harbor';
+    const coverageInput = { game: coverageGame, mode: 'guide' as const, prompt: 'How do I align the platinum prism?' };
+    const coveragePage = `<html><title>${coverageGame} gameplay guide</title><main><h1>${coverageGame} gameplay guide</h1>`
+      + `<p>In the game ${coverageGame}, this page lists a tutorial shield record.</p>`
+      + `<p>In the game ${coverageGame}, align the platinum prism with the eastern notch before rotating the relay. `
+      + 'Preserve charge for the return crossing and inspect the prism after each rotation. Reverse the relay if the prism loses its glow.</p>'
+      + `<p>In the game ${coverageGame}, the tutorial-area shield is the Practice Shield. `
+      + 'The Practice Shield is sold at the Lantern Shop in the training village for 25 practice coins. '
+      + 'Collect the coins before returning to the Lantern Shop to buy the tutorial-area shield.</p></main></html>';
+    for (let index = 0; index < 4; index += 1) {
+      const url = `https://guides.example.org/silver-harbor/retained-${randomUUID()}`;
+      http.mockImplementationOnce(async (target: string, options: any) => {
+        expect(new URL(target).hostname).toBe('93.184.216.34');
+        expect(options).toMatchObject({ maxRedirects: 0, proxy: false, headers: { Host: 'guides.example.org' } });
+        return { data: coveragePage, headers: { 'content-type': 'text/html' } };
+      });
+      const document = await resolveGamingDocument(url, 1_000_000, { documentPurpose: 'durable' });
+      const restrictedRevisionCount = await service.captureGamingSourceAuthorityRestrictionCount(coverageGame, document.canonicalUrl);
+      expect(restrictedRevisionCount).toBe(0);
+      const approvedDocumentHash = service.hashGamingApprovedDocument(document);
+      const assessment = assessGamingClearSource(coverageInput, document, { subjectId: url, subjectHash: approvedDocumentHash,
+        actorScopeHash: hash(current.actorKey), sourcePolicy: assessGamingSourcePolicy(url, coverageGame),
+        freshness: extractGamingFreshnessMetadata(document, coverageInput, new Date()), now: new Date() });
+      expect(assessment).toMatchObject({ qualityEligible: true, decision: 'accept', gates: { identity: 'verified', claimSupport: 'verified' } });
+      coverageApprovals.push({ document, assessment, approvedDocumentHash, restrictedRevisionCount: restrictedRevisionCount! });
+    }
   }, 30_000);
 
   beforeEach(() => { http.mockClear(); providerTrap.mockClear(); });
@@ -190,7 +230,8 @@ withDatabase('retained Gaming status and current execution on real PostgreSQL 18
   });
 
   const malformed: Array<[string, (body: any) => void]> = [
-    ['future CLEAR policy', body => { body.sources[0].hybridApproval.gamingClear.policyProfile = 'gaming-clear-policy/v7:walkthrough:source'; }],
+    ['future CLEAR policy', body => { body.sources[0].hybridApproval.gamingClear.policyProfile =
+      `${GAMING_CLEAR_POLICY_VERSION.replace(/\d+$/u, version => String(Number(version) + 1))}:walkthrough:source`; }],
     ['future rubric', body => { body.sources[0].hybridApproval.gamingClear.rubricVersion = 'gaming-clear/v2'; }],
     ['profile mismatch', body => { body.sources[0].hybridApproval.gamingClear.policyProfile = 'gaming-clear-policy/v1:walkthrough:answer'; }],
     ['extra version tuple', body => { body.sources[0].hybridApproval.gamingClear.policyProfile += ':extra'; }],
@@ -214,7 +255,7 @@ withDatabase('retained Gaming status and current execution on real PostgreSQL 18
     expect(http).not.toHaveBeenCalled(); expect(providerTrap).not.toHaveBeenCalled();
   });
 
-  test.each(retained)('refuses execution and reapproval of SQL-retained producer $provenance.commit', async fixture => {
+  test.each([...retained, priorPolicy])('refuses execution and reapproval of SQL-retained producer $provenance.commit', async fixture => {
     const row = await persistJob(fixture, 'completed');
     const body = (await jobs.getJobById(row.id))!.input.body as any;
     const writes = await sourceWrites();
@@ -297,29 +338,31 @@ withDatabase('retained Gaming status and current execution on real PostgreSQL 18
     const description = `In the game ${game}, this page lists a tutorial shield record.`;
     const input = { game, mode: 'guide' as const, prompt: `How do I get the shield from the tutorial area in ${game}?`,
       requireRequestCoverage: true, failOnUnavailable: true };
+    let approvalIndex = 0;
     const seed = async (text: string, title: string | null) => {
-      const url = `https://guides.example.org/silver-harbor/retained-${randomUUID()}`;
+      const { document, assessment, approvedDocumentHash, restrictedRevisionCount } = coverageApprovals[approvalIndex++];
+      const url = document.publicUrl;
+      expect(document.text.replace(/\s+/gu, ' ')).toContain(text);
       const contentHash = hash(text);
-      const old = retained[4].body.sources[0].hybridApproval.gamingClear;
-      const assessment = createGamingClearAssessment({ ...old, subjectHash: contentHash,
-        contextFingerprint: hash(`synthetic retained corpus ${game}`), questionProfile: 'walkthrough',
-        dimensions: old.dimensionScores, evidenceRefs: ['history-fixture-source'], evaluatedAt: '2026-11-06T12:00:00.000Z' });
       const normalized = { text, game, chunk: { ordinal: 0, totalChunks: 1, startChar: 0, endChar: text.length } };
-      // This models an already retained row; it does not claim fresh-source approval.
-      // Backend identity/applicability provenance is explicit; request coverage must still inspect its actual text.
+      // Index one genuine acquired passage under the complete source's current
+      // server assessment. Request coverage must still inspect this passage.
       const stored = await persistGamingSourceRevision({ gameKey: 'silver-harbor', gameName: game,
         canonicalUrl: url, publicUrl: url, sourceType: 'supplied', trustScore: 0.5, contentHash,
         cleanedContent: text, fetchedAt: new Date().toISOString(), extractor: 'synthetic-retained-corpus',
         extractorVersion: 'pg18-retained-fixture-v1', normalizerSchemaVersion: '1',
         provenance: { gameName: game, sourceIdentityPolicyVersion: GAMING_CLEAR_POLICY_VERSION,
-          gamingClear: assessment, approvedContentHash: contentHash,
+          classification: 'verified', generationEligible: true, gamingClear: assessment, approvedContentHash: approvedDocumentHash,
           acquiredApplicability: { extractorVersion: 'gaming-hybrid-freshness-v1', contentHash, game },
           resolverId: 'synthetic-retained-corpus', resolverVersion: 'pg18-retained-fixture-v1', resolutionStrategy: 'retained_text' },
         extractionMetrics: { coverageStatus: 'complete', documentCharsIndexed: text.length, chunkCount: 1 },
         records: [{ recordType: 'guide', semanticKey: hash(url), payloadHash: hash(JSON.stringify(normalized)),
-          title: title ?? undefined, searchText: text, normalized }] });
+          title: title ?? undefined, searchText: text, normalized }],
+        authorityAuthorization: { revisionContentHash: contentHash, approvedDocumentHash, assessment, restrictedRevisionCount } });
       const raw = await searchActiveGamingKnowledge({ gameKey: 'silver-harbor', query: 'shield', mode: 'guide', sourceIds: [stored.sourceId] });
       expect(raw).toHaveLength(1); expect(raw[0].normalized.text).toBe(text);
+      expect(raw[0].authorityReassessmentRequired).toBeUndefined();
+      expect(raw[0].provenance.authorityAssessment).toMatchObject({ revisionContentHash: contentHash, approvedDocumentHash, restrictedRevisionCount });
       return url;
     };
     for (const [text, title] of [[description, null], [`${heading} ${description}`, heading], [`${heading} ${description}`, null]] as const) {

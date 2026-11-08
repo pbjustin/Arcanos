@@ -324,7 +324,7 @@ describe('ordinary Gaming negative controls through authenticated served MCP', (
       assertNoAnswer(final.result); expect(mockTrinity).not.toHaveBeenCalled();
       expect(final.result.selectedEvidenceIds).toEqual([]);
     }
-    expect(mockHttp).not.toHaveBeenCalled(); expect(retrieve).toHaveBeenCalledTimes(1);
+    expect(mockHttp).not.toHaveBeenCalled(); expect(retrieve).toHaveBeenCalledTimes(complete ? 5 : 2);
   });
 
   it.each([

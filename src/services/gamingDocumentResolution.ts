@@ -16,6 +16,7 @@ import {
 import {
   GAMING_BUILD_RESOURCE_HARD_LIMITS,
   classifyGamingResource,
+  inspectGamingBuildResourceSourceUse,
   prepareGamingResourceUrl
 } from "@services/gamingBuildResources.js";
 import {
@@ -33,7 +34,7 @@ import { extractGamingDocumentEvidence } from './gamingDocumentEvidence.js';
 import { extractGamingCurrentnessDocument } from './gamingCurrentnessDocument.js';
 import type { GamingCurrentnessDocumentMetadata } from '@shared/gaming/gamingCurrentnessAdapters.js';
 
-export const GAMING_DOCUMENT_RESOLVER_VERSION = "gaming-document-v6";
+export const GAMING_DOCUMENT_RESOLVER_VERSION = "gaming-document-v7";
 const acquisitionAttestations = new WeakMap<GamingDocumentAcquisition, string>();
 const documentBinding = (document: ResolvedGamingDocument): string => createHash("sha256")
   .update(JSON.stringify({ requestedUrl: document.requestedUrl, canonicalUrl: document.canonicalUrl,
@@ -41,7 +42,8 @@ const documentBinding = (document: ResolvedGamingDocument): string => createHash
     contentType: document.contentType, resolution: document.resolution, metrics: document.metrics,
     acquisition: document.acquisition, evidenceUnits: document.evidenceUnits,
     ...(document.currentnessDocument ? { currentnessDocument: document.currentnessDocument } : {}),
-    sourceUseRestricted: document.sourceUseRestricted }), "utf8").digest("hex");
+    sourceUseRestricted: document.sourceUseRestricted,
+    decodedSourceUseRestricted: document.decodedSourceUseRestricted }), "utf8").digest("hex");
 
 /** Preserve article selectors; only structured URL payloads need a separate citation projection. */
 export function projectGamingDocumentPublicUrl(url: string): string {
@@ -82,7 +84,8 @@ export interface ResolvedGamingDocument {
   text: string;
   contentType?: string;
   rawDocument?: FetchAndCleanRawDocument;
-  metadata: { title?: string; headings?: string };
+  metadata: { title?: string; headings?: string; applicabilityUnverified?: true;
+    localTopicReferences?: Array<{ start: number; length: number; contentHash: string; gameHash: string }> };
   extraction: FetchAndCleanExtractionMetrics;
   resolution: {
     resolverId: string;
@@ -102,6 +105,8 @@ export interface ResolvedGamingDocument {
   evidenceUnits?: GamingEvidenceUnit[];
   structureDiagnostics?: GamingStructureDiagnostics;
   sourceUseRestricted?: boolean;
+  /** Internal origin only; sourceUseRestricted remains the permission fence. */
+  decodedSourceUseRestricted?: true;
   currentnessDocument?: GamingCurrentnessDocumentMetadata;
 }
 
@@ -119,6 +124,7 @@ interface GamingDocumentResolver {
     finalUrl?: string;
     transitions?: GamingDocumentAcquisition["transitions"];
     structure?: ReturnType<typeof extractGamingDocumentEvidence>;
+    decodedSourceUseRestricted?: true;
   } | null>;
 }
 
@@ -236,25 +242,37 @@ async function acquireGenericGamingDocument(url: string, maxChars: number, optio
         }
         let extracted: webFetcher.FetchAndCleanDocument;
         let structure: ReturnType<typeof extractGamingDocumentEvidence>;
+        let decodedSourceUseRestricted = false;
         try {
           webFetcher.assertSupportedFetchAndCleanBody(response.body, response.contentType);
           structure = extractGamingDocumentEvidence({ body: response.body, contentType: response.contentType,
             sourceUrl: projectGamingDocumentPublicUrl(currentUrl), deadlineAt: options.deadlineAt,
             receivedBytes: response.receivedBytes, acceptedBytes: response.acceptedBytes, declaredBytes: response.declaredBytes });
+          // Observe decoded supported fields on the complete accepted response,
+          // before a raw preview or selected prose can omit their restrictions.
+          if (!structure.sourceUseRestricted) {
+            decodedSourceUseRestricted = inspectGamingBuildResourceSourceUse({ url: currentUrl, contentType: response.contentType,
+              ...(["application/json", "text/plain"].includes(response.contentType) ? { text: response.body } : { html: response.body }),
+              signal: options.signal });
+            if (decodedSourceUseRestricted) structure.sourceUseRestricted = true;
+          }
           // Raw diagnostic/build preview describes the original response, not the
           // structural projection. Extraction sees the entire accepted body above.
           const rawLimit = Math.min(options.rawDocumentMaxChars ?? GAMING_BUILD_RESOURCE_HARD_LIMITS.maxHtmlChars,
             GAMING_BUILD_RESOURCE_HARD_LIMITS.maxHtmlChars);
           options.onRawDocument?.({ body: response.body.slice(0, rawLimit), contentType: response.contentType,
             truncated: response.body.length > rawLimit });
-          extracted = webFetcher.extractFetchAndCleanDocument(currentUrl, structure.proseBody, response.contentType, maxChars,
+          const selectedTextChars = options.retainFullSelectedText && structure.localTopicReferences?.length
+            ? options.maxSelectedTextChars ?? maxChars : maxChars;
+          extracted = webFetcher.extractFetchAndCleanDocument(currentUrl, structure.proseBody, response.contentType, selectedTextChars,
             gamingDocumentFetchOptions(currentUrl, { ...options, onRawDocument: undefined }), Date.now() - startedAt);
         } catch {
           session.assertActive();
           throw new GamingDocumentAcquisitionError("SOURCE_EXTRACTION_FAILED", "extraction", "DOCUMENT_EXTRACTION_FAILED", transitions.length);
         }
         session.assertActive();
-        return { text: extracted.combined, finalUrl: currentUrl, transitions, supportsStructuredExtraction: true, structure };
+        return { text: extracted.combined, finalUrl: currentUrl, transitions, supportsStructuredExtraction: true, structure,
+          ...(decodedSourceUseRestricted ? { decodedSourceUseRestricted: true as const } : {}) };
       }
       const transition = resolveGamingDocumentRedirect({
         currentUrl, status: response.status, location: response.location, redirectCount: transitions.length, seen
@@ -329,9 +347,38 @@ export async function resolveGamingDocument(
       body: rawDocument.body.slice(0, GAMING_BUILD_RESOURCE_HARD_LIMITS.maxHtmlChars),
       truncated: rawDocument.truncated || rawDocument.body.length > GAMING_BUILD_RESOURCE_HARD_LIMITS.maxHtmlChars
     } : undefined;
+    const projectedReferences: NonNullable<ResolvedGamingDocument['metadata']['localTopicReferences']> = [];
+    if (acquired.structure?.localTopicReferences?.length) {
+      // Bind occurrences in the full selected prose before its context ceiling.
+      // Only exact spans that survive projection may become local references.
+      const selectedProse = filterGamingDocumentInstructions(acquired.text);
+      const paragraphLocations = new Map<string, number[]>();
+      for (const reference of acquired.structure.localTopicReferences.slice(0, 64)) {
+        if (Date.now() >= deadlineAt) break;
+        let locations = paragraphLocations.get(reference.paragraphText);
+        if (!locations) {
+          locations = []; let from = 0; let index: number;
+          while (locations.length <= reference.paragraphCount
+            && (index = selectedProse.indexOf(reference.paragraphText, from)) >= 0) {
+            locations.push(index); from = index + reference.paragraphText.length;
+          }
+          paragraphLocations.set(reference.paragraphText, locations);
+        }
+        if (locations.length !== reference.paragraphCount) continue;
+        const paragraphStart = locations[reference.paragraphOccurrence];
+        const start = paragraphStart + reference.frameStart;
+        if (paragraphStart === undefined || reference.frameStart < 0
+          || selectedProse.slice(start, start + reference.text.length) !== reference.text
+          || projection.text.slice(start, start + reference.text.length) !== reference.text) continue;
+        projectedReferences.push({ start, length: reference.text.length, gameHash: reference.gameHash,
+          contentHash: createHash('sha256').update(reference.text).digest('hex') });
+      }
+    }
     const safeMetadata = {
       ...(effectiveExtraction.documentTitle ? { title: filterGamingDocumentInstructions(effectiveExtraction.documentTitle).slice(0, 240) } : {}),
-      ...(effectiveExtraction.headingText ? { headings: filterGamingDocumentInstructions(effectiveExtraction.headingText).slice(0, 240) } : {})
+      ...(effectiveExtraction.headingText ? { headings: filterGamingDocumentInstructions(effectiveExtraction.headingText).slice(0, 240) } : {}),
+      ...(acquired.structure?.applicabilityUnverified ? { applicabilityUnverified: true as const } : {}),
+      ...(projectedReferences.length ? { localTopicReferences: projectedReferences } : {})
     };
     const metadataInstructionFiltered = [effectiveExtraction.documentTitle, effectiveExtraction.headingText]
       .some(value => value !== undefined && filterGamingDocumentInstructions(value)
@@ -353,6 +400,12 @@ export async function resolveGamingDocument(
       throw new GamingDocumentAcquisitionError('SOURCE_EXTRACTION_FAILED', 'extraction', 'EXTRACTION_BUDGET_EXHAUSTED');
     }
     const rawInstructionFiltered = rawEvidence?.instructionFiltered ?? false;
+    const decodedSourceUseRestricted = acquired.decodedSourceUseRestricted === true || (!acquired.structure
+      && !rawEvidence?.sourceUseRestricted && inspectGamingBuildResourceSourceUse({ url: acquired.finalUrl ?? url,
+        contentType: rawDocument?.contentType,
+        ...(rawDocument ? ["application/json", "text/plain"].includes(rawDocument.contentType)
+          ? { text: rawDocument.body } : { html: rawDocument.body } : { text: acquired.text }),
+        metadata: safeMetadata, signal: options.signal }));
     const instructionFiltered = projection.instructionFiltered || acquired.structure?.instructionFiltered === true
       || metadataInstructionFiltered || rawInstructionFiltered;
     options.onExtraction?.(effectiveExtraction);
@@ -410,7 +463,9 @@ export async function resolveGamingDocument(
       ...(acquisition ? { acquisition } : {}),
       ...(evidenceUnits?.length ? { evidenceUnits } : {}),
       ...(structureDiagnostics ? { structureDiagnostics } : {}),
-      ...(acquired.structure?.sourceUseRestricted ? { sourceUseRestricted: true } : {})
+      ...(acquired.structure?.sourceUseRestricted || rawEvidence?.sourceUseRestricted || decodedSourceUseRestricted
+        ? { sourceUseRestricted: true } : {}),
+      ...(decodedSourceUseRestricted ? { decodedSourceUseRestricted: true as const } : {})
     };
     if (acquisition) acquisitionAttestations.set(acquisition, documentBinding(document));
     if (Date.now() >= deadlineAt) throw new GamingDocumentAcquisitionError("SOURCE_TIMEOUT", "extraction", "DEADLINE_EXCEEDED", acquisition?.redirectCount);

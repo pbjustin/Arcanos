@@ -218,6 +218,37 @@ describe('bounded stored Gaming chunk evidence', () => {
     expect((await retrieveStoredGamingKnowledge(request, { resolveVerifiedPatch: () => undefined })).clearEvidenceAssessment?.decision).not.toBe('accept');
   });
 
+  test.each(['stored_unverified', 'reference_only', 'needs_reassessment', 'rejected'])(
+    'retained %s content remains searchable but cannot enter generation evidence', async classification => {
+      const text = 'In the game Synthetic Quest, the Zephyrglass Compass opens the hidden route beyond the cobalt arch.';
+      const stored = record('retained-nonauthoritative', text, { provenance: {
+        classification, generationEligible: false, sourceIdentityPolicyVersion: GAMING_CLEAR_POLICY_VERSION,
+        acquiredApplicability: { extractorVersion: GAMING_FRESHNESS_POLICY_VERSION, contentHash: 'c'.repeat(64),
+          game: input.game, edition: 'base-game', platforms: ['PC'], regions: ['EU'], metadataConflict: false, metadataUnverified: false }
+      } });
+      search.mockResolvedValue([stored]);
+      const request = { ...input, platform: 'PC', region: 'EU', edition: 'base-game', hybridRetrieval: true, requireRequestCoverage: true };
+      const result = await retrieveStoredGamingKnowledge(request, { resolveVerifiedPatch: () => undefined });
+      expect(search).toHaveBeenCalled();
+      expect(result.context).toBe('');
+      expect(result.sources).toEqual([]);
+      expect(result.evidence).toBeUndefined();
+      // The stored text and catalog identity remain intact for inspection or reassessment.
+      expect(stored.normalized.text).toBe(text);
+      expect(result.sourceKnown).toBe(true);
+    }
+  );
+
+  test('explicit retention restriction wins over a verified classification label', () => {
+    const text = 'Find the Zephyrglass Compass beyond the cobalt arch.';
+    const stored = record('retained-flag', text, { provenance: { classification: 'verified', generationEligible: false } });
+    expect(selectStoredGamingEvidence([stored], input)).toEqual([]);
+    stored.provenance = { classification: 'stored_unverified', generationEligible: true };
+    expect(selectStoredGamingEvidence([stored], input)).toEqual([]);
+    stored.provenance = { classification: 'verified', generationEligible: true };
+    expect(selectStoredGamingEvidence([stored], input)).toHaveLength(1);
+  });
+
   test('retains independently extracted structured equipment evidence without treating metadata as evidence', () => {
     const row = record('structured', 'A build planner page describes equipment choices.', {
       recordType: 'build', normalized: { text: 'A build planner page describes equipment choices.',

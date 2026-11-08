@@ -145,7 +145,40 @@ acquired identities remain bounded negative paths. Additional acquired-document
 tests cover Journey, Silver Harbor, Slate Meridian, localized titles, novel
 guide-framed topics, incomplete statistics and durable consent.
 
-Internal CLEAR policy v6 invalidates prior v1/v2/v3/v4/v5 assessments while preserving
+A bounded first prose sentence describing a complete named title as a video or
+genre game can establish acquired wiki identity alongside the primary title.
+Only the parser-owned leading heading is removed for this check. Quoted,
+compared, requested, excluded or incomplete descriptions cannot supply that
+proof. Complete edition and sequel names remain distinct. This identity says
+nothing about whether the wiki index contains actionable gameplay evidence;
+linked walkthroughs are not acquired merely because the index links to them.
+Complete `Related guide:` and `Related guides:` references use the existing
+bounded local-reference projection, alongside related articles. Their content
+cannot contribute gameplay evidence or override primary declarations.
+An implicit `in` clause also needs a complete nominal guide frame before an
+unknown article subject can contradict the requested game. A guide marker later
+in concatenated navigation cannot manufacture that frame. Explicit named-game
+declarations and recognized leading wrong-game names retain their vetoes.
+Complete Game/Edition/Patch metadata records remain identity or applicability
+assertions; recognized metadata fields alone do not establish gameplay sufficiency.
+Closed HTML paragraphs may also contain a local `in TITLE - LINKED TOPIC`
+reference. The parser recognizes that narrow nominal frame after the complete
+visible-source security scan; declarations, metadata fields, gameplay actions,
+requirements and edition labels remain excluded from this treatment. The resolver
+binds at most 64 reference spans to exact content/game hashes in the acquired
+document metadata. Matching game-scoped projection removes only the nominal
+frame, preserving the original document and every surrounding assertion. It
+cannot establish primary identity or supply gameplay evidence. Alias-equivalent
+spans are deduplicated and overlapping spans are ignored. Annotation tampering
+also invalidates the resolver's document attestation.
+
+The original synthetic fixtures in `tests/fixtures/gaming-wiki-identity.ts` run
+through the protected acquisition and production extraction paths in
+`tests/gaming-wiki-identity-regression.test.ts`. They are not captured IGN
+responses and do not establish the historical rejection's exact cause or live
+publisher availability.
+
+Internal CLEAR policy v7 invalidates prior v1/v2/v3/v4/v5/v6 assessments while preserving
 the public `gaming-clear/v1` schema. Context fingerprints include the policy
 revision, and approved hybrid ingestion revisions bind that revision. Existing
 extraction caches may reuse bounded acquired bytes; approval decisions require

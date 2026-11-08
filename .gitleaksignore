@@ -59,3 +59,9 @@ b37f8ae9cf249fbdeb58cf9e8614214bf5e11ae4:tests/live-validation-gaming-adapter.te
 # Public SQLite kv_state row name for recovered usage totals; no credential or capability.
 d4c4b9e2752a542d6983022e4cd45c56661556f3:daemon-python/arcanos/agentic/history_db.py:generic-api-key:26
 1f058c42b57197448b08e073664da988bf29ec2c:daemon-python/arcanos/agentic/history_db.py:generic-api-key:26
+# Fixed synthetic actor labels in offline Gaming identity fixtures; no authentication capability.
+# Current labels are shortened; retain only these four exact historical false positives.
+579ba2319cec9e8de326f5374135797a6833b629:tests/gaming-cr2-claim-identity.test.ts:generic-api-key:54
+579ba2319cec9e8de326f5374135797a6833b629:tests/gaming-cr2-claim-identity.test.ts:generic-api-key:81
+579ba2319cec9e8de326f5374135797a6833b629:tests/gaming-cr2-claim-identity.test.ts:generic-api-key:90
+579ba2319cec9e8de326f5374135797a6833b629:tests/gaming-cr2-claim-identity.test.ts:generic-api-key:140

@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { load } from 'cheerio';
 import { preservePrimaryContentSidebarLayouts } from '@shared/gaming/gamingDocumentTextNormalization.js';
+import { normalizeGamingComparableIdentity } from '@shared/gaming/gamingGameRegistry.js';
+import { gamingAttributableClaimText } from '@shared/gaming/gamingRetrievalPolicy.js';
 import { countGamingHtmlElements, filterGamingDocumentInstructions, hasGamingActionableProse, GAMING_DOCUMENT_FURNITURE_SELECTOR,
   gamingDocumentExtractionProfile, gamingDocumentFetchOptions } from '@services/gamingDocumentExtraction.js';
 import {
@@ -16,14 +18,24 @@ export const GAMING_HTML_EVIDENCE_LIMITS = Object.freeze({
   columns: 32, span: 64, expandedCells: 32_768, lists: 256, units: 2_048,
   fields: 32, fieldChars: 1_024, contextChars: 512, unitChars: 4_096, outputChars: 1_000_000
 });
+export const GAMING_SOURCE_USE_RESTRICTION = /\b(?:no (?:automated|machine) (?:access|use)|automated (?:access|use) (?:is )?prohibited|do not (?:store|redistribute) (?:this|our) content)\b/iu;
 type Element = cheerio.Element;
 type CheerioAPI = ReturnType<typeof load>;
 type Fields = GamingEvidenceUnit['fields'];
 interface SourceLocation { startOffset: number; endOffset: number; endTag?: { endOffset: number } }
 type LocatedElement = Element & { sourceCodeLocation?: SourceLocation };
+export interface GamingHtmlLocalTopicReference {
+  text: string; paragraphText: string; gameHash: string;
+  paragraphOccurrence: number; paragraphCount: number; frameStart: number;
+}
 export interface GamingHtmlEvidenceExtractionResult extends GamingEvidenceExtractionResult {
   /** Original accepted HTML with structural candidates removed from the prose fallback. */
   proseBody?: string;
+  /** Parser-owned local article references; the resolver retains only bound spans. */
+  localTopicReferences?: GamingHtmlLocalTopicReference[];
+  /** Layout search exhaustion cannot establish unrestricted source scope. */
+  applicabilityUnverified?: true;
+  sourceUseRestricted?: true;
 }
 const EXCLUDED = `aside,[role="menu"],${GAMING_DOCUMENT_FURNITURE_SELECTOR}`;
 const DISCUSSION = '[itemtype="https://schema.org/DiscussionForumPosting"],[itemtype="http://schema.org/DiscussionForumPosting"]';
@@ -38,6 +50,9 @@ const LABELLED_FIELD = /^([^:;|\n]{1,80}):\s*(.*)$/;
 // value cannot turn a partial tuple back into unrestricted prose.
 const RECORD_FIELD_LABEL = /^(?:game|edition|scope|applicability|patch|version|system|star system|body|planet|moon|site(?: number| identifier|[ _-]?id)?|pml(?:\/site)?|resource|material|mineral|item|equipment|weapon|armou?r|stat(?:istic)?|attribute|value|units?|mechanic|change|before|after|skill|build|notes?|requirements?|compatibility|description)$/iu;
 const PARAGRAPH_IDENTITY_FIELD = /^(Game|Edition)\s*:\s*([^;.!?\n]*?)(?=\s+(?:Game|Edition)\s*:|[;.!?]|$)/iu;
+const APPLICABILITY_LIST_LABEL = /^(Platforms?|Regions?|Editions?|Patch(?:es)?|Versions?|Source use|Usage restrictions)\s*:?$/iu;
+interface ApplicabilityListLabel { label: string; complete: boolean; preserveOnly: boolean; exhausted?: true }
+const APPLICABILITY_LAYOUT_LIMITS = Object.freeze({ ancestors: 16, siblings: 32 });
 
 function text(value: string): string {
   return value.normalize('NFKC').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -72,6 +87,39 @@ function eligible($: CheerioAPI, element: Element): boolean {
 }
 function unique(values: string[]): string[] { return [...new Set(values.filter(Boolean))]; }
 
+/** A closed source label owns its following list, including bounded layout
+ * wrappers. Independent sections and intervening headings are scope boundaries. */
+function applicabilityListLabel($: CheerioAPI, list: Element): ApplicabilityListLabel | undefined {
+  let current = $(list);
+  let complete = true;
+  const exhausted = (): ApplicabilityListLabel => ({ label: '', complete: false, preserveOnly: true, exhausted: true });
+  for (let depth = 0; depth < APPLICABILITY_LAYOUT_LIMITS.ancestors && current.length; depth++, current = current.parent()) {
+    if (depth > 0 && current.is('article,main,figure,body,html')) return undefined;
+    const previous = current.prevAll().toArray();
+    for (const sibling of previous.slice(0, APPLICABILITY_LAYOUT_LIMITS.siblings)) {
+      // A heading can own the following section, but a separate sibling section
+      // cannot lend its internal label to another independent section/list.
+      if ($(sibling).is('section,article,main,figure,ul,ol,dl,table')) return undefined;
+      const value = cleanElementText($, sibling);
+      if (!value) continue;
+      const match = APPLICABILITY_LIST_LABEL.exec(value);
+      if (match) {
+        const sourceLabel = match[1].toLowerCase();
+        return { label: /^platforms?$/u.test(sourceLabel) ? 'Platforms'
+          : /^regions?$/u.test(sourceLabel) ? 'Regions' : /^editions?$/u.test(sourceLabel) ? 'Edition'
+            // The structural evidence vocabulary already maps Version to Patch.
+            : /^(?:versions?|patch(?:es)?)$/u.test(sourceLabel) ? 'Patch' : 'Source use',
+          complete: complete && closed(sibling), preserveOnly: /^(?:source use|usage restrictions)$/u.test(sourceLabel) };
+      }
+      if ($(sibling).is('h1,h2,h3,h4,h5,h6,section,article,main,figure,ul,ol,dl,table')) return undefined;
+      complete = false;
+    }
+    if (previous.length > APPLICABILITY_LAYOUT_LIMITS.siblings) return exhausted();
+    if (depth > 0 && current.is('section')) return undefined;
+  }
+  return current.length ? exhausted() : undefined;
+}
+
 /** Parse only the already acquired HTML. There is no fetch, script evaluation, or question input. */
 export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput): GamingHtmlEvidenceExtractionResult {
   const result: GamingHtmlEvidenceExtractionResult = {
@@ -101,6 +149,7 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
   // parse; any possible markup or entity still takes the parser-owned path.
   if (!htmlContent && !/[<&]/u.test(input.body)) {
     const visibleText = text(input.body);
+    if (GAMING_SOURCE_USE_RESTRICTION.test(visibleText)) result.sourceUseRestricted = true;
     if (filterGamingDocumentInstructions(input.body) !== visibleText) fail('source_instruction_filtered');
     deadlineExpired();
     return result;
@@ -124,14 +173,116 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
   // entire bounded visible response before selection so omitted instructions
   // cannot make a partially sanitized document eligible for grounding.
   const rawTitle = $('title').first().text();
+  // Cheerio preserves adjacent inline text and decodes entities. Inspect the
+  // full visible response before source furniture or navigation can disappear.
+  if (GAMING_SOURCE_USE_RESTRICTION.test(visibleText) || GAMING_SOURCE_USE_RESTRICTION.test(text(rawTitle)))
+    result.sourceUseRestricted = true;
   if ([[rawVisibleText, visibleText], [rawTitle, text(rawTitle)]].some(([raw, normalized]) =>
     filterGamingDocumentInstructions(raw) !== normalized)) fail('source_instruction_filtered');
   if (deadlineExpired()) return result;
   if (!htmlContent) return result;
+  const applicabilityLists = new Map<Element, ApplicabilityListLabel | undefined>();
+  for (const list of $('ul,ol').toArray().slice(0, limit.lists)) {
+    if (deadlineExpired()) return result;
+    const applicability = eligible($, list) ? applicabilityListLabel($, list) : undefined;
+    applicabilityLists.set(list, applicability);
+    if (applicability?.exhausted) { result.applicabilityUnverified = true; fail('applicability_scope_unverified'); }
+  }
+  // A label-only linked article is catalog navigation, not a source-wide game
+  // declaration or a structured gameplay record. Inspect the complete response
+  // above first; omission cannot erase source instructions or use restrictions.
+  for (const item of $('li').toArray()) {
+    if (deadlineExpired()) return result;
+    const node = $(item);
+    const parentList = node.closest('ul,ol').get(0);
+    // Unknown/exhausted list layouts remain visible; a labelled applicability
+    // value cannot become disposable navigation merely because it is linked.
+    if (!parentList || !applicabilityLists.has(parentList) || applicabilityLists.get(parentList)) continue;
+    if (!closed(item) || node.children('ul,ol,dl,table').length || node.find('ul,ol,dl,table').length) continue;
+    const anchors = node.find('a[href]');
+    if (!anchors.length || anchors.length > 16 || anchors.toArray().some(anchor => !closed(anchor))) continue;
+    const structuredLabel = listElementText($, item);
+    const label = text(structuredLabel);
+    if (!label || label.length > GAMING_HTML_EVIDENCE_LIMITS.unitChars
+      || [...structuredLabel.matchAll(/(?:^|[;|\n])\s*([^:;|\n]{1,80}):/gu)].some(match => RECORD_FIELD_LABEL.test(match[1])
+        || /^(?:platforms?|regions?|effective(?: from| until)?|published(?: at)?|source updated(?: at)?|last updated|season|current (?:patch|build|season)|valid (?:from|until))$/iu.test(match[1]))
+      // Linked facts, short steps and version/date-bearing release entries are
+      // authored evidence even if their entire visible text is a single link.
+      || /[.!?](?:\s|$)|\p{N}/u.test(label)
+      || /\b(?:patch(?:es)?|builds?|updates?|releases?|versions?|seasons?|platforms?|regions?|effective|published|updated|baseline|supersedes)\b/iu.test(label)
+      || /^(?:(?:first|next|then)[,:]?\s+)?(?:to\s+|attack\b|avoid\b|block\b|collect\b|defeat\b|dodge\b|equip\b|explore\b|follow\b|gather\b|heal\b|jump\b|move\b|open\b|press\b|restore\b|save\b|select\b|spend\b|upgrade\b|use\b|wait\b|this\s+(?:guide|article|page|document|source)\b)/iu.test(label)
+      || /\b(?:is|are|was|were|has|have|only|not|no|without|except|requires?|costs?|grants?|unlocks?|available|must|should)\b/iu.test(label)
+      || hasGamingActionableProse(label) || gamingAttributableClaimText(label)) continue;
+    const remainder = node.clone();
+    remainder.find('a[href]').remove();
+    if (/^[\s|/,:;.!?()[\]{}•–—-]*$/u.test(remainder.text())) node.remove();
+  }
+  if (deadlineExpired()) return result;
   // Inspect the complete visible response above before omitting existing
   // publisher furniture from either structured records or the prose fallback.
   for (const selector of gamingDocumentExtractionProfile(input.sourceUrl)?.removeSelectors ?? []) $(selector).remove();
   if (deadlineExpired()) return result;
+  // A named article topic linked after a spaced editorial separator is a local
+  // reference, rather than a new source-wide game title. Preserve the paragraph
+  // here; request projection can exclude only that frame after matching game
+  // identity. Never annotate declarations, requirements, edition or record fields.
+  const localTopicReferences: NonNullable<GamingHtmlEvidenceExtractionResult['localTopicReferences']> = [];
+  const referenceAnchors = $('p > a[href]').toArray().slice(0, 256);
+  const paragraphTexts = new Map<Element, string>();
+  const paragraphTextFor = (paragraph: Element): string => {
+    let value = paragraphTexts.get(paragraph);
+    if (value === undefined) { value = text($(paragraph).text()); paragraphTexts.set(paragraph, value); }
+    return value;
+  };
+  const matchingParagraphs = new Map<string, Element[]>();
+  for (const anchor of referenceAnchors) {
+    const value = paragraphTextFor($(anchor).parent().get(0)!);
+    if (value.length <= 512) matchingParagraphs.set(value, []);
+  }
+  // Count plain as well as linked equal paragraphs. A textual copy cannot move
+  // a parser annotation onto an unlinked scope at an earlier occurrence.
+  for (const paragraph of matchingParagraphs.size ? $('p').toArray() : []) {
+    if (deadlineExpired()) return result;
+    const matches = matchingParagraphs.get(paragraphTextFor(paragraph));
+    if (matches && eligible($, paragraph)) matches.push(paragraph);
+  }
+  const paragraphOccurrences = new Map<Element, { occurrence: number; count: number }>();
+  for (const matches of matchingParagraphs.values()) for (const [occurrence, paragraph] of matches.entries())
+    paragraphOccurrences.set(paragraph, { occurrence, count: matches.length });
+  for (const anchor of referenceAnchors) {
+    if (deadlineExpired()) return result;
+    const paragraph = $(anchor).parent().get(0)!;
+    const paragraphText = paragraphTextFor(paragraph);
+    const topic = text($(anchor).text());
+    const preceding = anchor.prev?.type === 'text' ? text($(anchor.prev).text()) : '';
+    if (!closed(anchor) || !closed(paragraph) || !eligible($, paragraph)
+      || paragraphText.length > 512 || !topic || topic.length > 120
+      || /\bthis\s+(?:guide|build|walkthrough|article|source|page|document)\s+(?:covers|is\s+(?:for|about)|requires?|needs?|only\s+works)\b/iu.test(paragraphText)
+      || /\b(?:game|edition|scope|applicability|patch|platforms?)\s*:/iu.test(paragraphText)
+      || /\b(?:only|requires?|needs?|exclusiv\w*|not|never|without|except|edition|dlc|expansion|remake|remaster(?:ed)?)\b/iu.test(paragraphText)
+      || hasGamingActionableProse(paragraphText)
+      || /\b(?:attack|avoid|block|collect|defeat|dodge|equip|explore|follow|gather|heal|jump|move|open|press|restore|save|select|spend|upgrade|use|wait|costs?|grants?|unlocks?|deals?|inflicts?)\b/iu.test(paragraphText)
+      || /^(?:ii|iii|iv|\d+|classic)\b/iu.test(topic)) continue;
+    const scopes = [...preceding.matchAll(/\bin\s+/giu)];
+    const scope = scopes.at(-1);
+    const match = scope && /^in\s+(?!the\s+game\b)([^.!?;,\n]{1,120}?)\s+[-–—]$/iu.exec(preceding.slice(scope.index));
+    if (!match || `${match[1]} - ${topic}`.length > 160) continue;
+    // Only the linked nominal frame is projected. Other sentences, named-game
+    // scopes and contradictory assertions in the paragraph remain inspectable.
+    const framePrefix = preceding.slice(scope!.index);
+    const frame = `${framePrefix} ${topic}`;
+    const occurrence = paragraphOccurrences.get(paragraph);
+    const children = $(paragraph).contents().toArray();
+    const prefix = text(children.slice(0, children.indexOf(anchor)).map(child => $(child).text()).join(''));
+    const frameStart = prefix.length - framePrefix.length;
+    if (!occurrence || frameStart < 0 || paragraphText.slice(frameStart, frameStart + frame.length) !== frame) continue;
+    const reference = { text: frame, paragraphText, paragraphOccurrence: occurrence.occurrence,
+      paragraphCount: occurrence.count, frameStart, gameHash: createHash('sha256')
+      .update(normalizeGamingComparableIdentity(match[1].trim())).digest('hex') };
+    localTopicReferences.push(reference);
+    if (localTopicReferences.length >= 64) break;
+  }
+  if (localTopicReferences.length) result.localTopicReferences = localTopicReferences;
   if (visibleText.length <= 300 && /\b(?:verify (?:that )?you are human|checking your browser|enable javascript and cookies to continue|sign in to continue|log in to continue)\b/iu.test(visibleText)) {
     result.proseBody = ''; fail('access_challenge'); return result;
   }
@@ -211,11 +362,11 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
     const nearby = node.prevAll('p,aside,div,span,small').slice(0, 2).add(node.nextAll('p,aside,div,span,small').slice(0, 2));
     return nearby.add(nearby.find(qualifierSelector).filter(qualifierBlock));
   }
-  function context(element: Element, scope: string, caption?: string): GamingEvidenceUnit['context'] {
+  function context(element: Element, scope: string, caption?: string, ancestorLimit = 6): GamingEvidenceUnit['context'] {
     const node = $(element);
     let heading: string | undefined;
     let current = node;
-    for (let level = 0; level < 6 && current.length && !heading; level++, current = current.parent()) {
+    for (let level = 0; level < ancestorLimit && current.length && !heading; level++, current = current.parent()) {
       const candidate = current.prevAll('h1,h2,h3,h4,h5,h6').first();
       if (candidate.length) heading = text(candidate.text());
       if (!heading && current.is('section,article,main')) heading = text(current.children('h1,h2,h3,h4,h5,h6').add(current.children('header').find('h1,h2,h3,h4,h5,h6')).first().text()) || undefined;
@@ -231,15 +382,15 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
       .add(container.children('header').find('h1,h2,h3,h4,h5,h6')).first().text()) || undefined;
     let relevant = nearbyQualifiers(node);
     let ancestor = node.parent();
-    for (let depth = 0; depth < 6 && ancestor.length && !ancestor.is('html'); depth++, ancestor = ancestor.parent()) {
+    for (let depth = 0; depth < ancestorLimit && ancestor.length && !ancestor.is('html'); depth++, ancestor = ancestor.parent()) {
       relevant = relevant.add(ancestor.children(qualifierSelector).filter(qualifierBlock)).add(nearbyQualifiers(ancestor));
     }
     if (ancestor.length && !ancestor.is('html') && wholeArticleContext) {
       const enclosingScopes = container.parents('article,main');
-      if (enclosingScopes.length > 6) markContext(scope, 'required_context_missing');
+      if (enclosingScopes.length > ancestorLimit) markContext(scope, 'required_context_missing');
       // Plain wrappers must not hide notes in an enclosing article/main scope.
       // The candidate-scope check below still excludes independent sibling scopes.
-      relevant = relevant.add(enclosingScopes.slice(0, 6).find(qualifierSelector).filter(qualifierBlock));
+      relevant = relevant.add(enclosingScopes.slice(0, ancestorLimit).find(qualifierSelector).filter(qualifierBlock));
     }
     if (ancestor.length && !ancestor.is('html') && !wholeArticleContext) markContext(scope, 'required_context_missing');
     if (container.length) relevant = relevant.add(container.find(qualifierSelector).filter(qualifierBlock));
@@ -448,7 +599,10 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
   result.attempts.push('html_list', 'html_definition');
   const lists = $('ul,ol,dl').toArray();
   const consumedNestedLists = new Set<Element>();
-  if (lists.length > limit.lists) { result.truncated = true; fail('extraction_budget_exhausted'); }
+  if (lists.length > limit.lists) {
+    result.truncated = true; result.applicabilityUnverified = true;
+    fail('extraction_budget_exhausted'); fail('applicability_scope_unverified');
+  }
   function parseFields(value: string): Fields {
     const fields: Fields = [];
     for (const part of value.split(/[;|\n]+/).map((part) => part.trim()).filter(Boolean)) {
@@ -463,7 +617,34 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
     if (exhausted()) break;
     if (!eligible($, list) || $(list).closest('table:not([role="presentation"])').length || consumedNestedLists.has(list)) continue;
     const scope = `list:${listIndex}`;
-    const unitContext = context(list, scope);
+    const applicability = applicabilityLists.get(list);
+    // Metadata association and its qualifier inspection share one bound. Other
+    // structural records retain their established context limit.
+    const unitContext = context(list, scope, undefined,
+      applicability && !applicability.exhausted ? APPLICABILITY_LAYOUT_LIMITS.ancestors : 6);
+    if (applicability && !applicability.preserveOnly) {
+      const items = $(list).find('li').toArray().filter(item => !$(item).find('ul,ol,dl,table').length);
+      const repeatedLabel = new RegExp(`^(?:${applicability.label === 'Platforms' ? 'Platforms?' : applicability.label === 'Regions' ? 'Regions?'
+        : applicability.label === 'Patch' ? 'Patch|Version' : applicability.label}):\\s*`, 'iu');
+      const values = items.slice(0, limit.fields).map(item => listElementText($, item).replace(repeatedLabel, ''));
+      const reasons = !applicability.complete || !closed(list) || !intactTransportScope(list)
+        || items.some(item => !closed(item) || $(item).find('*').toArray().some(child => !$(child).is('br,img') && !closed(child)))
+        ? ['content_truncated'] : [];
+      if (!values.length || values.some(value => !value)) reasons.push('incomplete_record');
+      if (items.length > limit.fields) reasons.push('content_truncated');
+      if ($(list).find('ul,ol,dl,table').length
+        || !['Platforms', 'Regions'].includes(applicability.label) && values.length !== 1) reasons.push('ambiguous_field_mapping');
+      const explicitFields = values.some(value => value.split(/[;|\n]+/u).some(part => LABELLED_FIELD.test(part.trim())));
+      // Other explicit fields retain the ordinary record parser and its Game/
+      // Edition vetoes. Their surrounding applicability cannot become absent.
+      addUnit('paragraph', [{ label: applicability.label, value: explicitFields ? '' : values.join(', ') }], list, 'html_list',
+        { ...unitContext, scope: `${scope}/applicability` }, [...reasons, ...(explicitFields ? ['incomplete_record'] : [])]);
+      if (!explicitFields) {
+        removedProseElements.add(list);
+        for (const nestedList of $(list).find('ul,ol,dl').toArray()) consumedNestedLists.add(nestedList);
+        continue;
+      }
+    }
     if ($(list).is('dl')) {
       removedProseElements.add(list);
       let fields: Fields = []; let reasons: string[] = []; let first: Element = list;
@@ -526,6 +707,17 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
       }
       removedProseElements.add(item);
       const reasons = !closed(item) || !closed(list) || !intactTransportScope(list) ? ['content_truncated'] : [];
+      // A leading unlabelled line cannot invalidate and erase later explicit
+      // scope fields. Preserve it under a non-semantic parser label while the
+      // incomplete integrity flag prevents any promotion to gameplay evidence.
+      if (fields.some(field => !field.label)) {
+        reasons.push('incomplete_record');
+        if (fields.some(field => /^(?:game|edition|scope|applicability|patch|version|platforms?|regions?)$/iu.test(field.label))) {
+          result.applicabilityUnverified = true;
+          fail('applicability_scope_unverified');
+        }
+        fields = fields.map(field => field.label ? field : { label: 'Unlabelled content', value: field.value });
+      }
       if ($(item).find('table,ul,ol,dl').length > (nested.length ? 1 : 0)) reasons.push('ambiguous_field_mapping', 'required_context_missing');
       if (nested.children('li').toArray().some((child) => !closed(child))) reasons.push('content_truncated');
       addUnit('list_item', fields, item, 'html_list', { ...unitContext, scope: `${scope}/item:${itemIndex}` }, reasons);

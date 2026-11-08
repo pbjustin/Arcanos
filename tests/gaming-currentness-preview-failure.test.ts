@@ -1,5 +1,8 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import request from 'supertest';
+import { createGamingLifecycleDrain } from './testUtils/gamingLifecycleDrain.js';
+
+const lifecycle = createGamingLifecycleDrain();
 
 const actualFreshness = await import('../src/shared/gaming/gamingFreshnessCore.js');
 const actualPolicy = await import('../src/shared/gaming/gamingHybridPolicyCore.js');
@@ -42,13 +45,15 @@ async function queryGuide(mode: 'guide' | 'build' | 'meta' = 'guide') {
 }
 
 describe('served Gaming currentness proof boundary', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await lifecycle.drain();
     extract.mockReset().mockImplementation(actualFreshness.extractGamingFreshnessMetadata);
     evaluate.mockReset().mockImplementation(actualFreshness.evaluateGamingFreshness);
     project.mockReset().mockImplementation(actualPolicy.projectGamingHybridCandidateEvidence);
     disposition.mockReset().mockImplementation(actualDisposition.resolveGamingFreshnessDisposition);
     claimsCurrentness.mockReset().mockImplementation(actualDisposition.gamingAnswerClaimsVerifiedCurrentness);
   });
+  afterEach(async () => { await lifecycle.drain(); });
 
   // Guide requests run the full large-source proof set before currentness checks.
   // Use the existing 30-second served-guide test bound for coverage instrumentation.
@@ -111,7 +116,10 @@ describe('served Gaming currentness proof boundary', () => {
   }, 30_000);
 
   it.each(['missing build admitted', 'missing platform admitted', 'unexpected extraction error'])(
-    'withholds every Gaming proof and success body after %s', async scenario => {
+    // These requests execute the same bounded large-source proof set as the
+    // 30-second served-guide cases above. Covered guide cases measured up to
+    // 2.5 seconds; currentness itself took 41 ms across both failing scenarios.
+    'withholds every Gaming proof and success body after %s', lifecycle.track(async scenario => {
       extract.mockImplementation((...args) => {
         const doc = args[0];
         if (!doc.publicUrl.startsWith('https://currentness-preview.example/')) return actualFreshness.extractGamingFreshnessMetadata(...args);
@@ -130,7 +138,7 @@ describe('served Gaming currentness proof boundary', () => {
       expect(response.body).toEqual({ error: 'PREVIEW_GAMING_CURRENTNESS_CONTRACT_INVALID' });
       expect(response.text).not.toContain('Sealed preview guide response.');
       expect(response.text).not.toContain('private-currentness-preview-sentinel');
-    }
+    }), 30_000
   );
 
   it.each(['build', 'meta'] as const)('does not claim currentness fixture execution for %s', async mode => {

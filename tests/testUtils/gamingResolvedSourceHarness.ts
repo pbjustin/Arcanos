@@ -1,5 +1,7 @@
 import type { Pool } from 'pg';
+import { createHash } from 'node:crypto';
 import { normalizeGamingGameIdentity } from '../../src/shared/gaming/gamingGameIdentity.js';
+import { gamingSourceHasAuthorityRestriction, gamingSourceRequiresAuthorityReassessment } from '../../src/shared/gaming/gamingSourceAuthority.js';
 
 export const resolvedSourceId = '10000000-0000-4000-8000-000000000001';
 
@@ -9,6 +11,7 @@ export class GamingResolvedSourceHarness {
   revisions: Array<Record<string, any>> = [];
   records: Array<Record<string, any>> = [];
   queries: string[] = [];
+  private sourceVersion = 0;
   readonly pool = {
     connect: async () => ({ query: this.query.bind(this), release: () => undefined }),
     query: this.query.bind(this)
@@ -20,6 +23,35 @@ export class GamingResolvedSourceHarness {
     const result = (rows: Array<Record<string, any>> = []) => ({ rows, rowCount: rows.length });
     if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)) return result();
     if (sql.startsWith("SELECT set_config('statement_timeout'")) return result();
+    if (sql.startsWith('UPDATE gaming_sources')) this.sourceVersion += 1;
+    if (sql.startsWith('SELECT COUNT(*) FILTER')) {
+      const matches = this.source && values[0].includes(this.source.game_key)
+        && this.source.canonical_url_hash === values[1] && this.source.canonical_url === values[2];
+      return result([{ restricted_revision_count: String(matches
+        ? this.revisions.filter(revision => gamingSourceHasAuthorityRestriction(revision.provenance)).length : 0),
+        requires_reassessment: Boolean(matches && this.revisions.length),
+        state_fingerprint: createHash('md5').update(matches ? JSON.stringify([this.source!.id, this.sourceVersion,
+          this.revisions.map(revision => revision.id)]) : '').digest('hex') }]);
+    }
+    if (sql.startsWith('SELECT COUNT(*) AS restricted_revision_count')) {
+      const matches = this.source?.game_key === values[0] && this.source?.canonical_url_hash === values[1]
+        && this.source?.canonical_url === values[2];
+      return result([{ restricted_revision_count: String(matches
+        ? this.revisions.filter(revision => gamingSourceHasAuthorityRestriction(revision.provenance)).length : 0) }]);
+    }
+    if (sql.startsWith('SELECT COUNT(*) AS authority_grant_revision_count')) {
+      return result([{ authority_grant_revision_count: String(this.revisions.filter(revision => revision.source_id === values[0]
+        && revision.provenance.authorityAssessment !== undefined).length) }]);
+    }
+    if (sql.startsWith('SELECT id FROM gaming_sources WHERE ($1::uuid IS NULL OR id = $1)')) {
+      return result(this.source && (values[0] === null || this.source.id === values[0]) && this.source.game_key === values[1]
+        && this.source.canonical_url_hash === values[2] && this.source.canonical_url === values[3] ? [{ id: this.source.id }] : []);
+    }
+    if (sql.startsWith("UPDATE gaming_sources SET last_checked_at = $2, last_error_code = 'SOURCE_USE_RESTRICTED'")) {
+      if (this.source?.id === values[0]) Object.assign(this.source, { last_checked_at: values[1],
+        last_error_code: 'SOURCE_USE_RESTRICTED' });
+      return result(this.source?.id === values[0] ? [this.source] : []);
+    }
     if (sql.startsWith('INSERT INTO gaming_sources')) {
       if (this.source) return result();
       this.source = {
@@ -35,7 +67,11 @@ export class GamingResolvedSourceHarness {
       if (this.source) Object.assign(this.source, { game_name: values[1] ?? this.source.game_name,
         public_url: values[2], host: values[3], source_type: values[4], trust_score: values[5], priority: values[6],
         status: 'active', last_checked_at: values[7], last_success_at: values[7], last_error_code: null });
-      return result(this.source ? [this.source] : []);
+      return result(this.source ? [{ ...this.source,
+        authority_history_requires_reassessment: this.revisions.some(revision => gamingSourceRequiresAuthorityReassessment(revision.provenance)),
+        restricted_revision_count: String(this.revisions.filter(revision => gamingSourceHasAuthorityRestriction(revision.provenance)).length),
+        authority_grant_revision_count: String(this.revisions.filter(revision => revision.provenance.authorityAssessment !== undefined).length),
+      }] : []);
     }
     if (sql.endsWith('FOR UPDATE') || sql.startsWith('UPDATE gaming_sources')) {
       return result(this.source ? [this.source] : []);
@@ -115,12 +151,14 @@ export class GamingResolvedSourceHarness {
         && (disjunction
           ? words.some(word => record.search_text.toLowerCase().includes(word))
           : words.every(word => record.search_text.toLowerCase().includes(word))))
-        .slice(0, values[3]).map(record => {
+        .slice(values[5] ?? 0, (values[5] ?? 0) + values[3]).map(record => {
           const revision = this.revisions.find(item => item.id === record.source_revision_id)!;
           return {
             ...this.source, ...record, ...revision, record_id: record.id,
             record_patch: record.patch, record_created_at: record.created_at,
             source_id: this.source?.id, revision_id: revision.id, revision_patch: revision.patch,
+            source_has_non_authoritative_history: this.revisions.some(item => gamingSourceRequiresAuthorityReassessment(item.provenance)),
+            source_restricted_revision_count: String(this.revisions.filter(item => gamingSourceHasAuthorityRestriction(item.provenance)).length),
             relevance: 1
           };
         }));
@@ -131,6 +169,7 @@ export class GamingResolvedSourceHarness {
         && this.records.some(record => record.status === 'active' && record.game_key === this.source?.game_key
           && this.revisions.some(revision => revision.id === record.source_revision_id && revision.source_id === this.source?.id)
           && (!values[1] || record.record_type === values[1]))
+        && !(values[2] > 0)
         ? [{ source_id: this.source.id, game_key: this.source.game_key, game_name: this.source.game_name }] : []);
     }
     throw new Error('Unexpected SQL operation in Gaming fixture');

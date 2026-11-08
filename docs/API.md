@@ -2077,6 +2077,41 @@ sanitized lifecycle projection with source-level states, safe errors, record
 counts, provenance, and timestamps—never generic job payloads, queue state,
 worker state, raw database records, or provider diagnostics.
 
+Processing acceptance, durable storage, and gameplay authority are separate.
+Existing per-source `status` values remain unchanged. Additive `classification`
+values distinguish `verified`, `stored_unverified`, `reference_only`,
+`needs_reassessment`, and `rejected`; `generationEligible: false` excludes retained
+content from generation retrieval. A revision retains its content hash,
+classification, applicability restrictions, a preview of up to 16,000 characters,
+and bounded chunks. Partial chunk coverage can omit source text beyond that
+preview. The ingestion-status response exposes sanitized metadata rather than
+revision text; retained content must not be treated as an exact-text archive for
+inspection or reassessment. `verified` only permits consideration: request-specific
+applicability, evidence CLEAR, spoiler controls, Trinity citations and final answer
+CLEAR still apply. A catalog/index can be stored as reference material; its links
+are never acquired or represented as ingested by that operation.
+
+V2 candidate submission may return a content-bound `requires_confirmation`
+candidate with a `REFERENCE_ONLY_REQUIRES_CONFIRMATION` or
+`UNVERIFIED_RETENTION_REQUIRES_CONFIRMATION` reason. Those artifacts are retained separately from accepted
+evidence under the same workflow ownership, expiry, capacity and acquisition
+budgets. Only a separately authorized `ask_before_store` ingestion with explicit
+confirmation can store them; automatic storage remains limited to fully approved
+sources. The worker reacquires the exact source and rejects changed content,
+source-use restrictions and contradictory game identity. Storage does not create
+a source assessment. Later retrieval excludes every stored non-authoritative
+classification until a separately authorized reassessment writes an eligible revision.
+The persistence transaction checks immutable source history after acquiring its
+source lock. Generic refresh, duplicate submissions and historical reactivation
+preserve that restriction. A new current assessment must follow the latest held
+revision and binds its authority to the exact document, revision and retained
+history; older approvals cannot clear a later hold. The same check applies after
+a worker or retrieval process restarts. History is captured before assessment,
+so clock differences cannot renew an earlier approval, while raw retained records
+remain readable for inspection.
+Sanitized `EXTRACTION_FAILED` and `STORAGE_FAILED` errors distinguish document
+processing and persistence failures from acquisition failures.
+
 Live supplied-source retrieval, initial durable ingestion, and refresh all use
 `resolveGamingDocument()` in `src/services/gamingDocumentResolution.ts`. Its
 small ordered resolver registry acquires a bounded `ResolvedGamingDocument`

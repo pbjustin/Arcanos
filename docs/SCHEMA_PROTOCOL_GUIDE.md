@@ -12,7 +12,7 @@ continues to load only the existing input/output schema pairs.
 See [Gaming resource behavior](API.md#private-chatgpt-gaming-resource).
 
 The sealed Gaming MCP preview pins the full released eight-tool catalog at
-65,103 JSON bytes and its exact SHA-256. The reviewed changes are v2 release and
+65,104 JSON bytes and its exact SHA-256. The reviewed changes are v2 release and
 revision guidance, bounded additive frontend recovery fields and paired v2
 query clarification continuation fields; tool names,
 query/write OAuth scopes and consent checks retain their existing authority.
@@ -46,6 +46,13 @@ actor ownership, revision, expiry, immutable scope and idempotency remain checke
 It adds no command-envelope ID, ActionPlan shape, Python-owned protocol or
 schema-catalog family. Query, transient candidate validation, and consequential
 durable ingestion are separate operations. See [Gaming API](API.md#gaming-hybrid-knowledge-actions).
+
+Gaming source output classifications and `generationEligible` are additive optional
+fields; existing processing status enums and required fields remain unchanged.
+V2 storage-only candidate IDs are bound to separately retained server-acquired
+artifacts. They cannot satisfy gameplay selection or currentness and require an
+explicit confirmed `ask_before_store` operation. Canonical OpenAPI and private MCP
+output schemas declare these fields together. No daemon or Python surface changes.
 
 ## Overview
 

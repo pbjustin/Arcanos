@@ -19,6 +19,7 @@ import { normalizeGamingGameIdentity } from '@shared/gaming/gamingGameIdentity.j
 import { buildGamingRetrievalTerms, GAMING_RETRIEVAL_POLICY_VERSION } from '@shared/gaming/gamingRetrievalPolicy.js';
 import { assessGamingClearEvidence, assessGamingRequestCoverage } from '@shared/gaming/gamingClearEvidence.js';
 import { GAMING_CLEAR_POLICY_VERSION, parseGamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
+import { gamingSourceHasAuthorityRestriction } from '@shared/gaming/gamingSourceAuthority.js';
 
 export { buildStoredGamingLexicalQuery } from '@shared/gaming/gamingStoredEvidenceCore.js';
 export type {
@@ -91,6 +92,10 @@ export async function retrieveStoredGamingKnowledge(input: GamingStoredKnowledge
   const resolveSourceIdentity = input.mode === 'guide' || input.hybridRetrieval || preciseGameKey !== gameKey
     || Boolean(recognizedParent && normalizeGamingGameIdentity(recognizedParent) !== preciseGameKey);
   let sourceKnown = false;
+  let lexicalCandidateCount = 0;
+  const lexicalRecordIds = new Set<string>();
+  const eligible: GamingKnowledgeProvenanceRecord[] = [];
+  let refillDeadlineReached = false;
   let records: GamingKnowledgeProvenanceRecord[];
   try {
     if (activeLookups >= MAX_CONCURRENT_LOOKUPS) throw Object.assign(new Error('Stored Gaming knowledge lookup capacity is busy.'), { name: 'GamingStoredKnowledgeLookupBusyError' });
@@ -110,22 +115,80 @@ export async function retrieveStoredGamingKnowledge(input: GamingStoredKnowledge
       // actual pool waiter/query settles. Its aborted signal forbids stale DB work.
       const pending = Promise.resolve().then(async () => {
         const lookupStartedAt = Date.now();
+        const identityInput = { game: input.game, ...((input.mode === 'guide' || input.hybridRetrieval) && input.edition ? { edition: input.edition } : {}), mode: input.hybridRetrieval ? undefined : input.mode };
         const identities = resolveSourceIdentity
-          ? await findActiveGamingSourceIdentities({ game: input.game, ...((input.mode === 'guide' || input.hybridRetrieval) && input.edition ? { edition: input.edition } : {}), mode: input.hybridRetrieval ? undefined : input.mode }, { queryTimeoutMs, signal: controller.signal })
+          ? await findActiveGamingSourceIdentities(identityInput, { queryTimeoutMs, signal: controller.signal })
           : undefined;
         // Newly ingested precise titles can differ from the historical build/meta
         // alias key. Prefer their exact catalog scope, retaining the legacy fallback.
-        const sources = input.mode === 'guide' || input.hybridRetrieval || identities?.length ? identities : undefined;
+        let sources = input.mode === 'guide' || input.hybridRetrieval || identities?.length ? identities : undefined;
+        let identityOffset = 0;
         sourceKnown = (input.mode === 'guide' || input.hybridRetrieval === true) && Boolean(sources?.length);
         controller.signal.throwIfAborted();
         // Catalog presence never substitutes for positively relevant gameplay evidence.
         if (!query || (sources && !sources.length)) return [];
-        const remainingMs = Math.max(1, queryTimeoutMs - (Date.now() - lookupStartedAt));
-        return searchActiveGamingKnowledge({ gameKey: sources?.length ? preciseGameKey : gameKey, query, mode: input.hybridRetrieval ? undefined : input.mode, limit: MAX_STORED_GAMING_CANDIDATES,
-          ...(sources ? { sourceIds: sources.map(source => source.sourceId) } : {}) },
-        { queryTimeoutMs: remainingMs, signal: controller.signal });
+        const sourceRevisions = new Map<string, string>();
+        const invalidatedSources = new Set<string>();
+        let offset = 0;
+        // Retained rows stay available to raw owner inspection. Refill the
+        // generation pool past them rather than treating one full held page as
+        // exhausted knowledge. Every page shares the original lookup deadline.
+        while (eligible.length < MAX_STORED_GAMING_CANDIDATES) {
+          controller.signal.throwIfAborted();
+          const remainingMs = queryTimeoutMs - (Date.now() - lookupStartedAt);
+          if (remainingMs <= 0) throw Object.assign(new Error('Stored Gaming knowledge lookup timed out.'), { name: 'TimeoutError' });
+          const page = await searchActiveGamingKnowledge({ gameKey: sources?.length ? preciseGameKey : gameKey, query,
+            mode: input.hybridRetrieval ? undefined : input.mode, limit: MAX_STORED_GAMING_CANDIDATES,
+            ...(offset ? { offset } : {}), ...(sources ? { sourceIds: sources.map(source => source.sourceId) } : {}) },
+          { queryTimeoutMs: remainingMs, signal: controller.signal });
+          controller.signal.throwIfAborted();
+          lexicalCandidateCount += page.length;
+          for (const record of page) {
+            const duplicate = lexicalRecordIds.has(record.recordId);
+            lexicalRecordIds.add(record.recordId);
+            // A refresh or hold may commit between pages. Once observed, discard
+            // that source for this lookup, including previously collected rows.
+            const observedRevision = sourceRevisions.get(record.sourceId);
+            if (record.authorityReassessmentRequired === true || gamingSourceHasAuthorityRestriction(record.provenance)
+              || observedRevision !== undefined && observedRevision !== record.revisionId) {
+              invalidatedSources.add(record.sourceId);
+              for (let index = eligible.length - 1; index >= 0; index -= 1) {
+                if (eligible[index].sourceId === record.sourceId) eligible.splice(index, 1);
+              }
+              continue;
+            }
+            if (invalidatedSources.has(record.sourceId) || duplicate) continue;
+            sourceRevisions.set(record.sourceId, record.revisionId);
+            eligible.push(record);
+          }
+          if (page.length < MAX_STORED_GAMING_CANDIDATES) {
+            if (sources?.length === MAX_STORED_GAMING_CANDIDATES && eligible.length < MAX_STORED_GAMING_CANDIDATES) {
+              identityOffset += sources.length;
+              const identityRemainingMs = queryTimeoutMs - (Date.now() - lookupStartedAt);
+              if (identityRemainingMs <= 0) throw Object.assign(new Error('Stored Gaming knowledge lookup timed out.'), { name: 'TimeoutError' });
+              sources = await findActiveGamingSourceIdentities({ ...identityInput, offset: identityOffset },
+                { queryTimeoutMs: identityRemainingMs, signal: controller.signal });
+              controller.signal.throwIfAborted();
+              if (sources.length) { offset = 0; continue; }
+            }
+            break;
+          }
+          offset += page.length;
+        }
+        return eligible.slice(0, MAX_STORED_GAMING_CANDIDATES);
       }).finally(() => { activeLookups -= 1; });
-      records = await Promise.race([pending, aborted]);
+      try {
+        records = await Promise.race([pending, aborted]);
+      } catch (error) {
+        const timedOut = error instanceof Error && error.name === 'TimeoutError'
+          || error !== null && typeof error === 'object' && 'code' in error && error.code === '57014'
+            && error instanceof Error && /statement timeout/iu.test(error.message);
+        if (input.signal?.aborted || !timedOut || !eligible.length) throw error;
+        // Preserve only records whose authority survived every completed page.
+        // Late query results cannot mutate this snapshot after deadline abort.
+        records = eligible.slice(0, MAX_STORED_GAMING_CANDIDATES);
+        refillDeadlineReached = true;
+      }
     } finally {
       clearTimeout(timer);
       input.signal?.removeEventListener('abort', relayAbort);
@@ -159,8 +222,9 @@ export async function retrieveStoredGamingKnowledge(input: GamingStoredKnowledge
     ...(input.mode === 'guide' ? { retrievalPolicyVersion: GAMING_RETRIEVAL_POLICY_VERSION,
       requestTermCount: retrievalTerms.requestTerms.length, playerContextTermCount: retrievalTerms.contextTerms.length,
       effectiveSpoilerMode: input.spoilerMode ?? 'none' } : {}),
-    lexicalCandidateCount: records.length, semanticCandidateCount: 0,
-    mergedCandidateCount: new Set(records.map(record => record.recordId)).size,
+    lexicalCandidateCount, semanticCandidateCount: 0,
+    mergedCandidateCount: lexicalRecordIds.size,
+    ...(refillDeadlineReached ? { refillDeadlineReached: true } : {}),
     selectedChunkCount: result.evidence?.length ?? 0, selectedContextChars: result.context.length,
     ...(input.mode === 'guide' ? { sourceKnown } : {}),
     retrievalElapsedMs: Date.now() - startedAt

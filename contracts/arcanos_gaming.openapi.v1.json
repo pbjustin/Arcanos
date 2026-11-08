@@ -1762,7 +1762,16 @@
               "PROVIDER_TIMEOUT",
               "PROVIDER_FAILED",
               "REVIEW_REQUIRED",
-              "INTERNAL_ERROR"
+              "INTERNAL_ERROR",
+              "EXTRACTION_FAILED",
+              "STORAGE_FAILED",
+              "RESOLVED_SOURCE_IDENTITY_MISMATCH",
+              "SOURCE_USE_RESTRICTED",
+              "APPROVED_CONTENT_CHANGED",
+              "SOURCE_INSTRUCTIONS_REJECTED",
+              "APPROVED_ASSESSMENT_REQUIRED",
+              "APPROVED_APPLICABILITY_EXPIRED",
+              "EDITION_CONFLICT"
             ]
           },
           "message": {
@@ -1877,6 +1886,22 @@
           },
           "error": {
             "$ref": "#/components/schemas/GamingSourceItemError"
+          },
+          "classification": {
+            "$ref": "#/components/schemas/GamingSourceClassification"
+          },
+          "generationEligible": {
+            "type": "boolean",
+            "description": "Storage alone never grants generation authority. False for safely retained incomplete or reference material."
+          },
+          "reasonCodes": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            }
           }
         }
       },
@@ -4317,6 +4342,17 @@
             }
           }
         }
+      },
+      "GamingSourceClassification": {
+        "type": "string",
+        "enum": [
+          "verified",
+          "stored_unverified",
+          "reference_only",
+          "needs_reassessment",
+          "rejected"
+        ],
+        "description": "Independent of processing status. Only verified sources may be considered for grounded generation; every request still requires current applicability, CLEAR evidence validation and answer validation."
       }
     }
   },

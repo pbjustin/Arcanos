@@ -4,6 +4,7 @@ import request from 'supertest';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { Readable } from 'node:stream';
 import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
+import { createGamingAcquisitionStages } from './testUtils/gamingAcquisitionStages.js';
 import { GAMING_CLEAR_DIMENSIONS } from '../src/shared/gaming/gamingClearPolicy.js';
 import { resolveGamingFreshnessDisposition } from '../src/shared/gaming/gamingFreshnessDisposition.js';
 import type { GamingHybridResponse } from '../src/shared/gaming/gamingHybridContract.js';
@@ -57,11 +58,13 @@ if (configuration.status !== 'ready') throw new Error('Expected local Gaming OAu
 let keys: Awaited<ReturnType<typeof generateKeyPair>>;
 let keyResolver: ReturnType<typeof createLocalJWKSet>;
 let previousEnv: Record<string, string | undefined>;
+let acquisitionStages: ReturnType<typeof createGamingAcquisitionStages> | undefined;
 beforeAll(async () => {
   keys = await generateKeyPair('RS256');
   keyResolver = createLocalJWKSet({ keys: [{ ...await exportJWK(keys.publicKey), kid: 'recovery-fixture', alg: 'RS256' }] });
 });
-beforeEach(() => {
+beforeEach(async () => {
+  await acquisitionStages?.dispose(); acquisitionStages = undefined;
   pages.clear(); jest.clearAllMocks(); resetSafetyRuntimeStateForTests();
   previousEnv = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]));
   Object.assign(process.env, env);
@@ -113,7 +116,8 @@ beforeEach(() => {
     return { result, gamingClearAudit: assessment, meta: { provider: { finishReason: 'stop' } } };
   });
 });
-afterEach(() => {
+afterEach(async () => {
+  await acquisitionStages?.dispose();
   for (const [key, value] of Object.entries(previousEnv)) {
     if (value === undefined) delete process.env[key]; else process.env[key] = value;
   }
@@ -328,54 +332,73 @@ describe('backend-authoritative Gaming discovery recovery through served MCP', (
     expect(mockAuditCompletion).not.toHaveBeenCalled(); expect(mockIngest).not.toHaveBeenCalled();
   });
 
-  it('inspects omitted acquired contradictions even when global capacity prevents retaining the artifacts', async () => {
-    const copper = 'https://guides.example.org/capacity-copperblade-one';
-    const conflictUrl = 'https://different.example.org/capacity-copperblade-two';
-    let seedSequence = 0;
-    const run = harness({ evaluateCandidates: async (input, context) => {
-      if (input.protocolVersion !== v2) {
-        // Existing v1 dependency seam supplies only retention pressure. These
-        // skeleton artifacts have no answer evidence and cause no acquisition.
-        const accepted = input.candidates.map(candidate => {
-          const candidateId = `20000000-0000-4000-8000-${String(++seedSequence).padStart(12, '0')}`;
-          return { candidateId, document: { text: 's'.repeat(1_000_000) }, freshness: {
-            id: candidateId, url: candidate.url, game, currentness: 'stable', fetchedAt: new Date(clock).toISOString()
-          } };
+  describe('real acquired-artifact capacity pressure', () => {
+    let seedSequence: number;
+    let run: ReturnType<typeof harness>;
+    beforeEach(() => {
+      seedSequence = 0;
+      acquisitionStages = createGamingAcquisitionStages(mockHttp);
+      run = harness({ evaluateCandidates: async (input, context) => {
+        const signal = acquisitionStages?.signal;
+        const evaluated = await evaluateGamingHybridCandidates(input, { ...context,
+          signal: signal ? context.signal ? AbortSignal.any([signal, context.signal]) : signal : context.signal });
+        if (input.protocolVersion !== v2) {
+          expect(evaluated.accepted).toHaveLength(3);
+          expect(evaluated.accepted.map(candidate => candidate.document.text.length)).toEqual([1_000_000, 1_000_000, 1_000_000]);
+          seedSequence += evaluated.accepted.length;
+          // Preserve the acquired objects and their private authority bindings.
+          // Seed workflows provide retention pressure, never answer evidence.
+          return { ...evaluated, knowledge: empty };
+        }
+        expect(evaluated.accepted).toHaveLength(2);
+        // Model bounded ranking that keeps the first good passage and omits the
+        // lower-ranked conflicting row. Actual artifacts remain intact and bound.
+        evaluated.knowledge = selectGamingHybridAcceptedEvidence(input, [evaluated.accepted[0]], {
+          actorKey: context.actorKey, workflowId: context.workflowId!, now: clock
         });
-        return { accepted: accepted as never, knowledge: empty, decisions: accepted.map((candidate, submittedIndex) => ({
-          submittedIndex, candidateId: candidate.candidateId, url: input.candidates[submittedIndex].url,
-          decision: 'accepted_transient' as const, reasonCodes: ['VALIDATED_RELEVANT_CONTENT']
-        })) };
-      }
-      const evaluated = await evaluateGamingHybridCandidates(input, context);
-      expect(evaluated.accepted).toHaveLength(2);
-      // Model bounded ranking that keeps the first good passage and omits the
-      // lower-ranked conflicting row. Actual artifacts remain intact and bound.
-      evaluated.knowledge = selectGamingHybridAcceptedEvidence(input, [evaluated.accepted[0]], {
-        actorKey: context.actorKey, workflowId: context.workflowId!, now: clock
-      });
-      expect(evaluated.knowledge.sources).toHaveLength(1);
-      expect(evaluated.knowledge.materialConflict).toBe(false);
-      return evaluated;
-    } });
+        expect(evaluated.knowledge.sources).toHaveLength(1);
+        expect(evaluated.knowledge.materialConflict).toBe(false);
+        return evaluated;
+      } });
+    });
+    // Preserve each real three-document submission and the full 12m retention
+    // boundary. Each hook processes one document before the next HTTP gate.
     for (let index = 0; index < 4; index += 1) {
-      const seed = await run.query({ contractVersion: 'gaming-hybrid-v1', question: `Explain fixture objective ${index}.`,
-        idempotencyKey: `capacity-seed-query-${index}` });
-      const seeded = await run.submit(seed.result, [0, 1, 2].map(candidate => `https://seed.example.org/${index}/${candidate}`),
-        `capacity-seed-candidates-${index}`);
-      expect(seeded.result.candidates!.every(candidate => candidate.candidateId)).toBe(true);
+      let batch: { advance(): Promise<unknown>; result: Promise<Awaited<ReturnType<typeof run.submit>>> };
+      beforeEach(async () => {
+        const urls = [0, 1, 2].map(candidate => `https://seed.example.org/${index}/${candidate}`);
+        const prose = `In the game ${game}, ${gateText} Fixture objective ${index} follows this route. `;
+        const text = prose + 'x'.repeat(1_000_000 - prose.length);
+        for (const url of urls) addPage(url, text, '', game, {
+          html: `<html><title>${game} guide</title><article><p>${text}</p></article></html>`
+        });
+        const seed = await run.query({ contractVersion: 'gaming-hybrid-v1',
+          question: `How do I activate amber gate at fixture objective ${index}?`, idempotencyKey: `capacity-seed-query-${index}` });
+        batch = acquisitionStages!.begin(urls, () => run.submit(seed.result, urls, `capacity-seed-candidates-${index}`));
+        await batch.advance();
+      });
+      beforeEach(async () => { await batch.advance(); });
+      beforeEach(async () => {
+        await batch.advance();
+        const seeded = await batch.result;
+        expect(seeded.result.candidates!.every(candidate => candidate.candidateId)).toBe(true);
+      });
     }
-    expect(seedSequence).toBe(12); expect(mockHttp).not.toHaveBeenCalled(); expect(mockTrinity).not.toHaveBeenCalled();
-    addStatPage(copper, 'Copperblade', 10); addStatPage(conflictUrl, 'Copperblade', 11);
-    const initial = await run.query({ question: 'What is Copperblade weight value?' });
-    const conflict = await run.submit(initial.result, [copper, conflictUrl], 'capacity-conflict-candidates');
-    expect(conflict.result).toMatchObject({ nextAction: 'stop', reason: 'CONTRADICTORY_EVIDENCE', coverageSatisfied: false });
-    expect(conflict.result.answer).toBeUndefined();
-    expect(conflict.result.candidates).toHaveLength(2);
-    expect(conflict.result.candidates!.every(candidate => candidate.decision === 'accepted_transient'
-      && !candidate.candidateId && candidate.reasonCodes.includes('ARTIFACT_CAPACITY_REACHED'))).toBe(true);
-    expect(mockHttp).toHaveBeenCalledTimes(2); expect(mockTrinity).not.toHaveBeenCalled();
-    expect(mockAuditCompletion).not.toHaveBeenCalled(); expect(mockIngest).not.toHaveBeenCalled();
+    it('inspects omitted acquired contradictions even when global capacity prevents retaining the artifacts', async () => {
+      const copper = 'https://guides.example.org/capacity-copperblade-one';
+      const conflictUrl = 'https://different.example.org/capacity-copperblade-two';
+      expect(seedSequence).toBe(12); expect(mockHttp).toHaveBeenCalledTimes(12); expect(mockTrinity).not.toHaveBeenCalled();
+      addStatPage(copper, 'Copperblade', 10); addStatPage(conflictUrl, 'Copperblade', 11);
+      const initial = await run.query({ question: 'What is Copperblade weight value?' });
+      const conflict = await run.submit(initial.result, [copper, conflictUrl], 'capacity-conflict-candidates');
+      expect(conflict.result).toMatchObject({ nextAction: 'stop', reason: 'CONTRADICTORY_EVIDENCE', coverageSatisfied: false });
+      expect(conflict.result.answer).toBeUndefined();
+      expect(conflict.result.candidates).toHaveLength(2);
+      expect(conflict.result.candidates!.every(candidate => candidate.decision === 'accepted_transient'
+        && !candidate.candidateId && candidate.reasonCodes.includes('ARTIFACT_CAPACITY_REACHED'))).toBe(true);
+      expect(mockHttp).toHaveBeenCalledTimes(14); expect(mockTrinity).not.toHaveBeenCalled();
+      expect(mockAuditCompletion).not.toHaveBeenCalled(); expect(mockIngest).not.toHaveBeenCalled();
+    });
   });
 
   it('follows one explicit recovery grant after unsupported/access failures and retains useful evidence', async () => {

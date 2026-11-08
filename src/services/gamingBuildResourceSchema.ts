@@ -72,7 +72,8 @@ export const GAMING_STRUCTURED_FAILURE_REASONS = [
   "STRUCTURED_RESOURCE_PARTIAL",
   "STRUCTURED_RESOURCE_METADATA_ONLY",
   "STRUCTURED_RESOURCE_GAME_MISMATCH",
-  "SOURCE_INSTRUCTIONS_REJECTED"
+  "SOURCE_INSTRUCTIONS_REJECTED",
+  "SOURCE_USE_RESTRICTED"
 ] as const;
 
 export type GamingStructuredFailureReason = typeof GAMING_STRUCTURED_FAILURE_REASONS[number];
@@ -229,6 +230,8 @@ export interface GamingBuildResourceResult {
   metrics: GamingBuildExtractionMetrics;
   cacheHit: boolean;
   failureReason?: GamingStructuredFailureReason;
+  /** Internal source-use finding, independent of the primary extraction error. */
+  sourceUseRestricted?: true;
 }
 
 export interface GamingBuildResourceAdapter {

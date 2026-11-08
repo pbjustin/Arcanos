@@ -12,11 +12,13 @@ import {
 const findOrCreateGptJobMock = jest.fn();
 const getJobByIdMock = jest.fn();
 const persistGamingSourceRevisionMock = jest.fn();
+const recordGamingSourceAuthorityHoldMock = jest.fn();
 const getGamingSourceByIdMock = jest.fn();
 const searchActiveGamingKnowledgeMock = jest.fn();
 const resolveGamingDocumentMock = jest.fn();
 const planAutonomousWorkerJobMock = jest.fn();
 const ingestGamingBuildResourceMock = jest.fn();
+const inspectGamingBuildResourceSourceUseMock = jest.fn();
 
 function sourceApproval(subjectHash: string, freshness: 'verified' | 'not_applicable' = 'verified') {
   const dimension = { status: 'evaluated' as const, score: 4.5, reasonCodes: ['SYNTHETIC_SUPPORTED_SOURCE'],
@@ -147,11 +149,15 @@ beforeEach(async () => {
   findOrCreateGptJobMock.mockReset();
   getJobByIdMock.mockReset();
   persistGamingSourceRevisionMock.mockReset();
+  recordGamingSourceAuthorityHoldMock.mockReset();
+  recordGamingSourceAuthorityHoldMock.mockResolvedValue(null);
   getGamingSourceByIdMock.mockReset();
   searchActiveGamingKnowledgeMock.mockReset();
   resolveGamingDocumentMock.mockReset();
   planAutonomousWorkerJobMock.mockReset();
   ingestGamingBuildResourceMock.mockReset();
+  inspectGamingBuildResourceSourceUseMock.mockReset();
+  inspectGamingBuildResourceSourceUseMock.mockReturnValue(false);
 
   findOrCreateGptJobMock.mockResolvedValue({
     job: {
@@ -248,6 +254,7 @@ beforeEach(async () => {
   jest.unstable_mockModule('../src/core/db/repositories/gamingSourceRepository.js', () => ({
     GamingSourceRepositoryUnavailableError: MockGamingSourceRepositoryUnavailableError,
     persistGamingSourceRevision: persistGamingSourceRevisionMock,
+    recordGamingSourceAuthorityHold: recordGamingSourceAuthorityHoldMock,
     getGamingSourceById: getGamingSourceByIdMock,
     searchActiveGamingKnowledge: searchActiveGamingKnowledgeMock,
     findActiveGamingSourceIdentities: jest.fn(async () => [{ sourceId: '019fe3cd-8c01-7f01-8d2d-caa951bc4ba0', gameKey: 'borderlands-4', gameName: 'Borderlands 4' }])
@@ -264,7 +271,8 @@ beforeEach(async () => {
     planAutonomousWorkerJob: planAutonomousWorkerJobMock
   }));
   jest.unstable_mockModule('../src/services/gamingBuildResources.js', () => ({
-    ingestGamingBuildResource: ingestGamingBuildResourceMock
+    ingestGamingBuildResource: ingestGamingBuildResourceMock,
+    inspectGamingBuildResourceSourceUse: inspectGamingBuildResourceSourceUseMock
   }));
   jest.unstable_mockModule('../src/services/gamingSourceDiscovery.js', () => ({
     sanitizeGamingDiscoveryCandidateUrl: (rawUrl: string) => {
@@ -299,6 +307,37 @@ beforeEach(async () => {
 });
 
 describe('gaming source ingestion', () => {
+  it.each([false, true])('honors an attested decoded restriction beyond the raw preview, queued approval=%s', async approved => {
+    const { createApprovedGamingSourceIngestion, hashGamingApprovedDocument } = await import('../src/services/gamingSourceIngestion.js');
+    const url = 'https://example.com/attested-decoded-restriction';
+    const text = 'In Borderlands 4, follow the marked route and turn the copper lever to open the gate. '.repeat(6);
+    const clean = resolvedDocument(url, text);
+    const actorKey = 'attested-decoded-owner';
+    let body: unknown = { action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: url, game: 'Borderlands 4', gameKey: 'borderlands-4', origin: 'user_supplied' }] };
+    if (approved) {
+      const contentHash = hashGamingApprovedDocument(clean as any);
+      const queued = await createApprovedGamingSourceIngestion([{ url, game: 'Borderlands 4', contentHash,
+        sourceAssessment: sourceApproval(contentHash), actorScopeHash: createHash('sha256').update(actorKey).digest('hex'),
+        policyVersion: 'gaming-hybrid-candidates/v1', sourceTrustType: 'supplied', freshness: {} }],
+      'attested-decoded-queued', { actorKey, canStore: true });
+      expect(queued.statusCode).toBe(202);
+      body = (findOrCreateGptJobMock.mock.calls[0][0] as any).input.body;
+    }
+    // The resolver inspected the complete body; this bounded raw preview cannot
+    // rediscover the restriction. The attested observation must remain decisive.
+    resolveGamingDocumentMock.mockResolvedValueOnce({ ...clean, sourceUseRestricted: true, decodedSourceUseRestricted: true,
+      rawDocument: { body: '<html>clean prefix', contentType: 'text/html', truncated: true } });
+    inspectGamingBuildResourceSourceUseMock.mockReturnValue(false);
+    const result = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', body);
+    expect(result.output.sources[0]).toMatchObject({ status: 'rejected', error: {
+      code: approved ? 'APPROVED_CONTENT_CHANGED' : 'SOURCE_USE_RESTRICTED', retryable: false } });
+    expect(recordGamingSourceAuthorityHoldMock).toHaveBeenCalledWith({ sourceId: undefined, gameKey: 'borderlands-4',
+      canonicalUrl: url, reason: 'SOURCE_USE_RESTRICTED' });
+    expect(persistGamingSourceRevisionMock).not.toHaveBeenCalled();
+    expect(ingestGamingBuildResourceMock).not.toHaveBeenCalled();
+  });
+
   it.each(['document', 'scheme-less document', 'bare upload document', 'bundled upload document', 'apostrophe upload document', 'structured normalization'])('rejects %s instruction taint before durable persistence', async boundary => {
     const url = 'https://mobalytics.gg/borderlands-4/builds';
     const text = 'Borderlands 4 endgame build equipment skills rotation '.repeat(12);
@@ -993,6 +1032,37 @@ describe('gaming source ingestion', () => {
     }));
   });
 
+  it.each([
+    { text: 'Unreadable gameplay association remains uncertain.', classification: 'stored_unverified', reason: 'GAME_IDENTITY_UNVERIFIED' },
+    { text: 'Borderlands 4. Identifier synthetic. Publisher Synthetic Fixtures. Publication date 2026. Download options.', classification: 'reference_only', reason: 'INSUFFICIENT_GAMEPLAY_EVIDENCE' }
+  ])('retains safe $classification material separately from generation authority', async ({ text, classification, reason }) => {
+    resolveGamingDocumentMock.mockResolvedValueOnce(resolvedDocument('https://example.com/catalog', text));
+    ingestGamingBuildResourceMock.mockResolvedValueOnce(genericNormalizedGamingSource(''));
+    const result = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: 'https://example.com/catalog',
+        game: 'Borderlands 4', gameKey: 'borderlands-4', origin: 'user_supplied' }]
+    });
+    expect(result.output.sources[0]).toMatchObject({ status: 'stored', classification, generationEligible: false,
+      reasonCodes: expect.arrayContaining([reason]) });
+    expect(persistGamingSourceRevisionMock).toHaveBeenCalledWith(expect.objectContaining({
+      provenance: expect.objectContaining({ classification, generationEligible: false,
+        acquiredApplicability: expect.objectContaining({ metadataUnverified: true }) })
+    }));
+  });
+
+  it('reports a sanitized storage failure separately from acquisition', async () => {
+    persistGamingSourceRevisionMock.mockRejectedValueOnce(new Error('postgres://private-credential/source Publisher raw content'));
+    const result = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: 'https://example.com/guide',
+        game: 'Borderlands 4', gameKey: 'borderlands-4', origin: 'user_supplied' }]
+    });
+    expect(result.output.sources[0]).toMatchObject({ status: 'failed', classification: 'rejected', generationEligible: false,
+      error: { code: 'STORAGE_FAILED', retryable: true } });
+    expect(JSON.stringify(result)).not.toMatch(/private-credential|Publisher raw content/u);
+  });
+
   it('retains partial extraction warnings for catalog metadata even when the bounded response is complete', async () => {
     const text = 'Borderlands 4. Identifier test-guide. Publisher Synthetic Fixtures. Publication date 2026. Download options. Scanner synthetic. Addeddate today. '.repeat(3);
     resolveGamingDocumentMock.mockResolvedValueOnce(resolvedDocument('https://example.com/catalog', text));
@@ -1209,8 +1279,8 @@ describe('gaming source ingestion', () => {
     ['SOURCE_FETCH_FAILED', 'UNSUPPORTED_CONTENT_TYPE', undefined, 'UNSUPPORTED_CONTENT_TYPE', false],
     ['UNSUPPORTED_SOURCE_FORMAT', 'UNSUPPORTED_ENCODING', undefined, 'UNSUPPORTED_CONTENT_TYPE', false],
     ['UNSUPPORTED_SOURCE_FORMAT', 'UNSUPPORTED_CONTENT_TYPE', undefined, 'UNSUPPORTED_CONTENT_TYPE', false],
-    ['SOURCE_EXTRACTION_FAILED', 'DOCUMENT_EXTRACTION_FAILED', undefined, 'UNSUPPORTED_CONTENT_TYPE', false],
-    ['SOURCE_EXTRACTION_FAILED', 'EXTRACTION_BUDGET_EXHAUSTED', undefined, 'UNSUPPORTED_CONTENT_TYPE', false],
+    ['SOURCE_EXTRACTION_FAILED', 'DOCUMENT_EXTRACTION_FAILED', undefined, 'EXTRACTION_FAILED', false],
+    ['SOURCE_EXTRACTION_FAILED', 'EXTRACTION_BUDGET_EXHAUSTED', undefined, 'EXTRACTION_FAILED', false],
     ['SOURCE_FETCH_FAILED', 'CONDITIONAL_CONTENT_UNAVAILABLE', 304, 'FETCH_FAILED', false],
     ['SOURCE_INACCESSIBLE', 'HTTP_RESPONSE_UNUSABLE', 401, 'AUTHENTICATION_REQUIRED', false],
     ['SOURCE_INACCESSIBLE', 'HTTP_RESPONSE_UNUSABLE', 403, 'ACCESS_DENIED', false],

@@ -6,13 +6,15 @@ import { test } from 'node:test';
 import { runGamingImageSmoke } from './gaming-preview-image-smoke.mjs';
 import { buildGamingScopedPreviewAssertionInventory } from './gaming-scoped-preview-e2e.mjs';
 import { sha256 } from './stacked-draft-preview-build.mjs';
+import { resolveGamingMcpCatalogSha256 } from './gaming-mcp-preview-e2e.mjs';
+import { NATIVE_PR_PREVIEW_E2E_CONTRACT } from './native-pr-preview-contract.mjs';
 
 const uuid = digit => `${digit.repeat(8)}-${digit.repeat(4)}-4${digit.repeat(3)}-8${digit.repeat(3)}-${digit.repeat(12)}`;
 function fixture() {
   const root = mkdtempSync(path.join(tmpdir(), 'gaming-image-smoke-'));
   const auth = { version: 1, controllerSha: 'a'.repeat(40), mainSha: 'a'.repeat(40), baseSha: 'a'.repeat(40),
     headSha: '848d6be5fc7d73936bb7921bd496d3051e30752d', treeSha: 'd78ffd0a423e9755008784b6c244cafc131d1acf',
-    sourceArchiveSha256: 'b'.repeat(64), targetSha256: 'c'.repeat(64), runId: '1234',
+    sourceArchiveSha256: '5bc4713eb4842f5927354bebc9ae82f43f9c32516dd7f32b61a8c446db684123', targetSha256: 'c'.repeat(64), runId: '1234',
     expiresAt: new Date(Date.now() + 60_000).toISOString(),
     target: { projectId: uuid('1'), baseEnvironmentId: uuid('2'), workerServiceId: uuid('3'), webServiceId: uuid('4') } };
   const build = { schemaVersion: 1, controllerSha: auth.controllerSha, candidateSha: auth.headSha, treeSha: auth.treeSha,
@@ -73,7 +75,10 @@ function fixture() {
     return { GAMING_SCOPED_PREVIEW: 'NOT_RUN', hostedExecuted: null, summary: { requestsMade: 84 },
       assertionInventory: { plannedCaseIds, executedCaseIds: [...plannedCaseIds], skippedCaseIds: [] } };
   };
-  return { root, files, commands, containers, requests, options: { ...files, environment: { PATH: '/usr/bin' }, execute, fetchLocal, verify } };
+  const git = { treeSha: async head => { assert.equal(head, auth.headSha); return auth.treeSha; },
+    archiveSha256: async head => { assert.equal(head, auth.headSha); return auth.sourceArchiveSha256; },
+    gamingCatalogSha256: async head => { assert.equal(head, auth.headSha); return 'd43aa08b59e003f447bbb2e24e9bc116f67c0e66778cd3d9de1e6f1785de4953'; } };
+  return { root, files, commands, containers, requests, options: { ...files, environment: { PATH: '/usr/bin' }, execute, fetchLocal, verify, git } };
 }
 
 test('local image smoke preserves kernel entrypoint, uses two contained roles and maps only loopback requests', async () => {
@@ -84,6 +89,61 @@ test('local image smoke preserves kernel entrypoint, uses two contained roles an
     assert.equal(result.GAMING_SCOPED_PREVIEW, 'NOT_RUN'); assert.equal(result.hostedExecuted, false);
     assert.deepEqual(result.kernelEntrypointVerified, { worker: true, web: true });
     assert.equal(result.cleanup.verifiedAbsent, true); assert.equal(f.containers.size, 0); assert.equal(f.requests.length, 86);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('local image smoke binds historical catalog verification to the attested frozen source', async () => {
+  const f = fixture();
+  try {
+    const result = await runGamingImageSmoke({ ...f.options, verify: async options => {
+      assert.deepEqual(options.frozenImageContract, {
+        candidateSha: '848d6be5fc7d73936bb7921bd496d3051e30752d',
+        treeSha: 'd78ffd0a423e9755008784b6c244cafc131d1acf',
+        sourceArchiveSha256: '5bc4713eb4842f5927354bebc9ae82f43f9c32516dd7f32b61a8c446db684123',
+        catalogSha256: 'd43aa08b59e003f447bbb2e24e9bc116f67c0e66778cd3d9de1e6f1785de4953',
+      });
+      return f.options.verify(options);
+    } });
+    assert.equal(result.status, 'PASS');
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('historical catalog binding cannot override ordinary exact-head checks or accept substituted source data', async () => {
+  const f = fixture();
+  try {
+    const frozen = { candidateSha: '848d6be5fc7d73936bb7921bd496d3051e30752d', treeSha: 'd78ffd0a423e9755008784b6c244cafc131d1acf',
+      sourceArchiveSha256: '5bc4713eb4842f5927354bebc9ae82f43f9c32516dd7f32b61a8c446db684123',
+      catalogSha256: 'd43aa08b59e003f447bbb2e24e9bc116f67c0e66778cd3d9de1e6f1785de4953' };
+    assert.equal(resolveGamingMcpCatalogSha256(frozen.candidateSha), NATIVE_PR_PREVIEW_E2E_CONTRACT.chatGptGaming.catalogSha256);
+    assert.equal(resolveGamingMcpCatalogSha256(frozen.candidateSha, frozen), frozen.catalogSha256);
+    assert.throws(() => resolveGamingMcpCatalogSha256('a'.repeat(40), frozen), /FROZEN_CONTRACT_INVALID/u);
+    assert.throws(() => resolveGamingMcpCatalogSha256(frozen.candidateSha, { ...frozen, allowAnyCatalog: true }), /FROZEN_CONTRACT_INVALID/u);
+    for (const key of Object.keys(frozen)) {
+      assert.throws(() => resolveGamingMcpCatalogSha256(frozen.candidateSha, { ...frozen, [key]: '0'.repeat(frozen[key].length) }), /FROZEN_CONTRACT_INVALID/u);
+    }
+    await assert.rejects(runGamingImageSmoke({ ...f.options, git: { ...f.options.git,
+      treeSha: async () => '0'.repeat(40) } }), /SOURCE_IDENTITY_MISMATCH/u);
+    assert.equal(f.commands.length, 0);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+  for (const field of ['archiveSha256', 'gamingCatalogSha256']) {
+    const changed = fixture();
+    try {
+      await assert.rejects(runGamingImageSmoke({ ...changed.options, git: { ...changed.options.git,
+        [field]: async () => '0'.repeat(64) } }), /(?:SOURCE_IDENTITY_MISMATCH|FROZEN_CONTRACT_INVALID)/u);
+      assert.equal(changed.commands.length, 0);
+    } finally { rmSync(changed.root, { recursive: true, force: true }); }
+  }
+});
+
+test('image smoke retains its existing frozen-candidate-only authorization before Docker', async () => {
+  const f = fixture();
+  try {
+    const authorization = JSON.parse(readFileSync(f.files.authorizationFile, 'utf8'));
+    const build = JSON.parse(readFileSync(f.files.buildFile, 'utf8'));
+    authorization.headSha = 'a'.repeat(40); build.candidateSha = authorization.headSha;
+    writeFileSync(f.files.authorizationFile, JSON.stringify(authorization)); writeFileSync(f.files.buildFile, JSON.stringify(build));
+    await assert.rejects(runGamingImageSmoke(f.options), /GAMING_BUILD_AUTHORIZATION_INVALID/u);
+    assert.equal(f.commands.length, 0);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 

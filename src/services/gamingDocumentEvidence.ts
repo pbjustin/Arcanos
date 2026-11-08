@@ -1,19 +1,20 @@
 import { GAMING_EVIDENCE_UNIT_POLICY_VERSION, type GamingEvidenceExtractionInput,
   type GamingEvidenceUnit, type GamingStructureDiagnostics } from '@shared/gaming/gamingEvidenceUnits.js';
 import { filterGamingDocumentInstructions, stripGamingHtmlTags } from './gamingDocumentExtraction.js';
-import { extractGamingHtmlEvidence } from './gamingHtmlEvidence.js';
+import { extractGamingHtmlEvidence, GAMING_SOURCE_USE_RESTRICTION, type GamingHtmlLocalTopicReference } from './gamingHtmlEvidence.js';
 import { extractGamingJsonEvidence } from './gamingJsonEvidence.js';
 import { markGamingEvidenceUnitConflicts } from '@shared/gaming/gamingStructuralEvidence.js';
 import { normalizeGamingDocumentInstructionCharacters } from '@shared/gaming/gamingDocumentTextNormalization.js';
 
-const SOURCE_USE_RESTRICTION = /\b(?:no (?:automated|machine) (?:access|use)|automated (?:access|use) (?:is )?prohibited|do not (?:store|redistribute) (?:this|our) content)\b/iu;
 const normalize = (value: string) => normalizeGamingDocumentInstructionCharacters(value).replace(/\s+/gu, ' ').trim();
 
 /** One accepted response; no network, query, model or publisher trust enters extraction. */
 export function extractGamingDocumentEvidence(input: GamingEvidenceExtractionInput & {
   receivedBytes?: number; acceptedBytes?: number; declaredBytes?: number;
 }): { units: GamingEvidenceUnit[]; proseBody: string; instructionFiltered: boolean;
-  sourceUseRestricted: boolean; diagnostics: GamingStructureDiagnostics } {
+  sourceUseRestricted: boolean; diagnostics: GamingStructureDiagnostics;
+  applicabilityUnverified?: true;
+  localTopicReferences?: GamingHtmlLocalTopicReference[] } {
   const startedAt = Date.now();
   const html = extractGamingHtmlEvidence(input);
   const json = extractGamingJsonEvidence(input);
@@ -50,9 +51,13 @@ export function extractGamingDocumentEvidence(input: GamingEvidenceExtractionInp
   if (capped && !subreasons.includes('extraction_budget_exhausted')) subreasons.push('extraction_budget_exhausted');
   // Inert JSON-only content is never indexed by falling back to its entire state blob.
   const proseBody = input.contentType === 'application/json' ? '' : html.proseBody ?? input.body;
-  const sourceUseRestricted = SOURCE_USE_RESTRICTION.test(stripGamingHtmlTags(input.body));
+  const sourceUseRestricted = html.sourceUseRestricted === true
+    || json.units.some(unit => GAMING_SOURCE_USE_RESTRICTION.test(normalize(unit.text)))
+    || GAMING_SOURCE_USE_RESTRICTION.test(stripGamingHtmlTags(input.body));
   const truncated = html.truncated || json.truncated || capped;
-  return { units, proseBody, instructionFiltered, sourceUseRestricted, diagnostics: {
+  return { units, proseBody, instructionFiltered, sourceUseRestricted,
+    ...(html.applicabilityUnverified ? { applicabilityUnverified: true } : {}),
+    ...(html.localTopicReferences?.length ? { localTopicReferences: html.localTopicReferences } : {}), diagnostics: {
     policyVersion: GAMING_EVIDENCE_UNIT_POLICY_VERSION,
     strategies: [...new Set(['prose', ...html.attempts, ...json.attempts])].slice(0, 8),
     contentType: input.contentType || 'unknown',

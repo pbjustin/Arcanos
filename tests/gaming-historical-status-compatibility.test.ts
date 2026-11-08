@@ -53,7 +53,8 @@ beforeAll(async () => {
     isResolvedGamingDocumentIdentityVerified: (document: any, url: string) => document.requestedUrl === url,
     describeGamingDocumentSource: (url: string) => ({ publicUrl: url })
   }));
-  jest.unstable_mockModule('../src/services/gamingBuildResources.js', () => ({ ingestGamingBuildResource: normalizeMock }));
+  jest.unstable_mockModule('../src/services/gamingBuildResources.js', () => ({ ingestGamingBuildResource: normalizeMock,
+    inspectGamingBuildResourceSourceUse: () => false }));
   jest.unstable_mockModule('../src/services/workerAutonomyService.js', () => ({ planAutonomousWorkerJob: plannerMock }));
   jest.unstable_mockModule('../src/services/gamingSourceDiscovery.js', () => ({
     sanitizeGamingDiscoveryCandidateUrl: (url: string) => ({ url, rejected: false })

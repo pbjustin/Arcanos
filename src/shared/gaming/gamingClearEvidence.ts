@@ -5,7 +5,7 @@ import { createGamingClearAssessment, classifyGamingClearQuestion, gamingClearCo
   type GamingClearAssessment } from './gamingClearPolicy.js';
 import { gamingEditionIdentitiesMatch, normalizeGamingEvidenceGameIdentity, resolveGamingGuideIdentity } from './gamingGameIdentity.js';
 import { assessGamingProgressionRequest } from './gamingProgressionPolicy.js';
-import { buildGamingRetrievalTerms, buildGamingRequestRequirements, gamingRequestRequirementLimitExceeded, gamingTermCoverage, resolveGamingUserDecisionGap, type GamingRetrievalPolicyInput } from './gamingRetrievalPolicy.js';
+import { buildGamingClaimCoverageTerms, buildGamingRequestRequirements, gamingRequestRequirementLimitExceeded, gamingTermCoverage, gamingAttributableClaimText, resolveGamingUserDecisionGap, type GamingRetrievalPolicyInput } from './gamingRetrievalPolicy.js';
 import { classifyGamingQuestionFreshness, evaluateGamingFreshness, type GamingFreshnessEvaluation, type GamingFreshnessEvidence } from './gamingFreshnessCore.js';
 import type { GamingStoredKnowledgeContext, GamingStoredKnowledgeSource } from './gamingStoredEvidenceCore.js';
 import { assessGamingStructuralUsability, gamingCrossSourceStructuralConflict, gamingStructuralCoverageTerms } from './gamingStructuralEvidence.js';
@@ -37,6 +37,13 @@ function safePublicUrl(value: string): boolean {
     const url = new URL(value);
     return url.protocol === 'https:' && !url.username && !url.password;
   } catch { return false; }
+}
+
+function chunkClaimText(chunk: NonNullable<GamingStoredKnowledgeContext['evidence']>[number], source: GamingStoredKnowledgeSource | undefined, game: string | undefined): string {
+  const prose = gamingAttributableClaimText(gamingClearIntactProseText({ text: chunk.text, evidenceUnits: chunk.evidenceUnits,
+    metrics: { truncated: false } }), game, { title: source?.title, headings: chunk.headingPath?.at(-1) });
+  const records = (chunk.evidenceUnits ?? []).filter(unit => assessGamingStructuralUsability({ units: [unit] }).hasIntactUsableUnit);
+  return [prose, ...records.map(unit => unit.text)].filter(Boolean).join('\n');
 }
 
 /**
@@ -110,7 +117,7 @@ export function assessGamingClearEvidence(
     && [chunk.sourceId, chunk.revisionId, chunk.recordId].every(id => typeof id === 'string' && id.length > 0 && id.length <= 240)
     && sources.some(source => source.sourceId === chunk.sourceId && source.url === chunk.publicUrl)
     && Number.isFinite(Date.parse(chunk.provenance.fetchedAt)));
-  const { focusTerms } = buildGamingRetrievalTerms(input);
+  const focusTerms = buildGamingClaimCoverageTerms(input);
   const gameplayChunks = selected.filter(chunk => {
     const source = sources.find(item => item.sourceId === chunk.sourceId);
     const item = relevantMetadata.find(entry => entry.id === chunk.sourceId || entry.url === chunk.publicUrl);
@@ -120,10 +127,9 @@ export function assessGamingClearEvidence(
     return !['current_build', 'advisory_recommendation'].includes(questionProfile) || (role !== 'patch_authority' && source?.sourceType !== 'official_updates'
       && source?.sourceType !== 'patch_notes' && item?.category !== 'official_updates');
   });
-  const text = gameplayChunks.map(chunk => chunk.text).join('\n\n');
-  const coverage = gamingTermCoverage(text, focusTerms);
   const structuralUnits = gameplayChunks.flatMap(chunk => chunk.evidenceUnits ?? []);
-  const proseText = gamingClearIntactProseText({ text, evidenceUnits: structuralUnits, metrics: { truncated: false } });
+  const proseText = gameplayChunks.map(chunk => chunkClaimText(chunk, sources.find(source => source.sourceId === chunk.sourceId), input.game)).join('\n');
+  const coverage = gamingTermCoverage(proseText, focusTerms);
   const structural = assessGamingStructuralUsability({ units: structuralUnits, ...input, proseText, compareAcrossSources: options.requireRequestCoverage });
   const fullStructuralConflict = options.requireRequestCoverage ? gamingCrossSourceStructuralConflict({ ...input,
     sources: knowledge.sources.map(source => ({ sourceUrl: source.url,
@@ -245,28 +251,29 @@ export function assessGamingRequestCoverage(input: GamingRetrievalPolicyInput,
   });
   const progression = assessGamingProgressionRequest(input);
   if (progression.clarificationNeeded) return { coverageSatisfied: false, missingCoverage: [], gapAssessmentStatus: 'not_assessed', requirementSupport: [] };
-  const { focusTerms } = buildGamingRetrievalTerms(input);
+  const focusTerms = buildGamingClaimCoverageTerms(input);
   if (!focusTerms.length || input.mode === 'build' && focusTerms.every(term => ['best', 'good', 'build', 'recommend', 'recommended', 'recommendations'].includes(term))
     && !input.class && !input.role && !input.constraints?.length) return { coverageSatisfied: false, missingCoverage: [],
     gapAssessmentStatus: 'not_assessed', requirementSupport: [],
     clarification: input.mode === 'build' ? 'What play style or build constraints should the recommendation cover?' : 'Which topic or objective should the guide cover?' };
-  const text = chunks.map(chunk => chunk.text).join('\n\n');
   const units = chunks.flatMap(chunk => chunk.evidenceUnits ?? []);
-  const proseText = gamingClearIntactProseText({ text, evidenceUnits: units, metrics: { truncated: false } });
+  const proseText = chunks.map(chunk => chunkClaimText(chunk, knowledge.sources.find(source => source.sourceId === chunk.sourceId), input.game)).join('\n');
   const structural = assessGamingStructuralUsability({ units, ...input, proseText, compareAcrossSources: true });
   const structuredClaim = units.length > 0 && structural.claimShape !== 'none';
   const independentProse = !structural.hasRelevantClaimUnit && structural.hasIndependentProseAnchors
     && proseText.length >= 120 && gamingTermCoverage(proseText, focusTerms) >= 0.5;
   const requirements = buildGamingRequestRequirements(input);
   const topicSupport = chunks.length > 0 && focusTerms.length > 0
-    && (structuredClaim && !requirements.length ? structural.claimSupported || independentProse : gamingTermCoverage(text, focusTerms) >= 0.5)
+    && (structuredClaim && !requirements.length ? structural.claimSupported || independentProse
+      : gamingTermCoverage([proseText, ...units.map(unit => unit.text)].join('\n'), focusTerms) >= 0.5)
     && !structural.materialConflict;
   const requirementUnitSupport: Array<{ requirement: string; evidenceUnitIds: string[] }> = [];
   const support = requirements.map(requirement => {
     // A clause needs its own intact passage or record; words from unrelated rows
     // never fabricate the relationship requested by that clause.
     const supported = chunks.flatMap(chunk => {
-      if (!chunk.evidenceUnits?.length) return gamingTermCoverage(chunk.text, requirement.terms) === 1 ? [chunk] : [];
+      if (!chunk.evidenceUnits?.length) return gamingTermCoverage(chunkClaimText(chunk,
+        knowledge.sources.find(source => source.sourceId === chunk.sourceId), input.game), requirement.terms) === 1 ? [chunk] : [];
       const supportingUnits = chunk.evidenceUnits.filter(unit => {
         const assessment = assessGamingStructuralUsability({ units: [unit], ...input, prompt: requirement.terms.join(' ') });
         return gamingTermCoverage(unit.text, gamingStructuralCoverageTerms(input, unit, requirement.terms)) === 1

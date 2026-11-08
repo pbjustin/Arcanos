@@ -12,6 +12,7 @@ describe('generic source rejection diagnostics', () => {
     ['SOURCE_FETCH_FAILED', 'acquisition', 'source_access'],
     ['SOURCE_EXTRACTION_FAILED', 'extraction', 'extraction'],
     ['INSUFFICIENT_EXTRACTION', 'extraction', 'gameplay_quality'],
+    ['INSUFFICIENT_GAMEPLAY_EVIDENCE', 'relevance', 'gameplay_quality'],
     ['GAME_IDENTITY_UNVERIFIED', 'identity', 'gameplay_quality']
   ] as const)('classifies %s without article text', (reason, stage, failureClass) => {
     const trace = createGamingSourceEvaluation({ submittedIndex: 0 });
@@ -42,13 +43,19 @@ describe('generic source rejection diagnostics', () => {
   it('retains an acquired extraction failure stage when the overall budget also expires', async () => {
     const { evaluateGamingHybridCandidates } = await import('../src/services/gamingHybridCandidates.js');
     const { GamingDocumentAcquisitionError } = await import('../src/services/gamingDocumentResolution.js');
-    const timeout = jest.spyOn(AbortSignal, 'timeout').mockReturnValue(AbortSignal.abort());
+    const acquisitionDeadline = new AbortController();
+    const timeout = jest.spyOn(AbortSignal, 'timeout').mockReturnValueOnce(acquisitionDeadline.signal);
+    const resolveDocument = jest.fn(async () => {
+      acquisitionDeadline.abort();
+      throw new GamingDocumentAcquisitionError('SOURCE_TIMEOUT', 'extraction', 'DEADLINE_EXCEEDED');
+    });
     try {
       const result = await evaluateGamingHybridCandidates({ game: 'Lantern Voyage', mode: 'guide',
         prompt: 'Explain the starting route.', protocolVersion: 'gaming-hybrid-v2',
         candidates: [{ url: 'https://community.example.org/guide' }] }, { actorKey: 'synthetic-diagnostic-actor' }, {
-        resolveDocument: async () => { throw new GamingDocumentAcquisitionError('SOURCE_TIMEOUT', 'extraction', 'DEADLINE_EXCEEDED'); }
+        resolveDocument
       });
+      expect(resolveDocument).toHaveBeenCalledTimes(1);
       expect(result.accepted).toEqual([]);
       expect(result.evaluations[0].stages.acquisition).toMatchObject({ status: 'rejected', reasonCode: 'SOURCE_TIMEOUT',
         diagnostic: { acquisitionStage: 'extraction', failureClass: 'extraction' } });

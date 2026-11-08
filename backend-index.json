@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-07T06:11:37.933Z",
+  "generatedAt": "2026-11-08T08:22:19.972Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2948,6 +2948,9 @@
           "relativePath": "src/shared/gaming/gamingSourceAcquisitionPreviewFixture.ts"
         },
         {
+          "relativePath": "src/shared/gaming/gamingSourceAuthority.ts"
+        },
+        {
           "relativePath": "src/shared/gaming/gamingSourceCatalogData.ts"
         },
         {
@@ -4432,6 +4435,9 @@
           "relativePath": "tests/fixtures/environmentBooleanCases.ts"
         },
         {
+          "relativePath": "tests/fixtures/gaming-catalog-authority.ts"
+        },
+        {
           "relativePath": "tests/fixtures/gaming-currentness/second-publisher.ts"
         },
         {
@@ -4445,6 +4451,9 @@
         },
         {
           "relativePath": "tests/fixtures/gaming-universal-identity.ts"
+        },
+        {
+          "relativePath": "tests/fixtures/gaming-wiki-identity.ts"
         },
         {
           "relativePath": "tests/fixtures/gamingClearCalibration.ts"
@@ -4463,6 +4472,9 @@
         },
         {
           "relativePath": "tests/gaming-acquired-topic-identity.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-acquisition-stages.test.ts"
         },
         {
           "relativePath": "tests/gaming-advisory-strictness.test.ts"
@@ -4501,7 +4513,16 @@
           "relativePath": "tests/gaming-body-identity.test.ts"
         },
         {
+          "relativePath": "tests/gaming-candidate-applicability-retention.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-catalog-evidence-authority.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-claim-corroboration.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-claim-scope-linear-scan.test.ts"
         },
         {
           "relativePath": "tests/gaming-clarification-context.test.ts"
@@ -4540,6 +4561,9 @@
           "relativePath": "tests/gaming-clear-source.test.ts"
         },
         {
+          "relativePath": "tests/gaming-coderabbit-claim-scope.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-colon-comparison-parsers.test.ts"
         },
         {
@@ -4556,6 +4580,24 @@
         },
         {
           "relativePath": "tests/gaming-composition-preview-fixture.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-cr-extraction-regressions.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-cr2-claim-identity.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-cr2-equipment-cap.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-cr2-extraction.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-cr2-retention.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-cr2-source-harness.test.ts"
         },
         {
           "relativePath": "tests/gaming-currentness-adapters.test.ts"
@@ -4577,6 +4619,9 @@
         },
         {
           "relativePath": "tests/gaming-currentness-workflow.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-decoded-source-use-review.test.ts"
         },
         {
           "relativePath": "tests/gaming-discovery-recovery.integration.test.ts"
@@ -4705,6 +4750,9 @@
           "relativePath": "tests/gaming-html-scan.test.ts"
         },
         {
+          "relativePath": "tests/gaming-hybrid-authority-revocation.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-hybrid-corroboration.test.ts"
         },
         {
@@ -4771,6 +4819,12 @@
           "relativePath": "tests/gaming-legacy-instruction-boundary.test.ts"
         },
         {
+          "relativePath": "tests/gaming-lifecycle-drain.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-linked-catalog-extraction.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-live-runtime.test.ts"
         },
         {
@@ -4814,6 +4868,12 @@
         },
         {
           "relativePath": "tests/gaming-mixed-candidate-failures.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-navigation-applicability-regression.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-navigation-independent-review.test.ts"
         },
         {
           "relativePath": "tests/gaming-ordinary-gameplay-acceptance.integration.test.ts"
@@ -4921,6 +4981,9 @@
           "relativePath": "tests/gaming-semantic-reasons.test.ts"
         },
         {
+          "relativePath": "tests/gaming-short-guide-acquisition.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-skill-composition.test.ts"
         },
         {
@@ -4937,6 +5000,12 @@
         },
         {
           "relativePath": "tests/gaming-source-acquisition-preview.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-source-authority-snapshot.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-source-authority.test.ts"
         },
         {
           "relativePath": "tests/gaming-source-discovery.integration.test.ts"
@@ -4964,6 +5033,12 @@
         },
         {
           "relativePath": "tests/gaming-source-scope-negation.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-source-use-parser-reuse.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-stored-authority-refill.test.ts"
         },
         {
           "relativePath": "tests/gaming-stored-knowledge.test.ts"
@@ -5024,6 +5099,9 @@
         },
         {
           "relativePath": "tests/gaming-web-context-quality.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-wiki-identity-regression.test.ts"
         },
         {
           "relativePath": "tests/gaming.direct-answer.test.ts"
@@ -5311,10 +5389,22 @@
           "relativePath": "tests/integration/dag-worker-metrics.integration.test.ts"
         },
         {
+          "relativePath": "tests/integration/gaming-authority-http.pg18.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/integration/gaming-authority-read.pg18.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/integration/gaming-cr2-source-hold.pg18.integration.test.ts"
+        },
+        {
           "relativePath": "tests/integration/gaming-durable-rag.pg18.integration.test.ts"
         },
         {
           "relativePath": "tests/integration/gaming-historical-status.pg18.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/integration/gaming-hybrid-authority-revocation.pg18.integration.test.ts"
         },
         {
           "relativePath": "tests/integration/gpt-access-device-auth.pg18.integration.test.ts"
@@ -6211,6 +6301,9 @@
           "relativePath": "tests/testUtils/gamingAcquisitionFixtures.ts"
         },
         {
+          "relativePath": "tests/testUtils/gamingAcquisitionStages.ts"
+        },
+        {
           "relativePath": "tests/testUtils/gamingArchiveFixtures.ts"
         },
         {
@@ -6220,7 +6313,13 @@
           "relativePath": "tests/testUtils/gamingGenericBenchmarkMetrics.ts"
         },
         {
+          "relativePath": "tests/testUtils/gamingHybridAcceptedFixtures.ts"
+        },
+        {
           "relativePath": "tests/testUtils/gamingLargeGuideFixture.ts"
+        },
+        {
+          "relativePath": "tests/testUtils/gamingLifecycleDrain.ts"
         },
         {
           "relativePath": "tests/testUtils/gamingResolvedSourceHarness.ts"

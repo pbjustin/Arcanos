@@ -1,4 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
+import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { runGamingMcpPreviewE2e, buildGamingMcpPreviewRequestPlan } from '../scripts/gaming-mcp-preview-e2e.mjs';
 import { expectedNativePrPreviewResponseBody } from '../scripts/native-pr-preview-e2e.mjs';
 import { NATIVE_PR_PREVIEW_E2E_CONTRACT } from '../scripts/native-pr-preview-contract.mjs';
@@ -11,7 +13,7 @@ const args = ['--pr-number', String(options.prNumber), '--commit-sha', options.c
   '--worker-base-url', 'https://worker-pr-1520.up.railway.app', '--execute', '--allow-network'];
 const plan = buildGamingMcpPreviewRequestPlan();
 type Mutation = (body: Record<string, unknown>, headers: Record<string, string>) => void;
-function fakeFetch(changedId: string, mutate: Mutation) {
+function fakeFetch(changedId: string, mutate: Mutation, identity = options) {
   let cursor = 0;
   return async () => {
     const item = plan[cursor++];
@@ -19,7 +21,7 @@ function fakeFetch(changedId: string, mutate: Mutation) {
     if (item.proof) { headers[gaming.proofHeader] = gaming.proofVersion; headers[migration.proofHeader] = migration.proofVersion;
       headers[gaming.compositionProofHeader] = gaming.compositionProofVersion; }
     let body: Record<string, unknown>;
-    if (item.path === '/readyz') body = expectedNativePrPreviewResponseBody({ expectedType: `${item.role}-readiness` }, options);
+    if (item.path === '/readyz') body = expectedNativePrPreviewResponseBody({ expectedType: `${item.role}-readiness` }, identity);
     else if (item.id === 'malformed') body = { error: 'PREVIEW_REQUEST_INVALID' };
     else body = handleGamingMcpPreviewRequest(item.body).payload ?? {};
     body = JSON.parse(JSON.stringify(body));
@@ -29,6 +31,38 @@ function fakeFetch(changedId: string, mutate: Mutation) {
 }
 
 describe('Gaming supplemental exact-head verifier fails closed', () => {
+  it('accepts the matching historical catalog only under its attested frozen contract', async () => {
+    // Own protocol catalog rebuilt from the three pure source/schema Git blobs
+    // at 848d6be5. This is not publisher bytes, image execution or current E2E.
+    const tools = JSON.parse(readFileSync(new URL('./fixtures/gaming-historical-catalog-848d6be5.json', import.meta.url), 'utf8'));
+    const frozenImageContract = { candidateSha: '848d6be5fc7d73936bb7921bd496d3051e30752d', treeSha: 'd78ffd0a423e9755008784b6c244cafc131d1acf',
+      sourceArchiveSha256: '5bc4713eb4842f5927354bebc9ae82f43f9c32516dd7f32b61a8c446db684123',
+      catalogSha256: 'd43aa08b59e003f447bbb2e24e9bc116f67c0e66778cd3d9de1e6f1785de4953' };
+    expect(createHash('sha256').update(JSON.stringify(tools)).digest('hex')).toBe(frozenImageContract.catalogSha256);
+    const frozenArgs = args.map(value => value === options.commitSha ? frozenImageContract.candidateSha : value);
+    const result = await runGamingMcpPreviewE2e({ args: frozenArgs, frozenImageContract,
+      localGitState: { ...localGitState, head: frozenImageContract.candidateSha },
+      fetchImpl: fakeFetch('catalog', body => { (body.result as { tools: unknown[] }).tools = tools; },
+        { ...options, commitSha: frozenImageContract.candidateSha }) });
+    expect(result.summary).toMatchObject({ status: 'PASS', requestsMade: plan.length });
+    expect(result.checks.find((check: { caseId: string }) => check.caseId === 'catalog')).toMatchObject({ httpStatus: 200 });
+    expect(result.limits.maxResponseBytes).toBe(65_536);
+  });
+  it('keeps exact catalog validation when the attested historical image contract is selected', async () => {
+    const frozenImageContract = { candidateSha: '848d6be5fc7d73936bb7921bd496d3051e30752d', treeSha: 'd78ffd0a423e9755008784b6c244cafc131d1acf',
+      sourceArchiveSha256: '5bc4713eb4842f5927354bebc9ae82f43f9c32516dd7f32b61a8c446db684123',
+      catalogSha256: 'd43aa08b59e003f447bbb2e24e9bc116f67c0e66778cd3d9de1e6f1785de4953' };
+    const frozenArgs = args.map(value => value === options.commitSha ? frozenImageContract.candidateSha : value);
+    await expect(runGamingMcpPreviewE2e({ args: frozenArgs, frozenImageContract,
+      localGitState: { ...localGitState, head: frozenImageContract.candidateSha },
+      fetchImpl: fakeFetch('unchanged', () => {}, { ...options, commitSha: frozenImageContract.candidateSha }) }))
+      .rejects.toMatchObject({ code: 'GAMING_PREVIEW_EXACT_CATALOG', caseId: 'catalog' });
+    let requests = 0;
+    await expect(runGamingMcpPreviewE2e({ args, localGitState, frozenImageContract,
+      fetchImpl: async () => { requests++; throw new Error('Must reject before transport'); } }))
+      .rejects.toMatchObject({ code: 'GAMING_PREVIEW_FROZEN_CONTRACT_INVALID', caseId: 'catalog' });
+    expect(requests).toBe(0);
+  });
   it('accepts the exact released catalog before verifying the fixed outputs and denied writes', async () => {
     const result = await runGamingMcpPreviewE2e({ args, localGitState, fetchImpl: fakeFetch('unchanged', () => {}) });
     expect(result.summary).toMatchObject({ status: 'PASS', requestsMade: plan.length });

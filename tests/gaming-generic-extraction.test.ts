@@ -514,6 +514,8 @@ describe('generic gameplay extraction and source instruction boundaries', () => 
       + '</article></body></html>');
     const result = await evaluateGamingHybridCandidates(request, actor);
     expect(result.accepted).toHaveLength(0);
-    expect(result.decisions[0].reasonCodes).toEqual(['INSUFFICIENT_EXTRACTION']);
+    expect(result.decisions[0].reasonCodes).toEqual(['INSUFFICIENT_GAMEPLAY_EVIDENCE']);
+    expect(result.evaluations[0].stages.extraction.status).toBe('passed');
+    expect(result.evaluations[0].stages.relevance.status).toBe('rejected');
   });
 });

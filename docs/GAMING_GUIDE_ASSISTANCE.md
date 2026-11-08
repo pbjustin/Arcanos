@@ -828,7 +828,7 @@ automatically false; fetching an old document does not make its facts current.
 ### Server-owned policy and decisions
 
 The server-owned CLEAR policy separates audit profile, question profile and
-source role. The current internal version is `gaming-clear-policy/v4`.
+source role. The current internal version is `gaming-clear-policy/v7`.
 Requests and source text cannot supply policy weights, floors or approval.
 These initial hypotheses are conservative rubric judgments, not calibrated
 probabilities or accuracy percentages.
@@ -1184,7 +1184,7 @@ currentness adapters and durable storage eligibility require their separate
 existing source-policy review. Runtime submissions cannot mutate the registry.
 
 CLEAR policy v3 introduced rejection of persisted v1/v2 assessments. The
-current v6 policy also rejects v3/v4/v5 assessments until sources are reassessed.
+current v7 policy also rejects v3/v4/v5/v6 assessments until sources are reassessed.
 Both preserve the public `gaming-clear/v1` rubric and wire shape.
 Context fingerprints bind the registry schema, revision and a hash of its exact
 reviewed data. Existing bounded extraction caches can reuse acquired bytes, but
@@ -1202,6 +1202,29 @@ identity is verified; matching request, URL or page title metadata does not
 provide that proof. Older unapproved stored revisions without current
 server-written identity proof remain readable but cannot authorize generation
 until reassessed. These checks do not automatically write or migrate stored data.
+
+Live extraction caches also respect durable source history. If any revision is
+known for the exact source and applicable game identity, retrieval reacquires its
+bytes and performs current whole-document source CLEAR before selecting evidence.
+This includes unmarked historical revisions, legacy assessments and source holds;
+an unchanged restriction count does not authorize cache reuse. Exact registered
+aliases and applicable base/edition keys carry restrictions without granting game
+identity. Failed configured database reads withhold evidence. A redirect
+destination with durable history and no pre-acquisition authority witness is
+withheld. Fresh source validation does not reactivate SQL revisions or historical
+owner approvals.
+
+Hybrid accepted evidence also carries a private durable-authority snapshot,
+captured before acquisition and checked after source assessment, before and after
+generation, and on cached or idempotent response reuse. Exact source state includes
+server update identity as well as restriction counts, so repeated observations of
+the same source-use hold revoke older artifacts. Only small authority receipts
+survive full-document eviction. Stored evidence, including legacy sources without
+an explicit origin label, must still match freshly retrieved source, revision,
+record, URL and text before reuse. All reads share a bounded cancellation deadline;
+unavailable or changed authority withholds the answer and selected evidence with
+`EVIDENCE_REVALIDATION_REQUIRED`. Storage policy never exempts transient evidence
+from this read-only authority check or authorizes a write.
 
 Status polling separately accepts strictly shaped retained ingestion envelopes
 from known earlier CLEAR policies, so completed and failed historical operations

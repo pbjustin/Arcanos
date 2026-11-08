@@ -2,6 +2,7 @@ import { filterGamingDocumentInstructions } from '@services/gamingDocumentExtrac
 import type { GamingPlayerContext } from './gamingPlayerContext.js';
 import { assessGamingProgressionRequest, filterGamingNonAffirmativeStateClauses, hasUsefulGamingProgressValue } from './gamingProgressionPolicy.js';
 import { GAMING_PLAYER_DECISION_CHOICES } from './gamingPreferenceData.js';
+import { gamingRegistryLiteralPattern, resolveGamingRegistryGame } from './gamingGameRegistry.js';
 
 export const GAMING_RETRIEVAL_POLICY_VERSION = 'gaming-player-retrieval/v1';
 const STOP_WORDS = new Set('a an and are as at be by can do does for from how i in is it me my of on or should that the this to was what when where which who why with you about after before finishing completing completed finished defeated get go help please tell use using want would guide next now then need proceed continue current objective checkpoint step steps walkthrough explain detailed detail concise briefly spoiler spoilers spoilerfree beat defeat boss strategy game look up newly released beginner route supplied source opening simple summary summarize overview linked guides direct answer both am im m supposed stuck has have user major first'.split(' '));
@@ -102,6 +103,144 @@ export function gamingTermCoverage(text: string, terms: readonly string[]): numb
     });
   const available = new Set(gamingLexicalTokens(supportingText));
   return terms.length ? terms.filter(term => available.has(term)).length / terms.length : 0;
+}
+
+/** Claim coverage excludes request style and contextual freshness qualifiers.
+ * The original request remains intact for identity, applicability and freshness. */
+export function buildGamingClaimCoverageTerms(input: GamingRetrievalPolicyInput): string[] {
+  const prompt = input.prompt.replace(/\b(?:on|for|at|as of)\s+(?:the\s+)?(?:latest|current|newest|live)\s+(?:patch|version|build|season)\b(?!\s+(?:changes|updates|notes|differences|effects)\b)/giu, '');
+  return buildGamingRetrievalTerms({ ...input, prompt }).focusTerms
+    .filter(term => !['recommend', 'recommended', 'recommendation', 'recommendations', 'best', 'good'].includes(term));
+}
+
+/** Intelligible acquired gameplay assertions, not an authority or truth verdict.
+ * Catalog speech acts, game identity and topic labels supply no claim text.
+ * Both declarative relations and player actions remain eligible for the normal
+ * identity, applicability, coverage and final semantic CLEAR assessments. */
+export function gamingAttributableClaimText(text: string, game?: string, metadata?: { title?: string; headings?: string }): string {
+  const registryGame = game ? resolveGamingRegistryGame(game) : undefined;
+  const names = [...new Set([game, registryGame?.name, ...(registryGame?.aliases ?? [])].filter((value): value is string => Boolean(value)))];
+  const gamePattern = names.length ? `(?:${names.sort((left, right) => right.length - left.length).map(gamingRegistryLiteralPattern).join('|')})` : undefined;
+  const scope = gamePattern ? new RegExp(`\\bin(?: the game)?\\s+${gamePattern},\\s*`, 'iu') : undefined;
+  const gamePrefix = gamePattern ? new RegExp(`^${gamePattern}\\s+`, 'iu') : undefined;
+  const definition = gamePattern ? new RegExp(`^${gamePattern}\\s+is\\s+an?\\s+(?:[\\p{L}][\\p{L}'’-]{0,31}\\s+){0,8}game(?=\\s|[.!?,;]|$)`, 'iu') : undefined;
+  const authorship = /^(?:(?:it|this\s+game|the\s+game)\s+(?:is|was|were|has\s+been)\s+)?(?:developed|published|created|produced)\s+by\b/iu;
+  const nominalSection = String.raw`(?:about\s+(?:the\s+)?game|(?:overview|summary|details|information)\s+(?:of|about)\s+(?:the\s+)?game)`;
+  const sectionPrefix = new RegExp(`^${nominalSection}(?:\\s*[:.!?])?(?:\\s+|$)`, 'iu');
+  const nominalPagePrefix = gamePattern ? new RegExp(`^${gamePattern}\\s+(?:wiki(?:\\s+guide)?|guide|walkthrough|index)\\s+(?=${nominalSection}\\b|${gamePattern}\\s+is\\b)`, 'iu') : undefined;
+  const metaHead = /\b(?:wiki|catalog|index|glossary|encyclopedia|entry|entries|article|articles|page|pages|topic|topics|directory|collection|heading|headings|guide|document|source|section|sections|overview|summary|content|gameplay|evidence|information|news|record|records|table|tables|titles|labels|names)\s*$/iu;
+  const referenceObject = /\b(?:wiki|catalog|index|encyclopedia|directory|articles?|pages?|headings?|titles?|topics?|glossary)\b/iu;
+  const action = /\b(?:activate|allocate|attack|avoid|block|buy|choose|collect|compare|complete|craft|cross|defeat|dodge|enter|equip|exit|explore|find|finish|focus|follow|gather|heal|improve|inspect|jump|keep|leave|move|open|place|plan|plant|practice|prepare|preserve|press|prioritize|raise|reach|read|reduce|remove|repair|restore|return|rotate|save|select|spend|take|trade|travel|turn|unlock|upgrade|use|visit|wait)\b/iu;
+  const relation = /\b(?:is|are|was|were|has|have|uses?|costs?|requires?|needs?|opens?|unlocks?|grants?|blocks?|protects?|deflects?|reflects?|absorbs?|inflicts?|deals?|reduces?|restores?|increases?|changes?|stuns?|sells?|spawns?|drops?|equals?|provides?|supports?|contains?|includes?|prevents?|allows?|follows?|begins?|starts?|ends?|waits?|leaves?|progress(?:es)?|prioritizes?|retains?|favors?|combines?|improves?|determines?|depends?|gives?|causes?|offers?|halves?|staggers?|weighs?)\s+\S/giu;
+  // A plural noun is not a finite verb merely because it ends in s or is
+  // capitalized. Retain productive verb forms without admitting label bags.
+  const finiteRelation = /\b[\p{L}][\p{L}'’-]*(?:ates|ifies|izes|ises|ects|uces|ores|ows|cks|ches|shes|rms|rns|nks|lds|nts)\s+(?!(?:and|or|plus|as|is|are|was|were|has|have|can|could|must|should|may|will|would)\b)\S/giu;
+  const location = /\b(?:at|in|on|from|near|beside|behind|inside|outside|under|beneath|above|below|between|within)\s+\S/giu;
+  // A flattened heading can precede a source-description sentence without a
+  // full stop. Keep its material assertion separate from the description.
+  let prose = text.trim().replace(/\s+(?=(?:this|the)\s+(?:page|article|guide|walkthrough|document|source|section)\s+(?:explains?|describes?|covers?|lists?|provides?|contains?|includes?|offers?|presents?)\b)/giu, '\n');
+  for (const heading of [metadata?.title, metadata?.headings?.split(/\s+\|\s+|\n/u, 1)[0]]
+    .filter((value): value is string => Boolean(value)).sort((left, right) => right.length - left.length)) {
+    const topic = gamePrefix ? heading.replace(gamePrefix, '') : heading;
+    if (prose.startsWith(heading) && /^\s/u.test(prose.slice(heading.length))
+      && ![...topic.matchAll(relation), ...topic.matchAll(finiteRelation), ...topic.matchAll(location)].length && !action.test(topic.split(/\s+/u, 1)[0])
+      && (/^(?:wiki(?:\s+guide)?|guide|walkthrough|index)$/iu.test(topic)
+        || !/^\s+(?:is|are|was|were|has|have|can|must|should|uses?|costs?|requires?|opens?|grants?|blocks?)\b/iu.test(prose.slice(heading.length))))
+      prose = prose.slice(heading.length).trim();
+  }
+  // A fresh acquired game scope starts its own clause even when a flattened
+  // primary heading precedes it. Evaluate that prefix independently instead of
+  // borrowing its words or losing the following procedure without display metadata.
+  const claimProse = scope ? prose.replace(new RegExp(scope.source, 'giu'), (_match: string, offset: number) => {
+    // The suffix rules below need at most two words. Inspect them directly
+    // instead of copying/splitting the entire preceding document per scope.
+    // Keep arbitrary whitespace intact and stop at the original clause boundary.
+    let prefixStart = offset;
+    let completedWords = 0;
+    let withinWord = false;
+    while (prefixStart > 0) {
+      const character = prose.charAt(prefixStart - 1);
+      if (/[.!?;\n]/u.test(character)) break;
+      if (/\s/u.test(character)) {
+        if (withinWord) {
+          completedWords += 1;
+          withinWord = false;
+          if (completedWords === 2) break;
+        }
+      } else withinWord = true;
+      prefixStart -= 1;
+    }
+    const prefix = prose.slice(prefixStart, offset);
+    // A parenthetical scope cannot sever a prohibition or conditional prefix
+    // from its action and turn negative gameplay advice into a positive claim.
+    return /,\s*$/u.test(prefix) || /\b(?:do\s+not|don['’]t|does\s+not|doesn['’]t|never|cannot|can['’]t|must\s+not|should\s+not|unless|only\s+if)\s*$/iu.test(prefix)
+      ? ' ' : '\n';
+  }) : prose;
+  return claimProse.split(/\n+|(?<=[.!?])\s+|;\s*/u).map(original => {
+    let clause = original.trim();
+    if (!clause || /\b(?:at|in|for|from|to|with|and|but|after|before|until|when|where|if|unless|only)\s*[.!?]?$/iu.test(clause)) return '';
+    // Flattened parser headings can precede the definition without punctuation.
+    // Remove only closed nominal page/section labels, never a factual heading.
+    if (nominalPagePrefix) clause = clause.replace(nominalPagePrefix, '');
+    clause = clause.replace(sectionPrefix, '').trim();
+    // Identity/authorship is metadata even when the same sentence names a
+    // developer or publisher. Inspect a separate gameplay continuation intact.
+    const definitionMatch = definition?.exec(clause);
+    if (definitionMatch) clause = clause.slice(definitionMatch[0].length).trim();
+    if (authorship.test(clause)) {
+      const continuation = /,\s*(?:(?:and|while|but|whereas)\s+)?|\s+(?:while|but|whereas)\s+/iu.exec(clause);
+      clause = continuation ? clause.slice(continuation.index + continuation[0].length).trim() : '';
+    }
+    if (definitionMatch) clause = clause.replace(/^(?:and|while|but|where|whereas)\s+/iu, '');
+    if (!clause || /^[.!?]+$/u.test(clause)) return '';
+    // Reading a source link supplies no acquired gameplay, even when its label
+    // repeats the requested item. Preserve a separate authored continuation.
+    if (/^(?:(?:first|next|then)[,:]?\s+)?(?:read|consult|browse)\s+[^.!?;:\n]{0,180}\b(?:walkthroughs?|guides?|articles?|pages?|wiki|catalog|index|directory)\b/iu.test(clause)) {
+      const continuation = /,\s*(?:(?:and|while|but|whereas)\s+)?|\s+(?:while|but|whereas)\s+/iu.exec(clause);
+      clause = continuation ? clause.slice(continuation.index + continuation[0].length).trim() : '';
+      if (!clause) return '';
+    }
+    const claimText = clause;
+    // A title's leading game name may itself contain a preposition or verb.
+    // Evaluate its following topic; preserve a game that is the actual subject
+    // of an explicit finite relation rather than a heading prefix.
+    if (gamePrefix) {
+      const topic = clause.replace(gamePrefix, '');
+      const directPredicate = [...topic.matchAll(relation), ...topic.matchAll(finiteRelation)].some(match => match.index === 0)
+        || /^(?:can|could|must|should|may|will|would)\b/iu.test(topic);
+      if (topic !== clause && !directPredicate) clause = topic;
+    }
+    const actionClause = clause.replace(/^(?:do\s+not|don['’]t)\s+/iu, '');
+    // Typed build serialization binds a named slot, ranked skill or stat value;
+    // a list of unbound item/topic names does not satisfy these relations.
+    if (/^(?:Equipment\s+\(\d+\):\s+[^:,\n]{1,80}:\s+\S|Skills\s+\(\d+\):\s+[^,\n]{1,160}\s+rank\s+\d|Stats\s+\(\d+\):\s+[^:,\n]{1,80}:\s+(?:[-+]?\d|yes\b|no\b))/iu.test(clause)) return claimText;
+    clause = clause.replace(/\b(?:does|do)\s+not\s+(?!(?:explain|cover|describe|document|address|support|verify|establish|prove)\b)/giu, '');
+    const attributed = (index: number): boolean => {
+      const subject = clause.slice(0, index).split(/[,;:]/u).at(-1)?.trim() ?? '';
+      return Boolean(subject && /\p{L}/u.test(subject) && !metaHead.test(subject)
+        && !/^(?:the|a|an|these|those|this|our|your|their)$/iu.test(subject));
+    };
+    if ([...clause.matchAll(relation)].some(match => attributed(match.index)
+      // Offering a guide/build is a description until it binds the actual
+      // configuration used. Catalog/document subjects remain excluded above.
+      && (!/^offers?\b/iu.test(match[0]) || /\busing\s+\S/iu.test(clause.slice(match.index)))
+      && (!referenceObject.test(clause) || /^(?:(?:is|are|was|were)\s+(?:sold|found|located|available)|costs?|requires?|needs?|opens?|unlocks?|grants?|blocks?|protects?|deflects?|reflects?|absorbs?|inflicts?|deals?|reduces?|restores?|increases?|changes?|stuns?|sells?|spawns?|drops?|equals?|prevents?|follows?)\b/iu.test(clause.slice(match.index))))) return claimText;
+    if (!referenceObject.test(clause) && [...clause.matchAll(finiteRelation)].some(match => attributed(match.index))) return claimText;
+    // Generic imperative syntax preserves unfamiliar procedure verbs such as
+    // "align the prism" without admitting an instruction to follow a catalog.
+    const mechanicalResult = /\b(?:to\s+(?:unlock|open|activate|restore|repair|cross|defeat)|grants?|unlocks?|costs?|inflicts?|deals?)\s+(?!(?:the\s+)?(?:wiki|catalog|index|article|page|directory)\b)\S/iu.test(clause);
+    const browsingOnly = referenceObject.test(clause) && !mechanicalResult;
+    const instruction = /^(?:(?:first|next|then)[,:]?\s+)?(?:to\s+)?([\p{L}][\p{L}'’-]*)\s+\S/iu.exec(actionClause);
+    const localInstruction = /(?:^|[,:])\s*(?:(?:first|next|then)[,:]?\s+)?(?:to\s+)?([\p{L}][\p{L}'’-]*)\s+\S/giu;
+    const imperative = /(?:^|[,:])\s*(?:(?:first|next|then)[,:]?\s+)?(?!(?:about|above|below|under|over|at|in|on|of|with|without|for|from|as|through|during|after|before|unless|because|while|where|when|if|that|this|the|an?|and|or|plus|but|its|their|these|those|your|our|my|we|you|they|he|she|is|are|was|were|has|does)\b)[\p{L}][\p{L}'’-]*\s+(?:the|a|an|your|our|their|its|this|that)\s+\p{L}/iu.test(actionClause);
+    if (!browsingOnly && (imperative || instruction && action.test(instruction[1])
+      || [...actionClause.matchAll(localInstruction)].some(match => action.test(match[1])))) return claimText;
+    const modal = /\b(?:can|could|must|should|may|will|would)\s+[\p{L}][\p{L}'’-]*\s+\S/giu;
+    if (!browsingOnly && [...clause.matchAll(modal)].some(match => attributed(match.index))) return claimText;
+    if (/\b(?:you|players?|characters?|commanders?)\s+(?:(?:can|could|must|should|may|will|typically|usually|often)\s+){0,2}[\p{L}][\p{L}'’-]*\s+\S/iu.test(clause)
+      && !referenceObject.test(clause)) return claimText;
+    return !referenceObject.test(clause) && [...clause.matchAll(location)].some(match => attributed(match.index)) ? claimText : '';
+  }).filter(Boolean).join('\n');
 }
 
 /** Source admission asks for a useful contribution; aggregate answer coverage remains separate. */
@@ -216,7 +355,7 @@ export function buildGamingRequestRequirements(input: GamingRetrievalPolicyInput
     // Relational question framing describes the requested facts; it is not a
     // word that an independently acquired passage must repeat verbatim.
     const topicalClause = clause.replace(new RegExp(`\\b(?:${GENERIC_RELATIONSHIP_HEADS})\\s+of\\s+`, 'giu'), '');
-    const terms = buildGamingRetrievalTerms({ game: input.game, prompt: topicalClause }).requestTerms
+    const terms = buildGamingClaimCoverageTerms({ game: input.game, prompt: topicalClause })
       .filter(term => !['recommend', 'recommended', 'recommendation', 'recommendations', 'provide', 'describe', 'including', 'include', 'cover', 'covering'].includes(term))
       .filter(term => !/[0-9]{6,}/u.test(term));
     // This finite diagnostic vocabulary supplies labels only when explicitly

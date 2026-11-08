@@ -1,5 +1,6 @@
 import { filterGamingDocumentInstructions } from "@services/gamingDocumentExtraction.js";
 import { normalizeGamingDocumentInstructionCharacters } from "@shared/gaming/gamingDocumentTextNormalization.js";
+import { GAMING_SOURCE_USE_RESTRICTION } from "@services/gamingHtmlEvidence.js";
 import { createHash } from "node:crypto";
 import { gunzipSync, inflateRawSync, inflateSync } from "node:zlib";
 import { load } from "cheerio";
@@ -86,6 +87,7 @@ type DecodedCandidate = {
   decodedSize: number;
   reason?: GamingStructuredFailureReason;
   terminalFailure?: GamingStructuredFailureReason;
+  sourceUseRestricted?: true;
 };
 
 type ExtractionState = {
@@ -95,6 +97,7 @@ type ExtractionState = {
   sawMalformed: boolean;
   instructionFiltered: boolean;
   terminalFailure?: GamingStructuredFailureReason;
+  sourceUseRestricted?: true;
   strategy: GamingExtractionStrategy;
 };
 
@@ -140,6 +143,11 @@ function hasBuildSourceInstructions(value: unknown): boolean {
   const withoutLinks = value.replace(/\[LINKS\]/gi, " ");
   const normalized = normalizeGamingDocumentInstructionCharacters(withoutLinks).replace(/\s+/gu, " ").trim();
   return filterGamingDocumentInstructions(withoutLinks) !== normalized;
+}
+
+function hasBuildSourceUseRestriction(value: unknown): boolean {
+  return typeof value === "string" && GAMING_SOURCE_USE_RESTRICTION.test(
+    normalizeGamingDocumentInstructionCharacters(value).replace(/\s+/gu, " "));
 }
 
 function safeString(value: unknown, maxChars: number = LIMITS.maxStringLength): string | undefined {
@@ -358,17 +366,19 @@ function collectObjectStrings(value: unknown, wantedKeys?: ReadonlySet<string>):
   return output;
 }
 
-function metadataFromHtml(html: string | undefined, deadline = Number.POSITIVE_INFINITY, onInstructions?: () => void): GamingResourceMetadata {
+function metadataFromHtml(html: string | undefined, deadline = Number.POSITIVE_INFINITY, onInstructions?: () => void,
+  onSourceUseRestricted?: () => void, parsedHtml?: ReturnType<typeof load>): GamingResourceMetadata {
   if (!html || html.length > LIMITS.maxHtmlChars || Date.now() > deadline) {
     return {};
   }
-  const $ = load(html);
+  const $ = parsedHtml ?? load(html);
   if (Date.now() > deadline) return {};
   const openGraph: Record<string, string> = {};
   $("meta[property^='og:']").slice(0, 32).each((_, element) => {
     const property = safeString($(element).attr("property"), 80)?.toLowerCase();
     const rawContent = $(element).attr("content");
     if ((property === "og:title" || property === "og:description") && hasBuildSourceInstructions(rawContent)) onInstructions?.();
+    if ((property === "og:title" || property === "og:description") && hasBuildSourceUseRestriction(rawContent)) onSourceUseRestricted?.();
     const content = safeString(rawContent, 240);
     if (property && content && !DANGEROUS_KEYS.has(property.toLowerCase())) {
       openGraph[property.toLowerCase()] = content;
@@ -378,6 +388,7 @@ function metadataFromHtml(html: string | undefined, deadline = Number.POSITIVE_I
   const rawTitle = $("title").first().text();
   const rawDescription = $("meta[name='description']").first().attr("content");
   if (hasBuildSourceInstructions(rawTitle) || hasBuildSourceInstructions(rawDescription)) onInstructions?.();
+  if (hasBuildSourceUseRestriction(rawTitle) || hasBuildSourceUseRestriction(rawDescription)) onSourceUseRestricted?.();
   const title = safeString(rawTitle, 240);
   const description = safeString(rawDescription, 500);
   const canonicalUrl = safeString($("link[rel='canonical']").first().attr("href"), LIMITS.maxUrlChars);
@@ -572,8 +583,10 @@ function parseJsonCandidate(text: string, deadline: number): DecodedCandidate {
     const value = JSON.parse(normalized) as unknown;
     const inspection = inspectStructure(value, deadline);
     if (inspection.ok) return { value, decodedSize };
-    const terminalFailure = inspectRejectedBuildFields(value, deadline);
+    let sourceUseRestricted = false;
+    const terminalFailure = inspectRejectedBuildFields(value, deadline, () => { sourceUseRestricted = true; });
     return { decodedSize, reason: terminalFailure ?? failureFromInspection(inspection),
+      ...(sourceUseRestricted ? { sourceUseRestricted: true } : {}),
       ...(terminalFailure ? { terminalFailure } : {}) };
   } catch {
     return { decodedSize, reason: "STRUCTURED_PAYLOAD_MALFORMED" };
@@ -715,14 +728,15 @@ function extractBalancedJson(script: string): string | undefined {
 }
 
 function collectEmbeddedCandidates(input: GamingResourceInput, metadata: GamingResourceMetadata, deadline: number,
-  onRejected?: (reason: GamingStructuredFailureReason) => void): unknown[] {
+  onRejected?: (reason: GamingStructuredFailureReason) => void, onSourceUseRestricted?: () => void,
+  parsedHtml?: ReturnType<typeof load>): unknown[] {
   const output: unknown[] = [];
   const addValue = (value: unknown): void => {
     if (value === undefined || output.length >= LIMITS.maxPayloadCandidates) return;
     const inspection = inspectStructure(value, deadline);
     if (inspection.ok) output.push(value);
     else {
-      const rejection = inspectRejectedBuildFields(value, deadline);
+      const rejection = inspectRejectedBuildFields(value, deadline, onSourceUseRestricted);
       if (rejection) onRejected?.(rejection);
     }
   };
@@ -736,6 +750,7 @@ function collectEmbeddedCandidates(input: GamingResourceInput, metadata: GamingR
       : extractBalancedJson(boundedConfiguration);
     if (!jsonText) continue;
     const parsed = parseJsonCandidate(jsonText, deadline);
+    if (parsed.sourceUseRestricted) onSourceUseRestricted?.();
     if (parsed.terminalFailure) onRejected?.(parsed.terminalFailure);
     if (parsed.value !== undefined) output.push(parsed.value);
   }
@@ -743,10 +758,11 @@ function collectEmbeddedCandidates(input: GamingResourceInput, metadata: GamingR
   if (!html || html.length > LIMITS.maxHtmlChars || Date.now() > deadline) return output;
   if (/application\/json/iu.test(input.contentType ?? "")) {
     const parsed = parseJsonCandidate(html, deadline);
+    if (parsed.sourceUseRestricted) onSourceUseRestricted?.();
     if (parsed.terminalFailure) onRejected?.(parsed.terminalFailure);
     if (parsed.value !== undefined) output.push(parsed.value);
   }
-  const $ = load(html);
+  const $ = parsedHtml ?? load(html);
   let cumulativeChars = 0;
   $("script").slice(0, LIMITS.maxScripts).each((_, element) => {
     if (Date.now() > deadline || output.length >= LIMITS.maxPayloadCandidates) return false;
@@ -764,6 +780,7 @@ function collectEmbeddedCandidates(input: GamingResourceInput, metadata: GamingR
     }
     if (!jsonText) return;
     const parsed = parseJsonCandidate(jsonText, deadline);
+    if (parsed.sourceUseRestricted) onSourceUseRestricted?.();
     if (parsed.terminalFailure) onRejected?.(parsed.terminalFailure);
     if (parsed.value !== undefined) output.push(parsed.value);
   });
@@ -789,7 +806,7 @@ function visibleHtmlCandidate(input: GamingResourceInput, deadline = Number.POSI
     const consumed = new Set<unknown>();
     const normalized = normalizeBuildRecord(item, { value: item, metadata: {}, publicUrl: "", resourceType: "build_planner",
       extractor: "visible-field-inspection", confidence: 0, onInstructions,
-      onFieldRead: value => consumed.add(value) });
+      onFieldRead: value => { consumed.add(value); if (hasBuildSourceUseRestriction(value)) onInvalid?.("SOURCE_USE_RESTRICTED"); } });
     const fields = normalized ? Object.keys(normalized).flatMap(key => key === "source" ? []
       : key === "character" || key === "stats" ? Object.keys(normalized[key] ?? {}).map(field => `${key}.${field}`) : [key]) : [];
     return { consumed, fields };
@@ -896,12 +913,16 @@ function visibleHtmlCandidate(input: GamingResourceInput, deadline = Number.POSI
   return Object.keys(record).length > 0 ? record : undefined;
 }
 
-function findValue(record: PlainRecord, aliases: readonly string[]): unknown {
+function findValue(record: PlainRecord, aliases: readonly string[], inspectAlias?: (value: unknown) => unknown): unknown {
   const wanted = new Set(aliases.map(normalizeKey));
+  let selected: unknown; let found = false;
   for (const [key, value] of ownEntries(record)) {
-    if (wanted.has(normalizeKey(key))) return value;
+    if (!wanted.has(normalizeKey(key))) continue;
+    if (!inspectAlias) return value;
+    inspectAlias(value);
+    if (!found) { selected = value; found = true; }
   }
-  return undefined;
+  return selected;
 }
 
 function recordScore(record: PlainRecord): number {
@@ -954,7 +975,7 @@ function stringList(value: unknown, preserveDuplicates = false, sanitizeString =
     const raw = typeof item === "string" || typeof item === "number"
       ? String(item)
       : isPlainRecord(item)
-        ? findValue(item, ["name", "label", "title", "item", "skill", "talent", "value"])
+        ? findValue(item, ["name", "label", "title", "item", "skill", "talent", "value"], sanitizeString)
         : undefined;
     const cleaned = sanitizeString(typeof raw === "number" ? String(raw) : raw);
     if (!cleaned || NAVIGATION_ONLY_PATTERN.test(cleaned)) continue;
@@ -977,15 +998,16 @@ function equipmentEntries(value: unknown, defaultCategory?: string, sanitizeStri
       return;
     }
     if (!isPlainRecord(raw)) return;
-    const rawName = findValue(raw, ["name", "itemName", "label", "title", "item", "weapon", "card", "unit"]);
+    const rawName = findValue(raw, ["name", "itemName", "label", "title", "item", "weapon", "card", "unit"], sanitizeString);
     const name = sanitizeString(typeof rawName === "number" ? String(rawName) : rawName, 240);
     if (!name) return;
-    const slot = sanitizeString(findValue(raw, ["slot", "position", "location"]) ?? fallbackSlot, 120);
-    const category = sanitizeString(findValue(raw, ["category", "type", "kind"]) ?? defaultCategory, 120);
-    const rarity = sanitizeString(findValue(raw, ["rarity", "quality", "tier"]), 120);
-    const upgrades = stringList(findValue(raw, ["upgrades", "upgrade", "enhancements"]), false, sanitizeString);
-    const modifications = stringList(findValue(raw, ["modifications", "mods", "attachments", "gems", "runes", "affixes", "enchantments"]), false, sanitizeString);
-    const quantityRaw = findValue(raw, ["quantity", "qty", "count", "copies", "amount"]);
+    const slot = sanitizeString(findValue(raw, ["slot", "position", "location"], sanitizeString) ?? fallbackSlot, 120);
+    const category = sanitizeString(findValue(raw, ["category", "type", "kind"], sanitizeString) ?? defaultCategory, 120);
+    const rarity = sanitizeString(findValue(raw, ["rarity", "quality", "tier"], sanitizeString), 120);
+    const inspectList = (value: unknown) => stringList(value, false, sanitizeString);
+    const upgrades = stringList(findValue(raw, ["upgrades", "upgrade", "enhancements"], inspectList), false, sanitizeString);
+    const modifications = stringList(findValue(raw, ["modifications", "mods", "attachments", "gems", "runes", "affixes", "enchantments"], inspectList), false, sanitizeString);
+    const quantityRaw = findValue(raw, ["quantity", "qty", "count", "copies", "amount"], sanitizeString);
     sanitizeString(quantityRaw);
     const quantity = numberValue(quantityRaw);
     output.push({
@@ -1027,13 +1049,14 @@ function skillEntries(value: unknown, sanitizeString = safeString): NormalizedGa
       return;
     }
     if (!isPlainRecord(raw)) return;
-    const name = sanitizeString(findValue(raw, ["name", "skillName", "label", "title", "skill", "ability", "spell", "talent"]) ?? fallbackName, 240);
+    const name = sanitizeString(findValue(raw, ["name", "skillName", "label", "title", "skill", "ability", "spell", "talent"], sanitizeString) ?? fallbackName, 240);
     if (!name) return;
-    const rankRaw = findValue(raw, ["rank", "level", "points", "value"]);
+    const rankRaw = findValue(raw, ["rank", "level", "points", "value"], sanitizeString);
     sanitizeString(rankRaw);
     const rank = numberValue(rankRaw);
-    const category = sanitizeString(findValue(raw, ["category", "type", "tree", "group"]), 120);
-    const modifiers = stringList(findValue(raw, ["modifiers", "mods", "upgrades", "runes", "nodes"]), false, sanitizeString);
+    const category = sanitizeString(findValue(raw, ["category", "type", "tree", "group"], sanitizeString), 120);
+    const modifiers = stringList(findValue(raw, ["modifiers", "mods", "upgrades", "runes", "nodes"],
+      value => stringList(value, false, sanitizeString)), false, sanitizeString);
     output.push({
       name,
       ...(rank !== undefined && Number.isInteger(rank) && rank >= 0 ? { rank } : {}),
@@ -1073,7 +1096,7 @@ function statEntries(value: unknown, sanitizeString = safeString): Record<string
   if (Array.isArray(value)) {
     for (const item of value.slice(0, LIMITS.maxStatEntries)) {
       if (!isPlainRecord(item)) continue;
-      add(findValue(item, ["name", "stat", "key", "label"]), findValue(item, ["value", "amount", "score", "rating"]));
+      add(findValue(item, ["name", "stat", "key", "label"], sanitizeString), findValue(item, ["value", "amount", "score", "rating"], sanitizeString));
     }
   } else if (isPlainRecord(value)) {
     for (const [key, nested] of ownEntries(value).slice(0, LIMITS.maxStatEntries)) {
@@ -1127,10 +1150,10 @@ function normalizeBuildRecord(record: PlainRecord | undefined, params: BuildNorm
   const patch = sanitizeString(findValue(root, ["patch", "version", "season"]), 120);
   const characterRaw = findValue(root, ["character", "avatar", "hero", "champion"]);
   const characterRecord = isPlainRecord(characterRaw) ? characterRaw : root;
-  const characterClass = sanitizeString(findValue(characterRecord, ["class", "className", "profession"]), 120);
-  const subclass = sanitizeString(findValue(characterRecord, ["subclass", "subClass", "advancedClass"]), 120);
-  const specialization = sanitizeString(findValue(characterRecord, ["specialization", "spec", "discipline"]), 120);
-  const levelRaw = findValue(characterRecord, ["level", "characterLevel"]);
+  const characterClass = sanitizeString(findValue(characterRecord, ["class", "className", "profession"], sanitizeString), 120);
+  const subclass = sanitizeString(findValue(characterRecord, ["subclass", "subClass", "advancedClass"], sanitizeString), 120);
+  const specialization = sanitizeString(findValue(characterRecord, ["specialization", "spec", "discipline"], sanitizeString), 120);
+  const levelRaw = findValue(characterRecord, ["level", "characterLevel"], sanitizeString);
   sanitizeString(levelRaw);
   const level = numberValue(levelRaw);
   const character = characterClass || subclass || specialization || (level !== undefined && Number.isInteger(level) && level >= 0)
@@ -1202,14 +1225,50 @@ function normalizeBuildRecord(record: PlainRecord | undefined, params: BuildNorm
   };
 }
 
+/** Visit consumed fields without constructing or admitting a normalized build. */
+function inspectSupportedBuildRecordFields(record: PlainRecord, inspectField: (value: unknown) => void): void {
+  const read = (value: unknown, maxChars?: number): string | undefined => {
+    inspectField(value);
+    return typeof value === "string" && value.length > LIMITS.maxDecodedBytes ? undefined : safeString(value, maxChars);
+  };
+  for (const aliases of [["game", "gameName"], ["buildName", "title", "name"], ["role", "position", "job"],
+    ["archetype", "buildType", "style"], ["activity", "mode", "content", "scenario"], ["patch", "version", "season"]]) {
+    read(findValue(record, aliases));
+  }
+  const characterValue = findValue(record, ["character", "avatar", "hero", "champion"]);
+  const character = isPlainRecord(characterValue) ? characterValue : record;
+  for (const aliases of [["class", "className", "profession"], ["subclass", "subClass", "advancedClass"],
+    ["specialization", "spec", "discipline"], ["level", "characterLevel"]]) read(findValue(character, aliases, read));
+  for (const aliases of [["equipment", "gear", "items", "loadout"], ["weapons"], ["armor"], ["deck", "cards"], ["army", "units", "roster"]]) {
+    const equipment = findValue(record, aliases);
+    // Security inspection covers every structurally admitted source entry;
+    // the independent 128-entry build admission cap must not hide later fields.
+    if (Array.isArray(equipment)) {
+      for (let offset = 0; offset < equipment.length; offset += LIMITS.maxEquipmentEntries)
+        equipmentEntries(equipment.slice(offset, offset + LIMITS.maxEquipmentEntries), undefined, read);
+    } else if (isPlainRecord(equipment)) {
+      const entries = ownEntries(equipment);
+      for (let offset = 0; offset < entries.length; offset += LIMITS.maxEquipmentEntries)
+        equipmentEntries(Object.fromEntries(entries.slice(offset, offset + LIMITS.maxEquipmentEntries)), undefined, read);
+    } else equipmentEntries(equipment, undefined, read);
+  }
+  for (const aliases of [["skills", "abilities", "spells"], ["skillTree", "nodes"]]) skillEntries(findValue(record, aliases), read);
+  statEntries(findValue(record, ["stats", "attributes", "ratings", "setup", "settings", "tuning"]), read);
+  for (const aliases of [["talents", "talentChoices"], ["perks"], ["traits"], ["rotation", "sequence", "priority"],
+    ["consumables", "potions", "food"], ["companions", "team", "party", "members", "heroes", "champions"],
+    ["utility", "tools", "support"], ["strengths", "pros", "advantages"], ["weaknesses", "cons", "disadvantages"],
+    ["constraints", "requirements", "limitations"], ["notes", "description", "summary"]]) stringList(findValue(record, aliases), false, read);
+}
+
 /** Inspect supported fields without admitting an oversized record or scanning unbounded text. */
-function inspectRejectedBuildFields(value: unknown, deadline: number): GamingStructuredFailureReason | undefined {
+function inspectRejectedBuildFields(value: unknown, deadline: number, onSourceUseRestricted?: () => void): GamingStructuredFailureReason | undefined {
   if (!inspectStructure(value, deadline, Number.POSITIVE_INFINITY).ok) return undefined;
   const pending: unknown[] = [value];
   let instructions = false;
+  let sourceUseRestricted = false;
   let uninspectable = false;
   while (pending.length > 0) {
-    if (Date.now() > deadline) return "STRUCTURED_PAYLOAD_TOO_LARGE";
+    if (Date.now() > deadline) return instructions ? "SOURCE_INSTRUCTIONS_REJECTED" : "STRUCTURED_PAYLOAD_TOO_LARGE";
     const current = pending.pop();
     if (Array.isArray(current)) {
       pending.push(...current);
@@ -1218,17 +1277,65 @@ function inspectRejectedBuildFields(value: unknown, deadline: number): GamingStr
     if (!isPlainRecord(current)) continue;
     // Ranking chooses evidence; it cannot hide a supported sibling from rejection inspection.
     if (recordScore(current) > 0) {
-      normalizeBuildRecord(current, { value: current, metadata: {}, publicUrl: "", resourceType: "build_planner",
-        extractor: "rejected-field-inspection", confidence: 0, maxSourceStringChars: LIMITS.maxDecodedBytes,
-        onInstructions: () => { instructions = true; },
-        onFieldRead: field => { if (typeof field === "string" && field.length > LIMITS.maxDecodedBytes) uninspectable = true; } });
-      if (instructions) return "SOURCE_INSTRUCTIONS_REJECTED";
+      const inspectRecord = (record: PlainRecord) => inspectSupportedBuildRecordFields(record, field => {
+          if (typeof field === "string" && field.length > LIMITS.maxDecodedBytes) uninspectable = true;
+          else {
+            if (hasBuildSourceInstructions(field)) instructions = true;
+            if (hasBuildSourceUseRestriction(field) && !sourceUseRestricted) {
+              sourceUseRestricted = true; onSourceUseRestricted?.();
+            }
+          }
+        });
+      inspectRecord(current);
+      // Apply the same supported-field readers to each source alias separately.
+      // Output preference and category/count caps cannot hide a second alias.
+      for (const [key, field] of ownEntries(current)) {
+        if (Date.now() > deadline) return instructions ? "SOURCE_INSTRUCTIONS_REJECTED" : "STRUCTURED_PAYLOAD_TOO_LARGE";
+        inspectRecord({ [key]: field });
+      }
     }
     for (const [, nested] of ownEntries(current)) {
       if (nested && typeof nested === "object") pending.push(nested);
     }
   }
-  return uninspectable ? "STRUCTURED_PAYLOAD_TOO_LARGE" : undefined;
+  return instructions ? "SOURCE_INSTRUCTIONS_REJECTED" : sourceUseRestricted ? "SOURCE_USE_RESTRICTED"
+    : uninspectable ? "STRUCTURED_PAYLOAD_TOO_LARGE" : undefined;
+}
+
+/** Observe supported source-use restrictions only. No adapters, cache, build admission or I/O. */
+export function inspectGamingBuildResourceSourceUse(input: GamingResourceInput): boolean {
+  if (input.signal?.aborted) return false;
+  const deadline = Date.now() + LIMITS.maxExtractionMs;
+  const prepared = prepareGamingResourceUrl(input.url);
+  if (!prepared) return false;
+  let restricted = false;
+  const observe = () => { restricted = true; };
+  // Both readers inspect the same accepted HTML without mutating its tree.
+  // Keep reuse local to this pure observation; no DOM or result enters a cache.
+  const parsedHtml = input.html && input.html.length <= LIMITS.maxHtmlChars && Date.now() <= deadline ? load(input.html) : undefined;
+  const metadata = mergeMetadata(input.metadata, metadataFromHtml(input.html, deadline, undefined, observe, parsedHtml));
+  for (const field of [metadata.title, metadata.description, metadata.openGraph?.["og:title"], metadata.openGraph?.["og:description"]]) {
+    if (typeof field === "string" && field.length <= LIMITS.maxHtmlChars && hasBuildSourceUseRestriction(field)) observe();
+  }
+  const inspect = (candidate: DecodedCandidate) => {
+    if (candidate.sourceUseRestricted) observe();
+    if (candidate.value !== undefined) inspectRejectedBuildFields(candidate.value, deadline, observe);
+  };
+  for (const payload of collectUrlPayloadCandidates(prepared)) {
+    if (Date.now() > deadline || restricted) break;
+    inspect(decodePayloadCandidate(payload, deadline));
+  }
+  if (Date.now() <= deadline && !restricted) {
+    for (const value of collectEmbeddedCandidates(input, metadata, deadline, undefined, observe, parsedHtml)) {
+      if (Date.now() > deadline || restricted) break;
+      inspectRejectedBuildFields(value, deadline, observe);
+    }
+  }
+  if (Date.now() <= deadline && !restricted && input.text && input.text.length <= LIMITS.maxHtmlChars) {
+    if (/json/iu.test(input.contentType ?? "") || /^\s*[\[{]/u.test(input.text)) inspect(parseJsonCandidate(input.text, deadline));
+    else if (hasBuildSourceUseRestriction(input.text)) observe();
+  }
+  return restricted;
 }
 
 function canonicalGameKey(value: string): string {
@@ -1395,7 +1502,7 @@ function emptyValidation(failureReason: GamingStructuredFailureReason): GamingBu
     equipmentCount: 0,
     skillCount: 0,
     statCount: 0,
-    issues: [],
+    issues: failureReason === "SOURCE_USE_RESTRICTED" ? [failureReason] : [],
     failureReason
   };
 }
@@ -1663,6 +1770,7 @@ function genericExtract(params: {
     }
     state.sawCandidate = true;
     const decoded = decodePayloadCandidate(rawPayload, params.deadline);
+    if (decoded.sourceUseRestricted) state.sourceUseRestricted = true;
     state.decodedSize = Math.max(state.decodedSize, decoded.decodedSize);
     if (decoded.value !== undefined) candidates.push({ value: decoded.value, strategy: "url_payload", confidence: 0.9 });
     else if (decoded.reason === "STRUCTURED_PAYLOAD_TOO_LARGE") state.sawOversized = true;
@@ -1673,22 +1781,29 @@ function genericExtract(params: {
   for (const value of collectEmbeddedCandidates(params.input, params.metadata, params.deadline, reason => {
     if (reason === "SOURCE_INSTRUCTIONS_REJECTED") state.instructionFiltered = true;
     else state.terminalFailure = reason;
-  })) {
+  }, () => { state.sourceUseRestricted = true; })) {
     state.sawCandidate = true;
     candidates.push({ value, strategy: "embedded_state", confidence: 0.82 });
   }
   const visible = visibleHtmlCandidate(params.input, params.deadline, () => { state.instructionFiltered = true; },
-    reason => { state.terminalFailure = reason; });
+    reason => { state.terminalFailure = reason; if (reason === "SOURCE_USE_RESTRICTED") state.sourceUseRestricted = true; });
+  if (visible !== undefined) {
+    state.sawCandidate = true;
+    candidates.push({ value: visible, strategy: "visible_html", confidence: 0.72 });
+  }
+  // Finish bounded source-use inspection independently of which extraction
+  // error wins. An instruction-bearing record cannot hide a later restriction.
+  for (const candidate of candidates) {
+    const rejectedFields = inspectRejectedBuildFields(candidate.value, params.deadline, () => { state.sourceUseRestricted = true; });
+    if (rejectedFields === "SOURCE_INSTRUCTIONS_REJECTED") state.instructionFiltered = true;
+    else if (rejectedFields) state.terminalFailure = rejectedFields;
+  }
   if (state.instructionFiltered) return { build: null,
     validation: rejectedInstructionValidation(), state, classification: params.classification };
   if ((params.input.html && params.input.html.length > LIMITS.maxHtmlChars) || Date.now() > params.deadline)
     state.terminalFailure = "STRUCTURED_PAYLOAD_TOO_LARGE";
   if (state.terminalFailure) return { build: null,
     validation: emptyValidation(state.terminalFailure), state, classification: params.classification };
-  if (visible !== undefined) {
-    state.sawCandidate = true;
-    candidates.push({ value: visible, strategy: "visible_html", confidence: 0.72 });
-  }
   let bestBuild: NormalizedGamingBuild | null = null;
   let bestValidation = emptyValidation("STRUCTURED_RESOURCE_UNSUPPORTED");
   let bestStrategy: GamingExtractionStrategy = "none";
@@ -1707,10 +1822,13 @@ function genericExtract(params: {
       resourceType: effectiveType,
       extractor: `generic-${candidate.strategy}`,
       confidence: Math.max(params.classification.confidence, candidate.confidence),
-      onInstructions: () => { state.instructionFiltered = true; }
+      onInstructions: () => { state.instructionFiltered = true; },
+      onFieldRead: field => { if (hasBuildSourceUseRestriction(field)) { state.terminalFailure = "SOURCE_USE_RESTRICTED"; state.sourceUseRestricted = true; } }
     });
     if (state.instructionFiltered) return { build: null,
       validation: rejectedInstructionValidation(), state, classification: effectiveClassification };
+    if (state.terminalFailure) return { build: null,
+      validation: emptyValidation(state.terminalFailure), state, classification: effectiveClassification };
     if (!normalized || candidateIndex >= LIMITS.maxPayloadCandidates) continue;
     const validation = validateNormalizedGamingBuild(normalized, {
       requestedGame: params.input.requestedGame,
@@ -1733,10 +1851,13 @@ function genericExtract(params: {
       resourceType: params.classification.type,
       extractor: "generic-metadata",
       confidence: params.classification.confidence,
-      onInstructions: () => { state.instructionFiltered = true; }
+      onInstructions: () => { state.instructionFiltered = true; },
+      onFieldRead: field => { if (hasBuildSourceUseRestriction(field)) { state.terminalFailure = "SOURCE_USE_RESTRICTED"; state.sourceUseRestricted = true; } }
     });
     if (state.instructionFiltered) return { build: null,
       validation: rejectedInstructionValidation(), state, classification: effectiveClassification };
+    if (state.terminalFailure) return { build: null,
+      validation: emptyValidation(state.terminalFailure), state, classification: effectiveClassification };
     if (metadataBuild) {
       bestBuild = metadataBuild;
       bestValidation = validateNormalizedGamingBuild(metadataBuild, { requestedGame: params.input.requestedGame });
@@ -1770,10 +1891,13 @@ export async function ingestGamingBuildResource(
   const prepared = prepareGamingResourceUrl(input.url);
   if (!prepared) return invalidResult(input);
   let metadataInstructions = false;
+  let metadataSourceUseRestricted = false;
   const metadata = mergeMetadata(input.metadata, metadataFromHtml(input.html, deadline,
-    () => { metadataInstructions = true; }));
+    () => { metadataInstructions = true; }, () => { metadataSourceUseRestricted = true; }));
   metadataInstructions ||= [metadata.title, metadata.description,
     metadata.openGraph?.["og:title"], metadata.openGraph?.["og:description"]].some(hasBuildSourceInstructions);
+  metadataSourceUseRestricted ||= [metadata.title, metadata.description,
+    metadata.openGraph?.["og:title"], metadata.openGraph?.["og:description"]].some(hasBuildSourceUseRestriction);
   let classification = classifyGamingResource({ ...input, preparedUrl: prepared, metadata });
   const adapterInput = boundedAdapterInput(input, prepared, metadata);
   const registered = options.adapters
@@ -1798,7 +1922,7 @@ export async function ingestGamingBuildResource(
     adapterVersion,
     sha256(`${sourcePayloadHash}\n${requestScopeHash}`)
   );
-  if (!metadataInstructions && options.useCache !== false) {
+  if (!metadataInstructions && !metadataSourceUseRestricted && options.useCache !== false) {
     const cached = buildCache.get(key);
     if (cached) return { ...cloneResult(cached), cacheHit: true };
   }
@@ -1808,12 +1932,13 @@ export async function ingestGamingBuildResource(
   let adapterElapsedMs = adapterSelection.elapsedMs;
   // Source admission is independent of adapter output: an adapter may omit a tainted
   // supported field, but that cannot turn the original source into trusted evidence.
-  const generic = metadataInstructions ? undefined : genericExtract({ input, prepared, metadata, classification, deadline });
+  const generic = metadataSourceUseRestricted ? undefined : genericExtract({ input, prepared, metadata, classification, deadline });
   const genericState = generic?.state;
   const decodedSize = genericState?.decodedSize ?? 0;
   let adapterInstructions = metadataInstructions || genericState?.instructionFiltered === true;
-  let adapterFailure: GamingStructuredFailureReason | undefined;
-  if (adapterSelection.adapter && !adapterInstructions && !genericState?.terminalFailure) {
+  let sourceUseRestricted = metadataSourceUseRestricted || genericState?.sourceUseRestricted === true;
+  let adapterFailure: GamingStructuredFailureReason | undefined = metadataSourceUseRestricted ? "SOURCE_USE_RESTRICTED" : undefined;
+  if (adapterSelection.adapter && !adapterInstructions && !adapterFailure && !genericState?.terminalFailure) {
     const adapterStartedAt = Date.now();
     const extracted = await withTimeout(
       Promise.resolve().then(() => adapterSelection.adapter!.extract(adapterInput)),
@@ -1823,7 +1948,12 @@ export async function ingestGamingBuildResource(
     adapterElapsedMs += Date.now() - adapterStartedAt;
     if (extracted) {
       const inspection = inspectStructure(extracted, deadline);
-      if (inspection.ok) {
+      const rejectedFields = inspection.ok ? inspectRejectedBuildFields(extracted, deadline, () => { sourceUseRestricted = true; }) : undefined;
+      if (rejectedFields) {
+        adapterInstructions ||= rejectedFields === "SOURCE_INSTRUCTIONS_REJECTED";
+        adapterFailure = rejectedFields;
+        validation = emptyValidation(rejectedFields);
+      } else if (inspection.ok) {
         build = normalizeBuildCandidate({
           value: extracted,
           metadata,
@@ -1831,7 +1961,8 @@ export async function ingestGamingBuildResource(
           resourceType: structuredType(classification.type) ? classification.type : extracted.source?.resourceType ?? "build_planner",
           extractor: adapterId,
           confidence: Math.max(classification.confidence, adapterSelection.confidence),
-          onInstructions: () => { adapterInstructions = true; }
+          onInstructions: () => { adapterInstructions = true; },
+          onFieldRead: field => { if (hasBuildSourceUseRestriction(field)) { adapterFailure = "SOURCE_USE_RESTRICTED"; sourceUseRestricted = true; } }
         });
         if (build) {
           validation = validateNormalizedGamingBuild(build, {
@@ -1852,6 +1983,7 @@ export async function ingestGamingBuildResource(
     }
   }
   if (adapterInstructions) validation = rejectedInstructionValidation();
+  else if (adapterFailure === "SOURCE_USE_RESTRICTED") { build = null; validation = emptyValidation(adapterFailure); }
   else if (genericState?.terminalFailure) validation = generic!.validation;
   if (!adapterInstructions && !adapterFailure && generic && (!build || !validation.accepted)) {
     if (generic.state.instructionFiltered || !build || qualityRank(generic.validation.quality) >= qualityRank(validation.quality)) {
@@ -1861,6 +1993,7 @@ export async function ingestGamingBuildResource(
       classification = generic.classification;
     }
   }
+  if (sourceUseRestricted) build = null;
   if (build?.game) {
     classification = {
       ...classification,
@@ -1906,7 +2039,8 @@ export async function ingestGamingBuildResource(
     adapterVersion,
     extractionStrategy,
     evidenceText,
-    publicSnippet: failureReason === "SOURCE_INSTRUCTIONS_REJECTED" ? "" : publicSnippetFor(build, quality, structuredDetected),
+    publicSnippet: sourceUseRestricted || failureReason === "SOURCE_INSTRUCTIONS_REJECTED" || failureReason === "SOURCE_USE_RESTRICTED"
+      ? "" : publicSnippetFor(build, quality, structuredDetected),
     metrics: {
       payloadLength: prepared.payloadLength,
       payloadHash: sourcePayloadHash,
@@ -1919,9 +2053,10 @@ export async function ingestGamingBuildResource(
       adapterElapsedMs
     },
     cacheHit: false,
+    ...(sourceUseRestricted ? { sourceUseRestricted: true } : {}),
     ...(failureReason ? { failureReason } : {})
   };
-  if (failureReason !== "SOURCE_INSTRUCTIONS_REJECTED" && options.useCache !== false) {
+  if (!sourceUseRestricted && failureReason !== "SOURCE_INSTRUCTIONS_REJECTED" && failureReason !== "SOURCE_USE_RESTRICTED" && options.useCache !== false) {
     const ttlMs = Math.max(1, Math.min(options.cacheTtlMs ?? LIMITS.cacheTtlMs, 24 * 60 * 60_000));
     buildCache.set(key, cloneResult(result), ttlMs);
   }

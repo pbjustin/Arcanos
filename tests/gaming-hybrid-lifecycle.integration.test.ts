@@ -6,7 +6,8 @@ import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js
 import express from 'express';
 import request from 'supertest';
 import { GamingResolvedSourceHarness } from './testUtils/gamingResolvedSourceHarness.js';
-import { GAMING_CLEAR_DIMENSIONS } from '../src/shared/gaming/gamingClearPolicy.js';
+import { createGamingLifecycleDrain } from './testUtils/gamingLifecycleDrain.js';
+import { GAMING_CLEAR_DIMENSIONS, gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
 import type { GamingHybridResult } from '../src/services/gamingHybridKnowledge.js';
 
 const URL = 'https://guides.example.org/amber-vault';
@@ -78,12 +79,14 @@ jest.unstable_mockModule('@services/openai/chatFallbacks.js', () => ({
 const { createGamingHybridWorkflow } = await import('../src/services/gamingHybridKnowledge.js');
 const { evaluateGamingHybridCandidates, createApprovedGamingHybridIngestion } = await import('../src/services/gamingHybridCandidates.js');
 const { executeQueuedGamingSourceIngestion, getGamingSourceIngestionStatus, hashGamingApprovedDocument, refreshGamingSources } = await import('../src/services/gamingSourceIngestion.js');
-const { assessGamingSourcePolicy, extractGamingFreshnessMetadata } = await import('../src/shared/gaming/gamingFreshnessCore.js');
+const { assessGamingSourcePolicy, extractGamingFreshnessMetadata, evaluateGamingFreshness } = await import('../src/shared/gaming/gamingFreshnessCore.js');
+const { assessGamingClearEvidence } = await import('../src/shared/gaming/gamingClearEvidence.js');
 const { resolveGamingDocument, isResolvedGamingDocumentIdentityVerified } = await import('../src/services/gamingDocumentResolution.js');
 const { logger } = await import('../src/platform/logging/structuredLogging.js');
 // Load the real router before timed lifecycle tests so registration cannot outlive a test's fixture scope.
 const { default: gamingHttpRouter } = await import('../src/routes/gpt-access.js');
 const context = { actorKey: 'synthetic-hybrid-reader', requestId: 'hybrid-request', canStore: true, canAutoStore: false };
+const lifecycle = createGamingLifecycleDrain();
 const input = { game: SOURCE_GAME, mode: 'guide' as const, prompt: 'How do I cross the obsidian observatory?', spoilerMode: 'none' as const };
 const contractVersion = 'gaming-hybrid-v1';
 const environment = { ARCANOS_GAMING_RAG_ENABLED: 'true', ARCANOS_GAMING_DISCOVERY_ENABLED: 'false',
@@ -93,7 +96,8 @@ const environment = { ARCANOS_GAMING_RAG_ENABLED: 'true', ARCANOS_GAMING_DISCOVE
 let prior: Record<string, string | undefined>;
 
 async function evaluate(overrides: Record<string, unknown> = {}) {
-  return evaluateGamingHybridCandidates({ ...input, candidates: [{ url: URL }], ...overrides }, context);
+  return evaluateGamingHybridCandidates({ ...input, candidates: [{ url: URL }], ...overrides },
+    { ...context, storagePolicy: 'ask_before_store' });
 }
 async function store(candidates: Awaited<ReturnType<typeof evaluate>>['accepted'], key = 'store-operation-1') {
   return createApprovedGamingHybridIngestion({ candidates, storagePolicy: 'ask_before_store', confirmed: true, idempotencyKey: key }, context);
@@ -131,6 +135,74 @@ async function discoverCurrent(mode: 'build' | 'meta', extras: Record<string, un
  * This is not PostgreSQL FTS evidence or proof of ChatGPT's real web-tool sequencing.
  */
 describe('Gaming hybrid durable lifecycle', () => {
+  function respondWithReferenceCatalog(metadataRecord = false) {
+    mockHttp.mockResolvedValue({ data: `<html><title>${SOURCE_GAME} Wiki Guide</title><article><h1>${SOURCE_GAME} Wiki Guide</h1>`
+      + `<p>${SOURCE_GAME} is an open-world role-playing game.</p><p>This page provides an index of walkthrough entries. `
+      + 'Browse the linked walkthrough entries and introductory reference articles for this game.</p>'
+      + '<a href="https://guides.example.org/unacquired-chapter">Individual walkthrough</a>'
+      + (metadataRecord ? `<dl><dt>Game</dt><dd>${SOURCE_GAME}</dd><dt>Edition</dt><dd>base game</dd><dt>Patch</dt><dd>1.0</dd></dl>` : '')
+      + '</article></html>',
+    headers: { 'content-type': 'text/html' } });
+  }
+
+  it.each([false, true])('retains a v2 reference candidate only after explicit consent without supplying answer evidence (metadata record=%s)', async metadataRecord => {
+    respondWithReferenceCatalog(metadataRecord);
+    const workflow = createGamingHybridWorkflow();
+    const version = 'gaming-hybrid-v2';
+    const queried = await workflow.query({ contractVersion: version, idempotencyKey: 'retained-reference-query',
+      game: SOURCE_GAME, question: input.prompt, storagePolicy: 'ask_before_store' }, context);
+    const found = await workflow.candidates({ contractVersion: version, workflowId: queried.body.workflowId,
+      expectedRevision: queried.body.revision, idempotencyKey: 'retained-reference-submit', candidates: [{ url: URL }] }, context);
+    const candidateId = found.body.candidates?.[0].candidateId;
+    expect(found.body.candidates?.[0]).toMatchObject({ candidateId: expect.any(String), decision: 'requires_confirmation',
+      reasonCodes: expect.arrayContaining(['REFERENCE_ONLY_REQUIRES_CONFIRMATION']) });
+    expect(found.body.evidenceSelected).toBe(false);
+    expect(found.body.answer).toBeUndefined();
+    expect(mockTrinity).not.toHaveBeenCalled();
+    expect(jobs.size).toBe(0);
+    const storage = { contractVersion: version, workflowId: queried.body.workflowId, idempotencyKey: 'retained-reference-store',
+      candidateIds: [candidateId], storagePolicy: 'ask_before_store' };
+    expect((await workflow.ingest({ ...storage, confirmStore: false }, context)).status).toBe(403);
+    expect(jobs.size).toBe(0);
+    const stored = await workflow.ingest({ ...storage, idempotencyKey: 'retained-reference-confirmed', confirmStore: true }, context);
+    expect(stored.body.ingestion?.status).toBe('queued');
+    const completed = await complete(stored.body.ingestion!.ingestionId);
+    expect(completed.sources[0]).toMatchObject({ status: 'stored', classification: 'reference_only', generationEligible: false });
+    expect(database.revisions[0].provenance).toMatchObject({ classification: 'reference_only', generationEligible: false });
+    const fetchCount = mockHttp.mock.calls.length;
+    const later = await createGamingHybridWorkflow().query({ contractVersion: version, idempotencyKey: 'retained-new-session',
+      game: SOURCE_GAME, question: input.prompt }, context);
+    expect(later.body.answer).toBeUndefined();
+    expect(later.body.evidenceSelected).toBe(false);
+    expect(mockHttp).toHaveBeenCalledTimes(fetchCount);
+    expect(mockHttp.mock.calls.every(([url]) => !String(url).includes('unacquired-chapter'))).toBe(true);
+  });
+
+  it('keeps retained candidate actor, hash, expiry and automatic-storage controls', async () => {
+    respondWithReferenceCatalog();
+    const evaluated = await evaluateGamingHybridCandidates({ ...input, protocolVersion: 'gaming-hybrid-v2', candidates: [{ url: URL }] },
+      { ...context, retainUnverified: true });
+    expect(evaluated.accepted).toEqual([]);
+    expect(evaluated.retained).toHaveLength(1);
+    const retained = evaluated.retained![0];
+    const submit = (candidate = retained, overrides: Record<string, unknown> = {}, caller = context) =>
+      createApprovedGamingHybridIngestion({ candidates: [candidate], storagePolicy: 'ask_before_store', confirmed: true,
+        idempotencyKey: 'reference-controls', ...overrides }, caller);
+    expect((await submit(retained, { storagePolicy: 'auto_store_approved' }, { ...context, canAutoStore: true })).statusCode).toBe(403);
+    expect((await submit(retained, {}, { ...context, actorKey: 'different-owner' })).statusCode).toBe(403);
+    expect((await submit({ ...retained, expiresAt: Date.now() - 1 })).statusCode).toBe(403);
+    expect((await submit({ ...retained, document: { ...retained.document, text: 'changed text' } })).statusCode).toBe(403);
+    expect(jobs.size).toBe(0);
+    const queued = await submit();
+    expect(queued.statusCode).toBe(202);
+    respondWithReferenceCatalog();
+    mockHttp.mockResolvedValueOnce({ data: `<html><title>${SOURCE_GAME} Wiki Guide</title><article>Changed document.</article></html>`,
+      headers: { 'content-type': 'text/html' } });
+    const completed = await complete((queued.payload as any).ingestionId);
+    expect(completed.sources[0]).toMatchObject({ status: 'rejected', error: { code: 'APPROVED_CONTENT_CHANGED' } });
+    expect(database.revisions).toHaveLength(0);
+  });
+
   it.each(['gaming-hybrid-v1', 'gaming-hybrid-v2'] as const)('returns a sanitized oversized-source decision under %s while the decoded limit still fires', async protocolVersion => {
     const previousByteLimit = process.env.WEB_FETCH_MAX_BYTES;
     process.env.WEB_FETCH_MAX_BYTES = '128';
@@ -338,7 +410,8 @@ describe('Gaming hybrid durable lifecycle', () => {
       expect(jest.mocked(logger.info).mock.calls.some(([event]) => event === 'gaming.clear.source.completed')).toBe(true);
     } finally { if (savedToken === undefined) delete process.env[tokenKey]; else process.env[tokenKey] = savedToken; }
   });
-  beforeEach(() => {
+  beforeEach(async () => {
+    await lifecycle.drain();
     database = new GamingResolvedSourceHarness(); jobs.clear(); operations.clear(); jobSequence = 0;
     documentText = PASSAGE; documentGame = SOURCE_GAME; documentTitle = undefined; includeIndependentGameScope = true;
     privateDns = false; queueUnavailable = false;
@@ -375,7 +448,8 @@ describe('Gaming hybrid durable lifecycle', () => {
       return { data: `<html><title>${documentTitle ?? `${documentGame} guide`}</title><body><article><p>${documentGame} gameplay reference.</p>${gameScope}${paragraphs}</article></body></html>`, headers: { 'content-type': 'text/html' } };
     });
   });
-  afterEach(() => {
+  afterEach(async () => {
+    await lifecycle.drain();
     for (const [key, value] of Object.entries(prior)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
     jest.restoreAllMocks();
     jest.useRealTimers();
@@ -596,6 +670,19 @@ describe('Gaming hybrid durable lifecycle', () => {
     expect((await workflow.candidates({ ...officialRequest, idempotencyKey: 'failed-index-extra-round' }, context)).status).toBe(409);
     expect(mockTrinity).toHaveBeenCalledTimes(1);
     expect(database.queries.some(sql => /^(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b/iu.test(sql))).toBe(false);
+  });
+
+  it('uses a reviewed acquired index for applicability without granting it gameplay claim support', async () => {
+    const { indexUrl, articleUrl } = await mageCurrentnessLifecycle();
+    const request = { game: 'Elden Ring', mode: 'build' as const, prompt: 'What is a good mage build now?', platform: 'PC' };
+    const result = await evaluateGamingHybridCandidates({ ...request, discoveryType: 'currentness_verification',
+      candidates: [{ url: indexUrl }, { url: articleUrl }] }, context);
+    expect(result.accepted.some(candidate => candidate.sourceAssessment.sourceRole === 'currentness_index')).toBe(true);
+    expect(evaluateGamingFreshness({ game: request.game, question: 'What patch is currently active?',
+      platform: request.platform, evidence: result.accepted.map(candidate => candidate.freshness), now: new Date() }).usable).toBe(true);
+    const assessment = assessGamingClearEvidence(request, result.knowledge, { identityVerified: true });
+    expect(assessment.gates.claimSupport).not.toBe('verified');
+    expect(assessment.decision).not.toBe('accept');
   });
 
   it('continues the registry-directed HTTP lifecycle through a required official article before exactly one answer', async () => {
@@ -1178,7 +1265,7 @@ describe('Gaming hybrid durable lifecycle', () => {
     expect(mockTrinity).not.toHaveBeenCalled();
   });
 
-  it('retains late rows beyond the diagnostic preview, hashes substantive changes and preserves last-good records on approval failure', async () => {
+  it('retains late rows beyond the diagnostic preview, hashes substantive changes and preserves last-good records on approval failure', lifecycle.track(async () => {
     // This exercises content preservation, not elapsed acquisition time. Keep
     // CPU scheduling from spending the mocked source's extraction deadline.
     setClock('2026-01-01T00:00:00Z');
@@ -1202,9 +1289,9 @@ describe('Gaming hybrid durable lifecycle', () => {
     expect((await complete(((await store(changed.accepted, 'structured-refresh-3')).payload as any).ingestionId)).sources[0].status).toBe('updated');
     expect(database.records.some(record => record.status === 'active' && record.search_text.includes('PML 8'))).toBe(true);
     expect(database.records.some(record => record.status === 'active' && record.search_text.includes('PML 7'))).toBe(false);
-  });
+  }));
 
-  it('selects late content beyond 100K, hashes the full artifact, and rejects changed late content before storage', async () => {
+  it('selects late content beyond 100K, hashes the full artifact, and rejects changed late content before storage', lifecycle.track(async () => {
     documentText = `${'Village traders exchange copper coins for canvas and wood. '.repeat(2_400)}\n\n${PASSAGE}`;
     expect(documentText.indexOf(PASSAGE)).toBeGreaterThan(100_000);
     const first = await evaluate();
@@ -1225,9 +1312,90 @@ describe('Gaming hybrid durable lifecycle', () => {
     const newRefresh = await store(third.accepted, 'new-logical-refresh-3');
     expect((await complete((newRefresh.payload as { ingestionId: string }).ingestionId)).sources[0].status).toBe('updated');
     expect(database.revisions).toHaveLength(2);
+  }));
+
+  it('drains the whole prior scenario before resetting fixtures for current-index ingestion', async () => {
+    let releaseWorker!: () => void;
+    let workerEntered!: () => void;
+    let releaseContinuation!: () => void;
+    let continuationEntered!: () => void;
+    const entered = new Promise<void>(resolve => { workerEntered = resolve; });
+    const workerGate = new Promise<void>(resolve => { releaseWorker = resolve; });
+    const tailEntered = new Promise<void>(resolve => { continuationEntered = resolve; });
+    const continuationGate = new Promise<void>(resolve => { releaseContinuation = resolve; });
+    let workerFinished = false;
+    let wholeScenarioFinished = false;
+    let fixtureReset = false;
+    const priorScenario = lifecycle.track(async () => {
+      const accepted = (await evaluate()).accepted;
+      const oldQueued = await store(accepted, 'drained-prior-source');
+      const priorHttp = mockHttp.getMockImplementation()!;
+      mockHttp.mockImplementationOnce(async (...args: any[]) => {
+        const response = await priorHttp(...args);
+        workerEntered(); await workerGate; return response;
+      });
+      const old = await complete((oldQueued.payload as any).ingestionId);
+      expect(old.sources[0].status).toBe('stored');
+      workerFinished = true; continuationEntered();
+      await continuationGate;
+      expect(database.source?.canonical_url).toBe(URL);
+      wholeScenarioFinished = true;
+    })();
+    // Ensure an unexpected scenario failure cannot strand the diagnostic gates.
+    priorScenario.then(() => { workerEntered(); continuationEntered(); }, () => { workerEntered(); continuationEntered(); });
+    let reset: Promise<void> | undefined;
+    try {
+      await entered;
+      reset = (async () => {
+        await lifecycle.drain();
+        database = new GamingResolvedSourceHarness(); jobs.clear(); operations.clear(); jobSequence = 0;
+        mockHttp.mockReset(); fixtureReset = true;
+      })();
+      releaseWorker(); await tailEntered; await Promise.resolve();
+      expect(workerFinished).toBe(true);
+      expect(wholeScenarioFinished).toBe(false);
+      expect(fixtureReset).toBe(false);
+      releaseContinuation(); await priorScenario; await reset;
+      expect(wholeScenarioFinished).toBe(true);
+      expect(fixtureReset).toBe(true);
+      // The URLs exercise reviewed ownership policy; every byte is synthetic controlled HTTP.
+      const game = 'Star Wars: The Old Republic';
+      const indexUrl = 'https://swtor.com/patchnotes';
+      const patchUrl = 'https://swtor.com/patchnotes/synthetic-test-update';
+      const guideUrl = 'https://guides.example.org/swtor-telescope-build';
+      const indexText = `Game: ${game}. Current patch: 2.1. Current build: 2.1.1. Effective from: 2026-09-08. Platforms: all. Regions: all. Official synthetic update release index for the disposable Gaming test. This index identifies the applicable update and hotfix only.`;
+      const patchText = `Game: ${game}. Patch: 2.1. Build: 2.1.1. Effective from: 2026-09-08. Published at: 2026-09-08. Platforms: all. Regions: all. In ${game}, these acquired records describe telescope compatibility. ${PASSAGE}`;
+      mockHttp.mockImplementation(async (url: string, options: any) => {
+        expect(options).toMatchObject({ maxRedirects: 0, proxy: false });
+        const index = new globalThis.URL(url).pathname === '/patchnotes';
+        const guide = new globalThis.URL(url).pathname === '/swtor-telescope-build';
+        const distinctPatch = patchText.replace(PASSAGE, 'The telescope balance at the obsidian observatory changes under this synthetic update. These notes verify only the update, without recommending a build.');
+        return { data: `<html><title>${game} ${guide ? 'build guide' : 'patch notes'}</title><body><article>${index ? indexText : guide ? patchText : distinctPatch}</article></body></html>`, headers: { 'content-type': 'text/html' } };
+      });
+      const workflow = createGamingHybridWorkflow();
+      const query = { contractVersion, idempotencyKey: 'dynamic-query-1', game, mode: 'build',
+        question: 'Which current telescope build works at the obsidian observatory?', storagePolicy: 'ask_before_store' };
+      const missing = await workflow.query(query, context);
+      const found = await workflow.candidates({ contractVersion, workflowId: missing.body.workflowId,
+        idempotencyKey: 'dynamic-candidates-1', candidates: [{ url: guideUrl }, { url: patchUrl }, { url: indexUrl }] }, context);
+      expect(found.body).toMatchObject({ state: 'answer_ready', freshnessStatus: 'current', effectivePatch: '2.1', effectiveBuild: '2.1.1' });
+      expect(found.body.answer?.sources).toEqual(expect.arrayContaining([expect.objectContaining({ url: indexUrl })]));
+      const candidateId = found.body.candidates!.find(candidate => candidate.url === guideUrl)!.candidateId!;
+      const queued = await workflow.ingest({ contractVersion, workflowId: missing.body.workflowId,
+        idempotencyKey: 'dynamic-store-1', candidateIds: [candidateId], storagePolicy: 'ask_before_store', confirmStore: true }, context);
+      expect(queued.body.state).toBe('ingestion_pending');
+
+      const current = await complete(queued.body.ingestion!.ingestionId);
+      expect(current.sources[0].status).toBe('stored');
+      expect(current.sources[0].error).toBeUndefined();
+      expect(database.source?.canonical_url).toBe(guideUrl);
+    } finally {
+      releaseWorker(); releaseContinuation();
+      await Promise.allSettled([priorScenario, ...(reset ? [reset] : [])]);
+    }
   });
 
-  it('reuses a bounded official current-index attestation for a later no-URL build query after ingestion', async () => {
+  it.each(['unchanged', 'context', 'policy', 'role', 'missing-canonical'] as const)('reuses a bounded official current-index attestation after ingestion and rejects changed proof: %s', async mutation => {
     // The URLs exercise reviewed ownership policy; every byte is synthetic controlled HTTP.
     const game = 'Star Wars: The Old Republic';
     const indexUrl = 'https://swtor.com/patchnotes';
@@ -1265,6 +1433,19 @@ describe('Gaming hybrid durable lifecycle', () => {
     const staleWorkflow = createGamingHybridWorkflow({ now: () => Date.now() + 7 * 60 * 60_000 });
     const stale = await staleWorkflow.query({ ...query, idempotencyKey: 'dynamic-query-stale' }, context);
     expect(stale.body).toMatchObject({ state: 'discovery_required', freshnessStatus: 'stale' });
+    if (mutation !== 'unchanged') {
+      const proof = database.revisions[0].provenance.hybridFreshness.currentVerification;
+      if (mutation === 'context') proof.contextHash = 'f'.repeat(64);
+      if (mutation === 'policy') proof.policyVersion = 'obsolete-policy';
+      if (mutation === 'role') proof.evidence.currentness = 'stable';
+      if (mutation === 'missing-canonical') delete proof.canonicalUrl;
+      // A freshly recomputed checksum cannot substitute for the original authority predicate.
+      proof.bindingHash = gamingClearHash({ ...proof, bindingHash: undefined });
+      const withheld = await workflow.query({ ...query, idempotencyKey: 'dynamic-query-2' }, context);
+      expect(withheld).toMatchObject({ status: 409, body: { reason: 'EVIDENCE_REVALIDATION_REQUIRED', evidenceSelected: false } });
+      expect(withheld.body.answer).toBeUndefined();
+      expect(mockHttp).toHaveBeenCalledTimes(calls);
+    }
   });
 
   it('uses caller/logical-operation idempotency while allowing a new unchanged revalidation', async () => {

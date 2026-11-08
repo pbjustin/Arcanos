@@ -1,7 +1,7 @@
 /** Internal diagnostic contract; never grants acquisition, generation, or storage authority. */
 import { GAMING_GAME_REGISTRY } from './gamingGameRegistry.js';
 export const GAMING_SOURCE_EVALUATION_VERSION = 'gaming-source-evaluation/v1';
-export const GAMING_SOURCE_EVALUATION_RULE_VERSION = 'gaming-source-evaluation-rules/v2';
+export const GAMING_SOURCE_EVALUATION_RULE_VERSION = 'gaming-source-evaluation-rules/v3';
 export const GAMING_SOURCE_EVALUATION_STAGES = ['acquisition', 'extraction', 'identity', 'applicability',
   'relevance', 'freshness', 'provenance', 'selection', 'generation'] as const;
 export type GamingSourceEvaluationStage = typeof GAMING_SOURCE_EVALUATION_STAGES[number];
@@ -19,7 +19,7 @@ const REJECTION_STAGES = {
   PLATFORM_MISMATCH: 'applicability', PLATFORM_UNVERIFIED: 'applicability',
   REGION_MISMATCH: 'applicability', REGION_UNVERIFIED: 'applicability',
   CONTRADICTORY_SOURCE_METADATA: 'applicability', CONFLICTING_EDITION_SCOPE: 'applicability',
-  QUESTION_COVERAGE_INSUFFICIENT: 'relevance', CONTRADICTORY_STRUCTURAL_RECORDS: 'relevance',
+  INSUFFICIENT_GAMEPLAY_EVIDENCE: 'relevance', QUESTION_COVERAGE_INSUFFICIENT: 'relevance', CONTRADICTORY_STRUCTURAL_RECORDS: 'relevance',
   PATCH_MISMATCH: 'freshness', NOT_YET_EFFECTIVE: 'freshness', NO_LONGER_EFFECTIVE: 'freshness',
   REQUIRED_FRESHNESS_UNVERIFIED: 'freshness', SOURCE_USE_RESTRICTED: 'provenance',
   REVIEWED_OFFICIAL_CURRENTNESS_SOURCE_REQUIRED: 'provenance',
