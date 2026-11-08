@@ -1436,15 +1436,27 @@ export async function readGamingSourceAuthorityRestrictionCount(input: { gameKey
 }
 
 /** A missing database differs from unavailable durable authority; never turn a failed read into epoch zero. */
-export async function readGamingSourceAuthoritySnapshot(input: GamingSourceAuthoritySnapshotInput,
-  options: QueryActiveGamingKnowledgeOptions = {}): Promise<GamingSourceAuthoritySnapshot> {
+export function readGamingSourceAuthoritySnapshot(input: GamingSourceAuthoritySnapshotInput,
+  options: QueryActiveGamingKnowledgeOptions = {}): GamingSourceAuthoritySnapshot | Promise<GamingSourceAuthoritySnapshot> {
+  try {
+    options.signal?.throwIfAborted();
+    const configured = ['DATABASE_URL', 'DATABASE_PRIVATE_URL', 'DATABASE_PUBLIC_URL',
+      'PGUSER', 'PGPASSWORD', 'PGHOST', 'PGPORT', 'PGDATABASE'].some(name => {
+      const value = getEnv(name)?.trim();
+      return Boolean(value && !['undefined', 'null'].includes(value.toLowerCase()));
+    });
+    // Preserve the existing source-start ordering when no durable read exists.
+    if (!configured) return { status: 'unconfigured' };
+  } catch (error) {
+    // Await callers, including pre-aborted requests, retain rejected-Promise semantics.
+    return Promise.reject(error);
+  }
+  return readConfiguredGamingSourceAuthoritySnapshot(input, options);
+}
+
+async function readConfiguredGamingSourceAuthoritySnapshot(input: GamingSourceAuthoritySnapshotInput,
+  options: QueryActiveGamingKnowledgeOptions): Promise<GamingSourceAuthoritySnapshot> {
   options.signal?.throwIfAborted();
-  const configured = ['DATABASE_URL', 'DATABASE_PRIVATE_URL', 'DATABASE_PUBLIC_URL',
-    'PGUSER', 'PGPASSWORD', 'PGHOST', 'PGPORT', 'PGDATABASE'].some(name => {
-    const value = getEnv(name)?.trim();
-    return Boolean(value && !['undefined', 'null'].includes(value.toLowerCase()));
-  });
-  if (!configured) return { status: 'unconfigured' };
   const queryTimeoutMs = Math.min(1_000, normalizeQueryTimeoutMs(options.queryTimeoutMs) ?? 1_000);
   const deadline = AbortSignal.timeout(queryTimeoutMs);
   const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;

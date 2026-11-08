@@ -61,6 +61,14 @@ The transcription is explicitly not represented as original Jest output.
 5. Both workflows now preserve full assertion JSON even on failure, alongside
    the existing checkout-bound counters. PR CI requests Jest JSON explicitly.
    Regression checks require the result path and unconditional artifact retention.
+6. The first cache repair unconditionally awaited even the unconfigured authority
+   result. That inserted a new asynchronous boundary before Archive metadata
+   acquisition and deterministically broke its existing immediate-cancellation
+   assertion. The unconfigured result now remains synchronous; configured reads
+   still settle before acquisition and fail closed. The original Archive
+   assertion, caller cancellation, query deadlines and source checks remain
+   unchanged. The isolated failing-before fixture and complete passing-after
+   suites are retained separately.
 
 ## Additional live-cache authority defect
 

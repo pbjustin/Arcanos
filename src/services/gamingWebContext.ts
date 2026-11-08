@@ -1664,7 +1664,7 @@ async function fetchGamingRagDocument(
   const sourceStartedAt = now;
   const sourceLogTarget = buildSafeSourceLogTarget(fetchUrl);
   const authorityError = () => ({ url: sourceUrl, error: 'Source authority could not be verified; reacquire this source.' });
-  const readAuthority = (canonicalUrl: string, signal = requestSignal): Promise<GamingSourceAuthoritySnapshot> => {
+  const readAuthority = (canonicalUrl: string, signal = requestSignal): GamingSourceAuthoritySnapshot | Promise<GamingSourceAuthoritySnapshot> => {
     const remainingMs = Math.max(1, fetchTimeoutMs - (Date.now() - sourceStartedAt));
     return gamingSourceRepository.readGamingSourceAuthoritySnapshot({ gameKey: authorityGameKey,
       gameKeys: authorityGameKeys, canonicalUrl }, { signal, queryTimeoutMs: remainingMs });
@@ -1677,7 +1677,10 @@ async function fetchGamingRagDocument(
     && (value.restrictedRevisionCount > 0 || value.requiresReassessment);
   const requestedCanonicalUrl = documentSource.publicUrl;
   let initialAuthority: GamingSourceAuthoritySnapshot;
-  try { initialAuthority = await readAuthority(requestedCanonicalUrl); }
+  try {
+    const snapshot = readAuthority(requestedCanonicalUrl);
+    initialAuthority = 'then' in snapshot ? await snapshot : snapshot;
+  }
   catch {
     documentCache.delete(cacheKey);
     requestSignal?.throwIfAborted();

@@ -30,6 +30,13 @@ describe('server-owned Gaming cache authority snapshots', () => {
     expect(getPool).not.toHaveBeenCalled();
   });
 
+  it('returns an unconfigured snapshot synchronously without delaying source-start ordering', () => {
+    const snapshot = readGamingSourceAuthoritySnapshot(input);
+    expect(snapshot).toEqual({ status: 'unconfigured' });
+    expect(snapshot).not.toBeInstanceOf(Promise);
+    expect(getPool).not.toHaveBeenCalled();
+  });
+
   it('keeps an explicitly unconfigured instance database-free even when connection status is mocked true', async () => {
     connected = true;
     expect(await readGamingSourceAuthoritySnapshot(input)).toEqual({ status: 'unconfigured' });
