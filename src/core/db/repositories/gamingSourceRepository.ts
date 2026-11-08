@@ -5,7 +5,7 @@ import { getPool, isDatabaseConnected } from '../client.js';
 import { getEnv } from '@platform/runtime/env.js';
 import { normalizeGamingGameIdentity, resolveGamingGuideIdentity } from '@shared/gaming/gamingGameIdentity.js';
 import { createGamingStoredAuthorityAssessment, hasGamingStoredAuthorityAssessment, gamingSourceHasAuthorityRestriction, GAMING_STORED_AUTHORITY_VERSION,
-  type GamingSourceAuthorityAuthorization } from '@shared/gaming/gamingSourceAuthority.js';
+  type GamingSourceAuthorityAuthorization, type GamingSourceAuthoritySnapshot as SharedGamingSourceAuthoritySnapshot } from '@shared/gaming/gamingSourceAuthority.js';
 
 export const GAMING_SOURCE_TYPES = [
   'official',
@@ -150,8 +150,7 @@ export interface QueryActiveGamingKnowledgeOptions {
 }
 
 /** A history count is not a reusable source-authority grant, including when it is unchanged. */
-export type GamingSourceAuthoritySnapshot = { status: 'unconfigured' }
-  | { status: 'available'; restrictedRevisionCount: number; requiresReassessment: boolean; stateFingerprint: string };
+export type GamingSourceAuthoritySnapshot = SharedGamingSourceAuthoritySnapshot;
 
 export interface GamingSourceAuthoritySnapshotInput {
   gameKey: string;
