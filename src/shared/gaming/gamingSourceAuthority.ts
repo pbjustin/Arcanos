@@ -4,6 +4,22 @@ import { resolveGamingRegistryGame } from './gamingGameRegistry.js';
 
 export const GAMING_STORED_AUTHORITY_VERSION = 'gaming-stored-source-authority/v1';
 
+/** Source authority observations are immutable receipts, not permission grants. */
+export type GamingSourceAuthoritySnapshot = { status: 'unconfigured' }
+  | { status: 'available'; restrictedRevisionCount: number; requiresReassessment: boolean; stateFingerprint: string };
+
+/** Shared comparison for cached, acquired, and pre-generation observations. */
+export function sameGamingSourceAuthoritySnapshot(
+  left: GamingSourceAuthoritySnapshot, right: GamingSourceAuthoritySnapshot
+): boolean {
+  if (left.status !== right.status) return false;
+  if (left.status === 'unconfigured') return true;
+  return right.status === 'available'
+    && left.restrictedRevisionCount === right.restrictedRevisionCount
+    && left.requiresReassessment === right.requiresReassessment
+    && left.stateFingerprint === right.stateFingerprint;
+}
+
 /** Revocations share exact registry aliases and their requested edition, never related games. */
 export function gamingSourceAuthorityGameKeys(game: string, edition?: string): string[] {
   const registryGame = resolveGamingRegistryGame(game);

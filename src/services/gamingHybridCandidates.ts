@@ -4,7 +4,7 @@ import { gamingRegistryRecognizesEdition } from '@shared/gaming/gamingGameRegist
 import { createHash, randomUUID } from 'node:crypto';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { normalizeGamingGameIdentity, resolveGamingGuideIdentity } from '@shared/gaming/gamingGameIdentity.js';
-import { gamingSourceAuthorityGameKeys } from '@shared/gaming/gamingSourceAuthority.js';
+import { gamingSourceAuthorityGameKeys, sameGamingSourceAuthoritySnapshot } from '@shared/gaming/gamingSourceAuthority.js';
 import { readGamingSourceAuthoritySnapshot, type GamingSourceAuthoritySnapshot } from '@core/db/repositories/gamingSourceRepository.js';
 import { classifyGamingDocumentQuality, isGamingDocumentOverviewOnly, selectGamingSourceAdmissionUrl } from '@shared/gaming/gamingDocumentIngestionCore.js';
 import { buildGamingRetrievalTerms, buildGamingRequestRequirements, hasGamingRelevantGuideContribution, gamingTermCoverage } from '@shared/gaming/gamingRetrievalPolicy.js';
@@ -139,11 +139,6 @@ type AuthorityObservation = { input: { gameKey: string; gameKeys: string[]; cano
 const authorityObservations = new WeakMap<object, readonly AuthorityObservation[]>();
 const authorityBindings = new WeakMap<GamingHybridAcceptedCandidate, GamingHybridAuthorityBinding>();
 const authorityInvalid = () => Object.assign(new Error('Source authority must be revalidated.'), { code: 'EVIDENCE_REVALIDATION_REQUIRED' });
-const sameAuthority = (left: GamingSourceAuthoritySnapshot, right: GamingSourceAuthoritySnapshot) =>
-  left.status === right.status && (left.status === 'unconfigured' || right.status === 'available'
-    && left.restrictedRevisionCount === right.restrictedRevisionCount && left.requiresReassessment === right.requiresReassessment
-    && left.stateFingerprint === right.stateFingerprint);
-
 export function gamingHybridAuthorityBindings(candidates: readonly GamingHybridAcceptedCandidate[]): GamingHybridAuthorityBinding[] {
   return candidates.map(candidate => {
     const binding = authorityBindings.get(candidate);
@@ -162,7 +157,7 @@ export async function assertGamingHybridAuthorityCurrent(bindings: readonly Gami
     if (!observations) throw authorityInvalid();
     for (const observation of observations) {
       const current = await readGamingSourceAuthoritySnapshot(observation.input, { signal: readSignal, queryTimeoutMs: 1_000 });
-      if (!sameAuthority(observation.snapshot, current)) throw authorityInvalid();
+      if (!sameGamingSourceAuthoritySnapshot(observation.snapshot, current)) throw authorityInvalid();
     }
   }));
   readSignal.throwIfAborted();
