@@ -559,6 +559,9 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
     if (invalidSpan) { fail('ambiguous_field_mapping'); continue; }
     let headerRows = 0;
     while (headerRows < grid.length && grid[headerRows]?.length && grid[headerRows].every((cell) => cell && $(cell.element).is('th') && $(cell.element).attr('scope') !== 'row')) headerRows++;
+    // Without column-record boundaries, an omitted property row can qualify
+    // the entire table. Explicit headers cannot make its inspected prefix whole.
+    if (!headerRows && rows.length > limit.rowsPerTable) markContext(scope, 'required_context_missing');
     // A property table, like a definition list, explicitly binds labels and
     // values inside one record container. Never combine independent row groups,
     // mixed column tables or spanning cells into an inferred tuple.

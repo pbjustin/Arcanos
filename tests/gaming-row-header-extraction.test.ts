@@ -12,6 +12,7 @@ const { extractGamingDocumentEvidence } = await import('../src/services/gamingDo
 const { resolveGamingDocument } = await import('../src/services/gamingDocumentResolution.js');
 const { evaluateGamingHybridCandidates } = await import('../src/services/gamingHybridCandidates.js');
 const { assessGamingStructuralUsability } = await import('../src/shared/gaming/gamingStructuralEvidence.js');
+const { GAMING_HTML_EVIDENCE_LIMITS } = await import('../src/services/gamingHtmlEvidence.js');
 
 // Authored synthetic wiki-style property rows, not assertions about Portal 2.
 const sourceUrl = 'https://guides.example.org/copper-key';
@@ -30,6 +31,11 @@ const extract = (content: string, transportTruncated = false) => extractGamingDo
 const request = { game: 'Portal 2', mode: 'guide' as const, prompt: 'What is the weight stat value for the Copper shield?',
   protocolVersion: 'gaming-hybrid-v2', candidates: [{ url: sourceUrl }] };
 const serve = (body: string) => http.mockResolvedValue({ status: 200, headers: { 'content-type': 'text/html' }, data: body });
+const oversizedProperties = (extraRows: number, qualifier: string) => table(Array.from({
+  length: GAMING_HTML_EVIDENCE_LIMITS.rowsPerTable + extraRows - 1
+}, (_, index) => `<tr><th scope="row" id="item-${index}" headers="stat">Item</th>`
+  + `<td headers="item-${index}">Copper shield</td></tr>`).join('')
+  + `<tr><th scope="row" id="stat">Stat</th><td>${qualifier}</td></tr>`);
 
 beforeEach(() => http.mockReset());
 
@@ -104,6 +110,47 @@ describe('explicit wiki table row-header extraction', () => {
     expect(result.units[0].integrity).toMatchObject({ status: 'partial', reasons: ['content_truncated'] });
     expect(assessGamingStructuralUsability({ game: 'Portal 2', mode: 'guide',
       prompt: request.prompt, units: result.units }).claimSupported).toBe(false);
+  });
+
+  it.each([
+    [1, 'Example only; unconfirmed.'],
+    [2, 'This property record applies only to the Remastered edition.']
+  ])('withholds complete prefix records with %i overflow rows and an uninspected trailing qualifier', (extraRows, qualifier) => {
+    const result = extract(oversizedProperties(extraRows, qualifier));
+    const records = result.units.filter(unit => unit.kind === 'table_row');
+    expect(records.length).toBeGreaterThan(0);
+    expect(records[0].integrity.status).toBe('partial');
+    expect(records.every(unit => unit.integrity.status === 'partial'
+      && unit.integrity.reasons.includes('required_context_missing'))).toBe(true);
+    expect(result.diagnostics).toMatchObject({ budgetOutcome: 'exhausted', truncationStages: ['extraction'] });
+    expect(result.diagnostics.subreasons).toContain('extraction_budget_exhausted');
+    expect(assessGamingStructuralUsability({ game: 'Portal 2', mode: 'guide',
+      prompt: 'Explain the Copper shield.', units: result.units }).claimSupported).toBe(false);
+    expect(result.proseBody).not.toContain('Copper shield');
+  });
+
+  it('keeps independently complete column-table rows usable when later rows exceed the row limit', () => {
+    const columns = '<tr><th>Item</th><th>Stat</th><th>Value</th><th>Unit</th><th>Scope</th></tr>'
+      + '<tr><td>Copper shield</td><td>Weight</td><td>5</td><td>kg</td><td>base-game</td></tr>'
+        .repeat(GAMING_HTML_EVIDENCE_LIMITS.rowsPerTable);
+    const result = extract(table(columns));
+    expect(result.units).toHaveLength(1);
+    expect(result.units[0].integrity).toEqual({ status: 'complete', reasons: [] });
+    expect(result.diagnostics.budgetOutcome).toBe('exhausted');
+    expect(assessGamingStructuralUsability({ game: 'Portal 2', mode: 'guide',
+      prompt: request.prompt, units: result.units }).claimSupported).toBe(true);
+  });
+
+  it('withholds an oversized property-table prefix through protected acquisition and ordinary source CLEAR', async () => {
+    serve(article('<p>Game: Portal 2.</p>' + oversizedProperties(1, 'Example only; unconfirmed.')));
+    const document = await resolveGamingDocument(sourceUrl);
+    expect(document.metrics.truncated).toBe(true);
+    expect(document.evidenceUnits?.filter(unit => unit.kind === 'table_row')
+      .every(unit => unit.integrity.status !== 'complete')).toBe(true);
+    const result = await evaluateGamingHybridCandidates({ ...request, prompt: 'Explain the Copper shield.' },
+      { actorKey: 'oversized-row-header-synthetic-reader' });
+    expect(result.accepted).toEqual([]);
+    expect(result.knowledge.evidence ?? []).toEqual([]);
   });
 
   it.each(['Portal 2', 'Copper Voyage'])('uses intact %s row-header gameplay through protected acquisition and ordinary source CLEAR', async game => {

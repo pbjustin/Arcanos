@@ -88,7 +88,7 @@ Player-facing instructions such as following a mission walkthrough are normal
 evidence. Assistant control instructions remain a document-level rejection,
 including instructions in acquired title/heading metadata or text omitted by
 the context projection budget. Sanitization is not approval of the remainder.
-Resolver `gaming-document-v8` separates the current extraction decisions from
+Resolver `gaming-document-v9` separates the current extraction decisions from
 older cached resolutions and durable revision identity.
 
 Label-only linked article list items are catalog navigation rather than game
