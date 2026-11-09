@@ -3,6 +3,7 @@ import { load } from 'cheerio';
 import { countGamingHtmlElements, filterGamingDocumentInstructions, GAMING_DOCUMENT_FURNITURE_SELECTOR,
   gamingDocumentExtractionProfile, gamingDocumentFetchOptions } from '@services/gamingDocumentExtraction.js';
 import { normalizeGamingDocumentInstructionCharacters, preservePrimaryContentSidebarLayouts } from '@shared/gaming/gamingDocumentTextNormalization.js';
+import { restoreGamingStaticStream } from './gamingHtmlEvidence.js';
 import {
   GAMING_EVIDENCE_UNIT_POLICY_VERSION,
   type GamingEvidenceExtractionInput,
@@ -380,6 +381,16 @@ export function extractGamingJsonEvidence(input: GamingEvidenceExtractionInput):
     // The installed parser supports source locations; the repository also includes older ambient Cheerio types.
     const parserOptions = { xmlMode: false, sourceCodeLocationInfo: true };
     const $ = load(input.body, parserOptions);
+    // Share the exact bounded presentation interpretation with HTML extraction,
+    // while retaining original response slices and script ordinals as provenance.
+    const originalScriptOrder = new Map($('script').toArray().map((element, index) => [element, index]));
+    const stream = restoreGamingStaticStream($, deadlineExpired);
+    if (deadlineExpired()) return result;
+    if (stream === 'unsupported' || stream === 'restored' && input.transportTruncated) {
+      reason('unsupported_streamed_html');
+      if (input.transportTruncated) { result.truncated = true; reason('content_truncated'); }
+      return result;
+    }
     preservePrimaryContentSidebarLayouts($, gamingDocumentFetchOptions(input.sourceUrl).primaryContentSelectors);
     if (deadlineExpired()) return result;
     $('template, noscript').remove();
@@ -522,8 +533,10 @@ export function extractGamingJsonEvidence(input: GamingEvidenceExtractionInput):
       if (input.transportTruncated && !scopeLocation?.endTag) {
         visibleContext.integrityReasons!.push('required_context_missing'); reason('required_context_missing');
       }
+      const sourceIndex = stream === 'restored' ? originalScriptOrder.get(element) : index;
+      if (sourceIndex === undefined) { reason('required_context_missing'); continue; }
       parse(input.body.slice(location.startTag.endOffset, location.endTag.startOffset),
-        type === 'application/ld+json' ? 'json_ld' : 'application_json', `script[${index + 1}]`, visibleContext);
+        type === 'application/ld+json' ? 'json_ld' : 'application_json', `script[${sourceIndex + 1}]`, visibleContext);
       if (bytes >= LIMITS.totalJsonBytes) break;
     }
     if (input.transportTruncated) { result.truncated = true; reason('content_truncated'); }

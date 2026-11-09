@@ -59,7 +59,7 @@ const APPLICABILITY_LAYOUT_LIMITS = Object.freeze({ ancestors: 16, siblings: 32 
 const STATIC_STREAM_HELPER_SHA256 = '7a3c441a297b4368e7168f53d44323873b11a160d3567f2d4695187785c22646';
 const STATIC_STREAM_SEGMENTS = 32;
 
-function restoreStaticStream($: CheerioAPI, deadlineExpired: () => boolean): 'absent' | 'restored' | 'unsupported' {
+export function restoreGamingStaticStream($: CheerioAPI, deadlineExpired: () => boolean): 'absent' | 'restored' | 'unsupported' {
   const slots = $('template[id^="B:"]').toArray();
   const buckets = $('div[hidden][id^="S:"]').toArray();
   if (!slots.length && !buckets.length) return 'absent';
@@ -272,33 +272,43 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
   const $ = load(input.body, parseOptions as Parameters<typeof load>[1]);
   preservePrimaryContentSidebarLayouts($, gamingDocumentFetchOptions(input.sourceUrl).primaryContentSelectors);
   if (deadlineExpired()) return result;
-  const visibleBody = $('body').clone();
-  visibleBody.find('script,style,template,noscript').remove();
-  // Match visible block separation before normalization: adjacent paragraphs
-  // cannot join "previous" and "instructions" into a different word and evade
-  // the full-response security scan after the context ceiling.
-  visibleBody.find('br').replaceWith('\n');
-  visibleBody.find('p,div,section,article,main,header,footer,nav,aside,li,dt,dd,table,tr,td,th,h1,h2,h3,h4,h5,h6')
-    .prepend('\n').append('\n');
-  const rawVisibleText = visibleBody.text();
-  const visibleText = text(rawVisibleText);
+  const inspectVisibleResponse = (): string => {
+    const visibleBody = $('body').clone();
+    visibleBody.find('script,style,template,noscript').remove();
+    // Match visible block separation before normalization: adjacent paragraphs
+    // cannot join "previous" and "instructions" into a different word and evade
+    // the full-response security scan after the context ceiling.
+    visibleBody.find('br').replaceWith('\n');
+    visibleBody.find('p,div,section,article,main,header,footer,nav,aside,li,dt,dd,table,tr,td,th,h1,h2,h3,h4,h5,h6')
+      .prepend('\n').append('\n');
+    const raw = visibleBody.text();
+    const normalized = text(raw);
+    if (GAMING_SOURCE_USE_RESTRICTION.test(normalized)) result.sourceUseRestricted = true;
+    if (filterGamingDocumentInstructions(raw) !== normalized) fail('source_instruction_filtered');
+    return normalized;
+  };
+  let visibleText = inspectVisibleResponse();
   // The context projection can omit a long article's tail or its title. Scan the
   // entire bounded visible response before selection so omitted instructions
   // cannot make a partially sanitized document eligible for grounding.
   const rawTitle = $('title').first().text();
   // Cheerio preserves adjacent inline text and decodes entities. Inspect the
   // full visible response before source furniture or navigation can disappear.
-  if (GAMING_SOURCE_USE_RESTRICTION.test(visibleText) || GAMING_SOURCE_USE_RESTRICTION.test(text(rawTitle)))
+  if (GAMING_SOURCE_USE_RESTRICTION.test(text(rawTitle)))
     result.sourceUseRestricted = true;
-  if ([[rawVisibleText, visibleText], [rawTitle, text(rawTitle)]].some(([raw, normalized]) =>
-    filterGamingDocumentInstructions(raw) !== normalized)) fail('source_instruction_filtered');
+  if (filterGamingDocumentInstructions(rawTitle) !== text(rawTitle)) fail('source_instruction_filtered');
   if (deadlineExpired()) return result;
   if (!htmlContent) return result;
-  const stream = restoreStaticStream($, deadlineExpired);
+  const stream = restoreGamingStaticStream($, deadlineExpired);
   if (deadlineExpired()) return result;
   if (stream === 'unsupported' || stream === 'restored' && input.transportTruncated) {
     result.proseBody = ''; fail('unsupported_streamed_html'); return result;
   }
+  // Relocation can assemble a directive/restriction from separated fragments.
+  // Inspect the complete restored view before navigation or hidden furniture
+  // disappears, retaining every finding from the original response scan.
+  if (stream === 'restored') visibleText = inspectVisibleResponse();
+  if (deadlineExpired()) return result;
   const applicabilityLists = new Map<Element, ApplicabilityListLabel | undefined>();
   for (const list of $('ul,ol').toArray().slice(0, limit.lists)) {
     if (deadlineExpired()) return result;
@@ -628,7 +638,10 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
     const scope = `table:${tableIndex}`;
     const caption = text($(table).children('caption').first().text());
     const unitContext = context(table, scope, caption);
-    const footerText = text($(table).children('tfoot').text());
+    const footer = $(table).children('tfoot').clone();
+    footer.find('br').replaceWith(' ');
+    footer.find('p,div,section,article,li,dt,dd,tr,td,th').prepend(' ').append(' ');
+    const footerText = text(footer.text());
     if (footerText) {
       unitContext.qualifiers = unique([...(unitContext.qualifiers ?? []), footerText.slice(0, limit.contextChars)]);
       if (footerText.length > limit.contextChars || !closed($(table).children('tfoot').first().get(0)!)) markContext(scope, 'content_truncated');

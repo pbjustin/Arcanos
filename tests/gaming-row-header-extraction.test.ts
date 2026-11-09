@@ -127,8 +127,16 @@ describe('explicit wiki table row-header extraction', () => {
       { label: 'Game', value: 'Portal 2' }, { label: 'Item', value: 'Copper shield' }, { label: 'Stat', value: 'Weight' },
       { label: 'Value', value: '5' }, { label: 'Unit', value: 'kg' }, { label: 'Scope', value: 'base-game' }
     ]);
-    expect(result.units[0].context.qualifiers).toContain('Valueobsolete');
+    expect(result.units[0].context.qualifiers).toContain('Value obsolete');
     expect(result.units[0].fields.some(field => field.value === 'obsolete')).toBe(false);
+  });
+
+  it.each(['superseded', 'unconfirmed', 'example only', 'retracted'])('preserves the word boundary before the footer qualifier %s', qualifier => {
+    const result = extract(table(`<tbody>${propertyRows()}</tbody><tfoot>${row('Value', qualifier)}</tfoot>`));
+    expect(result.units).toHaveLength(1);
+    expect(result.units[0].context.qualifiers).toContain(`Value ${qualifier}`);
+    expect(assessGamingStructuralUsability({ game: 'Portal 2', mode: 'guide',
+      prompt: request.prompt, units: result.units }).claimSupported).toBe(false);
   });
 
   it('never fills a missing body value from a footer property', () => {
@@ -136,7 +144,7 @@ describe('explicit wiki table row-header extraction', () => {
       + `<tfoot>${row('Value', '9')}</tfoot>`));
     expect(result.units).toHaveLength(1);
     expect(result.units[0].fields.some(field => field.label === 'Value')).toBe(false);
-    expect(result.units[0].context.qualifiers).toContain('Value9');
+    expect(result.units[0].context.qualifiers).toContain('Value 9');
     expect(assessGamingStructuralUsability({ game: 'Portal 2', mode: 'guide',
       prompt: request.prompt, units: result.units }).claimSupported).toBe(false);
   });

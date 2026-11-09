@@ -997,8 +997,8 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['src/shared/ios/iosDevicePreviewFixture.ts', '32491af102dc33ef8353eb240dc536088b1d3e3e8e39ae5cf678c78a091c640b'],
   ['src/shared/ios/iosGatewayPreviewFixture.ts', '67babf8ad6b2d7d1e1f7f2131ad3ac4856e27b47c026db525d269e4f07d035f5'],
   ['src/services/gamingDocumentEvidence.ts', 'ee0729e0c2ec80dbe8b54059741ea37593b2bac599fe4f03248765d55f66e8e9'],
-  ['src/services/gamingHtmlEvidence.ts', 'a95670a6a02a814fe7f3688db1213c0d7ab3767d4f481a710d336023c8a3647c'],
-  ['src/services/gamingJsonEvidence.ts', '2c4f8caf8cd0ae39993fa81ebc912fdd2043de114fe2e98755a9a9e90ce95760'],
+  ['src/services/gamingHtmlEvidence.ts', 'd7296225a9f520c0d9822774c251da54e47dfda17015b0a2c3ee1da30b379c28'],
+  ['src/services/gamingJsonEvidence.ts', '501bc0b41b240aadf6d3dc23f5c536e3b87f19ab7b65d8468ec686a2e3fea28e'],
   ['src/shared/gaming/gamingStructuredEvidencePreviewFixture.ts', 'a5ec185667e3771528e29bdf7b2f451f18a8b5b05ff265319134f0c517f9118a'],
   ['src/shared/gaming/gamingSourceAcquisitionCore.ts', 'c3a02a507bd9434afa41737badd0662ce928eb196d66b06809395226539f2da4'],
   ['src/shared/protectedDocumentByteBudget.ts', 'a4021d978ded2f16d446b3a11c58b567c6466acdf346556d34a4b91ebbf33f78'], // gitleaks:allow -- public source semantic SHA-256
