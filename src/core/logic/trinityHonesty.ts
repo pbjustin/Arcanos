@@ -941,10 +941,15 @@ function impliesPersistenceActionClaim(text: string): boolean {
   // Imperative physical insertion is ordinary instruction, not a claim that
   // ARCANOS persisted anything. Keep storage/credential context, ambiguous
   // objects and every separately asserted or completed action under the gate.
-  const insertionText = PERSISTENCE_SAVE_CONTEXT_PATTERN.test(text) || PERSISTENCE_CREDENTIAL_TOKEN_PATTERN.test(text)
-    || BACKEND_ACTION_CONTEXT_PATTERN.test(text)
-    || /\b(?:i|we|chatgpt)\b/i.test(text) || text.match(SYSTEM_OWNED_SAVE_ACTOR_PATTERN) ? text
-    : text.replace(/(^|[,;:]\s*|\b(?:then|and)\s+)insert(?=\s+(?:the|a|an|your)\s+[a-z])/gi, '$1');
+  // Inspect visible Markdown wording without changing the returned presentation.
+  const insertionInstructionText = text.normalize('NFKC').replace(/[*_`]/g, '').replace(/[\u2010-\u2015]/g, '-')
+    .replace(/^\s*(?:[-*+]|\d+[.)])\s+/, '').trimStart();
+  const insertionText = PERSISTENCE_SAVE_CONTEXT_PATTERN.test(insertionInstructionText) || PERSISTENCE_CREDENTIAL_TOKEN_PATTERN.test(insertionInstructionText)
+    || BACKEND_ACTION_CONTEXT_PATTERN.test(insertionInstructionText)
+    || /\b(?:private|signing|ssh)[ -]+(?:[a-z0-9-]+[ -]+){0,3}keys?\b/i.test(insertionInstructionText)
+    || /(?:^|[.!?;,:]\s*)(?:then\s+)?it(?:['’]ll|\s+(?:will|would|can|could|shall|should|may|might|must|is\s+going\s+to))\b/i.test(insertionInstructionText)
+    || /\b(?:i|we|chatgpt)\b/i.test(insertionInstructionText) || insertionInstructionText.match(SYSTEM_OWNED_SAVE_ACTOR_PATTERN) ? insertionInstructionText
+    : insertionInstructionText.replace(/(^|[,;:]\s*|\b(?:then|and)\s+)insert(?=\s+(?:the|a|an|your)\s+[a-z])/gi, '$1');
   if (/\b(saved|persisted|persist|wrote|write|stored|store|updated|update|inserted|insert)\b/i.test(insertionText)) return true;
   if (impliesSystemOwnedSaveClaim(text)) return true;
   if (!/\bsave\b/i.test(text)) return false;
