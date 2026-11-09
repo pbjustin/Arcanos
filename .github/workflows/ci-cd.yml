@@ -258,6 +258,10 @@ jobs:
           docker build -t arcanos-test .
           echo "✅ Docker build successful"
 
+      - name: Verify controlled Docker SHA and Git source proof cases
+        timeout-minutes: 5
+        run: node --test scripts/production-build-identity-docker.test.mjs
+
       - name: Verify production build identity against the actual image
         timeout-minutes: 2
         run: |

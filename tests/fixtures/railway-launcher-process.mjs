@@ -107,6 +107,8 @@ async function runScenario(scenario) {
   copyFileSync(launcherPath, join(fixtureRoot, 'scripts/start-railway-service.mjs'));
   copyFileSync(fileURLToPath(new URL('../../scripts/production-build-identity.mjs', import.meta.url)),
     join(fixtureRoot, 'scripts/production-build-identity.mjs'));
+  copyFileSync(fileURLToPath(new URL('../../scripts/production-git-source-proof.mjs', import.meta.url)),
+    join(fixtureRoot, 'scripts/production-git-source-proof.mjs'));
   const launcher = nativeSpawn(process.execPath, ['--import', import.meta.url, join(fixtureRoot, 'scripts/start-railway-service.mjs')], {
     cwd: fixtureRoot,
     env: {

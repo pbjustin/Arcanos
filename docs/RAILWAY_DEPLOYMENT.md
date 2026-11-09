@@ -142,11 +142,23 @@ artifact inventory. The fixed inventories do not traverse runtime volumes;
 `node_modules` and dotenv paths are excluded from the source inventory before
 their contents are read.
 
-`gitSha` is populated only when a complete local Git checkout matches every
-tracked blob and contains no pending changes. Docker/source snapshots without
-Git metadata report it as null. `configuredGitSha` and `buildConfiguredGitSha`
-are platform references, never proof of the deployed commit. A build/runtime
-reference disagreement or a reference conflicting with a verified checkout
+`gitSha` requires a complete, byte-matching clean checkout (`verified_checkout`)
+or a revalidated Git commit/tree proof (`verified_git_source`). The Docker build
+declares `ARG RAILWAY_GIT_COMMIT_SHA` and, after pruning dependencies, fetches
+that exact commit from the fixed public repository and compares the complete
+measured source path set and blob bytes. It retains bounded Git objects in
+`dist/git-source-proof.json`, included in the artifact digest, without `.git`.
+The runtime independently rechecks those objects; an edited/rehashed receipt
+alone cannot prove a commit. No runtime fetch or signing credential is needed.
+See [production Git identity](PRODUCTION_GIT_PROVENANCE.md) for trust limits,
+validation, and the outstanding Railway configuration audit.
+
+`configuredGitSha` and `buildConfiguredGitSha` are platform references, never
+proof by themselves. Their match reports `matches_build_reference` while source
+status stays `unverified` without independent proof. Missing build metadata or
+unavailable Git evidence stays unverified; malformed build references fail the
+build. Missing runtime metadata cannot establish a build/runtime match. A
+build/runtime reference disagreement or a reference conflicting with proven source
 reports `mismatch`; changed source/emitted bytes also report `mismatch` and
 withhold `gitSha`. Missing or malformed receipts warn as `unverified` without
 preventing startup. No runtime configuration, credentials or per-file hashes

@@ -1,12 +1,16 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs, { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import {
-  BUILD_IDENTITY_PATH, readProductionBuildIdentity, reportProductionBuildIdentity,
+  BUILD_IDENTITY_PATH, isProductionSourcePath, readProductionBuildIdentity, reportProductionBuildIdentity,
   writeProductionBuildIdentity,
 } from '../scripts/production-build-identity.mjs';
+import {
+  GIT_SOURCE_PROOF_PATH, writeGitSourceProofFromRepository,
+} from '../scripts/production-git-source-proof.mjs';
 
 const roots = [];
 function fixture() {
@@ -192,6 +196,96 @@ describe('production build identity', () => {
     });
   });
 
+  it('captures a valid full build SHA without promoting matching platform references to source proof', () => {
+    const options = fixture();
+    options.env.RAILWAY_GIT_COMMIT_SHA = 'ABCDEF0123456789ABCDEF0123456789ABCDEF01';
+    const sha = options.env.RAILWAY_GIT_COMMIT_SHA.toLowerCase();
+    expect(writeProductionBuildIdentity(options)).toMatchObject({ configuredGitSha: sha, gitSha: null });
+    expect(readProductionBuildIdentity(options)).toMatchObject({
+      status: 'unverified', gitSha: null, artifactStatus: 'matches_build_receipt',
+      referenceStatus: 'matches_build_reference', configuredGitSha: sha, buildConfiguredGitSha: sha,
+    });
+  });
+
+  it('reproduces a missing build SHA despite a valid runtime SHA', () => {
+    const options = fixture();
+    expect(writeProductionBuildIdentity(options)).toMatchObject({ configuredGitSha: null, gitSha: null });
+    options.env.RAILWAY_GIT_COMMIT_SHA = 'a'.repeat(40);
+    expect(readProductionBuildIdentity(options)).toMatchObject({
+      status: 'unverified', buildConfiguredGitSha: null, configuredGitSha: 'a'.repeat(40),
+      artifactStatus: 'matches_build_receipt', referenceStatus: 'unverified',
+    });
+  });
+
+  it.each(['short', 'a'.repeat(39), 'a'.repeat(41), 'g'.repeat(40), ` ${'a'.repeat(40)}`, `${'a'.repeat(40)}\n`, null, 42])(
+    'rejects malformed build SHA %p without writing a receipt', value => {
+      const options = fixture();
+      options.env.RAILWAY_GIT_COMMIT_SHA = value;
+      expect(() => writeProductionBuildIdentity(options)).toThrow('BUILD_GIT_SHA_INVALID');
+      expect(fs.existsSync(join(options.rootPath, BUILD_IDENTITY_PATH))).toBe(false);
+    }
+  );
+
+  it('keeps a missing runtime SHA unverified and rejects malformed runtime metadata', () => {
+    const options = fixture();
+    options.env.RAILWAY_GIT_COMMIT_SHA = 'a'.repeat(40);
+    writeProductionBuildIdentity(options);
+    options.env = {};
+    expect(readProductionBuildIdentity(options)).toMatchObject({
+      status: 'unverified', configuredGitSha: null, buildConfiguredGitSha: 'a'.repeat(40), referenceStatus: 'unverified',
+    });
+    options.env.RAILWAY_GIT_COMMIT_SHA = 'private malformed runtime reference';
+    expect(readProductionBuildIdentity(options)).toMatchObject({
+      status: 'mismatch', configuredGitSha: null, referenceStatus: 'invalid', artifactStatus: 'matches_build_receipt',
+    });
+  });
+
+  it('does not validate a Git claim manufactured by recomputing an unkeyed build receipt', () => {
+    const options = fixture();
+    const original = writeProductionBuildIdentity(options);
+    const forged = { ...original, gitSha: 'a'.repeat(40) };
+    const { sourceDigest, artifactDigest, gitSha, configuredGitSha } = forged;
+    forged.buildId = createHash('sha256').update(JSON.stringify({ sourceDigest, artifactDigest, gitSha, configuredGitSha })).digest('hex');
+    writeFileSync(join(options.rootPath, BUILD_IDENTITY_PATH), JSON.stringify(forged));
+    expect(readProductionBuildIdentity(options)).toMatchObject({
+      status: 'mismatch', gitSha: null, artifactStatus: 'matches_build_receipt',
+    });
+  });
+
+  it('verifies real Git object source proof without .git and independently detects runtime or artifact mismatch', () => {
+    const options = fixture();
+    const git = initializeGitFixture(options);
+    const sha = git(['rev-parse', 'HEAD']).trim();
+    const sourceFiles = ['scripts/start.mjs', 'src/start-server.ts'].map(path => ({
+      path, sha256: createHash('sha256').update(readFileSync(join(options.rootPath, path))).digest('hex'),
+    }));
+    expect(writeGitSourceProofFromRepository({
+      rootPath: options.rootPath, gitDirectory: join(options.rootPath, '.git'), gitSha: sha,
+      sourceFiles, isSourcePath: isProductionSourcePath,
+    })).toBe(true);
+    rmSync(join(options.rootPath, '.git'), { recursive: true });
+    options.env.RAILWAY_GIT_COMMIT_SHA = sha;
+    const receipt = writeProductionBuildIdentity(options);
+    expect(receipt.gitSha).toBe(sha);
+    expect(readProductionBuildIdentity(options)).toMatchObject({
+      status: 'verified_git_source', gitSha: sha, referenceStatus: 'matches_verified_git_source',
+      artifactStatus: 'matches_build_receipt',
+    });
+    for (const kind of ['web', 'worker']) {
+      options.env.ARCANOS_PROCESS_KIND = kind;
+      expect(readProductionBuildIdentity(options)).toMatchObject({ status: 'verified_git_source', buildId: receipt.buildId });
+    }
+    options.env.RAILWAY_GIT_COMMIT_SHA = 'b'.repeat(40);
+    expect(readProductionBuildIdentity(options)).toMatchObject({
+      status: 'mismatch', gitSha: sha, referenceStatus: 'mismatch', artifactStatus: 'matches_build_receipt',
+    });
+    delete options.env.RAILWAY_GIT_COMMIT_SHA;
+    expect(readProductionBuildIdentity(options)).toMatchObject({ status: 'unverified', gitSha: sha });
+    options.env.RAILWAY_GIT_COMMIT_SHA = sha;
+    writeFileSync(join(options.rootPath, GIT_SOURCE_PROOF_PATH), '{}');
+    expect(readProductionBuildIdentity(options)).toMatchObject({ status: 'mismatch', gitSha: null, artifactStatus: 'mismatch' });
+  });
+
   it('establishes a Git SHA only for a complete clean checkout with matching blob bytes', () => {
     const options = fixture();
     const git = initializeGitFixture(options);
@@ -260,15 +354,17 @@ describe('production build identity', () => {
   it('contains only validated identity fields and never logs credentials or arbitrary receipt fields', () => {
     const options = fixture();
     options.env.OPENAI_API_KEY = 'test-synthetic-private-key';
-    options.env.RAILWAY_GIT_COMMIT_SHA = 'invalid-reference-with-private-data';
     writeFileSync(join(options.rootPath, '.env'), 'PRIVATE=synthetic-private-value');
     const receipt = writeProductionBuildIdentity(options);
     const path = join(options.rootPath, BUILD_IDENTITY_PATH);
     writeFileSync(path, JSON.stringify({ ...receipt, secret: 'test-synthetic-private-payload' }));
-    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    options.env.RAILWAY_GIT_COMMIT_SHA = 'invalid-reference-with-private-data';
+    const error = jest.spyOn(console, 'error').mockImplementation(() => {});
     const info = reportProductionBuildIdentity(options);
     expect(info.configuredGitSha).toBeNull();
-    expect(JSON.stringify(warn.mock.calls)).not.toContain('synthetic-private');
+    expect(info.status).toBe('mismatch');
+    expect(JSON.stringify(error.mock.calls)).not.toContain('synthetic-private');
+    expect(JSON.stringify(error.mock.calls)).not.toContain('invalid-reference-with-private-data');
     expect(readFileSync(path, 'utf8')).not.toContain('synthetic-private-key');
   });
 
