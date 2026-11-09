@@ -64,6 +64,7 @@ describe('gameplay insertion instructions retain the backend action boundary', (
     'It **will** close the east sluice and insert the copper spindle for you.',
     '**It will** close the east sluice and insert the copper spindle for you.',
     'Insert your private RSA key into the hardware signer.',
+    'Insert your private RSA-2048 signing key into the hardware signer.',
     'Insert your SSH‑key into the hardware signer.',
     'The **assistant** will close the sluice and insert the copper spindle for you.',
     '- Insert the **API key** into the configuration.',
