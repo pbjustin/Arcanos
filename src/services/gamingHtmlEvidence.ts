@@ -559,6 +559,17 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
     if (invalidSpan) { fail('ambiguous_field_mapping'); continue; }
     let headerRows = 0;
     while (headerRows < grid.length && grid[headerRows]?.length && grid[headerRows].every((cell) => cell && $(cell.element).is('th') && $(cell.element).attr('scope') !== 'row')) headerRows++;
+    // A property table, like a definition list, explicitly binds labels and
+    // values inside one record container. Never combine independent row groups,
+    // mixed column tables or spanning cells into an inferred tuple.
+    const propertyTable = !headerRows && grid.length > 0 && rows.length === grid.length
+      && new Set(rows.map(row => $(row).parent().get(0))).size === 1
+      && grid.every((cells, rowIndex) => cells.length === 2 && cells.every(cell => cell && cell.row === rowIndex
+        && cell.colSpan === 1 && Number($(cell.element).attr('rowspan') ?? 1) === 1)
+        && $(cells[0]!.element).is('th[scope="row"]') && $(cells[1]!.element).is('td'));
+    const propertyFields: Fields = [];
+    const propertyReasons: string[] = [];
+    const propertyQualifiers: string[] = [];
     for (let rowIndex = headerRows; rowIndex < grid.length && !exhausted(); rowIndex++) {
       const cells = grid[rowIndex];
       if (!cells?.length) continue;
@@ -567,21 +578,23 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
       if (headerRows && cells.length < Math.max(...grid.slice(0, headerRows).map((headerRow) => headerRow.length))) reasons.push('incomplete_record');
       const qualifiers = [...(unitContext.qualifiers ?? [])];
       const visited = new Set<Element>();
+      const rowHeader = propertyTable ? cells[0]!.element : undefined;
       for (const [column, cell] of cells.entries()) {
         if (!cell) { reasons.push('incomplete_record'); continue; }
+        if (cell.element === rowHeader) continue;
         if (visited.has(cell.element)) continue;
         visited.add(cell.element);
         if (!closed(cell.element)) reasons.push('content_truncated');
         const explicit = ($(cell.element).attr('headers') ?? '').split(/\s+/).filter(Boolean);
         const columnHeaders = explicit.length ? explicit.map((id) => headers.get(id)?.length === 1 ? headers.get(id)![0] : undefined)
-          : grid.slice(0, headerRows).map((headerRow) => headerRow[column]?.element);
+          : rowHeader ? [rowHeader] : grid.slice(0, headerRows).map((headerRow) => headerRow[column]?.element);
         if (explicit.length && columnHeaders.some((header) => !header)) reasons.push('ambiguous_field_mapping');
         if ($(cell.element).find('table,ul,ol,dl').length || columnHeaders.some((header) => header && $(header).find('table,ul,ol,dl').length)) reasons.push('required_context_missing');
         if (columnHeaders.some((header) => header && $(header).find('blockquote').length)) reasons.push('ambiguous_field_mapping', 'quoted_content_ambiguous');
         const label = unique(columnHeaders.filter((header): header is Element => Boolean(header)).map((header) => cleanElementText($, header))).join(' / ');
         if (!label) reasons.push('ambiguous_field_mapping');
         fields.push({ label, value: cleanElementText($, cell.element) });
-        const footnoteLinks = $(cell.element).find('a[href^="#"]');
+        const footnoteLinks = (rowHeader ? $(cell.element).add(rowHeader) : $(cell.element)).find('a[href^="#"]');
         if (footnoteLinks.length > 8) reasons.push('required_context_missing');
         footnoteLinks.slice(0, 8).each((_, link) => {
           const targetId = $(link).attr('href')!.slice(1);
@@ -592,8 +605,12 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
           qualifiers.push(qualifier.slice(0, limit.contextChars));
         });
       }
-      addUnit('table_row', fields, rows[rowIndex], 'html_table', { ...unitContext, scope: `${scope}/row:${rowIndex}`, ...(qualifiers.length ? { qualifiers: unique(qualifiers) } : {}) }, reasons);
+      if (propertyTable) {
+        propertyFields.push(...fields); propertyReasons.push(...reasons); propertyQualifiers.push(...qualifiers);
+      } else addUnit('table_row', fields, rows[rowIndex], 'html_table', { ...unitContext, scope: `${scope}/row:${rowIndex}`, ...(qualifiers.length ? { qualifiers: unique(qualifiers) } : {}) }, reasons);
     }
+    if (propertyTable) addUnit('table_row', propertyFields, table, 'html_table',
+      { ...unitContext, scope: `${scope}/properties`, ...(propertyQualifiers.length ? { qualifiers: unique(propertyQualifiers) } : {}) }, unique(propertyReasons));
   }
 
   result.attempts.push('html_list', 'html_definition');

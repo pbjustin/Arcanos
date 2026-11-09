@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-08T20:00:19.119Z",
+  "generatedAt": "2026-11-09T01:48:13.148Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4507,6 +4507,9 @@
           "relativePath": "tests/gaming-authority-snapshot-equality.test.ts"
         },
         {
+          "relativePath": "tests/gaming-backend-discovery.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-base-defaulting.test.ts"
         },
         {
@@ -4822,6 +4825,9 @@
           "relativePath": "tests/gaming-legacy-instruction-boundary.test.ts"
         },
         {
+          "relativePath": "tests/gaming-lexical-retrieval-benchmark.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-lifecycle-drain.test.ts"
         },
         {
@@ -4970,6 +4976,9 @@
         },
         {
           "relativePath": "tests/gaming-retrieval-policy.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-row-header-extraction.test.ts"
         },
         {
           "relativePath": "tests/gaming-samurai-guide-workflow.integration.test.ts"
@@ -6320,6 +6329,9 @@
         },
         {
           "relativePath": "tests/testUtils/gamingLargeGuideFixture.ts"
+        },
+        {
+          "relativePath": "tests/testUtils/gamingLexicalBenchmarkFixtures.ts"
         },
         {
           "relativePath": "tests/testUtils/gamingLifecycleDrain.ts"

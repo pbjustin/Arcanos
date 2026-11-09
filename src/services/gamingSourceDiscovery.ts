@@ -11,6 +11,7 @@ import { logger } from "@platform/logging/structuredLogging.js";
 import { getEnv } from "@platform/runtime/env.js";
 import { GAMING_BUILD_RESOURCE_HARD_LIMITS } from "@services/gamingBuildResourceSchema.js";
 import { buildGamingRetrievalTerms } from "@shared/gaming/gamingRetrievalPolicy.js";
+import { gamingRegistryLiteralPattern, normalizeGamingComparableIdentity } from "@shared/gaming/gamingGameRegistry.js";
 import type { GamingPlayerContext } from "@shared/gaming/gamingPlayerContext.js";
 import {
   getGamingDiscoveryBudgetMs,
@@ -86,6 +87,10 @@ export interface GamingDiscoveryInput extends Pick<GamingPlayerContext, "class" 
   provider?: GamingSearchProvider;
   /** Already attempted candidates stay excluded even when search results are cached. */
   excludedUrls?: readonly string[];
+  /** Evaluate two targeted queries within the same result and wall-clock ceilings. */
+  queryVariants?: boolean;
+  /** A caller-owned recovery grant can request new hints instead of replaying the query cache. */
+  refreshSearch?: boolean;
 }
 
 export interface GamingDiscoveryResult {
@@ -197,12 +202,22 @@ function buildQueryTopicTerms(input: GamingDiscoveryInput): string[] {
     .filter(term => !QUERY_STOP_WORDS.has(term)).slice(0, MAX_QUERY_TOPIC_TERMS);
 }
 
-export function buildGamingDiscoveryQuery(input: GamingDiscoveryInput): string {
-  const game = safeSearchText(input.game, 100);
-  const topicTerms = buildQueryTopicTerms({ ...input, game });
+function buildGamingDiscoveryScope(input: GamingDiscoveryInput): string | undefined {
+  // Keep whole sanitized fields or withhold the query. The extra character
+  // distinguishes an overlong scope from one that exactly fits the ceiling.
+  const [game, edition, platform, version] = [input.game, input.edition, input.platform, input.requestedVersion]
+    .map(value => safeSearchText(value, MAX_SEARCH_QUERY_CHARS + 1));
   const gameSegment = game
     ? (game.includes(" ") ? `"${game.replace(/[\"\\]/g, " ").replace(/\s+/g, " ").trim()}"` : game)
     : "";
+  const scope = [gameSegment, edition, platform, version].filter(Boolean).join(" ");
+  return scope.length <= MAX_SEARCH_QUERY_CHARS ? scope : undefined;
+}
+
+export function buildGamingDiscoveryQuery(input: GamingDiscoveryInput): string {
+  const scope = buildGamingDiscoveryScope(input);
+  if (scope === undefined) return "";
+  const topicTerms = buildQueryTopicTerms(input);
   const topicText = topicTerms.join(" ");
   let modeSegment = input.mode === "guide" ? "guide" : input.mode === "build" ? "build" : "meta";
   if (input.patchSensitive || input.mode === "meta") {
@@ -211,14 +226,35 @@ export function buildGamingDiscoveryQuery(input: GamingDiscoveryInput): string {
     modeSegment = "";
   }
 
-  return [gameSegment, safeSearchText(input.edition, 40), safeSearchText(input.platform, 40),
-    safeSearchText(input.requestedVersion, 30), topicText, modeSegment]
+  return [scope, topicText, modeSegment]
     .filter(Boolean)
     .join(" ")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, MAX_SEARCH_QUERY_CHARS)
     .trim();
+}
+
+/** Alternate wording narrows the request anchor without dropping applicability scope.
+ * These are search hints only; neither query establishes source or claim authority. */
+export function buildGamingDiscoveryQueries(input: GamingDiscoveryInput): string[] {
+  const primary = buildGamingDiscoveryQuery(input);
+  const scope = buildGamingDiscoveryScope(input);
+  if (scope === undefined) return [];
+  const focused = buildGamingRetrievalTerms({
+    game: safeSearchText(input.game, 100), prompt: stripUntrustedInstructions(input.prompt).slice(0, 1_000), mode: input.mode
+  }).focusTerms.filter(term => !QUERY_STOP_WORDS.has(term)).slice(0, 8);
+  const suffix = input.patchSensitive || input.mode === "meta" ? "latest patch notes"
+    : input.mode === "build" ? "equipment skills build"
+      : focused.some(term => /^(?:quest|walkthrough|route|location|find|reach)$/iu.test(term)) ? "walkthrough" : "mechanics guide";
+  const available = MAX_SEARCH_QUERY_CHARS - scope.length - suffix.length - 2;
+  const topic: string[] = [];
+  for (const term of focused) {
+    if ([...topic, term].join(" ").length > available) break;
+    topic.push(term);
+  }
+  const secondary = topic.length ? `${scope} ${topic.join(" ")} ${suffix}`.replace(/\s+/gu, " ").trim() : primary;
+  return [...new Set([primary, secondary].filter(Boolean))];
 }
 
 export function sanitizeGamingDiscoveryCandidateUrl(rawUrl: string): GamingSourceAdmissionResult {
@@ -260,7 +296,8 @@ function isClearlyStale(date: string | undefined): boolean {
 }
 
 function classifyCandidate(result: GamingSearchResult): GamingDiscoveredCandidate["characteristics"] {
-  const domain = normalizeDomain(new URL(result.url).hostname);
+  const parsedUrl = new URL(result.url);
+  const domain = normalizeDomain(parsedUrl.hostname);
   const haystack = `${result.title} ${result.snippet ?? ""} ${result.url}`;
   const patchLikely = /\b(?:balance|hotfix|patch|release notes?|update|version)\b/i.test(haystack);
   const wikiLikely = /(?:^|\.)wiki(?:\.|$)|\bwiki\b/i.test(`${domain} ${result.title}`);
@@ -268,8 +305,10 @@ function classifyCandidate(result: GamingSearchResult): GamingDiscoveredCandidat
   const officialLikely = getGamingDiscoveryOfficialDomains().some((candidate) =>
     domainMatches(domain, candidate)
   );
-  const articleLikely = !/^\/?$/.test(new URL(result.url).pathname)
-    && !/\b(?:category|forum|forums|index|tag)\b/i.test(new URL(result.url).pathname);
+  const wikiArticle = /\/index\.php$/iu.test(parsedUrl.pathname) && Boolean(parsedUrl.searchParams.get("title"))
+    && !/^(?:category|special):/iu.test(parsedUrl.searchParams.get("title")!);
+  const articleLikely = !/^\/?$/.test(parsedUrl.pathname)
+    && (wikiArticle || !/\b(?:category|categories|index|tags?)\b|\/(?:forums?)\/?$/iu.test(parsedUrl.pathname));
   return {
     officialLikely,
     patchLikely,
@@ -287,6 +326,13 @@ function scoreDiscoveredCandidate(
   const gameTerms = tokenize(input.game ?? "").filter((term) => !QUERY_STOP_WORDS.has(term));
   const titleAndUrl = `${result.title} ${result.url}`;
   const fullSearchText = `${titleAndUrl} ${result.snippet ?? ""}`;
+  // A numbered series title must not spend a fetch slot on an explicitly
+  // different installment. This negative metadata hint grants no positive identity.
+  const numberedGame = /^(.*?)[\s-]+(\d+(?:\.\d+)?|[ivx]{1,6})$/iu.exec(input.game?.trim() ?? "");
+  if (numberedGame) {
+    const candidateTitle = new RegExp(`(?:^|[^\\p{L}\\p{N}])(${gamingRegistryLiteralPattern(numberedGame[1])}[\\s-]+(?:\\d+(?:\\.\\d+)?|[ivx]{1,6}))(?=$|[^\\p{L}\\p{N}])`, "iu").exec(result.title);
+    if (candidateTitle && normalizeGamingComparableIdentity(candidateTitle[1]) !== normalizeGamingComparableIdentity(input.game!)) return undefined;
+  }
   if (tokenize(`${result.title} ${result.snippet ?? ""}`).length < 4) {
     return undefined;
   }
@@ -318,7 +364,8 @@ function scoreDiscoveredCandidate(
     + topicSnippetOverlap * 0.1
     + modeScore * 0.1
     + rankScore * 0.08
-    + (characteristics.articleLikely ? 0.04 : -0.08)
+    + (characteristics.articleLikely ? 0.04 : -0.2)
+    - (topicTerms.length && topicTitleOverlap === 0 && topicSnippetOverlap === 0 ? 0.1 : 0)
     + (characteristics.officialLikely ? 0.08 : 0)
     + (characteristics.wikiLikely && input.mode === "guide" ? 0.06 : 0)
     + (characteristics.patchLikely && input.patchSensitive ? 0.08 : 0)
@@ -524,6 +571,7 @@ function normalizeProviderResults(results: unknown, resultLimit: number): Gaming
 function createDiscoveryAbort(parentSignal: AbortSignal | undefined, timeoutMs: number): {
   signal: AbortSignal;
   didTimeout: () => boolean;
+  cancel: () => void;
   cleanup: () => void;
 } {
   const controller = new AbortController();
@@ -541,6 +589,7 @@ function createDiscoveryAbort(parentSignal: AbortSignal | undefined, timeoutMs: 
   return {
     signal: controller.signal,
     didTimeout: () => timedOut,
+    cancel: () => controller.abort(),
     cleanup: () => {
       clearTimeout(timeoutHandle);
       parentSignal?.removeEventListener("abort", abortFromParent);
@@ -619,10 +668,12 @@ export async function discoverGamingSources(input: GamingDiscoveryInput): Promis
   if (!query) {
     return emptyDiscoveryResult(startedAt, "DISCOVERY_NO_RESULTS", { searchProvider: providerId });
   }
-  const queryHash = createHash("sha256").update(query).digest("hex");
+  const resultLimit = getGamingDiscoverySearchResultLimit();
+  const queries = input.queryVariants ? buildGamingDiscoveryQueries({ ...input, patchSensitive }).slice(0, resultLimit) : [query];
+  const queryHash = createHash("sha256").update(queries.length === 1 ? query : JSON.stringify(queries)).digest("hex");
   const querySummary = {
-    charCount: query.length,
-    termCount: tokenize(query).length,
+    charCount: queries.reduce((count, item) => count + item.length, 0),
+    termCount: queries.reduce((count, item) => count + tokenize(item).length, 0),
     freshnessPreference
   };
   const cacheKey = createHash("sha256").update(JSON.stringify({
@@ -630,43 +681,49 @@ export async function discoverGamingSources(input: GamingDiscoveryInput): Promis
     version: provider.version,
     game: input.game?.trim().toLowerCase() ?? "",
     mode: input.mode,
-    query,
+    queries,
+    resultLimit,
     freshnessPreference
   })).digest("hex");
   const now = Date.now();
   const cached = discoveryCache.get(cacheKey);
   let searchResults: GamingSearchResult[];
   let cacheHit = false;
-  if (cached && cached.expiresAt > now) {
+  if (!input.refreshSearch && cached && cached.expiresAt > now) {
     searchResults = cloneSearchResults(cached.results);
     cacheHit = true;
   } else {
     const timeoutMs = Math.min(getGamingDiscoveryTimeoutMs(), getGamingDiscoveryBudgetMs());
     const discoveryAbort = createDiscoveryAbort(input.signal, timeoutMs);
     try {
-      const providerResults = await runProviderSearchWithAbort(provider, {
-        query,
+      // Variations partition the existing result ceiling and share one deadline.
+      // They are independent searches, never retries after transport failures.
+      const perQueryLimits = queries.map((_item, index) => Math.floor(resultLimit / queries.length)
+        + (index < resultLimit % queries.length ? 1 : 0));
+      const providerResults = await Promise.all(queries.map((plannedQuery, index) => runProviderSearchWithAbort(provider, {
+        query: plannedQuery,
         ...(input.game ? { game: input.game } : {}),
         mode: input.mode,
         freshnessPreference,
-        resultLimit: getGamingDiscoverySearchResultLimit(),
+        resultLimit: perQueryLimits[index],
         signal: discoveryAbort.signal
-      });
-      const normalizedResults = normalizeProviderResults(providerResults, getGamingDiscoverySearchResultLimit());
-      if (!normalizedResults) {
+      })));
+      const normalizedResults = providerResults.map((results, index) => normalizeProviderResults(results, perQueryLimits[index]));
+      if (normalizedResults.some(results => results === undefined)) {
         return emptyDiscoveryResult(startedAt, "DISCOVERY_PROVIDER_ERROR", {
           searchProvider: providerId,
           searchQueryHash: queryHash,
           searchQuerySummary: querySummary
         });
       }
-      searchResults = normalizedResults;
+      searchResults = normalizedResults.flatMap(results => results ?? []);
       pruneDiscoveryCache(now);
       discoveryCache.set(cacheKey, {
         expiresAt: now + getGamingDiscoveryQueryCacheTtlMs(input.mode, patchSensitive),
         results: cloneSearchResults(searchResults)
       });
     } catch (error) {
+      discoveryAbort.cancel();
       const timedOut = discoveryAbort.didTimeout()
         || (error instanceof Error && (error.name === "AbortError" || /timed?\s*out|timeout/i.test(error.message)));
       return emptyDiscoveryResult(startedAt, timedOut ? "DISCOVERY_PROVIDER_TIMEOUT" : "DISCOVERY_PROVIDER_ERROR", {

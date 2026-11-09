@@ -31,7 +31,7 @@ import { buildStoredGamingKnowledgeContext, type GamingSourceGatewayContext } fr
 import { formatStoredGamingEvidence, type GamingStoredKnowledgeContext } from './gamingStoredKnowledge.js';
 import type { runGameplayPipeline, GamingPipelineInput } from './gamingPipeline.js';
 import { getGamingWebContextMaxChars } from './gamingConfig.js';
-import { buildGamingDiscoveryQuery, sanitizeGamingDiscoveryCandidateUrl } from './gamingSourceDiscovery.js';
+import { buildGamingDiscoveryQueries, discoverGamingSources, sanitizeGamingDiscoveryCandidateUrl } from './gamingSourceDiscovery.js';
 import { evaluateGamingHybridCandidates, createApprovedGamingHybridIngestion, selectGamingHybridEvidence,
   selectGamingHybridAcceptedEvidence, assertGamingHybridEvidenceMembership, type GamingHybridAcceptedCandidate,
   type GamingHybridRetainedCandidate, gamingHybridAuthorityBindings, assertGamingHybridAuthorityCurrent,
@@ -58,7 +58,7 @@ interface CurrentVerification {
 type Workflow = {
   id: string; actor: string; createdAt: number; input: GamingHybridQuery; pipeline: GamingPipelineInput;
   revision: number; closed?: boolean; activeOperationKey?: string;
-  acquisitionWorkMs: number; submittedUrls: Set<string>;
+  acquisitionWorkMs: number; submittedUrls: Set<string>; attemptedAcquisitionUrls: Set<string>;
   round: number; currentnessRound: number; accepted: GamingHybridAcceptedCandidate[]; operations: Map<string, Operation>;
   retained?: GamingHybridRetainedCandidate[];
   pendingDiscovery?: DiscoveryType;
@@ -104,6 +104,7 @@ export interface GamingHybridDependencies {
   evaluateCandidates: typeof evaluateGamingHybridCandidates;
   ingest: typeof createApprovedGamingHybridIngestion;
   generate: typeof runGameplayPipeline;
+  discover: typeof discoverGamingSources;
   now: () => number;
 }
 
@@ -111,7 +112,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
   const deps: GamingHybridDependencies = { retrieve: buildStoredGamingKnowledgeContext, evaluateCandidates: evaluateGamingHybridCandidates,
     ingest: createApprovedGamingHybridIngestion,
     generate: async (input, evidence) => (await import('./gamingPipeline.js')).runGameplayPipeline(input, evidence),
-    now: Date.now, ...overrides };
+    discover: discoverGamingSources, now: Date.now, ...overrides };
   // Transient request context only. Jobs/revisions remain in the existing durable pipeline.
   // A restart or another replica misses safely; it never grants additional artifact access.
   const workflows = new Map<string, Workflow>();
@@ -329,14 +330,10 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     }
     // Public gap labels are intentionally generic diagnostics. They cannot replace
     // the requested location/mechanic as search intent, even on a recovery round.
-    const query = buildGamingDiscoveryQuery({ game: clean(input.game), prompt: redactString(input.question),
+    const gapFocus = gapAssessmentStatus === 'assessed' ? gaps.filter(gap => !/^requested topic\b/iu.test(gap)).join(' ') : '';
+    return buildGamingDiscoveryQueries({ game: clean(input.game), prompt: `${redactString(input.question)} ${gapFocus}`,
       mode: workflow.pipeline.mode, edition: input.edition, platform: input.platform, requestedVersion: input.requestedVersion,
       currentArea: workflow.pipeline.currentArea, class: workflow.pipeline.class, constraints: workflow.pipeline.constraints });
-    const focus = query.replace(/\s+(?:guide|build)$/u, '');
-    const gapFocus = gapAssessmentStatus === 'assessed' ? gaps.filter(gap => !/^requested topic\b/iu.test(gap)).join(' ') : '';
-    const secondary = buildGamingDiscoveryQuery({ game: clean(input.game), mode: 'guide',
-      prompt: `${gapFocus} ${focus}`, edition: input.edition, platform: input.platform, requestedVersion: input.requestedVersion });
-    return Array.from(new Set([query, secondary]));
   }
   function discovery(context: GamingHybridCallContext, workflow: Workflow, body: GamingHybridResponse,
     hasGameplayEvidence = false): GamingHybridResult {
@@ -847,7 +844,60 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     workflow.operations.set(key, { hash: digest, promise });
     return promise;
   }
-  return {
+  async function discoverForQuery(context: GamingHybridCallContext, workflow: Workflow, initial: GamingHybridResult): Promise<GamingHybridResult> {
+    if (workflow.input.contractVersion !== GAMING_HYBRID_V2_CONTRACT_VERSION
+      || !getEnvBoolean('ARCANOS_GAMING_HYBRID_BACKEND_DISCOVERY_ENABLED', false)
+      || workflow.pipeline.guideUrls?.length) return initial;
+    return protect(context, workflow, async () => {
+      let result = initial;
+      // Each iteration uses a grant already issued by answer(), and submits through
+      // the same actor/revision/idempotency/accounting gate as host URL hints.
+      for (let round = 0; round < GAMING_HYBRID_V2_LIMITS.discoveryRounds; round += 1) {
+        if (workflow.closed || result.body.nextAction !== 'search'
+          || result.body.discovery?.type !== 'gameplay_evidence' || !result.body.discovery.continuationRequired
+          || workflow.round > 0 && !result.body.discovery.replacementAllowed) break;
+        const revision = workflow.revision;
+        const key = `backend-search:${revision}`;
+        if (workflow.activeOperationKey) return failure(context, 'SUBMISSION_IN_PROGRESS', 409, workflow);
+        workflow.activeOperationKey = key;
+        let discovered: Awaited<ReturnType<typeof deps.discover>>;
+        try {
+          discovered = await deps.discover({ game: workflow.input.game, prompt: redactString(workflow.input.question),
+            mode: workflow.pipeline.mode, edition: workflow.pipeline.edition, platform: workflow.pipeline.platform,
+            currentArea: workflow.pipeline.currentArea, class: workflow.pipeline.class, constraints: workflow.pipeline.constraints,
+            requestedVersion: workflow.input.requestedVersion,
+            patchSensitive: classifyGamingQuestionFreshness(workflow.pipeline) !== 'stable',
+            queryVariants: true, refreshSearch: workflow.round > 0, signal: context.signal,
+            excludedUrls: [...new Set([...workflow.submittedUrls, ...workflow.attemptedAcquisitionUrls])] });
+        } finally { if (workflow.activeOperationKey === key) workflow.activeOperationKey = undefined; }
+        context.signal?.throwIfAborted();
+        if (deps.now() - workflow.createdAt >= Math.min(LIMITS.workflowTtlMs,
+          GAMING_FRESHNESS_DEFAULTS[classifyGamingQuestionFreshness(workflow.pipeline)]))
+          return failure(context, 'WORKFLOW_EXPIRED', 409, workflow);
+        if (discovered.discoveryFailureReason) {
+          // Host search remains available. A provider failure grants no acquisition
+          // attempt and is never reported as a completed discovery or missing fact.
+          return discovered.discoveryFailureReason === 'DISCOVERY_DISABLED' ? result
+            : { ...result, body: { ...result.body, reason: discovered.discoveryFailureReason } };
+        }
+        const seen = new Set([...workflow.submittedUrls, ...workflow.attemptedAcquisitionUrls].map(candidateSubmissionUrl));
+        const candidates = discovered.candidates.flatMap(candidate => {
+          const admission = sanitizeGamingDiscoveryCandidateUrl(candidate.url);
+          if (admission.rejected || !admission.url) return [];
+          const url = candidateSubmissionUrl(admission.url);
+          if (seen.has(url)) return [];
+          seen.add(url);
+          return [{ url: admission.url }];
+        }).slice(0, result.body.discovery.nextSubmissionCandidateLimit ?? 0);
+        if (!candidates.length) break;
+        result = await api.candidates({ contractVersion: GAMING_HYBRID_V2_CONTRACT_VERSION,
+          workflowId: workflow.id, expectedRevision: revision, idempotencyKey: key,
+          discoveryType: 'gameplay_evidence', candidates }, context);
+      }
+      return result;
+    });
+  }
+  const api = {
     async query(payload: unknown, context: GamingHybridCallContext): Promise<GamingHybridResult> {
       const parsed = gamingHybridQuerySchema.safeParse(payload);
       const denied = admit(context, parsed.success ? parsed.data.contractVersion : gamingHybridRequestedContractVersion(payload)); if (denied) return denied;
@@ -982,7 +1032,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       if (!parsed.data.platform && questionScope.platform)
         playerContext.contextOrigins = { ...playerContext.contextOrigins, platform: 'question' };
       const workflow: Workflow = { id: randomUUID(), actor, budgetKey, createdAt: deps.now(), input,
-        revision: 0, acquisitionWorkMs: 0, submittedUrls: new Set(),
+        revision: 0, acquisitionWorkMs: 0, submittedUrls: new Set(), attemptedAcquisitionUrls: new Set(),
         round: 0, currentnessRound: 0, accepted: [], operations: new Map(),
         pipeline: { ...playerContext, game: input.game, prompt: input.question,
           mode: input.mode, requestedVersion: input.requestedVersion, region: input.region, edition: resolveGamingRequestEdition(input),
@@ -992,7 +1042,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       const promise = protect(context, workflow, async () => {
         workflow.knowledge = await deps.retrieve({ ...workflow.pipeline, game: input.game, failOnUnavailable: true, hybridRetrieval: true, signal: context.signal });
         return answer(context, workflow, workflow.knowledge);
-      }).then(result => {
+      }).then(result => discoverForQuery(context, workflow, result)).then(result => {
         if (input.contractVersion !== GAMING_HYBRID_V2_CONTRACT_VERSION && (result.status >= 500 || result.status === 429)) {
           const entry = queries.get(key);
           if (entry) {
@@ -1087,6 +1137,10 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
             ...(v2 ? { protocolVersion: GAMING_HYBRID_V2_CONTRACT_VERSION } : {}) },
           { ...context, workflowId: workflow.id, storagePolicy: workflow.input.storagePolicy,
             retainUnverified: workflow.input.storagePolicy === 'ask_before_store',
+            ...(v2 ? { onRequestUrl: (url: string) => {
+              const admission = sanitizeGamingDiscoveryCandidateUrl(url);
+              if (admission.url && !admission.rejected) workflow.attemptedAcquisitionUrls.add(candidateSubmissionUrl(admission.url));
+            } } : {}),
             ...(v2 ? { maxElapsedMs: acquisitionAllowanceMs } : {}) });
           chargedAcquisitionMs = Math.max(0, evaluated.acquisitionWorkMs ?? deps.now() - acquisitionStartedAt);
         } finally {
@@ -1192,6 +1246,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       });
     }
   };
+  return api;
 }
 
 export const gamingHybridWorkflow = createGamingHybridWorkflow();

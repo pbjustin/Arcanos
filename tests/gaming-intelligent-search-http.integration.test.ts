@@ -63,6 +63,7 @@ let previousEnv: Record<string, string | undefined>;
 const env = {
   FINETUNED_MODEL_ID: authority,
   ARCANOS_GAMING_RAG_ENABLED: 'false', ARCANOS_GAMING_DISCOVERY_ENABLED: 'false',
+  ARCANOS_GAMING_HYBRID_BACKEND_DISCOVERY_ENABLED: 'false',
   ARCANOS_GAMING_CURATED_SOURCES_JSON: '[]', ARCANOS_GAMING_WEB_CONTEXT_CHARS: '12000',
   ARCANOS_GAMING_RAG_CHUNK_CHARS: '1200', BRAVE_SEARCH_API_KEY: ''
 };
@@ -217,6 +218,83 @@ async function submit(state: GamingHybridResponse, urls = [active.url], key = 'i
 }
 
 describe('Intelligent discovery through authenticated loopback Gaming MCP and real Trinity', () => {
+  it.each([...fixtures, { game: 'Lantern Voyage', question: 'How do I open the copper gate?',
+    url: 'https://community.example.org/lantern/copper-gate',
+    passage: 'To open the copper gate, turn the copper wheel twice and pull the copper gate lever. The copper gate opens after the wheel turns twice.',
+    answer: 'Turn the copper wheel twice, then pull the copper gate lever. [1]' }])(
+    'automatically discovers and answers $game through protected acquisition, CLEAR, Trinity and final audit', async fixture => {
+      active = fixture;
+      process.env.ARCANOS_GAMING_DISCOVERY_ENABLED = 'true';
+      process.env.ARCANOS_GAMING_HYBRID_BACKEND_DISCOVERY_ENABLED = 'true';
+      process.env.BRAVE_SEARCH_API_KEY = 'synthetic-search-fixture-only';
+      await serve();
+      const nativeFetch = globalThis.fetch;
+      const searches: string[] = [];
+      jest.spyOn(globalThis, 'fetch').mockImplementation(async (input, options) => {
+        const url = new URL(input instanceof Request ? input.url : String(input));
+        if (url.origin === 'https://api.search.brave.com') {
+          searches.push(url.searchParams.get('q')!);
+          expect(options?.redirect).toBe('error');
+          expect(url.searchParams.get('q')).toContain(active.game);
+          return new Response(JSON.stringify({ web: { results: [
+            { url: 'https://127.0.0.1/private-guide', title: `${active.game} guide`, description: active.question },
+            { url: active.url, title: `${active.game} gameplay walkthrough`, description: active.question }
+          ] } }), { headers: { 'content-type': 'application/json' } });
+        }
+        expect(url.origin).toBe(new URL(endpoint).origin);
+        return nativeFetch(input, options);
+      });
+      const answered = await query();
+      expect(answered).toMatchObject({ statusCode: 200, result: { revision: 1, state: 'answer_ready', coverageSatisfied: true,
+        answer: { response: active.answer, provenance: 'arcanos-trinity' } } });
+      expect(answered.result.answer?.sources.map(source => source.url)).toEqual([active.url]);
+      expect(providerStages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
+      expect(searches).toHaveLength(2); expect(new Set(searches).size).toBe(2);
+      expect(acquire).toHaveBeenCalledTimes(1); expect(responsesCreate).toHaveBeenCalledTimes(4);
+      expect((await query()).result.answer).toEqual(answered.result.answer);
+      expect(searches).toHaveLength(2); expect(acquire).toHaveBeenCalledTimes(1);
+      expect(ingest).not.toHaveBeenCalled(); expect(memoryWrite).not.toHaveBeenCalled();
+    });
+
+  it('automatically replaces an admitted redirect returning 403 without retrying that destination', async () => {
+    process.env.ARCANOS_GAMING_DISCOVERY_ENABLED = 'true';
+    process.env.ARCANOS_GAMING_HYBRID_BACKEND_DISCOVERY_ENABLED = 'true';
+    process.env.BRAVE_SEARCH_API_KEY = 'synthetic-search-fixture-only';
+    await serve();
+    const nativeFetch = globalThis.fetch;
+    const denied = `${active.url}/denied`;
+    const replacement = 'https://alternative.example.org/ocarina/tutorial-shield';
+    let searches = 0;
+    jest.spyOn(globalThis, 'fetch').mockImplementation(async (input, options) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      if (url.origin === 'https://api.search.brave.com') {
+        searches += 1;
+        const urls = searches <= 2 ? [active.url] : [denied, replacement];
+        return new Response(JSON.stringify({ web: { results: urls.map(url => ({ url,
+          title: `${active.game} tutorial shield walkthrough`, description: active.question })) } }),
+        { headers: { 'content-type': 'application/json' } });
+      }
+      expect(url.origin).toBe(new URL(endpoint).origin); return nativeFetch(input, options);
+    });
+    const acquired: string[] = [];
+    acquisitionResponse = (url, headers) => {
+      acquired.push(`https://${headers.Host}${url.pathname}`);
+      if (url.pathname === new URL(active.url).pathname && headers.Host === new URL(active.url).host)
+        return { status: 302, headers: { location: denied }, data: '' };
+      if (url.pathname.endsWith('/denied')) return { status: 403, headers: {}, data: 'Publisher access denied.' };
+      return { status: 200, headers: { 'content-type': 'text/html' }, data: `<article><h1>${active.game} gameplay guide</h1>
+        <p>In the game ${active.game}, players use the following instructions.</p><p>${active.passage}</p></article>` };
+    };
+    const result = await query();
+    expect(result.result).toMatchObject({ revision: 2, state: 'answer_ready', coverageSatisfied: true });
+    expect(result.result.answer?.sources.map(source => source.url)).toEqual([replacement]);
+    expect(acquired).toEqual([active.url, denied, replacement]);
+    expect(searches).toBe(4); expect(providerStages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
+    expect(result.result.candidates).toEqual([expect.objectContaining({ decision: 'rejected', reasonCodes: ['SOURCE_INACCESSIBLE'] }),
+      expect.objectContaining({ decision: 'eligible_for_ingestion' })]);
+    expect(ingest).not.toHaveBeenCalled();
+  });
+
   it.each(['cancelled', 'failed'] as const)('keeps a %s host-side search read-only before candidate submission', async outcome => {
     await serve(); const started = await query();
     process.env.ARCANOS_GAMING_DISCOVERY_ENABLED = 'true';

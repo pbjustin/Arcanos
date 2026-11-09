@@ -68,6 +68,15 @@ their flattened contents from bypassing record integrity checks. Ordinary articl
 selection continues for the remaining prose. No browser, script execution,
 linked-page fetch, pagination, crawler, OCR, or additional PDF parser is added.
 
+An explicit property table whose rows each contain one `th[scope="row"]` label
+and one nonspanning data cell retains those field relationships as one record.
+All rows must share one row group. Separate tables or row groups are never
+combined; mixed column tables retain their existing interpretation. Duplicate
+labels, omitted nested structures, unresolved header references, footnote
+qualifiers and incomplete boundaries retain the existing integrity checks.
+Extracted fields still require independent identity, applicability and CLEAR
+validation before they can support a gameplay answer.
+
 A closed list item with an editorial topic prefix and complete actionable
 gameplay sentences remains ordinary prose. A colon alone does not establish a
 structured record. Explicit record fields, nested structures, missing values
@@ -79,7 +88,7 @@ Player-facing instructions such as following a mission walkthrough are normal
 evidence. Assistant control instructions remain a document-level rejection,
 including instructions in acquired title/heading metadata or text omitted by
 the context projection budget. Sanitization is not approval of the remainder.
-Resolver `gaming-document-v7` separates the current extraction decisions from
+Resolver `gaming-document-v8` separates the current extraction decisions from
 older cached resolutions and durable revision identity.
 
 Label-only linked article list items are catalog navigation rather than game

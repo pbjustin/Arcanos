@@ -11,7 +11,8 @@ installed-client acceptance, live providers or private release readiness.
 The frontend forwards the original question and supplied player context, reads
 structured state, searches when requested, supplies bounded candidate URL hints,
 and presents only the backend-approved answer, clarification or limitation.
-It must actually use available Web Search for discovery. Search snippets are
+When the backend requests host discovery, it must actually use available Web
+Search. Search snippets are
 not evidence. Frontend readability is preliminary because ARCANOS may be unable
 to acquire the same page. Search queries exclude private player information,
 credentials, account identifiers and unrelated conversation history.
@@ -27,9 +28,31 @@ exclusions are checked independently of the provider's
 rank ceiling. Discovery applies a small
 repeated-domain ranking penalty to similarly relevant pages. Stronger topic
 matches retain priority. These discovery hints never establish accessibility,
-game identity, edition compatibility or claim support. The MCP workflow still
-delegates search to the host; enabling a hosted Responses `web_search` adapter
+game identity, edition compatibility or claim support. The default MCP workflow
+delegates search to the host. The disabled-by-default
+`ARCANOS_GAMING_HYBRID_BACKEND_DISCOVERY_ENABLED` option can reuse the existing
+configured search provider for a new v2 query's granted gameplay rounds. Both
+this option and `ARCANOS_GAMING_DISCOVERY_ENABLED` must be enabled. V1, explicit
+supplied-guide requests and official-currentness discovery retain their existing
+handoffs. Backend search feeds URL hints through the ordinary candidate method;
+it cannot set evidence authority, approve storage or create a new workflow budget.
+An unavailable provider returns its actual discovery reason with host search
+still available. Identical query retries reuse the completed operation.
+Enabling a hosted Responses `web_search` adapter
 requires a separately authorized route and provider budget.
+
+Host query planning offers at most two targeted variations. Backend-assisted
+search evaluates those variations within one discovery deadline and partitions
+the existing total search-result allowance across them. The complete sanitized
+game, edition, platform and exact-version scope must fit the existing 180-character
+query bound; otherwise no underconstrained query is sent. Index/category pages
+and topic-free landing pages rank below relevant guide hints, and explicitly
+different numbered installments are excluded. These remain negative ranking
+hints, never positive verification. During an already granted recovery, backend
+search refreshes provider hints rather than reusing an exhausted cached result
+set. It excludes submitted URLs and sanitized admitted acquisition destinations,
+including failed redirects. Failed work is still charged; there is no new retry
+allowance, crawler or access-control bypass.
 
 ARCANOS independently acquires source content and checks identity, integrity,
 relevance, applicability and provenance through the existing document resolver,
