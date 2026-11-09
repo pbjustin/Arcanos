@@ -20,6 +20,7 @@ skipped. Final remote identity and CI belong to the commit-bound PR receipt.
 | [Acceptance report](pr1595-end-to-end-acceptance.md) | Authenticated workflows, reproduced failures, repairs, extraction, budgets and security | Actual application components; external effects are explicitly identified |
 | [Held-out lexical evaluation](heldout-lexical.md) and [results](heldout-lexical-results.json) | Independent corpus, real PostgreSQL ranking and stored-service/CLEAR evaluation at original base and starting head | New isolated PostgreSQL 18.6; authored grants and documents; no model or publisher |
 | [Public publisher observations](public-publisher-observations.json) | Nine live protected HTTPS candidate attempts against search-discovered URLs at the starting head | Host web search and real reader; no authenticated MCP, backend search provider or Trinity generation |
+| [Public-source remediation](public-source-remediation.md) and [sanitized observations](public-source-remediation.json) | Follow-up at `a7c04e32`: real public acceptance, distinct failure causes, bounded repairs and retained rejections | Compiled protected acquisition through normal v2 source CLEAR and selected passages; no live MCP, backend search, model or durable storage |
 | [Original development benchmark](../2026-11-08/gaming-lexical-benchmark.md) | Original 15-case selector benchmark and before/after results | Historical pure post-query selector; not SQL ranking or live answers |
 
 Live full-provider acceptance remains **BLOCKED**. There is no supplied

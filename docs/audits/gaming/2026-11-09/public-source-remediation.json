@@ -1,0 +1,2350 @@
+{
+  "classification": "LIVE_PUBLIC_SOURCE_COMPONENTS_ONLY",
+  "startingHead": "a7c04e3224b70b3d30df007a240646b6d3081d8d",
+  "originalBase": "eea2d0b6ed72d00e3489a9f8ddf45335b3aa1e86",
+  "currentWorkingTreeRuntimeFileHashes": {
+    "src/services/gamingDocumentResolution.ts": "598cb8a261829427a77778828dd9e5212d6d3e8c560005cff56fdb427c793b81",
+    "src/services/gamingDocumentExtraction.ts": "1fae21f5f9929b60d05f3e276dbde0c356ed9fa0b101b990695c03a886ea8f04",
+    "src/services/gamingHtmlEvidence.ts": "4d72c6b1e171523037deeaeba59c283360eb888450b2000560e43565532f8d57",
+    "src/shared/gaming/gamingAcquiredIdentity.ts": "ea817e29a480f5fd1d6358c4a03116e35b28d22d9e5d6472cd785077131e2410",
+    "src/shared/gaming/gamingClearSource.ts": "72e55f69d21c0d4d2b0be7b3db382034da5cbd42174ed8bbcbd6fb9848fc2967",
+    "src/shared/gaming/gamingGameRegistry.ts": "f58e9288a6fe32d98481ca9e3019e0635ba49cfbd083b63791dae34b3fb4ba5b"
+  },
+  "generation": "NOT_EXECUTED",
+  "liveBackendSearch": "NOT_EXECUTED",
+  "authenticatedMcp": "NOT_EXECUTED",
+  "durableStorage": "NONE",
+  "productionChanges": "NONE",
+  "note": "Earlier batches include intermediate repairs. Only final-repair/final-alternative describe the final runtime tree. HTTP 200, title and search metadata are not authority. No article bodies are included.",
+  "batches": [
+    {
+      "capture": "starting-head-receipt",
+      "executionHead": "a7c04e3224b70b3d30df007a240646b6d3081d8d",
+      "includesUncommittedRepairs": false,
+      "elapsedMs": 5781,
+      "attempts": [
+        {
+          "publisherId": "thonky",
+          "game": "The Legend of Zelda: Ocarina of Time",
+          "question": "Where do I get the Deku Shield early in Ocarina of Time?",
+          "publicUrl": "https://www.thonky.com/ocarina-of-time/reach-the-deku-tree",
+          "observedAt": "2026-11-09T06:24:20.398Z",
+          "responses": [
+            {
+              "status": 200,
+              "contentType": "text/html; charset=utf-8"
+            }
+          ],
+          "requestedHops": [
+            "https://www.thonky.com/ocarina-of-time/reach-the-deku-tree"
+          ],
+          "rawPreviewChars": 95335,
+          "rawPreviewTruncated": false,
+          "rawPreviewSha256": "798ad1a3ae300373ecdc0576264edf155c3ee0cd12205e8ddcdffbf297c512b0",
+          "extractedChars": 4142,
+          "extraction": {
+            "strategy": "article",
+            "rawTextLength": 4577,
+            "cleanedTextLength": 4142,
+            "fetchElapsedMs": 879,
+            "extractionElapsedMs": 9,
+            "selectedContainer": "article",
+            "qualityScore": 0.8444,
+            "navigationPenalty": 0.0019,
+            "navigationDensity": 0.0048,
+            "linkDensity": 0,
+            "candidateCount": 2,
+            "documentTitle": "Reach the Deku Tree - The Legend of Zelda: Ocarina of Time Guide and Walkthrough",
+            "headingText": "Wake Up | Get a Sword | Get a Shield | Go to the Deku Tree"
+          },
+          "metrics": {
+            "rawTextLength": 4577,
+            "cleanedTextLength": 4142,
+            "truncated": false,
+            "instructionFiltered": false
+          },
+          "independentIdentity": {
+            "status": "unknown",
+            "gameIdentityVerified": false,
+            "reasonCodes": [
+              "GAME_IDENTITY_UNVERIFIED"
+            ],
+            "diagnostic": {
+              "ruleId": "gaming.identity.independent_anchor_required",
+              "evidenceCategory": "acquired_anchors",
+              "subjectKind": "unknown",
+              "scope": "unknown",
+              "determination": "insufficient_corroboration"
+            }
+          },
+          "sourceClear": [],
+          "observedSourceAssessments": [],
+          "clearCaptureBoundary": "assessment_not_reached_or_not_retained_in_original_capture",
+          "decisions": [
+            {
+              "decision": "rejected",
+              "reasonCodes": [
+                "GAME_IDENTITY_UNVERIFIED"
+              ]
+            }
+          ],
+          "evaluations": [
+            {
+              "stages": {
+                "acquisition": "passed:SOURCE_ACQUIRED",
+                "extraction": "passed:EXTRACTION_INTACT",
+                "identity": "rejected:GAME_IDENTITY_UNVERIFIED",
+                "applicability": "not_run:STAGE_NOT_RUN",
+                "relevance": "not_run:STAGE_NOT_RUN",
+                "freshness": "not_run:STAGE_NOT_RUN",
+                "provenance": "passed:PROVENANCE_ACQUIRED",
+                "selection": "not_run:STAGE_NOT_RUN",
+                "generation": "not_run:STAGE_NOT_RUN"
+              },
+              "outcome": "rejected",
+              "rejectionReasons": [
+                "GAME_IDENTITY_UNVERIFIED"
+              ]
+            }
+          ],
+          "acceptedRevisions": [],
+          "selectedEvidenceCount": 0,
+          "selectedEvidence": [],
+          "classification": "independent_game_identity_unverified"
+        },
+        {
+          "publisherId": "frontier",
+          "game": "Elite Dangerous",
+          "question": "Find a detailed guide explaining system colonisation and how to get started.",
+          "publicUrl": "https://www.elitedangerous.com/news/system-colonisation-guide",
+          "observedAt": "2026-11-09T06:24:21.757Z",
+          "responses": [
+            {
+              "status": 200,
+              "contentType": "text/html;charset=utf-8"
+            }
+          ],
+          "requestedHops": [
+            "https://www.elitedangerous.com/news/system-colonisation-guide"
+          ],
+          "rawPreviewChars": 1048576,
+          "rawPreviewTruncated": true,
+          "rawPreviewSha256": "9f8d2f8453368dea8c3c90365ffa79442ff256e0631d63f28cfed829aff013d4",
+          "extractedChars": 5488,
+          "extraction": {
+            "strategy": "article",
+            "rawTextLength": 5455,
+            "cleanedTextLength": 5488,
+            "fetchElapsedMs": 1119,
+            "extractionElapsedMs": 94,
+            "selectedContainer": "article",
+            "qualityScore": 0.7523,
+            "navigationPenalty": 0.0251,
+            "navigationDensity": 0.0358,
+            "linkDensity": 0.0091,
+            "candidateCount": 2,
+            "documentTitle": "System Colonisation Guide - News - Elite Dangerous",
+            "headingText": "System Colonisation Guide | Did You Know? | How to Create a New Colony | 1. Select a Star System | 2. Create a System Colony"
+          },
+          "metrics": {
+            "rawTextLength": 5455,
+            "cleanedTextLength": 5488,
+            "truncated": true,
+            "instructionFiltered": false
+          },
+          "independentIdentity": {
+            "status": "unknown",
+            "gameIdentityVerified": false,
+            "reasonCodes": [
+              "GAME_IDENTITY_UNVERIFIED"
+            ],
+            "diagnostic": {
+              "ruleId": "gaming.identity.family_scope_unverified",
+              "evidenceCategory": "body_scope",
+              "subjectKind": "unknown",
+              "scope": "unknown",
+              "determination": "insufficient_corroboration"
+            }
+          },
+          "sourceClear": [],
+          "observedSourceAssessments": [],
+          "clearCaptureBoundary": "assessment_not_reached_or_not_retained_in_original_capture",
+          "decisions": [
+            {
+              "decision": "rejected",
+              "reasonCodes": [
+                "GAME_IDENTITY_UNVERIFIED"
+              ]
+            }
+          ],
+          "evaluations": [
+            {
+              "stages": {
+                "acquisition": "passed:SOURCE_ACQUIRED",
+                "extraction": "passed:EXTRACTION_PARTIAL",
+                "identity": "rejected:GAME_IDENTITY_UNVERIFIED",
+                "applicability": "not_run:STAGE_NOT_RUN",
+                "relevance": "not_run:STAGE_NOT_RUN",
+                "freshness": "not_run:STAGE_NOT_RUN",
+                "provenance": "passed:PROVENANCE_ACQUIRED",
+                "selection": "not_run:STAGE_NOT_RUN",
+                "generation": "not_run:STAGE_NOT_RUN"
+              },
+              "outcome": "rejected",
+              "rejectionReasons": [
+                "GAME_IDENTITY_UNVERIFIED"
+              ]
+            }
+          ],
+          "acceptedRevisions": [],
+          "selectedEvidenceCount": 0,
+          "selectedEvidence": [],
+          "classification": "independent_game_identity_unverified"
+        },
+        {
+          "publisherId": "dualshockers",
+          "game": "Elden Ring",
+          "question": "Find a good early-game Samurai build guide. No major spoilers.",
+          "publicUrl": "https://www.dualshockers.com/elden-ring-samurai-class-build-tips/",
+          "observedAt": "2026-11-09T06:24:22.363Z",
+          "responses": [
+            {
+              "status": 200,
+              "contentType": "text/html; charset=utf-8"
+            }
+          ],
+          "requestedHops": [
+            "https://www.dualshockers.com/elden-ring-samurai-class-build-tips/"
+          ],
+          "rawPreviewChars": 191870,
+          "rawPreviewTruncated": false,
+          "rawPreviewSha256": "cb34a59d1b7094a4135755f8b283eccda07476ab9e8b51a23f5504f6ff4ff7b6",
+          "extractedChars": 62920,
+          "extraction": {
+            "strategy": "#article-body",
+            "rawTextLength": 5345,
+            "cleanedTextLength": 4970,
+            "fetchElapsedMs": 436,
+            "extractionElapsedMs": 14,
+            "selectedContainer": "#article-body",
+            "qualityScore": 0.7365,
+            "navigationPenalty": 0.027,
+            "navigationDensity": 0.0046,
+            "linkDensity": 0.033,
+            "candidateCount": 3,
+            "documentTitle": "Elden Ring Samurai Class Guide",
+            "headingText": "Elden Ring Samurai Class Guide | Why Play A Samurai Class | Best Weapons For A Samurai Build | Best Armor For A Samurai Build | Best Talismans For A Samurai Build | Best Bleed Samurai"
+          },
+          "metrics": {
+            "rawTextLength": 5345,
+            "cleanedTextLength": 62920,
+            "truncated": true,
+            "instructionFiltered": false
+          },
+          "independentIdentity": {
+            "status": "unknown",
+            "gameIdentityVerified": false,
+            "reasonCodes": [
+              "GAME_IDENTITY_UNVERIFIED"
+            ],
+            "diagnostic": {
+              "ruleId": "gaming.identity.family_scope_unverified",
+              "evidenceCategory": "body_scope",
+              "subjectKind": "unknown",
+              "scope": "unknown",
+              "determination": "insufficient_corroboration"
+            }
+          },
+          "sourceClear": [],
+          "observedSourceAssessments": [],
+          "clearCaptureBoundary": "assessment_not_reached_or_not_retained_in_original_capture",
+          "decisions": [
+            {
+              "decision": "rejected",
+              "reasonCodes": [
+                "GAME_IDENTITY_UNVERIFIED"
+              ]
+            }
+          ],
+          "evaluations": [
+            {
+              "stages": {
+                "acquisition": "passed:SOURCE_ACQUIRED",
+                "extraction": "passed:EXTRACTION_PARTIAL",
+                "identity": "rejected:GAME_IDENTITY_UNVERIFIED",
+                "applicability": "not_run:STAGE_NOT_RUN",
+                "relevance": "not_run:STAGE_NOT_RUN",
+                "freshness": "not_run:STAGE_NOT_RUN",
+                "provenance": "passed:PROVENANCE_ACQUIRED",
+                "selection": "not_run:STAGE_NOT_RUN",
+                "generation": "not_run:STAGE_NOT_RUN"
+              },
+              "outcome": "rejected",
+              "rejectionReasons": [
+                "GAME_IDENTITY_UNVERIFIED"
+              ]
+            }
+          ],
+          "acceptedRevisions": [],
+          "selectedEvidenceCount": 0,
+          "selectedEvidence": [],
+          "classification": "independent_game_identity_unverified"
+        },
+        {
+          "publisherId": "silverback",
+          "game": "Elite Dangerous",
+          "question": "Find a detailed guide explaining system colonisation and how to get started.",
+          "publicUrl": "https://svbkresearchinstitute.com/colonization",
+          "observedAt": "2026-11-09T06:24:23.037Z",
+          "responses": [
+            {
+              "status": 200,
+              "contentType": "text/html"
+            }
+          ],
+          "requestedHops": [
+            "https://svbkresearchinstitute.com/colonization"
+          ],
+          "rawPreviewChars": 1327,
+          "rawPreviewTruncated": false,
+          "rawPreviewSha256": "23be023f44e59d336fc7a95f747b914a66673a973026a4bb744b12329999a15f",
+          "extractedChars": 0,
+          "extraction": {
+            "strategy": "body",
+            "rawTextLength": 0,
+            "cleanedTextLength": 0,
+            "fetchElapsedMs": 593,
+            "extractionElapsedMs": 1,
+            "selectedContainer": "body",
+            "qualityScore": 0.14,
+            "navigationPenalty": 0,
+            "navigationDensity": 0,
+            "linkDensity": 0,
+            "candidateCount": 0,
+            "documentTitle": "The Silverback Research Institute · Elite Dangerous Research"
+          },
+          "metrics": {
+            "rawTextLength": 0,
+            "cleanedTextLength": 0,
+            "truncated": false,
+            "instructionFiltered": false
+          },
+          "independentIdentity": {
+            "status": "unknown",
+            "gameIdentityVerified": false,
+            "reasonCodes": [
+              "GAME_IDENTITY_UNVERIFIED"
+            ],
+            "diagnostic": {
+              "ruleId": "gaming.identity.independent_anchor_required",
+              "evidenceCategory": "acquired_anchors",
+              "subjectKind": "unknown",
+              "scope": "unknown",
+              "determination": "insufficient_corroboration"
+            }
+          },
+          "sourceClear": [],
+          "observedSourceAssessments": [],
+          "clearCaptureBoundary": "assessment_not_reached_or_not_retained_in_original_capture",
+          "decisions": [
+            {
+              "decision": "rejected",
+              "reasonCodes": [
+                "INSUFFICIENT_EXTRACTION"
+              ]
+            }
+          ],
+          "evaluations": [
+            {
+              "stages": {
+                "acquisition": "passed:SOURCE_ACQUIRED",
+                "extraction": "rejected:INSUFFICIENT_EXTRACTION",
+                "identity": "unknown:GAME_IDENTITY_UNVERIFIED",
+                "applicability": "not_run:STAGE_NOT_RUN",
+                "relevance": "not_run:STAGE_NOT_RUN",
+                "freshness": "not_run:STAGE_NOT_RUN",
+                "provenance": "passed:PROVENANCE_ACQUIRED",
+                "selection": "not_run:STAGE_NOT_RUN",
+                "generation": "not_run:STAGE_NOT_RUN"
+              },
+              "outcome": "rejected",
+              "rejectionReasons": [
+                "INSUFFICIENT_EXTRACTION"
+              ]
+            }
+          ],
+          "acceptedRevisions": [],
+          "selectedEvidenceCount": 0,
+          "selectedEvidence": [],
+          "classification": "no_server_delivered_guide_text"
+        },
+        {
+          "publisherId": "consolepulse",
+          "game": "Xenoblade Chronicles 2",
+          "question": "Find a Chapter 2 guide for Rex as DPS and Nia as healer. Avoid later-story spoilers.",
+          "publicUrl": "https://consolepulse.com/nintendo/xenoblade-chronicles/guides/xenoblade-chronicles-2-chapter-2-walkthrough",
+          "observedAt": "2026-11-09T06:24:24.660Z",
+          "responses": [
+            {
+              "status": 200,
+              "contentType": "text/html; charset=utf-8"
+            }
+          ],
+          "requestedHops": [
+            "https://consolepulse.com/nintendo/xenoblade-chronicles/guides/xenoblade-chronicles-2-chapter-2-walkthrough"
+          ],
+          "rawPreviewChars": 353351,
+          "rawPreviewTruncated": false,
+          "rawPreviewSha256": "8b70b9a2e40b981f6d696839e78f659df27a529fe2a5a829777b1471dde24c81",
+          "extractedChars": 0,
+          "extraction": {
+            "strategy": "body",
+            "rawTextLength": 39,
+            "cleanedTextLength": 0,
+            "fetchElapsedMs": 1608,
+            "extractionElapsedMs": 5,
+            "selectedContainer": "body",
+            "qualityScore": 0.14,
+            "navigationPenalty": 0,
+            "navigationDensity": 0,
+            "linkDensity": 0,
+            "candidateCount": 1,
+            "documentTitle": "Xenoblade Chronicles 2 Chapter 2 Walkthrough Guide: Aptitude"
+          },
+          "metrics": {
+            "rawTextLength": 39,
+            "cleanedTextLength": 0,
+            "truncated": false,
+            "instructionFiltered": false
+          },
+          "independentIdentity": {
+            "status": "unknown",
+            "gameIdentityVerified": false,
+            "reasonCodes": [
+              "GAME_IDENTITY_UNVERIFIED"
+            ],
+            "diagnostic": {
+              "ruleId": "gaming.identity.independent_anchor_required",
+              "evidenceCategory": "acquired_anchors",
+              "subjectKind": "article_topic",
+              "scope": "unknown",
+              "determination": "insufficient_corroboration"
+            }
+          },
+          "sourceClear": [],
+          "observedSourceAssessments": [],
+          "clearCaptureBoundary": "assessment_not_reached_or_not_retained_in_original_capture",
+          "decisions": [
+            {
+              "decision": "rejected",
+              "reasonCodes": [
+                "INSUFFICIENT_EXTRACTION"
+              ]
+            }
+          ],
+          "evaluations": [
+            {
+              "stages": {
+                "acquisition": "passed:SOURCE_ACQUIRED",
+                "extraction": "rejected:INSUFFICIENT_EXTRACTION",
+                "identity": "unknown:GAME_IDENTITY_UNVERIFIED",
+                "applicability": "not_run:STAGE_NOT_RUN",
+                "relevance": "not_run:STAGE_NOT_RUN",
+                "freshness": "not_run:STAGE_NOT_RUN",
+                "provenance": "passed:PROVENANCE_ACQUIRED",
+                "selection": "not_run:STAGE_NOT_RUN",
+                "generation": "not_run:STAGE_NOT_RUN"
+              },
+              "outcome": "rejected",
+              "rejectionReasons": [
+                "INSUFFICIENT_EXTRACTION"
+              ]
+            }
+          ],
+          "acceptedRevisions": [],
+          "selectedEvidenceCount": 0,
+          "selectedEvidence": [],
+          "classification": "extraction_incomplete"
+        },
+        {
+          "publisherId": "blackbox",
+          "game": "Elite Dangerous",
+          "question": "Find a detailed guide explaining system colonisation and how to get started.",
+          "publicUrl": "https://edblackbox.com/guides/systems/galaxy-and-power-systems/system-colonization.html",
+          "observedAt": "2026-11-09T06:24:25.159Z",
+          "responses": [
+            {
+              "status": 200,
+              "contentType": "text/html; charset=utf-8"
+            }
+          ],
+          "requestedHops": [
+            "https://edblackbox.com/guides/systems/galaxy-and-power-systems/system-colonization.html"
+          ],
+          "rawPreviewChars": 59331,
+          "rawPreviewTruncated": false,
+          "rawPreviewSha256": "d4929e7f1aad67fe708105f24890c358b834e19f19f4a55f655d25d2c187dfe2",
+          "extractedChars": 65655,
+          "extraction": {
+            "strategy": "article",
+            "rawTextLength": 27442,
+            "cleanedTextLength": 216,
+            "fetchElapsedMs": 478,
+            "extractionElapsedMs": 14,
+            "selectedContainer": "article",
+            "qualityScore": 0.702,
+            "navigationPenalty": 0,
+            "navigationDensity": 0,
+            "linkDensity": 0,
+            "candidateCount": 11,
+            "documentTitle": "System Colonisation · Galaxy & Power Systems | E:D Black Box",
+            "headingText": "Weekly"
+          },
+          "metrics": {
+            "rawTextLength": 27442,
+            "cleanedTextLength": 65655,
+            "truncated": false,
+            "instructionFiltered": true
+          },
+          "independentIdentity": {
+            "status": "unknown",
+            "gameIdentityVerified": false,
+            "reasonCodes": [
+              "GAME_IDENTITY_UNVERIFIED"
+            ],
+            "diagnostic": {
+              "ruleId": "gaming.identity.independent_anchor_required",
+              "evidenceCategory": "acquired_anchors",
+              "subjectKind": "unknown",
+              "scope": "unknown",
+              "determination": "insufficient_corroboration"
+            }
+          },
+          "sourceClear": [],
+          "observedSourceAssessments": [],
+          "clearCaptureBoundary": "assessment_not_reached_or_not_retained_in_original_capture",
+          "decisions": [
+            {
+              "decision": "rejected",
+              "reasonCodes": [
+                "SOURCE_INSTRUCTIONS_REJECTED"
+              ]
+            }
+          ],
+          "evaluations": [
+            {
+              "stages": {
+                "acquisition": "passed:SOURCE_ACQUIRED",
+                "extraction": "rejected:SOURCE_INSTRUCTIONS_REJECTED",
+                "identity": "not_run:STAGE_NOT_RUN",
+                "applicability": "not_run:STAGE_NOT_RUN",
+                "relevance": "not_run:STAGE_NOT_RUN",
+                "freshness": "not_run:STAGE_NOT_RUN",
+                "provenance": "not_run:STAGE_NOT_RUN",
+                "selection": "not_run:STAGE_NOT_RUN",
+                "generation": "not_run:STAGE_NOT_RUN"
+              },
+              "outcome": "rejected",
+              "rejectionReasons": [
+                "SOURCE_INSTRUCTIONS_REJECTED"
+              ]
+            }
+          ],
+          "acceptedRevisions": [],
+          "selectedEvidenceCount": 0,
+          "selectedEvidence": [],
+          "classification": "source_instruction_rejection"
+        }
+      ]
+    },
+    {
+      "capture": "working-tree-receipt",
+      "executionHead": "a7c04e3224b70b3d30df007a240646b6d3081d8d",
+      "includesUncommittedRepairs": true,
+      "elapsedMs": 10411,
+      "attempts": [
+        {
+          "publisherId": "thonky",
+          "game": "The Legend of Zelda: Ocarina of Time",
+          "question": "Where do I get the Deku Shield early in Ocarina of Time?",
+          "publicUrl": "https://www.thonky.com/ocarina-of-time/reach-the-deku-tree",
+          "observedAt": "2026-11-09T07:10:54.525Z",
+          "responses": [
+            {
+              "status": 200,
+              "contentType": "text/html; charset=utf-8"
+            }
+          ],
+          "requestedHops": [
+            "https://www.thonky.com/ocarina-of-time/reach-the-deku-tree"
+          ],
+          "rawPreviewChars": 95335,
+          "rawPreviewTruncated": false,
+          "rawPreviewSha256": "798ad1a3ae300373ecdc0576264edf155c3ee0cd12205e8ddcdffbf297c512b0",
+          "extractedChars": 4142,
+          "extraction": {
+            "strategy": "article",
+            "rawTextLength": 4577,
+            "cleanedTextLength": 4142,
+            "fetchElapsedMs": 838,
+            "extractionElapsedMs": 9,
+            "selectedContainer": "article",
+            "qualityScore": 0.8444,
+            "navigationPenalty": 0.0019,
+            "navigationDensity": 0.0048,
+            "linkDensity": 0,
+            "candidateCount": 2,
+            "documentTitle": "Reach the Deku Tree - The Legend of Zelda: Ocarina of Time Guide and Walkthrough",
+            "headingText": "Wake Up | Get a Sword | Get a Shield | Go to the Deku Tree"
+          },
+          "metrics": {
+            "rawTextLength": 4577,
+            "cleanedTextLength": 4142,
+            "truncated": false,
+            "instructionFiltered": false
+          },
+          "independentIdentity": {
+            "status": "unknown",
+            "gameIdentityVerified": false,
+            "reasonCodes": [
+              "GAME_IDENTITY_UNVERIFIED"
+            ],
+            "diagnostic": {
+              "ruleId": "gaming.identity.independent_anchor_required",
+              "evidenceCategory": "acquired_anchors",
+              "subjectKind": "unknown",
+              "scope": "unknown",
+              "determination": "insufficient_corroboration"
+            }
+          },
+          "sourceClear": [],
+          "observedSourceAssessments": [],
+          "clearCaptureBoundary": "assessment_not_reached_or_not_retained_in_original_capture",
+          "decisions": [
+            {
+              "decision": "rejected",
+              "reasonCodes": [
+                "GAME_IDENTITY_UNVERIFIED"
+              ]
+            }
+          ],
+          "evaluations": [
+            {
+              "stages": {
+                "acquisition": "passed:SOURCE_ACQUIRED",
+                "extraction": "passed:EXTRACTION_INTACT",
+                "identity": "rejected:GAME_IDENTITY_UNVERIFIED",
+                "applicability": "not_run:STAGE_NOT_RUN",
+                "relevance": "not_run:STAGE_NOT_RUN",
+                "freshness": "not_run:STAGE_NOT_RUN",
+                "provenance": "passed:PROVENANCE_ACQUIRED",
+                "selection": "not_run:STAGE_NOT_RUN",
+                "generation": "not_run:STAGE_NOT_RUN"
+              },
+              "outcome": "rejected",
+              "rejectionReasons": [
+                "GAME_IDENTITY_UNVERIFIED"
+              ]
+            }
+          ],
+          "acceptedRevisions": [],
+          "selectedEvidenceCount": 0,
+          "selectedEvidence": [],
+          "classification": "independent_game_identity_unverified"
+        },
+        {
+          "publisherId": "frontier",
+          "game": "Elite Dangerous",
+          "question": "Find a detailed guide explaining system colonisation and how to get started.",
+          "publicUrl": "https://www.elitedangerous.com/news/system-colonisation-guide",
+          "observedAt": "2026-11-09T07:10:57.748Z",
+          "responses": [
+            {
+              "status": 200,
+              "contentType": "text/html;charset=utf-8"
+            }
+          ],
+          "requestedHops": [
+            "https://www.elitedangerous.com/news/system-colonisation-guide"
+          ],
+          "rawPreviewChars": 1048576,
+          "rawPreviewTruncated": true,
+          "rawPreviewSha256": "21d603511cf52a9e8f68f4b18406707798c53c3b6384a228d0641abeeca5773b",
+          "extractedChars": 5488,
+          "extraction": {
+            "strategy": "article",
+            "rawTextLength": 5455,
+            "cleanedTextLength": 5488,
+            "fetchElapsedMs": 2690,
+            "extractionElapsedMs": 169,
+            "selectedContainer": "article",
+            "qualityScore": 0.7523,
+            "navigationPenalty": 0.0251,
+            "navigationDensity": 0.0358,
+            "linkDensity": 0.0091,
+            "candidateCount": 2,
+            "documentTitle": "System Colonisation Guide - News - Elite Dangerous",
+            "headingText": "System Colonisation Guide | Did You Know? | How to Create a New Colony | 1. Select a Star System | 2. Create a System Colony"
+          },
+          "metrics": {
+            "rawTextLength": 5455,
+            "cleanedTextLength": 5488,
+            "truncated": true,
+            "instructionFiltered": false
+          },
+          "independentIdentity": {
+            "status": "verified",
+            "gameIdentityVerified": true,
+            "reasonCodes": [
+              "ACQUIRED_METADATA_AND_BODY_IDENTITY"
+            ],
+            "diagnostic": {
+              "ruleId": "gaming.identity.acquired_anchors_verified",
+              "evidenceCategory": "acquired_anchors",
+              "subjectKind": "game_identity",
+              "scope": "source_global",
+              "determination": "corroborated"
+            }
+          },
+          "sourceClear": [
+            {
+              "rubricVersion": "gaming-clear/v1",
+              "policyProfile": "gaming-clear-policy/v7:walkthrough:source",
+              "decision": "accept",
+              "gates": {
+                "identity": "verified",
+                "compatibility": "verified",
+                "claimSupport": "verified",
+                "freshness": "verified",
+                "provenance": "verified",
+                "security": "verified"
+              },
+              "overall": 4.225,
+              "blockingReasons": []
+            }
+          ],
+          "observedSourceAssessments": [],
+          "clearCaptureBoundary": "assessment_recorded",
+          "decisions": [
+            {
+              "decision": "accepted_transient",
+              "reasonCodes": [
+                "VALIDATED_RELEVANT_CONTENT",
+                "EXTRACTION_PARTIAL"
+              ]
+            }
+          ],
+          "evaluations": [
+            {
+              "stages": {
+                "acquisition": "passed:SOURCE_ACQUIRED",
+                "extraction": "passed:EXTRACTION_PARTIAL",
+                "identity": "passed:ACQUIRED_IDENTITY_VERIFIED",
+                "applicability": "passed:APPLICABILITY_EVALUATED",
+                "relevance": "passed:GAMEPLAY_CONTRIBUTION_VERIFIED",
+                "freshness": "passed:FRESHNESS_VERIFIED",
+                "provenance": "passed:PROVENANCE_ACQUIRED",
+                "selection": "passed:EVIDENCE_SELECTED",
+                "generation": "not_run:GENERATION_NOT_EVALUATED"
+              },
+              "outcome": "selected",
+              "rejectionReasons": []
+            }
+          ],
+          "acceptedRevisions": [],
+          "selectedEvidenceCount": 1,
+          "selectedEvidence": [],
+          "classification": "accepted_gameplay_evidence"
+        },
+        {
+          "publisherId": "dualshockers",
+          "game": "Elden Ring",
+          "question": "Find a good early-game Samurai build guide. No major spoilers.",
+          "publicUrl": "https://www.dualshockers.com/elden-ring-samurai-class-build-tips/",
+          "observedAt": "2026-11-09T07:10:58.460Z",
+          "responses": [
+            {
+              "status": 200,
+              "contentType": "text/html; charset=utf-8"
+            }
+          ],
+          "requestedHops": [
+            "https://www.dualshockers.com/elden-ring-samurai-class-build-tips/"
+          ],
+          "rawPreviewChars": 191870,
+          "rawPreviewTruncated": false,
+          "rawPreviewSha256": "c56ca539b32865f0bf99ce679f869b4f7be83d77b4048950747509757498d3e5",
+          "extractedChars": 62920,
+          "extraction": {
+            "strategy": "#article-body",
+            "rawTextLength": 5345,
+            "cleanedTextLength": 4970,
+            "fetchElapsedMs": 410,
+            "extractionElapsedMs": 15,
+            "selectedContainer": "#article-body",
+            "qualityScore": 0.7365,
+            "navigationPenalty": 0.027,
+            "navigationDensity": 0.0046,
+            "linkDensity": 0.033,
+            "candidateCount": 3,
+            "documentTitle": "Elden Ring Samurai Class Guide",
+            "headingText": "Elden Ring Samurai Class Guide | Why Play A Samurai Class | Best Weapons For A Samurai Build | Best Armor For A Samurai Build | Best Talismans For A Samurai Build | Best Bleed Samurai"
+          },
+          "metrics": {
+            "rawTextLength": 5345,
+            "cleanedTextLength": 62920,
+            "truncated": true,
+            "instructionFiltered": false
+          },
+          "independentIdentity": {
+            "status": "verified",
+            "gameIdentityVerified": true,
+            "reasonCodes": [
+              "ACQUIRED_METADATA_AND_BODY_IDENTITY"
+            ],
+            "diagnostic": {
+              "ruleId": "gaming.identity.acquired_anchors_verified",
+              "evidenceCategory": "acquired_anchors",
+              "subjectKind": "game_identity",
+              "scope": "source_global",
+              "determination": "corroborated"
+            }
+          },
+          "sourceClear": [],
+          "observedSourceAssessments": [],
+          "clearCaptureBoundary": "assessment_not_reached_or_not_retained_in_original_capture",
+          "decisions": [
+            {
+              "decision": "rejected",
+              "reasonCodes": [
+                "FRESHNESS_UNVERIFIED"
+              ]
+            }
+          ],
+          "evaluations": [
+            {
+              "stages": {
+                "acquisition": "passed:SOURCE_ACQUIRED",
+                "extraction": "passed:EXTRACTION_PARTIAL",
+                "identity": "passed:ACQUIRED_IDENTITY_VERIFIED",
+                "applicability": "passed:APPLICABILITY_EVALUATED",
+                "relevance": "not_run:STAGE_NOT_RUN",
+                "freshness": "unknown:FRESHNESS_UNVERIFIED",
+                "provenance": "passed:PROVENANCE_ACQUIRED",
+                "selection": "rejected:SOURCE_VALIDATION_REJECTED",
+                "generation": "not_run:STAGE_NOT_RUN"
+              },
+              "outcome": "rejected",
+              "rejectionReasons": [
+                "SOURCE_VALIDATION_REJECTED"
+              ]
+            }
+          ],
+          "acceptedRevisions": [],
+          "selectedEvidenceCount": 0,
+          "selectedEvidence": [],
+          "classification": "incomplete_extraction_and_freshness_unverified"
+        },
+        {
+          "publisherId": "silverback",
+          "game": "Elite Dangerous",
+          "question": "Find a detailed guide explaining system colonisation and how to get started.",
+          "publicUrl": "https://svbkresearchinstitute.com/colonization",
+          "observedAt": "2026-11-09T07:10:59.116Z",
+          "responses": [
+            {
+              "status": 200,
+              "contentType": "text/html"
+            }
+          ],
+          "requestedHops": [
+            "https://svbkresearchinstitute.com/colonization"
+          ],
+          "rawPreviewChars": 1327,
+          "rawPreviewTruncated": false,
+          "rawPreviewSha256": "23be023f44e59d336fc7a95f747b914a66673a973026a4bb744b12329999a15f",
+          "extractedChars": 0,
+          "extraction": {
+            "strategy": "body",
+            "rawTextLength": 0,
+            "cleanedTextLength": 0,
+            "fetchElapsedMs": 558,
+            "extractionElapsedMs": 2,
+            "selectedContainer": "body",
+            "qualityScore": 0.14,
+            "navigationPenalty": 0,
+            "navigationDensity": 0,
+            "linkDensity": 0,
+            "candidateCount": 0,
+            "documentTitle": "The Silverback Research Institute · Elite Dangerous Research"
+          },
+          "metrics": {
+            "rawTextLength": 0,
+            "cleanedTextLength": 0,
+            "truncated": false,
+            "instructionFiltered": false
+          },
+          "independentIdentity": {
+            "status": "unknown",
+            "gameIdentityVerified": false,
+            "reasonCodes": [
+              "GAME_IDENTITY_UNVERIFIED"
+            ],
+            "diagnostic": {
+              "ruleId": "gaming.identity.independent_anchor_required",
+              "evidenceCategory": "acquired_anchors",
+              "subjectKind": "unknown",
+              "scope": "unknown",
+              "determination": "insufficient_corroboration"
+            }
+          },
+          "sourceClear": [],
+          "observedSourceAssessments": [],
+          "clearCaptureBoundary": "assessment_not_reached_or_not_retained_in_original_capture",
+          "decisions": [
+            {
+              "decision": "rejected",
+              "reasonCodes": [
+                "INSUFFICIENT_EXTRACTION"
+              ]
+            }
+          ],
+          "evaluations": [
+            {
+              "stages": {
+                "acquisition": "passed:SOURCE_ACQUIRED",
+                "extraction": "rejected:INSUFFICIENT_EXTRACTION",
+                "identity": "unknown:GAME_IDENTITY_UNVERIFIED",
+                "applicability": "not_run:STAGE_NOT_RUN",
+                "relevance": "not_run:STAGE_NOT_RUN",
+                "freshness": "not_run:STAGE_NOT_RUN",
+                "provenance": "passed:PROVENANCE_ACQUIRED",
+                "selection": "not_run:STAGE_NOT_RUN",
+                "generation": "not_run:STAGE_NOT_RUN"
+              },
+              "outcome": "rejected",
+              "rejectionReasons": [
+                "INSUFFICIENT_EXTRACTION"
+              ]
+            }
+          ],
+          "acceptedRevisions": [],
+          "selectedEvidenceCount": 0,
+          "selectedEvidence": [],
+          "classification": "no_server_delivered_guide_text"
+        },
+        {
+          "publisherId": "consolepulse",
+          "game": "Xenoblade Chronicles 2",
+          "question": "Find a Chapter 2 guide for Rex as DPS and Nia as healer. Avoid later-story spoilers.",
+          "publicUrl": "https://consolepulse.com/nintendo/xenoblade-chronicles/guides/xenoblade-chronicles-2-chapter-2-walkthrough",
+          "observedAt": "2026-11-09T07:11:03.093Z",
+          "responses": [
+            {
+              "status": 200,
+              "contentType": "text/html; charset=utf-8"
+            }
+          ],
+          "requestedHops": [
+            "https://consolepulse.com/nintendo/xenoblade-chronicles/guides/xenoblade-chronicles-2-chapter-2-walkthrough"
+          ],
+          "rawPreviewChars": 353351,
+          "rawPreviewTruncated": false,
+          "rawPreviewSha256": "8b70b9a2e40b981f6d696839e78f659df27a529fe2a5a829777b1471dde24c81",
+          "extractedChars": 31998,
+          "extraction": {
+            "strategy": "[class*='article-body']",
+            "rawTextLength": 20272,
+            "cleanedTextLength": 17812,
+            "fetchElapsedMs": 3890,
+            "extractionElapsedMs": 38,
+            "selectedContainer": "[class*='article-body']",
+            "qualityScore": 0.7315,
+            "navigationPenalty": 0.0075,
+            "navigationDensity": 0.0067,
+            "linkDensity": 0.007,
+            "candidateCount": 2,
+            "documentTitle": "Xenoblade Chronicles 2 Chapter 2 Walkthrough Guide: Aptitude",
+            "headingText": "Chapter 2 quick route | Reach Torigoth | Find Gramps and rescue Nia | Climb to Outlook Knoll | Cross Gormott safely | Survive the Torigoth arrest"
+          },
+          "metrics": {
+            "rawTextLength": 20272,
+            "cleanedTextLength": 31998,
+            "truncated": false,
+            "instructionFiltered": false
+          },
+          "independentIdentity": {
+            "status": "conflict",
+            "gameIdentityVerified": false,
+            "reasonCodes": [
+              "GAME_MISMATCH"
+            ],
+            "diagnostic": {
+              "ruleId": "gaming.identity.instruction_heading_conflict",
+              "evidenceCategory": "body_heading",
+              "subjectKind": "game_identity",
+              "scope": "source_global",
+              "determination": "explicit_contradiction"
+            }
+          },
+          "sourceClear": [],
+          "observedSourceAssessments": [],
+          "clearCaptureBoundary": "assessment_not_reached_or_not_retained_in_original_capture",
+          "decisions": [
+            {
+              "decision": "rejected",
+              "reasonCodes": [
+                "GAME_MISMATCH"
+              ]
+            }
+          ],
+          "evaluations": [
+            {
+              "stages": {
+                "acquisition": "passed:SOURCE_ACQUIRED",
+                "extraction": "passed:EXTRACTION_INTACT",
+                "identity": "rejected:GAME_MISMATCH",
+                "applicability": "not_run:STAGE_NOT_RUN",
+                "relevance": "not_run:STAGE_NOT_RUN",
+                "freshness": "not_run:STAGE_NOT_RUN",
+                "provenance": "passed:PROVENANCE_ACQUIRED",
+                "selection": "not_run:STAGE_NOT_RUN",
+                "generation": "not_run:STAGE_NOT_RUN"
+              },
+              "outcome": "rejected",
+              "rejectionReasons": [
+                "GAME_MISMATCH"
+              ]
+            }
+          ],
+          "acceptedRevisions": [],
+          "selectedEvidenceCount": 0,
+          "selectedEvidence": [],
+          "classification": "game_or_edition_conflict"
+        },
+        {
+          "publisherId": "blackbox",
+          "game": "Elite Dangerous",
+          "question": "Find a detailed guide explaining system colonisation and how to get started.",
+          "publicUrl": "https://edblackbox.com/guides/systems/galaxy-and-power-systems/system-colonization.html",
+          "observedAt": "2026-11-09T07:11:03.931Z",
+          "responses": [
+            {
+              "status": 200,
+              "contentType": "text/html; charset=utf-8"
+            }
+          ],
+          "requestedHops": [
+            "https://edblackbox.com/guides/systems/galaxy-and-power-systems/system-colonization.html"
+          ],
+          "rawPreviewChars": 59331,
+          "rawPreviewTruncated": false,
+          "rawPreviewSha256": "d4929e7f1aad67fe708105f24890c358b834e19f19f4a55f655d25d2c187dfe2",
+          "extractedChars": 65655,
+          "extraction": {
+            "strategy": "article",
+            "rawTextLength": 27442,
+            "cleanedTextLength": 216,
+            "fetchElapsedMs": 789,
+            "extractionElapsedMs": 26,
+            "selectedContainer": "article",
+            "qualityScore": 0.702,
+            "navigationPenalty": 0,
+            "navigationDensity": 0,
+            "linkDensity": 0,
+            "candidateCount": 11,
+            "documentTitle": "System Colonisation · Galaxy & Power Systems | E:D Black Box",
+            "headingText": "Weekly"
+          },
+          "metrics": {
+            "rawTextLength": 27442,
+            "cleanedTextLength": 65655,
+            "truncated": false,
+            "instructionFiltered": true
+          },
+          "independentIdentity": {
+            "status": "unknown",
+            "gameIdentityVerified": false,
+            "reasonCodes": [
+              "GAME_IDENTITY_UNVERIFIED"
+            ],
+            "diagnostic": {
+              "ruleId": "gaming.identity.independent_anchor_required",
+              "evidenceCategory": "acquired_anchors",
+              "subjectKind": "unknown",
+              "scope": "unknown",
+              "determination": "insufficient_corroboration"
+            }
+          },
+          "sourceClear": [],
+          "observedSourceAssessments": [],
+          "clearCaptureBoundary": "assessment_not_reached_or_not_retained_in_original_capture",
+          "decisions": [
+            {
+              "decision": "rejected",
+              "reasonCodes": [
+                "SOURCE_INSTRUCTIONS_REJECTED"
+              ]
+            }
+          ],
+          "evaluations": [
+            {
+              "stages": {
+                "acquisition": "passed:SOURCE_ACQUIRED",
+                "extraction": "rejected:SOURCE_INSTRUCTIONS_REJECTED",
+                "identity": "not_run:STAGE_NOT_RUN",
+                "applicability": "not_run:STAGE_NOT_RUN",
+                "relevance": "not_run:STAGE_NOT_RUN",
+                "freshness": "not_run:STAGE_NOT_RUN",
+                "provenance": "not_run:STAGE_NOT_RUN",
+                "selection": "not_run:STAGE_NOT_RUN",
+                "generation": "not_run:STAGE_NOT_RUN"
+              },
+              "outcome": "rejected",
+              "rejectionReasons": [
+                "SOURCE_INSTRUCTIONS_REJECTED"
+              ]
+            }
+          ],
+          "acceptedRevisions": [],
+          "selectedEvidenceCount": 0,
+          "selectedEvidence": [],
+          "classification": "source_instruction_rejection"
+        }
+      ]
+    },
+    {
+      "capture": "alternative-publishers-receipt",
+      "executionHead": "a7c04e3224b70b3d30df007a240646b6d3081d8d",
+      "includesUncommittedRepairs": true,
+      "elapsedMs": 2121,
+      "attempts": [
+        {
+          "publisherId": "zelda-questduo",
+          "game": "The Legend of Zelda: Ocarina of Time",
+          "question": "Where do I get the Deku Shield early in Ocarina of Time?",
+          "publicUrl": "https://questduo.com/the-legend-of-zelda-ocarina-of-time/link-wakes-up-the-great-deku-tree-walkthrough/",
+          "observedAt": "2026-11-09T07:20:22.131Z",
+          "responses": [
+            {
+              "status": 200,
+              "contentType": "text/html; charset=UTF-8"
+            }
+          ],
+          "requestedHops": [
+            "https://questduo.com/the-legend-of-zelda-ocarina-of-time/link-wakes-up-the-great-deku-tree-walkthrough/"
+          ],
+          "rawPreviewChars": 226010,
+          "rawPreviewTruncated": false,
+          "rawPreviewSha256": "80d3758c7e0917b4c93c5fac80c9e4dd0f49461e4e5b5bae5811f4b0d4aec24c",
+          "extractedChars": 13026,
+          "extraction": {
+            "strategy": ".entry-content",
+            "rawTextLength": 10055,
+            "cleanedTextLength": 9232,
+            "fetchElapsedMs": 576,
+            "extractionElapsedMs": 24,
+            "selectedContainer": ".entry-content",
+            "qualityScore": 0.7583,
+            "navigationPenalty": 0.0018,
+            "navigationDensity": 0.0045,
+            "linkDensity": 0,
+            "candidateCount": 15,
+            "documentTitle": "TLOZ Ocarina of Time – Link Wakes Up & The Great Deku Tree Walkthrough - QuestDuo",
+            "headingText": "Link Wakes Up (Quest) Walkthrough | Get the Sword | Get the Shield | Enter the Great Deku Tree | The Great Deku Tree (Quest) Walkthrough | Find the Fairy Slingshot"
+          },
+          "metrics": {
+            "rawTextLength": 10055,
+            "cleanedTextLength": 13026,
+            "truncated": false,
+            "instructionFiltered": false
+          },
+          "independentIdentity": {
+            "status": "verified",
+            "gameIdentityVerified": true,
+            "reasonCodes": [
+              "ACQUIRED_BODY_SCOPE_IDENTITY"
+            ],
+            "diagnostic": {
+              "ruleId": "gaming.identity.acquired_anchors_verified",
+              "evidenceCategory": "acquired_anchors",
+              "subjectKind": "game_identity",
+              "scope": "source_global",
+              "determination": "corroborated"
+            }
+          },
+          "sourceClear": [
+            {
+              "rubricVersion": "gaming-clear/v1",
+              "policyProfile": "gaming-clear-policy/v7:walkthrough:source",
+              "decision": "accept",
+              "gates": {
+                "identity": "verified",
+                "compatibility": "verified",
+                "claimSupport": "verified",
+                "freshness": "verified",
+                "provenance": "verified",
+                "security": "verified"
+              },
+              "overall": 4.275,
+              "blockingReasons": []
+            }
+          ],
+          "observedSourceAssessments": [],
+          "clearCaptureBoundary": "assessment_recorded",
+          "decisions": [
+            {
+              "decision": "eligible_for_ingestion",
+              "reasonCodes": [
+                "VALIDATED_RELEVANT_CONTENT"
+              ]
+            }
+          ],
+          "evaluations": [
+            {
+              "stages": {
+                "acquisition": "passed:SOURCE_ACQUIRED",
+                "extraction": "passed:EXTRACTION_INTACT",
+                "identity": "passed:ACQUIRED_IDENTITY_VERIFIED",
+                "applicability": "passed:APPLICABILITY_EVALUATED",
+                "relevance": "passed:GAMEPLAY_CONTRIBUTION_VERIFIED",
+                "freshness": "passed:FRESHNESS_VERIFIED",
+                "provenance": "passed:PROVENANCE_ACQUIRED",
+                "selection": "passed:EVIDENCE_SELECTED",
+                "generation": "not_run:GENERATION_NOT_EVALUATED"
+              },
+              "outcome": "selected",
+              "rejectionReasons": []
+            }
+          ],
+          "acceptedRevisions": [
+            {
+              "publicUrl": "https://questduo.com/the-legend-of-zelda-ocarina-of-time/link-wakes-up-the-great-deku-tree-walkthrough/",
+              "contentHash": "713232a84a466cb65ace17c934f87ad2272c410f988a67ba16a37d91499880eb",
+              "resolverVersion": "gaming-document-v12"
+            }
+          ],
+          "selectedEvidenceCount": 1,
+          "selectedEvidence": [
+            {
+              "revisionId": "713232a84a466cb65ace17c934f87ad2272c410f988a67ba16a37d91499880eb",
+              "recordId": "e6d1a507-c26d-40df-8930-eef15d7924bf:1",
+              "publicUrl": "https://questduo.com/the-legend-of-zelda-ocarina-of-time/link-wakes-up-the-great-deku-tree-walkthrough/",
+              "textSha256": "a88302bb4ae0012ade563cee1fb55c9157c2867545d938fcea36c27a8a6121e7"
+            }
+          ],
+          "classification": "accepted_gameplay_evidence"
+        },
+        {
+          "publisherId": "zelda-gamesradar",
+          "game": "The Legend of Zelda: Ocarina of Time",
+          "question": "Where do I get the Deku Shield early in Ocarina of Time?",
+          "publicUrl": "https://www.gamesradar.com/the-legend-of-zelda-ocarina-of-time-deku-tree-walkthrough/",
+          "observedAt": "2026-11-09T07:20:22.887Z",
+          "responses": [
+            {
+              "status": 200,
+              "contentType": "text/html; charset=utf-8"
+            }
+          ],
+          "requestedHops": [
+            "https://www.gamesradar.com/the-legend-of-zelda-ocarina-of-time-deku-tree-walkthrough/"
+          ],
+          "rawPreviewChars": 1048576,
+          "rawPreviewTruncated": true,
+          "rawPreviewSha256": "0d83edc7a9033a461c991ff4f5543102767e27a817afc87908f0391d3fcdad16",
+          "extractedChars": 1721,
+          "extraction": {
+            "strategy": "body",
+            "rawTextLength": 1238,
+            "cleanedTextLength": 1238,
+            "fetchElapsedMs": 634,
+            "extractionElapsedMs": 66,
+            "selectedContainer": "body",
+            "qualityScore": 0.3814,
+            "navigationPenalty": 0.5382,
+            "navigationDensity": 1,
+            "linkDensity": 0.2738,
+            "candidateCount": 2,
+            "documentTitle": "The Legend of Zelda: Ocarina of Time Deku Tree walkthrough | GamesRadar+"
+          },
+          "metrics": {
+            "rawTextLength": 1238,
+            "cleanedTextLength": 1721,
+            "truncated": false,
+            "instructionFiltered": false
+          },
+          "independentIdentity": {
+            "status": "unknown",
+            "gameIdentityVerified": false,
+            "reasonCodes": [
+              "GAME_IDENTITY_UNVERIFIED"
+            ],
+            "diagnostic": {
+              "ruleId": "gaming.identity.independent_anchor_required",
+              "evidenceCategory": "acquired_anchors",
+              "subjectKind": "unknown",
+              "scope": "unknown",
+              "determination": "insufficient_corroboration"
+            }
+          },
+          "sourceClear": [],
+          "observedSourceAssessments": [],
+          "clearCaptureBoundary": "assessment_not_reached_or_not_retained_in_original_capture",
+          "decisions": [
+            {
+              "decision": "rejected",
+              "reasonCodes": [
+                "GAME_IDENTITY_UNVERIFIED"
+              ]
+            }
+          ],
+          "evaluations": [
+            {
+              "stages": {
+                "acquisition": "passed:SOURCE_ACQUIRED",
+                "extraction": "passed:EXTRACTION_INTACT",
+                "identity": "rejected:GAME_IDENTITY_UNVERIFIED",
+                "applicability": "not_run:STAGE_NOT_RUN",
+                "relevance": "not_run:STAGE_NOT_RUN",
+                "freshness": "not_run:STAGE_NOT_RUN",
+                "provenance": "passed:PROVENANCE_ACQUIRED",
+                "selection": "not_run:STAGE_NOT_RUN",
+                "generation": "not_run:STAGE_NOT_RUN"
+              },
+              "outcome": "rejected",
+              "rejectionReasons": [
+                "GAME_IDENTITY_UNVERIFIED"
+              ]
+            }
+          ],
+          "acceptedRevisions": [],
+          "selectedEvidenceCount": 0,
+          "selectedEvidence": [],
+          "classification": "independent_game_identity_unverified"
+        },
+        {
+          "publisherId": "zelda-palace",
+          "game": "The Legend of Zelda: Ocarina of Time",
+          "question": "Where do I get the Deku Shield early in Ocarina of Time?",
+          "publicUrl": "https://www.zeldaspalace.com/ocarinaoftime/equipment.php",
+          "observedAt": "2026-11-09T07:20:23.471Z",
+          "responses": [
+            {
+              "status": 200,
+              "contentType": "text/html; charset=UTF-8"
+            }
+          ],
+          "requestedHops": [
+            "https://www.zeldaspalace.com/ocarinaoftime/equipment.php"
+          ],
+          "rawPreviewChars": 21105,
+          "rawPreviewTruncated": false,
+          "rawPreviewSha256": "40297272aa3778feb62e8ade831cd63a6c7a3a214a6930b3786c9e14aa01d834",
+          "extractedChars": 154,
+          "extraction": {
+            "strategy": "main",
+            "rawTextLength": 176,
+            "cleanedTextLength": 154,
+            "fetchElapsedMs": 572,
+            "extractionElapsedMs": 1,
+            "selectedContainer": "main",
+            "qualityScore": 0.4715,
+            "navigationPenalty": 0.1286,
+            "navigationDensity": 0,
+            "linkDensity": 0.2857,
+            "candidateCount": 1,
+            "documentTitle": "Ocarina of Time tips and tricks - Equipment - Zelda's Palace",
+            "headingText": "Ocarina of Time tips and tricks | Equipment"
+          },
+          "metrics": {
+            "rawTextLength": 176,
+            "cleanedTextLength": 154,
+            "truncated": false,
+            "instructionFiltered": false
+          },
+          "independentIdentity": {
+            "status": "unknown",
+            "gameIdentityVerified": false,
+            "reasonCodes": [
+              "GAME_IDENTITY_UNVERIFIED"
+            ],
+            "diagnostic": {
+              "ruleId": "gaming.identity.independent_anchor_required",
+              "evidenceCategory": "acquired_anchors",
+              "subjectKind": "article_topic",
+              "scope": "unknown",
+              "determination": "insufficient_corroboration"
+            }
+          },
+          "sourceClear": [],
+          "observedSourceAssessments": [],
+          "clearCaptureBoundary": "assessment_not_reached_or_not_retained_in_original_capture",
+          "decisions": [
+            {
+              "decision": "rejected",
+              "reasonCodes": [
+                "INSUFFICIENT_GAMEPLAY_EVIDENCE"
+              ]
+            }
+          ],
+          "evaluations": [
+            {
+              "stages": {
+                "acquisition": "passed:SOURCE_ACQUIRED",
+                "extraction": "passed:EXTRACTION_INTACT",
+                "identity": "unknown:GAME_IDENTITY_UNVERIFIED",
+                "applicability": "not_run:STAGE_NOT_RUN",
+                "relevance": "rejected:INSUFFICIENT_GAMEPLAY_EVIDENCE",
+                "freshness": "not_run:STAGE_NOT_RUN",
+                "provenance": "passed:PROVENANCE_ACQUIRED",
+                "selection": "not_run:STAGE_NOT_RUN",
+                "generation": "not_run:STAGE_NOT_RUN"
+              },
+              "outcome": "rejected",
+              "rejectionReasons": [
+                "INSUFFICIENT_GAMEPLAY_EVIDENCE"
+              ]
+            }
+          ],
+          "acceptedRevisions": [],
+          "selectedEvidenceCount": 0,
+          "selectedEvidence": [],
+          "classification": "insufficient_gameplay_evidence"
+        }
+      ]
+    },
+    {
+      "capture": "navigation-repair-receipt",
+      "executionHead": "a7c04e3224b70b3d30df007a240646b6d3081d8d",
+      "includesUncommittedRepairs": true,
+      "elapsedMs": 2792,
+      "attempts": [
+        {
+          "publisherId": "consolepulse",
+          "game": "Xenoblade Chronicles 2",
+          "question": "Find a Chapter 2 guide for Rex as DPS and Nia as healer. Avoid later-story spoilers.",
+          "publicUrl": "https://consolepulse.com/nintendo/xenoblade-chronicles/guides/xenoblade-chronicles-2-chapter-2-walkthrough",
+          "observedAt": "2026-11-09T07:31:46.680Z",
+          "responses": [
+            {
+              "status": 200,
+              "contentType": "text/html; charset=utf-8"
+            }
+          ],
+          "requestedHops": [
+            "https://consolepulse.com/nintendo/xenoblade-chronicles/guides/xenoblade-chronicles-2-chapter-2-walkthrough"
+          ],
+          "rawPreviewChars": 353351,
+          "rawPreviewTruncated": false,
+          "rawPreviewSha256": "8b70b9a2e40b981f6d696839e78f659df27a529fe2a5a829777b1471dde24c81",
+          "extractedChars": 29679,
+          "extraction": {
+            "strategy": "[class*='article-body']",
+            "rawTextLength": 20272,
+            "cleanedTextLength": 17812,
+            "fetchElapsedMs": 2539,
+            "extractionElapsedMs": 56,
+            "selectedContainer": "[class*='article-body']",
+            "qualityScore": 0.7315,
+            "navigationPenalty": 0.0075,
+            "navigationDensity": 0.0067,
+            "linkDensity": 0.007,
+            "candidateCount": 2,
+            "documentTitle": "Xenoblade Chronicles 2 Chapter 2 Walkthrough Guide: Aptitude",
+            "headingText": "Chapter 2 quick route | Reach Torigoth | Find Gramps and rescue Nia | Climb to Outlook Knoll | Cross Gormott safely | Survive the Torigoth arrest"
+          },
+          "metrics": {
+            "rawTextLength": 20272,
+            "cleanedTextLength": 29679,
+            "truncated": false,
+            "instructionFiltered": false
+          },
+          "independentIdentity": {
+            "status": "conflict",
+            "gameIdentityVerified": false,
+            "reasonCodes": [
+              "GAME_MISMATCH"
+            ],
+            "diagnostic": {
+              "ruleId": "gaming.identity.affirmative_body_scope_conflict",
+              "evidenceCategory": "body_scope",
+              "subjectKind": "game_identity",
+              "scope": "source_global",
+              "determination": "explicit_contradiction"
+            }
+          },
+          "sourceClear": [],
+          "observedSourceAssessments": [],
+          "clearCaptureBoundary": "assessment_not_reached_or_not_retained_in_original_capture",
+          "decisions": [
+            {
+              "decision": "rejected",
+              "reasonCodes": [
+                "GAME_MISMATCH"
+              ]
+            }
+          ],
+          "evaluations": [
+            {
+              "stages": {
+                "acquisition": "passed:SOURCE_ACQUIRED",
+                "extraction": "passed:EXTRACTION_INTACT",
+                "identity": "rejected:GAME_MISMATCH",
+                "applicability": "not_run:STAGE_NOT_RUN",
+                "relevance": "not_run:STAGE_NOT_RUN",
+                "freshness": "not_run:STAGE_NOT_RUN",
+                "provenance": "passed:PROVENANCE_ACQUIRED",
+                "selection": "not_run:STAGE_NOT_RUN",
+                "generation": "not_run:STAGE_NOT_RUN"
+              },
+              "outcome": "rejected",
+              "rejectionReasons": [
+                "GAME_MISMATCH"
+              ]
+            }
+          ],
+          "acceptedRevisions": [],
+          "selectedEvidenceCount": 0,
+          "selectedEvidence": [],
+          "classification": "game_or_edition_conflict"
+        }
+      ]
+    },
+    {
+      "capture": "final-repair-receipt",
+      "executionHead": "ad1743d1f9af216f86faa622b59a2015cfd17b20",
+      "includesUncommittedRepairs": true,
+      "elapsedMs": 8026,
+      "attempts": [
+        {
+          "publisherId": "thonky",
+          "game": "The Legend of Zelda: Ocarina of Time",
+          "question": "Where do I get the Deku Shield early in Ocarina of Time?",
+          "publicUrl": "https://www.thonky.com/ocarina-of-time/reach-the-deku-tree",
+          "observedAt": "2026-11-09T08:00:26.474Z",
+          "responses": [
+            {
+              "status": 200,
+              "contentType": "text/html; charset=utf-8"
+            }
+          ],
+          "requestedHops": [
+            "https://www.thonky.com/ocarina-of-time/reach-the-deku-tree"
+          ],
+          "rawPreviewChars": 95335,
+          "rawPreviewTruncated": false,
+          "rawPreviewSha256": "798ad1a3ae300373ecdc0576264edf155c3ee0cd12205e8ddcdffbf297c512b0",
+          "extractedChars": 4142,
+          "extraction": {
+            "strategy": "article",
+            "rawTextLength": 4577,
+            "cleanedTextLength": 4142,
+            "fetchElapsedMs": 879,
+            "extractionElapsedMs": 10,
+            "selectedContainer": "article",
+            "qualityScore": 0.8444,
+            "navigationPenalty": 0.0019,
+            "navigationDensity": 0.0048,
+            "linkDensity": 0,
+            "candidateCount": 2,
+            "documentTitle": "Reach the Deku Tree - The Legend of Zelda: Ocarina of Time Guide and Walkthrough",
+            "headingText": "Wake Up | Get a Sword | Get a Shield | Go to the Deku Tree"
+          },
+          "metrics": {
+            "rawTextLength": 4577,
+            "cleanedTextLength": 4142,
+            "truncated": false,
+            "instructionFiltered": false
+          },
+          "independentIdentity": {
+            "status": "unknown",
+            "gameIdentityVerified": false,
+            "reasonCodes": [
+              "GAME_IDENTITY_UNVERIFIED"
+            ],
+            "diagnostic": {
+              "ruleId": "gaming.identity.independent_anchor_required",
+              "evidenceCategory": "acquired_anchors",
+              "subjectKind": "unknown",
+              "scope": "unknown",
+              "determination": "insufficient_corroboration"
+            }
+          },
+          "sourceClear": [],
+          "observedSourceAssessments": [],
+          "clearCaptureBoundary": "assessment_not_reached_or_not_retained_in_original_capture",
+          "decisions": [
+            {
+              "decision": "rejected",
+              "reasonCodes": [
+                "GAME_IDENTITY_UNVERIFIED"
+              ]
+            }
+          ],
+          "evaluations": [
+            {
+              "stages": {
+                "acquisition": "passed:SOURCE_ACQUIRED",
+                "extraction": "passed:EXTRACTION_INTACT",
+                "identity": "rejected:GAME_IDENTITY_UNVERIFIED",
+                "applicability": "not_run:STAGE_NOT_RUN",
+                "relevance": "not_run:STAGE_NOT_RUN",
+                "freshness": "not_run:STAGE_NOT_RUN",
+                "provenance": "passed:PROVENANCE_ACQUIRED",
+                "selection": "not_run:STAGE_NOT_RUN",
+                "generation": "not_run:STAGE_NOT_RUN"
+              },
+              "outcome": "rejected",
+              "rejectionReasons": [
+                "GAME_IDENTITY_UNVERIFIED"
+              ]
+            }
+          ],
+          "acceptedRevisions": [],
+          "selectedEvidenceCount": 0,
+          "selectedEvidence": [],
+          "classification": "independent_game_identity_unverified"
+        },
+        {
+          "publisherId": "frontier",
+          "game": "Elite Dangerous",
+          "question": "Find a detailed guide explaining system colonisation and how to get started.",
+          "publicUrl": "https://www.elitedangerous.com/news/system-colonisation-guide",
+          "observedAt": "2026-11-09T08:00:28.439Z",
+          "responses": [
+            {
+              "status": 200,
+              "contentType": "text/html;charset=utf-8"
+            }
+          ],
+          "requestedHops": [
+            "https://www.elitedangerous.com/news/system-colonisation-guide"
+          ],
+          "rawPreviewChars": 1048576,
+          "rawPreviewTruncated": true,
+          "rawPreviewSha256": "5d425dc9a51a20d31d1928059d2a64d8e8cfbd9305310af358c7379bc67fde3a",
+          "extractedChars": 5488,
+          "extraction": {
+            "strategy": "article",
+            "rawTextLength": 5455,
+            "cleanedTextLength": 5488,
+            "fetchElapsedMs": 1610,
+            "extractionElapsedMs": 103,
+            "selectedContainer": "article",
+            "qualityScore": 0.7523,
+            "navigationPenalty": 0.0251,
+            "navigationDensity": 0.0358,
+            "linkDensity": 0.0091,
+            "candidateCount": 2,
+            "documentTitle": "System Colonisation Guide - News - Elite Dangerous",
+            "headingText": "System Colonisation Guide | Did You Know? | How to Create a New Colony | 1. Select a Star System | 2. Create a System Colony"
+          },
+          "metrics": {
+            "rawTextLength": 5455,
+            "cleanedTextLength": 5488,
+            "truncated": true,
+            "instructionFiltered": false
+          },
+          "independentIdentity": {
+            "status": "verified",
+            "gameIdentityVerified": true,
+            "reasonCodes": [
+              "ACQUIRED_METADATA_AND_BODY_IDENTITY"
+            ],
+            "diagnostic": {
+              "ruleId": "gaming.identity.acquired_anchors_verified",
+              "evidenceCategory": "acquired_anchors",
+              "subjectKind": "game_identity",
+              "scope": "source_global",
+              "determination": "corroborated"
+            }
+          },
+          "sourceClear": [
+            {
+              "rubricVersion": "gaming-clear/v1",
+              "policyProfile": "gaming-clear-policy/v7:walkthrough:source",
+              "decision": "accept",
+              "gates": {
+                "identity": "verified",
+                "compatibility": "verified",
+                "claimSupport": "verified",
+                "freshness": "verified",
+                "provenance": "verified",
+                "security": "verified"
+              },
+              "overall": 4.225,
+              "blockingReasons": []
+            }
+          ],
+          "observedSourceAssessments": [
+            {
+              "decision": "accept",
+              "assessmentStatus": "completed",
+              "overall": 4.225,
+              "policyProfile": "gaming-clear-policy/v7:walkthrough:source",
+              "blockingFindingCount": 0,
+              "dimensionScores": {
+                "clarity": {
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "INTELLIGIBLE_RELEVANT_EXTRACTION"
+                  ],
+                  "unresolvedFacts": []
+                },
+                "leverage": {
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "QUESTION_ANCHORS_PRESENT"
+                  ],
+                  "unresolvedFacts": []
+                },
+                "efficiency": {
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "BOUNDED_CHUNK_RETRIEVAL_AVAILABLE"
+                  ],
+                  "unresolvedFacts": []
+                },
+                "alignment": {
+                  "score": 4,
+                  "reasonCodes": [
+                    "ACQUIRED_METADATA_AND_BODY_IDENTITY"
+                  ],
+                  "unresolvedFacts": []
+                },
+                "resilience": {
+                  "score": 3,
+                  "reasonCodes": [
+                    "EXTRACTION_PARTIAL"
+                  ],
+                  "unresolvedFacts": [
+                    "INDEPENDENT_CORROBORATION_NOT_ESTABLISHED"
+                  ]
+                }
+              }
+            }
+          ],
+          "clearCaptureBoundary": "assessment_recorded",
+          "decisions": [
+            {
+              "decision": "accepted_transient",
+              "reasonCodes": [
+                "VALIDATED_RELEVANT_CONTENT",
+                "EXTRACTION_PARTIAL"
+              ]
+            }
+          ],
+          "evaluations": [
+            {
+              "stages": {
+                "acquisition": "passed:SOURCE_ACQUIRED",
+                "extraction": "passed:EXTRACTION_PARTIAL",
+                "identity": "passed:ACQUIRED_IDENTITY_VERIFIED",
+                "applicability": "passed:APPLICABILITY_EVALUATED",
+                "relevance": "passed:GAMEPLAY_CONTRIBUTION_VERIFIED",
+                "freshness": "passed:FRESHNESS_VERIFIED",
+                "provenance": "passed:PROVENANCE_ACQUIRED",
+                "selection": "passed:EVIDENCE_SELECTED",
+                "generation": "not_run:GENERATION_NOT_EVALUATED"
+              },
+              "outcome": "selected",
+              "rejectionReasons": []
+            }
+          ],
+          "acceptedRevisions": [
+            {
+              "publicUrl": "https://www.elitedangerous.com/news/system-colonisation-guide",
+              "contentHash": "6d74d1708a8bfe4dad042419463f2049850ca225429d3c0aa1c476363cb5a515",
+              "resolverVersion": "gaming-document-v12"
+            }
+          ],
+          "selectedEvidenceCount": 1,
+          "selectedEvidence": [
+            {
+              "revisionId": "6d74d1708a8bfe4dad042419463f2049850ca225429d3c0aa1c476363cb5a515",
+              "recordId": "449eb74a-618e-4ab2-8482-501544760f4c:1",
+              "publicUrl": "https://www.elitedangerous.com/news/system-colonisation-guide",
+              "textSha256": "7d98698dee994f4a7c99d92d8216d44030a70bdbe070d31311dc377257ba0470"
+            }
+          ],
+          "classification": "accepted_gameplay_evidence"
+        },
+        {
+          "publisherId": "dualshockers",
+          "game": "Elden Ring",
+          "question": "Find a good early-game Samurai build guide. No major spoilers.",
+          "publicUrl": "https://www.dualshockers.com/elden-ring-samurai-class-build-tips/",
+          "observedAt": "2026-11-09T08:00:29.134Z",
+          "responses": [
+            {
+              "status": 200,
+              "contentType": "text/html; charset=utf-8"
+            }
+          ],
+          "requestedHops": [
+            "https://www.dualshockers.com/elden-ring-samurai-class-build-tips/"
+          ],
+          "rawPreviewChars": 191870,
+          "rawPreviewTruncated": false,
+          "rawPreviewSha256": "ae2320c6ba6314edde6ab561a70631bb938f42c4fb6e1d9d13fb5141cbd27953",
+          "extractedChars": 62920,
+          "extraction": {
+            "strategy": "#article-body",
+            "rawTextLength": 5345,
+            "cleanedTextLength": 4970,
+            "fetchElapsedMs": 435,
+            "extractionElapsedMs": 17,
+            "selectedContainer": "#article-body",
+            "qualityScore": 0.7365,
+            "navigationPenalty": 0.027,
+            "navigationDensity": 0.0046,
+            "linkDensity": 0.033,
+            "candidateCount": 3,
+            "documentTitle": "Elden Ring Samurai Class Guide",
+            "headingText": "Elden Ring Samurai Class Guide | Why Play A Samurai Class | Best Weapons For A Samurai Build | Best Armor For A Samurai Build | Best Talismans For A Samurai Build | Best Bleed Samurai"
+          },
+          "metrics": {
+            "rawTextLength": 5345,
+            "cleanedTextLength": 62920,
+            "truncated": true,
+            "instructionFiltered": false
+          },
+          "independentIdentity": {
+            "status": "verified",
+            "gameIdentityVerified": true,
+            "reasonCodes": [
+              "ACQUIRED_METADATA_AND_BODY_IDENTITY"
+            ],
+            "diagnostic": {
+              "ruleId": "gaming.identity.acquired_anchors_verified",
+              "evidenceCategory": "acquired_anchors",
+              "subjectKind": "game_identity",
+              "scope": "source_global",
+              "determination": "corroborated"
+            }
+          },
+          "sourceClear": [],
+          "observedSourceAssessments": [
+            {
+              "decision": "reject",
+              "assessmentStatus": "completed",
+              "overall": 3.975,
+              "policyProfile": "gaming-clear-policy/v7:current_build:source",
+              "blockingFindingCount": 2,
+              "dimensionScores": {
+                "clarity": {
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "INTELLIGIBLE_RELEVANT_EXTRACTION"
+                  ],
+                  "unresolvedFacts": []
+                },
+                "leverage": {
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "QUESTION_ANCHORS_PRESENT"
+                  ],
+                  "unresolvedFacts": []
+                },
+                "efficiency": {
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "BOUNDED_CHUNK_RETRIEVAL_AVAILABLE"
+                  ],
+                  "unresolvedFacts": []
+                },
+                "alignment": {
+                  "score": 4,
+                  "reasonCodes": [
+                    "ACQUIRED_METADATA_AND_BODY_IDENTITY"
+                  ],
+                  "unresolvedFacts": []
+                },
+                "resilience": {
+                  "score": 3,
+                  "reasonCodes": [
+                    "EXTRACTION_PARTIAL"
+                  ],
+                  "unresolvedFacts": [
+                    "INDEPENDENT_CORROBORATION_NOT_ESTABLISHED",
+                    "COMBINED_APPLICABILITY_REQUIRED"
+                  ]
+                }
+              }
+            }
+          ],
+          "clearCaptureBoundary": "assessment_recorded",
+          "decisions": [
+            {
+              "decision": "rejected",
+              "reasonCodes": [
+                "FRESHNESS_UNVERIFIED"
+              ]
+            }
+          ],
+          "evaluations": [
+            {
+              "stages": {
+                "acquisition": "passed:SOURCE_ACQUIRED",
+                "extraction": "passed:EXTRACTION_PARTIAL",
+                "identity": "passed:ACQUIRED_IDENTITY_VERIFIED",
+                "applicability": "passed:APPLICABILITY_EVALUATED",
+                "relevance": "not_run:STAGE_NOT_RUN",
+                "freshness": "unknown:FRESHNESS_UNVERIFIED",
+                "provenance": "passed:PROVENANCE_ACQUIRED",
+                "selection": "rejected:SOURCE_VALIDATION_REJECTED",
+                "generation": "not_run:STAGE_NOT_RUN"
+              },
+              "outcome": "rejected",
+              "rejectionReasons": [
+                "SOURCE_VALIDATION_REJECTED"
+              ]
+            }
+          ],
+          "acceptedRevisions": [],
+          "selectedEvidenceCount": 0,
+          "selectedEvidence": [],
+          "classification": "incomplete_extraction_and_freshness_unverified"
+        },
+        {
+          "publisherId": "silverback",
+          "game": "Elite Dangerous",
+          "question": "Find a detailed guide explaining system colonisation and how to get started.",
+          "publicUrl": "https://svbkresearchinstitute.com/colonization",
+          "observedAt": "2026-11-09T08:00:29.788Z",
+          "responses": [
+            {
+              "status": 200,
+              "contentType": "text/html"
+            }
+          ],
+          "requestedHops": [
+            "https://svbkresearchinstitute.com/colonization"
+          ],
+          "rawPreviewChars": 1327,
+          "rawPreviewTruncated": false,
+          "rawPreviewSha256": "23be023f44e59d336fc7a95f747b914a66673a973026a4bb744b12329999a15f",
+          "extractedChars": 0,
+          "extraction": {
+            "strategy": "body",
+            "rawTextLength": 0,
+            "cleanedTextLength": 0,
+            "fetchElapsedMs": 566,
+            "extractionElapsedMs": 2,
+            "selectedContainer": "body",
+            "qualityScore": 0.14,
+            "navigationPenalty": 0,
+            "navigationDensity": 0,
+            "linkDensity": 0,
+            "candidateCount": 0,
+            "documentTitle": "The Silverback Research Institute · Elite Dangerous Research"
+          },
+          "metrics": {
+            "rawTextLength": 0,
+            "cleanedTextLength": 0,
+            "truncated": false,
+            "instructionFiltered": false
+          },
+          "independentIdentity": {
+            "status": "unknown",
+            "gameIdentityVerified": false,
+            "reasonCodes": [
+              "GAME_IDENTITY_UNVERIFIED"
+            ],
+            "diagnostic": {
+              "ruleId": "gaming.identity.independent_anchor_required",
+              "evidenceCategory": "acquired_anchors",
+              "subjectKind": "unknown",
+              "scope": "unknown",
+              "determination": "insufficient_corroboration"
+            }
+          },
+          "sourceClear": [],
+          "observedSourceAssessments": [],
+          "clearCaptureBoundary": "assessment_not_reached_or_not_retained_in_original_capture",
+          "decisions": [
+            {
+              "decision": "rejected",
+              "reasonCodes": [
+                "INSUFFICIENT_EXTRACTION"
+              ]
+            }
+          ],
+          "evaluations": [
+            {
+              "stages": {
+                "acquisition": "passed:SOURCE_ACQUIRED",
+                "extraction": "rejected:INSUFFICIENT_EXTRACTION",
+                "identity": "unknown:GAME_IDENTITY_UNVERIFIED",
+                "applicability": "not_run:STAGE_NOT_RUN",
+                "relevance": "not_run:STAGE_NOT_RUN",
+                "freshness": "not_run:STAGE_NOT_RUN",
+                "provenance": "passed:PROVENANCE_ACQUIRED",
+                "selection": "not_run:STAGE_NOT_RUN",
+                "generation": "not_run:STAGE_NOT_RUN"
+              },
+              "outcome": "rejected",
+              "rejectionReasons": [
+                "INSUFFICIENT_EXTRACTION"
+              ]
+            }
+          ],
+          "acceptedRevisions": [],
+          "selectedEvidenceCount": 0,
+          "selectedEvidence": [],
+          "classification": "no_server_delivered_guide_text"
+        },
+        {
+          "publisherId": "consolepulse",
+          "game": "Xenoblade Chronicles 2",
+          "question": "Find a Chapter 2 guide for Rex as DPS and Nia as healer. Avoid later-story spoilers.",
+          "publicUrl": "https://consolepulse.com/nintendo/xenoblade-chronicles/guides/xenoblade-chronicles-2-chapter-2-walkthrough",
+          "observedAt": "2026-11-09T08:00:32.962Z",
+          "responses": [
+            {
+              "status": 200,
+              "contentType": "text/html; charset=utf-8"
+            }
+          ],
+          "requestedHops": [
+            "https://consolepulse.com/nintendo/xenoblade-chronicles/guides/xenoblade-chronicles-2-chapter-2-walkthrough"
+          ],
+          "rawPreviewChars": 353351,
+          "rawPreviewTruncated": false,
+          "rawPreviewSha256": "8b70b9a2e40b981f6d696839e78f659df27a529fe2a5a829777b1471dde24c81",
+          "extractedChars": 29679,
+          "extraction": {
+            "strategy": "[class*='article-body']",
+            "rawTextLength": 20272,
+            "cleanedTextLength": 17812,
+            "fetchElapsedMs": 3056,
+            "extractionElapsedMs": 60,
+            "selectedContainer": "[class*='article-body']",
+            "qualityScore": 0.7315,
+            "navigationPenalty": 0.0075,
+            "navigationDensity": 0.0067,
+            "linkDensity": 0.007,
+            "candidateCount": 2,
+            "documentTitle": "Xenoblade Chronicles 2 Chapter 2 Walkthrough Guide: Aptitude",
+            "headingText": "Chapter 2 quick route | Reach Torigoth | Find Gramps and rescue Nia | Climb to Outlook Knoll | Cross Gormott safely | Survive the Torigoth arrest"
+          },
+          "metrics": {
+            "rawTextLength": 20272,
+            "cleanedTextLength": 29679,
+            "truncated": false,
+            "instructionFiltered": false
+          },
+          "independentIdentity": {
+            "status": "unknown",
+            "gameIdentityVerified": false,
+            "reasonCodes": [
+              "GAME_IDENTITY_UNVERIFIED"
+            ],
+            "diagnostic": {
+              "ruleId": "gaming.identity.independent_anchor_required",
+              "evidenceCategory": "acquired_anchors",
+              "subjectKind": "article_topic",
+              "scope": "unknown",
+              "determination": "insufficient_corroboration"
+            }
+          },
+          "sourceClear": [],
+          "observedSourceAssessments": [],
+          "clearCaptureBoundary": "assessment_not_reached_or_not_retained_in_original_capture",
+          "decisions": [
+            {
+              "decision": "rejected",
+              "reasonCodes": [
+                "GAME_IDENTITY_UNVERIFIED"
+              ]
+            }
+          ],
+          "evaluations": [
+            {
+              "stages": {
+                "acquisition": "passed:SOURCE_ACQUIRED",
+                "extraction": "passed:EXTRACTION_INTACT",
+                "identity": "rejected:GAME_IDENTITY_UNVERIFIED",
+                "applicability": "not_run:STAGE_NOT_RUN",
+                "relevance": "not_run:STAGE_NOT_RUN",
+                "freshness": "not_run:STAGE_NOT_RUN",
+                "provenance": "passed:PROVENANCE_ACQUIRED",
+                "selection": "not_run:STAGE_NOT_RUN",
+                "generation": "not_run:STAGE_NOT_RUN"
+              },
+              "outcome": "rejected",
+              "rejectionReasons": [
+                "GAME_IDENTITY_UNVERIFIED"
+              ]
+            }
+          ],
+          "acceptedRevisions": [],
+          "selectedEvidenceCount": 0,
+          "selectedEvidence": [],
+          "classification": "independent_game_identity_unverified"
+        },
+        {
+          "publisherId": "blackbox",
+          "game": "Elite Dangerous",
+          "question": "Find a detailed guide explaining system colonisation and how to get started.",
+          "publicUrl": "https://edblackbox.com/guides/systems/galaxy-and-power-systems/system-colonization.html",
+          "observedAt": "2026-11-09T08:00:33.445Z",
+          "responses": [
+            {
+              "status": 200,
+              "contentType": "text/html; charset=utf-8"
+            }
+          ],
+          "requestedHops": [
+            "https://edblackbox.com/guides/systems/galaxy-and-power-systems/system-colonization.html"
+          ],
+          "rawPreviewChars": 59331,
+          "rawPreviewTruncated": false,
+          "rawPreviewSha256": "d4929e7f1aad67fe708105f24890c358b834e19f19f4a55f655d25d2c187dfe2",
+          "extractedChars": 65655,
+          "extraction": {
+            "strategy": "article",
+            "rawTextLength": 27442,
+            "cleanedTextLength": 216,
+            "fetchElapsedMs": 432,
+            "extractionElapsedMs": 18,
+            "selectedContainer": "article",
+            "qualityScore": 0.702,
+            "navigationPenalty": 0,
+            "navigationDensity": 0,
+            "linkDensity": 0,
+            "candidateCount": 11,
+            "documentTitle": "System Colonisation · Galaxy & Power Systems | E:D Black Box",
+            "headingText": "Weekly"
+          },
+          "metrics": {
+            "rawTextLength": 27442,
+            "cleanedTextLength": 65655,
+            "truncated": false,
+            "instructionFiltered": true
+          },
+          "independentIdentity": {
+            "status": "unknown",
+            "gameIdentityVerified": false,
+            "reasonCodes": [
+              "GAME_IDENTITY_UNVERIFIED"
+            ],
+            "diagnostic": {
+              "ruleId": "gaming.identity.independent_anchor_required",
+              "evidenceCategory": "acquired_anchors",
+              "subjectKind": "unknown",
+              "scope": "unknown",
+              "determination": "insufficient_corroboration"
+            }
+          },
+          "sourceClear": [],
+          "observedSourceAssessments": [],
+          "clearCaptureBoundary": "assessment_not_reached_or_not_retained_in_original_capture",
+          "decisions": [
+            {
+              "decision": "rejected",
+              "reasonCodes": [
+                "SOURCE_INSTRUCTIONS_REJECTED"
+              ]
+            }
+          ],
+          "evaluations": [
+            {
+              "stages": {
+                "acquisition": "passed:SOURCE_ACQUIRED",
+                "extraction": "rejected:SOURCE_INSTRUCTIONS_REJECTED",
+                "identity": "not_run:STAGE_NOT_RUN",
+                "applicability": "not_run:STAGE_NOT_RUN",
+                "relevance": "not_run:STAGE_NOT_RUN",
+                "freshness": "not_run:STAGE_NOT_RUN",
+                "provenance": "not_run:STAGE_NOT_RUN",
+                "selection": "not_run:STAGE_NOT_RUN",
+                "generation": "not_run:STAGE_NOT_RUN"
+              },
+              "outcome": "rejected",
+              "rejectionReasons": [
+                "SOURCE_INSTRUCTIONS_REJECTED"
+              ]
+            }
+          ],
+          "acceptedRevisions": [],
+          "selectedEvidenceCount": 0,
+          "selectedEvidence": [],
+          "classification": "source_instruction_rejection"
+        }
+      ]
+    },
+    {
+      "capture": "final-alternative-receipt",
+      "executionHead": "ad1743d1f9af216f86faa622b59a2015cfd17b20",
+      "includesUncommittedRepairs": true,
+      "elapsedMs": 827,
+      "attempts": [
+        {
+          "publisherId": "zelda-questduo",
+          "game": "The Legend of Zelda: Ocarina of Time",
+          "question": "Where do I get the Deku Shield early in Ocarina of Time?",
+          "publicUrl": "https://questduo.com/the-legend-of-zelda-ocarina-of-time/link-wakes-up-the-great-deku-tree-walkthrough/",
+          "observedAt": "2026-11-09T08:00:34.843Z",
+          "responses": [
+            {
+              "status": 200,
+              "contentType": "text/html; charset=UTF-8"
+            }
+          ],
+          "requestedHops": [
+            "https://questduo.com/the-legend-of-zelda-ocarina-of-time/link-wakes-up-the-great-deku-tree-walkthrough/"
+          ],
+          "rawPreviewChars": 226010,
+          "rawPreviewTruncated": false,
+          "rawPreviewSha256": "bc760fd12e3f26329d0e302302e09c82dd56668c68d30d5a44f412bf8ff8c043",
+          "extractedChars": 13026,
+          "extraction": {
+            "strategy": ".entry-content",
+            "rawTextLength": 10055,
+            "cleanedTextLength": 9232,
+            "fetchElapsedMs": 585,
+            "extractionElapsedMs": 24,
+            "selectedContainer": ".entry-content",
+            "qualityScore": 0.7583,
+            "navigationPenalty": 0.0018,
+            "navigationDensity": 0.0045,
+            "linkDensity": 0,
+            "candidateCount": 15,
+            "documentTitle": "TLOZ Ocarina of Time – Link Wakes Up & The Great Deku Tree Walkthrough - QuestDuo",
+            "headingText": "Link Wakes Up (Quest) Walkthrough | Get the Sword | Get the Shield | Enter the Great Deku Tree | The Great Deku Tree (Quest) Walkthrough | Find the Fairy Slingshot"
+          },
+          "metrics": {
+            "rawTextLength": 10055,
+            "cleanedTextLength": 13026,
+            "truncated": false,
+            "instructionFiltered": false
+          },
+          "independentIdentity": {
+            "status": "verified",
+            "gameIdentityVerified": true,
+            "reasonCodes": [
+              "ACQUIRED_BODY_SCOPE_IDENTITY"
+            ],
+            "diagnostic": {
+              "ruleId": "gaming.identity.acquired_anchors_verified",
+              "evidenceCategory": "acquired_anchors",
+              "subjectKind": "game_identity",
+              "scope": "source_global",
+              "determination": "corroborated"
+            }
+          },
+          "sourceClear": [
+            {
+              "rubricVersion": "gaming-clear/v1",
+              "policyProfile": "gaming-clear-policy/v7:walkthrough:source",
+              "decision": "accept",
+              "gates": {
+                "identity": "verified",
+                "compatibility": "verified",
+                "claimSupport": "verified",
+                "freshness": "verified",
+                "provenance": "verified",
+                "security": "verified"
+              },
+              "overall": 4.275,
+              "blockingReasons": []
+            }
+          ],
+          "observedSourceAssessments": [
+            {
+              "decision": "accept",
+              "assessmentStatus": "completed",
+              "overall": 4.275,
+              "policyProfile": "gaming-clear-policy/v7:walkthrough:source",
+              "blockingFindingCount": 0,
+              "dimensionScores": {
+                "clarity": {
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "INTELLIGIBLE_RELEVANT_EXTRACTION"
+                  ],
+                  "unresolvedFacts": []
+                },
+                "leverage": {
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "QUESTION_ANCHORS_PRESENT"
+                  ],
+                  "unresolvedFacts": []
+                },
+                "efficiency": {
+                  "score": 4.5,
+                  "reasonCodes": [
+                    "BOUNDED_CHUNK_RETRIEVAL_AVAILABLE"
+                  ],
+                  "unresolvedFacts": []
+                },
+                "alignment": {
+                  "score": 4,
+                  "reasonCodes": [
+                    "ACQUIRED_BODY_SCOPE_IDENTITY"
+                  ],
+                  "unresolvedFacts": []
+                },
+                "resilience": {
+                  "score": 3.5,
+                  "reasonCodes": [
+                    "TRACEABLE_ACQUIRED_DOCUMENT"
+                  ],
+                  "unresolvedFacts": [
+                    "INDEPENDENT_CORROBORATION_NOT_ESTABLISHED"
+                  ]
+                }
+              }
+            }
+          ],
+          "clearCaptureBoundary": "assessment_recorded",
+          "decisions": [
+            {
+              "decision": "eligible_for_ingestion",
+              "reasonCodes": [
+                "VALIDATED_RELEVANT_CONTENT"
+              ]
+            }
+          ],
+          "evaluations": [
+            {
+              "stages": {
+                "acquisition": "passed:SOURCE_ACQUIRED",
+                "extraction": "passed:EXTRACTION_INTACT",
+                "identity": "passed:ACQUIRED_IDENTITY_VERIFIED",
+                "applicability": "passed:APPLICABILITY_EVALUATED",
+                "relevance": "passed:GAMEPLAY_CONTRIBUTION_VERIFIED",
+                "freshness": "passed:FRESHNESS_VERIFIED",
+                "provenance": "passed:PROVENANCE_ACQUIRED",
+                "selection": "passed:EVIDENCE_SELECTED",
+                "generation": "not_run:GENERATION_NOT_EVALUATED"
+              },
+              "outcome": "selected",
+              "rejectionReasons": []
+            }
+          ],
+          "acceptedRevisions": [
+            {
+              "publicUrl": "https://questduo.com/the-legend-of-zelda-ocarina-of-time/link-wakes-up-the-great-deku-tree-walkthrough/",
+              "contentHash": "713232a84a466cb65ace17c934f87ad2272c410f988a67ba16a37d91499880eb",
+              "resolverVersion": "gaming-document-v12"
+            }
+          ],
+          "selectedEvidenceCount": 1,
+          "selectedEvidence": [
+            {
+              "revisionId": "713232a84a466cb65ace17c934f87ad2272c410f988a67ba16a37d91499880eb",
+              "recordId": "5dd2679a-c00f-41f9-9e83-4868c5c31232:1",
+              "publicUrl": "https://questduo.com/the-legend-of-zelda-ocarina-of-time/link-wakes-up-the-great-deku-tree-walkthrough/",
+              "textSha256": "a88302bb4ae0012ade563cee1fb55c9157c2867545d938fcea36c27a8a6121e7"
+            }
+          ],
+          "classification": "accepted_gameplay_evidence"
+        }
+      ]
+    }
+  ]
+}
