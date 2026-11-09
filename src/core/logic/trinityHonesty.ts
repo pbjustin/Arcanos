@@ -938,7 +938,14 @@ function impliesFirstPersonSaveClaim(text: string): boolean {
 /** Bare "save" can mean conserve a resource. Completed actions, assistant-owned
  * promises, storage objects and ambiguous references retain the persistence gate. */
 function impliesPersistenceActionClaim(text: string): boolean {
-  if (/\b(saved|persisted|persist|wrote|write|stored|store|updated|update|inserted|insert)\b/i.test(text)) return true;
+  // Imperative physical insertion is ordinary instruction, not a claim that
+  // ARCANOS persisted anything. Keep storage/credential context, ambiguous
+  // objects and every separately asserted or completed action under the gate.
+  const insertionText = PERSISTENCE_SAVE_CONTEXT_PATTERN.test(text) || PERSISTENCE_CREDENTIAL_TOKEN_PATTERN.test(text)
+    || BACKEND_ACTION_CONTEXT_PATTERN.test(text)
+    || /\b(?:i|we|chatgpt)\b/i.test(text) || text.match(SYSTEM_OWNED_SAVE_ACTOR_PATTERN) ? text
+    : text.replace(/(^|[,;:]\s*|\b(?:then|and)\s+)insert(?=\s+(?:the|a|an|your)\s+[a-z])/gi, '$1');
+  if (/\b(saved|persisted|persist|wrote|write|stored|store|updated|update|inserted|insert)\b/i.test(insertionText)) return true;
   if (impliesSystemOwnedSaveClaim(text)) return true;
   if (!/\bsave\b/i.test(text)) return false;
   // A denied/mediated clause cannot lend its storage nouns to a separate save

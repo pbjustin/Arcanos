@@ -48,7 +48,23 @@ export function gamingLexicalTokens(text: string): string[] {
 
 /** Retrieval-only normalization; the original request retains every answer constraint. */
 function gamingTopicalRequest(prompt: string): string {
+  // A request to find a guide names the gameplay topic, not an acquired fact
+  // containing the words "find" or "explaining". Only consume a leading,
+  // bounded source-discovery frame; quoted titles and ordinary find actions stay.
+  const discoveryPrefix = /^\s*(?:please\s+)?find\s+(?:(?:me|us)\s+)?(?:a|an|the)\s+(?:(?:good|detailed)\s+){0,2}/iu.exec(prompt);
+  if (discoveryPrefix) {
+    const remainder = prompt.slice(discoveryPrefix[0].length);
+    const directFrame = /^(?:guide|walkthrough)\s+(?:explaining|about|for|on)\s+/iu;
+    const topicFrame = /^([^.!?\n"“”]{1,160}?)\s+(?:guide|walkthrough)(?=\s*(?:[.!?]|$)|\s+(?:for|about|on)\b)/iu;
+    const topic = directFrame.test(remainder) ? remainder.replace(directFrame, '')
+      : topicFrame.test(remainder) ? remainder.replace(topicFrame, '$1') : undefined;
+    if (topic !== undefined) prompt = topic
+      // The bare introductory tail belongs to this guide-search frame. Keep
+      // concrete subjects ("get started with surface prospecting") untouched.
+      .replace(/\s+and\s+how\s+to\s+get\s+started(?=\s*(?:[.!?]|$))/giu, '');
+  }
   return prompt
+    .replace(/(^|[.!?]\s+)(?:no\s+major|avoid\s+(?:major|later[ -]story))\s+spoilers?(?=\s*(?:[.!?]|$))/giu, '$1')
     // Quoted source titles identify supplied material, not requested gameplay
     // facts or player edition. Required-source identity remains a separate gate.
     .replace(/\b(?:the|this|a)\s+(?:(?:submitted|supplied|provided|linked|required)\s+)?(?:guide|source|article)\s+is\s+(?:titled|called|named)\s+["“][^"”\n]{1,240}["”]\s*\.?/giu, '')
@@ -271,7 +287,7 @@ export function scopeGamingEvidenceParagraphs(text: string, input: GamingRetriev
     for (let next = index + 1; next < Math.min(units.length, index + 5); next += 1) {
       const previousTerms = [...new Set(gamingLexicalTokens(units[next - 1]))].filter(term => !STOP_WORDS.has(term));
       const connected = gamingTermCoverage(units[next], previousTerms) > 0;
-      const dependentOrAction = /^(?:(?:then|otherwise)\s+)?(?:do not|don't|cross|step|back away|open|close|turn|pull|push|wait|dodge|block|attack|equip|bring|check|inspect|follow|climb|return|keep|avoid)\b/iu.test(units[next]);
+      const dependentOrAction = /^(?:(?:then|otherwise)\s+)?(?:do not|don't|cross|step|back away|open|close|turn|pull|push|wait|dodge|block|attack|equip|bring|check|inspect|follow|climb|return|keep|avoid|prioritize|raise)\b/iu.test(units[next]);
       const evidenceLimit = /^(?:this|the|our|that) (?:guide|source|article|page|evidence|document|section|passage) (?:does not|doesn't|cannot|can't|will not|won't)\b/iu.test(units[next]);
       if (!connected && !dependentOrAction && !evidenceLimit) break;
       included.add(next);

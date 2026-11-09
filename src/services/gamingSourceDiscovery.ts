@@ -205,8 +205,12 @@ function buildQueryTopicTerms(input: GamingDiscoveryInput): string[] {
 function buildGamingDiscoveryScope(input: GamingDiscoveryInput): string | undefined {
   // Check complete sanitized fields before any clipping or boundary trimming.
   // Whitespace just beyond the ceiling must not hide a later scope qualifier.
-  const fields = [input.game, input.edition, input.platform, input.requestedVersion]
-    .map(value => value ? stripUntrustedInstructions(value) || undefined : undefined);
+  const explicitFields = [input.game, input.edition, input.platform, input.requestedVersion];
+  const fields = explicitFields.map(value => value ? stripUntrustedInstructions(value) || undefined : undefined);
+  // Redaction must not silently broaden an explicit identity/version constraint.
+  // Harmless Unicode/whitespace normalization does not change its meaning.
+  if (fields.some((value, index) => explicitFields[index] !== undefined
+    && explicitFields[index]!.normalize('NFKC').replace(/\s+/gu, ' ').trim() !== (value ?? ''))) return undefined;
   if (fields.some(value => value && value.length > MAX_SEARCH_QUERY_CHARS)) return undefined;
   const [game, edition, platform, version] = fields;
   const gameSegment = game

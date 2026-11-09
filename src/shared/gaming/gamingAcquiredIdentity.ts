@@ -17,7 +17,8 @@ export function isGamingAcquiredGameSurface(value: string): boolean {
  * Without a nominal prefix, "in the game" refers to the established article game;
  * the following player instructions are not a newly named title. Keep case and
  * complete nominal suffixes so titles such as "Minecraft Has Fallen" stay intact. */
-export function gamingAcquiredNominalScope(value: string, commaDelimited = false, namedGameScope = false): string | undefined {
+export function gamingAcquiredNominalScope(value: string, commaDelimited = false, namedGameScope = false,
+  precedingClause = ''): string | undefined {
   // Lowercase game surfaces are ordinary locations, not independently named
   // titles. Keep capitalized names and unfamiliar nominal continuations binding.
   if (namedGameScope && isGamingAcquiredGameSurface(value)) return '';
@@ -27,6 +28,9 @@ export function gamingAcquiredNominalScope(value: string, commaDelimited = false
   const nameEnd = known ? Math.max(0, ...[known.name, ...known.aliases].map(name =>
     new RegExp(`^${gamingRegistryLiteralPattern(name)}(?=$|[^\\p{L}\\p{N}])`, 'iu').exec(value)?.[0].length ?? 0)) : 0;
   const continuationText = value.slice(nameEnd);
+  // A degree complement describes timing in the established game, not a title.
+  if (!known && namedGameScope && !commaDelimited && /\b(?:enough|so)\s*$/u.test(precedingClause)
+    && /^that there (?:is|are)\b/u.test(value) && !detectGamingRegistryAlias(value)) return '';
   // A pronoun-shaped title can also be a complete sentence. A comma closes
   // the acquired nominal scope regardless of capitalization; without that
   // boundary, keep its title/predicate ambiguity explicit rather than dropping it.
@@ -39,6 +43,15 @@ export function gamingAcquiredNominalScope(value: string, commaDelimited = false
   if (personClause && personClause.index > 0)
     return value.slice(0, nameEnd + personClause.index).trim();
   if (personClause?.index === 0) return value.slice(0, nameEnd).trim();
+  // Embedded "in the game" can end before a purpose or means adjunct.
+  // Keep independent player clauses, comma-delimited names, recognized games,
+  // sentence-initial names and capitalized introductory prepositions under normal inspection.
+  // These grammatical frames supply no positive identity or applicability proof.
+  if (!known && namedGameScope && !commaDelimited && precedingClause.trim() && !detectGamingRegistryAlias(value)) {
+    const purpose = /^for both (?:[\p{L}\p{N}][\p{L}\p{N}'’-]* ){0,7}[\p{L}\p{N}][\p{L}\p{N}'’-]* and (?:[\p{L}\p{N}][\p{L}\p{N}'’-]* ){0,7}[\p{L}\p{N}][\p{L}\p{N}'’-]*$/u;
+    const means = /^by \p{Ll}[\p{L}'’-]{0,30}ing (?:(?:the|an?|your|our|their|his|her|its|this|that|these|those|one|two|three|four|five|six|seven|eight|nine|ten|some|several|many|more|enough|all|any)\b|\d+\b|\p{L}[\p{L}'’-]{0,50}['’]s\s+\p{L})/u;
+    if (purpose.test(value) || means.test(value)) return '';
+  }
   // Multiword unfamiliar names followed directly by a finite predicate have
   // no independent subject boundary. Do not infer a different scope from case.
   if (!known && namedGameScope && /^(?!(?:the|your|our|their)\b)(?:\p{L}[\p{L}'’]*\s+){2,}(?:is|are|has|have|can|could|may|might|must|should|will|would|starts?|begins?|rewards?|requires?|offers?|contains?)\b/iu.test(value))

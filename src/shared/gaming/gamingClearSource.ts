@@ -123,7 +123,7 @@ function acquiredBodySubjects(prose: string): { subjects: Array<{ text: string; 
     const subjectClause = subjectWindow.slice(0, boundary?.index ?? subjectWindow.length).trim();
     let ambiguousNominalScope = false;
     const nominalScope = (value: string, commaDelimited = false): string => {
-      const subject = gamingAcquiredNominalScope(value, commaDelimited, /^in the game\b/iu.test(match[0]));
+      const subject = gamingAcquiredNominalScope(value, commaDelimited, /^in the game\b/iu.test(match[0]), prefix);
       if (subject === undefined) ambiguousNominalScope = true;
       return subject ?? '';
     };
