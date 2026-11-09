@@ -4,6 +4,7 @@ import { normalizeGamingRegistryEdition, gamingRegistryEditionChoices, gamingReg
 import { createGamingSourceEvaluation, GAMING_SOURCE_EVALUATION_VERSION, GAMING_SOURCE_EVALUATION_RULE_VERSION } from '@shared/gaming/gamingSourceEvaluation.js';
 import { normalizeGamingPlatformIdentity } from '@shared/gaming/gamingPlatformIdentity.js';
 import { createHash, randomUUID } from 'node:crypto';
+import { createLinkedAbortController, getRequestRemainingMs } from '@arcanos/runtime';
 import { getEnvBoolean } from '@platform/runtime/env.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { redactString } from '@shared/redaction.js';
@@ -24,6 +25,9 @@ import { assessGamingClaimCorroboration } from '@shared/gaming/gamingClaimCorrob
 import { GAMING_CLEAR_APPROVED_ANSWER, hasBoundGamingClearAnswer, type GamingClearAnswerCarrier } from '@shared/gaming/gamingClearAnswerBinding.js';
 import { gamingClearHash } from '@shared/gaming/gamingClearPolicy.js';
 import { gamingSourceAuthorityGameKeys } from '@shared/gaming/gamingSourceAuthority.js';
+import { GAMING_EXECUTION_OUTER_HEADROOM_MS, GAMING_PROVIDER_DISPATCH_HEADROOM_MS } from '@shared/gaming/gamingExecutionBudgetCore.js';
+import { GAMING_GENERATION_FINAL_STAGE_RESERVE_MS, GAMING_GENERATION_ANSWER_AUDIT_RESERVE_MS,
+  GAMING_GENERATION_TERMINAL_HEADROOM_MS, GAMING_RUNTIME_BUDGET_SAFETY_BUFFER_MS } from '@shared/gaming/gamingGenerationBudgetCore.js';
 import { readGamingSourceAuthoritySnapshot } from '@core/db/repositories/gamingSourceRepository.js';
 import { resolveGamingFreshnessDisposition, selectGamingAdvisoryGameplayEvidence, isGamingAdvisoryCurrentnessOperation,
   gamingAnswerClaimsVerifiedCurrentness } from '@shared/gaming/gamingFreshnessDisposition.js';
@@ -59,6 +63,7 @@ type Workflow = {
   id: string; actor: string; createdAt: number; input: GamingHybridQuery; pipeline: GamingPipelineInput;
   revision: number; closed?: boolean; activeOperationKey?: string;
   acquisitionWorkMs: number; submittedUrls: Set<string>; attemptedAcquisitionUrls: Set<string>;
+  backendAcquisitionAllowanceMs?: number;
   round: number; currentnessRound: number; accepted: GamingHybridAcceptedCandidate[]; operations: Map<string, Operation>;
   retained?: GamingHybridRetainedCandidate[];
   pendingDiscovery?: DiscoveryType;
@@ -78,6 +83,11 @@ type Workflow = {
   evidenceExpiresAt?: number;
 };
 const hash = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+// Leave the existing provider dispatch, final/audit and outer validation/response
+// reserves available after automatic acquisition. This grants no extra time.
+const BACKEND_GENERATION_RESERVE_MS = GAMING_EXECUTION_OUTER_HEADROOM_MS + GAMING_PROVIDER_DISPATCH_HEADROOM_MS
+  + GAMING_GENERATION_FINAL_STAGE_RESERVE_MS + GAMING_GENERATION_ANSWER_AUDIT_RESERVE_MS
+  + GAMING_GENERATION_TERMINAL_HEADROOM_MS + GAMING_RUNTIME_BUDGET_SAFETY_BUFFER_MS;
 /** Account for the admitted acquisition URL, so tracking aliases cannot spend recovery on the same source. */
 function candidateSubmissionUrl(value: string): string {
   const admission = sanitizeGamingDiscoveryCandidateUrl(value);
@@ -856,10 +866,17 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
         if (workflow.closed || result.body.nextAction !== 'search'
           || result.body.discovery?.type !== 'gameplay_evidence' || !result.body.discovery.continuationRequired
           || workflow.round > 0 && !result.body.discovery.replacementAllowed) break;
+        const remainingMs = getRequestRemainingMs();
+        const automaticWorkMs = remainingMs === null ? null : Math.max(0, remainingMs - BACKEND_GENERATION_RESERVE_MS);
+        // Return the already-issued host grant rather than close this workflow
+        // through an HTTP timeout after spending its acquisition allowance.
+        if (automaticWorkMs !== null && automaticWorkMs <= 0) break;
         const revision = workflow.revision;
         const key = `backend-search:${revision}`;
         if (workflow.activeOperationKey) return failure(context, 'SUBMISSION_IN_PROGRESS', 409, workflow);
         workflow.activeOperationKey = key;
+        const searchAbort = automaticWorkMs === null ? undefined : createLinkedAbortController({
+          timeoutMs: automaticWorkMs, parentSignal: context.signal });
         let discovered: Awaited<ReturnType<typeof deps.discover>>;
         try {
           discovered = await deps.discover({ game: workflow.input.game, prompt: redactString(workflow.input.question),
@@ -867,9 +884,12 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
             currentArea: workflow.pipeline.currentArea, class: workflow.pipeline.class, constraints: workflow.pipeline.constraints,
             requestedVersion: workflow.input.requestedVersion,
             patchSensitive: classifyGamingQuestionFreshness(workflow.pipeline) !== 'stable',
-            queryVariants: true, refreshSearch: workflow.round > 0, signal: context.signal,
+            queryVariants: true, refreshSearch: workflow.round > 0, signal: searchAbort?.signal ?? context.signal,
             excludedUrls: [...new Set([...workflow.submittedUrls, ...workflow.attemptedAcquisitionUrls])] });
-        } finally { if (workflow.activeOperationKey === key) workflow.activeOperationKey = undefined; }
+        } finally {
+          searchAbort?.cleanup();
+          if (workflow.activeOperationKey === key) workflow.activeOperationKey = undefined;
+        }
         context.signal?.throwIfAborted();
         if (deps.now() - workflow.createdAt >= Math.min(LIMITS.workflowTtlMs,
           GAMING_FRESHNESS_DEFAULTS[classifyGamingQuestionFreshness(workflow.pipeline)]))
@@ -890,9 +910,16 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
           return [{ url: admission.url }];
         }).slice(0, result.body.discovery.nextSubmissionCandidateLimit ?? 0);
         if (!candidates.length) break;
-        result = await api.candidates({ contractVersion: GAMING_HYBRID_V2_CONTRACT_VERSION,
-          workflowId: workflow.id, expectedRevision: revision, idempotencyKey: key,
-          discoveryType: 'gameplay_evidence', candidates }, context);
+        const afterSearchMs = getRequestRemainingMs();
+        const acquisitionMs = afterSearchMs === null ? LIMITS.candidateTimeoutMs
+          : Math.min(LIMITS.candidateTimeoutMs, Math.max(0, afterSearchMs - BACKEND_GENERATION_RESERVE_MS));
+        if (acquisitionMs <= 0) break;
+        workflow.backendAcquisitionAllowanceMs = acquisitionMs;
+        try {
+          result = await api.candidates({ contractVersion: GAMING_HYBRID_V2_CONTRACT_VERSION,
+            workflowId: workflow.id, expectedRevision: revision, idempotencyKey: key,
+            discoveryType: 'gameplay_evidence', candidates }, context);
+        } finally { workflow.backendAcquisitionAllowanceMs = undefined; }
       }
       return result;
     });
@@ -1128,6 +1155,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
         }
         const acquisitionStartedAt = deps.now();
         const acquisitionAllowanceMs = v2 && !currentness ? Math.min(LIMITS.candidateTimeoutMs,
+          workflow.backendAcquisitionAllowanceMs ?? LIMITS.candidateTimeoutMs,
           Math.max(0, GAMING_HYBRID_V2_LIMITS.totalCandidateTimeoutMs - workflow.acquisitionWorkMs)) : LIMITS.candidateTimeoutMs;
         let evaluated: Awaited<ReturnType<typeof deps.evaluateCandidates>>;
         let chargedAcquisitionMs = 0;

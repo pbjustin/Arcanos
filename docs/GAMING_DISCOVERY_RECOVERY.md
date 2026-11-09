@@ -54,6 +54,16 @@ set. It excludes submitted URLs and sanitized admitted acquisition destinations,
 including failed redirects. Failed work is still charged; there is no new retry
 allowance, crawler or access-control bypass.
 
+Automatic work also honors the remaining HTTP request deadline. It preserves
+the existing outer validation/response, provider dispatch, final-answer, audit
+and terminal reserves (24.5 seconds combined), bounds search to the remaining
+automatic-work window, and caps acquisition by what remains after search. If
+that window is exhausted, it returns the existing resumable host-search grant
+with accepted evidence and unspent acquisition allowance intact. A later host
+submission uses the same workflow/revision; this does not grant a new round or
+extend the absolute workflow TTL. Requests without an inherited deadline keep
+the existing discovery/acquisition bounds.
+
 ARCANOS independently acquires source content and checks identity, integrity,
 relevance, applicability and provenance through the existing document resolver,
 selection, coverage and CLEAR path. The backend selects a compact evidence set
