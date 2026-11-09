@@ -1,0 +1,582 @@
+{
+  "baselineProcedure": "Original base selector behavior, with only the newly added explicit-edition prefilter removed; then restored in finally. Fixture set is identical.",
+  "toolchain": "Node 24.18.1 / npm 11.16.0; Windows; Jest in-band",
+  "before": {
+    "version": "gaming-lexical-selection/v1",
+    "baseSha": "eea2d0b6ed72d00e3489a9f8ddf45335b3aa1e86",
+    "scope": "production pure post-query selector; fixed candidate ranks; no PostgreSQL or provider acceptance",
+    "records": 15,
+    "cases": 15,
+    "k": 3,
+    "recallAt3": 0.8,
+    "precisionAt3": 0.3111111111111111,
+    "meanReturnedPrecision": 0.8,
+    "pooledReturnedPrecision": 0.9333333333333333,
+    "requestCoverageRate": 0.8,
+    "clearAcceptRate": 0.7333333333333333,
+    "exactRecallAt3": 1,
+    "paraphraseRecallAt3": 0.5,
+    "provenanceIntegrityRate": 1,
+    "falseAuthorityAccepted": 0,
+    "iterations": 5,
+    "batchElapsedMs": [
+      36.62349999999992,
+      34.693899999999985,
+      33.85120000000006,
+      31.990800000000036,
+      32.19620000000009
+    ],
+    "batchMedianMs": 33.85120000000006,
+    "batchMaxMs": 36.62349999999992,
+    "cpuUserMicros": 171000,
+    "cpuSystemMicros": 63000,
+    "heapDeltaBytes": 19116840,
+    "maxRssKiB": 180032,
+    "observations": [
+      {
+        "id": "named-load",
+        "kind": "exact",
+        "query": "\"equipment\" OR \"load\"",
+        "selected": [
+          "load"
+        ],
+        "relevant": [
+          "load"
+        ],
+        "recallAt3": 1,
+        "precisionAt3": 0.3333333333333333,
+        "returnedPrecision": 1,
+        "coverage": true,
+        "clearDecision": "accept",
+        "provenanceIntact": true
+      },
+      {
+        "id": "named-stamina",
+        "kind": "exact",
+        "query": "\"stamina\" OR \"recovery\"",
+        "selected": [
+          "stamina"
+        ],
+        "relevant": [
+          "stamina"
+        ],
+        "recallAt3": 1,
+        "precisionAt3": 0.3333333333333333,
+        "returnedPrecision": 1,
+        "coverage": true,
+        "clearDecision": "accept",
+        "provenanceIntact": true
+      },
+      {
+        "id": "named-poise",
+        "kind": "exact",
+        "query": "\"poise\"",
+        "selected": [
+          "poise"
+        ],
+        "relevant": [
+          "poise"
+        ],
+        "recallAt3": 1,
+        "precisionAt3": 0.3333333333333333,
+        "returnedPrecision": 1,
+        "coverage": true,
+        "clearDecision": "accept",
+        "provenanceIntact": true
+      },
+      {
+        "id": "named-crafting",
+        "kind": "exact",
+        "query": "\"craft\" OR \"crafting\" OR \"table\"",
+        "selected": [
+          "craft"
+        ],
+        "relevant": [
+          "craft"
+        ],
+        "recallAt3": 1,
+        "precisionAt3": 0.3333333333333333,
+        "returnedPrecision": 1,
+        "coverage": true,
+        "clearDecision": "accept",
+        "provenanceIntact": true
+      },
+      {
+        "id": "named-shield",
+        "kind": "exact",
+        "query": "\"deku\" OR \"shield\" OR \"sold\"",
+        "selected": [
+          "shield"
+        ],
+        "relevant": [
+          "shield"
+        ],
+        "recallAt3": 1,
+        "precisionAt3": 0.3333333333333333,
+        "returnedPrecision": 1,
+        "coverage": true,
+        "clearDecision": "accept",
+        "provenanceIntact": true
+      },
+      {
+        "id": "unknown-bridge",
+        "kind": "exact",
+        "query": "\"repair\" OR \"copper\" OR \"bridge\"",
+        "selected": [
+          "bridge"
+        ],
+        "relevant": [
+          "bridge"
+        ],
+        "recallAt3": 1,
+        "precisionAt3": 0.3333333333333333,
+        "returnedPrecision": 1,
+        "coverage": true,
+        "clearDecision": "accept",
+        "provenanceIntact": true
+      },
+      {
+        "id": "unknown-gate",
+        "kind": "exact",
+        "query": "\"open\" OR \"amber\" OR \"gate\"",
+        "selected": [
+          "gate"
+        ],
+        "relevant": [
+          "gate"
+        ],
+        "recallAt3": 1,
+        "precisionAt3": 0.3333333333333333,
+        "returnedPrecision": 1,
+        "coverage": true,
+        "clearDecision": "accept",
+        "provenanceIntact": true
+      },
+      {
+        "id": "coordinated-name",
+        "kind": "exact",
+        "query": "\"blade\" OR \"wind\" OR \"rain\"",
+        "selected": [
+          "weapon"
+        ],
+        "relevant": [
+          "weapon"
+        ],
+        "recallAt3": 1,
+        "precisionAt3": 0.3333333333333333,
+        "returnedPrecision": 1,
+        "coverage": true,
+        "clearDecision": "accept",
+        "provenanceIntact": true
+      },
+      {
+        "id": "load-paraphrase",
+        "kind": "paraphrase",
+        "query": "\"dodging\" OR \"feel\" OR \"sluggish\"",
+        "selected": [],
+        "relevant": [
+          "load"
+        ],
+        "recallAt3": 0,
+        "precisionAt3": 0,
+        "returnedPrecision": 0,
+        "coverage": false,
+        "clearDecision": "reject",
+        "provenanceIntact": true
+      },
+      {
+        "id": "poise-paraphrase",
+        "kind": "paraphrase",
+        "query": "\"resist\" OR \"stagger\" OR \"interruption\"",
+        "selected": [
+          "poise"
+        ],
+        "relevant": [
+          "poise"
+        ],
+        "recallAt3": 1,
+        "precisionAt3": 0.3333333333333333,
+        "returnedPrecision": 1,
+        "coverage": true,
+        "clearDecision": "accept",
+        "provenanceIntact": true
+      },
+      {
+        "id": "bridge-paraphrase",
+        "kind": "paraphrase",
+        "query": "\"restore\" OR \"damaged\" OR \"crossing\"",
+        "selected": [
+          "bridge"
+        ],
+        "relevant": [
+          "bridge"
+        ],
+        "recallAt3": 1,
+        "precisionAt3": 0.3333333333333333,
+        "returnedPrecision": 1,
+        "coverage": false,
+        "clearDecision": "reject",
+        "provenanceIntact": true
+      },
+      {
+        "id": "gate-paraphrase",
+        "kind": "paraphrase",
+        "query": "\"unlock\" OR \"entrance\"",
+        "selected": [],
+        "relevant": [
+          "gate"
+        ],
+        "recallAt3": 0,
+        "precisionAt3": 0,
+        "returnedPrecision": 0,
+        "coverage": false,
+        "clearDecision": "reject",
+        "provenanceIntact": true
+      },
+      {
+        "id": "two-mechanics",
+        "kind": "multi-source",
+        "query": "\"equipment\" OR \"load\" OR \"stamina\" OR \"recovery\"",
+        "selected": [
+          "load",
+          "stamina"
+        ],
+        "relevant": [
+          "load",
+          "stamina"
+        ],
+        "recallAt3": 1,
+        "precisionAt3": 0.6666666666666666,
+        "returnedPrecision": 1,
+        "coverage": true,
+        "clearDecision": "accept",
+        "provenanceIntact": true
+      },
+      {
+        "id": "two-procedures",
+        "kind": "multi-source",
+        "query": "\"repair\" OR \"copper\" OR \"bridge\" OR \"also\" OR \"open\" OR \"amber\" OR \"gate\"",
+        "selected": [
+          "gate",
+          "bridge"
+        ],
+        "relevant": [
+          "bridge",
+          "gate"
+        ],
+        "recallAt3": 1,
+        "precisionAt3": 0.6666666666666666,
+        "returnedPrecision": 1,
+        "coverage": true,
+        "clearDecision": "accept",
+        "provenanceIntact": true
+      },
+      {
+        "id": "authority-isolation",
+        "kind": "authority",
+        "query": "\"equipment\" OR \"load\"",
+        "selected": [
+          "foreign-edition"
+        ],
+        "relevant": [
+          "load"
+        ],
+        "recallAt3": 0,
+        "precisionAt3": 0,
+        "returnedPrecision": 0,
+        "coverage": true,
+        "clearDecision": "reject",
+        "provenanceIntact": true
+      }
+    ]
+  },
+  "after": {
+    "version": "gaming-lexical-selection/v1",
+    "baseSha": "eea2d0b6ed72d00e3489a9f8ddf45335b3aa1e86",
+    "scope": "production pure post-query selector; fixed candidate ranks; no PostgreSQL or provider acceptance",
+    "records": 15,
+    "cases": 15,
+    "k": 3,
+    "recallAt3": 0.8666666666666667,
+    "precisionAt3": 0.3333333333333333,
+    "meanReturnedPrecision": 0.8666666666666667,
+    "pooledReturnedPrecision": 1,
+    "requestCoverageRate": 0.8,
+    "clearAcceptRate": 0.8,
+    "exactRecallAt3": 1,
+    "paraphraseRecallAt3": 0.5,
+    "provenanceIntegrityRate": 1,
+    "falseAuthorityAccepted": 0,
+    "iterations": 5,
+    "batchElapsedMs": [
+      37.67039999999997,
+      33.1665999999999,
+      30.2432,
+      33.7808,
+      31.147199999999998
+    ],
+    "batchMedianMs": 33.1665999999999,
+    "batchMaxMs": 37.67039999999997,
+    "cpuUserMicros": 203000,
+    "cpuSystemMicros": 32000,
+    "heapDeltaBytes": -1824048,
+    "maxRssKiB": 183372,
+    "observations": [
+      {
+        "id": "named-load",
+        "kind": "exact",
+        "query": "\"equipment\" OR \"load\"",
+        "selected": [
+          "load"
+        ],
+        "relevant": [
+          "load"
+        ],
+        "recallAt3": 1,
+        "precisionAt3": 0.3333333333333333,
+        "returnedPrecision": 1,
+        "coverage": true,
+        "clearDecision": "accept",
+        "provenanceIntact": true
+      },
+      {
+        "id": "named-stamina",
+        "kind": "exact",
+        "query": "\"stamina\" OR \"recovery\"",
+        "selected": [
+          "stamina"
+        ],
+        "relevant": [
+          "stamina"
+        ],
+        "recallAt3": 1,
+        "precisionAt3": 0.3333333333333333,
+        "returnedPrecision": 1,
+        "coverage": true,
+        "clearDecision": "accept",
+        "provenanceIntact": true
+      },
+      {
+        "id": "named-poise",
+        "kind": "exact",
+        "query": "\"poise\"",
+        "selected": [
+          "poise"
+        ],
+        "relevant": [
+          "poise"
+        ],
+        "recallAt3": 1,
+        "precisionAt3": 0.3333333333333333,
+        "returnedPrecision": 1,
+        "coverage": true,
+        "clearDecision": "accept",
+        "provenanceIntact": true
+      },
+      {
+        "id": "named-crafting",
+        "kind": "exact",
+        "query": "\"craft\" OR \"crafting\" OR \"table\"",
+        "selected": [
+          "craft"
+        ],
+        "relevant": [
+          "craft"
+        ],
+        "recallAt3": 1,
+        "precisionAt3": 0.3333333333333333,
+        "returnedPrecision": 1,
+        "coverage": true,
+        "clearDecision": "accept",
+        "provenanceIntact": true
+      },
+      {
+        "id": "named-shield",
+        "kind": "exact",
+        "query": "\"deku\" OR \"shield\" OR \"sold\"",
+        "selected": [
+          "shield"
+        ],
+        "relevant": [
+          "shield"
+        ],
+        "recallAt3": 1,
+        "precisionAt3": 0.3333333333333333,
+        "returnedPrecision": 1,
+        "coverage": true,
+        "clearDecision": "accept",
+        "provenanceIntact": true
+      },
+      {
+        "id": "unknown-bridge",
+        "kind": "exact",
+        "query": "\"repair\" OR \"copper\" OR \"bridge\"",
+        "selected": [
+          "bridge"
+        ],
+        "relevant": [
+          "bridge"
+        ],
+        "recallAt3": 1,
+        "precisionAt3": 0.3333333333333333,
+        "returnedPrecision": 1,
+        "coverage": true,
+        "clearDecision": "accept",
+        "provenanceIntact": true
+      },
+      {
+        "id": "unknown-gate",
+        "kind": "exact",
+        "query": "\"open\" OR \"amber\" OR \"gate\"",
+        "selected": [
+          "gate"
+        ],
+        "relevant": [
+          "gate"
+        ],
+        "recallAt3": 1,
+        "precisionAt3": 0.3333333333333333,
+        "returnedPrecision": 1,
+        "coverage": true,
+        "clearDecision": "accept",
+        "provenanceIntact": true
+      },
+      {
+        "id": "coordinated-name",
+        "kind": "exact",
+        "query": "\"blade\" OR \"wind\" OR \"rain\"",
+        "selected": [
+          "weapon"
+        ],
+        "relevant": [
+          "weapon"
+        ],
+        "recallAt3": 1,
+        "precisionAt3": 0.3333333333333333,
+        "returnedPrecision": 1,
+        "coverage": true,
+        "clearDecision": "accept",
+        "provenanceIntact": true
+      },
+      {
+        "id": "load-paraphrase",
+        "kind": "paraphrase",
+        "query": "\"dodging\" OR \"feel\" OR \"sluggish\"",
+        "selected": [],
+        "relevant": [
+          "load"
+        ],
+        "recallAt3": 0,
+        "precisionAt3": 0,
+        "returnedPrecision": 0,
+        "coverage": false,
+        "clearDecision": "reject",
+        "provenanceIntact": true
+      },
+      {
+        "id": "poise-paraphrase",
+        "kind": "paraphrase",
+        "query": "\"resist\" OR \"stagger\" OR \"interruption\"",
+        "selected": [
+          "poise"
+        ],
+        "relevant": [
+          "poise"
+        ],
+        "recallAt3": 1,
+        "precisionAt3": 0.3333333333333333,
+        "returnedPrecision": 1,
+        "coverage": true,
+        "clearDecision": "accept",
+        "provenanceIntact": true
+      },
+      {
+        "id": "bridge-paraphrase",
+        "kind": "paraphrase",
+        "query": "\"restore\" OR \"damaged\" OR \"crossing\"",
+        "selected": [
+          "bridge"
+        ],
+        "relevant": [
+          "bridge"
+        ],
+        "recallAt3": 1,
+        "precisionAt3": 0.3333333333333333,
+        "returnedPrecision": 1,
+        "coverage": false,
+        "clearDecision": "reject",
+        "provenanceIntact": true
+      },
+      {
+        "id": "gate-paraphrase",
+        "kind": "paraphrase",
+        "query": "\"unlock\" OR \"entrance\"",
+        "selected": [],
+        "relevant": [
+          "gate"
+        ],
+        "recallAt3": 0,
+        "precisionAt3": 0,
+        "returnedPrecision": 0,
+        "coverage": false,
+        "clearDecision": "reject",
+        "provenanceIntact": true
+      },
+      {
+        "id": "two-mechanics",
+        "kind": "multi-source",
+        "query": "\"equipment\" OR \"load\" OR \"stamina\" OR \"recovery\"",
+        "selected": [
+          "load",
+          "stamina"
+        ],
+        "relevant": [
+          "load",
+          "stamina"
+        ],
+        "recallAt3": 1,
+        "precisionAt3": 0.6666666666666666,
+        "returnedPrecision": 1,
+        "coverage": true,
+        "clearDecision": "accept",
+        "provenanceIntact": true
+      },
+      {
+        "id": "two-procedures",
+        "kind": "multi-source",
+        "query": "\"repair\" OR \"copper\" OR \"bridge\" OR \"also\" OR \"open\" OR \"amber\" OR \"gate\"",
+        "selected": [
+          "gate",
+          "bridge"
+        ],
+        "relevant": [
+          "bridge",
+          "gate"
+        ],
+        "recallAt3": 1,
+        "precisionAt3": 0.6666666666666666,
+        "returnedPrecision": 1,
+        "coverage": true,
+        "clearDecision": "accept",
+        "provenanceIntact": true
+      },
+      {
+        "id": "authority-isolation",
+        "kind": "authority",
+        "query": "\"equipment\" OR \"load\"",
+        "selected": [
+          "load"
+        ],
+        "relevant": [
+          "load"
+        ],
+        "recallAt3": 1,
+        "precisionAt3": 0.3333333333333333,
+        "returnedPrecision": 1,
+        "coverage": true,
+        "clearDecision": "accept",
+        "provenanceIntact": true
+      }
+    ]
+  }
+}

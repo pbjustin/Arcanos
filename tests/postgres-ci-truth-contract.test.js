@@ -46,6 +46,7 @@ const POSTGRES_TEST_FILES = [
   'tests/integration/gaming-cr2-source-hold.pg18.integration.test.ts',
   'tests/integration/gaming-authority-http.pg18.integration.test.ts',
   'tests/integration/gaming-hybrid-authority-revocation.pg18.integration.test.ts',
+  'tests/integration/gaming-heldout-lexical.pg18.integration.test.ts',
   'tests/integration/gpt-access-device-auth.pg18.integration.test.ts',
   'tests/integration/dag-token-accounting.pg18.integration.test.ts',
   'tests/dag-accounting-e2e.test.ts',

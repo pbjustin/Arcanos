@@ -3,7 +3,7 @@ import { selectGamingDocumentExcerpt } from '@services/gamingDocumentChunks.js';
 import { filterGamingDocumentInstructions } from '@services/gamingDocumentExtraction.js';
 import type { GamingPlayerContext } from './gamingPlayerContext.js';
 import { buildGamingRetrievalTerms, hasGamingRelevantGuideContribution, buildGamingRequestRequirements, gamingTermCoverage, safeGamingEvidenceMetadata, scopeGamingEvidenceParagraphs } from './gamingRetrievalPolicy.js';
-import { normalizeGamingEvidenceGameIdentity, resolveGamingGuideIdentity } from './gamingGameIdentity.js';
+import { gamingEditionEvidenceMatchesRequest, normalizeGamingEvidenceGameIdentity, resolveGamingGuideIdentity, resolveGamingRequestEdition } from './gamingGameIdentity.js';
 import type { GamingClearAssessment } from './gamingClearPolicy.js';
 import type { GamingClaimCorroborationSummary } from './gamingClaimCorroboration.js';
 import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
@@ -253,6 +253,10 @@ function projectCandidate<RecordType extends GamingStoredEvidenceRecord>(record:
   const sourceEdition = typeof provenance.edition === 'string' ? provenance.edition
     : typeof freshnessMetadata?.edition === 'string' ? freshnessMetadata.edition
       : typeof acquiredApplicability?.edition === 'string' ? acquiredApplicability.edition : undefined;
+  const requestEdition = resolveGamingRequestEdition(input);
+  // A known incompatible prose passage cannot displace compatible support and
+  // force the later CLEAR gate to refuse an otherwise answerable request.
+  if (sourceEdition && requestEdition && !gamingEditionEvidenceMatchesRequest(sourceEdition, requestEdition, input)) return null;
   const editionScoped = selectGamingSourceEditionScopedEvidence(gameScoped.document, input, sourceEdition);
   if (editionScoped.status === 'conflict' || editionScoped.status === 'unverified' && editionScoped.reasonCodes.length) return null;
   evidenceUnits = editionScoped.status === 'verified' ? editionScoped.units : [...gameScoped.document.evidenceUnits];

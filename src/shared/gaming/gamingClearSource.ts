@@ -1,5 +1,5 @@
 import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest } from './gamingGameIdentity.js';
-import { gamingRegistryDistinctScopeQualifier, gamingRegistryExpansionNames, gamingRegistrySourceGameMatchesRequest,
+import { detectGamingRegistryAlias, gamingRegistryDistinctScopeQualifier, gamingRegistryExpansionNames, gamingRegistrySourceGameMatchesRequest,
   normalizeGamingRegistryEdition, readGamingRegistryEditionScope, resolveGamingRegistryGame, gamingApplicabilityAssertionContext } from './gamingGameRegistry.js';
 import { resolveGamingFreshnessDisposition } from './gamingFreshnessDisposition.js';
 import { classifyGamingDocumentQuality, detectGamingDocumentGame } from './gamingDocumentIngestionCore.js';
@@ -123,7 +123,7 @@ function acquiredBodySubjects(prose: string): { subjects: Array<{ text: string; 
     const subjectClause = subjectWindow.slice(0, boundary?.index ?? subjectWindow.length).trim();
     let ambiguousNominalScope = false;
     const nominalScope = (value: string, commaDelimited = false): string => {
-      const subject = gamingAcquiredNominalScope(value, commaDelimited, /^in the game\b/iu.test(match[0]));
+      const subject = gamingAcquiredNominalScope(value, commaDelimited, /^in the game\b/iu.test(match[0]), prefix);
       if (subject === undefined) ambiguousNominalScope = true;
       return subject ?? '';
     };
@@ -131,6 +131,19 @@ function acquiredBodySubjects(prose: string): { subjects: Array<{ text: string; 
     // Keep the quote's own bounds; a later gameplay predicate cannot rename it.
     const quotedName = quotedNames.find(name => name.start >= subjectStart && name.end <= subjectStart + subjectWindow.length
       && /^\s*$/u.test(unquoted.slice(subjectStart, name.start)));
+    // An explicit spoiler warning may list character events rather than name a
+    // game. Inspect its complete bounded sentence; retain its text and every
+    // other declaration for applicability, spoiler and contradiction checks.
+    if (!quotedName && /^this\s+guide\s+covers\s+$/iu.test(match[0])
+      && prefixComplete && /^(?:chapter\s+\d{1,3}\s+)?spoiler\s+warning\s*:\s*$/iu.test(prefix.trim())) {
+      const warningEnd = /[.!?;\n]/u.exec(subjectWindow)?.index;
+      const warning = warningEnd === undefined ? '' : subjectWindow.slice(0, warningEnd).trim();
+      const event = "\\p{Lu}[\\p{L}-]{0,39}['’]s\\s+\\p{Ll}[\\p{L}-]{0,39}";
+      const encounters = '\\p{Lu}[\\p{L}-]{0,39}(?:\\s+and\\s+\\p{Lu}[\\p{L}-]{0,39})?\\s+encounters';
+      if (new RegExp(`^${event}(?:(?:,\\s*(?:and\\s+)?|\\s+and\\s+)${event})*(?:,\\s+and\\s+the\\s+full\\s+${encounters})?$`, 'u').test(warning)
+        && !detectGamingRegistryAlias(warning)
+        && !/\b(?:game|edition|platform|patch|build|version|season|region|remaster(?:ed)?|remake|classic|dlc|expansion)\b/iu.test(warning)) continue;
+    }
     // Only a prepositional scope can continue with a gameplay predicate. A
     // source-global declaration owns its entire nominal subject, including
     // sentence-like titles regardless of capitalization.

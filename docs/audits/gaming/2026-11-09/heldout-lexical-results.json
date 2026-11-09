@@ -1,0 +1,1700 @@
+{
+  "version": "gaming-heldout-acceptance/v1",
+  "captureBoundary": "Original base and reviewed feature head with identical uncommitted held-out fixture/test files; authored synthetic source grants; real isolated PostgreSQL 18.6; no paid calls or generated answers",
+  "baseline": {
+    "executionRevision": "eea2d0b6ed72d00e3489a9f8ddf45335b3aa1e86",
+    "testsPassed": 46,
+    "testsFailed": 0,
+    "testsSkipped": 0,
+    "selector": {
+      "version": "gaming-heldout-lexical/v1",
+      "studyHead": "c6c05d799d276c35ca2f76588f209b45ba7c0fb1",
+      "scope": "actual service projection/selection/formatting and deterministic CLEAR; supplied equal-rank rows; no SQL or generated answer",
+      "positiveQuestions": 13,
+      "restrictionControls": 9,
+      "macroRecallAt3": 0.7692307692307693,
+      "macroPrecisionAt3": 0.30769230769230765,
+      "clearAcceptCount": 9,
+      "falseAuthorityAccepted": 0,
+      "observations": [
+        {
+          "id": "heldout-equip-load",
+          "kind": "exact",
+          "selected": [
+            "equip-burden"
+          ],
+          "relevant": [
+            "equip-burden"
+          ],
+          "recallAt3": 1,
+          "precisionAt3": 0.3333333333333333,
+          "coverage": true,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-focus",
+          "kind": "exact",
+          "selected": [
+            "soul-focus"
+          ],
+          "relevant": [
+            "soul-focus"
+          ],
+          "recallAt3": 1,
+          "precisionAt3": 0.3333333333333333,
+          "coverage": true,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-anchor",
+          "kind": "exact",
+          "selected": [
+            "anchor"
+          ],
+          "relevant": [
+            "anchor"
+          ],
+          "recallAt3": 1,
+          "precisionAt3": 0.3333333333333333,
+          "coverage": true,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-recharge",
+          "kind": "exact",
+          "selected": [
+            "recharge"
+          ],
+          "relevant": [
+            "recharge"
+          ],
+          "recallAt3": 1,
+          "precisionAt3": 0.3333333333333333,
+          "coverage": true,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-frost",
+          "kind": "exact",
+          "selected": [
+            "frost"
+          ],
+          "relevant": [
+            "frost"
+          ],
+          "recallAt3": 1,
+          "precisionAt3": 0.3333333333333333,
+          "coverage": true,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-sword",
+          "kind": "exact",
+          "selected": [
+            "sword"
+          ],
+          "relevant": [
+            "sword"
+          ],
+          "recallAt3": 1,
+          "precisionAt3": 0.3333333333333333,
+          "coverage": true,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-spoiler-scope",
+          "kind": "exact",
+          "selected": [
+            "safe-key"
+          ],
+          "relevant": [
+            "safe-key"
+          ],
+          "recallAt3": 1,
+          "precisionAt3": 0.3333333333333333,
+          "coverage": true,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-two-procedures",
+          "kind": "complementary",
+          "selected": [
+            "anchor",
+            "recharge"
+          ],
+          "relevant": [
+            "anchor",
+            "recharge"
+          ],
+          "recallAt3": 1,
+          "precisionAt3": 0.6666666666666666,
+          "coverage": true,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-two-mechanics",
+          "kind": "complementary",
+          "selected": [
+            "frost",
+            "heat"
+          ],
+          "relevant": [
+            "frost",
+            "heat"
+          ],
+          "recallAt3": 1,
+          "precisionAt3": 0.6666666666666666,
+          "coverage": true,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-anchor-paraphrase",
+          "kind": "paraphrase",
+          "selected": [],
+          "relevant": [
+            "anchor"
+          ],
+          "recallAt3": 0,
+          "precisionAt3": 0,
+          "coverage": false,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-recharge-paraphrase",
+          "kind": "paraphrase",
+          "selected": [],
+          "relevant": [
+            "recharge"
+          ],
+          "recallAt3": 0,
+          "precisionAt3": 0,
+          "coverage": false,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-frost-paraphrase",
+          "kind": "paraphrase",
+          "selected": [],
+          "relevant": [
+            "frost"
+          ],
+          "recallAt3": 0,
+          "precisionAt3": 0,
+          "coverage": false,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-heat-paraphrase",
+          "kind": "paraphrase",
+          "selected": [
+            "heat"
+          ],
+          "relevant": [
+            "heat"
+          ],
+          "recallAt3": 1,
+          "precisionAt3": 0.3333333333333333,
+          "coverage": false,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-foreign-game",
+          "kind": "restriction",
+          "selected": [],
+          "relevant": [],
+          "recallAt3": null,
+          "precisionAt3": null,
+          "coverage": false,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-foreign-edition",
+          "kind": "restriction",
+          "selected": [],
+          "relevant": [],
+          "recallAt3": null,
+          "precisionAt3": null,
+          "coverage": false,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-foreign-platform",
+          "kind": "restriction",
+          "selected": [],
+          "relevant": [],
+          "recallAt3": null,
+          "precisionAt3": null,
+          "coverage": false,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-old-patch",
+          "kind": "restriction",
+          "selected": [
+            "old-patch"
+          ],
+          "relevant": [],
+          "recallAt3": null,
+          "precisionAt3": null,
+          "coverage": true,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-unverified",
+          "kind": "restriction",
+          "selected": [],
+          "relevant": [],
+          "recallAt3": null,
+          "precisionAt3": null,
+          "coverage": false,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-reference",
+          "kind": "restriction",
+          "selected": [],
+          "relevant": [],
+          "recallAt3": null,
+          "precisionAt3": null,
+          "coverage": false,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-revoked",
+          "kind": "restriction",
+          "selected": [],
+          "relevant": [],
+          "recallAt3": null,
+          "precisionAt3": null,
+          "coverage": false,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-missing-grant",
+          "kind": "restriction",
+          "selected": [],
+          "relevant": [],
+          "recallAt3": null,
+          "precisionAt3": null,
+          "coverage": false,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-bad-binding",
+          "kind": "restriction",
+          "selected": [
+            "bad-binding"
+          ],
+          "relevant": [],
+          "recallAt3": null,
+          "precisionAt3": null,
+          "coverage": true,
+          "clearDecision": "clarify",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        }
+      ]
+    },
+    "sql": {
+      "version": "gaming-heldout-lexical/v1",
+      "studyHead": "c6c05d799d276c35ca2f76588f209b45ba7c0fb1",
+      "serverVersion": 180006,
+      "scope": "real disposable PostgreSQL identity/search/ranking plus production stored service selection and deterministic CLEAR; synthetic authority grants; no generated answer or provider",
+      "positiveQuestions": 13,
+      "restrictionControls": 9,
+      "macroRawRecallAt3": 0.7692307692307693,
+      "macroRawPrecisionAt3": 0.30769230769230765,
+      "macroSelectedRecallAt3": 0.7692307692307693,
+      "macroSelectedPrecisionAt3": 0.30769230769230765,
+      "clearAcceptCount": 9,
+      "falseAuthorityAccepted": 0,
+      "heapUsedBytes": 131487240,
+      "maxRssKiB": 314216,
+      "observations": [
+        {
+          "id": "heldout-equip-load",
+          "kind": "exact",
+          "relevant": [
+            "equip-burden"
+          ],
+          "rawTop3": [
+            "equip-burden"
+          ],
+          "selected": [
+            "equip-burden"
+          ],
+          "rawRecallAt3": 1,
+          "rawPrecisionAt3": 0.3333333333333333,
+          "selectedRecallAt3": 1,
+          "selectedPrecisionAt3": 0.3333333333333333,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "rawSqlMs": 5.8539999999998145,
+          "serviceMs": 53.97720000000004,
+          "rawAuthorityReassessment": [
+            false
+          ]
+        },
+        {
+          "id": "heldout-focus",
+          "kind": "exact",
+          "relevant": [
+            "soul-focus"
+          ],
+          "rawTop3": [
+            "soul-focus"
+          ],
+          "selected": [
+            "soul-focus"
+          ],
+          "rawRecallAt3": 1,
+          "rawPrecisionAt3": 0.3333333333333333,
+          "selectedRecallAt3": 1,
+          "selectedPrecisionAt3": 0.3333333333333333,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "rawSqlMs": 3.79729999999995,
+          "serviceMs": 15.925300000000107,
+          "rawAuthorityReassessment": [
+            false
+          ]
+        },
+        {
+          "id": "heldout-anchor",
+          "kind": "exact",
+          "relevant": [
+            "anchor"
+          ],
+          "rawTop3": [
+            "anchor",
+            "heat"
+          ],
+          "selected": [
+            "anchor"
+          ],
+          "rawRecallAt3": 1,
+          "rawPrecisionAt3": 0.3333333333333333,
+          "selectedRecallAt3": 1,
+          "selectedPrecisionAt3": 0.3333333333333333,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "rawSqlMs": 4.2792000000001735,
+          "serviceMs": 12.525499999999965,
+          "rawAuthorityReassessment": [
+            false,
+            false
+          ]
+        },
+        {
+          "id": "heldout-recharge",
+          "kind": "exact",
+          "relevant": [
+            "recharge"
+          ],
+          "rawTop3": [
+            "recharge"
+          ],
+          "selected": [
+            "recharge"
+          ],
+          "rawRecallAt3": 1,
+          "rawPrecisionAt3": 0.3333333333333333,
+          "selectedRecallAt3": 1,
+          "selectedPrecisionAt3": 0.3333333333333333,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "rawSqlMs": 3.1282000000001062,
+          "serviceMs": 6.699200000000019,
+          "rawAuthorityReassessment": [
+            false
+          ]
+        },
+        {
+          "id": "heldout-frost",
+          "kind": "exact",
+          "relevant": [
+            "frost"
+          ],
+          "rawTop3": [
+            "frost"
+          ],
+          "selected": [
+            "frost"
+          ],
+          "rawRecallAt3": 1,
+          "rawPrecisionAt3": 0.3333333333333333,
+          "selectedRecallAt3": 1,
+          "selectedPrecisionAt3": 0.3333333333333333,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "rawSqlMs": 3.0369000000000597,
+          "serviceMs": 6.695199999999886,
+          "rawAuthorityReassessment": [
+            false
+          ]
+        },
+        {
+          "id": "heldout-sword",
+          "kind": "exact",
+          "relevant": [
+            "sword"
+          ],
+          "rawTop3": [
+            "sword"
+          ],
+          "selected": [
+            "sword"
+          ],
+          "rawRecallAt3": 1,
+          "rawPrecisionAt3": 0.3333333333333333,
+          "selectedRecallAt3": 1,
+          "selectedPrecisionAt3": 0.3333333333333333,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "rawSqlMs": 2.5764999999998963,
+          "serviceMs": 7.3478999999999814,
+          "rawAuthorityReassessment": [
+            false
+          ]
+        },
+        {
+          "id": "heldout-spoiler-scope",
+          "kind": "exact",
+          "relevant": [
+            "safe-key"
+          ],
+          "rawTop3": [
+            "safe-key"
+          ],
+          "selected": [
+            "safe-key"
+          ],
+          "rawRecallAt3": 1,
+          "rawPrecisionAt3": 0.3333333333333333,
+          "selectedRecallAt3": 1,
+          "selectedPrecisionAt3": 0.3333333333333333,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "rawSqlMs": 3.018299999999954,
+          "serviceMs": 6.220900000000029,
+          "rawAuthorityReassessment": [
+            false
+          ]
+        },
+        {
+          "id": "heldout-two-procedures",
+          "kind": "complementary",
+          "relevant": [
+            "anchor",
+            "recharge"
+          ],
+          "rawTop3": [
+            "recharge",
+            "anchor",
+            "heat"
+          ],
+          "selected": [
+            "anchor",
+            "recharge"
+          ],
+          "rawRecallAt3": 1,
+          "rawPrecisionAt3": 0.6666666666666666,
+          "selectedRecallAt3": 1,
+          "selectedPrecisionAt3": 0.6666666666666666,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "rawSqlMs": 5.109199999999873,
+          "serviceMs": 15.54729999999995,
+          "rawAuthorityReassessment": [
+            false,
+            false,
+            false
+          ]
+        },
+        {
+          "id": "heldout-two-mechanics",
+          "kind": "complementary",
+          "relevant": [
+            "frost",
+            "heat"
+          ],
+          "rawTop3": [
+            "heat",
+            "frost"
+          ],
+          "selected": [
+            "frost",
+            "heat"
+          ],
+          "rawRecallAt3": 1,
+          "rawPrecisionAt3": 0.6666666666666666,
+          "selectedRecallAt3": 1,
+          "selectedPrecisionAt3": 0.6666666666666666,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "rawSqlMs": 3.6269999999999527,
+          "serviceMs": 9.391300000000001,
+          "rawAuthorityReassessment": [
+            false,
+            false
+          ]
+        },
+        {
+          "id": "heldout-anchor-paraphrase",
+          "kind": "paraphrase",
+          "relevant": [
+            "anchor"
+          ],
+          "rawTop3": [],
+          "selected": [],
+          "rawRecallAt3": 0,
+          "rawPrecisionAt3": 0,
+          "selectedRecallAt3": 0,
+          "selectedPrecisionAt3": 0,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "rawSqlMs": 1.710399999999936,
+          "serviceMs": 4.821099999999888,
+          "rawAuthorityReassessment": []
+        },
+        {
+          "id": "heldout-recharge-paraphrase",
+          "kind": "paraphrase",
+          "relevant": [
+            "recharge"
+          ],
+          "rawTop3": [],
+          "selected": [],
+          "rawRecallAt3": 0,
+          "rawPrecisionAt3": 0,
+          "selectedRecallAt3": 0,
+          "selectedPrecisionAt3": 0,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "rawSqlMs": 1.7930999999998676,
+          "serviceMs": 4.724699999999757,
+          "rawAuthorityReassessment": []
+        },
+        {
+          "id": "heldout-frost-paraphrase",
+          "kind": "paraphrase",
+          "relevant": [
+            "frost"
+          ],
+          "rawTop3": [],
+          "selected": [],
+          "rawRecallAt3": 0,
+          "rawPrecisionAt3": 0,
+          "selectedRecallAt3": 0,
+          "selectedPrecisionAt3": 0,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "rawSqlMs": 1.706000000000131,
+          "serviceMs": 3.903400000000147,
+          "rawAuthorityReassessment": []
+        },
+        {
+          "id": "heldout-heat-paraphrase",
+          "kind": "paraphrase",
+          "relevant": [
+            "heat"
+          ],
+          "rawTop3": [
+            "heat"
+          ],
+          "selected": [
+            "heat"
+          ],
+          "rawRecallAt3": 1,
+          "rawPrecisionAt3": 0.3333333333333333,
+          "selectedRecallAt3": 1,
+          "selectedPrecisionAt3": 0.3333333333333333,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "rawSqlMs": 3.0185999999998785,
+          "serviceMs": 6.663099999999758,
+          "rawAuthorityReassessment": [
+            false
+          ]
+        },
+        {
+          "id": "heldout-foreign-game",
+          "kind": "restriction",
+          "relevant": [],
+          "rawTop3": [],
+          "selected": [],
+          "rawRecallAt3": null,
+          "rawPrecisionAt3": null,
+          "selectedRecallAt3": null,
+          "selectedPrecisionAt3": null,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "rawSqlMs": 0.5187000000000808,
+          "serviceMs": 2.9494999999997162,
+          "rawAuthorityReassessment": []
+        },
+        {
+          "id": "heldout-foreign-edition",
+          "kind": "restriction",
+          "relevant": [],
+          "rawTop3": [],
+          "selected": [],
+          "rawRecallAt3": null,
+          "rawPrecisionAt3": null,
+          "selectedRecallAt3": null,
+          "selectedPrecisionAt3": null,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "rawSqlMs": 0.5551999999997861,
+          "serviceMs": 2.989900000000034,
+          "rawAuthorityReassessment": []
+        },
+        {
+          "id": "heldout-foreign-platform",
+          "kind": "restriction",
+          "relevant": [],
+          "rawTop3": [
+            "foreign-platform"
+          ],
+          "selected": [],
+          "rawRecallAt3": null,
+          "rawPrecisionAt3": null,
+          "selectedRecallAt3": null,
+          "selectedPrecisionAt3": null,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "rawSqlMs": 2.5823999999997795,
+          "serviceMs": 5.445999999999913,
+          "rawAuthorityReassessment": [
+            false
+          ]
+        },
+        {
+          "id": "heldout-old-patch",
+          "kind": "restriction",
+          "relevant": [],
+          "rawTop3": [
+            "old-patch"
+          ],
+          "selected": [
+            "old-patch"
+          ],
+          "rawRecallAt3": null,
+          "rawPrecisionAt3": null,
+          "selectedRecallAt3": null,
+          "selectedPrecisionAt3": null,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "rawSqlMs": 2.7480000000000473,
+          "serviceMs": 7.517800000000079,
+          "rawAuthorityReassessment": [
+            false
+          ]
+        },
+        {
+          "id": "heldout-unverified",
+          "kind": "restriction",
+          "relevant": [],
+          "rawTop3": [
+            "unverified"
+          ],
+          "selected": [],
+          "rawRecallAt3": null,
+          "rawPrecisionAt3": null,
+          "selectedRecallAt3": null,
+          "selectedPrecisionAt3": null,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "rawSqlMs": 2.0318999999999505,
+          "serviceMs": 4.58869999999979,
+          "rawAuthorityReassessment": [
+            true
+          ]
+        },
+        {
+          "id": "heldout-reference",
+          "kind": "restriction",
+          "relevant": [],
+          "rawTop3": [
+            "reference"
+          ],
+          "selected": [],
+          "rawRecallAt3": null,
+          "rawPrecisionAt3": null,
+          "selectedRecallAt3": null,
+          "selectedPrecisionAt3": null,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "rawSqlMs": 1.8245999999999185,
+          "serviceMs": 3.849699999999757,
+          "rawAuthorityReassessment": [
+            true
+          ]
+        },
+        {
+          "id": "heldout-revoked",
+          "kind": "restriction",
+          "relevant": [],
+          "rawTop3": [
+            "revoked"
+          ],
+          "selected": [],
+          "rawRecallAt3": null,
+          "rawPrecisionAt3": null,
+          "selectedRecallAt3": null,
+          "selectedPrecisionAt3": null,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "rawSqlMs": 2.327099999999973,
+          "serviceMs": 4.179200000000037,
+          "rawAuthorityReassessment": [
+            true
+          ]
+        },
+        {
+          "id": "heldout-missing-grant",
+          "kind": "restriction",
+          "relevant": [],
+          "rawTop3": [
+            "missing-grant"
+          ],
+          "selected": [],
+          "rawRecallAt3": null,
+          "rawPrecisionAt3": null,
+          "selectedRecallAt3": null,
+          "selectedPrecisionAt3": null,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "rawSqlMs": 1.916700000000219,
+          "serviceMs": 4.445900000000165,
+          "rawAuthorityReassessment": [
+            true
+          ]
+        },
+        {
+          "id": "heldout-bad-binding",
+          "kind": "restriction",
+          "relevant": [],
+          "rawTop3": [
+            "bad-binding"
+          ],
+          "selected": [
+            "bad-binding"
+          ],
+          "rawRecallAt3": null,
+          "rawPrecisionAt3": null,
+          "selectedRecallAt3": null,
+          "selectedPrecisionAt3": null,
+          "clearDecision": "clarify",
+          "originalProvenance": true,
+          "rawSqlMs": 4.2654999999999745,
+          "serviceMs": 7.343900000000303,
+          "rawAuthorityReassessment": [
+            false
+          ]
+        }
+      ]
+    }
+  },
+  "head": {
+    "executionRevision": "c6c05d799d276c35ca2f76588f209b45ba7c0fb1",
+    "testsPassed": 46,
+    "testsFailed": 0,
+    "testsSkipped": 0,
+    "selector": {
+      "version": "gaming-heldout-lexical/v1",
+      "studyHead": "c6c05d799d276c35ca2f76588f209b45ba7c0fb1",
+      "scope": "actual service projection/selection/formatting and deterministic CLEAR; supplied equal-rank rows; no SQL or generated answer",
+      "positiveQuestions": 13,
+      "restrictionControls": 9,
+      "macroRecallAt3": 0.7692307692307693,
+      "macroPrecisionAt3": 0.30769230769230765,
+      "clearAcceptCount": 9,
+      "falseAuthorityAccepted": 0,
+      "observations": [
+        {
+          "id": "heldout-equip-load",
+          "kind": "exact",
+          "selected": [
+            "equip-burden"
+          ],
+          "relevant": [
+            "equip-burden"
+          ],
+          "recallAt3": 1,
+          "precisionAt3": 0.3333333333333333,
+          "coverage": true,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-focus",
+          "kind": "exact",
+          "selected": [
+            "soul-focus"
+          ],
+          "relevant": [
+            "soul-focus"
+          ],
+          "recallAt3": 1,
+          "precisionAt3": 0.3333333333333333,
+          "coverage": true,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-anchor",
+          "kind": "exact",
+          "selected": [
+            "anchor"
+          ],
+          "relevant": [
+            "anchor"
+          ],
+          "recallAt3": 1,
+          "precisionAt3": 0.3333333333333333,
+          "coverage": true,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-recharge",
+          "kind": "exact",
+          "selected": [
+            "recharge"
+          ],
+          "relevant": [
+            "recharge"
+          ],
+          "recallAt3": 1,
+          "precisionAt3": 0.3333333333333333,
+          "coverage": true,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-frost",
+          "kind": "exact",
+          "selected": [
+            "frost"
+          ],
+          "relevant": [
+            "frost"
+          ],
+          "recallAt3": 1,
+          "precisionAt3": 0.3333333333333333,
+          "coverage": true,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-sword",
+          "kind": "exact",
+          "selected": [
+            "sword"
+          ],
+          "relevant": [
+            "sword"
+          ],
+          "recallAt3": 1,
+          "precisionAt3": 0.3333333333333333,
+          "coverage": true,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-spoiler-scope",
+          "kind": "exact",
+          "selected": [
+            "safe-key"
+          ],
+          "relevant": [
+            "safe-key"
+          ],
+          "recallAt3": 1,
+          "precisionAt3": 0.3333333333333333,
+          "coverage": true,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-two-procedures",
+          "kind": "complementary",
+          "selected": [
+            "anchor",
+            "recharge"
+          ],
+          "relevant": [
+            "anchor",
+            "recharge"
+          ],
+          "recallAt3": 1,
+          "precisionAt3": 0.6666666666666666,
+          "coverage": true,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-two-mechanics",
+          "kind": "complementary",
+          "selected": [
+            "frost",
+            "heat"
+          ],
+          "relevant": [
+            "frost",
+            "heat"
+          ],
+          "recallAt3": 1,
+          "precisionAt3": 0.6666666666666666,
+          "coverage": true,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-anchor-paraphrase",
+          "kind": "paraphrase",
+          "selected": [],
+          "relevant": [
+            "anchor"
+          ],
+          "recallAt3": 0,
+          "precisionAt3": 0,
+          "coverage": false,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-recharge-paraphrase",
+          "kind": "paraphrase",
+          "selected": [],
+          "relevant": [
+            "recharge"
+          ],
+          "recallAt3": 0,
+          "precisionAt3": 0,
+          "coverage": false,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-frost-paraphrase",
+          "kind": "paraphrase",
+          "selected": [],
+          "relevant": [
+            "frost"
+          ],
+          "recallAt3": 0,
+          "precisionAt3": 0,
+          "coverage": false,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-heat-paraphrase",
+          "kind": "paraphrase",
+          "selected": [
+            "heat"
+          ],
+          "relevant": [
+            "heat"
+          ],
+          "recallAt3": 1,
+          "precisionAt3": 0.3333333333333333,
+          "coverage": false,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-foreign-game",
+          "kind": "restriction",
+          "selected": [],
+          "relevant": [],
+          "recallAt3": null,
+          "precisionAt3": null,
+          "coverage": false,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-foreign-edition",
+          "kind": "restriction",
+          "selected": [],
+          "relevant": [],
+          "recallAt3": null,
+          "precisionAt3": null,
+          "coverage": false,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-foreign-platform",
+          "kind": "restriction",
+          "selected": [],
+          "relevant": [],
+          "recallAt3": null,
+          "precisionAt3": null,
+          "coverage": false,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-old-patch",
+          "kind": "restriction",
+          "selected": [
+            "old-patch"
+          ],
+          "relevant": [],
+          "recallAt3": null,
+          "precisionAt3": null,
+          "coverage": true,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-unverified",
+          "kind": "restriction",
+          "selected": [],
+          "relevant": [],
+          "recallAt3": null,
+          "precisionAt3": null,
+          "coverage": false,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-reference",
+          "kind": "restriction",
+          "selected": [],
+          "relevant": [],
+          "recallAt3": null,
+          "precisionAt3": null,
+          "coverage": false,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-revoked",
+          "kind": "restriction",
+          "selected": [],
+          "relevant": [],
+          "recallAt3": null,
+          "precisionAt3": null,
+          "coverage": false,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-missing-grant",
+          "kind": "restriction",
+          "selected": [],
+          "relevant": [],
+          "recallAt3": null,
+          "precisionAt3": null,
+          "coverage": false,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        },
+        {
+          "id": "heldout-bad-binding",
+          "kind": "restriction",
+          "selected": [
+            "bad-binding"
+          ],
+          "relevant": [],
+          "recallAt3": null,
+          "precisionAt3": null,
+          "coverage": true,
+          "clearDecision": "clarify",
+          "originalProvenance": true,
+          "spoilerExcluded": true
+        }
+      ]
+    },
+    "sql": {
+      "version": "gaming-heldout-lexical/v1",
+      "studyHead": "c6c05d799d276c35ca2f76588f209b45ba7c0fb1",
+      "serverVersion": 180006,
+      "scope": "real disposable PostgreSQL identity/search/ranking plus production stored service selection and deterministic CLEAR; synthetic authority grants; no generated answer or provider",
+      "positiveQuestions": 13,
+      "restrictionControls": 9,
+      "macroRawRecallAt3": 0.7692307692307693,
+      "macroRawPrecisionAt3": 0.30769230769230765,
+      "macroSelectedRecallAt3": 0.7692307692307693,
+      "macroSelectedPrecisionAt3": 0.30769230769230765,
+      "clearAcceptCount": 9,
+      "falseAuthorityAccepted": 0,
+      "heapUsedBytes": 82664856,
+      "maxRssKiB": 201104,
+      "observations": [
+        {
+          "id": "heldout-equip-load",
+          "kind": "exact",
+          "relevant": [
+            "equip-burden"
+          ],
+          "rawTop3": [
+            "equip-burden"
+          ],
+          "selected": [
+            "equip-burden"
+          ],
+          "rawRecallAt3": 1,
+          "rawPrecisionAt3": 0.3333333333333333,
+          "selectedRecallAt3": 1,
+          "selectedPrecisionAt3": 0.3333333333333333,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "rawSqlMs": 5.630699999999933,
+          "serviceMs": 54.05449999999996,
+          "rawAuthorityReassessment": [
+            false
+          ]
+        },
+        {
+          "id": "heldout-focus",
+          "kind": "exact",
+          "relevant": [
+            "soul-focus"
+          ],
+          "rawTop3": [
+            "soul-focus"
+          ],
+          "selected": [
+            "soul-focus"
+          ],
+          "rawRecallAt3": 1,
+          "rawPrecisionAt3": 0.3333333333333333,
+          "selectedRecallAt3": 1,
+          "selectedPrecisionAt3": 0.3333333333333333,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "rawSqlMs": 3.5008999999998878,
+          "serviceMs": 16.000499999999988,
+          "rawAuthorityReassessment": [
+            false
+          ]
+        },
+        {
+          "id": "heldout-anchor",
+          "kind": "exact",
+          "relevant": [
+            "anchor"
+          ],
+          "rawTop3": [
+            "anchor",
+            "heat"
+          ],
+          "selected": [
+            "anchor"
+          ],
+          "rawRecallAt3": 1,
+          "rawPrecisionAt3": 0.3333333333333333,
+          "selectedRecallAt3": 1,
+          "selectedPrecisionAt3": 0.3333333333333333,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "rawSqlMs": 4.3700000000000045,
+          "serviceMs": 11.374099999999999,
+          "rawAuthorityReassessment": [
+            false,
+            false
+          ]
+        },
+        {
+          "id": "heldout-recharge",
+          "kind": "exact",
+          "relevant": [
+            "recharge"
+          ],
+          "rawTop3": [
+            "recharge"
+          ],
+          "selected": [
+            "recharge"
+          ],
+          "rawRecallAt3": 1,
+          "rawPrecisionAt3": 0.3333333333333333,
+          "selectedRecallAt3": 1,
+          "selectedPrecisionAt3": 0.3333333333333333,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "rawSqlMs": 3.341000000000008,
+          "serviceMs": 8.546199999999999,
+          "rawAuthorityReassessment": [
+            false
+          ]
+        },
+        {
+          "id": "heldout-frost",
+          "kind": "exact",
+          "relevant": [
+            "frost"
+          ],
+          "rawTop3": [
+            "frost"
+          ],
+          "selected": [
+            "frost"
+          ],
+          "rawRecallAt3": 1,
+          "rawPrecisionAt3": 0.3333333333333333,
+          "selectedRecallAt3": 1,
+          "selectedPrecisionAt3": 0.3333333333333333,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "rawSqlMs": 2.9811999999999443,
+          "serviceMs": 6.654599999999846,
+          "rawAuthorityReassessment": [
+            false
+          ]
+        },
+        {
+          "id": "heldout-sword",
+          "kind": "exact",
+          "relevant": [
+            "sword"
+          ],
+          "rawTop3": [
+            "sword"
+          ],
+          "selected": [
+            "sword"
+          ],
+          "rawRecallAt3": 1,
+          "rawPrecisionAt3": 0.3333333333333333,
+          "selectedRecallAt3": 1,
+          "selectedPrecisionAt3": 0.3333333333333333,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "rawSqlMs": 2.613299999999981,
+          "serviceMs": 7.344299999999976,
+          "rawAuthorityReassessment": [
+            false
+          ]
+        },
+        {
+          "id": "heldout-spoiler-scope",
+          "kind": "exact",
+          "relevant": [
+            "safe-key"
+          ],
+          "rawTop3": [
+            "safe-key"
+          ],
+          "selected": [
+            "safe-key"
+          ],
+          "rawRecallAt3": 1,
+          "rawPrecisionAt3": 0.3333333333333333,
+          "selectedRecallAt3": 1,
+          "selectedPrecisionAt3": 0.3333333333333333,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "rawSqlMs": 2.829300000000103,
+          "serviceMs": 6.79340000000002,
+          "rawAuthorityReassessment": [
+            false
+          ]
+        },
+        {
+          "id": "heldout-two-procedures",
+          "kind": "complementary",
+          "relevant": [
+            "anchor",
+            "recharge"
+          ],
+          "rawTop3": [
+            "recharge",
+            "anchor",
+            "heat"
+          ],
+          "selected": [
+            "anchor",
+            "recharge"
+          ],
+          "rawRecallAt3": 1,
+          "rawPrecisionAt3": 0.6666666666666666,
+          "selectedRecallAt3": 1,
+          "selectedPrecisionAt3": 0.6666666666666666,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "rawSqlMs": 4.773500000000013,
+          "serviceMs": 12.934999999999945,
+          "rawAuthorityReassessment": [
+            false,
+            false,
+            false
+          ]
+        },
+        {
+          "id": "heldout-two-mechanics",
+          "kind": "complementary",
+          "relevant": [
+            "frost",
+            "heat"
+          ],
+          "rawTop3": [
+            "heat",
+            "frost"
+          ],
+          "selected": [
+            "frost",
+            "heat"
+          ],
+          "rawRecallAt3": 1,
+          "rawPrecisionAt3": 0.6666666666666666,
+          "selectedRecallAt3": 1,
+          "selectedPrecisionAt3": 0.6666666666666666,
+          "clearDecision": "accept",
+          "originalProvenance": true,
+          "rawSqlMs": 3.3677999999999884,
+          "serviceMs": 9.643199999999979,
+          "rawAuthorityReassessment": [
+            false,
+            false
+          ]
+        },
+        {
+          "id": "heldout-anchor-paraphrase",
+          "kind": "paraphrase",
+          "relevant": [
+            "anchor"
+          ],
+          "rawTop3": [],
+          "selected": [],
+          "rawRecallAt3": 0,
+          "rawPrecisionAt3": 0,
+          "selectedRecallAt3": 0,
+          "selectedPrecisionAt3": 0,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "rawSqlMs": 1.770200000000159,
+          "serviceMs": 4.357400000000098,
+          "rawAuthorityReassessment": []
+        },
+        {
+          "id": "heldout-recharge-paraphrase",
+          "kind": "paraphrase",
+          "relevant": [
+            "recharge"
+          ],
+          "rawTop3": [],
+          "selected": [],
+          "rawRecallAt3": 0,
+          "rawPrecisionAt3": 0,
+          "selectedRecallAt3": 0,
+          "selectedPrecisionAt3": 0,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "rawSqlMs": 2.074100000000044,
+          "serviceMs": 4.813599999999951,
+          "rawAuthorityReassessment": []
+        },
+        {
+          "id": "heldout-frost-paraphrase",
+          "kind": "paraphrase",
+          "relevant": [
+            "frost"
+          ],
+          "rawTop3": [],
+          "selected": [],
+          "rawRecallAt3": 0,
+          "rawPrecisionAt3": 0,
+          "selectedRecallAt3": 0,
+          "selectedPrecisionAt3": 0,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "rawSqlMs": 1.7245000000000346,
+          "serviceMs": 3.7867999999998574,
+          "rawAuthorityReassessment": []
+        },
+        {
+          "id": "heldout-heat-paraphrase",
+          "kind": "paraphrase",
+          "relevant": [
+            "heat"
+          ],
+          "rawTop3": [
+            "heat"
+          ],
+          "selected": [
+            "heat"
+          ],
+          "rawRecallAt3": 1,
+          "rawPrecisionAt3": 0.3333333333333333,
+          "selectedRecallAt3": 1,
+          "selectedPrecisionAt3": 0.3333333333333333,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "rawSqlMs": 3.3572999999998956,
+          "serviceMs": 7.178600000000188,
+          "rawAuthorityReassessment": [
+            false
+          ]
+        },
+        {
+          "id": "heldout-foreign-game",
+          "kind": "restriction",
+          "relevant": [],
+          "rawTop3": [],
+          "selected": [],
+          "rawRecallAt3": null,
+          "rawPrecisionAt3": null,
+          "selectedRecallAt3": null,
+          "selectedPrecisionAt3": null,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "rawSqlMs": 0.5688000000000102,
+          "serviceMs": 2.8199999999999363,
+          "rawAuthorityReassessment": []
+        },
+        {
+          "id": "heldout-foreign-edition",
+          "kind": "restriction",
+          "relevant": [],
+          "rawTop3": [],
+          "selected": [],
+          "rawRecallAt3": null,
+          "rawPrecisionAt3": null,
+          "selectedRecallAt3": null,
+          "selectedPrecisionAt3": null,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "rawSqlMs": 0.5714000000000397,
+          "serviceMs": 2.80379999999991,
+          "rawAuthorityReassessment": []
+        },
+        {
+          "id": "heldout-foreign-platform",
+          "kind": "restriction",
+          "relevant": [],
+          "rawTop3": [
+            "foreign-platform"
+          ],
+          "selected": [],
+          "rawRecallAt3": null,
+          "rawPrecisionAt3": null,
+          "selectedRecallAt3": null,
+          "selectedPrecisionAt3": null,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "rawSqlMs": 3.125200000000177,
+          "serviceMs": 5.078500000000076,
+          "rawAuthorityReassessment": [
+            false
+          ]
+        },
+        {
+          "id": "heldout-old-patch",
+          "kind": "restriction",
+          "relevant": [],
+          "rawTop3": [
+            "old-patch"
+          ],
+          "selected": [
+            "old-patch"
+          ],
+          "rawRecallAt3": null,
+          "rawPrecisionAt3": null,
+          "selectedRecallAt3": null,
+          "selectedPrecisionAt3": null,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "rawSqlMs": 2.9253000000001066,
+          "serviceMs": 7.736099999999851,
+          "rawAuthorityReassessment": [
+            false
+          ]
+        },
+        {
+          "id": "heldout-unverified",
+          "kind": "restriction",
+          "relevant": [],
+          "rawTop3": [
+            "unverified"
+          ],
+          "selected": [],
+          "rawRecallAt3": null,
+          "rawPrecisionAt3": null,
+          "selectedRecallAt3": null,
+          "selectedPrecisionAt3": null,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "rawSqlMs": 1.740400000000136,
+          "serviceMs": 3.922900000000027,
+          "rawAuthorityReassessment": [
+            true
+          ]
+        },
+        {
+          "id": "heldout-reference",
+          "kind": "restriction",
+          "relevant": [],
+          "rawTop3": [
+            "reference"
+          ],
+          "selected": [],
+          "rawRecallAt3": null,
+          "rawPrecisionAt3": null,
+          "selectedRecallAt3": null,
+          "selectedPrecisionAt3": null,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "rawSqlMs": 1.7029999999999745,
+          "serviceMs": 3.735099999999875,
+          "rawAuthorityReassessment": [
+            true
+          ]
+        },
+        {
+          "id": "heldout-revoked",
+          "kind": "restriction",
+          "relevant": [],
+          "rawTop3": [
+            "revoked"
+          ],
+          "selected": [],
+          "rawRecallAt3": null,
+          "rawPrecisionAt3": null,
+          "selectedRecallAt3": null,
+          "selectedPrecisionAt3": null,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "rawSqlMs": 2.580400000000054,
+          "serviceMs": 4.143600000000106,
+          "rawAuthorityReassessment": [
+            true
+          ]
+        },
+        {
+          "id": "heldout-missing-grant",
+          "kind": "restriction",
+          "relevant": [],
+          "rawTop3": [
+            "missing-grant"
+          ],
+          "selected": [],
+          "rawRecallAt3": null,
+          "rawPrecisionAt3": null,
+          "selectedRecallAt3": null,
+          "selectedPrecisionAt3": null,
+          "clearDecision": "reject",
+          "originalProvenance": true,
+          "rawSqlMs": 2.05600000000004,
+          "serviceMs": 3.9379999999998745,
+          "rawAuthorityReassessment": [
+            true
+          ]
+        },
+        {
+          "id": "heldout-bad-binding",
+          "kind": "restriction",
+          "relevant": [],
+          "rawTop3": [
+            "bad-binding"
+          ],
+          "selected": [
+            "bad-binding"
+          ],
+          "rawRecallAt3": null,
+          "rawPrecisionAt3": null,
+          "selectedRecallAt3": null,
+          "selectedPrecisionAt3": null,
+          "clearDecision": "clarify",
+          "originalProvenance": true,
+          "rawSqlMs": 2.7980999999999767,
+          "serviceMs": 6.361499999999978,
+          "rawAuthorityReassessment": [
+            false
+          ]
+        }
+      ]
+    }
+  },
+  "target": {
+    "host": "127.0.0.1",
+    "port": 52439,
+    "database": "arcanos_audit_pg18_20260727",
+    "serverVersion": 180006,
+    "schemaPolicy": "Fresh gaming_heldout_lexical_<uuid> schema per suite; only owned synthetic tables truncated; schema drop plus catalog-absence assertion in teardown"
+  },
+  "toolchain": "Node24.18.1/npm11.16.0 native Windows, in-band Jest",
+  "fixtures": [
+    {
+      "file": "./tests/gaming-heldout-lexical.test.ts",
+      "sha256": "66c4b8a09e8a4f4e7ae9f6796498c7fd6edf793cd89d386abd4d336333006fd8"
+    },
+    {
+      "file": "./tests/integration/gaming-heldout-lexical.pg18.integration.test.ts",
+      "sha256": "a652900d5d932c0dca79951debfbd74358b2ba41442328e9bd81068a5fab642c"
+    },
+    {
+      "file": "./tests/testUtils/gamingHeldoutLexicalFixtures.ts",
+      "sha256": "df8963b9afeab5928d1d2d850aaab4ff385a4fc07e9e21ec932ea29a3be4493d"
+    }
+  ]
+}

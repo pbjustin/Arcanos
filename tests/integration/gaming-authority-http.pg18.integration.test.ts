@@ -51,6 +51,8 @@ databaseTest('compiled authenticated MCP, real SQL queue/worker, protected loopb
   expect(receipt.sourceIdentity.buildIdentity.artifactStatus).toBe('matches_build_receipt');
   expect(receipt.freshProcess.sourceIdentity).toEqual(receipt.sourceIdentity);
   expect(receipt.checks).toEqual(expect.arrayContaining(['refresh cannot grant authority', 'real compiled grounded response', 'no unauthorized network attempted',
+    'compiled stored SQL lookup requests host discovery before generation',
+    'compiled host discovery ranks and deduplicates two bounded provider queries',
     'owner-confirmed verified hybrid selects grounded evidence', 'owner-confirmed verified hybrid persists through queued worker',
     'owner-confirmed verified hybrid uses real provider stages']));
   expect(receipt.checks).toEqual(expect.arrayContaining([

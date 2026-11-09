@@ -11,7 +11,8 @@ installed-client acceptance, live providers or private release readiness.
 The frontend forwards the original question and supplied player context, reads
 structured state, searches when requested, supplies bounded candidate URL hints,
 and presents only the backend-approved answer, clarification or limitation.
-It must actually use available Web Search for discovery. Search snippets are
+When the backend requests host discovery, it must actually use available Web
+Search. Search snippets are
 not evidence. Frontend readability is preliminary because ARCANOS may be unable
 to acquire the same page. Search queries exclude private player information,
 credentials, account identifiers and unrelated conversation history.
@@ -22,14 +23,66 @@ filling fetch slots, including admitted redirect destinations whose acquisition
 fails and cached search results. These negative exclusions are request-local:
 the existing protected-hop callback records only sanitized, admitted attempts,
 without exposing redirect locations or granting acquired identity or authority.
-Rejected or unattempted redirect locations do not enter this set. All supplied
-exclusions are checked independently of the provider's
+Rejected or unattempted redirect locations do not enter this set. Recovery
+candidates also pass a protected-hop guard before another request to an
+already attempted destination. Duplicate notifications for one new hop remain
+valid, and official-currentness revalidation keeps its separate existing policy.
+All supplied exclusions are checked independently of the provider's
 rank ceiling. Discovery applies a small
 repeated-domain ranking penalty to similarly relevant pages. Stronger topic
 matches retain priority. These discovery hints never establish accessibility,
-game identity, edition compatibility or claim support. The MCP workflow still
-delegates search to the host; enabling a hosted Responses `web_search` adapter
+game identity, edition compatibility or claim support. The default MCP workflow
+delegates search to the host. The disabled-by-default
+`ARCANOS_GAMING_HYBRID_BACKEND_DISCOVERY_ENABLED` option can reuse the existing
+configured search provider for a new v2 query's granted gameplay rounds. Both
+this option and `ARCANOS_GAMING_DISCOVERY_ENABLED` must be enabled. V1, explicit
+supplied-guide requests and official-currentness discovery retain their existing
+handoffs. Backend search feeds URL hints through the ordinary candidate method;
+it cannot set evidence authority, approve storage or create a new workflow budget.
+An unavailable provider returns its actual discovery reason with host search
+still available. Identical query retries reuse the completed operation.
+Enabling a hosted Responses `web_search` adapter
 requires a separately authorized route and provider budget.
+
+Host query planning offers at most two targeted variations. Backend-assisted
+search evaluates those variations within one discovery deadline and partitions
+the existing total search-result allowance across them. The complete sanitized
+game, edition, platform and exact-version scope must fit the existing 180-character
+query bound. If scope cannot be retained, discovery stops with `INVALID_REQUEST`,
+an explanation and no search grant or narrower host hint. Valid scoped hints retain
+edition, platform and version. Index/category pages
+and topic-free landing pages rank below relevant guide hints, and explicitly
+different numbered installments are excluded. These remain negative ranking
+hints, never positive verification. During an already granted recovery, backend
+search refreshes provider hints rather than reusing an exhausted cached result
+set. It excludes submitted URLs and sanitized admitted acquisition destinations,
+including failed redirects. Failed work is still charged; there is no new retry
+allowance, crawler or access-control bypass.
+
+For guide requests with an explicit version and historical/as-of wording, backend
+discovery allows older dated hints through the recency filter. Acquired evidence
+still requires exact requested-version applicability and normal CLEAR assessment;
+a publisher date cannot verify a patch. Meta/currentness modes retain their
+existing currentness policy.
+
+Automatic work also honors the remaining HTTP request deadline. Its conservative
+generation admission target preserves the full mode-specific intake allowance,
+an ordinary 12-second stage window for reasoning (or the lower configured stage
+cap), final-answer/audit/terminal reserves, the safety buffer and existing outer
+headroom. Defaults total 55.5 seconds for guides and 43.5 seconds for builds/meta.
+This is an admission target, not a new reasoning timeout or a promise about
+provider latency. Smaller operator pipeline/module caps cannot be bypassed:
+when they cannot fit the target, automatic work yields to the host.
+
+Search is bounded to the remaining automatic-work window; acquisition is capped
+by what remains after search. Under default settings, a 38-second HTTP request
+returns its host-search grant before automatic work, while a 60-second MCP
+request can use its remaining bounded window. If that window is exhausted, the
+workflow returns the existing resumable host-search grant
+with accepted evidence and unspent acquisition allowance intact. A later host
+submission uses the same workflow/revision; this does not grant a new round or
+extend the absolute workflow TTL. Requests without an inherited deadline keep
+the existing discovery/acquisition bounds.
 
 ARCANOS independently acquires source content and checks identity, integrity,
 relevance, applicability and provenance through the existing document resolver,

@@ -1,0 +1,531 @@
+{
+  "version": "pr1595-public-components/v1",
+  "reviewHead": "c6c05d799d276c35ca2f76588f209b45ba7c0fb1",
+  "observedAt": [
+    "2026-11-09T05:18:28.657Z",
+    "2026-11-09T05:19:47.596Z"
+  ],
+  "search": "Live host web search. Configured backend Brave provider was NOT invoked.",
+  "acquisition": "Real compiled protected HTTPS reader and v2 candidate/CLEAR evaluation; no acquisition or DNS substitute.",
+  "identity": "Component input used the exact named game and question; this was not an authenticated MCP user session.",
+  "generations": 0,
+  "storage": "No storage policy or ingestion invocation; database/provider credentials removed before module imports.",
+  "limitations": "No successful live answer. Search hints are untrusted. These failures do not justify accepting the sources or bypassing access controls.",
+  "observations": [
+    {
+      "scenario": "zelda",
+      "game": "The Legend of Zelda: Ocarina of Time",
+      "question": "Where do I get the Deku Shield early in Ocarina of Time?",
+      "sourceUrl": "https://www.thonky.com/ocarina-of-time/reach-the-deku-tree",
+      "admittedHops": [
+        "https://www.thonky.com/ocarina-of-time/reach-the-deku-tree"
+      ],
+      "accepted": 0,
+      "reasons": [
+        "GAME_IDENTITY_UNVERIFIED"
+      ],
+      "stages": [
+        {
+          "acquisition": {
+            "status": "passed",
+            "reason": "SOURCE_ACQUIRED"
+          },
+          "extraction": {
+            "status": "passed",
+            "reason": "EXTRACTION_INTACT",
+            "extractedChars": 4142
+          },
+          "identity": {
+            "status": "rejected",
+            "reason": "GAME_IDENTITY_UNVERIFIED",
+            "contentHash": "f6998f55eeea93b87c8b9c0afda26a5163c5fc08ab4ebdcd95848729e675a1de",
+            "identityRuleId": "gaming.identity.independent_anchor_required"
+          },
+          "applicability": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "relevance": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "freshness": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "provenance": {
+            "status": "passed",
+            "reason": "PROVENANCE_ACQUIRED"
+          },
+          "selection": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "generation": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          }
+        }
+      ],
+      "durationMs": 941,
+      "rssBytes": 167645184
+    },
+    {
+      "scenario": "elden-ring",
+      "game": "Elden Ring",
+      "question": "Find a good early-game Samurai build guide. No major spoilers.",
+      "sourceUrl": "https://mobalytics.gg/gamebase/guides/elden-ring-samurai-build",
+      "admittedHops": [
+        "https://mobalytics.gg/gamebase/guides/elden-ring-samurai-build"
+      ],
+      "accepted": 0,
+      "reasons": [
+        "SOURCE_INACCESSIBLE"
+      ],
+      "stages": [
+        {
+          "acquisition": {
+            "status": "rejected",
+            "reason": "SOURCE_INACCESSIBLE",
+            "httpStatus": 403
+          },
+          "extraction": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "identity": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "applicability": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "relevance": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "freshness": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "provenance": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "selection": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "generation": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          }
+        }
+      ],
+      "durationMs": 152,
+      "rssBytes": 167301120
+    },
+    {
+      "scenario": "elite-official",
+      "game": "Elite Dangerous",
+      "question": "Find a detailed guide explaining system colonisation and how to get started.",
+      "sourceUrl": "https://www.elitedangerous.com/news/system-colonisation-guide",
+      "admittedHops": [
+        "https://www.elitedangerous.com/news/system-colonisation-guide"
+      ],
+      "accepted": 0,
+      "reasons": [
+        "GAME_IDENTITY_UNVERIFIED"
+      ],
+      "stages": [
+        {
+          "acquisition": {
+            "status": "passed",
+            "reason": "SOURCE_ACQUIRED"
+          },
+          "extraction": {
+            "status": "passed",
+            "reason": "EXTRACTION_PARTIAL",
+            "extractedChars": 5488
+          },
+          "identity": {
+            "status": "rejected",
+            "reason": "GAME_IDENTITY_UNVERIFIED",
+            "contentHash": "33830675a189d021f23c547e173fcf2ec854751282a9db7519e6cdf751a0f58a",
+            "identityRuleId": "gaming.identity.family_scope_unverified"
+          },
+          "applicability": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "relevance": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "freshness": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "provenance": {
+            "status": "passed",
+            "reason": "PROVENANCE_ACQUIRED"
+          },
+          "selection": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "generation": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          }
+        }
+      ],
+      "durationMs": 1448,
+      "rssBytes": 498388992
+    },
+    {
+      "scenario": "elite-community",
+      "game": "Elite Dangerous",
+      "question": "Find a detailed guide explaining system colonisation and how to get started.",
+      "sourceUrl": "https://svbkresearchinstitute.com/colonization",
+      "admittedHops": [
+        "https://svbkresearchinstitute.com/colonization"
+      ],
+      "accepted": 0,
+      "reasons": [
+        "INSUFFICIENT_EXTRACTION"
+      ],
+      "stages": [
+        {
+          "acquisition": {
+            "status": "passed",
+            "reason": "SOURCE_ACQUIRED"
+          },
+          "extraction": {
+            "status": "rejected",
+            "reason": "INSUFFICIENT_EXTRACTION",
+            "extractedChars": 0,
+            "identityRuleId": "gaming.identity.independent_anchor_required"
+          },
+          "identity": {
+            "status": "unknown",
+            "reason": "GAME_IDENTITY_UNVERIFIED",
+            "contentHash": "d7a4ffb4a7a3009b2580764c926e5d42b5c18d75c4e7867d102225ca78c05cc3",
+            "identityRuleId": "gaming.identity.independent_anchor_required"
+          },
+          "applicability": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "relevance": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "freshness": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "provenance": {
+            "status": "passed",
+            "reason": "PROVENANCE_ACQUIRED"
+          },
+          "selection": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "generation": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          }
+        }
+      ],
+      "durationMs": 706,
+      "rssBytes": 498790400
+    },
+    {
+      "scenario": "xenoblade-2",
+      "game": "Xenoblade Chronicles 2",
+      "question": "Find a Chapter 2 guide for Rex as DPS and Nia as healer. Avoid later-story spoilers.",
+      "sourceUrl": "https://gamefaqs.gamespot.com/switch/204208-xenoblade-chronicles-2/faqs/79512/chapter-2-aptitude",
+      "admittedHops": [
+        "https://gamefaqs.gamespot.com/switch/204208-xenoblade-chronicles-2/faqs/79512/chapter-2-aptitude"
+      ],
+      "accepted": 0,
+      "reasons": [
+        "SOURCE_INACCESSIBLE"
+      ],
+      "stages": [
+        {
+          "acquisition": {
+            "status": "rejected",
+            "reason": "SOURCE_INACCESSIBLE",
+            "httpStatus": 403
+          },
+          "extraction": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "identity": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "applicability": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "relevance": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "freshness": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "provenance": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "selection": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "generation": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          }
+        }
+      ],
+      "durationMs": 118,
+      "rssBytes": 499032064
+    },
+    {
+      "scenario": "zelda-alternative",
+      "game": "The Legend of Zelda: Ocarina of Time",
+      "question": "Where do I get the Deku Shield early in Ocarina of Time?",
+      "sourceUrl": "https://www.zeldadungeon.net/ocarina-of-time-walkthrough/inside-the-great-deku-tree/",
+      "admittedHops": [
+        "https://www.zeldadungeon.net/ocarina-of-time-walkthrough/inside-the-great-deku-tree/"
+      ],
+      "accepted": 0,
+      "reasons": [
+        "SOURCE_INACCESSIBLE"
+      ],
+      "stages": [
+        {
+          "acquisition": {
+            "status": "rejected",
+            "reason": "SOURCE_INACCESSIBLE",
+            "httpStatus": 403
+          },
+          "extraction": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "identity": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "applicability": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "relevance": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "freshness": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "provenance": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "selection": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "generation": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          }
+        }
+      ],
+      "durationMs": 168,
+      "rssBytes": 108875776
+    },
+    {
+      "scenario": "elden-ring-alternative",
+      "game": "Elden Ring",
+      "question": "Find a good early-game Samurai build guide. No major spoilers.",
+      "sourceUrl": "https://www.dualshockers.com/elden-ring-samurai-class-build-tips/",
+      "admittedHops": [
+        "https://www.dualshockers.com/elden-ring-samurai-class-build-tips/"
+      ],
+      "accepted": 0,
+      "reasons": [
+        "GAME_MISMATCH"
+      ],
+      "stages": [
+        {
+          "acquisition": {
+            "status": "passed",
+            "reason": "SOURCE_ACQUIRED"
+          },
+          "extraction": {
+            "status": "passed",
+            "reason": "EXTRACTION_PARTIAL",
+            "extractedChars": 62920
+          },
+          "identity": {
+            "status": "rejected",
+            "reason": "GAME_MISMATCH",
+            "contentHash": "a6fc1973fa7ef7ce890fc4879c0674e8ededd0a3ca3e040fac18a20ea4acadfb",
+            "identityRuleId": "gaming.identity.affirmative_body_scope_conflict"
+          },
+          "applicability": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "relevance": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "freshness": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "provenance": {
+            "status": "passed",
+            "reason": "PROVENANCE_ACQUIRED"
+          },
+          "selection": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "generation": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          }
+        }
+      ],
+      "durationMs": 646,
+      "rssBytes": 180535296
+    },
+    {
+      "scenario": "elite-alternative",
+      "game": "Elite Dangerous",
+      "question": "Find a detailed guide explaining system colonisation and how to get started.",
+      "sourceUrl": "https://edblackbox.com/guides/systems/galaxy-and-power-systems/system-colonization.html",
+      "admittedHops": [
+        "https://edblackbox.com/guides/systems/galaxy-and-power-systems/system-colonization.html"
+      ],
+      "accepted": 0,
+      "reasons": [
+        "SOURCE_INSTRUCTIONS_REJECTED"
+      ],
+      "stages": [
+        {
+          "acquisition": {
+            "status": "passed",
+            "reason": "SOURCE_ACQUIRED"
+          },
+          "extraction": {
+            "status": "rejected",
+            "reason": "SOURCE_INSTRUCTIONS_REJECTED"
+          },
+          "identity": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "applicability": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "relevance": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "freshness": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "provenance": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "selection": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "generation": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          }
+        }
+      ],
+      "durationMs": 527,
+      "rssBytes": 184950784
+    },
+    {
+      "scenario": "xenoblade-2-alternative",
+      "game": "Xenoblade Chronicles 2",
+      "question": "Find a Chapter 2 guide for Rex as DPS and Nia as healer. Avoid later-story spoilers.",
+      "sourceUrl": "https://consolepulse.com/nintendo/xenoblade-chronicles/guides/xenoblade-chronicles-2-chapter-2-walkthrough",
+      "admittedHops": [
+        "https://consolepulse.com/nintendo/xenoblade-chronicles/guides/xenoblade-chronicles-2-chapter-2-walkthrough"
+      ],
+      "accepted": 0,
+      "reasons": [
+        "INSUFFICIENT_EXTRACTION"
+      ],
+      "stages": [
+        {
+          "acquisition": {
+            "status": "passed",
+            "reason": "SOURCE_ACQUIRED"
+          },
+          "extraction": {
+            "status": "rejected",
+            "reason": "INSUFFICIENT_EXTRACTION",
+            "extractedChars": 0,
+            "identityRuleId": "gaming.identity.independent_anchor_required"
+          },
+          "identity": {
+            "status": "unknown",
+            "reason": "GAME_IDENTITY_UNVERIFIED",
+            "contentHash": "e51dc24621049128fc18bdd0454fdb1d3d70a00f335aae272645af102cc79e9b",
+            "identityRuleId": "gaming.identity.independent_anchor_required"
+          },
+          "applicability": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "relevance": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "freshness": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "provenance": {
+            "status": "passed",
+            "reason": "PROVENANCE_ACQUIRED"
+          },
+          "selection": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          },
+          "generation": {
+            "status": "not_run",
+            "reason": "STAGE_NOT_RUN"
+          }
+        }
+      ],
+      "durationMs": 3320,
+      "rssBytes": 265097216
+    }
+  ]
+}

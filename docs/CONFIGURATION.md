@@ -10,6 +10,26 @@ credentials, or bypass the separate consequential ingestion Action and platform
 confirmation. Do not change production configuration to validate this feature.
 See [hybrid knowledge policy](GAMING_GUIDE_ASSISTANCE.md#hybrid-knowledge-handoff-gaming-hybrid-v1).
 
+`ARCANOS_GAMING_HYBRID_BACKEND_DISCOVERY_ENABLED` defaults to `false`. When
+explicitly enabled alongside `ARCANOS_GAMING_DISCOVERY_ENABLED` and its configured
+search provider, a new v2 query may search for gameplay guides after stored
+evidence proves insufficient. URL hints pass through the normal actor-bound v2
+candidate operation, including its revisions, two-submission/six-URL/24-second
+acquisition ceiling, source authority, CLEAR and Trinity checks. Search uses at
+most two targeted queries per granted round within the existing discovery
+deadline and total result ceiling. It does not refresh official currentness,
+replace explicitly supplied guides, store sources, or affect v1. Missing provider
+configuration and search failures leave host discovery available and report the
+actual limitation. Query retries do not rerun discovery. No production change is
+needed to validate this disabled option.
+
+Automatic work preserves a mode-aware generation admission target under the
+existing request deadline and operator caps. With default guide settings, the
+38-second hybrid HTTP route yields its host-search grant; the 60-second MCP
+route retains a bounded automatic window. See
+[discovery recovery](GAMING_DISCOVERY_RECOVERY.md#authority-and-evidence) for the
+stage allowances and limitations. No deadline or acquisition limit is extended.
+
 ## Overview
 This document captures active backend and daemon configuration used by current code. Defaults and precedence are derived from `src/platform/runtime/unifiedConfig.ts`, `src/platform/runtime/env.ts`, compatibility re-exports under `src/config/`, and daemon config modules.
 

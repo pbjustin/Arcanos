@@ -479,9 +479,40 @@ try {
     const confirmedProviderStart = providerRequests.length;
     const confirmedQuery = unwrap(await rpc('arcanos_gaming_hybrid_query', { contractVersion: 'gaming-hybrid-v2',
       game: confirmedGame, edition: 'base-game', question: PROMPT, storagePolicy: 'ask_before_store', idempotencyKey: randomUUID() })).result;
+    check('compiled stored SQL lookup requests host discovery before generation', () => {
+      assert.equal(confirmedQuery.nextAction, 'search');
+      assert.equal(providerRequests.length, confirmedProviderStart);
+      assert.equal(confirmedQuery.revision, 0);
+    });
+    // The host uses the normal compiled discovery adapter. Only its external
+    // provider is deterministic; the returned URL must survive normal ranking,
+    // admission, MCP submission, protected acquisition, CLEAR and generation.
+    const searchRequests = [];
+    const discoveryFlag = process.env.ARCANOS_GAMING_DISCOVERY_ENABLED;
+    let foundGuides;
+    try {
+      process.env.ARCANOS_GAMING_DISCOVERY_ENABLED = 'true';
+      const { discoverGamingSources } = await load('services/gamingSourceDiscovery.js');
+      foundGuides = await discoverGamingSources({ game: confirmedGame, prompt: PROMPT,
+        mode: 'guide', edition: 'base-game', queryVariants: true,
+        provider: { id: 'synthetic-compiled-host', version: 'v1', isConfigured: () => true, async search(input) {
+          searchRequests.push({ query: input.query, resultLimit: input.resultLimit });
+          return [{ url: confirmedUrl, title: `${confirmedGame} obsidian observatory walkthrough guide`,
+            snippet: `${PASSAGE} ${confirmedGame} base-game observatory route.`, provider: 'synthetic-compiled-host', providerRank: 1 }];
+        } } });
+    } finally {
+      if (discoveryFlag === undefined) delete process.env.ARCANOS_GAMING_DISCOVERY_ENABLED;
+      else process.env.ARCANOS_GAMING_DISCOVERY_ENABLED = discoveryFlag;
+    }
+    check('compiled host discovery ranks and deduplicates two bounded provider queries', () => {
+      assert.equal(foundGuides.discoveryFailureReason, undefined);
+      assert.equal(searchRequests.length, 2);
+      assert.ok(searchRequests.reduce((sum, item) => sum + item.resultLimit, 0) <= 8);
+      assert.deepEqual(foundGuides.candidates.map(candidate => candidate.url), [confirmedUrl]);
+    });
     const confirmedFound = unwrap(await rpc('arcanos_gaming_submit_candidates', { contractVersion: 'gaming-hybrid-v2',
       workflowId: confirmedQuery.workflowId, expectedRevision: confirmedQuery.revision,
-      candidates: [{ url: confirmedUrl }], idempotencyKey: randomUUID() })).result;
+      candidates: foundGuides.candidates.map(candidate => ({ url: candidate.url })), idempotencyKey: randomUUID() })).result;
     check('owner-confirmed verified hybrid selects grounded evidence', () => {
       assert.equal(confirmedFound.state, 'answer_ready', JSON.stringify(confirmedFound));
       assert.equal(confirmedFound.evidenceSelected, true);

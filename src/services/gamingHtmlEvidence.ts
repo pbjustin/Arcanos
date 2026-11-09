@@ -54,6 +54,119 @@ const APPLICABILITY_LIST_LABEL = /^(Platforms?|Regions?|Editions?|Patch(?:es)?|V
 interface ApplicabilityListLabel { label: string; complete: boolean; preserveOnly: boolean; exhausted?: true }
 const APPLICABILITY_LAYOUT_LIMITS = Object.freeze({ ancestors: 16, siblings: 32 });
 
+// One reviewed React transport form, interpreted as static DOM relationships,
+// never JavaScript. Other renderers/helper revisions remain unsupported.
+const STATIC_STREAM_HELPER_SHA256 = '7a3c441a297b4368e7168f53d44323873b11a160d3567f2d4695187785c22646';
+const STATIC_STREAM_SEGMENTS = 32;
+
+export function restoreGamingStaticStream($: CheerioAPI, deadlineExpired: () => boolean): 'absent' | 'restored' | 'unsupported' {
+  const slots = $('template[id^="B:"]').toArray();
+  const buckets = $('div[hidden][id^="S:"]').toArray();
+  if (!slots.length && !buckets.length) return 'absent';
+  if (!slots.length || slots.length !== buckets.length || slots.length > STATIC_STREAM_SEGMENTS) return 'unsupported';
+  let scanSteps = 0;
+  const inertAncestor = (element: Element): boolean => {
+    // Template contents have a parser-owned document-fragment parent, which
+    // Cheerio's element-only parents() traversal does not cross.
+    for (let ancestor: Element | null = element.parent; ancestor; ancestor = ancestor.parent) {
+      if (++scanSteps > GAMING_HTML_EVIDENCE_LIMITS.elements || deadlineExpired()
+        || $(ancestor).is('template,noscript')) return true;
+    }
+    return false;
+  };
+  const ids = new Map<string, Element[]>();
+  for (const element of $('[id]').toArray()) {
+    if (deadlineExpired()) return 'unsupported';
+    const id = $(element).attr('id')!;
+    const matches = ids.get(id);
+    if (!matches) ids.set(id, [element]);
+    else if (matches.length < 2) matches.push(element);
+  }
+  const calls: { slot: Element; bucket: Element }[] = [];
+  let initialized = false;
+  for (const script of $('script').toArray()) {
+    if (deadlineExpired()) return 'unsupported';
+    const source = $(script).html() ?? '';
+    if (!/\$(?:RC|RV|RB)\b/u.test(source)) continue;
+    if (!closed(script) || inertAncestor(script) || $(script).attr('nomodule') !== undefined
+      || $(script).attr('src') !== undefined
+      || !['', 'text/javascript', 'application/javascript'].includes($(script).attr('type') ?? '')) return 'unsupported';
+    const call = /\$RC\("(B:[0-9a-f]{1,8})","(S:[0-9a-f]{1,8})"\);?$/u.exec(source);
+    if (!call || calls.length >= STATIC_STREAM_SEGMENTS) return 'unsupported';
+    const prefix = source.slice(0, call.index);
+    if (!initialized) {
+      if (createHash('sha256').update(prefix).digest('hex') !== STATIC_STREAM_HELPER_SHA256) return 'unsupported';
+      initialized = true;
+    } else if (prefix) return 'unsupported';
+    const [slot] = ids.get(call[1]) ?? [];
+    const [bucket] = ids.get(call[2]) ?? [];
+    const callStart = (script as LocatedElement).sourceCodeLocation?.startOffset;
+    if (ids.get(call[1])?.length !== 1 || ids.get(call[2])?.length !== 1
+      || !slots.includes(slot) || !buckets.includes(bucket)
+      || calls.some(previous => previous.slot === slot || previous.bucket === bucket)) return 'unsupported';
+    // The reviewed helper cannot resolve IDs supplied later in the response.
+    if (callStart === undefined || [(slot as LocatedElement), (bucket as LocatedElement)]
+      .some(element => !element.sourceCodeLocation || element.sourceCodeLocation.endOffset > callStart)) return 'unsupported';
+    calls.push({ slot, bucket });
+  }
+  if (!initialized || calls.length !== slots.length) return 'unsupported';
+  const plans: { start: Element; removed: Element[]; bucket: Element }[] = [];
+  const availableBuckets = new Set<Element>();
+  const removed = new Set<Element>();
+  for (const { slot, bucket } of calls) {
+    if (deadlineExpired()) return 'unsupported';
+    if (!closed(slot) || $(slot).html() !== '' || inertAncestor(slot) || !closed(bucket)
+      || !$(bucket).parent().is('body') || Object.keys($(bucket).attr() ?? {}).some(key => !['hidden', 'id'].includes(key))) return 'unsupported';
+    // A later slot may be supplied by an already planned bucket, but never by
+    // itself, an unavailable bucket, or fallback content removed by another slot.
+    for (let ancestor: Element | null = slot.parent; ancestor; ancestor = ancestor.parent) {
+      if (++scanSteps > GAMING_HTML_EVIDENCE_LIMITS.elements || deadlineExpired()) return 'unsupported';
+      if (removed.has(ancestor) || buckets.includes(ancestor) && !availableBuckets.has(ancestor)) return 'unsupported';
+    }
+    const start = slot.prev;
+    if (!start || start.type !== 'comment' || start.data !== '$?' || removed.has(slot)) return 'unsupported';
+    const discarded: Element[] = [];
+    const nested: string[] = [];
+    let end: Element | null = slot;
+    for (; end; end = end.next) {
+      if (++scanSteps > GAMING_HTML_EVIDENCE_LIMITS.elements || deadlineExpired()) return 'unsupported';
+      if (end.type === 'comment') {
+        const marker = end.data ?? '';
+        if (marker === '/$' || marker === '/&') {
+          if (!nested.length) { if (marker !== '/$') return 'unsupported'; break; }
+          if (nested.pop() !== marker) return 'unsupported';
+        } else if (['$', '$?', '$~', '$!', '&'].includes(marker)) nested.push(marker === '&' ? '/&' : '/$');
+      }
+      discarded.push(end);
+      if (discarded.length > GAMING_HTML_EVIDENCE_LIMITS.elements) return 'unsupported';
+    }
+    if (!end) return 'unsupported';
+    // Validate the complete plan before moving any nodes. A nested slot inside
+    // a fallback is not interchangeable with a slot supplied in its bucket.
+    const discardedSet = new Set(discarded);
+    for (const candidate of slots) {
+      if (candidate === slot) continue;
+      for (let ancestor: Element | null = candidate; ancestor; ancestor = ancestor.parent) {
+        if (++scanSteps > GAMING_HTML_EVIDENCE_LIMITS.elements || deadlineExpired()) return 'unsupported';
+        if (discardedSet.has(ancestor)) return 'unsupported';
+      }
+    }
+    for (const element of discarded) removed.add(element);
+    plans.push({ start, removed: discarded, bucket });
+    availableBuckets.add(bucket);
+  }
+  if (deadlineExpired()) return 'unsupported';
+  for (const plan of plans) {
+    // Consume only the protocol's hidden transport wrapper. Destination
+    // ancestry and hidden/restricted descendants remain under normal policy.
+    $(plan.removed[0]).before($(plan.bucket).contents());
+    $(plan.removed).remove();
+    $(plan.bucket).remove();
+    plan.start.data = '$';
+  }
+  return 'restored';
+}
+
 function text(value: string): string {
   return value.normalize('NFKC').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/g, ' ').replace(/\s+/g, ' ').trim();
 }
@@ -159,28 +272,43 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
   const $ = load(input.body, parseOptions as Parameters<typeof load>[1]);
   preservePrimaryContentSidebarLayouts($, gamingDocumentFetchOptions(input.sourceUrl).primaryContentSelectors);
   if (deadlineExpired()) return result;
-  const visibleBody = $('body').clone();
-  visibleBody.find('script,style,template,noscript').remove();
-  // Match visible block separation before normalization: adjacent paragraphs
-  // cannot join "previous" and "instructions" into a different word and evade
-  // the full-response security scan after the context ceiling.
-  visibleBody.find('br').replaceWith('\n');
-  visibleBody.find('p,div,section,article,main,header,footer,nav,aside,li,dt,dd,table,tr,td,th,h1,h2,h3,h4,h5,h6')
-    .prepend('\n').append('\n');
-  const rawVisibleText = visibleBody.text();
-  const visibleText = text(rawVisibleText);
+  const inspectVisibleResponse = (): string => {
+    const visibleBody = $('body').clone();
+    visibleBody.find('script,style,template,noscript').remove();
+    // Match visible block separation before normalization: adjacent paragraphs
+    // cannot join "previous" and "instructions" into a different word and evade
+    // the full-response security scan after the context ceiling.
+    visibleBody.find('br').replaceWith('\n');
+    visibleBody.find('p,div,section,article,main,header,footer,nav,aside,li,dt,dd,table,tr,td,th,h1,h2,h3,h4,h5,h6')
+      .prepend('\n').append('\n');
+    const raw = visibleBody.text();
+    const normalized = text(raw);
+    if (GAMING_SOURCE_USE_RESTRICTION.test(normalized)) result.sourceUseRestricted = true;
+    if (filterGamingDocumentInstructions(raw) !== normalized) fail('source_instruction_filtered');
+    return normalized;
+  };
+  let visibleText = inspectVisibleResponse();
   // The context projection can omit a long article's tail or its title. Scan the
   // entire bounded visible response before selection so omitted instructions
   // cannot make a partially sanitized document eligible for grounding.
   const rawTitle = $('title').first().text();
   // Cheerio preserves adjacent inline text and decodes entities. Inspect the
   // full visible response before source furniture or navigation can disappear.
-  if (GAMING_SOURCE_USE_RESTRICTION.test(visibleText) || GAMING_SOURCE_USE_RESTRICTION.test(text(rawTitle)))
+  if (GAMING_SOURCE_USE_RESTRICTION.test(text(rawTitle)))
     result.sourceUseRestricted = true;
-  if ([[rawVisibleText, visibleText], [rawTitle, text(rawTitle)]].some(([raw, normalized]) =>
-    filterGamingDocumentInstructions(raw) !== normalized)) fail('source_instruction_filtered');
+  if (filterGamingDocumentInstructions(rawTitle) !== text(rawTitle)) fail('source_instruction_filtered');
   if (deadlineExpired()) return result;
   if (!htmlContent) return result;
+  const stream = restoreGamingStaticStream($, deadlineExpired);
+  if (deadlineExpired()) return result;
+  if (stream === 'unsupported' || stream === 'restored' && input.transportTruncated) {
+    result.proseBody = ''; fail('unsupported_streamed_html'); return result;
+  }
+  // Relocation can assemble a directive/restriction from separated fragments.
+  // Inspect the complete restored view before navigation or hidden furniture
+  // disappears, retaining every finding from the original response scan.
+  if (stream === 'restored') visibleText = inspectVisibleResponse();
+  if (deadlineExpired()) return result;
   const applicabilityLists = new Map<Element, ApplicabilityListLabel | undefined>();
   for (const list of $('ul,ol').toArray().slice(0, limit.lists)) {
     if (deadlineExpired()) return result;
@@ -209,7 +337,7 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
       // Linked facts, short steps and version/date-bearing release entries are
       // authored evidence even if their entire visible text is a single link.
       || /[.!?](?:\s|$)|\p{N}/u.test(label)
-      || /\b(?:patch(?:es)?|builds?|updates?|releases?|versions?|seasons?|platforms?|regions?|effective|published|updated|baseline|supersedes)\b/iu.test(label)
+      || /\b(?:patch(?:es)?|builds?|updates?|releases?|versions?|seasons?|platforms?|effective|published|updated|baseline|supersedes)\b/iu.test(label)
       || /^(?:(?:first|next|then)[,:]?\s+)?(?:to\s+|attack\b|avoid\b|block\b|collect\b|defeat\b|dodge\b|equip\b|explore\b|follow\b|gather\b|heal\b|jump\b|move\b|open\b|press\b|restore\b|save\b|select\b|spend\b|upgrade\b|use\b|wait\b|this\s+(?:guide|article|page|document|source)\b)/iu.test(label)
       || /\b(?:is|are|was|were|has|have|only|not|no|without|except|requires?|costs?|grants?|unlocks?|available|must|should)\b/iu.test(label)
       || hasGamingActionableProse(label) || gamingAttributableClaimText(label)) continue;
@@ -506,21 +634,25 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
   let expandedCells = 0;
   for (const [tableIndex, table] of tables.slice(0, limit.tables).entries()) {
     if (exhausted()) break;
-    if (!eligible($, table) || $(table).attr('role') === 'presentation') continue;
+    if (!eligible($, table) || $(table).attr('role') === 'presentation' || $(table).closest('tfoot').length) continue;
     const scope = `table:${tableIndex}`;
     const caption = text($(table).children('caption').first().text());
     const unitContext = context(table, scope, caption);
-    const footerText = text($(table).children('tfoot').text());
+    const footer = $(table).children('tfoot').clone();
+    footer.find('br').replaceWith(' ');
+    footer.find('p,div,section,article,li,dt,dd,tr,td,th').prepend(' ').append(' ');
+    const footerText = text(footer.text());
     if (footerText) {
       unitContext.qualifiers = unique([...(unitContext.qualifiers ?? []), footerText.slice(0, limit.contextChars)]);
       if (footerText.length > limit.contextChars || !closed($(table).children('tfoot').first().get(0)!)) markContext(scope, 'content_truncated');
     }
-    const rows = $(table).find('tr').toArray().filter((row) => $(row).closest('table').get(0) === table);
+    // Footer content qualifies body records; it cannot supply record fields or headers.
+    const rows = $(table).find('tr').toArray().filter((row) => $(row).closest('table').get(0) === table && !$(row).closest('tfoot').length);
     const grid: Array<Array<{ element: Element; row: number; column: number; colSpan: number } | undefined>> = [];
     const rowReasons: string[][] = [];
     const headers = new Map<string, Element[]>();
     $(table).find('th[id]').each((_, th) => {
-      if ($(th).closest('table').get(0) !== table) return;
+      if ($(th).closest('table').get(0) !== table || $(th).closest('tfoot').length) return;
       const id = $(th).attr('id')!;
       headers.set(id, [...(headers.get(id) ?? []), th]);
     });
@@ -559,6 +691,20 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
     if (invalidSpan) { fail('ambiguous_field_mapping'); continue; }
     let headerRows = 0;
     while (headerRows < grid.length && grid[headerRows]?.length && grid[headerRows].every((cell) => cell && $(cell.element).is('th') && $(cell.element).attr('scope') !== 'row')) headerRows++;
+    // Without column-record boundaries, an omitted property row can qualify
+    // the entire table. Explicit headers cannot make its inspected prefix whole.
+    if (!headerRows && rows.length > limit.rowsPerTable) markContext(scope, 'required_context_missing');
+    // A property table, like a definition list, explicitly binds labels and
+    // values inside one record container. Never combine independent row groups,
+    // mixed column tables or spanning cells into an inferred tuple.
+    const propertyTable = !headerRows && grid.length > 0 && rows.length === grid.length
+      && new Set(rows.map(row => $(row).parent().get(0))).size === 1
+      && grid.every((cells, rowIndex) => cells.length === 2 && cells.every(cell => cell && cell.row === rowIndex
+        && cell.colSpan === 1 && Number($(cell.element).attr('rowspan') ?? 1) === 1)
+        && $(cells[0]!.element).is('th[scope="row"]') && $(cells[1]!.element).is('td'));
+    const propertyFields: Fields = [];
+    const propertyReasons: string[] = [];
+    const propertyQualifiers: string[] = [];
     for (let rowIndex = headerRows; rowIndex < grid.length && !exhausted(); rowIndex++) {
       const cells = grid[rowIndex];
       if (!cells?.length) continue;
@@ -567,21 +713,23 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
       if (headerRows && cells.length < Math.max(...grid.slice(0, headerRows).map((headerRow) => headerRow.length))) reasons.push('incomplete_record');
       const qualifiers = [...(unitContext.qualifiers ?? [])];
       const visited = new Set<Element>();
+      const rowHeader = propertyTable ? cells[0]!.element : undefined;
       for (const [column, cell] of cells.entries()) {
         if (!cell) { reasons.push('incomplete_record'); continue; }
+        if (cell.element === rowHeader) continue;
         if (visited.has(cell.element)) continue;
         visited.add(cell.element);
         if (!closed(cell.element)) reasons.push('content_truncated');
         const explicit = ($(cell.element).attr('headers') ?? '').split(/\s+/).filter(Boolean);
         const columnHeaders = explicit.length ? explicit.map((id) => headers.get(id)?.length === 1 ? headers.get(id)![0] : undefined)
-          : grid.slice(0, headerRows).map((headerRow) => headerRow[column]?.element);
+          : rowHeader ? [rowHeader] : grid.slice(0, headerRows).map((headerRow) => headerRow[column]?.element);
         if (explicit.length && columnHeaders.some((header) => !header)) reasons.push('ambiguous_field_mapping');
         if ($(cell.element).find('table,ul,ol,dl').length || columnHeaders.some((header) => header && $(header).find('table,ul,ol,dl').length)) reasons.push('required_context_missing');
         if (columnHeaders.some((header) => header && $(header).find('blockquote').length)) reasons.push('ambiguous_field_mapping', 'quoted_content_ambiguous');
         const label = unique(columnHeaders.filter((header): header is Element => Boolean(header)).map((header) => cleanElementText($, header))).join(' / ');
         if (!label) reasons.push('ambiguous_field_mapping');
         fields.push({ label, value: cleanElementText($, cell.element) });
-        const footnoteLinks = $(cell.element).find('a[href^="#"]');
+        const footnoteLinks = (rowHeader ? $(cell.element).add(rowHeader) : $(cell.element)).find('a[href^="#"]');
         if (footnoteLinks.length > 8) reasons.push('required_context_missing');
         footnoteLinks.slice(0, 8).each((_, link) => {
           const targetId = $(link).attr('href')!.slice(1);
@@ -592,8 +740,12 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
           qualifiers.push(qualifier.slice(0, limit.contextChars));
         });
       }
-      addUnit('table_row', fields, rows[rowIndex], 'html_table', { ...unitContext, scope: `${scope}/row:${rowIndex}`, ...(qualifiers.length ? { qualifiers: unique(qualifiers) } : {}) }, reasons);
+      if (propertyTable) {
+        propertyFields.push(...fields); propertyReasons.push(...reasons); propertyQualifiers.push(...qualifiers);
+      } else addUnit('table_row', fields, rows[rowIndex], 'html_table', { ...unitContext, scope: `${scope}/row:${rowIndex}`, ...(qualifiers.length ? { qualifiers: unique(qualifiers) } : {}) }, reasons);
     }
+    if (propertyTable) addUnit('table_row', propertyFields, table, 'html_table',
+      { ...unitContext, scope: `${scope}/properties`, ...(propertyQualifiers.length ? { qualifiers: unique(propertyQualifiers) } : {}) }, unique(propertyReasons));
   }
 
   result.attempts.push('html_list', 'html_definition');

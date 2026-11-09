@@ -186,6 +186,8 @@ export async function evaluateGamingHybridCandidates(
   submission: GamingStoredKnowledgeInput & { candidates: readonly GamingHybridCandidateInput[]; region?: string;
     discoveryType?: 'gameplay_evidence' | 'currentness_verification'; protocolVersion?: 'gaming-hybrid-v1' | 'gaming-hybrid-v2' },
   context: { actorKey: string; requestId?: string; traceId?: string; workflowId?: string; signal?: AbortSignal; maxElapsedMs?: number;
+    /** Negative deduplication only; invoked by protected acquisition after hop admission. */
+    onRequestUrl?: (url: string) => void;
     /** Owned workflow intent; an absent policy stays transient and database-free. */
     storagePolicy?: GamingHybridStoragePolicy;
     /** Server-derived from the owned workflow's explicit storage policy. */
@@ -293,6 +295,7 @@ export async function evaluateGamingHybridCandidates(
       const initialAuthority = await observeAuthority(publicUrl);
       const document = await (dependencies.resolveDocument ?? resolveGamingDocument)(publicUrl,
         GAMING_DURABLE_DOCUMENT_LIMITS.documentChars, { documentPurpose: 'durable', signal, deadlineAt,
+          ...(context.onRequestUrl ? { onRequestUrl: context.onRequestUrl } : {}),
           timeoutMs: Math.min(5_000, getGamingWebContextFetchTimeoutMs(), Math.max(1, deadlineAt - Date.now())), includeLinks: false });
       callerSignal?.throwIfAborted();
       if (v2 && (acquisitionSignal?.aborted || Date.now() >= deadlineAt)) { reject('SOURCE_TIMEOUT'); continue; }

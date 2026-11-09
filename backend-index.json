@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-08T20:00:19.119Z",
+  "generatedAt": "2026-11-09T09:43:33.718Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4507,6 +4507,9 @@
           "relativePath": "tests/gaming-authority-snapshot-equality.test.ts"
         },
         {
+          "relativePath": "tests/gaming-backend-discovery.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-base-defaulting.test.ts"
         },
         {
@@ -4630,6 +4633,9 @@
           "relativePath": "tests/gaming-discovery-recovery.integration.test.ts"
         },
         {
+          "relativePath": "tests/gaming-discovery-request-framing.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-document-ingestion-preview-failure.test.ts"
         },
         {
@@ -4646,6 +4652,9 @@
         },
         {
           "relativePath": "tests/gaming-durable-rag-preview.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-established-game-adjuncts.test.ts"
         },
         {
           "relativePath": "tests/gaming-evidence-identity-reliability.test.ts"
@@ -4741,6 +4750,12 @@
           "relativePath": "tests/gaming-guide-response-preview.test.ts"
         },
         {
+          "relativePath": "tests/gaming-heldout-acquisition-acceptance.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-heldout-lexical.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-historical-status-compatibility.test.ts"
         },
         {
@@ -4786,6 +4801,9 @@
           "relativePath": "tests/gaming-independent-clear-review.test.ts"
         },
         {
+          "relativePath": "tests/gaming-independent-discovery-e2e.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-independent-identity-review.test.ts"
         },
         {
@@ -4820,6 +4838,9 @@
         },
         {
           "relativePath": "tests/gaming-legacy-instruction-boundary.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-lexical-retrieval-benchmark.test.ts"
         },
         {
           "relativePath": "tests/gaming-lifecycle-drain.test.ts"
@@ -4970,6 +4991,9 @@
         },
         {
           "relativePath": "tests/gaming-retrieval-policy.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-row-header-extraction.test.ts"
         },
         {
           "relativePath": "tests/gaming-samurai-guide-workflow.integration.test.ts"
@@ -5402,6 +5426,9 @@
         },
         {
           "relativePath": "tests/integration/gaming-durable-rag.pg18.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/integration/gaming-heldout-lexical.pg18.integration.test.ts"
         },
         {
           "relativePath": "tests/integration/gaming-historical-status.pg18.integration.test.ts"
@@ -6316,10 +6343,16 @@
           "relativePath": "tests/testUtils/gamingGenericBenchmarkMetrics.ts"
         },
         {
+          "relativePath": "tests/testUtils/gamingHeldoutLexicalFixtures.ts"
+        },
+        {
           "relativePath": "tests/testUtils/gamingHybridAcceptedFixtures.ts"
         },
         {
           "relativePath": "tests/testUtils/gamingLargeGuideFixture.ts"
+        },
+        {
+          "relativePath": "tests/testUtils/gamingLexicalBenchmarkFixtures.ts"
         },
         {
           "relativePath": "tests/testUtils/gamingLifecycleDrain.ts"
@@ -6359,6 +6392,9 @@
         },
         {
           "relativePath": "tests/trinity-final-output-preview-fixture.test.ts"
+        },
+        {
+          "relativePath": "tests/trinity-gameplay-insertion-honesty.test.ts"
         },
         {
           "relativePath": "tests/trinity-gaming-intake.test.ts"

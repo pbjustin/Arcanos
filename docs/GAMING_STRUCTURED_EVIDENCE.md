@@ -68,6 +68,18 @@ their flattened contents from bypassing record integrity checks. Ordinary articl
 selection continues for the remaining prose. No browser, script execution,
 linked-page fetch, pagination, crawler, OCR, or additional PDF parser is added.
 
+An explicit property table whose rows each contain one `th[scope="row"]` label
+and one nonspanning data cell retains those field relationships as one record.
+All rows must share one row group. Separate tables or row groups are never
+combined; mixed column tables retain their existing interpretation. Duplicate
+labels, omitted nested structures, unresolved header references, footnote
+qualifiers and incomplete boundaries retain the existing integrity checks.
+Footer rows, footer headers and nested footer tables supply qualifications only;
+cell boundaries remain visible in those qualifications. They cannot supply
+property fields or complete a missing body value.
+Extracted fields still require independent identity, applicability and CLEAR
+validation before they can support a gameplay answer.
+
 A closed list item with an editorial topic prefix and complete actionable
 gameplay sentences remains ordinary prose. A colon alone does not establish a
 structured record. Explicit record fields, nested structures, missing values
@@ -79,8 +91,25 @@ Player-facing instructions such as following a mission walkthrough are normal
 evidence. Assistant control instructions remain a document-level rejection,
 including instructions in acquired title/heading metadata or text omitted by
 the context projection budget. Sanitization is not approval of the remainder.
-Resolver `gaming-document-v7` separates the current extraction decisions from
+Resolver `gaming-document-v13` separates the current extraction and acquired-scope decisions from
 older cached resolutions and durable revision identity.
+
+Complete, recognized React HTML transport buckets can be relocated statically
+into their closed pending template slots. This does not execute JavaScript or
+fetch more content. The exact reviewed helper fingerprint, literal calls, unique
+closed references, source order, destination ancestry and a 32-segment ceiling
+are required. Unsupported or ambiguous shapes stay unsupported. The complete
+accepted-response instruction and source-use scans run before relocation and
+again on the restored view before furniture removal, so relocation cannot hide
+an assembled restriction or directive. Ordinary hidden descendants and navigation
+remain excluded afterward. Inert JSON records use the same bounded relocation
+on their parser's own DOM, inheriting destination context while retaining original
+response slices and script ordinals. Independent JSON limits still apply. The
+original acquired response, byte/text limits and deadlines remain unchanged.
+
+A link-only article title mentioning a geographic region remains navigation.
+Explicit region/edition/platform fields, applicability layouts, restrictions and
+linked gameplay statements retain their independent evidence checks.
 
 Label-only linked article list items are catalog navigation rather than game
 declarations or gameplay records. Complete authored gameplay, explicit record

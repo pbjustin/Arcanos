@@ -496,6 +496,14 @@ binding, selected evidence and coverage contracts, exact accounting, frontend
 instructions and separately authorized rollout. V2 does not change currentness
 qualifications or generation deadlines described here.
 
+Discovery uses host Web Search by default. An operator may separately opt into
+bounded backend-assisted gameplay discovery with the disabled-by-default
+`ARCANOS_GAMING_HYBRID_BACKEND_DISCOVERY_ENABLED` setting and an enabled/configured
+existing discovery provider. It reuses v2 candidate evaluation and the same
+workflow budget; it does not authorize source storage. See
+[discovery recovery](GAMING_DISCOVERY_RECOVERY.md#authority-and-evidence) and
+[configuration](CONFIGURATION.md) for failure, scope and compatibility limits.
+
 V2 clarification keeps the workflow open and retains accepted artifacts, selected
 evidence, admitted URLs, coverage and remaining discovery/acquisition allowances.
 Repeat the original query with the returned `workflowId`, `expectedRevision`, a
