@@ -54,11 +54,20 @@ set. It excludes submitted URLs and sanitized admitted acquisition destinations,
 including failed redirects. Failed work is still charged; there is no new retry
 allowance, crawler or access-control bypass.
 
-Automatic work also honors the remaining HTTP request deadline. It preserves
-the existing outer validation/response, provider dispatch, final-answer, audit
-and terminal reserves (24.5 seconds combined), bounds search to the remaining
-automatic-work window, and caps acquisition by what remains after search. If
-that window is exhausted, it returns the existing resumable host-search grant
+Automatic work also honors the remaining HTTP request deadline. Its conservative
+generation admission target preserves the full mode-specific intake allowance,
+an ordinary 12-second stage window for reasoning (or the lower configured stage
+cap), final-answer/audit/terminal reserves, the safety buffer and existing outer
+headroom. Defaults total 55.5 seconds for guides and 43.5 seconds for builds/meta.
+This is an admission target, not a new reasoning timeout or a promise about
+provider latency. Smaller operator pipeline/module caps cannot be bypassed:
+when they cannot fit the target, automatic work yields to the host.
+
+Search is bounded to the remaining automatic-work window; acquisition is capped
+by what remains after search. Under default settings, a 38-second HTTP request
+returns its host-search grant before automatic work, while a 60-second MCP
+request can use its remaining bounded window. If that window is exhausted, the
+workflow returns the existing resumable host-search grant
 with accepted evidence and unspent acquisition allowance intact. A later host
 submission uses the same workflow/revision; this does not grant a new round or
 extend the absolute workflow TTL. Requests without an inherited deadline keep

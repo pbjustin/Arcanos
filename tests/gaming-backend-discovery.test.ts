@@ -11,6 +11,9 @@ const query = { contractVersion, idempotencyKey: 'backend-search-query', game: '
 const empty = { context: '', sources: [], evidence: [], sourceKnown: false };
 const flag = 'ARCANOS_GAMING_HYBRID_BACKEND_DISCOVERY_ENABLED';
 let previous: string | undefined;
+const timingKeys = ['ARCANOS_GAMING_STAGE_TIMEOUT_MS', 'ARCANOS_GAMING_GUIDE_STAGE_TIMEOUT_MS',
+  'ARCANOS_GAMING_PIPELINE_TIMEOUT_MS', 'ARCANOS_GAMING_GUIDE_PIPELINE_TIMEOUT_MS', 'ARCANOS_GAMING_MODULE_TIMEOUT_MS'];
+let previousTiming: Record<string, string | undefined>;
 function discovered(urls = ['https://guides.example/copper-gate']): GamingDiscoveryResult {
   return { candidates: urls.map((url, index) => ({ url, title: 'Lantern Voyage copper gate guide',
     providerRank: index + 1, provider: 'synthetic', score: 0.9, suggestedSourceType: 'curated', stable: true,
@@ -32,8 +35,17 @@ function setup() {
   return { workflow, discover, evaluateCandidates, generate, ingest, advance: (ms: number) => { clock += ms; } };
 }
 
-beforeEach(() => { previous = process.env[flag]; process.env[flag] = 'true'; });
-afterEach(() => { if (previous === undefined) delete process.env[flag]; else process.env[flag] = previous; });
+beforeEach(() => {
+  previous = process.env[flag]; process.env[flag] = 'true';
+  previousTiming = Object.fromEntries(timingKeys.map(key => [key, process.env[key]]));
+  for (const key of timingKeys) delete process.env[key];
+});
+afterEach(() => {
+  if (previous === undefined) delete process.env[flag]; else process.env[flag] = previous;
+  for (const [key, value] of Object.entries(previousTiming)) {
+    if (value === undefined) delete process.env[key]; else process.env[key] = value;
+  }
+});
 
 describe('opt-in backend discovery uses the existing v2 workflow', () => {
   it('acquires URL hints once and retains the normal revision and failed-work accounting', async () => {
@@ -157,9 +169,10 @@ describe('opt-in backend discovery uses the existing v2 workflow', () => {
     expect(result.body).toMatchObject({ revision: 2, discovery: { remainingCandidateUrls: 2, remainingTotalAcquisitionMs: 0 } });
   });
 
-  it('caps slow acquisition under the 38-second HTTP parent and hands recovery back before generation time is spent', async () => {
+  it('honors explicit 2.5-second stage caps under a 38-second parent and preserves host recovery accounting', async () => {
     jest.useFakeTimers();
     try {
+      process.env.ARCANOS_GAMING_GUIDE_STAGE_TIMEOUT_MS = '2500';
       const { workflow, discover, evaluateCandidates } = setup();
       const controller = new AbortController();
       const startedAt = Date.now();
@@ -190,6 +203,7 @@ describe('opt-in backend discovery uses the existing v2 workflow', () => {
   it('returns the original resumable grant if search uses the remaining automatic-work window', async () => {
     jest.useFakeTimers();
     try {
+      process.env.ARCANOS_GAMING_GUIDE_STAGE_TIMEOUT_MS = '2500';
       const { workflow, discover, evaluateCandidates } = setup();
       const controller = new AbortController();
       const startedAt = Date.now();
@@ -217,6 +231,7 @@ describe('opt-in backend discovery uses the existing v2 workflow', () => {
   it('aborts only the automatic search window and cleans its timer without cancelling the parent workflow', async () => {
     jest.useFakeTimers();
     try {
+      process.env.ARCANOS_GAMING_GUIDE_STAGE_TIMEOUT_MS = '2500';
       const { workflow, discover, evaluateCandidates } = setup();
       const controller = new AbortController();
       let notify!: () => void;
@@ -236,5 +251,14 @@ describe('opt-in backend discovery uses the existing v2 workflow', () => {
       expect(controller.signal.aborted).toBe(false); expect(evaluateCandidates).not.toHaveBeenCalled();
       expect(jest.getTimerCount()).toBe(0);
     } finally { jest.useRealTimers(); }
+  });
+
+  it.each(['pipeline', 'module'] as const)('yields before search when an operator %s cap cannot fit the generation target', async cap => {
+    process.env[cap === 'pipeline' ? 'ARCANOS_GAMING_GUIDE_PIPELINE_TIMEOUT_MS' : 'ARCANOS_GAMING_MODULE_TIMEOUT_MS'] = '10000';
+    const { workflow, discover, evaluateCandidates } = setup();
+    const result = await workflow.query(query, context);
+    expect(result.body).toMatchObject({ revision: 0, nextAction: 'search', discovery: {
+      continuationRequired: true, remainingCandidateUrls: 6, remainingTotalAcquisitionMs: 24_000 } });
+    expect(discover).not.toHaveBeenCalled(); expect(evaluateCandidates).not.toHaveBeenCalled();
   });
 });

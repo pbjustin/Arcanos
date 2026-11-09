@@ -167,11 +167,13 @@ afterEach(async () => {
 
 /** Serve the real MCP workflow with isolated effects and optional read-only evidence observation. */
 async function serve(observeCandidates?: (value: Awaited<ReturnType<typeof evaluateGamingHybridCandidates>>) => void,
-  observeDocument?: (value: Awaited<ReturnType<typeof resolveGamingDocument>>) => void) {
+  observeDocument?: (value: Awaited<ReturnType<typeof resolveGamingDocument>>) => void,
+  options: { timeoutMs?: number; onAcquisitionAllowance?: (ms: number) => void } = {}) {
   const retrieve = jest.fn(async () => ({ context: '', sources: [], evidence: [], sourceKnown: false }));
   const workflow = createGamingHybridWorkflow({ retrieve, ingest: ingest as never, now: () => Date.now() + workflowOffsetMs,
-    ...(observeCandidates || observeDocument ? { evaluateCandidates: async (...args: Parameters<typeof evaluateGamingHybridCandidates>) => {
+    ...(observeCandidates || observeDocument || options.onAcquisitionAllowance ? { evaluateCandidates: async (...args: Parameters<typeof evaluateGamingHybridCandidates>) => {
       const [submission, context, dependencies] = args;
+      options.onAcquisitionAllowance?.(context.maxElapsedMs ?? 12_000);
       const value = await evaluateGamingHybridCandidates(submission, context, { ...dependencies,
         ...(observeDocument ? { resolveDocument: async (...parameters: Parameters<typeof resolveGamingDocument>) => {
           const document = await (dependencies?.resolveDocument ?? resolveGamingDocument)(...parameters);
@@ -182,7 +184,8 @@ async function serve(observeCandidates?: (value: Awaited<ReturnType<typeof evalu
   const execute = createGamingMcpExecutor({ hybridQuery: workflow.query, candidates: workflow.candidates, ingestCandidates: workflow.ingest });
   const app = express();
   app.use(createChatGptGamingMcpRouter({ configuration, verification: { keyResolver, readEnvironmentValue: () => undefined },
-    providerAdmission: (_req, _res, next) => next(), execute }));
+    providerAdmission: (_req, _res, next) => next(), execute,
+    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }) }));
   server = createServer(app); server.listen(0, '127.0.0.1'); await once(server, 'listening');
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('Expected loopback HTTP listener.');
@@ -218,6 +221,65 @@ async function submit(state: GamingHybridResponse, urls = [active.url], key = 'i
 }
 
 describe('Intelligent discovery through authenticated loopback Gaming MCP and real Trinity', () => {
+  it.each([38_000, 60_000])('preserves successful grounded generation after slow acquisition under a %i ms parent', async timeoutMs => {
+    process.env.ARCANOS_GAMING_DISCOVERY_ENABLED = 'true';
+    process.env.ARCANOS_GAMING_HYBRID_BACKEND_DISCOVERY_ENABLED = 'true';
+    process.env.BRAVE_SEARCH_API_KEY = 'synthetic-search-fixture-only';
+    // Advance an elapsed-time fixture while retaining real loopback transport.
+    // These are deterministic model/publisher substitutes, not live latency proof.
+    let clock = Date.now();
+    jest.spyOn(Date, 'now').mockImplementation(() => clock);
+    let acquisitionAllowance = 0;
+    await serve(value => {
+      expect(value.accepted).toHaveLength(1);
+      // Include completed extraction/validation work in the batch's elapsed time;
+      // the protected HTTP fetch itself retains its separate five-second cap.
+      clock += timeoutMs === 60_000 ? acquisitionAllowance - 1 : 4_000;
+    }, undefined, { timeoutMs, onAcquisitionAllowance: ms => { acquisitionAllowance = ms; } });
+    const nativeFetch = globalThis.fetch;
+    let searches = 0;
+    jest.spyOn(globalThis, 'fetch').mockImplementation(async (input, options) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      if (url.origin === 'https://api.search.brave.com') {
+        searches += 1; clock += 2_000;
+        return new Response(JSON.stringify({ web: { results: [{ url: active.url,
+          title: `${active.game} gameplay walkthrough`, description: active.question }] } }),
+        { headers: { 'content-type': 'application/json' } });
+      }
+      expect(url.origin).toBe(new URL(endpoint).origin); return nativeFetch(input, options);
+    });
+    acquisitionResponse = () => {
+      return { status: 200, headers: { 'content-type': 'text/html' }, data: classBasedSource(
+        `<p>In the game ${active.game}, players follow these acquired instructions.</p><p>${active.passage}</p>`) };
+    };
+    const sdk = responsesCreate.getMockImplementation()!;
+    const durations: Record<string, number> = timeoutMs === 60_000
+      ? { intake: 20_000, reasoning: 10_000, final: 4_000, answer_audit: 3_000 }
+      : { intake: 8_000, reasoning: 4_000, final: 2_000, answer_audit: 1_000 };
+    responsesCreate.mockImplementation(async (...args: any[]) => {
+      const result = await sdk(...args);
+      clock += durations[providerStages.at(-1)!];
+      return result;
+    });
+    let answered = await query();
+    if (timeoutMs === 38_000) {
+      expect(answered.result).toMatchObject({ revision: 0, nextAction: 'search', discovery: {
+        continuationRequired: true, remainingCandidateUrls: 6, remainingTotalAcquisitionMs: 24_000 } });
+      expect(searches).toBe(0); expect(acquire).not.toHaveBeenCalled(); expect(responsesCreate).not.toHaveBeenCalled();
+      answered = await submit(answered.result);
+      expect(acquisitionAllowance).toBe(12_000);
+    } else {
+      expect(searches).toBe(2);
+    }
+    expect(answered).toMatchObject({ statusCode: 200, result: { state: 'answer_ready', coverageSatisfied: true,
+      answer: { response: active.answer, provenance: 'arcanos-trinity' } } });
+    expect(answered.result.answer?.sources.map(source => source.url)).toEqual([active.url]);
+    expect(providerStages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
+    if (timeoutMs === 60_000) expect(acquisitionAllowance).toBe(500);
+    expect(acquire).toHaveBeenCalledTimes(1); expect(responsesCreate).toHaveBeenCalledTimes(4);
+    expect(ingest).not.toHaveBeenCalled(); expect(memoryWrite).not.toHaveBeenCalled();
+  });
+
   it.each([...fixtures, { game: 'Lantern Voyage', question: 'How do I open the copper gate?',
     url: 'https://community.example.org/lantern/copper-gate',
     passage: 'To open the copper gate, turn the copper wheel twice and pull the copper gate lever. The copper gate opens after the wheel turns twice.',

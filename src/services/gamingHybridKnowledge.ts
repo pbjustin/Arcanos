@@ -25,8 +25,8 @@ import { assessGamingClaimCorroboration } from '@shared/gaming/gamingClaimCorrob
 import { GAMING_CLEAR_APPROVED_ANSWER, hasBoundGamingClearAnswer, type GamingClearAnswerCarrier } from '@shared/gaming/gamingClearAnswerBinding.js';
 import { gamingClearHash } from '@shared/gaming/gamingClearPolicy.js';
 import { gamingSourceAuthorityGameKeys } from '@shared/gaming/gamingSourceAuthority.js';
-import { GAMING_EXECUTION_OUTER_HEADROOM_MS, GAMING_PROVIDER_DISPATCH_HEADROOM_MS } from '@shared/gaming/gamingExecutionBudgetCore.js';
-import { GAMING_GENERATION_FINAL_STAGE_RESERVE_MS, GAMING_GENERATION_ANSWER_AUDIT_RESERVE_MS,
+import { DEFAULT_GAMING_STAGE_TIMEOUT_MS, DEFAULT_GAMING_GUIDE_STAGE_TIMEOUT_MS,
+  GAMING_GENERATION_FINAL_STAGE_RESERVE_MS, GAMING_GENERATION_ANSWER_AUDIT_RESERVE_MS,
   GAMING_GENERATION_TERMINAL_HEADROOM_MS, GAMING_RUNTIME_BUDGET_SAFETY_BUFFER_MS } from '@shared/gaming/gamingGenerationBudgetCore.js';
 import { readGamingSourceAuthoritySnapshot } from '@core/db/repositories/gamingSourceRepository.js';
 import { resolveGamingFreshnessDisposition, selectGamingAdvisoryGameplayEvidence, isGamingAdvisoryCurrentnessOperation,
@@ -34,7 +34,7 @@ import { resolveGamingFreshnessDisposition, selectGamingAdvisoryGameplayEvidence
 import { buildStoredGamingKnowledgeContext, type GamingSourceGatewayContext } from './gamingSourceIngestion.js';
 import { formatStoredGamingEvidence, type GamingStoredKnowledgeContext } from './gamingStoredKnowledge.js';
 import type { runGameplayPipeline, GamingPipelineInput } from './gamingPipeline.js';
-import { getGamingWebContextMaxChars } from './gamingConfig.js';
+import { getGamingWebContextMaxChars, getGamingConfiguredStageTimeoutMs, getGamingExecutionBudget } from './gamingConfig.js';
 import { buildGamingDiscoveryQueries, discoverGamingSources, sanitizeGamingDiscoveryCandidateUrl } from './gamingSourceDiscovery.js';
 import { evaluateGamingHybridCandidates, createApprovedGamingHybridIngestion, selectGamingHybridEvidence,
   selectGamingHybridAcceptedEvidence, assertGamingHybridEvidenceMembership, type GamingHybridAcceptedCandidate,
@@ -83,11 +83,19 @@ type Workflow = {
   evidenceExpiresAt?: number;
 };
 const hash = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex');
-// Leave the existing provider dispatch, final/audit and outer validation/response
-// reserves available after automatic acquisition. This grants no extra time.
-const BACKEND_GENERATION_RESERVE_MS = GAMING_EXECUTION_OUTER_HEADROOM_MS + GAMING_PROVIDER_DISPATCH_HEADROOM_MS
-  + GAMING_GENERATION_FINAL_STAGE_RESERVE_MS + GAMING_GENERATION_ANSWER_AUDIT_RESERVE_MS
-  + GAMING_GENERATION_TERMINAL_HEADROOM_MS + GAMING_RUNTIME_BUDGET_SAFETY_BUFFER_MS;
+/** Admit optional acquisition only with a full intake allowance, an ordinary
+ * stage window for reasoning, downstream reserves and existing outer headroom.
+ * This is a conservative admission target, not a new reasoning cap or deadline. */
+function backendGenerationReserveMs(mode: GamingHybridQuery['mode']): number | undefined {
+  const configuredStageMs = getGamingConfiguredStageTimeoutMs(mode);
+  const intakeMs = configuredStageMs ?? (mode === 'guide' ? DEFAULT_GAMING_GUIDE_STAGE_TIMEOUT_MS : DEFAULT_GAMING_STAGE_TIMEOUT_MS);
+  const reasoningMs = Math.min(configuredStageMs ?? DEFAULT_GAMING_STAGE_TIMEOUT_MS, DEFAULT_GAMING_STAGE_TIMEOUT_MS);
+  const pipelineMs = intakeMs + reasoningMs + GAMING_GENERATION_FINAL_STAGE_RESERVE_MS
+    + GAMING_GENERATION_ANSWER_AUDIT_RESERVE_MS + GAMING_GENERATION_TERMINAL_HEADROOM_MS + GAMING_RUNTIME_BUDGET_SAFETY_BUFFER_MS;
+  const execution = getGamingExecutionBudget(mode, null);
+  if (execution.pipelineTimeoutMs < pipelineMs) return undefined;
+  return pipelineMs + execution.outerHeadroomMs;
+}
 /** Account for the admitted acquisition URL, so tracking aliases cannot spend recovery on the same source. */
 function candidateSubmissionUrl(value: string): string {
   const admission = sanitizeGamingDiscoveryCandidateUrl(value);
@@ -858,6 +866,8 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     if (workflow.input.contractVersion !== GAMING_HYBRID_V2_CONTRACT_VERSION
       || !getEnvBoolean('ARCANOS_GAMING_HYBRID_BACKEND_DISCOVERY_ENABLED', false)
       || workflow.pipeline.guideUrls?.length) return initial;
+    const generationReserveMs = backendGenerationReserveMs(workflow.pipeline.mode);
+    if (generationReserveMs === undefined) return initial;
     return protect(context, workflow, async () => {
       let result = initial;
       // Each iteration uses a grant already issued by answer(), and submits through
@@ -867,7 +877,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
           || result.body.discovery?.type !== 'gameplay_evidence' || !result.body.discovery.continuationRequired
           || workflow.round > 0 && !result.body.discovery.replacementAllowed) break;
         const remainingMs = getRequestRemainingMs();
-        const automaticWorkMs = remainingMs === null ? null : Math.max(0, remainingMs - BACKEND_GENERATION_RESERVE_MS);
+        const automaticWorkMs = remainingMs === null ? null : Math.max(0, remainingMs - generationReserveMs);
         // Return the already-issued host grant rather than close this workflow
         // through an HTTP timeout after spending its acquisition allowance.
         if (automaticWorkMs !== null && automaticWorkMs <= 0) break;
@@ -912,7 +922,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
         if (!candidates.length) break;
         const afterSearchMs = getRequestRemainingMs();
         const acquisitionMs = afterSearchMs === null ? LIMITS.candidateTimeoutMs
-          : Math.min(LIMITS.candidateTimeoutMs, Math.max(0, afterSearchMs - BACKEND_GENERATION_RESERVE_MS));
+          : Math.min(LIMITS.candidateTimeoutMs, Math.max(0, afterSearchMs - generationReserveMs));
         if (acquisitionMs <= 0) break;
         workflow.backendAcquisitionAllowanceMs = acquisitionMs;
         try {

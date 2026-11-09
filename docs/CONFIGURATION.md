@@ -23,6 +23,13 @@ configuration and search failures leave host discovery available and report the
 actual limitation. Query retries do not rerun discovery. No production change is
 needed to validate this disabled option.
 
+Automatic work preserves a mode-aware generation admission target under the
+existing request deadline and operator caps. With default guide settings, the
+38-second hybrid HTTP route yields its host-search grant; the 60-second MCP
+route retains a bounded automatic window. See
+[discovery recovery](GAMING_DISCOVERY_RECOVERY.md#authority-and-evidence) for the
+stage allowances and limitations. No deadline or acquisition limit is extended.
+
 ## Overview
 This document captures active backend and daemon configuration used by current code. Defaults and precedence are derived from `src/platform/runtime/unifiedConfig.ts`, `src/platform/runtime/env.ts`, compatibility re-exports under `src/config/`, and daemon config modules.
 
