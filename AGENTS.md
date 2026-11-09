@@ -158,6 +158,7 @@ Do not install dependencies or start services merely to validate documentation.
 
 ## Completion and reporting
 
+- Completion and scope control: Once the requested acceptance criteria and applicable required validation gates are satisfied, stop. Do not introduce speculative fixes, unnecessary abstractions, unnecessary repeated validation, or unrelated follow-up PRs. Report independently verified additional defects with evidence and severity, but obtain separate authorization before expanding implementation beyond the user's existing authorization. Optional improvements must remain recommendations, not artificial blockers.
 - Report what changed and why, the files affected, validation actually performed and its results, checks not run and the reason, and remaining risks, blockers, policy conflicts, or unresolved assumptions.
 - Give every blocker a stated basis: demonstrated defect, applicable required check/review, explicit task acceptance condition, consequential unresolved evidence, or missing authorization for a specific necessary action. Distinguish failed requirements, unverified requirements, optional checks not run, and risks/limitations. Optional validation does not create a merge gate; actual required gates remain binding. Keep code findings, merge readiness, and deployment evidence separate.
 - Inspect the final diff and status against the starting baseline; confirm unrelated user work is preserved. State staging/commit, push/PR, preview/deployment, and production-operation status explicitly without implying actions that did not occur.
