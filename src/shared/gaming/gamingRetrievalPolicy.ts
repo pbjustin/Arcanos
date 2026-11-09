@@ -286,8 +286,15 @@ export function scopeGamingEvidenceParagraphs(text: string, input: GamingRetriev
     // This is conservative excerpt selection, not a verified progression classifier.
     for (let next = index + 1; next < Math.min(units.length, index + 5); next += 1) {
       const previousTerms = [...new Set(gamingLexicalTokens(units[next - 1]))].filter(term => !STOP_WORDS.has(term));
-      const connected = gamingTermCoverage(units[next], previousTerms) > 0;
-      const dependentOrAction = /^(?:(?:then|otherwise)\s+)?(?:do not|don't|cross|step|back away|open|close|turn|pull|push|wait|dodge|block|attack|equip|bring|check|inspect|follow|climb|return|keep|avoid|prioritize|raise)\b/iu.test(units[next]);
+      const raiseInstruction = /^(?:(?:then|otherwise)\s+)?raise\b/iu.test(units[next]);
+      const connected = gamingTermCoverage(units[next], previousTerms.filter(term => !raiseInstruction || term !== 'raise')) > 0;
+      // Raising a banner can describe unrelated story progression. Without a
+      // shared topic, retain only an explicit attribute/equipment allocation
+      // relationship in matching build context; no named game stat is assumed.
+      const buildAllocation = raiseInstruction && /\b(?:builds?|stats?|attributes?|equipment)\b/iu.test(`${input.prompt} ${unit}`)
+        && /^(?:(?:then|otherwise)\s+)?raise\s+(?!(?:the|an?|your|our|their|this|that|these|those)\b)[\p{L}][\p{L}'’-]*(?:\s+[\p{L}][\p{L}'’-]*){0,2}\s+(?:enough\s+)?(?:for|to|until)\b/iu.test(units[next])
+        && /\b(?:equipment|stats?|attributes?|requirements?)\b/iu.test(units[next]);
+      const dependentOrAction = /^(?:(?:then|otherwise)\s+)?(?:do not|don't|cross|step|back away|open|close|turn|pull|push|wait|dodge|block|attack|equip|bring|check|inspect|follow|climb|return|keep|avoid|prioritize)\b/iu.test(units[next]) || buildAllocation;
       const evidenceLimit = /^(?:this|the|our|that) (?:guide|source|article|page|evidence|document|section|passage) (?:does not|doesn't|cannot|can't|will not|won't)\b/iu.test(units[next]);
       if (!connected && !dependentOrAction && !evidenceLimit) break;
       included.add(next);

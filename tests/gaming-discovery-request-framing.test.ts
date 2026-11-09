@@ -93,6 +93,40 @@ describe('source discovery language remains retrieval framing', () => {
     expect(scoped).toContain('medium equipment load');
   });
 
+  it.each(['none', 'light'] as const)('%s excludes unrelated Raise-led narrative after a matching build and stat instruction', spoilerMode => {
+    const input = { game: 'Elden Ring', mode: 'guide' as const, spoilerMode,
+      prompt: 'Find a good early-game Samurai build guide. No major spoilers.' };
+    const anchor = 'In Elden Ring, an early-game Samurai build uses the Uchigatana and Unsheathe.';
+    const advice = 'Prioritize Vigor for survival, then meet Dexterity requirements.';
+    for (const unrelated of ['Raise the black banner after the final ruler reveals the hidden heir.',
+      'Then raise the final monument when the navigator betrays the crew.']) {
+      expect(scopeGamingEvidenceParagraphs(`${anchor} ${advice} ${unrelated}`, input)).toBe(`${anchor}\n\n${advice}`);
+    }
+  });
+
+  it('does not treat a shared Raise verb as topical continuity', () => {
+    const input = { mode: 'guide' as const, spoilerMode: 'none' as const, prompt: 'Explain the early-game Samurai build.' };
+    const anchor = 'Raise weapon readiness for the early-game Samurai build.';
+    expect(scopeGamingEvidenceParagraphs(`${anchor} Raise the black banner after the final ruler reveals the hidden heir.`, input))
+      .toBe(anchor);
+  });
+
+  it('retains source-stated unfamiliar attribute and equipment requirements with their qualification', () => {
+    const input = { mode: 'guide' as const, spoilerMode: 'none' as const, prompt: 'Explain the early-game Prismweaver build.' };
+    const anchor = 'An early-game Prismweaver build uses the amber lens and silver robe.';
+    const advice = 'Raise Insight enough for the named equipment requirement.';
+    const qualification = 'This guide does not establish current patch balance or late-game requirements.';
+    const scoped = scopeGamingEvidenceParagraphs(`${anchor} ${advice} ${qualification}`, input);
+    expect(scoped).toBe(`${anchor}\n\n${advice}\n\n${qualification}`);
+  });
+
+  it('retains an explicitly connected Raise instruction outside a build request', () => {
+    const input = { mode: 'guide' as const, spoilerMode: 'none' as const, prompt: 'How do I use the amber shield?' };
+    const anchor = 'The amber shield blocks the guardian beam.';
+    const advice = 'Raise the amber shield when the guardian prepares the beam.';
+    expect(scopeGamingEvidenceParagraphs(`${anchor} ${advice}`, input)).toBe(`${anchor}\n\n${advice}`);
+  });
+
   it('does not import stat instructions from an independent paragraph or an unrelated story sentence', () => {
     const input = { game: 'Elden Ring', mode: 'guide' as const, spoilerMode: 'none' as const, prompt: 'Explain the early-game Samurai build.' };
     const anchor = 'In Elden Ring, an early-game Samurai build uses the Uchigatana and Unsheathe.';
