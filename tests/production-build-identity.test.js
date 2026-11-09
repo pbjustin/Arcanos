@@ -376,6 +376,28 @@ describe('production build identity', () => {
     expect(writeProductionBuildIdentity(aliasedOptions).gitSha).toBeNull();
   });
 
+  it('does not verify substituted source from Git replacement refs as the original commit', () => {
+    const options = fixture();
+    const git = initializeGitFixture(options);
+    const original = git(['rev-parse', 'HEAD']).trim();
+    writeFileSync(join(options.rootPath, 'src/start-server.ts'), 'export const version = 2;\n');
+    git(['add', 'src/start-server.ts']);
+    git(['-c', 'user.name=Offline fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-m', 'replacement source']);
+    const replacement = git(['rev-parse', 'HEAD']).trim();
+    git(['checkout', '--no-overwrite-ignore', '--detach', original]);
+    git(['replace', original, replacement]);
+    git(['checkout', 'HEAD', '--', 'src/start-server.ts']);
+    // Ordinary Git commands now report a clean checkout through the substituted tree.
+    expect(git(['status', '--porcelain']).trim()).toBe('');
+    expect(readFileSync(join(options.rootPath, 'src/start-server.ts'), 'utf8')).not.toBe(
+      git(['--no-replace-objects', 'show', `${original}:src/start-server.ts`])
+    );
+    expect(writeProductionBuildIdentity(options).gitSha).toBeNull();
+    expect(readProductionBuildIdentity(options)).toMatchObject({
+      status: 'unverified', gitSha: null, artifactStatus: 'matches_build_receipt',
+    });
+  });
+
   it('does not accept local Git metadata that names another physical worktree', () => {
     const checkout = fixture();
     const git = initializeGitFixture(checkout);

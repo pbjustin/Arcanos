@@ -89,7 +89,8 @@ function verifiedGitSha(rootPath, sourceFiles) {
   try {
     // A source snapshot without its own Git metadata must not discover an ancestor repository.
     lstatSync(resolve(rootPath, '.git'));
-    const git = args => execFileSync('git', args, { cwd: rootPath, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 8 * 1024 * 1024, timeout: 5_000 });
+    // Replacement refs must not substitute another commit/tree under the reported HEAD SHA.
+    const git = args => execFileSync('git', ['--no-replace-objects', ...args], { cwd: rootPath, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 8 * 1024 * 1024, timeout: 5_000 });
     if (realpathSync.native(git(['rev-parse', '--show-toplevel']).trim()) !== realpathSync.native(rootPath)) return null;
     if (git(['status', '--porcelain', '--untracked-files=all']).trim()) return null;
     const sha = normalizeSha(git(['rev-parse', 'HEAD']).trim());
