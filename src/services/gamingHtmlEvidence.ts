@@ -506,7 +506,7 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
   let expandedCells = 0;
   for (const [tableIndex, table] of tables.slice(0, limit.tables).entries()) {
     if (exhausted()) break;
-    if (!eligible($, table) || $(table).attr('role') === 'presentation') continue;
+    if (!eligible($, table) || $(table).attr('role') === 'presentation' || $(table).closest('tfoot').length) continue;
     const scope = `table:${tableIndex}`;
     const caption = text($(table).children('caption').first().text());
     const unitContext = context(table, scope, caption);
@@ -515,12 +515,13 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
       unitContext.qualifiers = unique([...(unitContext.qualifiers ?? []), footerText.slice(0, limit.contextChars)]);
       if (footerText.length > limit.contextChars || !closed($(table).children('tfoot').first().get(0)!)) markContext(scope, 'content_truncated');
     }
-    const rows = $(table).find('tr').toArray().filter((row) => $(row).closest('table').get(0) === table);
+    // Footer content qualifies body records; it cannot supply record fields or headers.
+    const rows = $(table).find('tr').toArray().filter((row) => $(row).closest('table').get(0) === table && !$(row).closest('tfoot').length);
     const grid: Array<Array<{ element: Element; row: number; column: number; colSpan: number } | undefined>> = [];
     const rowReasons: string[][] = [];
     const headers = new Map<string, Element[]>();
     $(table).find('th[id]').each((_, th) => {
-      if ($(th).closest('table').get(0) !== table) return;
+      if ($(th).closest('table').get(0) !== table || $(th).closest('tfoot').length) return;
       const id = $(th).attr('id')!;
       headers.set(id, [...(headers.get(id) ?? []), th]);
     });

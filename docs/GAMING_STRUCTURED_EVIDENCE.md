@@ -74,6 +74,8 @@ All rows must share one row group. Separate tables or row groups are never
 combined; mixed column tables retain their existing interpretation. Duplicate
 labels, omitted nested structures, unresolved header references, footnote
 qualifiers and incomplete boundaries retain the existing integrity checks.
+Footer rows, footer headers and nested footer tables supply qualifications only;
+they cannot supply property fields or complete a missing body value.
 Extracted fields still require independent identity, applicability and CLEAR
 validation before they can support a gameplay answer.
 
@@ -88,7 +90,7 @@ Player-facing instructions such as following a mission walkthrough are normal
 evidence. Assistant control instructions remain a document-level rejection,
 including instructions in acquired title/heading metadata or text omitted by
 the context projection budget. Sanitization is not approval of the remainder.
-Resolver `gaming-document-v9` separates the current extraction decisions from
+Resolver `gaming-document-v10` separates the current extraction decisions from
 older cached resolutions and durable revision identity.
 
 Label-only linked article list items are catalog navigation rather than game

@@ -112,6 +112,65 @@ describe('explicit wiki table row-header extraction', () => {
       prompt: request.prompt, units: result.units }).claimSupported).toBe(false);
   });
 
+  it('never treats a footer-only property table as a gameplay record', () => {
+    const result = extract(table(`<tfoot>${propertyRows().replace(row('Value', '5'), row('Value', 'obsolete'))}</tfoot>`));
+    expect(result.units.filter(unit => unit.kind === 'table_row')).toEqual([]);
+    expect(assessGamingStructuralUsability({ game: 'Portal 2', mode: 'guide',
+      prompt: request.prompt, units: result.units }).claimSupported).toBe(false);
+    expect(result.proseBody).not.toContain('obsolete');
+  });
+
+  it('keeps body property fields separate from footer qualifications', () => {
+    const result = extract(table(`<tbody>${propertyRows()}</tbody><tfoot>${row('Value', 'obsolete')}</tfoot>`));
+    expect(result.units).toHaveLength(1);
+    expect(result.units[0].fields).toEqual([
+      { label: 'Game', value: 'Portal 2' }, { label: 'Item', value: 'Copper shield' }, { label: 'Stat', value: 'Weight' },
+      { label: 'Value', value: '5' }, { label: 'Unit', value: 'kg' }, { label: 'Scope', value: 'base-game' }
+    ]);
+    expect(result.units[0].context.qualifiers).toContain('Valueobsolete');
+    expect(result.units[0].fields.some(field => field.value === 'obsolete')).toBe(false);
+  });
+
+  it('never fills a missing body value from a footer property', () => {
+    const result = extract(table(`<tbody>${propertyRows().replace(row('Value', '5'), '')}</tbody>`
+      + `<tfoot>${row('Value', '9')}</tfoot>`));
+    expect(result.units).toHaveLength(1);
+    expect(result.units[0].fields.some(field => field.label === 'Value')).toBe(false);
+    expect(result.units[0].context.qualifiers).toContain('Value9');
+    expect(assessGamingStructuralUsability({ game: 'Portal 2', mode: 'guide',
+      prompt: request.prompt, units: result.units }).claimSupported).toBe(false);
+  });
+
+  it('retains footer corrections as qualifications on an otherwise intact body property record', () => {
+    const result = extract(table(`<tbody>${propertyRows()}</tbody><tfoot><tr><td>Example only; unconfirmed.</td></tr></tfoot>`));
+    expect(result.units).toHaveLength(1);
+    expect(result.units[0].integrity.status).toBe('complete');
+    expect(result.units[0].context.qualifiers).toContain('Example only; unconfirmed.');
+    expect(assessGamingStructuralUsability({ game: 'Portal 2', mode: 'guide',
+      prompt: request.prompt, units: result.units }).claimSupported).toBe(false);
+  });
+
+  it('never extracts a nested footer table as a separate gameplay record', () => {
+    const result = extract(table(`<tfoot><tr><td>${table(propertyRows())}</td></tr></tfoot>`));
+    expect(result.units.filter(unit => unit.kind === 'table_row')).toEqual([]);
+    expect(assessGamingStructuralUsability({ game: 'Portal 2', mode: 'guide',
+      prompt: request.prompt, units: result.units }).claimSupported).toBe(false);
+  });
+
+  it('does not borrow a body field label from a footer header', () => {
+    const result = extract(table('<tbody><tr><th scope="row">Item</th><td headers="footer-label">Copper shield</td></tr></tbody>'
+      + '<tfoot><tr><th id="footer-label" scope="row">Scope</th><td>Example only.</td></tr></tfoot>'));
+    expect(result.units.every(unit => unit.integrity.status !== 'complete')).toBe(true);
+    expect(result.units.every(unit => !unit.fields.some(field => field.label === 'Scope'))).toBe(true);
+  });
+
+  it('withholds footer-only properties through protected acquisition and ordinary source CLEAR', async () => {
+    serve(article(table(`<tfoot>${propertyRows().replace(row('Value', '5'), row('Value', 'obsolete'))}</tfoot>`)));
+    const result = await evaluateGamingHybridCandidates(request, { actorKey: 'footer-row-header-synthetic-reader' });
+    expect(result.accepted).toEqual([]);
+    expect(result.knowledge.evidence ?? []).toEqual([]);
+  });
+
   it.each([
     [1, 'Example only; unconfirmed.'],
     [2, 'This property record applies only to the Remastered edition.']
