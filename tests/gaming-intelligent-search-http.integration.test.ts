@@ -357,6 +357,48 @@ describe('Intelligent discovery through authenticated loopback Gaming MCP and re
     expect(ingest).not.toHaveBeenCalled();
   });
 
+  it('blocks a previously failed redirect hop during recovery and acquires the independent alternative', async () => {
+    process.env.ARCANOS_GAMING_DISCOVERY_ENABLED = 'true';
+    process.env.ARCANOS_GAMING_HYBRID_BACKEND_DISCOVERY_ENABLED = 'true';
+    process.env.BRAVE_SEARCH_API_KEY = 'synthetic-search-fixture-only';
+    await serve();
+    const nativeFetch = globalThis.fetch;
+    const denied = `${active.url}/denied`, alias = `${active.url}/alias`;
+    const replacement = 'https://alternative.example.org/ocarina/tutorial-shield';
+    let searches = 0;
+    jest.spyOn(globalThis, 'fetch').mockImplementation(async (input, options) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      if (url.origin === 'https://api.search.brave.com') {
+        searches += 1;
+        const urls = searches <= 2 ? [active.url] : [alias, replacement];
+        return new Response(JSON.stringify({ web: { results: urls.map(url => ({ url,
+          title: `${active.game} tutorial shield walkthrough`, description: active.question })) } }),
+        { headers: { 'content-type': 'application/json' } });
+      }
+      expect(url.origin).toBe(new URL(endpoint).origin); return nativeFetch(input, options);
+    });
+    const acquired: string[] = [];
+    acquisitionResponse = (url, headers) => {
+      const logical = `https://${headers.Host}${url.pathname}`;
+      acquired.push(logical);
+      if (logical === active.url || logical === alias) return { status: 302, headers: { location: denied }, data: '' };
+      if (logical === denied) return { status: 403, headers: {}, data: 'Publisher access denied.' };
+      expect(logical).toBe(replacement);
+      return { status: 200, headers: { 'content-type': 'text/html' }, data: `<article><h1>${active.game} gameplay guide</h1>
+        <p>In the game ${active.game}, players use the following instructions.</p><p>${active.passage}</p></article>` };
+    };
+    const result = await query();
+    expect(acquired).toEqual([active.url, denied, alias, replacement]);
+    expect(result.result).toMatchObject({ revision: 2, state: 'answer_ready', coverageSatisfied: true });
+    expect(result.result.answer?.sources.map(source => source.url)).toEqual([replacement]);
+    expect(result.result.candidates).toEqual([
+      expect.objectContaining({ decision: 'rejected', reasonCodes: ['SOURCE_INACCESSIBLE'] }),
+      expect.objectContaining({ decision: 'rejected', reasonCodes: ['URL_BLOCKED'] }),
+      expect.objectContaining({ decision: 'eligible_for_ingestion' })]);
+    expect(searches).toBe(4); expect(providerStages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
+    expect(ingest).not.toHaveBeenCalled(); expect(memoryWrite).not.toHaveBeenCalled();
+  });
+
   it.each(['cancelled', 'failed'] as const)('keeps a %s host-side search read-only before candidate submission', async outcome => {
     await serve(); const started = await query();
     process.env.ARCANOS_GAMING_DISCOVERY_ENABLED = 'true';

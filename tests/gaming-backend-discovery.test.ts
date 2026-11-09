@@ -3,6 +3,7 @@ import { createGamingHybridWorkflow } from '../src/services/gamingHybridKnowledg
 import { GAMING_HYBRID_CONTRACT_VERSION, GAMING_HYBRID_V2_CONTRACT_VERSION as contractVersion,
   GAMING_HYBRID_V2_LIMITS } from '../src/shared/gaming/gamingHybridContract.js';
 import type { GamingDiscoveryResult } from '../src/services/gamingSourceDiscovery.js';
+import { clearGamingDiscoveryCache, discoverGamingSources } from '../src/services/gamingSourceDiscovery.js';
 import { runWithRequestAbortContext } from '@arcanos/runtime';
 
 const context = { actorKey: 'backend-search-fixture-actor', requestId: 'backend-search-fixture-request' };
@@ -48,6 +49,86 @@ afterEach(() => {
 });
 
 describe('opt-in backend discovery uses the existing v2 workflow', () => {
+  it.each([GAMING_HYBRID_CONTRACT_VERSION, contractVersion])('withholds broadened game hints for %s', async version => {
+    process.env[flag] = 'false';
+    const { workflow, discover, evaluateCandidates } = setup();
+    const result = await workflow.query({ ...query, contractVersion: version, game: 'Champion 20261109' }, context);
+    expect(result.body).toMatchObject({ nextAction: 'stop', reason: 'INVALID_REQUEST',
+      discovery: { searchQueries: [], continuationRequired: false } });
+    expect(result.body.qualification).toMatch(/scope|search/iu);
+    expect(result.body.searchHint).toBeUndefined();
+    expect(discover).not.toHaveBeenCalled(); expect(evaluateCandidates).not.toHaveBeenCalled();
+  });
+
+  it.each([GAMING_HYBRID_CONTRACT_VERSION, contractVersion])('reports an unsearchable edition without a narrower host grant for %s', async version => {
+    const { workflow, discover, evaluateCandidates } = setup();
+    const result = await workflow.query({ ...query, contractVersion: version, edition: '20261109' }, context);
+    expect(result.body).toMatchObject({ nextAction: 'stop', reason: 'INVALID_REQUEST',
+      discovery: { searchQueries: [], continuationRequired: false } });
+    expect(result.body.searchHint).toBeUndefined();
+    expect(discover).not.toHaveBeenCalled(); expect(evaluateCandidates).not.toHaveBeenCalled();
+  });
+
+  it('preserves all searchable applicability fields in the host hint', async () => {
+    process.env[flag] = 'false';
+    const { workflow } = setup();
+    const result = await workflow.query({ ...query, edition: 'Anniversary', platform: 'PC', requestedVersion: '1.2' }, context);
+    expect(result.body.nextAction).toBe('search');
+    expect(result.body.searchHint).toContain('Anniversary');
+    expect(result.body.searchHint).toContain('PC');
+    expect(result.body.searchHint).toContain('1.2');
+  });
+
+  it('keeps an existing source-authority blocker primary when the scope is also unsearchable', async () => {
+    const workflow = createGamingHybridWorkflow({ retrieve: async () => ({ ...empty, structuralConflictAssessmentUnavailable: true }) });
+    const result = await workflow.query({ ...query, game: 'Champion 20261109' }, context);
+    expect(result.body).toMatchObject({ nextAction: 'stop', reason: 'STRUCTURAL_CONFLICT_ASSESSMENT_UNVERIFIED',
+      discovery: { searchQueries: [], continuationRequired: false } });
+    expect(result.body.searchHint).toBeUndefined();
+  });
+
+  it('allows an old exact-patch historical guide through the real discovery adapter', async () => {
+    const enabled = process.env.ARCANOS_GAMING_DISCOVERY_ENABLED;
+    process.env.ARCANOS_GAMING_DISCOVERY_ENABLED = 'true'; clearGamingDiscoveryCache();
+    try {
+      const provider = { id: 'historical-guide-fixture', isConfigured: () => true,
+        search: jest.fn(async () => [{ url: 'https://guides.example/historical-copper-gate',
+          title: 'Lantern Voyage copper gate patch 1.2 guide', snippet: 'Open the copper gate by turning the brass handle in patch 1.2.',
+          publishedAt: '2021-01-01T00:00:00Z', providerRank: 1, provider: 'historical-guide-fixture' }]) };
+      const { workflow, discover, evaluateCandidates } = setup();
+      discover.mockImplementation(async input => discoverGamingSources({ ...input, provider }));
+      await workflow.query({ ...query, mode: 'guide', requestedVersion: '1.2',
+        question: 'As of historical patch 1.2, how do I open the copper gate?' }, context);
+      expect(provider.search).toHaveBeenCalled();
+      expect(provider.search.mock.calls[0][0]).toMatchObject({ freshnessPreference: 'stable' });
+      expect(evaluateCandidates).toHaveBeenCalledWith(expect.objectContaining({ requestedVersion: '1.2',
+        candidates: [{ url: 'https://guides.example/historical-copper-gate' }] }), expect.any(Object));
+    } finally {
+      clearGamingDiscoveryCache();
+      if (enabled === undefined) delete process.env.ARCANOS_GAMING_DISCOVERY_ENABLED;
+      else process.env.ARCANOS_GAMING_DISCOVERY_ENABLED = enabled;
+    }
+  });
+
+  it('blocks a previous failed redirect destination while allowing duplicate notifications for a new acquisition', async () => {
+    const first = 'https://guides.example/initial', failed = 'https://guides.example/failed', replacement = 'https://guides.example/replacement';
+    const { workflow, discover, evaluateCandidates } = setup();
+    discover.mockResolvedValueOnce(discovered([first])).mockResolvedValueOnce(discovered([replacement]));
+    evaluateCandidates.mockImplementationOnce(async (_input, acquisition) => {
+      acquisition.onRequestUrl(first); acquisition.onRequestUrl(first); acquisition.onRequestUrl(failed);
+      return { accepted: [], knowledge: empty, acquisitionWorkMs: 12_000,
+        decisions: [{ submittedIndex: 0, url: first, decision: 'rejected', reasonCodes: ['SOURCE_INACCESSIBLE'] }] };
+    }).mockImplementationOnce(async (_input, acquisition) => {
+      expect(() => { acquisition.onRequestUrl(replacement); acquisition.onRequestUrl(replacement); }).not.toThrow();
+      expect(() => acquisition.onRequestUrl(failed)).toThrow();
+      return { accepted: [], knowledge: empty, acquisitionWorkMs: 12_000,
+        decisions: [{ submittedIndex: 0, url: replacement, decision: 'rejected', reasonCodes: ['URL_BLOCKED'] }] };
+    });
+    const result = await workflow.query(query, context);
+    expect(evaluateCandidates).toHaveBeenCalledTimes(2);
+    expect(result.body).toMatchObject({ revision: 2, nextAction: 'stop', discovery: { remainingTotalAcquisitionMs: 0 } });
+  });
+
   it('acquires URL hints once and retains the normal revision and failed-work accounting', async () => {
     const { workflow, discover, evaluateCandidates, generate, ingest } = setup();
     const first = await workflow.query(query, context);

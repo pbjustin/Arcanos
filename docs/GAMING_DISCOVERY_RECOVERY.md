@@ -23,8 +23,11 @@ filling fetch slots, including admitted redirect destinations whose acquisition
 fails and cached search results. These negative exclusions are request-local:
 the existing protected-hop callback records only sanitized, admitted attempts,
 without exposing redirect locations or granting acquired identity or authority.
-Rejected or unattempted redirect locations do not enter this set. All supplied
-exclusions are checked independently of the provider's
+Rejected or unattempted redirect locations do not enter this set. Recovery
+candidates also pass a protected-hop guard before another request to an
+already attempted destination. Duplicate notifications for one new hop remain
+valid, and official-currentness revalidation keeps its separate existing policy.
+All supplied exclusions are checked independently of the provider's
 rank ceiling. Discovery applies a small
 repeated-domain ranking penalty to similarly relevant pages. Stronger topic
 matches retain priority. These discovery hints never establish accessibility,
@@ -45,7 +48,9 @@ Host query planning offers at most two targeted variations. Backend-assisted
 search evaluates those variations within one discovery deadline and partitions
 the existing total search-result allowance across them. The complete sanitized
 game, edition, platform and exact-version scope must fit the existing 180-character
-query bound; otherwise no underconstrained query is sent. Index/category pages
+query bound. If scope cannot be retained, discovery stops with `INVALID_REQUEST`,
+an explanation and no search grant or narrower host hint. Valid scoped hints retain
+edition, platform and version. Index/category pages
 and topic-free landing pages rank below relevant guide hints, and explicitly
 different numbered installments are excluded. These remain negative ranking
 hints, never positive verification. During an already granted recovery, backend
@@ -53,6 +58,12 @@ search refreshes provider hints rather than reusing an exhausted cached result
 set. It excludes submitted URLs and sanitized admitted acquisition destinations,
 including failed redirects. Failed work is still charged; there is no new retry
 allowance, crawler or access-control bypass.
+
+For guide requests with an explicit version and historical/as-of wording, backend
+discovery allows older dated hints through the recency filter. Acquired evidence
+still requires exact requested-version applicability and normal CLEAR assessment;
+a publisher date cannot verify a patch. Meta/currentness modes retain their
+existing currentness policy.
 
 Automatic work also honors the remaining HTTP request deadline. Its conservative
 generation admission target preserves the full mode-specific intake allowance,
