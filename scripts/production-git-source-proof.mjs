@@ -13,6 +13,7 @@ const MAX_PATHS = 20_000;
 const gitObjectHash = (type, bytes) => createHash('sha1')
   .update(`${type} ${bytes.length}\0`).update(bytes).digest('hex');
 
+/** Preserve normal networking/CA trust while excluding caller-controlled Git repositories and config. */
 function gitEnvironment() {
   const env = { ...process.env };
   // Do not borrow caller-supplied repositories, config, helpers or disabled TLS.
@@ -22,6 +23,7 @@ function gitEnvironment() {
   return { ...env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0' };
 }
 
+/** Run a bounded Git operation with TLS/object checks and no credential helper, hooks or file transport. */
 function git(gitDirectory, args) {
   return execFileSync('git', [
     '-c', 'credential.helper=', '-c', 'core.hooksPath=/dev/null',
@@ -31,6 +33,7 @@ function git(gitDirectory, args) {
   ], { env: gitEnvironment(), stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: MAX_BYTES, timeout: 60_000 });
 }
 
+/** Decode bounded, strictly base64-encoded Git object bytes; malformed evidence throws. */
 function decodeObject(value) {
   if (typeof value !== 'string' || value.length > MAX_BYTES || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value)) {
     throw new Error('GIT_SOURCE_PROOF_INVALID');
@@ -38,6 +41,7 @@ function decodeObject(value) {
   return Buffer.from(value, 'base64');
 }
 
+/** Resolve the proof inside a real dist directory, rejecting links before either reads or writes. */
 function proofPath(rootPath) {
   const directory = resolve(rootPath, 'dist');
   const parent = lstatSync(directory);
@@ -52,6 +56,7 @@ function proofPath(rootPath) {
   return path;
 }
 
+/** Parse raw Git tree records and reject truncated entries or unsafe path components. */
 function treeEntries(bytes) {
   const entries = [];
   let offset = 0;
@@ -72,6 +77,7 @@ function treeEntries(bytes) {
   return entries;
 }
 
+/** Verify commit/tree hashes, exact selected paths and source blobs; invalid filesystem evidence throws. */
 function verifyProof({ proof, rootPath, gitSha, sourceFiles, isSourcePath }) {
   if (!isSha(gitSha) || !proof || proof.version !== 1 || proof.gitSha !== gitSha
     || typeof isSourcePath !== 'function' || !Array.isArray(proof.trees)

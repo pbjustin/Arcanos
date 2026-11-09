@@ -19,6 +19,7 @@ const sha = 'a'.repeat(40);
 const otherSha = 'b'.repeat(40);
 const env = { ...process.env };
 for (const name of ['DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_TLS', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH']) delete env[name];
+/** Run only the managed local Docker daemon with bounded output and explicit failure handling. */
 function docker(args, { allowFailure = false } = {}) {
   const result = spawnSync('docker', ['--host=unix:///var/run/docker.sock', ...args], {
     env, encoding: 'utf8', timeout: 180_000, maxBuffer: 2 * 1024 * 1024,
@@ -27,6 +28,7 @@ function docker(args, { allowFailure = false } = {}) {
   if (!allowFailure) assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
   return result;
 }
+/** Build a disposable no-network image with a controlled optional Railway reference. */
 function build(name, target, reference) {
   const image = `${prefix}:${name}`;
   const args = ['build', '--no-cache', '--network=none', '--target', target, '-t', image];
@@ -36,8 +38,9 @@ function build(name, target, reference) {
   if (result.status === 0) images.push(image);
   return { image, result };
 }
+/** Read image identity offline, optionally mutating only the disposable container's files. */
 function read(image, reference, processKind = 'web', mutation = '') {
-  const code = `import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+  const code = `import { existsSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
     import { readProductionBuildIdentity } from './scripts/production-build-identity.mjs';
     if (existsSync('.git')) throw new Error('unexpected Git metadata');
     ${mutation}
@@ -60,8 +63,10 @@ before(() => {
     cpSync(join(root, 'scripts', name), join(context, 'scripts', name));
   }
   writeFileSync(join(context, 'src', 'start-server.ts'), 'export const version = 1;\n');
+  mkdirSync(join(context, 'vendor/dist'), { recursive: true });
+  writeFileSync(join(context, 'vendor/dist/index.js'), 'export const dependency = true;\n');
   writeFileSync(join(context, '.dockerignore'), '.git\n');
-  writeFileSync(join(context, '.gitignore'), 'dist/\n');
+  writeFileSync(join(context, '.gitignore'), '/dist/\n');
   writeFileSync(join(context, 'Dockerfile'), `FROM node:24.18.1-alpine AS source
 WORKDIR /app
 COPY . .
@@ -84,7 +89,7 @@ RUN node scripts/production-build-identity.mjs --write
   git(['-c', 'user.name=Offline Docker fixture', '-c', 'user.email=fixture@example.invalid',
     '-c', 'commit.gpgsign=false', 'commit', '-m', 'controlled Docker source']);
   fixtureSha = git(['rev-parse', 'HEAD']);
-  const sourceFiles = ['Dockerfile', 'src/start-server.ts',
+  const sourceFiles = ['Dockerfile', 'src/start-server.ts', 'vendor/dist/index.js',
     ...readdirSync(join(context, 'scripts')).map(name => `scripts/${name}`)].sort().map(path => ({
       path, sha256: createHash('sha256').update(readFileSync(join(context, path))).digest('hex'),
     }));
@@ -149,6 +154,14 @@ test('malformed runtime SHA cannot produce verification success', () => {
   assert.equal(identity.configuredGitSha, null);
   assert.doesNotMatch(JSON.stringify(identity), /private-invalid-reference/u);
 });
+test('malformed runtime SHA remains a mismatch when the image inventory fails', () => {
+  const identity = read(current, 'private-invalid-reference', 'web',
+    `symlinkSync('/app/src', '/app/src/linked', 'dir');`);
+  assert.equal(identity.status, 'mismatch');
+  assert.equal(identity.referenceStatus, 'invalid');
+  assert.equal(identity.artifactStatus, 'unknown');
+  assert.doesNotMatch(JSON.stringify(identity), /private-invalid-reference/u);
+});
 test('receipt and generated artifact tampering are independently detected', () => {
   for (const mutation of [
     `writeFileSync('dist/start-server.js', 'tampered artifact');`,
@@ -178,6 +191,13 @@ test('verifies real Git commit/tree proof against generated output without a .gi
   assert.equal(identity.referenceStatus, 'matches_verified_git_source');
   assert.equal(identity.artifactStatus, 'matches_build_receipt');
   assert.deepEqual(identity, read(proven, fixtureSha, 'worker'));
+});
+test('direct vendor/dist bytes remain bound to proven source identity', () => {
+  const identity = read(proven, fixtureSha, 'web',
+    `writeFileSync('vendor/dist/index.js', 'changed dependency');`);
+  assert.equal(identity.status, 'mismatch');
+  assert.equal(identity.gitSha, null);
+  assert.equal(identity.artifactStatus, 'mismatch');
 });
 test('tampered portable proof cannot preserve independent verification', () => {
   const identity = read(proven, fixtureSha, 'web',

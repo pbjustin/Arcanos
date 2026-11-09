@@ -1,9 +1,9 @@
-import { execFileSync } from 'node:child_process';
+import childProcess, { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from '@jest/globals';
+import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import {
   GIT_SOURCE_PROOF_PATH, createGitSourceProof, verifyGitSourceProof, writeGitSourceProofFromRepository,
 } from '../scripts/production-git-source-proof.mjs';
@@ -13,6 +13,7 @@ import {
 
 const roots = [];
 const isSourcePath = path => path.startsWith('src/') && path.endsWith('.ts');
+/** Create a real committed source tree and a separate, Git-free build snapshot. */
 function fixture() {
   const directory = mkdtempSync(join(tmpdir(), 'arcanos-git-proof-'));
   roots.push(directory);
@@ -135,6 +136,9 @@ describe('portable production Git source proof', () => {
     rmSync(original);
     symlinkSync(join(options.gitDirectory, '../src/index.ts'), original);
     expect(verifyGitSourceProof(options)).toBe(false);
+    rmSync(original);
+    cpSync(join(options.gitDirectory, '../src/index.ts'), original);
+    expect(verifyGitSourceProof(options)).toBe(true);
     const proofPath = join(options.rootPath, GIT_SOURCE_PROOF_PATH);
     const bytes = readFileSync(proofPath);
     rmSync(proofPath);
@@ -158,6 +162,61 @@ describe('portable production Git source proof', () => {
 
   it.each([null, '', 'a'.repeat(39), 'a'.repeat(41), 'g'.repeat(40), 'a'.repeat(40) + '\n'])('rejects malformed SHA %p before any fetch', gitSha => {
     expect(createGitSourceProof({ gitSha })).toBe(false);
+  });
+
+  it('fetches an exact commit through the production writer and removes its temporary Git store', async () => {
+    const options = fixture();
+    mkdirSync(join(options.rootPath, 'packages'));
+    writeFileSync(join(options.rootPath, 'dist/start-server.js'), 'export const compiled = true;\n');
+    const fetches = [];
+    await jest.isolateModulesAsync(async () => {
+      jest.unstable_mockModule('node:child_process', () => ({
+        ...childProcess,
+        execFileSync: (file, args, commandOptions) => {
+          expect(file).toBe('git');
+          const fetchIndex = args.indexOf('fetch');
+          if (fetchIndex >= 0) {
+            expect(args.slice(fetchIndex)).toEqual([
+              'fetch', '--depth=1', '--no-tags', 'https://github.com/pbjustin/Arcanos.git', options.gitSha,
+            ]);
+            expect(args).toEqual(expect.arrayContaining([
+              'credential.helper=', 'core.hooksPath=/dev/null', 'protocol.file.allow=never',
+              'http.followRedirects=false', 'http.sslVerify=true', 'fetch.fsckObjects=true', 'transfer.fsckObjects=true',
+            ]));
+            expect(commandOptions.env).toMatchObject({
+              GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0',
+            });
+            const gitDirectory = args.find(arg => arg.startsWith('--git-dir=')).slice('--git-dir='.length);
+            expect(existsSync(gitDirectory)).toBe(true);
+            fetches.push(gitDirectory);
+            // Only the test transport changes: Git still fetches and validates real objects.
+            const localArgs = args.map(arg => arg === 'https://github.com/pbjustin/Arcanos.git'
+              ? options.gitDirectory : arg === 'protocol.file.allow=never' ? 'protocol.file.allow=always' : arg);
+            return execFileSync(file, localArgs, commandOptions);
+          }
+          return execFileSync(file, args, commandOptions);
+        },
+      }));
+      try {
+        const isolated = await import('../scripts/production-build-identity.mjs');
+        const identityOptions = {
+          rootPath: options.rootPath, env: { RAILWAY_GIT_COMMIT_SHA: options.gitSha }, verifySource: true,
+        };
+        expect(isolated.writeProductionBuildIdentity(identityOptions)).toMatchObject({
+          gitSha: options.gitSha, configuredGitSha: options.gitSha,
+        });
+        expect(isolated.readProductionBuildIdentity(identityOptions)).toMatchObject({
+          status: 'verified_git_source', gitSha: options.gitSha,
+          artifactStatus: 'matches_build_receipt', referenceStatus: 'matches_verified_git_source',
+        });
+      } finally {
+        jest.unstable_unmockModule('node:child_process');
+      }
+    });
+    expect(fetches).toHaveLength(1);
+    expect(existsSync(fetches[0])).toBe(false);
+    expect(existsSync(join(options.rootPath, '.git'))).toBe(false);
+    expect(existsSync(join(options.rootPath, GIT_SOURCE_PROOF_PATH))).toBe(true);
   });
 
   it('rejects malformed, oversized and incomplete tree proofs', () => {

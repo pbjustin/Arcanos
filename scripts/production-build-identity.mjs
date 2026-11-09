@@ -36,6 +36,7 @@ export function isProductionSourcePath(path) {
   return CODE_EXTENSIONS.test(path);
 }
 
+/** Hash bounded source or emitted files, rejecting links and excluding private/runtime data. */
 function inventory(rootPath, runtime) {
   const files = [];
   let bytes = 0;
@@ -59,13 +60,13 @@ function inventory(rootPath, runtime) {
       for (const name of readdirSync(absolute).sort()) {
         if (['node_modules', '__pycache__', '.git'].includes(name) && !runtime) continue;
         // Checked-in vendor dist files are dependency inputs, not generated workspace output.
-        if (name === 'dist' && !runtime && !path.startsWith('vendor/')) continue;
+        if (name === 'dist' && !runtime && path !== 'vendor' && !path.startsWith('vendor/')) continue;
         visit(`${path}/${name}`);
       }
       return;
     }
     if (path === BUILD_IDENTITY_PATH || path === 'scripts/self-heal-preview-artifact.json') return;
-    if (!runtime && !SOURCE_FILES.includes(path) && !CODE_EXTENSIONS.test(path)) return;
+    if (!runtime && !isProductionSourcePath(path)) return;
     if (!stat.isFile() || stat.size > 32 * 1024 * 1024) throw new Error('BUILD_IDENTITY_SIZE');
     bytes += stat.size;
     if (bytes > 512 * 1024 * 1024 || files.length >= 20_000) throw new Error('BUILD_IDENTITY_SIZE');
@@ -109,6 +110,7 @@ function verifiedGitSha(rootPath, sourceFiles) {
   } catch { return null; }
 }
 
+/** Write a receipt for actual build output; optional fetching proves source, never env claims alone. */
 export function writeProductionBuildIdentity({ rootPath = ROOT, env = process.env, verifySource = false } = {}) {
   if (invalidSha(env.RAILWAY_GIT_COMMIT_SHA)) throw new Error('BUILD_GIT_SHA_INVALID');
   // Require real build output; a source-only command cannot manufacture a build receipt.
@@ -132,7 +134,7 @@ export function writeProductionBuildIdentity({ rootPath = ROOT, env = process.en
 export function readProductionBuildIdentity({ rootPath = ROOT, env = process.env } = {}) {
   const configuredGitSha = normalizeSha(env.RAILWAY_GIT_COMMIT_SHA);
   const invalidReference = invalidSha(env.RAILWAY_GIT_COMMIT_SHA);
-  const unknown = { status: 'unverified', gitSha: null, buildId: null, sourceDigest: null, artifactDigest: null, configuredGitSha, buildConfiguredGitSha: null, artifactStatus: 'unknown', referenceStatus: invalidReference ? 'invalid' : 'unknown' };
+  const unknown = { status: invalidReference ? 'mismatch' : 'unverified', gitSha: null, buildId: null, sourceDigest: null, artifactDigest: null, configuredGitSha, buildConfiguredGitSha: null, artifactStatus: 'unknown', referenceStatus: invalidReference ? 'invalid' : 'unknown' };
   try {
     const path = resolve(rootPath, BUILD_IDENTITY_PATH);
     const stat = lstatSync(path);
@@ -170,6 +172,7 @@ export function readProductionBuildIdentity({ rootPath = ROOT, env = process.env
   } catch { return unknown; }
 }
 
+/** Log only validated identity fields, preserving error severity even when inventory is unavailable. */
 export function reportProductionBuildIdentity(options) {
   const identity = readProductionBuildIdentity(options);
   const log = identity.status === 'mismatch' ? console.error : identity.status === 'unverified' ? console.warn : console.log;

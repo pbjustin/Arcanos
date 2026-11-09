@@ -217,6 +217,59 @@ describe('production build identity', () => {
     });
   });
 
+  it('includes direct vendor/dist inputs in both the inventory and Git source proof', () => {
+    const options = fixture();
+    const path = 'vendor/dist/index.js';
+    mkdirSync(join(options.rootPath, 'vendor/dist'), { recursive: true });
+    writeFileSync(join(options.rootPath, path), 'export const dependency = true;\n');
+    // Generated root output is ignored; vendored output is a committed build input.
+    writeFileSync(join(options.rootPath, '.gitignore'), '/dist/\nnode_modules/\n.env\n');
+    const git = initializeGitFixture(options);
+    const sha = git(['rev-parse', 'HEAD']).trim();
+    const sourceFiles = ['scripts/start.mjs', 'src/start-server.ts', path].map(path => ({
+      path, sha256: createHash('sha256').update(readFileSync(join(options.rootPath, path))).digest('hex'),
+    }));
+    expect(writeGitSourceProofFromRepository({
+      rootPath: options.rootPath, gitDirectory: join(options.rootPath, '.git'), gitSha: sha,
+      sourceFiles, isSourcePath: isProductionSourcePath,
+    })).toBe(true);
+    rmSync(join(options.rootPath, '.git'), { recursive: true });
+    options.env.RAILWAY_GIT_COMMIT_SHA = sha;
+    expect(writeProductionBuildIdentity(options).gitSha).toBe(sha);
+    expect(readProductionBuildIdentity(options)).toMatchObject({
+      status: 'verified_git_source', gitSha: sha, artifactStatus: 'matches_build_receipt',
+    });
+    writeFileSync(join(options.rootPath, path), 'changed dependency');
+    expect(readProductionBuildIdentity(options)).toMatchObject({
+      status: 'mismatch', gitSha: null, artifactStatus: 'mismatch',
+    });
+  });
+
+  it('reports an invalid runtime reference as an error even when inventory fails', () => {
+    const options = fixture();
+    writeProductionBuildIdentity(options);
+    const external = fixture();
+    symlinkSync(external.rootPath, join(options.rootPath, 'src/linked'), process.platform === 'win32' ? 'junction' : 'dir');
+    options.env.RAILWAY_GIT_COMMIT_SHA = 'invalid-reference-with-private-data';
+    const error = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(reportProductionBuildIdentity(options)).toMatchObject({
+      status: 'mismatch', referenceStatus: 'invalid', artifactStatus: 'unknown', gitSha: null,
+    });
+    expect(error).toHaveBeenCalledWith('[railway-launcher] build.identity', expect.any(String));
+    expect(warn).not.toHaveBeenCalled();
+    expect(JSON.stringify(error.mock.calls)).not.toContain('invalid-reference-with-private-data');
+  });
+
+  it.each(['missing', 'corrupt'])('retains invalid runtime classification with a %s receipt', receiptState => {
+    const options = fixture();
+    if (receiptState === 'corrupt') writeFileSync(join(options.rootPath, BUILD_IDENTITY_PATH), '{incomplete');
+    options.env.RAILWAY_GIT_COMMIT_SHA = 'invalid-reference-with-private-data';
+    expect(readProductionBuildIdentity(options)).toMatchObject({
+      status: 'mismatch', referenceStatus: 'invalid', artifactStatus: 'unknown', gitSha: null,
+    });
+  });
+
   it.each(['short', 'a'.repeat(39), 'a'.repeat(41), 'g'.repeat(40), ` ${'a'.repeat(40)}`, `${'a'.repeat(40)}\n`, null, 42])(
     'rejects malformed build SHA %p without writing a receipt', value => {
       const options = fixture();
