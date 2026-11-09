@@ -315,6 +315,30 @@ describe('gaming open-web source discovery', () => {
     expect((await discoverGamingSources({ game, mode: 'guide', prompt: 'How do I upgrade a shield?', provider })).candidates).toHaveLength(1);
   });
 
+  it.each([
+    ['Final Fantasy 14', 'Final Fantasy XIV shield upgrade guide'],
+    ['Final Fantasy XIV', 'Final Fantasy 14 shield upgrade guide'],
+    ['Unfamiliar Star Atlas 14', 'Unfamiliar Star Atlas XIV shield upgrade guide'],
+    ['Unfamiliar Star Atlas 1', 'Unfamiliar Star Atlas I shield upgrade guide'],
+    ['Dark Souls III', 'Dark Souls II and Dark Souls III shield upgrade guide'],
+    ['Dark Souls III', 'Dark Souls III and Dark Souls II shield upgrade guide']
+  ])('keeps a potentially relevant numbered-title hint for %s: %s', async (game, title) => {
+    const { provider } = makeProvider(async () => [makeResult({ title,
+      url: 'https://guides.example/shield-upgrade', snippet: `${title}. Upgrade a shield using iron at the forge.` })]);
+    const result = await discoverGamingSources({ game, mode: 'guide', prompt: 'How do I upgrade a shield?', provider });
+    expect(result.candidates).toHaveLength(1);
+  });
+
+  it.each([
+    ['Final Fantasy 14', 'Final Fantasy XV shield upgrade guide'],
+    ['Dark Souls III', 'Dark Souls II shield upgrade guide'],
+    ['Unfamiliar Star Atlas 14', 'Unfamiliar Star Atlas IXI shield upgrade guide']
+  ])('still excludes an explicitly different installment for %s: %s', async (game, title) => {
+    const { provider } = makeProvider(async () => [makeResult({ title,
+      url: 'https://guides.example/shield-upgrade', snippet: `${title}. Upgrade a shield using iron at the forge.` })]);
+    expect((await discoverGamingSources({ game, mode: 'guide', prompt: 'How do I upgrade a shield?', provider })).candidates).toEqual([]);
+  });
+
   it('keeps a public MediaWiki article on index.php eligible while demoting its category page', async () => {
     const { provider } = makeProvider(async () => [
       makeResult({ url: 'https://moonring.community/index.php?title=Category:Shield', title: 'Moonring shield upgrade guide category',
@@ -352,6 +376,22 @@ describe('gaming open-web source discovery', () => {
     expect(search).not.toHaveBeenCalled();
     expect(result.discoveryFailureReason).toBe('DISCOVERY_NO_RESULTS');
     expect(result.candidates).toEqual([]);
+  });
+
+  it.each(['game', 'edition', 'platform', 'requestedVersion'] as const)(
+    'withholds an overlong %s whose clipping sentinel is whitespace rather than silently shortening scope', async field => {
+      const { provider, search } = makeProvider(async () => [makeResult()]);
+      const input = guideInput({ game: undefined, provider, queryVariants: true, [field]: `${'a'.repeat(180)} remainder` });
+      expect(buildGamingDiscoveryQuery(input)).toBe('');
+      expect(buildGamingDiscoveryQueries(input)).toEqual([]);
+      expect((await discoverGamingSources(input)).candidates).toEqual([]);
+      expect(search).not.toHaveBeenCalled();
+    });
+
+  it('retains an exactly bounded sanitized scope with harmless surrounding whitespace', () => {
+    const input = guideInput({ game: undefined, requestedVersion: `  ${'a'.repeat(180)}  ` });
+    expect(buildGamingDiscoveryQuery(input)).toBe('a'.repeat(180));
+    expect(buildGamingDiscoveryQueries(input)).toEqual(['a'.repeat(180)]);
   });
 
   it('preserves a full unfamiliar title and long build identifier when they fit the existing query bound', () => {

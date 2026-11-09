@@ -11,7 +11,7 @@ import { logger } from "@platform/logging/structuredLogging.js";
 import { getEnv } from "@platform/runtime/env.js";
 import { GAMING_BUILD_RESOURCE_HARD_LIMITS } from "@services/gamingBuildResourceSchema.js";
 import { buildGamingRetrievalTerms } from "@shared/gaming/gamingRetrievalPolicy.js";
-import { gamingRegistryLiteralPattern, normalizeGamingComparableIdentity } from "@shared/gaming/gamingGameRegistry.js";
+import { gamingRegistryLiteralPattern } from "@shared/gaming/gamingGameRegistry.js";
 import type { GamingPlayerContext } from "@shared/gaming/gamingPlayerContext.js";
 import {
   getGamingDiscoveryBudgetMs,
@@ -203,10 +203,12 @@ function buildQueryTopicTerms(input: GamingDiscoveryInput): string[] {
 }
 
 function buildGamingDiscoveryScope(input: GamingDiscoveryInput): string | undefined {
-  // Keep whole sanitized fields or withhold the query. The extra character
-  // distinguishes an overlong scope from one that exactly fits the ceiling.
-  const [game, edition, platform, version] = [input.game, input.edition, input.platform, input.requestedVersion]
-    .map(value => safeSearchText(value, MAX_SEARCH_QUERY_CHARS + 1));
+  // Check complete sanitized fields before any clipping or boundary trimming.
+  // Whitespace just beyond the ceiling must not hide a later scope qualifier.
+  const fields = [input.game, input.edition, input.platform, input.requestedVersion]
+    .map(value => value ? stripUntrustedInstructions(value) || undefined : undefined);
+  if (fields.some(value => value && value.length > MAX_SEARCH_QUERY_CHARS)) return undefined;
+  const [game, edition, platform, version] = fields;
   const gameSegment = game
     ? (game.includes(" ") ? `"${game.replace(/[\"\\]/g, " ").replace(/\s+/g, " ").trim()}"` : game)
     : "";
@@ -318,6 +320,19 @@ function classifyCandidate(result: GamingSearchResult): GamingDiscoveredCandidat
   };
 }
 
+/** Compare only the existing bounded numeral suffix, without changing title identity policy. */
+function discoveryInstallment(value: string): string {
+  const numeral = value.toLowerCase();
+  if (!/^(?=.+)(?:xxx|xx|x)?(?:ix|iv|v?i{0,3})$/u.test(numeral)) return numeral;
+  const digits: Record<string, number> = { i: 1, v: 5, x: 10 };
+  let total = 0;
+  for (let index = 0; index < numeral.length; index += 1) {
+    const current = digits[numeral[index]];
+    total += current < (digits[numeral[index + 1]] ?? 0) ? -current : current;
+  }
+  return String(total);
+}
+
 function scoreDiscoveredCandidate(
   result: GamingSearchResult,
   input: GamingDiscoveryInput,
@@ -330,8 +345,11 @@ function scoreDiscoveredCandidate(
   // different installment. This negative metadata hint grants no positive identity.
   const numberedGame = /^(.*?)[\s-]+(\d+(?:\.\d+)?|[ivx]{1,6})$/iu.exec(input.game?.trim() ?? "");
   if (numberedGame) {
-    const candidateTitle = new RegExp(`(?:^|[^\\p{L}\\p{N}])(${gamingRegistryLiteralPattern(numberedGame[1])}[\\s-]+(?:\\d+(?:\\.\\d+)?|[ivx]{1,6}))(?=$|[^\\p{L}\\p{N}])`, "iu").exec(result.title);
-    if (candidateTitle && normalizeGamingComparableIdentity(candidateTitle[1]) !== normalizeGamingComparableIdentity(input.game!)) return undefined;
+    const titlePattern = new RegExp(`(?:^|[^\\p{L}\\p{N}])${gamingRegistryLiteralPattern(numberedGame[1])}[\\s-]+(\\d+(?:\\.\\d+)?|[ivx]{1,6})(?=$|[^\\p{L}\\p{N}])`, "giu");
+    const installments = Array.from(result.title.slice(0, MAX_SEARCH_TITLE_CHARS).matchAll(titlePattern), match => discoveryInstallment(match[1]));
+    // Comparison titles can name several installments. Reject only when every
+    // explicit same-series title differs; acquisition still verifies relevance.
+    if (installments.length && !installments.includes(discoveryInstallment(numberedGame[2]))) return undefined;
   }
   if (tokenize(`${result.title} ${result.snippet ?? ""}`).length < 4) {
     return undefined;
