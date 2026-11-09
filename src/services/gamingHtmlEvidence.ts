@@ -54,6 +54,119 @@ const APPLICABILITY_LIST_LABEL = /^(Platforms?|Regions?|Editions?|Patch(?:es)?|V
 interface ApplicabilityListLabel { label: string; complete: boolean; preserveOnly: boolean; exhausted?: true }
 const APPLICABILITY_LAYOUT_LIMITS = Object.freeze({ ancestors: 16, siblings: 32 });
 
+// One reviewed React transport form, interpreted as static DOM relationships,
+// never JavaScript. Other renderers/helper revisions remain unsupported.
+const STATIC_STREAM_HELPER_SHA256 = '7a3c441a297b4368e7168f53d44323873b11a160d3567f2d4695187785c22646';
+const STATIC_STREAM_SEGMENTS = 32;
+
+function restoreStaticStream($: CheerioAPI, deadlineExpired: () => boolean): 'absent' | 'restored' | 'unsupported' {
+  const slots = $('template[id^="B:"]').toArray();
+  const buckets = $('div[hidden][id^="S:"]').toArray();
+  if (!slots.length && !buckets.length) return 'absent';
+  if (!slots.length || slots.length !== buckets.length || slots.length > STATIC_STREAM_SEGMENTS) return 'unsupported';
+  let scanSteps = 0;
+  const inertAncestor = (element: Element): boolean => {
+    // Template contents have a parser-owned document-fragment parent, which
+    // Cheerio's element-only parents() traversal does not cross.
+    for (let ancestor: Element | null = element.parent; ancestor; ancestor = ancestor.parent) {
+      if (++scanSteps > GAMING_HTML_EVIDENCE_LIMITS.elements || deadlineExpired()
+        || $(ancestor).is('template,noscript')) return true;
+    }
+    return false;
+  };
+  const ids = new Map<string, Element[]>();
+  for (const element of $('[id]').toArray()) {
+    if (deadlineExpired()) return 'unsupported';
+    const id = $(element).attr('id')!;
+    const matches = ids.get(id);
+    if (!matches) ids.set(id, [element]);
+    else if (matches.length < 2) matches.push(element);
+  }
+  const calls: { slot: Element; bucket: Element }[] = [];
+  let initialized = false;
+  for (const script of $('script').toArray()) {
+    if (deadlineExpired()) return 'unsupported';
+    const source = $(script).html() ?? '';
+    if (!/\$(?:RC|RV|RB)\b/u.test(source)) continue;
+    if (!closed(script) || inertAncestor(script) || $(script).attr('nomodule') !== undefined
+      || $(script).attr('src') !== undefined
+      || !['', 'text/javascript', 'application/javascript'].includes($(script).attr('type') ?? '')) return 'unsupported';
+    const call = /\$RC\("(B:[0-9a-f]{1,8})","(S:[0-9a-f]{1,8})"\);?$/u.exec(source);
+    if (!call || calls.length >= STATIC_STREAM_SEGMENTS) return 'unsupported';
+    const prefix = source.slice(0, call.index);
+    if (!initialized) {
+      if (createHash('sha256').update(prefix).digest('hex') !== STATIC_STREAM_HELPER_SHA256) return 'unsupported';
+      initialized = true;
+    } else if (prefix) return 'unsupported';
+    const [slot] = ids.get(call[1]) ?? [];
+    const [bucket] = ids.get(call[2]) ?? [];
+    const callStart = (script as LocatedElement).sourceCodeLocation?.startOffset;
+    if (ids.get(call[1])?.length !== 1 || ids.get(call[2])?.length !== 1
+      || !slots.includes(slot) || !buckets.includes(bucket)
+      || calls.some(previous => previous.slot === slot || previous.bucket === bucket)) return 'unsupported';
+    // The reviewed helper cannot resolve IDs supplied later in the response.
+    if (callStart === undefined || [(slot as LocatedElement), (bucket as LocatedElement)]
+      .some(element => !element.sourceCodeLocation || element.sourceCodeLocation.endOffset > callStart)) return 'unsupported';
+    calls.push({ slot, bucket });
+  }
+  if (!initialized || calls.length !== slots.length) return 'unsupported';
+  const plans: { start: Element; removed: Element[]; bucket: Element }[] = [];
+  const availableBuckets = new Set<Element>();
+  const removed = new Set<Element>();
+  for (const { slot, bucket } of calls) {
+    if (deadlineExpired()) return 'unsupported';
+    if (!closed(slot) || $(slot).html() !== '' || inertAncestor(slot) || !closed(bucket)
+      || !$(bucket).parent().is('body') || Object.keys($(bucket).attr() ?? {}).some(key => !['hidden', 'id'].includes(key))) return 'unsupported';
+    // A later slot may be supplied by an already planned bucket, but never by
+    // itself, an unavailable bucket, or fallback content removed by another slot.
+    for (let ancestor: Element | null = slot.parent; ancestor; ancestor = ancestor.parent) {
+      if (++scanSteps > GAMING_HTML_EVIDENCE_LIMITS.elements || deadlineExpired()) return 'unsupported';
+      if (removed.has(ancestor) || buckets.includes(ancestor) && !availableBuckets.has(ancestor)) return 'unsupported';
+    }
+    const start = slot.prev;
+    if (!start || start.type !== 'comment' || start.data !== '$?' || removed.has(slot)) return 'unsupported';
+    const discarded: Element[] = [];
+    const nested: string[] = [];
+    let end: Element | null = slot;
+    for (; end; end = end.next) {
+      if (++scanSteps > GAMING_HTML_EVIDENCE_LIMITS.elements || deadlineExpired()) return 'unsupported';
+      if (end.type === 'comment') {
+        const marker = end.data ?? '';
+        if (marker === '/$' || marker === '/&') {
+          if (!nested.length) { if (marker !== '/$') return 'unsupported'; break; }
+          if (nested.pop() !== marker) return 'unsupported';
+        } else if (['$', '$?', '$~', '$!', '&'].includes(marker)) nested.push(marker === '&' ? '/&' : '/$');
+      }
+      discarded.push(end);
+      if (discarded.length > GAMING_HTML_EVIDENCE_LIMITS.elements) return 'unsupported';
+    }
+    if (!end) return 'unsupported';
+    // Validate the complete plan before moving any nodes. A nested slot inside
+    // a fallback is not interchangeable with a slot supplied in its bucket.
+    const discardedSet = new Set(discarded);
+    for (const candidate of slots) {
+      if (candidate === slot) continue;
+      for (let ancestor: Element | null = candidate; ancestor; ancestor = ancestor.parent) {
+        if (++scanSteps > GAMING_HTML_EVIDENCE_LIMITS.elements || deadlineExpired()) return 'unsupported';
+        if (discardedSet.has(ancestor)) return 'unsupported';
+      }
+    }
+    for (const element of discarded) removed.add(element);
+    plans.push({ start, removed: discarded, bucket });
+    availableBuckets.add(bucket);
+  }
+  if (deadlineExpired()) return 'unsupported';
+  for (const plan of plans) {
+    // Consume only the protocol's hidden transport wrapper. Destination
+    // ancestry and hidden/restricted descendants remain under normal policy.
+    $(plan.removed[0]).before($(plan.bucket).contents());
+    $(plan.removed).remove();
+    $(plan.bucket).remove();
+    plan.start.data = '$';
+  }
+  return 'restored';
+}
+
 function text(value: string): string {
   return value.normalize('NFKC').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/g, ' ').replace(/\s+/g, ' ').trim();
 }
@@ -181,6 +294,11 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
     filterGamingDocumentInstructions(raw) !== normalized)) fail('source_instruction_filtered');
   if (deadlineExpired()) return result;
   if (!htmlContent) return result;
+  const stream = restoreStaticStream($, deadlineExpired);
+  if (deadlineExpired()) return result;
+  if (stream === 'unsupported' || stream === 'restored' && input.transportTruncated) {
+    result.proseBody = ''; fail('unsupported_streamed_html'); return result;
+  }
   const applicabilityLists = new Map<Element, ApplicabilityListLabel | undefined>();
   for (const list of $('ul,ol').toArray().slice(0, limit.lists)) {
     if (deadlineExpired()) return result;
@@ -209,7 +327,7 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
       // Linked facts, short steps and version/date-bearing release entries are
       // authored evidence even if their entire visible text is a single link.
       || /[.!?](?:\s|$)|\p{N}/u.test(label)
-      || /\b(?:patch(?:es)?|builds?|updates?|releases?|versions?|seasons?|platforms?|regions?|effective|published|updated|baseline|supersedes)\b/iu.test(label)
+      || /\b(?:patch(?:es)?|builds?|updates?|releases?|versions?|seasons?|platforms?|effective|published|updated|baseline|supersedes)\b/iu.test(label)
       || /^(?:(?:first|next|then)[,:]?\s+)?(?:to\s+|attack\b|avoid\b|block\b|collect\b|defeat\b|dodge\b|equip\b|explore\b|follow\b|gather\b|heal\b|jump\b|move\b|open\b|press\b|restore\b|save\b|select\b|spend\b|upgrade\b|use\b|wait\b|this\s+(?:guide|article|page|document|source)\b)/iu.test(label)
       || /\b(?:is|are|was|were|has|have|only|not|no|without|except|requires?|costs?|grants?|unlocks?|available|must|should)\b/iu.test(label)
       || hasGamingActionableProse(label) || gamingAttributableClaimText(label)) continue;

@@ -90,8 +90,21 @@ Player-facing instructions such as following a mission walkthrough are normal
 evidence. Assistant control instructions remain a document-level rejection,
 including instructions in acquired title/heading metadata or text omitted by
 the context projection budget. Sanitization is not approval of the remainder.
-Resolver `gaming-document-v11` separates the current extraction and acquired-scope decisions from
+Resolver `gaming-document-v12` separates the current extraction and acquired-scope decisions from
 older cached resolutions and durable revision identity.
+
+Complete, recognized React HTML transport buckets can be relocated statically
+into their closed pending template slots. This does not execute JavaScript or
+fetch more content. The exact reviewed helper fingerprint, literal calls, unique
+closed references, source order, destination ancestry and a 32-segment ceiling
+are required. Unsupported or ambiguous shapes stay unsupported. The complete
+accepted-response instruction and source-use scans run before relocation;
+ordinary hidden descendants and navigation remain excluded afterward. The
+original acquired response, byte/text limits and deadlines remain unchanged.
+
+A link-only article title mentioning a geographic region remains navigation.
+Explicit region/edition/platform fields, applicability layouts, restrictions and
+linked gameplay statements retain their independent evidence checks.
 
 Label-only linked article list items are catalog navigation rather than game
 declarations or gameplay records. Complete authored gameplay, explicit record

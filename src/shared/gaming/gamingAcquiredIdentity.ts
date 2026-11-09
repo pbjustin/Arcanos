@@ -1,4 +1,4 @@
-import { detectGamingRegistryAlias, gamingRegistrySourceGameMatchesRequest,
+import { detectGamingRegistryAlias, gamingRegistrySourceGameMatchesRequest, gamingRegistryDistinctScopeQualifier,
   gamingRegistryLiteralPattern, normalizeGamingComparableIdentity, resolveGamingRegistryGame } from './gamingGameRegistry.js';
 import { isGamingAcquiredTopicTitle } from '@services/gamingGameDetection.js';
 
@@ -28,6 +28,32 @@ export function gamingAcquiredNominalScope(value: string, commaDelimited = false
   const nameEnd = known ? Math.max(0, ...[known.name, ...known.aliases].map(name =>
     new RegExp(`^${gamingRegistryLiteralPattern(name)}(?=$|[^\\p{L}\\p{N}])`, 'iu').exec(value)?.[0].length ?? 0)) : 0;
   const continuationText = value.slice(nameEnd);
+  // An unregistered multiword possessor can own an ordinary location too.
+  // This is only a scope boundary; the source still needs independent game proof.
+  const nominalPossessor = !known && !namedGameScope
+    ? /^((?:\p{Lu}[\p{L}\p{N}-]*\s+){1,5}\p{Lu}[\p{L}\p{N}-]*)(?:['’]s|(?<=s)['’])\s+(?=\p{Ll})/u.exec(value) : null;
+  if (nominalPossessor) {
+    const owned = value.slice(nominalPossessor[0].length);
+    return gamingRegistryDistinctScopeQualifier(nominalPossessor[1], normalizeGamingComparableIdentity(owned))
+      ? `${nominalPossessor[1]} ${owned}` : nominalPossessor[1];
+  }
+  if (known && !namedGameScope) {
+    const name = value.slice(0, nameEnd);
+    const possessive = /^['’]s\s+/iu.exec(continuationText)
+      ?? (/s$/iu.test(name) ? /^['’]\s+/u.exec(continuationText) : null);
+    if (possessive) {
+      const owned = continuationText.slice(possessive[0].length);
+      // Possession describes the named game's world. Keep explicit edition or
+      // related-game qualifiers inspectable rather than reducing them to a parent.
+      return gamingRegistryDistinctScopeQualifier(known.name, normalizeGamingComparableIdentity(owned)) || /^\p{Lu}/u.test(owned)
+        ? `${name} ${owned}` : name;
+    }
+    // A dash before an independent lowercase clause is punctuation. An explicit
+    // game declaration or a title-shaped subtitle retains its complete name.
+    const aside = /^(?:--|[–—])\s*/u.exec(continuationText);
+    if (aside && !gamingRegistryDistinctScopeQualifier(known.name, normalizeGamingComparableIdentity(continuationText.slice(aside[0].length)))
+      && /^(?:\p{Ll}[\p{L}'’-]*\s+){1,3}(?:is|are|has|have|can|will|must|should)\b/u.test(continuationText.slice(aside[0].length))) return name;
+  }
   // A degree complement describes timing in the established game, not a title.
   if (!known && namedGameScope && !commaDelimited && /\b(?:enough|so)\s*$/u.test(precedingClause)
     && /^that there (?:is|are)\b/u.test(value) && !detectGamingRegistryAlias(value)) return '';

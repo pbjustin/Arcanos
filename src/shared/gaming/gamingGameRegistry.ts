@@ -226,7 +226,11 @@ export function gamingApplicabilityAssertionText(value: string, game?: string, r
     const start = match.index + match[0].length;
     const window = text.slice(start, start + APPLICABILITY_SCOPE_LIMITS.contextChars);
     const boundary = /[.!?;,\r\n]/u.exec(window)?.index;
-    if (/["“”`]|(?<![\p{L}\p{N}])['‘’]|['‘’](?![\p{L}\p{N}])/u.test(window.slice(0, boundary))) complete = false;
+    // A plural proper owner in ordinary prose can precede a lowercase object.
+    // Inspect quotations without changing source text or explicit declarations.
+    const quotationScope = `${match[0]}${window.slice(0, boundary)}`.replace(
+      /(\b[Ii]n\s+(?:\p{Lu}[\p{L}\p{N}-]*\s+){1,5}\p{Lu}[\p{L}\p{N}-]*[sS])['’](?=\s+\p{Ll})/gu, '$1 ');
+    if (/["“”`]|(?<![\p{L}\p{N}])['‘’]|['‘’](?![\p{L}\p{N}])/u.test(quotationScope)) complete = false;
   }
   return { text, complete };
 }

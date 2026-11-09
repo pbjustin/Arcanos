@@ -1,7 +1,54 @@
 import { describe, expect, it } from '@jest/globals';
 import { GAMING_GAME_REGISTRY, validateGamingGameRegistry, resolveGamingRegistryGame,
   detectGamingRegistryAlias, normalizeGamingRegistryEdition, gamingRegistrySourceGameMatchesRequest,
-  gamingRegistryDistinctScopeQualifier, gamingRegistryRelatedScopeNames, readGamingRegistryEditionScope } from '../src/shared/gaming/gamingGameRegistry.js';
+  gamingRegistryDistinctScopeQualifier, gamingRegistryRelatedScopeNames, readGamingRegistryEditionScope,
+  gamingApplicabilityAssertionText } from '../src/shared/gaming/gamingGameRegistry.js';
+import { extractGamingFreshnessMetadata } from '../src/shared/gaming/gamingFreshnessCore.js';
+
+describe('plural possession preserves applicability inspection', () => {
+  it.each([
+    'Establish a colony in Elite Dangerous’ galactic legacy.',
+    "Establish a colony in Elite Dangerous' galactic legacy.",
+    'In this guide we’ll explain how to settle in Elite Dangerous’ outer systems.',
+    'Equip the lantern in Dark Souls’ open world.'
+  ])('does not mistake ordinary nominal possession for an open quotation: %s', text => {
+    expect(gamingApplicabilityAssertionText(text, 'Elite Dangerous')).toEqual({ text, complete: true });
+  });
+
+  it.each([
+    "In 'Elite Dangerous’ galactic legacy.",
+    'In “Elite Dangerous’ galactic legacy.',
+    'In Elite Dangerous’ “galactic legacy.',
+    'Game: Elite Dangerous’ galactic legacy.',
+    'This guide covers Elite Dangerous’ galactic legacy.',
+    'In the game Elite Dangerous’ galactic legacy.',
+    'In Elite Dangerous’ Remastered Edition.',
+    'In Elite Dangerous’',
+    'In Elite Dangerous ’ galactic legacy.',
+    'In Elite Dangerous’’ galactic legacy.',
+    "In Elite Dangerous’ outer systems; Platforms: 'PS5.",
+    'In Elite Dangerous’ outer systems; Edition: “Legacy.'
+  ])('keeps explicit declarations and malformed or unclosed quotations uncertain: %s', text => {
+    expect(gamingApplicabilityAssertionText(text, 'Elite Dangerous').complete).toBe(false);
+  });
+
+  it('preserves source-global platform and edition fields after nominal possession', () => {
+    const text = 'Establish a colony in Elite Dangerous’ outer systems. Platforms: PS5. Edition: Legacy.';
+    const freshness = extractGamingFreshnessMetadata({ publicUrl: 'https://synthetic.example/colony', text,
+      metadata: { title: 'Elite Dangerous colony guide' } }, { game: 'Elite Dangerous', platform: 'PC' });
+    expect(freshness).toMatchObject({ platforms: ['PS5'], edition: 'Legacy' });
+    expect(freshness.metadataUnverified).not.toBe(true);
+    expect(gamingApplicabilityAssertionText(text, 'Elite Dangerous').text).toBe(text);
+  });
+
+  it('continues treating complete quoted gameplay and restrictions as references', () => {
+    const text = 'The source quotes: “In Elite Dangerous’ outer systems. Platforms: PS5.”';
+    const freshness = extractGamingFreshnessMetadata({ publicUrl: 'https://synthetic.example/colony', text,
+      metadata: { title: 'Elite Dangerous colony guide' } }, { game: 'Elite Dangerous', platform: 'PC' });
+    expect(gamingApplicabilityAssertionText(text, 'Elite Dangerous').complete).toBe(true);
+    expect(freshness.platforms).toBeUndefined();
+  });
+});
 
 describe('versioned game recognition is independent of acquired proof', () => {
   it('keeps stable identifiers, edition relationships and provenance in reviewed data', () => {
