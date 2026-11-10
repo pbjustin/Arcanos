@@ -72,8 +72,14 @@ COPY arcanos-ai-runtime/ ./arcanos-ai-runtime/
 COPY daemon-python/ ./daemon-python/
 COPY config/ ./config/
 COPY contracts/ ./contracts/
+COPY schemas/ ./schemas/
 COPY openapi/ ./openapi/
 COPY tsconfig.json ./
+COPY Dockerfile railway.json ./
+
+# Railway injects Git variables into Docker builds only when the stage declares
+# them. This is a reference, not proof that the copied source matches Git.
+ARG RAILWAY_GIT_COMMIT_SHA
 
 # Install dev dependencies (override NODE_ENV) and build
 RUN npm install --include=dev --no-audit --no-fund && \
@@ -83,6 +89,11 @@ RUN npm install --include=dev --no-audit --no-fund && \
 
 # Clean up dev dependencies after build
 RUN npm prune --production
+
+# Independently compare the final measured source to the exact public Git commit.
+# Keep bounded commit/tree objects (no .git or credentials) bound to emitted bytes.
+# Missing metadata/network evidence stays unverified; malformed references fail.
+RUN node scripts/production-build-identity.mjs --write --verify-source
 
 # This receipt is produced only for the explicitly admitted disposable profile.
 # Its digest covers emitted application/workspace bytes and runtime scripts.

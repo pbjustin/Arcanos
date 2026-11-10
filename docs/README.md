@@ -102,6 +102,7 @@ both be installed as `arcanos`; their guides explain unambiguous invocation.
 | Document | Lifecycle | Scope |
 | --- | --- | --- |
 | [Railway rationale](RAILWAY_RATIONALE.md) | Companion | Why Railway is the preferred target and when to reconsider. |
+| [Production Git identity](PRODUCTION_GIT_PROVENANCE.md) | Runbook | Build SHA propagation, independent Git source proof, trust limits, and Railway configuration follow-up. |
 | [Startup resilience](STARTUP_RESILIENCE.md) | Canonical | Listener, dependency lifecycle, and health semantics. |
 | [Redis resilience runbook](REDIS_RESILIENCE_RUNBOOK.md) | Canonical | Redis outage diagnosis and recovery boundaries. |
 | [Local-agent preview E2E report](PREVIEW_E2E_REPORT.md) | Historical | Dated isolated-preview deployment, security, test, confirmation, and teardown evidence. |

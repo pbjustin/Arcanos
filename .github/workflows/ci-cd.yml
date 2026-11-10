@@ -258,6 +258,10 @@ jobs:
           docker build -t arcanos-test .
           echo "✅ Docker build successful"
 
+      - name: Verify controlled Docker SHA and Git source proof cases
+        timeout-minutes: 5
+        run: node --test scripts/production-build-identity-docker.test.mjs
+
       - name: Verify production build identity against the actual image
         timeout-minutes: 2
         run: |
@@ -266,6 +270,17 @@ jobs:
             --mount "type=bind,src=$GITHUB_WORKSPACE/tests/fixtures/production-build-identity-artifact.mjs,dst=/fixture.mjs,readonly" \
             --entrypoint /usr/bin/env arcanos-test -i PATH=/usr/local/bin:/usr/bin:/bin \
             node /fixture.mjs --isolated-image
+
+      - name: Verify Git source proof with the real production build context
+        timeout-minutes: 15
+        run: |
+          # Default checkout and this reference both identify the PR merge commit on PR events.
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          docker build --build-arg RAILWAY_GIT_COMMIT_SHA="$GITHUB_SHA" -t arcanos-source-proof-test .
+          docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --mount "type=bind,src=$GITHUB_WORKSPACE/tests/fixtures/production-git-source-proof-image.mjs,dst=/fixture.mjs,readonly" \
+            --entrypoint /usr/bin/env arcanos-source-proof-test -i PATH=/usr/local/bin:/usr/bin:/bin \
+            node /fixture.mjs --isolated-image "$GITHUB_SHA"
 
       - name: Verify isolated self-heal preview image artifact and executable ownership
         timeout-minutes: 10
