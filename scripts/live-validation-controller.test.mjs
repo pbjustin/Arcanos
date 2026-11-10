@@ -195,6 +195,20 @@ function executionFixture(f, options = {}) {
 }
 const execute = (f, e) => runLiveValidationController([...f.argv, '--execute', '--allow-paid-provider'], e.dependencies);
 
+test('controller leaves a competing one-shot claim intact before runtime mutation', async t => {
+  const f = fixture(t); const e = executionFixture(f);
+  const stateFile = path.join(f.directory, 'evidence', 'controller-state.private.json');
+  const winningClaim = '{"claim":"concurrent-controller-fixture"}\n';
+  e.dependencies.createRailwayApi = () => {
+    // Model a second controller publishing its claim just after the initial file check.
+    writeFileSync(stateFile, winningClaim, { mode: 0o600, flag: 'wx' });
+    return e.railway;
+  };
+  await assert.rejects(execute(f, e), { code: 'LIVE_VALIDATION_RUN_REPLAY_FORBIDDEN' });
+  assert.equal(readFileSync(stateFile, 'utf8'), winningClaim);
+  assert.deepEqual(e.seen, []);
+});
+
 test('CLI accepts PR, exact SHA or both, and requires paired paid flags with hard ceilings', t => {
   const f = fixture(t);
   assert.equal(parseLiveValidationControllerArguments(f.argv).execute, false);
@@ -766,8 +780,39 @@ test('controller sanitizes the actual direct-provider snapshot including workflo
   const actual = usage();
   assert.equal(actual.status, 'active'); assert.equal(actual.workflows, 2);
   assert.equal(actual.requests, 3); assert.equal(actual.metadataRequests, 1);
+  assert.deepEqual(actual.modelValidation, [{ stage: 'metadata', outcome: 'completed',
+    elapsedMs: provider.snapshot().stages[0].elapsedMs, reserved: true }]);
   assert.equal(actual.providerCalls, 2); assert.equal(actual.generationCalls, 1); assert.equal(actual.auditCalls, 1);
   assert.equal(actual.observedInputTokens, 20); assert.equal(actual.observedOutputTokens, 10);
   assert.equal(actual.observedTotalTokens, 30);
   assert.ok(actual.reservedSpendMicroUsd >= actual.observedSpendMicroUsd);
+});
+
+test('model validation receipt preserves bounded outcomes and drops raw or inconsistent diagnostics', t => {
+  const { target } = fixture(t);
+  const plan = { runId: 'a'.repeat(32), commitSha: sha, prNumber: 1528, runtimeDeploymentId, profileHash: 'b'.repeat(64) };
+  const provider = createLiveValidationProvider({ target, identity: { sourceCommit: sha, deploymentId: runtimeDeploymentId },
+    apiKey: 'sk-unit-test-fixture-' + 'x'.repeat(40), fetchImplementation: () => assert.fail('unexpected transport') });
+  t.after(() => provider.close());
+  const snapshot = provider.snapshot();
+  const summarize = (stages, metadataRequests = 1) => sanitizeLiveValidationUsage({ ...plan, ...snapshot, stages,
+    usage: { ...snapshot.usage, requests: metadataRequests, metadataRequests } }, { plan, target });
+  const stage = { stage: 'metadata', outcome: 'failed', code: 'LIVE_VALIDATION_METADATA_NOT_FOUND',
+    elapsedMs: 12, reserved: true };
+  const legacy = { ...stage, code: 'LIVE_VALIDATION_MODEL_VALIDATION_FAILED' };
+  delete legacy.reserved;
+  const rejected = { ...stage, code: 'LIVE_VALIDATION_BUDGET_EXHAUSTED', elapsedMs: 0, reserved: false };
+  assert.equal(summarize(undefined).modelValidation, undefined);
+  assert.deepEqual(summarize([legacy]).modelValidation, [{ ...legacy, reserved: true }]);
+  assert.deepEqual(summarize([{ ...stage, model: 'private model label', message: 'private provider message' },
+    rejected, { stage: 'generation', outcome: 'failed', code: 'private content error' }]).modelValidation, [stage, rejected]);
+  assert.deepEqual(summarize([rejected], 0).modelValidation, [rejected]);
+  assert.equal(summarize([{ ...stage, reserved: false }], 0).modelValidation, undefined);
+  for (const stages of [[{ ...stage, code: 'LIVE_VALIDATION_PRIVATE_PAYLOAD' }], [{ ...stage, elapsedMs: -1 }],
+    [{ ...stage, reserved: 'private reservation marker' }], [{ ...stage, elapsedMs: target.limits.durationMs + 1 }],
+    [stage, stage], [rejected, rejected], Array(target.limits.maxRequests + 2).fill(stage)]) {
+    const usage = summarize(stages);
+    assert.equal(usage.modelValidation, undefined);
+    assert.equal(usage.metadataRequests, 1);
+  }
 });

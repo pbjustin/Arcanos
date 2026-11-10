@@ -6,6 +6,19 @@ const INPUT_TOKEN_OVERHEAD = 1_024;
 const REQUEST_LIMIT = 4_000_000;
 const STAGES = new Set(['generation', 'answer_audit']);
 const MODEL = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
+export const LIVE_VALIDATION_METADATA_RESERVED_CODES = Object.freeze([
+  'LIVE_VALIDATION_METADATA_ACCESS_DENIED', 'LIVE_VALIDATION_METADATA_NOT_FOUND',
+  'LIVE_VALIDATION_METADATA_TRANSPORT_FAILED', 'LIVE_VALIDATION_MODEL_VALIDATION_FAILED',
+  'LIVE_VALIDATION_PROVIDER_RESPONSE_INVALID', 'LIVE_VALIDATION_PROVIDER_RESPONSE_LIMIT',
+  'LIVE_VALIDATION_PROVIDER_TIMEOUT', 'LIVE_VALIDATION_USAGE_INVALID'
+]);
+export const LIVE_VALIDATION_METADATA_DIAGNOSTIC_CODES = Object.freeze([
+  ...LIVE_VALIDATION_METADATA_RESERVED_CODES, 'LIVE_VALIDATION_PROVIDER_FAILED',
+  'LIVE_VALIDATION_PROVIDER_CANCELLED', 'LIVE_VALIDATION_RUN_CLOSED',
+  'LIVE_VALIDATION_NEGATIVE_PROVIDER_FORBIDDEN', 'LIVE_VALIDATION_DURATION_LIMIT',
+  'LIVE_VALIDATION_BUDGET_EXHAUSTED', 'LIVE_VALIDATION_BUDGET_EXPIRED',
+  'LIVE_VALIDATION_BUDGET_CLOCK_INVALID', 'LIVE_VALIDATION_CONCURRENCY_LIMIT'
+]);
 export class LiveValidationProviderError extends Error {
   constructor(code) { super(code); this.name = 'LiveValidationProviderError'; this.code = code; }
 }
@@ -103,11 +116,15 @@ export function createLiveValidationProvider({ target, identity, apiKey, now = D
       requireProvider(!closed, 'LIVE_VALIDATION_RUN_CLOSED');
       requireProvider(!active, 'LIVE_VALIDATION_CONCURRENCY_LIMIT');
       request = parseRequest(input, init);
+      if (request.method === 'GET') {
+        stage = 'metadata';
+        startedAtMs = now();
+      }
       requireProvider(!request.signal?.aborted, 'LIVE_VALIDATION_PROVIDER_CANCELLED');
       requireProvider(workflow?.caseId !== 'gaming-guide-negative', 'LIVE_VALIDATION_NEGATIVE_PROVIDER_FORBIDDEN');
       const observed = observation();
-      stage = request.method === 'GET' ? 'metadata' : observed?.stage;
-      requireProvider(stage === 'metadata' || observed?.moduleId === 'gaming' && STAGES.has(stage), 'LIVE_VALIDATION_STAGE_INVALID');
+      requireProvider(stage === 'metadata' || observed?.moduleId === 'gaming' && STAGES.has(observed.stage), 'LIVE_VALIDATION_STAGE_INVALID');
+      stage ??= observed?.stage;
       if (stage !== 'metadata') {
         requireProvider(workflow?.caseId === 'gaming-guide-positive' || workflow?.caseId === 'gaming-guide-negative',
           'LIVE_VALIDATION_WORKFLOW_REQUIRED');
@@ -118,6 +135,7 @@ export function createLiveValidationProvider({ target, identity, apiKey, now = D
       const remaining = getRemainingMs();
       requireProvider(remaining === null || remaining === undefined || typeof remaining === 'number' && Number.isFinite(remaining),
         'LIVE_VALIDATION_DURATION_LIMIT');
+      const metadataDeadlineAt = stage === 'metadata' && typeof remaining === 'number' ? now() + remaining : undefined;
       const timeoutMs = Math.floor(Math.min(request.nativeTimeoutMs, budget.remainingMs(), remaining ?? Number.POSITIVE_INFINITY));
       requireProvider(integer(timeoutMs, 1), 'LIVE_VALIDATION_DURATION_LIMIT');
       reservation = budget.reserve({ model: request.model, inputTokens: content.inputTokens, outputTokens: content.outputTokens, stage });
@@ -128,7 +146,12 @@ export function createLiveValidationProvider({ target, identity, apiKey, now = D
         onAbort = () => reject(new LiveValidationProviderError(timedOut ? 'LIVE_VALIDATION_PROVIDER_TIMEOUT'
           : callerAborted ? 'LIVE_VALIDATION_PROVIDER_CANCELLED' : 'LIVE_VALIDATION_RUN_CLOSED'));
         controller.signal.addEventListener('abort', onAbort, { once: true });
-        onCallerAbort = () => { callerAborted = true; controller.abort(); };
+        onCallerAbort = () => {
+          // The SDK forwards abort without a reason and may beat the guard's timer.
+          if (metadataDeadlineAt !== undefined && now() >= metadataDeadlineAt) timedOut = true;
+          callerAborted = true;
+          controller.abort();
+        };
         request.signal?.addEventListener('abort', onCallerAbort, { once: true });
         if (request.signal?.aborted) onCallerAbort();
         timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
@@ -139,12 +162,14 @@ export function createLiveValidationProvider({ target, identity, apiKey, now = D
           headers: { authorization: 'Bearer ' + credential }, signal: controller.signal });
       }), interrupted]);
       const body = result.body;
-      requireProvider(result.status === 200 && body && typeof body === 'object', 'LIVE_VALIDATION_PROVIDER_FAILED');
+      requireProvider(result.status === 200, 'LIVE_VALIDATION_PROVIDER_FAILED');
       let inputTokens = 0; let outputTokens = 0;
       if (stage === 'metadata') {
+        requireProvider(body && typeof body === 'object' && !Array.isArray(body), 'LIVE_VALIDATION_PROVIDER_RESPONSE_INVALID');
         requireProvider(body.id === request.model && body.object === 'model', 'LIVE_VALIDATION_MODEL_VALIDATION_FAILED');
         actualModel = request.model;
       } else {
+        requireProvider(body && typeof body === 'object', 'LIVE_VALIDATION_PROVIDER_FAILED');
         try { actualModel = responseModelIdentity ? responseModelIdentity(body, request.model)
           : body.model === request.model ? body.model : undefined; }
         catch { throw new LiveValidationProviderError('LIVE_VALIDATION_PROVIDER_MODEL_MISMATCH'); }
@@ -160,7 +185,9 @@ export function createLiveValidationProvider({ target, identity, apiKey, now = D
       if (stage === 'answer_audit') workflow.auditCompleted++;
       return Response.json(stage === 'metadata' ? { id: request.model, object: 'model' } : body);
     } catch (error) {
-      const code = timedOut ? 'LIVE_VALIDATION_PROVIDER_TIMEOUT' : safeCode(error);
+      const candidateCode = timedOut ? 'LIVE_VALIDATION_PROVIDER_TIMEOUT' : safeCode(error);
+      const code = stage === 'metadata' && !LIVE_VALIDATION_METADATA_DIAGNOSTIC_CODES.includes(candidateCode)
+        ? 'LIVE_VALIDATION_PROVIDER_FAILED' : candidateCode;
       failureCode = code;
       const observed = observation();
       if (code === 'LIVE_VALIDATION_PROVIDER_TIMEOUT' && stage !== 'metadata' && observed) observed.timeoutStage = stage;
@@ -169,10 +196,15 @@ export function createLiveValidationProvider({ target, identity, apiKey, now = D
     } finally {
       clearTimeout(timer); request?.signal?.removeEventListener('abort', onCallerAbort);
       controller?.signal.removeEventListener('abort', onAbort);
-      if (reservation !== undefined) {
+      const reserved = reservation !== undefined;
+      // A pre-reservation failure closes the guard before a later call can parse a model.
+      if (reserved || stage === 'metadata' && failureCode) {
         stages.push({ caseId: workflow?.caseId ?? null, stage, model: request.model,
           ...(actualModel ? { actualModel } : {}), outcome: failureCode ? 'failed' : 'completed',
-          elapsedMs: Math.max(0, now() - startedAtMs), ...(failureCode ? { code: failureCode } : {}) });
+          elapsedMs: Math.max(0, now() - startedAtMs), ...(failureCode ? { code: failureCode } : {}),
+          ...(stage === 'metadata' ? { reserved } : {}) });
+      }
+      if (reserved) {
         active = false; activeAbort = undefined;
       }
     }

@@ -1,12 +1,13 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { constants, existsSync, lstatSync, mkdirSync, openSync, closeSync, fstatSync, readFileSync,
-  writeFileSync, fsyncSync, realpathSync, renameSync, readSync } from 'node:fs';
+  writeFileSync, fsyncSync, realpathSync, renameSync, linkSync, unlinkSync, readSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sanitizeLivePreviewEvidence, verifyLivePreviewEvidence } from './live-pr-preview-verifier.mjs';
 import { validateLiveValidationTarget, assertLiveValidationInventory,
   LIVE_VALIDATION_HARD_LIMITS } from './live-validation-target.mjs';
 import { canonicalLiveValidationJson } from './live-validation-bootstrap.mjs';
+import { LIVE_VALIDATION_METADATA_DIAGNOSTIC_CODES, LIVE_VALIDATION_METADATA_RESERVED_CODES } from './live-validation-provider.mjs';
 import { execFileSync } from 'node:child_process';
 
 export const liveValidationTargetSha256 = target => canonicalHash(validateLiveValidationTarget(target));
@@ -127,16 +128,24 @@ function evidenceDirectory(directory, root) {
   if (!existsSync(directory)) mkdirSync(directory, { mode: 0o700 });
   return outsideCheckout(directory, root);
 }
-function protectedWrite(file, value) {
+function protectedWrite(file, value, { exclusive = false } = {}) {
   const temporary = file + '.' + randomBytes(8).toString('hex') + '.tmp';
-  if (existsSync(file)) {
+  if (!exclusive && existsSync(file)) {
     const stat = lstatSync(file);
     requireController(!stat.isSymbolicLink() && stat.isFile() && (stat.mode & 0o077) === 0
       && (typeof process.getuid !== 'function' || stat.uid === process.getuid()), 'LIVE_VALIDATION_STATE_UNSAFE');
   }
   const fd = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-  try { writeFileSync(fd, JSON.stringify(value) + '\n'); fsyncSync(fd); } finally { closeSync(fd); }
-  renameSync(temporary, file);
+  try {
+    try { writeFileSync(fd, JSON.stringify(value) + '\n'); fsyncSync(fd); } finally { closeSync(fd); }
+    // Publish the complete first state without replacing a competing claim.
+    if (exclusive) linkSync(temporary, file); else renameSync(temporary, file);
+  } catch (error) {
+    if (exclusive && error.code === 'EEXIST') throw new LiveValidationControllerError('LIVE_VALIDATION_RUN_REPLAY_FORBIDDEN');
+    throw error;
+  } finally {
+    if (exclusive) unlinkSync(temporary);
+  }
   const parent = openSync(path.dirname(file), constants.O_RDONLY | constants.O_DIRECTORY);
   try { fsyncSync(parent); } finally { closeSync(parent); }
 }
@@ -603,6 +612,26 @@ function assertProfileObservation(value, expected) {
   'LIVE_VALIDATION_FRESHNESS_QUALIFICATION_FAILED');
 }
 
+function projectModelValidation(stages, metadataRequests, limits) {
+  if (!Array.isArray(stages) || stages.length > limits.maxRequests + 1) return undefined;
+  const modelValidation = [];
+  let reservedCount = 0;
+  let rejectedCount = 0;
+  for (const entry of stages) {
+    if (entry?.stage !== 'metadata') continue;
+    const { outcome, elapsedMs, code } = entry;
+    // Older runtimes only recorded metadata stages after a reservation.
+    const reserved = Object.hasOwn(entry, 'reserved') ? entry.reserved : true;
+    if (!integer(elapsedMs, 0, limits.durationMs) || typeof reserved !== 'boolean'
+      || (outcome === 'completed' ? !reserved || code !== undefined
+        : outcome !== 'failed' || !LIVE_VALIDATION_METADATA_DIAGNOSTIC_CODES.includes(code))) return undefined;
+    if (!reserved && LIVE_VALIDATION_METADATA_RESERVED_CODES.includes(code)) return undefined;
+    if (reserved ? ++reservedCount > metadataRequests : ++rejectedCount > 1) return undefined;
+    modelValidation.push({ stage: 'metadata', outcome, elapsedMs, reserved, ...(code === undefined ? {} : { code }) });
+  }
+  return modelValidation.length ? modelValidation : undefined;
+}
+
 export function sanitizeLiveValidationUsage(value, { plan, target }) {
   requireController(value?.runId === plan.runId && value.commitSha === plan.commitSha && value.prNumber === plan.prNumber
     && value.runtimeDeploymentId === plan.runtimeDeploymentId && value.profileHash === plan.profileHash
@@ -619,8 +648,10 @@ export function sanitizeLiveValidationUsage(value, { plan, target }) {
     && value.usage.providerCalls === value.usage.generationCalls + value.usage.auditCalls
     && value.usage.requests === value.usage.providerCalls + value.usage.metadataRequests,
   'LIVE_VALIDATION_USAGE_LIMIT_FAILED');
+  const modelValidation = projectModelValidation(value.stages, value.usage.metadataRequests, target.limits);
   return { runId: plan.runId, status: ['active', 'stopped'].includes(value.status) ? value.status : 'unknown',
-    workflows: value.counts.workflows, ...Object.fromEntries(keys.map(key => [key, value.usage[key]])) };
+    workflows: value.counts.workflows, ...Object.fromEntries(keys.map(key => [key, value.usage[key]])),
+    ...(modelValidation ? { modelValidation } : {}) };
 }
 
 function validateState(state, { target, args }) {
@@ -777,7 +808,8 @@ export async function runLiveValidationController(argv, dependencies = {}) {
     runId: canonicalHash({ targetHash: localGate.targetHash, artifactAttestationSha256: artifact.attestationSha256 }).slice(0, 32),
     runtimeDeploymentId: null, runtimeCreated: false, runtimeDeployAttempted: false,
     runStarted: false, completed: false, cleanupComplete: false };
-  const writeState = value => protectedWrite(stateFile, value); writeState(state);
+  const writeState = value => protectedWrite(stateFile, value);
+  protectedWrite(stateFile, state, { exclusive: true });
   const started = now(); let deadline = started + 1_200_000; // Deployment has a separate, unpaid deadline.
   const checkDeadline = () => requireController(now() < deadline && !dependencies.signal?.aborted, 'LIVE_VALIDATION_DEADLINE_EXCEEDED');
   const runJson = (route, options = {}) => { checkDeadline(); return serviceJson(runtime, route,

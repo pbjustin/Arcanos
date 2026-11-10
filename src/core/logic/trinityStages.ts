@@ -64,7 +64,8 @@ import { runStructuredReasoning } from '@services/openai/structuredReasoning.js'
 import {
   getRequestAbortSignal,
   isAbortError,
-  runWithRequestAbortTimeout
+  runWithRequestAbortTimeout,
+  throwIfRequestAborted
 } from '@arcanos/runtime';
 import {
   buildFinalHonestyInstruction,
@@ -117,7 +118,8 @@ const DEFAULT_TRINITY_INTAKE_STAGE_TIMEOUT_MS = 6_000;
 const DEFAULT_TRINITY_REASONING_STAGE_TIMEOUT_MS = 20_000;
 const DEFAULT_TRINITY_FINAL_STAGE_TIMEOUT_MS = 4_000;
 const MODEL_VALIDATION_CACHE_TTL_MS = 10 * 60_000;
-const validatedModelCache = new Map<string, number>();
+// Model availability is scoped to the provider client that checked it.
+const validatedModelCache = new WeakMap<OpenAI, { model: string; expiresAt: number }>();
 
 function normalizeCompletionProviderMetadata(
   response: unknown,
@@ -281,10 +283,11 @@ export async function validateModel(
   explicitTimeoutMs?: number
 ): Promise<string> {
   if (runtimeBudget) assertBudgetAvailable(runtimeBudget);
+  throwIfRequestAborted();
 
   const defaultModel = getTrinityIntakeModel();
-  const cachedValidationExpiresAt = validatedModelCache.get(defaultModel) ?? 0;
-  if (cachedValidationExpiresAt > Date.now()) {
+  const cachedValidation = validatedModelCache.get(client);
+  if (cachedValidation?.model === defaultModel && cachedValidation.expiresAt > Date.now()) {
     return defaultModel;
   }
   try {
@@ -311,7 +314,7 @@ export async function validateModel(
       model: defaultModel,
       status: 'available'
     });
-    validatedModelCache.set(defaultModel, Date.now() + MODEL_VALIDATION_CACHE_TTL_MS);
+    validatedModelCache.set(client, { model: defaultModel, expiresAt: Date.now() + MODEL_VALIDATION_CACHE_TTL_MS });
     return defaultModel;
   } catch (err) {
     const normalizedError = normalizeWorkerAiBudgetError(err);

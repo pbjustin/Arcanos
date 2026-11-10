@@ -302,6 +302,25 @@ no endpoint override, no redirects and no retries. The aggregate deadline also
 bounds source and model work. An audit has its own measured stage status and
 remaining budget; successful generation never substitutes for its completion.
 
+The acceptance summary may include `actualUsage.modelValidation` when the
+authenticated runtime reports model lookup stages. The array preserves the
+stage (`metadata`), outcome (`completed` or `failed`), elapsed milliseconds,
+whether a request was reserved, and an allowlisted error code on failure. It
+omits model IDs, URLs, headers, response bodies and exception text. A rejected
+lookup with `reserved: false` consumes no request. Reserved lookups count in
+`metadataRequests` even when the upstream result cannot be validated. An older
+runtime without stage evidence still produces the existing counters.
+
+For a failed lookup, `LIVE_VALIDATION_METADATA_ACCESS_DENIED` represents HTTP
+401 or 403. `LIVE_VALIDATION_METADATA_NOT_FOUND` represents HTTP 404 from the
+configured provider and credential scope. `LIVE_VALIDATION_METADATA_TRANSPORT_FAILED`
+identifies a transport error. Existing timeout, cancellation, budget and
+response validation codes retain their meanings. This evidence identifies the
+failed stage even when the Gaming response reports `GENERATION_UNAVAILABLE`.
+Trinity reuses a successful model lookup for the same SDK client and model
+within the existing cache lifetime. An expired budget or cancelled request
+still stops intake before a cached result can be used.
+
 Quota state is local to the one run in one deployment process. The service has
 one replica and no automatic restart. A manual restart/redeployment can create
 new process state; it is not authorization to repeat an exhausted run. Controller

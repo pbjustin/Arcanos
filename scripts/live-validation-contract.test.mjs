@@ -98,7 +98,7 @@ function observation(positive) {
       .map(stage => [stage, { status: positive || ['acquisition', 'selection', 'response'].includes(stage) ? 'passed' : 'not_run', elapsedMs: positive ? 10 : null }])) };
 }
 
-test('controller uses its real service client, runtime HTTP auth and direct SDK provider through both profiles and cleanup', async t => {
+async function exerciseController(t, metadataStatus) {
   const f = fixture(t); let token; let active = false; let stopped = false; let providerCalls = 0; let server; let origin;
   let application; const routes = []; const providerUrls = [];
   // Controlled adapter/provider fixtures exercise transport and retention only;
@@ -118,8 +118,12 @@ test('controller uses its real service client, runtime HTTP auth and direct SDK 
         buildManifest: identity(target).buildManifest, testToken: token, apiKey: 'sk-offline-test-synthetic-validation-credential',
         resolveResponseModelIdentity: async () => (response, expected) => response.model === expected ? expected : undefined,
         createProvider: options => createLiveValidationProvider({ ...options, fetchImplementation: async (url, init) => {
-          providerCalls++; providerUrls.push(url); const body = JSON.parse(init.body);
+          providerCalls++; providerUrls.push(url);
           assert.match(init.headers.authorization, /^Bearer sk-/u); assert.equal(init.redirect, 'error');
+          if (init.method === 'GET') return metadataStatus === 200
+            ? Response.json({ id: target.models[1].id, object: 'model' })
+            : Response.json({ error: { message: 'private upstream fixture body' } }, { status: metadataStatus });
+          const body = JSON.parse(init.body);
           return new Response(JSON.stringify({ id: 'offline-response', object: 'response', model: body.model, status: 'completed', output: [],
             usage: { input_tokens: 2, output_tokens: 1, total_tokens: 3 } }), { status: 200, headers: { 'content-type': 'application/json' } });
         } }),
@@ -132,6 +136,15 @@ test('controller uses its real service client, runtime HTTP auth and direct SDK 
               hooks.onSourceValidation(positive ? 'passed' : 'rejected'); lastObservation = observation(positive);
               if (!positive) return { accepted: false, failureCode: 'INCOMPATIBLE_SOURCE' };
               assert.equal(getStage().stage, 'generation');
+              try { await client.models.retrieve(target.models[1].id); }
+              catch (error) {
+                lastObservation = { ...lastObservation, outcome: 'unavailable', reason: 'GENERATION_UNAVAILABLE',
+                  semanticGap: 'UNOBSERVED', audit: null, stages: { ...lastObservation.stages,
+                    generation: { status: 'failed', elapsedMs: 10 }, intake: { status: 'not_run', elapsedMs: null },
+                    reasoning: { status: 'not_run', elapsedMs: null }, final: { status: 'not_run', elapsedMs: null },
+                    answer_audit: { status: 'not_run', elapsedMs: null } } };
+                throw error;
+              }
               await client.responses.create({ model: target.models[0].id, input: 'Offline grounded guide fixture.', max_output_tokens: 100 });
               hooks.onAnswerAuditStart(); assert.equal(getStage().stage, 'answer_audit');
               await client.responses.create({ model: target.models[1].id, input: 'Offline mandatory audit fixture.', max_output_tokens: 100 });
@@ -161,10 +174,28 @@ test('controller uses its real service client, runtime HTTP auth and direct SDK 
       return fetch(origin + requested.pathname, init);
     }
   });
+  const modelUrl = 'https://api.openai.com/v1/models/' + f.target.models[1].id;
+  if (metadataStatus === 404) {
+    assert.equal(result.status, 'FAILED'); assert.equal(result.code, 'LIVE_VALIDATION_PROFILE_FAILED');
+    assert.equal(result.observedCases[0].observation.reason, 'GENERATION_UNAVAILABLE');
+    assert.equal(result.observedCases[0].observation.coverage.satisfied, true);
+    assert.deepEqual(providerUrls, [modelUrl]); assert.equal(providerCalls, 1);
+    assert.equal(result.actualUsage.metadataRequests, 1);
+    assert.equal(result.actualUsage.generationCalls, 0); assert.equal(result.actualUsage.auditCalls, 0);
+    assert.equal(result.usageReadback, 'PASS'); assert.equal(result.cleanup.runClosed, true);
+    const summaryText = readFileSync(path.join(f.directory, 'evidence', 'acceptance-summary.json'), 'utf8');
+    const [{ elapsedMs, ...lookup }] = JSON.parse(summaryText).actualUsage.modelValidation;
+    assert.ok(Number.isSafeInteger(elapsedMs) && elapsedMs >= 0);
+    assert.deepEqual(lookup, { stage: 'metadata', outcome: 'failed', reserved: true, code: 'LIVE_VALIDATION_METADATA_NOT_FOUND' });
+    for (const privateValue of [token, 'private upstream fixture body', modelUrl, 'sk-offline-test-synthetic-validation-credential']) {
+      assert.equal(summaryText.includes(privateValue), false);
+    }
+    return;
+  }
   assert.equal(result.status, 'PASS', result.code); assert.deepEqual(result.cases.map(item => item.status), ['PASS', 'PASS']);
-  assert.equal(providerCalls, 2); assert.deepEqual(providerUrls, ['https://api.openai.com/v1/responses', 'https://api.openai.com/v1/responses']);
+  assert.equal(providerCalls, 3); assert.deepEqual(providerUrls, [modelUrl, 'https://api.openai.com/v1/responses', 'https://api.openai.com/v1/responses']);
   assert.deepEqual(result.cases[1].actualUsage, { providerCalls: 0, generationCalls: 0, auditCalls: 0 });
-  assert.equal(result.actualUsage.workflows, 2); assert.equal(result.actualUsage.metadataRequests, 0); assert.equal(result.actualUsage.observedTotalTokens, 6);
+  assert.equal(result.actualUsage.workflows, 2); assert.equal(result.actualUsage.metadataRequests, 1); assert.equal(result.actualUsage.observedTotalTokens, 6);
   assert.equal(stopped, true); assert.ok(routes.includes('/stop')); assert.equal(result.cleanup.runClosed, true);
   assert.equal(JSON.stringify(result).includes(token), false); assert.equal(JSON.stringify(result).includes('sk-offline-test-synthetic-validation-credential'), false);
   const retained = JSON.parse(readFileSync(path.join(f.directory, 'evidence', 'accepted-answer.private.json'), 'utf8'));
@@ -179,4 +210,9 @@ test('controller uses its real service client, runtime HTTP auth and direct SDK 
     assert.equal(JSON.stringify(result).includes(prohibited), false);
   }
   assert.equal(JSON.stringify(retained).includes('Offline acquired evidence fixture.'), false);
-});
+}
+
+test('controller uses its real service client, runtime HTTP auth and direct SDK provider through both profiles and cleanup',
+  t => exerciseController(t, 200));
+test('controller retains an intake lookup failure through runtime usage with zero generation or audit calls',
+  t => exerciseController(t, 404));

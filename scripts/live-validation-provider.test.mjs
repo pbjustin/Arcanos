@@ -18,6 +18,7 @@ const code = expected => error => error instanceof LiveValidationProviderError &
 const invoke = (provider, override = {}, init = {}) => provider.fetch(LIVE_VALIDATION_RESPONSES_URL, {
   method: 'POST', headers: { authorization: 'Bearer sdk-placeholder', 'x-stainless-timeout': '120',
     'x-stainless-retry-count': '0', 'x-stainless-lang': 'js' }, body: JSON.stringify({ ...body, ...override }), ...init });
+const lookup = (provider, init = {}) => provider.fetch(LIVE_VALIDATION_MODEL_URL_PREFIX + MODEL, { method: 'GET', ...init });
 function fixture(context, options = {}) {
   const calls = []; const observation = { moduleId: 'gaming', stage: 'generation' };
   const provider = createLiveValidationProvider({ target, identity, apiKey: API_KEY, observation: () => observation,
@@ -53,6 +54,101 @@ test('canonical model metadata can run before a workflow, counts requests, and h
   assert.equal(f.calls[0].url, LIVE_VALIDATION_MODEL_URL_PREFIX + encodeURIComponent(MODEL));
   assert.deepEqual(await result.json(), { id: MODEL, object: 'model' });
   assert.equal(f.provider.snapshot().usage.requests, 1); assert.equal(f.provider.snapshot().usage.providerCalls, 0);
+  assert.deepEqual(f.provider.snapshot().stages.map(({ elapsedMs, ...stage }) => stage), [
+    { caseId: null, stage: 'metadata', model: MODEL, actualModel: MODEL, outcome: 'completed', reserved: true }
+  ]);
+});
+
+test('metadata failures retain a bounded classification without reading denied bodies or leaking transport messages', async context => {
+  const fixtures = [
+    ['HTTP 401', 401, 'LIVE_VALIDATION_METADATA_ACCESS_DENIED'],
+    ['HTTP 403', 403, 'LIVE_VALIDATION_METADATA_ACCESS_DENIED'],
+    ['HTTP 404', 404, 'LIVE_VALIDATION_METADATA_NOT_FOUND'],
+    ['other HTTP denial', 429, 'LIVE_VALIDATION_PROVIDER_FAILED'],
+    ['fetch rejection', () => { throw new Error(API_KEY); }, 'LIVE_VALIDATION_METADATA_TRANSPORT_FAILED'],
+    ['body read rejection', () => ({ status: 200, body: { [Symbol.asyncIterator]: () => ({
+      next: async () => { throw new Error(API_KEY); }
+    }) } }), 'LIVE_VALIDATION_METADATA_TRANSPORT_FAILED'],
+    ['malformed JSON', () => new Response('unparsed-private-body'), 'LIVE_VALIDATION_PROVIDER_RESPONSE_INVALID'],
+    ['invalid JSON shape', () => Response.json(null), 'LIVE_VALIDATION_PROVIDER_RESPONSE_INVALID'],
+    ['wrong model identity', () => Response.json({ id: 'another-model', object: 'model' }), 'LIVE_VALIDATION_MODEL_VALIDATION_FAILED'],
+    ['wrong object', () => Response.json({ id: MODEL, object: 'not-model' }), 'LIVE_VALIDATION_MODEL_VALIDATION_FAILED']
+  ];
+  for (const [label, outcome, expected] of fixtures) await context.test(label, async child => {
+    let calls = 0;
+    let deniedBodyRead = false; let deniedBodyCancelled = false;
+    const f = fixture(child, { fetchImplementation: async () => {
+      calls++;
+      if (typeof outcome !== 'number') return outcome();
+      return { status: outcome, body: {
+        [Symbol.asyncIterator]() { deniedBodyRead = true; throw new Error(API_KEY); },
+        cancel() { deniedBodyCancelled = true; }
+      } };
+    } });
+    f.provider.beginWorkflow('gaming-guide-positive');
+    await assert.rejects(lookup(f.provider), error => code(expected)(error) && error.message === expected);
+    const snapshot = f.provider.snapshot();
+    assert.equal(calls, 1); assert.equal(deniedBodyRead, false);
+    assert.equal(deniedBodyCancelled, typeof outcome === 'number');
+    assert.equal(snapshot.closed, true); assert.equal(snapshot.usage.metadataRequests, 1);
+    assert.equal(snapshot.usage.generationCalls, 0); assert.equal(snapshot.usage.auditCalls, 0);
+    assert.equal(snapshot.usage.reservedSpendMicroUsd, 0);
+    assert.deepEqual(snapshot.stages.map(({ elapsedMs, ...stage }) => stage), [
+      { caseId: 'gaming-guide-positive', stage: 'metadata', model: MODEL, outcome: 'failed', code: expected, reserved: true }
+    ]);
+    for (const secret of [API_KEY, 'unparsed-private-body', 'another-model']) assert.equal(JSON.stringify(snapshot).includes(secret), false);
+  });
+});
+
+test('metadata quota and cancellation denials preserve reservation counts and add only one terminal record', async context => {
+  for (const [label, expected] of [['request quota', 'LIVE_VALIDATION_BUDGET_EXHAUSTED'],
+    ['pre-aborted', 'LIVE_VALIDATION_PROVIDER_CANCELLED'], ['deadline', 'LIVE_VALIDATION_DURATION_LIMIT']]) {
+    await context.test(label, async child => {
+      const atQuota = label === 'request quota';
+      const f = fixture(child, { target: { ...target, limits: { ...target.limits, maxRequests: 1 } },
+        ...(label === 'deadline' ? { getRemainingMs: () => 0 } : {}) });
+      f.provider.beginWorkflow('gaming-guide-positive');
+      if (atQuota) await lookup(f.provider);
+      await assert.rejects(lookup(f.provider, label === 'pre-aborted' ? { signal: AbortSignal.abort() } : {}), code(expected));
+      const snapshot = f.provider.snapshot();
+      const requests = atQuota ? 1 : 0;
+      assert.equal(f.calls.length, requests); assert.equal(snapshot.usage.metadataRequests, requests);
+      assert.equal(snapshot.stages.length, requests + 1);
+      const { elapsedMs, ...terminal } = snapshot.stages.at(-1);
+      assert.deepEqual(terminal, { caseId: 'gaming-guide-positive', stage: 'metadata', model: MODEL,
+        outcome: 'failed', code: expected, reserved: false });
+      await assert.rejects(lookup(f.provider), code('LIVE_VALIDATION_RUN_CLOSED'));
+      assert.deepEqual(f.provider.snapshot().stages, snapshot.stages);
+    });
+  }
+});
+
+test('metadata timeout and in-flight cancellation retain the consumed reservation without a content timeout', async context => {
+  for (const [label, expected] of [['timeout', 'LIVE_VALIDATION_PROVIDER_TIMEOUT'],
+    ['request deadline abort', 'LIVE_VALIDATION_PROVIDER_TIMEOUT'], ['cancellation', 'LIVE_VALIDATION_PROVIDER_CANCELLED']]) {
+    await context.test(label, async child => {
+      const controller = new AbortController();
+      let calls = 0; let now = Date.now();
+      const f = fixture(child, { now: () => now, getRemainingMs: () => label === 'timeout' ? 20 : 1000,
+        fetchImplementation: () => { calls++; return new Promise(() => {}); } });
+      f.provider.beginWorkflow('gaming-guide-positive');
+      const pending = lookup(f.provider, { signal: controller.signal });
+      if (label !== 'timeout') {
+        await new Promise(resolve => setImmediate(resolve));
+        // The SDK's forwarded abort can arrive before the guard's own timer and without a timeout reason.
+        if (label === 'request deadline abort') now += 1000;
+        controller.abort();
+      }
+      await assert.rejects(pending, code(expected));
+      const snapshot = f.provider.snapshot();
+      assert.equal(calls, 1); assert.equal(snapshot.usage.metadataRequests, 1);
+      assert.equal(snapshot.counts.pendingRequests, 1); assert.equal(snapshot.closed, true);
+      assert.equal(f.observation.timeoutStage, undefined);
+      assert.deepEqual(snapshot.stages.map(({ elapsedMs, ...stage }) => stage), [
+        { caseId: 'gaming-guide-positive', stage: 'metadata', model: MODEL, outcome: 'failed', code: expected, reserved: true }
+      ]);
+    });
+  }
 });
 
 test('negative workflow denies content and metadata with zero provider requests', async context => {
@@ -62,6 +158,10 @@ test('negative workflow denies content and metadata with zero provider requests'
       : f.provider.fetch(LIVE_VALIDATION_MODEL_URL_PREFIX + encodeURIComponent(MODEL), { method }),
     code('LIVE_VALIDATION_NEGATIVE_PROVIDER_FORBIDDEN'));
     assert.equal(f.calls.length, 0); assert.equal(f.provider.snapshot().usage.requests, 0);
+    assert.deepEqual(f.provider.snapshot().stages.map(({ elapsedMs, ...stage }) => stage), method === 'GET' ? [
+      { caseId: 'gaming-guide-negative', stage: 'metadata', model: MODEL, outcome: 'failed',
+        code: 'LIVE_VALIDATION_NEGATIVE_PROVIDER_FORBIDDEN', reserved: false }
+    ] : []);
   }
   const f = fixture(context); f.provider.beginWorkflow('gaming-guide-negative'); f.provider.endWorkflow();
   assert.equal(f.provider.snapshot().closed, false);
@@ -192,6 +292,25 @@ test('simultaneous SDK requests cannot create a second provider request', async 
   await assert.rejects(invoke(f.provider), code('LIVE_VALIDATION_CONCURRENCY_LIMIT'));
   await assert.rejects(first, code('LIVE_VALIDATION_RUN_CLOSED'));
   assert.equal(calls, 1); assert.equal(f.provider.snapshot().usage.requests, 1);
+});
+
+test('concurrent metadata rejection keeps the in-flight reservation and cannot expand replay diagnostics', async context => {
+  let calls = 0;
+  const f = fixture(context, { fetchImplementation: () => { calls++; return new Promise(() => {}); } });
+  f.provider.beginWorkflow('gaming-guide-positive');
+  const pending = lookup(f.provider);
+  await new Promise(resolve => setImmediate(resolve));
+  await assert.rejects(lookup(f.provider), code('LIVE_VALIDATION_CONCURRENCY_LIMIT'));
+  await assert.rejects(pending, code('LIVE_VALIDATION_RUN_CLOSED'));
+  const snapshot = f.provider.snapshot();
+  assert.equal(calls, 1); assert.equal(snapshot.usage.metadataRequests, 1);
+  assert.equal(snapshot.counts.pendingRequests, 1);
+  assert.deepEqual(snapshot.stages.map(({ elapsedMs, ...stage }) => stage), [
+    { caseId: 'gaming-guide-positive', stage: 'metadata', model: MODEL, outcome: 'failed',
+      code: 'LIVE_VALIDATION_RUN_CLOSED', reserved: true }
+  ]);
+  await assert.rejects(lookup(f.provider), code('LIVE_VALIDATION_RUN_CLOSED'));
+  assert.deepEqual(f.provider.snapshot().stages, snapshot.stages);
 });
 
 test('provider rejects redirects and oversized bodies and never includes response secrets in failures', async context => {
