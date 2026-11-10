@@ -1,0 +1,364 @@
+{
+  "baselineSha": "2df6e6a0fb409aaa42e1b5f687ea2622c8dde560",
+  "runtime": {
+    "node": "24.18.1",
+    "npm": "11.16.0"
+  },
+  "fixtureDisclosure": "All publisher/search/model responses are authored test substitutes. Timings measure this local harness only; they do not establish live latency or production performance.",
+  "receipt": "Identical final regression file against exact clean baseline source and repaired worktree source.",
+  "beforeTests": {
+    "passed": 6,
+    "failed": 4,
+    "skipped": 0
+  },
+  "afterTests": {
+    "passed": 10,
+    "failed": 0,
+    "skipped": 0
+  },
+  "before": {
+    "evidenceKind": "deterministic external-service fixtures; test-harness timings",
+    "realPublisherCalls": 0,
+    "realProviderCalls": 0,
+    "realProviderCostUsd": 0,
+    "scenarios": [
+      {
+        "scenario": "A",
+        "acquiredSources": 1,
+        "attemptedSources": 1,
+        "acceptedSources": 1,
+        "selectedSources": 1,
+        "selectedPassages": 1,
+        "coverageSatisfied": true,
+        "answerDelivered": true,
+        "finalAuditCompleted": true,
+        "citationChecks": 1,
+        "citationsBound": 1,
+        "elapsedMs": 372.02,
+        "acquisitionMs": 23.25,
+        "generationMs": 15.21,
+        "syntheticSdkCalls": 4,
+        "syntheticUsageTokens": 540,
+        "failureStage": null
+      },
+      {
+        "scenario": "B",
+        "acquiredSources": 1,
+        "attemptedSources": 1,
+        "acceptedSources": 1,
+        "selectedSources": 1,
+        "selectedPassages": 1,
+        "coverageSatisfied": true,
+        "answerDelivered": true,
+        "finalAuditCompleted": true,
+        "citationChecks": 1,
+        "citationsBound": 1,
+        "elapsedMs": 60.01,
+        "acquisitionMs": 6.78,
+        "generationMs": 3.65,
+        "syntheticSdkCalls": 4,
+        "syntheticUsageTokens": 540,
+        "failureStage": null
+      },
+      {
+        "scenario": "C",
+        "acquiredSources": 1,
+        "attemptedSources": 1,
+        "acceptedSources": 1,
+        "selectedSources": 0,
+        "selectedPassages": 0,
+        "coverageSatisfied": false,
+        "answerDelivered": false,
+        "finalAuditCompleted": false,
+        "citationChecks": 2,
+        "citationsBound": 0,
+        "elapsedMs": 60.76,
+        "acquisitionMs": 7.09,
+        "generationMs": 0,
+        "syntheticSdkCalls": 0,
+        "syntheticUsageTokens": 0,
+        "failureStage": "QUESTION_COVERAGE_INSUFFICIENT"
+      },
+      {
+        "scenario": "D",
+        "acquiredSources": 2,
+        "attemptedSources": 2,
+        "acceptedSources": 2,
+        "selectedSources": 0,
+        "selectedPassages": 0,
+        "coverageSatisfied": false,
+        "answerDelivered": false,
+        "finalAuditCompleted": false,
+        "citationChecks": 2,
+        "citationsBound": 0,
+        "elapsedMs": 44.42,
+        "acquisitionMs": 8.11,
+        "generationMs": 0,
+        "syntheticSdkCalls": 0,
+        "syntheticUsageTokens": 0,
+        "failureStage": "QUESTION_COVERAGE_INSUFFICIENT"
+      },
+      {
+        "scenario": "E",
+        "acquiredSources": 1,
+        "attemptedSources": 1,
+        "acceptedSources": 1,
+        "selectedSources": 1,
+        "selectedPassages": 1,
+        "coverageSatisfied": true,
+        "answerDelivered": true,
+        "finalAuditCompleted": true,
+        "citationChecks": 1,
+        "citationsBound": 1,
+        "elapsedMs": 47.1,
+        "acquisitionMs": 4.11,
+        "generationMs": 3.35,
+        "syntheticSdkCalls": 4,
+        "syntheticUsageTokens": 540,
+        "failureStage": null
+      }
+    ],
+    "summary": {
+      "scenarios": 5,
+      "successfulAcquiredSources": {
+        "numerator": 6,
+        "denominator": 6
+      },
+      "acceptedToSelectedSources": {
+        "numerator": 3,
+        "denominator": 6
+      },
+      "completeQuestionCoverage": {
+        "numerator": 3,
+        "denominator": 5
+      },
+      "qualifiedPartialCoverage": {
+        "supported": false
+      },
+      "answersDelivered": {
+        "numerator": 3,
+        "denominator": 5
+      },
+      "syntheticSemanticAuditsCompleted": {
+        "numerator": 3,
+        "denominator": 5
+      },
+      "expectedClaimBindings": {
+        "numerator": 3,
+        "denominator": 7
+      },
+      "citationAccuracyForDeliveredClaims": {
+        "numerator": 3,
+        "denominator": 3
+      },
+      "requestLatencyMs": {
+        "p50": 60.01,
+        "p95": 372.02,
+        "population": "five deterministic fixture workflows; nearest-rank"
+      },
+      "acquisitionMs": {
+        "p50": 7.09,
+        "p95": 23.25,
+        "population": "sum of mocked-reader document resolution durations per workflow"
+      },
+      "generationMs": {
+        "p50": 3.35,
+        "p95": 15.21,
+        "population": "first to last SDK substitute response; zero for blocked generation"
+      },
+      "syntheticSdkCalls": 12,
+      "syntheticUsageTokens": 1620,
+      "liveModelUsage": null,
+      "liveModelCostUsd": null,
+      "failureReasons": {
+        "QUESTION_COVERAGE_INSUFFICIENT": 2
+      }
+    }
+  },
+  "after": {
+    "evidenceKind": "deterministic external-service fixtures; test-harness timings",
+    "realPublisherCalls": 0,
+    "realProviderCalls": 0,
+    "realProviderCostUsd": 0,
+    "scenarios": [
+      {
+        "scenario": "A",
+        "acquiredSources": 1,
+        "attemptedSources": 1,
+        "acceptedSources": 1,
+        "selectedSources": 1,
+        "selectedPassages": 1,
+        "coverageSatisfied": true,
+        "answerDelivered": true,
+        "finalAuditCompleted": true,
+        "citationChecks": 1,
+        "citationsBound": 1,
+        "elapsedMs": 388.54,
+        "acquisitionMs": 24.32,
+        "generationMs": 15.18,
+        "syntheticSdkCalls": 4,
+        "syntheticUsageTokens": 540,
+        "failureStage": null
+      },
+      {
+        "scenario": "B",
+        "acquiredSources": 1,
+        "attemptedSources": 1,
+        "acceptedSources": 1,
+        "selectedSources": 1,
+        "selectedPassages": 1,
+        "coverageSatisfied": true,
+        "answerDelivered": true,
+        "finalAuditCompleted": true,
+        "citationChecks": 1,
+        "citationsBound": 1,
+        "elapsedMs": 68.65,
+        "acquisitionMs": 6.99,
+        "generationMs": 4.5,
+        "syntheticSdkCalls": 4,
+        "syntheticUsageTokens": 540,
+        "failureStage": null
+      },
+      {
+        "scenario": "C",
+        "acquiredSources": 1,
+        "attemptedSources": 1,
+        "acceptedSources": 1,
+        "selectedSources": 1,
+        "selectedPassages": 1,
+        "coverageSatisfied": true,
+        "answerDelivered": true,
+        "finalAuditCompleted": true,
+        "citationChecks": 2,
+        "citationsBound": 2,
+        "elapsedMs": 97.26,
+        "acquisitionMs": 7.27,
+        "generationMs": 7.07,
+        "syntheticSdkCalls": 4,
+        "syntheticUsageTokens": 540,
+        "failureStage": null
+      },
+      {
+        "scenario": "D",
+        "acquiredSources": 2,
+        "attemptedSources": 2,
+        "acceptedSources": 2,
+        "selectedSources": 2,
+        "selectedPassages": 2,
+        "coverageSatisfied": true,
+        "answerDelivered": true,
+        "finalAuditCompleted": true,
+        "citationChecks": 2,
+        "citationsBound": 2,
+        "elapsedMs": 72.67,
+        "acquisitionMs": 8.4,
+        "generationMs": 4.54,
+        "syntheticSdkCalls": 4,
+        "syntheticUsageTokens": 540,
+        "failureStage": null
+      },
+      {
+        "scenario": "E",
+        "acquiredSources": 1,
+        "attemptedSources": 1,
+        "acceptedSources": 1,
+        "selectedSources": 1,
+        "selectedPassages": 1,
+        "coverageSatisfied": true,
+        "answerDelivered": true,
+        "finalAuditCompleted": true,
+        "citationChecks": 1,
+        "citationsBound": 1,
+        "elapsedMs": 50.8,
+        "acquisitionMs": 4.35,
+        "generationMs": 2.76,
+        "syntheticSdkCalls": 4,
+        "syntheticUsageTokens": 540,
+        "failureStage": null
+      }
+    ],
+    "summary": {
+      "scenarios": 5,
+      "successfulAcquiredSources": {
+        "numerator": 6,
+        "denominator": 6
+      },
+      "acceptedToSelectedSources": {
+        "numerator": 6,
+        "denominator": 6
+      },
+      "completeQuestionCoverage": {
+        "numerator": 5,
+        "denominator": 5
+      },
+      "qualifiedPartialCoverage": {
+        "supported": false
+      },
+      "answersDelivered": {
+        "numerator": 5,
+        "denominator": 5
+      },
+      "syntheticSemanticAuditsCompleted": {
+        "numerator": 5,
+        "denominator": 5
+      },
+      "expectedClaimBindings": {
+        "numerator": 7,
+        "denominator": 7
+      },
+      "citationAccuracyForDeliveredClaims": {
+        "numerator": 7,
+        "denominator": 7
+      },
+      "requestLatencyMs": {
+        "p50": 72.67,
+        "p95": 388.54,
+        "population": "five deterministic fixture workflows; nearest-rank"
+      },
+      "acquisitionMs": {
+        "p50": 7.27,
+        "p95": 24.32,
+        "population": "sum of mocked-reader document resolution durations per workflow"
+      },
+      "generationMs": {
+        "p50": 4.54,
+        "p95": 15.18,
+        "population": "first to last SDK substitute response; zero for blocked generation"
+      },
+      "syntheticSdkCalls": 20,
+      "syntheticUsageTokens": 2700,
+      "liveModelUsage": null,
+      "liveModelCostUsd": null,
+      "failureReasons": {}
+    }
+  },
+  "negativeControls": {
+    "unsupportedGeneratedQuantity": {
+      "withheld": true,
+      "generationReached": true,
+      "auditReached": true
+    },
+    "wrongSourceCitation": {
+      "withheld": true,
+      "generationReached": true,
+      "auditReached": true
+    },
+    "missingRequestedQuantity": {
+      "withheld": true,
+      "generationReached": false
+    },
+    "unsupportedDeliveryAcceptance": {
+      "numerator": 0,
+      "denominator": 3,
+      "population": "these three authored missing-fact/generated-claim/citation controls only; source-authority controls measured separately"
+    }
+  },
+  "liveProviderAcceptance": "BLOCKED: no authorized repaired-head non-production target or bounded live model run available",
+  "productionBaseline": "See production-baseline.json; separate authorized transient production workflow, before repair, no provider execution.",
+  "fixtureSha256": "b47c4e5b838c6bd9a16a367aedee914982f267331e10f859bc3a01644f31bf49",
+  "repairSourceSha256": {
+    "src/shared/gaming/gamingRetrievalPolicy.ts": "68194835467846f2b28bcbff04b58521dec26573c3361a228091392194c0fc38",
+    "src/shared/gaming/gamingStoredEvidenceCore.ts": "c5baf6c1dc9b741f051da48d62d9c8c1eded703119ae2b3d560331815c9ad61f",
+    "src/shared/gaming/gamingClearEvidence.ts": "b834d38ae4c11f6afe2ca7eb137da9faf5b3c9576fcc5c15dedc24a9d4f8dfef"
+  }
+}

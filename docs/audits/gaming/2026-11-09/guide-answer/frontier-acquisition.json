@@ -1,0 +1,649 @@
+{
+  "schemaVersion": "gaming-guide-answer-source-receipt/v1",
+  "classification": "LIVE_PUBLIC_SOURCE_COMPONENTS_ONLY",
+  "baseSha": "2df6e6a0fb409aaa42e1b5f687ea2622c8dde560",
+  "url": "https://www.elitedangerous.com/news/system-colonisation-guide",
+  "resolver": "gaming-document-v13",
+  "sourceMaterial": "independently acquired real publisher article; no source body redistributed",
+  "hashes": {
+    "selectedTextSha256": "7b650756e8a6f76016102e13a350d0c4b1ef5cdfe3a75f0977e7b8d5d5963367",
+    "rawPreviewSha256": "2dd557fba5c0c59c3a9eddc227c244364d314eddda32370cf07642c14330fe28",
+    "rawPreviewIsWholeResponse": false,
+    "acceptedDocumentBindingHash": "ce892e17f789dc26a687f3886710ca852a8d67f618dee1a8f8538a0ce694f085"
+  },
+  "raw": {
+    "receivedBytes": 419572,
+    "acceptedBytes": 2839634,
+    "decodedChars": 2838916,
+    "retainedPreviewChars": 1048576,
+    "retainedPreviewTruncated": true
+  },
+  "extraction": {
+    "selectedChars": 5488,
+    "sourceParagraphElements": 26,
+    "nonemptySourceParagraphs": 22,
+    "intactNonemptyParagraphs": 22,
+    "paragraphIntegrity": [
+      {
+        "index": 0,
+        "chars": 243,
+        "sha256": "7a3830af64794d574e4c44521a8741e4974f00791fa3611f2fb51206ea07117f",
+        "survivesIntact": true
+      },
+      {
+        "index": 1,
+        "chars": 154,
+        "sha256": "9c7465fe3c4f45d59da509c8b36983bbef9f2b9f5f0248f23be33b2a0a1974be",
+        "survivesIntact": true
+      },
+      {
+        "index": 2,
+        "chars": 311,
+        "sha256": "b0e8bf630305d1a13592b366f11c42cb1ff02c3a8fcc416936c9c6a3d40e28e7",
+        "survivesIntact": true
+      },
+      {
+        "index": 3,
+        "chars": 183,
+        "sha256": "4d0e6cf81066863b25a46ba0bf9b1562b73340189f13de03d434de8cd7bed64e",
+        "survivesIntact": true
+      },
+      {
+        "index": 4,
+        "chars": 260,
+        "sha256": "39d434ba0f0d088529e0ccff1bae6cd1269419c5183b9c8ded53cd09e704cae7",
+        "survivesIntact": true
+      },
+      {
+        "index": 5,
+        "chars": 342,
+        "sha256": "1488330dee93ad767dbefa49854bab5b26a2206b684d5a8690aad33db611f989",
+        "survivesIntact": true
+      },
+      {
+        "index": 6,
+        "chars": 343,
+        "sha256": "20f24d95cd3b715b9f7938983cf29e57913b853949164b1c57829c964b748891",
+        "survivesIntact": true
+      },
+      {
+        "index": 7,
+        "chars": 207,
+        "sha256": "34a57ab1830293838517dafda7ac67b68f49db9494718a28242510da1f98f9a8",
+        "survivesIntact": true
+      },
+      {
+        "index": 8,
+        "chars": 165,
+        "sha256": "3a1a4ff0ca38eb25d06852d6c1d2c4c454b48d3425f2ff8c376c2c64c5c4c954",
+        "survivesIntact": true
+      },
+      {
+        "index": 9,
+        "chars": 157,
+        "sha256": "e4cb0a5f35ce34e61f2060a5445d3fce9fbd9f2595fb6e17515c50aabe01c4db",
+        "survivesIntact": true
+      },
+      {
+        "index": 10,
+        "chars": 139,
+        "sha256": "10d55bcb325fc138cc063440b5827b5ec07f5831ebbc5ff6b8b117611106fde1",
+        "survivesIntact": true
+      },
+      {
+        "index": 11,
+        "chars": 116,
+        "sha256": "c7a3f59a123f002e04f488b4d12bfb69c7ffeddaf5324e50284cc8795ba03844",
+        "survivesIntact": true
+      },
+      {
+        "index": 12,
+        "chars": 234,
+        "sha256": "d67b8f874c7186e8c5f04a93d8afdfdcf42846013bcebd08901700e1cd3240dc",
+        "survivesIntact": true
+      },
+      {
+        "index": 13,
+        "chars": 29,
+        "sha256": "8e9eebc39705821db8a19b55d51260754d693d4e8508e34479b21f0dc52c531b",
+        "survivesIntact": true
+      },
+      {
+        "index": 14,
+        "chars": 206,
+        "sha256": "d90a0c9f87e2e4a329d57c42ffca089275dc212b7ac31748554f84a996922c2f",
+        "survivesIntact": true
+      },
+      {
+        "index": 15,
+        "chars": 231,
+        "sha256": "ce53b8ce525fa59f41be4ac03c57be305a7305808419783c22fa953c230a05fe",
+        "survivesIntact": true
+      },
+      {
+        "index": 16,
+        "chars": 309,
+        "sha256": "f28f6135cd7a6e94db123593d2da1f12ff5016b60241a729632d93a9ad7c20e5",
+        "survivesIntact": true
+      },
+      {
+        "index": 17,
+        "chars": 240,
+        "sha256": "5a642b942dbdb54bda3300ee9cdaf6f464b8b63670c8ddb2c930c6189c0be314",
+        "survivesIntact": true
+      },
+      {
+        "index": 18,
+        "chars": 235,
+        "sha256": "17d5a1b43a08cc968aed03cb9b0774c508d2c330f71ca05bb753815d72f4b0ca",
+        "survivesIntact": true
+      },
+      {
+        "index": 19,
+        "chars": 170,
+        "sha256": "f6bfb19902b03aa46e0b14cf983b2e72546dbeaed83e61464cb5b4bdc217d64c",
+        "survivesIntact": true
+      },
+      {
+        "index": 20,
+        "chars": 308,
+        "sha256": "c9711cec5f1d5978eabb90612499c24af682db477e77c2a9a817bace8e2e3a88",
+        "survivesIntact": true
+      },
+      {
+        "index": 21,
+        "chars": 171,
+        "sha256": "92923de4284cb7cfe2f626a2d95fd213be2bbcd5a3f8bed2b4c96ef0b25e5691",
+        "survivesIntact": true
+      }
+    ],
+    "structuredUnits": 0,
+    "budgetOutcome": "exhausted",
+    "subreasons": [
+      "no_supported_structured_records",
+      "extraction_budget_exhausted"
+    ],
+    "stateScript": {
+      "id": "__NUXT_DATA__",
+      "retainedPrefixChars": 855693,
+      "perScriptByteCeiling": 262144,
+      "conclusion": "JSON structural-state budget exhausted; visible article prose intact"
+    },
+    "parserChanged": false
+  },
+  "facts": [
+    {
+      "id": "contact",
+      "description": "station services contact and galaxy-map selection",
+      "survives": true,
+      "markerStart": 762,
+      "markerEnd": 806
+    },
+    {
+      "id": "range",
+      "description": "unpopulated destination within the article stated 15 light year radius",
+      "survives": true,
+      "markerStart": 912,
+      "markerEnd": 941
+    },
+    {
+      "id": "structure",
+      "description": "initial station or orbital outpost type chosen before registration",
+      "survives": true,
+      "markerStart": 1046,
+      "markerEnd": 1100
+    },
+    {
+      "id": "registration_cost",
+      "description": "credit cost varies with chosen structure; no universal amount proven",
+      "survives": true,
+      "markerStart": 1586,
+      "markerEnd": 1607
+    },
+    {
+      "id": "reservation",
+      "description": "registration reserves the claim for 24 hours",
+      "survives": true,
+      "markerStart": 1749,
+      "markerEnd": 1777
+    },
+    {
+      "id": "beacon",
+      "description": "travel to the destination and deploy a beacon at its assigned location",
+      "survives": true,
+      "markerStart": 1914,
+      "markerEnd": 1978
+    },
+    {
+      "id": "suite",
+      "description": "the article describes the colonisation suite as available on all ships",
+      "survives": true,
+      "markerStart": 2048,
+      "markerEnd": 2074
+    },
+    {
+      "id": "construction",
+      "description": "deliver mined and purchased commodities within the construction period",
+      "survives": true,
+      "markerStart": 2495,
+      "markerEnd": 2526
+    },
+    {
+      "id": "material_help",
+      "description": "the game provides sourcing help when required goods are absent",
+      "survives": true,
+      "markerStart": 2673,
+      "markerEnd": 2728
+    }
+  ],
+  "before": {
+    "observedAt": "2026-11-10T04:39:18.648Z",
+    "httpStatuses": [
+      200
+    ],
+    "instrumentedComponentElapsedMs": 2259,
+    "fetchElapsedMs": 1447,
+    "proseExtractionElapsedMs": 459,
+    "acquired": true,
+    "identity": "verified",
+    "sourceClear": [
+      {
+        "decision": "accept",
+        "overall": 4.1
+      }
+    ],
+    "acceptedCount": 1,
+    "selectedEvidenceCount": 0,
+    "pool": [
+      {
+        "ordinal": 0,
+        "chars": 1671,
+        "relevance": 0.25,
+        "textSha256": "e69a9aacf2648e065b416b7417008608fdc3a98221b9b3f41890041b5270f6f3"
+      },
+      {
+        "ordinal": 1,
+        "chars": 1689,
+        "relevance": 0.25,
+        "textSha256": "9016a8c4a2c629ce30f4376dd93281d40e3794e5481643f1f506be64e80a01ae"
+      },
+      {
+        "ordinal": 2,
+        "chars": 1776,
+        "relevance": 0.25,
+        "textSha256": "0cf690b1b9682b12a0602e95243eb0037bac595e14f6dad7ebf3c2b45ba03aa7"
+      },
+      {
+        "ordinal": 3,
+        "chars": 921,
+        "relevance": 0.25,
+        "textSha256": "c34a707cce824abca73dc3e793ab877b4231d3976ab6857165a9fb419cb407c1"
+      }
+    ],
+    "projected": [
+      {
+        "ordinal": 0,
+        "chars": 807,
+        "combinedScore": 0.5125
+      },
+      {
+        "ordinal": 1,
+        "chars": 709,
+        "combinedScore": 0.5125
+      },
+      {
+        "ordinal": 2,
+        "chars": 722,
+        "combinedScore": 0.5125
+      },
+      {
+        "ordinal": 3,
+        "chars": 749,
+        "combinedScore": 0.5125
+      }
+    ],
+    "projectedCount": 4,
+    "selectedCount": 0,
+    "formattedCount": 0,
+    "requirements": [
+      {
+        "requirement": "requested topic 1",
+        "terms": [
+          "prerequisites"
+        ]
+      },
+      {
+        "requirement": "requested topic 2",
+        "terms": [
+          "concrete",
+          "cite",
+          "sources"
+        ]
+      }
+    ],
+    "focusTerms": [
+      "system",
+      "colonisation",
+      "started",
+      "including",
+      "prerequisites",
+      "concrete",
+      "cite",
+      "sources"
+    ],
+    "limits": {
+      "chunkChars": 900,
+      "maxChunks": 6,
+      "maxSources": 3,
+      "maxContextChars": 5000,
+      "structuredEvidenceChars": 8000
+    }
+  },
+  "after": {
+    "observedAt": "2026-11-10T04:44:47.985Z",
+    "httpStatuses": [
+      200
+    ],
+    "instrumentedComponentElapsedMs": 3023,
+    "fetchElapsedMs": 1831,
+    "proseExtractionElapsedMs": 416,
+    "acquired": true,
+    "identity": "verified",
+    "sourceClear": [
+      {
+        "decision": "accept",
+        "overall": 4.225
+      }
+    ],
+    "acceptedCount": 1,
+    "selectedEvidenceCount": 2,
+    "pool": [
+      {
+        "ordinal": 0,
+        "chars": 1671,
+        "relevance": 0.6666666666666666,
+        "textSha256": "e69a9aacf2648e065b416b7417008608fdc3a98221b9b3f41890041b5270f6f3"
+      },
+      {
+        "ordinal": 1,
+        "chars": 1689,
+        "relevance": 0.6666666666666666,
+        "textSha256": "9016a8c4a2c629ce30f4376dd93281d40e3794e5481643f1f506be64e80a01ae"
+      },
+      {
+        "ordinal": 2,
+        "chars": 1776,
+        "relevance": 0.6666666666666666,
+        "textSha256": "0cf690b1b9682b12a0602e95243eb0037bac595e14f6dad7ebf3c2b45ba03aa7"
+      },
+      {
+        "ordinal": 3,
+        "chars": 921,
+        "relevance": 0.6666666666666666,
+        "textSha256": "c34a707cce824abca73dc3e793ab877b4231d3976ab6857165a9fb419cb407c1"
+      }
+    ],
+    "projected": [
+      {
+        "ordinal": 0,
+        "chars": 807,
+        "combinedScore": 0.7833333333333333
+      },
+      {
+        "ordinal": 1,
+        "chars": 709,
+        "combinedScore": 0.7833333333333333
+      },
+      {
+        "ordinal": 2,
+        "chars": 722,
+        "combinedScore": 0.7833333333333333
+      },
+      {
+        "ordinal": 3,
+        "chars": 749,
+        "combinedScore": 0.7833333333333333
+      }
+    ],
+    "projectedCount": 4,
+    "selectedCount": 2,
+    "formattedCount": 2,
+    "requirements": [
+      {
+        "requirement": "requested topic 1",
+        "terms": [
+          "system",
+          "colonisation"
+        ],
+        "procedure": "prerequisite"
+      },
+      {
+        "requirement": "requested topic 2",
+        "terms": [
+          "system",
+          "colonisation"
+        ],
+        "procedure": "start"
+      }
+    ],
+    "focusTerms": [
+      "system",
+      "colonisation",
+      "including"
+    ],
+    "limits": {
+      "chunkChars": 900,
+      "maxChunks": 6,
+      "maxSources": 3,
+      "maxContextChars": 5000,
+      "structuredEvidenceChars": 8000
+    },
+    "coverageSatisfied": true,
+    "missingCoverage": [],
+    "selectedContextChars": 1886,
+    "citationPassageBindings": [
+      {
+        "recordOrdinal": 1,
+        "revisionId": "ce892e17f789dc26a687f3886710ca852a8d67f618dee1a8f8538a0ce694f085",
+        "sourceUrl": "https://www.elitedangerous.com/news/system-colonisation-guide",
+        "chars": 709,
+        "textSha256": "7d98698dee994f4a7c99d92d8216d44030a70bdbe070d31311dc377257ba0470",
+        "contiguousOriginalSpan": false,
+        "allSentencesBound": true,
+        "sourceOrderPreserved": true,
+        "spans": [
+          {
+            "start": 1485,
+            "end": 1670,
+            "sha256": "44140b3fd6901d4e1db6c50c55e9064e3ec670f794a123f34a7f0246677c253e"
+          },
+          {
+            "start": 1671,
+            "end": 1827,
+            "sha256": "c16dc285f37b385b051c4879d804cde2f76a1d4e59ab940834e346349e982a78"
+          },
+          {
+            "start": 1831,
+            "end": 1979,
+            "sha256": "ed28bdd7304fa9863dcd6dad8f43ce0c3f988f233da5fadea9fc4e1ce703e5d8"
+          },
+          {
+            "start": 1980,
+            "end": 2197,
+            "sha256": "fe3d7af34306fffd9413c5bd31d23639196fb13bb46107754e6ab032b2072d53"
+          }
+        ]
+      },
+      {
+        "recordOrdinal": 0,
+        "revisionId": "ce892e17f789dc26a687f3886710ca852a8d67f618dee1a8f8538a0ce694f085",
+        "sourceUrl": "https://www.elitedangerous.com/news/system-colonisation-guide",
+        "chars": 807,
+        "textSha256": "580ca096596104668e1e2de702f8078dd0998f7df3d1de6d7456a15ca83f6d11",
+        "contiguousOriginalSpan": true,
+        "allSentencesBound": true,
+        "sourceOrderPreserved": true,
+        "spans": [
+          {
+            "start": 0,
+            "end": 291,
+            "sha256": "23a20cc1eb0bd0ec225e57119c1bffed153157a58313be542150bc7980730599"
+          },
+          {
+            "start": 292,
+            "end": 446,
+            "sha256": "9c7465fe3c4f45d59da509c8b36983bbef9f2b9f5f0248f23be33b2a0a1974be"
+          },
+          {
+            "start": 447,
+            "end": 460,
+            "sha256": "aff534b9dd3af53156be1e13be19f8551aa0eb9da68c230d20b485287a1c9273"
+          },
+          {
+            "start": 461,
+            "end": 647,
+            "sha256": "bf9a91c393a604eb8ab0feb22fdc50b79b2c8116c21006ffd0d1550c1c2ac84f"
+          },
+          {
+            "start": 648,
+            "end": 807,
+            "sha256": "02367c795d2aad6c62df7e1f4f4794634017b25740658dbf8f91f60b074dd248"
+          }
+        ]
+      }
+    ]
+  },
+  "shortRequest": {
+    "classification": "REAL_ACQUIRED_DOCUMENT_REUSED_IN_SAME_PROCESS",
+    "additionalFetches": 0,
+    "acceptedCount": 1,
+    "selectedEvidenceCount": 1,
+    "coverageSatisfied": true,
+    "missingCoverage": [],
+    "selectedEvidence": [
+      {
+        "textSha256": "580ca096596104668e1e2de702f8078dd0998f7df3d1de6d7456a15ca83f6d11",
+        "exactTextInAcquiredDocument": true,
+        "url": "https://www.elitedangerous.com/news/system-colonisation-guide"
+      }
+    ]
+  },
+  "finalCodeReplay": {
+    "observedAt": "2026-11-10T04:48:06.749Z",
+    "classification": "DETERMINISTIC_REPLAY_OF_REAL_ACQUIRED_RECORDS",
+    "newAcquisition": false,
+    "newAuthorityEstablished": false,
+    "coverageSatisfied": true,
+    "missingCoverage": [],
+    "selectedCount": 2,
+    "selectedContextChars": 1886,
+    "citationPassageBindings": [
+      {
+        "recordOrdinal": 1,
+        "revisionId": "ce892e17f789dc26a687f3886710ca852a8d67f618dee1a8f8538a0ce694f085",
+        "sourceUrl": "https://www.elitedangerous.com/news/system-colonisation-guide",
+        "chars": 709,
+        "textSha256": "7d98698dee994f4a7c99d92d8216d44030a70bdbe070d31311dc377257ba0470",
+        "contiguousOriginalSpan": false,
+        "allSentencesBound": true,
+        "sourceOrderPreserved": true,
+        "spans": [
+          {
+            "start": 1485,
+            "end": 1670,
+            "sha256": "44140b3fd6901d4e1db6c50c55e9064e3ec670f794a123f34a7f0246677c253e"
+          },
+          {
+            "start": 1671,
+            "end": 1827,
+            "sha256": "c16dc285f37b385b051c4879d804cde2f76a1d4e59ab940834e346349e982a78"
+          },
+          {
+            "start": 1831,
+            "end": 1979,
+            "sha256": "ed28bdd7304fa9863dcd6dad8f43ce0c3f988f233da5fadea9fc4e1ce703e5d8"
+          },
+          {
+            "start": 1980,
+            "end": 2197,
+            "sha256": "fe3d7af34306fffd9413c5bd31d23639196fb13bb46107754e6ab032b2072d53"
+          }
+        ]
+      },
+      {
+        "recordOrdinal": 0,
+        "revisionId": "ce892e17f789dc26a687f3886710ca852a8d67f618dee1a8f8538a0ce694f085",
+        "sourceUrl": "https://www.elitedangerous.com/news/system-colonisation-guide",
+        "chars": 807,
+        "textSha256": "580ca096596104668e1e2de702f8078dd0998f7df3d1de6d7456a15ca83f6d11",
+        "contiguousOriginalSpan": true,
+        "allSentencesBound": true,
+        "sourceOrderPreserved": true,
+        "spans": [
+          {
+            "start": 0,
+            "end": 291,
+            "sha256": "23a20cc1eb0bd0ec225e57119c1bffed153157a58313be542150bc7980730599"
+          },
+          {
+            "start": 292,
+            "end": 446,
+            "sha256": "9c7465fe3c4f45d59da509c8b36983bbef9f2b9f5f0248f23be33b2a0a1974be"
+          },
+          {
+            "start": 447,
+            "end": 460,
+            "sha256": "aff534b9dd3af53156be1e13be19f8551aa0eb9da68c230d20b485287a1c9273"
+          },
+          {
+            "start": 461,
+            "end": 647,
+            "sha256": "bf9a91c393a604eb8ab0feb22fdc50b79b2c8116c21006ffd0d1550c1c2ac84f"
+          },
+          {
+            "start": 648,
+            "end": 807,
+            "sha256": "02367c795d2aad6c62df7e1f4f4794634017b25740658dbf8f91f60b074dd248"
+          }
+        ]
+      }
+    ],
+    "performance": {
+      "classification": "DETERMINISTIC_ACCEPTED_RECORD_SELECTION_REPLAY",
+      "samples": 31,
+      "warmups": 3,
+      "p50Ms": 9.93,
+      "p95Ms": 14.609,
+      "maxMs": 14.62,
+      "acquisitionRepeated": false
+    },
+    "reviewedSemanticDigests": {
+      "gamingRetrievalPolicy": "731d44075dbf1699afde8b2da98321e452357a3477a01aa23df2597b2e34b59a",
+      "gamingClearEvidence": "dbb25dbd7f04f59b89b80bac6c49636a1ab89798b4c8f08be0ce508da5ace66f"
+    }
+  },
+  "performance": {
+    "classification": "DETERMINISTIC_ACCEPTED_RECORD_SELECTION_REPLAY",
+    "samples": 31,
+    "warmups": 3,
+    "p50Ms": 9.93,
+    "p95Ms": 14.609,
+    "maxMs": 14.62,
+    "acquisitionRepeated": false,
+    "acquisitionSamples": 1,
+    "acquisitionPercentiles": "NOT_MEASURED",
+    "generationTime": "NOT_EXECUTED",
+    "warning": "instrumented acquisition component elapsed includes 34 selection runs; before/after wall times are not a latency comparison"
+  },
+  "modelExecution": "NOT_EXECUTED",
+  "modelUsage": 0,
+  "modelCost": 0,
+  "durableStorage": "NONE",
+  "productionChanges": "NONE",
+  "limitations": [
+    "source acquisition is not authenticated MCP or Trinity end-to-end acceptance",
+    "publication date does not verify current patch",
+    "sample rates are selected-case measurements, not production-wide rates",
+    "no acquisition or end-to-end latency percentiles are claimed"
+  ]
+}
