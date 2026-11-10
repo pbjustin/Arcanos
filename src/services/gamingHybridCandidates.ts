@@ -663,6 +663,10 @@ export async function evaluateGamingHybridCandidates(
     policyVersion: GAMING_HYBRID_CANDIDATE_POLICY_VERSION, candidateCount: submittedCandidates.length,
     evaluatedCandidateCount: queue.length, requiredArticleCount: queue.filter(item => item.origin === 'required_official_article').length,
     acceptedCount: accepted.length, rejectedCount: decisions.filter(decision => decision.decision === 'rejected').length,
+    poolRecordCount: allRecords.length, selectedRecordCount: selected.length,
+    formattedOutRecordCount: selected.length - (knowledge.evidence?.length ?? 0),
+    selectionOutcome: !allRecords.length ? 'NO_ACCEPTED_GAMEPLAY_RECORDS' : !selected.length ? 'NO_COVERAGE_SET'
+      : !knowledge.evidence?.length ? 'FORMATTING_BUDGET_EXHAUSTED' : 'EVIDENCE_SELECTED',
     selectedChunkCount: knowledge.evidence?.length ?? 0, selectedContextChars: knowledge.context.length,
     decisions: decisions.map(decision => ({ candidateId: decision.candidateId, decision: decision.decision, reasons: decision.reasonCodes })) });
   return { decisions, accepted, ...(retained.length ? { retained } : {}), knowledge, evaluations: evaluations.map(projectGamingSourceEvaluation), acquisitionWorkMs: Math.max(0, Date.now() - acquisitionStartedAt), ...(currentnessEvidence.length ? { currentnessEvidence } : {}),

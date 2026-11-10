@@ -31,6 +31,16 @@ identity independently. CLEAR, applicability, structure, coverage, freshness,
 Trinity and final answer validation operate on acquired evidence. Acceptance
 grants no durable storage consent. Source instructions remain rejected.
 
+Retrieval separates closed presentation requests, such as citing sources or
+numbering steps, from gameplay requirements. Starting and prerequisite questions
+can match bounded grammatical alternatives in acquired claims while retaining
+their named gameplay topic. Unrelated actions, named objects, quantities and
+independent requested facts still need their own support. Original player,
+edition, platform, patch and spoiler restrictions remain in force. Intact partial
+extraction may supply evidence; complete question coverage and the final answer
+audit still gate hybrid-v2 delivery. Qualified partial answer delivery is not
+enabled by this matching behavior.
+
 Gameplay discovery queries retain bounded, sanitized question terms and material
 class, location, edition and version context. Hybrid recovery keeps the original
 gameplay intent instead of searching generic coverage labels. Legacy retrieval

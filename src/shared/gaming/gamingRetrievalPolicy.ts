@@ -46,15 +46,24 @@ export function gamingLexicalTokens(text: string): string[] {
   return text.normalize('NFKC').toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
 }
 
+function gamingAcquisitionObjectRequest(prompt: string): boolean {
+  return /^\s*(?:where|which|how)\b[^.!?\n]{0,80}\b(?:obtain|find|buy|acquire|locate)\b/iu.test(prompt);
+}
+
 /** Retrieval-only normalization; the original request retains every answer constraint. */
-function gamingTopicalRequest(prompt: string): string {
+function gamingTopicalRequest(prompt: string, preserveProcedure = false): string {
+  // Closed presentation clauses do not assert a second gameplay fact. Keep
+  // named objects, player restrictions and the original generation request.
+  prompt = prompt
+    .replace(/\b(?:cite|provide\s+citations?\s+(?:for|to))\s+(?:(?:your|the|these|guide)\s+){0,2}sources?(?=\s*[.!?,;]|\s*$)/giu, '')
+    .replace(/\b(?:give|show|provide)\s+(?:(?:me|us)\s+)?(?:(?:clear|concrete|ordered|numbered|actionable)\s+){0,2}(?:steps|instructions)(?:\s+with\s+citations)?(?=\s*[.!?,;]|\s*$)/giu, '');
   // A request to find a guide names the gameplay topic, not an acquired fact
   // containing the words "find" or "explaining". Only consume a leading,
   // bounded source-discovery frame; quoted titles and ordinary find actions stay.
   const discoveryPrefix = /^\s*(?:please\s+)?find\s+(?:(?:me|us)\s+)?(?:a|an|the)\s+(?:(?:good|detailed)\s+){0,2}/iu.exec(prompt);
   if (discoveryPrefix) {
     const remainder = prompt.slice(discoveryPrefix[0].length);
-    const directFrame = /^(?:guide|walkthrough)\s+(?:explaining|about|for|on)\s+/iu;
+    const directFrame = /^(?:guide|walkthrough)(?:\s+(?:explaining|about|for|on)\s+|\s*[,;]\s*)/iu;
     const topicFrame = /^([^.!?\n"“”]{1,160}?)\s+(?:guide|walkthrough)(?=\s*(?:[.!?]|$)|\s+(?:for|about|on)\b)/iu;
     const topic = directFrame.test(remainder) ? remainder.replace(directFrame, '')
       : topicFrame.test(remainder) ? remainder.replace(topicFrame, '$1') : undefined;
@@ -63,6 +72,16 @@ function gamingTopicalRequest(prompt: string): string {
       // concrete subjects ("get started with surface prospecting") untouched.
       .replace(/\s+and\s+how\s+to\s+get\s+started(?=\s*(?:[.!?]|$))/giu, '');
   }
+  if (!preserveProcedure) prompt = prompt
+    // Only question/action framing is interchangeable; named gameplay objects
+    // remain exact anchors. "Begin" alone never establishes a source mechanic.
+    .replace(/\b(?:how\s+(?:do|can|should)\s+(?:i|we)\s+|how\s+to\s+)(?:get\s+started(?:\s+with)?|begin|start)(?=\s|[.!?,;]|$)/giu, '')
+    .replace(/\b(?:the\s+)?first\s+(?:concrete\s+|ordered\s+)?steps(?=\s*[.!?,;]|\s*$|\s+(?:and|for|to|with)\b)/giu, '')
+    .replace(/\b(?:prerequisites?|requirements?)(?=\s*[.!?,;]|\s*$|\s+(?:and|plus|as well as|for|to)\b)/giu,
+      match => gamingAcquisitionObjectRequest(prompt) ? match : '')
+    .replace(/\bwhat\s+do\s+(?:i|we)\s+need\s+first(?:\s+(?:for|to))?\b/giu, '')
+    .replace(/\bhow\s+(?:do|can|should)\s+(?:i|we)\s+set\s+up\s+/giu, '')
+    .replace(/\bearly\s+in\s+(?=chapter\s+\d\b)/giu, '');
   return prompt
     .replace(/(^|[.!?]\s+)(?:no\s+major|avoid\s+(?:major|later[ -]story))\s+spoilers?(?=\s*(?:[.!?]|$))/giu, '$1')
     // Quoted source titles identify supplied material, not requested gameplay
@@ -315,7 +334,55 @@ export function safeGamingEvidenceMetadata(value: string, input: GamingRetrieval
 }
 
 /** Public labels describe requested topics only; player context never becomes a discovery requirement. */
-export interface GamingRequestRequirement { requirement: string; terms: string[] }
+export interface GamingRequestRequirement {
+  requirement: string;
+  terms: string[];
+  /** Closed request wording; it does not establish that the mechanic exists. */
+  procedure?: 'prerequisite' | 'start';
+}
+
+function gamingProcedureRequest(clause: string): GamingRequestRequirement['procedure'] {
+  if (gamingAcquisitionObjectRequest(clause)) return undefined;
+  if (/\b(?:prerequisites?|requirements?)(?=\s*[.!?,;]|\s*$|\s+(?:and|plus|as well as|for|to)\b)|\bwhat\s+do\s+(?:i|we)\s+need\s+first\b/iu.test(clause)) return 'prerequisite';
+  if (/\b(?:how\s+(?:do|can|should)\s+(?:i|we)\s+|how\s+to\s+)(?:get\s+started|begin|start)\b|\bfirst\s+(?:concrete\s+|ordered\s+)?steps(?=\s*[.!?,;]|\s*$|\s+(?:and|for|to|with)\b)/iu.test(clause)) return 'start';
+  return undefined;
+}
+
+/** Exact named topic anchors plus an acquired requirement/action relationship.
+ * These closed grammatical alternatives do not relax other lexical clauses. */
+export function gamingRequirementSupported(text: string, requirement: GamingRequestRequirement): boolean {
+  if (!requirement.procedure) return gamingTermCoverage(text, requirement.terms) === 1;
+  const affirmativeSubject = (subject: string) => {
+    if (/\b(?:not|never|unlike|except|rather\s+than|no\s+longer)\b/iu.test(subject)
+      || gamingTermCoverage(subject, requirement.terms) !== 1) return false;
+    const coordinated = subject.split(/\b(?:and|or)\b/iu);
+    const lastSubject = coordinated.at(-1)?.trim() ?? '';
+    // A complete requested topic before a new coordinated subject cannot lend
+    // its anchors to that subject's predicate. Atomic names spanning "and"
+    // retain their complete term set rather than becoming separate objects.
+    return coordinated.length < 2 || !lastSubject || gamingTermCoverage(lastSubject, requirement.terms) === 1
+      || !coordinated.slice(0, -1).some(part => gamingTermCoverage(part, requirement.terms) === 1);
+  };
+  return text.split(/\n+|(?<=[.!?])\s+|;\s*/u).some(sentence => {
+    if (gamingTermCoverage(sentence, requirement.terms) !== 1) return false;
+    if (requirement.procedure === 'prerequisite') {
+      const relation = /\b(?:requires?|needs?|must\s+(?:first\s+)?(?:have|obtain|buy|equip|unlock|complete|reach|finish|carry|collect|spend|select)|only\s+if|(?:is|are)\s+required|(?:no|without)\s+prerequisites?)\b/giu;
+      return [...sentence.matchAll(relation)].some(match => {
+        const prefix = sentence.slice(0, match.index);
+        const before = /\bbefore\s+(?:beginning|starting)\s+([^,;:]{1,180}),\s*(?:you|players?|commanders?)\s*$/iu.exec(prefix);
+        return affirmativeSubject(prefix.split(/[,;:]|\b(?:but|whereas|while|although)\b/iu).at(-1) ?? '')
+          || Boolean(before && affirmativeSubject(before[1]));
+      });
+    }
+    const forbiddenPrefix = (index: number) => /\b(?:not|never|avoid|don['’]t)\b/iu.test(sentence.slice(0, index));
+    const target = /\bto\s+(?:begin|start)\s+([^.!?;\n,]{1,180}),\s*\p{L}/iu.exec(sentence);
+    if (target && affirmativeSubject(target[1]) && !forbiddenPrefix(target.index)) return true;
+    const action = /\b(?:begin|start)\s+by\s+([^.!?;\n]{1,240})/iu.exec(sentence);
+    if (action && affirmativeSubject(action[1]) && !forbiddenPrefix(action.index)) return true;
+    const subject = /^(.{1,180}?)\s+(?:begins?|starts?)\s+by\s+\p{L}/iu.exec(sentence);
+    return Boolean(subject && affirmativeSubject(subject[1]));
+  });
+}
 
 /**
  * Explicit lists/conjunctions retain their independent requested topics. A single
@@ -323,7 +390,7 @@ export interface GamingRequestRequirement { requirement: string; terms: string[]
  * universal build checklist. This bounded lexical adapter makes no semantic claim.
  */
 function gamingRequestClauses(input: GamingRetrievalPolicyInput): { clauses: string[]; hasCoordinatedTarget: boolean } {
-  const question = gamingTopicalRequest(resolveGamingUserDecisionGap(input).prompt.slice(0, 8_000))
+  const question = gamingTopicalRequest(resolveGamingUserDecisionGap(input).prompt.slice(0, 8_000), true)
     .replace(/https?:\/\/[^\s)]+/giu, '')
     // In "How do X, Y and Z work?", the shared predicate and an introductory
     // regional qualifier frame the topics. Original scope/freshness gates still
@@ -362,7 +429,7 @@ function gamingRequestClauses(input: GamingRetrievalPolicyInput): { clauses: str
   const requested = detailStart ? topicalQuestion.slice(detailStart.index + detailStart[0].length) : topicalQuestion;
   const clauses = requested.split(/\s+(?:and|plus|as well as)\s+|[;,]|[.!?]\s+(?=(?:(?:also|then)\s+)?(?:what|where|how|which|why|can|could|should|please|explain|describe|recommend|show|list|tell)\b)/iu)
     .map(clause => clause.replace(/^\s*(?:also|then)\s+(?=(?:what|where|how|which|why|can|could|should|please|explain|describe|recommend|show|list|tell)\b)/iu, ''))
-    .filter(clause => buildGamingRetrievalTerms({ game: input.game, prompt: clause }).requestTerms.length > 0);
+    .filter(clause => gamingProcedureRequest(clause) || buildGamingRetrievalTerms({ game: input.game, prompt: clause }).requestTerms.length > 0);
   return { clauses, hasCoordinatedTarget };
 }
 
@@ -374,13 +441,17 @@ export function gamingRequestRequirementLimitExceeded(input: GamingRetrievalPoli
 export function buildGamingRequestRequirements(input: GamingRetrievalPolicyInput): GamingRequestRequirement[] {
   const { clauses, hasCoordinatedTarget } = gamingRequestClauses(input);
   if (clauses.length > 8) return [];
+  const subject = input.prompt.split(/\b(?:including|covering|include|covers?)\s+/iu, 1)[0];
+  const topicTerms = buildGamingClaimCoverageTerms({ game: input.game, prompt: subject });
   const requirements = clauses.map((clause, index) => {
     // Relational question framing describes the requested facts; it is not a
     // word that an independently acquired passage must repeat verbatim.
     const topicalClause = clause.replace(new RegExp(`\\b(?:${GENERIC_RELATIONSHIP_HEADS})\\s+of\\s+`, 'giu'), '');
-    const terms = buildGamingClaimCoverageTerms({ game: input.game, prompt: topicalClause })
+    const procedure = gamingProcedureRequest(clause);
+    let terms = buildGamingClaimCoverageTerms({ game: input.game, prompt: topicalClause })
       .filter(term => !['recommend', 'recommended', 'recommendation', 'recommendations', 'provide', 'describe', 'including', 'include', 'cover', 'covering'].includes(term))
       .filter(term => !/[0-9]{6,}/u.test(term));
+    if (procedure && !terms.length) terms = topicTerms;
     // This finite diagnostic vocabulary supplies labels only when explicitly
     // requested. It adds no mandatory facets and contains no player/source text.
     const clauseWords = new Set(terms);
@@ -393,10 +464,10 @@ export function buildGamingRequestRequirements(input: GamingRetrievalPolicyInput
       { label: 'equipment selection', words: ['equipment', 'selection'] },
       { label: 'skill selection', words: ['skill', 'selection'] }
     ].find(facet => facet.words.every(word => clauseWords.has(word)));
-    return { requirement: canonical?.label ?? `requested topic ${index + 1}`, terms };
+    return { requirement: canonical?.label ?? `requested topic ${index + 1}`, terms, ...(procedure ? { procedure } : {}) };
   }).filter(requirement => requirement.terms.length > 0 && requirement.requirement.length > 0);
   // A coordinated target is one atomic request, not two independently supported facts.
-  return (requirements.length > 1 || hasCoordinatedTarget && requirements.length === 1) && requirements.every(requirement => requirement.terms.length >= 1)
+  return (requirements.length > 1 || hasCoordinatedTarget && requirements.length === 1 || requirements.some(requirement => requirement.procedure)) && requirements.every(requirement => requirement.terms.length >= 1)
     ? requirements.map((requirement, index) => ({ ...requirement,
       requirement: requirements.filter(entry => entry.requirement === requirement.requirement).length > 1
         ? `${requirement.requirement} (requested topic ${index + 1})` : requirement.requirement })) : [];

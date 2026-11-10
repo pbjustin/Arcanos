@@ -11,6 +11,7 @@ jest.unstable_mockModule('node:dns/promises', () => ({ Resolver: class {
   cancel() {}
 } }));
 const { evaluateGamingHybridCandidates, assertGamingHybridEvidenceMembership } = await import('../src/services/gamingHybridCandidates.js');
+const { logger } = await import('../src/platform/logging/structuredLogging.js');
 const actor = { actorKey: 'stage-regression-actor', requestId: 'req_1234_stageregression', traceId: 'a'.repeat(32),
   workflowId: '30000000-0000-4000-8000-000000000001' };
 const url = 'https://guides.example.org/equipment';
@@ -28,6 +29,26 @@ async function evaluate(body: string, game = 'Portal 2', sourceUrl = url, conten
 beforeEach(() => { http.mockReset(); });
 
 describe('independent source identity before applicability rejection', () => {
+  it('distinguishes accepted pool records from selector and formatting losses without logging content', async () => {
+    const log = jest.spyOn(logger, 'info');
+    try {
+      http.mockResolvedValue({ status: 200, headers: { 'content-type': 'text/html' },
+        data: article('<div>Game: Portal 2.</div><div>Edition: Base game.</div><div>Platforms: PC.</div>') });
+      const result = await evaluateGamingHybridCandidates({ game: 'Portal 2', edition: 'base-game', platform: 'PC', mode: 'guide',
+        prompt: 'Explain the practice equipment route.', protocolVersion: 'gaming-hybrid-v2', candidates: [{ url }] }, actor,
+      { selectEvidence: () => [] });
+      expect(result.accepted).toHaveLength(1);
+      expect(result.knowledge.sources).toHaveLength(0);
+      const diagnostic = log.mock.calls.find(call => call[0] === 'gaming.hybrid.candidates_evaluated')?.[1];
+      expect(diagnostic).toMatchObject({ poolRecordCount: expect.any(Number), selectedRecordCount: 0,
+        formattedOutRecordCount: 0, selectionOutcome: 'NO_COVERAGE_SET' });
+      expect((diagnostic as { poolRecordCount: number }).poolRecordCount).toBeGreaterThan(0);
+      expect(JSON.stringify(diagnostic)).not.toContain('Explain the practice equipment route');
+      expect(JSON.stringify(diagnostic)).not.toContain('Inspect the practice equipment');
+      expect(JSON.stringify(diagnostic)).not.toContain(actor.actorKey);
+      expect(JSON.stringify(diagnostic)).not.toContain(url);
+    } finally { log.mockRestore(); }
+  });
   it('reports contradictory acquired Game declarations at the identity stage', async () => {
     // Plain text establishes the prose-only path, without structural field records.
     const result = await evaluate(`Game: Portal 2. Game: Hades. Edition: Base game. ${prose}`,

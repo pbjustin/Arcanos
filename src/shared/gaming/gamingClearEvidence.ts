@@ -5,7 +5,7 @@ import { createGamingClearAssessment, classifyGamingClearQuestion, gamingClearCo
   type GamingClearAssessment } from './gamingClearPolicy.js';
 import { gamingEditionIdentitiesMatch, normalizeGamingEvidenceGameIdentity, resolveGamingGuideIdentity } from './gamingGameIdentity.js';
 import { assessGamingProgressionRequest } from './gamingProgressionPolicy.js';
-import { buildGamingClaimCoverageTerms, buildGamingRequestRequirements, gamingRequestRequirementLimitExceeded, gamingTermCoverage, gamingAttributableClaimText, resolveGamingUserDecisionGap, type GamingRetrievalPolicyInput } from './gamingRetrievalPolicy.js';
+import { buildGamingClaimCoverageTerms, buildGamingRequestRequirements, gamingRequestRequirementLimitExceeded, gamingRequirementSupported, gamingTermCoverage, gamingAttributableClaimText, resolveGamingUserDecisionGap, type GamingRetrievalPolicyInput } from './gamingRetrievalPolicy.js';
 import { classifyGamingQuestionFreshness, evaluateGamingFreshness, type GamingFreshnessEvaluation, type GamingFreshnessEvidence } from './gamingFreshnessCore.js';
 import type { GamingStoredKnowledgeContext, GamingStoredKnowledgeSource } from './gamingStoredEvidenceCore.js';
 import { assessGamingStructuralUsability, gamingCrossSourceStructuralConflict, gamingStructuralCoverageTerms } from './gamingStructuralEvidence.js';
@@ -272,8 +272,8 @@ export function assessGamingRequestCoverage(input: GamingRetrievalPolicyInput,
     // A clause needs its own intact passage or record; words from unrelated rows
     // never fabricate the relationship requested by that clause.
     const supported = chunks.flatMap(chunk => {
-      if (!chunk.evidenceUnits?.length) return gamingTermCoverage(chunkClaimText(chunk,
-        knowledge.sources.find(source => source.sourceId === chunk.sourceId), input.game), requirement.terms) === 1 ? [chunk] : [];
+      if (!chunk.evidenceUnits?.length) return gamingRequirementSupported(chunkClaimText(chunk,
+        knowledge.sources.find(source => source.sourceId === chunk.sourceId), input.game), requirement) ? [chunk] : [];
       const supportingUnits = chunk.evidenceUnits.filter(unit => {
         const assessment = assessGamingStructuralUsability({ units: [unit], ...input, prompt: requirement.terms.join(' ') });
         return gamingTermCoverage(unit.text, gamingStructuralCoverageTerms(input, unit, requirement.terms)) === 1

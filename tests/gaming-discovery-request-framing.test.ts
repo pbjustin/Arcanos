@@ -60,15 +60,19 @@ describe('source discovery language remains retrieval framing', () => {
 
   it('retains a concrete getting-started subject rather than removing its mechanic', () => {
     const input = { game: 'Elite Dangerous', prompt: 'Find a guide explaining system colonisation and how to get started with surface prospecting.' };
-    expect(buildGamingRequestRequirements(input)[1].terms).toEqual(['started', 'surface', 'prospecting']);
+    expect(buildGamingRequestRequirements(input)[1]).toMatchObject({ terms: ['surface', 'prospecting'], procedure: 'start' });
     expect(assessGamingRequestCoverage(input, knowledge(input.game, [
       'System colonisation starts by purchasing a claim and delivering construction commodities.'
     ])).coverageSatisfied).toBe(false);
+    expect(assessGamingRequestCoverage(input, knowledge(input.game, [
+      'System colonisation starts by purchasing a claim and delivering construction commodities.',
+      'To begin surface prospecting, equip the surface scanner and inspect the selected terrain.'
+    ])).coverageSatisfied).toBe(true);
   });
 
   it.each([
     ['How do I find the Copper Key and open the Silver Gate?', ['find', 'copper', 'key']],
-    ['Explain how to get started with copper smelting and iron forging.', ['started', 'copper', 'smelting']],
+    ['Explain how to get started with copper smelting and iron forging.', ['copper', 'smelting']],
     ['Find a guide explaining the quest "How to Get Started" and the Copper Gate.', ['quest', 'started']],
     ['How do I complete the quest "Avoid later-story spoilers"?', ['quest', 'avoid', 'later', 'story']]
   ])('preserves actual action and literal title terms: %s', (prompt, terms) => {
