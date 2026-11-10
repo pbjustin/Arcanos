@@ -46,6 +46,7 @@ export function gamingLexicalTokens(text: string): string[] {
   return text.normalize('NFKC').toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
 }
 
+/** Keep acquisition questions about named objects outside procedure-facet parsing. */
 function gamingAcquisitionObjectRequest(prompt: string): boolean {
   return /^\s*(?:where|which|how)\b[^.!?\n]{0,80}\b(?:obtain|find|buy|acquire|locate)\b/iu.test(prompt);
 }
@@ -341,6 +342,7 @@ export interface GamingRequestRequirement {
   procedure?: 'prerequisite' | 'start';
 }
 
+/** Identify closed prerequisite/start wording without asserting source support. */
 function gamingProcedureRequest(clause: string): GamingRequestRequirement['procedure'] {
   if (gamingAcquisitionObjectRequest(clause)) return undefined;
   if (/\b(?:prerequisites?|requirements?)(?=\s*[.!?,;]|\s*$|\s+(?:and|plus|as well as|for|to)\b)|\bwhat\s+do\s+(?:i|we)\s+need\s+first\b/iu.test(clause)) return 'prerequisite';
@@ -438,6 +440,7 @@ export function gamingRequestRequirementLimitExceeded(input: GamingRetrievalPoli
   return gamingRequestClauses(input).clauses.length > 8;
 }
 
+/** Build bounded factual clauses and procedure intents while retaining named topic anchors. */
 export function buildGamingRequestRequirements(input: GamingRetrievalPolicyInput): GamingRequestRequirement[] {
   const { clauses, hasCoordinatedTarget } = gamingRequestClauses(input);
   if (clauses.length > 8) return [];

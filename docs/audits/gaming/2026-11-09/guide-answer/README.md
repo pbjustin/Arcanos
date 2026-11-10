@@ -2,9 +2,11 @@
 
 The implementation starts from main at
 `2df6e6a0fb409aaa42e1b5f687ea2622c8dde560`. The source repair is
-`39772771f6c2988a660313b1ed889ea8f2c65fbe`; subsequent audit publication does not
-change its source bytes. This is a focused request interpretation and evidence
-coverage repair. Live acceptance of the repaired code remains **BLOCKED**.
+`39772771f6c2988a660313b1ed889ea8f2c65fbe`, followed by audit publication at
+`99e4afeff243e8b239566d90a962d2e312d00645`. The later
+[CodeRabbit follow-up](coderabbit-followup.md) strengthens structural procedure
+support; the original receipts remain historical observations at their recorded
+source hashes. Live acceptance of the repaired code remains **BLOCKED**.
 
 ## Finding and repair
 

@@ -142,6 +142,7 @@ beforeAll(async () => {
 });
 const messageText = (payload: any): string => typeof payload.input === 'string' ? payload.input : payload.input.map((message: any) => typeof message.content === 'string'
   ? message.content : message.content.map((part: any) => part.text ?? '').join('')).join('\n');
+/** Compose an explicitly synthetic answer using the selected source numbers. */
 function draft(payload: any): string {
   const text = messageText(payload);
   const numbered = [...text.matchAll(/\[Source (\d+)\][\s\S]*?URL: (https:\/\/[^\s"\\]+)/gu)];
@@ -230,6 +231,7 @@ afterEach(() => {
   jest.restoreAllMocks(); resetSafetyRuntimeStateForTests();
 });
 
+/** Wire the authenticated MCP workflow with controlled external-service seams. */
 function harness(backend: boolean) {
   if (backend) process.env.ARCANOS_GAMING_HYBRID_BACKEND_DISCOVERY_ENABLED = 'true';
   else delete process.env.ARCANOS_GAMING_HYBRID_BACKEND_DISCOVERY_ENABLED;
@@ -247,6 +249,7 @@ function harness(backend: boolean) {
   app.use(createChatGptGamingMcpRouter({ configuration, verification: { keyResolver: jwks, readEnvironmentValue: () => undefined },
     providerAdmission: (_req, _res, next) => next(), execute }));
   let sequence = 0;
+  /** Send one signed fixture operation through the real MCP HTTP boundary. */
   async function invoke(name: 'arcanos_gaming_hybrid_query' | 'arcanos_gaming_submit_candidates', input: unknown, subject = 'heldout-owner') {
     const now = Math.floor(Date.now() / 1000);
     const token = await new SignJWT({ iss: configuration.issuer, aud: configuration.resource, sub: subject,
@@ -261,6 +264,7 @@ function harness(backend: boolean) {
   const payload = { contractVersion: 'gaming-hybrid-v2', game: scenario.game, question: scenario.question,
     idempotencyKey: `heldout-query-${scenario.id}`, storagePolicy: 'transient_only' };
   const query = (overrides: Record<string, unknown> = {}) => invoke('arcanos_gaming_hybrid_query', { ...payload, ...overrides }) as Promise<{ statusCode: number; result: GamingHybridResponse }>;
+  /** Follow the granted host-search handoff and submit the authored public URLs. */
   async function complete() {
     let result = await query();
     if (!backend) {

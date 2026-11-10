@@ -8,7 +8,7 @@ import { assessGamingProgressionRequest } from './gamingProgressionPolicy.js';
 import { buildGamingClaimCoverageTerms, buildGamingRequestRequirements, gamingRequestRequirementLimitExceeded, gamingRequirementSupported, gamingTermCoverage, gamingAttributableClaimText, resolveGamingUserDecisionGap, type GamingRetrievalPolicyInput } from './gamingRetrievalPolicy.js';
 import { classifyGamingQuestionFreshness, evaluateGamingFreshness, type GamingFreshnessEvaluation, type GamingFreshnessEvidence } from './gamingFreshnessCore.js';
 import type { GamingStoredKnowledgeContext, GamingStoredKnowledgeSource } from './gamingStoredEvidenceCore.js';
-import { assessGamingStructuralUsability, gamingCrossSourceStructuralConflict, gamingStructuralCoverageTerms } from './gamingStructuralEvidence.js';
+import { assessGamingStructuralUsability, gamingCrossSourceStructuralConflict, gamingStructuralCoverageTerms, normalizeGamingStructuralFieldLabel } from './gamingStructuralEvidence.js';
 import { gamingClearIntactProseText } from './gamingClearSource.js';
 import { isGamingDocumentOverviewOnly } from './gamingDocumentIngestionCore.js';
 import { resolveGamingFreshnessDisposition } from './gamingFreshnessDisposition.js';
@@ -276,8 +276,18 @@ export function assessGamingRequestCoverage(input: GamingRetrievalPolicyInput,
         knowledge.sources.find(source => source.sourceId === chunk.sourceId), input.game), requirement) ? [chunk] : [];
       const supportingUnits = chunk.evidenceUnits.filter(unit => {
         const assessment = assessGamingStructuralUsability({ units: [unit], ...input, prompt: requirement.terms.join(' ') });
-        return gamingTermCoverage(unit.text, gamingStructuralCoverageTerms(input, unit, requirement.terms)) === 1
-          && (assessment.claimShape === 'none' ? assessment.hasIntactUsableUnit : assessment.claimSupported);
+        if (!(assessment.claimShape === 'none' ? assessment.hasIntactUsableUnit : assessment.claimSupported)
+          || gamingTermCoverage(unit.text, gamingStructuralCoverageTerms(input, unit, requirement.terms)) !== 1) return false;
+        if (!requirement.procedure) return true;
+        const fields = new Map(unit.fields.map(field => [normalizeGamingStructuralFieldLabel(field.label), field.value]));
+        const mechanic = fields.get('mechanic');
+        const value = fields.get('value');
+        // A field label or source heading cannot manufacture a procedure. Keep
+        // explicit value claims and a same-row mechanic/predicate relationship;
+        // do not attach an independently named subject to the mechanic.
+        return unit.fields.some(field => gamingRequirementSupported(field.value, requirement))
+          || Boolean(mechanic && value && /^(?:(?:begins?|starts?)\s+by\b|requires?\b|needs?\b)/iu.test(value.trim())
+            && gamingRequirementSupported(`${mechanic} ${value}`, requirement));
       });
       return supportingUnits.length ? [{ ...chunk, evidenceUnits: supportingUnits }] : [];
     });

@@ -41,6 +41,12 @@ extraction may supply evidence; complete question coverage and the final answer
 audit still gate hybrid-v2 delivery. Qualified partial answer delivery is not
 enabled by this matching behavior.
 
+Structured prerequisite/start support also needs an acquired relationship in the
+same intact record's field values. A topic-only mechanic/value row, heading,
+caption or column label cannot supply that relationship. A predicate split
+across a record's mechanic and value fields may qualify; its original text,
+qualifications, identity and citation binding remain unchanged.
+
 Gameplay discovery queries retain bounded, sanitized question terms and material
 class, location, edition and version context. Hybrid recovery keeps the original
 gameplay intent instead of searching generic coverage labels. Legacy retrieval
