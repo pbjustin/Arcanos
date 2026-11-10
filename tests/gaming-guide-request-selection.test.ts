@@ -143,7 +143,10 @@ describe('guide request interpretation and accepted passage delivery', () => {
   it('keeps Requirements for Victory as an acquisition object', () => {
     const request = { game: 'Lantern Voyage', prompt: 'Where can I obtain the Requirements for Victory book?' };
     expect(buildGamingRetrievalTerms(request).focusTerms).toContain('requirements');
-    expect(buildGamingRequestRequirements(request)).toEqual([]);
+    const requirements = buildGamingRequestRequirements(request);
+    expect(requirements).toHaveLength(1);
+    expect(requirements[0].terms).toEqual(['requirements', 'victory', 'book']);
+    expect(requirements[0].procedure).toBeUndefined();
   });
 
   it('retains an explicit before-start player prerequisite across its grammatical comma', () => {

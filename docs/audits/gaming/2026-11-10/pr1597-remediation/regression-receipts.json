@@ -1,0 +1,142 @@
+{
+  "classification": "DETERMINISTIC_REGRESSION_TESTS_NOT_LIVE_PROVIDER_ACCEPTANCE",
+  "base": "2df6e6a0fb409aaa42e1b5f687ea2622c8dde560",
+  "startingHead": "ab8380e70116a50a0bfb524820cb97abdec3ccf4",
+  "beforeProductionSourceUnmodified": true,
+  "afterSourceBinding": {
+    "retrievalAstSha256": "a918c449c560c79d6c8204bebd1b6c795f0c17ee8b557e95e5d4aed48700dc09",
+    "clearAstSha256": "4f09281c9dfde0e51df902bc6c106dcabb27a10d77b71d67f7dff0af03002689"
+  },
+  "comparisons": [
+    {
+      "file": "tests/gaming-procedure-grammar.test.ts",
+      "fixtureSha256Lf": "81ec7bb0cbbe58c9c7f2851112c4cbfd58abc47e1711811f76fbfdd54b634067",
+      "before": {
+        "passed": 23,
+        "failed": 30,
+        "skipped": 0
+      },
+      "after": {
+        "passed": 53,
+        "failed": 0,
+        "skipped": 0
+      },
+      "failingBefore": [
+        "bounded acquired starting-procedure grammar accepts an actual action at the predicate boundary: imperative-topic-by",
+        "bounded acquired starting-procedure grammar accepts an actual action at the predicate boundary: purpose-colon",
+        "bounded acquired starting-procedure grammar rejects missing action support at the predicate boundary: unrelated-declarative",
+        "bounded acquired starting-procedure grammar rejects missing action support at the predicate boundary: unavailable-declarative",
+        "bounded acquired starting-procedure grammar rejects missing action support at the predicate boundary: unanswered-question",
+        "bounded acquired starting-procedure grammar rejects missing action support at the predicate boundary: comma-action-question",
+        "bounded acquired starting-procedure grammar rejects missing action support at the predicate boundary: foreign-topic-nested-by",
+        "bounded acquired starting-procedure grammar rejects missing action support at the predicate boundary: unavailable-then-unrelated-action",
+        "bounded acquired starting-procedure grammar rejects missing action support at the predicate boundary: question-then-unrelated-action",
+        "bounded acquired starting-procedure grammar rejects missing action support at the predicate boundary: declarative-then-unrelated-action",
+        "bounded acquired starting-procedure grammar rejects missing action support at the predicate boundary: negative-before-then",
+        "bounded acquired starting-procedure grammar rejects missing action support at the predicate boundary: nonaction-before-comma-action",
+        "bounded acquired starting-procedure grammar rejects missing action support at the predicate boundary: coordinated-action-question",
+        "bounded acquired starting-procedure grammar rejects missing action support at the predicate boundary: comma-separated-action-question",
+        "bounded acquired starting-procedure grammar carries an attributable action through selection and CLEAR: imperative-topic-by",
+        "bounded acquired starting-procedure grammar carries an attributable action through selection and CLEAR: purpose-colon",
+        "bounded acquired starting-procedure grammar withholds complete coverage and CLEAR claim support: unrelated-declarative",
+        "bounded acquired starting-procedure grammar withholds complete coverage and CLEAR claim support: unavailable-declarative",
+        "bounded acquired starting-procedure grammar withholds complete coverage and CLEAR claim support: unanswered-question",
+        "bounded acquired starting-procedure grammar withholds complete coverage and CLEAR claim support: comma-action-question",
+        "bounded acquired starting-procedure grammar withholds complete coverage and CLEAR claim support: foreign-topic-nested-by",
+        "bounded acquired starting-procedure grammar withholds complete coverage and CLEAR claim support: unavailable-then-unrelated-action",
+        "bounded acquired starting-procedure grammar withholds complete coverage and CLEAR claim support: question-then-unrelated-action",
+        "bounded acquired starting-procedure grammar withholds complete coverage and CLEAR claim support: declarative-then-unrelated-action",
+        "bounded acquired starting-procedure grammar withholds complete coverage and CLEAR claim support: negative-before-then",
+        "bounded acquired starting-procedure grammar withholds complete coverage and CLEAR claim support: nonaction-before-comma-action",
+        "bounded acquired starting-procedure grammar withholds complete coverage and CLEAR claim support: coordinated-action-question",
+        "bounded acquired starting-procedure grammar withholds complete coverage and CLEAR claim support: comma-separated-action-question",
+        "bounded acquired starting-procedure grammar keeps a prohibited starting action attributable without promoting it to an affirmative procedure",
+        "bounded acquired starting-procedure grammar applies the same action grammar to an unfamiliar authored mechanic"
+      ]
+    },
+    {
+      "file": "tests/gaming-request-factual-clauses.test.ts",
+      "fixtureSha256Lf": "ba6af56c41e57d576c5f3792c250e8ae42d26edabe2df4663d6a3217ef9951de",
+      "before": {
+        "passed": 21,
+        "failed": 10,
+        "skipped": 0
+      },
+      "after": {
+        "passed": 31,
+        "failed": 0,
+        "skipped": 0
+      },
+      "failingBefore": [
+        "factual request clauses retain subject, relation and requested count covers the first three acquired actions without demanding literal first/three/needed wording",
+        "factual request clauses retain subject, relation and requested count preserves a separate prerequisite and its three ordered starting actions",
+        "factual request clauses retain subject, relation and requested count binds same-sentence them to the materials requirement and requires their acquisition location",
+        "factual request clauses retain subject, relation and requested count keeps required materials independent of starting actions",
+        "factual request clauses retain subject, relation and requested count keeps missing factual scope unresolved: List the prerequisites.",
+        "factual request clauses retain subject, relation and requested count keeps missing factual scope unresolved: Find a guide, explain the mechanics and cite your sources.",
+        "factual request clauses retain subject, relation and requested count preserves the named Requirements for Victory acquisition object",
+        "factual request clauses retain subject, relation and requested count keeps a first-0 action request outside the supported positive count bound unresolved",
+        "factual request clauses retain subject, relation and requested count keeps a first-9 action request outside the supported positive count bound unresolved",
+        "factual request clauses retain subject, relation and requested count does not combine alternative one-action and two-action starting routes into a three-action procedure"
+      ]
+    },
+    {
+      "file": "tests/gaming-guide-answer-delivery.integration.test.ts",
+      "fixtureSha256Lf": "d11418f7a1ef02ee9d3d4113e2c18e36016a171fefd98b10dabc9ce645f6bb8f",
+      "before": {
+        "passed": 17,
+        "failed": 7,
+        "skipped": 0
+      },
+      "after": {
+        "passed": 24,
+        "failed": 0,
+        "skipped": 0
+      },
+      "failingBefore": [
+        "authored adversarial procedure facts through authenticated MCP does not promote a non-procedure into starting instructions: sold permits",
+        "authored adversarial procedure facts through authenticated MCP does not promote a non-procedure into starting instructions: unavailable process",
+        "authored adversarial procedure facts through authenticated MCP does not promote a non-procedure into starting instructions: unanswered question",
+        "authored adversarial procedure facts through authenticated MCP delivers an explicit acquired action expressed as start target by action",
+        "authored adversarial procedure facts through authenticated MCP delivers an explicit acquired action expressed as colon imperative",
+        "authored adversarial procedure facts through authenticated MCP delivers the first three supported actions without requiring presentation words in the guide",
+        "authored adversarial procedure facts through authenticated MCP binds materials and their acquisition locations through ordinary them anaphora"
+      ]
+    }
+  ],
+  "fullGaming": {
+    "suites": 240,
+    "passed": 8640,
+    "failed": 0,
+    "skipped": 0,
+    "command": "node scripts/run-jest.mjs --runTestsByPath <full-gaming-suites> --coverage=false --maxWorkers=2 --workerIdleMemoryLimit=768MB",
+    "selection": "rg --files tests packages/cli/__tests__; filenames match (gaming|trinity.*(?:honesty|citation)|native-pr-preview-import).*\\.test\\.[tj]s$, excluding \\.pg(?:18)?\\. and tests/fixtures",
+    "finalTestAddition": "The final alternative-route control was added after the full sweep and independently passed in the final 185-test focused run; no runtime source changed."
+  },
+  "finalFocused": {
+    "suites": 7,
+    "passed": 185,
+    "failed": 0,
+    "skipped": 0,
+    "openHandles": 0,
+    "command": "node scripts/run-jest.mjs --runTestsByPath tests/gaming-procedure-grammar.test.ts tests/gaming-request-factual-clauses.test.ts tests/gaming-guide-answer-delivery.integration.test.ts tests/gaming-guide-request-selection.test.ts tests/gaming-discovery-request-framing.test.ts tests/gaming-lifecycle-drain.test.ts tests/gaming-hybrid-v2-lifecycle.test.ts --coverage=false --runInBand --detectOpenHandles"
+  },
+  "routeReview": {
+    "classification": "in-memory route-reset ablation only; shared source untouched; not a historical full-head replay",
+    "hashes": {
+      "src/shared/gaming/gamingRetrievalPolicy.ts": "a918c449c560c79d6c8204bebd1b6c795f0c17ee8b557e95e5d4aed48700dc09",
+      "src/shared/gaming/gamingClearEvidence.ts": "4f09281c9dfde0e51df902bc6c106dcabb27a10d77b71d67f7dff0af03002689"
+    },
+    "before": {
+      "alternativesSupported": true,
+      "genuineChainSupported": true
+    },
+    "after": {
+      "alternativesSupported": false,
+      "genuineChainSupported": true
+    }
+  },
+  "productionChanges": "NONE",
+  "providerCalls": 0,
+  "liveProviderAcceptance": "BLOCKED"
+}

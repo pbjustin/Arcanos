@@ -118,6 +118,7 @@ const acquired: string[] = [];
 const audits: Array<{ answer: string; playerContext: { spoilerMode: string };
   evidence: Array<{ sourceIndex: number; sourceId: string; revisionId: string; text: string; chunkId: string }> }> = [];
 const fixtureMeasurements: Array<Record<string, unknown>> = [];
+const adversarialMeasurements: Array<Record<string, unknown>> = [];
 const acquisitionDurations: number[] = [];
 let generationStarted = 0;
 let generationFinished = 0;
@@ -392,5 +393,163 @@ afterAll(() => {
   console.info('GAMING_GUIDE_DELIVERY_FIXTURE_METRICS ' + JSON.stringify({
     evidenceKind: 'deterministic external-service fixtures; test-harness timings',
     realPublisherCalls: 0, realProviderCalls: 0, realProviderCostUsd: 0, scenarios: fixtureMeasurements
+  }));
+});
+
+
+/** Build authored procedural evidence; none of these pages represents a publisher capture. */
+function proceduralScenario(question: string, prose: string, claims: Claim[]): Scenario {
+  const url = 'https://heldout-guides.example/elite/adversarial-procedure';
+  return { id: 'procedural-adversarial', game: 'Elite Dangerous', question,
+    pages: [{ url, title: 'Elite Dangerous system colonisation guide', body:
+      '<p>In the game Elite Dangerous, system colonisation uses settlement projects and construction deliveries. '
+      + 'Inspect the settlement manifest to plan construction deliveries for an existing colony.</p>' + prose }],
+    claims: claims.map(claim => ({ ...claim, url })) };
+}
+
+/** Record sanitized stages; source bodies, prompts, URLs and actor IDs stay out of this receipt. */
+function recordAdversarialResult(label: string, result: { statusCode: number; result: GamingHybridResponse }): void {
+  const accepted = evaluations.flatMap(value => value.accepted);
+  adversarialMeasurements.push({ case: label, acquiredDocuments: documents.length, acceptedSources: accepted.length,
+    identityVerifiedSources: accepted.filter(candidate => candidate.sourceAssessment.gates.identity === 'verified').length,
+    sourceClearAccepted: accepted.filter(candidate => candidate.sourceAssessment.decision === 'accept').length,
+    selectedPassages: result.result.selectedEvidenceIds?.length ?? 0, coverageSatisfied: result.result.coverageSatisfied,
+    state: result.result.state, answerPresent: Boolean(result.result.answer), failureReason: result.result.reason,
+    trinityStages: [...stages], syntheticSdkCalls: sdk.mock.calls.length, finalAudits: audits.length,
+    realPublisherCalls: 0, realProviderCalls: 0 });
+}
+
+/** Check that a delivered fixture answer was audited against its exact accepted source. */
+function expectAuditedProcedure(result: { statusCode: number; result: GamingHybridResponse }): void {
+  recordAdversarialResult(scenario.id, result);
+  expect(result.result.state === 'answer_ready' ? undefined : { reason: result.result.reason,
+    accepted: evaluations.flatMap(value => value.accepted).length, selected: result.result.selectedEvidenceIds,
+    missing: result.result.missingCoverage, stages }).toBeUndefined();
+  expect(result.result).toMatchObject({ state: 'answer_ready', coverageSatisfied: true, evidenceSelected: true });
+  expect(evaluations.flatMap(value => value.accepted).length).toBeGreaterThan(0);
+  expect(stages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
+  for (const claim of scenario.claims) {
+    const line = result.result.answer!.response.split('\n').find(value => claim.answerProbe.test(value));
+    const citation = Number(/\[(\d+)\]/u.exec(line ?? '')?.[1]);
+    expect(citation).toBeGreaterThan(0);
+    expect(result.result.answer!.sources[citation - 1]?.url).toBe(claim.url);
+    expect(audits[0].evidence.some(chunk => chunk.sourceIndex === citation && auditSourceUrl(chunk.sourceId) === claim.url
+      && claim.support.every(probe => probe.test(chunk.text)))).toBe(true);
+  }
+}
+
+describe('authored adversarial procedure facts through authenticated MCP', () => {
+  it.each([
+    { id: 'sold permits', sentence: 'To begin system colonisation, trade permits are sold at the market.',
+      draft: 'The source says trade permits are sold at the market.', support: /trade permits are sold at the market/iu },
+    { id: 'unavailable process', sentence: 'To begin system colonisation, the process is currently unavailable.',
+      draft: 'The source says the system colonisation process is currently unavailable.', support: /process is currently unavailable/iu },
+    { id: 'unanswered question', sentence: 'To begin system colonisation, what do I do?',
+      draft: 'The source asks what to do to begin system colonisation.', support: /what do I do/iu }
+  ])('does not promote a non-procedure into starting instructions: $id', async fixture => {
+    scenario = proceduralScenario('How do I start system colonisation in Elite Dangerous?', `<p>${fixture.sentence}</p>`,
+      [{ url: '', draft: fixture.draft, answerProbe: /source/iu, support: [fixture.support] }]);
+    const result = await harness(false).complete();
+    recordAdversarialResult(`non-procedure-${fixture.id}`, result);
+    expect(evaluations.flatMap(value => value.accepted).length).toBeGreaterThan(0);
+    expect(result.result).toMatchObject({ coverageSatisfied: false });
+    expect(result.result.answer).toBeUndefined();
+    expect(stages).toEqual([]);
+    expect(sdk).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { id: 'ordinary comma', sentence: 'To begin system colonisation, visit the System Colonisation Contact and select a destination.',
+      support: [/visit the System Colonisation Contact/iu, /select a destination/iu],
+      draft: 'Visit the System Colonisation Contact, then select a destination.' },
+    { id: 'start target by action', sentence: 'Start system colonisation by visiting a contact and selecting an unpopulated system.',
+      support: [/visiting a contact/iu, /selecting an unpopulated system/iu],
+      draft: 'Visit a colonisation contact, then select an unpopulated system.' },
+    { id: 'colon imperative', sentence: 'To begin system colonisation: visit the System Colonisation Contact.',
+      support: [/To begin system colonisation:/iu, /visit the System Colonisation Contact/iu],
+      draft: 'Visit the System Colonisation Contact to begin system colonisation.' }
+  ])('delivers an explicit acquired action expressed as $id', async fixture => {
+    scenario = proceduralScenario('How do I start system colonisation in Elite Dangerous?', `<p>${fixture.sentence}</p>`,
+      [{ url: '', draft: fixture.draft, answerProbe: /Visit/iu, support: fixture.support }]);
+    scenario.id = `valid-${fixture.id.replace(/[^a-z0-9]+/giu, '-')}`;
+    expectAuditedProcedure(await harness(false).complete());
+  });
+
+  it('delivers the first three supported actions without requiring presentation words in the guide', async () => {
+    scenario = proceduralScenario('Explain the first three actions needed for system colonisation.',
+      '<p>To begin system colonisation, visit the System Colonisation Contact. Select an unpopulated system. '
+      + 'Choose the initial station type and register the claim.</p>',
+      [{ url: '', draft: '1. Visit the System Colonisation Contact. 2. Select an unpopulated system. '
+        + '3. Choose the initial station type and register the claim.', answerProbe: /1\..*Contact.*2\..*unpopulated.*3\..*register/iu,
+        support: [/visit the System Colonisation Contact/iu, /Select an unpopulated system/iu, /register the claim/iu] }]);
+    scenario.id = 'first-three-actions';
+    expectAuditedProcedure(await harness(false).complete());
+  });
+
+  it('binds materials and their acquisition locations through ordinary them anaphora', async () => {
+    scenario = proceduralScenario('What materials do I need for system colonisation and where can I find them?',
+      '<p>For system colonisation, the required materials are palladium and water.</p>'
+      + '<p>Buy palladium at the refinery market and collect water at the extraction market.</p>',
+      [{ url: '', draft: 'System colonisation requires palladium and water; buy palladium at the refinery market '
+        + 'and collect water at the extraction market.', answerProbe: /palladium.*water.*refinery market.*extraction market/iu,
+        support: [/required materials are palladium and water/iu, /Buy palladium at the refinery market/iu,
+          /collect water at the extraction market/iu] }]);
+    scenario.id = 'materials-and-locations';
+    expectAuditedProcedure(await harness(false).complete());
+  });
+
+
+  it.each([
+    { id: 'unrelated-locations', locations: 'The trading interface is at the orbital concourse. The colony office is at the landing pad.' },
+    { id: 'other-material-locations', locations: 'Buy titanium at the refinery market and collect oxygen at the extraction market.' },
+    { id: 'missing-water-location', locations: 'Buy palladium at the refinery market. The guide does not establish where to find water.' }
+  ])('does not use unsupported locations to resolve material them: $id', async fixture => {
+    scenario = proceduralScenario('What materials do I need for system colonisation and where can I find them?',
+      '<p>For system colonisation, the required materials are palladium and water.</p>' + `<p>${fixture.locations}</p>`, []);
+    const result = await harness(false).complete();
+    recordAdversarialResult(fixture.id, result);
+    expect(evaluations.flatMap(value => value.accepted).length).toBeGreaterThan(0);
+    expect(result.result).toMatchObject({ coverageSatisfied: false });
+    expect(result.result.answer).toBeUndefined();
+    expect(stages).toEqual([]); expect(sdk).not.toHaveBeenCalled();
+  });
+
+  it('keeps an unquoted First Three Actions book as a named acquisition target', async () => {
+    scenario = proceduralScenario('Where do I obtain the First Three Actions book?',
+      '<p>The First Three Actions book is sold at the orbital depot.</p>',
+      [{ url: '', draft: 'Obtain the First Three Actions book at the orbital depot.',
+        answerProbe: /First Three Actions.*orbital depot/iu, support: [/First Three Actions book is sold at the orbital depot/iu] }]);
+    scenario.id = 'named-action-count-book';
+    expectAuditedProcedure(await harness(false).complete());
+  });
+
+  it('still rejects acquired wrong-game procedure material before any model stage', async () => {
+    scenario = proceduralScenario('How do I start system colonisation in Elite Dangerous?',
+      '<p>To begin system colonisation, visit the System Colonisation Contact and select a destination.</p>', []);
+    scenario.pages = scenario.pages.map(page => ({ ...page, title: 'EVE Online system colonisation guide',
+      body: page.body.replace(/Elite Dangerous/gu, 'EVE Online') }));
+    const result = await harness(false).complete();
+    recordAdversarialResult('wrong-game', result);
+    expect(result.result.answer).toBeUndefined();
+    expect(evaluations.flatMap(value => value.accepted)).toHaveLength(0);
+    expect(evaluations.flatMap(value => value.decisions).some(value => value.reasonCodes.includes('GAME_MISMATCH'))).toBe(true);
+    expect(stages).toEqual([]); expect(sdk).not.toHaveBeenCalled();
+  });
+
+  it('keeps explicit source edition conflicts binding before model work', async () => {
+    scenario = scenarios[1];
+    sourceSuffix = '<p>Edition: Shadow of the Erdtree.</p>';
+    const result = await harness(false).complete();
+    recordAdversarialResult('wrong-edition', result);
+    expect(result.result.answer).toBeUndefined();
+    expect(evaluations.flatMap(value => value.accepted)).toHaveLength(0);
+    expect(evaluations.flatMap(value => value.decisions).some(value => value.reasonCodes.includes('EDITION_CONFLICT'))).toBe(true);
+    expect(stages).toEqual([]); expect(sdk).not.toHaveBeenCalled();
+  });
+});
+
+afterAll(() => {
+  console.info('GAMING_GUIDE_ADVERSARIAL_METRICS ' + JSON.stringify({
+    evidenceKind: 'authored synthetic external services; actual authenticated application code', cases: adversarialMeasurements
   }));
 });

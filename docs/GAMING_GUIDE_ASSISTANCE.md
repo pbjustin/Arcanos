@@ -1288,6 +1288,25 @@ gameplay advice is still usable evidence. Affirmative contradictory owners of th
 same acquired article topic remain binding even when its title names the requested
 game. URL identity and frontend labels cannot resolve that contradiction.
 
+Starting-procedure coverage requires an affirmative acquired action tied to the
+requested topic. An introductory topic mention, a question, an unavailable
+procedure or an unrelated passive fact cannot establish that relationship. The
+bounded grammar accepts purpose clauses with a comma or colon and imperative
+“start [topic] by [action]” instructions. Negative gameplay advice remains
+available as evidence without proving an affirmative starting procedure.
+
+Explicit first-N-action requests retain their count (one through eight). Ordered
+actions must share an acquired starting anchor; separate paragraphs and
+alternative routes cannot pool their counts. Counted continuations retain the
+existing four-successor projection bound. Material requirements and their
+acquisition locations remain separate factual requirements. Closed same-sentence
+coordination can resolve “them” to the requested materials; unresolved subjects
+or cross-sentence pronouns require clarification. Named acquisition targets such
+as a Requirements for Victory book retain their literal identity. Presentation
+instructions do not supply missing gameplay facts. These checks preserve the
+eight-requirement and 8,000-character parsing bounds and do not change source
+authority, CLEAR policy, workflow budgets or the public MCP contract.
+
 The deterministic local acceptance fixtures in
 [`gamingAcceptance`](../tests/fixtures/gamingAcceptance/README.md) are synthetic,
 not captures of production wiki content. Authenticated served tests exercise

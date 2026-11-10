@@ -1,0 +1,72 @@
+{
+  "status": "PASS_WITH_RECORDED_INITIAL_HARNESS_TIMEOUT",
+  "executionHead": "ab8380e70116a50a0bfb524820cb97abdec3ccf4",
+  "sourceHashes": {
+    "src/services/gamingHybridCandidates.ts": "d43276f0188384db76fa9cba53acf57d22629462fdc0e4c69382bca3356b735a",
+    "src/shared/gaming/gamingClearEvidence.ts": "28e7d180a669b864dd2b86ce1dab829d1a4065b3f54046a8912e712cf2d5e444",
+    "src/shared/gaming/gamingRetrievalPolicy.ts": "824b5724e4247876d634a3397ee9aa5178ff0f5ac79640267022159e3dadc7f1",
+    "scripts/check-native-pr-preview-imports.mjs": "86864f3b6e44404916155f18c049224dcc8b4b54bedf17e2562d546e5a9523fa"
+  },
+  "reportedBuildSourceDigest": "36c15f4a83ab27f1971213187a4bf083cf41c80885b6db495c4dfb6b06c821c2",
+  "toolchain": {
+    "node": "24.18.1",
+    "npm": "11.16.0",
+    "postgres": "18.6"
+  },
+  "target": {
+    "newOwnedCluster": true,
+    "loopbackOnly": true,
+    "port": 56509,
+    "database": "arcanos_audit_pg18_20260727",
+    "applicationDatabaseUsed": false
+  },
+  "initialAttempt": {
+    "status": "FAILED",
+    "passedSuites": 6,
+    "failedSuites": 1,
+    "passedTests": 166,
+    "failedTests": 1,
+    "skippedTests": 0,
+    "openHandles": 0,
+    "failure": "Compiled HTTP parent ETIMEDOUT at90000ms while awaiting nested fresh-reader after grounded response and answer audit at61209ms",
+    "concurrentWork": "240-suite Gaming run active",
+    "schemaCleanupVerified": true
+  },
+  "isolatedFailedSuiteRerun": {
+    "status": "PASSED",
+    "passedSuites": 1,
+    "failedSuites": 0,
+    "passedTests": 2,
+    "failedTests": 0,
+    "skippedTests": 0,
+    "openHandles": 0,
+    "elapsedSeconds": 65.155,
+    "codeOrFixtureChanges": false,
+    "conditions": "Broad Gaming workers completed; same frozen source/build/HEAD; owned schemas clean before retry"
+  },
+  "latestDistinctTestResults": {
+    "suites": 7,
+    "tests": 167,
+    "passed": 167,
+    "failed": 0,
+    "skipped": 0
+  },
+  "failureInterpretation": "Initial failure is a harness timeout, not an observed assertion failure. Unchanged isolated rerun passes. Resource contention is consistent with the evidence but its exact contribution is not conclusively proved. Neither timeout nor production limits were increased.",
+  "falseAuthorityAcceptance": {
+    "accepted": 0,
+    "controls": 9,
+    "scope": "existing held-out SQL foreign-game/edition/platform/old-patch/unverified/reference/revoked/missing-grant/bad-binding controls"
+  },
+  "compiledPath": "actual compiled MCP/OAuth, SQL queue/worker and fresh-process authority, SDK/Trinity transport with synthetic loopback publisher/search/model responses",
+  "cleanup": {
+    "sourceUnchangedDuringValidation": true,
+    "headUnchangedDuringValidation": true,
+    "remainingGamingSchemas": 0,
+    "ownedServerStopped": true,
+    "priorClustersUntouched": true,
+    "ignoredClusterFilesPreserved": true,
+    "ownedDataDirectoryVerifiedBeforeStop": true
+  },
+  "realProviderCalls": 0,
+  "productionChanges": "NONE"
+}
