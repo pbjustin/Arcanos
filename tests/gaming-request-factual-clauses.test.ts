@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import { selectGamingHybridEvidence } from '../src/services/gamingHybridCandidates.js';
 import { assessGamingClearEvidence, assessGamingRequestCoverage } from '../src/shared/gaming/gamingClearEvidence.js';
-import { buildGamingRequestRequirements, gamingRequestScopeUnresolved } from '../src/shared/gaming/gamingRetrievalPolicy.js';
+import { buildGamingRequestRequirements, gamingAttributableClaimText, gamingRequestScopeUnresolved, gamingRequirementSupported } from '../src/shared/gaming/gamingRetrievalPolicy.js';
 import type { GamingStoredKnowledgeContext, GamingStoredKnowledgeInput } from '../src/shared/gaming/gamingStoredEvidenceCore.js';
 
 // Independently authored grammar/control fixtures, not publisher quotations or
@@ -194,5 +194,64 @@ describe('factual request clauses retain subject, relation and requested count',
     const input = request(prompt);
     expect(gamingRequestScopeUnresolved(input)).toBe(true);
     expect(assessGamingRequestCoverage(input, knowledge([firstThree])).coverageSatisfied).toBe(false);
+  });
+
+  it.each([
+    'Does system colonisation require a permit?',
+    'Does system colonisation need a permit?',
+    'Does system colonisation require a permit',
+    'System colonisation requires a permit?',
+    'System colonisation has no prerequisites?'
+  ])('does not promote an unanswered prerequisite question into acquired support: %s', passage => {
+    const input = request('Explain system colonisation prerequisites.');
+    const requirement = buildGamingRequestRequirements(input)[0];
+    const data = knowledge([passage]);
+    expect(requirement).toMatchObject({ procedure: 'prerequisite', terms: ['system', 'colonisation'] });
+    expect(gamingRequirementSupported(passage, requirement)).toBe(false);
+    expect(assessGamingRequestCoverage(input, data).coverageSatisfied).toBe(false);
+    const selected = selectGamingHybridEvidence(input, data);
+    expect(selected.coverageSatisfied).toBe(false);
+    expect(selected.selectedEvidenceIds).toEqual([]);
+    expect(assessGamingClearEvidence(input, data, { requireRequestCoverage: true }).gates.claimSupport).not.toBe('verified');
+    expect(assessGamingClearEvidence(input, selected.knowledge, { requireRequestCoverage: true }).gates.claimSupport).not.toBe('verified');
+  });
+
+  it.each([
+    'System colonisation requires a permit.',
+    'System colonisation has no prerequisites.',
+    'Do system colonisation only if you have a permit.'
+  ])('preserves explicit prerequisite and absence-of-prerequisite assertions: %s', passage => {
+    const input = request('Explain system colonisation prerequisites.');
+    const requirement = buildGamingRequestRequirements(input)[0];
+    const data = knowledge([passage]);
+    expect(gamingAttributableClaimText(passage, input.game)).toBe(passage);
+    expect(gamingRequirementSupported(passage, requirement)).toBe(true);
+    const selected = selectGamingHybridEvidence(input, data);
+    expect(selected.coverageSatisfied).toBe(true);
+    expect(selected.selectedEvidenceIds).toEqual(['factual-passage-0']);
+    expect(selected.knowledge.evidence![0].publicUrl).toBe(data.evidence![0].publicUrl);
+    expect(assessGamingClearEvidence(input, selected.knowledge, { requireRequestCoverage: true }).gates.claimSupport).toBe('verified');
+  });
+
+  it('uses an independent prerequisite assertion after an unanswered question', () => {
+    const input = request('Explain system colonisation prerequisites.');
+    const passage = 'Does system colonisation require a permit? System colonisation requires a survey permit.';
+    const data = knowledge([passage]);
+    expect(gamingRequirementSupported(passage, buildGamingRequestRequirements(input)[0])).toBe(true);
+    const selected = selectGamingHybridEvidence(input, data);
+    expect(selected.coverageSatisfied).toBe(true);
+    expect(selected.selectedEvidenceIds).toEqual(['factual-passage-0']);
+    expect(assessGamingClearEvidence(input, selected.knowledge, { requireRequestCoverage: true }).gates.claimSupport).toBe('verified');
+  });
+
+  it('retains negative gameplay advice without treating one excluded permit as complete prerequisite proof', () => {
+    const input = request('Explain system colonisation prerequisites.');
+    const passage = 'System colonisation does not require a permit.';
+    expect(gamingAttributableClaimText(passage, input.game)).toBe(passage);
+    expect(gamingRequirementSupported(passage, buildGamingRequestRequirements(input)[0])).toBe(false);
+    const data = knowledge([passage]);
+    expect(assessGamingRequestCoverage(input, data).coverageSatisfied).toBe(false);
+    expect(selectGamingHybridEvidence(input, data).coverageSatisfied).toBe(false);
+    expect(assessGamingClearEvidence(input, data, { requireRequestCoverage: true }).gates.claimSupport).not.toBe('verified');
   });
 });

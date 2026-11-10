@@ -524,6 +524,9 @@ export function gamingRequirementSupported(text: string, requirement: GamingRequ
   return text.split(/\n+|(?<=[.!?])\s+|;\s*/u).some(sentence => {
     if (gamingTermCoverage(sentence, requirement.terms) !== 1) return false;
     if (requirement.procedure === 'prerequisite') {
+      // An unanswered question supplies no prerequisite assertion, even when
+      // its leading auxiliary survives extraction without a question mark.
+      if (sentence.includes('?') || /^\s*does\s+/iu.test(sentence)) return false;
       const relation = /\b(?:requires?|needs?|must\s+(?:first\s+)?(?:have|obtain|buy|equip|unlock|complete|reach|finish|carry|collect|spend|select)|only\s+if|(?:is|are)\s+required|(?:no|without)\s+prerequisites?)\b/giu;
       return [...sentence.matchAll(relation)].some(match => {
         const prefix = sentence.slice(0, match.index);

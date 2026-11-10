@@ -88,3 +88,41 @@ The maintained [live-validation runbook](../../../../LIVE_VALIDATION.md) defines
 the exact-SHA bootstrap, paid admission, usage readback and scoped cleanup. A real
 result must distinguish the public Frontier acquisition from the authored negative
 control and preserve any failure rather than substituting synthetic success.
+
+## Additional prerequisite-question regression
+
+Independent review of `3500868f7bf26d28813764a07d8c68c5e8c31217` reproduced an
+unanswered question being counted as prerequisite support. The authored accepted
+passage `Does system colonisation require a permit?` passed the requirement
+predicate, actual passage selector, request coverage and CLEAR claim-support
+gate. The same question without its final question mark also passed. This is
+accepted-passage proof, not an independently acquired publisher or live-model
+exploit.
+
+The correction excludes question sentences and the proven leading `Does` form
+only from prerequisite support. It preserves independently stated requirements,
+explicit absence of prerequisites, affirmative `Do ... only if ...` instructions,
+negative gameplay advice and an affirmative answer following a question. Global
+claim attribution, source authority and coverage thresholds remain unchanged.
+
+The finalized 50-case factual-clause suite reports **45 pass / five fail** on the
+unchanged starting source; after the correction, five focused suites report
+**180/180 pass**, zero skips and zero open handles. The five former failures cover
+four punctuated question forms and the same unpunctuated `Does` frame. Every
+negative checks the predicate, actual selection/coverage and raw/selected CLEAR;
+positive controls retain their citation relationship. No real-provider call was
+made for these fixtures.
+
+The complete affected Gaming run passes **240 suites / 8,662 tests**, with zero
+failures, skips or open handles. The guarded durable-retrieval PostgreSQL suite
+passes **29/29** on a newly created local PostgreSQL 18.6 target. Its schemas and
+sessions were checked, the owned server was stopped and its listener was verified
+absent. Build, type-check, lint, backend/CLI contract/offline checks, Railway static
+validation and maintained documentation checks also pass on the repaired source.
+
+The separate local operator launcher has twelve passing offline safety tests and
+a nonpaid real-child startup check. Its temporary process uses an immutable
+bundle, a clean environment, UID/GID 65534 and authenticated loopback HTTP. Those
+checks establish local setup only. Actual paid execution remains gated by fresh
+exact-head CI and the ten verified offline records; it must not be reported as
+Railway hosting, installed MCP authentication or frontend discovery proof.
