@@ -323,8 +323,8 @@ execution. No local fixture or anonymous URL check proves live acceptance.
 
 | Profile | Required observations |
 | --- | --- |
-| `gaming-guide-positive` | Elden Ring, Samurai, immediately after tutorial, starting Uchigatana/early blade path, no explicit edition and ordinary advisory freshness. Missing PC context and three preferences are resolved in one workflow. Public fixture acquisition happens once; the three later replies retain selected evidence and acquisition allowances. Passing acceptance requires measured intake, reasoning and final stages, completed mandatory CLEAR audit, final `answer_ready`, admitted acquired-source citations, no durable source writes and no player persistence. |
-| `gaming-guide-negative` | The Elden Ring request supplies an explicitly wrong-game Sekiro guide. The source is rejected/excluded, conflict reason is preserved, unsupported generation is withheld and durable writes remain zero. |
+| `gaming-guide-positive` | Elite Dangerous system-colonisation prerequisites and first steps, independently acquired from Frontier's public system-colonisation guide. The ordinary stable-mechanics question makes no current-patch assertion. Passing acceptance requires selected evidence and complete coverage, measured intake/reasoning/final stages, completed mandatory CLEAR audit, final `answer_ready`, bound citations, no durable source writes and no player persistence. |
+| `gaming-guide-negative` | The Elite Dangerous request supplies an explicitly authored wrong-game Sekiro fixture at an immutable public GitHub URL. The source is rejected/excluded, conflict reason is preserved, provider calls remain zero and durable writes remain zero. |
 
 The adapter calls the existing v2 Gaming workflow. It forces `transient_only`,
 fresh request actor scope, skipped stored retrieval and denied ingestion. It does
@@ -333,10 +333,13 @@ invent a separate Gaming engine. A clarification is preserved as an observed
 result; it is not misreported as a generated audited answer. Missing noncritical
 patch knowledge retains the ordinary visible freshness qualification.
 
-The canonical profiles use immutable public GitHub URLs for the reviewed
-synthetic PC Samurai and wrong-game fixtures. Live execution proves the deployed
-pipeline over real HTTPS fixture acquisition and the configured provider; it does
-not certify external-publisher reachability or current patch compatibility.
+The canonical positive profile uses Frontier's real public article; its publisher
+reachability and usable evidence must pass during the run. The negative profile
+uses a clearly authored control. The separate fixture profiles retain the
+synthetic Samurai clarification regression. A live result proves only the
+acquisition and provider boundaries actually observed, never current-patch
+compatibility merely from successful HTTPS. This adapter invokes hybrid-v2
+directly; installed Gaming MCP OAuth and frontend search require separate proof.
 Optional `clarificationReplies` is bounded to eight cumulative context patches.
 The adapter generates continuation identity/revision/idempotency fields and
 submits one candidate batch; normal service refinement fences still apply.
@@ -387,6 +390,23 @@ stage evidence. They exclude prompts, source passages, answer prose, hidden
 reasoning, chain-of-thought, credentials, raw provider errors and responses.
 Citation evidence uses admitted source origins/document digests. Runtime stdout
 and diagnostic files are private untrusted data, not public acceptance artifacts.
+
+An accepted validation response additionally carries `privateAnswer` to the
+authenticated exact-run operator. The adapter creates it only after the existing
+bound CLEAR audit and final-response equality checks pass. It contains the exact
+answer, audit subject/context hashes and ordered source URLs, without source
+snippets, provider bodies or reasoning. Failed, incomplete or unbound results
+omit it. The existing runtime credential scan covers this separate field.
+
+After the original profile, identity, evidence, audit and provider-usage gates,
+the controller checks the closed bounded payload, canonical JSON-string answer
+hash, citation indices and usable source-document hashes. It writes
+`accepted-answer.private.json` through the existing protected writer into the
+outside-checkout `0700` operator directory as a `0600` file. Public evidence and
+summaries retain only a hash of that private artifact's answer payload; they never
+include its prose. Do not publish the private file or controller state. Retaining
+an audited answer for operator inspection does not enable player persistence or
+durable source ingestion.
 
 ## Secret scanning and deferred work
 

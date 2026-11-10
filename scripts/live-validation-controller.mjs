@@ -46,6 +46,37 @@ function publicEvidenceContainsSession(value, secrets) {
 }
 function json(text, code) { try { return JSON.parse(text); } catch { throw new LiveValidationControllerError(code); } }
 
+/** Only retain the audited answer as a private operator artifact, never public evidence. */
+export function validateLiveValidationPrivateAnswer(value, { evidence, observation, secrets = [] } = {}) {
+  const code = 'LIVE_VALIDATION_PRIVATE_ANSWER_INVALID';
+  requireController(exact(value, ['version', 'response', 'subjectHash', 'contextFingerprint', 'sources'])
+    && value.version === 1 && typeof value.response === 'string' && value.response.trim().length > 0
+    && value.response.length <= 65_536 && HASH.test(value.subjectHash ?? '') && HASH.test(value.contextFingerprint ?? '')
+    && canonicalHash(value.response) === value.subjectHash && !publicEvidenceContainsSession(value, secrets)
+    && evidence?.result?.acceptedAnswer === true && evidence.result.citationsResolved === true
+    && evidence.audit?.assessmentStatus === 'completed' && evidence.audit.decision === 'accept' && evidence.audit.boundToFinalAnswer === true
+    && observation?.coverage?.satisfied === true && observation.audit?.assessmentStatus === 'completed'
+    && observation.audit.decision === 'accept' && observation.audit.boundToFinalAnswer === true
+    && Array.isArray(value.sources) && value.sources.length > 0 && value.sources.length <= 8
+    && value.sources.length === evidence.result.sources.length, code);
+  for (const [index, source] of value.sources.entries()) {
+    requireController(exact(source, ['index', 'url']) && source.index === index + 1
+      && typeof source.url === 'string' && source.url.length <= 2_048, code);
+    let url;
+    try { url = new URL(source.url); } catch { throw new LiveValidationControllerError(code); }
+    requireController(url.protocol === 'https:' && !url.username && !url.password, code);
+    url.search = ''; url.hash = '';
+    requireController(evidence.result.sources.some(accepted => accepted.index === source.index && accepted.usable === true
+      && accepted.documentUrlSha256 === digest(url.toString())), code);
+  }
+  const references = [...value.response.matchAll(/(?:\[(?:sources?\s+)?|\(sources?\s+|\bsources?\s+)(\d+(?:\s*,\s*\d+)*)/giu)]
+    .flatMap(match => match[1].split(',').map(item => Number(item.trim())));
+  requireController(references.length > 0 && references.length <= 128
+    && references.every(index => value.sources.some(source => source.index === index))
+    && canonicalHash([...new Set(references)].sort((a, b) => a - b)) === canonicalHash(evidence.result.citationIndices), code);
+  return structuredClone(value);
+}
+
 export function parseLiveValidationControllerArguments(argv) {
   const args = { command: argv[0] === 'cleanup' ? 'cleanup' : 'run', execute: false, allowPaidProvider: false, operatorBootstrap: false,
     profile: 'gaming-guide', limits: { ...LIVE_VALIDATION_HARD_LIMITS } };
@@ -803,6 +834,13 @@ export async function runLiveValidationController(argv, dependencies = {}) {
       requireController(providerCalls >= 0 && generationCalls >= 0 && auditCalls >= 0
         && (entry.expected.providerCalls === 0 ? providerCalls === 0 && generationCalls === 0 && auditCalls === 0
           : generationCalls > 0 && auditCalls > 0), 'LIVE_VALIDATION_ACTUAL_PROVIDER_USAGE_FAILED');
+      if (entry.expected.outcome === 'accepted') {
+        const answer = validateLiveValidationPrivateAnswer(response.privateAnswer,
+          { evidence: observedCase.evidence, observation: observedCase.observation, secrets: [testToken] });
+        protectedWrite(path.join(directory, 'accepted-answer.private.json'), { version: 1, runId: state.runId,
+          caseId: entry.id, sourceCommit: args.commitSha, runtimeIdentity, profileHash, ...answer });
+        observedCase.answerArtifactSha256 = canonicalHash(answer);
+      } else requireController(response.privateAnswer === undefined, 'LIVE_VALIDATION_PRIVATE_ANSWER_INVALID');
       Object.assign(observedCase, { status: 'PASS', actualUsage: { providerCalls, generationCalls, auditCalls } }); priorUsage = usage; actualUsage = usage;
     }
     requireController(priorUsage.workflows === 2, 'LIVE_VALIDATION_WORKFLOW_COUNT_FAILED'); state.completed = true; writeState(state);

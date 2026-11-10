@@ -87,14 +87,12 @@ function identity(target) {
 }
 function observation(positive) {
   return { schemaVersion: 1, contractVersion: 'gaming-hybrid-v2', outcome: positive ? 'accepted' : 'need_new_source',
-    reason: positive ? null : 'GAME_MISMATCH', semanticGap: positive ? 'NONCRITICAL_GAP' : 'CONFLICT',
+    reason: positive ? null : 'GAME_MISMATCH', semanticGap: positive ? 'NONE' : 'CONFLICT',
     coverage: { satisfied: positive, assessmentStatus: 'assessed', missingCount: positive ? 0 : 1 },
     selectedCandidateCount: positive ? 1 : 0, selectedEvidenceCount: positive ? 1 : 0,
     candidates: positive ? [] : [{ decision: 'rejected', reasonCodes: ['GAME_MISMATCH'] }],
-    qualification: { visible: positive, patchCompatibility: 'unverified', claimsVerifiedCurrentness: false },
+    qualification: { visible: false, patchCompatibility: positive ? 'not_required' : 'unverified', claimsVerifiedCurrentness: false },
     audit: positive ? { assessmentStatus: 'completed', decision: 'accept', boundToFinalAnswer: true } : null,
-    ...(positive ? { clarification: { version: 1, submittedCount: 4, completedCount: 4, postAcquisitionCount: 3,
-      sameWorkflow: true, revisionsAdvanced: true, retainedEvidence: true, budgetsPreserved: true, acquisitionCount: 1 } } : {}),
     auditStartBudget: { runtimeRemainingMs: 120000, requestRemainingMs: 120000 },
     stages: Object.fromEntries(['acquisition', 'selection', 'generation', 'intake', 'reasoning', 'final', 'answer_audit', 'response']
       .map(stage => [stage, { status: positive || ['acquisition', 'selection', 'response'].includes(stage) ? 'passed' : 'not_run', elapsedMs: positive ? 10 : null }])) };
@@ -103,6 +101,13 @@ function observation(positive) {
 test('controller uses its real service client, runtime HTTP auth and direct SDK provider through both profiles and cleanup', async t => {
   const f = fixture(t); let token; let active = false; let stopped = false; let providerCalls = 0; let server; let origin;
   let application; const routes = []; const providerUrls = [];
+  // Controlled adapter/provider fixtures exercise transport and retention only;
+  // this prose is not an acquired publisher claim or a live model answer.
+  const answer = '1. Follow the documented system-colonisation starting procedure [1].';
+  const contextFingerprint = '9'.repeat(64); let expectedPrivateAnswer;
+  assert.equal(profiles.profiles[0].input.query.game, 'Elite Dangerous');
+  assert.equal(profiles.profiles[0].expected.semanticGap, 'NONE');
+  assert.equal(profiles.profiles[0].input.clarificationReplies, undefined);
   const railway = {
     async inventory() { return inventory(f.target, active, stopped); },
     async bindTestToken(target, value) { assert.equal(target.runtimeServiceId, runtimeId); token = value; },
@@ -130,8 +135,11 @@ test('controller uses its real service client, runtime HTTP auth and direct SDK 
               await client.responses.create({ model: target.models[0].id, input: 'Offline grounded guide fixture.', max_output_tokens: 100 });
               hooks.onAnswerAuditStart(); assert.equal(getStage().stage, 'answer_audit');
               await client.responses.create({ model: target.models[1].id, input: 'Offline mandatory audit fixture.', max_output_tokens: 100 });
+              expectedPrivateAnswer = { version: 1, response: answer, subjectHash: validationHash(answer), contextFingerprint,
+                sources: entry.input.candidateUrls.map((url, index) => ({ index: index + 1, url })) };
               return { accepted: true, audit: { assessmentStatus: 'completed', decision: 'accept', boundToFinalAnswer: true },
-                result: { ok: true, route: 'gaming', mode: 'guide', data: { response: 'Use the documented early blade path [1].',
+                privateAnswer: expectedPrivateAnswer,
+                result: { ok: true, route: 'gaming', mode: 'guide', data: { response: answer,
                   sources: [{ url: entry.input.candidateUrls[0], snippet: 'Offline acquired evidence fixture.' }],
                   grounding: { groundingStatus: 'grounded', groundedInSuppliedEvidence: true, fetchedSuppliedSourceCount: 1, usableSourceCount: 1,
                     citableSourceCount: 1, selectedChunkCount: 1, suppliedEvidenceSourceCount: 1 } } } };
@@ -159,4 +167,16 @@ test('controller uses its real service client, runtime HTTP auth and direct SDK 
   assert.equal(result.actualUsage.workflows, 2); assert.equal(result.actualUsage.metadataRequests, 0); assert.equal(result.actualUsage.observedTotalTokens, 6);
   assert.equal(stopped, true); assert.ok(routes.includes('/stop')); assert.equal(result.cleanup.runClosed, true);
   assert.equal(JSON.stringify(result).includes(token), false); assert.equal(JSON.stringify(result).includes('sk-offline-test-synthetic-validation-credential'), false);
+  const retained = JSON.parse(readFileSync(path.join(f.directory, 'evidence', 'accepted-answer.private.json'), 'utf8'));
+  assert.equal(retained.caseId, 'gaming-guide-positive'); assert.equal(retained.sourceCommit, sha);
+  for (const key of ['version', 'response', 'subjectHash', 'contextFingerprint', 'sources']) assert.deepEqual(retained[key], expectedPrivateAnswer[key]);
+  assert.equal(result.cases[0].answerArtifactSha256, validationHash(expectedPrivateAnswer));
+  assert.equal(result.cases[1].answerArtifactSha256, undefined);
+  assert.equal(result.cases[0].observation.semanticGap, 'NONE');
+  assert.equal(result.cases[0].observation.clarification, undefined);
+  assert.equal(result.cases[0].observation.qualification.visible, false);
+  for (const prohibited of [answer, contextFingerprint, 'Offline acquired evidence fixture.', 'privateAnswer']) {
+    assert.equal(JSON.stringify(result).includes(prohibited), false);
+  }
+  assert.equal(JSON.stringify(retained).includes('Offline acquired evidence fixture.'), false);
 });

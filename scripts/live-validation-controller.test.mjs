@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -12,12 +12,14 @@ import { LIVE_VALIDATION_PROJECT_ID, LIVE_VALIDATION_HARD_LIMITS, LIVE_VALIDATIO
 import { canonicalLiveValidationJson, validationHash } from './live-validation-bootstrap.mjs';
 import { createLivePreviewEvidence, LIVE_PREVIEW_CASE_MANIFEST } from './live-pr-preview-verifier.mjs';
 import { createLiveValidationProvider } from './live-validation-provider.mjs';
+import * as privateAnswerController from './live-validation-controller.mjs';
 
 const ROOT = path.resolve(new URL('../', import.meta.url).pathname);
 const sha = 'a'.repeat(40); const trustedSha = 'b'.repeat(40); const treeSha = 'c'.repeat(40); const compiledSha256 = 'd'.repeat(64);
 const envId = '11111111-1111-4111-8111-111111111111'; const runtimeId = '22222222-2222-4222-8222-222222222222';
 const runtimeDeploymentId = '55555555-5555-4555-8555-555555555555';
 const hash = value => createHash('sha256').update(value).digest('hex');
+const ANSWER_TEXT = 'Use the supplied documented blade path [1].';
 const profiles = JSON.parse(readFileSync(path.join(ROOT, 'examples/live-validation/profiles.json'), 'utf8'));
 function profileFixture() {
   const value = structuredClone(profiles);
@@ -109,7 +111,7 @@ function evidenceFor(entry) {
     maxTotalTokens: 20_000, durationMs: 600_000, maxSpendMicroUsd: 2_000_000, maxConcurrency: 1, maxRetries: 0 };
   return createLivePreviewEvidence({ sourceCommit: sha, approvedSourceCommit: sha, deploymentId: runtimeDeploymentId, moduleId: 'gaming', mode: 'live-backend-v1' }, {
     caseId: entry.caseId, failureCode: spec.failureCode, stages: spec.stages,
-    result: positive ? { ok: true, route: 'gaming', mode: 'guide', data: { response: 'Use the supplied documented blade path [1].',
+    result: positive ? { ok: true, route: 'gaming', mode: 'guide', data: { response: ANSWER_TEXT,
       sources: [{ url: entry.input.candidateUrls[0], snippet: 'Grounded preparation and blade guidance.' }],
       grounding: { groundingStatus: 'grounded', groundedInSuppliedEvidence: true, fetchedSuppliedSourceCount: 1,
         usableSourceCount: 1, citableSourceCount: 1, selectedChunkCount: 1, suppliedEvidenceSourceCount: 1 } } } : undefined,
@@ -120,13 +122,23 @@ function evidenceFor(entry) {
       reservedSpendMicroUsd: positive ? 10_000 : 0, observedInputTokens: positive ? 600 : 0, observedOutputTokens: positive ? 100 : 0,
       observedSpendMicroUsd: positive ? 4_000 : 0, elapsedMs: 100, limits } });
 }
+/** Accepted synthetic answer data stays separate from closed public evidence. */
+function privateAnswerFor(entry, response = ANSWER_TEXT) {
+  return { version: 1, response, subjectHash: validationHash(response),
+    contextFingerprint: validationHash({ scope: 'offline-private-answer' }),
+    sources: [{ index: 1, url: entry.input.candidateUrls[0] }] };
+}
+/** Call through the module namespace so the before-feature suite can still load. */
+const validatePrivateAnswer = (...args) => privateAnswerController.validateLiveValidationPrivateAnswer(...args);
 function observation(positive) {
   return { schemaVersion: 1, contractVersion: 'gaming-hybrid-v2', outcome: positive ? 'accepted' : 'need_new_source',
-    reason: positive ? null : 'GAME_MISMATCH', semanticGap: positive ? 'NONCRITICAL_GAP' : 'CONFLICT',
+    reason: positive ? null : 'GAME_MISMATCH',
+    semanticGap: positive ? profiles.profiles.find(entry => entry.id === 'gaming-guide-positive').expected.semanticGap : 'CONFLICT',
     coverage: { satisfied: positive, assessmentStatus: 'assessed', missingCount: positive ? 0 : 1 },
     selectedCandidateCount: positive ? 1 : 0, selectedEvidenceCount: positive ? 1 : 0,
     candidates: positive ? [] : [{ decision: 'rejected', reasonCodes: ['GAME_MISMATCH'] }],
-    qualification: { visible: positive, patchCompatibility: 'unverified', claimsVerifiedCurrentness: false },
+    qualification: { visible: positive && profiles.profiles.find(entry => entry.id === 'gaming-guide-positive').expected.qualifiedUnknownPatch === true,
+      patchCompatibility: 'unverified', claimsVerifiedCurrentness: false },
     audit: positive ? { assessmentStatus: 'completed', decision: 'accept', boundToFinalAnswer: true } : null,
     auditStartBudget: { runtimeRemainingMs: 120000, requestRemainingMs: 120000 },
     stages: Object.fromEntries(['acquisition', 'selection', 'generation', 'intake', 'reasoning', 'final', 'answer_audit', 'response']
@@ -165,8 +177,13 @@ function executionFixture(f, options = {}) {
       const projected = observation(positive); if (options.lostConflict && !positive) projected.candidates = [];
       if (positive) options.mutateObservation?.(projected);
       if (options.leakToken && positive) evidence.result.sources[0].url = 'https://' + token + '.example.org';
+      options.mutateEvidence?.(evidence, positive);
+      let privateAnswer = positive && !options.omitPrivateAnswer ? privateAnswerFor(entry) : undefined;
+      if (privateAnswer) options.mutatePrivateAnswer?.(privateAnswer, { token, evidence, observation: projected });
+      if (!positive && options.negativePrivateAnswer) privateAnswer = privateAnswerFor(entry, 'Unexpected negative answer [1].');
+      options.beforeAcceptanceReturn?.({ positive });
       return { status: 200, body: { identity: identity(f.target), caseId: entry.id, evidence, observation: projected,
-        profilePassed: true, durableWrites: 0, productionChanged: false } };
+        profilePassed: true, durableWrites: 0, productionChanged: false, ...(privateAnswer ? { privateAnswer } : {}) } };
     }
     throw new Error('Unexpected service route');
   } };
@@ -281,6 +298,125 @@ test('one-service mocked flow binds ephemeral token before exact deploy, proves 
   assert.deepEqual(e.seen.slice(0, 3), ['bind', 'deploy', '/ready']); assert.equal(e.stopped(), true);
   assert.equal(result.cases[1].observation.candidates[0].reasonCodes[0], 'GAME_MISMATCH');
   assert.equal(JSON.stringify(result).includes(Buffer.alloc(32, 17).toString('hex')), false);
+  const answerFile = path.join(f.directory, 'evidence', 'accepted-answer.private.json');
+  const retained = JSON.parse(readFileSync(answerFile, 'utf8'));
+  const positive = profileFixture().profiles.find(entry => entry.id === 'gaming-guide-positive');
+  assert.equal(lstatSync(answerFile).mode & 0o077, 0);
+  assert.equal(lstatSync(path.dirname(answerFile)).mode & 0o077, 0);
+  if (typeof process.getuid === 'function') assert.equal(lstatSync(answerFile).uid, process.getuid());
+  assert.equal(retained.response, ANSWER_TEXT); assert.equal(retained.subjectHash, validationHash(ANSWER_TEXT));
+  assert.equal(retained.caseId, positive.id); assert.equal(retained.sourceCommit, sha);
+  assert.equal(retained.runId, result.runId); assert.equal(retained.profileHash, e.plan().profileHash);
+  assert.deepEqual(retained.sources, privateAnswerFor(positive).sources);
+  assert.deepEqual(retained.runtimeIdentity, result.runtimeIdentity);
+  assert.equal(result.cases[0].answerArtifactSha256, validationHash(privateAnswerFor(positive)));
+  assert.equal(Object.hasOwn(result.cases[1], 'answerArtifactSha256'), false);
+  for (const publicValue of [result, JSON.parse(readFileSync(path.join(f.directory, 'evidence', 'acceptance-summary.json'), 'utf8'))]) {
+    const serialized = JSON.stringify(publicValue);
+    assert.equal(serialized.includes(ANSWER_TEXT), false);
+    assert.equal(serialized.includes(positive.input.candidateUrls[0]), false);
+    assert.equal(serialized.includes('privateAnswer'), false);
+    assert.equal(serialized.includes('contextFingerprint'), false);
+  }
+});
+
+test('private answer validation accepts exact bound content while cloning it away from caller mutation', () => {
+  const entry = profileFixture().profiles.find(value => value.id === 'gaming-guide-positive');
+  const input = privateAnswerFor(entry);
+  const validated = validatePrivateAnswer(input, { evidence: evidenceFor(entry), observation: observation(true) });
+  assert.deepEqual(validated, input); assert.notEqual(validated, input); assert.notEqual(validated.sources, input.sources);
+  input.sources[0].url = 'https://different.example.org/changed';
+  assert.equal(validated.sources[0].url, entry.input.candidateUrls[0]);
+});
+
+test('private answer validation rejects invalid shapes, unbound content, citations, sources and audit state', async t => {
+  const entry = profileFixture().profiles.find(value => value.id === 'gaming-guide-positive');
+  const mutations = [
+    ['unknown field', value => { value.rawSource = 'private acquired source'; }],
+    ['missing field', value => { delete value.contextFingerprint; }],
+    ['wrong version', value => { value.version = 2; }],
+    ['empty answer', value => { value.response = ' '; value.subjectHash = validationHash(value.response); }],
+    ['oversized answer', value => { value.response = 'x'.repeat(65_537); value.subjectHash = validationHash(value.response); }],
+    ['changed answer hash', value => { value.response += ' altered'; }],
+    ['invalid context fingerprint', value => { value.contextFingerprint = 'not-a-hash'; }],
+    ['source ordinal', value => { value.sources[0].index = 2; }],
+    ['unknown source field', value => { value.sources[0].body = 'private source'; }],
+    ['wrong source URL', value => { value.sources[0].url = 'https://different.example.org/guide'; }],
+    ['plain HTTP', value => { value.sources[0].url = value.sources[0].url.replace('https:', 'http:'); }],
+    ['credential-bearing URL', value => { const url = new URL(value.sources[0].url); url.username = 'fixture'; value.sources[0].url = url.toString(); }],
+    ['no sources', value => { value.sources = []; }],
+    ['duplicate source', value => { value.sources.push({ ...value.sources[0] }); }],
+    ['missing citation', value => { value.response = 'An answer without a citation.'; value.subjectHash = validationHash(value.response); }],
+    ['out of range citation', value => { value.response = 'A claimed answer [2].'; value.subjectHash = validationHash(value.response); }],
+    ['unusable source', (_value, evidence) => { evidence.result.sources[0].usable = false; }],
+    ['source hash mismatch', (_value, evidence) => { evidence.result.sources[0].documentUrlSha256 = 'e'.repeat(64); }],
+    ['citation proof mismatch', (_value, evidence) => { evidence.result.citationIndices = []; }],
+    ['not accepted', (_value, evidence) => { evidence.result.acceptedAnswer = false; }],
+    ['unresolved citations', (_value, evidence) => { evidence.result.citationsResolved = false; }],
+    ['unbound audit', (_value, evidence) => { evidence.audit.boundToFinalAnswer = false; }],
+    ['rejected audit', (_value, evidence) => { evidence.audit.decision = 'reject'; }],
+    ['unfinished audit', (_value, evidence) => { evidence.audit.assessmentStatus = 'unavailable'; }],
+    ['missing coverage', (_value, _evidence, observed) => { observed.coverage.satisfied = false; }],
+    ['unbound observation', (_value, _evidence, observed) => { observed.audit.boundToFinalAnswer = false; }],
+    ['rejected observation audit', (_value, _evidence, observed) => { observed.audit.decision = 'reject'; }],
+    ['unfinished observation audit', (_value, _evidence, observed) => { observed.audit.assessmentStatus = 'unavailable'; }]
+  ];
+  for (const [label, mutate] of mutations) await t.test(label, () => {
+    const value = privateAnswerFor(entry); const evidence = evidenceFor(entry); const observed = observation(true);
+    mutate(value, evidence, observed);
+    assert.throws(() => validatePrivateAnswer(value, { evidence, observation: observed }), { code: 'LIVE_VALIDATION_PRIVATE_ANSWER_INVALID' });
+  });
+});
+
+test('private answer validation rejects a known secret without exposing it in the error', () => {
+  const entry = profileFixture().profiles.find(value => value.id === 'gaming-guide-positive');
+  const secret = 'test-private-secret-value';
+  const value = privateAnswerFor(entry, `This private answer contains ${secret}. [1]`);
+  assert.throws(() => validatePrivateAnswer(value, { evidence: evidenceFor(entry), observation: observation(true), secrets: [secret] }),
+    error => error.code === 'LIVE_VALIDATION_PRIVATE_ANSWER_INVALID' && !String(error).includes(secret));
+});
+
+test('failed positive proof never retains the private payload or returns it in the summary', async t => {
+  for (const [label, options] of [
+    ['missing private payload', { omitPrivateAnswer: true }],
+    ['changed private answer', { mutatePrivateAnswer: value => { value.response += ' unbound'; } }],
+    ['unbound audit', { unboundAudit: true }],
+    ['fallback result', { mutateEvidence: (evidence, positive) => { if (positive) evidence.result.acceptedAnswer = false; } }],
+    ['runtime token in answer', { mutatePrivateAnswer: (value, { token }) => {
+      value.response = `Private ${token} [1]`; value.subjectHash = validationHash(value.response);
+    } }]
+  ]) await t.test(label, async child => {
+    const f = fixture(child); const e = executionFixture(f, options); const result = await execute(f, e);
+    assert.notEqual(result.status, 'PASS'); assert.equal(e.stopped(), true);
+    assert.equal(existsSync(path.join(f.directory, 'evidence', 'accepted-answer.private.json')), false);
+    const publicJson = JSON.stringify(result);
+    assert.equal(publicJson.includes(ANSWER_TEXT), false);
+    assert.equal(publicJson.includes('unbound'), false);
+    assert.equal(publicJson.includes(Buffer.alloc(32, 17).toString('hex')), false);
+    assert.equal(publicJson.includes('privateAnswer'), false);
+  });
+});
+
+test('a negative profile cannot replace the accepted positive private artifact', async t => {
+  const f = fixture(t); const e = executionFixture(f, { negativePrivateAnswer: true });
+  const result = await execute(f, e);
+  assert.equal(result.status, 'FAILED'); assert.equal(result.code, 'LIVE_VALIDATION_PRIVATE_ANSWER_INVALID');
+  const retained = JSON.parse(readFileSync(path.join(f.directory, 'evidence', 'accepted-answer.private.json'), 'utf8'));
+  assert.equal(retained.response, ANSWER_TEXT); assert.notEqual(retained.response, 'Unexpected negative answer [1].');
+  assert.equal(JSON.stringify(result).includes('Unexpected negative answer'), false);
+  assert.equal(Object.hasOwn(result.observedCases[1], 'answerArtifactSha256'), false);
+});
+
+test('private answer retention refuses a symlink destination without overwriting its target', async t => {
+  const f = fixture(t); const target = path.join(f.directory, 'keep-existing.txt');
+  writeFileSync(target, 'keep-existing-content', { mode: 0o600 });
+  const e = executionFixture(f, { beforeAcceptanceReturn: ({ positive }) => {
+    if (positive) symlinkSync(target, path.join(f.directory, 'evidence', 'accepted-answer.private.json'));
+  } });
+  const result = await execute(f, e);
+  assert.equal(result.status, 'FAILED'); assert.equal(result.code, 'LIVE_VALIDATION_STATE_UNSAFE');
+  assert.equal(readFileSync(target, 'utf8'), 'keep-existing-content'); assert.equal(e.stopped(), true);
+  assert.equal(JSON.stringify(result).includes(ANSWER_TEXT), false);
 });
 test('accepted deployment with a lost response preserves intent and blocks cleanup without provider admission or guessed stop', async t => {
   const f = fixture(t); let persistedBeforeDeploy;

@@ -5,7 +5,7 @@ import test from 'node:test';
 import OpenAI from 'openai';
 import { getRequestRemainingMs, runWithRequestAbortTimeout } from '@arcanos/runtime';
 import { createValidationRuntimeApplication, resolveLiveValidationModels,
-  LIVE_VALIDATION_ACCEPTANCE_WORK_TIMEOUT_MS } from './start-live-validation-runtime.mjs';
+  LIVE_VALIDATION_ACCEPTANCE_WORK_TIMEOUT_MS, validationProfilePassed } from './start-live-validation-runtime.mjs';
 import { createLiveValidationProvider } from './live-validation-provider.mjs';
 import { validationHash } from './live-validation-bootstrap.mjs';
 import { sanitizeLiveValidationUsage } from './live-validation-controller.mjs';
@@ -77,18 +77,24 @@ function fixture(t, overrides = {}) {
       await client.responses.create({ model: MODEL, input: PRIVATE_PROMPT, max_output_tokens: 100 });
       observer.onAnswerAuditStart();
       await client.responses.create({ model: 'gpt-6-luna', input: PRIVATE_PROMPT, max_output_tokens: 100 });
-      lastObservation = { schemaVersion: 1, contractVersion: 'gaming-hybrid-v2', outcome: 'accepted', semanticGap: 'NONCRITICAL_GAP', reason: null,
+      lastObservation = { schemaVersion: 1, contractVersion: 'gaming-hybrid-v2', outcome: 'accepted',
+        semanticGap: profiles.profiles.find(value => value.id === POSITIVE).expected.semanticGap, reason: null,
         coverage: { satisfied: true, assessmentStatus: 'assessed', missingCount: 0 }, selectedCandidateCount: 1,
         audit: { assessmentStatus: 'completed', decision: 'accept', boundToFinalAnswer: !overrides.unbound },
         auditStartBudget: { runtimeRemainingMs: 120_000, requestRemainingMs: 120_000 },
-        selectedEvidenceCount: 1, qualification: { visible: true, patchCompatibility: 'unverified', claimsVerifiedCurrentness: false }, candidates: [], stages: {
+        selectedEvidenceCount: 1, qualification: { visible: profiles.profiles.find(value => value.id === POSITIVE).expected.qualifiedUnknownPatch === true,
+          patchCompatibility: 'unverified', claimsVerifiedCurrentness: false }, candidates: [], stages: {
           ...Object.fromEntries(['acquisition', 'selection', 'intake', 'reasoning', 'final', 'response'].map(stage => [stage, { status: 'passed', elapsedMs: 1 }])),
           generation: { status: 'passed', elapsedMs: 1 }, answer_audit: { status: 'passed', elapsedMs: 1 } } };
-      return { accepted: true, audit: { assessmentStatus: 'completed', decision: 'accept', boundToFinalAnswer: !overrides.unbound },
+      const result = { accepted: true, audit: { assessmentStatus: 'completed', decision: 'accept', boundToFinalAnswer: !overrides.unbound },
         result: { ok: true, data: { response: PRIVATE_ANSWER,
           sources: [{ url: input.candidateUrls[0], snippet: 'private-source-passage' }],
           grounding: { groundingStatus: 'grounded', groundedInSuppliedEvidence: true, fetchedSuppliedSourceCount: 1,
-            usableSourceCount: 1, citableSourceCount: 1, selectedChunkCount: 1, suppliedEvidenceSourceCount: 1 } } } };
+            usableSourceCount: 1, citableSourceCount: 1, selectedChunkCount: 1, suppliedEvidenceSourceCount: 1 } } },
+        privateAnswer: { version: 1, response: PRIVATE_ANSWER, subjectHash: validationHash(PRIVATE_ANSWER),
+          contextFingerprint: validationHash({ scope: 'offline-private-answer' }), sources: [{ index: 1, url: input.candidateUrls[0] }] } };
+      overrides.mutateModuleResult?.(result);
+      return result;
     }, getLastObservation: () => lastObservation ? structuredClone(lastObservation) : undefined
   };
   const runtime = createValidationRuntimeApplication({ target, identity, profiles, buildManifest, now, testToken,
@@ -178,12 +184,17 @@ test('positive and wrong-game negative profiles share one direct metered SDK lan
   assert.equal(positive.body.profilePassed, true); assert.equal(positive.body.verification.status, 'PASS');
   assert.deepEqual(positive.body.providerDelta, { providerCalls: 2, generationCalls: 1, auditCalls: 1 });
   assert.equal(positive.body.observation.stages.response.status, 'passed');
-  for (const secret of [PRIVATE_PROMPT, PRIVATE_PROVIDER, PRIVATE_ANSWER, CREDENTIAL, TOKEN, 'private-source-passage', '/private/path'])
+  assert.deepEqual(positive.body.privateAnswer, { version: 1, response: PRIVATE_ANSWER, subjectHash: validationHash(PRIVATE_ANSWER),
+    contextFingerprint: validationHash({ scope: 'offline-private-answer' }), sources: [{ index: 1, url: f.profile(POSITIVE).input.candidateUrls[0] }] });
+  const { privateAnswer: _answer, ...publicValue } = positive.body;
+  assert.equal(JSON.stringify(publicValue).includes(PRIVATE_ANSWER), false);
+  for (const secret of [PRIVATE_PROMPT, PRIVATE_PROVIDER, CREDENTIAL, TOKEN, 'private-source-passage', '/private/path'])
     assert.ok(!positive.text.includes(secret));
   assert.equal(positive.body.durableWrites, 0); assert.equal(positive.body.playerPersistence, 0);
   assert.equal(positive.body.productionChanged, false);
   const negative = await f.acceptance(NEGATIVE); assert.equal(negative.status, 200);
   assert.equal(negative.body.profilePassed, true); assert.equal(negative.body.observation.semanticGap, 'CONFLICT');
+  assert.equal(Object.hasOwn(negative.body, 'privateAnswer'), false);
   assert.deepEqual(negative.body.providerDelta, { providerCalls: 0, generationCalls: 0, auditCalls: 0 });
   assert.equal(f.counts().providerCalls, 3); // One real SDK model lookup, generation and mandatory audit.
   assert.ok(f.seen.every(value => value.url.startsWith('https://api.openai.com/v1/')));
@@ -204,7 +215,32 @@ test('unbound mandatory audit cannot pass despite successful real SDK transports
   const result = await f.acceptance(POSITIVE); assert.equal(result.status, 200);
   assert.equal(result.body.profilePassed, false); assert.equal(result.body.verification.status, 'FAIL');
   assert.equal(result.body.evidence.stages.delivery, 'rejected');
+  assert.equal(Object.hasOwn(result.body, 'privateAnswer'), false);
+  assert.equal(result.text.includes(PRIVATE_ANSWER), false);
 });
+
+test('failed or fallback verification withholds the adapter private answer', async t => {
+  const f = fixture(t, { mutateModuleResult: result => { result.result.ok = false; } }); await f.admit();
+  const response = await f.acceptance(POSITIVE);
+  assert.equal(response.status, 200); assert.equal(response.body.profilePassed, false);
+  assert.equal(response.body.verification.status, 'FAIL');
+  assert.equal(Object.hasOwn(response.body, 'privateAnswer'), false);
+  assert.equal(response.text.includes(PRIVATE_ANSWER), false);
+});
+
+for (const [label, secret] of [['model credential', CREDENTIAL], ['temporary runtime token', TOKEN]])
+  test(`private answer retention does not return the ${label}`, async t => {
+    const f = fixture(t, { mutateModuleResult: result => {
+      result.privateAnswer.response = `Fixture output ${secret} [1]`;
+      result.privateAnswer.subjectHash = validationHash(result.privateAnswer.response);
+    } }); await f.admit();
+    const response = await f.acceptance(POSITIVE);
+    assert.equal(response.status, 403);
+    assert.equal(response.body.error.code, 'LIVE_VALIDATION_SECRET_IN_EVIDENCE');
+    assert.equal(Object.hasOwn(response.body, 'privateAnswer'), false);
+    assert.equal(response.text.includes(secret), false);
+    assert.equal(response.text.includes('Fixture output'), false);
+  });
 
 test('overlap and replay are denied while an underlying execution is still active', async t => {
   let release; let entered; const wait = new Promise(resolve => { release = resolve; });
@@ -251,6 +287,23 @@ test('model policy retains exact fine-tune authority and normal helper roles', (
   assert.throws(() => resolveLiveValidationModels(models.slice(0, 2), constants), /LIVE_VALIDATION_MODELS_INVALID/u);
   assert.throws(() => resolveLiveValidationModels([...models, { id: MODEL + '-another' }], constants), /LIVE_VALIDATION_MODELS_INVALID/u);
   assert.equal(LIVE_VALIDATION_ACCEPTANCE_WORK_TIMEOUT_MS, 300_000);
+});
+
+test('an advisory Elden Ring profile requires visible patch uncertainty while the stable profile does not invent it', () => {
+  const advisory = { id: POSITIVE, input: { query: { game: 'Elden Ring', mode: 'build',
+    question: 'Recommend an early Samurai build on the current patch.' } },
+  expected: { outcome: 'accepted', semanticGap: 'NONCRITICAL_GAP', qualifiedUnknownPatch: true } };
+  const moduleResult = { accepted: true, audit: { assessmentStatus: 'completed', decision: 'accept', boundToFinalAnswer: true } };
+  const observed = { outcome: 'accepted', semanticGap: 'NONCRITICAL_GAP', coverage: { satisfied: true }, selectedEvidenceCount: 1,
+    qualification: { visible: true, claimsVerifiedCurrentness: false } };
+  const delta = { generationCalls: 1, auditCalls: 1 };
+  assert.equal(validationProfilePassed(advisory, moduleResult, observed, delta), true);
+  assert.equal(validationProfilePassed(advisory, moduleResult, { ...observed, qualification: { visible: false, claimsVerifiedCurrentness: false } }, delta), false);
+  assert.equal(validationProfilePassed(advisory, moduleResult, { ...observed, qualification: { visible: true, claimsVerifiedCurrentness: true } }, delta), false);
+  const stable = { ...advisory, input: { query: { game: 'Elite Dangerous', mode: 'guide', question: 'How do I start system colonisation?' } },
+    expected: { outcome: 'accepted', semanticGap: 'NONE' } };
+  assert.equal(validationProfilePassed(stable, moduleResult, { ...observed, semanticGap: 'NONE', qualification: {
+    visible: false, claimsVerifiedCurrentness: false } }, delta), true);
 });
 
 

@@ -6,7 +6,7 @@ import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js
 import type { TrinityWritingPipelineRequest } from '../src/core/logic/trinityWritingPipeline.js';
 import type { GamingSuccessEnvelope } from '../src/services/gamingModes.js';
 import type { LivePrPreviewModuleObserver } from '../src/liveValidationGamingAdapter.js';
-import type { LiveValidationGamingExecutor } from '../src/liveValidationGamingAdapter.js';
+import type { LiveValidationGamingExecutor, LiveValidationGamingInput } from '../src/liveValidationGamingAdapter.js';
 import type { GamingHybridResponse } from '../src/shared/gaming/gamingHybridContract.js';
 import type { GamingHybridResult } from '../src/services/gamingHybridKnowledge.js';
 import { GAMING_CLEAR_DIMENSIONS, gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
@@ -18,8 +18,23 @@ const guideHtml = readFileSync(new URL('./fixtures/gaming-samurai-guide.html', i
 const clarificationGuideHtml = readFileSync(new URL('./fixtures/gaming-samurai-pc-clarification-guide.html', import.meta.url), 'utf8');
 const wrongGameHtml = readFileSync(new URL('./fixtures/gaming-sekiro-conflict-guide.html', import.meta.url), 'utf8');
 const publicClarificationGuideUrl = 'https://raw.githubusercontent.com/pbjustin/Arcanos/62fe94af217e375cd6a5a77d834f4dffd7c49675/tests/fixtures/gaming-samurai-pc-clarification-guide.html';
-const canonicalProfiles = JSON.parse(readFileSync(new URL('../examples/live-validation/profiles.json', import.meta.url), 'utf8')).profiles as
-  Array<{ id: string; input: unknown; expected: { outcome: string } }>;
+type ValidationProfile = { id: string; input: LiveValidationGamingInput; expected: { outcome: string; semanticGap: string } };
+const canonicalProfiles = JSON.parse(readFileSync(new URL('../examples/live-validation/profiles.json', import.meta.url), 'utf8')).profiles as ValidationProfile[];
+const fixtureProfiles = JSON.parse(readFileSync(new URL('../examples/live-validation/fixture-profiles.json', import.meta.url), 'utf8')).profiles as ValidationProfile[];
+// Authored test data only: these bytes are not a retained Frontier quotation or
+// proof that the public URL is reachable or supports current gameplay claims.
+const authoredEliteGuideHtml = '<html><title>Elite Dangerous system colonisation authored fixture guide</title><body><article>'
+  + '<h1>Elite Dangerous system colonisation</h1><p>This independently authored synthetic fixture exercises deterministic validation. '
+  + 'It is not Frontier publisher text and does not establish current-patch applicability.</p>'
+  + '<h2>Requirements and getting started</h2><p>In the game Elite Dangerous, before beginning system colonisation, '
+  + 'you must obtain a colonisation claim from a colonisation contact. System colonisation begins by selecting an uninhabited '
+  + 'candidate system and purchasing the claim. Travel to the selected system with the claim, deploy the system colonisation ship, '
+  + 'and deliver the construction commodities requested by the project. Complete the requested deliveries before the project deadline.</p>'
+  + '<p>Check the project requirements before committing the claim because commodity quantities depend on the selected project. '
+  + 'This authored walkthrough does not verify current-patch compatibility.</p></article></body></html>';
+const authoredEliteAnswer = '1. Select an uninhabited candidate system and obtain the required colonisation claim from a colonisation contact.\n'
+  + '2. Travel to the selected system and deploy the colonisation ship.\n'
+  + '3. Check the project requirements and deliver the requested construction commodities before the deadline.';
 const question = "I'm at the beginning of Elden Ring. I'm a Samurai. I just got out of the tutorial area. I want a Samurai blade build.";
 const groundedAnswer = 'Keep the starting Uchigatana as your Samurai blade and retain Unsheathe. Prioritize Vigor toward 20, then Endurance if stamina or equipment load limits you. Add Dexterity toward 20 later. Collect ordinary Smithing Stones in Limgrave and upgrade this katana before pursuing another blade. Keep a medium equipment load and attack after an enemy misses.';
 const deliveredAnswer = `${GAMING_UNVERIFIED_GUIDE_WARNING}\n\n${groundedAnswer} [Source 1]`;
@@ -34,6 +49,7 @@ const mockDefaultClient = jest.fn(() => { throw new Error('Default provider clie
 const mockBackendSearch = jest.fn(async () => { throw new Error('Backend discovery is forbidden in transient validation.'); });
 let sourceHtml = guideHtml;
 let sourceContentType = 'text/html';
+let generatedAnswer = groundedAnswer;
 let clock = Date.parse('2026-10-05T12:00:00Z');
 let emitProviderStages = true;
 
@@ -111,7 +127,8 @@ const query = {
 const advance = (ms: number) => { clock += ms; jest.setSystemTime(clock); };
 
 beforeEach(() => {
-  jest.clearAllMocks(); resetSafetyRuntimeStateForTests(); sourceHtml = guideHtml; sourceContentType = 'text/html'; emitProviderStages = true;
+  jest.clearAllMocks(); resetSafetyRuntimeStateForTests(); sourceHtml = guideHtml; sourceContentType = 'text/html';
+  generatedAnswer = groundedAnswer; emitProviderStages = true;
   queryHandoffs.length = 0; candidateHandoffs.length = 0;
   previousEnv = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]));
   Object.assign(process.env, env); clock = Date.parse('2026-10-05T12:00:00Z');
@@ -150,7 +167,7 @@ beforeEach(() => {
       advance(elapsedMs);
       if (emitProviderStages) reportStage?.({ stage, phase: 'completed', elapsedMs, ...budget });
     }
-    const result = `${groundedAnswer} [Source 1]`;
+    const result = `${generatedAnswer} [Source 1]`;
     const audit = await request.context.runOptions!.gamingClearAnswerAudit!(result, request.context.runtimeBudget!);
     return { result, gamingClearAudit: audit.assessment, fallbackFlag: false, dryRun: false,
       meta: { provider: { finishReason: 'stop', responseStatus: 'completed' } } };
@@ -309,12 +326,13 @@ describe('private Gaming live-validation adapter through the real transient v2 w
     const output = await run.run({ question: `${question} I'm undecided between bleed and pure Dexterity.` }, [guideUrl],
       [{ constraints: ['bleed', 'pure Dexterity'] }]);
     expect(output.accepted).toBe(false); expect(queryHandoffs.at(-1)?.result.body.reason).toBe('CLARIFICATION_UNRESOLVED');
+    expect(output).not.toHaveProperty('privateAnswer');
     expect(run.adapter.getLastObservation()?.clarification).toMatchObject({ submittedCount: 1, completedCount: 0,
       postAcquisitionCount: 0, sameWorkflow: false, revisionsAdvanced: false, retainedEvidence: false, budgetsPreserved: false, acquisitionCount: 1 });
     expect(mockHttp).toHaveBeenCalledTimes(1); expect(mockTrinity).not.toHaveBeenCalled(); expect(mockAuditCompletion).not.toHaveBeenCalled();
   });
 
-  it.each(canonicalProfiles)('executes the checked-in $id profile over the actual public fixture MIME type', async profile => {
+  it.each(fixtureProfiles)('preserves the authored Samurai $id fixture profile over plaintext transport', async profile => {
     sourceHtml = profile.expected.outcome === 'accepted' ? clarificationGuideHtml : wrongGameHtml;
     sourceContentType = 'text/plain; charset=utf-8';
     const run = harness(); const input = run.adapter.validateInput(profile.input);
@@ -329,6 +347,11 @@ describe('private Gaming live-validation adapter through the real transient v2 w
         sameWorkflow: true, revisionsAdvanced: true, retainedEvidence: true, budgetsPreserved: true, acquisitionCount: 1 });
       expect(mockTrinity).toHaveBeenCalledTimes(1); expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
       expect(output.audit?.boundToFinalAnswer).toBe(true);
+      const result = output.result as GamingSuccessEnvelope;
+      expect(output.privateAnswer).toEqual({ version: 1, response: result.data.response,
+        subjectHash: gamingClearHash(result.data.response),
+        contextFingerprint: Object.getOwnPropertyDescriptor(result.data, GAMING_CLEAR_APPROVED_ANSWER)?.value.contextFingerprint,
+        sources: profile.input.candidateUrls.map((url, index) => ({ index: index + 1, url })) });
     } else {
       // Plain transport grants no HTML field provenance. The independently
       // acquired Game declaration and whole-source subject still conflict;
@@ -338,6 +361,65 @@ describe('private Gaming live-validation adapter through the real transient v2 w
         reasonCodes: ['GAME_MISMATCH'] })]);
       expect(output.result).toBeUndefined(); expect(run.execute).not.toHaveBeenCalled();
       expect(mockTrinity).not.toHaveBeenCalled(); expect(mockAuditCompletion).not.toHaveBeenCalled();
+    }
+  });
+
+  it.each(canonicalProfiles)('executes the checked-in Elite $id profile with explicitly authored source bytes', async profile => {
+    const positive = profile.expected.outcome === 'accepted';
+    sourceHtml = positive ? authoredEliteGuideHtml : wrongGameHtml;
+    sourceContentType = positive ? 'text/html; charset=utf-8' : 'text/plain; charset=utf-8';
+    generatedAnswer = authoredEliteAnswer;
+    expect(profile.input.query).toMatchObject({ game: 'Elite Dangerous', mode: 'guide', storagePolicy: 'transient_only' });
+    expect(profile.input.clarificationReplies).toBeUndefined();
+    const run = harness(); const input = run.adapter.validateInput(profile.input);
+    expect(input.ok).toBe(true); if (!input.ok) throw new Error('Expected valid canonical Elite input.');
+    const output = await run.adapter.execute(input.input, run.observer);
+    const observation = run.adapter.getLastObservation()!;
+    expect(observation).toMatchObject({ outcome: profile.expected.outcome, semanticGap: profile.expected.semanticGap });
+    expect(output.accepted).toBe(positive);
+    expect(mockHttp).toHaveBeenCalledTimes(1); expect(mockWorkflowFactory).toHaveBeenCalledTimes(1);
+    expect(candidateHandoffs).toHaveLength(1); expect(queryHandoffs).toHaveLength(1);
+    if (positive) {
+      expect(profile.input.candidateUrls).toEqual(['https://www.elitedangerous.com/news/system-colonisation-guide']);
+      expect(candidateHandoffs[0].result.body).toMatchObject({ state: 'answer_ready', nextAction: 'answer', coverageSatisfied: true });
+      expect(observation.selectedEvidenceCount).toBeGreaterThan(0);
+      // The exact procedural request is stable under the existing freshness
+      // policy; unlike the Samurai build, it does not assert current balance.
+      expect(observation.qualification).toMatchObject({ visible: false, claimsVerifiedCurrentness: false });
+      expect(observation.clarification).toBeUndefined();
+      for (const stage of ['acquisition', 'selection', 'intake', 'reasoning', 'final', 'generation', 'answer_audit'] as const) {
+        expect(observation.stages[stage].status).toBe('passed');
+        expect(observation.stages[stage].elapsedMs).not.toBeNull();
+      }
+      const result = output.result as GamingSuccessEnvelope;
+      expect(result.data.response).toContain(authoredEliteAnswer);
+      expect(result.data.response).not.toContain(GAMING_UNVERIFIED_GUIDE_WARNING);
+      expect(result.data.response).toContain('[Source 1]');
+      expect(result.data.sources.map(source => source.url)).toEqual(profile.input.candidateUrls);
+      expect(hasBoundGamingClearAnswer(result.data)).toBe(true);
+      expect(output.audit?.boundToFinalAnswer).toBe(true);
+      expect(output.privateAnswer).toEqual({ version: 1, response: result.data.response,
+        subjectHash: gamingClearHash(result.data.response),
+        contextFingerprint: Object.getOwnPropertyDescriptor(result.data, GAMING_CLEAR_APPROVED_ANSWER)?.value.contextFingerprint,
+        sources: [{ index: 1, url: profile.input.candidateUrls[0] }] });
+      // The private artifact is a closed answer projection, without evidence
+      // snippets, source bodies, workflow identifiers or record identifiers.
+      expect(Object.keys(output.privateAnswer!).sort()).toEqual(['contextFingerprint', 'response', 'sources', 'subjectHash', 'version']);
+      expect(Object.keys(output.privateAnswer!.sources[0]).sort()).toEqual(['index', 'url']);
+      expect(JSON.stringify(output.privateAnswer)).not.toContain('independently authored synthetic fixture');
+      for (const privateValue of [candidateHandoffs[0].actorKey, candidateHandoffs[0].result.body.workflowId!,
+        ...candidateHandoffs[0].result.body.selectedEvidenceIds!]) expect(JSON.stringify(output.privateAnswer)).not.toContain(privateValue);
+      const audited = JSON.parse((mockAuditCompletion.mock.calls[0][1] as any).messages[1].content);
+      expect(audited.answer).toBe(result.data.response);
+      expect(JSON.stringify(audited.evidence)).toContain('colonisation claim');
+      expect(audited.evidence.map((chunk: { chunkId: string }) => chunk.chunkId)).toEqual(candidateHandoffs[0].result.body.selectedEvidenceIds);
+      expect(mockTrinity).toHaveBeenCalledTimes(1); expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+    } else {
+      expect(output.failureCode).toBe('INCOMPATIBLE_SOURCE');
+      expect(observation.candidates).toEqual([expect.objectContaining({ decision: 'rejected', reasonCodes: ['GAME_MISMATCH'] })]);
+      expect(observation.selectedEvidenceCount).toBe(0); expect(output.result).toBeUndefined();
+      expect(output).not.toHaveProperty('privateAnswer');
+      expect(run.execute).not.toHaveBeenCalled(); expect(mockTrinity).not.toHaveBeenCalled(); expect(mockAuditCompletion).not.toHaveBeenCalled();
     }
   });
 
@@ -356,6 +438,7 @@ describe('private Gaming live-validation adapter through the real transient v2 w
   it('does not accept an unused configured reply as proof of clarification', async () => {
     const run = harness(); const output = await run.run({}, [guideUrl], [{ constraints: ['pure Dexterity'] }]);
     expect(output.accepted).toBe(false); expect(queryHandoffs).toHaveLength(1);
+    expect(output).not.toHaveProperty('privateAnswer');
     expect(run.adapter.getLastObservation()?.clarification).toMatchObject({ submittedCount: 0, completedCount: 0,
       sameWorkflow: false, revisionsAdvanced: false, retainedEvidence: false, budgetsPreserved: false, acquisitionCount: 1 });
     expect(mockHttp).toHaveBeenCalledTimes(1); expect(mockTrinity).toHaveBeenCalledTimes(1); expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
@@ -372,6 +455,7 @@ describe('private Gaming live-validation adapter through the real transient v2 w
   ])('rejects %s source before generation and answer audit', async (_name, html, reason, failureCode) => {
     sourceHtml = html; const run = harness(); const output = await run.run();
     expect(output.accepted).toBe(false); expect(output.result).toBeUndefined(); expect(output.failureCode).toBe(failureCode);
+    expect(output).not.toHaveProperty('privateAnswer');
     expect(mockHttp).toHaveBeenCalledTimes(1); expect(mockTrinity).not.toHaveBeenCalled(); expect(mockAuditCompletion).not.toHaveBeenCalled();
     expect(run.execute).not.toHaveBeenCalled(); expect(run.observer.onAnswerAuditStart).not.toHaveBeenCalled();
     const observation = run.adapter.getLastObservation()!;
@@ -437,6 +521,7 @@ describe('private Gaming live-validation adapter through the real transient v2 w
     });
     const output = await run.run();
     expect(output.accepted).toBe(false); expect(output.audit?.boundToFinalAnswer).toBe(false);
+    expect(output).not.toHaveProperty('privateAnswer');
     expect(run.adapter.getLastObservation()?.outcome).not.toBe('accepted');
     expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
   });
@@ -447,6 +532,7 @@ describe('private Gaming live-validation adapter through the real transient v2 w
     });
     const run = harness(); const output = await run.run();
     expect(output.accepted).toBe(false); expect(output.failureCode).toBe('AUDIT_TIMEOUT');
+    expect(output).not.toHaveProperty('privateAnswer');
     expect(output.audit).toMatchObject({ assessmentStatus: 'unavailable', boundToFinalAnswer: false });
     const observation = run.adapter.getLastObservation()!;
     expect(observation.stages.answer_audit).toEqual({ status: 'timed_out', elapsedMs: 17 });
@@ -466,6 +552,7 @@ describe('private Gaming live-validation adapter through the real transient v2 w
     expect(output.failureCode).toBe('MODEL_TIMEOUT');
     expect(run.observer.onFailure).toHaveBeenCalledWith('MODEL_TIMEOUT');
     expect(output.accepted).toBe(false); expect(mockAuditCompletion).not.toHaveBeenCalled();
+    expect(output).not.toHaveProperty('privateAnswer');
     expect(run.observer.onAnswerAuditStart).not.toHaveBeenCalled();
     const observation = run.adapter.getLastObservation()!;
     expect(observation.stages[stage]).toEqual({ status: 'timed_out', elapsedMs: 23 });
@@ -501,6 +588,7 @@ describe('private Gaming live-validation adapter through the real transient v2 w
   it('records null budgets and not-run stages when source discovery has not executed', async () => {
     const run = harness(); const output = await run.run({}, []);
     expect(output.accepted).toBe(false); expect(run.execute).not.toHaveBeenCalled();
+    expect(output).not.toHaveProperty('privateAnswer');
     expect(mockHttp).not.toHaveBeenCalled(); expect(mockTrinity).not.toHaveBeenCalled(); expect(mockAuditCompletion).not.toHaveBeenCalled();
     const observation = run.adapter.getLastObservation()!;
     expect(observation.semanticGap).toBe('EVIDENCE_GAP');

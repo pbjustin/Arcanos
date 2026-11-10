@@ -27,6 +27,9 @@ export interface LivePrPreviewModuleResult {
   accepted: boolean;
   audit?: LivePrPreviewAudit;
   failureCode?: LivePreviewFailureCode;
+  /** Authenticated operator artifact only; excluded from public evidence and observation. */
+  privateAnswer?: { version: 1; response: string; subjectHash: string; contextFingerprint: string;
+    sources: Array<{ index: number; url: string }> };
 }
 export interface LivePrPreviewModuleAdapter {
   moduleId: string;
@@ -260,7 +263,10 @@ export function createLiveValidationGamingAdapter(execute: LiveValidationGamingE
         decision: answerAssessment.decision, boundToFinalAnswer: accepted } : undefined;
       lastObservation = createLiveValidationObservation({ body: final?.body, accepted, audit, stages, auditStartBudget,
         ...(input.clarificationReplies?.length ? { clarification } : {}) });
-      return { result, accepted, audit, failureCode };
+      return { result, accepted, audit, failureCode,
+        ...(accepted && result && answerAssessment ? { privateAnswer: { version: 1 as const, response: result.data.response,
+          subjectHash: answerAssessment.subjectHash, contextFingerprint: answerAssessment.contextFingerprint,
+          sources: result.data.sources.map((source, index) => ({ index: index + 1, url: source.url })) } } : {}) };
     }
   };
 }

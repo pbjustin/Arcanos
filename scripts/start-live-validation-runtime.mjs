@@ -174,7 +174,9 @@ export function createValidationRuntimeApplication({ target, identity, profiles,
       if (observation) observation.stages.response = { status: 'passed', elapsedMs: Math.max(0, now() - constructionStarted) };
       const value = { identity, caseId: profile.id, evidence, observation, verification,
         profilePassed: semanticPass && verification.status === 'PASS', providerDelta: delta,
-        durableWrites: 0, playerPersistence: 0, productionChanged: false };
+        durableWrites: 0, playerPersistence: 0, productionChanged: false,
+        ...(semanticPass && verification.status === 'PASS' && moduleResult.privateAnswer
+          ? { privateAnswer: moduleResult.privateAnswer } : {}) };
       const serialized = JSON.stringify(value);
       requireValidation(!serialized.includes(testToken) && (!apiKey || !serialized.includes(apiKey)), 'LIVE_VALIDATION_SECRET_IN_EVIDENCE');
       return validationJson(response, value);
