@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import { selectGamingHybridEvidence } from '../src/services/gamingHybridCandidates.js';
-import { assessGamingRequestCoverage } from '../src/shared/gaming/gamingClearEvidence.js';
-import { buildGamingRequestRequirements } from '../src/shared/gaming/gamingRetrievalPolicy.js';
+import { assessGamingClearEvidence, assessGamingRequestCoverage } from '../src/shared/gaming/gamingClearEvidence.js';
+import { buildGamingRequestRequirements, gamingRequestScopeUnresolved } from '../src/shared/gaming/gamingRetrievalPolicy.js';
 import type { GamingStoredKnowledgeContext, GamingStoredKnowledgeInput } from '../src/shared/gaming/gamingStoredEvidenceCore.js';
 
 // Independently authored grammar/control fixtures, not publisher quotations or
@@ -164,5 +164,35 @@ describe('factual request clauses retain subject, relation and requested count',
       + 'Alternatively, to begin system colonisation, visit the southern contact and select a different starting system.';
     expect(assessGamingRequestCoverage(request(actionQuestion), knowledge([alternatives])).coverageSatisfied).toBe(false);
     expect(assessGamingRequestCoverage(request(actionQuestion), knowledge([firstThree])).coverageSatisfied).toBe(true);
+  });
+
+  it.each([
+    ['What is the boss weakness during its first phase?',
+      'The boss weakness during its first phase is frost damage. Equip a frost weapon while the boss remains in this first phase.'],
+    ['How do I damage the Guardian in its first form?',
+      'The Guardian in its first form takes additional frost damage. Attack the Guardian with a frost weapon in its first form.']
+  ])('preserves ordinary first-phase/form scope instead of treating it as an unresolved procedure: %s', (prompt, passage) => {
+    const input = request(prompt);
+    const data = knowledge([passage]);
+    expect(gamingRequestScopeUnresolved(input)).toBe(false);
+    expect(assessGamingRequestCoverage(input, data).coverageSatisfied).toBe(true);
+    const selected = selectGamingHybridEvidence(input, data);
+    expect(selected.coverageSatisfied).toBe(true);
+    expect(selected.knowledge.evidence![0]).toEqual(data.evidence![0]);
+    expect(assessGamingClearEvidence(input, selected.knowledge, { requireRequestCoverage: true }).gates.claimSupport).toBe('verified');
+  });
+
+  it.each([
+    'Explain its first three actions.',
+    'Explain its first 3 actions.',
+    'Explain its first three ordered actions.',
+    'Explain its first 3 concrete actions.',
+    'Explain its first concrete steps.',
+    'Explain its first ordered steps.',
+    'Where can I find them?'
+  ])('retains the unresolved procedural/material referent guard: %s', prompt => {
+    const input = request(prompt);
+    expect(gamingRequestScopeUnresolved(input)).toBe(true);
+    expect(assessGamingRequestCoverage(input, knowledge([firstThree])).coverageSatisfied).toBe(false);
   });
 });

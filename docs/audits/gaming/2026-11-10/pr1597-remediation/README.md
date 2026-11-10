@@ -5,6 +5,10 @@ Starting head: `ab8380e70116a50a0bfb524820cb97abdec3ccf4`.
 Both matched the fetched PR, without SHA drift. This supplements the
 [original acceptance record](../../2026-11-09/guide-answer/README.md).
 
+The later [CodeRabbit follow-up](coderabbit-followup.md) narrows an overbroad
+first-phase/form scope check and corrects receipt typography. Counts and hashes
+below describe the preceding remediation; its historical receipts remain intact.
+
 ## Confirmed defects and bounded corrections
 
 1. The purpose-clause predicate accepted a topic before a comma without requiring

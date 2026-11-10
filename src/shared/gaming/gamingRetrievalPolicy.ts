@@ -595,7 +595,7 @@ export function gamingRequestRequirementLimitExceeded(input: GamingRetrievalPoli
 /** Missing gameplay scope or unresolved references cannot be supplied by retrieved text. */
 export function gamingRequestScopeUnresolved(input: GamingRetrievalPolicyInput): boolean {
   const scoped = gamingScopedRequest(input.prompt);
-  if (/\bwhere\s+(?:can|do)\s+(?:i|we)\s+(?:find|obtain|buy|collect)\s+them\b|\bits\s+first\s+/iu.test(scoped)) return true;
+  if (/\bwhere\s+(?:can|do)\s+(?:i|we)\s+(?:find|obtain|buy|collect)\s+them\b|\bits\s+first\s+(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+(?:(?:concrete|ordered)\s+)?actions?\b/iu.test(scoped)) return true;
   const generic = new Set('list find identify required materials prerequisites requirements mechanics actions needed its them three one two four five six seven eight nine ten'.split(' '));
   const terms = buildGamingClaimCoverageTerms(input);
   return terms.length === 0 || terms.every(term => generic.has(term) || /^\d+$/u.test(term));
