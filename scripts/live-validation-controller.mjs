@@ -128,6 +128,7 @@ function evidenceDirectory(directory, root) {
   if (!existsSync(directory)) mkdirSync(directory, { mode: 0o700 });
   return outsideCheckout(directory, root);
 }
+/** Atomically publish private JSON, rejecting an existing state file on the first run claim. */
 function protectedWrite(file, value, { exclusive = false } = {}) {
   const temporary = file + '.' + randomBytes(8).toString('hex') + '.tmp';
   if (!exclusive && existsSync(file)) {
@@ -612,6 +613,7 @@ function assertProfileObservation(value, expected) {
   'LIVE_VALIDATION_FRESHNESS_QUALIFICATION_FAILED');
 }
 
+/** Keep allowlisted lookup diagnostics whose reservations agree with the usage counters. */
 function projectModelValidation(stages, metadataRequests, limits) {
   if (!Array.isArray(stages) || stages.length > limits.maxRequests + 1) return undefined;
   const modelValidation = [];
@@ -632,6 +634,7 @@ function projectModelValidation(stages, metadataRequests, limits) {
   return modelValidation.length ? modelValidation : undefined;
 }
 
+/** Bind runtime usage to the admitted run and budget before projecting it into a receipt. */
 export function sanitizeLiveValidationUsage(value, { plan, target }) {
   requireController(value?.runId === plan.runId && value.commitSha === plan.commitSha && value.prNumber === plan.prNumber
     && value.runtimeDeploymentId === plan.runtimeDeploymentId && value.profileHash === plan.profileHash
@@ -752,6 +755,7 @@ export async function cleanupLiveValidationRun({ target, args, state, railway, r
     runtimeDeploymentStopped: stopped, runClosed, definitionsRetained: failures.length === 0, failures };
 }
 
+/** Plan, execute, or clean up one exact-commit validation run with protected local state. */
 export async function runLiveValidationController(argv, dependencies = {}) {
   const args = parseLiveValidationControllerArguments(argv);
   const root = dependencies.repositoryRoot ?? ROOT; const environment = dependencies.environment ?? process.env;

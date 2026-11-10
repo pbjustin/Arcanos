@@ -108,6 +108,7 @@ export function createLiveValidationProvider({ target, identity, apiKey, now = D
     return { inputTokens, outputTokens: body.max_output_tokens,
       body: { ...requestBody, store: false, stream: false, service_tier: 'default' } };
   }
+  /** Reserve budget before egress and record a bounded outcome for each reserved request or approved lookup denial. */
   async function guardedFetch(input, init) {
     let stage; let timedOut = false; let callerAborted = false; let timer; let onCallerAbort;
     let reservation; let request; let controller; let onAbort;
