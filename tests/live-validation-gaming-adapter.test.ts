@@ -113,7 +113,7 @@ const { logger } = await import('../src/platform/logging/structuredLogging.js');
 const { resetSafetyRuntimeStateForTests } = await import('../src/services/safety/runtimeState.js');
 const { createLiveValidationObservation, emptyLiveValidationStages, liveValidationDuration } = await import(
   '../src/shared/gaming/liveValidationObservation.js');
-const { getSafeRemainingMs, getRequestRemainingMs } = await import('@arcanos/runtime');
+const { createAbortError, getSafeRemainingMs, getRequestRemainingMs, runWithRequestAbortContext } = await import('@arcanos/runtime');
 
 const env = {
   ARCANOS_GAMING_RAG_ENABLED: 'false', ARCANOS_GAMING_DISCOVERY_ENABLED: 'false',
@@ -563,6 +563,28 @@ describe('private Gaming live-validation adapter through the real transient v2 w
     expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
   });
 
+  it('preserves an unavailable audit diagnostic without publishing the candidate answer or provider output', async () => {
+    const rawProviderOutput = 'private audit fixture response with source and answer text';
+    mockAuditCompletion.mockImplementationOnce(async () => {
+      advance(17);
+      return { choices: [{ finish_reason: 'stop', message: { content: rawProviderOutput } }] };
+    });
+    const run = harness();
+    const output = await run.run();
+    const observation = run.adapter.getLastObservation()!;
+
+    expect(output.accepted).toBe(false);
+    expect(output).not.toHaveProperty('privateAnswer');
+    expect(observation.audit).toMatchObject({
+      assessmentStatus: 'unavailable', decision: 'unavailable', boundToFinalAnswer: false,
+      reasonCode: 'AUDIT_MALFORMED', effectiveTimeoutMs: 12_000
+    });
+    expect(observation.stages.answer_audit).toEqual({ status: 'failed', elapsedMs: 17 });
+    expect(JSON.stringify(observation)).not.toContain(rawProviderOutput);
+    expect(JSON.stringify(observation)).not.toContain(groundedAnswer);
+    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+  });
+
   it('records an actual audit timeout without binding or accepting its answer', async () => {
     mockAuditCompletion.mockImplementationOnce(async () => {
       advance(17); throw Object.assign(new Error('Sealed audit timeout.'), { name: 'AbortError' });
@@ -575,6 +597,38 @@ describe('private Gaming live-validation adapter through the real transient v2 w
     expect(observation.stages.answer_audit).toEqual({ status: 'timed_out', elapsedMs: 17 });
     expect(observation.auditStartBudget.runtimeRemainingMs).toBeGreaterThan(0);
     expect(mockTrinity).toHaveBeenCalledTimes(1); expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { trigger: 'before the request deadline', deadlineExpired: false, auditStatus: 'failed' },
+    { trigger: 'at the request deadline', deadlineExpired: true, auditStatus: 'timed_out' }
+  ] as const)('records an audit abort $trigger without accepting the answer', async ({ deadlineExpired, auditStatus }) => {
+    const controller = new AbortController();
+    let auditElapsedMs = 0;
+    let remainingAtAbort: number | null = null;
+    mockAuditCompletion.mockImplementationOnce(async () => {
+      auditElapsedMs = deadlineExpired ? getRequestRemainingMs() ?? 0 : 17;
+      advance(auditElapsedMs);
+      remainingAtAbort = getRequestRemainingMs();
+      const error = createAbortError('Synthetic request abort during answer audit.');
+      controller.abort(error);
+      throw error;
+    });
+    const run = harness();
+    const output = await runWithRequestAbortContext({
+      controller, signal: controller.signal, deadlineAt: clock + 30_000, timeoutMs: 30_000
+    }, () => run.run());
+
+    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+    expect(auditElapsedMs).toBeGreaterThan(0);
+    if (deadlineExpired) expect(remainingAtAbort).toBe(0);
+    else expect(remainingAtAbort).toBeGreaterThan(0);
+    expect(output.accepted).toBe(false);
+    expect(output).not.toHaveProperty('privateAnswer');
+    expect(run.adapter.getLastObservation()?.stages).toMatchObject({
+      generation: { status: 'passed' },
+      answer_audit: { status: auditStatus, elapsedMs: auditElapsedMs }
+    });
   });
 
   it.each(['intake', 'reasoning', 'final'] as const)('preserves an observed %s timeout when upstream cancellation reaches the provider first', async stage => {

@@ -67,7 +67,7 @@ export function gamingClearAnswerMatches(assessment: GamingClearAssessment | und
 /** One stateless semantic review replaces Gaming's ledger review. No model tools, retries or repairs. */
 export async function runGamingClearAnswerAudit(client: OpenAI, input: GamingClearAnswerInput,
   runtimeBudget: RuntimeBudget, modelLane: 'routine' | 'escalation' = 'routine', remainingWatchdogMs?: number
-): Promise<{ assessment: GamingClearAssessment; usage?: TrinityMetaTokens }> {
+): Promise<{ assessment: GamingClearAssessment; usage?: TrinityMetaTokens; effectiveTimeoutMs?: number }> {
   const startedAt = Date.now();
   let modelCallStarted = false;
   let auditBudget: {
@@ -90,7 +90,8 @@ export async function runGamingClearAnswerAudit(client: OpenAI, input: GamingCle
       modelCallsUsed: modelCallStarted ? 1 : 0, modelCallLimit: 1, repairAttempts: 0,
       ...auditBudget, auditResult: assessment.decision
     });
-    return { assessment, ...(usage ? { usage } : {}) };
+    return { assessment, ...(usage ? { usage } : {}),
+      ...(auditBudget ? { effectiveTimeoutMs: auditBudget.effectiveTimeoutMs } : {}) };
   };
   const evidence = gamingClearAnswerEvidence(input);
   const invalidCitation = [...input.answer.matchAll(/(?:\[(?:sources?\s+)?|\(sources?\s+|\bsources?\s+)(\d+(?:\s*,\s*\d+)*)/giu)]

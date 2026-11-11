@@ -18,10 +18,17 @@ export interface LiveValidationStageTiming {
   status: 'not_run' | 'started' | 'passed' | 'failed' | 'timed_out';
   elapsedMs: number | null;
 }
+const LIVE_VALIDATION_AUDIT_REASON_CODES = [
+  'AUDIT_TIMEOUT', 'AUDIT_BUDGET_EXHAUSTED', 'AUDIT_PROVIDER_ERROR',
+  'AUDIT_PROVIDER_INCOMPLETE', 'AUDIT_MALFORMED', 'AUDIT_INPUT_UNAVAILABLE'
+] as const;
+
 export interface LiveValidationAudit {
   assessmentStatus: GamingClearAssessment['assessmentStatus'];
   decision: GamingClearAssessment['decision'];
   boundToFinalAnswer: boolean;
+  reasonCode?: typeof LIVE_VALIDATION_AUDIT_REASON_CODES[number];
+  effectiveTimeoutMs?: number;
 }
 /** Counts and invariants only; workflow IDs, context replies and evidence text stay private. */
 export interface LiveValidationClarification {
@@ -76,6 +83,8 @@ export function createLiveValidationObservation(input: {
   body?: GamingHybridResponse;
   accepted: boolean;
   audit?: LiveValidationAudit;
+  auditFindings?: GamingClearAssessment['findings'];
+  auditEffectiveTimeoutMs?: number;
   clarification?: LiveValidationClarification;
   stages: LiveValidationObservation['stages'];
   auditStartBudget: LiveValidationObservation['auditStartBudget'];
@@ -102,11 +111,21 @@ export function createLiveValidationObservation(input: {
     : accepted && qualification.visible && ['unverified', 'stale'].includes(qualification.patchCompatibility) ? 'NONCRITICAL_GAP'
       : accepted ? 'NONE' : outcome === 'need_new_source' ? 'EVIDENCE_GAP' : 'UNOBSERVED';
   const clarification = clarificationProjection(input.clarification);
+  const auditReason = input.audit?.assessmentStatus === 'unavailable'
+    ? LIVE_VALIDATION_AUDIT_REASON_CODES.find(code => input.auditFindings?.some(finding => finding.code === code))
+    : undefined;
+  const effectiveTimeoutMs = liveValidationDuration(input.auditEffectiveTimeoutMs);
+  const audit = input.audit ? {
+    assessmentStatus: input.audit.assessmentStatus, decision: input.audit.decision,
+    boundToFinalAnswer: input.audit.boundToFinalAnswer,
+    ...(auditReason ? { reasonCode: auditReason } : {}),
+    ...(effectiveTimeoutMs !== null ? { effectiveTimeoutMs } : {})
+  } : null;
   return { schemaVersion: 1, contractVersion: 'gaming-hybrid-v2', outcome, reason, semanticGap,
     coverage: { satisfied: body?.coverageSatisfied === true,
       assessmentStatus: body?.gapAssessmentStatus ?? 'not_assessed', missingCount: Math.min(body?.missingCoverage?.length ?? 0, 64) },
     selectedCandidateCount: body?.selectedCandidateIds?.length ?? 0, selectedEvidenceCount: body?.selectedEvidenceIds?.length ?? 0,
-    candidates, qualification, audit: input.audit ? { ...input.audit } : null,
+    candidates, qualification, audit,
     ...(clarification ? { clarification } : {}),
     stages: structuredClone(input.stages), auditStartBudget: { ...input.auditStartBudget } };
 }

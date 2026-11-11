@@ -1345,10 +1345,11 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
                   runtime?.onAnswerAudit?.(structuredClone(result));
                   return result;
                 } catch (error) {
+                  const requestRemainingMs = getRequestRemainingMs();
                   observeGamingPipelineStage(runtime, {
                     stage: 'answer_audit', phase: 'failed', elapsedMs: Date.now() - auditStartedAt,
-                    remainingBudgetMs: getSafeRemainingMs(runtimeBudget), requestRemainingMs: getRequestRemainingMs() ?? null,
-                    ...(isAbortError(error) ? { timedOut: true } : {})
+                    remainingBudgetMs: getSafeRemainingMs(runtimeBudget), requestRemainingMs,
+                    ...(isAbortError(error) && requestRemainingMs === 0 ? { timedOut: true } : {})
                   });
                   throw error;
                 }

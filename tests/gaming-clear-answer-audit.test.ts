@@ -31,6 +31,67 @@ const input = {
   evidence: [{ sourceId: refs[0], revisionId: refs[1], recordId: refs[2], publicUrl: 'https://example.com/guide', recordType: 'guide' as const,
     text, lexicalScore: 1, combinedScore: 1, provenance: { fetchedAt: '2026-09-09T12:00:00.000Z' } }] }
 };
+
+// Authored excerpts exercise answer binding and the audit contract without publisher or model access.
+const answerAuditFixtures = [
+  {
+    game: 'Elite Dangerous',
+    prompt: 'What are the prerequisites and first steps for system colonisation?',
+    passage: 'After obtaining a claim, locate the colonisation ship to review the required construction supplies.',
+    answer: 'Obtain a claim first, then locate the colonisation ship to review its supplies. [1]',
+    unsupportedAnswer: 'Obtain a claim, then deliver exactly 500 units of each supply. [1]',
+    findingCode: 'UNSUPPORTED_QUANTITY'
+  },
+  {
+    game: 'The Legend of Zelda: Ocarina of Time',
+    prompt: 'How do I get below the Forest Temple?',
+    passage: 'Restore the four flames in the Forest Temple to activate the elevator.',
+    answer: 'Restore the four flames to activate the elevator. [1]',
+    unsupportedAnswer: 'Use the Grappling Hook from The Wind Waker to get to the elevator. [1]',
+    findingCode: 'WRONG_GAME_MECHANIC'
+  },
+  {
+    game: 'Elden Ring',
+    prompt: 'What starting equipment does the Samurai have?',
+    passage: 'The Samurai starts with an Uchigatana that has the Unsheathe skill.',
+    answer: 'The Samurai starts with an Uchigatana equipped with Unsheathe. [1]',
+    unsupportedAnswer: 'The Samurai starts with an Uchigatana and this is the best weapon on the current patch. [1]',
+    findingCode: 'UNSUPPORTED_CURRENTNESS_CLAIM'
+  },
+  {
+    game: 'Xenoblade Chronicles 2',
+    prompt: 'How do I start a Blade Combo?',
+    passage: 'Start a Blade Combo with a Blade Special, then follow the available elements in the combo chart.',
+    answer: 'Use a Blade Special, then follow the combo chart for the next element. [1]',
+    unsupportedAnswer: 'Choose a Xenoblade Chronicles 3 class to unlock the first Blade Combo stage. [1]',
+    findingCode: 'WRONG_EDITION_MECHANIC'
+  },
+  {
+    game: 'Harbor of Bells',
+    prompt: 'How do I open the east sluice without spoilers?',
+    passage: 'Ring the brass bell twice to open the east sluice.',
+    answer: 'Ring the brass bell twice to open the east sluice. [1]',
+    unsupportedAnswer: 'Ring the brass bell twice, then fight the hidden final boss behind the sluice. [1]',
+    findingCode: 'UNSUPPORTED_SPOILER'
+  }
+];
+
+function answerAuditFixtureInput(fixture: typeof answerAuditFixtures[number]) {
+  const { game, prompt, passage, answer } = fixture;
+  const source = { ...input.knowledge.sources[0], game, snippet: passage };
+  return {
+    game, prompt, mode: 'guide' as const, spoilerMode: 'none' as const, answer,
+    evidenceAssessment: createGamingClearAssessment({
+      ...evidenceAssessment,
+      questionProfile: 'walkthrough',
+      dimensions: dimensions(),
+      evidenceRefs: refs,
+      subjectHash: gamingClearHash(passage),
+      contextFingerprint: gamingClearContextFingerprint({ game, prompt, passage })
+    }),
+    knowledge: { context: passage, sources: [source], evidence: [{ ...input.knowledge.evidence[0], text: passage }] }
+  };
+}
 const completion = (body: unknown = { dimensions: dimensions(), findings: [] }) => ({
   choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(body) } }],
   usage: { prompt_tokens: 900, completion_tokens: 200, total_tokens: 1_100 }
@@ -197,6 +258,38 @@ describe('Gaming final-answer CLEAR assessment', () => {
     expect(messages[0].content).not.toContain('reasoning_steps');
   });
 
+  describe.each(answerAuditFixtures)('$game answer audit', fixture => {
+    it('binds a supported answer to its exact supplied passage and context', async () => {
+      const auditInput = answerAuditFixtureInput(fixture);
+      const { assessment } = await runGamingClearAnswerAudit({} as never, auditInput, createRuntimeBudgetWithLimit(20_000, 0));
+
+      expect(assessment).toMatchObject({ assessmentStatus: 'completed', decision: 'accept',
+        contextFingerprint: auditInput.evidenceAssessment.contextFingerprint });
+      expect(gamingClearAnswerMatches(assessment, fixture.answer)).toBe(true);
+      expect(gamingClearAnswerMatches(assessment, fixture.unsupportedAnswer)).toBe(false);
+      expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+      const params = createSingleChatCompletion.mock.calls[0][1] as { messages: Array<{ content: string }> };
+      expect(JSON.parse(params.messages[1].content)).toMatchObject({
+        game: fixture.game, question: fixture.prompt, answer: fixture.answer, playerContext: { spoilerMode: 'none' },
+        evidence: [{ sourceIndex: 1, sourceId: refs[0], revisionId: refs[1], chunkId: refs[2], text: fixture.passage }]
+      });
+    });
+
+    it('blocks a plausible unsupported claim even when it cites the selected source', async () => {
+      const auditInput = { ...answerAuditFixtureInput(fixture), answer: fixture.unsupportedAnswer };
+      createSingleChatCompletion.mockResolvedValueOnce(completion({ dimensions: dimensions(), findings: [
+        { code: fixture.findingCode, severity: 'warning', evidenceRefs: [refs[2]] }
+      ] }));
+
+      const { assessment } = await runGamingClearAnswerAudit({} as never, auditInput, createRuntimeBudgetWithLimit(20_000, 0));
+
+      expect(assessment).toMatchObject({ assessmentStatus: 'completed', decision: 'reject', overall: 4.5,
+        blockingFindings: [{ code: fixture.findingCode, severity: 'blocking', evidenceRefs: [refs[2]] }] });
+      expect(gamingClearAnswerMatches(assessment, fixture.unsupportedAnswer)).toBe(false);
+      expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('retains unknown freshness on a qualified advisory answer and preserves parseable assessment policy', async () => {
     const advisory = createGamingClearAssessment({ ...evidenceAssessment, questionProfile: 'advisory_recommendation',
       evidenceRefs: refs, dimensions: dimensions(), gates: { ...evidenceAssessment.gates, freshness: 'unknown' } });
@@ -323,6 +416,19 @@ describe('Gaming final-answer CLEAR assessment', () => {
     const result = await run();
     expect(result.assessment).toMatchObject({ assessmentStatus: 'unavailable', decision: 'unavailable', overall: null });
     expect(Object.values(result.assessment.dimensionScores).every(dimension => dimension.score === null)).toBe(true);
+  });
+
+  it('keeps a completed non-JSON provider response unavailable without repair', async () => {
+    createSingleChatCompletion.mockResolvedValueOnce({
+      ...completion(), choices: [{ finish_reason: 'stop', message: { content: '{"dimensions":' } }]
+    });
+
+    const { assessment } = await run();
+
+    expect(assessment).toMatchObject({ assessmentStatus: 'unavailable', decision: 'unavailable', overall: null,
+      findings: [expect.objectContaining({ code: 'AUDIT_MALFORMED' })] });
+    expect(gamingClearAnswerMatches(assessment, input.answer)).toBe(false);
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
   });
 
   it.each([

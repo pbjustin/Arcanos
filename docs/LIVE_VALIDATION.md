@@ -311,6 +311,22 @@ lookup with `reserved: false` consumes no request. Reserved lookups count in
 `metadataRequests` even when the upstream result cannot be validated. An older
 runtime without stage evidence still produces the existing counters.
 
+The Gaming observation also retains the final answer audit's allowlisted reason
+when its assessment is unavailable and the effective timeout when computed.
+Read those optional fields on `observation.audit` together with
+`observation.stages.answer_audit` and `observation.auditStartBudget` for the
+outcome, elapsed time, and remaining pipeline and request allowances.
+`actualUsage.answerAuditProvider`, when present, reports the reserved audit
+request's bounded transport outcome, elapsed time, and allowlisted error code.
+A completed transport request can still yield an incomplete or malformed
+assessment. The projections exclude model IDs, raw errors, prompts, source
+passages, answer text and credentials. Older receipts may omit these fields.
+
+The JavaScript SDK rounds its timeout header down to whole seconds. The guard
+keeps the SDK's exact abort signal and uses the rounded value only to bound its
+own timer, subject to the earlier request and run deadlines. Cancellation before
+a known deadline does not establish a timeout.
+
 For a failed lookup, `LIVE_VALIDATION_METADATA_UNAUTHORIZED` represents HTTP
 401 and `LIVE_VALIDATION_METADATA_FORBIDDEN` represents HTTP 403.
 `LIVE_VALIDATION_METADATA_NOT_FOUND` represents HTTP 404 for the configured

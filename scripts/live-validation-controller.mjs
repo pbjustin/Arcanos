@@ -17,6 +17,12 @@ const HASH = /^[0-9a-f]{64}$/u;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const PROFILE_IDS = ['gaming-guide-positive', 'gaming-guide-negative'];
 const MODEL_STAGES = ['intake', 'reasoning', 'final'];
+const ANSWER_AUDIT_REASON_CODES = ['AUDIT_INPUT_UNAVAILABLE', 'AUDIT_BUDGET_EXHAUSTED',
+  'AUDIT_PROVIDER_INCOMPLETE', 'AUDIT_MALFORMED', 'AUDIT_TIMEOUT', 'AUDIT_PROVIDER_ERROR'];
+const ANSWER_AUDIT_PROVIDER_CODES = ['LIVE_VALIDATION_PROVIDER_TIMEOUT', 'LIVE_VALIDATION_PROVIDER_CANCELLED',
+  'LIVE_VALIDATION_RUN_CLOSED', 'LIVE_VALIDATION_PROVIDER_MODEL_MISMATCH', 'LIVE_VALIDATION_PROVIDER_FAILED',
+  'LIVE_VALIDATION_PROVIDER_RESPONSE_INVALID', 'LIVE_VALIDATION_PROVIDER_RESPONSE_LIMIT', 'LIVE_VALIDATION_USAGE_INVALID'];
+const MAX_ANSWER_AUDIT_TIMEOUT_MS = 12_000;
 export const LIVE_VALIDATION_OPERATOR_GATE_IDS = Object.freeze(['type-check', 'lint', 'build', 'railway', 'workflow',
   'secret-scan', 'service-auth', 'egress', 'exact-sha', 'gaming']);
 const SUMMARY_VERSION = 'arcanos-live-validation-evidence/v1';
@@ -570,7 +576,11 @@ export function sanitizeLiveValidationObservation(value) {
     audit: !record(audit) ? null : {
       assessmentStatus: ['completed', 'not_run', 'unavailable'].includes(audit.assessmentStatus) ? audit.assessmentStatus : 'unobserved',
       decision: ['accept', 'reject', 'partial', 'unavailable'].includes(audit.decision) ? audit.decision : 'unobserved',
-      boundToFinalAnswer: audit.boundToFinalAnswer === true },
+      boundToFinalAnswer: audit.boundToFinalAnswer === true,
+      ...(audit.assessmentStatus === 'unavailable' && ANSWER_AUDIT_REASON_CODES.includes(audit.reasonCode)
+        ? { reasonCode: audit.reasonCode } : {}),
+      ...(integer(audit.effectiveTimeoutMs, 0, MAX_ANSWER_AUDIT_TIMEOUT_MS)
+        ? { effectiveTimeoutMs: audit.effectiveTimeoutMs } : {}) },
     ...(clarification ? { clarification } : {}),
     auditStartBudget: { runtimeRemainingMs: budget(value.auditStartBudget?.runtimeRemainingMs),
       requestRemainingMs: budget(value.auditStartBudget?.requestRemainingMs) },
@@ -634,6 +644,21 @@ function projectModelValidation(stages, metadataRequests, limits) {
   return modelValidation.length ? modelValidation : undefined;
 }
 
+/** Audit provider stages are recorded only for reserved calls. */
+function projectAnswerAuditProvider(stages, auditCalls, limits) {
+  if (!Array.isArray(stages) || stages.length > limits.maxRequests + 1) return undefined;
+  const answerAuditProvider = [];
+  for (const entry of stages) {
+    if (entry?.stage !== 'answer_audit') continue;
+    const { outcome, elapsedMs, code } = entry;
+    if (!['completed', 'failed'].includes(outcome) || !integer(elapsedMs, 0, limits.durationMs)
+      || (code !== undefined && (outcome !== 'failed' || !ANSWER_AUDIT_PROVIDER_CODES.includes(code)))
+      || answerAuditProvider.length >= auditCalls) return undefined;
+    answerAuditProvider.push({ outcome, elapsedMs, ...(code === undefined ? {} : { code }) });
+  }
+  return answerAuditProvider.length ? answerAuditProvider : undefined;
+}
+
 /** Bind runtime usage to the admitted run and budget before projecting it into a receipt. */
 export function sanitizeLiveValidationUsage(value, { plan, target }) {
   requireController(value?.runId === plan.runId && value.commitSha === plan.commitSha && value.prNumber === plan.prNumber
@@ -652,9 +677,11 @@ export function sanitizeLiveValidationUsage(value, { plan, target }) {
     && value.usage.requests === value.usage.providerCalls + value.usage.metadataRequests,
   'LIVE_VALIDATION_USAGE_LIMIT_FAILED');
   const modelValidation = projectModelValidation(value.stages, value.usage.metadataRequests, target.limits);
+  const answerAuditProvider = projectAnswerAuditProvider(value.stages, value.usage.auditCalls, target.limits);
   return { runId: plan.runId, status: ['active', 'stopped'].includes(value.status) ? value.status : 'unknown',
     workflows: value.counts.workflows, ...Object.fromEntries(keys.map(key => [key, value.usage[key]])),
-    ...(modelValidation ? { modelValidation } : {}) };
+    ...(modelValidation ? { modelValidation } : {}),
+    ...(answerAuditProvider ? { answerAuditProvider } : {}) };
 }
 
 function validateState(state, { target, args }) {

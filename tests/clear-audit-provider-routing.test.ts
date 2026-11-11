@@ -1,4 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { createAbortError, runWithRequestAbortContext } from '@arcanos/runtime';
+import { BadRequestError } from 'openai';
 import { runClearAudit } from '../src/core/audit/runClearAudit.js';
 import { GAMING_CLEAR_ANSWER_BUDGET, runGamingClearAnswerAudit, type GamingClearAnswerInput } from '../src/services/gamingClearAnswerAudit.js';
 import { createGamingClearAssessment, gamingClearContextFingerprint, gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
@@ -110,6 +112,66 @@ describe('CLEAR lane routing through the actual Responses conversion and validat
     expect(result.assessment).toMatchObject({ assessmentStatus: 'unavailable', decision: 'unavailable', overall: null });
     expect(result.assessment.findings.map(finding => finding.code)).toContain('AUDIT_PROVIDER_INCOMPLETE');
     expectSingleBoundedRequest(model, true);
+  });
+
+  it.each(lanes)('rejects a mismatched model response for the Gaming %s audit', async (lane, model) => {
+    const mismatchedModel = model === routineModel ? escalationModel : routineModel;
+    responsesCreate.mockResolvedValue(response(mismatchedModel, { dimensions, findings: [] }));
+
+    const { assessment } = await runGamingClearAnswerAudit(client, input, createRuntimeBudgetWithLimit(10_000, 0), lane);
+
+    expect(assessment).toMatchObject({ assessmentStatus: 'unavailable', decision: 'unavailable', overall: null,
+      findings: [expect.objectContaining({ code: 'AUDIT_PROVIDER_ERROR' })] });
+    expectSingleBoundedRequest(model, true);
+  });
+
+  it.each(lanes)('does not accept tool-call output from the Gaming %s audit', async (lane, model) => {
+    responsesCreate.mockResolvedValue({
+      ...response(model, { dimensions, findings: [] }),
+      output: [{ type: 'function_call', call_id: 'synthetic-call', name: 'unused', arguments: '{}' }]
+    });
+
+    const { assessment } = await runGamingClearAnswerAudit(client, input, createRuntimeBudgetWithLimit(10_000, 0), lane);
+
+    expect(assessment).toMatchObject({ assessmentStatus: 'unavailable', decision: 'unavailable', overall: null,
+      findings: [expect.objectContaining({ code: 'AUDIT_PROVIDER_INCOMPLETE' })] });
+    expectSingleBoundedRequest(model, true);
+  });
+
+  it('keeps a provider 400 for unsupported Gaming audit format unavailable', async () => {
+    responsesCreate.mockRejectedValue(new BadRequestError(400, {
+      message: 'Synthetic unsupported output format', type: 'invalid_request_error',
+      code: 'unsupported_value', param: 'text.format'
+    }, undefined, new Headers()));
+
+    const { assessment } = await runGamingClearAnswerAudit(client, input, createRuntimeBudgetWithLimit(10_000, 0));
+
+    expect(assessment).toMatchObject({ assessmentStatus: 'unavailable', decision: 'unavailable', overall: null,
+      findings: [expect.objectContaining({ code: 'AUDIT_PROVIDER_ERROR' })] });
+    expectSingleBoundedRequest(routineModel, true);
+  });
+
+  it('propagates caller cancellation from an in-flight Gaming audit', async () => {
+    const controller = new AbortController();
+    let markDispatched!: (signal: AbortSignal) => void;
+    const dispatched = new Promise<AbortSignal>(resolve => { markDispatched = resolve; });
+    responsesCreate.mockImplementation((_payload: unknown, options: { signal: AbortSignal }) =>
+      new Promise((_resolve, reject) => {
+        options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
+        markDispatched(options.signal);
+      }));
+    const pending = runWithRequestAbortContext({
+      controller, signal: controller.signal, deadlineAt: Date.now() + 10_000, timeoutMs: 10_000
+    }, () => runGamingClearAnswerAudit(client, input, createRuntimeBudgetWithLimit(10_000, 0)));
+
+    const providerSignal = await dispatched;
+    const cancellation = expect(pending).rejects.toThrow('request_aborted');
+    expect(providerSignal.aborted).toBe(false);
+    controller.abort(createAbortError('synthetic caller cancellation'));
+    await cancellation;
+
+    expect(providerSignal.aborted).toBe(true);
+    expectSingleBoundedRequest(routineModel, true);
   });
 
   it('ignores legacy module-local audit selectors for both production audit paths', async () => {

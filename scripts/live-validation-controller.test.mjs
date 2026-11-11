@@ -512,6 +512,27 @@ test('observations retain bounded semantic codes and timings while dropping arbi
   const sanitized = sanitizeLiveValidationObservation(value); assert.equal(sanitized.reason, 'GAME_MISMATCH');
   assert.deepEqual(sanitized.candidates[1], { decision: 'unobserved', reasonCodes: ['CONFLICT'] }); assert.doesNotMatch(JSON.stringify(sanitized), /private/);
 });
+test('answer audit receipt preserves only bounded audit diagnostics', () => {
+  const value = observation(true);
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, value.audit);
+  const audit = { assessmentStatus: 'unavailable', decision: 'unavailable', boundToFinalAnswer: false };
+  for (const reasonCode of ['AUDIT_INPUT_UNAVAILABLE', 'AUDIT_BUDGET_EXHAUSTED', 'AUDIT_PROVIDER_INCOMPLETE',
+    'AUDIT_MALFORMED', 'AUDIT_TIMEOUT', 'AUDIT_PROVIDER_ERROR']) {
+    value.audit = { ...audit, reasonCode, effectiveTimeoutMs: 12_000,
+      rawBody: 'private upstream response', model: 'private model', sourceId: 'private evidence' };
+    assert.deepEqual(sanitizeLiveValidationObservation(value).audit, { ...audit, reasonCode, effectiveTimeoutMs: 12_000 });
+  }
+  value.audit = { ...audit, reasonCode: 'AUDIT_PRIVATE_PAYLOAD', effectiveTimeoutMs: 0 };
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, { ...audit, effectiveTimeoutMs: 0 });
+  for (const effectiveTimeoutMs of [-1, 1.5, 12_001, null, 'private timeout']) {
+    value.audit = { ...audit, effectiveTimeoutMs };
+    assert.deepEqual(sanitizeLiveValidationObservation(value).audit, audit);
+  }
+  value.audit = { assessmentStatus: 'completed', decision: 'accept', boundToFinalAnswer: true,
+    reasonCode: 'AUDIT_TIMEOUT', effectiveTimeoutMs: 9000 };
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit,
+    { assessmentStatus: 'completed', decision: 'accept', boundToFinalAnswer: true, effectiveTimeoutMs: 9000 });
+});
 test('optional clarification observations expose only bounded counts and invariants', () => {
   const value = observation(true);
   assert.equal(Object.hasOwn(sanitizeLiveValidationObservation(value), 'clarification'), false);
@@ -782,10 +803,44 @@ test('controller sanitizes the actual direct-provider snapshot including workflo
   assert.equal(actual.requests, 3); assert.equal(actual.metadataRequests, 1);
   assert.deepEqual(actual.modelValidation, [{ stage: 'metadata', outcome: 'completed',
     elapsedMs: provider.snapshot().stages[0].elapsedMs, reserved: true }]);
+  assert.deepEqual(actual.answerAuditProvider, [{ outcome: 'completed',
+    elapsedMs: provider.snapshot().stages[2].elapsedMs }]);
   assert.equal(actual.providerCalls, 2); assert.equal(actual.generationCalls, 1); assert.equal(actual.auditCalls, 1);
   assert.equal(actual.observedInputTokens, 20); assert.equal(actual.observedOutputTokens, 10);
   assert.equal(actual.observedTotalTokens, 30);
   assert.ok(actual.reservedSpendMicroUsd >= actual.observedSpendMicroUsd);
+});
+
+test('answer audit provider receipt keeps only bounded reserved-call diagnostics', t => {
+  const { target } = fixture(t);
+  const plan = { runId: 'a'.repeat(32), commitSha: sha, prNumber: 1528, runtimeDeploymentId, profileHash: 'b'.repeat(64) };
+  const provider = createLiveValidationProvider({ target, identity: { sourceCommit: sha, deploymentId: runtimeDeploymentId },
+    apiKey: 'sk-unit-test-fixture-' + 'x'.repeat(40), fetchImplementation: () => assert.fail('unexpected transport') });
+  t.after(() => provider.close());
+  const snapshot = provider.snapshot();
+  const summarize = (stages, auditCalls = 1) => sanitizeLiveValidationUsage({ ...plan, ...snapshot, stages,
+    usage: { ...snapshot.usage, requests: auditCalls, providerCalls: auditCalls, auditCalls } }, { plan, target });
+  const stage = { stage: 'answer_audit', outcome: 'failed', elapsedMs: 34 };
+  const codes = ['LIVE_VALIDATION_PROVIDER_TIMEOUT', 'LIVE_VALIDATION_PROVIDER_CANCELLED', 'LIVE_VALIDATION_RUN_CLOSED',
+    'LIVE_VALIDATION_PROVIDER_MODEL_MISMATCH', 'LIVE_VALIDATION_PROVIDER_FAILED', 'LIVE_VALIDATION_PROVIDER_RESPONSE_INVALID',
+    'LIVE_VALIDATION_PROVIDER_RESPONSE_LIMIT', 'LIVE_VALIDATION_USAGE_INVALID'];
+  assert.equal(summarize(undefined).answerAuditProvider, undefined);
+  assert.deepEqual(summarize([stage]).answerAuditProvider, [{ outcome: 'failed', elapsedMs: 34 }]);
+  for (const code of codes) {
+    const usage = summarize([{ ...stage, code, model: 'private model', actualModel: 'private provider model',
+      caseId: 'private case', requestId: 'private request', rawBody: 'private response' }]);
+    assert.deepEqual(usage.answerAuditProvider, [{ outcome: 'failed', elapsedMs: 34, code }]);
+    assert.doesNotMatch(JSON.stringify(usage), /private/);
+  }
+  assert.equal(summarize([stage], 0).answerAuditProvider, undefined);
+  for (const stages of [[stage, stage], Array(target.limits.maxRequests + 2).fill({ stage: 'generation' }),
+    [{ ...stage, outcome: 'private outcome' }], [{ ...stage, code: 'LIVE_VALIDATION_PRIVATE_PAYLOAD' }],
+    [{ ...stage, elapsedMs: -1 }], [{ ...stage, elapsedMs: target.limits.durationMs + 1 }],
+    [{ ...stage, outcome: 'completed', code: codes[0] }]]) {
+    const usage = summarize(stages);
+    assert.equal(usage.answerAuditProvider, undefined);
+    assert.equal(usage.auditCalls, 1);
+  }
 });
 
 test('model validation receipt preserves bounded outcomes and drops raw or inconsistent diagnostics', t => {
