@@ -12,13 +12,16 @@ import type { GamingHybridResult } from '../src/services/gamingHybridKnowledge.j
 import { GAMING_CLEAR_DIMENSIONS, gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
 import { GAMING_CLEAR_APPROVED_ANSWER, hasBoundGamingClearAnswer } from '../src/shared/gaming/gamingClearAnswerBinding.js';
 import { GAMING_UNVERIFIED_GUIDE_WARNING } from '../src/shared/gaming/gamingFreshnessDisposition.js';
+import { createLivePreviewEvidence, LIVE_PREVIEW_MODE, verifyLivePreviewEvidence,
+  type LivePreviewCaseId } from '../scripts/live-pr-preview-verifier.mjs';
 
 const guideUrl = 'https://guides.example.org/elden-ring/early-samurai';
 const guideHtml = readFileSync(new URL('./fixtures/gaming-samurai-guide.html', import.meta.url), 'utf8');
 const clarificationGuideHtml = readFileSync(new URL('./fixtures/gaming-samurai-pc-clarification-guide.html', import.meta.url), 'utf8');
 const wrongGameHtml = readFileSync(new URL('./fixtures/gaming-sekiro-conflict-guide.html', import.meta.url), 'utf8');
 const publicClarificationGuideUrl = 'https://raw.githubusercontent.com/pbjustin/Arcanos/62fe94af217e375cd6a5a77d834f4dffd7c49675/tests/fixtures/gaming-samurai-pc-clarification-guide.html';
-type ValidationProfile = { id: string; input: LiveValidationGamingInput; expected: { outcome: string; semanticGap: string } };
+type ValidationProfile = { id: string; caseId: LivePreviewCaseId; input: LiveValidationGamingInput;
+  expected: { outcome: string; semanticGap: string } };
 const canonicalProfiles = JSON.parse(readFileSync(new URL('../examples/live-validation/profiles.json', import.meta.url), 'utf8')).profiles as ValidationProfile[];
 const fixtureProfiles = JSON.parse(readFileSync(new URL('../examples/live-validation/fixture-profiles.json', import.meta.url), 'utf8')).profiles as ValidationProfile[];
 // Authored test data only: these bytes are not a retained Frontier quotation or
@@ -373,12 +376,46 @@ describe('private Gaming live-validation adapter through the real transient v2 w
     expect(profile.input.clarificationReplies).toBeUndefined();
     const run = harness(); const input = run.adapter.validateInput(profile.input);
     expect(input.ok).toBe(true); if (!input.ok) throw new Error('Expected valid canonical Elite input.');
+    const startedAt = Date.now();
     const output = await run.adapter.execute(input.input, run.observer);
     const observation = run.adapter.getLastObservation()!;
     expect(observation).toMatchObject({ outcome: profile.expected.outcome, semanticGap: profile.expected.semanticGap });
     expect(output.accepted).toBe(positive);
     expect(mockHttp).toHaveBeenCalledTimes(1); expect(mockWorkflowFactory).toHaveBeenCalledTimes(1);
     expect(candidateHandoffs).toHaveLength(1); expect(queryHandoffs).toHaveLength(1);
+
+    const identity = { sourceCommit: 'a'.repeat(40), approvedSourceCommit: 'a'.repeat(40),
+      deploymentId: 'offline-elite-adapter-fixture', moduleId: 'gaming', mode: LIVE_PREVIEW_MODE };
+    const generationCalls = (['intake', 'reasoning', 'final'] as const)
+      .filter(stage => observation.stages[stage].status === 'passed').length;
+    const auditCalls = mockAuditCompletion.mock.calls.length;
+    const providerCalls = generationCalls + auditCalls;
+    const stageStatus = (stage: 'generation' | 'answer_audit') => {
+      const { status } = observation.stages[stage];
+      return status === 'started' ? 'unobserved' : status;
+    };
+    const evidence = createLivePreviewEvidence(identity, {
+      caseId: profile.caseId, result: output.result, audit: output.audit, failureCode: output.failureCode,
+      stages: {
+        authorization: 'passed', budget: 'passed',
+        source_acquisition: jest.mocked(run.observer.onSourceAcquisition).mock.lastCall?.[0],
+        source_validation: jest.mocked(run.observer.onSourceValidation).mock.lastCall?.[0],
+        generation: stageStatus('generation'), answer_audit: stageStatus('answer_audit'),
+        delivery: output.accepted ? 'passed' : 'rejected'
+      },
+      // Synthetic model usage accompanies the adapter's actual grounding, citations and bound audit.
+      usage: { requests: providerCalls, providerCalls, generationCalls, auditCalls,
+        reservedInputTokens: 1000 * providerCalls, reservedOutputTokens: 200 * providerCalls,
+        reservedTotalTokens: 1200 * providerCalls, reservedSpendMicroUsd: 1500 * providerCalls,
+        observedInputTokens: 500 * providerCalls, observedOutputTokens: 80 * providerCalls,
+        observedSpendMicroUsd: 600 * providerCalls, elapsedMs: Date.now() - startedAt,
+        limits: { maxRequests: 31, maxInputTokensPerRequest: 128000, maxOutputTokensPerRequest: 4096,
+          maxTotalTokens: 400000, durationMs: 600000, maxSpendMicroUsd: 2000000, maxConcurrency: 1, maxRetries: 0 } }
+    });
+    const verification = verifyLivePreviewEvidence(evidence, identity);
+    expect(verification.checks.filter(check => check.status === 'FAIL')).toEqual([]);
+    expect(verification).toMatchObject({ status: 'PASS', accepted: positive });
+
     if (positive) {
       expect(profile.input.candidateUrls).toEqual(['https://www.elitedangerous.com/news/system-colonisation-guide']);
       expect(candidateHandoffs[0].result.body).toMatchObject({ state: 'answer_ready', nextAction: 'answer', coverageSatisfied: true });

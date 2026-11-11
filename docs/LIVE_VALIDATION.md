@@ -363,9 +363,12 @@ invent a separate Gaming engine. A clarification is preserved as an observed
 result; it is not misreported as a generated audited answer. Missing noncritical
 patch knowledge retains the ordinary visible freshness qualification.
 
-The canonical positive profile uses Frontier's real public article; its publisher
-reachability and usable evidence must pass during the run. The negative profile
-uses a clearly authored control. The separate fixture profiles retain the
+The canonical positive profile explicitly supplies Frontier's real public guide
+in the question and submits the same URL as a candidate. This exercises the
+verifier's supplied-guide grounding check against independently acquired,
+selected evidence. The separate Gaming delivery integration suite also tests
+the natural question through candidate discovery. The negative profile uses a
+clearly authored control. The separate fixture profiles retain the
 synthetic Samurai clarification regression. A live result proves only the
 acquisition and provider boundaries actually observed, never current-patch
 compatibility merely from successful HTTPS. This adapter invokes hybrid-v2

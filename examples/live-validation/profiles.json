@@ -12,7 +12,7 @@
           "contractVersion": "gaming-hybrid-v2",
           "game": "Elite Dangerous",
           "mode": "guide",
-          "question": "Find a detailed guide explaining system colonisation in Elite Dangerous and how to get started, including prerequisites and the first concrete steps. Cite the guide sources.",
+          "question": "Find a detailed guide explaining system colonisation in Elite Dangerous and how to get started, including prerequisites and the first concrete steps. Cite the guide sources. Guide: https://www.elitedangerous.com/news/system-colonisation-guide",
           "idempotencyKey": "live-validation-elite-colonisation-positive",
           "storagePolicy": "transient_only"
         },
