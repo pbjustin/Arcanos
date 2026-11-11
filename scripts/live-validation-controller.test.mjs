@@ -804,6 +804,12 @@ test('model validation receipt preserves bounded outcomes and drops raw or incon
   const rejected = { ...stage, code: 'LIVE_VALIDATION_BUDGET_EXHAUSTED', elapsedMs: 0, reserved: false };
   assert.equal(summarize(undefined).modelValidation, undefined);
   assert.deepEqual(summarize([legacy]).modelValidation, [{ ...legacy, reserved: true }]);
+  for (const code of ['LIVE_VALIDATION_METADATA_UNAUTHORIZED', 'LIVE_VALIDATION_METADATA_FORBIDDEN',
+    'LIVE_VALIDATION_METADATA_RATE_LIMITED', 'LIVE_VALIDATION_METADATA_ACCESS_DENIED']) {
+    const classified = { ...stage, code };
+    assert.deepEqual(summarize([{ ...classified, rawBody: 'private upstream error' }]).modelValidation, [classified]);
+    assert.equal(summarize([{ ...classified, reserved: false }], 0).modelValidation, undefined);
+  }
   assert.deepEqual(summarize([{ ...stage, model: 'private model label', message: 'private provider message' },
     rejected, { stage: 'generation', outcome: 'failed', code: 'private content error' }]).modelValidation, [stage, rejected]);
   assert.deepEqual(summarize([rejected], 0).modelValidation, [rejected]);

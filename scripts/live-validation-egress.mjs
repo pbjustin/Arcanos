@@ -109,10 +109,12 @@ export function createLiveValidationProviderTransport({ approvedModels, fetchImp
       result = await Promise.race([fetchImplementation(url, { method, headers: requestHeaders,
         ...(method === 'POST' ? { body: JSON.stringify(body) } : {}), signal, redirect: 'error' }), interrupted]);
       if (method === 'GET' && !result?.redirected) {
-        if (result?.status === 401 || result?.status === 403) {
-          throw new LiveValidationEgressError('LIVE_VALIDATION_METADATA_ACCESS_DENIED');
+        switch (result?.status) {
+          case 401: throw new LiveValidationEgressError('LIVE_VALIDATION_METADATA_UNAUTHORIZED');
+          case 403: throw new LiveValidationEgressError('LIVE_VALIDATION_METADATA_FORBIDDEN');
+          case 404: throw new LiveValidationEgressError('LIVE_VALIDATION_METADATA_NOT_FOUND');
+          case 429: throw new LiveValidationEgressError('LIVE_VALIDATION_METADATA_RATE_LIMITED');
         }
-        if (result?.status === 404) throw new LiveValidationEgressError('LIVE_VALIDATION_METADATA_NOT_FOUND');
       }
       requireEgress(result && !result.redirected && result.status >= 200 && result.status < 300,
         'LIVE_VALIDATION_PROVIDER_FAILED');

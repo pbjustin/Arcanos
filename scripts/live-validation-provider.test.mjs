@@ -49,9 +49,15 @@ test('SDK-compatible transport binds the credential only to fixed public routes 
 });
 
 test('canonical model metadata can run before a workflow, counts requests, and hides unused metadata', async context => {
+  assert.throws(() => createLiveValidationProvider({ target, identity,
+    fetchImplementation: () => assert.fail('missing credential must never reach egress') }),
+  code('LIVE_VALIDATION_CREDENTIAL_INVALID'));
   const f = fixture(context);
-  const result = await f.provider.fetch(LIVE_VALIDATION_MODEL_URL_PREFIX + MODEL, { method: 'GET' });
+  const result = await f.provider.fetch(LIVE_VALIDATION_MODEL_URL_PREFIX + MODEL, { method: 'GET', headers: {
+    authorization: 'Bearer sdk-placeholder', 'openai-project': 'untrusted-project', 'openai-organization': 'untrusted-organization'
+  } });
   assert.equal(f.calls[0].url, LIVE_VALIDATION_MODEL_URL_PREFIX + encodeURIComponent(MODEL));
+  assert.deepEqual(f.calls[0].init.headers, { authorization: 'Bearer ' + API_KEY, accept: 'application/json' });
   assert.deepEqual(await result.json(), { id: MODEL, object: 'model' });
   assert.equal(f.provider.snapshot().usage.requests, 1); assert.equal(f.provider.snapshot().usage.providerCalls, 0);
   assert.deepEqual(f.provider.snapshot().stages.map(({ elapsedMs, ...stage }) => stage), [
@@ -61,10 +67,11 @@ test('canonical model metadata can run before a workflow, counts requests, and h
 
 test('metadata failures retain a bounded classification without reading denied bodies or leaking transport messages', async context => {
   const fixtures = [
-    ['HTTP 401', 401, 'LIVE_VALIDATION_METADATA_ACCESS_DENIED'],
-    ['HTTP 403', 403, 'LIVE_VALIDATION_METADATA_ACCESS_DENIED'],
+    ['HTTP 401', 401, 'LIVE_VALIDATION_METADATA_UNAUTHORIZED'],
+    ['HTTP 403', 403, 'LIVE_VALIDATION_METADATA_FORBIDDEN'],
     ['HTTP 404', 404, 'LIVE_VALIDATION_METADATA_NOT_FOUND'],
-    ['other HTTP denial', 429, 'LIVE_VALIDATION_PROVIDER_FAILED'],
+    ['HTTP 429', 429, 'LIVE_VALIDATION_METADATA_RATE_LIMITED'],
+    ['other HTTP failure', 500, 'LIVE_VALIDATION_PROVIDER_FAILED'],
     ['fetch rejection', () => { throw new Error(API_KEY); }, 'LIVE_VALIDATION_METADATA_TRANSPORT_FAILED'],
     ['body read rejection', () => ({ status: 200, body: { [Symbol.asyncIterator]: () => ({
       next: async () => { throw new Error(API_KEY); }

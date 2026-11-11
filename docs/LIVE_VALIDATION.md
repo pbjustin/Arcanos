@@ -311,15 +311,26 @@ lookup with `reserved: false` consumes no request. Reserved lookups count in
 `metadataRequests` even when the upstream result cannot be validated. An older
 runtime without stage evidence still produces the existing counters.
 
-For a failed lookup, `LIVE_VALIDATION_METADATA_ACCESS_DENIED` represents HTTP
-401 or 403. `LIVE_VALIDATION_METADATA_NOT_FOUND` represents HTTP 404 from the
-configured provider and credential scope. `LIVE_VALIDATION_METADATA_TRANSPORT_FAILED`
-identifies a transport error. Existing timeout, cancellation, budget and
-response validation codes retain their meanings. This evidence identifies the
-failed stage even when the Gaming response reports `GENERATION_UNAVAILABLE`.
+For a failed lookup, `LIVE_VALIDATION_METADATA_UNAUTHORIZED` represents HTTP
+401 and `LIVE_VALIDATION_METADATA_FORBIDDEN` represents HTTP 403.
+`LIVE_VALIDATION_METADATA_NOT_FOUND` represents HTTP 404 for the configured
+provider and credential scope. `LIVE_VALIDATION_METADATA_RATE_LIMITED`
+represents HTTP 429, which can reflect a rate or quota restriction.
+Older receipts can contain `LIVE_VALIDATION_METADATA_ACCESS_DENIED` for
+either 401 or 403. `LIVE_VALIDATION_METADATA_TRANSPORT_FAILED` identifies a
+transport error. Existing timeout, cancellation, budget and response validation
+codes retain their meanings. This evidence identifies the failed stage even
+when the Gaming response reports `GENERATION_UNAVAILABLE`.
 Trinity reuses a successful model lookup for the same SDK client and model
 within the existing cache lifetime. An expired budget or cancelled request
 still stops intake before a cached result can be used.
+
+After a credential correction, a separately authorized metadata-only check can
+verify that the credential can retrieve metadata for the configured model.
+Full acceptance requires a new authorized run identity and the existing
+exact-commit admission gates. The Gaming profile must acquire and validate its
+source, meet evidence coverage, generate the answer, and complete the final
+claim and citation audit.
 
 Quota state is local to the one run in one deployment process. The service has
 one replica and no automatic restart. A manual restart/redeployment can create
