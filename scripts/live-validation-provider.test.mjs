@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
 import { test } from 'node:test';
+import OpenAI from 'openai';
 import { createLiveValidationProvider, LiveValidationProviderError } from './live-validation-provider.mjs';
 import { LIVE_VALIDATION_BUDGET_CAPS } from './live-validation-budget.mjs';
 import { LIVE_VALIDATION_MODEL_URL_PREFIX, LIVE_VALIDATION_RESPONSES_URL } from './live-validation-egress.mjs';
@@ -191,6 +192,10 @@ test('forbidden routes, tools/media, storage, retry headers, output/input bounds
     provider => invoke(provider, { input: [{ role: 'user', content: [{ type: 'input_image', image_url: 'https://example.com' }] }] }),
     provider => invoke(provider, { max_output_tokens: 4_097 }), provider => invoke(provider, { input: 'x'.repeat(128_001) }),
     provider => invoke(provider, {}, { headers: { 'x-stainless-retry-count': '1' } }),
+    provider => invoke(provider, {}, { headers: { 'x-stainless-timeout': '0', 'x-stainless-lang': 'js' } }),
+    provider => invoke(provider, {}, { headers: { 'x-stainless-timeout': '0' }, signal: new AbortController().signal }),
+    provider => invoke(provider, {}, { headers: { 'x-stainless-timeout': 'invalid', 'x-stainless-lang': 'js' },
+      signal: new AbortController().signal }),
     provider => invoke(provider, {}, { signal: AbortSignal.abort() })
   ];
   for (const run of invalid) {
@@ -276,6 +281,108 @@ test('audit timeout preserves its stage and consumed reservation when fetch or r
     assert.equal(calls, 2); assert.equal(f.observation.timeoutStage, 'answer_audit');
     const after = f.provider.snapshot(); assert.equal(after.usage.auditCalls, 1); assert.equal(after.closed, true);
     assert.equal(after.stages[1].code, 'LIVE_VALIDATION_PROVIDER_TIMEOUT'); assert.equal(after.stages[1].stage, 'answer_audit');
+  }
+});
+
+test('the SDK whole-second timeout header leaves subsecond requests and their remaining fraction usable', async context => {
+  for (const [timeoutMs, responseDelayMs, header] of [[900, 0, '0'], [1_500, 1_100, '1']]) {
+    await context.test(String(timeoutMs) + ' ms', async child => {
+      let calls = 0;
+      let actualHeader;
+      const f = fixture(child, { fetchImplementation: async () => {
+        calls++;
+        if (responseDelayMs) await new Promise(resolve => setTimeout(resolve, responseDelayMs));
+        return Response.json(responseBody);
+      } });
+      const client = new OpenAI({ apiKey: 'sdk-placeholder', maxRetries: 0, fetch: (input, init) => {
+        actualHeader = new Headers(init.headers).get('x-stainless-timeout');
+        return f.provider.fetch(input, init);
+      } });
+      f.provider.beginWorkflow('gaming-guide-positive');
+
+      const result = await client.responses.create(body, { timeout: timeoutMs });
+
+      assert.equal(actualHeader, header);
+      assert.equal(result.id, responseBody.id);
+      assert.equal(calls, 1);
+      assert.equal(f.provider.snapshot().usage.requests, 1);
+      assert.equal(f.provider.snapshot().closed, false);
+    });
+  }
+});
+
+test('a rounded SDK timeout still obeys the exact SDK and outer deadlines and caller cancellation', async context => {
+  for (const [label, timeoutMs, outerRemainingMs, expected] of [
+    ['earlier outer deadline', 900, 20, 'LIVE_VALIDATION_PROVIDER_TIMEOUT'],
+    // The guard cannot distinguish the exact SDK timer from another abort inside its rounding interval.
+    ['exact SDK deadline', 20, 10_000, 'LIVE_VALIDATION_PROVIDER_CANCELLED'],
+    ['caller cancellation', 900, 10_000, 'LIVE_VALIDATION_PROVIDER_CANCELLED']
+  ]) {
+    await context.test(label, async child => {
+      const caller = new AbortController();
+      const { promise: dispatched, resolve: markDispatched } = Promise.withResolvers();
+      const f = fixture(child, { getRemainingMs: () => outerRemainingMs, fetchImplementation: () => {
+        markDispatched();
+        return new Promise(() => {});
+      } });
+      const client = new OpenAI({ apiKey: 'sdk-placeholder', maxRetries: 0, fetch: f.provider.fetch });
+      f.provider.beginWorkflow('gaming-guide-positive');
+      const pending = client.responses.create(body, { timeout: timeoutMs, signal: caller.signal });
+      if (label === 'caller cancellation') {
+        await Promise.race([dispatched, pending]);
+        caller.abort();
+      }
+
+      await assert.rejects(pending);
+      const snapshot = f.provider.snapshot();
+      assert.equal(snapshot.closed, true);
+      assert.equal(snapshot.usage.requests, 1);
+      assert.equal(snapshot.counts.pendingRequests, 1);
+      assert.equal(snapshot.stages.at(-1).code, expected);
+    });
+  }
+});
+
+test('content abort at the known deadline is a timeout, while earlier cancellation stays distinct', async context => {
+  const scenarios = [
+    ['an exact transport deadline', '1', 5_000, 1_000, 'LIVE_VALIDATION_PROVIDER_TIMEOUT'],
+    ['an exact decimal deadline', '0.020', 5_000, 20, 'LIVE_VALIDATION_PROVIDER_TIMEOUT'],
+    ['an earlier request deadline', '5', 1_000, 1_000, 'LIVE_VALIDATION_PROVIDER_TIMEOUT'],
+    ['pre-deadline cancellation', '1', 5_000, 999, 'LIVE_VALIDATION_PROVIDER_CANCELLED']
+  ];
+  for (const stage of ['generation', 'answer_audit']) {
+    for (const [label, nativeTimeout, requestRemainingMs, elapsedMs, expected] of scenarios) {
+      await context.test(stage + ' with ' + label, async child => {
+        let now = Date.now();
+        let hold = stage === 'generation';
+        const caller = new AbortController();
+        const { promise: dispatched, resolve: markDispatched } = Promise.withResolvers();
+        const f = fixture(child, { now: () => now, getRemainingMs: () => requestRemainingMs,
+          fetchImplementation: () => {
+            if (!hold) return Promise.resolve(Response.json(responseBody));
+            markDispatched();
+            return new Promise(() => {});
+          } });
+        f.provider.beginWorkflow('gaming-guide-positive');
+        if (stage === 'answer_audit') await invoke(f.provider);
+        f.observation.stage = stage;
+        hold = true;
+        const pending = invoke(f.provider, {}, { headers: { 'x-stainless-timeout': nativeTimeout }, signal: caller.signal });
+        await dispatched;
+        now += elapsedMs;
+        caller.abort();
+
+        await assert.rejects(pending, code(expected));
+        const snapshot = f.provider.snapshot();
+        assert.equal(snapshot.closed, true);
+        assert.equal(snapshot.usage.requests, stage === 'answer_audit' ? 2 : 1);
+        assert.equal(snapshot.usage.auditCalls, stage === 'answer_audit' ? 1 : 0);
+        assert.equal(snapshot.counts.pendingRequests, 1);
+        assert.equal(f.observation.timeoutStage, expected === 'LIVE_VALIDATION_PROVIDER_TIMEOUT' ? stage : undefined);
+        assert.deepEqual(snapshot.stages.at(-1), { caseId: 'gaming-guide-positive', stage, model: MODEL,
+          outcome: 'failed', elapsedMs, code: expected });
+      });
+    }
   }
 });
 

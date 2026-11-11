@@ -88,12 +88,16 @@ export function createLiveValidationProvider({ target, identity, apiKey, now = D
       model = body?.model;
     }
     validateLiveValidationProviderRequest({ url: canonicalUrl, method, body }, { approvedModels: models });
+    const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
     const rawTimeout = headers.get('x-stainless-timeout');
-    const nativeTimeoutMs = rawTimeout === null ? 120_000
+    const headerTimeoutMs = rawTimeout === null ? 120_000
       : /^[0-9]+(?:\.[0-9]+)?$/u.test(rawTimeout) ? Math.floor(Number(rawTimeout) * 1_000) : 0;
-    requireProvider(integer(nativeTimeoutMs, 1), 'LIVE_VALIDATION_DURATION_LIMIT');
-    return { url: canonicalUrl, method, body, model, nativeTimeoutMs,
-      signal: init?.signal ?? (input instanceof Request ? input.signal : undefined) };
+    // The JS SDK truncates this header to seconds and keeps the exact timeout on its signal.
+    const roundedSdkTimeout = signal instanceof AbortSignal && headers.get('x-stainless-lang') === 'js'
+      && /^(?:0|[1-9][0-9]*)$/u.test(rawTimeout ?? '');
+    const timeoutCeilingMs = roundedSdkTimeout ? headerTimeoutMs + 999 : headerTimeoutMs;
+    requireProvider(integer(timeoutCeilingMs, 1), 'LIVE_VALIDATION_DURATION_LIMIT');
+    return { url: canonicalUrl, method, body, model, timeoutCeilingMs, signal };
   }
   function contentRequest(body) {
     const limits = budget.snapshot().limits;
@@ -118,6 +122,7 @@ export function createLiveValidationProvider({ target, identity, apiKey, now = D
     try {
       requireProvider(!closed, 'LIVE_VALIDATION_RUN_CLOSED');
       requireProvider(!active, 'LIVE_VALIDATION_CONCURRENCY_LIMIT');
+      const fetchStartedAtMs = now();
       request = parseRequest(input, init);
       if (request.method === 'GET') {
         stage = 'metadata';
@@ -138,9 +143,14 @@ export function createLiveValidationProvider({ target, identity, apiKey, now = D
       const remaining = getRemainingMs();
       requireProvider(remaining === null || remaining === undefined || typeof remaining === 'number' && Number.isFinite(remaining),
         'LIVE_VALIDATION_DURATION_LIMIT');
-      const metadataDeadlineAt = stage === 'metadata' && typeof remaining === 'number' ? now() + remaining : undefined;
-      const timeoutMs = Math.floor(Math.min(request.nativeTimeoutMs, budget.remainingMs(), remaining ?? Number.POSITIVE_INFINITY));
+      const budgetReadAtMs = now();
+      const requestDeadlineAt = typeof remaining === 'number' ? budgetReadAtMs + remaining : undefined;
+      const runRemainingMs = budget.remainingMs();
+      const timeoutMs = Math.floor(Math.min(request.timeoutCeilingMs, runRemainingMs, remaining ?? Number.POSITIVE_INFINITY));
       requireProvider(integer(timeoutMs, 1), 'LIVE_VALIDATION_DURATION_LIMIT');
+      // A rounded SDK signal can fire before this ceiling without revealing whether it timed out.
+      const abortDeadlineAt = stage === 'metadata' ? requestDeadlineAt : Math.min(fetchStartedAtMs + request.timeoutCeilingMs,
+        budgetReadAtMs + runRemainingMs, requestDeadlineAt ?? Number.POSITIVE_INFINITY);
       reservation = budget.reserve({ model: request.model, inputTokens: content.inputTokens, outputTokens: content.outputTokens, stage });
       startedAtMs = now();
       active = true; controller = new AbortController(); activeAbort = controller;
@@ -151,7 +161,7 @@ export function createLiveValidationProvider({ target, identity, apiKey, now = D
         controller.signal.addEventListener('abort', onAbort, { once: true });
         onCallerAbort = () => {
           // The SDK forwards abort without a reason and may beat the guard's timer.
-          if (metadataDeadlineAt !== undefined && now() >= metadataDeadlineAt) timedOut = true;
+          if (abortDeadlineAt !== undefined && now() >= abortDeadlineAt) timedOut = true;
           callerAborted = true;
           controller.abort();
         };
