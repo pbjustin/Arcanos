@@ -294,7 +294,7 @@ test('the SDK whole-second timeout header leaves subsecond requests and their re
         if (responseDelayMs) await new Promise(resolve => setTimeout(resolve, responseDelayMs));
         return Response.json(responseBody);
       } });
-      const client = new OpenAI({ apiKey: 'sdk-placeholder', maxRetries: 0, fetch: (input, init) => {
+      const client = new OpenAI({ apiKey: 'sdk-placeholder', baseURL: 'https://api.openai.com/v1', maxRetries: 0, fetch: (input, init) => {
         actualHeader = new Headers(init.headers).get('x-stainless-timeout');
         return f.provider.fetch(input, init);
       } });
@@ -325,7 +325,7 @@ test('a rounded SDK timeout still obeys the exact SDK and outer deadlines and ca
         markDispatched();
         return new Promise(() => {});
       } });
-      const client = new OpenAI({ apiKey: 'sdk-placeholder', maxRetries: 0, fetch: f.provider.fetch });
+      const client = new OpenAI({ apiKey: 'sdk-placeholder', baseURL: 'https://api.openai.com/v1', maxRetries: 0, fetch: f.provider.fetch });
       f.provider.beginWorkflow('gaming-guide-positive');
       const pending = client.responses.create(body, { timeout: timeoutMs, signal: caller.signal });
       if (label === 'caller cancellation') {
