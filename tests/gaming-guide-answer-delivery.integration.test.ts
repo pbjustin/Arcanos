@@ -477,10 +477,10 @@ describe('authored adversarial procedure facts through authenticated MCP', () =>
 
   it('delivers the first three supported actions without requiring presentation words in the guide', async () => {
     scenario = proceduralScenario('Explain the first three actions needed for system colonisation.',
-      '<p>To begin system colonisation, visit the System Colonisation Contact. Select an unpopulated system. '
-      + 'Choose the initial station type and register the claim.</p>',
+      '<p>To begin system colonisation, visit the System Colonisation Contact. Next, select an unpopulated system. '
+      + 'Then register the claim.</p>',
       [{ url: '', draft: '1. Visit the System Colonisation Contact. 2. Select an unpopulated system. '
-        + '3. Choose the initial station type and register the claim.', answerProbe: /1\..*Contact.*2\..*unpopulated.*3\..*register/iu,
+        + '3. Register the claim.', answerProbe: /1\..*Contact.*2\..*unpopulated.*3\..*register/iu,
         support: [/visit the System Colonisation Contact/iu, /Select an unpopulated system/iu, /register the claim/iu] }]);
     scenario.id = 'first-three-actions';
     expectAuditedProcedure(await harness(false).complete());

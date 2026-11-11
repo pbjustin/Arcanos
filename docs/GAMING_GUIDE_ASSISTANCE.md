@@ -1297,7 +1297,9 @@ available as evidence without proving an affirmative starting procedure.
 
 Explicit first-N-action requests retain their count (one through eight). Ordered
 actions must share an acquired starting anchor; separate paragraphs and
-alternative routes cannot pool their counts. Counted continuations retain the
+alternative routes cannot pool their counts. A later sentence needs a clear
+sequence connection to that anchor before its actions count. A prerequisite
+must apply to the requested activity itself. Counted continuations retain the
 existing four-successor projection bound. Material requirements and their
 acquisition locations remain separate factual requirements. Closed same-sentence
 coordination can resolve “them” to the requested materials; unresolved subjects

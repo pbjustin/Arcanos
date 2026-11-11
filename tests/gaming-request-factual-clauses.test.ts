@@ -166,6 +166,55 @@ describe('factual request clauses retain subject, relation and requested count',
     expect(assessGamingRequestCoverage(request(actionQuestion), knowledge([firstThree])).coverageSatisfied).toBe(true);
   });
 
+  it('does not count unbound same-paragraph imperatives as ordered actions', () => {
+    const input = request('Explain the first three actions needed for fishing.');
+    const passage = 'To start fishing, equip a rod. Buy a helmet for arena combat. Register for a sword tournament.';
+    const data = knowledge([passage]);
+    expect(gamingRequirementSupported(passage, buildGamingRequestRequirements(input)[0])).toBe(false);
+    expect(assessGamingRequestCoverage(input, data).coverageSatisfied).toBe(false);
+    const selected = selectGamingHybridEvidence(input, data);
+    expect(selected.coverageSatisfied).toBe(false);
+    expect(selected.selectedEvidenceIds).toEqual([]);
+    expect(assessGamingClearEvidence(input, data, { requireRequestCoverage: true }).gates.claimSupport).not.toBe('verified');
+  });
+
+  it('retains previously supported numbered continuations', () => {
+    const input = request('Explain the first three actions needed for fishing.');
+    const passage = 'To start fishing, equip a rod. 2) Inspect the pond. 3) Use the rod.';
+    expect(gamingRequirementSupported(passage, buildGamingRequestRequirements(input)[0])).toBe(true);
+  });
+
+  it.each([
+    'Selling fishing gear requires a trade licence.',
+    'Fishing gear sales require a trade licence.'
+  ])('does not borrow the prerequisite of an incidental activity: %s', passage => {
+    const input = request('Explain fishing prerequisites and the first concrete steps.');
+    const start = 'To start fishing, equip a rod and use it at the pond.';
+    const data = knowledge([passage, start]);
+    const requirement = buildGamingRequestRequirements(input).find(item => item.procedure === 'prerequisite')!;
+    expect(gamingRequirementSupported(passage, requirement)).toBe(false);
+    expect(assessGamingRequestCoverage(input, data).coverageSatisfied).toBe(false);
+    const selected = selectGamingHybridEvidence(input, data);
+    expect(selected.coverageSatisfied).toBe(false);
+    expect(selected.selectedEvidenceIds).toEqual(['factual-passage-1']);
+    expect(assessGamingClearEvidence(input, data, { requireRequestCoverage: true }).gates.claimSupport).not.toBe('verified');
+    expect(assessGamingRequestCoverage(input, knowledge(['Fishing requires a rod.', start])).coverageSatisfied).toBe(true);
+  });
+
+  it('binds a registration cost to the registered object and its stated purpose', () => {
+    const input = request('Explain prism tuning prerequisites.', { game: 'Lantern Vale' });
+    const passage = 'The cost to register an amber prism for tuning requires spending two silver tokens.';
+    const data = knowledge([passage], input.game);
+    const requirement = buildGamingRequestRequirements(input)[0];
+    expect(gamingRequirementSupported(passage, requirement)).toBe(true);
+    expect(gamingRequirementSupported('Registering an amber prism near the tuning station for trading requires two tokens.', requirement)).toBe(false);
+    const selected = selectGamingHybridEvidence(input, data);
+    expect(selected.coverageSatisfied).toBe(true);
+    expect(selected.selectedEvidenceIds).toEqual(['factual-passage-0']);
+    expect(assessGamingClearEvidence({ ...input, game: input.game! }, selected.knowledge,
+      { requireRequestCoverage: true }).gates.claimSupport).toBe('verified');
+  });
+
   it.each([
     ['What is the boss weakness during its first phase?',
       'The boss weakness during its first phase is frost damage. Equip a frost weapon while the boss remains in this first phase.'],

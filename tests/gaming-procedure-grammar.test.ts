@@ -17,7 +17,8 @@ const positive = [
   { id: 'purpose-colon', text: 'To begin system colonisation: visit the System Colonisation Contact.' },
   { id: 'neutral-intro-nested-by', text: 'To start your journey towards the outer colonies, begin by visiting the system colonisation contact.' },
   { id: 'future-player-action', text: 'To begin system colonisation, you will select a destination.' },
-  { id: 'modal-ordered-action', text: 'To begin system colonisation, you must first select a destination.' }
+  { id: 'modal-ordered-action', text: 'To begin system colonisation, you must first select a destination.' },
+  { id: 'restriction-and-affirmative-action', text: 'To begin system colonisation, avoid abandoning an active claim and visit the contact.' }
 ];
 const negative = [
   { id: 'unrelated-declarative', text: 'To begin system colonisation, trade permits are sold at the market.' },
@@ -35,6 +36,8 @@ const negative = [
   { id: 'question-then-unrelated-action', text: 'To begin system colonisation, what do I do? Open the navigation menu.' },
   { id: 'declarative-then-unrelated-action', text: 'To begin system colonisation, trade permits are sold at the market. Open the navigation menu.' },
   { id: 'negative-before-then', text: 'To begin system colonisation, you must not then select a destination.' },
+  { id: 'restriction-only', text: 'To begin system colonisation, avoid abandoning an active claim.' },
+  { id: 'coordinated-restrictions', text: 'To begin system colonisation, avoid abandoning an active claim and visiting a closed contact.' },
   { id: 'nonaction-before-comma-action', text: 'To begin system colonisation, the process is currently unavailable, open the navigation menu.' },
   { id: 'coordinated-action-question', text: 'To begin system colonisation, visit a contact and select a destination?' },
   { id: 'comma-separated-action-question', text: 'To begin system colonisation, visit a contact, select a destination?' }
@@ -114,5 +117,18 @@ describe('bounded acquired starting-procedure grammar', () => {
     const unknown = { requirement: 'requested topic', terms: ['prism', 'tuning'], procedure: 'start' as const };
     expect(gamingRequirementSupported('To begin prism tuning, rotate the iris and collect the beacon.', unknown)).toBe(true);
     expect(gamingRequirementSupported('To begin prism tuning, the equipment is currently unavailable.', unknown)).toBe(false);
+  });
+
+  it('accepts a topic-bound first action without repeating the request verb', () => {
+    const input = { ...request, prompt: 'How do I start fishing?' };
+    const text = 'For fishing, first equip a rod and cast into the pond.';
+    const fishing = buildGamingRequestRequirements(input)[0];
+    expect(gamingRequirementSupported(text, fishing)).toBe(true);
+    expect(gamingRequirementSupported('For fishing, equip a better rod after winning the tournament.', fishing)).toBe(false);
+    const selected = selectGamingHybridEvidence(input, knowledge(text));
+    expect(selected.coverageSatisfied).toBe(true);
+    expect(selected.selectedEvidenceIds).toEqual(['authored-passage']);
+    expect(assessGamingClearEvidence({ ...input, game: request.game! }, selected.knowledge,
+      { identityVerified: true, requireRequestCoverage: true }).gates.claimSupport).toBe('verified');
   });
 });
