@@ -399,6 +399,76 @@ describe('Gaming final-answer CLEAR assessment', () => {
       expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
     });
 
+  it('rejects an invented prerequisite even when the main steps and citation are valid', async () => {
+    const fixture = answerAuditFixtures[0];
+    const auditInput = { ...answerAuditFixtureInput(fixture),
+      answer: 'Obtain a claim, locate the colonisation ship, and purchase a special expansion permit. [1]' };
+    createSingleChatCompletion.mockResolvedValueOnce(completion({ dimensions: dimensions(), findings: [
+      { code: 'UNSUPPORTED_PREREQUISITE', severity: 'warning', evidenceRefs: [refs[2]] }
+    ] }));
+
+    const { assessment } = await runGamingClearAnswerAudit({} as never, auditInput, createRuntimeBudgetWithLimit(20_000, 0));
+
+    expect(assessment).toMatchObject({ decision: 'reject',
+      blockingFindings: [expect.objectContaining({ code: 'UNSUPPORTED_PREREQUISITE' })] });
+    expect(gamingClearAnswerMatches(assessment, auditInput.answer)).toBe(false);
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects an answer that omits a material patch limitation from its cited source', async () => {
+    const passage = 'In patch 1.0, turn the west valve to open the return route. Later patches are outside this guide.';
+    const auditInput = {
+      ...input, prompt: 'How did the return route work in patch 1.0?', requestedVersion: '1.0',
+      answer: 'Turn the west valve to open the return route on every patch. [1]',
+      evidenceAssessment: createGamingClearAssessment({ ...evidenceAssessment, questionProfile: 'patch_change',
+        dimensions: dimensions(), evidenceRefs: refs, subjectHash: gamingClearHash(passage),
+        contextFingerprint: gamingClearContextFingerprint({ passage, patch: '1.0' }),
+        gates: { ...evidenceAssessment.gates, freshness: 'verified' } }),
+      knowledge: {
+        context: passage, sources: [{ ...input.knowledge.sources[0], snippet: passage, verifiedPatchVersion: '1.0' }],
+        evidence: [{ ...input.knowledge.evidence[0], text: passage }]
+      }
+    };
+    createSingleChatCompletion.mockResolvedValueOnce(completion({ dimensions: dimensions(), findings: [
+      { code: 'OMITTED_PATCH_LIMIT', severity: 'warning', evidenceRefs: [refs[2]] }
+    ] }));
+
+    const { assessment } = await runGamingClearAnswerAudit({} as never, auditInput, createRuntimeBudgetWithLimit(20_000, 0));
+
+    expect(assessment).toMatchObject({ decision: 'reject',
+      blockingFindings: [expect.objectContaining({ code: 'OMITTED_PATCH_LIMIT' })] });
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+    const params = createSingleChatCompletion.mock.calls[0][1] as { messages: Array<{ content: string }> };
+    expect(JSON.parse(params.messages[1].content)).toMatchObject({
+      requestedVersion: '1.0', applicability: [{ verifiedPatchVersion: '1.0' }], evidence: [{ text: passage }]
+    });
+  });
+
+  it('keeps a wrong existing citation distinct from an out-of-range citation', async () => {
+    const otherPassage = 'Ring the east bell to access the storehouse.';
+    const otherSource = { ...input.knowledge.sources[0], sourceId: 'source-2', url: 'https://example.com/storehouse', snippet: otherPassage };
+    const otherChunk = { ...input.knowledge.evidence[0], sourceId: otherSource.sourceId, revisionId: 'revision-2',
+      recordId: 'chunk-2', publicUrl: otherSource.url, text: otherPassage };
+    const knowledge = { context: [text, otherPassage].join('\n'), sources: [...input.knowledge.sources, otherSource],
+      evidence: [...input.knowledge.evidence, otherChunk] };
+    createSingleChatCompletion.mockResolvedValueOnce(completion({ dimensions: dimensions(), findings: [
+      { code: 'CITATION_DOES_NOT_SUPPORT_CLAIM', severity: 'warning', evidenceRefs: [otherChunk.recordId] }
+    ] }));
+
+    const wrongCitation = await run({ knowledge, answer: 'Turn the west valve to open the return route. [2]' });
+    const outOfRange = await run({ knowledge, answer: 'Turn the west valve to open the return route. [3]' });
+
+    expect(wrongCitation.assessment).toMatchObject({ assessmentMethod: 'mixed', decision: 'reject',
+      blockingFindings: [expect.objectContaining({ code: 'CITATION_DOES_NOT_SUPPORT_CLAIM' })] });
+    expect(outOfRange.assessment).toMatchObject({ assessmentMethod: 'deterministic', decision: 'reject',
+      blockingFindings: expect.arrayContaining([expect.objectContaining({ code: 'CITATION_NOT_FOUND' })]) });
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+    const params = createSingleChatCompletion.mock.calls[0][1] as { messages: Array<{ content: string }> };
+    expect(JSON.parse(params.messages[1].content)).toMatchObject({
+      evidence: [{ sourceIndex: 1, text }, { sourceIndex: 2, text: otherPassage }]
+    });
+  });
+
   it.each(['[99]', '[1, 99]', '(Source 99)', '[Source 99]'])('rejects missing citation %s without a model call', async citation => {
     const result = await run({ answer: `Turn the west valve. ${citation}` });
     expect(result.assessment.decision).toBe('reject');
@@ -440,6 +510,23 @@ describe('Gaming final-answer CLEAR assessment', () => {
     const result = await run();
     expect(result.assessment).toMatchObject({ assessmentStatus: 'unavailable', decision: 'unavailable', overall: null });
     expect(result.assessment.findings.map(finding => finding.code)).toContain(expectedCode);
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts the exact decimal floor after a bounded provider audit', async () => {
+    const evaluated = dimensions();
+    evaluated.clarity.score = 4.1;
+    evaluated.leverage.score = 2.3;
+    evaluated.efficiency.score = 5;
+    evaluated.alignment.score = 4.6;
+    evaluated.resilience.score = 5;
+    createSingleChatCompletion.mockResolvedValueOnce(completion({ dimensions: evaluated, findings: [] }));
+
+    const { assessment } = await run();
+
+    expect(assessment).toMatchObject({ decision: 'accept', overall: 3.9999999999999996, findings: [] });
+    expect(gamingClearAnswerMatches(assessment, input.answer)).toBe(true);
+    expect(parseGamingClearAssessment(assessment)).toEqual(assessment);
     expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
   });
 

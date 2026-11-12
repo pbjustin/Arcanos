@@ -129,6 +129,32 @@ describe('Gaming CLEAR canonical policy and strict boundary', () => {
     expect(createGamingClearAssessment(candidate).overall).toBeLessThan(4);
     expect(createGamingClearAssessment(candidate).decision).toBe('reject');
   });
+  test('rejects an answer whose exact decimal aggregate is below a rounded-up floor', () => {
+    const candidate = input('answer', 5);
+    candidate.dimensions.clarity.score = 3.5;
+    candidate.dimensions.leverage.score = 2.4999999999999996;
+
+    const assessment = createGamingClearAssessment(candidate);
+
+    expect(assessment).toMatchObject({ overall: 4, decision: 'reject',
+      blockingFindings: [expect.objectContaining({ code: 'PROFILE_FLOOR_NOT_MET' })] });
+    expect(parseGamingClearAssessment(assessment)).toEqual(assessment);
+    expect(parseGamingClearAssessment({ ...assessment, decision: 'accept', findings: [], blockingFindings: [] })).toBeNull();
+  });
+  test('keeps a prior persisted answer floor rejection rejected and source scores unchanged', () => {
+    const candidate = input('answer', 5);
+    candidate.dimensions.clarity.score = 4.1;
+    candidate.dimensions.leverage.score = 2.3;
+    candidate.dimensions.alignment.score = 4.6;
+    const prior = createGamingClearAssessment({ ...candidate, findings: [
+      { code: 'PROFILE_FLOOR_NOT_MET', severity: 'blocking', evidenceRefs: [] }
+    ] });
+    expect(prior).toMatchObject({ overall: 3.9999999999999996, decision: 'reject' });
+    expect(parseGamingClearAssessment(prior)).toEqual(prior);
+    expect(createGamingClearAssessment({ ...candidate, profile: 'source' })).toMatchObject({
+      overall: 3.9999999999999996, decision: 'accept', qualityEligible: false
+    });
+  });
   test.each(['PROFILE_FLOOR_NOT_MET', 'DIMENSION_UNEVALUATED', 'IDENTITY_UNVERIFIED', 'FRESHNESS_REQUIRED'])(
     'model warnings cannot suppress server blocking reason %s', code => {
       const candidate = input('answer', 5);
