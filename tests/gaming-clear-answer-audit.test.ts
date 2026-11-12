@@ -513,6 +513,57 @@ describe('Gaming final-answer CLEAR assessment', () => {
     expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    [{ provider_metadata: { status: 'incomplete' } }, 'provider_incomplete', 'bounded'],
+    [{ truncated: true }, 'provider_incomplete', 'bounded'],
+    [{ content_filtered: true }, 'provider_incomplete', 'bounded'],
+    [{ provider_metadata: { finish_reason: 'synthetic private finish' } }, 'unexpected_finish', 'bounded'],
+    [{ choices: [{ finish_reason: 'stop', message: { content: null } }] }, 'missing_content', 'missing'],
+    [{ choices: [{ finish_reason: 'stop', message: { content: '  ' } }] }, 'missing_content', 'empty'],
+    [{ choices: [{ finish_reason: 'stop', message: { content: 'x'.repeat(16_001) } }] }, 'oversized_content', 'oversized']
+  ])('fails closed and classifies a nonusable audit completion: %#', async (override, resultClass, contentLengthClass) => {
+    createSingleChatCompletion.mockResolvedValueOnce({ ...completion(), ...override });
+    const result = await run();
+    expect(result.assessment).toMatchObject({ assessmentStatus: 'unavailable', decision: 'unavailable', overall: null,
+      findings: [expect.objectContaining({ code: 'AUDIT_PROVIDER_INCOMPLETE' })] });
+    expect(result.providerDiagnostic).toMatchObject({ resultClass, contentLengthClass });
+    expect(JSON.stringify(result.providerDiagnostic)).not.toContain('synthetic private finish');
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['malformed_json', '{"dimensions":'],
+    ['invalid_schema', '{"dimensions":{},"findings":[]}']
+  ])('distinguishes %s from the other AUDIT_MALFORMED subtype', async (resultClass, content) => {
+    createSingleChatCompletion.mockResolvedValueOnce({ ...completion(), provider_metadata: { status: 'completed' },
+      choices: [{ finish_reason: 'stop', message: { content } }] });
+    const result = await run();
+    expect(result.assessment).toMatchObject({ assessmentStatus: 'unavailable', decision: 'unavailable', overall: null,
+      findings: [expect.objectContaining({ code: 'AUDIT_MALFORMED' })] });
+    expect(result.providerDiagnostic).toMatchObject({ resultClass, providerStatus: 'completed',
+      finishReason: 'stop', contentLengthClass: 'bounded' });
+    expect(JSON.stringify(result.providerDiagnostic)).not.toContain('dimensions');
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { refusal: 'synthetic private refusal' },
+    { refusal: '' },
+    { tool_calls: [{ function: { name: 'synthetic private tool', arguments: '{}' } }] },
+    { function_call: { name: 'synthetic private tool', arguments: '{}' } }
+  ])('rejects mixed non-text audit output even with a stop finish and valid JSON: %#', async extra => {
+    const candidate = completion();
+    createSingleChatCompletion.mockResolvedValueOnce({ ...candidate, choices: [{ ...candidate.choices[0],
+      message: { ...candidate.choices[0].message, ...extra } }] });
+    const result = await run();
+    expect(result.assessment).toMatchObject({ assessmentStatus: 'unavailable', decision: 'unavailable', overall: null,
+      findings: [expect.objectContaining({ code: 'AUDIT_PROVIDER_INCOMPLETE' })] });
+    expect(result.providerDiagnostic).toMatchObject({ resultClass: 'unsupported_output', contentLengthClass: 'bounded',
+      outputKind: 'refusal' in extra ? 'refusal' : 'tool_output' });
+    expect(JSON.stringify(result.providerDiagnostic)).not.toContain('synthetic private');
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+  });
+
   it('accepts the exact decimal floor after a bounded provider audit', async () => {
     const evaluated = dimensions();
     evaluated.clarity.score = 4.1;

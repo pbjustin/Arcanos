@@ -133,3 +133,6 @@ export interface LiveValidationAuditRejection {
   blockingFindingCount: number;
 }
 export function sanitizeLiveValidationAuditRejection(value: unknown): LiveValidationAuditRejection | undefined;
+
+export function sanitizeLiveValidationAuditProviderDiagnostic(value: unknown, assessmentStatus: unknown):
+  import('../src/shared/gaming/liveValidationObservation.js').LiveValidationAuditProviderDiagnostic | undefined;

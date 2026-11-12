@@ -1,4 +1,5 @@
 import { afterEach, describe, it, expect, beforeEach, jest } from '@jest/globals';
+import { createOpenAIAdapter } from '../src/core/adapters/openai.adapter.js';
 import {
   createChatCompletionWithFallback,
   createSingleChatCompletion,
@@ -16,10 +17,38 @@ import {
   getTelemetrySnapshot,
   resetTelemetry,
 } from '../src/platform/logging/telemetry.js';
+import { aiLogger } from '../src/platform/logging/structuredLogging.js';
 import { runDirectAnswerStage } from '../src/core/logic/trinityStages.js';
 
 const authority = 'ft:gpt-4.1-2025-04-14:synthetic:authority:fallback';
 const savedAuthority = process.env.FINETUNED_MODEL_ID;
+
+const transportFixtureText = '{"fixture":"private-provider-output"}';
+const transportFixtureMessage = {
+  type: 'message', role: 'assistant', status: 'completed',
+  content: [{ type: 'output_text', text: transportFixtureText, annotations: [] }]
+};
+const sensitiveCompletionParams = {
+  model: authority, messages: [{ role: 'user' as const, content: 'Return synthetic JSON.' }],
+  response_format: { type: 'json_object' as const }, redactErrorDetails: true, maxRetries: 0 as const
+};
+const textOnlyCompletionParams = { ...sensitiveCompletionParams, requireCompletedTextOutput: true };
+
+function responseTransportFixture(overrides: Record<string, unknown> = {}) {
+  const endpoint = 'https://responses.fixture.invalid/v1';
+  const transport = jest.fn<typeof fetch>(async (request, init) => {
+    expect(request instanceof Request ? request.url : String(request)).toBe(endpoint + '/responses');
+    expect(init?.method).toBe('POST');
+    expect(JSON.parse(String(init?.body))).toMatchObject({ store: false, text: { format: { type: 'json_object' } } });
+    return Response.json({
+      id: 'resp_transport_fixture', object: 'response', model: authority, status: 'completed',
+      output: [transportFixtureMessage], usage: { input_tokens: 4, output_tokens: 6, total_tokens: 10 },
+      ...overrides
+    });
+  });
+  const adapter = createOpenAIAdapter({ apiKey: 'test-sdk-transport', baseURL: endpoint, maxRetries: 0, fetch: transport });
+  return { adapter, transport };
+}
 
 async function restoreCircuitBreakerIsolation(): Promise<void> {
   const snapshot = getCircuitBreakerSnapshot();
@@ -138,6 +167,103 @@ describe('createChatCompletionWithFallback', () => {
       truncated: true,
       lengthTruncated: true
     });
+  });
+
+  it.each([
+    { reason: 'max_output_tokens', finishReason: 'length', truncated: true, contentFiltered: false },
+    { reason: 'content_filter', finishReason: 'content_filter', truncated: false, contentFiltered: true },
+    { reason: undefined, finishReason: 'length', truncated: true, contentFiltered: false }
+  ])('preserves sanitized SDK incomplete metadata for $reason with valid-looking JSON text', async ({
+    reason, finishReason, truncated, contentFiltered
+  }) => {
+    const { adapter, transport } = responseTransportFixture({
+      status: 'incomplete',
+      ...(reason ? { incomplete_details: { reason, fixtureDetail: 'private-incomplete-detail' } } : {})
+    });
+
+    const outcome = await createSingleChatCompletion(adapter, textOnlyCompletionParams).catch(error => error);
+
+    expect(outcome).toMatchObject({
+      code: 'OPENAI_COMPLETION_INCOMPLETE', providerStatus: 'incomplete', finishReason,
+      incompleteReason: reason ?? 'none', truncated, lengthTruncated: truncated, contentFiltered
+    });
+    expect(JSON.stringify(outcome)).not.toMatch(/private-provider-output|private-incomplete-detail/);
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['queued', 'pending_status'],
+    ['in_progress', 'pending_status'],
+    ['failed', 'terminal_status'],
+    ['cancelled', 'terminal_status'],
+    ['unknown_fixture_status', 'unsupported_status']
+  ])('rejects a %s SDK lifecycle before admitting valid-looking JSON', async (status, reason) => {
+    const { adapter, transport } = responseTransportFixture({ status });
+    await expect(createSingleChatCompletion(adapter, textOnlyCompletionParams)).rejects.toMatchObject({
+      code: 'OPENAI_RESPONSE_LEGACY_CONVERSION_ERROR', responseStatus: status, reason
+    });
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps completed JSON conversion compatible when the provider omits usage', async () => {
+    const { adapter, transport } = responseTransportFixture({ usage: null });
+    const response = await createSingleChatCompletion(adapter, sensitiveCompletionParams);
+
+    expect(response.choices[0]).toMatchObject({ finish_reason: 'stop', message: { content: transportFixtureText } });
+    expect(response.usage).toMatchObject({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { name: 'refusal', reason: 'refusal', output: [{ ...transportFixtureMessage, content: [...transportFixtureMessage.content,
+      { type: 'refusal', refusal: 'private-refusal-output' }] }], legacyFinishReason: 'stop' },
+    { name: 'empty refusal', reason: 'refusal', output: [{ ...transportFixtureMessage, content: [...transportFixtureMessage.content,
+      { type: 'refusal', refusal: '' }] }], legacyFinishReason: 'stop' },
+    { name: 'hosted tool', reason: 'tool_output', output: [transportFixtureMessage, { type: 'web_search_call', id: 'private-tool-id', status: 'completed' }],
+      legacyFinishReason: 'stop' },
+    { name: 'mapped tool', reason: 'tool_output', output: [transportFixtureMessage,
+      { type: 'function_call', call_id: 'private-tool-id', name: 'fixture_tool', arguments: '{}', status: 'completed' }],
+      legacyFinishReason: 'tool_calls' },
+    { name: 'MCP tool list', reason: 'tool_output', output: [transportFixtureMessage,
+      { type: 'mcp_list_tools', id: 'private-tool-id', server_label: 'fixture-server', tools: [] }], legacyFinishReason: 'stop' },
+    { name: 'shell tool result', reason: 'tool_output', output: [transportFixtureMessage,
+      { type: 'shell_call_output', id: 'private-tool-id', call_id: 'fixture-call-id', status: 'completed', max_output_length: null, output: [] }],
+      legacyFinishReason: 'stop' },
+    { name: 'patch tool result', reason: 'tool_output', output: [transportFixtureMessage,
+      { type: 'apply_patch_call_output', id: 'private-tool-id', call_id: 'fixture-call-id', status: 'completed', output: 'private-tool-output' }],
+      legacyFinishReason: 'stop' },
+    { name: 'in-progress message', reason: 'nonterminal_message', messageStatus: 'in_progress',
+      output: [{ ...transportFixtureMessage, status: 'in_progress' }], legacyFinishReason: 'stop' },
+    { name: 'incomplete message', reason: 'nonterminal_message', messageStatus: 'incomplete',
+      output: [{ ...transportFixtureMessage, status: 'incomplete' }], legacyFinishReason: 'stop' },
+    { name: 'commentary-only message', reason: 'commentary_only',
+      output: [{ ...transportFixtureMessage, phase: 'commentary' }], legacyFinishReason: 'stop' }
+  ])('only rejects completed $name output when text-only handling is requested', async ({ reason, output, legacyFinishReason, messageStatus }) => {
+    const { adapter, transport } = responseTransportFixture({ output });
+    const legacy = await createSingleChatCompletion(adapter, sensitiveCompletionParams);
+    expect(legacy.choices[0]).toMatchObject({ finish_reason: legacyFinishReason, message: { content: transportFixtureText } });
+
+    const warnings = jest.spyOn(aiLogger, 'warn');
+    const outcome = await createSingleChatCompletion(adapter, textOnlyCompletionParams).catch(error => error);
+
+    expect(outcome).toMatchObject({ code: 'OPENAI_COMPLETION_UNUSABLE_OUTPUT', providerStatus: 'completed', reason });
+    expect(outcome.messageStatus).toBe(messageStatus);
+    expect(warnings).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify({ ...outcome, message: outcome.message, warnings: warnings.mock.calls }))
+      .not.toMatch(/private-provider-output|private-refusal-output|private-tool-id|private-tool-output/);
+    expect(transport).toHaveBeenCalledTimes(2);
+  });
+
+  it('accepts completed final JSON with reasoning and empty commentary when text-only handling is requested', async () => {
+    const { adapter, transport } = responseTransportFixture({
+      output: [{ type: 'reasoning', id: 'reasoning-fixture', summary: [] },
+        { ...transportFixtureMessage, phase: 'commentary', content: [] },
+        { ...transportFixtureMessage, phase: 'final_answer' }]
+    });
+    const response = await createSingleChatCompletion(adapter, textOnlyCompletionParams);
+
+    expect(response.choices[0]).toMatchObject({ finish_reason: 'stop', message: { content: transportFixtureText } });
+    expect(transport).toHaveBeenCalledTimes(1);
   });
 
   it('gives unconstrained conversation the normal final allocation through the real Responses boundary', async () => {

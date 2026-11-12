@@ -15,6 +15,7 @@ import {
   gamingClearHash, parseGamingClearModelAssessment, type GamingClearAssessment
 } from '@shared/gaming/gamingClearPolicy.js';
 import type { GamingPlayerContext } from '@shared/gaming/gamingPlayerContext.js';
+import type { LiveValidationAuditProviderDiagnostic } from '@shared/gaming/liveValidationObservation.js';
 import type { GamingStoredKnowledgeContext } from '@shared/gaming/gamingStoredEvidenceCore.js';
 import { GAMING_STALE_GUIDE_WARNING, GAMING_UNVERIFIED_GUIDE_WARNING, gamingAnswerClaimsVerifiedCurrentness,
   resolveGamingFreshnessDisposition } from '@shared/gaming/gamingFreshnessDisposition.js';
@@ -32,6 +33,135 @@ export interface GamingClearAnswerInput extends GamingPlayerContext {
   knowledge: GamingStoredKnowledgeContext;
   evidenceAssessment: GamingClearAssessment;
   requestId?: string;
+}
+
+const AUDIT_PROVIDER_STATUSES = ['completed', 'incomplete', 'failed', 'cancelled', 'queued', 'in_progress'] as const;
+const AUDIT_FINISH_REASONS = ['stop', 'length', 'tool_calls', 'content_filter', 'function_call'] as const;
+const AUDIT_INCOMPLETE_REASONS = ['max_output_tokens', 'content_filter', 'none'] as const;
+const MAX_AUDIT_RESPONSE_CHARS = 16_000;
+
+interface AuditProviderFields {
+  providerStatus?: unknown;
+  finishReason?: unknown;
+  incompleteReason?: unknown;
+  truncated?: unknown;
+  contentFiltered?: unknown;
+}
+
+function auditProviderEnum<T extends string>(value: unknown, allowed: readonly T[]): T | 'unknown' | undefined {
+  if (value === undefined || value === null) return undefined;
+  return typeof value === 'string' && allowed.includes(value as T) ? value as T : 'unknown';
+}
+
+function auditProviderFields(fields: AuditProviderFields) {
+  const providerStatus = auditProviderEnum(fields.providerStatus, AUDIT_PROVIDER_STATUSES);
+  const finishReason = auditProviderEnum(fields.finishReason, AUDIT_FINISH_REASONS);
+  const incompleteReason = auditProviderEnum(fields.incompleteReason, AUDIT_INCOMPLETE_REASONS);
+  return {
+    ...(providerStatus === undefined ? {} : { providerStatus }),
+    ...(finishReason === undefined ? {} : { finishReason }),
+    ...(incompleteReason === undefined ? {} : { incompleteReason }),
+    ...(typeof fields.truncated === 'boolean' ? { truncated: fields.truncated } : {}),
+    ...(typeof fields.contentFiltered === 'boolean' ? { contentFiltered: fields.contentFiltered } : {})
+  };
+}
+
+type AuditCompletion = Awaited<ReturnType<typeof createSingleChatCompletion>> & {
+  provider_metadata?: { status?: unknown; finish_reason?: unknown; incomplete_details?: unknown; incomplete?: unknown;
+    truncated?: unknown; length_truncated?: unknown; content_filtered?: unknown };
+  response_status?: unknown;
+  incomplete_details?: unknown;
+  incomplete?: unknown;
+  truncated?: unknown;
+  length_truncated?: unknown;
+  content_filtered?: unknown;
+};
+
+/** Require a usable text-only completion before interpreting it as an audit. */
+function readAuditCompletion(response: AuditCompletion): LiveValidationAuditProviderDiagnostic {
+  const metadata = response.provider_metadata;
+  const choice = response.choices?.[0];
+  const message = choice?.message;
+  const content = message?.content;
+  const contentLengthClass = typeof content !== 'string' ? 'missing'
+    : content.length > MAX_AUDIT_RESPONSE_CHARS ? 'oversized' : content.trim() ? 'bounded' : 'empty';
+  const providerStatus = [metadata?.status, response.response_status]
+    .find(status => status != null && status !== 'completed') ?? metadata?.status ?? response.response_status;
+  const finishReason = [metadata?.finish_reason, choice?.finish_reason]
+    .find(reason => reason != null && reason !== 'stop') ?? choice?.finish_reason ?? metadata?.finish_reason;
+  const incompleteDetails = metadata?.incomplete_details ?? response.incomplete_details;
+  const incompleteReason = typeof incompleteDetails === 'object' && incompleteDetails !== null && 'reason' in incompleteDetails
+    ? incompleteDetails.reason : undefined;
+  const truncated = metadata?.truncated === true || metadata?.length_truncated === true
+    || response.truncated === true || response.length_truncated === true || finishReason === 'length' || choice?.finish_reason === 'length'
+    || incompleteReason === 'max_output_tokens';
+  const contentFiltered = metadata?.content_filtered === true || response.content_filtered === true
+    || finishReason === 'content_filter' || choice?.finish_reason === 'content_filter' || incompleteReason === 'content_filter';
+  const fields = {
+    ...auditProviderFields({ providerStatus, finishReason, incompleteReason, truncated, contentFiltered }),
+    contentLengthClass
+  } satisfies Omit<LiveValidationAuditProviderDiagnostic, 'resultClass'>;
+  if (providerStatus === 'incomplete' || providerStatus === 'failed' || providerStatus === 'cancelled'
+    || metadata?.incomplete === true || response.incomplete === true || incompleteDetails != null || truncated || contentFiltered) {
+    return { resultClass: 'provider_incomplete', ...fields };
+  }
+  const hasTools = message?.function_call != null || message?.tool_calls != null
+    && (!Array.isArray(message.tool_calls) || message.tool_calls.length > 0)
+    || finishReason === 'tool_calls' || finishReason === 'function_call'
+    || choice?.finish_reason === 'tool_calls' || choice?.finish_reason === 'function_call';
+  const hasRefusal = message?.refusal != null;
+  if (hasRefusal || hasTools) {
+    return { resultClass: 'unsupported_output', ...fields, outputKind: hasRefusal ? 'refusal' : 'tool_output' };
+  }
+  if (providerStatus != null && providerStatus !== 'completed' || choice && (choice.finish_reason !== 'stop' || finishReason !== 'stop')) {
+    return { resultClass: 'unexpected_finish', ...fields };
+  }
+  if (contentLengthClass === 'missing' || contentLengthClass === 'empty') return { resultClass: 'missing_content', ...fields };
+  if (contentLengthClass === 'oversized') return { resultClass: 'oversized_content', ...fields };
+  return { resultClass: 'complete', ...fields };
+}
+
+function readAuditProviderFailure(error: unknown): {
+  reason: 'AUDIT_TIMEOUT' | 'AUDIT_PROVIDER_INCOMPLETE' | 'AUDIT_PROVIDER_ERROR';
+  diagnostic?: LiveValidationAuditProviderDiagnostic;
+} {
+  if (isAbortError(error)) return { reason: 'AUDIT_TIMEOUT' };
+  const failure = (typeof error === 'object' && error !== null ? error : {}) as AuditProviderFields & {
+    code?: unknown; reason?: unknown; responseStatus?: unknown; lengthTruncated?: unknown; messageStatus?: unknown;
+  };
+  if (failure.code === 'OPENAI_COMPLETION_INCOMPLETE') {
+    const fields = auditProviderFields({ providerStatus: failure.providerStatus, finishReason: failure.finishReason,
+      incompleteReason: failure.incompleteReason, contentFiltered: failure.contentFiltered,
+      truncated: failure.lengthTruncated === true ? true : failure.truncated });
+    return { reason: 'AUDIT_PROVIDER_INCOMPLETE', diagnostic: { resultClass: 'provider_incomplete', ...fields } };
+  }
+  if (failure.code === 'OPENAI_COMPLETION_UNUSABLE_OUTPUT') {
+    if (failure.reason === 'commentary_only') {
+      return { reason: 'AUDIT_PROVIDER_INCOMPLETE', diagnostic: { resultClass: 'commentary_only', ...auditProviderFields(failure) } };
+    }
+    if (failure.reason === 'nonterminal_message') {
+      const { messageStatus } = failure;
+      return { reason: 'AUDIT_PROVIDER_INCOMPLETE', diagnostic: { resultClass: 'provider_incomplete',
+        ...auditProviderFields(failure),
+        ...(messageStatus === 'in_progress' || messageStatus === 'incomplete' ? { messageStatus } : {}) } };
+    }
+    const outputKind = failure.reason === 'refusal' || failure.reason === 'tool_output' ? failure.reason : undefined;
+    return { reason: 'AUDIT_PROVIDER_INCOMPLETE', diagnostic: { resultClass: 'unsupported_output', ...auditProviderFields(failure),
+      ...(outputKind ? { outputKind } : {}) } };
+  }
+  if (failure.code === 'OPENAI_RESPONSE_LEGACY_CONVERSION_ERROR') {
+    const fields = auditProviderFields({ providerStatus: failure.responseStatus });
+    switch (failure.reason) {
+      case 'unsupported_tool_call':
+        return { reason: 'AUDIT_PROVIDER_INCOMPLETE', diagnostic: { resultClass: 'unsupported_output', outputKind: 'tool_output', ...fields } };
+      case 'pending_status':
+      case 'unsupported_status':
+        return { reason: 'AUDIT_PROVIDER_INCOMPLETE', diagnostic: { resultClass: 'unexpected_finish', ...fields } };
+      case 'terminal_status':
+        return { reason: 'AUDIT_PROVIDER_ERROR', diagnostic: { resultClass: 'provider_incomplete', ...fields } };
+    }
+  }
+  return { reason: 'AUDIT_PROVIDER_ERROR' };
 }
 
 const DIMENSION_NAMES = ['clarity', 'leverage', 'efficiency', 'alignment', 'resilience'] as const;
@@ -67,7 +197,8 @@ export function gamingClearAnswerMatches(assessment: GamingClearAssessment | und
 /** One stateless semantic review replaces Gaming's ledger review. No model tools, retries or repairs. */
 export async function runGamingClearAnswerAudit(client: OpenAI, input: GamingClearAnswerInput,
   runtimeBudget: RuntimeBudget, modelLane: 'routine' | 'escalation' = 'routine', remainingWatchdogMs?: number
-): Promise<{ assessment: GamingClearAssessment; usage?: TrinityMetaTokens; effectiveTimeoutMs?: number }> {
+): Promise<{ assessment: GamingClearAssessment; usage?: TrinityMetaTokens; effectiveTimeoutMs?: number;
+  providerDiagnostic?: LiveValidationAuditProviderDiagnostic }> {
   const startedAt = Date.now();
   let modelCallStarted = false;
   let auditBudget: {
@@ -79,7 +210,8 @@ export async function runGamingClearAnswerAudit(client: OpenAI, input: GamingCle
   const unavailable = (code: string) => createGamingClearAssessment({ ...base,
     assessmentMethod: 'model_assisted', assessmentStatus: 'unavailable', dimensions: unknownDimensions(),
     findings: [{ code, severity: 'warning', evidenceRefs: [] }] });
-  const finish = (assessment: GamingClearAssessment, usage?: TrinityMetaTokens) => {
+  const finish = (assessment: GamingClearAssessment, usage?: TrinityMetaTokens,
+    providerDiagnostic?: LiveValidationAuditProviderDiagnostic) => {
     logger.info(`gaming.clear.answer.${assessment.assessmentStatus === 'completed' ? 'completed' : 'unavailable'}`, {
       module: 'ARCANOS:GAMING', requestId: input.requestId, rubricVersion: assessment.rubricVersion,
       profile: assessment.profile, policyProfile: assessment.policyProfile, subjectHash: assessment.subjectHash,
@@ -90,7 +222,7 @@ export async function runGamingClearAnswerAudit(client: OpenAI, input: GamingCle
       modelCallsUsed: modelCallStarted ? 1 : 0, modelCallLimit: 1, repairAttempts: 0,
       ...auditBudget, auditResult: assessment.decision
     });
-    return { assessment, ...(usage ? { usage } : {}),
+    return { assessment, ...(usage ? { usage } : {}), ...(providerDiagnostic ? { providerDiagnostic } : {}),
       ...(auditBudget ? { effectiveTimeoutMs: auditBudget.effectiveTimeoutMs } : {}) };
   };
   const evidence = gamingClearAnswerEvidence(input);
@@ -186,27 +318,25 @@ export async function runGamingClearAnswerAudit(client: OpenAI, input: GamingCle
       ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
       messages: [{ role: 'system', content: instructions }, { role: 'user', content: data }],
       response_format: { type: 'json_object' }, signal: getRequestAbortSignal(), timeoutMs,
-      redactErrorDetails: true, maxRetries: 0
+      redactErrorDetails: true, requireCompletedTextOutput: true, maxRetries: 0
     }, modelLane === 'escalation' ? 'audit-escalation' : 'audit');
     usage = response.usage;
-    const content = response.choices[0]?.message.content;
-    if (response.choices[0]?.finish_reason !== 'stop' || typeof content !== 'string' || content.length > 16_000) {
-      return finish(unavailable('AUDIT_PROVIDER_INCOMPLETE'), usage);
-    }
+    const diagnostic = readAuditCompletion(response);
+    if (diagnostic.resultClass !== 'complete') return finish(unavailable('AUDIT_PROVIDER_INCOMPLETE'), usage, diagnostic);
     let parsed: unknown;
-    try { parsed = JSON.parse(content); } catch { return finish(unavailable('AUDIT_MALFORMED'), usage); }
+    try { parsed = JSON.parse(response.choices[0].message.content!); }
+    catch { return finish(unavailable('AUDIT_MALFORMED'), usage, { ...diagnostic, resultClass: 'malformed_json' }); }
     const validated = parseGamingClearModelAssessment(parsed, base.evidenceRefs);
     if (!validated || Object.values(validated.dimensions).some(dimension => dimension.status === 'evaluated' && !dimension.evidenceRefs.length)) {
-      return finish(unavailable('AUDIT_MALFORMED'), usage);
+      return finish(unavailable('AUDIT_MALFORMED'), usage, { ...diagnostic, resultClass: 'invalid_schema' });
     }
     return finish(createGamingClearAssessment({ ...base, dimensions: validated.dimensions,
-      findings: validated.findings, assessmentMethod: 'mixed', assessmentStatus: 'completed' }), usage);
+      findings: validated.findings, assessmentMethod: 'mixed', assessmentStatus: 'completed' }), usage, diagnostic);
   } catch (error) {
     throwIfRequestAborted();
     const normalized = normalizeWorkerAiBudgetError(error);
     if (classifyWorkerAiBudgetError(normalized)) throw normalized;
-    const code = typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined;
-    return finish(unavailable(isAbortError(error) ? 'AUDIT_TIMEOUT'
-      : code === 'OPENAI_COMPLETION_INCOMPLETE' ? 'AUDIT_PROVIDER_INCOMPLETE' : 'AUDIT_PROVIDER_ERROR'), usage);
+    const failure = readAuditProviderFailure(error);
+    return finish(unavailable(failure.reason), usage, failure.diagnostic);
   }
 }

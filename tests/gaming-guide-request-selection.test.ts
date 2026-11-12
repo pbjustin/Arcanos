@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 import { selectGamingHybridEvidence } from '../src/services/gamingHybridCandidates.js';
-import { assessGamingRequestCoverage } from '../src/shared/gaming/gamingClearEvidence.js';
+import { assessGamingClearEvidence, assessGamingRequestCoverage } from '../src/shared/gaming/gamingClearEvidence.js';
 import { buildGamingRequestRequirements, buildGamingRetrievalTerms } from '../src/shared/gaming/gamingRetrievalPolicy.js';
 import type { GamingStoredKnowledgeContext, GamingStoredKnowledgeInput } from '../src/shared/gaming/gamingStoredEvidenceCore.js';
 import { extractGamingHtmlEvidence } from '../src/services/gamingHtmlEvidence.js';
@@ -43,7 +43,11 @@ describe('guide request interpretation and accepted passage delivery', () => {
     const selected = selectGamingHybridEvidence(input, original);
     expect(selected.coverageSatisfied).toBe(true);
     expect(selected.missingCoverage).toEqual([]);
+    expect(selected.selectedEvidenceIds).toHaveLength(2);
     expect(selected.selectedEvidenceIds).toEqual(expect.arrayContaining(['passage-0', 'passage-1']));
+    expect(assessGamingClearEvidence(input, selected.knowledge, {
+      requireRequestCoverage: true, identityVerified: true
+    }).gates.claimSupport).toBe('verified');
     for (const chunk of selected.knowledge.evidence!) {
       expect(chunk).toEqual(original.evidence!.find(item => item.recordId === chunk.recordId));
       expect(selected.knowledge.sources.find(source => source.sourceId === chunk.sourceId)?.url).toBe(chunk.publicUrl);

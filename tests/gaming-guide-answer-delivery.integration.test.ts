@@ -110,6 +110,7 @@ const scenarios: Scenario[] = [
 
 let scenario = scenarios[0];
 let poison: 'none' | 'unsupported' | 'wrong_citation' = 'none';
+let auditInterruption: 'none' | 'truncation' | 'refusal' | 'tool_output' = 'none';
 let sourceSuffix = '';
 let searchUnavailable = false;
 const stages: string[] = [];
@@ -158,7 +159,7 @@ function draft(payload: any): string {
 }
 beforeEach(() => {
   jest.clearAllMocks(); resetSafetyRuntimeStateForTests(); clearGamingDiscoveryCache();
-  scenario = scenarios[0]; poison = 'none'; sourceSuffix = ''; searchUnavailable = false;
+  scenario = scenarios[0]; poison = 'none'; auditInterruption = 'none'; sourceSuffix = ''; searchUnavailable = false;
   stages.length = 0; searches.length = 0; acquired.length = 0; audits.length = 0; documents.length = 0; evaluations.length = 0;
   acquisitionDurations.length = 0; generationStarted = 0; generationFinished = 0;
   saved = Object.fromEntries(Object.keys(environment).map(name => [name, process.env[name]]));
@@ -211,6 +212,18 @@ beforeEach(() => {
       output = JSON.stringify({ dimensions: Object.fromEntries(GAMING_CLEAR_DIMENSIONS.map(name => [name,
         { status: 'evaluated', score: supported ? 4.5 : 1, reasonCodes: [supported ? 'SUPPORTED_FIXTURE' : 'UNSUPPORTED_CLAIM'], evidenceRefs: refs, unresolvedFacts: [] }])),
         findings: supported ? [] : [{ code: 'UNSUPPORTED_CLAIM', severity: 'blocking', evidenceRefs: refs }] });
+      if (auditInterruption !== 'none') {
+        expect(supported).toBe(true);
+        return {
+          id: 'heldout-audit-response', model: payload.model,
+          status: auditInterruption === 'truncation' ? 'incomplete' : 'completed',
+          ...(auditInterruption === 'truncation' ? { incomplete_details: { reason: 'max_output_tokens' } } : {}),
+          output: auditInterruption === 'refusal' ? [{
+            type: 'message', content: [{ type: 'refusal', refusal: 'Synthetic audit refusal.' }]
+          }] : auditInterruption === 'tool_output' ? [{ type: 'web_search_call', status: 'completed' }] : [],
+          output_text: output, usage: { input_tokens: 90, output_tokens: 45, total_tokens: 135 }
+        };
+      }
     } else if (payload.text?.format?.name?.startsWith('trinity_structured_reasoning')) {
       stages.push('reasoning');
       output = JSON.stringify({ reasoning_steps: [], assumptions: [], constraints: [], tradeoffs: [], alternatives_considered: [],
@@ -366,6 +379,18 @@ it('rejects a claim attached to the wrong independently accepted source', async 
   expect(stages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
   expect(audits).toHaveLength(1);
 });
+
+it.each(['truncation', 'refusal', 'tool_output'] as const)(
+  'withholds a supported and cited guide when the provider audit adds %s to valid assessment JSON', async interruption => {
+    scenario = scenarios[4];
+    auditInterruption = interruption;
+    const result = await harness(false).complete();
+    expect(result.result).toMatchObject({ coverageSatisfied: true, reason: 'GENERATION_UNAVAILABLE' });
+    expect(result.result.answer).toBeUndefined();
+    expect(stages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
+    expect(audits).toHaveLength(1);
+    expect(sdk).toHaveBeenCalledTimes(4);
+  });
 
 it.each([
   'How do I get started with system colonisation?',

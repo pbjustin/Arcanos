@@ -23,12 +23,26 @@ const LIVE_VALIDATION_AUDIT_REASON_CODES = [
   'AUDIT_PROVIDER_INCOMPLETE', 'AUDIT_MALFORMED', 'AUDIT_INPUT_UNAVAILABLE'
 ] as const;
 
+export interface LiveValidationAuditProviderDiagnostic {
+  resultClass: 'complete' | 'provider_incomplete' | 'unexpected_finish' | 'commentary_only' | 'unsupported_output'
+    | 'missing_content' | 'oversized_content' | 'malformed_json' | 'invalid_schema';
+  providerStatus?: 'completed' | 'incomplete' | 'failed' | 'cancelled' | 'queued' | 'in_progress' | 'unknown';
+  finishReason?: 'stop' | 'length' | 'tool_calls' | 'content_filter' | 'function_call' | 'unknown';
+  incompleteReason?: 'max_output_tokens' | 'content_filter' | 'none' | 'unknown';
+  truncated?: boolean;
+  contentFiltered?: boolean;
+  contentLengthClass?: 'missing' | 'empty' | 'bounded' | 'oversized';
+  outputKind?: 'refusal' | 'tool_output';
+  messageStatus?: 'in_progress' | 'incomplete';
+}
+
 export interface LiveValidationAudit {
   assessmentStatus: GamingClearAssessment['assessmentStatus'];
   decision: GamingClearAssessment['decision'];
   boundToFinalAnswer: boolean;
   reasonCode?: typeof LIVE_VALIDATION_AUDIT_REASON_CODES[number];
   effectiveTimeoutMs?: number;
+  providerDiagnostic?: LiveValidationAuditProviderDiagnostic;
   findingCodes?: string[];
   blockingFindingCount?: number;
 }
@@ -87,6 +101,7 @@ export function createLiveValidationObservation(input: {
   audit?: LiveValidationAudit;
   auditFindings?: GamingClearAssessment['findings'];
   auditEffectiveTimeoutMs?: number;
+  auditProviderDiagnostic?: LiveValidationAuditProviderDiagnostic;
   clarification?: LiveValidationClarification;
   stages: LiveValidationObservation['stages'];
   auditStartBudget: LiveValidationObservation['auditStartBudget'];
@@ -124,7 +139,8 @@ export function createLiveValidationObservation(input: {
     ...(input.audit.assessmentStatus === 'completed' && input.audit.decision === 'reject'
       && input.audit.findingCodes && input.audit.blockingFindingCount !== undefined
       ? { findingCodes: [...input.audit.findingCodes], blockingFindingCount: input.audit.blockingFindingCount } : {}),
-    ...(effectiveTimeoutMs !== null ? { effectiveTimeoutMs } : {})
+    ...(effectiveTimeoutMs !== null ? { effectiveTimeoutMs } : {}),
+    ...(input.auditProviderDiagnostic ? { providerDiagnostic: { ...input.auditProviderDiagnostic } } : {})
   } : null;
   return { schemaVersion: 1, contractVersion: 'gaming-hybrid-v2', outcome, reason, semanticGap,
     coverage: { satisfied: body?.coverageSatisfied === true,

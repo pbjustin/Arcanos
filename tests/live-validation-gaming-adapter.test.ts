@@ -586,7 +586,9 @@ describe('private Gaming live-validation adapter through the real transient v2 w
     expect(observation.outcome).toBe('unavailable');
     expect(observation.audit).toEqual({
       assessmentStatus: 'completed', decision: 'reject', boundToFinalAnswer: false, effectiveTimeoutMs: 12_000,
-      findingCodes: ['CITATION_DOES_NOT_SUPPORT_CLAIM', 'UNCLASSIFIED_AUDIT_FINDING'], blockingFindingCount: 3
+      findingCodes: ['CITATION_DOES_NOT_SUPPORT_CLAIM', 'UNCLASSIFIED_AUDIT_FINDING'], blockingFindingCount: 3,
+      providerDiagnostic: { resultClass: 'complete', finishReason: 'stop', truncated: false,
+        contentFiltered: false, contentLengthClass: 'bounded' }
     });
     expect(observation.stages.answer_audit).toEqual({ status: 'passed', elapsedMs: 17 });
     for (const privateValue of [privateCode, privateReference, groundedAnswer, guideUrl]) {
@@ -609,12 +611,60 @@ describe('private Gaming live-validation adapter through the real transient v2 w
     expect(output).not.toHaveProperty('privateAnswer');
     expect(observation.audit).toMatchObject({
       assessmentStatus: 'unavailable', decision: 'unavailable', boundToFinalAnswer: false,
-      reasonCode: 'AUDIT_MALFORMED', effectiveTimeoutMs: 12_000
+      reasonCode: 'AUDIT_MALFORMED', effectiveTimeoutMs: 12_000,
+      providerDiagnostic: { resultClass: 'malformed_json', finishReason: 'stop', contentLengthClass: 'bounded' }
     });
     expect(observation.stages.answer_audit).toEqual({ status: 'failed', elapsedMs: 17 });
     expect(JSON.stringify(observation)).not.toContain(rawProviderOutput);
     expect(JSON.stringify(observation)).not.toContain(groundedAnswer);
     expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['refusal', 'tool_output'] as const)('withholds valid audit JSON accompanied by %s and records only its kind', async outputKind => {
+    const privateProviderValue = 'PRIVATE_NON_TEXT_OUTPUT_FIXTURE';
+    const normalAudit = mockAuditCompletion.getMockImplementation()!;
+    mockAuditCompletion.mockImplementationOnce(async (client, params) => {
+      const response = await normalAudit(client, params) as { choices: Array<{ finish_reason: 'stop'; message: { content: string } }> };
+      const choice = response.choices[0];
+      const unsupportedMessage = outputKind === 'refusal' ? { refusal: privateProviderValue }
+        : { tool_calls: [{ id: privateProviderValue }] };
+      return { ...response, choices: [{ ...choice, message: { ...choice.message, ...unsupportedMessage } }] };
+    });
+
+    const run = harness();
+    const output = await run.run();
+    const observation = run.adapter.getLastObservation()!;
+    expect(output.accepted).toBe(false);
+    expect(output).not.toHaveProperty('privateAnswer');
+    expect(observation.audit).toMatchObject({ assessmentStatus: 'unavailable', decision: 'unavailable',
+      reasonCode: 'AUDIT_PROVIDER_INCOMPLETE', providerDiagnostic: { resultClass: 'unsupported_output', outputKind } });
+    expect(JSON.stringify(observation)).not.toContain(privateProviderValue);
+    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it('independently projects a closed provider diagnostic at the adapter boundary', async () => {
+    const run = harness();
+    const execute = run.execute.getMockImplementation()!;
+    const privateOutput = 'PRIVATE_PROVIDER_OUTPUT_FIXTURE';
+    const privateStatus = 'PRIVATE_PROVIDER_STATUS_FIXTURE';
+    mockAuditCompletion.mockImplementationOnce(async () => ({ choices: [{ finish_reason: 'stop', message: { content: privateOutput } }] }));
+    run.execute.mockImplementationOnce((input, prepared, hooks) => execute(input, prepared, {
+      ...hooks,
+      onAnswerAudit: value => hooks.onAnswerAudit?.({
+        ...value,
+        providerDiagnostic: { resultClass: 'malformed_json', providerStatus: privateStatus, finishReason: 'stop',
+          contentLengthClass: 'bounded', rawOutput: privateOutput }
+      } as typeof value)
+    }));
+
+    const output = await run.run();
+    const observation = run.adapter.getLastObservation()!;
+    expect(output.accepted).toBe(false);
+    expect(output).not.toHaveProperty('privateAnswer');
+    expect(observation.audit).toMatchObject({ reasonCode: 'AUDIT_MALFORMED',
+      providerDiagnostic: { resultClass: 'malformed_json', finishReason: 'stop', contentLengthClass: 'bounded' } });
+    expect(JSON.stringify(observation)).not.toContain(privateOutput);
+    expect(JSON.stringify(observation)).not.toContain(privateStatus);
   });
 
   it('records an actual audit timeout without binding or accepting its answer', async () => {

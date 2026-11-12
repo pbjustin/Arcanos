@@ -49,6 +49,33 @@ test('SDK-compatible transport binds the credential only to fixed public routes 
   for (const secret of [API_KEY, body.input, 'must-not-reach-provider', 'sdk-placeholder']) assert.equal(artifact.includes(secret), false);
 });
 
+test('a reserved audit transport can complete with an incomplete Responses result', async context => {
+  let requests = 0;
+  const f = fixture(context, { fetchImplementation: async () => {
+    requests++;
+    return Response.json(requests === 1 ? { ...responseBody, status: 'completed' } : {
+      ...responseBody, status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' },
+      output: [{ type: 'message', role: 'assistant', status: 'incomplete',
+        content: [{ type: 'output_text', text: 'SYNTHETIC_PARTIAL_AUDIT', annotations: [] }] }]
+    });
+  } });
+  const sdk = new OpenAI({ apiKey: API_KEY, baseURL: 'https://api.openai.com/v1', fetch: f.provider.fetch, maxRetries: 0 });
+  f.provider.beginWorkflow('gaming-guide-positive');
+  await sdk.responses.create(body);
+  f.observation.stage = 'answer_audit';
+  const response = await sdk.responses.create(body);
+  assert.equal(response.status, 'incomplete');
+  assert.equal(response.incomplete_details.reason, 'max_output_tokens');
+  const snapshot = f.provider.snapshot();
+  assert.equal(requests, 2);
+  assert.equal(snapshot.usage.generationCalls, 1);
+  assert.equal(snapshot.usage.auditCalls, 1);
+  assert.equal(snapshot.usage.observedOutputTokens, 10);
+  assert.equal(snapshot.stages[1].outcome, 'completed');
+  assert.doesNotMatch(JSON.stringify(snapshot), /SYNTHETIC_PARTIAL_AUDIT/);
+  f.provider.endWorkflow();
+});
+
 test('canonical model metadata can run before a workflow, counts requests, and hides unused metadata', async context => {
   assert.throws(() => createLiveValidationProvider({ target, identity,
     fetchImplementation: () => assert.fail('missing credential must never reach egress') }),
@@ -232,7 +259,7 @@ test('max cost and request quota reject before an additional fetch', async conte
 });
 
 test('model identity and usage reconciliation reject mismatches without refund', async context => {
-  for (const override of [{ model: 'different-model' }, { usage: { input_tokens: 10, output_tokens: 5, total_tokens: 16 } },
+  for (const override of [{ model: 'different-model' }, { usage: undefined }, { usage: { input_tokens: 10, output_tokens: 5, total_tokens: 16 } },
     { usage: { input_tokens: 1_000_000, output_tokens: 5, total_tokens: 1_000_005 } },
     { usage: { input_tokens: 10, output_tokens: 101, total_tokens: 111 } }]) {
     const f = fixture(context, { fetchImplementation: async () => Response.json({ ...responseBody, ...override }) });

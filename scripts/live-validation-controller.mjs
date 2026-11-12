@@ -3,7 +3,8 @@ import { constants, existsSync, lstatSync, mkdirSync, openSync, closeSync, fstat
   writeFileSync, fsyncSync, realpathSync, renameSync, linkSync, unlinkSync, readSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { sanitizeLivePreviewEvidence, sanitizeLiveValidationAuditRejection, verifyLivePreviewEvidence } from './live-pr-preview-verifier.mjs';
+import { sanitizeLivePreviewEvidence, sanitizeLiveValidationAuditProviderDiagnostic,
+  sanitizeLiveValidationAuditRejection, verifyLivePreviewEvidence } from './live-pr-preview-verifier.mjs';
 import { validateLiveValidationTarget, assertLiveValidationInventory,
   LIVE_VALIDATION_HARD_LIMITS } from './live-validation-target.mjs';
 import { canonicalLiveValidationJson } from './live-validation-bootstrap.mjs';
@@ -551,6 +552,7 @@ export function sanitizeLiveValidationObservation(value) {
   const budget = amount => integer(amount, 0, LIVE_VALIDATION_HARD_LIMITS.durationMs) ? amount : null;
   const count = amount => integer(amount, 0, 64) ? amount : null;
   const audit = value.audit;
+  const auditProviderDiagnostic = sanitizeLiveValidationAuditProviderDiagnostic(audit?.providerDiagnostic, audit?.assessmentStatus);
   const auditRejection = audit?.assessmentStatus === 'completed' && audit.decision === 'reject'
     ? sanitizeLiveValidationAuditRejection(audit) : undefined;
   const trace = value.clarification;
@@ -584,6 +586,7 @@ export function sanitizeLiveValidationObservation(value) {
         ? { reasonCode: audit.reasonCode } : {}),
       ...(integer(audit.effectiveTimeoutMs, 0, MAX_ANSWER_AUDIT_TIMEOUT_MS)
         ? { effectiveTimeoutMs: audit.effectiveTimeoutMs } : {}),
+      ...(auditProviderDiagnostic ? { providerDiagnostic: auditProviderDiagnostic } : {}),
       ...auditRejection },
     ...(clarification ? { clarification } : {}),
     auditStartBudget: { runtimeRemainingMs: budget(value.auditStartBudget?.runtimeRemainingMs),

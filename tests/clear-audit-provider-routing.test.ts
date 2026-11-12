@@ -85,8 +85,10 @@ describe('CLEAR lane routing through the actual Responses conversion and validat
 
   it.each(lanes)('sends Gaming %s audit to %s with one zero-retry tool-free request', async (lane, model) => {
     responsesCreate.mockResolvedValue(response(model, { dimensions, findings: [] }));
-    expect((await runGamingClearAnswerAudit(client, input, createRuntimeBudgetWithLimit(10_000, 0), lane)).assessment)
-      .toMatchObject({ assessmentStatus: 'completed', decision: 'accept' });
+    const result = await runGamingClearAnswerAudit(client, input, createRuntimeBudgetWithLimit(10_000, 0), lane);
+    expect(result.assessment).toMatchObject({ assessmentStatus: 'completed', decision: 'accept' });
+    expect(result.providerDiagnostic).toMatchObject({ resultClass: 'complete', providerStatus: 'completed',
+      finishReason: 'stop', contentLengthClass: 'bounded' });
     expectSingleBoundedRequest(model, true);
   });
 
@@ -111,6 +113,8 @@ describe('CLEAR lane routing through the actual Responses conversion and validat
     const result = await runGamingClearAnswerAudit(client, input, createRuntimeBudgetWithLimit(10_000, 0), lane);
     expect(result.assessment).toMatchObject({ assessmentStatus: 'unavailable', decision: 'unavailable', overall: null });
     expect(result.assessment.findings.map(finding => finding.code)).toContain('AUDIT_PROVIDER_INCOMPLETE');
+    expect(result.providerDiagnostic).toMatchObject({ resultClass: 'provider_incomplete', providerStatus: 'incomplete',
+      finishReason: 'length', incompleteReason: 'max_output_tokens', truncated: true, contentFiltered: false });
     expectSingleBoundedRequest(model, true);
   });
 
@@ -136,6 +140,65 @@ describe('CLEAR lane routing through the actual Responses conversion and validat
     expect(assessment).toMatchObject({ assessmentStatus: 'unavailable', decision: 'unavailable', overall: null,
       findings: [expect.objectContaining({ code: 'AUDIT_PROVIDER_INCOMPLETE' })] });
     expectSingleBoundedRequest(model, true);
+  });
+
+  it.each([
+    [{ refusal: 'synthetic private refusal' }, 'refusal'],
+    [{ output: [{ type: 'message', status: 'completed', content: [{ type: 'refusal', refusal: '' }] }] }, 'refusal'],
+    [{ output: [{ type: 'web_search_call', id: 'synthetic-private-call-id', status: 'completed' }] }, 'tool_output']
+  ])('rejects mixed non-text Responses audit output with valid JSON: %#', async (extra, outputKind) => {
+    responsesCreate.mockResolvedValue({ ...response(routineModel, { dimensions, findings: [] }), ...extra });
+    const result = await runGamingClearAnswerAudit(client, input, createRuntimeBudgetWithLimit(10_000, 0));
+    expect(result.assessment).toMatchObject({ assessmentStatus: 'unavailable', decision: 'unavailable', overall: null,
+      findings: [expect.objectContaining({ code: 'AUDIT_PROVIDER_INCOMPLETE' })] });
+    expect(result.providerDiagnostic).toMatchObject({ resultClass: 'unsupported_output', providerStatus: 'completed', outputKind });
+    expect(result.providerDiagnostic?.finishReason).toBeUndefined();
+    expect(JSON.stringify(result.providerDiagnostic)).not.toMatch(/synthetic.private|web_search_call/u);
+    expectSingleBoundedRequest(routineModel, true);
+  });
+
+  it.each(['incomplete', 'in_progress'])('rejects a %s message inside a completed Responses audit', async status => {
+    responsesCreate.mockResolvedValue({ ...response(routineModel, { dimensions, findings: [] }),
+      output: [{ type: 'message', status, content: [] }] });
+    const result = await runGamingClearAnswerAudit(client, input, createRuntimeBudgetWithLimit(10_000, 0));
+    expect(result.assessment).toMatchObject({ assessmentStatus: 'unavailable', decision: 'unavailable',
+      findings: [expect.objectContaining({ code: 'AUDIT_PROVIDER_INCOMPLETE' })] });
+    expect(result.providerDiagnostic).toEqual({ resultClass: 'provider_incomplete', providerStatus: 'completed', messageStatus: status });
+    expectSingleBoundedRequest(routineModel, true);
+  });
+
+  it('does not interpret commentary-only JSON as a final audit', async () => {
+    const good = response(routineModel, { dimensions, findings: [] });
+    responsesCreate.mockResolvedValue({ ...good,
+      output: [{ type: 'message', status: 'completed', phase: 'commentary',
+        content: [{ type: 'output_text', text: good.output_text, annotations: [] }] }] });
+    const result = await runGamingClearAnswerAudit(client, input, createRuntimeBudgetWithLimit(10_000, 0));
+    expect(result.assessment).toMatchObject({ assessmentStatus: 'unavailable', decision: 'unavailable',
+      findings: [expect.objectContaining({ code: 'AUDIT_PROVIDER_INCOMPLETE' })] });
+    expect(result.providerDiagnostic).toEqual({ resultClass: 'commentary_only', providerStatus: 'completed' });
+    expectSingleBoundedRequest(routineModel, true);
+  });
+
+  it.each([
+    ['failed', 'provider_incomplete', 'AUDIT_PROVIDER_ERROR', 'failed'],
+    ['cancelled', 'provider_incomplete', 'AUDIT_PROVIDER_ERROR', 'cancelled'],
+    ['queued', 'unexpected_finish', 'AUDIT_PROVIDER_INCOMPLETE', 'queued'],
+    ['in_progress', 'unexpected_finish', 'AUDIT_PROVIDER_INCOMPLETE', 'in_progress'],
+    ['synthetic-private-status', 'unexpected_finish', 'AUDIT_PROVIDER_INCOMPLETE', 'unknown']
+  ])('keeps the noncompleted Responses lifecycle unavailable: %s', async (status, resultClass, code, providerStatus) => {
+    const good = response(routineModel, { dimensions, findings: [] });
+    responsesCreate.mockResolvedValueOnce({ ...good, status }).mockResolvedValue(good);
+    try {
+      const result = await runGamingClearAnswerAudit(client, input, createRuntimeBudgetWithLimit(10_000, 0));
+      expect(result.assessment).toMatchObject({ assessmentStatus: 'unavailable', decision: 'unavailable', overall: null,
+        findings: [expect.objectContaining({ code })] });
+      expect(result.providerDiagnostic).toMatchObject({ resultClass, providerStatus });
+      expect(JSON.stringify(result.providerDiagnostic)).not.toContain('synthetic-private-status');
+      expectSingleBoundedRequest(routineModel, true);
+    } finally {
+      // Keep the real shared circuit breaker isolated between conversion failures.
+      await runGamingClearAnswerAudit(client, input, createRuntimeBudgetWithLimit(10_000, 0));
+    }
   });
 
   it('keeps a provider 400 for unsupported Gaming audit format unavailable', async () => {

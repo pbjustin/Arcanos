@@ -319,8 +319,12 @@ outcome, elapsed time, and remaining pipeline and request allowances.
 `actualUsage.answerAuditProvider`, when present, reports the reserved audit
 request's bounded transport outcome, elapsed time, and allowlisted error code.
 A completed transport request can still yield an incomplete or malformed
-assessment. The projections exclude model IDs, raw errors, prompts, source
-passages, answer text and credentials. Older receipts may omit these fields.
+assessment. Read `observation.audit.providerDiagnostic` for the audit result
+class and available provider status, finish reason, incomplete reason, and
+content classification. Refusals, tool output, commentary-only output and
+nonterminal message statuses are identified by closed values. The projections
+exclude model IDs, raw errors, prompts, source passages, answer text and
+credentials. Older receipts may omit these fields.
 
 When a completed audit rejects an answer, `observation.audit.findingCodes`
 lists distinct allowlisted blocking codes and `blockingFindingCount` counts
@@ -352,9 +356,14 @@ still stops intake before a cached result can be used.
 After a credential correction, a separately authorized metadata-only check can
 verify that the credential can retrieve metadata for the configured model.
 Full acceptance requires a new authorized run identity and the existing
-exact-commit admission gates. The Gaming profile must acquire and validate its
-source, meet evidence coverage, generate the answer, and complete the final
-claim and citation audit.
+exact-commit admission gates. The positive Gaming profile must acquire the
+supplied public guide, independently verify its game identity, pass CLEAR policy v7
+source validation, and select passages that cover the question. Trinity intake,
+reasoning and final generation must succeed. Delivery requires a complete
+provider audit that accepts and binds the exact answer and its resolved
+citations. The wrong-game profile must then reject source validation before
+any generation or audit calls. Preserve a failed run's receipt and one-shot
+state when a gate stops acceptance.
 
 Quota state is local to the one run in one deployment process. The service has
 one replica and no automatic restart. A manual restart/redeployment can create

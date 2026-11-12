@@ -533,6 +533,63 @@ test('answer audit receipt preserves only bounded audit diagnostics', () => {
   assert.deepEqual(sanitizeLiveValidationObservation(value).audit,
     { assessmentStatus: 'completed', decision: 'accept', boundToFinalAnswer: true, effectiveTimeoutMs: 9000 });
 });
+test('answer audit provider result diagnostics project only bounded metadata', () => {
+  const value = observation(true);
+  const audit = { assessmentStatus: 'unavailable', decision: 'unavailable', boundToFinalAnswer: false,
+    reasonCode: 'AUDIT_PROVIDER_INCOMPLETE' };
+  const diagnostic = { resultClass: 'provider_incomplete', providerStatus: 'incomplete', finishReason: 'length',
+    incompleteReason: 'max_output_tokens', truncated: true, contentFiltered: false, contentLengthClass: 'bounded',
+    messageStatus: 'in_progress' };
+  value.audit = { ...audit, providerDiagnostic: { ...diagnostic, rawText: 'private output', modelId: 'private model',
+    requestId: 'private request', sourceUrl: 'private source', contentLength: 123, outputKind: 'tool_output' } };
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, { ...audit, providerDiagnostic: diagnostic });
+
+  value.audit.providerDiagnostic = { resultClass: 'malformed_json', providerStatus: 'private provider status',
+    finishReason: 'unknown', incompleteReason: 'private reason', truncated: 'true', contentFiltered: 1,
+    contentLengthClass: 123, error: { message: 'private error' } };
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, {
+    ...audit, providerDiagnostic: { resultClass: 'malformed_json', finishReason: 'unknown' }
+  });
+
+  for (const invalid of [undefined, null, [], { finishReason: 'stop' }, { resultClass: 'private class' }]) {
+    value.audit.providerDiagnostic = invalid;
+    assert.deepEqual(sanitizeLiveValidationObservation(value).audit, audit);
+  }
+
+  for (const outputKind of ['refusal', 'tool_output']) {
+    value.audit.providerDiagnostic = { resultClass: 'unsupported_output', outputKind, messageStatus: 'incomplete' };
+    assert.deepEqual(sanitizeLiveValidationObservation(value).audit, {
+      ...audit, providerDiagnostic: { resultClass: 'unsupported_output', outputKind }
+    });
+  }
+  value.audit.providerDiagnostic = { resultClass: 'unsupported_output', outputKind: 'private kind' };
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, {
+    ...audit, providerDiagnostic: { resultClass: 'unsupported_output' }
+  });
+
+  value.audit.providerDiagnostic = { resultClass: 'provider_incomplete', messageStatus: 'private status' };
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, {
+    ...audit, providerDiagnostic: { resultClass: 'provider_incomplete' }
+  });
+
+  for (const resultClass of ['unexpected_finish', 'commentary_only', 'missing_content', 'oversized_content', 'invalid_schema']) {
+    const status = { ...audit, reasonCode: resultClass === 'invalid_schema' ? 'AUDIT_MALFORMED' : 'AUDIT_PROVIDER_INCOMPLETE' };
+    value.audit = { ...status, providerDiagnostic: { resultClass, rawText: 'private audit text' } };
+    assert.deepEqual(sanitizeLiveValidationObservation(value).audit, { ...status, providerDiagnostic: { resultClass } });
+  }
+
+  const completed = { assessmentStatus: 'completed', decision: 'accept', boundToFinalAnswer: true };
+  value.audit = { ...completed, providerDiagnostic: { resultClass: 'complete', contentLengthClass: 'bounded' } };
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, value.audit);
+  value.audit = { ...completed, providerDiagnostic: diagnostic };
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, completed);
+  value.audit = { ...audit, providerDiagnostic: { resultClass: 'complete' } };
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, audit);
+  const notRun = { assessmentStatus: 'not_run', decision: 'unavailable', boundToFinalAnswer: false };
+  value.audit = { ...notRun, providerDiagnostic: diagnostic };
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, notRun);
+});
+
 test('completed rejected audit receipts retain only safe findings and a bounded blocking count', () => {
   const value = observation(true);
   const audit = { assessmentStatus: 'completed', decision: 'reject', boundToFinalAnswer: false, effectiveTimeoutMs: 12_000 };

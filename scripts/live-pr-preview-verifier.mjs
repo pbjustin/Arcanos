@@ -61,6 +61,31 @@ export function sanitizeLiveValidationAuditRejection(value) {
   return { findingCodes: [...projected].sort(), blockingFindingCount };
 }
 
+const AUDIT_PROVIDER_RESULT_CLASSES = new Set(['complete', 'provider_incomplete', 'unexpected_finish', 'commentary_only', 'unsupported_output',
+  'missing_content', 'oversized_content', 'malformed_json', 'invalid_schema']);
+const AUDIT_PROVIDER_STATUSES = new Set(['completed', 'incomplete', 'failed', 'cancelled', 'queued', 'in_progress', 'unknown']);
+const AUDIT_PROVIDER_FINISH_REASONS = new Set(['stop', 'length', 'tool_calls', 'content_filter', 'function_call', 'unknown']);
+const AUDIT_PROVIDER_INCOMPLETE_REASONS = new Set(['max_output_tokens', 'content_filter', 'none', 'unknown']);
+const AUDIT_PROVIDER_CONTENT_LENGTH_CLASSES = new Set(['missing', 'empty', 'bounded', 'oversized']);
+
+/** Project classification and bounded provider metadata without retaining output or changing acceptance. */
+export function sanitizeLiveValidationAuditProviderDiagnostic(value, assessmentStatus) {
+  if (!isRecord(value) || !['completed', 'unavailable'].includes(assessmentStatus)) return undefined;
+  const { resultClass, providerStatus, finishReason, incompleteReason, truncated, contentFiltered,
+    contentLengthClass, outputKind, messageStatus } = value;
+  if (!AUDIT_PROVIDER_RESULT_CLASSES.has(resultClass) || (resultClass === 'complete') !== (assessmentStatus === 'completed')) return undefined;
+  return { resultClass,
+    ...(AUDIT_PROVIDER_STATUSES.has(providerStatus) ? { providerStatus } : {}),
+    ...(AUDIT_PROVIDER_FINISH_REASONS.has(finishReason) ? { finishReason } : {}),
+    ...(AUDIT_PROVIDER_INCOMPLETE_REASONS.has(incompleteReason) ? { incompleteReason } : {}),
+    ...(typeof truncated === 'boolean' ? { truncated } : {}),
+    ...(typeof contentFiltered === 'boolean' ? { contentFiltered } : {}),
+    ...(AUDIT_PROVIDER_CONTENT_LENGTH_CLASSES.has(contentLengthClass) ? { contentLengthClass } : {}),
+    ...(resultClass === 'unsupported_output' && (outputKind === 'refusal' || outputKind === 'tool_output') ? { outputKind } : {}),
+    ...(resultClass === 'provider_incomplete' && (messageStatus === 'in_progress' || messageStatus === 'incomplete')
+      ? { messageStatus } : {}) };
+}
+
 function identityValid(value) {
   return isRecord(value) && typeof value.sourceCommit === 'string' && /^[a-f0-9]{40}$/u.test(value.sourceCommit)
     && value.sourceCommit === value.approvedSourceCommit

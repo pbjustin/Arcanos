@@ -10,8 +10,10 @@ import { validateGamingPlayerContextInput } from './shared/gaming/gamingPlayerCo
 import { hasBoundGamingClearAnswer } from './shared/gaming/gamingClearAnswerBinding.js';
 import { gamingClearHash, type GamingClearAssessment } from './shared/gaming/gamingClearPolicy.js';
 import { createLiveValidationObservation, emptyLiveValidationStages, liveValidationDuration,
-  type LiveValidationObservation, type LiveValidationStageEvent, type LiveValidationClarification } from './shared/gaming/liveValidationObservation.js';
-import { sanitizeLiveValidationAuditRejection, type LivePreviewEvidenceInput, type LivePreviewFailureCode } from '../scripts/live-pr-preview-verifier.mjs';
+  type LiveValidationObservation, type LiveValidationStageEvent, type LiveValidationClarification,
+  type LiveValidationAuditProviderDiagnostic } from './shared/gaming/liveValidationObservation.js';
+import { sanitizeLiveValidationAuditProviderDiagnostic, sanitizeLiveValidationAuditRejection,
+  type LivePreviewEvidenceInput, type LivePreviewFailureCode } from '../scripts/live-pr-preview-verifier.mjs';
 
 export type LivePrPreviewAudit = NonNullable<LivePreviewEvidenceInput['audit']>;
 export interface LivePrPreviewModuleObserver {
@@ -123,6 +125,7 @@ export function createLiveValidationGamingAdapter(execute: LiveValidationGamingE
       let evidenceAssessment: GamingClearAssessment | undefined;
       let answerAssessment: GamingClearAssessment | undefined;
       let auditEffectiveTimeoutMs: number | undefined;
+      let auditProviderDiagnostic: LiveValidationAuditProviderDiagnostic | undefined;
       let final: GamingHybridResult | undefined;
       let failureCode: LivePreviewFailureCode | undefined;
       let acquired = false;
@@ -186,6 +189,7 @@ export function createLiveValidationGamingAdapter(execute: LiveValidationGamingE
             onAnswerAudit: value => {
               answerAssessment = structuredClone(value.assessment);
               auditEffectiveTimeoutMs = value.effectiveTimeoutMs;
+              auditProviderDiagnostic = sanitizeLiveValidationAuditProviderDiagnostic(value.providerDiagnostic, answerAssessment.assessmentStatus);
               observer.onAudit({ assessmentStatus: value.assessment.assessmentStatus, decision: value.assessment.decision, boundToFinalAnswer: false });
               const timedOut = value.assessment.findings.some(finding => finding.code === 'AUDIT_TIMEOUT');
               if (stages.answer_audit.status === 'started' || stages.answer_audit.status === 'not_run') {
@@ -270,7 +274,7 @@ export function createLiveValidationGamingAdapter(execute: LiveValidationGamingE
         : undefined;
       lastObservation = createLiveValidationObservation({ body: final?.body, accepted,
         audit: audit ? { ...audit, ...auditRejection } : undefined, stages, auditStartBudget,
-        auditFindings: answerAssessment?.findings, auditEffectiveTimeoutMs,
+        auditFindings: answerAssessment?.findings, auditEffectiveTimeoutMs, auditProviderDiagnostic,
         ...(input.clarificationReplies?.length ? { clarification } : {}) });
       return { result, accepted, audit, failureCode,
         ...(accepted && result && answerAssessment ? { privateAnswer: { version: 1 as const, response: result.data.response,
