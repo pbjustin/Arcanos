@@ -38,10 +38,49 @@ const response = (model: string, body: unknown) => ({ id: 'synthetic-audit-respo
   output_text: JSON.stringify(body), output: [], usage: { input_tokens: 200, output_tokens: 150, total_tokens: 350 } });
 const lanes = [['routine', routineModel], ['escalation', escalationModel]] as const;
 
+const suppliedSourceId = 'f60c345d-c34c-42a7-ad8c-487e9d30cae6';
+const passages = [text, 'Cross the lower bridge to reach the west valve, and use it to return to the entrance.'];
+const suppliedRevision = gamingClearHash(passages);
+const chunkRefs = passages.map((_, index) => `${suppliedSourceId}:${index}`);
+const suppliedInput: GamingClearAnswerInput = { ...input,
+  evidenceAssessment: createGamingClearAssessment({ profile: 'evidence', questionProfile: 'walkthrough',
+    subjectId: 'synthetic-supplied-evidence', subjectHash: suppliedRevision,
+    contextFingerprint: gamingClearContextFingerprint({ game: input.game, prompt: input.prompt, chunkRefs, passages }),
+    evidenceRefs: chunkRefs, gates: evidenceAssessment.gates,
+    dimensions: { clarity: { ...dimensions.clarity, evidenceRefs: chunkRefs }, leverage: { ...dimensions.leverage, evidenceRefs: chunkRefs },
+      efficiency: { ...dimensions.efficiency, evidenceRefs: chunkRefs }, alignment: { ...dimensions.alignment, evidenceRefs: chunkRefs },
+      resilience: { ...dimensions.resilience, evidenceRefs: chunkRefs } }
+  }),
+  knowledge: {
+    context: passages.join('\n'),
+    sources: [{ ...input.knowledge.sources[0], sourceId: suppliedSourceId }],
+    evidence: passages.map((passage, index) => ({ ...input.knowledge.evidence![0],
+      sourceId: suppliedSourceId, revisionId: suppliedRevision, recordId: chunkRefs[index], text: passage }))
+  }
+};
+const suppliedDimensionScores = [
+  ['clarity', 4.4, ['ACTIONS_PRECISE', 'SEQUENCE_EXPLICIT']],
+  ['leverage', 4.2, ['QUESTION_ADDRESSED', 'NEXT_STEPS_SUPPORTED']],
+  ['efficiency', 4.1, ['NO_REDUNDANT_CONTENT', 'DEPTH_PROPORTIONATE']],
+  ['alignment', 4.6, ['EDITION_MATCHES', 'CONSTRAINTS_RESPECTED']],
+  ['resilience', 4.2, ['CLAIMS_TRACEABLE', 'LIMITATIONS_QUALIFIED']]
+] as const;
+const materialFindings = ['CITATION_DOES_NOT_SUPPORT_CLAIM', 'UNSUPPORTED_QUANTITY', 'INVENTED_PREREQUISITE', 'WRONG_EDITION_MECHANIC',
+  'OMITTED_PATCH_RESTRICTION', 'SPOILER_VIOLATION', 'UNSUPPORTED_ACTION_SEQUENCE', 'UNQUALIFIED_PARTIAL_EXTRACTION'].map((code, index) => ({
+  code, severity: 'blocking', evidenceRefs: index % 2 ? [...chunkRefs].reverse() : chunkRefs
+}));
+const supportedGuide = 'Cross the lower bridge. Turn the west valve. Return by the lower bridge. [1]';
+const assessmentFixtures = [
+  { lane: 'routine', model: routineModel, decision: 'accept', visibleTokens: 477, reasoningTokens: 0, findings: [], answer: supportedGuide },
+  { lane: 'routine', model: routineModel, decision: 'reject', visibleTokens: 1_071, reasoningTokens: 0, findings: materialFindings,
+    answer: 'Buy three keys to cross the upper bridge. Turn the east valve to open the shortcut and reveal the hidden boss. [1]' },
+  { lane: 'escalation', model: escalationModel, decision: 'unavailable', visibleTokens: 477, reasoningTokens: 600, findings: [], answer: supportedGuide }
+] as const;
+
 function expectSingleBoundedRequest(model: string, gaming = false): void {
   expect(responsesCreate).toHaveBeenCalledTimes(1);
   const [payload, options] = responsesCreate.mock.calls[0] as [Record<string, unknown>, Record<string, unknown>];
-  expect(payload).toMatchObject({ model, max_output_tokens: 1_024 });
+  expect(payload).toMatchObject({ model, max_output_tokens: gaming && model === routineModel ? 1_536 : 1_024 });
   expect(payload.reasoning).toEqual({ effort: model === routineModel ? 'none' : 'low' });
   for (const field of ['tools', 'frequency_penalty', 'presence_penalty', 'max_tokens', 'max_completion_tokens']) {
     expect(payload[field]).toBeUndefined();
@@ -60,6 +99,9 @@ function expectSingleBoundedRequest(model: string, gaming = false): void {
     expect(options.maxRetries).toBe(0);
     expect(payload.store).toBe(false);
     expect(payload.text).toMatchObject({ format: { type: 'json_object' } });
+    expect(payload.input).toEqual(expect.arrayContaining([expect.objectContaining({ role: 'developer',
+      content: [expect.objectContaining({ text: expect.stringMatching(/Return minified JSON.*Keep distinct material findings and unresolved facts/su) })]
+    })]));
   }
 }
 
@@ -90,6 +132,48 @@ describe('CLEAR lane routing through the actual Responses conversion and validat
     expect(result.providerDiagnostic).toMatchObject({ resultClass: 'complete', providerStatus: 'completed',
       finishReason: 'stop', contentLengthClass: 'bounded' });
     expectSingleBoundedRequest(model, true);
+  });
+
+  it.each(assessmentFixtures)('returns $decision for a multi-passage Gaming assessment in the $lane lane', async ({ lane, model, decision, answer, findings, visibleTokens, reasoningTokens }) => {
+    const suppliedDimensions = Object.fromEntries(suppliedDimensionScores.map(([name, score, reasonCodes]) => [name, {
+      status: 'evaluated', score, reasonCodes, evidenceRefs: chunkRefs,
+      unresolvedFacts: findings.length && name === 'resilience' ? ['PREREQUISITE_NOT_ESTABLISHED'] : []
+    }]));
+    const completion = response(model, { dimensions: suppliedDimensions, findings });
+    // Visible usage is measured from compact JSON with a local GPT-OSS tokenizer as an o200k-family proxy.
+    // Reasoning usage is synthetic. The fixture models both kinds of output sharing the requested cap.
+    const outputTokens = visibleTokens + reasoningTokens;
+    responsesCreate.mockImplementation(({ max_output_tokens: cap }: { max_output_tokens: number }) => {
+      const consumedReasoningTokens = Math.min(cap, reasoningTokens);
+      const consumedOutputTokens = Math.min(cap, outputTokens);
+      return Promise.resolve({
+        ...completion,
+        ...(cap < outputTokens ? { status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' },
+          output_text: completion.output_text.slice(0, Math.floor(completion.output_text.length * (cap - consumedReasoningTokens) / visibleTokens)) } : {}),
+        usage: { input_tokens: 200, output_tokens: consumedOutputTokens, total_tokens: 200 + consumedOutputTokens,
+          output_tokens_details: { reasoning_tokens: consumedReasoningTokens } }
+      });
+    });
+    const result = await runGamingClearAnswerAudit(client, { ...suppliedInput, answer }, createRuntimeBudgetWithLimit(10_000, 0), lane);
+    expectSingleBoundedRequest(model, true);
+    const [, options] = responsesCreate.mock.calls[0] as [unknown, { timeout: number }];
+    expect(result.effectiveTimeoutMs).toBe(options.timeout);
+    if (decision === 'unavailable') {
+      expect(result.assessment).toMatchObject({ assessmentStatus: 'unavailable', decision, overall: null, blockingFindings: [] });
+      expect(result.assessment.findings.map(finding => finding.code)).toEqual(['AUDIT_PROVIDER_INCOMPLETE']);
+      expect(result.providerDiagnostic).toMatchObject({ resultClass: 'provider_incomplete', providerStatus: 'incomplete',
+        finishReason: 'length', incompleteReason: 'max_output_tokens', truncated: true, contentFiltered: false });
+      return;
+    }
+    expect(result.assessment).toMatchObject({ assessmentStatus: 'completed', decision });
+    expect(result.assessment.dimensionScores).toEqual(suppliedDimensions);
+    const expectedBlockingFindings = decision === 'reject'
+      ? [...findings, { code: 'MATERIAL_FACT_UNRESOLVED', severity: 'blocking', evidenceRefs: [] }]
+      : findings;
+    expect(result.assessment.blockingFindings).toEqual(expectedBlockingFindings);
+    expect(result.providerDiagnostic).toMatchObject({ resultClass: 'complete', providerStatus: 'completed',
+      finishReason: 'stop', contentLengthClass: 'bounded' });
+    expect(result.usage).toMatchObject({ completion_tokens: outputTokens });
   });
 
   it.each(lanes)('aborts an actual pending general %s audit at the remaining runtime deadline', async (lane, model) => {

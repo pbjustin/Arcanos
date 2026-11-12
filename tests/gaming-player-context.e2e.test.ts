@@ -256,7 +256,7 @@ describe('public Gaming player context to selected evidence and normal Trinity r
     }
     expect(createGPT5Reasoning).not.toHaveBeenCalled();
     expect(JSON.stringify(responsesCreate.mock.calls[2]?.[0])).toContain(fixture.evidence);
-    expect(responsesCreate.mock.calls[2]?.[0]).toMatchObject({ max_output_tokens: 1_024, store: false });
+    expect(responsesCreate.mock.calls[2]?.[0]).toMatchObject({ max_output_tokens: 1_536, store: false });
     expect(responsesCreate.mock.calls[2]?.[1]).toMatchObject({ maxRetries: 0 });
     expect(forbiddenWrite).not.toHaveBeenCalled();
     expect(storePattern).not.toHaveBeenCalled();

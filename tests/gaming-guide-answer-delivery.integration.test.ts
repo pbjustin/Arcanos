@@ -61,6 +61,7 @@ interface Scenario {
   pages: Array<{ url: string; title: string; body: string }>;
   claims: Claim[];
 }
+const frontierGuideUrl = 'https://www.elitedangerous.com/news/system-colonisation-guide';
 const scenarios: Scenario[] = [
   { id: 'A', game: 'The Legend of Zelda: Ocarina of Time', question: 'Where can I obtain the Deku Shield early in the game?',
     pages: [{ url: 'https://heldout-guides.example/oot/deku-shield-shop', title: 'Ocarina of Time early Deku Shield shop guide',
@@ -77,13 +78,15 @@ const scenarios: Scenario[] = [
       answerProbe: /Uchigatana.*Unsheathe.*Vigor.*Dexterity.*medium/iu,
       support: [/Uchigatana/iu, /Unsheathe/iu, /Vigor/iu, /Dexterity/iu, /medium/iu] }] },
   { id: 'C', game: 'Elite Dangerous', question: 'Find a detailed guide explaining system colonisation in Elite Dangerous and how to get started, including prerequisites and the first concrete steps. Cite the guide sources.',
-    pages: [{ url: 'https://heldout-guides.example/elite/colonisation-first-system', title: 'Elite Dangerous system colonisation getting started guide',
-      body: '<p>In the game Elite Dangerous, before beginning system colonisation, you must obtain a colonisation claim from a colonisation contact. System colonisation begins by selecting an uninhabited candidate system and purchasing the claim. Travel to the selected system with the claim, deploy the system colonisation ship, and deliver the construction commodities requested by the project. Complete the requested deliveries before the project deadline. Establish a colony in Elite Dangerous’ outer systems.</p><p>Check the project requirements before committing the claim because commodity quantities depend on the selected project. This authored walkthrough does not verify current-patch compatibility.</p>' }],
-    claims: [{ url: 'https://heldout-guides.example/elite/colonisation-first-system',
+    // Both discovery and HTTP are mocked. The public URL identifies the scenario and the bytes are authored.
+    pages: [{ url: frontierGuideUrl, title: 'Elite Dangerous system colonisation getting started guide',
+      body: '<p>In the game Elite Dangerous, system colonisation begins by selecting an uninhabited candidate system and purchasing a colonisation claim. Travel to the selected system with the claim, deploy the system colonisation ship, and deliver the construction commodities requested by the project. Complete the requested deliveries before the project deadline. Establish a colony in Elite Dangerous’ outer systems.</p><p>Check the project requirements before committing the claim because commodity quantities depend on the selected project. This authored walkthrough does not verify current-patch compatibility.</p>'
+        + '<table><tr><th>Mechanic</th><th>Value</th></tr><tr><td>System colonisation</td><td>requires a colonisation claim from a colonisation contact</td></tr></table>' }],
+    claims: [{ url: frontierGuideUrl,
       draft: '1. Select an uninhabited system and obtain the required colonisation claim. 2. Deploy the colonisation ship. 3. Deliver the requested construction commodities before the deadline.',
       answerProbe: /1\..*uninhabited system.*colonisation claim.*2\..*colonisation ship.*3\..*construction commodities.*deadline/iu,
       support: [/uninhabited/iu, /colonisation claim/iu, /colonisation ship/iu, /construction commodities/iu, /deadline/iu] },
-    { url: 'https://heldout-guides.example/elite/colonisation-first-system',
+    { url: frontierGuideUrl,
       draft: 'The selected excerpts do not establish platform or edition compatibility, and current patch compatibility could not be verified.',
       answerProbe: /do not establish platform.*edition.*patch/iu, uncertainty: true, support: [] }] },
   { id: 'D', game: 'Xenoblade Chronicles 2', question: 'How do I set up Rex for damage and Nia for healing early in Chapter 2?',
@@ -343,6 +346,13 @@ describe.each([false])('natural guide request delivery, SYNTHETIC external effec
     expect(evaluations.every(value => value.accepted.every(candidate => candidate.sourceAssessment.gates.identity === 'verified'
       && candidate.sourceAssessment.gates.security === 'verified' && candidate.sourceAssessment.gates.claimSupport === 'verified'))).toBe(true);
     expect(result.result.selectedEvidenceIds!.length).toBeGreaterThan(0);
+    if (fixture.id === 'C') {
+      expect(result.result.selectedEvidenceIds).toHaveLength(2);
+      expect(audits[0].evidence.map(chunk => chunk.chunkId)).toEqual(result.result.selectedEvidenceIds);
+      expect(audits[0].evidence.map(chunk => chunk.text)).toEqual(expect.arrayContaining([
+        expect.stringMatching(/requires a colonisation claim/iu), expect.stringMatching(/begins by selecting/iu)
+      ]));
+    }
     for (const chunk of audits[0].evidence) {
       const candidate = evaluations.flatMap(value => value.accepted).find(value => value.candidateId === chunk.sourceId);
       expect(chunk.revisionId).toBe(candidate?.contentHash);

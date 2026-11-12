@@ -212,6 +212,41 @@ test('mandatory successful answer audit follows generation and is the final cont
   await assert.rejects(invoke(repeated.provider), code('LIVE_VALIDATION_REGENERATION_FORBIDDEN')); assert.equal(repeated.calls.length, 2);
 });
 
+test('a 1536-token routine audit reserves and reconciles one call under existing run limits', async context => {
+  const model = { id: 'gpt-6-luna', inputMicroUsdPerToken: 0.275, outputMicroUsdPerToken: 1.1 };
+  const limits = { ...LIVE_VALIDATION_BUDGET_CAPS, maxRequests: 31 };
+  const requestedCaps = [];
+  const f = fixture(context, { target: { limits, models: [model] }, fetchImplementation: async (_url, init) => {
+    const { max_output_tokens } = JSON.parse(init.body);
+    requestedCaps.push(max_output_tokens);
+    const output = max_output_tokens === 1_536 ? 1_372 : 5;
+    return Response.json({ ...responseBody, model: model.id, status: 'completed',
+      usage: { input_tokens: 10, output_tokens: output, total_tokens: 10 + output } });
+  } });
+  f.provider.beginWorkflow('gaming-guide-positive');
+  await invoke(f.provider, { model: model.id });
+  const beforeAudit = f.provider.snapshot();
+  f.observation.stage = 'answer_audit';
+  await invoke(f.provider, { model: model.id, max_output_tokens: 1_536 });
+  f.provider.endWorkflow();
+  const afterAudit = f.provider.snapshot();
+  assert.equal(afterAudit.usage.reservedOutputTokens - beforeAudit.usage.reservedOutputTokens, 1_536);
+  assert.equal(afterAudit.usage.observedOutputTokens - beforeAudit.usage.observedOutputTokens, 1_372);
+  const reservedInput = afterAudit.usage.reservedInputTokens - beforeAudit.usage.reservedInputTokens;
+  assert.equal(afterAudit.usage.reservedSpendMicroUsd - beforeAudit.usage.reservedSpendMicroUsd,
+    Math.ceil(reservedInput * model.inputMicroUsdPerToken + 1_536 * model.outputMicroUsdPerToken));
+
+  f.provider.beginWorkflow('gaming-guide-negative');
+  await assert.rejects(invoke(f.provider, { model: model.id }), code('LIVE_VALIDATION_NEGATIVE_PROVIDER_FORBIDDEN'));
+  const final = f.provider.snapshot();
+  assert.deepEqual(requestedCaps, [100, 1_536]);
+  assert.equal(final.usage.requests, 2);
+  assert.equal(final.usage.auditCalls, 1);
+  assert.equal(final.counts.workflows, 2);
+  assert.equal(final.usage.reservedSpendMicroUsd, afterAudit.usage.reservedSpendMicroUsd);
+  assert.deepEqual(final.limits, beforeAudit.limits);
+});
+
 test('forbidden routes, tools/media, storage, retry headers, output/input bounds and preabort cause zero paid calls', async context => {
   const invalid = [
     provider => provider.fetch('https://evil.example/v1/responses', { method: 'POST', body: JSON.stringify(body) }),

@@ -247,7 +247,7 @@ describe('Gaming final-answer CLEAR assessment', () => {
     expect(result.usage?.total_tokens).toBe(1_100);
     expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
     const params = createSingleChatCompletion.mock.calls[0][1] as Record<string, unknown>;
-    expect(params).toMatchObject({ model: 'gpt-6-luna', max_completion_tokens: 1_024, timeoutMs: 12_000,
+    expect(params).toMatchObject({ model: 'gpt-6-luna', max_completion_tokens: 1_536, timeoutMs: 12_000,
       maxRetries: 0, redactErrorDetails: true, reasoning_effort: 'none', response_format: { type: 'json_object' } });
     expect(params.tools).toBeUndefined();
     expect(params.tool_choice).toBeUndefined();

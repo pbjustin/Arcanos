@@ -491,7 +491,8 @@ Both audit functions default to the routine lane. Their optional trusted interna
 `modelLane='escalation'` selects the escalation model for the same single call.
 No public request field or environment switch enables automatic escalation, and
 no retry, recursion or repair loop is added. Gaming retains at most one audit,
-no tools, the 1024 output-token ceiling, aggregate runtime budget, strict result
+no tools, a 1,536-token routine output ceiling and a 1,024-token explicit
+escalation ceiling, aggregate runtime budget, strict result
 validation, citation/evidence binding and fail-closed unavailable outcomes.
 Its mandatory answer audit defaults to a bounded 12,000 ms maximum. A positive
 `TRINITY_CLEAR_AUDIT_TIMEOUT_MS` is honored below that maximum and clamped above

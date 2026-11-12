@@ -1063,7 +1063,10 @@ workflow itself has time remaining. Expired proof yields
 `EVIDENCE_REVALIDATION_REQUIRED` without replaying the answer, issuing additional
 model calls or resetting the discovery round.
 
-The one audit call has **1,024 maximum output tokens**, **32,000 maximum data
+The one audit call has **1,536 maximum output tokens** on the routine lane
+and **1,024** on explicit escalation. The prompt requests minified JSON while
+retaining every distinct material finding, unresolved fact and supporting
+reference. The call also has **32,000 maximum data
 characters**, **38,000 maximum total prompt characters** including trusted rubric,
 **12,000 maximum answer characters**, and a **12,000 ms ceiling** clamped to existing
 configuration and remaining runtime/watchdog/request time while retaining terminal

@@ -170,7 +170,7 @@ describe('Archive guide document reaches the Gaming provider and HTTP envelope',
     expect(mockProvider).toHaveBeenCalledTimes(1);
     expect(mockAuditResponsesCreate).toHaveBeenCalledTimes(1);
     const [auditRequest, auditOptions] = mockAuditResponsesCreate.mock.calls[0];
-    expect(auditRequest).toMatchObject({ max_output_tokens: 1024, store: false });
+    expect(auditRequest).toMatchObject({ max_output_tokens: 1536, store: false });
     expect(auditOptions).toMatchObject({ maxRetries: 0 });
     expect(auditData(auditRequest as AuditRequest)).toMatchObject({
       answer: 'Save at the lantern checkpoint before the boss encounter. [1]',

@@ -20,7 +20,8 @@ import type { GamingStoredKnowledgeContext } from '@shared/gaming/gamingStoredEv
 import { GAMING_STALE_GUIDE_WARNING, GAMING_UNVERIFIED_GUIDE_WARNING, gamingAnswerClaimsVerifiedCurrentness,
   resolveGamingFreshnessDisposition } from '@shared/gaming/gamingFreshnessDisposition.js';
 
-export const GAMING_CLEAR_ANSWER_BUDGET = Object.freeze({ maxCalls: 1, maxRepairs: 0, maxOutputTokens: 1_024,
+export const GAMING_CLEAR_ANSWER_BUDGET = Object.freeze({ maxCalls: 1, maxRepairs: 0, maxOutputTokens: 1_536,
+  escalationMaxOutputTokens: 1_024,
   maxInputChars: 32_000, maxTotalPromptChars: 38_000, maxAnswerChars: 12_000, maxTimeoutMs: 12_000 });
 
 export interface GamingClearAnswerInput extends GamingPlayerContext {
@@ -300,21 +301,24 @@ export async function runGamingClearAnswerAudit(client: OpenAI, input: GamingCle
       'Reject any claim that these recommendations are current, latest-patch compatible, verified for the current release, or presently optimal. Known source patch/version/date facts remain attributable facts, not proof of current compatibility.'
     ] : []),
     'Evaluate leverage against the actual question; patch notes alone cannot justify a best-build recommendation. Unknown relevant facts remain unknown. Scores are judgments, not accuracy probabilities.',
-    'Return JSON with exactly dimensions and findings. dimensions has exactly clarity, leverage, efficiency, alignment, resilience.',
+    'Return minified JSON with exactly dimensions and findings. dimensions has exactly clarity, leverage, efficiency, alignment, resilience.',
     'Each dimension has exactly status (evaluated or unknown), score (a finite number 0 through 5 when evaluated, otherwise null), reasonCodes (up to 8 UPPER_SNAKE_CASE codes), evidenceRefs (existing sourceId/revisionId/chunkId values only), unresolvedFacts (up to 4 UPPER_SNAKE_CASE codes).',
-    'findings is an array of up to 16 objects with exactly code (UPPER_SNAKE_CASE), severity (blocking or warning), evidenceRefs (existing IDs only). Use no free-text reasoning. Every evaluated dimension must cite supporting evidence references. Do not return overall or decision.'
+    'findings is an array of up to 16 objects with exactly code (UPPER_SNAKE_CASE), severity (blocking or warning), evidenceRefs (existing IDs only).',
+    'Keep distinct material findings and unresolved facts. Use only relevant evidence references, omit duplicate entries within arrays, and use [] when an array has no entries. Every evaluated dimension must cite supporting evidence references. Return no free-text reasoning, overall, or decision.'
   ].join('\n');
   if (instructions.length + data.length > GAMING_CLEAR_ANSWER_BUDGET.maxTotalPromptChars) return finish(unavailable('AUDIT_INPUT_UNAVAILABLE'));
   let usage: TrinityMetaTokens | undefined;
   try {
     // Trusted callers may choose an escalation lane for the single audit slot; automatic escalation stays disabled.
     const model = modelLane === 'escalation' ? getClearAuditEscalationModel() : getClearAuditModel();
+    const maxOutputTokens = modelLane === 'escalation'
+      ? GAMING_CLEAR_ANSWER_BUDGET.escalationMaxOutputTokens : GAMING_CLEAR_ANSWER_BUDGET.maxOutputTokens;
     const reasoningEffort = resolveOpenAIModelCapabilities(model).normalizeReasoningRequests
       ? normalizeOpenAIModelReasoningEffort(model, 'none') : undefined;
     modelCallStarted = true;
     logger.info('gaming.clear.answer.dispatch', { module: 'ARCANOS:GAMING', requestId: input.requestId, ...auditBudget });
     const response = await createSingleChatCompletion(client, {
-      model, ...getTokenParameter(model, GAMING_CLEAR_ANSWER_BUDGET.maxOutputTokens),
+      model, ...getTokenParameter(model, maxOutputTokens),
       ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
       messages: [{ role: 'system', content: instructions }, { role: 'user', content: data }],
       response_format: { type: 'json_object' }, signal: getRequestAbortSignal(), timeoutMs,
