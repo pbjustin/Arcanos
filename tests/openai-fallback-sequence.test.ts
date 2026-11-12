@@ -254,15 +254,20 @@ describe('createChatCompletionWithFallback', () => {
     expect(transport).toHaveBeenCalledTimes(2);
   });
 
-  it('accepts completed final JSON with reasoning and empty commentary when text-only handling is requested', async () => {
+  it.each([
+    ['explicit final-answer phase', { phase: 'final_answer' }],
+    ['unphased legacy final message', {}]
+  ])('keeps commentary out of completed JSON with an %s', async (_label, finalPhase) => {
     const { adapter, transport } = responseTransportFixture({
       output: [{ type: 'reasoning', id: 'reasoning-fixture', summary: [] },
-        { ...transportFixtureMessage, phase: 'commentary', content: [] },
-        { ...transportFixtureMessage, phase: 'final_answer' }]
+        { ...transportFixtureMessage, phase: 'commentary',
+          content: [{ type: 'output_text', text: 'Synthetic interim commentary. ', annotations: [] }] },
+        { ...transportFixtureMessage, ...finalPhase }]
     });
     const response = await createSingleChatCompletion(adapter, textOnlyCompletionParams);
 
     expect(response.choices[0]).toMatchObject({ finish_reason: 'stop', message: { content: transportFixtureText } });
+    expect(JSON.parse(response.choices[0].message.content!)).toEqual(JSON.parse(transportFixtureText));
     expect(transport).toHaveBeenCalledTimes(1);
   });
 

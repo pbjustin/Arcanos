@@ -325,6 +325,19 @@ export function extractResponseRefusal(response: unknown): string | null {
   return null;
 }
 
+function extractLegacyResponseContent(response: Record<string, unknown>): string {
+  const output: unknown[] = Array.isArray(response.output) ? response.output : [];
+  const messages = output.filter((item): item is Record<string, unknown> =>
+    isRecord(item) && item.type === 'message');
+  if (messages.some(message => message.phase === 'commentary')) {
+    const finalMessages = messages.filter(message => message.phase === 'final_answer');
+    const answerMessages = finalMessages.length ? finalMessages : messages.filter(message => message.phase == null);
+    // The SDK aggregates commentary into output_text. Read the answer items directly.
+    if (answerMessages.length) return extractResponseOutputText({ output: answerMessages });
+  }
+  return extractResponseOutputText(response);
+}
+
 export function normalizeOpenAIResponseSemantics(
   response: unknown
 ): NormalizedOpenAIResponseSemantics {
@@ -336,7 +349,7 @@ export function normalizeOpenAIResponseSemantics(
   const incompleteDetails = readIncompleteDetails(response);
   const incompleteReason = readIncompleteReason(incompleteDetails);
   const lifecycle = resolveLifecycle(status, incompleteDetails);
-  const content = extractResponseOutputText(response, '');
+  const content = extractLegacyResponseContent(response);
   const refusal = extractResponseRefusal(response);
   const parsedToolCalls = parseResponseToolCalls(response, status);
   const conversionFailure = resolveConversionFailure({
