@@ -139,7 +139,7 @@ function sanitizedUsage(usage) {
 /** Match actual numeric references, preserving descriptive Markdown link labels as prose. */
 export function extractLivePreviewNumericCitations(answer) {
   return [...answer.matchAll(NUMERIC_CITATION)]
-    .flatMap(match => (match[1] ?? match[2]).split(',').map(value => Number(value.trim())));
+    .flatMap(match => (match[1] ?? match[2])?.split(',').map(value => Number(value.trim())) ?? []);
 }
 
 function sanitizedResult(result, audit) {

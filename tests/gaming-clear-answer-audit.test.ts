@@ -473,8 +473,9 @@ describe('Gaming final-answer CLEAR assessment', () => {
     });
   });
 
-  it('sends descriptive Markdown link labels beginning with numbers to the semantic audit', async () => {
-    const answer = 'Turn the west valve. [1] See the [20 Rupees guide](https://example.com/guide).';
+  it.each(['20 Rupees guide', 'Source 2 engine notes', 'Engine notes [Source 2]'])(
+    'sends descriptive Markdown link label %s to the semantic audit', async label => {
+    const answer = `Turn the west valve. [1] See the [${label}](https://example.com/guide).`;
     const result = await run({ answer });
 
     expect(result.assessment).toMatchObject({ assessmentStatus: 'completed', decision: 'accept' });
@@ -483,9 +484,19 @@ describe('Gaming final-answer CLEAR assessment', () => {
     expect(JSON.parse(request.messages[1].content).answer).toBe(answer);
   });
 
+  it.each(['//other.example/guide', '/guide', '#guide', 'mailto:guide@example.com',
+    '<//other.example/guide>', '', 'https://example.com/guide unexpected'])(
+    'rejects numbered links with unsupported destinations before audit: %s', async destination => {
+      const result = await run({ answer: `Turn the west valve. [1](${destination})` });
+      expect(result.assessment).toMatchObject({ assessmentMethod: 'deterministic', decision: 'reject',
+        blockingFindings: expect.arrayContaining([expect.objectContaining({ code: 'CITATION_DOES_NOT_SUPPORT_CLAIM' })]) });
+      expect(createSingleChatCompletion).not.toHaveBeenCalled();
+    });
+
   it.each([
     ['[1](https://example.com/storehouse)', '[1](https://example.com/guide)'],
     ['[Source 1](<https://example.com/storehouse>)', '[Source 1](<https://example.com/guide>)'],
+    ['[1](https://example.com/storehouse "Guide")', '[1](https://example.com/guide "Guide")'],
   ])('rejects a numbered link whose URL points at a different selected source: %s', async (wrongLink, correctLink) => {
     const otherSource = { ...input.knowledge.sources[0], sourceId: 'source-2', url: 'https://example.com/storehouse' };
     const otherChunk = { ...input.knowledge.evidence[0], sourceId: otherSource.sourceId, revisionId: 'revision-2',

@@ -363,8 +363,11 @@ export function scopeGamingEvidenceParagraphs(text: string, input: GamingRetriev
   const maxRouteUnits = Math.max(5, ...countedStarts.map(requirement => requirement.minimumActions ?? 1));
   const included = new Set<number>();
   for (const [index, unit] of units.entries()) {
-    // A counted continuation in flattened prose must retain its starting anchor.
-    if (countedStarts.length && (paragraphs.length > 1 ? /^[2-8][.)]\s+/u : ORDERED_ACTION_CONTINUATION).test(unit.trim())) continue;
+    // An orphan continuation cannot start an excerpt. A discourse-prefixed
+    // sentence can still state an independent start for the requested topic.
+    if (countedStarts.length && /^[2-8][.)]\s+/u.test(unit.trim())) continue;
+    if (countedStarts.length && paragraphs.length === 1 && ORDERED_ACTION_CONTINUATION.test(unit.trim())
+      && (unit.length > 8_000 || !countedStarts.some(requirement => gamingStartingActions(unit, requirement.terms) > 0))) continue;
     if (gamingTermCoverage(unit, focusTerms) === 0) continue;
     included.add(index);
     if (index > 0 && /\b(?:prerequisite|requires?|must first|only if)\b/iu.test(units[index - 1])) included.add(index - 1);
@@ -580,9 +583,16 @@ function gamingTopicSubject(subject: string, terms: readonly string[]): boolean 
     && gamingTermCoverage(topical, terms) === 1;
 }
 
+function gamingMaterialIdentity(text: string): { name: string; quantity?: string } {
+  const item = text.normalize('NFKC').trim().replace(/^(?:a|an|the)\s+/iu, '');
+  const amount = /^(\d+)\s+(?=\p{L})/u.exec(item);
+  return { name: gamingLexicalTokens(item.slice(amount?.[0].length ?? 0)).join(' '),
+    ...(amount ? { quantity: amount[1].replace(/^0+(?=\d)/u, '') } : {}) };
+}
+
 /** Extract a stated materials list only from the request's acquired topic relation. */
-function gamingRequiredMaterials(text: string, terms: readonly string[]): string[] {
-  const materials = new Set<string>();
+function gamingRequiredMaterials(text: string, terms: readonly string[]): ReturnType<typeof gamingMaterialIdentity>[] {
+  const materials = new Map<string, ReturnType<typeof gamingMaterialIdentity>>();
   for (const sentence of text.split(/\n+|(?<=[.!?])\s+|;\s*/u)) {
     if (gamingTermCoverage(sentence, terms) !== 1 || sentence.includes('?') || /\b(?:unlike|not|never|no\s+longer)\b/iu.test(sentence)) continue;
     const direct = /\bmaterials\s+(?:required|needed)\s+for\s+(.{1,160}?)\s+(?:are|include)\s+(.{1,240})/iu.exec(sentence);
@@ -594,12 +604,12 @@ function gamingRequiredMaterials(text: string, terms: readonly string[]): string
     if (entities.length > 8) return [];
     if (entities.some(value => /^(?:unknown|not\s+specified|unverified|unspecified|n\/?a|not\s+confirmed|to\s+be\s+determined)$/iu.test(value))) continue;
     for (const entity of entities) {
-      const material = gamingLexicalTokens(entity).join(' ');
-      if (material) materials.add(material);
+      const material = gamingMaterialIdentity(entity);
+      if (material.name) materials.set(`${material.quantity ?? ''}:${material.name}`, material);
       if (materials.size > 8) return [];
     }
   }
-  return [...materials];
+  return [...materials.values()];
 }
 
 /** Bind acquisition locations to actual topic materials, rather than an unresolved pronoun. */
@@ -614,7 +624,12 @@ function gamingMaterialAcquisitionSupported(text: string, terms: readonly string
     return relation ? [relation[1]] : [];
   });
   const materials = gamingRequiredMaterials(text, terms);
-  if (materials.length > 0 && materials.every(material => objects.some(object => gamingTermCoverage(object, gamingLexicalTokens(material)) === 1))) return true;
+  const locations = objects.flatMap(object => object.split(/\s+and\s+|,\s*/iu).map(gamingMaterialIdentity));
+  if (materials.some(material => material.quantity !== undefined && locations.some(location =>
+    location.name === material.name && location.quantity !== undefined && location.quantity !== material.quantity))) return false;
+  if (materials.length > 0 && materials.every(material => material.quantity === undefined
+    ? objects.some(object => gamingTermCoverage(object, gamingLexicalTokens(material.name)) === 1)
+    : locations.some(location => location.name === material.name))) return true;
   return objects.some(value => !/\b(?:one\s+of|some|among|part\s+of)\b/iu.test(value)
     && /\bmaterials\b/iu.test(value) && (gamingTopicSubject(value, terms)
       || /^materials\s+for\s+/iu.test(value.trim()) && gamingTopicSubject(value.replace(/^materials\s+for\s+/iu, ''), terms)));

@@ -346,7 +346,7 @@ test('private answer validation accepts exact bound content while cloning it awa
 
 test('private answer validation counts numeric citations separately from descriptive Markdown labels', () => {
   const entry = profileFixture().profiles.find(value => value.id === 'gaming-guide-positive');
-  const answer = `Follow the documented preparation [1]. See the [20 Rupees guide](${entry.input.candidateUrls[0]}).`;
+  const answer = `Follow the documented preparation [1]. See the [Source 2 engine notes](${entry.input.candidateUrls[0]}).`;
   const input = privateAnswerFor(entry, answer);
   assert.deepEqual(validatePrivateAnswer(input, { evidence: evidenceFor(entry), observation: observation(true) }), input);
 });

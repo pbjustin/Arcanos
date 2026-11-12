@@ -78,6 +78,20 @@ describe('factual request clauses retain subject, relation and requested count',
   });
 
   it.each([
+    ['an unquantified location', 'Buy cargo plates at orbital depots.', true],
+    ['the same explicit quantity', 'Buy 10 cargo plates at orbital depots.', true],
+    ['a conflicting quantity', 'Buy 5 cargo plates at orbital depots.', false],
+    ['a conflict alongside an unquantified location', 'Buy cargo plates at orbital depots. Buy 5 cargo plates at the outpost.', false],
+    ['a different material', 'Buy 10 beacon coils at orbital depots.', false]
+  ])('matches quantified material requirements against %s', (_label, location, supported) => {
+    const input = request(materialQuestion);
+    const passage = `The materials required for system colonisation are 10 cargo plates. ${location}`;
+    const selected = selectGamingHybridEvidence(input, knowledge([passage]));
+    expect(selected.coverageSatisfied).toBe(supported);
+    if (supported) expect(selected.knowledge.evidence?.[0].text).toBe(passage);
+  });
+
+  it.each([
     ['no location', materials],
     ['another object location', `${materials} The copper key is sold at the orbital depot.`],
     ['another activity materials', `${materials} The materials for trading are sold at the orbital depot.`],
@@ -209,6 +223,16 @@ describe('factual request clauses retain subject, relation and requested count',
     expect(gamingRequirementSupported(passage, buildGamingRequestRequirements(input)[0])).toBe(false);
     expect(assessGamingRequestCoverage(input, knowledge([passage])).coverageSatisfied).toBe(false);
     expect(scopeGamingEvidenceParagraphs(passage, input)).toBe('To start fishing, equip a rod.');
+  });
+
+  it.each(['Then', 'Next'])('keeps an explicit requested start after %s without keeping an orphan action', marker => {
+    const input = request('Explain the first two actions needed for fishing.');
+    const start = `${marker} to start fishing, equip a fishing rod.`;
+    const continuation = 'Next, use the rod.';
+    const passage = `To start mining, equip a pickaxe. Then use the fishing boat. ${start} ${continuation}`;
+    const scoped = filterGamingDocumentInstructions(scopeGamingEvidenceParagraphs(passage, input));
+    expect(scoped).toBe(`${start} ${continuation}`);
+    expect(assessGamingRequestCoverage(input, knowledge([scoped])).coverageSatisfied).toBe(true);
   });
 
   it.each([

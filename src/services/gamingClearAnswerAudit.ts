@@ -43,7 +43,8 @@ const AUDIT_FINISH_REASONS = ['stop', 'length', 'tool_calls', 'content_filter', 
 const AUDIT_INCOMPLETE_REASONS = ['max_output_tokens', 'content_filter', 'none'] as const;
 const MAX_AUDIT_RESPONSE_CHARS = 16_000;
 const NUMERIC_CITATION = new RegExp(citationSyntax.numericReferencePattern, 'giu');
-const NUMBERED_CITATION_LINK = /\[\s*(?:sources?\s+)?(\d+(?:\s*,\s*\d+)*)\s*\]\(\s*(?:<(https?:\/\/[^\s<>]+)>|(https?:\/\/[^\s)<>]+))(?=[\s)])/giu;
+const NUMBERED_CITATION_LINK = /\[\s*(?:sources?\s+)?(\d+(?:\s*,\s*\d+)*)\s*\]\(/giu;
+const CITATION_LINK_DESTINATION = /^\s*(?:<(https?:\/\/[^\s<>]+)>|(https?:\/\/[^\s)<>]+))(?:\s+(?:"[^"\r\n]*"|'[^'\r\n]*'|\([^()\r\n]*\)))?\s*\)/iu;
 
 interface AuditProviderFields {
   providerStatus?: unknown;
@@ -239,15 +240,20 @@ export async function runGamingClearAnswerAudit(client: OpenAI, input: GamingCle
       ...(auditBudget ? { effectiveTimeoutMs: auditBudget.effectiveTimeoutMs } : {}) };
   };
   const evidence = gamingClearAnswerEvidence(input);
+  // Descriptive link labels consume a match without capturing a source index.
   const invalidCitation = [...input.answer.matchAll(NUMERIC_CITATION)]
-    .some(match => (match[1] ?? match[2]).split(',').some(index => !evidence.some(item => item.sourceIndex === Number(index.trim()))));
+    .some(match => (match[1] ?? match[2])?.split(',').some(index =>
+      !evidence.some(item => item.sourceIndex === Number(index.trim()))));
   const rejectCitation = (code: 'CITATION_NOT_FOUND' | 'CITATION_DOES_NOT_SUPPORT_CLAIM') =>
     finish(createGamingClearAssessment({ ...base, dimensions: unknownDimensions(),
       assessmentMethod: 'deterministic', findings: [{ code, severity: 'blocking', evidenceRefs: [] }] }));
   if (invalidCitation) return rejectCitation('CITATION_NOT_FOUND');
   // A numbered Markdown link and its URL must identify the same selected source.
-  const mismatchedCitationLink = [...input.answer.matchAll(NUMBERED_CITATION_LINK)].some(([, indices, angleUrl, plainUrl]) =>
-    indices.split(',').some(index => input.knowledge.sources[Number(index.trim()) - 1]?.url !== (angleUrl ?? plainUrl)));
+  const mismatchedCitationLink = [...input.answer.matchAll(NUMBERED_CITATION_LINK)].some(match => {
+    const destination = CITATION_LINK_DESTINATION.exec(input.answer.slice(match.index + match[0].length));
+    return !destination || match[1].split(',').some(index =>
+      input.knowledge.sources[Number(index.trim()) - 1]?.url !== (destination[1] ?? destination[2]));
+  });
   if (mismatchedCitationLink) return rejectCitation('CITATION_DOES_NOT_SUPPORT_CLAIM');
   if (input.evidenceAssessment.decision !== 'accept') return finish(unavailable('EVIDENCE_NOT_SUFFICIENT'));
   if (base.questionProfile === 'advisory_recommendation') {

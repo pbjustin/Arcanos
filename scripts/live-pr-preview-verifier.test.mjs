@@ -169,7 +169,7 @@ test('citations must resolve to usable public source URLs at their original one-
   assert.equal(canonical.result.sources[0].url, 'https://guides.example.com/');
   assert.equal(canonical.result.sources[0].documentUrlSha256, createHash('sha256').update('https://guides.example.com/game/guide').digest('hex'));
   const linked = makeEvidence('useful_grounded_guide', input => {
-    input.result.data.response = 'Prepare as documented [1]. See the [20 Rupees guide](https://guides.example.com/game/guide).';
+    input.result.data.response = 'Prepare as documented [1]. See the [20 Rupees guide](https://guides.example.com/game/guide) and [Source 2 engine notes](https://guides.example.com/game/guide).';
   });
   assert.deepEqual(linked.result.citationIndices, [1]);
   assert.equal(verifyLivePreviewEvidence(linked, identity).status, 'PASS');
