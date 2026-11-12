@@ -10,7 +10,10 @@ const GENERIC_RELATIONSHIP_HEADS = String.raw`effects?|mechanics?|benefits?|loca
 const GAMEPLAY_ACTIONS = new Set('activate access align allocate attack avoid block buy choose collect compare complete confirm craft cross defeat deploy dodge enter equip exit explore find finish focus follow gather heal improve inspect insert jump keep leave move open place plan plant practice prepare preserve press prioritize raise reach read reduce register remove repair restore return rotate save select spend take trade travel turn unlock upgrade use visit wait'.split(' '));
 const ACTION_COUNTS: Readonly<Record<string, number>> = { zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
 const FIRST_ACTIONS = /\bfirst\s+(zero|one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+(?:(?:concrete|ordered)\s+)?actions?\b/iu;
-const ORDERED_ACTION_CONTINUATION = /^(?:(?:next|then)\b|[2-8]\)\s+)/iu;
+const ORDERED_ACTION_CONTINUATION = /^(?:(?:next|then)\b|[2-8][.)]\s+)/iu;
+const NUMBERED_ACTION_PREFIX = /^([1-8])[.)]\s+/u;
+const PERIOD_ORDINAL = /^(?:to\s+(?:begin|start)\s+[^.!?;\n,:]{1,180}[,:]\s*)?[1-8]\.$/iu;
+const CONTINUITY_FILLER = new Set('your our their its his her these those them player players commander commanders'.split(' '));
 const AVOIDING_ACTION = /^avoid(?:ing)?\s+/iu;
 
 /** Quoted acquisition titles are named objects, not requests for that number of actions. */
@@ -184,6 +187,18 @@ export function buildGamingClaimCoverageTerms(input: GamingRetrievalPolicyInput)
     .filter(term => !['recommend', 'recommended', 'recommendation', 'recommendations', 'best', 'good'].includes(term));
 }
 
+/** Rejoin isolated ordinal markers split by the ordinary prose boundary. */
+function splitGamingProse(text: string, boundary: RegExp): string[] {
+  const clauses: string[] = [];
+  for (const part of text.split(boundary)) {
+    const previous = clauses.at(-1);
+    if (previous && PERIOD_ORDINAL.test(previous.trim()) && part.trim()) {
+      clauses[clauses.length - 1] = previous + ' ' + part;
+    } else clauses.push(part);
+  }
+  return clauses;
+}
+
 /** Intelligible acquired gameplay assertions, not an authority or truth verdict.
  * Catalog speech acts, game identity and topic labels supply no claim text.
  * Both declarative relations and player actions remain eligible for the normal
@@ -247,8 +262,14 @@ export function gamingAttributableClaimText(text: string, game?: string, metadat
     return /,\s*$/u.test(prefix) || /\b(?:do\s+not|don['’]t|does\s+not|doesn['’]t|never|cannot|can['’]t|must\s+not|should\s+not|unless|only\s+if)\s*$/iu.test(prefix)
       ? ' ' : '\n';
   }) : prose;
-  return claimProse.split(/\n+|(?<=[.!?])\s+|;\s*/u).map(original => {
+  const clauses = claimProse.split(/\n\s*\n/u).flatMap((paragraph, index) => {
+    const parts = splitGamingProse(paragraph, /\n+|(?<=[.!?])\s+|;\s*/u);
+    return index === 0 ? parts : ['', ...parts];
+  });
+  const claims = clauses.map(original => {
     let clause = original.trim();
+    const ordinal = NUMBERED_ACTION_PREFIX.exec(clause)?.[0] ?? '';
+    clause = clause.slice(ordinal.length);
     if (!clause || /\b(?:at|in|for|from|to|with|and|but|after|before|until|when|where|if|unless|only)\s*[.!?]?$/iu.test(clause)) return '';
     // Flattened parser headings can precede the definition without punctuation.
     // Remove only closed nominal page/section labels, never a factual heading.
@@ -271,7 +292,7 @@ export function gamingAttributableClaimText(text: string, game?: string, metadat
       clause = continuation ? clause.slice(continuation.index + continuation[0].length).trim() : '';
       if (!clause) return '';
     }
-    const claimText = clause;
+    const claimText = ordinal + clause;
     // A title's leading game name may itself contain a preposition or verb.
     // Evaluate its following topic; preserve a game that is the actual subject
     // of an explicit finite relation rather than a heading prefix.
@@ -308,7 +329,7 @@ export function gamingAttributableClaimText(text: string, game?: string, metadat
     const mechanicalResult = /\b(?:to\s+(?:unlock|open|activate|restore|repair|cross|defeat)|grants?|unlocks?|costs?|inflicts?|deals?)\s+(?!(?:the\s+)?(?:wiki|catalog|index|article|page|directory)\b)\S/iu.test(clause);
     const browsingOnly = referenceObject.test(clause) && !mechanicalResult;
     const instruction = /^(?:(?:first|next|then)[,:]?\s+)?(?:to\s+)?([\p{L}][\p{L}'’-]*)\s+\S/iu.exec(actionClause);
-    const localInstruction = /(?:^|[,:])\s*(?:(?:first|next|then)[,:]?\s+)?(?:to\s+)?([\p{L}][\p{L}'’-]*)\s+\S/giu;
+    const localInstruction = /(?:^|[,:])\s*(?:(?:first|next|then)[,:]?\s+|[1-8][.)]\s+)?(?:to\s+)?([\p{L}][\p{L}'’-]*)\s+\S/giu;
     const imperative = /(?:^|[,:])\s*(?:(?:first|next|then)[,:]?\s+)?(?!(?:about|above|below|under|over|at|in|on|of|with|without|for|from|as|through|during|after|before|unless|because|while|where|when|if|that|this|the|an?|and|or|plus|but|its|their|these|those|your|our|my|we|you|they|he|she|is|are|was|were|has|does)\b)[\p{L}][\p{L}'’-]*\s+(?:the|a|an|your|our|their|its|this|that)\s+\p{L}/iu.test(actionClause);
     if (!browsingOnly && (imperative || instruction && action.test(instruction[1])
       || [...actionClause.matchAll(localInstruction)].some(match => action.test(match[1])))) return claimText;
@@ -317,7 +338,10 @@ export function gamingAttributableClaimText(text: string, game?: string, metadat
     if (/\b(?:you|players?|characters?|commanders?)\s+(?:(?:can|could|must|should|may|will|typically|usually|often)\s+){0,2}[\p{L}][\p{L}'’-]*\s+\S/iu.test(clause)
       && !referenceObject.test(clause)) return claimText;
     return !referenceObject.test(clause) && [...clause.matchAll(location)].some(match => attributed(match.index)) ? claimText : '';
-  }).filter(Boolean).join('\n');
+  });
+  // Dropping metadata must not make an orphan ordinal adjacent to a start.
+  return claims.map((claim, index) => claim && claims[index - 1] === '' && NUMBERED_ACTION_PREFIX.test(claim)
+    ? '\n' + claim : claim).filter(Boolean).join('\n').trim();
 }
 
 /** Source admission asks for a useful contribution; aggregate answer coverage remains separate. */
@@ -333,11 +357,13 @@ export function scopeGamingEvidenceParagraphs(text: string, input: GamingRetriev
   const { focusTerms } = buildGamingRetrievalTerms(input);
   const paragraphs = text.split(/\n\s*\n/u).map(part => part.trim()).filter(Boolean);
   if (!focusTerms.length) return text;
-  const units = paragraphs.length > 1 ? paragraphs : text.split(/(?<=[.!?])\s+/u).filter(Boolean);
+  const units = paragraphs.length > 1 ? paragraphs : splitGamingProse(text, /(?<=[.!?])\s+/u).filter(Boolean);
   if (units.length < 2) return text;
   const countedStarts = buildGamingRequestRequirements(input).filter(requirement => (requirement.minimumActions ?? 0) > 1);
   const included = new Set<number>();
   for (const [index, unit] of units.entries()) {
+    // An ordinal after the first item must retain its starting anchor.
+    if (countedStarts.length && /^[2-8][.)]\s+/u.test(unit.trim())) continue;
     if (gamingTermCoverage(unit, focusTerms) === 0) continue;
     included.add(index);
     if (index > 0 && /\b(?:prerequisite|requires?|must first|only if)\b/iu.test(units[index - 1])) included.add(index - 1);
@@ -347,6 +373,14 @@ export function scopeGamingEvidenceParagraphs(text: string, input: GamingRetriev
     // Retain a directly dependent mechanic/warning and an explicit prerequisite.
     // This is conservative excerpt selection, not a verified progression classifier.
     for (let next = index + 1; next < Math.min(units.length, index + 5); next += 1) {
+      if (countedStarts.length && NUMBERED_ACTION_PREFIX.test(units[next].trim())) {
+        const before = units.slice(index, next).join(' ');
+        const through = before + ' ' + units[next];
+        if (through.length > 8_000 || !countedStarts.some(requirement =>
+          gamingStartingActions(through, requirement.terms) > gamingStartingActions(before, requirement.terms))) break;
+        included.add(next);
+        continue;
+      }
       const previousTerms = [...new Set(gamingLexicalTokens(units[next - 1]))].filter(term => !STOP_WORDS.has(term));
       const raiseInstruction = /^(?:(?:then|otherwise)\s+)?raise\b/iu.test(units[next]);
       const connected = gamingTermCoverage(units[next], previousTerms.filter(term => !raiseInstruction || term !== 'raise')) > 0;
@@ -422,13 +456,23 @@ function gamingNamedProcedureTopic(text: string, terms: readonly string[]): bool
   return terms.length > 0 && words.length === terms.length && terms.every(term => words.includes(term));
 }
 
+/** A numbered continuation needs a direct object bound to the topic or route. */
+function gamingActionObjectTerms(action: string): string[] {
+  const object = action.slice(action.indexOf(' ') + 1)
+    .split(/\b(?:at|in|on|from|near|with|for|to|by|via|using|beside|behind|inside|outside|during|after|before|until|while|when|where|if|unless)\b/u, 1)[0];
+  const terms = gamingLexicalTokens(object.replace(/^(?:(?:a|an|the|this|that|these|those|my|your|our|their|its|his|her)\s+){0,2}/u, ''));
+  return terms.some(term => /\p{L}/u.test(term) && !STOP_WORDS.has(term) && !CONTINUITY_FILLER.has(term)) ? terms : [];
+}
+
 /** Count bounded ordered actions only after an explicit same-passage start anchor. */
-function gamingStartingActions(text: string, terms: readonly string[], affirmativeSubject: (subject: string) => boolean): number {
+function gamingStartingActions(text: string, terms: readonly string[]): number {
   let best = 0;
   for (const paragraph of text.split(/\n\s*\n/u)) {
     const actions = new Set<string>();
+    const routeObjects = new Set<string>();
     let active = false;
-    for (const sentence of paragraph.split(/\n+|(?<=[.!?])\s+|;\s*/u)) {
+    let nextOrdinal = 2;
+    for (const sentence of splitGamingProse(paragraph, /\n+|(?<=[.!?])\s+|;\s*/u)) {
       if (sentence.includes('?')) { active = false; actions.clear(); continue; }
       const forbidden = (index: number) => /\b(?:not|never|avoid|don['’]t)\b/iu.test(sentence.slice(0, index));
       const target = /\bto\s+(?:begin|start)\s+([^.!?;\n,:]{1,180})[,:]\s*(.+)/iu.exec(sentence);
@@ -437,10 +481,10 @@ function gamingStartingActions(text: string, terms: readonly string[], affirmati
       const by = /\b(?:begin|start)\s+by\s+(.+)/iu.exec(sentence);
       const topicFirst = /^for\s+([^.!?;\n,:]{1,180})[,:]\s*(first\b.+)/iu.exec(sentence.trim());
       let tail: string | undefined;
-      if (target) tail = affirmativeSubject(target[1]) && !forbidden(target.index) ? target[2]
+      if (target) tail = gamingAffirmativeProcedureSubject(target[1], terms) && !forbidden(target.index) ? target[2]
         : /^(?:your|the)\s+journey\b/iu.test(target[1]) && by && gamingTermCoverage(by[1], terms) === 1 && !forbidden(by.index) ? by[1] : undefined;
-      else if (imperative) tail = affirmativeSubject(imperative[1]) ? imperative[2] : undefined;
-      else if (subject) tail = affirmativeSubject(subject[1]) ? subject[2] : undefined;
+      else if (imperative) tail = gamingAffirmativeProcedureSubject(imperative[1], terms) ? imperative[2] : undefined;
+      else if (subject) tail = gamingAffirmativeProcedureSubject(subject[1], terms) ? subject[2] : undefined;
       else if (by) tail = gamingTermCoverage(by[1], terms) === 1 && !forbidden(by.index) ? by[1] : undefined;
       else if (topicFirst && gamingNamedProcedureTopic(topicFirst[1], terms)) tail = topicFirst[2];
       const anchor = Boolean(target || imperative || subject || by || topicFirst);
@@ -449,10 +493,13 @@ function gamingStartingActions(text: string, terms: readonly string[], affirmati
         // Each explicit start begins its own route; alternative procedures do
         // not contribute actions to one another's requested count.
         actions.clear();
+        routeObjects.clear();
+        nextOrdinal = 2;
         active = Boolean(tail);
         if (!active) break;
       }
-      if (!anchor && !ORDERED_ACTION_CONTINUATION.test(sentence.trim())) {
+      const ordinal = NUMBERED_ACTION_PREFIX.exec(sentence.trim());
+      if (!anchor && (!ORDERED_ACTION_CONTINUATION.test(sentence.trim()) || ordinal && Number(ordinal[1]) !== nextOrdinal)) {
         active = false;
         actions.clear();
       }
@@ -462,17 +509,30 @@ function gamingStartingActions(text: string, terms: readonly string[], affirmati
         .replace(/^(?:(?:first|next|then)[,:]?\s+|[1-8][.)]\s+)/iu, '');
       const fragments = sequence.split(/\s+(?:and(?:\s+then)?|then)\s+|,\s*/iu);
       if (!gamingActionInstruction(fragments[0]) && !AVOIDING_ACTION.test(fragments[0])) break;
-      let found = false;
+      const clauseActions = new Set<string>();
       let avoiding = false;
       for (const fragment of fragments) {
         // Coordinated gerunds can still be objects of "avoid". A new
         // imperative can contribute an affirmative action in the same clause.
         const action = gamingActionInstruction(fragment, !avoiding);
-        if (action) { actions.add(action); found = true; avoiding = false; }
+        if (action) {
+          const objectTerms = gamingActionObjectTerms(action);
+          const object = objectTerms.join(' ');
+          const linked = routeObjects.has(object)
+            || terms.length > 0 && terms.every(term => objectTerms.includes(term));
+          if (!anchor && ordinal && !linked) { active = false; break; }
+          if ((anchor || linked) && object) routeObjects.add(object);
+          clauseActions.add(action); avoiding = false;
+        }
         else if (AVOIDING_ACTION.test(fragment.trim())) avoiding = true;
         else if (!/^(?:do\s+not|don['’]t)\s+/iu.test(fragment.trim())) break;
       }
+      if (!active) continue;
+      const found = clauseActions.size > 0;
+      for (const action of clauseActions) actions.add(action);
       if (!found && !actions.size) break;
+      if (!anchor && found) nextOrdinal += 1;
+      if (ordinal && !found) active = false;
       best = Math.max(best, actions.size);
       if (best >= 8) return 8;
     }
@@ -531,6 +591,18 @@ function gamingMaterialAcquisitionSupported(text: string, terms: readonly string
       || /^materials\s+for\s+/iu.test(value.trim()) && gamingTopicSubject(value.replace(/^materials\s+for\s+/iu, ''), terms)));
 }
 
+function gamingAffirmativeProcedureSubject(subject: string, terms: readonly string[]): boolean {
+  if (/\b(?:not|never|unlike|except|rather\s+than|no\s+longer)\b/iu.test(subject)
+    || gamingTermCoverage(subject, terms) !== 1) return false;
+  const coordinated = subject.split(/\b(?:and|or)\b/iu);
+  const lastSubject = coordinated.at(-1)?.trim() ?? '';
+  // A complete requested topic before a new coordinated subject cannot lend
+  // its anchors to that subject's predicate. Atomic names spanning "and"
+  // retain their complete term set rather than becoming separate objects.
+  return coordinated.length < 2 || !lastSubject || gamingTermCoverage(lastSubject, terms) === 1
+    || !coordinated.slice(0, -1).some(part => gamingTermCoverage(part, terms) === 1);
+}
+
 /** Exact named topic anchors plus an acquired requirement/action relationship.
  * These closed grammatical alternatives do not relax other lexical clauses. */
 export function gamingRequirementSupported(text: string, requirement: GamingRequestRequirement): boolean {
@@ -540,18 +612,7 @@ export function gamingRequirementSupported(text: string, requirement: GamingRequ
   if (requirement.relation === 'materials') return gamingRequiredMaterials(text, requirement.terms).length > 0;
   if (requirement.relation === 'acquisition') return gamingMaterialAcquisitionSupported(text, requirement.terms);
   if (!requirement.procedure) return gamingTermCoverage(text, requirement.terms) === 1;
-  const affirmativeSubject = (subject: string) => {
-    if (/\b(?:not|never|unlike|except|rather\s+than|no\s+longer)\b/iu.test(subject)
-      || gamingTermCoverage(subject, requirement.terms) !== 1) return false;
-    const coordinated = subject.split(/\b(?:and|or)\b/iu);
-    const lastSubject = coordinated.at(-1)?.trim() ?? '';
-    // A complete requested topic before a new coordinated subject cannot lend
-    // its anchors to that subject's predicate. Atomic names spanning "and"
-    // retain their complete term set rather than becoming separate objects.
-    return coordinated.length < 2 || !lastSubject || gamingTermCoverage(lastSubject, requirement.terms) === 1
-      || !coordinated.slice(0, -1).some(part => gamingTermCoverage(part, requirement.terms) === 1);
-  };
-  if (requirement.procedure === 'start') return gamingStartingActions(text, requirement.terms, affirmativeSubject) >= (requirement.minimumActions ?? 1);
+  if (requirement.procedure === 'start') return gamingStartingActions(text, requirement.terms) >= (requirement.minimumActions ?? 1);
   return text.split(/\n+|(?<=[.!?])\s+|;\s*/u).some(sentence => {
     if (gamingTermCoverage(sentence, requirement.terms) !== 1) return false;
     if (requirement.procedure === 'prerequisite') {
@@ -564,7 +625,7 @@ export function gamingRequirementSupported(text: string, requirement: GamingRequ
         const before = /\bbefore\s+(?:beginning|starting)\s+([^,;:]{1,180}),\s*(?:you|players?|commanders?)\s*$/iu.exec(prefix);
         const subject = prefix.split(/[,;:]|\b(?:but|whereas|while|although)\b/iu).at(-1)?.trim() ?? '';
         return Boolean(before && gamingNamedProcedureTopic(before[1], requirement.terms))
-          || affirmativeSubject(subject) && (gamingNamedProcedureTopic(subject, requirement.terms)
+          || gamingAffirmativeProcedureSubject(subject, requirement.terms) && (gamingNamedProcedureTopic(subject, requirement.terms)
             || gamingRegistrationPrerequisite(subject, requirement.terms));
       });
     }

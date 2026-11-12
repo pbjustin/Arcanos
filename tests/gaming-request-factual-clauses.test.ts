@@ -1,7 +1,8 @@
 import { describe, expect, it } from '@jest/globals';
+import { filterGamingDocumentInstructions } from '../src/services/gamingDocumentExtraction.js';
 import { selectGamingHybridEvidence } from '../src/services/gamingHybridCandidates.js';
 import { assessGamingClearEvidence, assessGamingRequestCoverage } from '../src/shared/gaming/gamingClearEvidence.js';
-import { buildGamingRequestRequirements, gamingAttributableClaimText, gamingRequestScopeUnresolved, gamingRequirementSupported } from '../src/shared/gaming/gamingRetrievalPolicy.js';
+import { buildGamingRequestRequirements, gamingAttributableClaimText, gamingRequestScopeUnresolved, gamingRequirementSupported, scopeGamingEvidenceParagraphs } from '../src/shared/gaming/gamingRetrievalPolicy.js';
 import type { GamingStoredKnowledgeContext, GamingStoredKnowledgeInput } from '../src/shared/gaming/gamingStoredEvidenceCore.js';
 
 // Independently authored grammar/control fixtures, not publisher quotations or
@@ -178,10 +179,81 @@ describe('factual request clauses retain subject, relation and requested count',
     expect(assessGamingClearEvidence(input, data, { requireRequestCoverage: true }).gates.claimSupport).not.toBe('verified');
   });
 
-  it('retains previously supported numbered continuations', () => {
-    const input = request('Explain the first three actions needed for fishing.');
-    const passage = 'To start fishing, equip a rod. 2) Inspect the pond. 3) Use the rod.';
+  it('keeps a period-numbered continuation attached to its action', () => {
+    const input = request('Explain the first two actions needed for fishing.');
+    const passage = 'To start fishing, equip a rod. 2. Use the rod.';
     expect(gamingRequirementSupported(passage, buildGamingRequestRequirements(input)[0])).toBe(true);
+    expect(gamingAttributableClaimText(passage, input.game)).toContain('2. Use the rod.');
+    const scoped = filterGamingDocumentInstructions(scopeGamingEvidenceParagraphs(passage, input));
+    expect(assessGamingRequestCoverage(input, knowledge([scoped])).coverageSatisfied).toBe(true);
+  });
+
+  it('retains a period-numbered first action under an explicit start anchor', () => {
+    const input = request('Explain the first three actions needed for fishing.');
+    const passage = 'To start fishing: 1. Equip a rod. 2. Inspect the rod. 3. Use the rod.';
+    expect(gamingRequirementSupported(passage, buildGamingRequestRequirements(input)[0])).toBe(true);
+    expect(assessGamingRequestCoverage(input, knowledge([passage])).coverageSatisfied).toBe(true);
+  });
+
+  it('keeps an explicitly anchored first ordinal when scoping later numbered actions', () => {
+    const input = request('Explain the first two actions needed for fishing.');
+    const passage = '1) To start fishing, equip a rod. 2) Inspect the rod at the pond.';
+    expect(assessGamingRequestCoverage(input, knowledge([passage])).coverageSatisfied).toBe(true);
+    const scoped = filterGamingDocumentInstructions(scopeGamingEvidenceParagraphs(passage, input));
+    expect(scoped).toBe(passage);
+    expect(assessGamingRequestCoverage(input, knowledge([scoped])).coverageSatisfied).toBe(true);
+  });
+
+  it.each([
+    'To start fishing, equip a rod. 2) Equip an arena helmet. 3) Open the tournament gate.',
+    'To start fishing, equip a rod. 2) Inspect the arena helmet. 3) Use the rod.',
+    'To start fishing, equip a rod. 2) Use the rod and open the tournament gate.',
+    'To start fishing, equip a large rod. 2) Open the large gate. 3) Use the large rod.',
+    'To start fishing, equip a rod. 2) Equip the arena rod. 3) Use the rod.',
+    'To start fishing, equip a rod. 2) Inspect the boss rod. 3) Use the boss rod.',
+    'To start fishing, equip the rod mk 1. 2) Equip the rod mk 2. 3) Inspect the rod mk 2.',
+    'To start fishing, equip a rod. 2) Open the gate while carrying the rod. 3) Use the rod.',
+    'To start fishing, equip a rod. 2) Inspect the rod. 4) Use the rod.'
+  ])('does not treat unbound or nonconsecutive ordinals as a complete fishing sequence: %s', passage => {
+    const input = request('Explain the first three actions needed for fishing.');
+    const data = knowledge([passage]);
+    expect(gamingRequirementSupported(passage, buildGamingRequestRequirements(input)[0])).toBe(false);
+    expect(assessGamingRequestCoverage(input, data).coverageSatisfied).toBe(false);
+    expect(selectGamingHybridEvidence(input, data).selectedEvidenceIds).toEqual([]);
+    expect(assessGamingClearEvidence(input, data, { requireRequestCoverage: true }).gates.claimSupport).not.toBe('verified');
+  });
+
+  it('does not partially count or retain an ordinal that coordinates an unrelated action', () => {
+    const input = request('Explain the first two actions needed for fishing.');
+    const passage = 'To start fishing, equip a rod. 2) Use the rod and open the tournament gate.';
+    expect(gamingRequirementSupported(passage, buildGamingRequestRequirements(input)[0])).toBe(false);
+    expect(assessGamingRequestCoverage(input, knowledge([passage])).coverageSatisfied).toBe(false);
+    expect(scopeGamingEvidenceParagraphs(passage, input)).toBe('To start fishing, equip a rod.');
+  });
+
+  it('preserves the original numbered claim text and covers explicitly connected actions in selected evidence', () => {
+    const input = request('Explain the first three actions needed for fishing.');
+    const unrelated = 'To start fishing, equip a rod. 2) Inspect the pond. 3) Use the rod.';
+    expect(gamingAttributableClaimText(unrelated, input.game)).toContain('2) Inspect the pond.');
+    // The ordinal preserves source order, but it cannot establish why an otherwise unbound action belongs.
+    expect(assessGamingRequestCoverage(input, knowledge([unrelated])).coverageSatisfied).toBe(false);
+    const passage = 'To start fishing, equip a rod. 2) Inspect the rod. 3) Use the rod.';
+    const data = knowledge([passage]);
+    expect(gamingRequirementSupported(passage, buildGamingRequestRequirements(input)[0])).toBe(true);
+    expect(assessGamingRequestCoverage(input, data).coverageSatisfied).toBe(true);
+    const selected = selectGamingHybridEvidence(input, data);
+    expect(selected.coverageSatisfied).toBe(true);
+    expect(selected.selectedEvidenceIds).toEqual(['factual-passage-0']);
+    expect(selected.knowledge.evidence![0]).toEqual(data.evidence![0]);
+    expect(assessGamingClearEvidence(input, selected.knowledge, { requireRequestCoverage: true }).gates.claimSupport).toBe('verified');
+  });
+
+  it.each(['This guide provides a glossary.', '\n\n'])('does not attach an orphan ordinal across a removed clause or paragraph: %s', gap => {
+    const input = request('Explain the first two actions needed for fishing.');
+    const passage = 'To start fishing, equip a rod. ' + gap + ' 2) Use the rod for fishing.';
+    const scoped = filterGamingDocumentInstructions(scopeGamingEvidenceParagraphs(passage, input));
+    expect(assessGamingRequestCoverage(input, knowledge([passage])).coverageSatisfied).toBe(false);
+    expect(assessGamingRequestCoverage(input, knowledge([scoped])).coverageSatisfied).toBe(false);
   });
 
   it.each([
