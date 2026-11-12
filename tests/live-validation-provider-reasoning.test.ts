@@ -93,7 +93,7 @@ describe('real Trinity model allocations through the live-validation paid guard'
       expect(audit.assessment).toMatchObject({ profile: 'answer', assessmentStatus: 'completed', decision: 'accept' });
       expect(payloads.map(payload => [payload.model, payload.max_output_tokens])).toEqual([
         ['gpt-6-luna', 500], ['gpt-6.1-sol', LIVE_VALIDATION_TOKEN_LIMITS.maxOutputTokensPerRequest],
-        [authority, 1000], ['gpt-6-luna', 1024]
+        [authority, 1000], ['gpt-6-luna', 1_536]
       ]);
       expect(payloads.every(payload => payload.store === false && payload.max_output_tokens <= 4096)).toBe(true);
       expect(provider.snapshot()).toMatchObject({ closed: false,
