@@ -11,8 +11,7 @@ import { hasBoundGamingClearAnswer } from './shared/gaming/gamingClearAnswerBind
 import { gamingClearHash, type GamingClearAssessment } from './shared/gaming/gamingClearPolicy.js';
 import { createLiveValidationObservation, emptyLiveValidationStages, liveValidationDuration,
   type LiveValidationObservation, type LiveValidationStageEvent, type LiveValidationClarification } from './shared/gaming/liveValidationObservation.js';
-import type { LivePreviewEvidenceInput } from '../scripts/live-pr-preview-verifier.mjs';
-import type { LivePreviewFailureCode } from '../scripts/live-pr-preview-verifier.mjs';
+import { sanitizeLiveValidationAuditRejection, type LivePreviewEvidenceInput, type LivePreviewFailureCode } from '../scripts/live-pr-preview-verifier.mjs';
 
 export type LivePrPreviewAudit = NonNullable<LivePreviewEvidenceInput['audit']>;
 export interface LivePrPreviewModuleObserver {
@@ -263,7 +262,14 @@ export function createLiveValidationGamingAdapter(execute: LiveValidationGamingE
         && final.body.answer?.response === result.data.response);
       const audit: LivePrPreviewAudit | undefined = answerAssessment ? { assessmentStatus: answerAssessment.assessmentStatus,
         decision: answerAssessment.decision, boundToFinalAnswer: accepted } : undefined;
-      lastObservation = createLiveValidationObservation({ body: final?.body, accepted, audit, stages, auditStartBudget,
+      const auditRejection = answerAssessment?.assessmentStatus === 'completed' && answerAssessment.decision === 'reject'
+        ? sanitizeLiveValidationAuditRejection({
+          findingCodes: answerAssessment.blockingFindings.map(finding => finding.code),
+          blockingFindingCount: answerAssessment.blockingFindings.length
+        })
+        : undefined;
+      lastObservation = createLiveValidationObservation({ body: final?.body, accepted,
+        audit: audit ? { ...audit, ...auditRejection } : undefined, stages, auditStartBudget,
         auditFindings: answerAssessment?.findings, auditEffectiveTimeoutMs,
         ...(input.clarificationReplies?.length ? { clarification } : {}) });
       return { result, accepted, audit, failureCode,

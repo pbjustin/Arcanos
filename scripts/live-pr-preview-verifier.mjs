@@ -7,6 +7,21 @@ const STAGE_NAMES = Object.freeze(['authorization', 'budget', 'source_acquisitio
 const STAGE_STATUSES = new Set(['not_run', 'passed', 'rejected', 'failed', 'timed_out', 'exhausted']);
 const AUDIT_STATUSES = new Set(['completed', 'unavailable', 'not_run']);
 const AUDIT_DECISIONS = new Set(['accept', 'partial', 'reject', 'clarify', 'unavailable']);
+const MAX_AUDIT_FINDINGS = 32;
+const UNCLASSIFIED_AUDIT_FINDING = 'UNCLASSIFIED_AUDIT_FINDING';
+// Model finding strings are untrusted even when they match the CLEAR code syntax.
+const AUDIT_REJECTION_FINDING_CODES = new Set([
+  'CITATION_NOT_FOUND', 'CITATION_DOES_NOT_SUPPORT_CLAIM',
+  'UNSUPPORTED_CLAIM', 'UNSUPPORTED_MECHANIC', 'UNSUPPORTED_QUANTITY',
+  'MISSING_PREREQUISITE', 'INVENTED_PREREQUISITE', 'UNSUPPORTED_PREREQUISITE',
+  'UNSUPPORTED_ACTION_SEQUENCE', 'WRONG_GAME_MECHANIC', 'WRONG_EDITION_MECHANIC',
+  'EDITION_CONFLICT', 'WRONG_PATCH', 'ANSWER_PATCH_CONFLICT', 'OMITTED_PATCH_RESTRICTION',
+  'UNSUPPORTED_CURRENTNESS_CLAIM', 'FRESHNESS_WARNING_REQUIRED', 'UNQUALIFIED_PARTIAL_EXTRACTION',
+  'SPOILER_VIOLATION', 'UNSUPPORTED_SPOILER',
+  'DIMENSION_UNEVALUATED', 'MATERIAL_FACT_UNRESOLVED', 'PROFILE_FLOOR_NOT_MET',
+  ...['IDENTITY', 'COMPATIBILITY', 'CLAIMSUPPORT', 'FRESHNESS', 'PROVENANCE', 'SECURITY']
+    .flatMap(gate => ['CONFLICT', 'REQUIRED', 'UNVERIFIED'].map(reason => gate + '_' + reason))
+]);
 const COUNT_FIELDS = Object.freeze(['requests', 'providerCalls', 'generationCalls', 'auditCalls', 'reservedInputTokens', 'reservedOutputTokens', 'reservedTotalTokens', 'reservedSpendMicroUsd', 'observedInputTokens', 'observedOutputTokens', 'observedSpendMicroUsd', 'elapsedMs']);
 const LIMIT_FIELDS = Object.freeze(['maxRequests', 'maxInputTokensPerRequest', 'maxOutputTokensPerRequest', 'maxTotalTokens', 'durationMs', 'maxSpendMicroUsd']);
 const GROUNDING_COUNTS = Object.freeze(['fetchedSuppliedSourceCount', 'usableSourceCount', 'citableSourceCount', 'selectedChunkCount', 'suppliedEvidenceSourceCount']);
@@ -30,6 +45,21 @@ const isRecord = value => value !== null && typeof value === 'object' && !Array.
 const count = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
 const positiveLimit = value => Number.isSafeInteger(value) && value > 0 ? value : null;
 const boundedEnum = (value, allowed, otherwise) => allowed.has(value) ? value : otherwise;
+
+/** Keep rejection counts and reviewed labels without forwarding model codes or evidence references. */
+export function sanitizeLiveValidationAuditRejection(value) {
+  if (!isRecord(value)) return undefined;
+  const { blockingFindingCount, findingCodes } = value;
+  if (!Number.isSafeInteger(blockingFindingCount) || blockingFindingCount < 1
+    || blockingFindingCount > MAX_AUDIT_FINDINGS || !Array.isArray(findingCodes)
+    || findingCodes.length < 1 || findingCodes.length > blockingFindingCount) return undefined;
+  const projected = new Set();
+  for (const code of findingCodes) {
+    if (typeof code !== 'string' || code.length < 1 || code.length > 80) return undefined;
+    projected.add(AUDIT_REJECTION_FINDING_CODES.has(code) ? code : UNCLASSIFIED_AUDIT_FINDING);
+  }
+  return { findingCodes: [...projected].sort(), blockingFindingCount };
+}
 
 function identityValid(value) {
   return isRecord(value) && typeof value.sourceCommit === 'string' && /^[a-f0-9]{40}$/u.test(value.sourceCommit)

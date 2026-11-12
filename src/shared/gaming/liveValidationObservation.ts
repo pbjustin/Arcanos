@@ -29,6 +29,8 @@ export interface LiveValidationAudit {
   boundToFinalAnswer: boolean;
   reasonCode?: typeof LIVE_VALIDATION_AUDIT_REASON_CODES[number];
   effectiveTimeoutMs?: number;
+  findingCodes?: string[];
+  blockingFindingCount?: number;
 }
 /** Counts and invariants only; workflow IDs, context replies and evidence text stay private. */
 export interface LiveValidationClarification {
@@ -119,6 +121,9 @@ export function createLiveValidationObservation(input: {
     assessmentStatus: input.audit.assessmentStatus, decision: input.audit.decision,
     boundToFinalAnswer: input.audit.boundToFinalAnswer,
     ...(auditReason ? { reasonCode: auditReason } : {}),
+    ...(input.audit.assessmentStatus === 'completed' && input.audit.decision === 'reject'
+      && input.audit.findingCodes && input.audit.blockingFindingCount !== undefined
+      ? { findingCodes: [...input.audit.findingCodes], blockingFindingCount: input.audit.blockingFindingCount } : {}),
     ...(effectiveTimeoutMs !== null ? { effectiveTimeoutMs } : {})
   } : null;
   return { schemaVersion: 1, contractVersion: 'gaming-hybrid-v2', outcome, reason, semanticGap,

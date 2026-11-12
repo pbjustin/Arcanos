@@ -533,6 +533,30 @@ test('answer audit receipt preserves only bounded audit diagnostics', () => {
   assert.deepEqual(sanitizeLiveValidationObservation(value).audit,
     { assessmentStatus: 'completed', decision: 'accept', boundToFinalAnswer: true, effectiveTimeoutMs: 9000 });
 });
+test('completed rejected audit receipts retain only safe findings and a bounded blocking count', () => {
+  const value = observation(true);
+  const audit = { assessmentStatus: 'completed', decision: 'reject', boundToFinalAnswer: false, effectiveTimeoutMs: 12_000 };
+  value.audit = { ...audit, findingCodes: ['PROFILE_FLOOR_NOT_MET', 'PRIVATE_PROVIDER_CODE',
+    'MATERIAL_FACT_UNRESOLVED', 'PROFILE_FLOOR_NOT_MET'], blockingFindingCount: 4,
+    rawBody: 'private audit body', evidenceRefs: ['private evidence reference'], dimensionScores: { clarity: 1 } };
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, { ...audit,
+    findingCodes: ['MATERIAL_FACT_UNRESOLVED', 'PROFILE_FLOOR_NOT_MET', 'UNCLASSIFIED_AUDIT_FINDING'],
+    blockingFindingCount: 4 });
+  for (const malformed of [{ blockingFindingCount: 0 }, { blockingFindingCount: 33 }, { blockingFindingCount: 1.5 },
+    { findingCodes: ['MATERIAL_FACT_UNRESOLVED', { code: 'private' }] },
+    { findingCodes: ['MATERIAL_FACT_UNRESOLVED', 'PROFILE_FLOOR_NOT_MET'], blockingFindingCount: 1 },
+    { findingCodes: Array(33).fill('MATERIAL_FACT_UNRESOLVED') }]) {
+    value.audit = { ...audit, findingCodes: ['MATERIAL_FACT_UNRESOLVED'], blockingFindingCount: 1, ...malformed };
+    assert.deepEqual(sanitizeLiveValidationObservation(value).audit, audit);
+  }
+  value.audit = audit;
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, audit);
+  for (const [assessmentStatus, decision] of [['completed', 'accept'], ['completed', 'partial'], ['unavailable', 'unavailable']]) {
+    const otherAudit = { ...audit, assessmentStatus, decision };
+    value.audit = { ...otherAudit, findingCodes: ['MATERIAL_FACT_UNRESOLVED'], blockingFindingCount: 1 };
+    assert.deepEqual(sanitizeLiveValidationObservation(value).audit, otherAudit);
+  }
+});
 test('optional clarification observations expose only bounded counts and invariants', () => {
   const value = observation(true);
   assert.equal(Object.hasOwn(sanitizeLiveValidationObservation(value), 'clarification'), false);

@@ -563,6 +563,38 @@ describe('private Gaming live-validation adapter through the real transient v2 w
     expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
   });
 
+  it('retains bounded completed rejection findings without retaining the answer or evidence identifiers', async () => {
+    const privateCode = 'MODEL_SUPPLIED_PRIVATE_IDENTIFIER';
+    let privateReference = '';
+    mockAuditCompletion.mockImplementationOnce(async (_client: unknown, params: { messages: Array<{ content: string }> }) => {
+      const data = JSON.parse(params.messages[1].content) as { evidence: Array<{ chunkId: string }> };
+      privateReference = data.evidence[0].chunkId;
+      advance(17);
+      const dimensions = Object.fromEntries(GAMING_CLEAR_DIMENSIONS.map(name => [name, {
+        status: 'evaluated', score: 5, reasonCodes: [], evidenceRefs: [privateReference], unresolvedFacts: []
+      }]));
+      const findings = ['CITATION_DOES_NOT_SUPPORT_CLAIM', privateCode, 'CITATION_DOES_NOT_SUPPORT_CLAIM']
+        .map(code => ({ code, severity: 'warning', evidenceRefs: [privateReference] }));
+      return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ dimensions, findings }) } }] };
+    });
+    const run = harness();
+    const output = await run.run();
+    const observation = run.adapter.getLastObservation()!;
+
+    expect(output.accepted).toBe(false);
+    expect(output).not.toHaveProperty('privateAnswer');
+    expect(observation.outcome).toBe('unavailable');
+    expect(observation.audit).toEqual({
+      assessmentStatus: 'completed', decision: 'reject', boundToFinalAnswer: false, effectiveTimeoutMs: 12_000,
+      findingCodes: ['CITATION_DOES_NOT_SUPPORT_CLAIM', 'UNCLASSIFIED_AUDIT_FINDING'], blockingFindingCount: 3
+    });
+    expect(observation.stages.answer_audit).toEqual({ status: 'passed', elapsedMs: 17 });
+    for (const privateValue of [privateCode, privateReference, groundedAnswer, guideUrl]) {
+      expect(JSON.stringify(observation)).not.toContain(privateValue);
+    }
+    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+  });
+
   it('preserves an unavailable audit diagnostic without publishing the candidate answer or provider output', async () => {
     const rawProviderOutput = 'private audit fixture response with source and answer text';
     mockAuditCompletion.mockImplementationOnce(async () => {

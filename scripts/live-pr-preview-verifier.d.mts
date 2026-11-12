@@ -127,3 +127,9 @@ export function verifyLivePreviewSuite(evidence: unknown, expectedIdentity: Live
 
 /** Closed projection of saved evidence; never retains raw payloads or source paths. */
 export function sanitizeLivePreviewEvidence(evidence: unknown): unknown;
+
+export interface LiveValidationAuditRejection {
+  findingCodes: string[];
+  blockingFindingCount: number;
+}
+export function sanitizeLiveValidationAuditRejection(value: unknown): LiveValidationAuditRejection | undefined;
