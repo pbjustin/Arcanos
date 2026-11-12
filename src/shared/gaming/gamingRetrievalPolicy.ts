@@ -360,10 +360,11 @@ export function scopeGamingEvidenceParagraphs(text: string, input: GamingRetriev
   const units = paragraphs.length > 1 ? paragraphs : splitGamingProse(text, /(?<=[.!?])\s+/u).filter(Boolean);
   if (units.length < 2) return text;
   const countedStarts = buildGamingRequestRequirements(input).filter(requirement => (requirement.minimumActions ?? 0) > 1);
+  const maxRouteUnits = Math.max(5, ...countedStarts.map(requirement => requirement.minimumActions ?? 1));
   const included = new Set<number>();
   for (const [index, unit] of units.entries()) {
-    // An ordinal after the first item must retain its starting anchor.
-    if (countedStarts.length && /^[2-8][.)]\s+/u.test(unit.trim())) continue;
+    // A counted continuation in flattened prose must retain its starting anchor.
+    if (countedStarts.length && (paragraphs.length > 1 ? /^[2-8][.)]\s+/u : ORDERED_ACTION_CONTINUATION).test(unit.trim())) continue;
     if (gamingTermCoverage(unit, focusTerms) === 0) continue;
     included.add(index);
     if (index > 0 && /\b(?:prerequisite|requires?|must first|only if)\b/iu.test(units[index - 1])) included.add(index - 1);
@@ -372,15 +373,18 @@ export function scopeGamingEvidenceParagraphs(text: string, input: GamingRetriev
     if (paragraphs.length > 1) continue;
     // Retain a directly dependent mechanic/warning and an explicit prerequisite.
     // This is conservative excerpt selection, not a verified progression classifier.
-    for (let next = index + 1; next < Math.min(units.length, index + 5); next += 1) {
-      if (countedStarts.length && NUMBERED_ACTION_PREFIX.test(units[next].trim())) {
+    for (let next = index + 1; next < Math.min(units.length, index + maxRouteUnits); next += 1) {
+      if (countedStarts.length && ORDERED_ACTION_CONTINUATION.test(units[next].trim())) {
         const before = units.slice(index, next).join(' ');
         const through = before + ' ' + units[next];
-        if (through.length > 8_000 || !countedStarts.some(requirement =>
-          gamingStartingActions(through, requirement.terms) > gamingStartingActions(before, requirement.terms))) break;
+        if (through.length > 8_000 || !countedStarts.some(requirement => {
+          const retained = gamingStartingActions(before, requirement.terms);
+          return retained > 0 && retained < requirement.minimumActions! && gamingStartingActions(through, requirement.terms) > retained;
+        })) break;
         included.add(next);
         continue;
       }
+      if (next >= index + 5) break;
       const previousTerms = [...new Set(gamingLexicalTokens(units[next - 1]))].filter(term => !STOP_WORDS.has(term));
       const raiseInstruction = /^(?:(?:then|otherwise)\s+)?raise\b/iu.test(units[next]);
       const connected = gamingTermCoverage(units[next], previousTerms.filter(term => !raiseInstruction || term !== 'raise')) > 0;
@@ -390,10 +394,7 @@ export function scopeGamingEvidenceParagraphs(text: string, input: GamingRetriev
       const buildAllocation = raiseInstruction && /\b(?:builds?|stats?|attributes?|equipment)\b/iu.test(`${input.prompt} ${unit}`)
         && /^(?:(?:then|otherwise)\s+)?raise\s+(?!(?:the|an?|your|our|their|this|that|these|those)\b)[\p{L}][\p{L}'’-]*(?:\s+[\p{L}][\p{L}'’-]*){0,2}\s+(?:enough\s+)?(?:for|to|until)\b/iu.test(units[next])
         && /\b(?:equipment|stats?|attributes?|requirements?)\b/iu.test(units[next]);
-      const countedContinuation = countedStarts.some(requirement => gamingRequirementSupported(units[index], { ...requirement, minimumActions: 1 }))
-        && ORDERED_ACTION_CONTINUATION.test(units[next].trim())
-        && Boolean(gamingActionInstruction(units[next].split(/\s+and\s+/iu, 1)[0]));
-      const dependentOrAction = /^(?:(?:then|otherwise)\s+)?(?:do not|don't|cross|step|back away|open|close|turn|pull|push|wait|dodge|block|attack|equip|bring|check|inspect|follow|climb|return|keep|avoid|prioritize)\b/iu.test(units[next]) || buildAllocation || countedContinuation;
+      const dependentOrAction = /^(?:(?:then|otherwise)\s+)?(?:do not|don't|cross|step|back away|open|close|turn|pull|push|wait|dodge|block|attack|equip|bring|check|inspect|follow|climb|return|keep|avoid|prioritize)\b/iu.test(units[next]) || buildAllocation;
       const evidenceLimit = /^(?:this|the|our|that) (?:guide|source|article|page|evidence|document|section|passage) (?:does not|doesn't|cannot|can't|will not|won't)\b/iu.test(units[next]);
       if (!connected && !dependentOrAction && !evidenceLimit) break;
       included.add(next);
@@ -456,12 +457,28 @@ function gamingNamedProcedureTopic(text: string, terms: readonly string[]): bool
   return terms.length > 0 && words.length === terms.length && terms.every(term => words.includes(term));
 }
 
-/** A numbered continuation needs a direct object bound to the topic or route. */
-function gamingActionObjectTerms(action: string): string[] {
-  const object = action.slice(action.indexOf(' ') + 1)
-    .split(/\b(?:at|in|on|from|near|with|for|to|by|via|using|beside|behind|inside|outside|during|after|before|until|while|when|where|if|unless)\b/u, 1)[0];
+/** Identify the direct object separately from incidental location and context. */
+function gamingActionObject(action: string): { terms: string[]; definite: boolean; suffix: string } {
+  const rest = action.slice(action.indexOf(' ') + 1);
+  const object = rest.split(/\b(?:at|in|on|from|near|with|for|to|by|via|using|beside|behind|inside|outside|during|after|before|until|while|when|where|if|unless)\b/u, 1)[0];
   const terms = gamingLexicalTokens(object.replace(/^(?:(?:a|an|the|this|that|these|those|my|your|our|their|its|his|her)\s+){0,2}/u, ''));
-  return terms.some(term => /\p{L}/u.test(term) && !STOP_WORDS.has(term) && !CONTINUITY_FILLER.has(term)) ? terms : [];
+  return {
+    terms: terms.some(term => /\p{L}/u.test(term) && !STOP_WORDS.has(term) && !CONTINUITY_FILLER.has(term)) ? terms : [],
+    definite: /^the\s+/u.test(object),
+    suffix: rest.slice(object.length).trim()
+  };
+}
+
+/** Recognize an explicit purpose or gameplay interface complement. */
+function gamingActionObjectCompletesTopic(objectTerms: readonly string[], suffix: string, terms: readonly string[]): boolean {
+  if (!terms.includes(objectTerms.at(-1) ?? '')) return false;
+  const purpose = /^for\s+(.+)$/u.exec(suffix);
+  if (purpose) return gamingNamedProcedureTopic(purpose[1], terms);
+  const interfaceTopic = /^(?:on|in)\s+(?:the\s+)?(.+?)\s+(?:map|menu|interface|panel|screen)$/u.exec(suffix);
+  if (!interfaceTopic) return false;
+  const contextTerms = gamingLexicalTokens(interfaceTopic[1]);
+  return contextTerms.every(term => terms.includes(term))
+    && terms.every(term => objectTerms.includes(term) || contextTerms.includes(term));
 }
 
 /** Count bounded ordered actions only after an explicit same-passage start anchor. */
@@ -516,13 +533,19 @@ function gamingStartingActions(text: string, terms: readonly string[]): number {
         // imperative can contribute an affirmative action in the same clause.
         const action = gamingActionInstruction(fragment, !avoiding);
         if (action) {
-          const objectTerms = gamingActionObjectTerms(action);
+          const { terms: objectTerms, definite, suffix } = gamingActionObject(action);
           const object = objectTerms.join(' ');
-          const linked = routeObjects.has(object)
-            || terms.length > 0 && terms.every(term => objectTerms.includes(term));
-          if (!anchor && ordinal && !linked) { active = false; break; }
-          if ((anchor || linked) && object) routeObjects.add(object);
-          clauseActions.add(action); avoiding = false;
+          const knownObjects = definite && object ? [...routeObjects].filter(known => known === object || known.endsWith(` ${object}`)) : [];
+          const linkedObject = knownObjects.length === 1 ? knownObjects[0]
+            : !definite && routeObjects.has(object) ? object : undefined;
+          const topicLinked = terms.length > 0 && (terms.every(term => objectTerms.includes(term))
+            || !ordinal && gamingActionObjectCompletesTopic(objectTerms, suffix, terms));
+          if (!anchor && (knownObjects.length > 1 || !linkedObject && !topicLinked)) { active = false; break; }
+          const routeObject = linkedObject ?? object;
+          if (routeObject) routeObjects.add(routeObject);
+          // A shorter reference to the same object does not create a second action.
+          const actionKey = routeObject ? [action.slice(0, action.indexOf(' ')), routeObject, suffix].filter(Boolean).join(' ') : action;
+          clauseActions.add(actionKey); avoiding = false;
         }
         else if (AVOIDING_ACTION.test(fragment.trim())) avoiding = true;
         else if (!/^(?:do\s+not|don['’]t)\s+/iu.test(fragment.trim())) break;
@@ -559,6 +582,7 @@ function gamingTopicSubject(subject: string, terms: readonly string[]): boolean 
 
 /** Extract a stated materials list only from the request's acquired topic relation. */
 function gamingRequiredMaterials(text: string, terms: readonly string[]): string[] {
+  const materials = new Set<string>();
   for (const sentence of text.split(/\n+|(?<=[.!?])\s+|;\s*/u)) {
     if (gamingTermCoverage(sentence, terms) !== 1 || sentence.includes('?') || /\b(?:unlike|not|never|no\s+longer)\b/iu.test(sentence)) continue;
     const direct = /\bmaterials\s+(?:required|needed)\s+for\s+(.{1,160}?)\s+(?:are|include)\s+(.{1,240})/iu.exec(sentence);
@@ -566,11 +590,16 @@ function gamingRequiredMaterials(text: string, terms: readonly string[]): string
     const match = direct ?? scoped;
     if (!match || !gamingTopicSubject(match[1], terms)) continue;
     const entities = match[2].replace(/[.!?]+$/u, '').split(/\s+and\s+|,\s*/iu)
-      .map(value => value.trim()).filter(value => value && value.length <= 80);
-    if (entities.length > 0 && entities.length <= 8
-      && entities.every(value => !/^(?:unknown|not\s+specified|unverified|unspecified|n\/?a|not\s+confirmed|to\s+be\s+determined)$/iu.test(value))) return entities;
+      .map(value => value.trim().replace(/^(?:a|an|the)\s+/iu, '')).filter(value => value && value.length <= 80);
+    if (entities.length > 8) return [];
+    if (entities.some(value => /^(?:unknown|not\s+specified|unverified|unspecified|n\/?a|not\s+confirmed|to\s+be\s+determined)$/iu.test(value))) continue;
+    for (const entity of entities) {
+      const material = gamingLexicalTokens(entity).join(' ');
+      if (material) materials.add(material);
+      if (materials.size > 8) return [];
+    }
   }
-  return [];
+  return [...materials];
 }
 
 /** Bind acquisition locations to actual topic materials, rather than an unresolved pronoun. */

@@ -1304,12 +1304,18 @@ available as evidence without proving an affirmative starting procedure.
 Explicit first-N-action requests retain their count (one through eight). Ordered
 actions must share an acquired starting anchor; separate paragraphs and
 alternative routes cannot pool their counts. A later sentence needs a clear
-sequence connection to that anchor before its actions count. A prerequisite
-must apply to the requested activity itself. Counted continuations retain the
-existing four-successor projection bound. Material requirements and their
-acquisition locations remain separate factual requirements. Closed same-sentence
-coordination can resolve “them” to the requested materials; unresolved subjects
-or cross-sentence pronouns require clarification. Named acquisition targets such
+sequence connection to that anchor before its actions count. An ordinal or
+“then” marker needs an object tied to the activity or the route. A shortened
+definite object can link to one established route object. A multiword topic
+can be completed by an explicit purpose or named gameplay interface, with
+incidental modifiers excluded. A prerequisite must apply to the requested
+activity itself. Counted requests can retain up to seven
+connected successors as needed for the requested count. Other adjacent evidence
+keeps its four-successor projection bound. Material requirements and their
+acquisition locations remain separate factual requirements. Location evidence
+must cover every named required material across affirmative lists for the same
+activity. Closed same-sentence coordination can resolve “them” to the requested
+materials; unresolved subjects or cross-sentence pronouns require clarification. Named acquisition targets such
 as a Requirements for Victory book retain their literal identity. Presentation
 instructions do not supply missing gameplay facts. These checks preserve the
 eight-requirement and 8,000-character parsing bounds and do not change source

@@ -179,6 +179,80 @@ describe('factual request clauses retain subject, relation and requested count',
     expect(assessGamingClearEvidence(input, data, { requireRequestCoverage: true }).gates.claimSupport).not.toBe('verified');
   });
 
+  it.each([6, 7, 8])('retains the first %i requested actions through excerpt selection', count => {
+    const input = request(`Explain the first ${count} actions needed for fishing.`);
+    const steps = [
+      'To start fishing, equip a fishing rod.',
+      '2) Inspect the fishing rod.',
+      '3) Repair the fishing rod.',
+      '4) Upgrade the fishing rod.',
+      '5) Prepare the fishing rod.',
+      '6) Align the fishing rod.',
+      '7) Raise the fishing rod.',
+      '8) Use the fishing rod.'
+    ];
+    const passage = steps.join(' ');
+    const requirement = buildGamingRequestRequirements(input)[0];
+    expect(requirement.minimumActions).toBe(count);
+    expect(gamingRequirementSupported(passage, requirement)).toBe(true);
+    const scoped = filterGamingDocumentInstructions(scopeGamingEvidenceParagraphs(passage, input));
+    expect(scoped).toBe(steps.slice(0, count).join(' '));
+    expect(assessGamingRequestCoverage(input, knowledge([scoped])).coverageSatisfied).toBe(true);
+  });
+
+  it.each([
+    'To start fishing, equip a rod. Then equip an arena helmet. Next, open the tournament gate.',
+    'To start fishing, equip a rod. Then use the rod and open the tournament gate.',
+    'To start fishing, equip a rod. Then buy an arena helmet near the fishing pond. Next, use the rod.'
+  ])('rejects unbound Then or Next actions even when they share a paragraph: %s', passage => {
+    const input = request('Explain the first two actions needed for fishing.');
+    expect(gamingRequirementSupported(passage, buildGamingRequestRequirements(input)[0])).toBe(false);
+    expect(assessGamingRequestCoverage(input, knowledge([passage])).coverageSatisfied).toBe(false);
+    expect(scopeGamingEvidenceParagraphs(passage, input)).toBe('To start fishing, equip a rod.');
+  });
+
+  it.each([
+    'while reading a colonisation poster',
+    'near the colonisation exhibit',
+    'before visiting the colonisation office',
+    'in the colonisation poster'
+  ])('does not complete a multiword topic using an incidental modifier: %s', modifier => {
+    const input = request('Explain the first two actions needed for system colonisation.');
+    const anchor = 'To start system colonisation, visit the colonisation contact.';
+    const passage = `${anchor} Next, select an uninhabited system ${modifier}.`;
+    expect(gamingRequirementSupported(passage, buildGamingRequestRequirements(input)[0])).toBe(false);
+    expect(assessGamingRequestCoverage(input, knowledge([passage])).coverageSatisfied).toBe(false);
+    expect(scopeGamingEvidenceParagraphs(passage, input)).toBe(anchor);
+  });
+
+  it.each(['on the colonisation map', 'for system colonisation'])('accepts a continuation with an explicit topic relationship: %s', relationship => {
+    const input = request('Explain the first two actions needed for system colonisation.');
+    const passage = `To start system colonisation, visit the colonisation contact. Next, select an uninhabited system ${relationship}.`;
+    expect(assessGamingRequestCoverage(input, knowledge([passage])).coverageSatisfied).toBe(true);
+    expect(filterGamingDocumentInstructions(scopeGamingEvidenceParagraphs(passage, input))).toBe(passage);
+  });
+
+  it.each(['2)', 'Then,', 'Next,'])('binds a definite short object to the one previously named route object after %s', marker => {
+    const input = request('Explain the first three actions needed for fishing.');
+    const last = marker === '2)' ? '3)' : 'Then,';
+    const passage = `To start fishing, equip a fishing rod. ${marker} Inspect the rod. ${last} Use the rod.`;
+    expect(gamingRequirementSupported(passage, buildGamingRequestRequirements(input)[0])).toBe(true);
+    expect(assessGamingRequestCoverage(input, knowledge([passage])).coverageSatisfied).toBe(true);
+    const scoped = filterGamingDocumentInstructions(scopeGamingEvidenceParagraphs(passage, input));
+    expect(scoped).toBe(passage);
+  });
+
+  it.each([
+    ['a differently qualified object', 'To start fishing, equip a fishing rod. 2) Use the arena rod.', 2],
+    ['an indefinite short object', 'To start fishing, equip a fishing rod. 2) Use a rod.', 2],
+    ['two possible antecedents', 'To start fishing, equip a fishing rod and inspect an arena rod. 2) Use the rod.', 3],
+    ['an aliased repeat of the first action', 'To start fishing, equip a fishing rod. 2) Equip the rod.', 2]
+  ])('does not count %s as another action', (_label, passage, count) => {
+    const input = request(`Explain the first ${count} actions needed for fishing.`);
+    expect(gamingRequirementSupported(passage, buildGamingRequestRequirements(input)[0])).toBe(false);
+    expect(assessGamingRequestCoverage(input, knowledge([passage])).coverageSatisfied).toBe(false);
+  });
+
   it('keeps a period-numbered continuation attached to its action', () => {
     const input = request('Explain the first two actions needed for fishing.');
     const passage = 'To start fishing, equip a rod. 2. Use the rod.';

@@ -88,6 +88,24 @@ describe('guide request interpretation and accepted passage delivery', () => {
     expect(assessGamingRequestCoverage(request, knowledge([starting, requirement])).coverageSatisfied).toBe(false);
   });
 
+  it('matches acquisition locations for material names with ordinary determiners', () => {
+    const request = { ...input, prompt: 'What materials do I need for fishing and where can I find them?' };
+    const passage = 'Materials required for fishing are a fishing rod and the bait. '
+      + 'Buy fishing rod at the pier. Buy bait at the shop.';
+    expect(assessGamingRequestCoverage(request, knowledge([passage])).coverageSatisfied).toBe(true);
+    expect(assessGamingRequestCoverage(request, knowledge([passage.replace('Buy fishing rod', 'Buy arena rod')]))
+      .coverageSatisfied).toBe(false);
+  });
+
+  it('requires acquisition locations for every affirmatively listed material for the topic', () => {
+    const request = { ...input, prompt: 'What materials do I need for fishing and where can I find them?' };
+    const passage = 'Materials required for fishing are rod. Materials required for fishing are bait. Rod is sold at the pier.';
+    expect(assessGamingRequestCoverage(request, knowledge([passage])).coverageSatisfied).toBe(false);
+    const complete = passage + ' Bait is sold at the shop. For fishing, the required materials include a rod. '
+      + 'Materials required for arena combat are a helmet.';
+    expect(assessGamingRequestCoverage(request, knowledge([complete])).coverageSatisfied).toBe(true);
+  });
+
   it('retains useful bounded partial passages without fabricating complete clause coverage', () => {
     const request = { ...input, prompt: 'Explain system colonisation prerequisites and permit quantities.' };
     const selected = selectGamingHybridEvidence(request, knowledge([starting, requirement]));
