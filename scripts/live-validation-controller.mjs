@@ -3,7 +3,7 @@ import { constants, existsSync, lstatSync, mkdirSync, openSync, closeSync, fstat
   writeFileSync, fsyncSync, realpathSync, renameSync, linkSync, unlinkSync, readSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { sanitizeLivePreviewEvidence, sanitizeLiveValidationAuditProviderDiagnostic,
+import { extractLivePreviewNumericCitations, sanitizeLivePreviewEvidence, sanitizeLiveValidationAuditProviderDiagnostic,
   sanitizeLiveValidationAuditRejection, verifyLivePreviewEvidence } from './live-pr-preview-verifier.mjs';
 import { validateLiveValidationTarget, assertLiveValidationInventory,
   LIVE_VALIDATION_HARD_LIMITS } from './live-validation-target.mjs';
@@ -78,8 +78,7 @@ export function validateLiveValidationPrivateAnswer(value, { evidence, observati
     requireController(evidence.result.sources.some(accepted => accepted.index === source.index && accepted.usable === true
       && accepted.documentUrlSha256 === digest(url.toString())), code);
   }
-  const references = [...value.response.matchAll(/(?:\[(?:sources?\s+)?|\(sources?\s+|\bsources?\s+)(\d+(?:\s*,\s*\d+)*)/giu)]
-    .flatMap(match => match[1].split(',').map(item => Number(item.trim())));
+  const references = extractLivePreviewNumericCitations(value.response);
   requireController(references.length > 0 && references.length <= 128
     && references.every(index => value.sources.some(source => source.index === index))
     && canonicalHash([...new Set(references)].sort((a, b) => a - b)) === canonicalHash(evidence.result.citationIndices), code);

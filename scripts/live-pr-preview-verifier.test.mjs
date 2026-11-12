@@ -168,7 +168,14 @@ test('citations must resolve to usable public source URLs at their original one-
   const canonical = makeEvidence();
   assert.equal(canonical.result.sources[0].url, 'https://guides.example.com/');
   assert.equal(canonical.result.sources[0].documentUrlSha256, createHash('sha256').update('https://guides.example.com/game/guide').digest('hex'));
-  for (const answer of ['Uncited preparation.', 'Preparation [3]', 'Preparation [0]', 'Preparation [1, 9]', 'Preparation (Sources 1, 9)']) {
+  const linked = makeEvidence('useful_grounded_guide', input => {
+    input.result.data.response = 'Prepare as documented [1]. See the [20 Rupees guide](https://guides.example.com/game/guide).';
+  });
+  assert.deepEqual(linked.result.citationIndices, [1]);
+  assert.equal(verifyLivePreviewEvidence(linked, identity).status, 'PASS');
+  for (const answer of ['Uncited preparation.', 'Preparation [3]', 'Preparation [0]', 'Preparation [1, 9]',
+    'Preparation (Sources 1, 9)', 'Preparation Source 9', 'Preparation Sources 1, 0', 'Preparation [9](https://guides.example.com/game/guide)',
+    'Preparation [1.2 patch notes](https://guides.example.com/game/guide)']) {
     assert.equal(verifyLivePreviewEvidence(makeEvidence('useful_grounded_guide', input => { input.result.data.response = answer; }), identity).status, 'FAIL');
   }
   for (const url of ['http://127.0.0.1/private', 'https://[::1]/private', 'https://localhost/private', 'https://service.internal/private',

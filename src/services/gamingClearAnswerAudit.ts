@@ -1,5 +1,6 @@
 import type OpenAI from 'openai';
 import findingCodes from '../shared/gaming/gamingClearAnswerFindingCodes.json' with { type: 'json' };
+import citationSyntax from '../shared/gaming/gamingCitationSyntax.json' with { type: 'json' };
 import { createSingleChatCompletion } from '@services/openai/chatFallbacks.js';
 import { getClearAuditModel, getClearAuditEscalationModel } from '@services/openai/credentialProvider.js';
 import { normalizeOpenAIModelReasoningEffort, resolveOpenAIModelCapabilities } from '@shared/gpt/trinityReasoningPolicy.js';
@@ -41,6 +42,8 @@ const AUDIT_PROVIDER_STATUSES = ['completed', 'incomplete', 'failed', 'cancelled
 const AUDIT_FINISH_REASONS = ['stop', 'length', 'tool_calls', 'content_filter', 'function_call'] as const;
 const AUDIT_INCOMPLETE_REASONS = ['max_output_tokens', 'content_filter', 'none'] as const;
 const MAX_AUDIT_RESPONSE_CHARS = 16_000;
+const NUMERIC_CITATION = new RegExp(citationSyntax.numericReferencePattern, 'giu');
+const NUMBERED_CITATION_LINK = /\[\s*(?:sources?\s+)?(\d+(?:\s*,\s*\d+)*)\s*\]\(\s*(?:<(https?:\/\/[^\s<>]+)>|(https?:\/\/[^\s)<>]+))(?=[\s)])/giu;
 
 interface AuditProviderFields {
   providerStatus?: unknown;
@@ -236,10 +239,16 @@ export async function runGamingClearAnswerAudit(client: OpenAI, input: GamingCle
       ...(auditBudget ? { effectiveTimeoutMs: auditBudget.effectiveTimeoutMs } : {}) };
   };
   const evidence = gamingClearAnswerEvidence(input);
-  const invalidCitation = [...input.answer.matchAll(/(?:\[(?:sources?\s+)?|\(sources?\s+|\bsources?\s+)(\d+(?:\s*,\s*\d+)*)/giu)]
-    .some(match => match[1].split(',').some(index => !evidence.some(item => item.sourceIndex === Number(index.trim()))));
-  if (invalidCitation) return finish(createGamingClearAssessment({ ...base, dimensions: unknownDimensions(),
-    assessmentMethod: 'deterministic', findings: [{ code: 'CITATION_NOT_FOUND', severity: 'blocking', evidenceRefs: [] }] }));
+  const invalidCitation = [...input.answer.matchAll(NUMERIC_CITATION)]
+    .some(match => (match[1] ?? match[2]).split(',').some(index => !evidence.some(item => item.sourceIndex === Number(index.trim()))));
+  const rejectCitation = (code: 'CITATION_NOT_FOUND' | 'CITATION_DOES_NOT_SUPPORT_CLAIM') =>
+    finish(createGamingClearAssessment({ ...base, dimensions: unknownDimensions(),
+      assessmentMethod: 'deterministic', findings: [{ code, severity: 'blocking', evidenceRefs: [] }] }));
+  if (invalidCitation) return rejectCitation('CITATION_NOT_FOUND');
+  // A numbered Markdown link and its URL must identify the same selected source.
+  const mismatchedCitationLink = [...input.answer.matchAll(NUMBERED_CITATION_LINK)].some(([, indices, angleUrl, plainUrl]) =>
+    indices.split(',').some(index => input.knowledge.sources[Number(index.trim()) - 1]?.url !== (angleUrl ?? plainUrl)));
+  if (mismatchedCitationLink) return rejectCitation('CITATION_DOES_NOT_SUPPORT_CLAIM');
   if (input.evidenceAssessment.decision !== 'accept') return finish(unavailable('EVIDENCE_NOT_SUFFICIENT'));
   if (base.questionProfile === 'advisory_recommendation') {
     const qualified = input.answer.includes(GAMING_UNVERIFIED_GUIDE_WARNING) || input.answer.includes(GAMING_STALE_GUIDE_WARNING);

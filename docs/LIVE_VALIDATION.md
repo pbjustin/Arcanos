@@ -475,6 +475,21 @@ include its prose. Do not publish the private file or controller state. Retainin
 an audited answer for operator inspection does not enable player persistence or
 durable source ingestion.
 
+### Diagnosing rejected answers
+
+For a completed rejection, use the receipt's bounded finding counts. The
+accepted-answer artifact cannot recover a rejected candidate, the passages
+submitted with it, or its full CLEAR assessment. The protected JSON writer
+limits file access but does not encrypt the payload or expire it.
+
+For claim-level review, use synthetic replay first. A live diagnostic session
+requires separate owner authorization for that exact commit and isolated run.
+Before enabling any capture, verify an operator-only path that can keep the
+candidate, selected passages, and parsed assessment in memory for review, or
+write them only to approved encrypted temporary storage with verified expiry
+and cleanup. Exclude raw provider responses, reasoning traces, credentials, and
+request headers. Keep diagnostic capture disabled if any condition fails.
+
 ## Secret scanning and deferred work
 
 Existing repository-wide secret scanning stays enabled. The historical scan at

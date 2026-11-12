@@ -1331,6 +1331,12 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
                 }
               } } : {}),
               gamingClearAnswerAudit: async (answer, runtimeBudget, remainingWatchdogMs) => {
+                // Test the candidate before server-authored qualifications can mask a refusal.
+                if (isPureGamingProviderCapabilityRefusal(answer)) {
+                  throw Object.assign(new Error("Gaming provider returned a capability refusal instead of gameplay guidance."), {
+                    code: "GAMING_PROVIDER_UNUSABLE_RESPONSE"
+                  });
+                }
                 const auditStartedAt = Date.now();
                 observeGamingPipelineStage(runtime, {
                   stage: 'answer_audit', phase: 'started', elapsedMs: 0,

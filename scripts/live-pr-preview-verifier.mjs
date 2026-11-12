@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { isIP } from 'node:net';
 import answerFindingCodes from '../src/shared/gaming/gamingClearAnswerFindingCodes.json' with { type: 'json' };
+import citationSyntax from '../src/shared/gaming/gamingCitationSyntax.json' with { type: 'json' };
 
 export const LIVE_PREVIEW_MODE = 'live-backend-v1';
 export const LIVE_PREVIEW_ACCEPTANCE_PROFILE = 'grounded-audited-answer-v1';
@@ -9,6 +10,7 @@ const STAGE_STATUSES = new Set(['not_run', 'passed', 'rejected', 'failed', 'time
 const AUDIT_STATUSES = new Set(['completed', 'unavailable', 'not_run']);
 const AUDIT_DECISIONS = new Set(['accept', 'partial', 'reject', 'clarify', 'unavailable']);
 const MAX_AUDIT_FINDINGS = 32;
+const NUMERIC_CITATION = new RegExp(citationSyntax.numericReferencePattern, 'giu');
 // Model finding strings are untrusted even when they match the CLEAR code syntax.
 const AUDIT_REJECTION_FINDING_CODES = new Set([
   ...answerFindingCodes.blocking, answerFindingCodes.other,
@@ -134,6 +136,12 @@ function sanitizedUsage(usage) {
       maxConcurrency: limits.maxConcurrency === 1 ? 1 : null, maxRetries: limits.maxRetries === 0 ? 0 : null } };
 }
 
+/** Match actual numeric references, preserving descriptive Markdown link labels as prose. */
+export function extractLivePreviewNumericCitations(answer) {
+  return [...answer.matchAll(NUMERIC_CITATION)]
+    .flatMap(match => (match[1] ?? match[2]).split(',').map(value => Number(value.trim())));
+}
+
 function sanitizedResult(result, audit) {
   const envelope = isRecord(result) ? result : {};
   const data = isRecord(envelope.data) ? envelope.data : {};
@@ -148,8 +156,7 @@ function sanitizedResult(result, audit) {
       usable: typeof value.snippet === 'string' && value.snippet.trim().length > 0 && !value.error };
   });
   // Adapters retain the citation spellings checked by their mandatory backend answer audit.
-  const references = [...response.matchAll(/(?:\[(?:sources?\s+)?|\(sources?\s+|\bsources?\s+)(\d+(?:\s*,\s*\d+)*)/giu)]
-    .flatMap(match => match[1].split(',').map(value => Number(value.trim())));
+  const references = extractLivePreviewNumericCitations(response);
   const citationIndices = [...new Set(references)].sort((a, b) => a - b).slice(0, 32);
   const citationsResolved = references.length > 0 && references.length <= 128 && references.every(index =>
     Number.isSafeInteger(index) && index > 0 && sources.some(source => source.index === index && source.url && source.usable));

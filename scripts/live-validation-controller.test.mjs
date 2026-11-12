@@ -344,6 +344,13 @@ test('private answer validation accepts exact bound content while cloning it awa
   assert.equal(validated.sources[0].url, entry.input.candidateUrls[0]);
 });
 
+test('private answer validation counts numeric citations separately from descriptive Markdown labels', () => {
+  const entry = profileFixture().profiles.find(value => value.id === 'gaming-guide-positive');
+  const answer = `Follow the documented preparation [1]. See the [20 Rupees guide](${entry.input.candidateUrls[0]}).`;
+  const input = privateAnswerFor(entry, answer);
+  assert.deepEqual(validatePrivateAnswer(input, { evidence: evidenceFor(entry), observation: observation(true) }), input);
+});
+
 test('private answer validation rejects invalid shapes, unbound content, citations, sources and audit state', async t => {
   const entry = profileFixture().profiles.find(value => value.id === 'gaming-guide-positive');
   const mutations = [

@@ -112,9 +112,12 @@ const scenarios: Scenario[] = [
 ];
 
 let scenario = scenarios[0];
-let poison: 'none' | 'unsupported' | 'wrong_citation' = 'none';
+let poison: 'none' | 'unsupported' | 'wrong_citation' | 'invented_prerequisite' | 'wrong_order' = 'none';
 let auditInterruption: 'none' | 'truncation' | 'refusal' | 'tool_output' = 'none';
 let sourceSuffix = '';
+let sourceTextLimit: number | undefined;
+const capabilityRefusal = "I can't browse the web.";
+let finalCapabilityRefusal: 'none' | 'only' | 'with_guidance' = 'none';
 let searchUnavailable = false;
 const stages: string[] = [];
 const searches: string[] = [];
@@ -156,13 +159,19 @@ function draft(payload: any): string {
     expect(claim.support.filter(probe => !probe.test(text)).map(probe => probe.source)).toEqual([]);
     const source = poison === 'wrong_citation' && index === 0 ? numberFor(scenario.pages[1].url) : numberFor(claim.url);
     expect(source).toBeGreaterThan(0);
-    return `${claim.draft} [${source}]`;
+    const claimDraft = poison === 'wrong_order' && index === 0
+      ? '1. Deploy the colonisation ship. 2. Select an uninhabited system and obtain the required colonisation claim. 3. Deliver the requested construction commodities before the deadline.'
+      : claim.draft;
+    return `${claimDraft} [${source}]`;
   }).join('\n\n');
-  return poison === 'unsupported' ? `${response}\n\nThe Deku Shield costs 9999 Rupees. [1]` : response;
+  if (poison === 'unsupported') return `${response}\n\nThe Deku Shield costs 9999 Rupees. [1]`;
+  if (poison === 'invented_prerequisite') return `${response}\n\nYou must earn a Founder's Permit before purchasing a colonisation claim. [${numberFor(frontierGuideUrl)}]`;
+  return response;
 }
 beforeEach(() => {
   jest.clearAllMocks(); resetSafetyRuntimeStateForTests(); clearGamingDiscoveryCache();
   scenario = scenarios[0]; poison = 'none'; auditInterruption = 'none'; sourceSuffix = ''; searchUnavailable = false;
+  finalCapabilityRefusal = 'none'; sourceTextLimit = undefined;
   stages.length = 0; searches.length = 0; acquired.length = 0; audits.length = 0; documents.length = 0; evaluations.length = 0;
   acquisitionDurations.length = 0; generationStarted = 0; generationFinished = 0;
   saved = Object.fromEntries(Object.keys(environment).map(name => [name, process.env[name]]));
@@ -203,8 +212,27 @@ beforeEach(() => {
       audits.push(data);
       // This synthetic semantic judge independently checks the actual answer's
       // claim-to-source links, not equality with the model stub's planned draft.
-      const supported = scenario.claims.every(claim => {
-        const line = data.answer.split('\n').find((value: string) => claim.answerProbe.test(value));
+      const answerLines: string[] = data.answer.split('\n');
+      const guidePassages: Array<{ text: string; sourceIndex: number }> = data.evidence;
+      let specificFinding: string | undefined;
+      if (scenario.id === 'C') {
+        const permitLine = answerLines.find(line => /\bmust earn a Founder's Permit\b/iu.test(line));
+        const permitSource = /\[(\d+)\]/u.exec(permitLine ?? '');
+        if (permitSource && !guidePassages.some(passage => passage.sourceIndex === Number(permitSource[1])
+          && /\b(?:must|requires?)\b[^.]*\bFounder's Permit\b/iu.test(passage.text))) {
+          specificFinding = 'INVENTED_PREREQUISITE';
+        }
+        const procedure = answerLines.find(line => /\bdeploy the (?:system )?colonisation ship\b/iu.test(line));
+        const procedureSource = /\[(\d+)\]/u.exec(procedure ?? '');
+        const deploysBeforeClaim = /deploy the (?:system )?colonisation ship.*(?:obtain|purchas\w*) the (?:required )?colonisation claim/iu;
+        if (procedureSource && procedure && deploysBeforeClaim.test(procedure)
+          && !guidePassages.some(passage => passage.sourceIndex === Number(procedureSource[1])
+            && deploysBeforeClaim.test(passage.text))) {
+          specificFinding = 'UNSUPPORTED_ACTION_SEQUENCE';
+        }
+      }
+      const supported = !specificFinding && scenario.claims.every(claim => {
+        const line = answerLines.find(value => claim.answerProbe.test(value));
         const citation = /\[(\d+)\]/u.exec(line ?? '');
         return citation && data.evidence.some((chunk: any) => chunk.sourceIndex === Number(citation[1])
           && auditSourceUrl(chunk.sourceId) === claim.url && claim.support.every(probe => probe.test(chunk.text)))
@@ -214,7 +242,7 @@ beforeEach(() => {
       const refs = data.evidence.map((chunk: any) => chunk.chunkId);
       output = JSON.stringify({ dimensions: Object.fromEntries(GAMING_CLEAR_DIMENSIONS.map(name => [name,
         { status: 'evaluated', score: supported ? 4.5 : 1, reasonCodes: [supported ? 'SUPPORTED_FIXTURE' : 'UNSUPPORTED_CLAIM'], evidenceRefs: refs, unresolvedFacts: [] }])),
-        findings: supported ? [] : [{ code: 'UNSUPPORTED_CLAIM', severity: 'blocking', evidenceRefs: refs }] });
+        findings: supported ? [] : [{ code: specificFinding ?? 'UNSUPPORTED_CLAIM', severity: 'blocking', evidenceRefs: refs }] });
       if (auditInterruption !== 'none') {
         expect(supported).toBe(true);
         return {
@@ -234,7 +262,11 @@ beforeEach(() => {
         blocked_subtasks: [], user_visible_caveats: [], claim_tags: [], final_answer: draft(payload) });
     } else if (input.includes('Gaming guide intake policy: compact-v1')) {
       stages.push('intake'); output = 'Use the acquired guide passages, preserve qualifications and spoiler limits, and cite each factual recommendation.';
-    } else { stages.push('final'); output = draft(payload); }
+    } else {
+      stages.push('final');
+      output = finalCapabilityRefusal === 'only' ? capabilityRefusal : draft(payload);
+      if (finalCapabilityRefusal === 'with_guidance') output = `${capabilityRefusal}\n\n${output}`;
+    }
     generationFinished = performance.now();
     return { id: `heldout-sdk-${stages.length}`, model: payload.model, status: 'completed', output: [], output_text: output,
       usage: { input_tokens: 90, output_tokens: 45, total_tokens: 135 } };
@@ -254,9 +286,9 @@ function harness(backend: boolean) {
   else delete process.env.ARCANOS_GAMING_HYBRID_BACKEND_DISCOVERY_ENABLED;
   const workflow = createGamingHybridWorkflow({ retrieve: async () => ({ context: '', sources: [], evidence: [], sourceKnown: false }),
     ingest: write as never, evaluateCandidates: async (input, context, dependencies) => {
-      const value = await evaluateGamingHybridCandidates(input, context, { ...dependencies, resolveDocument: async (...args) => {
+      const value = await evaluateGamingHybridCandidates(input, context, { ...dependencies, resolveDocument: async (url, maxTextChars, options) => {
         const started = performance.now();
-        const document = await resolveGamingDocument(...args); acquisitionDurations.push(performance.now() - started);
+        const document = await resolveGamingDocument(url, sourceTextLimit ?? maxTextChars, options); acquisitionDurations.push(performance.now() - started);
         documents.push(document); return document;
       } });
       evaluations.push(value); return value;
@@ -381,6 +413,50 @@ describe.each([false])('natural guide request delivery, SYNTHETIC external effec
 
 });
 
+
+it('withholds a standalone capability refusal before spending the mandatory answer audit call', async () => {
+  scenario = scenarios[4];
+  finalCapabilityRefusal = 'only';
+  sourceTextLimit = 900;
+  sourceSuffix = `<p>${'The station scenery includes nearby landmarks. '.repeat(25)}</p>`;
+  const result = await harness(false).complete();
+  expect(result.result).toMatchObject({ coverageSatisfied: true, reason: 'GENERATION_UNAVAILABLE' });
+  expect(result.result.answer).toBeUndefined();
+  expect(stages).toEqual(['intake', 'reasoning', 'final']);
+  expect(audits).toHaveLength(0);
+  expect(sdk).toHaveBeenCalledTimes(3);
+});
+
+it('audits and binds substantive cited guidance that follows a capability limitation', async () => {
+  scenario = scenarios[4];
+  finalCapabilityRefusal = 'with_guidance';
+  sourceTextLimit = 900;
+  sourceSuffix = `<p>${'The station scenery includes nearby landmarks. '.repeat(25)}</p>`;
+  const result = await harness(false).complete();
+  expect(result.result).toMatchObject({ state: 'answer_ready', coverageSatisfied: true });
+  expect(stages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
+  expect(audits).toHaveLength(1);
+  expect(audits[0].answer).toContain(capabilityRefusal);
+  expect(audits[0].answer).toContain('Some selected source material was only partially extracted.');
+  expect(result.result.answer?.response).toBe(audits[0].answer);
+  expect(result.result.answer?.response).toMatch(scenario.claims[0].answerProbe);
+});
+
+it.each([
+  ['invented_prerequisite', 'INVENTED_PREREQUISITE'],
+  ['wrong_order', 'UNSUPPORTED_ACTION_SEQUENCE'],
+] as const)('withholds Elite Dangerous guidance with %s after a complete rejecting audit', async (attack, findingCode) => {
+  scenario = scenarios[2];
+  poison = attack;
+  const result = await harness(false).complete();
+  expect(result.result).toMatchObject({ coverageSatisfied: true, reason: 'GENERATION_UNAVAILABLE' });
+  expect(result.result.answer).toBeUndefined();
+  expect(stages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
+  const response = await sdk.mock.results.at(-1)!.value as { output_text: string };
+  expect(JSON.parse(response.output_text).findings).toEqual([
+    expect.objectContaining({ code: findingCode, severity: 'blocking' })
+  ]);
+});
 
 it('rejects a claim attached to the wrong independently accepted source', async () => {
   scenario = scenarios[3]; poison = 'wrong_citation';

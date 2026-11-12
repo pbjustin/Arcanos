@@ -473,7 +473,40 @@ describe('Gaming final-answer CLEAR assessment', () => {
     });
   });
 
-  it.each(['[99]', '[1, 99]', '(Source 99)', '[Source 99]'])('rejects missing citation %s without a model call', async citation => {
+  it('sends descriptive Markdown link labels beginning with numbers to the semantic audit', async () => {
+    const answer = 'Turn the west valve. [1] See the [20 Rupees guide](https://example.com/guide).';
+    const result = await run({ answer });
+
+    expect(result.assessment).toMatchObject({ assessmentStatus: 'completed', decision: 'accept' });
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+    const request = createSingleChatCompletion.mock.calls[0][1] as { messages: Array<{ content: string }> };
+    expect(JSON.parse(request.messages[1].content).answer).toBe(answer);
+  });
+
+  it.each([
+    ['[1](https://example.com/storehouse)', '[1](https://example.com/guide)'],
+    ['[Source 1](<https://example.com/storehouse>)', '[Source 1](<https://example.com/guide>)'],
+  ])('rejects a numbered link whose URL points at a different selected source: %s', async (wrongLink, correctLink) => {
+    const otherSource = { ...input.knowledge.sources[0], sourceId: 'source-2', url: 'https://example.com/storehouse' };
+    const otherChunk = { ...input.knowledge.evidence[0], sourceId: otherSource.sourceId, revisionId: 'revision-2',
+      recordId: 'chunk-2', publicUrl: otherSource.url, text: 'Ring the east bell to access the storehouse.' };
+    const knowledge = { ...input.knowledge, sources: [...input.knowledge.sources, otherSource],
+      evidence: [...input.knowledge.evidence, otherChunk] };
+
+    const wrong = await run({ knowledge, answer: `Turn the west valve. ${wrongLink}` });
+    expect(wrong.assessment).toMatchObject({ assessmentMethod: 'deterministic', decision: 'reject',
+      blockingFindings: expect.arrayContaining([expect.objectContaining({ code: 'CITATION_DOES_NOT_SUPPORT_CLAIM' })]) });
+    expect(createSingleChatCompletion).not.toHaveBeenCalled();
+
+    const answer = `Turn the west valve. ${correctLink}`;
+    const correct = await run({ knowledge, answer });
+    expect(correct.assessment.decision).toBe('accept');
+    expect(gamingClearAnswerMatches(correct.assessment, answer)).toBe(true);
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['[99]', '[1, 99]', '(Source 99)', '[Source 99]', 'Source 99', 'Sources 1, 99', 'Sources 1, 0',
+    '[99](https://example.com/guide)'])('rejects missing citation %s without a model call', async citation => {
     const result = await run({ answer: `Turn the west valve. ${citation}` });
     expect(result.assessment.decision).toBe('reject');
     expect(result.assessment.findings.map(finding => finding.code)).toContain('CITATION_NOT_FOUND');

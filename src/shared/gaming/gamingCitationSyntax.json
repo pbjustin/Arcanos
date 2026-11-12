@@ -1,0 +1,3 @@
+{
+  "numericReferencePattern": "\\[\\s*(\\d+(?:\\s*,\\s*\\d+)*)\\s*\\]|\\bsources?\\s+(\\d+(?:\\s*,\\s*\\d+)*)"
+}
