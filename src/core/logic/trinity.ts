@@ -1209,7 +1209,7 @@ export async function runThroughBrain(
           const text = validateStructuredOutput(candidateText, reasoningHonesty, directAnswerUserIntentPrompt);
           return {
             directAnswerReasoningHonesty: reasoningHonesty,
-            honestyFilteredFinal: { text, blocked: false, blockedCategories: [], ruleIds: ['NO_HONESTY_REWRITE' as const] },
+            honestyFilteredFinal: { text, fallbackOnly: false, blocked: false, blockedCategories: [], ruleIds: ['NO_HONESTY_REWRITE' as const] },
             enforcedFinalOutput: { text, removedMetaSections: [], blockedOrRewrittenClaims: [] },
             finalText: text,
             integrity: { valid: true, issues: [] },
@@ -1592,7 +1592,8 @@ export async function runThroughBrain(
         finalText,
       } = preparedDirectAnswer;
       let gamingDirectAudit: Awaited<ReturnType<NonNullable<TrinityRunOptions['gamingClearAnswerAudit']>>> | undefined;
-      if (gamingAnswerAudit && !directAnswerOutput.fallbackUsed && !directAnswerOutput.provider?.incomplete
+      const gamingDirectFallbackOnly = Boolean(gamingAnswerAudit && honestyFilteredFinal.fallbackOnly);
+      if (gamingAnswerAudit && !gamingDirectFallbackOnly && !directAnswerOutput.fallbackUsed && !directAnswerOutput.provider?.incomplete
         && !directAnswerOutput.provider?.truncated && !directAnswerOutput.provider?.contentFiltered) {
         checkWatchdog();
         gamingAuxiliaryAuditBudget.increment();
@@ -1675,10 +1676,11 @@ export async function runThroughBrain(
       const directAnswerFallbackSummary = {
         intakeFallbackUsed: false,
         gpt5FallbackUsed: false,
-        finalFallbackUsed: directAnswerOutput.fallbackUsed,
+        finalFallbackUsed: directAnswerOutput.fallbackUsed || gamingDirectFallbackOnly,
         fallbackReasons: [
           ...(directAnswerOptions.recovery ? [`Recovered after reasoning failure: ${selectionReason}`] : []),
-          ...(directAnswerOutput.fallbackUsed ? ['Direct-answer fallback used'] : [])
+          ...(directAnswerOutput.fallbackUsed ? ['Direct-answer fallback used'] : []),
+          ...(gamingDirectFallbackOnly ? ['No substantive Gaming candidate survived honesty filtering'] : [])
         ]
       };
 
@@ -2190,7 +2192,7 @@ export async function runThroughBrain(
       : MidLayerTranslator.translate({ raw: finalOutput.output }, presentationIntent);
     const honestyFilteredFinal = validateStructuredOutput
       ? { text: validateStructuredOutput(translatedFinalText, reasoningHonesty),
-          blocked: false, blockedCategories: [], ruleIds: ['NO_HONESTY_REWRITE' as const] }
+          fallbackOnly: false, blocked: false, blockedCategories: [], ruleIds: ['NO_HONESTY_REWRITE' as const] }
       : enforceFinalStageHonesty(
       translatedFinalText,
       reasoningHonesty,
@@ -2227,7 +2229,8 @@ export async function runThroughBrain(
     // Gaming replaces the legacy ledger audit with one audit of the actual final
     // candidate. Its callback owns strict validation and cannot trigger escalation.
     let gamingAuditResult: Awaited<ReturnType<NonNullable<TrinityRunOptions['gamingClearAnswerAudit']>>> | undefined;
-    if (gamingAnswerAudit && !intakeOutput.fallbackUsed && !reasoningOutput.fallbackUsed && !finalOutput.fallbackUsed
+    const gamingFinalFallbackOnly = Boolean(gamingAnswerAudit && honestyFilteredFinal.fallbackOnly);
+    if (gamingAnswerAudit && !gamingFinalFallbackOnly && !intakeOutput.fallbackUsed && !reasoningOutput.fallbackUsed && !finalOutput.fallbackUsed
       && !finalOutput.provider?.incomplete && !finalOutput.provider?.truncated && !finalOutput.provider?.contentFiltered) {
       checkWatchdog();
       gamingAuxiliaryAuditBudget.increment();
@@ -2334,11 +2337,12 @@ export async function runThroughBrain(
     const fallbackSummary = {
       intakeFallbackUsed: intakeOutput.fallbackUsed,
       gpt5FallbackUsed: reasoningOutput.fallbackUsed,
-      finalFallbackUsed: finalOutput.fallbackUsed,
+      finalFallbackUsed: finalOutput.fallbackUsed || gamingFinalFallbackOnly,
       fallbackReasons: [
         ...(intakeOutput.fallbackUsed ? ['Intake fallback used'] : []),
         ...(reasoningOutput.fallbackUsed ? ['GPT-5 reasoning fallback used'] : []),
-        ...(finalOutput.fallbackUsed ? ['Final fallback used'] : [])
+        ...(finalOutput.fallbackUsed ? ['Final fallback used'] : []),
+        ...(gamingFinalFallbackOnly ? ['No substantive Gaming candidate survived honesty filtering'] : [])
       ]
     };
 

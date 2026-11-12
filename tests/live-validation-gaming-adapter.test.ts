@@ -38,6 +38,7 @@ const authoredEliteGuideHtml = '<html><title>Elite Dangerous system colonisation
 const authoredEliteAnswer = '1. Select an uninhabited candidate system and obtain the required colonisation claim from a colonisation contact.\n'
   + '2. Travel to the selected system and deploy the colonisation ship.\n'
   + '3. Check the project requirements and deliver the requested construction commodities before the deadline.';
+const partialExtractionWarning = 'Some selected source material was only partially extracted. This answer is limited to the intact passages available for review.';
 const question = "I'm at the beginning of Elden Ring. I'm a Samurai. I just got out of the tutorial area. I want a Samurai blade build.";
 const groundedAnswer = 'Keep the starting Uchigatana as your Samurai blade and retain Unsheathe. Prioritize Vigor toward 20, then Endurance if stamina or equipment load limits you. Add Dexterity toward 20 later. Collect ordinary Smithing Stones in Limgrave and upgrade this katana before pursuing another blade. Keep a medium equipment load and attack after an enemy misses.';
 const deliveredAnswer = `${GAMING_UNVERIFIED_GUIDE_WARNING}\n\n${groundedAnswer} [Source 1]`;
@@ -52,6 +53,7 @@ const mockDefaultClient = jest.fn(() => { throw new Error('Default provider clie
 const mockBackendSearch = jest.fn(async () => { throw new Error('Backend discovery is forbidden in transient validation.'); });
 let sourceHtml = guideHtml;
 let sourceContentType = 'text/html';
+let sourceTextLimit: number | undefined;
 let generatedAnswer = groundedAnswer;
 let clock = Date.parse('2026-10-05T12:00:00Z');
 let emitProviderStages = true;
@@ -79,6 +81,11 @@ jest.unstable_mockModule('../src/core/db/client.js', () => ({
 jest.unstable_mockModule('../src/core/db/index.js', () => ({
   getPool: () => ({ query: mockDatabaseAccess, connect: mockDatabaseAccess }), isDatabaseConnected: () => true,
   query: mockDatabaseAccess, transaction: mockDatabaseAccess
+}));
+const documentResolution = await import('../src/services/gamingDocumentResolution.js');
+jest.unstable_mockModule('../src/services/gamingDocumentResolution.js', () => ({ ...documentResolution,
+  resolveGamingDocument: (url: string, maxChars?: number, options?: Parameters<typeof documentResolution.resolveGamingDocument>[2]) =>
+    documentResolution.resolveGamingDocument(url, sourceTextLimit ?? maxChars, options)
 }));
 const ingestion = await import('../src/services/gamingSourceIngestion.js');
 jest.unstable_mockModule('../src/services/gamingSourceIngestion.js', () => ({ ...ingestion,
@@ -131,6 +138,7 @@ const advance = (ms: number) => { clock += ms; jest.setSystemTime(clock); };
 
 beforeEach(() => {
   jest.clearAllMocks(); resetSafetyRuntimeStateForTests(); sourceHtml = guideHtml; sourceContentType = 'text/html';
+  sourceTextLimit = undefined;
   generatedAnswer = groundedAnswer; emitProviderStages = true;
   queryHandoffs.length = 0; candidateHandoffs.length = 0;
   previousEnv = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]));
@@ -431,6 +439,7 @@ describe('private Gaming live-validation adapter through the real transient v2 w
       const result = output.result as GamingSuccessEnvelope;
       expect(result.data.response).toContain(authoredEliteAnswer);
       expect(result.data.response).not.toContain(GAMING_UNVERIFIED_GUIDE_WARNING);
+      expect(result.data.response).not.toContain(partialExtractionWarning);
       expect(result.data.response).toContain('[Source 1]');
       expect(result.data.sources.map(source => source.url)).toEqual(profile.input.candidateUrls);
       expect(hasBoundGamingClearAnswer(result.data)).toBe(true);
@@ -457,6 +466,59 @@ describe('private Gaming live-validation adapter through the real transient v2 w
       expect(observation.selectedEvidenceCount).toBe(0); expect(output.result).toBeUndefined();
       expect(output).not.toHaveProperty('privateAnswer');
       expect(run.execute).not.toHaveBeenCalled(); expect(mockTrinity).not.toHaveBeenCalled(); expect(mockAuditCompletion).not.toHaveBeenCalled();
+    }
+  });
+
+  it.each(['accepted', 'rejected'] as const)('qualifies selected partial extraction before the bound audit when a stable guide is %s', async expected => {
+    const profile = canonicalProfiles.find(entry => entry.expected.outcome === 'accepted')!;
+    sourceTextLimit = 900;
+    sourceHtml = authoredEliteGuideHtml.replace('</article>', `<p>${'The station scenery includes nearby landmarks. '.repeat(25)}</p></article>`);
+    generatedAnswer = expected === 'accepted' ? authoredEliteAnswer : `${authoredEliteAnswer}\nA free claim is available at every station.`;
+    if (expected === 'rejected') {
+      mockAuditCompletion.mockImplementationOnce(async (_client: unknown, params: { messages: Array<{ content: string }> }) => {
+        const data = JSON.parse(params.messages[1].content) as { evidence: Array<{ chunkId: string }> };
+        const evidenceRefs = [data.evidence[0].chunkId];
+        const dimensions = Object.fromEntries(GAMING_CLEAR_DIMENSIONS.map(name => [name, {
+          status: 'evaluated', score: 5, reasonCodes: [], evidenceRefs, unresolvedFacts: []
+        }]));
+        return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ dimensions,
+          findings: [{ code: 'UNSUPPORTED_CLAIM', severity: 'blocking', evidenceRefs }] }) } }] };
+      });
+    }
+    const run = harness();
+    const input = run.adapter.validateInput(profile.input);
+    if (!input.ok) throw new Error('Expected valid canonical Elite input.');
+    const output = await run.adapter.execute(input.input, run.observer);
+    const observation = run.adapter.getLastObservation()!;
+    expect(observation.coverage.satisfied).toBe(true);
+    expect(observation.candidates).toEqual([expect.objectContaining({
+      decision: 'accepted_transient', reasonCodes: expect.arrayContaining(['EXTRACTION_PARTIAL'])
+    })]);
+    const trinityRequest = mockTrinity.mock.calls[0][0] as TrinityWritingPipelineRequest;
+    expect(trinityRequest.input.prompt).toContain('only partially extracted');
+    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+    const auditRequest = mockAuditCompletion.mock.calls[0][1] as { messages: Array<{ content: string }> };
+    const audited = JSON.parse(auditRequest.messages[1].content) as {
+      answer: string; applicability: Array<{ partialExtraction: boolean }>;
+      evidence: Array<{ sourceIndex: number; chunkId: string }>;
+    };
+    expect(audited.applicability).toEqual([expect.objectContaining({ partialExtraction: true })]);
+    expect(audited.answer).toBe(`${partialExtractionWarning}\n\n${generatedAnswer} [Source 1]`);
+    expect(audited.evidence.every(chunk => chunk.sourceIndex === 1)).toBe(true);
+    expect(audited.evidence.map(chunk => chunk.chunkId)).toEqual(candidateHandoffs[0].result.body.selectedEvidenceIds);
+    if (expected === 'accepted') {
+      expect(output.accepted).toBe(true);
+      const result = output.result as GamingSuccessEnvelope;
+      expect(result.data.response).toBe(audited.answer);
+      expect(hasBoundGamingClearAnswer(result.data)).toBe(true);
+      expect(output.privateAnswer).toMatchObject({ response: audited.answer, subjectHash: gamingClearHash(audited.answer),
+        sources: [{ index: 1, url: profile.input.candidateUrls[0] }] });
+      expect(output.audit?.boundToFinalAnswer).toBe(true);
+    } else {
+      expect(output.accepted).toBe(false);
+      expect(output).not.toHaveProperty('privateAnswer');
+      expect(observation.audit).toMatchObject({ assessmentStatus: 'completed', decision: 'reject',
+        boundToFinalAnswer: false, findingCodes: ['UNSUPPORTED_CLAIM'] });
     }
   });
 

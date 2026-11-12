@@ -180,6 +180,14 @@ export function gamingClearAnswerEvidence(input: GamingClearAnswerInput) {
   }));
 }
 
+/** Use trusted acquisition and CLEAR metadata to identify a partial source. */
+export function isGamingAuditSourcePartiallyExtracted(source: GamingStoredKnowledgeContext['sources'][number]): boolean {
+  const assessment = source.clearSourceAssessment;
+  return source.freshnessMetadata?.partialExtraction === true
+    || assessment?.findings.some(finding => finding.code === 'EXTRACTION_PARTIAL') === true
+    || Object.values(assessment?.dimensionScores ?? {}).some(dimension => dimension.reasonCodes.includes('EXTRACTION_PARTIAL'));
+}
+
 function baseAssessment(input: GamingClearAnswerInput) {
   const evidenceRefs = [...new Set((input.knowledge.evidence ?? []).flatMap(chunk => [chunk.sourceId, chunk.revisionId, chunk.recordId]))];
   const advisoryFreshness = input.evidenceAssessment.policyProfile.split(':')[1] === 'advisory_recommendation'
@@ -246,7 +254,7 @@ export async function runGamingClearAnswerAudit(client: OpenAI, input: GamingCle
       ...Object.values(source.clearSourceAssessment?.dimensionScores ?? {}).flatMap(dimension => dimension.reasonCodes)])].slice(0, 16);
     return { sourceId: source.sourceId, game: source.game, edition: source.edition,
       sourceRole: source.clearSourceAssessment?.sourceRole, verifiedPatchVersion: source.verifiedPatchVersion,
-      partialExtraction: metadata.partialExtraction === true || sourceReasonCodes.includes('EXTRACTION_PARTIAL'),
+      partialExtraction: isGamingAuditSourcePartiallyExtracted(source),
       sourceAssessmentStatus: source.clearSourceAssessment?.assessmentStatus ?? 'not_run', sourceReasonCodes,
       patch: metadata.patch, build: metadata.build, season: metadata.season, currentPatch: metadata.currentPatch,
       platforms: metadata.platforms, regions: metadata.regions,

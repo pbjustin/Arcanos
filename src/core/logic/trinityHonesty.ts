@@ -2264,6 +2264,7 @@ export function enforceFinalStageHonesty(
   }
 
   let text = normalizeOutputSpacing(keptLines);
+  const fallbackOnly = text.length === 0;
   const leadingDisclaimers: string[] = [];
   const partialRefusalLead = buildPartialRefusalLead(reasoningHonesty);
 
@@ -2290,6 +2291,7 @@ export function enforceFinalStageHonesty(
     text: (preservePresentation || instructionalVerificationPolicy === 'tutor-math-v1')
       && blockedCategories.size === 0 && leadingDisclaimers.length === 0 && rawText.trim()
       ? rawText.trim() : text,
+    fallbackOnly,
     blocked: blockedCategories.size > 0,
     blockedCategories: Array.from(blockedCategories),
     ruleIds: ruleIds.size ? [...ruleIds] : ['NO_HONESTY_REWRITE']

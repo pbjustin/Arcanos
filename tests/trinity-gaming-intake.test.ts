@@ -135,6 +135,49 @@ describe('Gaming compact Trinity intake through the real Responses adapter', () 
     if (decision !== 'accept') expect(result.auditSafe.auditFlags).toContain('GAMING_FINAL_ANSWER_NOT_ACCEPTED');
   });
 
+  it.each([
+    ['compact', false], ['compact', true], ['direct', false], ['direct', true]
+  ] as const)('routes the %s Gaming audit after honesty enforcement (supported guide survives=%s)', async (path, keepGuide) => {
+    const unsupportedClaim = 'I verified the current patch live in-game.';
+    const finalDraft = keepGuide ? unsupportedClaim + '\n\n' + finalAnswer : unsupportedClaim;
+    const requestInput = request();
+    const options = requestInput.context.runOptions as TrinityRunOptions;
+    if (path === 'compact') {
+      responsesCreate.mockResolvedValueOnce(response('Question: next step. Evidence [1].'));
+    } else {
+      delete options.gamingGuideIntakePolicy;
+      options.answerMode = 'direct';
+      options.requestedVerbosity = 'normal';
+      options.maxWords = 120;
+    }
+    responsesCreate.mockResolvedValueOnce(response(finalDraft, false, authorityModel));
+    const audit = jest.fn(async (text: string) => ({ assessment: createGamingClearAssessment({
+      profile: 'answer', questionProfile: 'walkthrough', subjectId: 'answer-test', subjectHash: gamingClearHash(text),
+      contextFingerprint: gamingClearContextFingerprint('gaming-test'), evidenceRefs: ['record-6'],
+      gates: { identity: 'verified', security: 'verified', compatibility: 'verified', provenance: 'verified',
+        claimSupport: 'verified', freshness: 'not_applicable' },
+      dimensions: Object.fromEntries(['clarity', 'leverage', 'efficiency', 'alignment', 'resilience'].map(name => [name,
+        { status: 'evaluated', score: 4.5, reasonCodes: ['SUPPORTED'], evidenceRefs: ['record-6'], unresolvedFacts: [] }
+      ])) as Parameters<typeof createGamingClearAssessment>[0]['dimensions']
+    }) }));
+    options.gamingClearAnswerAudit = audit;
+
+    const result = await runTrinityWritingPipeline(requestInput);
+
+    expect(responsesCreate).toHaveBeenCalledTimes(path === 'compact' ? 2 : 1);
+    expect(runStructuredReasoning).toHaveBeenCalledTimes(path === 'compact' ? 1 : 0);
+    expect(result.result).not.toContain(unsupportedClaim);
+    expect(audit).toHaveBeenCalledTimes(keepGuide ? 1 : 0);
+    expect(result.fallbackFlag).toBe(!keepGuide);
+    if (keepGuide) {
+      expect(result.result).toContain('Turn the west valve. [1]');
+      expect(audit.mock.calls[0][0]).toBe(result.result);
+      expect(result.gamingClearAudit?.decision).toBe('accept');
+    } else {
+      expect(result.gamingClearAudit).toBeUndefined();
+    }
+  });
+
   it('keeps malformed hybrid build output terminal after one audit without direct-answer continuation or regeneration', async () => {
     const malformedAnswer = '1. Turn the west valve.\n\n2. Follow the lit corridor.\n\n3. Use the';
     responsesCreate.mockResolvedValueOnce(response('Compact task card.'))

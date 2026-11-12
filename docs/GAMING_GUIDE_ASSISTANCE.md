@@ -1054,9 +1054,12 @@ by the prompt.
 The answer payload contains the actual answer, passages, source/revision/chunk
 IDs, applicable game/edition/patch/build/season and verification/effective-time
 metadata, and partial-extraction diagnostics. Direct context clipping retains
-complete fitting sentences within the existing context cap. Partial extraction
-requires bounded claims and material qualifications; it does not establish full
-document coverage. Freshness and context are checked immediately before auditing
+complete fitting sentences within the existing context cap. When a selected guide
+was partially extracted, the server adds a scope notice to the exact answer it
+audits and delivers. The audit still checks that each material claim is supported
+by the intact passages and that missing facts are handled honestly. When Trinity
+removes the entire provider draft, the resulting fallback is withheld before
+the Gaming audit. Freshness and context are checked immediately before auditing
 and again before delivery. Hybrid cached substantive answers also expire at the
 earliest actual proof deadline (including live status update age), even when the
 workflow itself has time remaining. Expired proof yields

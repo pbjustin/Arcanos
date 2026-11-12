@@ -64,7 +64,7 @@ import { resolveGamingAnswerPolicy } from "@shared/gaming/gamingAnswerPolicy.js"
 import { GAMING_HYBRID_INTAKE } from '@shared/gaming/gamingGuideIntakeCore.js';
 import { assessGamingClearEvidence } from '@shared/gaming/gamingClearEvidence.js';
 import { type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
-import { gamingClearAnswerMatches, runGamingClearAnswerAudit } from '@services/gamingClearAnswerAudit.js';
+import { gamingClearAnswerMatches, isGamingAuditSourcePartiallyExtracted, runGamingClearAnswerAudit } from '@services/gamingClearAnswerAudit.js';
 import { GAMING_CLEAR_APPROVED_ANSWER } from '@shared/gaming/gamingClearAnswerBinding.js';
 import { resolveGamingFreshnessDisposition } from '@shared/gaming/gamingFreshnessDisposition.js';
 
@@ -121,6 +121,8 @@ function createGamingGameRequiredError(mode: GamingMode): Error {
   Object.assign(error, { code: "GAMING_GAME_REQUIRED", mode });
   return error;
 }
+
+const PARTIAL_EXTRACTION_QUALIFICATION = 'Some selected source material was only partially extracted. This answer is limited to the intact passages available for review.';
 
 const PROVIDER_TIMEOUT_ERROR_MARKERS = [
   "openai_call_aborted_due_to_budget",
@@ -1123,11 +1125,15 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
   const sourceEditionQualification = [...new Set(clearKnowledge.sources.map(source =>
     buildGamingSourceEditionQualification(typeof source.freshnessMetadata?.edition === 'string'
       ? source.freshnessMetadata.edition : undefined, resolvedParams)).filter(Boolean))].join(' ');
-  const answerQualification = allowAdvisoryFreshness && prepared ? prepared.qualification : sourceEditionQualification;
-  // Audit and publish the same deterministically qualified text, even when the
-  // provider omits the required warning from its candidate answer.
-  const qualifyAdvisoryAnswer = (answer: string): string => answerQualification
-    && !answer.includes(answerQualification) ? `${answerQualification}\n\n${answer}` : answer;
+  const answerQualifications = [
+    allowAdvisoryFreshness && prepared ? prepared.qualification : sourceEditionQualification,
+    clearKnowledge.sources.some(isGamingAuditSourcePartiallyExtracted) ? PARTIAL_EXTRACTION_QUALIFICATION : ''
+  ].filter(Boolean);
+  // Use the same trusted qualifiers before audit and delivery, without turning
+  // an empty provider answer into a substantive candidate.
+  const qualifyAnswer = (answer: string): string => answer.trim()
+    ? [...answerQualifications.filter(qualification => !answer.includes(qualification)), answer].join('\n\n')
+    : answer;
   if (freshnessSensitive && !currentEvidenceAvailable && !allowAdvisoryFreshness) {
     const currentEvidenceFallbackReason: GamingFallbackReason = "CURRENT_EVIDENCE_UNAVAILABLE";
     logger.warn("gaming.fallback.used", {
@@ -1333,7 +1339,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
                 runtime?.onAnswerAuditStart?.();
                 try {
                   const result = await runGamingClearAnswerAudit(client, {
-                    ...resolvedParams, game: resolvedParams.game ?? '', answer: qualifyAdvisoryAnswer(answer), knowledge: clearKnowledge,
+                    ...resolvedParams, game: resolvedParams.game ?? '', answer: qualifyAnswer(answer), knowledge: clearKnowledge,
                     evidenceAssessment: assessGamingClearEvidence({ ...resolvedParams, game: resolvedParams.game ?? '' }, clearKnowledge, auditContext), requestId
                   }, runtimeBudget, 'routine', remainingWatchdogMs);
                   observeGamingPipelineStage(runtime, {
@@ -1399,7 +1405,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
         code: "GAMING_PROVIDER_UNUSABLE_RESPONSE"
       });
     }
-    trinityResult.result = qualifyAdvisoryAnswer(trinityResult.result);
+    trinityResult.result = qualifyAnswer(trinityResult.result);
   } catch (error) {
     const elapsedMs = Date.now() - providerStartedAt;
     logger.info("gaming.stream.end", {
