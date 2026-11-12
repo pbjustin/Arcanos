@@ -10,7 +10,8 @@ import { parseLiveValidationControllerArguments, runLiveValidationController, va
   LIVE_VALIDATION_OPERATOR_GATE_IDS, resolveLiveValidationSelection, createLiveValidationServiceClient } from './live-validation-controller.mjs';
 import { LIVE_VALIDATION_PROJECT_ID, LIVE_VALIDATION_HARD_LIMITS, LIVE_VALIDATION_PRODUCTION_ENVIRONMENT_ID } from './live-validation-target.mjs';
 import { canonicalLiveValidationJson, validationHash } from './live-validation-bootstrap.mjs';
-import { createLivePreviewEvidence, LIVE_PREVIEW_CASE_MANIFEST } from './live-pr-preview-verifier.mjs';
+import { createLivePreviewEvidence, LIVE_PREVIEW_CASE_MANIFEST,
+  sanitizeLiveValidationAuditRejection } from './live-pr-preview-verifier.mjs';
 import { createLiveValidationProvider } from './live-validation-provider.mjs';
 import * as privateAnswerController from './live-validation-controller.mjs';
 
@@ -598,7 +599,8 @@ test('completed rejected audit receipts retain only safe findings and a bounded 
     rawBody: 'private audit body', evidenceRefs: ['private evidence reference'], dimensionScores: { clarity: 1 } };
   assert.deepEqual(sanitizeLiveValidationObservation(value).audit, { ...audit,
     findingCodes: ['MATERIAL_FACT_UNRESOLVED', 'PROFILE_FLOOR_NOT_MET', 'UNCLASSIFIED_AUDIT_FINDING'],
-    blockingFindingCount: 4 });
+    blockingFindingCount: 4,
+    findingCounts: { MATERIAL_FACT_UNRESOLVED: 1, PROFILE_FLOOR_NOT_MET: 2, UNCLASSIFIED_AUDIT_FINDING: 1 } });
   for (const malformed of [{ blockingFindingCount: 0 }, { blockingFindingCount: 33 }, { blockingFindingCount: 1.5 },
     { findingCodes: ['MATERIAL_FACT_UNRESOLVED', { code: 'private' }] },
     { findingCodes: ['MATERIAL_FACT_UNRESOLVED', 'PROFILE_FLOOR_NOT_MET'], blockingFindingCount: 1 },
@@ -613,6 +615,45 @@ test('completed rejected audit receipts retain only safe findings and a bounded 
     value.audit = { ...otherAudit, findingCodes: ['MATERIAL_FACT_UNRESOLVED'], blockingFindingCount: 1 };
     assert.deepEqual(sanitizeLiveValidationObservation(value).audit, otherAudit);
   }
+});
+test('rejection counts retain repeated and reviewed findings through adapter and controller projection', () => {
+  const value = observation(true);
+  const audit = { assessmentStatus: 'completed', decision: 'reject', boundToFinalAnswer: false };
+  const adapterProjection = sanitizeLiveValidationAuditRejection({ blockingFindingCount: 7,
+    findingCodes: ['FALLBACK_PRESENTED_AS_COMPLETED', 'PLAYER_CONSTRAINT_IGNORED', 'PLAYER_CONSTRAINT_IGNORED',
+      'PRIVATE_PROVIDER_CODE', 'PRIVATE_OTHER_CODE', 'MATERIAL_FACT_UNRESOLVED', 'MATERIAL_FACT_UNRESOLVED'] });
+  value.audit = { ...audit, ...adapterProjection };
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, {
+    ...audit, blockingFindingCount: 7,
+    findingCodes: ['FALLBACK_PRESENTED_AS_COMPLETED', 'MATERIAL_FACT_UNRESOLVED', 'PLAYER_CONSTRAINT_IGNORED',
+      'UNCLASSIFIED_AUDIT_FINDING'],
+    findingCounts: { FALLBACK_PRESENTED_AS_COMPLETED: 1, MATERIAL_FACT_UNRESOLVED: 2, PLAYER_CONSTRAINT_IGNORED: 2,
+      UNCLASSIFIED_AUDIT_FINDING: 2 }
+  });
+});
+test('historical rejections and invalid count maps retain the original sanitized receipt fields', () => {
+  const value = observation(true);
+  const historicalAudit = { assessmentStatus: 'completed', decision: 'reject', boundToFinalAnswer: false,
+    findingCodes: ['MATERIAL_FACT_UNRESOLVED', 'PROFILE_FLOOR_NOT_MET', 'UNCLASSIFIED_AUDIT_FINDING'],
+    blockingFindingCount: 8 };
+  value.audit = historicalAudit;
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, historicalAudit);
+  for (const findingCounts of [
+    { MATERIAL_FACT_UNRESOLVED: 1, PROFILE_FLOOR_NOT_MET: 1, UNCLASSIFIED_AUDIT_FINDING: 5 },
+    { MATERIAL_FACT_UNRESOLVED: 1.5, PROFILE_FLOOR_NOT_MET: 1.5, UNCLASSIFIED_AUDIT_FINDING: 5 },
+    { MATERIAL_FACT_UNRESOLVED: 0, PROFILE_FLOOR_NOT_MET: 1, UNCLASSIFIED_AUDIT_FINDING: 7 },
+    { MATERIAL_FACT_UNRESOLVED: 2, PROFILE_FLOOR_NOT_MET: 2, UNCLASSIFIED_AUDIT_FINDING: 3, UNSUPPORTED_CLAIM: 1 },
+    { MATERIAL_FACT_UNRESOLVED: 2, PROFILE_FLOOR_NOT_MET: 2, UNCLASSIFIED_AUDIT_FINDING: 3, PRIVATE_PROVIDER_CODE: 1 },
+    JSON.parse('{"MATERIAL_FACT_UNRESOLVED":2,"PROFILE_FLOOR_NOT_MET":2,"UNCLASSIFIED_AUDIT_FINDING":3,"__proto__":1}'),
+    { MATERIAL_FACT_UNRESOLVED: 4, PROFILE_FLOOR_NOT_MET: 4 },
+    ['private value']
+  ]) {
+    value.audit = { ...historicalAudit, findingCounts };
+    assert.deepEqual(sanitizeLiveValidationObservation(value).audit, historicalAudit);
+  }
+  const completeCodes = { ...historicalAudit, blockingFindingCount: historicalAudit.findingCodes.length };
+  value.audit = { ...completeCodes, findingCounts: { PRIVATE_PROVIDER_CODE: 3 } };
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, completeCodes);
 });
 test('optional clarification observations expose only bounded counts and invariants', () => {
   const value = observation(true);

@@ -328,9 +328,10 @@ credentials. Older receipts may omit these fields.
 
 When a completed audit rejects an answer, `observation.audit.findingCodes`
 lists distinct allowlisted blocking codes and `blockingFindingCount` counts
-the recorded blocking findings before deduplication. Unrecognized model codes
-appear only as `UNCLASSIFIED_AUDIT_FINDING`. These fields describe the audit
-assessment and carry no finding text, evidence IDs or claim text. A completed
+the recorded blocking findings before deduplication. When available, `findingCounts`
+records the number of findings under each label, including unrecognized model
+codes counted under `UNCLASSIFIED_AUDIT_FINDING`. Older receipts may omit these
+counts. These fields carry no finding text, evidence IDs or claim text. A completed
 provider request or audit stage can still end in rejection. Acceptance continues
 to require a completed audit with an accept decision bound to the delivered answer.
 

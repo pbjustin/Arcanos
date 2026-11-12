@@ -587,6 +587,7 @@ describe('private Gaming live-validation adapter through the real transient v2 w
     expect(observation.audit).toEqual({
       assessmentStatus: 'completed', decision: 'reject', boundToFinalAnswer: false, effectiveTimeoutMs: 12_000,
       findingCodes: ['CITATION_DOES_NOT_SUPPORT_CLAIM', 'UNCLASSIFIED_AUDIT_FINDING'], blockingFindingCount: 3,
+      findingCounts: { CITATION_DOES_NOT_SUPPORT_CLAIM: 2, UNCLASSIFIED_AUDIT_FINDING: 1 },
       providerDiagnostic: { resultClass: 'complete', finishReason: 'stop', truncated: false,
         contentFiltered: false, contentLengthClass: 'bounded' }
     });

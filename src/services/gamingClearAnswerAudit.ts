@@ -1,4 +1,5 @@
 import type OpenAI from 'openai';
+import findingCodes from '../shared/gaming/gamingClearAnswerFindingCodes.json' with { type: 'json' };
 import { createSingleChatCompletion } from '@services/openai/chatFallbacks.js';
 import { getClearAuditModel, getClearAuditEscalationModel } from '@services/openai/credentialProvider.js';
 import { normalizeOpenAIModelReasoningEffort, resolveOpenAIModelCapabilities } from '@shared/gpt/trinityReasoningPolicy.js';
@@ -303,7 +304,9 @@ export async function runGamingClearAnswerAudit(client: OpenAI, input: GamingCle
     'Evaluate leverage against the actual question; patch notes alone cannot justify a best-build recommendation. Unknown relevant facts remain unknown. Scores are judgments, not accuracy probabilities.',
     'Return minified JSON with exactly dimensions and findings. dimensions has exactly clarity, leverage, efficiency, alignment, resilience.',
     'Each dimension has exactly status (evaluated or unknown), score (a finite number 0 through 5 when evaluated, otherwise null), reasonCodes (up to 8 UPPER_SNAKE_CASE codes), evidenceRefs (existing sourceId/revisionId/chunkId values only), unresolvedFacts (up to 4 UPPER_SNAKE_CASE codes).',
-    'findings is an array of up to 16 objects with exactly code (UPPER_SNAKE_CASE), severity (blocking or warning), evidenceRefs (existing IDs only).',
+    'findings is an array of up to 16 objects with exactly code, severity (blocking or warning), evidenceRefs (existing IDs only).',
+    'For blocking findings use the most specific matching code: ' + findingCodes.blocking.join(', ')
+      + '. If none applies, use ' + findingCodes.other + ' and keep the finding blocking.',
     'Keep distinct material findings and unresolved facts. Use only relevant evidence references, omit duplicate entries within arrays, and use [] when an array has no entries. Every evaluated dimension must cite supporting evidence references. Return no free-text reasoning, overall, or decision.'
   ].join('\n');
   if (instructions.length + data.length > GAMING_CLEAR_ANSWER_BUDGET.maxTotalPromptChars) return finish(unavailable('AUDIT_INPUT_UNAVAILABLE'));

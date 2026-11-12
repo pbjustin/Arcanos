@@ -131,6 +131,7 @@ export function sanitizeLivePreviewEvidence(evidence: unknown): unknown;
 export interface LiveValidationAuditRejection {
   findingCodes: string[];
   blockingFindingCount: number;
+  findingCounts?: Record<string, number>;
 }
 export function sanitizeLiveValidationAuditRejection(value: unknown): LiveValidationAuditRejection | undefined;
 

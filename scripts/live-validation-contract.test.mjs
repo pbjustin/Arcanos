@@ -106,7 +106,9 @@ async function exerciseController(t, { metadataStatus = 200, auditStatus = 200, 
   const answer = '1. Follow the documented system-colonisation starting procedure [1].';
   const contextFingerprint = '9'.repeat(64); let expectedPrivateAnswer;
   const rejectedAudit = { assessmentStatus: 'completed', decision: 'reject', boundToFinalAnswer: false };
-  const rejectionDiagnostics = { effectiveTimeoutMs: 12_000, findingCodes: ['MATERIAL_FACT_UNRESOLVED'], blockingFindingCount: 1 };
+  const rejectionDiagnostics = { effectiveTimeoutMs: 12_000, blockingFindingCount: 8,
+    findingCodes: ['MATERIAL_FACT_UNRESOLVED', 'PROFILE_FLOOR_NOT_MET', 'UNCLASSIFIED_AUDIT_FINDING'],
+    findingCounts: { MATERIAL_FACT_UNRESOLVED: 2, PROFILE_FLOOR_NOT_MET: 1, UNCLASSIFIED_AUDIT_FINDING: 5 } };
   assert.equal(profiles.profiles[0].input.query.game, 'Elite Dangerous');
   assert.equal(profiles.profiles[0].expected.semanticGap, 'NONE');
   assert.equal(profiles.profiles[0].input.clarificationReplies, undefined);

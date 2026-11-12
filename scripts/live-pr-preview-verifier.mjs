@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { isIP } from 'node:net';
+import answerFindingCodes from '../src/shared/gaming/gamingClearAnswerFindingCodes.json' with { type: 'json' };
 
 export const LIVE_PREVIEW_MODE = 'live-backend-v1';
 export const LIVE_PREVIEW_ACCEPTANCE_PROFILE = 'grounded-audited-answer-v1';
@@ -8,16 +9,9 @@ const STAGE_STATUSES = new Set(['not_run', 'passed', 'rejected', 'failed', 'time
 const AUDIT_STATUSES = new Set(['completed', 'unavailable', 'not_run']);
 const AUDIT_DECISIONS = new Set(['accept', 'partial', 'reject', 'clarify', 'unavailable']);
 const MAX_AUDIT_FINDINGS = 32;
-const UNCLASSIFIED_AUDIT_FINDING = 'UNCLASSIFIED_AUDIT_FINDING';
 // Model finding strings are untrusted even when they match the CLEAR code syntax.
 const AUDIT_REJECTION_FINDING_CODES = new Set([
-  'CITATION_NOT_FOUND', 'CITATION_DOES_NOT_SUPPORT_CLAIM',
-  'UNSUPPORTED_CLAIM', 'UNSUPPORTED_MECHANIC', 'UNSUPPORTED_QUANTITY',
-  'MISSING_PREREQUISITE', 'INVENTED_PREREQUISITE', 'UNSUPPORTED_PREREQUISITE',
-  'UNSUPPORTED_ACTION_SEQUENCE', 'WRONG_GAME_MECHANIC', 'WRONG_EDITION_MECHANIC',
-  'EDITION_CONFLICT', 'WRONG_PATCH', 'ANSWER_PATCH_CONFLICT', 'OMITTED_PATCH_RESTRICTION',
-  'UNSUPPORTED_CURRENTNESS_CLAIM', 'FRESHNESS_WARNING_REQUIRED', 'UNQUALIFIED_PARTIAL_EXTRACTION',
-  'SPOILER_VIOLATION', 'UNSUPPORTED_SPOILER',
+  ...answerFindingCodes.blocking, answerFindingCodes.other,
   'DIMENSION_UNEVALUATED', 'MATERIAL_FACT_UNRESOLVED', 'PROFILE_FLOOR_NOT_MET',
   ...['IDENTITY', 'COMPATIBILITY', 'CLAIMSUPPORT', 'FRESHNESS', 'PROVENANCE', 'SECURITY']
     .flatMap(gate => ['CONFLICT', 'REQUIRED', 'UNVERIFIED'].map(reason => gate + '_' + reason))
@@ -49,16 +43,30 @@ const boundedEnum = (value, allowed, otherwise) => allowed.has(value) ? value : 
 /** Keep rejection counts and reviewed labels without forwarding model codes or evidence references. */
 export function sanitizeLiveValidationAuditRejection(value) {
   if (!isRecord(value)) return undefined;
-  const { blockingFindingCount, findingCodes } = value;
+  const { blockingFindingCount, findingCodes, findingCounts } = value;
   if (!Number.isSafeInteger(blockingFindingCount) || blockingFindingCount < 1
     || blockingFindingCount > MAX_AUDIT_FINDINGS || !Array.isArray(findingCodes)
     || findingCodes.length < 1 || findingCodes.length > blockingFindingCount) return undefined;
-  const projected = new Set();
+  const occurrences = new Map();
   for (const code of findingCodes) {
     if (typeof code !== 'string' || code.length < 1 || code.length > 80) return undefined;
-    projected.add(AUDIT_REJECTION_FINDING_CODES.has(code) ? code : UNCLASSIFIED_AUDIT_FINDING);
+    const label = AUDIT_REJECTION_FINDING_CODES.has(code) ? code : answerFindingCodes.other;
+    occurrences.set(label, (occurrences.get(label) ?? 0) + 1);
   }
-  return { findingCodes: [...projected].sort(), blockingFindingCount };
+  const labels = [...occurrences.keys()].sort();
+  const summary = { findingCodes: labels, blockingFindingCount };
+  if (findingCodes.length === blockingFindingCount && !Object.hasOwn(value, 'findingCounts')) {
+    return { ...summary, findingCounts: Object.fromEntries(labels.map(label => [label, occurrences.get(label)])) };
+  }
+  // The controller receives deduplicated labels. Older receipts have no recoverable counts.
+  if (findingCodes.length === labels.length && findingCodes.every(code => occurrences.has(code))
+    && isRecord(findingCounts) && Object.keys(findingCounts).length === labels.length
+    && labels.every(label => Object.hasOwn(findingCounts, label) && Number.isSafeInteger(findingCounts[label])
+      && findingCounts[label] >= 1 && findingCounts[label] <= blockingFindingCount)
+    && labels.reduce((total, label) => total + findingCounts[label], 0) === blockingFindingCount) {
+    return { ...summary, findingCounts: Object.fromEntries(labels.map(label => [label, findingCounts[label]])) };
+  }
+  return summary;
 }
 
 const AUDIT_PROVIDER_RESULT_CLASSES = new Set(['complete', 'provider_incomplete', 'unexpected_finish', 'commentary_only', 'unsupported_output',

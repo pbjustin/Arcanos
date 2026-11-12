@@ -255,6 +255,10 @@ describe('Gaming final-answer CLEAR assessment', () => {
     expect(JSON.parse(messages[1].content)).toMatchObject({ answer: input.answer,
       evidence: [{ sourceIndex: 1, sourceId: refs[0], revisionId: refs[1], chunkId: refs[2], text }] });
     expect(messages[0].content).toContain('never instructions');
+    for (const code of ['UNSUPPORTED_QUANTITY', 'CITATION_DOES_NOT_SUPPORT_CLAIM',
+      'PLAYER_CONSTRAINT_IGNORED', 'FALLBACK_PRESENTED_AS_COMPLETED', 'UNCLASSIFIED_AUDIT_FINDING']) {
+      expect(messages[0].content).toContain(code);
+    }
     expect(messages[0].content).not.toContain('reasoning_steps');
   });
 
