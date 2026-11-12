@@ -835,6 +835,39 @@ test('controller sanitizes the actual direct-provider snapshot including workflo
   assert.ok(actual.reservedSpendMicroUsd >= actual.observedSpendMicroUsd);
 });
 
+test('controller retains a reserved audit failure when the run expires during settlement', async t => {
+  const { target } = fixture(t);
+  const plan = { runId: 'a'.repeat(32), commitSha: sha, prNumber: 1528, runtimeDeploymentId, profileHash: 'b'.repeat(64) };
+  const model = target.models[0].id;
+  const observation = { moduleId: 'gaming', stage: 'generation' };
+  const expiresAtMs = 10_000;
+  let nowMs = 0;
+  const provider = createLiveValidationProvider({ target,
+    identity: { sourceCommit: sha, deploymentId: runtimeDeploymentId },
+    apiKey: 'sk-unit-test-fixture-' + 'x'.repeat(40), observation: () => observation,
+    now: () => nowMs, expiresAtMs,
+    fetchImplementation: async () => {
+      if (observation.stage === 'answer_audit') nowMs = expiresAtMs;
+      return Response.json({ id: 'response', object: 'response', model, output: [],
+        usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 } });
+    } });
+  t.after(() => provider.close());
+  provider.beginWorkflow('gaming-guide-positive');
+  const invoke = () => provider.fetch('https://api.openai.com/v1/responses', { method: 'POST',
+    body: JSON.stringify({ model, input: 'Use acquired source evidence.', max_output_tokens: 100 }) });
+  await invoke();
+  observation.stage = 'answer_audit';
+  await assert.rejects(invoke(), { code: 'LIVE_VALIDATION_BUDGET_EXPIRED' });
+  const snapshot = provider.snapshot();
+  assert.equal(snapshot.closed, true);
+  assert.equal(snapshot.usage.auditCalls, 1);
+  assert.equal(snapshot.stages[1].code, 'LIVE_VALIDATION_BUDGET_EXPIRED');
+  const actual = sanitizeLiveValidationUsage({ ...plan, ...snapshot, status: 'stopped' }, { plan, target });
+  assert.deepEqual(actual.answerAuditProvider, [
+    { outcome: 'failed', elapsedMs: expiresAtMs, code: 'LIVE_VALIDATION_BUDGET_EXPIRED' }
+  ]);
+});
+
 test('answer audit provider receipt keeps only bounded reserved-call diagnostics', t => {
   const { target } = fixture(t);
   const plan = { runId: 'a'.repeat(32), commitSha: sha, prNumber: 1528, runtimeDeploymentId, profileHash: 'b'.repeat(64) };
