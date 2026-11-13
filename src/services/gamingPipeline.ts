@@ -1331,9 +1331,14 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
                 }
               } } : {}),
               gamingClearAnswerAudit: async (answer, runtimeBudget, remainingWatchdogMs) => {
-                // Test the candidate before server-authored qualifications can mask a refusal.
-                if (isPureGamingProviderCapabilityRefusal(answer)) {
-                  throw Object.assign(new Error("Gaming provider returned a capability refusal instead of gameplay guidance."), {
+                // An echoed qualification and its citation are not gameplay.
+                // Use a separate view so audit and delivery retain exact text.
+                const withoutQualifications = answerQualifications.reduce(
+                  (text, qualification) => text.replaceAll(qualification, " "), answer);
+                const substantiveCandidate = normalizeGamingInlineSourceReferences(withoutQualifications, 0).response;
+                if (isPureGamingProviderCapabilityRefusal(substantiveCandidate)
+                  || (substantiveCandidate !== answer && !hasVisibleContent(substantiveCandidate))) {
+                  throw Object.assign(new Error("Gaming provider did not produce substantive gameplay guidance."), {
                     code: "GAMING_PROVIDER_UNUSABLE_RESPONSE"
                   });
                 }

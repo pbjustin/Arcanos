@@ -69,3 +69,71 @@ case and proceed to the wrong-game control only after verified cited delivery.
 Preserve the sanitized receipt and verify provider stop and process cleanup.
 Keep content capture disabled unless separately approved under the
 [private diagnostic constraints](../../../LIVE_VALIDATION.md#diagnosing-rejected-answers).
+
+## Final stabilization
+
+The second consumed rejection, `914680b8-66e6-4d01-857b-b2cdaf29e145`
+at `95cdb4c8`, has the same four counts. Both receipts preserve the completed
+rejection and the withholding decision. Neither preserves the rejected
+candidate or the claim-to-passage and dimension data needed to identify the
+historical cause.
+
+Commit `dc421666` fixed the verified plural-step coverage defect. Replaying
+the retained Frontier extraction at that commit yields two source-bound
+passages for both the original question and the supplied-guide profile. The
+passages retain the credit prerequisite, the contact, the map selection and
+claim intent, and the subsequent initial station choice. The control with
+only the prerequisite and the contact fails starting-step coverage.
+
+The following checks complement the earlier claim matrix. The authored
+publisher and provider fixtures run through the existing Gaming boundaries.
+The policy independently applies the audit's findings, the score floors and
+the final answer binding.
+
+| Fixture | Expected | Observed | Decision boundary |
+| --- | --- | --- | --- |
+| All gameplay claims supported by the selected Elite passages | Deliver | Delivered | Grounded Trinity candidate |
+| Invented prerequisite | Withhold | Withheld | Completed audit reports the unsupported permit |
+| Unsupported quantity | Withhold | Withheld | Completed audit rejects the price absent from the cited passage |
+| Reversed starting procedure | Withhold | Withheld | Completed audit rejects the contradicted order |
+| Supported advice with a visible partial-extraction qualification | Deliver | Delivered | Completed positive audit of the exact qualified answer |
+| Missing material patch qualification | Withhold | Withheld | Completed negative audit retains a blocking finding |
+| Source-supported but incomplete guide | Withhold | Withheld | Completed negative audit finds a missing requested detail |
+| Standalone refusal or only an echoed qualification | Withhold before audit | Withheld | Candidate integrity |
+| Capability refusal followed by invented advice | Withhold | Withheld | Completed negative audit of the actual advice |
+| Correct citations on a supported guide | Deliver | Delivered | Each source index resolves to its selected passage |
+| Wrong source number or fabricated source URL | Withhold | Withheld | Claim support or citation validation |
+| Explicit request for citations with no selected citation in the answer | Withhold before audit | Withheld | Citation validation |
+| Wrong-game evidence | Withhold before generation | Withheld | Source identity |
+| Complete negative CLEAR assessment | Withhold | Withheld | Blocking finding survives favorable scores |
+| Complete positive CLEAR assessment | Deliver | Delivered | Exact candidate and evidence binding |
+| Valid-looking JSON carried by incomplete audit output | Withhold | Withheld | Provider completion validation |
+
+Before the final repair, an echoed server qualification could make a pure
+refusal or qualification-only draft reach the auditor and survive a permissive
+verdict. The candidate check now ignores the exact server qualification while
+testing for substantive text. The answer and qualification sent to CLEAR and
+returned on acceptance remain byte-bound.
+
+An explicit citation request also reached a permissive audit with no selected
+citation. The audit now requires a selected numeric reference or source URL for
+that request form. Actual claim-to-passage support still requires CLEAR. The
+authenticated Frontier fixture verifies that an uncited final draft stops
+before semantic audit even when its gameplay prose is otherwise supported.
+
+The deterministic version check also treated a standalone statement of
+guide uncertainty as an affirmative patch claim and inspected only the first
+version reference. The repaired check sends that bounded uncertainty form to
+the semantic audit and still rejects a conflicting affirmative version,
+including when it follows a supported reference.
+
+For an authorized diagnostic run, inspect only the candidate, selected passages
+and index map at the audit call, then the parsed assessment and disposition
+before teardown. Compare parsed provider findings to the policy's final
+findings to identify derived codes. Use the isolated operator's in-memory
+session with recording and transcript capture disabled. Verify the session
+and runtime are gone afterward. The existing accepted-answer writer cannot
+provide encrypted, expiring rejected-candidate storage, and this stabilization
+does not enable any new capture. No reviewed run-local observer currently
+exposes the complete diagnostic tuple. Before authorizing capture, verify its
+exact-run scope, content bounds, and teardown with synthetic data.

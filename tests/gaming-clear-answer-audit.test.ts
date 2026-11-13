@@ -525,6 +525,46 @@ describe('Gaming final-answer CLEAR assessment', () => {
   });
 
   it.each([
+    'Turn the west valve.',
+    'Turn the west valve. See [Source 1 guide notes](https://example.com/other).',
+    'Turn the west valve. See [Source 1 guide notes].',
+    'Turn the west valve. See [the guide](https://example.com/guide-copy).'
+  ])('withholds an explicitly requested answer without a selected citation: %s', async answer => {
+    const result = await run({ prompt: input.prompt + ' Cite the guide sources.', answer });
+    expect(result.assessment).toMatchObject({ assessmentStatus: 'completed', decision: 'reject',
+      blockingFindings: expect.arrayContaining([expect.objectContaining({ code: 'CITATION_NOT_FOUND' })]) });
+    expect(createSingleChatCompletion).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'Turn the west valve. [1]',
+    'Turn the west valve. [Source 1]',
+    'Turn the west valve. [Source 2 guide notes](https://example.com/guide)',
+    'Turn the west valve. See https://example.com/guide.'
+  ])('allows a selected citation through to semantic audit: %s', async answer => {
+    const result = await run({ prompt: input.prompt + ' Cite the guide sources.', answer });
+    expect(result.assessment.decision).toBe('accept');
+    expect(gamingClearAnswerMatches(result.assessment, answer)).toBe(true);
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the existing semantic audit for uncited answers without a citation request', async () => {
+    const result = await run({ answer: 'Turn the west valve.' });
+    expect(result.assessment.decision).toBe('accept');
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    'What is the quest named “The Archivist, Cite the Sources!”?',
+    'How do I start "The Archivist, Cite the Sources!"?',
+    "What's the best way to open the return route? Don't cite the sources."
+  ])('does not treat quoted quest titles or negated wording as citation directives: %s', async prompt => {
+    const result = await run({ prompt, answer: 'Turn the west valve.' });
+    expect(result.assessment.decision).toBe('accept');
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
     { dimensions: { ...dimensions(), clarity: { ...dimensions().clarity, score: '5' } }, findings: [] },
     { dimensions: dimensions(), findings: [], overall: 5 },
     { dimensions: dimensions(), findings: [{ code: 'SUPPORTED', severity: 'warning', evidenceRefs: ['nonexistent'] }] },
@@ -667,6 +707,31 @@ describe('Gaming final-answer CLEAR assessment', () => {
     createSingleChatCompletion.mockClear();
     const rejected = await run({ knowledge, answer: 'For patch 2.0, turn the west valve. [1]' });
     expect(rejected.assessment.decision).toBe('reject');
+    expect(createSingleChatCompletion).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'The guide does not establish whether these steps work on patch 2.0.',
+    'The guide documents this route on patch 1.0. This guide does not establish whether the route works on patch 2.0.'
+  ])('preserves source-limited uncertainty for the semantic audit: %s', async statement => {
+    const knowledge = { ...input.knowledge, sources: [{ ...input.knowledge.sources[0], verifiedPatchVersion: '1.0' }] };
+    const answer = `${input.answer} ${statement}`;
+    const { assessment } = await run({ knowledge, answer });
+    expect(assessment).toMatchObject({ assessmentMethod: 'mixed', decision: 'accept' });
+    expect(gamingClearAnswerMatches(assessment, answer)).toBe(true);
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    'The guide covers this route on patch 1.0, but these steps also work on patch 2.0.',
+    'The guide does not establish whether these steps work on patch 2.0, but the route works on patch 3.0.',
+    'The guide does not establish whether these steps work on patch 2.0. The route works on patch 3.0.',
+    'The guide does not establish whether these steps work on patch 2.0. The route works on\npatch 3.0.'
+  ])('rejects an unsupported patch assertion alongside another patch reference: %s', async statement => {
+    const knowledge = { ...input.knowledge, sources: [{ ...input.knowledge.sources[0], verifiedPatchVersion: '1.0' }] };
+    const { assessment } = await run({ knowledge, answer: `${input.answer} ${statement}` });
+    expect(assessment).toMatchObject({ assessmentMethod: 'deterministic', decision: 'reject',
+      blockingFindings: expect.arrayContaining([expect.objectContaining({ code: 'ANSWER_PATCH_CONFLICT' })]) });
     expect(createSingleChatCompletion).not.toHaveBeenCalled();
   });
 });

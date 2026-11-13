@@ -18,6 +18,7 @@ import {
 } from '@shared/gaming/gamingClearPolicy.js';
 import type { GamingPlayerContext } from '@shared/gaming/gamingPlayerContext.js';
 import type { LiveValidationAuditProviderDiagnostic } from '@shared/gaming/liveValidationObservation.js';
+import { gamingHybridCitationTargets } from '@shared/gaming/gamingHybridPolicyCore.js';
 import type { GamingStoredKnowledgeContext } from '@shared/gaming/gamingStoredEvidenceCore.js';
 import { GAMING_STALE_GUIDE_WARNING, GAMING_UNVERIFIED_GUIDE_WARNING, gamingAnswerClaimsVerifiedCurrentness,
   resolveGamingFreshnessDisposition } from '@shared/gaming/gamingFreshnessDisposition.js';
@@ -45,6 +46,9 @@ const MAX_AUDIT_RESPONSE_CHARS = 16_000;
 const NUMERIC_CITATION = new RegExp(citationSyntax.numericReferencePattern, 'giu');
 const NUMBERED_CITATION_LINK = /\[\s*(?:sources?\s+)?(\d+(?:\s*,\s*\d+)*)\s*\]\(/giu;
 const CITATION_LINK_DESTINATION = /^\s*(?:<(https?:\/\/[^\s<>]+)>|(https?:\/\/[^\s)<>]+))(?:\s+(?:"[^"\r\n]*"|'[^'\r\n]*'|\([^()\r\n]*\)))?\s*\)/iu;
+const EXPLICIT_CITATION_REQUEST = /(?:^|[.!?,;\n]|\band\b)\s*(?:please\s+)?(?:cite\s+(?:(?:your|the|these|guide)\s+){0,2}sources?|(?:include|provide)\s+(?:source\s+)?citations?)(?=\s*[.!?,;]|\s*$)/iu;
+const ANSWER_PATCH_REFERENCE = /\b(?:for|on|in)\s+(?:current\s+)?patch\s+(\d+(?:\.\d+){1,2})\b/giu;
+const GUIDE_PATCH_UNCERTAINTY = /(?:^|[.!?](?:\s*\[(?:sources?\s+)?\d+(?:\s*,\s*\d+)*\])?\s+|\r?\n)\s*(?:the|this)\s+guide\s+does\s+not\s+establish\s+whether\s+(?:these\s+steps\s+work|(?:the|this)\s+(?:route|strategy|build)\s+works)\s+on\s+patch\s+\d+(?:\.\d+){1,2}\.(?=\s|$)/giu;
 
 interface AuditProviderFields {
   providerStatus?: unknown;
@@ -241,7 +245,8 @@ export async function runGamingClearAnswerAudit(client: OpenAI, input: GamingCle
   };
   const evidence = gamingClearAnswerEvidence(input);
   // Descriptive link labels consume a match without capturing a source index.
-  const invalidCitation = [...input.answer.matchAll(NUMERIC_CITATION)]
+  const numericCitations = [...input.answer.matchAll(NUMERIC_CITATION)];
+  const invalidCitation = numericCitations
     .some(match => (match[1] ?? match[2])?.split(',').some(index =>
       !evidence.some(item => item.sourceIndex === Number(index.trim()))));
   const rejectCitation = (code: 'CITATION_NOT_FOUND' | 'CITATION_DOES_NOT_SUPPORT_CLAIM') =>
@@ -256,6 +261,14 @@ export async function runGamingClearAnswerAudit(client: OpenAI, input: GamingCle
   });
   if (mismatchedCitationLink) return rejectCitation('CITATION_DOES_NOT_SUPPORT_CLAIM');
   if (input.evidenceAssessment.decision !== 'accept') return finish(unavailable('EVIDENCE_NOT_SUFFICIENT'));
+  if (EXPLICIT_CITATION_REQUEST.test(input.prompt.replace(/"[^"\r\n]{0,160}"|“[^”\r\n]{0,160}”/gu, ' '))) {
+    // A bare Source N followed by more label text is not an inline citation.
+    const hasNumberedCitation = numericCitations.some(match => match[1] !== undefined
+      || match[2] !== undefined && /^\s*(?:[.,;:!?\])]|$)/u.test(input.answer.slice(match.index + match[0].length)));
+    const hasSelectedUrl = !hasNumberedCitation && gamingHybridCitationTargets(input.answer).some(url =>
+      evidence.some(item => input.knowledge.sources[item.sourceIndex - 1]?.url === url));
+    if (!hasNumberedCitation && !hasSelectedUrl) return rejectCitation('CITATION_NOT_FOUND');
+  }
   if (base.questionProfile === 'advisory_recommendation') {
     const qualified = input.answer.includes(GAMING_UNVERIFIED_GUIDE_WARNING) || input.answer.includes(GAMING_STALE_GUIDE_WARNING);
     if (!qualified || gamingAnswerClaimsVerifiedCurrentness(input.answer)) {
@@ -280,8 +293,11 @@ export async function runGamingClearAnswerAudit(client: OpenAI, input: GamingCle
   });
   const supportedPatches = new Set(applicability.flatMap(item => [item.verifiedPatchVersion, item.patch, item.currentPatch])
     .filter((value): value is string => typeof value === 'string'));
-  const answerPatch = /\b(?:for|on|in|use\s+this\s+(?:build\s+)?on)\s+(?:current\s+)?patch\s+(\d+(?:\.\d+){1,2})\b/iu.exec(input.answer)?.[1];
-  if (answerPatch && supportedPatches.size && !supportedPatches.has(answerPatch)) {
+  // Standalone source limitations remain part of the semantic audit. They
+  // cannot mask a separate version assertion, including one in the same sentence.
+  const hasUnsupportedPatch = supportedPatches.size > 0 && [...input.answer.replace(GUIDE_PATCH_UNCERTAINTY, '.')
+    .matchAll(ANSWER_PATCH_REFERENCE)].some(match => !supportedPatches.has(match[1]));
+  if (hasUnsupportedPatch) {
     return finish(createGamingClearAssessment({ ...base, dimensions: unknownDimensions(), assessmentMethod: 'deterministic',
       gates: { ...base.gates, compatibility: 'conflict' }, findings: [{ code: 'ANSWER_PATCH_CONFLICT', severity: 'blocking', evidenceRefs: base.evidenceRefs }] }));
   }
