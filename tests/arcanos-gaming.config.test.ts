@@ -86,7 +86,8 @@ describe("ArcanosGaming configuration", () => {
     expect(getGamingStageTimeoutMs("build", 50_000)).toBe(2_000);
     expect(getGamingStageTimeoutMs("meta", 50_000)).toBe(4_000);
     process.env.ARCANOS_GAMING_BUILD_STAGE_TIMEOUT_MS = "90000";
-    expect(getGamingStageTimeoutMs("build", 12_000)).toBe(2_500);
+    // Keep 500 ms of safety margin, 5 s for final generation, and 1 s for terminal work.
+    expect(getGamingStageTimeoutMs("build", 12_000)).toBe(5_500);
   });
 
   it("returns zero pipeline budget when the caller cannot supply required outer headroom", () => {
