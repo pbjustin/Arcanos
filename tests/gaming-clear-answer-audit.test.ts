@@ -728,7 +728,7 @@ describe('Gaming final-answer CLEAR assessment', () => {
     const params = createSingleChatCompletion.mock.calls[0][1] as { messages: Array<{ content: string }> };
     expect(JSON.parse(params.messages[1].content).applicability[0]).toMatchObject({ partialExtraction: true, patch: '1.0',
       sourceAssessmentStatus: 'not_run' });
-    expect(params.messages[0].content).toContain('missing prerequisites and unseen guide sections remain unknown');
+    expect(params.messages[0].content).toContain('Record unresolvedFacts only for unknown facts needed to answer the actual question');
     createSingleChatCompletion.mockClear();
     const rejected = await run({ knowledge, answer: 'For patch 2.0, turn the west valve. [1]' });
     expect(rejected.assessment.decision).toBe('reject');
@@ -737,6 +737,7 @@ describe('Gaming final-answer CLEAR assessment', () => {
 
   it.each([
     'The guide does not establish whether these steps work on patch 2.0.',
+    'The guide does not confirm whether these steps work on patch 2.0.',
     'The guide documents this route on patch 1.0. This guide does not establish whether the route works on patch 2.0.'
   ])('preserves source-limited uncertainty for the semantic audit: %s', async statement => {
     const knowledge = { ...input.knowledge, sources: [{ ...input.knowledge.sources[0], verifiedPatchVersion: '1.0' }] };
@@ -751,12 +752,16 @@ describe('Gaming final-answer CLEAR assessment', () => {
     'The guide covers this route on patch 1.0, but these steps also work on patch 2.0.',
     'The guide does not establish whether these steps work on patch 2.0, but the route works on patch 3.0.',
     'The guide does not establish whether these steps work on patch 2.0. The route works on patch 3.0.',
-    'The guide does not establish whether these steps work on patch 2.0. The route works on\npatch 3.0.'
+    'The guide does not establish whether these steps work on patch 2.0. The route works on\npatch 3.0.',
+    'The guide does not confirm whether these steps work on patch 2.0. The route works on patch 3.0.'
   ])('rejects an unsupported patch assertion alongside another patch reference: %s', async statement => {
     const knowledge = { ...input.knowledge, sources: [{ ...input.knowledge.sources[0], verifiedPatchVersion: '1.0' }] };
-    const { assessment } = await run({ knowledge, answer: `${input.answer} ${statement}` });
+    const result = await run({ knowledge, answer: `${input.answer} ${statement}` });
+    const { assessment } = result;
     expect(assessment).toMatchObject({ assessmentMethod: 'deterministic', decision: 'reject',
-      blockingFindings: expect.arrayContaining([expect.objectContaining({ code: 'ANSWER_PATCH_CONFLICT' })]) });
+      gates: { compatibility: 'verified' },
+      blockingFindings: expect.arrayContaining([expect.objectContaining({ code: 'UNSUPPORTED_CURRENTNESS_CLAIM' })]) });
+    expect(result).toMatchObject({ factualSupport: 'UNVERIFIED' });
     expect(createSingleChatCompletion).not.toHaveBeenCalled();
   });
 });

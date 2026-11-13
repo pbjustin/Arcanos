@@ -1051,6 +1051,14 @@ also block high scores. All model explanation fields are bounded reason codes;
 free-text reasoning is rejected by runtime validation, not merely discouraged
 by the prompt.
 
+The internal `gaming-claim-support/v1` audit distinguishes evidence that
+supports an assertion, evidence that leaves it unverified, and evidence that
+affirmatively contradicts it. Contradiction findings require a selected passage
+reference. The audit model judges what that passage establishes. An
+unrecognized finding remains blocking. Quality scores, material completeness,
+and applicability can independently prevent delivery even when the stated
+claims are supported. The five CLEAR v7 dimensions and delivery floors still apply.
+
 The answer payload contains the actual answer, passages, source/revision/chunk
 IDs, applicable game/edition/patch/build/season and verification/effective-time
 metadata, and partial-extraction diagnostics. Direct context clipping retains

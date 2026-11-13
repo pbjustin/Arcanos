@@ -220,8 +220,9 @@ beforeEach(() => {
       // This synthetic semantic judge independently checks the actual answer's
       // claim-to-source links, not equality with the model stub's planned draft.
       const answerLines: string[] = data.answer.split('\n');
-      const guidePassages: Array<{ text: string; sourceIndex: number }> = data.evidence;
+      const guidePassages: Array<{ text: string; sourceIndex: number; chunkId: string }> = data.evidence;
       let specificFinding: string | undefined;
+      let findingRef: string | undefined;
       if (scenario.id === 'E' && guidePassages.some(passage => passage.text.includes(rainwheelCondition))
         && !data.answer.includes('while the village gate is open')) {
         specificFinding = 'MISSING_PREREQUISITE';
@@ -239,7 +240,10 @@ beforeEach(() => {
         if (procedureSource && procedure && deploysBeforeClaim.test(procedure)
           && !guidePassages.some(passage => passage.sourceIndex === Number(procedureSource[1])
             && deploysBeforeClaim.test(passage.text))) {
-          specificFinding = 'UNSUPPORTED_ACTION_SEQUENCE';
+          const supportedOrder = guidePassages.find(passage => passage.sourceIndex === Number(procedureSource[1])
+            && /purchasing a colonisation claim\.[\s\S]*?Travel to the selected system with the claim, deploy the system colonisation ship/iu.test(passage.text));
+          specificFinding = supportedOrder ? 'CONTRADICTED_CLAIM' : 'UNSUPPORTED_ACTION_SEQUENCE';
+          findingRef = supportedOrder?.chunkId;
         }
       }
       const supported = permissiveAudit || !specificFinding && scenario.claims.every(claim => {
@@ -253,7 +257,8 @@ beforeEach(() => {
       const refs = data.evidence.map((chunk: any) => chunk.chunkId);
       output = JSON.stringify({ dimensions: Object.fromEntries(GAMING_CLEAR_DIMENSIONS.map(name => [name,
         { status: 'evaluated', score: supported ? 4.5 : 1, reasonCodes: [supported ? 'SUPPORTED_FIXTURE' : 'UNSUPPORTED_CLAIM'], evidenceRefs: refs, unresolvedFacts: [] }])),
-        findings: supported ? [] : [{ code: specificFinding ?? 'UNSUPPORTED_CLAIM', severity: 'blocking', evidenceRefs: refs }] });
+        findings: supported ? [] : [{ code: specificFinding ?? 'UNSUPPORTED_CLAIM', severity: 'blocking',
+          evidenceRefs: findingRef ? [findingRef] : refs }] });
       if (auditInterruption !== 'none') {
         expect(supported).toBe(true);
         return {
@@ -523,7 +528,7 @@ it('withholds a guide that omits a material condition from its selected source',
 
 it.each([
   ['invented_prerequisite', 'INVENTED_PREREQUISITE'],
-  ['wrong_order', 'UNSUPPORTED_ACTION_SEQUENCE'],
+  ['wrong_order', 'CONTRADICTED_CLAIM'],
 ] as const)('withholds Elite Dangerous guidance with %s after a complete rejecting audit', async (attack, findingCode) => {
   scenario = scenarios[2];
   poison = attack;
@@ -535,6 +540,10 @@ it.each([
   expect(JSON.parse(response.output_text).findings).toEqual([
     expect.objectContaining({ code: findingCode, severity: 'blocking' })
   ]);
+  expect(logger.info).toHaveBeenCalledWith('gaming.clear.answer.completed', expect.objectContaining({
+    factualSupport: attack === 'wrong_order' ? 'CONTRADICTED' : 'UNVERIFIED', decision: 'reject',
+    blockingCategories: expect.arrayContaining(['factual_support'])
+  }));
 });
 
 it('rejects a claim attached to the wrong independently accepted source', async () => {
