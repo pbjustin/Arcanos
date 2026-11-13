@@ -638,6 +638,47 @@ test('rejection counts retain repeated and reviewed findings through adapter and
       UNCLASSIFIED_AUDIT_FINDING: 2 }
   });
 });
+test('rejection receipts distinguish explicit unclassified findings from unmapped codes', () => {
+  const value = observation(true);
+  const audit = { assessmentStatus: 'completed', decision: 'reject', boundToFinalAnswer: false };
+  const unclassified = 'UNCLASSIFIED_AUDIT_FINDING';
+  const privateCode = 'MODEL_SUPPLIED_PRIVATE_IDENTIFIER';
+  for (const [codes, unmappedFindingCount] of [
+    [[unclassified, unclassified], 0],
+    [[unclassified, privateCode], 1],
+    [[privateCode, privateCode], 2]
+  ]) {
+    value.audit = { ...audit, ...sanitizeLiveValidationAuditRejection({
+      blockingFindingCount: 3, findingCodes: ['MATERIAL_FACT_UNRESOLVED', ...codes]
+    }, 'assessment') };
+    const projection = sanitizeLiveValidationObservation(value).audit;
+    assert.deepEqual(projection, { ...audit, findingCodes: ['MATERIAL_FACT_UNRESOLVED', unclassified],
+      blockingFindingCount: 3, findingCounts: { MATERIAL_FACT_UNRESOLVED: 1, [unclassified]: 2 },
+      unmappedFindingCount });
+    assert.equal(JSON.stringify(projection).includes(privateCode), false);
+  }
+});
+
+test('rejection receipts retain unmapped counts only with a consistent allowlisted aggregate', () => {
+  const value = observation(true);
+  const audit = { assessmentStatus: 'completed', decision: 'reject', boundToFinalAnswer: false };
+  const previous = { ...audit, findingCodes: ['UNCLASSIFIED_AUDIT_FINDING'], blockingFindingCount: 1,
+    findingCounts: { UNCLASSIFIED_AUDIT_FINDING: 1 } };
+  value.audit = previous;
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, previous);
+  for (const unmappedFindingCount of [-1, 2, 0.5, 'MODEL_SUPPLIED_PRIVATE_IDENTIFIER', null, { private: 'hidden' }]) {
+    value.audit = { ...previous, unmappedFindingCount };
+    assert.deepEqual(sanitizeLiveValidationObservation(value).audit, previous);
+  }
+  const { findingCounts: _counts, ...withoutCounts } = previous;
+  value.audit = { ...withoutCounts, unmappedFindingCount: 1 };
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, previous);
+  const classified = { ...audit, findingCodes: ['MATERIAL_FACT_UNRESOLVED'], blockingFindingCount: 1,
+    findingCounts: { MATERIAL_FACT_UNRESOLVED: 1 } };
+  value.audit = { ...classified, unmappedFindingCount: 0 };
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, classified);
+});
+
 test('historical rejections and invalid count maps retain the original sanitized receipt fields', () => {
   const value = observation(true);
   const historicalAudit = { assessmentStatus: 'completed', decision: 'reject', boundToFinalAnswer: false,

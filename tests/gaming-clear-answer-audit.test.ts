@@ -158,6 +158,31 @@ describe('Gaming final-answer CLEAR assessment', () => {
     expect(GAMING_CLEAR_ANSWER_BUDGET).toMatchObject({ maxTimeoutMs: 12_000, maxCalls: 1, maxRepairs: 0 });
   });
 
+  it('logs bounded audit diagnostics without unreviewed model codes or raw evidence references', async () => {
+    const scores = dimensions();
+    scores.clarity.reasonCodes = ['SYNTHETIC_PRIVATE_REASON'];
+    scores.alignment.score = 3.75;
+    scores.resilience.unresolvedFacts = ['SYNTHETIC_PRIVATE_UNRESOLVED'];
+    createSingleChatCompletion.mockResolvedValue(completion({ dimensions: scores, findings: [
+      { code: 'SYNTHETIC_PRIVATE_FINDING', severity: 'warning', evidenceRefs: [refs[2]] }
+    ] }));
+
+    const { assessment } = await run();
+
+    expect(assessment).toMatchObject({ decision: 'reject', blockingFindings: [
+      expect.objectContaining({ code: 'SYNTHETIC_PRIVATE_FINDING', severity: 'blocking' }),
+      expect.objectContaining({ code: 'MATERIAL_FACT_UNRESOLVED' }),
+      expect.objectContaining({ code: 'PROFILE_FLOOR_NOT_MET' })
+    ] });
+    expect(logger.info).toHaveBeenCalledWith('gaming.clear.answer.completed', expect.objectContaining({
+      decision: 'reject', blockingFindingCount: 3,
+      reasonCodes: ['UNCLASSIFIED_AUDIT_FINDING', 'MATERIAL_FACT_UNRESOLVED', 'PROFILE_FLOOR_NOT_MET'],
+      dimensionScores: expect.objectContaining({ clarity: { status: 'evaluated', score: 4.5 } })
+    }));
+    const telemetry = JSON.stringify(jest.mocked(logger.info).mock.calls);
+    for (const value of ['SYNTHETIC_PRIVATE_', ...refs]) expect(telemetry).not.toContain(value);
+  });
+
   describe.each(auditLanes)('%s audit deadline clamps', lane => {
     it.each([
       { remainingWatchdogMs: 2_500, expected: 1_500 },

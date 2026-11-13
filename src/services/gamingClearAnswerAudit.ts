@@ -13,7 +13,7 @@ import { logger } from '@platform/logging/structuredLogging.js';
 import { GAMING_GENERATION_TERMINAL_HEADROOM_MS } from '@shared/gaming/gamingGenerationBudgetCore.js';
 import { getTokenParameter } from '@shared/tokenParameterHelper.js';
 import {
-  GAMING_CLEAR_RUBRIC, classifyGamingClearQuestion, createGamingClearAssessment,
+  GAMING_CLEAR_NONBLOCKING_ANSWER_FINDINGS, GAMING_CLEAR_RUBRIC, classifyGamingClearQuestion, createGamingClearAssessment,
   gamingClearHash, parseGamingClearModelAssessment, type GamingClearAssessment
 } from '@shared/gaming/gamingClearPolicy.js';
 import type { GamingPlayerContext } from '@shared/gaming/gamingPlayerContext.js';
@@ -42,6 +42,11 @@ export interface GamingClearAnswerInput extends GamingPlayerContext {
 const AUDIT_PROVIDER_STATUSES = ['completed', 'incomplete', 'failed', 'cancelled', 'queued', 'in_progress'] as const;
 const AUDIT_FINISH_REASONS = ['stop', 'length', 'tool_calls', 'content_filter', 'function_call'] as const;
 const AUDIT_INCOMPLETE_REASONS = ['max_output_tokens', 'content_filter', 'none'] as const;
+const AUDIT_LOG_REASON_CODES = new Set([
+  ...findingCodes.blocking, ...findingCodes.policy, ...GAMING_CLEAR_NONBLOCKING_ANSWER_FINDINGS,
+  'AUDIT_TIMEOUT', 'AUDIT_BUDGET_EXHAUSTED', 'AUDIT_PROVIDER_ERROR', 'AUDIT_PROVIDER_INCOMPLETE',
+  'AUDIT_MALFORMED', 'AUDIT_INPUT_UNAVAILABLE', 'EVIDENCE_NOT_SUFFICIENT'
+]);
 const MAX_AUDIT_RESPONSE_CHARS = 16_000;
 const NUMERIC_CITATION = new RegExp(citationSyntax.numericReferencePattern, 'giu');
 const NUMBERED_CITATION_LINK = /\[\s*(?:sources?\s+)?(\d+(?:\s*,\s*\d+)*)\s*\]\(/giu;
@@ -212,6 +217,11 @@ export function gamingClearAnswerMatches(assessment: GamingClearAssessment | und
     && assessment.decision === 'accept' && assessment.subjectHash === gamingClearHash(answer);
 }
 
+/** Model-authored codes may carry private data even when they pass the assessment schema. */
+export function gamingClearAnswerLogReasonCodes(assessment: Pick<GamingClearAssessment, 'findings'>): string[] {
+  return assessment.findings.map(({ code }) => AUDIT_LOG_REASON_CODES.has(code) ? code : findingCodes.other);
+}
+
 /** One stateless semantic review replaces Gaming's ledger review. No model tools, retries or repairs. */
 export async function runGamingClearAnswerAudit(client: OpenAI, input: GamingClearAnswerInput,
   runtimeBudget: RuntimeBudget, modelLane: 'routine' | 'escalation' = 'routine', remainingWatchdogMs?: number
@@ -234,8 +244,9 @@ export async function runGamingClearAnswerAudit(client: OpenAI, input: GamingCle
       module: 'ARCANOS:GAMING', requestId: input.requestId, rubricVersion: assessment.rubricVersion,
       profile: assessment.profile, policyProfile: assessment.policyProfile, subjectHash: assessment.subjectHash,
       assessmentMethod: assessment.assessmentMethod, assessmentStatus: assessment.assessmentStatus,
-      dimensionScores: assessment.dimensionScores, overall: assessment.overall, decision: assessment.decision,
-      reasonCodes: assessment.findings.map(finding => finding.code), blockingFindingCount: assessment.blockingFindings.length,
+      dimensionScores: Object.fromEntries(Object.entries(assessment.dimensionScores).map(([dimension, { status, score }]) =>
+        [dimension, { status, score }])), overall: assessment.overall, decision: assessment.decision,
+      reasonCodes: gamingClearAnswerLogReasonCodes(assessment), blockingFindingCount: assessment.blockingFindings.length,
       elapsedMs: Date.now() - startedAt, budgetOutcome: assessment.assessmentStatus === 'completed' ? 'completed' : 'unavailable',
       modelCallsUsed: modelCallStarted ? 1 : 0, modelCallLimit: 1, repairAttempts: 0,
       ...auditBudget, auditResult: assessment.decision

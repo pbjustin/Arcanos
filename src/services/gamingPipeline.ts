@@ -64,7 +64,7 @@ import { resolveGamingAnswerPolicy } from "@shared/gaming/gamingAnswerPolicy.js"
 import { GAMING_HYBRID_INTAKE } from '@shared/gaming/gamingGuideIntakeCore.js';
 import { assessGamingClearEvidence } from '@shared/gaming/gamingClearEvidence.js';
 import { type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
-import { gamingClearAnswerMatches, isGamingAuditSourcePartiallyExtracted, runGamingClearAnswerAudit } from '@services/gamingClearAnswerAudit.js';
+import { gamingClearAnswerLogReasonCodes, gamingClearAnswerMatches, isGamingAuditSourcePartiallyExtracted, runGamingClearAnswerAudit } from '@services/gamingClearAnswerAudit.js';
 import { GAMING_CLEAR_APPROVED_ANSWER } from '@shared/gaming/gamingClearAnswerBinding.js';
 import { resolveGamingFreshnessDisposition } from '@shared/gaming/gamingFreshnessDisposition.js';
 
@@ -1673,7 +1673,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
     logger.info('gaming.answer.recovery', { ...baseLogContext, providerCompleted: true,
       assessmentStatus: trinityResult.gamingClearAudit?.assessmentStatus ?? 'not_run',
       decision: trinityResult.gamingClearAudit?.decision ?? 'unavailable',
-      reasonCodes: trinityResult.gamingClearAudit?.findings.map(finding => finding.code) ?? ['ANSWER_AUDIT_NOT_RUN'] });
+      reasonCodes: trinityResult.gamingClearAudit ? gamingClearAnswerLogReasonCodes(trinityResult.gamingClearAudit) : ['ANSWER_AUDIT_NOT_RUN'] });
     return formatGameplaySuccessWithLogs({ mode: params.mode,
       response: buildGamingProviderFallbackResponse({ input: resolvedParams, sources, fallbackReason: auditRecoveryReason }),
       sources, logContext: baseLogContext, requestStartedAt, grounding,

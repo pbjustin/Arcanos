@@ -108,7 +108,8 @@ async function exerciseController(t, { metadataStatus = 200, auditStatus = 200, 
   const rejectedAudit = { assessmentStatus: 'completed', decision: 'reject', boundToFinalAnswer: false };
   const rejectionDiagnostics = { effectiveTimeoutMs: 12_000, blockingFindingCount: 8,
     findingCodes: ['MATERIAL_FACT_UNRESOLVED', 'PROFILE_FLOOR_NOT_MET', 'UNCLASSIFIED_AUDIT_FINDING'],
-    findingCounts: { MATERIAL_FACT_UNRESOLVED: 2, PROFILE_FLOOR_NOT_MET: 1, UNCLASSIFIED_AUDIT_FINDING: 5 } };
+    findingCounts: { MATERIAL_FACT_UNRESOLVED: 2, PROFILE_FLOOR_NOT_MET: 1, UNCLASSIFIED_AUDIT_FINDING: 5 },
+    unmappedFindingCount: 3 };
   assert.equal(profiles.profiles[0].input.query.game, 'Elite Dangerous');
   assert.equal(profiles.profiles[0].expected.semanticGap, 'NONE');
   assert.equal(profiles.profiles[0].input.clarificationReplies, undefined);

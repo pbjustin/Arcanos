@@ -329,11 +329,14 @@ credentials. Older receipts may omit these fields.
 When a completed audit rejects an answer, `observation.audit.findingCodes`
 lists distinct allowlisted blocking codes and `blockingFindingCount` counts
 the recorded blocking findings before deduplication. When available, `findingCounts`
-records the number of findings under each label, including unrecognized model
-codes counted under `UNCLASSIFIED_AUDIT_FINDING`. Older receipts may omit these
-counts. These fields carry no finding text, evidence IDs or claim text. A completed
-provider request or audit stage can still end in rejection. Acceptance continues
-to require a completed audit with an accept decision bound to the delivered answer.
+records the number of findings under each label. The `UNCLASSIFIED_AUDIT_FINDING`
+total includes explicit uses of that label by the audit and unrecognized codes
+mapped to it. When available, `unmappedFindingCount` gives the mapped subset. A
+value of zero means every finding in that bucket used the label explicitly.
+Older receipts may omit these counts. These fields carry no finding text,
+evidence IDs or claim text. A completed provider request or audit stage can
+still end in rejection. Acceptance requires a completed audit with an accept
+decision bound to the delivered answer.
 
 The JavaScript SDK rounds its timeout header down to whole seconds. The guard
 keeps the SDK's exact abort signal and uses the rounded value only to bound its

@@ -46,6 +46,7 @@ export interface LiveValidationAudit {
   findingCodes?: string[];
   blockingFindingCount?: number;
   findingCounts?: Record<string, number>;
+  unmappedFindingCount?: number;
 }
 /** Counts and invariants only; workflow IDs, context replies and evidence text stay private. */
 export interface LiveValidationClarification {
@@ -140,7 +141,8 @@ export function createLiveValidationObservation(input: {
     ...(input.audit.assessmentStatus === 'completed' && input.audit.decision === 'reject'
       && input.audit.findingCodes && input.audit.blockingFindingCount !== undefined
       ? { findingCodes: [...input.audit.findingCodes], blockingFindingCount: input.audit.blockingFindingCount,
-        ...(input.audit.findingCounts ? { findingCounts: { ...input.audit.findingCounts } } : {}) } : {}),
+        ...(input.audit.findingCounts ? { findingCounts: { ...input.audit.findingCounts } } : {}),
+        ...(input.audit.unmappedFindingCount !== undefined ? { unmappedFindingCount: input.audit.unmappedFindingCount } : {}) } : {}),
     ...(effectiveTimeoutMs !== null ? { effectiveTimeoutMs } : {}),
     ...(input.auditProviderDiagnostic ? { providerDiagnostic: { ...input.auditProviderDiagnostic } } : {})
   } : null;

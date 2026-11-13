@@ -270,7 +270,7 @@ export function createLiveValidationGamingAdapter(execute: LiveValidationGamingE
         ? sanitizeLiveValidationAuditRejection({
           findingCodes: answerAssessment.blockingFindings.map(finding => finding.code),
           blockingFindingCount: answerAssessment.blockingFindings.length
-        })
+        }, 'assessment')
         : undefined;
       lastObservation = createLiveValidationObservation({ body: final?.body, accepted,
         audit: audit ? { ...audit, ...auditRejection } : undefined, stages, auditStartBudget,

@@ -1503,7 +1503,10 @@ describe('Gaming hybrid durable lifecycle', () => {
     expect(jobs.size).toBe(0);
   });
 
-  it.each(['timeout', 'rejection'] as const)('withholds v2 answer_ready after successful generation and mandatory answer-audit %s', async failure => {
+  it.each(['timeout', 'rejection', 'unclassified'] as const)('withholds v2 answer_ready after successful generation and mandatory answer-audit %s', async failure => {
+    const modelFinding = failure === 'unclassified' ? 'SYNTHETIC_PRIVATE_FINDING' : 'UNSUPPORTED_MECHANIC';
+    const safeReason = failure === 'timeout' ? 'AUDIT_TIMEOUT'
+      : failure === 'unclassified' ? 'UNCLASSIFIED_AUDIT_FINDING' : modelFinding;
     mockTrinity.mockImplementation(async (providerRequest: any) => {
       const result = `${PASSAGE} [Source 1]`;
       const { assessment } = await providerRequest.context.runOptions.gamingClearAnswerAudit(result, providerRequest.context.runtimeBudget);
@@ -1517,7 +1520,7 @@ describe('Gaming hybrid durable lifecycle', () => {
       return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
         dimensions: Object.fromEntries(GAMING_CLEAR_DIMENSIONS.map(name => [name, { status: 'evaluated', score: 4,
           reasonCodes: ['SUPPORTED_FIXTURE'], evidenceRefs, unresolvedFacts: [] }])),
-        findings: [{ code: 'UNSUPPORTED_MECHANIC', severity: 'blocking', evidenceRefs }]
+        findings: [{ code: modelFinding, severity: 'blocking', evidenceRefs }]
       }) } }] };
     });
     const workflow = createGamingHybridWorkflow();
@@ -1536,8 +1539,12 @@ describe('Gaming hybrid durable lifecycle', () => {
     expect(jest.mocked(logger.info).mock.calls).toContainEqual([
       failure === 'timeout' ? 'gaming.clear.answer.unavailable' : 'gaming.clear.answer.completed',
       expect.objectContaining({ modelCallsUsed: 1, modelCallLimit: 1, repairAttempts: 0,
-        reasonCodes: [failure === 'timeout' ? 'AUDIT_TIMEOUT' : 'UNSUPPORTED_MECHANIC'] })
+        reasonCodes: [safeReason] })
     ]);
+    expect(jest.mocked(logger.info).mock.calls).toContainEqual([
+      'gaming.answer.recovery', expect.objectContaining({ reasonCodes: [safeReason] })
+    ]);
+    expect(JSON.stringify(jest.mocked(logger.info).mock.calls)).not.toContain('SYNTHETIC_PRIVATE_FINDING');
     // Replaying the completed logical operation must not dispatch another generation or audit.
     expect(await workflow.candidates(submission, context)).toEqual(result);
     expect(mockTrinity).toHaveBeenCalledTimes(1);

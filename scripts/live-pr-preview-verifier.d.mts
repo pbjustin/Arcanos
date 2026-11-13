@@ -132,8 +132,9 @@ export interface LiveValidationAuditRejection {
   findingCodes: string[];
   blockingFindingCount: number;
   findingCounts?: Record<string, number>;
+  unmappedFindingCount?: number;
 }
-export function sanitizeLiveValidationAuditRejection(value: unknown): LiveValidationAuditRejection | undefined;
+export function sanitizeLiveValidationAuditRejection(value: unknown, codeSource?: 'assessment'): LiveValidationAuditRejection | undefined;
 
 export function sanitizeLiveValidationAuditProviderDiagnostic(value: unknown, assessmentStatus: unknown):
   import('../src/shared/gaming/liveValidationObservation.js').LiveValidationAuditProviderDiagnostic | undefined;

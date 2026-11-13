@@ -13,10 +13,7 @@ const MAX_AUDIT_FINDINGS = 32;
 const NUMERIC_CITATION = new RegExp(citationSyntax.numericReferencePattern, 'giu');
 // Model finding strings are untrusted even when they match the CLEAR code syntax.
 const AUDIT_REJECTION_FINDING_CODES = new Set([
-  ...answerFindingCodes.blocking, answerFindingCodes.other,
-  'DIMENSION_UNEVALUATED', 'MATERIAL_FACT_UNRESOLVED', 'PROFILE_FLOOR_NOT_MET',
-  ...['IDENTITY', 'COMPATIBILITY', 'CLAIMSUPPORT', 'FRESHNESS', 'PROVENANCE', 'SECURITY']
-    .flatMap(gate => ['CONFLICT', 'REQUIRED', 'UNVERIFIED'].map(reason => gate + '_' + reason))
+  ...answerFindingCodes.blocking, ...answerFindingCodes.policy, answerFindingCodes.other
 ]);
 const COUNT_FIELDS = Object.freeze(['requests', 'providerCalls', 'generationCalls', 'auditCalls', 'reservedInputTokens', 'reservedOutputTokens', 'reservedTotalTokens', 'reservedSpendMicroUsd', 'observedInputTokens', 'observedOutputTokens', 'observedSpendMicroUsd', 'elapsedMs']);
 const LIMIT_FIELDS = Object.freeze(['maxRequests', 'maxInputTokensPerRequest', 'maxOutputTokensPerRequest', 'maxTotalTokens', 'durationMs', 'maxSpendMicroUsd']);
@@ -43,22 +40,26 @@ const positiveLimit = value => Number.isSafeInteger(value) && value > 0 ? value 
 const boundedEnum = (value, allowed, otherwise) => allowed.has(value) ? value : otherwise;
 
 /** Keep rejection counts and reviewed labels without forwarding model codes or evidence references. */
-export function sanitizeLiveValidationAuditRejection(value) {
+export function sanitizeLiveValidationAuditRejection(value, codeSource) {
   if (!isRecord(value)) return undefined;
-  const { blockingFindingCount, findingCodes, findingCounts } = value;
+  const { blockingFindingCount, findingCodes, findingCounts, unmappedFindingCount } = value;
   if (!Number.isSafeInteger(blockingFindingCount) || blockingFindingCount < 1
     || blockingFindingCount > MAX_AUDIT_FINDINGS || !Array.isArray(findingCodes)
     || findingCodes.length < 1 || findingCodes.length > blockingFindingCount) return undefined;
   const occurrences = new Map();
+  let unmapped = 0;
   for (const code of findingCodes) {
     if (typeof code !== 'string' || code.length < 1 || code.length > 80) return undefined;
     const label = AUDIT_REJECTION_FINDING_CODES.has(code) ? code : answerFindingCodes.other;
+    if (label !== code) unmapped++;
     occurrences.set(label, (occurrences.get(label) ?? 0) + 1);
   }
   const labels = [...occurrences.keys()].sort();
   const summary = { findingCodes: labels, blockingFindingCount };
   if (findingCodes.length === blockingFindingCount && !Object.hasOwn(value, 'findingCounts')) {
-    return { ...summary, findingCounts: Object.fromEntries(labels.map(label => [label, occurrences.get(label)])) };
+    return { ...summary, findingCounts: Object.fromEntries(labels.map(label => [label, occurrences.get(label)])),
+      // Only original assessment codes can distinguish an explicit fallback from a mapped code.
+      ...(codeSource === 'assessment' && occurrences.has(answerFindingCodes.other) ? { unmappedFindingCount: unmapped } : {}) };
   }
   // The controller receives deduplicated labels. Older receipts have no recoverable counts.
   if (findingCodes.length === labels.length && findingCodes.every(code => occurrences.has(code))
@@ -66,7 +67,10 @@ export function sanitizeLiveValidationAuditRejection(value) {
     && labels.every(label => Object.hasOwn(findingCounts, label) && Number.isSafeInteger(findingCounts[label])
       && findingCounts[label] >= 1 && findingCounts[label] <= blockingFindingCount)
     && labels.reduce((total, label) => total + findingCounts[label], 0) === blockingFindingCount) {
-    return { ...summary, findingCounts: Object.fromEntries(labels.map(label => [label, findingCounts[label]])) };
+    return { ...summary, findingCounts: Object.fromEntries(labels.map(label => [label, findingCounts[label]])),
+      ...(occurrences.has(answerFindingCodes.other) && Object.hasOwn(value, 'unmappedFindingCount')
+        && Number.isSafeInteger(unmappedFindingCount) && unmappedFindingCount >= 0
+        && unmappedFindingCount <= findingCounts[answerFindingCodes.other] ? { unmappedFindingCount } : {}) };
   }
   return summary;
 }
