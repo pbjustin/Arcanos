@@ -1,5 +1,11 @@
 export const LIVE_PREVIEW_MODE: 'live-backend-v1';
 export const LIVE_PREVIEW_ACCEPTANCE_PROFILE: 'grounded-audited-answer-v1';
+export const LIVE_PREVIEW_PRESENTATION_PROFILE: 'grounded-presented-answer-v2';
+export const LIVE_PREVIEW_PRESENTATION_POLICY: 'gaming-clear-presentation/v1';
+export interface LivePreviewPresentation {
+  policyVersion: typeof LIVE_PREVIEW_PRESENTATION_POLICY;
+  boundToFinalAnswer: true;
+}
 export type LivePreviewCaseId = 'useful_grounded_guide' | 'incompatible_source' | 'insufficient_evidence'
   | 'acquisition_failure' | 'model_timeout' | 'audit_timeout' | 'exhausted_budget' | 'unauthorized_test_identity';
 export type LivePreviewStage = 'authorization' | 'budget' | 'source_acquisition' | 'source_validation'
@@ -65,6 +71,8 @@ export interface LivePreviewNormalizedAnswer {
 }
 export interface LivePreviewEvidenceInput {
   caseId: LivePreviewCaseId;
+  acceptanceProfile?: typeof LIVE_PREVIEW_ACCEPTANCE_PROFILE | typeof LIVE_PREVIEW_PRESENTATION_PROFILE;
+  presentation?: LivePreviewPresentation | null;
   /** Adapter-normalized grounded answer; module-specific public contracts remain outside this verifier. */
   result?: unknown;
   /** Backend-owned actual audit observation and binding to the delivered final answer. */
@@ -74,15 +82,11 @@ export interface LivePreviewEvidenceInput {
   failureCode?: LivePreviewFailureCode | null;
   stages: Partial<Record<LivePreviewStage, LivePreviewStageStatus>>;
 }
-export interface LivePreviewEvidence {
-  schemaVersion: 1;
-  acceptanceProfile: 'grounded-audited-answer-v1';
+interface LivePreviewEvidenceBase {
   identity: LivePreviewIdentity;
   caseId: LivePreviewCaseId;
   failureCode: LivePreviewFailureCode | 'UNOBSERVED_FAILURE' | null;
   stages: Record<LivePreviewStage, LivePreviewStageStatus>;
-  audit: { assessmentStatus: 'completed' | 'unavailable' | 'not_run' | 'unobserved';
-    decision: 'accept' | 'partial' | 'reject' | 'clarify' | 'unavailable' | 'unobserved'; boundToFinalAnswer: boolean };
   result: {
     ok: boolean;
     answerPresent: boolean;
@@ -103,6 +107,16 @@ export interface LivePreviewEvidence {
   verification: { syntheticPreview: 'unverified'; liveBackend: 'unverified'; installedPluginOAuth: 'unverified' };
   remainingGaps: string[];
 }
+export type LivePreviewEvidence = LivePreviewEvidenceBase & ({
+  schemaVersion: 1;
+  acceptanceProfile: typeof LIVE_PREVIEW_ACCEPTANCE_PROFILE;
+  audit: { assessmentStatus: 'completed' | 'unavailable' | 'not_run' | 'unobserved';
+    decision: 'accept' | 'partial' | 'reject' | 'clarify' | 'unavailable' | 'unobserved'; boundToFinalAnswer: boolean };
+} | {
+  schemaVersion: 2;
+  acceptanceProfile: typeof LIVE_PREVIEW_PRESENTATION_PROFILE;
+  presentation: LivePreviewPresentation | null;
+});
 export interface LivePreviewCaseVerification {
   status: 'PASS' | 'FAIL';
   code: 'LIVE_PREVIEW_CASE_PASS' | 'LIVE_PREVIEW_CASE_FAILED';
@@ -127,6 +141,7 @@ export function verifyLivePreviewSuite(evidence: unknown, expectedIdentity: Live
 
 /** Closed projection of saved evidence; never retains raw payloads or source paths. */
 export function sanitizeLivePreviewEvidence(evidence: unknown): unknown;
+export function sanitizeLivePreviewPresentation(value: unknown): LivePreviewPresentation | null;
 
 export interface LiveValidationAuditRejection {
   findingCodes: string[];

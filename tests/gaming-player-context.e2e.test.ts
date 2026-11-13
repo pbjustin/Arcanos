@@ -212,11 +212,7 @@ describe('public Gaming player context to selected evidence and normal Trinity r
       record(fixture, fixture.excludedFuture ?? 'An unrelated distant chapter reveals the ending and final identity.', 'future-unrelated')
     ]);
     responsesCreate.mockResolvedValueOnce(completion('Question and player constraints retained; verify source [1].'))
-      .mockResolvedValueOnce(completion(fixture.referenceAnswer, false, authorityModel))
-      .mockResolvedValueOnce(completion(JSON.stringify({ dimensions: Object.fromEntries(
-        ['clarity', 'leverage', 'efficiency', 'alignment', 'resilience'].map(name => [name,
-          { status: 'evaluated', score: 4.5, reasonCodes: ['SUPPORTED'], evidenceRefs: [fixture.id], unresolvedFacts: [] }
-        ])), findings: [] })));
+      .mockResolvedValueOnce(completion(fixture.referenceAnswer, false, authorityModel));
     runStructuredReasoning.mockResolvedValue({
       reasoning_steps: [], assumptions: [], constraints: [], tradeoffs: [], alternatives_considered: [], chosen_path_justification: '',
       response_mode: 'answer', achievable_subtasks: ['answer the requested gameplay question'], blocked_subtasks: [], user_visible_caveats: [], claim_tags: [],
@@ -237,7 +233,7 @@ describe('public Gaming player context to selected evidence and normal Trinity r
     expect(result.data.grounding).toMatchObject({ groundingStatus: 'grounded', selectedChunkCount: 1 });
     expect(result.data.fallbackReason).toBeUndefined();
     expect(searchActiveGamingKnowledge).toHaveBeenCalledTimes(1);
-    expect(responsesCreate).toHaveBeenCalledTimes(3);
+    expect(responsesCreate).toHaveBeenCalledTimes(2);
     expect(responsesCreate.mock.calls[0]?.[0]).toMatchObject({ max_output_tokens: 500, reasoning: { effort: 'none' } });
     const reasoning = runStructuredReasoning.mock.calls[0]?.[2] as string;
     expect(reasoning).toContain(fixture.evidence);
@@ -255,9 +251,10 @@ describe('public Gaming player context to selected evidence and normal Trinity r
       }
     }
     expect(createGPT5Reasoning).not.toHaveBeenCalled();
-    expect(JSON.stringify(responsesCreate.mock.calls[2]?.[0])).toContain(fixture.evidence);
-    expect(responsesCreate.mock.calls[2]?.[0]).toMatchObject({ max_output_tokens: 1_536, store: false });
-    expect(responsesCreate.mock.calls[2]?.[1]).toMatchObject({ maxRetries: 0 });
+    const finalRequest = responsesCreate.mock.calls[1]?.[0];
+    expect(JSON.stringify(finalRequest)).toContain(fixture.evidence);
+    expect(JSON.stringify(finalRequest)).toContain('gaming-clear-presentation/v1');
+    expect(responsesCreate.mock.calls[1]?.[1]).toMatchObject({ maxRetries: 0 });
     expect(forbiddenWrite).not.toHaveBeenCalled();
     expect(storePattern).not.toHaveBeenCalled();
   });

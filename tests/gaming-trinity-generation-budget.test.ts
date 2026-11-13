@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import type { TrinityRunOptions } from '../src/core/logic/trinityTypes.js';
 import { GAMING_HYBRID_INTAKE } from '../src/shared/gaming/gamingGuideIntakeCore.js';
-import { createGamingClearAssessment, gamingClearContextFingerprint, gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
+import { GAMING_CLEAR_PRESENTATION_POLICY_VERSION } from '../src/shared/gaming/gamingPromptCore.js';
 import { resolveGamingGenerationBudget } from '../src/services/gamingConfig.js';
 import { resolveGamingExecutionBudget } from '../src/shared/gaming/gamingExecutionBudgetCore.js';
 
@@ -30,7 +30,6 @@ const { runTrinityWritingPipeline } = await import('../src/core/logic/trinityWri
 const { detectTier } = await import('../src/core/logic/trinityTier.js');
 const { createRuntimeBudgetWithLimit, getSafeRemainingMs } = await import('../src/platform/resilience/runtimeBudget.js');
 const { createAbortError, getRequestAbortSignal, runWithRequestAbortTimeout } = await import('@arcanos/runtime');
-const { runGamingClearAnswerAudit } = await import('../src/services/gamingClearAnswerAudit.js');
 const client = { models: { retrieve: modelsRetrieve },
   responses: { create: responsesCreate } } as never;
 const prompt = 'Give a grounded build using <untrusted_evidence>Guide [1]: use the supported starter equipment.</untrusted_evidence>';
@@ -43,7 +42,7 @@ const response = (text: string, model = 'gpt-6-luna') => ({ id: 'budget-syntheti
   status: 'completed', output_text: text, output: [], usage: { input_tokens: 80, output_tokens: 20, total_tokens: 100 } });
 
 function startGeneration(configuredStageTimeoutMs?: number, watchdogTimeoutMs = 35_000,
-  generationPrompt = prompt, gamingClearAnswerAudit?: TrinityRunOptions['gamingClearAnswerAudit'],
+  generationPrompt = prompt,
   executionBudget?: ReturnType<typeof resolveGamingExecutionBudget>, compactIntake = true, directAnswer = false) {
   const pipelineTimeoutMs = executionBudget?.pipelineTimeoutMs ?? 35_000;
   const runtimeBudget = createRuntimeBudgetWithLimit(pipelineTimeoutMs, 500);
@@ -54,7 +53,7 @@ function startGeneration(configuredStageTimeoutMs?: number, watchdogTimeoutMs = 
     intentMode: 'EXECUTE_TASK', answerMode: directAnswer ? 'direct' : 'explained',
     disableOptionalSideEffects: true, redactAuditContent: true, watchdogModelTimeoutMs: watchdogTimeoutMs,
     modelStageTimeoutMs: 12_000, toolBackedCapabilities: { verifyProvidedData: true },
-    ...(gamingClearAnswerAudit ? { gamingClearAnswerAudit } : {}),
+    gamingPresentationPolicy: GAMING_CLEAR_PRESENTATION_POLICY_VERSION,
     resolveModelStageTimeoutMs: (stage, budget, remainingWatchdogMs, additionalDownstreamReserveMs = 0) => {
       const elapsedMs = Date.now() - budget.startedAt;
       const allocation = resolveGamingGenerationBudget({ mode: 'build', stage, pipelineTimeoutMs,
@@ -80,21 +79,6 @@ function startGeneration(configuredStageTimeoutMs?: number, watchdogTimeoutMs = 
     ? runWithRequestAbortTimeout({ timeoutMs: executionBudget.mcpOperationTimeoutMs }, runPipeline)
     : runPipeline();
   return { operation, allocations, stageBudgets };
-}
-
-function createAcceptedAnswerAudit() {
-  return jest.fn(async (text: string) => {
-    await new Promise(resolve => setTimeout(resolve, 3_000));
-    return { assessment: createGamingClearAssessment({
-      profile: 'answer', questionProfile: 'walkthrough', subjectId: 'budget-answer', subjectHash: gamingClearHash(text),
-      contextFingerprint: gamingClearContextFingerprint('budget-answer'), evidenceRefs: ['record-1'],
-      gates: { identity: 'verified', security: 'verified', compatibility: 'verified', provenance: 'verified',
-        claimSupport: 'verified', freshness: 'not_applicable' },
-      dimensions: Object.fromEntries(['clarity', 'leverage', 'efficiency', 'alignment', 'resilience'].map(name => [name,
-        { status: 'evaluated', score: 5, reasonCodes: ['SUPPORTED'], evidenceRefs: ['record-1'], unresolvedFacts: [] }
-      ])) as Parameters<typeof createGamingClearAssessment>[0]['dimensions'], findings: []
-    }) };
-  });
 }
 
 describe('Gaming allocation through the real Trinity stage dispatch', () => {
@@ -126,7 +110,7 @@ describe('Gaming allocation through the real Trinity stage dispatch', () => {
     let settled = false;
     operation.then(() => { settled = true; }, () => { settled = true; });
     await jest.advanceTimersByTimeAsync(5_000);
-    expect(allocations.find(entry => entry.stage === 'reasoning')).toEqual({ stage: 'reasoning', timeoutMs: 20_500,
+    expect(allocations.find(entry => entry.stage === 'reasoning')).toEqual({ stage: 'reasoning', timeoutMs: 23_500,
       elapsedMs: 5_000, additionalDownstreamReserveMs: 0 });
     await jest.advanceTimersByTimeAsync(12_000);
     expect(settled).toBe(false);
@@ -136,7 +120,7 @@ describe('Gaming allocation through the real Trinity stage dispatch', () => {
     expect(result.fallbackFlag).toBe(false);
     expect(runStructuredReasoning).toHaveBeenCalledTimes(1);
     expect(responsesCreate).toHaveBeenCalledTimes(2);
-    expect(allocations.find(entry => entry.stage === 'final')?.timeoutMs).toBe(12_500);
+    expect(allocations.find(entry => entry.stage === 'final')?.timeoutMs).toBe(15_500);
   });
 
   it('aborts a reasoning stage that exceeds its safe remaining window without another attempt', async () => {
@@ -144,7 +128,7 @@ describe('Gaming allocation through the real Trinity stage dispatch', () => {
     runStructuredReasoning.mockImplementationOnce(() => new Promise(() => {}));
     const { operation } = startGeneration();
     const failure = expect(operation).rejects.toMatchObject({ name: 'AbortError', timeoutPhase: 'reasoning' });
-    await jest.advanceTimersByTimeAsync(25_500);
+    await jest.advanceTimersByTimeAsync(28_500);
     await failure;
     expect(runStructuredReasoning).toHaveBeenCalledTimes(1);
     expect(responsesCreate).toHaveBeenCalledTimes(1);
@@ -167,8 +151,8 @@ describe('Gaming allocation through the real Trinity stage dispatch', () => {
     const { operation, allocations } = startGeneration(undefined, 20_000);
     const failure = expect(operation).rejects.toMatchObject({ name: 'AbortError', timeoutPhase: 'reasoning' });
     await jest.advanceTimersByTimeAsync(5_000);
-    expect(allocations.find(entry => entry.stage === 'reasoning')?.timeoutMs).toBe(6_000);
-    await jest.advanceTimersByTimeAsync(6_000);
+    expect(allocations.find(entry => entry.stage === 'reasoning')?.timeoutMs).toBe(9_000);
+    await jest.advanceTimersByTimeAsync(9_000);
     await failure;
     expect(runStructuredReasoning).toHaveBeenCalledTimes(1);
   });
@@ -180,55 +164,33 @@ describe('Gaming allocation through the real Trinity stage dispatch', () => {
     { path: 'compact hybrid', compactIntake: true, directAnswer: false, watchdogTimeoutMs: 35_000 },
     { path: 'ordinary Gaming', compactIntake: false, directAnswer: false, watchdogTimeoutMs: 35_000 },
     { path: 'direct Gaming', compactIntake: false, directAnswer: true, watchdogTimeoutMs: 35_000 }
-  ])('respects a $watchdogTimeoutMs ms watchdog during mandatory $path answer audit', async ({ compactIntake, directAnswer, watchdogTimeoutMs }) => {
-    const startedAt = Date.now();
-    const evidenceRefs = ['record-1'];
-    const dimensions = Object.fromEntries(['clarity', 'leverage', 'efficiency', 'alignment', 'resilience'].map(name => [name,
-      { status: 'evaluated', score: 5, reasonCodes: ['SUPPORTED'], evidenceRefs, unresolvedFacts: [] }
-    ])) as Parameters<typeof createGamingClearAssessment>[0]['dimensions'];
-    const evidenceAssessment = createGamingClearAssessment({
-      profile: 'evidence', questionProfile: 'walkthrough', subjectId: 'selected-evidence', subjectHash: gamingClearHash(prompt),
-      contextFingerprint: gamingClearContextFingerprint('selected-evidence'), evidenceRefs,
-      gates: { identity: 'verified', security: 'verified', compatibility: 'verified', provenance: 'verified',
-        claimSupport: 'verified', freshness: 'not_applicable' }, dimensions, findings: []
-    });
-    const knowledge = { context: prompt,
-      sources: [{ sourceId: 'source-1', url: 'https://example.com/starter-guide', sourceType: 'guide',
-        game: 'Fixture Quest', fetchedAt: '2026-10-04T00:00:00.000Z', snippet: 'Use the supported starter equipment.' }],
-      evidence: [{ sourceId: 'source-1', revisionId: 'revision-1', recordId: 'record-1', recordType: 'guide' as const,
-        publicUrl: 'https://example.com/starter-guide', text: 'Use the supported starter equipment.', lexicalScore: 1, combinedScore: 1,
-        provenance: { fetchedAt: '2026-10-04T00:00:00.000Z' } }] };
-    if (directAnswer) responsesCreate
-      .mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve(response(answer, authorityModel)), 15_500)));
-    else responsesCreate
-      .mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve(response('Question: build. Evidence [1].')), 3_000)))
-      .mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve(response(answer, authorityModel)), 5_500)));
-    responsesCreate.mockImplementationOnce((_payload: unknown, options: { signal: AbortSignal }) => new Promise((resolve, reject) => {
-        const timer = setTimeout(() => resolve(response(JSON.stringify({ dimensions, findings: [] }))), 5_000);
-        options.signal.addEventListener('abort', () => {
-          clearTimeout(timer);
-          reject(options.signal.reason);
-        }, { once: true });
-      }));
-    runStructuredReasoning.mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve(reasoning), 7_000)));
-    const audit = jest.fn((text: string, runtimeBudget: Parameters<typeof runGamingClearAnswerAudit>[2], remainingWatchdogMs?: number) =>
-      runGamingClearAnswerAudit(client, { game: 'Fixture Quest', prompt: 'How do I use the supported starter equipment?',
-        mode: 'guide', answer: text, knowledge, evidenceAssessment }, runtimeBudget, 'routine', remainingWatchdogMs));
-    const { operation } = startGeneration(undefined, watchdogTimeoutMs, prompt, audit, undefined, compactIntake, directAnswer);
-    await jest.advanceTimersByTimeAsync(20_500);
+  ])('respects a $watchdogTimeoutMs ms watchdog for $path presentation and preserves terminal time', async ({
+    compactIntake, directAnswer, watchdogTimeoutMs
+  }) => {
+    if (directAnswer) {
+      responsesCreate.mockImplementationOnce(() => new Promise(resolve =>
+        setTimeout(() => resolve(response(answer, authorityModel)), 15_500)));
+    } else {
+      responsesCreate
+        .mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve(response('Question: build. Evidence [1].')), 3_000)))
+        .mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve(response(answer, authorityModel)), 5_500)));
+      runStructuredReasoning.mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve(reasoning), 7_000)));
+    }
+
+    const { operation, stageBudgets } = startGeneration(undefined, watchdogTimeoutMs, prompt, undefined, compactIntake, directAnswer);
+    await jest.advanceTimersByTimeAsync(15_500);
+
     const result = await operation;
-    expect(result.gamingClearAudit).toMatchObject(watchdogTimeoutMs === 20_000
-      ? { assessmentStatus: 'unavailable', decision: 'unavailable', findings: [expect.objectContaining({ code: 'AUDIT_TIMEOUT' })] }
-      : { assessmentStatus: 'completed', decision: 'accept' });
-    expect(result.guardInfo).toMatchObject({ effectiveLimit: Math.min(watchdogTimeoutMs, 34_500),
-      elapsedMs: watchdogTimeoutMs === 20_000 ? 19_000 : 20_500 });
-    expect(audit).toHaveBeenCalledTimes(1);
-    expect(responsesCreate).toHaveBeenCalledTimes(directAnswer ? 2 : 3);
-    expect(responsesCreate.mock.calls[directAnswer ? 1 : 2][1]).toMatchObject({ timeout: watchdogTimeoutMs === 20_000 ? 3_500 : 12_000, maxRetries: 0 });
-    expect(startedAt + result.guardInfo!.elapsedMs).toBeLessThan(startedAt + watchdogTimeoutMs);
+    expect(result.result).toBe(answer);
+    expect(result.gamingPresentationPolicy).toBe(GAMING_CLEAR_PRESENTATION_POLICY_VERSION);
+    expect(result.guardInfo).toMatchObject({ effectiveLimit: Math.min(watchdogTimeoutMs, 34_500), elapsedMs: 15_500 });
+    expect(responsesCreate).toHaveBeenCalledTimes(directAnswer ? 1 : 2);
+    expect(runStructuredReasoning).toHaveBeenCalledTimes(directAnswer ? 0 : 1);
+    expect(reflectionMock).not.toHaveBeenCalled();
+    expect(stageBudgets.find(budget => budget.stage === (directAnswer ? 'direct-answer' : 'final'))?.downstreamReserveMs).toBe(1_000);
   });
 
-  it('completes the live 17,317ms reasoning shape and a 12-second final with bounded answer audit', async () => {
+  it('completes the live 17,317ms reasoning shape and a 12-second final within the existing terminal reserve', async () => {
     // Expire the shared model-validation cache so this trace includes real validation dispatch.
     jest.setSystemTime(1_000_000);
     const startedAt = Date.now();
@@ -240,40 +202,36 @@ describe('Gaming allocation through the real Trinity stage dispatch', () => {
       .mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve(response('Question: build. Evidence [1].')), 4_000)))
       .mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve(response(answer, authorityModel)), 12_000)));
     runStructuredReasoning.mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve(reasoning), 17_317)));
-    const audit = createAcceptedAnswerAudit();
     const { operation, allocations, stageBudgets } = startGeneration(undefined, executionBudget.pipelineTimeoutMs,
-      prompt, audit, executionBudget);
+      prompt, executionBudget);
     let settled = false;
     operation.then(() => { settled = true; }, () => { settled = true; });
 
     await jest.advanceTimersByTimeAsync(500 + 4_000);
     expect(modelsRetrieve).toHaveBeenCalledTimes(1);
     expect(allocations.find(entry => entry.stage === 'reasoning')).toMatchObject({
-      elapsedMs: 4_500, timeoutMs: 36_000
+      elapsedMs: 4_500, timeoutMs: 39_000
     });
     await jest.advanceTimersByTimeAsync(17_317);
     expect(allocations.find(entry => entry.stage === 'final')).toMatchObject({
-      elapsedMs: 21_817, timeoutMs: 23_683
+      elapsedMs: 21_817, timeoutMs: 26_683
     });
     expect(runStructuredReasoning).toHaveBeenCalledTimes(1);
     await jest.advanceTimersByTimeAsync(8_515);
     expect(settled).toBe(false);
-    expect(audit).not.toHaveBeenCalled();
     await jest.advanceTimersByTimeAsync(12_000 - 8_515);
-    expect(audit).toHaveBeenCalledTimes(1);
-    expect(settled).toBe(false);
-    await jest.advanceTimersByTimeAsync(3_000);
+    expect(settled).toBe(true);
 
     const result = await operation;
     expect(result.result).toBe(answer);
     expect(result.fallbackFlag).toBe(false);
-    expect(result.gamingClearAudit?.decision).toBe('accept');
+    expect(result.gamingPresentationPolicy).toBe(GAMING_CLEAR_PRESENTATION_POLICY_VERSION);
     expect(responsesCreate).toHaveBeenCalledTimes(2);
     expect(reflectionMock).not.toHaveBeenCalled();
     expect(stageBudgets.every(budget => budget.effectiveStageTimeoutMs > 0
       && budget.effectiveStageTimeoutMs <= budget.generationRemainingMs - budget.downstreamReserveMs)).toBe(true);
-    expect(stageBudgets.find(budget => budget.stage === 'final')?.downstreamReserveMs).toBe(4_000);
-    expect(Date.now() - startedAt).toBe(36_817);
+    expect(stageBudgets.find(budget => budget.stage === 'final')?.downstreamReserveMs).toBe(1_000);
+    expect(Date.now() - startedAt).toBe(33_817);
     expect(Date.now() - startedAt).toBeLessThan(executionBudget.pipelineTimeoutMs - executionBudget.terminalReserveMs);
     expect(executionBudget.mcpOperationTimeoutMs).toBeGreaterThanOrEqual(
       executionBudget.pipelineTimeoutMs + executionBudget.outerHeadroomMs);
@@ -288,74 +246,23 @@ describe('Gaming allocation through the real Trinity stage dispatch', () => {
     modelsRetrieve.mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve({ id: 'gpt-6-luna' }), 500)));
     responsesCreate.mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve(response('Question: build. Evidence [1].')), 4_000)));
     runStructuredReasoning.mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve(reasoning), 17_317)));
-    const audit = createAcceptedAnswerAudit();
     const { operation, allocations, stageBudgets } = startGeneration(undefined, executionBudget.pipelineTimeoutMs,
-      prompt, audit, executionBudget);
+      prompt, executionBudget);
     const failure = expect(operation).rejects.toMatchObject({ name: 'AbortError', timeoutPhase: 'reasoning' });
 
     await jest.advanceTimersByTimeAsync(4_500);
     expect(allocations.find(entry => entry.stage === 'reasoning')).toMatchObject({
-      elapsedMs: 4_500, timeoutMs: 6_000
+      elapsedMs: 4_500, timeoutMs: 9_000
     });
-    await jest.advanceTimersByTimeAsync(6_000);
+    await jest.advanceTimersByTimeAsync(9_000);
     await failure;
-    expect(Date.now() - startedAt).toBe(10_500);
+    expect(Date.now() - startedAt).toBe(13_500);
     expect(Date.now() - startedAt).toBeLessThan(executionBudget.requestRemainingMs);
     expect(stageBudgets.every(budget => budget.effectiveStageTimeoutMs > 0
       && budget.effectiveStageTimeoutMs <= budget.generationRemainingMs - budget.downstreamReserveMs)).toBe(true);
     expect(allocations.some(entry => entry.stage === 'final' || entry.stage === 'direct-answer')).toBe(false);
     expect(responsesCreate).toHaveBeenCalledTimes(1);
     expect(runStructuredReasoning).toHaveBeenCalledTimes(1);
-    expect(audit).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    { path: 'compact hybrid', compactIntake: true, failure: 'timeout' },
-    { path: 'compact hybrid', compactIntake: true, failure: 'rejection' },
-    { path: 'ordinary Gaming', compactIntake: false, failure: 'timeout' },
-    { path: 'ordinary Gaming', compactIntake: false, failure: 'rejection' }
-  ])('does not rerun $path generation or repair after mandatory answer-audit $failure', async ({ compactIntake, failure }) => {
-    const evidenceRefs = ['record-1'];
-    const dimensions = Object.fromEntries(['clarity', 'leverage', 'efficiency', 'alignment', 'resilience'].map(name => [name,
-      { status: 'evaluated', score: 5, reasonCodes: ['SUPPORTED'], evidenceRefs, unresolvedFacts: [] }
-    ])) as Parameters<typeof createGamingClearAssessment>[0]['dimensions'];
-    const evidenceAssessment = createGamingClearAssessment({
-      profile: 'evidence', questionProfile: 'walkthrough', subjectId: 'selected-evidence', subjectHash: gamingClearHash(prompt),
-      contextFingerprint: gamingClearContextFingerprint('selected-evidence'), evidenceRefs,
-      gates: { identity: 'verified', security: 'verified', compatibility: 'verified', provenance: 'verified',
-        claimSupport: 'verified', freshness: 'not_applicable' }, dimensions, findings: []
-    });
-    const knowledge = { context: prompt,
-      sources: [{ sourceId: 'source-1', url: 'https://example.com/starter-guide', sourceType: 'guide',
-        game: 'Fixture Quest', fetchedAt: '2026-10-04T00:00:00.000Z', snippet: 'Use the supported starter equipment.' }],
-      evidence: [{ sourceId: 'source-1', revisionId: 'revision-1', recordId: 'record-1', recordType: 'guide' as const,
-        publicUrl: 'https://example.com/starter-guide', text: 'Use the supported starter equipment.', lexicalScore: 1, combinedScore: 1,
-        provenance: { fetchedAt: '2026-10-04T00:00:00.000Z' } }] };
-    responsesCreate.mockResolvedValueOnce(response('Question: build. Evidence [1].'))
-      .mockResolvedValueOnce(response(answer, authorityModel));
-    runStructuredReasoning.mockResolvedValueOnce(reasoning);
-    if (failure === 'timeout') responsesCreate.mockRejectedValueOnce(createAbortError('synthetic answer-audit timeout'));
-    else responsesCreate.mockResolvedValueOnce(response(JSON.stringify({ dimensions,
-      findings: [{ code: 'UNSUPPORTED_MECHANIC', severity: 'blocking', evidenceRefs }] })));
-    const audit = jest.fn((text: string, runtimeBudget: Parameters<typeof runGamingClearAnswerAudit>[2]) =>
-      runGamingClearAnswerAudit(client, { game: 'Fixture Quest', prompt: 'How do I use the supported starter equipment?',
-        mode: 'guide', answer: text, knowledge, evidenceAssessment }, runtimeBudget));
-    const { operation, allocations } = startGeneration(undefined, 35_000, prompt, audit, undefined, compactIntake);
-    await jest.advanceTimersByTimeAsync(0);
-    const result = await operation;
-    expect(result.result).toBe(audit.mock.calls[0][0]);
-    expect(result.result.replace(/\s+/gu, ' ')).toBe(answer);
-    expect(result.fallbackFlag).toBe(false);
-    expect(result.gamingClearAudit).toMatchObject(failure === 'timeout'
-      ? { assessmentStatus: 'unavailable', findings: [expect.objectContaining({ code: 'AUDIT_TIMEOUT' })] }
-      : { assessmentStatus: 'completed', decision: 'reject', findings: [expect.objectContaining({ code: 'UNSUPPORTED_MECHANIC' })] });
-    expect(audit).toHaveBeenCalledTimes(1);
-    expect(runStructuredReasoning).toHaveBeenCalledTimes(1);
-    expect(responsesCreate).toHaveBeenCalledTimes(3); // One intake, one final, one audit.
-    expect(responsesCreate.mock.calls[2][1]).toMatchObject({ maxRetries: 0 });
-    expect(reflectionMock).not.toHaveBeenCalled(); // The legacy ledger audit cannot replace the failed answer audit.
-    expect(allocations.filter(entry => entry.stage === 'final')).toHaveLength(1);
-    expect(allocations.some(entry => entry.stage === 'direct-answer')).toBe(false);
   });
 
   it.each([
@@ -369,33 +276,31 @@ describe('Gaming allocation through the real Trinity stage dispatch', () => {
     modelsRetrieve.mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve({ id: 'gpt-6-luna' }), 500)));
     responsesCreate
       .mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve(response('Question: build. Evidence [1].')), 4_000)))
-      .mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve(response(answer, authorityModel)), 25_000)));
+      .mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve(response(answer, authorityModel)), 28_000)));
     runStructuredReasoning.mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve(reasoning), 17_317)));
-    const audit = createAcceptedAnswerAudit();
     const { operation, allocations } = startGeneration(undefined, executionBudget.pipelineTimeoutMs,
-      prompt, audit, executionBudget, compactIntake);
+      prompt, executionBudget, compactIntake);
     const failure = expect(operation).rejects.toMatchObject({ name: 'AbortError', timeoutPhase: 'final' });
 
     await jest.advanceTimersByTimeAsync(500 + 4_000 + 17_317);
     const finalBudget = allocations.find(entry => entry.stage === 'final')?.timeoutMs;
-    expect(finalBudget).toBe(23_683);
+    expect(finalBudget).toBe(26_683);
     await jest.advanceTimersByTimeAsync(finalBudget!);
     await failure;
-    expect(Date.now() - startedAt).toBe(45_500);
+    expect(Date.now() - startedAt).toBe(48_500);
     expect(Date.now() - startedAt).toBeLessThan(executionBudget.pipelineTimeoutMs - executionBudget.terminalReserveMs);
     expect(allocations.filter(entry => entry.stage === 'final')).toHaveLength(1);
     expect(allocations.some(entry => entry.stage === 'direct-answer')).toBe(false);
     expect(responsesCreate).toHaveBeenCalledTimes(2);
     expect(runStructuredReasoning).toHaveBeenCalledTimes(1);
-    expect(audit).not.toHaveBeenCalled();
   });
 
   it.each([
     { reflectionTimeoutMs: 3_000, watchdogTimeoutMs: 35_000, reasoningDurationMs: 17_000,
-      expectedReasoningTimeoutMs: 17_500, expectedFinalTimeoutMs: 5_500 },
+      expectedReasoningTimeoutMs: 20_500, expectedFinalTimeoutMs: 8_500 },
     { reflectionTimeoutMs: 7_000, watchdogTimeoutMs: 30_000, reasoningDurationMs: 8_000,
-      expectedReasoningTimeoutMs: 9_000, expectedFinalTimeoutMs: 6_000 }
-  ])('preserves final and answer-audit time after $reflectionTimeoutMs ms of critical reflection', async ({
+      expectedReasoningTimeoutMs: 12_000, expectedFinalTimeoutMs: 9_000 }
+  ])('preserves final and terminal response time after $reflectionTimeoutMs ms of critical reflection', async ({
     reflectionTimeoutMs, watchdogTimeoutMs, reasoningDurationMs, expectedReasoningTimeoutMs, expectedFinalTimeoutMs
   }) => {
     process.env.TRINITY_REFLECTION_STAGE_TIMEOUT_MS = String(reflectionTimeoutMs);
@@ -406,8 +311,7 @@ describe('Gaming allocation through the real Trinity stage dispatch', () => {
       .mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve(response(answer, authorityModel)), 5_000)));
     runStructuredReasoning.mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve(reasoning), reasoningDurationMs)));
     reflectionMock.mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve({ content: 'Supported tank setup.' }), reflectionTimeoutMs)));
-    const audit = createAcceptedAnswerAudit();
-    const { operation, allocations } = startGeneration(undefined, watchdogTimeoutMs, criticalPrompt, audit);
+    const { operation, allocations } = startGeneration(undefined, watchdogTimeoutMs, criticalPrompt);
     await jest.advanceTimersByTimeAsync(5_000);
     expect(allocations.filter(entry => ['model-validation', 'intake', 'reasoning'].includes(entry.stage))
       .every(entry => entry.additionalDownstreamReserveMs === reflectionTimeoutMs)).toBe(true);
@@ -416,16 +320,15 @@ describe('Gaming allocation through the real Trinity stage dispatch', () => {
     expect(allocations.find(entry => entry.stage === 'final')).toEqual({ stage: 'final',
       timeoutMs: expectedFinalTimeoutMs, elapsedMs: 5_000 + reasoningDurationMs + reflectionTimeoutMs,
       additionalDownstreamReserveMs: 0 });
-    await jest.advanceTimersByTimeAsync(8_000);
+    await jest.advanceTimersByTimeAsync(5_000);
     const result = await operation;
     expect(result.result).toBe(answer);
     expect(result.fallbackFlag).toBe(false);
     expect(result.tierInfo).toEqual(expect.objectContaining({ tier: 'critical', reflectionApplied: true }));
-    expect(result.gamingClearAudit?.decision).toBe('accept');
+    expect(result.gamingPresentationPolicy).toBe(GAMING_CLEAR_PRESENTATION_POLICY_VERSION);
     expect(reflectionMock).toHaveBeenCalledTimes(1);
     expect(runStructuredReasoning).toHaveBeenCalledTimes(1);
     expect(responsesCreate).toHaveBeenCalledTimes(2);
-    expect(audit).toHaveBeenCalledTimes(1);
     expect(Date.now()).toBeLessThan(100_000 + watchdogTimeoutMs - 1_000);
   });
 });

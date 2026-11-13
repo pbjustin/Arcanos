@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { buildGamingGuideIntakeContract, GAMING_HYBRID_INTAKE } from '../src/shared/gaming/gamingGuideIntakeCore.js';
-import { createGamingClearAssessment, gamingClearContextFingerprint, gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
+import { GAMING_CLEAR_PRESENTATION_POLICY_VERSION } from '../src/shared/gaming/gamingPromptCore.js';
 import type { TrinityRunOptions, TrinityStageObservation } from '../src/core/logic/trinityTypes.js';
 
 const responsesCreate = jest.fn();
@@ -70,6 +70,7 @@ function request(prompt = originalPrompt) {
       runtimeBudget: createRuntimeBudgetWithLimit(60_000, 0),
       runOptions: {
         gamingGuideIntakePolicy: 'compact-v1' as const,
+        gamingPresentationPolicy: GAMING_CLEAR_PRESENTATION_POLICY_VERSION,
         answerMode: 'explained' as const,
         requestedVerbosity: 'minimal' as const,
         maxWords: 4,
@@ -107,37 +108,69 @@ describe('Gaming compact Trinity intake through the real Responses adapter', () 
     }) });
   });
 
-  it.each(['accept', 'reject', 'unavailable'] as const)('replaces ledger CLEAR with one actual final-answer review for %s, including simple tier', async decision => {
-    responsesCreate.mockResolvedValueOnce(response('Question: next step. Evidence [1].')).mockResolvedValueOnce(response(finalAnswer, false, authorityModel));
-    const requestInput = request();
-    const audit = jest.fn(async (text: string) => ({ assessment: createGamingClearAssessment({
-      profile: 'answer', questionProfile: 'walkthrough', subjectId: 'answer-test', subjectHash: gamingClearHash(text),
-      contextFingerprint: gamingClearContextFingerprint('gaming-test'), evidenceRefs: ['record-6'],
-      gates: { identity: 'verified', security: 'verified', compatibility: 'verified', provenance: 'verified', claimSupport: 'verified', freshness: 'not_applicable' },
-      assessmentStatus: decision === 'unavailable' ? 'unavailable' : 'completed',
-      dimensions: Object.fromEntries(['clarity', 'leverage', 'efficiency', 'alignment', 'resilience'].map(name => [name,
-        { status: 'evaluated', score: 4.5, reasonCodes: ['SUPPORTED'], evidenceRefs: ['record-6'], unresolvedFacts: [] }
-      ])) as Parameters<typeof createGamingClearAssessment>[0]['dimensions'],
-      findings: decision === 'reject' ? [{ code: 'UNSUPPORTED_MECHANIC', severity: 'blocking', evidenceRefs: ['record-6'] }] : []
-    }), usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 } }));
-    (requestInput.context.runOptions as TrinityRunOptions).gamingClearAnswerAudit = audit;
-    const result = await runTrinityWritingPipeline(requestInput);
-    expect(audit).toHaveBeenCalledTimes(1);
-    expect(audit.mock.calls[0][0]).toBe(finalAnswer);
-    expect(audit.mock.invocationCallOrder[0]).toBeGreaterThan(responsesCreate.mock.invocationCallOrder[1]);
-    expect(createGPT5Reasoning).not.toHaveBeenCalled();
-    expect(responsesCreate).toHaveBeenCalledTimes(2);
+  it('delivers awkward but eligible guidance through the existing attempt without CLEAR scoring', async () => {
+    const awkward = 'The west valve is the thing to turn for the return route. [1]';
+    responsesCreate.mockResolvedValueOnce(response('Question: next step. Evidence [1].'))
+      .mockResolvedValueOnce(response(awkward, false, authorityModel));
+    const result = await runTrinityWritingPipeline(request());
+
+    expect(result.result).toBe(awkward);
+    expect(result.gamingPresentationPolicy).toBe(GAMING_CLEAR_PRESENTATION_POLICY_VERSION);
     expect(result.clearAudit).toBeUndefined();
     expect(result.confidence).toBeUndefined();
-    expect(result.gamingClearAudit?.decision).toBe(decision);
-    expect(result.gamingClearAudit?.subjectHash).toBe(gamingClearHash(result.result));
     expect(result.tierInfo?.escalated).toBe(false);
-    if (decision !== 'accept') expect(result.auditSafe.auditFlags).toContain('GAMING_FINAL_ANSWER_NOT_ACCEPTED');
+    expect(createGPT5Reasoning).not.toHaveBeenCalled();
+    expect(responsesCreate).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ['compact', '## Gaming CLEAR checklist\n- Clarity: reviewed.'],
+    ['direct', '**Gaming CLEAR Presentation scores:**\nClarity 4.'],
+    ['compact', 'Gaming CLEAR Presentation policy: gaming-clear-presentation/v1']
+  ] as const)('withholds internal presentation output on the %s Gaming path (%s)', async (path, internalSection) => {
+    const input = request();
+    const options = input.context.runOptions as TrinityRunOptions;
+    if (path === 'direct') {
+      delete options.gamingGuideIntakePolicy;
+      options.answerMode = 'direct';
+    } else {
+      responsesCreate.mockResolvedValueOnce(response('Question: next step. Evidence [1].'));
+    }
+    responsesCreate.mockResolvedValueOnce(response(internalSection + '\n\n' + finalAnswer, false, authorityModel));
+    await expect(runTrinityWritingPipeline(input)).rejects.toMatchObject({
+      code: 'TRINITY_STRUCTURED_OUTPUT_INVALID', reason: 'private_output'
+    });
+    expect(responsesCreate).toHaveBeenCalledTimes(path === 'compact' ? 2 : 1);
+    expect(createGPT5Reasoning).not.toHaveBeenCalled();
+  });
+
+  it('checks exact player text after Trinity inserts a reasoning caveat', async () => {
+    runStructuredReasoning.mockResolvedValueOnce({
+      reasoning_steps: [], assumptions: [], constraints: [], tradeoffs: [],
+      alternatives_considered: [], chosen_path_justification: '',
+      response_mode: 'partial_refusal', achievable_subtasks: ['explain the next step'],
+      blocked_subtasks: [], user_visible_caveats: ['I cannot verify live state here (gaming-clear-presentation/v1).'],
+      claim_tags: [], final_answer: finalAnswer
+    });
+    responsesCreate.mockResolvedValueOnce(response('Question: next step. Evidence [1].'))
+      .mockResolvedValueOnce(response(finalAnswer, false, authorityModel));
+    await expect(runTrinityWritingPipeline(request())).rejects.toMatchObject({
+      code: 'TRINITY_STRUCTURED_OUTPUT_INVALID', reason: 'private_output'
+    });
+  });
+
+  it('preserves ordinary wording and headings about game scores', async () => {
+    const answer = '## Clear scores\nUse the west valve. [1]';
+    responsesCreate.mockResolvedValueOnce(response('Question: next step. Evidence [1].'))
+      .mockResolvedValueOnce(response(answer, false, authorityModel));
+    const result = await runTrinityWritingPipeline(request());
+    expect(result.result).toBe(answer);
+    expect(result.gamingPresentationPolicy).toBe(GAMING_CLEAR_PRESENTATION_POLICY_VERSION);
   });
 
   it.each([
     ['compact', false], ['compact', true], ['direct', false], ['direct', true]
-  ] as const)('routes the %s Gaming audit after honesty enforcement (supported guide survives=%s)', async (path, keepGuide) => {
+  ] as const)('attests %s Gaming presentation after honesty enforcement (supported guide survives=%s)', async (path, keepGuide) => {
     const unsupportedClaim = 'I verified the current patch live in-game.';
     const finalDraft = keepGuide ? unsupportedClaim + '\n\n' + finalAnswer : unsupportedClaim;
     const requestInput = request();
@@ -151,34 +184,17 @@ describe('Gaming compact Trinity intake through the real Responses adapter', () 
       options.maxWords = 120;
     }
     responsesCreate.mockResolvedValueOnce(response(finalDraft, false, authorityModel));
-    const audit = jest.fn(async (text: string) => ({ assessment: createGamingClearAssessment({
-      profile: 'answer', questionProfile: 'walkthrough', subjectId: 'answer-test', subjectHash: gamingClearHash(text),
-      contextFingerprint: gamingClearContextFingerprint('gaming-test'), evidenceRefs: ['record-6'],
-      gates: { identity: 'verified', security: 'verified', compatibility: 'verified', provenance: 'verified',
-        claimSupport: 'verified', freshness: 'not_applicable' },
-      dimensions: Object.fromEntries(['clarity', 'leverage', 'efficiency', 'alignment', 'resilience'].map(name => [name,
-        { status: 'evaluated', score: 4.5, reasonCodes: ['SUPPORTED'], evidenceRefs: ['record-6'], unresolvedFacts: [] }
-      ])) as Parameters<typeof createGamingClearAssessment>[0]['dimensions']
-    }) }));
-    options.gamingClearAnswerAudit = audit;
-
     const result = await runTrinityWritingPipeline(requestInput);
 
     expect(responsesCreate).toHaveBeenCalledTimes(path === 'compact' ? 2 : 1);
     expect(runStructuredReasoning).toHaveBeenCalledTimes(path === 'compact' ? 1 : 0);
     expect(result.result).not.toContain(unsupportedClaim);
-    expect(audit).toHaveBeenCalledTimes(keepGuide ? 1 : 0);
     expect(result.fallbackFlag).toBe(!keepGuide);
-    if (keepGuide) {
-      expect(result.result).toContain('Turn the west valve. [1]');
-      expect(audit.mock.calls[0][0]).toBe(result.result);
-      expect(result.gamingClearAudit?.decision).toBe('accept');
-    } else {
-      expect(result.gamingClearAudit).toBeUndefined();
-    }
+    expect(result.gamingPresentationPolicy).toBe(keepGuide ? GAMING_CLEAR_PRESENTATION_POLICY_VERSION : undefined);
+    if (keepGuide) expect(result.result).toContain('Turn the west valve. [1]');
   });
 
-  it('keeps malformed hybrid build output terminal after one audit without direct-answer continuation or regeneration', async () => {
+  it('rejects an abrupt hybrid build after one final attempt without an audit or continuation', async () => {
     const malformedAnswer = '1. Turn the west valve.\n\n2. Follow the lit corridor.\n\n3. Use the';
     responsesCreate.mockResolvedValueOnce(response('Compact task card.'))
       .mockResolvedValueOnce(response(malformedAnswer, false, authorityModel));
@@ -192,29 +208,14 @@ describe('Gaming compact Trinity intake through the real Responses adapter', () 
     expect(options).toMatchObject({ gamingGuideIntakePolicy: 'compact-v1', disableOptionalSideEffects: true,
       redactAuditContent: true, disableMemoryAccess: true });
     expect(options.directAnswerIntegrityRepair).toBeUndefined();
-    const audit = jest.fn(async (text: string) => ({ assessment: createGamingClearAssessment({
-      profile: 'answer', questionProfile: 'walkthrough', subjectId: 'answer-test', subjectHash: gamingClearHash(text),
-      contextFingerprint: gamingClearContextFingerprint('gaming-test'), evidenceRefs: ['record-6'],
-      gates: { identity: 'verified', security: 'verified', compatibility: 'verified', provenance: 'verified', claimSupport: 'verified', freshness: 'not_applicable' },
-      assessmentStatus: 'completed',
-      dimensions: Object.fromEntries(['clarity', 'leverage', 'efficiency', 'alignment', 'resilience'].map(name => [name,
-        { status: 'evaluated', score: 4.5, reasonCodes: ['SUPPORTED'], evidenceRefs: ['record-6'], unresolvedFacts: [] }
-      ])) as Parameters<typeof createGamingClearAssessment>[0]['dimensions'],
-      findings: [{ code: 'INCOMPLETE_GAMEPLAY_STEPS', severity: 'blocking', evidenceRefs: ['record-6'] }]
-    }) }));
-    options.gamingClearAnswerAudit = audit;
     const controller = new AbortController();
-    const result = await runWithRequestAbortContext({ controller, signal: controller.signal,
-      deadlineAt: Date.now() + 60_000, timeoutMs: 60_000 }, () => runTrinityWritingPipeline(input));
-    expect(responsesCreate).toHaveBeenCalledTimes(2); // One intake and one final provider request.
+    await expect(runWithRequestAbortContext({ controller, signal: controller.signal,
+      deadlineAt: Date.now() + 60_000, timeoutMs: 60_000 }, () => runTrinityWritingPipeline(input)))
+      .rejects.toMatchObject({ code: 'TRINITY_OUTPUT_INTEGRITY_FAILED', trinityStage: 'final',
+        integrityIssues: expect.arrayContaining(['abrupt_mid_sentence_ending']) });
+    expect(responsesCreate).toHaveBeenCalledTimes(2);
     expect(runStructuredReasoning).toHaveBeenCalledTimes(1);
-    expect(audit).toHaveBeenCalledTimes(1);
-    expect(audit.mock.calls[0][0]).toBe(result.result);
-    expect(result.gamingClearAudit?.decision).toBe('reject');
-    expect(result.auditSafe.auditFlags).toContain('GAMING_FINAL_ANSWER_NOT_ACCEPTED');
     expect(createGPT5Reasoning).not.toHaveBeenCalled();
-    expect(result.routingStages?.some(stage => /DIRECT_ANSWER|INTEGRITY_REPAIR/u.test(stage))).toBe(false);
-    expect(result.meta.integrityRecovery).toBeUndefined();
   });
 
   it('forwards Gaming-only zero transport retries without changing ordinary provider defaults', async () => {
@@ -242,7 +243,7 @@ describe('Gaming compact Trinity intake through the real Responses adapter', () 
     expect(JSON.stringify(responsesCreate.mock.calls[0]?.[0])).not.toContain('compact-v1');
   });
 
-  it('uses compact instructions, existing token adapter and normal intake/reasoning/CLEAR/final stages', async () => {
+  it('uses compact instructions, existing token adapter and normal intake/reasoning/final stages', async () => {
     responsesCreate.mockResolvedValueOnce(response('Question: next step. Constraints: none spoilers; concise. Evidence [1].'))
       .mockResolvedValueOnce(response(finalAnswer, false, authorityModel));
     const result = await runTrinityWritingPipeline(request());
@@ -262,9 +263,20 @@ describe('Gaming compact Trinity intake through the real Responses adapter', () 
     expect(reasoningPrompt).toContain(syntheticEvidence);
     expect(reasoningPrompt).toContain('Spoiler mode: none');
     expect(reasoningPrompt).toContain('&lt;untrusted_evidence&gt;');
-    expect(createGPT5Reasoning).toHaveBeenCalledTimes(1);
-    expect(createGPT5Reasoning.mock.calls[0]?.[1]).toContain(syntheticEvidence);
-    expect(createGPT5Reasoning.mock.calls[0]?.[2]).toContain('Treat all JSON values');
+    expect(createGPT5Reasoning).not.toHaveBeenCalled();
+    const final = responsesCreate.mock.calls[1]?.[0] as {
+      input: { role: string; content: { text: string }[] }[];
+    };
+    const instructions = final.input
+      .filter(message => message.role === 'system' || message.role === 'developer')
+      .flatMap(message => message.content.map(part => part.text)).join(' ');
+    expect(instructions).toContain(GAMING_CLEAR_PRESENTATION_POLICY_VERSION);
+    expect(instructions).toContain('Within this generation attempt');
+    for (const dimension of ['Clarity', 'Leverage', 'Efficiency', 'Alignment', 'Resilience']) {
+      expect(instructions).toContain(dimension);
+    }
+    expect(instructions).not.toContain(syntheticEvidence);
+    expect(JSON.stringify(intake)).not.toContain(GAMING_CLEAR_PRESENTATION_POLICY_VERSION);
     expect(JSON.stringify(responsesCreate.mock.calls[1]?.[0])).toContain(syntheticEvidence);
     expect(JSON.stringify(responsesCreate.mock.calls[1]?.[0])).toContain('Spoiler mode: none');
     // The four-word soft target must not damage Markdown, indentation, citations, or a sentence.
@@ -478,6 +490,27 @@ describe('Gaming compact Trinity intake through the real Responses adapter', () 
   });
 
   it.each([
+    { moduleId: 'ARCANOS:OTHER', sourceEndpoint: 'arcanos-gaming.guide', trusted: true },
+    { moduleId: 'ARCANOS:GAMING', sourceEndpoint: 'arcanos-gaming.storeGuide', trusted: true },
+    { moduleId: 'ARCANOS:GAMING', sourceEndpoint: 'arcanos-gaming.guide', trusted: false }
+  ])('requires server-owned policy opt-in from an authorized writing flow: $moduleId $sourceEndpoint $trusted', async ({
+    moduleId, sourceEndpoint, trusted
+  }) => {
+    responsesCreate.mockImplementation(async (payload: { model: string }) =>
+      response(payload.model === authorityModel ? 'Turn the west valve. [1]' : 'Original framed request only.', false, payload.model));
+    const params = request('Explain the next step in the guide.');
+    const options = params.context.runOptions as TrinityRunOptions;
+    if (!trusted) delete options.gamingPresentationPolicy;
+    const result = await runTrinityWritingPipeline({
+      ...params, input: { ...params.input, moduleId, sourceEndpoint,
+        body: { ...params.input.body, gamingPresentationPolicy: GAMING_CLEAR_PRESENTATION_POLICY_VERSION } }
+    });
+
+    expect(result.gamingPresentationPolicy).toBeUndefined();
+    expect(JSON.stringify(responsesCreate.mock.calls)).not.toContain('Gaming CLEAR Presentation policy');
+  });
+
+  it.each([
     { moduleId: 'ARCANOS:OTHER', sourceEndpoint: 'arcanos-gaming.guide', body: { mode: 'guide' } },
     { moduleId: 'ARCANOS:GAMING', sourceEndpoint: 'arcanos-gaming.meta', body: { mode: 'guide' } },
     { moduleId: 'ARCANOS:GAMING', sourceEndpoint: 'arcanos-gaming.hybrid-build', body: { mode: 'build' } },
@@ -493,6 +526,6 @@ describe('Gaming compact Trinity intake through the real Responses adapter', () 
     expect(JSON.stringify(intake)).not.toContain('compact-v1');
     expect(intake).toMatchObject({ reasoning: { effort: 'none' } });
     expect(runStructuredReasoning.mock.calls[0]?.[2]).not.toContain('originalGamingRequest');
-    expect(createGPT5Reasoning.mock.calls[0]?.[1]).not.toContain('originalGamingRequest');
+    expect(createGPT5Reasoning.mock.calls[0]?.[1] ?? '').not.toContain('originalGamingRequest');
   });
 });

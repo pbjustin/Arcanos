@@ -17,7 +17,7 @@ Existing ARCANOS Railway project
         ├── exact requested PR SHA and compiled-artifact proof
         ├── validation-only OpenAI key and authenticated test execution
         ├── real public HTTPS guide acquisition
-        ├── real Trinity generation and mandatory CLEAR answer audit
+        ├── real Trinity generation with Gaming CLEAR Presentation v1
         ├── transient-only Gaming, no player persistence
         ├── no production Postgres, Redis, credentials or traffic
         └── bounded paid calls and sanitized stage evidence
@@ -283,13 +283,12 @@ Operator invocations must also pass the exact target limits, replacing the
 default example values above when the reviewed target is stricter.
 Provider admission reserves conservative input
 and output token costs before each operation at the reviewed model price ceilings,
-including every Trinity/audit stage. The USD 2 cap applies to those reservations;
+including every Trinity generation stage. The USD 2 cap applies to those reservations;
 understated ceilings cannot prove actual billed spend. Unknown model prices,
 invalid usage, timeout, exhaustion or concurrency
 violations fail closed. Failed or uncertain operations do not refund reservations.
 No direct-answer regeneration or integrity-repair loop bypasses the quota.
-Mandatory answer auditing and source/citation verification remain required even
-when the remaining budget is small.
+Source admission and response integrity checks remain required throughout the run.
 
 The dedicated launcher sets `TRINITY_REASONING_MAX_OUTPUT_TOKENS` to the same
 4,096-token provider ceiling before loading the Gaming pipeline. This keeps
@@ -299,8 +298,8 @@ production default or increasing the paid limit.
 The provider path permits the reviewed textual Responses operations and model
 metadata at fixed OpenAI endpoints, with storage/streaming/tools disabled,
 no endpoint override, no redirects and no retries. The aggregate deadline also
-bounds source and model work. An audit has its own measured stage status and
-remaining budget; successful generation never substitutes for its completion.
+bounds source and model work. The presentation profile admits generation and
+model lookup requests. It rejects answer-audit requests before reserving spend.
 
 The acceptance summary may include `actualUsage.modelValidation` when the
 authenticated runtime reports model lookup stages. The array preserves the
@@ -311,7 +310,7 @@ lookup with `reserved: false` consumes no request. Reserved lookups count in
 `metadataRequests` even when the upstream result cannot be validated. An older
 runtime without stage evidence still produces the existing counters.
 
-The Gaming observation also retains the final answer audit's allowlisted reason
+Historical v1 Gaming observations retain the final answer audit's allowlisted reason
 when its assessment is unavailable and the effective timeout when computed.
 Read those optional fields on `observation.audit` together with
 `observation.stages.answer_audit` and `observation.auditStartBudget` for the
@@ -335,8 +334,8 @@ mapped to it. When available, `unmappedFindingCount` gives the mapped subset. A
 value of zero means every finding in that bucket used the label explicitly.
 Older receipts may omit these counts. These fields carry no finding text,
 evidence IDs or claim text. A completed provider request or audit stage can
-still end in rejection. Acceptance requires a completed audit with an accept
-decision bound to the delivered answer.
+still end in rejection. The historical policy required a completed audit with
+an accept decision bound to the delivered answer.
 
 The JavaScript SDK rounds its timeout header down to whole seconds. The guard
 keeps the SDK's exact abort signal and uses the rounded value only to bound its
@@ -363,11 +362,26 @@ Full acceptance requires a new authorized run identity and the existing
 exact-commit admission gates. The positive Gaming profile must acquire the
 supplied public guide, independently verify its game identity, pass CLEAR policy v7
 source validation, and select passages that cover the question. Trinity intake,
-reasoning and final generation must succeed. Delivery requires a complete
-provider audit that accepts and binds the exact answer and its resolved
-citations. The wrong-game profile must then reject source validation before
-any generation or audit calls. Preserve a failed run's receipt and one-shot
-state when a gate stops acceptance.
+reasoning and final generation must succeed with Gaming CLEAR Presentation v1
+applied inside the existing generation attempt. Delivery requires a complete
+bound response and structurally resolved citations. The wrong-game profile
+must reject source validation before any generation call. Preserve a failed
+run's receipt and one-shot state when a gate stops acceptance.
+
+For a separately authorized run, use a fresh ID, the exact reviewed commit,
+the existing dedicated credential, the USD 2 cap, zero retries and verified
+cleanup. Check the private delivered answer for understandable instructions,
+the requested prerequisites and ordered first steps, appropriate qualifications,
+and citations. Record readability and request alignment as operator observations
+without publishing the response. The profile hash binds the original question and
+candidates. The automated evidence confirms policy application, completion, source
+admission, answer integrity and citation structure. A separate semantic or
+quality verdict is outside this profile.
+
+The hosted workflow takes its controller and profiles from the trusted default
+branch. A v1 trusted controller cannot admit a v2 candidate with a different
+profile hash. The v2 controller must first be available through the approved
+trusted execution path. Keep the existing exact-commit and credential gates.
 
 Quota state is local to the one run in one deployment process. The service has
 one replica and no automatic restart. A manual restart/redeployment can create
@@ -390,14 +404,14 @@ execution. No local fixture or anonymous URL check proves live acceptance.
 
 | Profile | Required observations |
 | --- | --- |
-| `gaming-guide-positive` | Elite Dangerous system-colonisation prerequisites and first steps, independently acquired from Frontier's public system-colonisation guide. The ordinary stable-mechanics question makes no current-patch assertion. Passing acceptance requires selected evidence and complete coverage, measured intake/reasoning/final stages, completed mandatory CLEAR audit, final `answer_ready`, bound citations, no durable source writes and no player persistence. |
+| `gaming-guide-positive` | Elite Dangerous system-colonisation prerequisites and first steps, independently acquired from Frontier's public system-colonisation guide. The ordinary stable-mechanics question makes no current-patch assertion. Passing acceptance requires selected evidence and complete coverage, measured intake/reasoning/final stages, bound Gaming CLEAR Presentation v1 output, final `answer_ready`, resolved citations, no durable source writes and no player persistence. |
 | `gaming-guide-negative` | The Elite Dangerous request supplies an explicitly authored wrong-game Sekiro fixture at an immutable public GitHub URL. The source is rejected/excluded, conflict reason is preserved, provider calls remain zero and durable writes remain zero. |
 
 The adapter calls the existing v2 Gaming workflow. It forces `transient_only`,
 fresh request actor scope, skipped stored retrieval and denied ingestion. It does
 not initialize a production database, persist player progress, launch workers or
 invent a separate Gaming engine. A clarification is preserved as an observed
-result; it is not misreported as a generated audited answer. Missing noncritical
+result with its own outcome. Missing noncritical
 patch knowledge retains the ordinary visible freshness qualification.
 
 The canonical positive profile explicitly supplies Frontier's real public guide
@@ -416,8 +430,8 @@ submits one candidate batch; normal service refinement fences still apply.
 
 Existing HTTPS-only public-source acquisition, DNS/IP-pinned SSRF protection,
 private-network rejection, redirect policy, wire/decoded/text bounds, source-use
-restrictions, instruction filtering, source compatibility, currentness, mandatory
-audit and citation integrity stay enforced. Validation guards additionally deny
+restrictions, instruction filtering, source compatibility, currentness, output
+integrity and citation structure stay enforced. Validation guards additionally deny
 production/provider/internal destinations in the actual acquisition transport.
 Inaccessible HTTP responses, rejected redirects and source-size failures remain
 acquisition failures; they cannot establish successful document acquisition.
@@ -429,15 +443,15 @@ verifier tunnel to provision.
 ## Sanitized stage evidence
 
 Each live result distinguishes measured source acquisition, evidence selection,
-generation, mandatory answer audit and response construction. Intake, reasoning
+generation and response construction. Intake, reasoning
 and final stages retain individual timing hooks. Positive acceptance requires
-measured completed acquisition, selection, generation, answer-audit and response
+measured completed acquisition, selection, generation and response
 stages, plus at least one observed completed model stage. A profile may require
 specific `intake`, `reasoning` and `final` stages through bounded, unique
 `requiredModelStages`; the canonical positive profile requires all three. A
 completed label without bounded elapsed timing is insufficient. Evidence records
 bounded timings, stage statuses, selected counts, semantic conflict/currentness
-flags, audit completion/decision and final-answer fingerprint binding.
+flags, and a versioned presentation attestation bound to the exact final answer.
 Unobserved stages remain unobserved; timing is never inferred from total latency.
 Required clarification proof records only bounded reply/acquisition counts and
 same-workflow, advancing-revision, retained-evidence and preserved-budget flags.
@@ -447,12 +461,10 @@ An observed intake, reasoning or final timeout remains `MODEL_TIMEOUT` with
 generation marked `timed_out`, even if upstream cancellation reaches the provider
 before its own timer. Generic cancellation alone does not establish a timeout.
 
-The known production regression completed Trinity generation before the mandatory
-Gaming answer audit timed out. A validation result must preserve that sequence:
-`generation = completed`, `answer_audit = timed_out`, final acceptance failure.
-It must not publish a final-looking answer as success when audit completion is
-missing. Negative evidence must retain source conflict rather than relabeling it
-as a provider failure.
+The v2 profile records `grounded-presented-answer-v2` and `auditCalls: 0`.
+Historical `grounded-audited-answer-v1` receipts still retain their original
+audit results and stage diagnostics. Negative evidence retains the source
+conflict and reports zero generation calls.
 
 Public artifacts contain exact source/deployment identity, compiled hashes,
 profile/status fields, bounded provider counts/cost reservations and sanitized
@@ -463,24 +475,25 @@ and diagnostic files are private untrusted data, not public acceptance artifacts
 
 An accepted validation response additionally carries `privateAnswer` to the
 authenticated exact-run operator. The adapter creates it only after the existing
-bound CLEAR audit and final-response equality checks pass. It contains the exact
-answer, audit subject/context hashes and ordered source URLs, without source
+presentation binding and final-response equality checks pass. The v2 artifact
+contains the exact answer, policy version, subject and context hashes and ordered
+source URLs, without source
 snippets, provider bodies or reasoning. Failed, incomplete or unbound results
 omit it. The existing runtime credential scan covers this separate field.
 
-After the original profile, identity, evidence, audit and provider-usage gates,
+After the profile, identity, evidence and provider-usage gates,
 the controller checks the closed bounded payload, canonical JSON-string answer
 hash, citation indices and usable source-document hashes. It writes
 `accepted-answer.private.json` through the existing protected writer into the
 outside-checkout `0700` operator directory as a `0600` file. Public evidence and
 summaries retain only a hash of that private artifact's answer payload; they never
 include its prose. Do not publish the private file or controller state. Retaining
-an audited answer for operator inspection does not enable player persistence or
+a delivered answer for operator inspection does not enable player persistence or
 durable source ingestion.
 
-### Diagnosing rejected answers
+### Diagnosing historical audit rejections
 
-For a completed rejection, use the receipt's bounded finding counts. The
+For a completed v1 rejection, use the receipt's bounded finding counts. The
 accepted-answer artifact cannot recover a rejected candidate, the passages
 submitted with it, or its full CLEAR assessment. The protected JSON writer
 limits file access but does not encrypt the payload or expire it.

@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -12,7 +13,7 @@ import { LIVE_VALIDATION_PROJECT_ID, LIVE_VALIDATION_HARD_LIMITS, LIVE_VALIDATIO
 import { canonicalLiveValidationJson, validationHash } from './live-validation-bootstrap.mjs';
 import { createLiveValidationProvider } from './live-validation-provider.mjs';
 
-const ROOT = path.resolve(new URL('../', import.meta.url).pathname);
+const ROOT = path.resolve(fileURLToPath(new URL('../', import.meta.url)));
 const sha = 'a'.repeat(40); const trustedSha = 'b'.repeat(40); const treeSha = 'c'.repeat(40); const compiledSha256 = 'd'.repeat(64);
 const envId = '11111111-1111-4111-8111-111111111111'; const runtimeId = '22222222-2222-4222-8222-222222222222';
 const runtimeDeploymentId = '55555555-5555-4555-8555-555555555555';
@@ -85,31 +86,26 @@ function identity(target) {
   return { role: 'runtime', sourceCommit: sha, projectId: target.projectId, environmentId: target.environmentId, serviceId: target.runtimeServiceId,
     deploymentId: runtimeDeploymentId, buildManifestSha256: validationHash(buildManifest), buildManifest };
 }
+const PRESENTATION = { policyVersion: 'gaming-clear-presentation/v1', boundToFinalAnswer: true };
 function observation(positive) {
-  return { schemaVersion: 1, contractVersion: 'gaming-hybrid-v2', outcome: positive ? 'accepted' : 'need_new_source',
+  return { schemaVersion: 2, contractVersion: 'gaming-hybrid-v2', outcome: positive ? 'accepted' : 'need_new_source',
     reason: positive ? null : 'GAME_MISMATCH', semanticGap: positive ? 'NONE' : 'CONFLICT',
     coverage: { satisfied: positive, assessmentStatus: 'assessed', missingCount: positive ? 0 : 1 },
     selectedCandidateCount: positive ? 1 : 0, selectedEvidenceCount: positive ? 1 : 0,
     candidates: positive ? [] : [{ decision: 'rejected', reasonCodes: ['GAME_MISMATCH'] }],
     qualification: { visible: false, patchCompatibility: positive ? 'not_required' : 'unverified', claimsVerifiedCurrentness: false },
-    audit: positive ? { assessmentStatus: 'completed', decision: 'accept', boundToFinalAnswer: true } : null,
-    auditStartBudget: { runtimeRemainingMs: 120000, requestRemainingMs: 120000 },
-    stages: Object.fromEntries(['acquisition', 'selection', 'generation', 'intake', 'reasoning', 'final', 'answer_audit', 'response']
+    presentation: positive ? PRESENTATION : null,
+    stages: Object.fromEntries(['acquisition', 'selection', 'generation', 'intake', 'reasoning', 'final', 'response']
       .map(stage => [stage, { status: positive || ['acquisition', 'selection', 'response'].includes(stage) ? 'passed' : 'not_run', elapsedMs: positive ? 10 : null }])) };
 }
 
-async function exerciseController(t, { metadataStatus = 200, auditStatus = 200, rejectAnswer = false } = {}) {
+async function exerciseController(t, { metadataStatus = 200, generationStatus = 200, withholdAnswer = false } = {}) {
   const f = fixture(t); let token; let active = false; let stopped = false; let providerCalls = 0; let server; let origin;
   let application; const routes = []; const providerUrls = [];
   // Controlled adapter/provider fixtures exercise transport and retention only;
   // this prose is not an acquired publisher claim or a live model answer.
   const answer = '1. Follow the documented system-colonisation starting procedure [1].';
   const contextFingerprint = '9'.repeat(64); let expectedPrivateAnswer;
-  const rejectedAudit = { assessmentStatus: 'completed', decision: 'reject', boundToFinalAnswer: false };
-  const rejectionDiagnostics = { effectiveTimeoutMs: 12_000, blockingFindingCount: 8,
-    findingCodes: ['MATERIAL_FACT_UNRESOLVED', 'PROFILE_FLOOR_NOT_MET', 'UNCLASSIFIED_AUDIT_FINDING'],
-    findingCounts: { MATERIAL_FACT_UNRESOLVED: 2, PROFILE_FLOOR_NOT_MET: 1, UNCLASSIFIED_AUDIT_FINDING: 5 },
-    unmappedFindingCount: 3 };
   assert.equal(profiles.profiles[0].input.query.game, 'Elite Dangerous');
   assert.equal(profiles.profiles[0].expected.semanticGap, 'NONE');
   assert.equal(profiles.profiles[0].input.clarificationReplies, undefined);
@@ -128,14 +124,14 @@ async function exerciseController(t, { metadataStatus = 200, auditStatus = 200, 
           if (init.method === 'GET') return metadataStatus === 200
             ? Response.json({ id: target.models[1].id, object: 'model' })
             : Response.json({ error: { message: 'private upstream fixture body' } }, { status: metadataStatus });
-          if (options.observation().stage === 'answer_audit' && auditStatus !== 200) {
-            return Response.json({ error: { message: 'private upstream audit rejection' } }, { status: auditStatus });
+          if (generationStatus !== 200) {
+            return Response.json({ error: { message: 'private upstream generation failure' } }, { status: generationStatus });
           }
           const body = JSON.parse(init.body);
           return new Response(JSON.stringify({ id: 'offline-response', object: 'response', model: body.model, status: 'completed', output: [],
             usage: { input_tokens: 2, output_tokens: 1, total_tokens: 3 } }), { status: 200, headers: { 'content-type': 'application/json' } });
         } }),
-        createAdapter: async ({ provider, observation: getStage }) => {
+        createAdapter: async ({ provider }) => {
           const client = new OpenAI({ apiKey: 'validation-provider-placeholder', baseURL: 'https://api.openai.com/v1', maxRetries: 0, fetch: provider.fetch });
           return { validateInput: input => ({ ok: true, input }), getLastObservation: () => structuredClone(lastObservation),
             execute: async (input, hooks) => {
@@ -143,41 +139,36 @@ async function exerciseController(t, { metadataStatus = 200, auditStatus = 200, 
               const positive = entry.id === 'gaming-guide-positive'; hooks.onSourceAcquisition('passed');
               hooks.onSourceValidation(positive ? 'passed' : 'rejected'); lastObservation = observation(positive);
               if (!positive) return { accepted: false, failureCode: 'INCOMPATIBLE_SOURCE' };
-              assert.equal(getStage().stage, 'generation');
               try { await client.models.retrieve(target.models[1].id); }
               catch (error) {
                 lastObservation = { ...lastObservation, outcome: 'unavailable', reason: 'GENERATION_UNAVAILABLE',
-                  semanticGap: 'UNOBSERVED', audit: null, stages: { ...lastObservation.stages,
+                  semanticGap: 'UNOBSERVED', presentation: null, stages: { ...lastObservation.stages,
                     generation: { status: 'failed', elapsedMs: 10 }, intake: { status: 'not_run', elapsedMs: null },
-                    reasoning: { status: 'not_run', elapsedMs: null }, final: { status: 'not_run', elapsedMs: null },
-                    answer_audit: { status: 'not_run', elapsedMs: null } } };
+                    reasoning: { status: 'not_run', elapsedMs: null }, final: { status: 'not_run', elapsedMs: null } } };
                 throw error;
               }
-              await client.responses.create({ model: target.models[0].id, input: 'Offline grounded guide fixture.', max_output_tokens: 100 });
-              hooks.onAnswerAuditStart(); assert.equal(getStage().stage, 'answer_audit');
               try {
-                await client.responses.create({ model: target.models[1].id, input: 'Offline mandatory audit fixture.', max_output_tokens: 100 });
+                await client.responses.create({ model: target.models[0].id, input: 'Offline grounded guide fixture.', max_output_tokens: 100 });
               } catch {
-                const audit = { assessmentStatus: 'unavailable', decision: 'unavailable', boundToFinalAnswer: false };
                 lastObservation = { ...lastObservation, outcome: 'unavailable', reason: 'GENERATION_UNAVAILABLE',
-                  semanticGap: 'UNOBSERVED', audit: { ...audit, reasonCode: 'AUDIT_PROVIDER_ERROR', effectiveTimeoutMs: 12_000 },
-                  stages: { ...lastObservation.stages, answer_audit: { status: 'failed', elapsedMs: 10 } } };
-                return { accepted: false, audit };
+                  semanticGap: 'UNOBSERVED', presentation: null,
+                  stages: { ...lastObservation.stages, generation: { status: 'failed', elapsedMs: 10 } } };
+                return { accepted: false };
               }
               const result = { ok: true, route: 'gaming', mode: 'guide', data: { response: answer,
                 sources: [{ url: entry.input.candidateUrls[0], snippet: 'Offline acquired evidence fixture.' }],
                 grounding: { groundingStatus: 'grounded', groundedInSuppliedEvidence: true, fetchedSuppliedSourceCount: 1, usableSourceCount: 1,
                   citableSourceCount: 1, selectedChunkCount: 1, suppliedEvidenceSourceCount: 1 } } };
-              expectedPrivateAnswer = { version: 1, response: answer, subjectHash: validationHash(answer), contextFingerprint,
+              expectedPrivateAnswer = { version: 2, policyVersion: PRESENTATION.policyVersion, response: answer, subjectHash: validationHash(answer), contextFingerprint,
                 sources: entry.input.candidateUrls.map((url, index) => ({ index: index + 1, url })) };
-              if (rejectAnswer) {
+              if (withholdAnswer) {
                 lastObservation = { ...lastObservation, outcome: 'unavailable', reason: 'GENERATION_UNAVAILABLE',
-                  semanticGap: 'UNOBSERVED', audit: { ...rejectedAudit, ...rejectionDiagnostics } };
-                result.data.response = 'Offline fallback without an audited guide.';
-                result.data.fallbackReason = 'GAMING_ANSWER_REJECTED';
-                return { accepted: false, audit: rejectedAudit, result, privateAnswer: expectedPrivateAnswer };
+                  semanticGap: 'UNOBSERVED', presentation: null };
+                result.data.response = 'Offline fallback without a completed guide.';
+                result.data.fallbackReason = 'PROVIDER_COMPLETION_INCOMPLETE';
+                return { accepted: false, result, privateAnswer: expectedPrivateAnswer };
               }
-              return { accepted: true, audit: { assessmentStatus: 'completed', decision: 'accept', boundToFinalAnswer: true },
+              return { accepted: true, presentation: PRESENTATION,
                 privateAnswer: expectedPrivateAnswer, result };
             } };
         } });
@@ -215,33 +206,26 @@ async function exerciseController(t, { metadataStatus = 200, auditStatus = 200, 
     }
     return;
   }
-  if (auditStatus !== 200 || rejectAnswer) {
+  if (generationStatus !== 200 || withholdAnswer) {
     assert.equal(result.status, 'FAILED');
     assert.equal(result.code, 'LIVE_VALIDATION_PROFILE_FAILED');
     assert.equal(result.observedCases.length, 1);
     assert.equal(result.observedCases[0].caseId, 'gaming-guide-positive');
     assert.equal(result.actualUsage.workflows, 1);
-    assert.equal(providerCalls, 3);
+    assert.equal(providerCalls, 2);
     assert.equal(result.actualUsage.generationCalls, 1);
-    assert.equal(result.actualUsage.auditCalls, 1);
+    assert.equal(result.actualUsage.auditCalls, 0);
     assert.equal(result.cleanup.runClosed, true);
     const summaryText = readFileSync(path.join(f.directory, 'evidence', 'acceptance-summary.json'), 'utf8');
     const summary = JSON.parse(summaryText);
     const observed = summary.observedCases[0];
-    assert.deepEqual(observed.observation.audit, rejectAnswer ? { ...rejectedAudit, ...rejectionDiagnostics } : {
-      assessmentStatus: 'unavailable', decision: 'unavailable', boundToFinalAnswer: false,
-      reasonCode: 'AUDIT_PROVIDER_ERROR', effectiveTimeoutMs: 12_000
-    });
-    if (rejectAnswer) {
-      assert.equal(observed.observation.stages.answer_audit.status, 'passed');
-      assert.equal(observed.evidence.stages.delivery, 'rejected');
-      assert.equal(observed.evidence.result.acceptedAnswer, false);
-      assert.equal(observed.evidence.result.citationsResolved, false);
-    }
-    const [{ elapsedMs, ...auditRequest }] = summary.actualUsage.answerAuditProvider;
-    assert.ok(Number.isSafeInteger(elapsedMs) && elapsedMs >= 0);
-    assert.deepEqual(auditRequest, rejectAnswer ? { outcome: 'completed' } : { outcome: 'failed', code: 'LIVE_VALIDATION_PROVIDER_FAILED' });
-    for (const value of [token, answer, 'private upstream audit rejection', 'Offline acquired evidence fixture.',
+    assert.equal(observed.observation.presentation, null);
+    assert.equal(Object.hasOwn(observed.observation, 'audit'), false);
+    assert.equal(Object.hasOwn(summary.actualUsage, 'answerAuditProvider'), false);
+    assert.equal(observed.evidence.stages.delivery, 'rejected');
+    assert.equal(observed.evidence.result.acceptedAnswer, false);
+    assert.equal(observed.evidence.result.citationsResolved, false);
+    for (const value of [token, answer, 'private upstream generation failure', 'Offline acquired evidence fixture.',
       'sk-offline-test-synthetic-validation-credential']) {
       assert.equal(summaryText.includes(value), false);
     }
@@ -249,14 +233,14 @@ async function exerciseController(t, { metadataStatus = 200, auditStatus = 200, 
     return;
   }
   assert.equal(result.status, 'PASS', result.code); assert.deepEqual(result.cases.map(item => item.status), ['PASS', 'PASS']);
-  assert.equal(providerCalls, 3); assert.deepEqual(providerUrls, [modelUrl, 'https://api.openai.com/v1/responses', 'https://api.openai.com/v1/responses']);
+  assert.equal(providerCalls, 2); assert.deepEqual(providerUrls, [modelUrl, 'https://api.openai.com/v1/responses']);
   assert.deepEqual(result.cases[1].actualUsage, { providerCalls: 0, generationCalls: 0, auditCalls: 0 });
-  assert.equal(result.actualUsage.workflows, 2); assert.equal(result.actualUsage.metadataRequests, 1); assert.equal(result.actualUsage.observedTotalTokens, 6);
+  assert.equal(result.actualUsage.workflows, 2); assert.equal(result.actualUsage.metadataRequests, 1); assert.equal(result.actualUsage.observedTotalTokens, 3);
   assert.equal(stopped, true); assert.ok(routes.includes('/stop')); assert.equal(result.cleanup.runClosed, true);
   assert.equal(JSON.stringify(result).includes(token), false); assert.equal(JSON.stringify(result).includes('sk-offline-test-synthetic-validation-credential'), false);
   const retained = JSON.parse(readFileSync(path.join(f.directory, 'evidence', 'accepted-answer.private.json'), 'utf8'));
   assert.equal(retained.caseId, 'gaming-guide-positive'); assert.equal(retained.sourceCommit, sha);
-  for (const key of ['version', 'response', 'subjectHash', 'contextFingerprint', 'sources']) assert.deepEqual(retained[key], expectedPrivateAnswer[key]);
+  for (const key of ['version', 'policyVersion', 'response', 'subjectHash', 'contextFingerprint', 'sources']) assert.deepEqual(retained[key], expectedPrivateAnswer[key]);
   assert.equal(result.cases[0].answerArtifactSha256, validationHash(expectedPrivateAnswer));
   assert.equal(result.cases[1].answerArtifactSha256, undefined);
   assert.equal(result.cases[0].observation.semanticGap, 'NONE');
@@ -272,7 +256,7 @@ test('controller uses its real service client, runtime HTTP auth and direct SDK 
   t => exerciseController(t));
 test('controller retains an intake lookup failure through runtime usage with zero generation or audit calls',
   t => exerciseController(t, { metadataStatus: 404 }));
-test('controller retains a rejected audit and provider outcome without publishing the unaudited answer',
-  t => exerciseController(t, { auditStatus: 400 }));
-test('controller retains completed semantic rejection diagnostics without publishing an answer or running the negative profile',
-  t => exerciseController(t, { rejectAnswer: true }));
+test('controller retains generation failure without publishing an answer or running the negative profile',
+  t => exerciseController(t, { generationStatus: 400 }));
+test('controller withholds incomplete generation without publishing an answer or running the negative profile',
+  t => exerciseController(t, { withholdAnswer: true }));

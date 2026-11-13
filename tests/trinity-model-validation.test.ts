@@ -91,15 +91,13 @@ describe('Trinity intake model availability validation', () => {
     const denied = fixture('denied', () => Response.json({ error: { message: 'Fixture model unavailable to this client',
       code: 'model_not_found' } }, { status: 404 }));
     await expect(validateModel(allowed.client, budget())).resolves.toBe(intakeModel);
-    const audit = jest.fn(async () => { throw new Error('Unexpected audit after metadata denial'); });
 
     const failure = await runThroughBrain(denied.client, 'Assess the supplied fixture guide and explain its starting steps.',
       undefined, undefined, { disableMemoryAccess: true, disableOptionalSideEffects: true,
-        sourceEndpoint: 'arcanos-gaming.guide', gamingGuideIntakePolicy: 'compact-v1', gamingClearAnswerAudit: audit },
+        sourceEndpoint: 'arcanos-gaming.guide', gamingGuideIntakePolicy: 'compact-v1', gamingPresentationPolicy: 'gaming-clear-presentation/v1' },
       budget()).catch((error: unknown) => error);
     expect(denied.fetch.mock.calls.map(([url, options]) => [String(url), options?.method])).toEqual([[modelUrl, 'GET']]);
     expect(failure).toMatchObject({ message: expect.stringContaining('Fixture model unavailable to this client') });
-    expect(audit).not.toHaveBeenCalled();
 
     // A later explicit attempt still checks the provider after a failed lookup.
     await expect(validateModel(denied.client, budget())).rejects.toThrow('Fixture model unavailable to this client');

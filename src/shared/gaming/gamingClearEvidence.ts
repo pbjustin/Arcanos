@@ -210,7 +210,7 @@ export function assessGamingClearEvidence(
       leverage: dimension(selected.length ? Math.min(4.5, 2.5 + 2 * coverage) : null, 'COMBINED_TOPIC_COVERAGE', hasSupport ? [] : ['REQUEST_COVERAGE_INCOMPLETE']),
       efficiency: dimension(selected.length ? duplicate ? 3 : 4.2 : null, 'BOUNDED_NONREDUNDANT_SELECTION'),
       alignment: dimension(identityVerified && applicable ? 4.5 : null, 'REQUEST_APPLICABILITY', identityVerified ? [] : ['GAME_IDENTITY_UNVERIFIED']),
-      resilience: dimension(traceable && applicable && (!patchSensitive || freshnessCoversSet || advisoryFreshness) ? 3.8 : null, 'TRACEABLE_APPLICABLE_EVIDENCE', ['SEMANTIC_CLAIM_SUPPORT_REQUIRES_ANSWER_AUDIT'])
+      resilience: dimension(traceable && applicable && (!patchSensitive || freshnessCoversSet || advisoryFreshness) ? 3.8 : null, 'TRACEABLE_APPLICABLE_EVIDENCE', ['GENERATED_CLAIMS_NOT_EVALUATED'])
     }, findings });
 }
 

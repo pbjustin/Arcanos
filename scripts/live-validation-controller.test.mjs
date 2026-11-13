@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -15,7 +16,7 @@ import { createLivePreviewEvidence, LIVE_PREVIEW_CASE_MANIFEST,
 import { createLiveValidationProvider } from './live-validation-provider.mjs';
 import * as privateAnswerController from './live-validation-controller.mjs';
 
-const ROOT = path.resolve(new URL('../', import.meta.url).pathname);
+const ROOT = path.resolve(fileURLToPath(new URL('../', import.meta.url)));
 const sha = 'a'.repeat(40); const trustedSha = 'b'.repeat(40); const treeSha = 'c'.repeat(40); const compiledSha256 = 'd'.repeat(64);
 const envId = '11111111-1111-4111-8111-111111111111'; const runtimeId = '22222222-2222-4222-8222-222222222222';
 const runtimeDeploymentId = '55555555-5555-4555-8555-555555555555';
@@ -106,33 +107,37 @@ function identity(target) {
   return { role: 'runtime', sourceCommit: sha, projectId: target.projectId, environmentId: target.environmentId, serviceId: target.runtimeServiceId,
     deploymentId: runtimeDeploymentId, buildManifestSha256: validationHash(buildManifest), buildManifest };
 }
-function evidenceFor(entry) {
+const PRESENTATION = { policyVersion: 'gaming-clear-presentation/v1', boundToFinalAnswer: true };
+function evidenceFor(entry, legacy = true) {
   const positive = entry.id.endsWith('positive'); const spec = LIVE_PREVIEW_CASE_MANIFEST.find(item => item.caseId === entry.caseId);
   const limits = { maxRequests: 32, maxInputTokensPerRequest: 1_000, maxOutputTokensPerRequest: 300,
     maxTotalTokens: 20_000, durationMs: 600_000, maxSpendMicroUsd: 2_000_000, maxConcurrency: 1, maxRetries: 0 };
   return createLivePreviewEvidence({ sourceCommit: sha, approvedSourceCommit: sha, deploymentId: runtimeDeploymentId, moduleId: 'gaming', mode: 'live-backend-v1' }, {
-    caseId: entry.caseId, failureCode: spec.failureCode, stages: spec.stages,
+    caseId: entry.caseId, failureCode: spec.failureCode,
+    stages: legacy ? spec.stages : { ...spec.stages, answer_audit: 'not_run' },
+    ...(!legacy ? { acceptanceProfile: profiles.acceptanceProfile, presentation: positive ? PRESENTATION : null } : {}),
     result: positive ? { ok: true, route: 'gaming', mode: 'guide', data: { response: ANSWER_TEXT,
       sources: [{ url: entry.input.candidateUrls[0], snippet: 'Grounded preparation and blade guidance.' }],
       grounding: { groundingStatus: 'grounded', groundedInSuppliedEvidence: true, fetchedSuppliedSourceCount: 1,
         usableSourceCount: 1, citableSourceCount: 1, selectedChunkCount: 1, suppliedEvidenceSourceCount: 1 } } } : undefined,
     audit: positive ? { assessmentStatus: 'completed', decision: 'accept', boundToFinalAnswer: true }
       : { assessmentStatus: 'not_run', decision: 'unavailable', boundToFinalAnswer: false },
-    usage: { requests: positive ? 2 : 0, providerCalls: positive ? 2 : 0, generationCalls: positive ? 1 : 0, auditCalls: positive ? 1 : 0,
-      reservedInputTokens: positive ? 1_800 : 0, reservedOutputTokens: positive ? 400 : 0, reservedTotalTokens: positive ? 2_200 : 0,
+    usage: { requests: positive ? (legacy ? 2 : 1) : 0, providerCalls: positive ? (legacy ? 2 : 1) : 0,
+      generationCalls: positive ? 1 : 0, auditCalls: positive && legacy ? 1 : 0,
+      reservedInputTokens: positive ? 900 : 0, reservedOutputTokens: positive ? 200 : 0, reservedTotalTokens: positive ? 1_100 : 0,
       reservedSpendMicroUsd: positive ? 10_000 : 0, observedInputTokens: positive ? 600 : 0, observedOutputTokens: positive ? 100 : 0,
       observedSpendMicroUsd: positive ? 4_000 : 0, elapsedMs: 100, limits } });
 }
 /** Accepted synthetic answer data stays separate from closed public evidence. */
-function privateAnswerFor(entry, response = ANSWER_TEXT) {
-  return { version: 1, response, subjectHash: validationHash(response),
+function privateAnswerFor(entry, response = ANSWER_TEXT, legacy = true) {
+  return { ...(legacy ? { version: 1 } : { version: 2, policyVersion: PRESENTATION.policyVersion }), response, subjectHash: validationHash(response),
     contextFingerprint: validationHash({ scope: 'offline-private-answer' }),
     sources: [{ index: 1, url: entry.input.candidateUrls[0] }] };
 }
 /** Call through the module namespace so the before-feature suite can still load. */
 const validatePrivateAnswer = (...args) => privateAnswerController.validateLiveValidationPrivateAnswer(...args);
-function observation(positive) {
-  return { schemaVersion: 1, contractVersion: 'gaming-hybrid-v2', outcome: positive ? 'accepted' : 'need_new_source',
+function observation(positive, legacy = true) {
+  return { schemaVersion: legacy ? 1 : 2, contractVersion: 'gaming-hybrid-v2', outcome: positive ? 'accepted' : 'need_new_source',
     reason: positive ? null : 'GAME_MISMATCH',
     semanticGap: positive ? profiles.profiles.find(entry => entry.id === 'gaming-guide-positive').expected.semanticGap : 'CONFLICT',
     coverage: { satisfied: positive, assessmentStatus: 'assessed', missingCount: positive ? 0 : 1 },
@@ -140,9 +145,9 @@ function observation(positive) {
     candidates: positive ? [] : [{ decision: 'rejected', reasonCodes: ['GAME_MISMATCH'] }],
     qualification: { visible: positive && profiles.profiles.find(entry => entry.id === 'gaming-guide-positive').expected.qualifiedUnknownPatch === true,
       patchCompatibility: 'unverified', claimsVerifiedCurrentness: false },
-    audit: positive ? { assessmentStatus: 'completed', decision: 'accept', boundToFinalAnswer: true } : null,
-    auditStartBudget: { runtimeRemainingMs: 120000, requestRemainingMs: 120000 },
-    stages: Object.fromEntries(['acquisition', 'selection', 'generation', 'intake', 'reasoning', 'final', 'answer_audit', 'response']
+    ...(legacy ? { audit: positive ? { assessmentStatus: 'completed', decision: 'accept', boundToFinalAnswer: true } : null,
+      auditStartBudget: { runtimeRemainingMs: 120000, requestRemainingMs: 120000 } } : { presentation: positive ? PRESENTATION : null }),
+    stages: Object.fromEntries(['acquisition', 'selection', 'generation', 'intake', 'reasoning', 'final', ...(legacy ? ['answer_audit'] : []), 'response']
       .map(stage => [stage, { status: positive || ['acquisition', 'selection', 'response'].includes(stage) ? 'passed' : 'not_run', elapsedMs: positive ? 10 : null }])) };
 }
 function executionFixture(f, options = {}) {
@@ -150,7 +155,7 @@ function executionFixture(f, options = {}) {
   let active = false; let stopped = false; let bound = false; let admitted = false; let workflows = 0; let clock = 1000000;
   const seen = []; let token;
   const usage = plan => ({ ...plan, status: 'active', counts: { workflows }, limits: { ...f.target.limits, maxConcurrency: 1, maxRetries: 0 },
-    usage: { requests: workflows ? 2 : 0, metadataRequests: 0, providerCalls: workflows ? 2 : 0, generationCalls: workflows ? 1 : 0, auditCalls: workflows ? 1 : 0,
+    usage: { requests: workflows ? 1 : 0, metadataRequests: 0, providerCalls: workflows ? 1 : 0, generationCalls: workflows ? 1 : 0, auditCalls: 0,
       reservedInputTokens: 1800, reservedOutputTokens: 400, reservedTotalTokens: 2200, reservedSpendMicroUsd: 10000,
       observedInputTokens: 600, observedOutputTokens: 100, observedTotalTokens: 700, observedSpendMicroUsd: 4000 } });
   let plan;
@@ -174,14 +179,15 @@ function executionFixture(f, options = {}) {
     if (route === '/stop') return { status: 200, body: { stopped: true, runId: plan.runId } };
     if (route === '/acceptance') {
       workflows++; const entry = executionProfiles.profiles.find(value => value.id === request.body.caseId); const positive = entry.id.endsWith('positive');
-      const evidence = evidenceFor(entry); if (options.unboundAudit && positive) evidence.audit.boundToFinalAnswer = false;
-      const projected = observation(positive); if (options.lostConflict && !positive) projected.candidates = [];
+      const evidence = evidenceFor(entry, options.legacyEvidence === true);
+      if (options.unboundPresentation && positive) evidence.presentation = null;
+      const projected = observation(positive, false); if (options.lostConflict && !positive) projected.candidates = [];
       if (positive) options.mutateObservation?.(projected);
       if (options.leakToken && positive) evidence.result.sources[0].url = 'https://' + token + '.example.org';
       options.mutateEvidence?.(evidence, positive);
-      let privateAnswer = positive && !options.omitPrivateAnswer ? privateAnswerFor(entry) : undefined;
+      let privateAnswer = positive && !options.omitPrivateAnswer ? privateAnswerFor(entry, undefined, false) : undefined;
       if (privateAnswer) options.mutatePrivateAnswer?.(privateAnswer, { token, evidence, observation: projected });
-      if (!positive && options.negativePrivateAnswer) privateAnswer = privateAnswerFor(entry, 'Unexpected negative answer [1].');
+      if (!positive && options.negativePrivateAnswer) privateAnswer = privateAnswerFor(entry, 'Unexpected negative answer [1].', false);
       options.beforeAcceptanceReturn?.({ positive });
       return { status: 200, body: { identity: identity(f.target), caseId: entry.id, evidence, observation: projected,
         profilePassed: true, durableWrites: 0, productionChanged: false, ...(privateAnswer ? { privateAnswer } : {}) } };
@@ -322,9 +328,9 @@ test('one-service mocked flow binds ephemeral token before exact deploy, proves 
   assert.equal(retained.response, ANSWER_TEXT); assert.equal(retained.subjectHash, validationHash(ANSWER_TEXT));
   assert.equal(retained.caseId, positive.id); assert.equal(retained.sourceCommit, sha);
   assert.equal(retained.runId, result.runId); assert.equal(retained.profileHash, e.plan().profileHash);
-  assert.deepEqual(retained.sources, privateAnswerFor(positive).sources);
+  assert.deepEqual(retained.sources, privateAnswerFor(positive, undefined, false).sources);
   assert.deepEqual(retained.runtimeIdentity, result.runtimeIdentity);
-  assert.equal(result.cases[0].answerArtifactSha256, validationHash(privateAnswerFor(positive)));
+  assert.equal(result.cases[0].answerArtifactSha256, validationHash(privateAnswerFor(positive, undefined, false)));
   assert.equal(Object.hasOwn(result.cases[1], 'answerArtifactSha256'), false);
   for (const publicValue of [result, JSON.parse(readFileSync(path.join(f.directory, 'evidence', 'acceptance-summary.json'), 'utf8'))]) {
     const serialized = JSON.stringify(publicValue);
@@ -402,7 +408,8 @@ test('failed positive proof never retains the private payload or returns it in t
   for (const [label, options] of [
     ['missing private payload', { omitPrivateAnswer: true }],
     ['changed private answer', { mutatePrivateAnswer: value => { value.response += ' unbound'; } }],
-    ['unbound audit', { unboundAudit: true }],
+    ['unbound presentation', { unboundPresentation: true }],
+    ['legacy scored audit proof', { legacyEvidence: true }],
     ['fallback result', { mutateEvidence: (evidence, positive) => { if (positive) evidence.result.acceptedAnswer = false; } }],
     ['runtime token in answer', { mutatePrivateAnswer: (value, { token }) => {
       value.response = `Private ${token} [1]`; value.subjectHash = validationHash(value.response);
@@ -508,8 +515,8 @@ test('failed GitHub checks or workflow reruns reject before token binding/deploy
   const f = fixture(t); const e = executionFixture(f, { checkFailure: true }); await assert.rejects(execute(f, e)); assert.deepEqual(e.seen, []);
   f.environment.WORKFLOW_RUN_ATTEMPT = '2'; await assert.rejects(execute(f, e)); assert.deepEqual(e.seen, []);
 });
-test('forged PASS cannot replace mandatory bound audit or preserve a missing negative semantic conflict reason', async t => {
-  for (const options of [{ unboundAudit: true }, { lostConflict: true }, { leakToken: true }]) await t.test(JSON.stringify(options), async child => {
+test('forged PASS cannot replace bound presentation or preserve a missing negative semantic conflict reason', async t => {
+  for (const options of [{ unboundPresentation: true }, { lostConflict: true }, { leakToken: true }]) await t.test(JSON.stringify(options), async child => {
     const f = fixture(child); const e = executionFixture(f, options); const result = await execute(f, e);
     assert.equal(result.status, 'FAILED'); assert.equal(e.stopped(), true);
     assert.equal(JSON.stringify(result).includes(Buffer.alloc(32, 17).toString('hex')), false);
@@ -772,7 +779,7 @@ test('positive proof rejects failed or unobserved model execution despite aggreg
     } });
     const result = await execute(f, e);
     assert.equal(result.status, 'FAILED'); assert.equal(result.code, 'LIVE_VALIDATION_PROFILE_STAGE_FAILED');
-    assert.equal(result.actualUsage.generationCalls, 1); assert.equal(result.actualUsage.auditCalls, 1);
+    assert.equal(result.actualUsage.generationCalls, 1); assert.equal(result.actualUsage.auditCalls, 0);
     assert.equal(e.stopped(), true);
   });
 });
@@ -784,8 +791,8 @@ test('profiles can require all measured model stages without requiring clarifica
   assert.equal(result.status, 'PASS');
   assert.equal(Object.hasOwn(result.cases[0].observation, 'clarification'), false);
 });
-test('required model stages and positive acquisition/audit/response stages must complete with timing evidence', async t => {
-  for (const stage of ['acquisition', 'selection', 'generation', 'intake', 'reasoning', 'final', 'answer_audit', 'response']) {
+test('required model stages and positive acquisition/response stages must complete with timing evidence', async t => {
+  for (const stage of ['acquisition', 'selection', 'generation', 'intake', 'reasoning', 'final', 'response']) {
     for (const status of ['not_run', 'failed', 'timed_out', 'passed']) await t.test(`${stage} ${status}`, async child => {
       const requiredProfiles = profileFixture();
       requiredProfiles.profiles[0].expected.requiredModelStages = ['intake', 'reasoning', 'final'];

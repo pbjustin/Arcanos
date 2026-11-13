@@ -49,8 +49,7 @@ beforeEach(() => {
   });
   trinity.mockImplementation(async (request: any) => {
     const result = `${prose} [Source 1]`;
-    const { assessment } = await request.context.runOptions.gamingClearAnswerAudit(result, {});
-    return { result, gamingClearAudit: assessment, meta: { provider: { finishReason: 'stop' } } };
+    return { result, gamingPresentationPolicy: request.context.runOptions.gamingPresentationPolicy, meta: { provider: { finishReason: 'stop' } } };
   });
 });
 afterEach(() => {
@@ -192,9 +191,8 @@ describe('unrequested benign acquired edition metadata', () => {
     if (mode === 'build') expect(answer.body.answer!.response).toContain('Current patch compatibility could not be verified');
     expect(answer.body.answer!.response).toContain('Compatibility with other editions was not independently verified.');
     expect(answer.body.answer!.sources.map(source => source.url)).toEqual([input.candidates[0].url]);
-    expect(trinity).toHaveBeenCalledTimes(1); expect(audit).toHaveBeenCalledTimes(1);
+    expect(trinity).toHaveBeenCalledTimes(1); expect(audit).not.toHaveBeenCalled();
     expect(trinity.mock.calls[0][0]).toMatchObject({ input: { body: { edition: undefined } } });
-    expect(JSON.parse((audit.mock.calls[0][1] as any).messages[1].content).answer).toBe(answer.body.answer!.response);
     expect(ingest).not.toHaveBeenCalled();
   });
 });

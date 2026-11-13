@@ -31,9 +31,9 @@ jest.unstable_mockModule('../src/core/db/repositories/gamingSourceRepository.js'
 }));
 const { createGamingHybridWorkflow } = await import('../src/services/gamingHybridKnowledge.js');
 const { evaluateGamingHybridCandidates } = await import('../src/services/gamingHybridCandidates.js');
-const { createGamingClearAssessment, gamingClearHash, GAMING_CLEAR_DIMENSIONS } =
+const { gamingClearHash } =
   await import('../src/shared/gaming/gamingClearPolicy.js');
-const { GAMING_CLEAR_APPROVED_ANSWER } = await import('../src/shared/gaming/gamingClearAnswerBinding.js');
+const { GAMING_PRESENTED_ANSWER } = await import('../src/shared/gaming/gamingPresentedAnswerBinding.js');
 const { assessGamingClearEvidence } = await import('../src/shared/gaming/gamingClearEvidence.js');
 const { GAMING_HYBRID_V2_LIMITS } = await import('../src/shared/gaming/gamingHybridContract.js');
 const { logger } = await import('../src/platform/logging/structuredLogging.js');
@@ -58,17 +58,13 @@ function setup(version: Version = 'gaming-hybrid-v2', question = 'Where is the c
       allowAdvisoryFreshness: prepared!.advisoryFreshnessAllowed, requireRequestCoverage: prepared!.requireRequestCoverage });
     expect(evidenceAssessment.decision).toBe('accept');
     const response = `${question.includes('silver lever') ? `${keyProse} ${leverProse}` : keyProse} [Source 1]`;
-    const refs = knowledge.evidence!.map(chunk => chunk.recordId);
-    const assessment = createGamingClearAssessment({ profile: 'answer', questionProfile: 'walkthrough',
-      subjectId: 'synthetic-authority-answer', subjectHash: gamingClearHash(response),
-      contextFingerprint: evidenceAssessment.contextFingerprint, gates: evidenceAssessment.gates, evidenceRefs: refs,
-      dimensions: Object.fromEntries(GAMING_CLEAR_DIMENSIONS.map(name => [name, { status: 'evaluated', score: 4,
-        reasonCodes: ['SUPPORTED_FIXTURE'], evidenceRefs: refs.slice(0, 1), unresolvedFacts: [] }])) as typeof evidenceAssessment.dimensionScores });
+    const binding = { policyVersion: 'gaming-clear-presentation/v1' as const, subjectHash: gamingClearHash(response),
+      contextFingerprint: evidenceAssessment.contextFingerprint, evidenceSubjectHash: evidenceAssessment.subjectHash };
     return { ok: true, route: 'gaming', mode: 'guide', data: { response, sources: knowledge.sources,
       grounding: { groundingStatus: 'grounded', requestedSourceCount: 0, fetchedSourceCount: knowledge.sources.length,
         fetchedSuppliedSourceCount: 0, usableSourceCount: knowledge.sources.length, citableSourceCount: knowledge.sources.length,
         selectedChunkCount: knowledge.evidence!.length, suppliedEvidenceSourceCount: 0, groundedInSuppliedEvidence: false },
-      [GAMING_CLEAR_APPROVED_ANSWER]: assessment } };
+      [GAMING_PRESENTED_ANSWER]: binding } };
   });
   const workflow = createGamingHybridWorkflow({ retrieve, evaluateCandidates: evaluate, generate, ingest: forbiddenWrite as never });
   const query = { contractVersion: version, idempotencyKey: 'authority-query', game, mode: 'guide' as const,

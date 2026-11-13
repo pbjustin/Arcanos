@@ -5,6 +5,8 @@ import citationSyntax from '../src/shared/gaming/gamingCitationSyntax.json' with
 
 export const LIVE_PREVIEW_MODE = 'live-backend-v1';
 export const LIVE_PREVIEW_ACCEPTANCE_PROFILE = 'grounded-audited-answer-v1';
+export const LIVE_PREVIEW_PRESENTATION_PROFILE = 'grounded-presented-answer-v2';
+export const LIVE_PREVIEW_PRESENTATION_POLICY = 'gaming-clear-presentation/v1';
 const STAGE_NAMES = Object.freeze(['authorization', 'budget', 'source_acquisition', 'source_validation', 'generation', 'answer_audit', 'delivery']);
 const STAGE_STATUSES = new Set(['not_run', 'passed', 'rejected', 'failed', 'timed_out', 'exhausted']);
 const AUDIT_STATUSES = new Set(['completed', 'unavailable', 'not_run']);
@@ -32,6 +34,13 @@ export const LIVE_PREVIEW_CASE_MANIFEST = Object.freeze([
   { caseId: 'unauthorized_test_identity', failureCode: 'UNAUTHORIZED_TEST_IDENTITY', provider: 'none', stages: stages('rejected', 'not_run', 'not_run', 'not_run', 'not_run', 'not_run', 'rejected') },
 ].map(Object.freeze));
 const MANIFEST = new Map(LIVE_PREVIEW_CASE_MANIFEST.map(entry => [entry.caseId, entry]));
+function caseExpectation(caseId, presentation) {
+  const expected = MANIFEST.get(caseId);
+  if (!presentation) return expected;
+  if (caseId === 'useful_grounded_guide') return { ...expected, provider: 'generation_only',
+    stages: { ...expected.stages, answer_audit: 'not_run' } };
+  return caseId === 'audit_timeout' ? undefined : expected;
+}
 const FAILURE_CODES = new Set(LIVE_PREVIEW_CASE_MANIFEST.map(entry => entry.failureCode).filter(Boolean));
 const REMAINING_GAPS = Object.freeze(['installed_plugin_oauth_unverified', 'chatgpt_consent_unverified', 'chatgpt_refresh_unverified', 'installed_plugin_acceptance_unverified', 'provider_billing_reconciliation_unverified', 'trusted_live_execution_provenance_required']);
 const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -146,7 +155,12 @@ export function extractLivePreviewNumericCitations(answer) {
     .flatMap(match => (match[1] ?? match[2])?.split(',').map(value => Number(value.trim())) ?? []);
 }
 
-function sanitizedResult(result, audit) {
+export function sanitizeLivePreviewPresentation(value) {
+  return isRecord(value) && value.policyVersion === LIVE_PREVIEW_PRESENTATION_POLICY && value.boundToFinalAnswer === true
+    ? { policyVersion: LIVE_PREVIEW_PRESENTATION_POLICY, boundToFinalAnswer: true } : null;
+}
+
+function sanitizedResult(result, bound) {
   const envelope = isRecord(result) ? result : {};
   const data = isRecord(envelope.data) ? envelope.data : {};
   const grounding = isRecord(data.grounding) ? data.grounding : {};
@@ -159,7 +173,7 @@ function sanitizedResult(result, audit) {
       documentUrlSha256: normalizedUrl === null ? null : createHash('sha256').update(normalizedUrl).digest('hex'),
       usable: typeof value.snippet === 'string' && value.snippet.trim().length > 0 && !value.error };
   });
-  // Adapters retain the citation spellings checked by their mandatory backend answer audit.
+  // The live profile uses numeric references to check the ordered source list.
   const references = extractLivePreviewNumericCitations(response);
   const citationIndices = [...new Set(references)].sort((a, b) => a - b).slice(0, 32);
   const citationsResolved = references.length > 0 && references.length <= 128 && references.every(index =>
@@ -173,21 +187,29 @@ function sanitizedResult(result, audit) {
       ...Object.fromEntries(GROUNDING_COUNTS.map(name => [name, count(grounding[name])])) },
     sources, citationIndices, citationsResolved,
     acceptedAnswer: envelope.ok === true && response.trim().length > 0 && !fallback && !dryRun && !incomplete
-      && audit.assessmentStatus === 'completed' && audit.decision === 'accept' && audit.boundToFinalAnswer };
+      && bound };
 }
 
-/** Only the private backend may supply audit/stage observations. HTTP response fields cannot establish them. */
-export function createLivePreviewEvidence(identity, { caseId, result, audit, usage, failureCode, stages: observedStages } = {}) {
+/** The private backend supplies versioned binding and stage observations independently of the answer body. */
+export function createLivePreviewEvidence(identity, { caseId, result, audit, usage, failureCode, stages: observedStages,
+  acceptanceProfile = LIVE_PREVIEW_ACCEPTANCE_PROFILE, presentation } = {}) {
   const safeIdentity = requireIdentity(identity);
-  if (!MANIFEST.has(caseId)) throw new Error('LIVE_PREVIEW_CASE_INVALID');
+  const isPresentation = acceptanceProfile === LIVE_PREVIEW_PRESENTATION_PROFILE;
+  if ((!isPresentation && acceptanceProfile !== LIVE_PREVIEW_ACCEPTANCE_PROFILE) || !caseExpectation(caseId, isPresentation)) {
+    throw new Error('LIVE_PREVIEW_CASE_INVALID');
+  }
   const observedAudit = isRecord(audit) ? audit : {};
   const safeAudit = { assessmentStatus: boundedEnum(observedAudit.assessmentStatus, AUDIT_STATUSES, 'unobserved'),
     decision: boundedEnum(observedAudit.decision, AUDIT_DECISIONS, 'unobserved'), boundToFinalAnswer: observedAudit.boundToFinalAnswer === true };
   const observations = isRecord(observedStages) ? observedStages : {};
-  return { schemaVersion: 1, acceptanceProfile: LIVE_PREVIEW_ACCEPTANCE_PROFILE, identity: safeIdentity, caseId,
+  const safePresentation = sanitizeLivePreviewPresentation(presentation);
+  const bound = isPresentation ? safePresentation !== null
+    : safeAudit.assessmentStatus === 'completed' && safeAudit.decision === 'accept' && safeAudit.boundToFinalAnswer;
+  return { schemaVersion: isPresentation ? 2 : 1, acceptanceProfile, identity: safeIdentity, caseId,
     failureCode: failureCode === undefined || failureCode === null ? null : boundedEnum(failureCode, FAILURE_CODES, 'UNOBSERVED_FAILURE'),
     stages: Object.fromEntries(STAGE_NAMES.map(name => [name, boundedEnum(observations[name], STAGE_STATUSES, 'unobserved')])),
-    result: sanitizedResult(result, safeAudit), audit: safeAudit, usage: sanitizedUsage(usage),
+    result: sanitizedResult(result, bound), ...(isPresentation ? { presentation: safePresentation } : { audit: safeAudit }),
+    usage: sanitizedUsage(usage),
     verification: { syntheticPreview: 'unverified', liveBackend: 'unverified', installedPluginOAuth: 'unverified' },
     remainingGaps: [...REMAINING_GAPS] };
 }
@@ -211,7 +233,8 @@ function usageValid(usage) {
 
 export function verifyLivePreviewEvidence(evidence, expectedIdentity) {
   const value = isRecord(evidence) ? evidence : {};
-  const expected = MANIFEST.get(value.caseId);
+  const isPresentation = value.acceptanceProfile === LIVE_PREVIEW_PRESENTATION_PROFILE;
+  const expected = caseExpectation(value.caseId, isPresentation);
   const identity = value.identity;
   const observations = isRecord(value.stages) ? value.stages : {};
   const result = isRecord(value.result) ? value.result : {};
@@ -219,8 +242,8 @@ export function verifyLivePreviewEvidence(evidence, expectedIdentity) {
   const usage = isRecord(value.usage) ? value.usage : {};
   const checks = [];
   const check = (id, passed) => checks.push({ id, status: passed ? 'PASS' : 'FAIL' });
-  check('schema', value.schemaVersion === 1);
-  check('reviewed_acceptance_profile', value.acceptanceProfile === LIVE_PREVIEW_ACCEPTANCE_PROFILE);
+  check('schema', isPresentation ? value.schemaVersion === 2 && !Object.hasOwn(value, 'audit') : value.schemaVersion === 1);
+  check('reviewed_acceptance_profile', isPresentation || value.acceptanceProfile === LIVE_PREVIEW_ACCEPTANCE_PROFILE);
   check('exact_approved_identity', identityValid(identity) && identityValid(expectedIdentity)
     && ['sourceCommit', 'approvedSourceCommit', 'deploymentId', 'moduleId', 'mode'].every(name => identity[name] === expectedIdentity[name]));
   check('known_case', Boolean(expected));
@@ -248,10 +271,11 @@ export function verifyLivePreviewEvidence(evidence, expectedIdentity) {
         && sourceList.some(source => isRecord(source) && source.index === index && source.usable === true
           && typeof source.url === 'string' && sanitizedSourceUrl(source.url) === source.url
           && typeof source.documentUrlSha256 === 'string' && /^[a-f0-9]{64}$/u.test(source.documentUrlSha256))));
-    check('mandatory_bound_answer_audit', audit.assessmentStatus === 'completed' && audit.decision === 'accept' && audit.boundToFinalAnswer === true);
+    if (isPresentation) check('bound_presentation_integrity', sanitizeLivePreviewPresentation(value.presentation) !== null);
+    else check('mandatory_bound_answer_audit', audit.assessmentStatus === 'completed' && audit.decision === 'accept' && audit.boundToFinalAnswer === true);
   } else {
-    check('no_accepted_answer', result.acceptedAnswer === false && audit.boundToFinalAnswer === false
-      && !(audit.assessmentStatus === 'completed' && audit.decision === 'accept'));
+    check('no_accepted_answer', result.acceptedAnswer === false && (isPresentation ? value.presentation === null
+      : audit.boundToFinalAnswer === false && !(audit.assessmentStatus === 'completed' && audit.decision === 'accept')));
     if (expected?.caseId === 'audit_timeout') check('audit_timeout_observed', audit.assessmentStatus === 'unavailable' && audit.decision === 'unavailable');
   }
   const passed = checks.every(item => item.status === 'PASS');
@@ -264,7 +288,8 @@ export function verifyLivePreviewSuite(evidence, expectedIdentity) {
   const boundedObservations = observations.slice(0, LIVE_PREVIEW_CASE_MANIFEST.length);
   const uniqueCases = new Set(boundedObservations.map(entry => entry?.caseId));
   const complete = observations.length === LIVE_PREVIEW_CASE_MANIFEST.length && uniqueCases.size === LIVE_PREVIEW_CASE_MANIFEST.length
-    && LIVE_PREVIEW_CASE_MANIFEST.every(entry => uniqueCases.has(entry.caseId));
+    && LIVE_PREVIEW_CASE_MANIFEST.every(entry => uniqueCases.has(entry.caseId))
+    && boundedObservations.every(entry => entry?.acceptanceProfile === LIVE_PREVIEW_ACCEPTANCE_PROFILE);
   const cases = boundedObservations.map(entry => verifyLivePreviewEvidence(entry, expectedIdentity));
   const passed = complete && cases.every(entry => entry.status === 'PASS') && cases.some(entry => entry.accepted);
   return { status: passed ? 'PASS' : 'FAIL', code: passed ? 'LIVE_BACKEND_PREVIEW_CONTRACT_PASS' : 'LIVE_BACKEND_PREVIEW_CONTRACT_FAILED',
@@ -279,17 +304,20 @@ export function sanitizeLivePreviewEvidence(value) {
   const safeCount = count;
   const safeBoolean = item => typeof item === 'boolean' ? item : null;
   const safeEnum = (item, allowed) => allowed.includes(item) ? item : 'unobserved';
-  const CASES = MANIFEST;
   const STAGES = STAGE_NAMES;
   const COUNTS = COUNT_FIELDS;
   const LIMITS = [...LIMIT_FIELDS, 'maxConcurrency', 'maxRetries'];
-  requireE2e(record(value) && record(value.identity) && record(value.result) && record(value.audit)
+  const isPresentation = value?.acceptanceProfile === LIVE_PREVIEW_PRESENTATION_PROFILE;
+  requireE2e(record(value) && record(value.identity) && record(value.result)
+    && (isPresentation ? value.schemaVersion === 2 && !Object.hasOwn(value, 'audit')
+      && (value.presentation === null || sanitizeLivePreviewPresentation(value.presentation) !== null) : record(value.audit))
     && record(value.stages) && record(value.usage), 'LIVE_PREVIEW_EVIDENCE_INVALID');
   const identity = value.identity;
   requireE2e(/^[0-9a-f]{40}$/u.test(identity.sourceCommit ?? '') && identity.sourceCommit === identity.approvedSourceCommit
     && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(identity.deploymentId ?? '')
     && identity.mode === LIVE_PREVIEW_MODE && /^[a-z][a-z0-9_-]{0,63}$/u.test(identity.moduleId ?? '')
-    && value.acceptanceProfile === LIVE_PREVIEW_ACCEPTANCE_PROFILE && CASES.has(value.caseId), 'LIVE_PREVIEW_EVIDENCE_INVALID');
+    && (isPresentation || value.acceptanceProfile === LIVE_PREVIEW_ACCEPTANCE_PROFILE)
+    && caseExpectation(value.caseId, isPresentation), 'LIVE_PREVIEW_EVIDENCE_INVALID');
   const result = value.result;
   requireE2e(Array.isArray(result.sources) && result.sources.length <= 8
     && Array.isArray(result.citationIndices) && result.citationIndices.length <= 32,
@@ -313,7 +341,8 @@ export function sanitizeLivePreviewEvidence(value) {
       ...(typeof source?.documentUrlSha256 === 'string' && /^[0-9a-f]{64}$/u.test(source.documentUrlSha256)
         ? { documentUrlSha256: source.documentUrlSha256 } : {}), usable: safeBoolean(source?.usable) };
   });
-  return { schemaVersion: value.schemaVersion === 1 ? 1 : null, acceptanceProfile: LIVE_PREVIEW_ACCEPTANCE_PROFILE,
+  return { schemaVersion: value.schemaVersion === (isPresentation ? 2 : 1) ? value.schemaVersion : null,
+    acceptanceProfile: value.acceptanceProfile,
     identity: { sourceCommit: identity.sourceCommit, approvedSourceCommit: identity.approvedSourceCommit,
       deploymentId: identity.deploymentId, moduleId: identity.moduleId, mode: LIVE_PREVIEW_MODE }, caseId: value.caseId,
     failureCode: value.failureCode === null ? null : safeEnum(value.failureCode, LIVE_PREVIEW_CASE_MANIFEST.map(entry => entry.failureCode)),
@@ -325,8 +354,9 @@ export function sanitizeLivePreviewEvidence(value) {
         ...Object.fromEntries(['fetchedSuppliedSourceCount', 'usableSourceCount', 'citableSourceCount', 'selectedChunkCount', 'suppliedEvidenceSourceCount']
           .map(key => [key, safeCount(grounding[key])])) }, sources,
       citationIndices: result.citationIndices.map(safeCount) },
-    audit: { assessmentStatus: safeEnum(audit.assessmentStatus, ['completed', 'unavailable', 'not_run']),
-      decision: safeEnum(audit.decision, ['accept', 'partial', 'reject', 'clarify', 'unavailable']), boundToFinalAnswer: safeBoolean(audit.boundToFinalAnswer) },
+    ...(isPresentation ? { presentation: sanitizeLivePreviewPresentation(value.presentation) } : {
+      audit: { assessmentStatus: safeEnum(audit.assessmentStatus, ['completed', 'unavailable', 'not_run']),
+        decision: safeEnum(audit.decision, ['accept', 'partial', 'reject', 'clarify', 'unavailable']), boundToFinalAnswer: safeBoolean(audit.boundToFinalAnswer) } }),
     usage: { ...Object.fromEntries(COUNTS.map(key => [key, safeCount(usage[key])])),
       limits: Object.fromEntries(LIMITS.map(key => [key, safeCount(usage.limits?.[key])])) },
     verification: { syntheticPreview: 'unverified', liveBackend: 'unverified', installedPluginOAuth: 'unverified' },

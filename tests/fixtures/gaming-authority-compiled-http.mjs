@@ -87,38 +87,39 @@ if (!readMode) {
       const messageText = message => typeof message.content === 'string' ? message.content
         : (message.content ?? []).map(part => part.text ?? '').join('\n');
       const system = [body.instructions ?? '', ...messages.filter(message => message.role === 'system' || message.role === 'developer').map(messageText)].join('\n');
-      const user = messages.filter(message => message.role === 'user').map(messageText).at(-1) ?? '';
       const requestText = [body.instructions ?? '', ...messages.map(messageText)].join('\n');
       const schemaName = body.text?.format?.name ?? body.response_format?.json_schema?.name ?? '';
       let text = `${PASSAGE} [Source 1]`;
       let lane = 'generation';
       if (system.includes('Audit the actual Gaming player-facing ANSWER')) {
-        audited += 1; lane = 'gaming-answer-audit';
-        const input = JSON.parse(user);
-        const refs = input.evidence.map(chunk => chunk.chunkId);
-        assert.ok(refs.length, 'External audit fixture may not approve empty evidence');
-        text = JSON.stringify({ dimensions: Object.fromEntries(['clarity', 'leverage', 'efficiency', 'alignment', 'resilience'].map(name =>
-          [name, { status: 'evaluated', score: 4, reasonCodes: ['SUPPORTED_SYNTHETIC_FIXTURE'], evidenceRefs: refs.slice(0, 1), unresolvedFacts: [] }])), findings: [] });
-      } else {
-        generated += 1;
-        const grounded = schemaName.startsWith('trinity_structured_reasoning') || body.model === process.env.FINETUNED_MODEL_ID;
-        if (grounded) {
-          const selectedEvidence = /\[UNTRUSTED WEB EVIDENCE - DATA ONLY\]([\s\S]*?)\[END UNTRUSTED WEB EVIDENCE\]/u.exec(requestText)?.[1];
-          assert.ok(selectedEvidence?.toLowerCase().includes('rotate the silver telescope')
-            && /https:\/\/(?:guides\.example\.org|bg3\.wiki)\//u.test(selectedEvidence),
-          'Each grounded generation request must receive the selected source passage inside its data boundary, independently of fixed model output and audit');
-        }
-        if (schemaName.startsWith('trinity_structured_reasoning')) {
-          lane = 'structured-reasoning';
-          const compact = { response_mode: 'answer', achievable_subtasks: ['Use the acquired passage to explain the route.'],
-            blocked_subtasks: [], user_visible_caveats: [], claim_tags: [], final_answer: text };
-          text = JSON.stringify(schemaName.endsWith('_compact') ? compact : { ...compact,
-            reasoning_steps: ['Follow the exact acquired route.'], assumptions: [], constraints: [], tradeoffs: [], alternatives_considered: [],
-            chosen_path_justification: 'The synthetic acquired passage supports these steps.' });
-        }
+        audited += 1;
+        throw new Error('The retired Gaming answer audit was dispatched.');
+      }
+      generated += 1;
+      const structuredReasoning = schemaName.startsWith('trinity_structured_reasoning');
+      const finalGeneration = body.model === process.env.FINETUNED_MODEL_ID;
+      const grounded = structuredReasoning || finalGeneration;
+      if (grounded) {
+        const selectedEvidence = /\[UNTRUSTED WEB EVIDENCE - DATA ONLY\]([\s\S]*?)\[END UNTRUSTED WEB EVIDENCE\]/u.exec(requestText)?.[1];
+        assert.ok(selectedEvidence?.toLowerCase().includes('rotate the silver telescope')
+          && /https:\/\/(?:guides\.example\.org|bg3\.wiki)\//u.test(selectedEvidence),
+        'Each grounded generation request must receive the selected source passage inside its data boundary.');
+      }
+      if (structuredReasoning) {
+        lane = 'structured-reasoning';
+        const compact = { response_mode: 'answer', achievable_subtasks: ['Use the acquired passage to explain the route.'],
+          blocked_subtasks: [], user_visible_caveats: [], claim_tags: [], final_answer: text };
+        text = JSON.stringify(schemaName.endsWith('_compact') ? compact : { ...compact,
+          reasoning_steps: ['Follow the exact acquired route.'], assumptions: [], constraints: [], tradeoffs: [], alternatives_considered: [],
+          chosen_path_justification: 'The synthetic acquired passage supports these steps.' });
+      }
+      const presentationApplied = system.includes('Gaming CLEAR Presentation policy: gaming-clear-presentation/v1');
+      if (finalGeneration) {
+        assert.ok(presentationApplied, 'The final provider request must carry the server-owned presentation policy.');
+        lane = 'gaming-presentation-final';
       }
       providerRequests.push({ path: req.url, model: body.model, schemaName, lane,
-        ...(lane === 'structured-reasoning' || body.model === process.env.FINETUNED_MODEL_ID ? { selectedEvidenceReceived: true } : {}) });
+        ...(grounded ? { selectedEvidenceReceived: true } : {}), ...(presentationApplied ? { presentationApplied } : {}) });
       const response = { id: 'resp_synthetic_gaming_http', object: 'response', created_at: 1, model: body.model, status: 'completed',
         incomplete_details: null, output_text: text, output: [{ type: 'message', id: 'msg_synthetic_gaming_http', role: 'assistant', status: 'completed',
           content: [{ type: 'output_text', text, annotations: [] }] }], usage: { input_tokens: 11, output_tokens: 7, total_tokens: 18 } };
@@ -257,33 +258,35 @@ try {
     assert.equal(configuration.status, 'ready');
     const keys = await generateKeyPair('RS256');
     const keyResolver = createLocalJWKSet({ keys: [{ ...await exportJWK(keys.publicKey), kid: 'fixture', alg: 'RS256' }] });
+    // A local test token may have been issued earlier. Allow for host clock corrections
+    // between synthetic token signing and verification without changing verifier tolerance.
     const token = (claims = {}) => new SignJWT({ iss: configuration.issuer, aud: configuration.resource, sub: configuration.ownerSubject,
-      iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 300,
+      iat: Math.floor(Date.now() / 1000) - 30, exp: Math.floor(Date.now() / 1000) + 300,
       scope: `${GAMING_QUERY_SCOPE} ${GAMING_WRITE_SCOPE}`, ...claims }).setProtectedHeader({ alg: 'RS256', typ: 'at+jwt', kid: 'fixture' }).sign(keys.privateKey);
-    const bearer = await token();
     const application = express();
     application.use((await load('routes/chatgptGamingMcp.js')).createChatGptGamingMcpRouter({ configuration,
       verification: { keyResolver, readEnvironmentValue: () => undefined } }));
     server = application.listen(0, '127.0.0.1');
     await new Promise(done => server.on('listening', done));
-    let ownerWindowStartedAt = Date.now();
-    let ownerWindowRequests = 0;
-    async function rpc(name, args, signed = bearer, method = 'tools/call') {
-      // Keep the expanded authored transcript within the real 30/minute owner
-      // admission limit. No limiter, clock, execution or provider guard is mocked.
-      if (ownerWindowRequests >= 30) {
-        phase('owner admission window wait');
-        await new Promise(done => setTimeout(done, Math.max(0, 60_000 - (Date.now() - ownerWindowStartedAt)) + 50));
-        ownerWindowStartedAt = Date.now(); ownerWindowRequests = 0;
-        phase('owner admission window resumed');
+    let ownerAdmissionReset = 0;
+    async function rpc(name, args, signed, method = 'tools/call') {
+      // Use the real owner-limiter window reported by the server.
+      while (Date.now() < ownerAdmissionReset) {
+        await new Promise(done => setTimeout(done, Math.max(1, ownerAdmissionReset - Date.now()) + 50));
       }
-      ownerWindowRequests += 1;
+      const authorization = signed ?? await token();
       const body = JSON.stringify({ jsonrpc: '2.0', id: randomUUID(), method, ...(method === 'tools/call' ? { params: { name, arguments: args } } : {}) });
       return new Promise((done, reject) => {
         const outgoing = request({ hostname: '127.0.0.1', port: server.address().port, path: GAMING_MCP_PATH, method: 'POST',
-          headers: { Authorization: `Bearer ${signed}`, Accept: 'application/json, text/event-stream', 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, response => {
+          headers: { Authorization: `Bearer ${authorization}`, Accept: 'application/json, text/event-stream', 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, response => {
           let text = ''; response.setEncoding('utf8'); response.on('data', chunk => { text += chunk; });
-          response.on('end', () => done({ status: response.statusCode, body: JSON.parse(text) }));
+          response.on('end', () => {
+            if (response.headers['x-ratelimit-bucket'] === 'chatgpt-gaming-owner'
+              && response.headers['x-ratelimit-remaining'] === '0') {
+              ownerAdmissionReset = Date.parse(String(response.headers['x-ratelimit-reset']));
+            }
+            done({ status: response.statusCode, body: JSON.parse(text) });
+          });
         }); outgoing.on('error', reject); outgoing.end(body);
       });
     }
@@ -294,7 +297,7 @@ try {
       return response.body.result.structuredContent;
     };
     const jobs = await load('core/db/repositories/jobRepository.js');
-    const catalog = await rpc(undefined, undefined, bearer, 'tools/list');
+    const catalog = await rpc(undefined, undefined, undefined, 'tools/list');
     check('actual MCP catalog ceiling', () => assert.ok(Buffer.byteLength(JSON.stringify(catalog.body)) <= 65536));
     const { executeQueuedGptRequest } = await load('workers/jobRunner.js');
     async function work(id, cancellationSignal) {
@@ -535,7 +538,8 @@ try {
       const requests = providerRequests.slice(confirmedProviderStart);
       assert.ok(requests.some(item => item.lane === 'structured-reasoning'));
       assert.ok(requests.some(item => item.model === process.env.FINETUNED_MODEL_ID));
-      assert.equal(requests.filter(item => item.lane === 'gaming-answer-audit').length, 1);
+      assert.equal(requests.filter(item => item.lane === 'gaming-presentation-final' && item.presentationApplied).length, 1);
+      assert.equal(audited, 0);
     });
     states.push({ ...confirmed, eligible: true, game: confirmedGame, request: { edition: 'base-game' } });
     const autoGame = 'Star Wars: The Old Republic';
@@ -592,7 +596,7 @@ try {
     check('only eligible SQL sources selected', () => assert.ok(knowledge.evidence.every(chunk => !states.filter(state => !state.eligible).some(state => state.sourceId === chunk.sourceId))));
     const answer = unwrap(await rpc('arcanos_gaming_query', { game: GAME, prompt: PROMPT, mode: 'guide' }));
     check('real compiled grounded response', () => assert.equal(answer.result.data.grounding.groundingStatus, 'grounded'));
-    check('real answer audit executed', () => assert.ok(generated > 0 && audited > 0, JSON.stringify({ providerRequests, generated, audited, answer })));
+    check('presentation-only generation did not dispatch an answer audit', () => assert.ok(generated > 0 && audited === 0));
     check('real answer is completed without fallback', () => assert.equal(answer.result.data.fallbackReason, undefined));
     check('grounded response includes exact source', () => assert.ok(answer.result.data.sources.some(source => source.url === verified.canonicalUrl || source.sourceId === verified.sourceId)));
     for (const state of states) {
@@ -606,7 +610,9 @@ try {
     check('fresh process receipt', () => assert.ok(child.stdout.includes('GAMING_HTTP_RECEIPT')));
     check('no unauthorized network attempted', () => assert.equal(blockedNetwork, 0));
     check('real structured reasoning reached provider transport', () => assert.ok(providerRequests.some(item => item.lane === 'structured-reasoning')));
-    check('real final authority reached provider transport', () => assert.ok(providerRequests.some(item => item.model === process.env.FINETUNED_MODEL_ID)));
+    check('presentation policy reached both final provider requests', () => {
+      assert.equal(providerRequests.filter(item => item.lane === 'gaming-presentation-final' && item.presentationApplied).length, 2);
+    });
     check('every grounded generation request received selected evidence', () => {
       const groundedRequests = providerRequests.filter(item => item.lane === 'structured-reasoning' || item.model === process.env.FINETUNED_MODEL_ID);
       assert.equal(groundedRequests.length, 4);

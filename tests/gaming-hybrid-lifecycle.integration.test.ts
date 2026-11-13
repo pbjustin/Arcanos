@@ -7,7 +7,7 @@ import express from 'express';
 import request from 'supertest';
 import { GamingResolvedSourceHarness } from './testUtils/gamingResolvedSourceHarness.js';
 import { createGamingLifecycleDrain } from './testUtils/gamingLifecycleDrain.js';
-import { GAMING_CLEAR_DIMENSIONS, gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
+import { gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
 import type { GamingHybridResult } from '../src/services/gamingHybridKnowledge.js';
 
 const URL = 'https://guides.example.org/amber-vault';
@@ -16,6 +16,11 @@ const PASSAGE = 'At the obsidian observatory, rotate the silver telescope toward
 const mockHttp = jest.fn();
 const mockTrinity = jest.fn();
 const mockAuditCompletion = jest.fn();
+
+function presentationResult(result: string) {
+  return { result, gamingPresentationPolicy: 'gaming-clear-presentation/v1' as const,
+    meta: { provider: { finishReason: 'stop', responseStatus: 'completed' } } };
+}
 const jobs = new Map<string, any>();
 const operations = new Map<string, any>();
 let database = new GamingResolvedSourceHarness();
@@ -70,8 +75,7 @@ jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
 jest.unstable_mockModule('@services/workerAutonomyService.js', () => ({ planAutonomousWorkerJob: async () => ({ status: 'pending', maxRetries: 2 }) }));
 jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({ getOpenAIClientOrAdapter: () => ({ client: {} }) }));
 jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({ runTrinityWritingPipeline: mockTrinity }));
-// Control the semantic provider response. The real audit validates citations,
-// response shape, scores, context binding and the final CLEAR decision.
+// Fail the fixture if the retired independent answer audit is dispatched.
 jest.unstable_mockModule('@services/openai/chatFallbacks.js', () => ({
   createSingleChatCompletion: mockAuditCompletion, createChatCompletionWithFallback: jest.fn(), ensureModelMatchesExpectation: jest.fn()
 }));
@@ -424,18 +428,10 @@ describe('Gaming hybrid durable lifecycle', () => {
     jest.spyOn(logger, 'info').mockImplementation(() => undefined);
     jest.spyOn(logger, 'warn').mockImplementation(() => undefined);
     jest.spyOn(logger, 'error').mockImplementation(() => undefined);
-    mockAuditCompletion.mockImplementation(async (_client: unknown, params: any) => {
-      const data = JSON.parse(params.messages[1].content);
-      const evidenceRefs = data.evidence.map((chunk: any) => chunk.chunkId);
-      return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
-        dimensions: Object.fromEntries(GAMING_CLEAR_DIMENSIONS.map(name => [name, { status: 'evaluated', score: 4,
-          reasonCodes: ['SUPPORTED_FIXTURE'], evidenceRefs: evidenceRefs.slice(0, 1), unresolvedFacts: [] }])), findings: []
-      }) } }], usage: { prompt_tokens: 500, completion_tokens: 200, total_tokens: 700 } };
-    });
-    mockTrinity.mockImplementation(async (request: any) => {
+    mockAuditCompletion.mockImplementation(() => { throw new Error('The retired Gaming answer audit was dispatched.'); });
+    mockTrinity.mockImplementation(() => {
       const result = `${PASSAGE} [Source 1]`;
-      const { assessment } = await request.context.runOptions.gamingClearAnswerAudit(result, {});
-      return { result, gamingClearAudit: assessment, meta: { provider: { finishReason: 'stop' } } };
+      return presentationResult(result);
     });
     mockHttp.mockImplementation(async (url: string, options: any) => {
       expect(new globalThis.URL(url).hostname).toBe('93.184.216.34');
@@ -495,10 +491,9 @@ describe('Gaming hybrid durable lifecycle', () => {
     const guide = 'In Lantern Voyage, an early-game mage build uses the copper staff and Intelligence for spell damage. Allocate vigor for survival and mind for casting. Upgrade the copper staff before increasing spell variety. Open combat from range with a spell, then recover stamina before casting again. This early-game mage build favors safe positioning over trading hits.';
     documentGame = game;
     documentText = `${fixture.labels} ${guide}`;
-    mockTrinity.mockImplementation(async (request: any) => {
+    mockTrinity.mockImplementation(() => {
       const result = `${guide} [Source 1]`;
-      const { assessment } = await request.context.runOptions.gamingClearAnswerAudit(result, {});
-      return { result, gamingClearAudit: assessment, meta: { provider: { finishReason: 'stop' } } };
+      return presentationResult(result);
     });
     const workflow = createGamingHybridWorkflow();
     const queried = await workflow.query({ contractVersion: 'gaming-hybrid-v2', idempotencyKey: 'v2-advisory-query',
@@ -515,10 +510,11 @@ describe('Gaming hybrid durable lifecycle', () => {
     expect(result.body.effectivePatch).toBeUndefined();
     expect(mockHttp).toHaveBeenCalledTimes(1);
     expect(mockTrinity).toHaveBeenCalledTimes(1);
-    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
-    const auditInput = JSON.parse((mockAuditCompletion.mock.calls[0][1] as any).messages[1].content);
-    expect(auditInput.verifiedEvidenceGates.freshness).toBe('unknown');
-    expect(auditInput.answer).toContain(result.body.qualification);
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
+    expect(result.body.answer?.response).toContain(result.body.qualification);
+    expect(mockTrinity).toHaveBeenCalledWith(expect.objectContaining({
+      context: expect.objectContaining({ runOptions: expect.objectContaining({ gamingPresentationPolicy: 'gaming-clear-presentation/v1' }) })
+    }));
     expect(jest.mocked(logger.info).mock.calls.filter(([event]) => event === 'gaming.currentness.operation_started')).toHaveLength(0);
     expect(await workflow.candidates(submission, context)).toEqual(result);
     expect(mockTrinity).toHaveBeenCalledTimes(1);
@@ -595,10 +591,9 @@ describe('Gaming hybrid durable lifecycle', () => {
             : '<p>In Elden Ring, village merchants barter leather supplies and canvas tents while craftsmen prepare wooden boxes for visiting traders. Shipping information covers parcel sizes and delivery windows, with payment instructions for physical collectibles.</p>';
       return { data: `<html><title>${path.endsWith('/elden-ring-mage') ? 'Elden Ring synthetic mage build guide' : path === articlePath ? `Elden Ring – Patch Notes Version ${currentPatch}` : 'Elden Ring news'}</title><body><main>${text}</main></body></html>`, headers: { 'content-type': 'text/html' } };
     });
-    mockTrinity.mockImplementation(async (request: any) => {
+    mockTrinity.mockImplementation(() => {
       const result = `${mageText} [Source 1]`;
-      const { assessment } = await request.context.runOptions.gamingClearAnswerAudit(result, {});
-      return { result, gamingClearAudit: assessment, meta: { provider: { finishReason: 'stop' } } };
+      return presentationResult(result);
     });
     const workflow = options.http ? createHttpWorkflow() : createGamingHybridWorkflow();
     const query = { contractVersion, idempotencyKey: 'mage-query-fixture', game, mode: 'build',
@@ -661,10 +656,7 @@ describe('Gaming hybrid durable lifecycle', () => {
     expect(verified.body.answer?.response).toContain('[Source 1]');
     expect(verified.body.answer?.sources.map(source => source.url)).toEqual([guideUrl]);
     expect(mockTrinity).toHaveBeenCalledTimes(1);
-    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
-    const auditInput = JSON.parse((mockAuditCompletion.mock.calls[0][1] as any).messages[1].content);
-    expect(auditInput.verifiedEvidenceGates.freshness).toBe('unknown');
-    expect(auditInput.answer).toContain('may be outdated');
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
     expect(jest.mocked(logger.info).mock.calls.filter(([event]) => event === 'gaming.currentness.operation_started')).toHaveLength(1);
     expect((await workflow.candidates(officialRequest, context)).body.answer).toEqual(verified.body.answer);
     expect((await workflow.candidates({ ...officialRequest, idempotencyKey: 'failed-index-extra-round' }, context)).status).toBe(409);
@@ -703,7 +695,7 @@ describe('Gaming hybrid durable lifecycle', () => {
     expect((await workflow.candidates({ ...officialRequest, idempotencyKey: 'registry-extra-round' }, context)).status).toBe(409);
     expect(mockHttp).toHaveBeenCalledTimes(5);
     expect(mockTrinity).toHaveBeenCalledTimes(1);
-    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
     const lifecycle = jest.mocked(logger.info).mock.calls;
     expect(lifecycle.filter(([event]) => event === 'gaming.currentness.operation_started')).toHaveLength(1);
     expect(lifecycle.filter(([event]) => event === 'gaming.currentness.exhausted')).toHaveLength(0);
@@ -762,15 +754,14 @@ describe('Gaming hybrid durable lifecycle', () => {
         return { data: `<html><title>${game} ${index ? 'Patch Notes' : 'Healer Talents Guide'}</title><body><main><p>Game: ${game}. ${labels} ${refreshed && refreshShape === 'contradictory metadata' ? 'Current build: 7.0.2.' : ''} Effective from: 2026-09-08. Platforms: all. Regions: all.</p><p>${prose}</p></main></body></html>`,
           headers: { 'content-type': 'text/html' } };
       });
-      mockTrinity.mockImplementation(async (providerRequest: any) => {
+      mockTrinity.mockImplementation((providerRequest: any) => {
         const sourceBlocks = String(providerRequest.input.prompt).split(/(?=^\[Source \d+\])/mu);
         const guideBlock = sourceBlocks.find(block => block.startsWith('[Source ')
           && block.split(/\r?\n/u).includes(`URL: ${guideUrl}`));
         expect(guideBlock).toBeDefined();
         guideSourceNumber = Number(/^\[Source (\d+)\]/u.exec(guideBlock!)![1]);
         const result = `${guideText} [Source ${guideSourceNumber}]`;
-        const { assessment } = await providerRequest.context.runOptions.gamingClearAnswerAudit(result, {});
-        return { result, gamingClearAudit: assessment, meta: { provider: { finishReason: 'stop' } } };
+        return presentationResult(result);
       });
       const workflow = createHttpWorkflow();
       const query = { contractVersion, idempotencyKey: 'same-url-refresh-query', game, mode: 'build', platform: 'PC',
@@ -793,7 +784,7 @@ describe('Gaming hybrid durable lifecycle', () => {
         idempotencyKey: 'same-url-refresh-official', discoveryType: 'currentness_verification', candidates: [{ url: indexUrl }] };
       const verified = await workflow.candidates(officialRequest, context);
       const conflict = refreshShape === 'contradictory metadata';
-      let auditEvidence: any;
+      let presentedSourceId: string | undefined;
       if (conflict) {
         expect(verified).toMatchObject({ status: 200, body: { state: 'discovery_required', nextAction: 'stop',
           freshnessStatus: 'conflicting', reason: 'CONFLICTING_CURRENTNESS',
@@ -813,15 +804,11 @@ describe('Gaming hybrid durable lifecycle', () => {
         const providerInput = JSON.stringify((mockTrinity.mock.calls[0][0] as any).input);
         expect(providerInput).toContain('7.0.1');
         expect(providerInput).not.toContain(oldMarker);
-        auditEvidence = JSON.parse((mockAuditCompletion.mock.calls[0][1] as any).messages[1].content);
-        expect(auditEvidence.evidence.some((chunk: any) => chunk.sourceIndex === guideSourceNumber
-          && chunk.text.includes('healer talents support sustained group healing'))).toBe(true);
-        expect(auditEvidence.evidence.some((chunk: any) => chunk.sourceId === oldIndexId || chunk.chunkId.startsWith(`${oldIndexId}:`))).toBe(false);
-        expect(auditEvidence.evidence.some((chunk: any) => chunk.sourceId === freshIndexId)).toBe(true);
-        expect(auditEvidence.applicability.find((source: any) => source.sourceId === freshIndexId))
-          .toMatchObject({ currentPatch: '7.0', currentBuild: '7.0.1', currentness: 'current_index' });
-        expect(auditEvidence.applicability.some((source: any) => source.sourceId === oldIndexId)).toBe(false);
-        expect(JSON.stringify(auditEvidence)).not.toContain(oldMarker);
+        expect(providerInput).toContain('healer talents support sustained group healing');
+        expect(providerInput).toContain(indexUrl);
+        expect(providerInput).toContain(refreshShape === 'applicability only'
+          ? 'Backend-verified official release index; applicability verification only. Applicable patch: 7.0. Applicable build: 7.0.1.' : freshMarker);
+        presentedSourceId = freshIndexId;
       }
       const sqlReads = database.queries.length;
       expect((await workflow.candidates(officialRequest, context)).body).toEqual(verified.body);
@@ -836,7 +823,7 @@ describe('Gaming hybrid durable lifecycle', () => {
       expect((await workflow.candidates({ ...gameplayRequest, idempotencyKey: 'same-url-refresh-extra-gameplay' }, context)).status).toBe(409);
       expect(acquisitionPaths).toEqual(['/swtor-healer-talents', '/patchnotes', '/patchnotes']);
       expect(mockTrinity).toHaveBeenCalledTimes(conflict ? 0 : 1);
-      expect(mockAuditCompletion).toHaveBeenCalledTimes(conflict ? 0 : 1);
+      expect(mockAuditCompletion).not.toHaveBeenCalled();
       expect(database.queries).toHaveLength(sqlReads);
       expect(database.queries.some(sql => /^(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b/iu.test(sql))).toBe(false);
       expect(database.source).toBeUndefined();
@@ -848,12 +835,11 @@ describe('Gaming hybrid durable lifecycle', () => {
       expect(currentnessOperationCount).toBe(1);
       if (process.env.GAMING_CURRENTNESS_REFRESH_HTTP_PROOF_PATH && refreshShape === 'relevant records') {
         writeFileSync(process.env.GAMING_CURRENTNESS_REFRESH_HTTP_PROOF_PATH, JSON.stringify({
-          proof: 'gaming-currentness-same-url-refresh-http/v1',
+          proof: 'gaming-currentness-same-url-refresh-http/v2',
           scope: 'real authenticated HTTP router, resolver, extraction, CLEAR and workflow; synthetic DNS/publisher/SQL/provider boundaries',
           trace: workflow.trace, acquisitionPaths, currentnessOperationCount, answerGenerationCount: mockTrinity.mock.calls.length,
           answerAuditCount: mockAuditCompletion.mock.calls.length, persistentWrites: 0,
-          providerEvidence: auditEvidence.evidence, providerApplicability: auditEvidence.applicability,
-          replacedSourceId: oldIndexId
+          presentedSourceId, replacedSourceId: oldIndexId
         }, null, 2));
       }
     });
@@ -894,7 +880,7 @@ describe('Gaming hybrid durable lifecycle', () => {
     expect(verified.body.answer?.response).toContain('[Source 1]');
     expect(verified.body.answer?.sources.map(source => source.url)).toEqual(expect.arrayContaining([guideUrl, indexUrl]));
     expect(mockTrinity).toHaveBeenCalledTimes(1);
-    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
     expect(mockTrinity.mock.calls[0][0]).toMatchObject({ input: { body: { platform: 'PC', region: 'EU', mode: 'build' } } });
     const official = { contractVersion, workflowId: missing.body.workflowId, idempotencyKey: 'mage-official-fixture',
       discoveryType: 'currentness_verification', candidates: [{ url: indexUrl }, { url: articleUrl }] };
@@ -905,7 +891,7 @@ describe('Gaming hybrid durable lifecycle', () => {
     expect((await workflow.candidates({ ...official, idempotencyKey: 'second-official-operation' }, context)).status).toBe(409);
     expect(mockHttp).toHaveBeenCalledTimes(5);
     expect(mockTrinity).toHaveBeenCalledTimes(1);
-    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
     expect(jobs.size).toBe(0);
     expect(database.queries.some(sql => /^(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b/iu.test(sql))).toBe(false);
   });
@@ -961,7 +947,7 @@ describe('Gaming hybrid durable lifecycle', () => {
     }
     expect(mockHttp).toHaveBeenCalledTimes(5);
     expect(mockTrinity).toHaveBeenCalledTimes(1);
-    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
     expect(jobs.size).toBe(0);
     expect(database.records).toHaveLength(0);
     expect(database.revisions).toHaveLength(0);
@@ -1025,7 +1011,7 @@ describe('Gaming hybrid durable lifecycle', () => {
     }
     expect(mockHttp).toHaveBeenCalledTimes(5);
     expect(mockTrinity).toHaveBeenCalledTimes(1);
-    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
     expect(database.queries).toHaveLength(sqlCalls);
     expect(jobs.size).toBe(0);
     expect(database.queries.some(sql => /^(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b/iu.test(sql))).toBe(false);
@@ -1218,11 +1204,10 @@ describe('Gaming hybrid durable lifecycle', () => {
     expect(evaluated.accepted[0].sourceAssessment.dimensionScores.clarity.reasonCodes).toContain('INTELLIGIBLE_HEADER_VALUE_RELATIONSHIPS');
     expect(evaluated.knowledge.evidence?.[0].evidenceUnits?.[0].provenance).toMatchObject({ sourceUrl: URL, strategy: 'html_table' });
     mockHttp.mockClear();
-    mockTrinity.mockImplementation(async (request: any) => {
+    mockTrinity.mockImplementation((request: any) => {
       expect(JSON.stringify(request)).toContain('TEST-ORION-01');
       const result = 'This source reports TEST-ORION-01 → B 2 → PML 7 → Platinum. Current applicability is unverified. [Source 1]';
-      const { assessment } = await request.context.runOptions.gamingClearAnswerAudit(result, {});
-      return { result, gamingClearAudit: assessment, meta: { provider: { finishReason: 'stop' } } };
+      return presentationResult(result);
     });
     const workflow = createGamingHybridWorkflow();
     const query = { contractVersion, idempotencyKey: 'structured-query-1', game: SOURCE_GAME,
@@ -1482,6 +1467,7 @@ describe('Gaming hybrid durable lifecycle', () => {
     expect(request.input.body).toMatchObject({ prompt: query.question, class: 'Sentinel', role: 'defender', spoilerMode: 'none', answerDepth: 'detailed' });
     expect(request.input.prompt).toContain('Sentinel'); expect(request.input.prompt).toContain('defender');
     expect(request.input.prompt).toContain('detailed'); expect(request.input.prompt).toContain(query.question);
+    expect(request.context.runOptions.gamingPresentationPolicy).toBe('gaming-clear-presentation/v1');
   });
 
   it('preserves the actual pipeline reasoning-timeout fallback as a safe retryable hybrid reason', async () => {
@@ -1503,52 +1489,27 @@ describe('Gaming hybrid durable lifecycle', () => {
     expect(jobs.size).toBe(0);
   });
 
-  it.each(['timeout', 'rejection', 'unclassified'] as const)('withholds v2 answer_ready after successful generation and mandatory answer-audit %s', async failure => {
-    const modelFinding = failure === 'unclassified' ? 'SYNTHETIC_PRIVATE_FINDING' : 'UNSUPPORTED_MECHANIC';
-    const safeReason = failure === 'timeout' ? 'AUDIT_TIMEOUT'
-      : failure === 'unclassified' ? 'UNCLASSIFIED_AUDIT_FINDING' : modelFinding;
-    mockTrinity.mockImplementation(async (providerRequest: any) => {
-      const result = `${PASSAGE} [Source 1]`;
-      const { assessment } = await providerRequest.context.runOptions.gamingClearAnswerAudit(result, providerRequest.context.runtimeBudget);
-      return { result, gamingClearAudit: assessment, fallbackFlag: false, dryRun: false,
-        meta: { provider: { finishReason: 'stop', responseStatus: 'completed' } } };
-    });
-    if (failure === 'timeout') mockAuditCompletion.mockRejectedValueOnce(Object.assign(new Error('synthetic mandatory audit timeout'), { name: 'AbortError' }));
-    else mockAuditCompletion.mockImplementationOnce(async (_client: unknown, params: any) => {
-      const data = JSON.parse(params.messages[1].content);
-      const evidenceRefs = [data.evidence[0].chunkId];
-      return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
-        dimensions: Object.fromEntries(GAMING_CLEAR_DIMENSIONS.map(name => [name, { status: 'evaluated', score: 4,
-          reasonCodes: ['SUPPORTED_FIXTURE'], evidenceRefs, unresolvedFacts: [] }])),
-        findings: [{ code: modelFinding, severity: 'blocking', evidenceRefs }]
-      }) } }] };
-    });
+  it.each([
+    ['no presentation provenance', { result: PASSAGE + ' [Source 1]', meta: { provider: { finishReason: 'stop', responseStatus: 'completed' } } }],
+    ['out-of-range citation', presentationResult(PASSAGE + ' [Source 9]')],
+    ['unselected citation URL', presentationResult(PASSAGE + ' [1](https://not-selected.example/guide)')]
+  ])('withholds v2 answer_ready after generation with %s', async (_failure, generated) => {
+    mockTrinity.mockResolvedValueOnce(generated);
     const workflow = createGamingHybridWorkflow();
-    const queried = await workflow.query({ contractVersion: 'gaming-hybrid-v2', idempotencyKey: 'v2-audit-failure-query',
+    const queried = await workflow.query({ contractVersion: 'gaming-hybrid-v2', idempotencyKey: 'v2-integrity-failure-query',
       game: input.game, mode: 'guide', question: input.prompt, currentArea: 'obsidian observatory',
       spoilerTolerance: 'none', storagePolicy: 'transient_only' }, context);
     const submission = { contractVersion: 'gaming-hybrid-v2', workflowId: queried.body.workflowId,
-      expectedRevision: queried.body.revision, idempotencyKey: 'v2-audit-failure-candidate', candidates: [{ url: URL }] };
+      expectedRevision: queried.body.revision, idempotencyKey: 'v2-integrity-failure-candidate', candidates: [{ url: URL }] };
     const result = await workflow.candidates(submission, context);
     expect(result).toMatchObject({ status: 503, body: { state: 'temporarily_unavailable',
       frontendOutcome: 'temporarily_unavailable', nextAction: 'stop', sourceKnown: true, evidenceSelected: true } });
     expect(result.body.answer).toBeUndefined();
     expect(mockTrinity).toHaveBeenCalledTimes(1);
-    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
-    expect(mockAuditCompletion.mock.calls[0][1]).toMatchObject({ maxRetries: 0 });
-    expect(jest.mocked(logger.info).mock.calls).toContainEqual([
-      failure === 'timeout' ? 'gaming.clear.answer.unavailable' : 'gaming.clear.answer.completed',
-      expect.objectContaining({ modelCallsUsed: 1, modelCallLimit: 1, repairAttempts: 0,
-        reasonCodes: [safeReason] })
-    ]);
-    expect(jest.mocked(logger.info).mock.calls).toContainEqual([
-      'gaming.answer.recovery', expect.objectContaining({ reasonCodes: [safeReason] })
-    ]);
-    expect(JSON.stringify(jest.mocked(logger.info).mock.calls)).not.toContain('SYNTHETIC_PRIVATE_FINDING');
-    // Replaying the completed logical operation must not dispatch another generation or audit.
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
     expect(await workflow.candidates(submission, context)).toEqual(result);
     expect(mockTrinity).toHaveBeenCalledTimes(1);
-    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
     expect(jobs.size).toBe(0);
   });
 

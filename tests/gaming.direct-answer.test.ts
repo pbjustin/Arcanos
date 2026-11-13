@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import type { TrinityRunOptions } from '../src/core/logic/trinityTypes.js';
+import type { GamingStoredKnowledgeContext } from '../src/shared/gaming/gamingStoredEvidenceCore.js';
 import type { RuntimeBudget } from '../src/platform/resilience/runtimeBudget.js';
 import { createGamingClearAssessment, gamingClearContextFingerprint, gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
 import { assessGamingRequestCoverage } from '../src/shared/gaming/gamingClearEvidence.js';
@@ -26,23 +27,19 @@ const mockRunTrinityWritingPipeline = jest.fn();
 const mockBuildStoredGamingKnowledgeContext = jest.fn();
 const DEFAULT_GUIDE_SNIPPET = 'Clean guide explains boss mechanics, route steps, and readable gameplay evidence.';
 
-// This existing suite isolates acquisition, formatting and provider orchestration.
-// Its generic snippets are deliberately not semantic-judgment fixtures. The real
-// CLEAR policies/provider audit are exercised by gaming-clear-{pipeline,answer-audit}
-// and gaming-player-context.e2e tests; this harness supplies explicit bound audit doubles.
-function orchestrationAssessment(profile: 'evidence' | 'answer', text: string, invalidCitation = false) {
-  return createGamingClearAssessment({ profile, questionProfile: 'walkthrough', subjectId: 'orchestration-fixture',
+// The orchestration fixtures isolate acquisition, formatting and provider output.
+function orchestrationAssessment(text: string) {
+  return createGamingClearAssessment({ profile: 'evidence', questionProfile: 'walkthrough', subjectId: 'orchestration-fixture',
     subjectHash: gamingClearHash(text), contextFingerprint: gamingClearContextFingerprint('orchestration-fixture'),
     evidenceRefs: ['orchestration-evidence'],
     gates: { security: 'verified', identity: 'verified', compatibility: 'verified', claimSupport: 'verified', provenance: 'verified', freshness: 'not_applicable' },
     dimensions: Object.fromEntries(['clarity', 'leverage', 'efficiency', 'alignment', 'resilience'].map(name => [name,
       { status: 'evaluated', score: 4.5, reasonCodes: ['FIXTURE_ACCEPTED'], evidenceRefs: ['orchestration-evidence'], unresolvedFacts: [] }
-    ])) as Parameters<typeof createGamingClearAssessment>[0]['dimensions'],
-    findings: invalidCitation ? [{ code: 'CITATION_NOT_FOUND', severity: 'blocking', evidenceRefs: [] }] : []
+    ])) as Parameters<typeof createGamingClearAssessment>[0]['dimensions']
   });
 }
 jest.unstable_mockModule('@shared/gaming/gamingClearEvidence.js', () => ({
-  assessGamingClearEvidence: () => orchestrationAssessment('evidence', 'controlled orchestration evidence'),
+  assessGamingClearEvidence: () => orchestrationAssessment('controlled orchestration evidence'),
   // Keep the real coverage policy when the v2 selector is imported by this v1 harness.
   assessGamingRequestCoverage
 }));
@@ -109,17 +106,23 @@ jest.unstable_mockModule('@platform/runtime/env.js', () => ({
 }));
 
 jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
-  runTrinityWritingPipeline: async (input: { input: { prompt: string } }) => {
+  runTrinityWritingPipeline: async (input: { context: { runOptions: TrinityRunOptions } }) => {
     const result = await mockRunTrinityWritingPipeline(input) as { result?: string } | undefined;
     if (!result || typeof result.result !== 'string') return result;
-    const sourceNumbers = new Set(Array.from(input.input.prompt.matchAll(/\[Source (\d+)\]/gu), match => Number(match[1])));
-    const invalidCitation = extractInlineSourceRefs(result.result).some(index => !sourceNumbers.has(index));
-    return { ...result, gamingClearAudit: orchestrationAssessment('answer', result.result, invalidCitation) };
+    return { ...result, gamingPresentationPolicy: input.context.runOptions.gamingPresentationPolicy };
   }
 }));
 
 jest.unstable_mockModule('@services/gamingSourceIngestion.js', () => ({
-  buildStoredGamingKnowledgeContext: mockBuildStoredGamingKnowledgeContext
+  buildStoredGamingKnowledgeContext: async (input: unknown) => {
+    const stored = await mockBuildStoredGamingKnowledgeContext(input) as GamingStoredKnowledgeContext;
+    if (stored.evidence || !stored.sources.length) return stored;
+    return { ...stored, evidence: stored.sources.flatMap(source => source.sourceId && source.snippet ? [{
+      sourceId: source.sourceId, publicUrl: source.url, revisionId: 'fixture-revision',
+      recordId: source.sourceId, recordType: 'guide', text: source.snippet, lexicalScore: 1,
+      combinedScore: 1, provenance: { fetchedAt: source.fetchedAt }
+    }] : []) };
+  }
 }));
 
 const actualWebFetcher = await import('../src/shared/webFetcher.js');
@@ -801,7 +804,7 @@ describe('gaming guide output hardening', () => {
     expect(normalizeGamingInlineSourceReferences(input, 1).response).toBe(expected);
   });
 
-  it('rejects generated references to missing sources instead of presenting an obsolete audited answer', async () => {
+  it('rejects generated references to missing sources instead of presenting an invalid cited answer', async () => {
     mockFetchAndClean.mockImplementation(async (url: string) => `Guide for ${url}: Elden Ring route, preparation, boss danger checks, and upgrades.`);
     mockRunTrinityWritingPipeline.mockResolvedValueOnce({
       result: 'Use [Source 3] for the route, (sources 1, 4) for prep, [1, 4] for danger checks, and source 2 for upgrades.',
@@ -818,7 +821,7 @@ describe('gaming guide output hardening', () => {
     });
 
     expect(result.data.sources).toHaveLength(2);
-    expect(result.data.fallbackReason).toBe('GAMING_ANSWER_REJECTED');
+    expect(result.data.fallbackReason).toBe('GAMING_PROVIDER_ERROR');
     expect(result.data.response).not.toContain('for the route');
     expect(result.data.grounding?.groundedInSuppliedEvidence).toBe(false);
     expectInlineSourceRefsToMap(result.data.response, result.data.sources.length);
@@ -1180,6 +1183,7 @@ describe('gaming guide output hardening', () => {
     mockBuildStoredGamingKnowledgeContext.mockResolvedValueOnce({
       context: '',
       sources: [{
+        sourceId: 'fixture-stored-route',
         url: sameUrl ? liveUrl : 'https://example.com/clockwork-stored-guide',
         sourceType: 'curated',
         fetchedAt: '2024-01-01T00:00:00.000Z',
@@ -1747,7 +1751,7 @@ describe('gaming guide output hardening', () => {
     }));
     expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
       watchdogModelTimeoutMs: 15000,
-      modelStageTimeoutMs: 5500
+      modelStageTimeoutMs: 8500
     }));
   });
 
@@ -1760,13 +1764,13 @@ describe('gaming guide output hardening', () => {
     } }) => {
       await new Promise(resolve => setTimeout(resolve, 5_000));
       reasoningTimeoutMs = input.context.runOptions.resolveModelStageTimeoutMs?.('reasoning', input.context.runtimeBudget, 30_000);
-      expect(input.context.runOptions.resolveModelStageTimeoutMs?.('reasoning', input.context.runtimeBudget, 30_000, 3_000)).toBe(18_000);
+      expect(input.context.runOptions.resolveModelStageTimeoutMs?.('reasoning', input.context.runtimeBudget, 30_000, 3_000)).toBe(21_000);
       await new Promise(resolve => setTimeout(resolve, 13_000));
       return { result: 'Use the supported starter equipment. [1]', meta: { provider: { finishReason: 'stop' } } };
     });
     const operation = runBuildPipeline({ game: 'Fixture Quest', prompt: 'Give me a grounded starter build.', guideUrls: [], auditEnabled: false });
     await jest.advanceTimersByTimeAsync(5_000);
-    expect(reasoningTimeoutMs).toBe(21_000);
+    expect(reasoningTimeoutMs).toBe(24_000);
     await jest.advanceTimersByTimeAsync(13_000);
     const result = await operation;
     expect(result.data.fallbackReason).toBeUndefined();
@@ -1794,7 +1798,7 @@ describe('gaming guide output hardening', () => {
       runtimeBudget: RuntimeBudget; runOptions: TrinityRunOptions
     } }) => {
       expect(input.context.runtimeBudget.watchdogLimit).toBe(20_000);
-      expect(input.context.runOptions.resolveModelStageTimeoutMs?.('reasoning', input.context.runtimeBudget, 29_000)).toBe(10_500);
+      expect(input.context.runOptions.resolveModelStageTimeoutMs?.('reasoning', input.context.runtimeBudget, 29_000)).toBe(13_500);
       return { result: 'Use the supported starter equipment. [1]', meta: { provider: { finishReason: 'stop' } } };
     });
     const controller = new AbortController();
@@ -1814,7 +1818,7 @@ describe('gaming guide output hardening', () => {
       runtimeBudget: RuntimeBudget; runOptions: TrinityRunOptions
     } }) => {
       expect(input.context.runOptions.answerMode).toBe('direct');
-      expect(input.context.runOptions.resolveModelStageTimeoutMs?.('direct-answer', input.context.runtimeBudget, 8_500)).toBe(4_500);
+      expect(input.context.runOptions.resolveModelStageTimeoutMs?.('direct-answer', input.context.runtimeBudget, 8_500)).toBe(7_500);
       await new Promise(resolve => setTimeout(resolve, 3_000));
       return { result: 'Use the supported starter equipment. [1]', meta: { provider: { finishReason: 'stop' } } };
     });
@@ -1839,11 +1843,11 @@ describe('gaming guide output hardening', () => {
 
   it('returns controlled timeout recovery when the selected intake stage has no downstream headroom', async () => {
     useControlledStoredGuideEvidence();
-    process.env.ARCANOS_GAMING_GUIDE_PIPELINE_TIMEOUT_MS = '9000';
+    process.env.ARCANOS_GAMING_GUIDE_PIPELINE_TIMEOUT_MS = '6000';
     mockRunTrinityWritingPipeline.mockImplementationOnce(async (input: { context: {
       runtimeBudget: RuntimeBudget; runOptions: TrinityRunOptions
     } }) => {
-      input.context.runOptions.resolveModelStageTimeoutMs?.('intake', input.context.runtimeBudget, 8_500);
+      input.context.runOptions.resolveModelStageTimeoutMs?.('intake', input.context.runtimeBudget, 5_500);
       throw new Error('An exhausted intake budget must stop before model dispatch.');
     });
     const result = await runGuidePipeline({ game: 'Fixture Quest', prompt: 'How do I defeat the Ash Sentinel?', guideUrls: [], auditEnabled: false });

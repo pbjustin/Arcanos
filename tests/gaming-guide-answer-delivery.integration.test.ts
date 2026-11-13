@@ -4,13 +4,12 @@ import { performance } from 'node:perf_hooks';
 import request from 'supertest';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
-import { GAMING_CLEAR_DIMENSIONS } from '../src/shared/gaming/gamingClearPolicy.js';
 import type { GamingHybridResponse } from '../src/shared/gaming/gamingHybridContract.js';
 
 // Guide-delivery, authored SYNTHETIC material. These fixtures make no claim that the
 // fabricated publisher pages exist or that model/gameplay quality was measured.
 // OAuth, MCP schemas, discovery/ranking, protected acquisition, extraction,
-// source/evidence CLEAR, Trinity orchestration and final answer binding are real.
+// source/evidence admission, Trinity orchestration and final answer binding are real.
 // External search/HTTPS/DNS/SDK, empty durable lookup and ingress admission are
 // controlled seams. No application service, provider or production data is used.
 const publisher = jest.fn();
@@ -52,7 +51,6 @@ interface Claim {
   draft: string;
   answerProbe: RegExp;
   support: RegExp[];
-  uncertainty?: boolean;
 }
 interface Scenario {
   id: string;
@@ -88,7 +86,7 @@ const scenarios: Scenario[] = [
       support: [/uninhabited/iu, /colonisation claim/iu, /colonisation ship/iu, /construction commodities/iu, /deadline/iu] },
     { url: frontierGuideUrl,
       draft: 'The selected excerpts do not establish platform or edition compatibility, and current patch compatibility could not be verified.',
-      answerProbe: /do not establish platform.*edition.*patch/iu, uncertainty: true, support: [] }] },
+      answerProbe: /do not establish platform.*edition.*patch/iu, support: [] }] },
   { id: 'D', game: 'Xenoblade Chronicles 2', question: 'How do I set up Rex for damage and Nia for healing early in Chapter 2?',
     pages: [{ url: 'https://heldout-guides.example/xc2/chapter-two-rex', title: 'Xenoblade Chronicles 2 Chapter 2 Rex DPS guide',
       body: '<p>In the game Xenoblade Chronicles 2, this Chapter 2 guide uses Rex as DPS. Rex should keep his starting attacker Blade, maintain auto-attacks long enough to recharge Arts, and cancel an auto-attack into an Art when the timing ring appears. Position Rex to use the damage bonus stated on the equipped Art. This Chapter 2 Rex DPS advice uses only the party equipment available at this checkpoint.</p>' },
@@ -112,26 +110,28 @@ const scenarios: Scenario[] = [
 ];
 
 let scenario = scenarios[0];
-let poison: 'none' | 'unsupported' | 'wrong_citation' | 'invented_prerequisite' | 'wrong_order' = 'none';
+let wrongCitation: 'none' | 'out_of_range' | 'mismatched_url' | 'unknown_url' = 'none';
 let useNumberedLink = false;
-let auditInterruption: 'none' | 'truncation' | 'refusal' | 'tool_output' = 'none';
+let finalInterruption: 'none' | 'truncation' | 'refusal' | 'tool_output' = 'none';
 let sourceSuffix = '';
 let sourceTextLimit: number | undefined;
 const capabilityRefusal = "I can't browse the web.";
 const partialExtractionWarning = 'Some selected source material was only partially extracted. This answer is limited to the intact passages available for review.';
 const rainwheelCondition = 'The Amber Locks rainwheel procedure works only while the village gate is open.';
 let finalCapabilityRefusal: 'none' | 'only' | 'with_guidance' | 'echoed_warning' | 'warning_only' = 'none';
+let finalRefusalText = capabilityRefusal;
 let finalQualificationPresentation = '';
-let permissiveAudit = false;
 let citeFallback = false;
-let omitRequestedDetail = false;
 let omitFinalCitations = false;
 let searchUnavailable = false;
 const stages: string[] = [];
 const searches: string[] = [];
 const acquired: string[] = [];
-const audits: Array<{ answer: string; playerContext: { spoilerMode: string };
-  evidence: Array<{ sourceIndex: number; sourceId: string; revisionId: string; text: string; chunkId: string }> }> = [];
+const presentationVersion = 'gaming-clear-presentation/v1';
+const finalOutputs: string[] = [];
+const finalEvidence: Array<{ sourceIndex: number; url: string; text: string }> = [];
+let presentSteps = false;
+let awkwardAnswer = false;
 const fixtureMeasurements: Array<Record<string, unknown>> = [];
 const adversarialMeasurements: Array<Record<string, unknown>> = [];
 const acquisitionDurations: number[] = [];
@@ -139,7 +139,6 @@ let generationStarted = 0;
 let generationFinished = 0;
 const documents: Awaited<ReturnType<typeof resolveGamingDocument>>[] = [];
 const evaluations: Awaited<ReturnType<typeof evaluateGamingHybridCandidates>>[] = [];
-const auditSourceUrl = (sourceId: string) => evaluations.flatMap(value => value.accepted).find(candidate => candidate.candidateId === sourceId)?.publicUrl;
 const environment = { FINETUNED_MODEL_ID: 'ft:gpt-4.1:synthetic:heldout-gaming',
   ARCANOS_GAMING_RAG_ENABLED: 'false', ARCANOS_GAMING_DISCOVERY_ENABLED: 'true',
   ARCANOS_GAMING_HYBRID_BACKEND_DISCOVERY_ENABLED: 'false', BRAVE_SEARCH_API_KEY: 'heldout-synthetic-search-only',
@@ -158,32 +157,39 @@ beforeAll(async () => {
 });
 const messageText = (payload: any): string => typeof payload.input === 'string' ? payload.input : payload.input.map((message: any) => typeof message.content === 'string'
   ? message.content : message.content.map((part: any) => part.text ?? '').join('')).join('\n');
-/** Compose an explicitly synthetic answer using the selected source numbers. */
-function draft(payload: any): string {
+/** Capture source blocks from the actual generation payload for citation assertions. */
+function readFinalEvidence(text: string) {
+  return [...text.matchAll(/\[Source (\d+)\]\s*\nOrigin:[^\n]*\nURL: (https:\/\/[^\s"\\]+)([\s\S]*?)(?=\[Source \d+\]|\[END UNTRUSTED WEB EVIDENCE\]|$)/gu)]
+    .map(match => ({ sourceIndex: Number(match[1]), url: match[2], text: match[3] }));
+}
+
+/** The controlled SDK models presentation behavior using only authored claims. */
+function draft(payload: any, forDelivery = false): string {
   const text = messageText(payload);
   const numbered = [...text.matchAll(/\[Source (\d+)\][\s\S]*?URL: (https:\/\/[^\s"\\]+)/gu)];
   const numberFor = (url: string) => Number(numbered.find(match => match[2].trim() === url)?.[1]);
-  const response = scenario.claims.map((claim, index) => {
+  return scenario.claims.map((claim, index) => {
     expect(claim.support.filter(probe => !probe.test(text)).map(probe => probe.source)).toEqual([]);
-    const source = poison === 'wrong_citation' && index === 0 ? numberFor(scenario.pages[1].url) : numberFor(claim.url);
+    const source = numberFor(claim.url);
     expect(source).toBeGreaterThan(0);
-    const claimDraft = poison === 'wrong_order' && index === 0
-      ? '1. Deploy the colonisation ship. 2. Select an uninhabited system and obtain the required colonisation claim. 3. Deliver the requested construction commodities before the deadline.'
+    const claimDraft = awkwardAnswer && forDelivery ? 'The Deku Shield, yes, Kokiri Shop in Kokiri Forest is where, and 40 Rupees is the cost.'
+      : presentSteps && index === 0 && forDelivery ? claim.draft.replace(/ (?=[23]\. )/gu, '\n')
+      : presentSteps && index === 0 ? claim.draft.replace(/\d\. /gu, '') + ' ' + claim.draft.replace(/\d\. /gu, '')
       : claim.draft;
-    return useNumberedLink ? `${claimDraft} [${source}](${claim.url})` : `${claimDraft} [${source}]`;
+    if (forDelivery && wrongCitation === 'out_of_range') return claimDraft + ' [99]';
+    const url = forDelivery && wrongCitation === 'mismatched_url' && index === 0 ? scenario.pages[1].url
+      : forDelivery && wrongCitation === 'unknown_url' ? 'https://not-selected.example/guide' : claim.url;
+    return useNumberedLink || url !== claim.url ? claimDraft + ' [' + source + '](' + url + ')' : claimDraft + ' [' + source + ']';
   }).join('\n\n');
-  if (poison === 'unsupported') return `${response}\n\nThe Deku Shield costs 9999 Rupees. [1]`;
-  if (poison === 'invented_prerequisite') return `${response}\n\nYou must earn a Founder's Permit before purchasing a colonisation claim. [${numberFor(frontierGuideUrl)}]`;
-  return response;
 }
 beforeEach(() => {
   jest.clearAllMocks(); resetSafetyRuntimeStateForTests(); clearGamingDiscoveryCache();
-  scenario = scenarios[0]; poison = 'none'; auditInterruption = 'none'; sourceSuffix = ''; searchUnavailable = false;
+  scenario = scenarios[0]; wrongCitation = 'none'; finalInterruption = 'none'; sourceSuffix = ''; searchUnavailable = false;
   useNumberedLink = false;
-  finalCapabilityRefusal = 'none'; sourceTextLimit = undefined; permissiveAudit = false; citeFallback = false; omitRequestedDetail = false;
+  finalCapabilityRefusal = 'none'; finalRefusalText = capabilityRefusal; sourceTextLimit = undefined; citeFallback = false; presentSteps = false; awkwardAnswer = false;
   finalQualificationPresentation = '';
   omitFinalCitations = false;
-  stages.length = 0; searches.length = 0; acquired.length = 0; audits.length = 0; documents.length = 0; evaluations.length = 0;
+  stages.length = 0; searches.length = 0; acquired.length = 0; finalOutputs.length = 0; finalEvidence.length = 0; documents.length = 0; evaluations.length = 0;
   acquisitionDurations.length = 0; generationStarted = 0; generationFinished = 0;
   saved = Object.fromEntries(Object.keys(environment).map(name => [name, process.env[name]]));
   Object.assign(process.env, environment);
@@ -218,64 +224,9 @@ beforeEach(() => {
     let output: string;
     if (input.includes('Audit the actual Gaming player-facing ANSWER')) {
       stages.push('answer_audit');
-      const data = JSON.parse(payload.input.find((message: any) => message.role === 'user').content.map((part: any) => part.text ?? '').join(''));
-      expect(data.question).toBe(scenario.question);
-      audits.push(data);
-      // This synthetic semantic judge independently checks the actual answer's
-      // claim-to-source links, not equality with the model stub's planned draft.
-      const answerLines: string[] = data.answer.split('\n');
-      const guidePassages: Array<{ text: string; sourceIndex: number; chunkId: string }> = data.evidence;
-      let specificFinding: string | undefined;
-      let findingRef: string | undefined;
-      if (scenario.id === 'E' && guidePassages.some(passage => passage.text.includes(rainwheelCondition))
-        && !data.answer.includes('while the village gate is open')) {
-        specificFinding = 'MISSING_PREREQUISITE';
-      }
-      if (scenario.id === 'C') {
-        const permitLine = answerLines.find(line => /\bmust earn a Founder's Permit\b/iu.test(line));
-        const permitSource = /\[(\d+)\]/u.exec(permitLine ?? '');
-        if (permitSource && !guidePassages.some(passage => passage.sourceIndex === Number(permitSource[1])
-          && /\b(?:must|requires?)\b[^.]*\bFounder's Permit\b/iu.test(passage.text))) {
-          specificFinding = 'INVENTED_PREREQUISITE';
-        }
-        const procedure = answerLines.find(line => /\bdeploy the (?:system )?colonisation ship\b/iu.test(line));
-        const procedureSource = /\[(\d+)\]/u.exec(procedure ?? '');
-        const deploysBeforeClaim = /deploy the (?:system )?colonisation ship.*(?:obtain|purchas\w*) the (?:required )?colonisation claim/iu;
-        if (procedureSource && procedure && deploysBeforeClaim.test(procedure)
-          && !guidePassages.some(passage => passage.sourceIndex === Number(procedureSource[1])
-            && deploysBeforeClaim.test(passage.text))) {
-          const supportedOrder = guidePassages.find(passage => passage.sourceIndex === Number(procedureSource[1])
-            && /purchasing a colonisation claim\.[\s\S]*?Travel to the selected system with the claim, deploy the system colonisation ship/iu.test(passage.text));
-          specificFinding = supportedOrder ? 'CONTRADICTED_CLAIM' : 'UNSUPPORTED_ACTION_SEQUENCE';
-          findingRef = supportedOrder?.chunkId;
-        }
-      }
-      const supported = permissiveAudit || !specificFinding && scenario.claims.every(claim => {
-        const line = answerLines.find(value => claim.answerProbe.test(value));
-        const citation = /\[(\d+)\]/u.exec(line ?? '');
-        return citation && data.evidence.some((chunk: any) => chunk.sourceIndex === Number(citation[1])
-          && auditSourceUrl(chunk.sourceId) === claim.url && claim.support.every(probe => probe.test(chunk.text)))
-          && (!claim.uncertainty || data.applicability.every((scope: any) => !scope.edition && !scope.platforms?.length
-            && !scope.currentPatch && !scope.currentBuild));
-      }) && !/9999|SPOILER_SENTINEL/iu.test(data.answer);
-      const refs = data.evidence.map((chunk: any) => chunk.chunkId);
-      output = JSON.stringify({ dimensions: Object.fromEntries(GAMING_CLEAR_DIMENSIONS.map(name => [name,
-        { status: 'evaluated', score: supported ? 4.5 : 1, reasonCodes: [supported ? 'SUPPORTED_FIXTURE' : 'UNSUPPORTED_CLAIM'], evidenceRefs: refs, unresolvedFacts: [] }])),
-        findings: supported ? [] : [{ code: specificFinding ?? 'UNSUPPORTED_CLAIM', severity: 'blocking',
-          evidenceRefs: findingRef ? [findingRef] : refs }] });
-      if (auditInterruption !== 'none') {
-        expect(supported).toBe(true);
-        return {
-          id: 'heldout-audit-response', model: payload.model,
-          status: auditInterruption === 'truncation' ? 'incomplete' : 'completed',
-          ...(auditInterruption === 'truncation' ? { incomplete_details: { reason: 'max_output_tokens' } } : {}),
-          output: auditInterruption === 'refusal' ? [{
-            type: 'message', content: [{ type: 'refusal', refusal: 'Synthetic audit refusal.' }]
-          }] : auditInterruption === 'tool_output' ? [{ type: 'web_search_call', status: 'completed' }] : [],
-          output_text: output, usage: { input_tokens: 90, output_tokens: 45, total_tokens: 135 }
-        };
-      }
-    } else if (payload.text?.format?.name?.startsWith('trinity_structured_reasoning')) {
+      throw new Error('The retired semantic audit must never dispatch in presentation mode.');
+    }
+    if (payload.text?.format?.name?.startsWith('trinity_structured_reasoning')) {
       stages.push('reasoning');
       output = JSON.stringify({ reasoning_steps: [], assumptions: [], constraints: [], tradeoffs: [], alternatives_considered: [],
         chosen_path_justification: '', response_mode: 'answer', achievable_subtasks: ['answer only acquired gameplay claims'],
@@ -284,20 +235,36 @@ beforeEach(() => {
       stages.push('intake'); output = 'Use the acquired guide passages, preserve qualifications and spoiler limits, and cite each factual recommendation.';
     } else {
       stages.push('final');
+      const trustedPrompt = messageText({ input: payload.input.filter((message: any) =>
+        message.role === 'system' || message.role === 'developer') });
+      expect(trustedPrompt).toContain('Gaming CLEAR Presentation policy: ' + presentationVersion);
+      expect(trustedPrompt).toMatch(/Clarity[\s\S]*Leverage[\s\S]*Efficiency[\s\S]*Alignment[\s\S]*Resilience/u);
+      expect(trustedPrompt).toMatch(/silently draft, review all five dimensions/iu);
+      finalEvidence.push(...readFinalEvidence(input));
       switch (finalCapabilityRefusal) {
-        case 'only': output = capabilityRefusal; break;
+        case 'only': output = finalRefusalText; break;
         case 'warning_only': output = partialExtractionWarning; break;
         case 'echoed_warning': output = `${partialExtractionWarning}\n\n${capabilityRefusal}`; break;
         default:
-          output = omitRequestedDetail ? 'At the Amber Locks, close the east sluice. [1]' : draft(payload);
-          if (finalCapabilityRefusal === 'with_guidance') output = `${capabilityRefusal}\n\n${output}`;
+          output = draft(payload, true);
+          if (finalCapabilityRefusal === 'with_guidance') output = `${finalRefusalText}\n\n${output}`;
       }
       if (citeFallback) output += useNumberedLink ? ` [1](${scenario.pages[0].url})` : ' [1]';
       if (finalQualificationPresentation) output = `${finalQualificationPresentation}\n\n${output}`;
       if (omitFinalCitations) output = output.replace(/ \[\d+\]/gu, '');
+      finalOutputs.push(output);
+      if (finalInterruption !== 'none') {
+        return { id: 'heldout-interrupted-final', model: payload.model,
+          status: finalInterruption === 'truncation' ? 'incomplete' : 'completed',
+          ...(finalInterruption === 'truncation' ? { incomplete_details: { reason: 'max_output_tokens' } } : {}),
+          output: finalInterruption === 'refusal' ? [{
+            type: 'message', content: [{ type: 'refusal', refusal: 'Synthetic final refusal.' }]
+          }] : finalInterruption === 'tool_output' ? [{ type: 'web_search_call', status: 'completed' }] : [],
+          output_text: output, usage: { input_tokens: 90, output_tokens: 45, total_tokens: 135 } };
+      }
     }
     generationFinished = performance.now();
-    return { id: `heldout-sdk-${stages.length}`, model: payload.model, status: 'completed', output: [], output_text: output,
+    return { id: 'heldout-sdk-' + stages.length, model: payload.model, status: 'completed', output: [], output_text: output,
       usage: { input_tokens: 90, output_tokens: 45, total_tokens: 135 } };
   });
 });
@@ -361,7 +328,7 @@ function harness(backend: boolean) {
 }
 
 describe.each([false])('natural guide request delivery, SYNTHETIC external effects, backend discovery %s', backend => {
-  it.each(scenarios)('delivers natural question $id only after source-bound selection, coverage, Trinity and final audit', async fixture => {
+  it.each(scenarios)('delivers natural question $id after source-bound selection, coverage, and Trinity presentation', async fixture => {
     scenario = fixture;
     const app = harness(backend);
     const started = performance.now();
@@ -371,20 +338,20 @@ describe.each([false])('natural guide request delivery, SYNTHETIC external effec
       const line = response?.response.split('\n').find(value => claim.answerProbe.test(value));
       const index = Number(/\[(\d+)\]/u.exec(line ?? '')?.[1]);
       return Boolean(index && response?.sources[index - 1]?.url === claim.url
-        && audits[0]?.evidence.some(chunk => chunk.sourceIndex === index && auditSourceUrl(chunk.sourceId) === claim.url
+        && finalEvidence.some(chunk => chunk.sourceIndex === index && chunk.url === claim.url
           && claim.support.every(probe => probe.test(chunk.text))));
     });
     fixtureMeasurements.push({ scenario: fixture.id, acquiredSources: documents.filter(document => document.acquisition).length,
       attemptedSources: acquired.length, acceptedSources: evaluations.flatMap(value => value.accepted).length,
       selectedSources: result.result.selectedCandidateIds?.length ?? 0, selectedPassages: result.result.selectedEvidenceIds?.length ?? 0,
       coverageSatisfied: result.result.coverageSatisfied === true, answerDelivered: result.result.state === 'answer_ready',
-      finalAuditCompleted: audits.length === 1, citationChecks: citationChecks.length, citationsBound: citationChecks.filter(Boolean).length,
+      presentationApplied: finalOutputs.length === 1, citationChecks: citationChecks.length, citationsBound: citationChecks.filter(Boolean).length,
       elapsedMs: Math.round((performance.now() - started) * 100) / 100,
       acquisitionMs: Math.round(acquisitionDurations.reduce((sum, value) => sum + value, 0) * 100) / 100,
       generationMs: Math.round((generationFinished - generationStarted) * 100) / 100,
       syntheticSdkCalls: sdk.mock.calls.length, syntheticUsageTokens: sdk.mock.calls.length * 135,
       failureStage: response ? null : result.result.reason });
-    expect(result.result.state === 'answer_ready' ? undefined : { reason: result.result.reason, stages, accepted: evaluations.flatMap(value => value.accepted).length, selected: result.result.selectedEvidenceIds, missing: result.result.missingCoverage, audits,
+    expect(result.result.state === 'answer_ready' ? undefined : { reason: result.result.reason, stages, accepted: evaluations.flatMap(value => value.accepted).length, selected: result.result.selectedEvidenceIds, missing: result.result.missingCoverage,
       warnings: jest.mocked(logger.warn).mock.calls }).toBeUndefined();
     expect(result).toMatchObject({ statusCode: 200, result: { state: 'answer_ready', nextAction: 'answer', revision: 1,
       evidenceSelected: true, coverageSatisfied: true, answer: { provenance: 'arcanos-trinity' } } });
@@ -394,7 +361,7 @@ describe.each([false])('natural guide request delivery, SYNTHETIC external effec
       const line = answer.response.split('\n').find(value => claim.answerProbe.test(value))!;
       const index = Number(/\[(\d+)\]/u.exec(line)?.[1]);
       expect(answer.sources[index - 1]?.url).toBe(claim.url);
-      expect(audits[0].evidence.some(chunk => chunk.sourceIndex === index && auditSourceUrl(chunk.sourceId) === claim.url
+      expect(finalEvidence.some(chunk => chunk.sourceIndex === index && chunk.url === claim.url
         && claim.support.every(probe => probe.test(chunk.text)))).toBe(true);
     }
     expect(answer.response).not.toMatch(/9999|SPOILER_SENTINEL|currently optimal|verified current/iu);
@@ -409,20 +376,19 @@ describe.each([false])('natural guide request delivery, SYNTHETIC external effec
     expect(result.result.selectedEvidenceIds!.length).toBeGreaterThan(0);
     if (fixture.id === 'C') {
       expect(result.result.selectedEvidenceIds).toHaveLength(2);
-      expect(audits[0].evidence.map(chunk => chunk.chunkId)).toEqual(result.result.selectedEvidenceIds);
-      expect(audits[0].evidence.map(chunk => chunk.text)).toEqual(expect.arrayContaining([
+      expect(finalEvidence.map(chunk => chunk.text)).toEqual(expect.arrayContaining([
         expect.stringMatching(/requires a colonisation claim/iu), expect.stringMatching(/begins by selecting/iu)
       ]));
     }
-    for (const chunk of audits[0].evidence) {
-      const candidate = evaluations.flatMap(value => value.accepted).find(value => value.candidateId === chunk.sourceId);
-      expect(chunk.revisionId).toBe(candidate?.contentHash);
-      expect(result.result.selectedEvidenceIds).toContain(chunk.chunkId);
+    const finalRequest = messageText(sdk.mock.calls[2][0]);
+    if (fixture.id === 'B' || fixture.id === 'D') {
+      expect(finalRequest).toContain('none');
+      expect(finalRequest).toContain(fixture.question);
     }
-    if (fixture.id === 'B' || fixture.id === 'D') expect(audits[0].playerContext.spoilerMode).toBe('none');
+    expect(answer.response).toContain(finalOutputs[0]);
     expect(result.result.requirementSupport!.length).toBeGreaterThan(0);
     expect(result.result.requirementSupport!.every(link => link.evidenceIds.every(id => result.result.selectedEvidenceIds!.includes(id)))).toBe(true);
-    expect(stages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
+    expect(stages).toEqual(['intake', 'reasoning', 'final']);
     expect(searches).toHaveLength(2); expect(new Set(searches).size).toBe(2);
     expect(acquired.sort()).toEqual(fixture.pages.map(page => page.url).sort());
     const callCount = sdk.mock.calls.length;
@@ -430,39 +396,38 @@ describe.each([false])('natural guide request delivery, SYNTHETIC external effec
     expect(sdk).toHaveBeenCalledTimes(callCount); expect(searches).toHaveLength(2);
   });
 
-  it('withholds an unsupported numerical claim after real Trinity and independent synthetic semantic audit', async () => {
-    poison = 'unsupported';
+  it('delivers awkward but eligible wording without requesting a quality verdict', async () => {
+    awkwardAnswer = true;
     const result = await harness(backend).complete();
-    expect(result.result.answer).toBeUndefined();
-    expect(result.result.state).not.toBe('answer_ready');
-    expect(stages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
-    expect(audits[0].answer).toContain('9999');
-    expect(audits[0].evidence.every(chunk => !chunk.text.includes('9999'))).toBe(true);
+    expect(result.result.state).toBe('answer_ready');
+    expect(result.result.answer?.response).toBe(finalOutputs[0]);
+    expect(finalOutputs[0]).toContain('40 Rupees');
+    expect(sdk).toHaveBeenCalledTimes(3);
   });
 
 });
 
-
-it('withholds a standalone capability refusal before spending the mandatory answer audit call', async () => {
-  scenario = scenarios[4];
-  finalCapabilityRefusal = 'only';
-  sourceTextLimit = 900;
-  sourceSuffix = `<p>${'The station scenery includes nearby landmarks. '.repeat(25)}</p>`;
-  const result = await harness(false).complete();
-  expect(result.result).toMatchObject({ coverageSatisfied: true, reason: 'GENERATION_UNAVAILABLE' });
-  expect(result.result.answer).toBeUndefined();
-  expect(stages).toEqual(['intake', 'reasoning', 'final']);
-  expect(audits).toHaveLength(0);
-  expect(sdk).toHaveBeenCalledTimes(3);
+it.each([capabilityRefusal, 'I cannot help with this request.', 'I am unable to answer this question.',
+  'I cannot provide that information.'])(
+  'withholds a standalone refusal without presenting it as a guide (%s)', async refusal => {
+    scenario = scenarios[4];
+    finalCapabilityRefusal = 'only';
+    finalRefusalText = refusal;
+    sourceTextLimit = 900;
+    sourceSuffix = `<p>${'The station scenery includes nearby landmarks. '.repeat(25)}</p>`;
+    const result = await harness(false).complete();
+    expect(result.result).toMatchObject({ coverageSatisfied: true, reason: 'GENERATION_UNAVAILABLE' });
+    expect(result.result.answer).toBeUndefined();
+    expect(stages).toEqual(['intake', 'reasoning', 'final']);
+    expect(sdk).toHaveBeenCalledTimes(3);
 });
 
 it.each([
   ['echoed_warning', false], ['warning_only', false], ['echoed_warning', true], ['warning_only', true]
 ] as const)(
-  'withholds %s (citation present: %s) without audit even if the synthetic audit would accept', async (finalMode, cite) => {
+  'withholds %s (citation present: %s) without treating source notices as gameplay', async (finalMode, cite) => {
     scenario = scenarios[4];
     finalCapabilityRefusal = finalMode;
-    permissiveAudit = true;
     citeFallback = cite;
     sourceTextLimit = 900;
     sourceSuffix = `<p>${'The station scenery includes nearby landmarks. '.repeat(25)}</p>`;
@@ -470,7 +435,6 @@ it.each([
     expect(result.result).toMatchObject({ coverageSatisfied: true, reason: 'GENERATION_UNAVAILABLE' });
     expect(result.result.answer).toBeUndefined();
     expect(stages).toEqual(['intake', 'reasoning', 'final']);
-    expect(audits).toHaveLength(0);
     expect(sdk).toHaveBeenCalledTimes(3);
   }
 );
@@ -479,7 +443,6 @@ it.each(['echoed_warning', 'warning_only'] as const)(
   'withholds %s even when followed by a numbered Markdown citation', async finalMode => {
     scenario = scenarios[4];
     finalCapabilityRefusal = finalMode;
-    permissiveAudit = true;
     citeFallback = true;
     useNumberedLink = true;
     sourceTextLimit = 900;
@@ -488,23 +451,22 @@ it.each(['echoed_warning', 'warning_only'] as const)(
     expect(result.result).toMatchObject({ coverageSatisfied: true, reason: 'GENERATION_UNAVAILABLE' });
     expect(result.result.answer).toBeUndefined();
     expect(stages).toEqual(['intake', 'reasoning', 'final']);
-    expect(audits).toHaveLength(0);
   }
 );
 
-it('audits and binds substantive cited guidance that follows a capability limitation', async () => {
-  scenario = scenarios[4];
-  finalCapabilityRefusal = 'with_guidance';
-  sourceTextLimit = 900;
-  sourceSuffix = `<p>${'The station scenery includes nearby landmarks. '.repeat(25)}</p>`;
-  const result = await harness(false).complete();
-  expect(result.result).toMatchObject({ state: 'answer_ready', coverageSatisfied: true });
-  expect(stages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
-  expect(audits).toHaveLength(1);
-  expect(audits[0].answer).toContain(capabilityRefusal);
-  expect(audits[0].answer).toContain('Some selected source material was only partially extracted.');
-  expect(result.result.answer?.response).toBe(audits[0].answer);
-  expect(result.result.answer?.response).toMatch(scenario.claims[0].answerProbe);
+it.each([capabilityRefusal, 'I cannot answer this question in full.'])(
+  'delivers substantive cited guidance with its capability and extraction qualifications (%s)', async limitation => {
+    scenario = scenarios[4];
+    finalCapabilityRefusal = 'with_guidance';
+    finalRefusalText = limitation;
+    sourceTextLimit = 900;
+    sourceSuffix = `<p>${'The station scenery includes nearby landmarks. '.repeat(25)}</p>`;
+    const result = await harness(false).complete();
+    expect(result.result).toMatchObject({ state: 'answer_ready', coverageSatisfied: true });
+    expect(stages).toEqual(['intake', 'reasoning', 'final']);
+    expect(result.result.answer?.response).toBe(partialExtractionWarning + '\n\n' + finalOutputs[0]);
+    expect(finalOutputs[0]).toContain(limitation);
+    expect(result.result.answer?.response).toMatch(scenario.claims[0].answerProbe);
 });
 
 it.each([
@@ -519,82 +481,52 @@ it.each([
     sourceSuffix = `<p>${'The station scenery includes nearby landmarks. '.repeat(25)}</p>`;
     const result = await harness(false).complete();
     expect(result.result.state).toBe('answer_ready');
-    expect(audits).toHaveLength(1);
     const prefix = needsPrefix ? `${partialExtractionWarning}\n\n${presentation}` : presentation;
-    expect(audits[0].answer.startsWith(`${prefix}\n\nAt the Amber Locks`)).toBe(true);
-    expect(result.result.answer?.response).toBe(audits[0].answer);
+    expect(result.result.answer?.response.startsWith(`${prefix}\n\nAt the Amber Locks`)).toBe(true);
+    expect(result.result.answer?.response).toContain(finalOutputs[0]);
   });
 
-it('withholds a refusal followed by invented advice after a complete negative audit', async () => {
-  finalCapabilityRefusal = 'with_guidance';
-  poison = 'unsupported';
-  const result = await harness(false).complete();
-  expect(result.result).toMatchObject({ coverageSatisfied: true, reason: 'GENERATION_UNAVAILABLE' });
-  expect(result.result.answer).toBeUndefined();
-  expect(stages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
-  expect(audits[0].answer).toContain(capabilityRefusal);
-  expect(audits[0].answer).toContain('9999');
-  expect(audits[0].evidence.every(chunk => !chunk.text.includes('9999'))).toBe(true);
-});
-
-it('withholds grounded but incomplete guidance after a complete negative audit', async () => {
-  scenario = scenarios[4];
-  omitRequestedDetail = true;
-  const result = await harness(false).complete();
-  expect(result.result).toMatchObject({ coverageSatisfied: true, reason: 'GENERATION_UNAVAILABLE' });
-  expect(result.result.answer).toBeUndefined();
-  expect(stages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
-  expect(audits[0].answer).toBe('At the Amber Locks, close the east sluice. [1]');
-  expect(audits[0].evidence.some(chunk => /east sluice.*pearl spindle.*twice/u.test(chunk.text))).toBe(true);
-});
-
-it('withholds a guide that omits a material condition from its selected source', async () => {
-  scenario = scenarios[4];
-  sourceSuffix = `<p>${rainwheelCondition}</p>`;
-  const result = await harness(false).complete();
-  expect(result.result).toMatchObject({ coverageSatisfied: true, reason: 'GENERATION_UNAVAILABLE' });
-  expect(result.result.answer).toBeUndefined();
-  expect(stages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
-  const { answer, evidence } = audits[0];
-  expect(answer).toMatch(scenario.claims[0].answerProbe);
-  expect(answer).not.toContain('while the village gate is open');
-  const citedSource = Number(/\[(\d+)\]/u.exec(answer)?.[1]);
-  expect(evidence.some(passage => passage.sourceIndex === citedSource && passage.text.includes(rainwheelCondition))).toBe(true);
-  const response = await sdk.mock.results.at(-1)!.value as { output_text: string };
-  expect(JSON.parse(response.output_text).findings).toEqual([
-    expect.objectContaining({ code: 'MISSING_PREREQUISITE', severity: 'blocking' })
-  ]);
-});
-
-it.each([
-  ['invented_prerequisite', 'INVENTED_PREREQUISITE'],
-  ['wrong_order', 'CONTRADICTED_CLAIM'],
-] as const)('withholds Elite Dangerous guidance with %s after a complete rejecting audit', async (attack, findingCode) => {
+it('models an ordered presentation rewrite in the final call without changing the authored facts', async () => {
   scenario = scenarios[2];
-  poison = attack;
+  presentSteps = true;
   const result = await harness(false).complete();
-  expect(result.result).toMatchObject({ coverageSatisfied: true, reason: 'GENERATION_UNAVAILABLE' });
-  expect(result.result.answer).toBeUndefined();
-  expect(stages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
-  const response = await sdk.mock.results.at(-1)!.value as { output_text: string };
-  expect(JSON.parse(response.output_text).findings).toEqual([
-    expect.objectContaining({ code: findingCode, severity: 'blocking' })
-  ]);
-  expect(logger.info).toHaveBeenCalledWith('gaming.clear.answer.completed', expect.objectContaining({
-    factualSupport: attack === 'wrong_order' ? 'CONTRADICTED' : 'UNVERIFIED', decision: 'reject',
-    blockingCategories: expect.arrayContaining(['factual_support'])
-  }));
+  const reasoning = await sdk.mock.results[1].value as { output_text: string };
+  const draftAnswer = JSON.parse(reasoning.output_text).final_answer;
+  const steps = scenario.claims[0].draft.split(/ (?=[23]\. )/gu);
+  expect(draftAnswer.match(/obtain the required colonisation claim/gu)).toHaveLength(2);
+  expect(result.result.state).toBe('answer_ready');
+  expect(result.result.answer?.response).toContain(steps.join('\n'));
+  expect(finalOutputs[0].match(/obtain the required colonisation claim/gu)).toHaveLength(1);
+  expect(finalOutputs[0].split(/\n\n/u)[0].replace(/ \[\d+\]$/u, '')).toBe(steps.join('\n'));
+  expect(stages).toEqual(['intake', 'reasoning', 'final']);
 });
 
-it('rejects a claim attached to the wrong independently accepted source', async () => {
-  scenario = scenarios[3]; poison = 'wrong_citation';
+it('retains a material source prerequisite in the presented answer', async () => {
+  scenario = { ...scenarios[4], claims: scenarios[4].claims.map(claim => ({
+    ...claim, draft: claim.draft + ' Only do this while the village gate is open.',
+    support: [...claim.support, /while the village gate is open/u]
+  })) };
+  sourceSuffix = '<p>' + rainwheelCondition + '</p>';
   const result = await harness(false).complete();
-  expect(result.result.answer).toBeUndefined();
-  expect(stages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
-  expect(audits).toHaveLength(1);
+  expect(result.result.state).toBe('answer_ready');
+  expect(result.result.answer?.response).toContain('while the village gate is open');
+  expect(stages).toEqual(['intake', 'reasoning', 'final']);
 });
 
-it('delivers an audited guide with a numbered Markdown citation to a URL containing parentheses', async () => {
+it.each(['out_of_range', 'mismatched_url', 'unknown_url'] as const)(
+  'withholds a completed guide with a structurally invalid citation (%s)', async citation => {
+    scenario = scenarios[3];
+    wrongCitation = citation;
+    const result = await harness(false).complete();
+    expect(result.result).toMatchObject({ coverageSatisfied: true, reason: 'GENERATION_UNAVAILABLE' });
+    expect(result.result.answer).toBeUndefined();
+    expect(stages).toEqual(['intake', 'reasoning', 'final']);
+    expect(finalOutputs).toHaveLength(1);
+    expect(sdk).toHaveBeenCalledTimes(3);
+  }
+);
+
+it('delivers a presented guide with a numbered Markdown citation to a URL containing parentheses', async () => {
   const url = 'https://heldout-guides.example/oot/Deku_Shield_(Item)';
   const original = scenarios[0];
   scenario = { ...original, pages: original.pages.map(page => ({ ...page, url })),
@@ -603,33 +535,31 @@ it('delivers an audited guide with a numbered Markdown citation to a URL contain
   const result = await harness(false).complete();
   expect(result.result.state).toBe('answer_ready');
   expect(result.result.answer?.response).toContain(`[1](${url})`);
-  expect(stages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
+  expect(stages).toEqual(['intake', 'reasoning', 'final']);
 });
 
-it('withholds a complete Elite Dangerous guide missing its explicitly requested citations before semantic audit', async () => {
+it('withholds a complete Elite Dangerous guide missing its explicitly requested citations at structural citation validation', async () => {
   scenario = scenarios[2];
   omitFinalCitations = true;
-  permissiveAudit = true;
   const result = await harness(false).complete();
   expect(result.result).toMatchObject({ coverageSatisfied: true, reason: 'GENERATION_UNAVAILABLE' });
   expect(result.result.answer).toBeUndefined();
   expect(stages).toEqual(['intake', 'reasoning', 'final']);
-  expect(audits).toHaveLength(0);
   const response = await sdk.mock.results.at(-1)!.value as { output_text: string };
   for (const claim of scenario.claims) expect(response.output_text).toMatch(claim.answerProbe);
   expect(response.output_text).not.toMatch(/\[\d+\]/u);
 });
 
 it.each(['truncation', 'refusal', 'tool_output'] as const)(
-  'withholds a supported and cited guide when the provider audit adds %s to valid assessment JSON', async interruption => {
+  'withholds a supported and cited guide when the final provider response includes %s', async interruption => {
     scenario = scenarios[4];
-    auditInterruption = interruption;
+    finalInterruption = interruption;
     const result = await harness(false).complete();
     expect(result.result).toMatchObject({ coverageSatisfied: true, reason: 'GENERATION_UNAVAILABLE' });
     expect(result.result.answer).toBeUndefined();
-    expect(stages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
-    expect(audits).toHaveLength(1);
-    expect(sdk).toHaveBeenCalledTimes(4);
+    expect(stages).toEqual(['intake', 'reasoning', 'final']);
+    expect(finalOutputs).toHaveLength(1);
+    expect(sdk).toHaveBeenCalledTimes(3);
   });
 
 it.each([
@@ -640,8 +570,8 @@ it.each([
   const result = await harness(false).complete();
   expect(result.result).toMatchObject({ state: 'answer_ready', evidenceSelected: true, coverageSatisfied: true });
   expect(result.result.answer?.response).toMatch(scenario.claims[0].answerProbe);
-  expect(stages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
-  expect(audits[0].evidence.length).toBeGreaterThan(0);
+  expect(stages).toEqual(['intake', 'reasoning', 'final']);
+  expect(finalEvidence.length).toBeGreaterThan(0);
 });
 
 it('retains the mandatory coverage gate instead of presenting an unsupported quantity as a qualified answer', async () => {
@@ -680,25 +610,25 @@ function recordAdversarialResult(label: string, result: { statusCode: number; re
     sourceClearAccepted: accepted.filter(candidate => candidate.sourceAssessment.decision === 'accept').length,
     selectedPassages: result.result.selectedEvidenceIds?.length ?? 0, coverageSatisfied: result.result.coverageSatisfied,
     state: result.result.state, answerPresent: Boolean(result.result.answer), failureReason: result.result.reason,
-    trinityStages: [...stages], syntheticSdkCalls: sdk.mock.calls.length, finalAudits: audits.length,
+    trinityStages: [...stages], syntheticSdkCalls: sdk.mock.calls.length, finalPresentationAttempts: finalOutputs.length,
     realPublisherCalls: 0, realProviderCalls: 0 });
 }
 
-/** Check that a delivered fixture answer was audited against its exact accepted source. */
-function expectAuditedProcedure(result: { statusCode: number; result: GamingHybridResponse }): void {
+/** Check citation membership and the authored support in the actual generation payload. */
+function expectPresentedProcedure(result: { statusCode: number; result: GamingHybridResponse }): void {
   recordAdversarialResult(scenario.id, result);
   expect(result.result.state === 'answer_ready' ? undefined : { reason: result.result.reason,
     accepted: evaluations.flatMap(value => value.accepted).length, selected: result.result.selectedEvidenceIds,
     missing: result.result.missingCoverage, stages }).toBeUndefined();
   expect(result.result).toMatchObject({ state: 'answer_ready', coverageSatisfied: true, evidenceSelected: true });
   expect(evaluations.flatMap(value => value.accepted).length).toBeGreaterThan(0);
-  expect(stages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
+  expect(stages).toEqual(['intake', 'reasoning', 'final']);
   for (const claim of scenario.claims) {
     const line = result.result.answer!.response.split('\n').find(value => claim.answerProbe.test(value));
     const citation = Number(/\[(\d+)\]/u.exec(line ?? '')?.[1]);
     expect(citation).toBeGreaterThan(0);
     expect(result.result.answer!.sources[citation - 1]?.url).toBe(claim.url);
-    expect(audits[0].evidence.some(chunk => chunk.sourceIndex === citation && auditSourceUrl(chunk.sourceId) === claim.url
+    expect(finalEvidence.some(chunk => chunk.sourceIndex === citation && chunk.url === claim.url
       && claim.support.every(probe => probe.test(chunk.text)))).toBe(true);
   }
 }
@@ -737,7 +667,7 @@ describe('authored adversarial procedure facts through authenticated MCP', () =>
     scenario = proceduralScenario('How do I start system colonisation in Elite Dangerous?', `<p>${fixture.sentence}</p>`,
       [{ url: '', draft: fixture.draft, answerProbe: /Visit/iu, support: fixture.support }]);
     scenario.id = `valid-${fixture.id.replace(/[^a-z0-9]+/giu, '-')}`;
-    expectAuditedProcedure(await harness(false).complete());
+    expectPresentedProcedure(await harness(false).complete());
   });
 
   it('delivers the first three supported actions without requiring presentation words in the guide', async () => {
@@ -748,7 +678,7 @@ describe('authored adversarial procedure facts through authenticated MCP', () =>
         + '3. Register the system colonisation claim.', answerProbe: /1\..*Contact.*2\..*unpopulated.*3\..*register/iu,
         support: [/visit the System Colonisation Contact/iu, /Select an unpopulated system/iu, /register the system colonisation claim/iu] }]);
     scenario.id = 'first-three-actions';
-    expectAuditedProcedure(await harness(false).complete());
+    expectPresentedProcedure(await harness(false).complete());
   });
 
   it('binds materials and their acquisition locations through ordinary them anaphora', async () => {
@@ -760,7 +690,7 @@ describe('authored adversarial procedure facts through authenticated MCP', () =>
         support: [/required materials are palladium and water/iu, /Buy palladium at the refinery market/iu,
           /collect water at the extraction market/iu] }]);
     scenario.id = 'materials-and-locations';
-    expectAuditedProcedure(await harness(false).complete());
+    expectPresentedProcedure(await harness(false).complete());
   });
 
 
@@ -785,7 +715,7 @@ describe('authored adversarial procedure facts through authenticated MCP', () =>
       [{ url: '', draft: 'Obtain the First Three Actions book at the orbital depot.',
         answerProbe: /First Three Actions.*orbital depot/iu, support: [/First Three Actions book is sold at the orbital depot/iu] }]);
     scenario.id = 'named-action-count-book';
-    expectAuditedProcedure(await harness(false).complete());
+    expectPresentedProcedure(await harness(false).complete());
   });
 
   it('still rejects acquired wrong-game procedure material before any model stage', async () => {

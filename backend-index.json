@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-13T14:05:49.845Z",
+  "generatedAt": "2026-11-13T18:49:28.731Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -1928,6 +1928,9 @@
           "relativePath": "src/services/gamingAgents.ts"
         },
         {
+          "relativePath": "src/services/gamingAnswerIntegrity.ts"
+        },
+        {
           "relativePath": "src/services/gamingArchiveResources.ts"
         },
         {
@@ -2919,6 +2922,9 @@
         },
         {
           "relativePath": "src/shared/gaming/gamingPreferenceData.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingPresentedAnswerBinding.ts"
         },
         {
           "relativePath": "src/shared/gaming/gamingProgressionPolicy.ts"
@@ -6371,6 +6377,9 @@
         },
         {
           "relativePath": "tests/testUtils/gamingLifecycleDrain.ts"
+        },
+        {
+          "relativePath": "tests/testUtils/gamingPresentationFixtures.ts"
         },
         {
           "relativePath": "tests/testUtils/gamingResolvedSourceHarness.ts"

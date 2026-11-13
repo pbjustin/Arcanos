@@ -350,7 +350,8 @@ export function buildFinalArcanosMessages(
   reasoningHonesty: TrinityReasoningHonesty,
   outputControls: TrinityOutputControls,
   systemPromptOverride?: string,
-  finalInstructionOverride?: string
+  finalInstructionOverride?: string,
+  generationSystemPolicy?: string
 ): ChatCompletionMessageParam[] {
   const systemContent =
     systemPromptOverride ||
@@ -372,7 +373,7 @@ export function buildFinalArcanosMessages(
   ) || 'Provide the final response.';
 
   return [
-    { role: 'system', content: systemContent },
+    { role: 'system', content: generationSystemPolicy ? `${systemContent}\n\n${generationSystemPolicy}` : systemContent },
     ...buildSessionContextMessages(),
     { role: 'user', content: userRequestContent },
     { role: 'assistant', content: assistantContent },
@@ -658,7 +659,8 @@ export async function runFinalStage(
   systemPromptOverride?: string,
   runtimeBudget?: RuntimeBudget,
   explicitTimeoutMs?: number,
-  finalLane: 'routine' | 'escalation' = 'routine'
+  finalLane: 'routine' | 'escalation' = 'routine',
+  generationSystemPolicy?: string
 ): Promise<TrinityFinalOutput> {
   if (runtimeBudget) assertBudgetAvailable(runtimeBudget);
 
@@ -681,7 +683,8 @@ export async function runFinalStage(
         capabilityFlags,
         outputControls,
         reasoningHonesty
-      })
+      }),
+      generationSystemPolicy
     ),
     temperature,
     model: complexModel,
@@ -689,6 +692,7 @@ export async function runFinalStage(
       ? { reasoning_effort: normalizeTrinityReasoningEffort(complexModel, 'none') }
       : {}),
     timeoutMs: resolveFinalStageTimeoutMs(runtimeBudget, explicitTimeoutMs),
+    ...(generationSystemPolicy ? { requireCompletedTextOutput: true, redactErrorDetails: true, maxRetries: 0 as const } : {}),
     ...finalTokenParams
   }, finalLane === 'escalation' ? 'final-escalation' : 'final');
   const finalText = finalResponse.choices[0]?.message?.content || '';
@@ -739,7 +743,8 @@ export async function runDirectAnswerStage(
   trustedPolicyPrompt?: string,
   directAnswerSystemPolicyPrompt?: string,
   directAnswerUntrustedContextPrompt?: string,
-  cooperativeModelStageTimeout = false
+  cooperativeModelStageTimeout = false,
+  requireCompletedTextOutput = false
 ): Promise<TrinityFinalOutput> {
   if (runtimeBudget) assertBudgetAvailable(runtimeBudget);
 
@@ -807,7 +812,8 @@ export async function runDirectAnswerStage(
           : { timeoutMs: stageTimeoutMs }),
         preserveAggregateAbortContext:
           useAggregateAbortContext || cooperativeModelStageTimeout,
-        redactErrorDetails: redactSensitiveDiagnostics,
+        redactErrorDetails: redactSensitiveDiagnostics || requireCompletedTextOutput,
+        ...(requireCompletedTextOutput ? { requireCompletedTextOutput: true, maxRetries: 0 as const } : {}),
         ...(directAnswerReasoningEffort
           ? { reasoning_effort: directAnswerReasoningEffort }
           : {}),

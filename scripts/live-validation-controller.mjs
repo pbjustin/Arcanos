@@ -4,7 +4,8 @@ import { constants, existsSync, lstatSync, mkdirSync, openSync, closeSync, fstat
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extractLivePreviewNumericCitations, sanitizeLivePreviewEvidence, sanitizeLiveValidationAuditProviderDiagnostic,
-  sanitizeLiveValidationAuditRejection, verifyLivePreviewEvidence } from './live-pr-preview-verifier.mjs';
+  sanitizeLiveValidationAuditRejection, LIVE_PREVIEW_PRESENTATION_PROFILE, LIVE_PREVIEW_PRESENTATION_POLICY,
+  sanitizeLivePreviewPresentation, verifyLivePreviewEvidence } from './live-pr-preview-verifier.mjs';
 import { validateLiveValidationTarget, assertLiveValidationInventory,
   LIVE_VALIDATION_HARD_LIMITS } from './live-validation-target.mjs';
 import { canonicalLiveValidationJson } from './live-validation-bootstrap.mjs';
@@ -55,17 +56,24 @@ function publicEvidenceContainsSession(value, secrets) {
 }
 function json(text, code) { try { return JSON.parse(text); } catch { throw new LiveValidationControllerError(code); } }
 
-/** Only retain the audited answer as a private operator artifact, never public evidence. */
+/** Validate the exact delivered answer for the applicable private operator artifact version. */
 export function validateLiveValidationPrivateAnswer(value, { evidence, observation, secrets = [] } = {}) {
   const code = 'LIVE_VALIDATION_PRIVATE_ANSWER_INVALID';
-  requireController(exact(value, ['version', 'response', 'subjectHash', 'contextFingerprint', 'sources'])
-    && value.version === 1 && typeof value.response === 'string' && value.response.trim().length > 0
+  const keys = ['version', 'response', 'subjectHash', 'contextFingerprint', 'sources'];
+  const presented = value?.version === 2;
+  requireController(exact(value, presented ? [...keys, 'policyVersion'] : keys)
+    && (presented || value.version === 1) && typeof value.response === 'string' && value.response.trim().length > 0
     && value.response.length <= 65_536 && HASH.test(value.subjectHash ?? '') && HASH.test(value.contextFingerprint ?? '')
     && canonicalHash(value.response) === value.subjectHash && !publicEvidenceContainsSession(value, secrets)
     && evidence?.result?.acceptedAnswer === true && evidence.result.citationsResolved === true
-    && evidence.audit?.assessmentStatus === 'completed' && evidence.audit.decision === 'accept' && evidence.audit.boundToFinalAnswer === true
-    && observation?.coverage?.satisfied === true && observation.audit?.assessmentStatus === 'completed'
-    && observation.audit.decision === 'accept' && observation.audit.boundToFinalAnswer === true
+    && observation?.coverage?.satisfied === true
+    && (presented ? value.policyVersion === LIVE_PREVIEW_PRESENTATION_POLICY
+      && evidence.schemaVersion === 2 && evidence.acceptanceProfile === LIVE_PREVIEW_PRESENTATION_PROFILE
+      && observation.schemaVersion === 2 && sanitizeLivePreviewPresentation(evidence.presentation) !== null
+      && sanitizeLivePreviewPresentation(observation.presentation) !== null
+      : evidence.schemaVersion === 1 && observation.schemaVersion === 1
+        && evidence.audit?.assessmentStatus === 'completed' && evidence.audit.decision === 'accept' && evidence.audit.boundToFinalAnswer === true
+        && observation.audit?.assessmentStatus === 'completed' && observation.audit.decision === 'accept' && observation.audit.boundToFinalAnswer === true)
     && Array.isArray(value.sources) && value.sources.length > 0 && value.sources.length <= 8
     && value.sources.length === evidence.result.sources.length, code);
   for (const [index, source] of value.sources.entries()) {
@@ -541,11 +549,15 @@ export async function resolveLiveValidationSelection(github, selection) {
 }
 
 export function sanitizeLiveValidationObservation(value) {
-  requireController(value?.schemaVersion === 1 && value.contractVersion === 'gaming-hybrid-v2'
+  const presented = value?.schemaVersion === 2;
+  const presentation = sanitizeLivePreviewPresentation(value?.presentation);
+  requireController((presented || value?.schemaVersion === 1) && value.contractVersion === 'gaming-hybrid-v2'
+    && (!presented || !Object.hasOwn(value, 'audit') && !Object.hasOwn(value, 'auditStartBudget')
+      && (value.presentation === null || presentation !== null))
     && ['accepted', 'clarification_required', 'need_new_source', 'unavailable'].includes(value.outcome)
     && ['USER_DECISION_GAP', 'EVIDENCE_GAP', 'NONCRITICAL_GAP', 'CONFLICT', 'NONE', 'UNOBSERVED'].includes(value.semanticGap),
   'LIVE_VALIDATION_PROFILE_OBSERVATION_FAILED');
-  const stages = ['acquisition', 'selection', 'generation', 'intake', 'reasoning', 'final', 'answer_audit', 'response'];
+  const stages = ['acquisition', 'selection', 'generation', 'intake', 'reasoning', 'final', ...(presented ? [] : ['answer_audit']), 'response'];
   requireController(record(value.stages) && stages.every(stage => ['not_run', 'started', 'passed', 'failed', 'timed_out'].includes(value.stages[stage]?.status)
     && (value.stages[stage].elapsedMs === null || integer(value.stages[stage].elapsedMs, 0, 3_600_000))), 'LIVE_VALIDATION_PROFILE_OBSERVATION_FAILED');
   const budget = amount => integer(amount, 0, LIVE_VALIDATION_HARD_LIMITS.durationMs) ? amount : null;
@@ -564,7 +576,7 @@ export function sanitizeLiveValidationObservation(value) {
       postAcquisitionCount: trace.postAcquisitionCount, sameWorkflow: trace.sameWorkflow,
       revisionsAdvanced: trace.revisionsAdvanced, retainedEvidence: trace.retainedEvidence,
       budgetsPreserved: trace.budgetsPreserved, acquisitionCount: trace.acquisitionCount } : undefined;
-  return { schemaVersion: 1, contractVersion: 'gaming-hybrid-v2', outcome: value.outcome, semanticGap: value.semanticGap,
+  return { schemaVersion: value.schemaVersion, contractVersion: 'gaming-hybrid-v2', outcome: value.outcome, semanticGap: value.semanticGap,
     reason: /^[A-Z][A-Z0-9_]{0,79}$/u.test(value.reason ?? '') ? value.reason : null,
     candidates: Array.isArray(value.candidates) ? value.candidates.slice(0, 8).map(item => ({
       decision: ['accepted_transient', 'eligible_for_ingestion', 'already_indexed', 'rejected', 'requires_confirmation'].includes(item?.decision) ? item.decision : 'unobserved',
@@ -577,19 +589,21 @@ export function sanitizeLiveValidationObservation(value) {
       patchCompatibility: ['unverified', 'stale', 'not_required', 'verified', 'unobserved'].includes(value.qualification?.patchCompatibility)
         ? value.qualification.patchCompatibility : 'unobserved',
       claimsVerifiedCurrentness: value.qualification?.claimsVerifiedCurrentness === true },
-    audit: !record(audit) ? null : {
-      assessmentStatus: ['completed', 'not_run', 'unavailable'].includes(audit.assessmentStatus) ? audit.assessmentStatus : 'unobserved',
-      decision: ['accept', 'reject', 'partial', 'unavailable'].includes(audit.decision) ? audit.decision : 'unobserved',
-      boundToFinalAnswer: audit.boundToFinalAnswer === true,
-      ...(audit.assessmentStatus === 'unavailable' && ANSWER_AUDIT_REASON_CODES.includes(audit.reasonCode)
-        ? { reasonCode: audit.reasonCode } : {}),
-      ...(integer(audit.effectiveTimeoutMs, 0, MAX_ANSWER_AUDIT_TIMEOUT_MS)
-        ? { effectiveTimeoutMs: audit.effectiveTimeoutMs } : {}),
-      ...(auditProviderDiagnostic ? { providerDiagnostic: auditProviderDiagnostic } : {}),
-      ...auditRejection },
+    ...(presented ? { presentation } : {
+      audit: !record(audit) ? null : {
+        assessmentStatus: ['completed', 'not_run', 'unavailable'].includes(audit.assessmentStatus) ? audit.assessmentStatus : 'unobserved',
+        decision: ['accept', 'reject', 'partial', 'unavailable'].includes(audit.decision) ? audit.decision : 'unobserved',
+        boundToFinalAnswer: audit.boundToFinalAnswer === true,
+        ...(audit.assessmentStatus === 'unavailable' && ANSWER_AUDIT_REASON_CODES.includes(audit.reasonCode)
+          ? { reasonCode: audit.reasonCode } : {}),
+        ...(integer(audit.effectiveTimeoutMs, 0, MAX_ANSWER_AUDIT_TIMEOUT_MS)
+          ? { effectiveTimeoutMs: audit.effectiveTimeoutMs } : {}),
+        ...(auditProviderDiagnostic ? { providerDiagnostic: auditProviderDiagnostic } : {}),
+        ...auditRejection },
+      auditStartBudget: { runtimeRemainingMs: budget(value.auditStartBudget?.runtimeRemainingMs),
+        requestRemainingMs: budget(value.auditStartBudget?.requestRemainingMs) }
+    }),
     ...(clarification ? { clarification } : {}),
-    auditStartBudget: { runtimeRemainingMs: budget(value.auditStartBudget?.runtimeRemainingMs),
-      requestRemainingMs: budget(value.auditStartBudget?.requestRemainingMs) },
     stages: Object.fromEntries(stages.map(stage => [stage, { status: value.stages[stage].status, elapsedMs: value.stages[stage].elapsedMs }])) };
 }
 function assertProfileRequirements(expected) {
@@ -603,13 +617,14 @@ function assertProfileRequirements(expected) {
     && integer(expected.clarification.postAcquisitionCount, 0, expected.clarification.completedCount), 'LIVE_VALIDATION_PROFILE_INVALID');
 }
 function assertProfileObservation(value, expected) {
-  requireController(value?.outcome === expected.outcome && value.semanticGap === expected.semanticGap,
+  requireController(value?.schemaVersion === 2 && value.outcome === expected.outcome && value.semanticGap === expected.semanticGap,
     'LIVE_VALIDATION_PROFILE_OBSERVATION_FAILED');
   if (expected.outcome === 'accepted') requireController(value.coverage.satisfied && value.selectedEvidenceCount > 0
-    && value.audit?.assessmentStatus === 'completed' && value.audit.decision === 'accept' && value.audit.boundToFinalAnswer,
+    && value.presentation?.boundToFinalAnswer === true,
   'LIVE_VALIDATION_PROFILE_OBSERVATION_FAILED');
+  else requireController(value.presentation === null, 'LIVE_VALIDATION_PROFILE_OBSERVATION_FAILED');
   const completed = stage => value.stages[stage]?.status === 'passed' && value.stages[stage].elapsedMs !== null;
-  if (expected.outcome === 'accepted') requireController(['acquisition', 'selection', 'generation', 'answer_audit', 'response'].every(completed)
+  if (expected.outcome === 'accepted') requireController(['acquisition', 'selection', 'generation', 'response'].every(completed)
     && MODEL_STAGES.some(completed), 'LIVE_VALIDATION_PROFILE_STAGE_FAILED');
   if (Object.hasOwn(expected, 'requiredModelStages')) {
     requireController(expected.requiredModelStages.every(completed), 'LIVE_VALIDATION_PROFILE_STAGE_FAILED');
@@ -827,7 +842,8 @@ export async function runLiveValidationController(argv, dependencies = {}) {
     : validateLiveValidationArtifact(binding, { args, git, environment, directory: environment.LIVE_VALIDATION_ARTIFACT_DIRECTORY });
   const profiles = dependencies.readProfiles ? dependencies.readProfiles(root)
     : json(readFileSync(path.join(root, 'examples/live-validation/profiles.json'), 'utf8'), 'LIVE_VALIDATION_PROFILE_INVALID');
-  requireController(profiles.version === 1 && Array.isArray(profiles.profiles) && profiles.profiles.length === 2
+  requireController(profiles.version === 2 && profiles.acceptanceProfile === LIVE_PREVIEW_PRESENTATION_PROFILE
+    && Array.isArray(profiles.profiles) && profiles.profiles.length === 2
     && PROFILE_IDS.every((id, index) => profiles.profiles[index]?.id === id)
     && profiles.profiles.every(entry => entry.moduleId === 'gaming' && entry.input?.query?.storagePolicy === 'transient_only'), 'LIVE_VALIDATION_PROFILE_INVALID');
   profiles.profiles.forEach(entry => assertProfileRequirements(entry.expected));
@@ -890,7 +906,8 @@ export async function runLiveValidationController(argv, dependencies = {}) {
         sourceCommit: args.commitSha, approvedSourceCommit: args.commitSha, deploymentId: state.runtimeDeploymentId, moduleId: 'gaming', mode: 'live-backend-v1' });
       requireController(response.caseId === entry.id && response.profilePassed === true && response.productionChanged === false
         && response.durableWrites === 0 && canonicalHash(identityFields(response.identity)) === canonicalHash(runtimeIdentity), 'LIVE_VALIDATION_PROFILE_FAILED');
-      requireController(observedCase.evidence?.caseId === entry.caseId && observedCase.verification?.status === 'PASS', 'LIVE_VALIDATION_PROFILE_EVIDENCE_FAILED');
+      requireController(observedCase.evidence?.acceptanceProfile === LIVE_PREVIEW_PRESENTATION_PROFILE
+        && observedCase.evidence.caseId === entry.caseId && observedCase.verification?.status === 'PASS', 'LIVE_VALIDATION_PROFILE_EVIDENCE_FAILED');
       if (entry.expected.outcome === 'accepted') {
         const approvedSources = entry.input.candidateUrls.map(raw => { const url = new URL(raw); url.search = ''; url.hash = ''; return digest(url.toString()); });
         requireController(approvedSources.length > 0 && observedCase.evidence.result.sources.some(source => source.usable === true
@@ -900,13 +917,12 @@ export async function runLiveValidationController(argv, dependencies = {}) {
       const usage = sanitizeLiveValidationUsage(await runJson('/usage'), { plan, target });
       const providerCalls = usage.providerCalls - priorUsage.providerCalls; const generationCalls = usage.generationCalls - priorUsage.generationCalls;
       const auditCalls = usage.auditCalls - priorUsage.auditCalls;
-      requireController(providerCalls >= 0 && generationCalls >= 0 && auditCalls >= 0
-        && (entry.expected.providerCalls === 0 ? providerCalls === 0 && generationCalls === 0 && auditCalls === 0
-          : generationCalls > 0 && auditCalls > 0), 'LIVE_VALIDATION_ACTUAL_PROVIDER_USAGE_FAILED');
+      requireController(auditCalls === 0 && providerCalls === generationCalls
+        && (entry.expected.providerCalls === 0 ? generationCalls === 0 : generationCalls > 0), 'LIVE_VALIDATION_ACTUAL_PROVIDER_USAGE_FAILED');
       if (entry.expected.outcome === 'accepted') {
         const answer = validateLiveValidationPrivateAnswer(response.privateAnswer,
           { evidence: observedCase.evidence, observation: observedCase.observation, secrets: [testToken] });
-        protectedWrite(path.join(directory, 'accepted-answer.private.json'), { version: 1, runId: state.runId,
+        protectedWrite(path.join(directory, 'accepted-answer.private.json'), { runId: state.runId,
           caseId: entry.id, sourceCommit: args.commitSha, runtimeIdentity, profileHash, ...answer });
         observedCase.answerArtifactSha256 = canonicalHash(answer);
       } else requireController(response.privateAnswer === undefined, 'LIVE_VALIDATION_PRIVATE_ANSWER_INVALID');

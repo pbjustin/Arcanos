@@ -64,9 +64,10 @@ import { resolveGamingAnswerPolicy } from "@shared/gaming/gamingAnswerPolicy.js"
 import { GAMING_HYBRID_INTAKE } from '@shared/gaming/gamingGuideIntakeCore.js';
 import { readGamingMarkdownCitationDestination } from '@shared/gaming/gamingHybridPolicyCore.js';
 import { assessGamingClearEvidence } from '@shared/gaming/gamingClearEvidence.js';
-import { type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
-import { gamingClearAnswerLogReasonCodes, gamingClearAnswerMatches, isGamingAuditSourcePartiallyExtracted, runGamingClearAnswerAudit } from '@services/gamingClearAnswerAudit.js';
-import { GAMING_CLEAR_APPROVED_ANSWER } from '@shared/gaming/gamingClearAnswerBinding.js';
+import { gamingClearHash, type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
+import { checkGamingAnswerIntegrity, isGamingSourcePartiallyExtracted } from '@services/gamingAnswerIntegrity.js';
+import { GAMING_PRESENTED_ANSWER, type GamingPresentedAnswer } from '@shared/gaming/gamingPresentedAnswerBinding.js';
+import { GAMING_CLEAR_PRESENTATION_POLICY_VERSION } from '@shared/gaming/gamingPromptCore.js';
 import { resolveGamingFreshnessDisposition } from '@shared/gaming/gamingFreshnessDisposition.js';
 
 export type GamingPipelineInput = Pick<
@@ -135,7 +136,7 @@ const PROVIDER_TIMEOUT_ERROR_MARKERS = [
 ];
 
 const PROVIDER_COMPLETION_INCOMPLETE_FALLBACK_REASON = "PROVIDER_COMPLETION_INCOMPLETE";
-const PURE_CAPABILITY_REFUSAL_MAX_CHARS = 320;
+const PURE_PROVIDER_REFUSAL_MAX_CHARS = 320;
 const MAX_GAMING_INTEGRITY_DIAGNOSTIC_CHARS = 120;
 const MAX_GAMING_INTEGRITY_OUTPUT_CHARS = 1_000_000;
 const MAX_GAMING_INTEGRITY_ISSUES = 8;
@@ -279,13 +280,13 @@ function readGamingIntegrityIssues(error: unknown): string[] {
     : [];
 }
 
-function isPureGamingProviderCapabilityRefusal(value: string): boolean {
+function isPureGamingProviderRefusal(value: string): boolean {
   const normalized = value
     .normalize("NFKC")
     .replace(/[\u2018\u2019]/gu, "'")
     .replace(/\s+/gu, " ")
     .trim();
-  if (normalized.length === 0 || normalized.length > PURE_CAPABILITY_REFUSAL_MAX_CHARS) {
+  if (normalized.length === 0 || normalized.length > PURE_PROVIDER_REFUSAL_MAX_CHARS) {
     return false;
   }
 
@@ -293,14 +294,16 @@ function isPureGamingProviderCapabilityRefusal(value: string): boolean {
     /^(?:(?:[-*>#\u2022]+\s*)|(?:(?:sorry|unfortunately|regrettably)\s*[,!:-]?\s*)|(?:as\s+an?\s+(?:ai|language\s+model)\s*[,!:-]?\s*))+/iu,
     ""
   );
-  const beginsWithRefusal = /^(?:(?:i|we)\s+can(?:not|'t)|(?:i(?:\s+am|'m)|we(?:\s+are|'re))\s+unable\s+to|(?:i|we)\s+do(?:n't|\s+not)\s+have)\b/iu.test(refusalText);
+  const refusalStart = /^(?:(?:i|we)\s+can(?:not|'t)|(?:i(?:\s+am|'m)|we(?:\s+are|'re))\s+unable\s+to|(?:i|we)\s+do(?:n't|\s+not)\s+have)\b/iu.exec(refusalText);
+  if (!refusalStart) return false;
+  // Match only a complete generic refusal so a limitation alongside real guidance survives.
+  const genericRefusal = /^(?:help(?:\s+with\s+(?:this|that)(?:\s+request)?)?|answer(?:\s+(?:this|that|your)\s+question)?|provide\s+(?:this|that|the\s+requested)\s+information)[.!?]*$/iu;
+  if (genericRefusal.test(refusalText.slice(refusalStart[0].length).trimStart())) return true;
+
   const namesUnavailableCapability = /\b(?:browse|call\s+tools?|access\s+(?:the\s+)?(?:web|live\s+external\s+data)|verify\s+(?:any\s+)?external\s+state)\b/iu.test(normalized);
   const continuesWithAnswer = /\b(?:but|however|still|instead|based\s+on|using\s+(?:the\s+)?(?:provided|supplied))\b/iu.test(refusalText);
   const hasAdditionalSentence = /[.!?;]\s+\S/iu.test(refusalText);
-  return beginsWithRefusal
-    && namesUnavailableCapability
-    && !continuesWithAnswer
-    && !hasAdditionalSentence;
+  return namesUnavailableCapability && !continuesWithAnswer && !hasAdditionalSentence;
 }
 
 /** Remove complete citation links for the substance check without modifying the candidate. */
@@ -492,15 +495,12 @@ function formatGameplaySuccessWithLogs(params: {
   discoveryFailureReason?: GamingDiscoveryFailureReason;
   evidenceRequest?: GamingEvidenceRequest;
   grounding?: GamingGrounding;
-  answerAssessment?: GamingClearAssessment;
+  answerBinding?: GamingPresentedAnswer;
 }): GamingSuccessEnvelope {
   const postprocessStartedAt = Date.now();
   const citableSourceCount = params.sources.filter(isCitableGamingWebSource).length;
   const citationNormalization = normalizeGamingInlineSourceReferences(params.response, citableSourceCount);
-  // The answer review saw the exact final citation spellings. Do not alter a
-  // claim/citation after it passes; unaudited legacy/recovery paths retain normalization.
-  const approvedAnswer = gamingClearAnswerMatches(params.answerAssessment, params.response);
-  const response = approvedAnswer ? params.response : citationNormalization.response;
+  const response = params.answerBinding ? params.response : citationNormalization.response;
   const grounding: GamingGrounding = params.grounding ?? {
     groundingStatus: "unavailable",
     requestedSourceCount: 0,
@@ -526,7 +526,7 @@ function formatGameplaySuccessWithLogs(params: {
     citableSourceCount,
     omittedSourceCount: params.omittedSourceCount ?? 0,
     maxInlineSourceRef: citationNormalization.maxInlineSourceRef,
-    citationNormalizationApplied: citationNormalization.applied,
+    citationNormalizationApplied: !params.answerBinding && citationNormalization.applied,
     ...(params.fallbackReason ? { fallbackReason: params.fallbackReason } : {})
   });
 
@@ -544,8 +544,8 @@ function formatGameplaySuccessWithLogs(params: {
       ...(params.evidenceRequest ? { evidenceRequest: params.evidenceRequest } : {})
     }
   });
-  if (approvedAnswer) Object.defineProperty(envelope.data, GAMING_CLEAR_APPROVED_ANSWER, {
-    value: params.answerAssessment, enumerable: false
+  if (params.answerBinding) Object.defineProperty(envelope.data, GAMING_PRESENTED_ANSWER, {
+    value: Object.freeze(params.answerBinding), enumerable: false
   });
 
   logger.info("gaming.postprocess.end", {
@@ -558,7 +558,7 @@ function formatGameplaySuccessWithLogs(params: {
     citableSourceCount,
     omittedSourceCount: params.omittedSourceCount ?? 0,
     maxInlineSourceRef: citationNormalization.maxInlineSourceRef,
-    citationNormalizationApplied: citationNormalization.applied,
+    citationNormalizationApplied: !params.answerBinding && citationNormalization.applied,
     ...(params.fallbackReason ? { fallbackReason: params.fallbackReason } : {})
   });
 
@@ -645,7 +645,7 @@ export interface GamingPreparedEvidence {
   advisoryFreshnessAllowed?: boolean;
   qualification: string;
   clearEvidenceAssessment?: GamingClearAssessment;
-  /** Backend-only v2 policy retained through admission, answer audit and delivery. */
+  /** Backend-only v2 policy retained through admission and delivery. */
   requireRequestCoverage?: boolean;
   /** Internal, actor/workflow-valid acquired receipts; never a public discovery hint. */
   suppliedGuides?: Array<{ requestedUrl: string; sourceId: string; publicUrl: string }>;
@@ -653,7 +653,7 @@ export interface GamingPreparedEvidence {
 
 /** Timing-only server observation; no prompts, evidence passages or answers. */
 export interface GamingPipelineStageObservation {
-  stage: 'selection' | 'intake' | 'reasoning' | 'final' | 'answer_audit';
+  stage: 'selection' | 'intake' | 'reasoning' | 'final';
   phase: 'started' | 'completed' | 'failed';
   elapsedMs?: number;
   remainingBudgetMs?: number | null;
@@ -668,8 +668,6 @@ export interface GamingPipelineRuntime {
   skipStoredRetrieval: true;
   onRetrieval?: (result: GamingRagContext) => void;
   onEvidenceAssessment?: (assessment: GamingClearAssessment) => void;
-  onAnswerAuditStart?: () => void;
-  onAnswerAudit?: (result: Awaited<ReturnType<typeof runGamingClearAnswerAudit>>) => void;
   onStage?: (event: Readonly<GamingPipelineStageObservation>) => void;
 }
 
@@ -1143,9 +1141,9 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
       ? source.freshnessMetadata.edition : undefined, resolvedParams)).filter(Boolean))].join(' ');
   const answerQualifications = [
     allowAdvisoryFreshness && prepared ? prepared.qualification : sourceEditionQualification,
-    clearKnowledge.sources.some(isGamingAuditSourcePartiallyExtracted) ? PARTIAL_EXTRACTION_QUALIFICATION : ''
+    clearKnowledge.sources.some(isGamingSourcePartiallyExtracted) ? PARTIAL_EXTRACTION_QUALIFICATION : ''
   ].filter(Boolean);
-  // Use the same trusted qualifiers before audit and delivery, without turning
+  // Preserve trusted qualifiers in the delivered answer without turning
   // an empty provider answer into a substantive candidate.
   const qualifyAnswer = (answer: string): string => {
     if (!answer.trim() || !answerQualifications.length) return answer;
@@ -1200,11 +1198,11 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
   }
 
   clearKnowledge = { ...clearKnowledge, context: webContext };
-  const auditContext = { actorScopeHash: prepared?.actorScopeHash, allowAdvisoryFreshness,
+  const evidenceContext = { actorScopeHash: prepared?.actorScopeHash, allowAdvisoryFreshness,
     requireRequestCoverage: prepared?.requireRequestCoverage === true };
   const selectionStartedAt = Date.now();
   observeGamingPipelineStage(runtime, { stage: 'selection', phase: 'started', elapsedMs: 0 });
-  const evidenceAssessment = assessGamingClearEvidence({ ...resolvedParams, game: resolvedParams.game ?? '' }, clearKnowledge, auditContext);
+  const evidenceAssessment = assessGamingClearEvidence({ ...resolvedParams, game: resolvedParams.game ?? '' }, clearKnowledge, evidenceContext);
   observeGamingPipelineStage(runtime, { stage: 'selection', phase: 'completed', elapsedMs: Date.now() - selectionStartedAt });
   runtime?.onEvidenceAssessment?.(structuredClone(evidenceAssessment));
   logger.info('gaming.clear.evidence.completed', {
@@ -1354,49 +1352,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
                   observeGamingPipelineStage(runtime, { ...event, stage: event.stage });
                 }
               } } : {}),
-              gamingClearAnswerAudit: async (answer, runtimeBudget, remainingWatchdogMs) => {
-                // An echoed qualification and its citation are not gameplay.
-                // Use a separate view so audit and delivery retain exact text.
-                const withoutQualifications = answerQualifications.reduce(
-                  (text, qualification) => text.replaceAll(qualification, " "), answer);
-                const substantiveCandidate = normalizeGamingInlineSourceReferences(
-                  stripNumberedMarkdownCitations(withoutQualifications), 0
-                ).response;
-                if (isPureGamingProviderCapabilityRefusal(substantiveCandidate)
-                  || (substantiveCandidate !== answer && !hasVisibleContent(substantiveCandidate))) {
-                  throw Object.assign(new Error("Gaming provider did not produce substantive gameplay guidance."), {
-                    code: "GAMING_PROVIDER_UNUSABLE_RESPONSE"
-                  });
-                }
-                const auditStartedAt = Date.now();
-                observeGamingPipelineStage(runtime, {
-                  stage: 'answer_audit', phase: 'started', elapsedMs: 0,
-                  remainingBudgetMs: getSafeRemainingMs(runtimeBudget), requestRemainingMs: getRequestRemainingMs() ?? null
-                });
-                runtime?.onAnswerAuditStart?.();
-                try {
-                  const result = await runGamingClearAnswerAudit(client, {
-                    ...resolvedParams, game: resolvedParams.game ?? '', answer: qualifyAnswer(answer), knowledge: clearKnowledge,
-                    evidenceAssessment: assessGamingClearEvidence({ ...resolvedParams, game: resolvedParams.game ?? '' }, clearKnowledge, auditContext), requestId
-                  }, runtimeBudget, 'routine', remainingWatchdogMs);
-                  observeGamingPipelineStage(runtime, {
-                    stage: 'answer_audit', phase: result.assessment.assessmentStatus === 'completed' ? 'completed' : 'failed',
-                    elapsedMs: Date.now() - auditStartedAt, remainingBudgetMs: getSafeRemainingMs(runtimeBudget),
-                    requestRemainingMs: getRequestRemainingMs() ?? null,
-                    ...(result.assessment.findings.some(finding => finding.code === 'AUDIT_TIMEOUT') ? { timedOut: true } : {})
-                  });
-                  runtime?.onAnswerAudit?.(structuredClone(result));
-                  return result;
-                } catch (error) {
-                  const requestRemainingMs = getRequestRemainingMs();
-                  observeGamingPipelineStage(runtime, {
-                    stage: 'answer_audit', phase: 'failed', elapsedMs: Date.now() - auditStartedAt,
-                    remainingBudgetMs: getSafeRemainingMs(runtimeBudget), requestRemainingMs,
-                    ...(isAbortError(error) && requestRemainingMs === 0 ? { timedOut: true } : {})
-                  });
-                  throw error;
-                }
-              },
+              gamingPresentationPolicy: GAMING_CLEAR_PRESENTATION_POLICY_VERSION,
               ...(prepared ? { disableOptionalSideEffects: true, redactAuditContent: true, gamingGuideIntakePolicy: 'compact-v1' as const } : {}),
               ...(runtime ? { disableOptionalSideEffects: true, redactAuditContent: true, disableMemoryAccess: true } : {}),
               ...(params.mode === "guide" ? { trustedPolicyPrompt: resolvedParams.prompt, internalMode: false } : {}),
@@ -1412,15 +1368,16 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
         })
     );
     const completion = trinityResult.meta?.provider;
-    if ((params.mode === "guide" || prepared) && (completion?.incomplete || completion?.truncated || completion?.lengthTruncated
-      || completion?.finishReason === "length" || completion?.responseStatus === "incomplete")) {
+    if (completion?.incomplete || completion?.truncated || completion?.lengthTruncated
+      || completion?.finishReason === "length" || completion?.responseStatus === "incomplete") {
       throw Object.assign(new Error("Gaming provider completion is incomplete."), {
         code: "OPENAI_COMPLETION_INCOMPLETE",
         finishReason: completion.finishReason,
         incompleteReason: completion.incompleteReason
       });
     }
-    if ((params.mode === "guide" || prepared) && (trinityResult.fallbackFlag || trinityResult.dryRun || completion?.contentFiltered)) {
+    if (trinityResult.fallbackFlag || trinityResult.dryRun || completion?.contentFiltered
+      || trinityResult.gamingPresentationPolicy !== GAMING_CLEAR_PRESENTATION_POLICY_VERSION) {
       throw Object.assign(new Error("Gaming provider did not produce a completed primary answer."), {
         code: "GAMING_PROVIDER_UNUSABLE_RESPONSE"
       });
@@ -1434,15 +1391,30 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
         code: "GAMING_PROVIDER_EMPTY_RESPONSE"
       });
     }
+    const withoutQualifications = answerQualifications.reduce(
+      (text, qualification) => text.replaceAll(qualification, " "), trinityResult.result);
+    const substantiveCandidate = normalizeGamingInlineSourceReferences(
+      stripNumberedMarkdownCitations(withoutQualifications), 0
+    ).response;
     if (
       trinityResult.reasoningHonesty?.responseMode === "refusal"
-      || isPureGamingProviderCapabilityRefusal(trinityResult.result)
+      || isPureGamingProviderRefusal(substantiveCandidate)
+      || !hasVisibleContent(substantiveCandidate)
     ) {
-      throw Object.assign(new Error("Gaming provider returned a capability refusal instead of gameplay guidance."), {
+      throw Object.assign(new Error("Gaming provider returned a refusal instead of gameplay guidance."), {
         code: "GAMING_PROVIDER_UNUSABLE_RESPONSE"
       });
     }
     trinityResult.result = qualifyAnswer(trinityResult.result);
+    const integrityFailure = checkGamingAnswerIntegrity({
+      answer: trinityResult.result, prompt: resolvedParams.prompt, knowledge: clearKnowledge, advisory: allowAdvisoryFreshness
+    });
+    if (integrityFailure) {
+      logger.info('gaming.answer.integrity_rejected', { ...baseLogContext, reason: integrityFailure });
+      throw Object.assign(new Error("Gaming provider returned an answer that failed integrity checks."), {
+        code: "GAMING_PROVIDER_UNUSABLE_RESPONSE"
+      });
+    }
   } catch (error) {
     const elapsedMs = Date.now() - providerStartedAt;
     logger.info("gaming.stream.end", {
@@ -1687,29 +1659,27 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
     finishReason: trinityResult.meta?.provider?.finishReason ?? "unknown"
   });
 
-  // Applicability can expire while generation or the bounded audit is running.
-  // Recheck only deterministic metadata; this grants no extra model/discovery attempt.
-  const finalEvidenceAssessment = assessGamingClearEvidence({ ...resolvedParams, game: resolvedParams.game ?? '' }, clearKnowledge, auditContext);
-  if (!gamingClearAnswerMatches(trinityResult.gamingClearAudit, trinityResult.result)
-    || finalEvidenceAssessment.decision !== 'accept'
-    || finalEvidenceAssessment.contextFingerprint !== trinityResult.gamingClearAudit?.contextFingerprint) {
-    const auditRecoveryReason: GamingFallbackReason = finalEvidenceAssessment.gates.freshness === 'unknown'
-      ? 'CURRENT_EVIDENCE_UNAVAILABLE' : trinityResult.gamingClearAudit?.assessmentStatus === 'completed'
-      ? 'GAMING_ANSWER_REJECTED' : 'GAMING_ANSWER_AUDIT_UNAVAILABLE';
+  // Revalidate the exact evidence set and applicability after generation.
+  const finalEvidenceAssessment = assessGamingClearEvidence({ ...resolvedParams, game: resolvedParams.game ?? '' }, clearKnowledge, evidenceContext);
+  if (finalEvidenceAssessment.decision !== 'accept'
+    || finalEvidenceAssessment.contextFingerprint !== evidenceAssessment.contextFingerprint
+    || finalEvidenceAssessment.subjectHash !== evidenceAssessment.subjectHash) {
+    const recoveryReason: GamingFallbackReason = finalEvidenceAssessment.gates.freshness === 'unknown'
+      ? 'CURRENT_EVIDENCE_UNAVAILABLE' : 'INTAKE_RETRIEVAL_FAILED';
     logger.info('gaming.answer.recovery', { ...baseLogContext, providerCompleted: true,
-      assessmentStatus: trinityResult.gamingClearAudit?.assessmentStatus ?? 'not_run',
-      decision: trinityResult.gamingClearAudit?.decision ?? 'unavailable',
-      reasonCodes: trinityResult.gamingClearAudit ? gamingClearAnswerLogReasonCodes(trinityResult.gamingClearAudit) : ['ANSWER_AUDIT_NOT_RUN'] });
+      reasonCodes: finalEvidenceAssessment.findings.map(finding => finding.code) });
     return formatGameplaySuccessWithLogs({ mode: params.mode,
-      response: buildGamingProviderFallbackResponse({ input: resolvedParams, sources, fallbackReason: auditRecoveryReason }),
+      response: buildGamingProviderFallbackResponse({ input: resolvedParams, sources, fallbackReason: recoveryReason }),
       sources, logContext: baseLogContext, requestStartedAt, grounding,
-      retrievedSourceCount, omittedSourceCount, fallbackReason: auditRecoveryReason, discoveryReason, discoveryFailureReason });
+      retrievedSourceCount, omittedSourceCount, fallbackReason: recoveryReason, discoveryReason, discoveryFailureReason });
   }
 
   return formatGameplaySuccessWithLogs({
     mode: params.mode,
     response: trinityResult.result,
-    answerAssessment: trinityResult.gamingClearAudit,
+    answerBinding: { policyVersion: GAMING_CLEAR_PRESENTATION_POLICY_VERSION,
+      subjectHash: gamingClearHash(trinityResult.result), contextFingerprint: finalEvidenceAssessment.contextFingerprint,
+      evidenceSubjectHash: finalEvidenceAssessment.subjectHash },
     sources,
     logContext: baseLogContext,
     requestStartedAt,

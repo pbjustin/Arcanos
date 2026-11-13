@@ -9,10 +9,10 @@ import type { LivePrPreviewModuleObserver } from '../src/liveValidationGamingAda
 import type { LiveValidationGamingExecutor, LiveValidationGamingInput } from '../src/liveValidationGamingAdapter.js';
 import type { GamingHybridResponse } from '../src/shared/gaming/gamingHybridContract.js';
 import type { GamingHybridResult } from '../src/services/gamingHybridKnowledge.js';
-import { GAMING_CLEAR_DIMENSIONS, gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
-import { GAMING_CLEAR_APPROVED_ANSWER, hasBoundGamingClearAnswer } from '../src/shared/gaming/gamingClearAnswerBinding.js';
+import { gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
+import { GAMING_PRESENTED_ANSWER, hasBoundGamingPresentedAnswer } from '../src/shared/gaming/gamingPresentedAnswerBinding.js';
 import { GAMING_UNVERIFIED_GUIDE_WARNING } from '../src/shared/gaming/gamingFreshnessDisposition.js';
-import { createLivePreviewEvidence, LIVE_PREVIEW_MODE, verifyLivePreviewEvidence,
+import { createLivePreviewEvidence, LIVE_PREVIEW_MODE, LIVE_PREVIEW_PRESENTATION_POLICY, LIVE_PREVIEW_PRESENTATION_PROFILE, verifyLivePreviewEvidence,
   type LivePreviewCaseId } from '../scripts/live-pr-preview-verifier.mjs';
 
 const guideUrl = 'https://guides.example.org/elden-ring/early-samurai';
@@ -120,7 +120,7 @@ const { logger } = await import('../src/platform/logging/structuredLogging.js');
 const { resetSafetyRuntimeStateForTests } = await import('../src/services/safety/runtimeState.js');
 const { createLiveValidationObservation, emptyLiveValidationStages, liveValidationDuration } = await import(
   '../src/shared/gaming/liveValidationObservation.js');
-const { createAbortError, getSafeRemainingMs, getRequestRemainingMs, runWithRequestAbortContext } = await import('@arcanos/runtime');
+const { getSafeRemainingMs, getRequestRemainingMs } = await import('@arcanos/runtime');
 
 const env = {
   ARCANOS_GAMING_RAG_ENABLED: 'false', ARCANOS_GAMING_DISCOVERY_ENABLED: 'false',
@@ -159,16 +159,7 @@ beforeEach(() => {
     data.on('error', () => undefined);
     return { status: 200, headers: { 'content-type': sourceContentType }, data };
   });
-  mockAuditCompletion.mockImplementation(async (_client: unknown, params: any) => {
-    const data = JSON.parse(params.messages[1].content) as { evidence: Array<{ chunkId: string }> };
-    advance(17);
-    return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
-      dimensions: Object.fromEntries(GAMING_CLEAR_DIMENSIONS.map(name => [name, {
-        status: 'evaluated', score: 4.5, reasonCodes: ['SUPPORTED_FIXTURE'],
-        evidenceRefs: data.evidence.map(chunk => chunk.chunkId).slice(0, 8), unresolvedFacts: []
-      }])), findings: []
-    }) } }], usage: { prompt_tokens: 400, completion_tokens: 150, total_tokens: 550 } };
-  });
+  mockAuditCompletion.mockImplementation(() => { throw new Error('Presentation flow cannot dispatch an answer audit.'); });
   mockTrinity.mockImplementation(async (request: TrinityWritingPipelineRequest) => {
     const reportStage = request.context.runOptions?.onStage;
     expect(reportStage).toEqual(expect.any(Function));
@@ -179,8 +170,7 @@ beforeEach(() => {
       if (emitProviderStages) reportStage?.({ stage, phase: 'completed', elapsedMs, ...budget });
     }
     const result = `${generatedAnswer} [Source 1]`;
-    const audit = await request.context.runOptions!.gamingClearAnswerAudit!(result, request.context.runtimeBudget!);
-    return { result, gamingClearAudit: audit.assessment, fallbackFlag: false, dryRun: false,
+    return { result, gamingPresentationPolicy: request.context.runOptions?.gamingPresentationPolicy, fallbackFlag: false, dryRun: false,
       meta: { provider: { finishReason: 'stop', responseStatus: 'completed' } } };
   });
 });
@@ -201,8 +191,7 @@ function harness(transform?: (value: GamingSuccessEnvelope) => GamingSuccessEnve
   });
   const adapter = createLiveValidationGamingAdapter(execute, { now: () => clock });
   const observer: LivePrPreviewModuleObserver = {
-    onSourceAcquisition: jest.fn(), onSourceValidation: jest.fn(), onAnswerAuditStart: jest.fn(),
-    onAudit: jest.fn(), onFailure: jest.fn()
+    onSourceAcquisition: jest.fn(), onSourceValidation: jest.fn(), onFailure: jest.fn()
   };
   async function run(overrides: Record<string, unknown> = {}, candidateUrls: string[] = [guideUrl], clarificationReplies?: unknown[]) {
     const validated = adapter.validateInput({ query: { ...query, ...overrides }, candidateUrls,
@@ -250,31 +239,27 @@ describe('private Gaming live-validation adapter through the real transient v2 w
   it('delivers exactly the acquired, bound, qualified starting-Samurai answer and observes actual stage events', async () => {
     const run = harness(); const output = await run.run(); const result = output.result as GamingSuccessEnvelope;
     expect(output.accepted).toBe(true); expect(output.failureCode).toBeUndefined();
-    expect(output.audit).toMatchObject({ assessmentStatus: 'completed', decision: 'accept', boundToFinalAnswer: true });
+    expect(output.presentation).toEqual({ policyVersion: LIVE_PREVIEW_PRESENTATION_POLICY, boundToFinalAnswer: true });
     const expectedDeliveredAnswer = `${run.execute.mock.calls[0][1].qualification}\n\n${groundedAnswer} [Source 1]`;
     expect(result.data.response).toBe(expectedDeliveredAnswer); expect(result.data.response).toContain(GAMING_UNVERIFIED_GUIDE_WARNING);
-    expect(hasBoundGamingClearAnswer(result.data)).toBe(true);
-    expect(Object.getOwnPropertyDescriptor(result.data, GAMING_CLEAR_APPROVED_ANSWER)?.value.subjectHash)
+    expect(hasBoundGamingPresentedAnswer(result.data)).toBe(true);
+    expect(Object.getOwnPropertyDescriptor(result.data, GAMING_PRESENTED_ANSWER)?.value.subjectHash)
       .toBe(gamingClearHash(expectedDeliveredAnswer));
     expect(result.data.sources.map(source => source.url)).toEqual([guideUrl]);
     expect(mockHttp).toHaveBeenCalledTimes(1); expect(mockTrinity).toHaveBeenCalledTimes(1);
-    expect(mockAuditCompletion).toHaveBeenCalledTimes(1); expect(mockAuditCompletion.mock.calls[0][0]).toBe(scopedClient);
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
     const provider = mockTrinity.mock.calls[0][0] as TrinityWritingPipelineRequest;
     expect(provider.context.client).toBe(scopedClient);
     expect(provider.input.body).toMatchObject({ game: 'Elden Ring', class: 'Samurai', progressPoint: 'just left the tutorial', edition: 'base-game' });
-    expect(provider.context.runOptions).toMatchObject({ disableMemoryAccess: true, disableOptionalSideEffects: true, redactAuditContent: true });
-    const audited = JSON.parse((mockAuditCompletion.mock.calls[0][1] as any).messages[1].content);
-    expect(audited.answer).toBe(result.data.response); expect(JSON.stringify(audited.evidence)).toContain('Uchigatana');
+    expect(provider.context.runOptions).toMatchObject({ disableMemoryAccess: true, disableOptionalSideEffects: true, gamingPresentationPolicy: LIVE_PREVIEW_PRESENTATION_POLICY });
+    expect(provider.input.prompt).toContain('Uchigatana');
     expect(run.observer.onSourceAcquisition).toHaveBeenCalledWith('passed');
-    expect(run.observer.onAnswerAuditStart).toHaveBeenCalledTimes(1);
     const observation = run.adapter.getLastObservation()!;
     expect(observation).toMatchObject({ outcome: 'accepted', semanticGap: 'NONCRITICAL_GAP',
       coverage: { satisfied: true, assessmentStatus: 'assessed', missingCount: 0 }, selectedCandidateCount: 1,
       qualification: { patchCompatibility: 'unverified', visible: true, claimsVerifiedCurrentness: false } });
-    expect(observation.auditStartBudget.runtimeRemainingMs).toBeGreaterThan(0);
-    expect(observation.auditStartBudget.requestRemainingMs).toBeGreaterThan(0);
     expect(observation.selectedEvidenceCount).toBeGreaterThan(0);
-    for (const [stage, elapsedMs] of [['acquisition', 25], ['intake', 7], ['reasoning', 11], ['final', 13], ['answer_audit', 17]] as const) {
+    for (const [stage, elapsedMs] of [['acquisition', 25], ['intake', 7], ['reasoning', 11], ['final', 13]] as const) {
       expect(observation.stages[stage]).toEqual({ status: 'passed', elapsedMs });
     }
     expect(observation.stages.selection).toEqual({ status: 'passed', elapsedMs: 0 });
@@ -285,7 +270,7 @@ describe('private Gaming live-validation adapter through the real transient v2 w
   it.each([
     ['HTML transport', guideUrl, 'text/html'],
     ['immutable public raw-GitHub transport', publicClarificationGuideUrl, 'text/plain; charset=utf-8']
-  ])('resolves material context and three choices in one retained-evidence workflow over %s before the final bound audit', async (_label, sourceUrl, contentType) => {
+  ])('resolves material context and three choices in one retained-evidence workflow over %s before bound presentation delivery', async (_label, sourceUrl, contentType) => {
     sourceHtml = clarificationGuideHtml;
     sourceContentType = contentType;
     const preferences = ['pure Dexterity', 'single katana', 'defensive'];
@@ -293,7 +278,7 @@ describe('private Gaming live-validation adapter through the real transient v2 w
     const run = harness();
     const output = await run.run({ question: `${question} Include controls. I'm undecided between bleed and pure Dexterity. I'm undecided between single katana and dual wield. I'm undecided between aggressive and defensive. Guide: ${sourceUrl}` }, [sourceUrl], replies);
     expect(candidateHandoffs[0].result.body.candidates).toEqual([expect.objectContaining({ decision: 'accepted_transient' })]);
-    expect(output.accepted).toBe(true); expect(output.audit?.boundToFinalAnswer).toBe(true);
+    expect(output.accepted).toBe(true); expect(output.presentation?.boundToFinalAnswer).toBe(true);
     expect(mockWorkflowFactory).toHaveBeenCalledTimes(1); expect(queryHandoffs).toHaveLength(5); expect(candidateHandoffs).toHaveLength(1);
     expect(queryHandoffs[0].result.body).toMatchObject({ nextAction: 'clarify', reason: 'PLATFORM_REQUIRED', revision: 0 });
     expect(queryHandoffs[1].result.body).toMatchObject({ nextAction: 'search', revision: 1 });
@@ -314,16 +299,14 @@ describe('private Gaming live-validation adapter through the real transient v2 w
     expect(queryHandoffs.slice(0, -1).every(handoff => handoff.generationCalls === 0)).toBe(true);
     expect(candidateHandoffs[0].generationCalls).toBe(0);
     expect(mockHttp).toHaveBeenCalledTimes(1); expect(run.execute).toHaveBeenCalledTimes(1);
-    expect(mockTrinity).toHaveBeenCalledTimes(1); expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+    expect(mockTrinity).toHaveBeenCalledTimes(1); expect(mockAuditCompletion).not.toHaveBeenCalled();
     expect(run.execute.mock.calls[0][0]).toMatchObject({ platform: 'PC', constraints: preferences,
       prompt: queryHandoffs[0].payload.question, guideUrls: [sourceUrl] });
     const prepared = run.execute.mock.calls[0][1];
     expect(prepared.knowledge.evidence?.map(chunk => chunk.recordId)).toEqual(acquired.selectedEvidenceIds);
     const finalResult = output.result as GamingSuccessEnvelope;
-    const audited = JSON.parse((mockAuditCompletion.mock.calls[0][1] as any).messages[1].content);
-    expect(audited.answer).toBe(finalResult.data.response);
-    expect(audited.evidence.map((chunk: { chunkId: string }) => chunk.chunkId)).toEqual(acquired.selectedEvidenceIds);
-    expect(hasBoundGamingClearAnswer(finalResult.data)).toBe(true);
+    expect(finalResult.data.response).toContain(groundedAnswer);
+    expect(hasBoundGamingPresentedAnswer(finalResult.data)).toBe(true);
     expect(run.adapter.getLastObservation()?.clarification).toEqual({ version: 1, submittedCount: 4, completedCount: 4,
       postAcquisitionCount: 3, sameWorkflow: true, revisionsAdvanced: true, retainedEvidence: true, budgetsPreserved: true, acquisitionCount: 1 });
     const serialized = JSON.stringify(run.adapter.getLastObservation());
@@ -356,12 +339,12 @@ describe('private Gaming live-validation adapter through the real transient v2 w
     if (output.accepted) {
       expect(run.adapter.getLastObservation()?.clarification).toMatchObject({ completedCount: 4, postAcquisitionCount: 3,
         sameWorkflow: true, revisionsAdvanced: true, retainedEvidence: true, budgetsPreserved: true, acquisitionCount: 1 });
-      expect(mockTrinity).toHaveBeenCalledTimes(1); expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
-      expect(output.audit?.boundToFinalAnswer).toBe(true);
+      expect(mockTrinity).toHaveBeenCalledTimes(1); expect(mockAuditCompletion).not.toHaveBeenCalled();
+      expect(output.presentation?.boundToFinalAnswer).toBe(true);
       const result = output.result as GamingSuccessEnvelope;
-      expect(output.privateAnswer).toEqual({ version: 1, response: result.data.response,
+      expect(output.privateAnswer).toEqual({ version: 2, policyVersion: LIVE_PREVIEW_PRESENTATION_POLICY, response: result.data.response,
         subjectHash: gamingClearHash(result.data.response),
-        contextFingerprint: Object.getOwnPropertyDescriptor(result.data, GAMING_CLEAR_APPROVED_ANSWER)?.value.contextFingerprint,
+        contextFingerprint: Object.getOwnPropertyDescriptor(result.data, GAMING_PRESENTED_ANSWER)?.value.contextFingerprint,
         sources: profile.input.candidateUrls.map((url, index) => ({ index: index + 1, url })) });
     } else {
       // Plain transport grants no HTML field provenance. The independently
@@ -398,20 +381,18 @@ describe('private Gaming live-validation adapter through the real transient v2 w
       .filter(stage => observation.stages[stage].status === 'passed').length;
     const auditCalls = mockAuditCompletion.mock.calls.length;
     const providerCalls = generationCalls + auditCalls;
-    const stageStatus = (stage: 'generation' | 'answer_audit') => {
-      const { status } = observation.stages[stage];
-      return status === 'started' ? 'unobserved' : status;
-    };
+    const generation = observation.stages.generation.status;
     const evidence = createLivePreviewEvidence(identity, {
-      caseId: profile.caseId, result: output.result, audit: output.audit, failureCode: output.failureCode,
+      caseId: profile.caseId, result: output.result, presentation: output.presentation, failureCode: output.failureCode,
+      acceptanceProfile: LIVE_PREVIEW_PRESENTATION_PROFILE,
       stages: {
         authorization: 'passed', budget: 'passed',
         source_acquisition: jest.mocked(run.observer.onSourceAcquisition).mock.lastCall?.[0],
         source_validation: jest.mocked(run.observer.onSourceValidation).mock.lastCall?.[0],
-        generation: stageStatus('generation'), answer_audit: stageStatus('answer_audit'),
+        generation: generation === 'started' ? 'unobserved' : generation, answer_audit: 'not_run',
         delivery: output.accepted ? 'passed' : 'rejected'
       },
-      // Synthetic model usage accompanies the adapter's actual grounding, citations and bound audit.
+      // Synthetic model usage accompanies the adapter's actual grounding, citations and bound presentation.
       usage: { requests: providerCalls, providerCalls, generationCalls, auditCalls,
         reservedInputTokens: 1000 * providerCalls, reservedOutputTokens: 200 * providerCalls,
         reservedTotalTokens: 1200 * providerCalls, reservedSpendMicroUsd: 1500 * providerCalls,
@@ -432,7 +413,7 @@ describe('private Gaming live-validation adapter through the real transient v2 w
       // policy; unlike the Samurai build, it does not assert current balance.
       expect(observation.qualification).toMatchObject({ visible: false, claimsVerifiedCurrentness: false });
       expect(observation.clarification).toBeUndefined();
-      for (const stage of ['acquisition', 'selection', 'intake', 'reasoning', 'final', 'generation', 'answer_audit'] as const) {
+      for (const stage of ['acquisition', 'selection', 'intake', 'reasoning', 'final', 'generation'] as const) {
         expect(observation.stages[stage].status).toBe('passed');
         expect(observation.stages[stage].elapsedMs).not.toBeNull();
       }
@@ -442,24 +423,20 @@ describe('private Gaming live-validation adapter through the real transient v2 w
       expect(result.data.response).not.toContain(partialExtractionWarning);
       expect(result.data.response).toContain('[Source 1]');
       expect(result.data.sources.map(source => source.url)).toEqual(profile.input.candidateUrls);
-      expect(hasBoundGamingClearAnswer(result.data)).toBe(true);
-      expect(output.audit?.boundToFinalAnswer).toBe(true);
-      expect(output.privateAnswer).toEqual({ version: 1, response: result.data.response,
+      expect(hasBoundGamingPresentedAnswer(result.data)).toBe(true);
+      expect(output.presentation?.boundToFinalAnswer).toBe(true);
+      expect(output.privateAnswer).toEqual({ version: 2, policyVersion: LIVE_PREVIEW_PRESENTATION_POLICY, response: result.data.response,
         subjectHash: gamingClearHash(result.data.response),
-        contextFingerprint: Object.getOwnPropertyDescriptor(result.data, GAMING_CLEAR_APPROVED_ANSWER)?.value.contextFingerprint,
+        contextFingerprint: Object.getOwnPropertyDescriptor(result.data, GAMING_PRESENTED_ANSWER)?.value.contextFingerprint,
         sources: [{ index: 1, url: profile.input.candidateUrls[0] }] });
       // The private artifact is a closed answer projection, without evidence
       // snippets, source bodies, workflow identifiers or record identifiers.
-      expect(Object.keys(output.privateAnswer!).sort()).toEqual(['contextFingerprint', 'response', 'sources', 'subjectHash', 'version']);
+      expect(Object.keys(output.privateAnswer!).sort()).toEqual(['contextFingerprint', 'policyVersion', 'response', 'sources', 'subjectHash', 'version']);
       expect(Object.keys(output.privateAnswer!.sources[0]).sort()).toEqual(['index', 'url']);
       expect(JSON.stringify(output.privateAnswer)).not.toContain('independently authored synthetic fixture');
       for (const privateValue of [candidateHandoffs[0].actorKey, candidateHandoffs[0].result.body.workflowId!,
         ...candidateHandoffs[0].result.body.selectedEvidenceIds!]) expect(JSON.stringify(output.privateAnswer)).not.toContain(privateValue);
-      const audited = JSON.parse((mockAuditCompletion.mock.calls[0][1] as any).messages[1].content);
-      expect(audited.answer).toBe(result.data.response);
-      expect(JSON.stringify(audited.evidence)).toContain('colonisation claim');
-      expect(audited.evidence.map((chunk: { chunkId: string }) => chunk.chunkId)).toEqual(candidateHandoffs[0].result.body.selectedEvidenceIds);
-      expect(mockTrinity).toHaveBeenCalledTimes(1); expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+      expect(mockTrinity).toHaveBeenCalledTimes(1); expect(mockAuditCompletion).not.toHaveBeenCalled();
     } else {
       expect(output.failureCode).toBe('INCOMPATIBLE_SOURCE');
       expect(observation.candidates).toEqual([expect.objectContaining({ decision: 'rejected', reasonCodes: ['GAME_MISMATCH'] })]);
@@ -469,25 +446,14 @@ describe('private Gaming live-validation adapter through the real transient v2 w
     }
   });
 
-  it.each(['accepted', 'rejected'] as const)('qualifies selected partial extraction before the bound audit when a stable guide is %s', async expected => {
+  it('keeps partial extraction visible and binds the exact delivered guide', async () => {
     const profile = canonicalProfiles.find(entry => entry.expected.outcome === 'accepted')!;
     sourceTextLimit = 900;
     sourceHtml = authoredEliteGuideHtml.replace('</article>', `<p>${'The station scenery includes nearby landmarks. '.repeat(25)}</p></article>`);
-    generatedAnswer = expected === 'accepted' ? authoredEliteAnswer : `${authoredEliteAnswer}\nA free claim is available at every station.`;
-    if (expected === 'rejected') {
-      mockAuditCompletion.mockImplementationOnce(async (_client: unknown, params: { messages: Array<{ content: string }> }) => {
-        const data = JSON.parse(params.messages[1].content) as { evidence: Array<{ chunkId: string }> };
-        const evidenceRefs = [data.evidence[0].chunkId];
-        const dimensions = Object.fromEntries(GAMING_CLEAR_DIMENSIONS.map(name => [name, {
-          status: 'evaluated', score: 5, reasonCodes: [], evidenceRefs, unresolvedFacts: []
-        }]));
-        return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ dimensions,
-          findings: [{ code: 'UNSUPPORTED_CLAIM', severity: 'blocking', evidenceRefs }] }) } }] };
-      });
-    }
+    generatedAnswer = authoredEliteAnswer;
     const run = harness();
     const input = run.adapter.validateInput(profile.input);
-    if (!input.ok) throw new Error('Expected valid canonical Elite input.');
+    expect(input.ok).toBe(true); if (!input.ok) throw new Error('Expected valid canonical Elite input.');
     const output = await run.adapter.execute(input.input, run.observer);
     const observation = run.adapter.getLastObservation()!;
     expect(observation.coverage.satisfied).toBe(true);
@@ -496,30 +462,13 @@ describe('private Gaming live-validation adapter through the real transient v2 w
     })]);
     const trinityRequest = mockTrinity.mock.calls[0][0] as TrinityWritingPipelineRequest;
     expect(trinityRequest.input.prompt).toContain('only partially extracted');
-    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
-    const auditRequest = mockAuditCompletion.mock.calls[0][1] as { messages: Array<{ content: string }> };
-    const audited = JSON.parse(auditRequest.messages[1].content) as {
-      answer: string; applicability: Array<{ partialExtraction: boolean }>;
-      evidence: Array<{ sourceIndex: number; chunkId: string }>;
-    };
-    expect(audited.applicability).toEqual([expect.objectContaining({ partialExtraction: true })]);
-    expect(audited.answer).toBe(`${partialExtractionWarning}\n\n${generatedAnswer} [Source 1]`);
-    expect(audited.evidence.every(chunk => chunk.sourceIndex === 1)).toBe(true);
-    expect(audited.evidence.map(chunk => chunk.chunkId)).toEqual(candidateHandoffs[0].result.body.selectedEvidenceIds);
-    if (expected === 'accepted') {
-      expect(output.accepted).toBe(true);
-      const result = output.result as GamingSuccessEnvelope;
-      expect(result.data.response).toBe(audited.answer);
-      expect(hasBoundGamingClearAnswer(result.data)).toBe(true);
-      expect(output.privateAnswer).toMatchObject({ response: audited.answer, subjectHash: gamingClearHash(audited.answer),
-        sources: [{ index: 1, url: profile.input.candidateUrls[0] }] });
-      expect(output.audit?.boundToFinalAnswer).toBe(true);
-    } else {
-      expect(output.accepted).toBe(false);
-      expect(output).not.toHaveProperty('privateAnswer');
-      expect(observation.audit).toMatchObject({ assessmentStatus: 'completed', decision: 'reject',
-        boundToFinalAnswer: false, findingCodes: ['UNSUPPORTED_CLAIM'] });
-    }
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
+    const result = output.result as GamingSuccessEnvelope;
+    expect(result.data.response).toBe(`${partialExtractionWarning}\n\n${generatedAnswer} [Source 1]`);
+    expect(hasBoundGamingPresentedAnswer(result.data)).toBe(true);
+    expect(output.privateAnswer).toMatchObject({ response: result.data.response, subjectHash: gamingClearHash(result.data.response),
+      sources: [{ index: 1, url: profile.input.candidateUrls[0] }] });
+    expect(output.presentation?.boundToFinalAnswer).toBe(true);
   });
 
   it('preserves the finite eight-reply bound for incomplete context without entering acquisition or generation', async () => {
@@ -540,7 +489,7 @@ describe('private Gaming live-validation adapter through the real transient v2 w
     expect(output).not.toHaveProperty('privateAnswer');
     expect(run.adapter.getLastObservation()?.clarification).toMatchObject({ submittedCount: 0, completedCount: 0,
       sameWorkflow: false, revisionsAdvanced: false, retainedEvidence: false, budgetsPreserved: false, acquisitionCount: 1 });
-    expect(mockHttp).toHaveBeenCalledTimes(1); expect(mockTrinity).toHaveBeenCalledTimes(1); expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+    expect(mockHttp).toHaveBeenCalledTimes(1); expect(mockTrinity).toHaveBeenCalledTimes(1); expect(mockAuditCompletion).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -556,11 +505,9 @@ describe('private Gaming live-validation adapter through the real transient v2 w
     expect(output.accepted).toBe(false); expect(output.result).toBeUndefined(); expect(output.failureCode).toBe(failureCode);
     expect(output).not.toHaveProperty('privateAnswer');
     expect(mockHttp).toHaveBeenCalledTimes(1); expect(mockTrinity).not.toHaveBeenCalled(); expect(mockAuditCompletion).not.toHaveBeenCalled();
-    expect(run.execute).not.toHaveBeenCalled(); expect(run.observer.onAnswerAuditStart).not.toHaveBeenCalled();
     const observation = run.adapter.getLastObservation()!;
     expect(observation.candidates).toEqual([expect.objectContaining({ decision: 'rejected', reasonCodes: expect.arrayContaining([reason]) })]);
-    expect(observation.outcome).toBe('need_new_source'); expect(observation.audit).toBeNull();
-    expect(observation.stages.answer_audit).toEqual({ status: 'not_run', elapsedMs: null });
+    expect(observation.outcome).toBe('need_new_source'); expect(observation.presentation).toBeNull();
   });
 
   it('rejects genuine wrong-game plaintext declarations before generation or source storage', async () => {
@@ -611,7 +558,7 @@ describe('private Gaming live-validation adapter through the real transient v2 w
     expect(mockAuditCompletion).not.toHaveBeenCalled();
   });
 
-  it.each(['missing binding', 'fallback', 'post-audit mutation'] as const)('withholds acceptance after %s', async scenario => {
+  it.each(['missing binding', 'fallback', 'post-binding mutation'] as const)('withholds acceptance after %s', async scenario => {
     const run = harness(value => {
       if (scenario === 'missing binding') return { ...value, data: { ...value.data } };
       if (scenario === 'fallback') value.data.fallbackReason = 'INTAKE_RETRIEVAL_FAILED';
@@ -619,162 +566,34 @@ describe('private Gaming live-validation adapter through the real transient v2 w
       return value;
     });
     const output = await run.run();
-    expect(output.accepted).toBe(false); expect(output.audit?.boundToFinalAnswer).toBe(false);
+    expect(output.accepted).toBe(false); expect(output.presentation).toBeUndefined();
     expect(output).not.toHaveProperty('privateAnswer');
     expect(run.adapter.getLastObservation()?.outcome).not.toBe('accepted');
-    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
   });
 
-  it('retains bounded completed rejection findings without retaining the answer or evidence identifiers', async () => {
-    const privateCode = 'MODEL_SUPPLIED_PRIVATE_IDENTIFIER';
-    let privateReference = '';
-    mockAuditCompletion.mockImplementationOnce(async (_client: unknown, params: { messages: Array<{ content: string }> }) => {
-      const data = JSON.parse(params.messages[1].content) as { evidence: Array<{ chunkId: string }> };
-      privateReference = data.evidence[0].chunkId;
-      advance(17);
-      const dimensions = Object.fromEntries(GAMING_CLEAR_DIMENSIONS.map(name => [name, {
-        status: 'evaluated', score: 5, reasonCodes: [], evidenceRefs: [privateReference], unresolvedFacts: []
-      }]));
-      const findings = ['CITATION_DOES_NOT_SUPPORT_CLAIM', privateCode, 'CITATION_DOES_NOT_SUPPORT_CLAIM']
-        .map(code => ({ code, severity: 'warning', evidenceRefs: [privateReference] }));
-      return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ dimensions, findings }) } }] };
-    });
-    const run = harness();
-    const output = await run.run();
-    const observation = run.adapter.getLastObservation()!;
-
-    expect(output.accepted).toBe(false);
-    expect(output).not.toHaveProperty('privateAnswer');
-    expect(observation.outcome).toBe('unavailable');
-    expect(observation.audit).toEqual({
-      assessmentStatus: 'completed', decision: 'reject', boundToFinalAnswer: false, effectiveTimeoutMs: 12_000,
-      findingCodes: ['CITATION_DOES_NOT_SUPPORT_CLAIM', 'UNCLASSIFIED_AUDIT_FINDING'], blockingFindingCount: 3,
-      findingCounts: { CITATION_DOES_NOT_SUPPORT_CLAIM: 2, UNCLASSIFIED_AUDIT_FINDING: 1 },
-      unmappedFindingCount: 1,
-      providerDiagnostic: { resultClass: 'complete', finishReason: 'stop', truncated: false,
-        contentFiltered: false, contentLengthClass: 'bounded' }
-    });
-    expect(observation.stages.answer_audit).toEqual({ status: 'passed', elapsedMs: 17 });
-    for (const privateValue of [privateCode, privateReference, groundedAnswer, guideUrl]) {
-      expect(JSON.stringify(observation)).not.toContain(privateValue);
-    }
-    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
-  });
-
-  it('preserves an unavailable audit diagnostic without publishing the candidate answer or provider output', async () => {
-    const rawProviderOutput = 'private audit fixture response with source and answer text';
-    mockAuditCompletion.mockImplementationOnce(async () => {
-      advance(17);
-      return { choices: [{ finish_reason: 'stop', message: { content: rawProviderOutput } }] };
-    });
-    const run = harness();
-    const output = await run.run();
-    const observation = run.adapter.getLastObservation()!;
-
-    expect(output.accepted).toBe(false);
-    expect(output).not.toHaveProperty('privateAnswer');
-    expect(observation.audit).toMatchObject({
-      assessmentStatus: 'unavailable', decision: 'unavailable', boundToFinalAnswer: false,
-      reasonCode: 'AUDIT_MALFORMED', effectiveTimeoutMs: 12_000,
-      providerDiagnostic: { resultClass: 'malformed_json', finishReason: 'stop', contentLengthClass: 'bounded' }
-    });
-    expect(observation.stages.answer_audit).toEqual({ status: 'failed', elapsedMs: 17 });
-    expect(JSON.stringify(observation)).not.toContain(rawProviderOutput);
-    expect(JSON.stringify(observation)).not.toContain(groundedAnswer);
-    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
-  });
-
-  it.each(['refusal', 'tool_output'] as const)('withholds valid audit JSON accompanied by %s and records only its kind', async outputKind => {
-    const privateProviderValue = 'PRIVATE_NON_TEXT_OUTPUT_FIXTURE';
-    const normalAudit = mockAuditCompletion.getMockImplementation()!;
-    mockAuditCompletion.mockImplementationOnce(async (client, params) => {
-      const response = await normalAudit(client, params) as { choices: Array<{ finish_reason: 'stop'; message: { content: string } }> };
-      const choice = response.choices[0];
-      const unsupportedMessage = outputKind === 'refusal' ? { refusal: privateProviderValue }
-        : { tool_calls: [{ id: privateProviderValue }] };
-      return { ...response, choices: [{ ...choice, message: { ...choice.message, ...unsupportedMessage } }] };
-    });
-
-    const run = harness();
-    const output = await run.run();
-    const observation = run.adapter.getLastObservation()!;
-    expect(output.accepted).toBe(false);
-    expect(output).not.toHaveProperty('privateAnswer');
-    expect(observation.audit).toMatchObject({ assessmentStatus: 'unavailable', decision: 'unavailable',
-      reasonCode: 'AUDIT_PROVIDER_INCOMPLETE', providerDiagnostic: { resultClass: 'unsupported_output', outputKind } });
-    expect(JSON.stringify(observation)).not.toContain(privateProviderValue);
-    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
-  });
-
-  it('independently projects a closed provider diagnostic at the adapter boundary', async () => {
-    const run = harness();
-    const execute = run.execute.getMockImplementation()!;
-    const privateOutput = 'PRIVATE_PROVIDER_OUTPUT_FIXTURE';
-    const privateStatus = 'PRIVATE_PROVIDER_STATUS_FIXTURE';
-    mockAuditCompletion.mockImplementationOnce(async () => ({ choices: [{ finish_reason: 'stop', message: { content: privateOutput } }] }));
-    run.execute.mockImplementationOnce((input, prepared, hooks) => execute(input, prepared, {
-      ...hooks,
-      onAnswerAudit: value => hooks.onAnswerAudit?.({
-        ...value,
-        providerDiagnostic: { resultClass: 'malformed_json', providerStatus: privateStatus, finishReason: 'stop',
-          contentLengthClass: 'bounded', rawOutput: privateOutput }
-      } as typeof value)
-    }));
-
-    const output = await run.run();
-    const observation = run.adapter.getLastObservation()!;
-    expect(output.accepted).toBe(false);
-    expect(output).not.toHaveProperty('privateAnswer');
-    expect(observation.audit).toMatchObject({ reasonCode: 'AUDIT_MALFORMED',
-      providerDiagnostic: { resultClass: 'malformed_json', finishReason: 'stop', contentLengthClass: 'bounded' } });
-    expect(JSON.stringify(observation)).not.toContain(privateOutput);
-    expect(JSON.stringify(observation)).not.toContain(privateStatus);
-  });
-
-  it('records an actual audit timeout without binding or accepting its answer', async () => {
-    mockAuditCompletion.mockImplementationOnce(async () => {
-      advance(17); throw Object.assign(new Error('Sealed audit timeout.'), { name: 'AbortError' });
-    });
+  it('delivers awkward but otherwise eligible guidance without a subjective quality audit', async () => {
+    generatedAnswer = 'Start Uchigatana. Unsheathe stays. Vigor first, then Endurance if needed. Upgrade with Smithing Stones.';
     const run = harness(); const output = await run.run();
-    expect(output.accepted).toBe(false); expect(output.failureCode).toBe('AUDIT_TIMEOUT');
-    expect(output).not.toHaveProperty('privateAnswer');
-    expect(output.audit).toMatchObject({ assessmentStatus: 'unavailable', boundToFinalAnswer: false });
-    const observation = run.adapter.getLastObservation()!;
-    expect(observation.stages.answer_audit).toEqual({ status: 'timed_out', elapsedMs: 17 });
-    expect(observation.auditStartBudget.runtimeRemainingMs).toBeGreaterThan(0);
-    expect(mockTrinity).toHaveBeenCalledTimes(1); expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+    expect(output.accepted).toBe(true);
+    expect(output.presentation?.boundToFinalAnswer).toBe(true);
+    expect(output.privateAnswer?.response).toContain(generatedAnswer);
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
   });
 
   it.each([
-    { trigger: 'before the request deadline', deadlineExpired: false, auditStatus: 'failed' },
-    { trigger: 'at the request deadline', deadlineExpired: true, auditStatus: 'timed_out' }
-  ] as const)('records an audit abort $trigger without accepting the answer', async ({ deadlineExpired, auditStatus }) => {
-    const controller = new AbortController();
-    let auditElapsedMs = 0;
-    let remainingAtAbort: number | null = null;
-    mockAuditCompletion.mockImplementationOnce(async () => {
-      auditElapsedMs = deadlineExpired ? getRequestRemainingMs() ?? 0 : 17;
-      advance(auditElapsedMs);
-      remainingAtAbort = getRequestRemainingMs();
-      const error = createAbortError('Synthetic request abort during answer audit.');
-      controller.abort(error);
-      throw error;
-    });
-    const run = harness();
-    const output = await runWithRequestAbortContext({
-      controller, signal: controller.signal, deadlineAt: clock + 30_000, timeoutMs: 30_000
-    }, () => run.run());
-
-    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
-    expect(auditElapsedMs).toBeGreaterThan(0);
-    if (deadlineExpired) expect(remainingAtAbort).toBe(0);
-    else expect(remainingAtAbort).toBeGreaterThan(0);
+    ['incomplete provider completion', { provider: { finishReason: 'length', responseStatus: 'incomplete' } }, groundedAnswer],
+    ['standalone refusal', { provider: { finishReason: 'stop', responseStatus: 'completed' } }, 'I cannot provide a gameplay guide.'],
+    ['missing citation', { provider: { finishReason: 'stop', responseStatus: 'completed' } }, groundedAnswer],
+    ['wrong citation', { provider: { finishReason: 'stop', responseStatus: 'completed' } }, `${groundedAnswer} [99]`]
+  ])('withholds %s before producing presentation proof or a private answer', async (_label, meta, result) => {
+    mockTrinity.mockResolvedValueOnce({ result, meta, gamingPresentationPolicy: LIVE_PREVIEW_PRESENTATION_POLICY, fallbackFlag: false, dryRun: false });
+    const run = harness(); const output = await run.run({ question: `${question} Cite the guide sources.` });
     expect(output.accepted).toBe(false);
-    expect(output).not.toHaveProperty('privateAnswer');
-    expect(run.adapter.getLastObservation()?.stages).toMatchObject({
-      generation: { status: 'passed' },
-      answer_audit: { status: auditStatus, elapsedMs: auditElapsedMs }
-    });
+    expect(output.presentation).toBeUndefined();
+    expect(output.privateAnswer).toBeUndefined();
+    expect(run.adapter.getLastObservation()?.presentation).toBeNull();
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
   });
 
   it.each(['intake', 'reasoning', 'final'] as const)('preserves an observed %s timeout when upstream cancellation reaches the provider first', async stage => {
@@ -790,12 +609,9 @@ describe('private Gaming live-validation adapter through the real transient v2 w
     expect(run.observer.onFailure).toHaveBeenCalledWith('MODEL_TIMEOUT');
     expect(output.accepted).toBe(false); expect(mockAuditCompletion).not.toHaveBeenCalled();
     expect(output).not.toHaveProperty('privateAnswer');
-    expect(run.observer.onAnswerAuditStart).not.toHaveBeenCalled();
     const observation = run.adapter.getLastObservation()!;
     expect(observation.stages[stage]).toEqual({ status: 'timed_out', elapsedMs: 23 });
     expect(observation.stages.generation).toEqual({ status: 'timed_out', elapsedMs: 23 });
-    expect(observation.stages.answer_audit).toEqual({ status: 'not_run', elapsedMs: null });
-    expect(observation.auditStartBudget).toEqual({ runtimeRemainingMs: null, requestRemainingMs: null });
   });
 
   it('does not infer a model timeout from an unobserved cancellation or elapsed time', async () => {
@@ -818,18 +634,15 @@ describe('private Gaming live-validation adapter through the real transient v2 w
       expect(observation.stages[stage]).toEqual({ status: 'not_run', elapsedMs: null });
     }
     expect(observation.stages.acquisition).toEqual({ status: 'passed', elapsedMs: 25 });
-    expect(observation.stages.answer_audit).toEqual({ status: 'passed', elapsedMs: 17 });
-    expect(observation.auditStartBudget.requestRemainingMs).toBeGreaterThan(0);
   });
 
-  it('records null budgets and not-run stages when source discovery has not executed', async () => {
+  it('records not-run stages when source discovery has not executed', async () => {
     const run = harness(); const output = await run.run({}, []);
     expect(output.accepted).toBe(false); expect(run.execute).not.toHaveBeenCalled();
     expect(output).not.toHaveProperty('privateAnswer');
     expect(mockHttp).not.toHaveBeenCalled(); expect(mockTrinity).not.toHaveBeenCalled(); expect(mockAuditCompletion).not.toHaveBeenCalled();
     const observation = run.adapter.getLastObservation()!;
     expect(observation.semanticGap).toBe('EVIDENCE_GAP');
-    expect(observation.auditStartBudget).toEqual({ runtimeRemainingMs: null, requestRemainingMs: null });
     for (const timing of Object.values(observation.stages)) expect(timing).toEqual({ status: 'not_run', elapsedMs: null });
   });
 
@@ -841,10 +654,10 @@ describe('private Gaming live-validation adapter through the real transient v2 w
     }
     observation.candidates[0].reasonCodes.push('CALLER_MUTATION');
     observation.stages.acquisition.elapsedMs = 999;
-    observation.audit!.boundToFinalAnswer = false;
+    Object.assign(observation.presentation!, { boundToFinalAnswer: false });
     const fresh = run.adapter.getLastObservation()!;
     expect(fresh.candidates[0].reasonCodes).not.toContain('CALLER_MUTATION');
-    expect(fresh.stages.acquisition.elapsedMs).toBe(25); expect(fresh.audit!.boundToFinalAnswer).toBe(true);
+    expect(fresh.stages.acquisition.elapsedMs).toBe(25); expect(fresh.presentation!.boundToFinalAnswer).toBe(true);
   });
 });
 
@@ -854,7 +667,7 @@ describe('sanitized live-validation semantic observations', () => {
     reason: 'QUESTION_COVERAGE_INSUFFICIENT', sourceKnown: false, evidenceSelected: false, freshnessStatus: 'unverified', ...overrides
   });
   const observe = (response: GamingHybridResponse, accepted = false) => createLiveValidationObservation({ body: response, accepted,
-    stages: emptyLiveValidationStages(), auditStartBudget: { runtimeRemainingMs: null, requestRemainingMs: null } });
+    stages: emptyLiveValidationStages() });
 
   it.each([
     ['player choice', body({ state: 'clarification_required', nextAction: 'clarify', reason: 'PLAYER_CHOICE_REQUIRED' }), false, 'USER_DECISION_GAP'],

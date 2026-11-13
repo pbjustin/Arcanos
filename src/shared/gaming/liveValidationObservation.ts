@@ -1,9 +1,9 @@
 import type { GamingHybridResponse } from './gamingHybridContract.js';
-import type { GamingClearAssessment } from './gamingClearPolicy.js';
+import type { GAMING_CLEAR_PRESENTATION_POLICY_VERSION } from './gamingPromptCore.js';
 import { GAMING_STALE_GUIDE_WARNING, GAMING_UNVERIFIED_GUIDE_WARNING,
   gamingAnswerClaimsVerifiedCurrentness } from './gamingFreshnessDisposition.js';
 
-export const LIVE_VALIDATION_STAGES = ['acquisition', 'selection', 'generation', 'intake', 'reasoning', 'final', 'answer_audit', 'response'] as const;
+export const LIVE_VALIDATION_STAGES = ['acquisition', 'selection', 'generation', 'intake', 'reasoning', 'final', 'response'] as const;
 export type LiveValidationStage = typeof LIVE_VALIDATION_STAGES[number];
 /** Server-owned events contain timing metadata only, never model content. */
 export interface LiveValidationStageEvent {
@@ -18,11 +18,6 @@ export interface LiveValidationStageTiming {
   status: 'not_run' | 'started' | 'passed' | 'failed' | 'timed_out';
   elapsedMs: number | null;
 }
-const LIVE_VALIDATION_AUDIT_REASON_CODES = [
-  'AUDIT_TIMEOUT', 'AUDIT_BUDGET_EXHAUSTED', 'AUDIT_PROVIDER_ERROR',
-  'AUDIT_PROVIDER_INCOMPLETE', 'AUDIT_MALFORMED', 'AUDIT_INPUT_UNAVAILABLE'
-] as const;
-
 export interface LiveValidationAuditProviderDiagnostic {
   resultClass: 'complete' | 'provider_incomplete' | 'unexpected_finish' | 'commentary_only' | 'unsupported_output'
     | 'missing_content' | 'oversized_content' | 'malformed_json' | 'invalid_schema';
@@ -36,17 +31,9 @@ export interface LiveValidationAuditProviderDiagnostic {
   messageStatus?: 'in_progress' | 'incomplete';
 }
 
-export interface LiveValidationAudit {
-  assessmentStatus: GamingClearAssessment['assessmentStatus'];
-  decision: GamingClearAssessment['decision'];
-  boundToFinalAnswer: boolean;
-  reasonCode?: typeof LIVE_VALIDATION_AUDIT_REASON_CODES[number];
-  effectiveTimeoutMs?: number;
-  providerDiagnostic?: LiveValidationAuditProviderDiagnostic;
-  findingCodes?: string[];
-  blockingFindingCount?: number;
-  findingCounts?: Record<string, number>;
-  unmappedFindingCount?: number;
+interface LiveValidationPresentation {
+  policyVersion: typeof GAMING_CLEAR_PRESENTATION_POLICY_VERSION;
+  boundToFinalAnswer: true;
 }
 /** Counts and invariants only; workflow IDs, context replies and evidence text stay private. */
 export interface LiveValidationClarification {
@@ -61,7 +48,7 @@ export interface LiveValidationClarification {
   acquisitionCount: number;
 }
 export interface LiveValidationObservation {
-  schemaVersion: 1;
+  schemaVersion: 2;
   contractVersion: 'gaming-hybrid-v2';
   outcome: 'accepted' | 'clarification_required' | 'need_new_source' | 'unavailable';
   reason: string | null;
@@ -72,10 +59,9 @@ export interface LiveValidationObservation {
   candidates: Array<{ decision: string; reasonCodes: string[] }>;
   qualification: { patchCompatibility: 'unverified' | 'stale' | 'not_required' | 'verified' | 'unobserved';
     visible: boolean; claimsVerifiedCurrentness: boolean };
-  audit: LiveValidationAudit | null;
+  presentation: LiveValidationPresentation | null;
   clarification?: LiveValidationClarification;
   stages: Record<LiveValidationStage, LiveValidationStageTiming>;
-  auditStartBudget: { runtimeRemainingMs: number | null; requestRemainingMs: number | null };
 }
 const reasonCode = (value: unknown): string | null => typeof value === 'string' && /^[A-Z][A-Z0-9_]{0,79}$/u.test(value) ? value : null;
 export const liveValidationDuration = (value: unknown): number | null => typeof value === 'number'
@@ -100,13 +86,9 @@ function clarificationProjection(value: LiveValidationClarification | undefined)
 export function createLiveValidationObservation(input: {
   body?: GamingHybridResponse;
   accepted: boolean;
-  audit?: LiveValidationAudit;
-  auditFindings?: GamingClearAssessment['findings'];
-  auditEffectiveTimeoutMs?: number;
-  auditProviderDiagnostic?: LiveValidationAuditProviderDiagnostic;
+  presentation?: LiveValidationPresentation;
   clarification?: LiveValidationClarification;
   stages: LiveValidationObservation['stages'];
-  auditStartBudget: LiveValidationObservation['auditStartBudget'];
 }): LiveValidationObservation {
   const { body, accepted } = input;
   const response = body?.answer?.response ?? '';
@@ -130,27 +112,11 @@ export function createLiveValidationObservation(input: {
     : accepted && qualification.visible && ['unverified', 'stale'].includes(qualification.patchCompatibility) ? 'NONCRITICAL_GAP'
       : accepted ? 'NONE' : outcome === 'need_new_source' ? 'EVIDENCE_GAP' : 'UNOBSERVED';
   const clarification = clarificationProjection(input.clarification);
-  const auditReason = input.audit?.assessmentStatus === 'unavailable'
-    ? LIVE_VALIDATION_AUDIT_REASON_CODES.find(code => input.auditFindings?.some(finding => finding.code === code))
-    : undefined;
-  const effectiveTimeoutMs = liveValidationDuration(input.auditEffectiveTimeoutMs);
-  const audit = input.audit ? {
-    assessmentStatus: input.audit.assessmentStatus, decision: input.audit.decision,
-    boundToFinalAnswer: input.audit.boundToFinalAnswer,
-    ...(auditReason ? { reasonCode: auditReason } : {}),
-    ...(input.audit.assessmentStatus === 'completed' && input.audit.decision === 'reject'
-      && input.audit.findingCodes && input.audit.blockingFindingCount !== undefined
-      ? { findingCodes: [...input.audit.findingCodes], blockingFindingCount: input.audit.blockingFindingCount,
-        ...(input.audit.findingCounts ? { findingCounts: { ...input.audit.findingCounts } } : {}),
-        ...(input.audit.unmappedFindingCount !== undefined ? { unmappedFindingCount: input.audit.unmappedFindingCount } : {}) } : {}),
-    ...(effectiveTimeoutMs !== null ? { effectiveTimeoutMs } : {}),
-    ...(input.auditProviderDiagnostic ? { providerDiagnostic: { ...input.auditProviderDiagnostic } } : {})
-  } : null;
-  return { schemaVersion: 1, contractVersion: 'gaming-hybrid-v2', outcome, reason, semanticGap,
+  return { schemaVersion: 2, contractVersion: 'gaming-hybrid-v2', outcome, reason, semanticGap,
     coverage: { satisfied: body?.coverageSatisfied === true,
       assessmentStatus: body?.gapAssessmentStatus ?? 'not_assessed', missingCount: Math.min(body?.missingCoverage?.length ?? 0, 64) },
     selectedCandidateCount: body?.selectedCandidateIds?.length ?? 0, selectedEvidenceCount: body?.selectedEvidenceIds?.length ?? 0,
-    candidates, qualification, audit,
+    candidates, qualification, presentation: input.presentation ? { ...input.presentation } : null,
     ...(clarification ? { clarification } : {}),
-    stages: structuredClone(input.stages), auditStartBudget: { ...input.auditStartBudget } };
+    stages: structuredClone(input.stages) };
 }

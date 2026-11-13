@@ -257,26 +257,26 @@ describe('opt-in backend discovery uses the existing v2 workflow', () => {
       const { workflow, discover, evaluateCandidates } = setup();
       const controller = new AbortController();
       const startedAt = Date.now();
-      discover.mockImplementation(async () => {
+      discover.mockImplementationOnce(async () => {
         jest.setSystemTime(Date.now() + 4_000);
         return discovered(['https://guides.example/initial']);
-      });
+      }).mockResolvedValueOnce(discovered([]));
       evaluateCandidates.mockImplementationOnce(async (_input: unknown, operation: { maxElapsedMs: number }) => {
-        expect(operation.maxElapsedMs).toBe(9_500);
+        expect(operation.maxElapsedMs).toBe(12_000);
         jest.setSystemTime(Date.now() + operation.maxElapsedMs);
         return { accepted: [], knowledge: empty, decisions: [], acquisitionWorkMs: operation.maxElapsedMs };
       });
       const result = await runWithRequestAbortContext({ controller, signal: controller.signal,
         deadlineAt: startedAt + 38_000, timeoutMs: 38_000 }, () => workflow.query(query, { ...context, signal: controller.signal }));
       expect(result.body).toMatchObject({ revision: 1, nextAction: 'search', discovery: {
-        continuationRequired: true, replacementAllowed: true, remainingTotalAcquisitionMs: 14_500 } });
-      expect(38_000 - (Date.now() - startedAt)).toBe(24_500);
-      expect(discover).toHaveBeenCalledTimes(1); expect(evaluateCandidates).toHaveBeenCalledTimes(1);
+        continuationRequired: true, replacementAllowed: true, remainingTotalAcquisitionMs: 12_000 } });
+      expect(38_000 - (Date.now() - startedAt)).toBe(22_000);
+      expect(discover).toHaveBeenCalledTimes(2); expect(evaluateCandidates).toHaveBeenCalledTimes(1);
       // A fresh request may use the existing grant; no workflow or allowance is renewed.
       const continued = await workflow.candidates({ contractVersion, workflowId: result.body.workflowId,
         expectedRevision: result.body.revision, idempotencyKey: 'http-deadline-host-recovery',
         candidates: [{ url: 'https://host.example/replacement' }] }, context);
-      expect(continued.body).toMatchObject({ revision: 2, nextAction: 'stop', discovery: { remainingTotalAcquisitionMs: 2_500 } });
+      expect(continued.body).toMatchObject({ revision: 2, nextAction: 'stop', discovery: { remainingTotalAcquisitionMs: 0 } });
       expect(evaluateCandidates.mock.calls[1][1].maxElapsedMs).toBe(12_000);
     } finally { jest.useRealTimers(); }
   });
@@ -289,7 +289,7 @@ describe('opt-in backend discovery uses the existing v2 workflow', () => {
       const controller = new AbortController();
       const startedAt = Date.now();
       discover.mockImplementation(async () => {
-        jest.setSystemTime(startedAt + 13_500);
+        jest.setSystemTime(startedAt + 16_500);
         return discovered();
       });
       const result = await runWithRequestAbortContext({ controller, signal: controller.signal,
@@ -304,7 +304,7 @@ describe('opt-in backend discovery uses the existing v2 workflow', () => {
     const { workflow, discover, evaluateCandidates } = setup();
     const controller = new AbortController();
     const result = await runWithRequestAbortContext({ controller, signal: controller.signal,
-      deadlineAt: Date.now() + 24_000, timeoutMs: 38_000 }, () => workflow.query(query, context));
+      deadlineAt: Date.now() + 21_500, timeoutMs: 38_000 }, () => workflow.query(query, context));
     expect(result.body).toMatchObject({ revision: 0, nextAction: 'search', discovery: { continuationRequired: true } });
     expect(discover).not.toHaveBeenCalled(); expect(evaluateCandidates).not.toHaveBeenCalled();
   });
@@ -325,7 +325,7 @@ describe('opt-in backend discovery uses the existing v2 workflow', () => {
       const pending = runWithRequestAbortContext({ controller, signal: controller.signal,
         deadlineAt: Date.now() + 38_000, timeoutMs: 38_000 }, () => workflow.query(query, { ...context, signal: controller.signal }));
       await searching;
-      await jest.advanceTimersByTimeAsync(13_500);
+      await jest.advanceTimersByTimeAsync(16_500);
       const result = await pending;
       expect(result.body).toMatchObject({ revision: 0, nextAction: 'search', reason: 'DISCOVERY_PROVIDER_TIMEOUT',
         discovery: { continuationRequired: true, remainingTotalAcquisitionMs: 24_000 } });

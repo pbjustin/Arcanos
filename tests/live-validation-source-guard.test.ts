@@ -112,7 +112,7 @@ describe('server-owned live-validation source guard inside real Gaming acquisiti
     const execute = jest.fn<LiveValidationGamingExecutor>(async () => { throw new Error('Generation must not run for denied sources.'); });
     const adapter = createLiveValidationGamingAdapter(execute, { sourceGuard });
     const observer: LivePrPreviewModuleObserver = { onSourceAcquisition: jest.fn(), onSourceValidation: jest.fn(),
-      onAnswerAuditStart: jest.fn(), onAudit: jest.fn(), onFailure: jest.fn() };
+      onFailure: jest.fn() };
     const validated = adapter.validateInput({ query: { contractVersion: 'gaming-hybrid-v2', game: 'Elden Ring', mode: 'build',
       class: 'Samurai', progressPoint: 'just left the tutorial', storagePolicy: 'transient_only', idempotencyKey: 'source-guard-adapter-001',
       question: "I'm a Samurai at the beginning of Elden Ring, just out of the tutorial. I want a Samurai blade build." }, candidateUrls: [startUrl] });

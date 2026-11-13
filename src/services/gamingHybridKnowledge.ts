@@ -22,11 +22,11 @@ import { resolveGamingHybridCandidateAttempt, resolveGamingHybridCurrentnessReas
   projectGamingHybridCandidateEvidence, normalizeGamingHybridCandidateUrl, gamingHybridRequiredGuideUrls, gamingHybridCitationTargets, projectGamingHybridSuppliedGuides, projectGamingGuideOutcome, gamingGuideSearchHint } from '@shared/gaming/gamingHybridPolicyCore.js';
 import { assessGamingClearEvidence } from '@shared/gaming/gamingClearEvidence.js';
 import { assessGamingClaimCorroboration } from '@shared/gaming/gamingClaimCorroboration.js';
-import { GAMING_CLEAR_APPROVED_ANSWER, hasBoundGamingClearAnswer, type GamingClearAnswerCarrier } from '@shared/gaming/gamingClearAnswerBinding.js';
+import { GAMING_PRESENTED_ANSWER, hasBoundGamingPresentedAnswer, type GamingPresentedAnswerCarrier } from '@shared/gaming/gamingPresentedAnswerBinding.js';
 import { gamingClearHash } from '@shared/gaming/gamingClearPolicy.js';
 import { gamingSourceAuthorityGameKeys } from '@shared/gaming/gamingSourceAuthority.js';
 import { DEFAULT_GAMING_STAGE_TIMEOUT_MS, DEFAULT_GAMING_GUIDE_STAGE_TIMEOUT_MS,
-  GAMING_GENERATION_FINAL_STAGE_RESERVE_MS, GAMING_GENERATION_ANSWER_AUDIT_RESERVE_MS,
+  GAMING_GENERATION_FINAL_STAGE_RESERVE_MS,
   GAMING_GENERATION_TERMINAL_HEADROOM_MS, GAMING_RUNTIME_BUDGET_SAFETY_BUFFER_MS } from '@shared/gaming/gamingGenerationBudgetCore.js';
 import { readGamingSourceAuthoritySnapshot } from '@core/db/repositories/gamingSourceRepository.js';
 import { resolveGamingFreshnessDisposition, selectGamingAdvisoryGameplayEvidence, isGamingAdvisoryCurrentnessOperation,
@@ -91,7 +91,7 @@ function backendGenerationReserveMs(mode: GamingHybridQuery['mode']): number | u
   const intakeMs = configuredStageMs ?? (mode === 'guide' ? DEFAULT_GAMING_GUIDE_STAGE_TIMEOUT_MS : DEFAULT_GAMING_STAGE_TIMEOUT_MS);
   const reasoningMs = Math.min(configuredStageMs ?? DEFAULT_GAMING_STAGE_TIMEOUT_MS, DEFAULT_GAMING_STAGE_TIMEOUT_MS);
   const pipelineMs = intakeMs + reasoningMs + GAMING_GENERATION_FINAL_STAGE_RESERVE_MS
-    + GAMING_GENERATION_ANSWER_AUDIT_RESERVE_MS + GAMING_GENERATION_TERMINAL_HEADROOM_MS + GAMING_RUNTIME_BUDGET_SAFETY_BUFFER_MS;
+    + GAMING_GENERATION_TERMINAL_HEADROOM_MS + GAMING_RUNTIME_BUDGET_SAFETY_BUFFER_MS;
   const execution = getGamingExecutionBudget(mode, null);
   if (execution.pipelineTimeoutMs < pipelineMs) return undefined;
   return pipelineMs + execution.outerHeadroomMs;
@@ -821,12 +821,10 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     if (v2) {
       const finalPipelineEvidenceAssessment = assessGamingClearEvidence({ ...workflow.pipeline, game: input.game }, usable,
         { actorScopeHash: workflow.actor, allowAdvisoryFreshness: advisoryAllowed, requireRequestCoverage: true });
-      const answerAssessment = (generated.data as typeof generated.data & GamingClearAnswerCarrier)[GAMING_CLEAR_APPROVED_ANSWER];
-      const allowedRefs = new Set((usable.evidence ?? []).flatMap(chunk => [chunk.sourceId, chunk.revisionId, chunk.recordId]));
-      const answerRefs = [...Object.values(answerAssessment?.dimensionScores ?? {}).flatMap(dimension => dimension.evidenceRefs),
-        ...(answerAssessment?.findings ?? []).flatMap(finding => finding.evidenceRefs)];
-      if (finalPipelineEvidenceAssessment.decision !== 'accept' || !hasBoundGamingClearAnswer(generated.data) || answerAssessment?.contextFingerprint !== finalPipelineEvidenceAssessment.contextFingerprint
-        || answerRefs.some(ref => !allowedRefs.has(ref)))
+      const binding = (generated.data as typeof generated.data & GamingPresentedAnswerCarrier)[GAMING_PRESENTED_ANSWER];
+      if (finalPipelineEvidenceAssessment.decision !== 'accept' || !hasBoundGamingPresentedAnswer(generated.data)
+        || binding?.contextFingerprint !== finalPipelineEvidenceAssessment.contextFingerprint
+        || binding.evidenceSubjectHash !== finalPipelineEvidenceAssessment.subjectHash)
         return { status: 503, body: { ...body, nextAction: 'stop', reason: 'INVALID_GENERATED_ANSWER' } };
       assertGamingHybridEvidenceMembership(usable, acceptedCandidates, { actorKey: context.actorKey, workflowId: workflow.id, now: deps.now() });
       if (gamingHybridCitationTargets(response).some(url => !usable.sources.some(source => source.url === url))

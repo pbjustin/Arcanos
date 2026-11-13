@@ -33,7 +33,7 @@ function safeCode(error) {
 /** Direct SDK fetch with one non-resettable paid budget, ordinary public TLS, and no broker. */
 export function createLiveValidationProvider({ target, identity, apiKey, now = Date.now,
   fetchImplementation = globalThis.fetch, getRemainingMs = () => null, observation = () => ({ moduleId: 'gaming', stage: 'generation' }),
-  expiresAtMs, responseModelIdentity } = {}) {
+  expiresAtMs, responseModelIdentity, generationOnly = false } = {}) {
   requireProvider(typeof apiKey === 'string' && apiKey.length >= 32 && apiKey.length <= 4_096
     && /^sk-[A-Za-z0-9_-]+$/u.test(apiKey)
     && !/^sk-(?:test|mock|example|placeholder|change[-_]?me|replace)(?:[-_]|$)/iu.test(apiKey),
@@ -62,9 +62,14 @@ export function createLiveValidationProvider({ target, identity, apiKey, now = D
     workflow = { caseId, generationCompleted: 0, auditCompleted: 0, lastContentStage: null };
   }
   function endWorkflow() {
-    if (workflow?.caseId === 'gaming-guide-positive' && !(workflow.generationCompleted > 0
-      && workflow.auditCompleted > 0 && workflow.lastContentStage === 'answer_audit')) {
-      close(); throw new LiveValidationProviderError('LIVE_VALIDATION_AUDIT_REQUIRED');
+    if (workflow?.caseId === 'gaming-guide-positive') {
+      if (generationOnly && workflow.generationCompleted === 0) {
+        close(); throw new LiveValidationProviderError('LIVE_VALIDATION_GENERATION_REQUIRED');
+      }
+      if (!generationOnly && !(workflow.generationCompleted > 0
+        && workflow.auditCompleted > 0 && workflow.lastContentStage === 'answer_audit')) {
+        close(); throw new LiveValidationProviderError('LIVE_VALIDATION_AUDIT_REQUIRED');
+      }
     }
     budget.endWorkflow(); workflow = undefined;
   }
@@ -133,6 +138,7 @@ export function createLiveValidationProvider({ target, identity, apiKey, now = D
       const observed = observation();
       requireProvider(stage === 'metadata' || observed?.moduleId === 'gaming' && STAGES.has(observed.stage), 'LIVE_VALIDATION_STAGE_INVALID');
       stage ??= observed?.stage;
+      requireProvider(!generationOnly || stage !== 'answer_audit', 'LIVE_VALIDATION_AUDIT_FORBIDDEN');
       if (stage !== 'metadata') {
         requireProvider(workflow?.caseId === 'gaming-guide-positive' || workflow?.caseId === 'gaming-guide-negative',
           'LIVE_VALIDATION_WORKFLOW_REQUIRED');

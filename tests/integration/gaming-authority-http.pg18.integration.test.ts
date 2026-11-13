@@ -87,7 +87,11 @@ databaseTest('compiled authenticated MCP, real SQL queue/worker, protected loopb
   expect(groundedRequests.every((request: { selectedEvidenceReceived?: boolean }) => request.selectedEvidenceReceived === true)).toBe(true);
   expect(receipt.provider).toBe('synthetic loopback HTTP; real SDK/adapter/Trinity');
   expect(receipt.providerRequests).toHaveLength(receipt.generated + receipt.audited);
-  expect(receipt.audited).toBe(2);
+  expect(receipt.audited).toBe(0);
+  expect(receipt.checks).toContain('presentation-only generation did not dispatch an answer audit');
+  expect(receipt.checks).toContain('presentation policy reached both final provider requests');
+  expect(receipt.providerRequests.filter((request: { lane: string; presentationApplied?: boolean }) =>
+    request.lane === 'gaming-presentation-final' && request.presentationApplied === true)).toHaveLength(2);
   console.info('GAMING_HTTP_TEST_RECEIPT ' + JSON.stringify({ sourceIdentity: receipt.sourceIdentity,
     checks: receipt.checks.length, freshChecks: receipt.freshProcess.checks.length,
     generated: receipt.generated, audited: receipt.audited, providerRequests: receipt.providerRequests }));

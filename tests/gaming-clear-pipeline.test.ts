@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { createGamingClearAssessment } from '../src/shared/gaming/gamingClearPolicy.js';
 import { GAMING_SOURCE_POLICY_VERSION, GAMING_FRESHNESS_DEFAULTS } from '../src/shared/gaming/gamingFreshnessCore.js';
 import type { GamingStoredKnowledgeContext } from '../src/shared/gaming/gamingStoredEvidenceCore.js';
 import { GAMING_UNVERIFIED_GUIDE_WARNING } from '../src/shared/gaming/gamingFreshnessDisposition.js';
 import { hasBoundGamingClearAnswer } from '../src/shared/gaming/gamingClearAnswerBinding.js';
+import { hasBoundGamingPresentedAnswer } from '../src/shared/gaming/gamingPresentedAnswerBinding.js';
 const runTrinityWritingPipeline = jest.fn();
 const createSingleChatCompletion = jest.fn();
 jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({ runTrinityWritingPipeline }));
@@ -15,7 +15,6 @@ jest.unstable_mockModule('@services/openai/credentialProvider.js', () => ({
 jest.unstable_mockModule('@services/gamingSourceIngestion.js', () => ({ buildStoredGamingKnowledgeContext: jest.fn() }));
 const { runGameplayPipeline } = await import('../src/services/gamingPipeline.js');
 const { ResponseComposerAgent } = await import('../src/services/gamingAgents.js');
-const { logger } = await import('../src/platform/logging/structuredLogging.js');
 
 const text = 'Lantern Vale guide: after restoring the Tide Hall pump, turn the west valve to open the return route. The valve is beside the pump.';
 const answer = '**Open the return route.**\n\nTurn the west valve beside the pump. [Source 1]';
@@ -25,41 +24,37 @@ const knowledge = () => ({ context: `[Source 1]\n${text}`, sourceKnown: true,
   sources: [{ sourceId: 'source-1', url: 'https://example.com/guide', sourceType: 'guide', game: 'Lantern Vale', fetchedAt: '2026-09-09T12:00:00.000Z', snippet: text }],
   evidence: [{ sourceId: 'source-1', revisionId: 'revision-1', recordId: 'chunk-1', recordType: 'guide' as const,
     publicUrl: 'https://example.com/guide', text, lexicalScore: 1, combinedScore: 1, provenance: { fetchedAt: '2026-09-09T12:00:00.000Z' } }] });
-const dimensions = () => Object.fromEntries(['clarity', 'leverage', 'efficiency', 'alignment', 'resilience'].map(name => [name,
-  { status: 'evaluated', score: 4.5, reasonCodes: ['SUPPORTED'], evidenceRefs: ['chunk-1'], unresolvedFacts: [] }
-])) as Parameters<typeof createGamingClearAssessment>[0]['dimensions'];
-let findings: Array<{ code: string; severity: string; evidenceRefs: string[] }> = [];
-let tamper = false;
+const presentationPolicy = 'gaming-clear-presentation/v1' as const;
+const completedProvider = { provider: { finishReason: 'stop', responseStatus: 'completed' } };
+function presented(result: string) {
+  return { result, gamingPresentationPolicy: presentationPolicy, fallbackFlag: false,
+    dryRun: false, activeModel: 'synthetic', meta: completedProvider };
+}
 let candidateAnswer = answer;
 const run = (overrides = {}, evidence = knowledge()) => runGameplayPipeline({ ...input, ...overrides }, { knowledge: evidence, current: true, qualification: '' });
 
-describe('Gaming CLEAR real pipeline delivery decisions', () => {
+describe('Gaming CLEAR presentation and independent pipeline delivery checks', () => {
   afterEach(() => jest.useRealTimers());
   beforeEach(() => {
-    jest.clearAllMocks(); findings = []; tamper = false; candidateAnswer = answer;
-    createSingleChatCompletion.mockImplementation(async () => ({ choices: [{ finish_reason: 'stop', message: {
-      content: JSON.stringify({ dimensions: dimensions(), findings }) } }], usage: { prompt_tokens: 500, completion_tokens: 150, total_tokens: 650 } }));
-    runTrinityWritingPipeline.mockImplementation(async (request: {
-      context: { runtimeBudget: never; runOptions: { gamingClearAnswerAudit: (text: string, budget: never) => Promise<{ assessment: unknown }> } }
-    }) => {
-      const audit = await request.context.runOptions.gamingClearAnswerAudit(candidateAnswer, request.context.runtimeBudget);
-      return { result: tamper ? `${candidateAnswer}\nInvented mechanic.` : candidateAnswer, gamingClearAudit: audit.assessment,
-        fallbackFlag: false, dryRun: false, activeModel: 'synthetic', meta: { provider: { finishReason: 'stop', responseStatus: 'completed' } } };
-    });
+    jest.clearAllMocks();
+    candidateAnswer = answer;
+    createSingleChatCompletion.mockImplementation(() => { throw new Error('The retired Gaming answer audit was dispatched.'); });
+    runTrinityWritingPipeline.mockImplementation(() => presented(candidateAnswer));
   });
 
-  it('accepts supported prose, preserves exact reviewed citations through composer, and hides scores', async () => {
+  it('preserves exact presented citations through the composer without a legacy approval marker', async () => {
     const result = await run();
     expect(result.data.response).toBe(answer);
     expect(result.data.fallbackReason).toBeUndefined();
-    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
-    expect(createSingleChatCompletion.mock.calls[0][1]).toMatchObject({ model: 'gpt-6-luna' });
+    expect(createSingleChatCompletion).not.toHaveBeenCalled();
+    expect(hasBoundGamingPresentedAnswer(result.data)).toBe(true);
+    expect(hasBoundGamingClearAnswer(result.data)).toBe(false);
     expect(JSON.stringify(result)).not.toContain('dimensionScores');
     const composed = ResponseComposerAgent.compose({ intent: { ...input, mode: 'build' } as never, backendEnvelope: result });
     expect(composed.data.response).toBe(answer);
   });
 
-  it.each(['EU', 'US', undefined])('retains region %s through the final applicability gate and semantic review', async region => {
+  it.each(['EU', 'US', undefined])('retains region %s through the independent applicability gate', async region => {
     const evidence: GamingStoredKnowledgeContext = knowledge();
     evidence.sources[0].freshnessMetadata = { id: 'source-1', game: input.game, url: evidence.sources[0].url,
       regions: ['EU'], fetchedAt: evidence.sources[0].fetchedAt, verifiedAt: evidence.sources[0].fetchedAt,
@@ -69,9 +64,10 @@ describe('Gaming CLEAR real pipeline delivery decisions', () => {
     if (region === 'EU') {
       expect(result.data.response).toBe(answer);
       expect(result.data.fallbackReason).toBeUndefined();
-      const params = createSingleChatCompletion.mock.calls[0][1] as { messages: Array<{ content: string }> };
-      expect(JSON.parse(params.messages[1].content)).toMatchObject({ playerContext: { region: 'EU' },
-        applicability: [{ regions: ['EU'] }] });
+      expect(createSingleChatCompletion).not.toHaveBeenCalled();
+      expect(runTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
+        context: expect.objectContaining({ runOptions: expect.objectContaining({ gamingPresentationPolicy: presentationPolicy }) })
+      }));
     } else {
       expect(result.data.fallbackReason).toBe('INTAKE_RETRIEVAL_FAILED');
       expect(runTrinityWritingPipeline).not.toHaveBeenCalled();
@@ -79,7 +75,7 @@ describe('Gaming CLEAR real pipeline delivery decisions', () => {
     }
   });
 
-  it('allows harmless acquired regional metadata and retains it in semantic review', async () => {
+  it('allows harmless acquired regional metadata without expanding applicability', async () => {
     const evidence: GamingStoredKnowledgeContext = knowledge();
     evidence.sources[0].freshnessMetadata = { id: 'source-1', game: input.game, url: evidence.sources[0].url,
       regions: ['EU'], fetchedAt: evidence.sources[0].fetchedAt, verifiedAt: evidence.sources[0].fetchedAt,
@@ -88,51 +84,52 @@ describe('Gaming CLEAR real pipeline delivery decisions', () => {
     expect(result.data.response).toBe(answer);
     expect(result.data.fallbackReason).toBeUndefined();
     expect(runTrinityWritingPipeline).toHaveBeenCalledTimes(1);
-    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
-    const params = createSingleChatCompletion.mock.calls[0][1] as { messages: Array<{ content: string }> };
-    expect(JSON.parse(params.messages[1].content)).toMatchObject({ applicability: [{ regions: ['EU'] }] });
+    expect(createSingleChatCompletion).not.toHaveBeenCalled();
   });
 
-  it('blocks a high-scoring material defect even with auditEnabled false and no retry/repair', async () => {
-    const auditTelemetry = jest.spyOn(logger, 'info');
-    findings = [{ code: 'UNSUPPORTED_MECHANIC', severity: 'blocking', evidenceRefs: ['chunk-1'] }];
+  it('delivers awkward wording even if a historical result includes a failing quality assessment', async () => {
+    candidateAnswer = 'That west valve beside the pump, turn it for the return route. [Source 1]';
+    runTrinityWritingPipeline.mockImplementationOnce(() => ({
+      ...presented(candidateAnswer),
+      gamingClearAudit: { decision: 'reject', findings: [{ code: 'PROFILE_FLOOR_NOT_MET', severity: 'blocking' }] }
+    }));
     const result = await run();
-    expect(result.data.response).not.toContain('west valve');
-    expect(result.data.fallbackReason).toBe('GAMING_ANSWER_REJECTED');
-    expect(result.data.grounding?.groundedInSuppliedEvidence).toBe(false);
+    expect(result.data.response).toBe(candidateAnswer);
+    expect(hasBoundGamingPresentedAnswer(result.data)).toBe(true);
     expect(hasBoundGamingClearAnswer(result.data)).toBe(false);
     expect(runTrinityWritingPipeline).toHaveBeenCalledTimes(1);
-    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
-    expect(createSingleChatCompletion.mock.calls[0][1]).toMatchObject({ maxRetries: 0 });
-    expect(auditTelemetry.mock.calls).toContainEqual(['gaming.clear.answer.completed', expect.objectContaining({
-      decision: 'reject', modelCallsUsed: 1, modelCallLimit: 1, repairAttempts: 0
-    })]);
+    expect(createSingleChatCompletion).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain('PROFILE_FLOOR_NOT_MET');
   });
 
-  it('uses honest recovery on unavailable audit while provider completion remains independently recorded', async () => {
-    const auditTelemetry = jest.spyOn(logger, 'info');
-    createSingleChatCompletion.mockRejectedValue(Object.assign(new Error('synthetic timeout'), { name: 'AbortError' }));
+  it('withholds completed text lacking server-owned presentation provenance', async () => {
+    runTrinityWritingPipeline.mockResolvedValueOnce({ result: answer, meta: completedProvider });
     const result = await run();
-    expect(result.data.response).toContain('couldn’t complete a reliable answer');
-    expect(result.data.fallbackReason).toBe('GAMING_ANSWER_AUDIT_UNAVAILABLE');
-    expect(hasBoundGamingClearAnswer(result.data)).toBe(false);
+    expect(result.data.response).not.toContain('Turn the west valve');
+    expect(result.data.fallbackReason).toBeDefined();
+    expect(hasBoundGamingPresentedAnswer(result.data)).toBe(false);
     expect(runTrinityWritingPipeline).toHaveBeenCalledTimes(1);
-    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
-    expect(createSingleChatCompletion.mock.calls[0][1]).toMatchObject({ maxRetries: 0 });
-    expect(auditTelemetry.mock.calls).toContainEqual(['gaming.clear.answer.unavailable', expect.objectContaining({
-      reasonCodes: ['AUDIT_TIMEOUT'], modelCallsUsed: 1, modelCallLimit: 1, repairAttempts: 0
-    })]);
+    expect(createSingleChatCompletion).not.toHaveBeenCalled();
   });
 
-  it('invalidates a pass when returned substantive text changes after the callback', async () => {
-    tamper = true;
+  it.each(['[Other guide](mailto:other@example.com)', '[Other guide][ref]\n\n[ref]: mailto:other@example.com'])(
+    'withholds a non-source Markdown link even when the answer also cites a selected source (%s)', async link => {
+    candidateAnswer = `${answer} ${link}`;
     const result = await run();
-    expect(result.data.response).not.toContain('Invented mechanic');
-    expect(result.data.fallbackReason).toBe('GAMING_ANSWER_REJECTED');
-    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+    expect(result.data.fallbackReason).toBeDefined();
+    expect(hasBoundGamingPresentedAnswer(result.data)).toBe(false);
+    expect(result.data.response).not.toContain('mailto:');
   });
 
-  it('fails evidence identity before generation and never lets an answer score override it', async () => {
+  it('invalidates presentation attestation if the exact candidate changes after integrity checks', async () => {
+    const result = await run();
+    expect(hasBoundGamingPresentedAnswer(result.data)).toBe(true);
+    result.data.response += '\nInvented mechanic.';
+    expect(hasBoundGamingPresentedAnswer(result.data)).toBe(false);
+    expect(createSingleChatCompletion).not.toHaveBeenCalled();
+  });
+
+  it('fails evidence identity before generation', async () => {
     const evidence = knowledge(); evidence.sources[0].game = 'Other Game';
     const result = await run({}, evidence);
     expect(result.data.fallbackReason).toBe('INTAKE_RETRIEVAL_FAILED');
@@ -140,14 +137,14 @@ describe('Gaming CLEAR real pipeline delivery decisions', () => {
     expect(createSingleChatCompletion).not.toHaveBeenCalled();
   });
 
-  it('clarifies missing progress without auditing a fixed question or invoking a provider', async () => {
+  it('clarifies missing progress without invoking a provider', async () => {
     const result = await run({ prompt: 'What next in Lantern Vale?', currentArea: undefined, lastCompletedObjective: undefined });
     expect(result.data.response).toContain('Where are you now');
     expect(runTrinityWritingPipeline).not.toHaveBeenCalled();
     expect(createSingleChatCompletion).not.toHaveBeenCalled();
   });
 
-  it('keeps provider failure separate and never attempts an audit without a candidate answer', async () => {
+  it('keeps provider failure separate from completed presentation', async () => {
     runTrinityWritingPipeline.mockRejectedValue(new Error('synthetic generation failure'));
     const result = await run();
     expect(result.data.fallbackReason).toBe('GAMING_PROVIDER_ERROR');
@@ -167,26 +164,27 @@ describe('Gaming CLEAR real pipeline delivery decisions', () => {
     expect(result.data.fallbackReason).toBeUndefined();
     expect(result.data.response).toBe(candidateAnswer);
     expect(runTrinityWritingPipeline).toHaveBeenCalledTimes(1);
-    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
-    expect(hasBoundGamingClearAnswer(result.data)).toBe(true);
+    expect(createSingleChatCompletion).not.toHaveBeenCalled();
+    expect(hasBoundGamingPresentedAnswer(result.data)).toBe(true);
   });
 
-  it('generates once from internally authorized advisory gameplay and binds the visible warning to the audited answer', async () => {
+  it('generates once from internally authorized advisory gameplay and binds the visible warning to the presented answer', async () => {
     const result = await runGameplayPipeline({ ...input, prompt: 'Which return route strategy should I use?', mode: 'build' },
       { knowledge: knowledge(), current: false, advisoryFreshnessAllowed: true, qualification: GAMING_UNVERIFIED_GUIDE_WARNING });
     expect(result.data.response).toBe(`${GAMING_UNVERIFIED_GUIDE_WARNING}\n\n${answer}`);
     expect(result.data.fallbackReason).toBeUndefined();
     expect(runTrinityWritingPipeline).toHaveBeenCalledTimes(1);
-    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
-    const params = createSingleChatCompletion.mock.calls[0][1] as { messages: Array<{ content: string }> };
-    expect(JSON.parse(params.messages[1].content)).toMatchObject({ answer: result.data.response, verifiedEvidenceGates: { freshness: 'unknown' } });
+    expect(createSingleChatCompletion).not.toHaveBeenCalled();
+    expect(hasBoundGamingPresentedAnswer(result.data)).toBe(true);
+    expect(hasBoundGamingPresentedAnswer(Object.assign(result.data, { response: answer }))).toBe(false);
   });
 
   it('rejects fabricated current compatibility even when the gameplay recommendation has adequate coverage', async () => {
     candidateAnswer = `${answer}\n\nThis strategy is compatible with the latest patch.`;
     const result = await runGameplayPipeline({ ...input, prompt: 'Which return route strategy should I use?', mode: 'build' },
       { knowledge: knowledge(), current: false, advisoryFreshnessAllowed: true, qualification: GAMING_UNVERIFIED_GUIDE_WARNING });
-    expect(result.data.fallbackReason).toBe('CURRENT_EVIDENCE_UNAVAILABLE');
+    expect(result.data.fallbackReason).toBeDefined();
+    expect(hasBoundGamingPresentedAnswer(result.data)).toBe(false);
     expect(result.data.response).not.toContain('compatible with the latest patch');
     expect(runTrinityWritingPipeline).toHaveBeenCalledTimes(1);
     expect(createSingleChatCompletion).not.toHaveBeenCalled();
@@ -209,7 +207,7 @@ describe('Gaming CLEAR real pipeline delivery decisions', () => {
     expect(createSingleChatCompletion).not.toHaveBeenCalled();
   });
 
-  it('withholds an otherwise approved answer if its verified currentness expires during the audit', async () => {
+  it('withholds an otherwise eligible answer if verified currentness expires during generation', async () => {
     jest.useFakeTimers();
     const now = new Date('2026-09-09T12:00:00.000Z');
     jest.setSystemTime(now);
@@ -226,13 +224,13 @@ describe('Gaming CLEAR real pipeline delivery decisions', () => {
         authority: 'official', category: 'official_updates', currentness: 'current_index', currentPatch: '1.0' } });
     evidence.evidence!.push({ ...evidence.evidence![0], sourceId: 'index-1', revisionId: 'index-revision',
       recordId: 'index-1:verification', publicUrl: 'https://example.com/current', text: 'Current patch: 1.0.' });
-    createSingleChatCompletion.mockImplementation(async () => {
+    runTrinityWritingPipeline.mockImplementation(() => {
       jest.setSystemTime(new Date(now.getTime() + 10));
-      return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ dimensions: dimensions(), findings: [] }) } }] };
+      return presented(candidateAnswer);
     });
     const result = await runGameplayPipeline({ ...input, prompt: 'On the current patch, how do I open the return route?' },
       { knowledge: evidence, current: true, qualification: '' });
-    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+    expect(createSingleChatCompletion).not.toHaveBeenCalled();
     expect(result.data.fallbackReason).toBe('CURRENT_EVIDENCE_UNAVAILABLE');
     expect(result.data.response).not.toContain('west valve');
   });

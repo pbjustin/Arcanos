@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from '@jest/globals';
 import {
-  GAMING_GENERATION_ANSWER_AUDIT_RESERVE_MS, GAMING_GENERATION_FINAL_STAGE_RESERVE_MS,
+  GAMING_GENERATION_FINAL_STAGE_RESERVE_MS,
   GAMING_GENERATION_TERMINAL_HEADROOM_MS, getGamingConfiguredStageTimeoutMs,
   getGamingPipelineTimeoutMs, resolveGamingGenerationBudget
 } from '../src/services/gamingConfig.js';
@@ -17,13 +17,13 @@ afterEach(() => {
 });
 
 describe('Gaming reusable generation allocation', () => {
-  it.each(['guide', 'build', 'meta'] as const)('uses remaining time for %s reasoning and reserves final/audit/terminal time', mode => {
+  it.each(['guide', 'build', 'meta'] as const)('uses remaining time for %s reasoning and reserves final/terminal time', mode => {
     const budget = resolveGamingGenerationBudget({ mode, stage: 'reasoning', pipelineTimeoutMs: 35_000,
       pipelineElapsedMs: 5_000, runtimeRemainingMs: 29_500 });
-    expect(budget.effectiveStageTimeoutMs).toBe(20_500);
+    expect(budget.effectiveStageTimeoutMs).toBe(23_500);
     expect(budget.effectiveStageTimeoutMs).toBeGreaterThan(12_000);
     expect(budget.downstreamReserveMs).toBe(GAMING_GENERATION_FINAL_STAGE_RESERVE_MS
-      + GAMING_GENERATION_ANSWER_AUDIT_RESERVE_MS + GAMING_GENERATION_TERMINAL_HEADROOM_MS);
+      + GAMING_GENERATION_TERMINAL_HEADROOM_MS);
     expect(budget.effectiveStageTimeoutMs).toBeLessThan(budget.generationRemainingMs);
   });
 
@@ -32,34 +32,34 @@ describe('Gaming reusable generation allocation', () => {
       pipelineElapsedMs: 5_000, configuredStageTimeoutMs: 2_000 }).effectiveStageTimeoutMs).toBe(2_000);
   });
 
-  it('retains final, audit and terminal time after pending reflection within a shorter watchdog', () => {
+  it('retains final and terminal time after pending reflection within a shorter watchdog', () => {
     const budget = resolveGamingGenerationBudget({ mode: 'build', stage: 'reasoning', pipelineTimeoutMs: 35_000,
       pipelineElapsedMs: 5_000, runtimeRemainingMs: 25_000, additionalDownstreamReserveMs: 7_000 });
-    expect(budget.downstreamReserveMs).toBe(16_000);
-    expect(budget.effectiveStageTimeoutMs).toBe(9_000);
+    expect(budget.downstreamReserveMs).toBe(13_000);
+    expect(budget.effectiveStageTimeoutMs).toBe(12_000);
   });
 
   it('clamps even an explicit large cap to a shorter parent request deadline', () => {
     const budget = resolveGamingGenerationBudget({ mode: 'build', stage: 'reasoning', pipelineTimeoutMs: 35_000,
       requestRemainingMs: 12_000, configuredStageTimeoutMs: 50_000 });
     expect(budget.generationRemainingMs).toBe(11_000);
-    expect(budget.effectiveStageTimeoutMs).toBe(2_000);
+    expect(budget.effectiveStageTimeoutMs).toBe(5_000);
   });
 
   it('does not dispatch a stage when required headroom exhausts the usable deadline', () => {
     expect(resolveGamingGenerationBudget({ mode: 'build', stage: 'reasoning', pipelineTimeoutMs: 35_000,
-      requestRemainingMs: 9_000 }).effectiveStageTimeoutMs).toBe(0);
+      requestRemainingMs: 7_000 }).effectiveStageTimeoutMs).toBe(0);
   });
 
   it.each([Number.POSITIVE_INFINITY, Number.NaN, 0, -1])('does not turn invalid budget %s into an unbounded stage', pipelineTimeoutMs => {
     expect(resolveGamingGenerationBudget({ mode: 'build', stage: 'reasoning', pipelineTimeoutMs }).effectiveStageTimeoutMs).toBe(0);
   });
 
-  it('reserves audit and terminal time after the final model stage', () => {
+  it('reserves terminal time after the final model stage', () => {
     const budget = resolveGamingGenerationBudget({ mode: 'guide', stage: 'final', pipelineTimeoutMs: 35_000,
       pipelineElapsedMs: 25_500 });
-    expect(budget.effectiveStageTimeoutMs).toBe(5_000);
-    expect(budget.downstreamReserveMs).toBe(4_000);
+    expect(budget.effectiveStageTimeoutMs).toBe(8_000);
+    expect(budget.downstreamReserveMs).toBe(1_000);
   });
 
   it('uses mode then generic override precedence and clamps pipeline limits to parent headroom', () => {

@@ -299,3 +299,31 @@ test('saved-evidence sanitization refuses ambiguous identity and oversized sourc
     assert.throws(() => sanitizeLivePreviewEvidence(evidence), /LIVE_PREVIEW_EVIDENCE_INVALID/u);
   }
 });
+
+test('presentation v2 accepts structurally bound delivery without a scored audit', () => {
+  const input = inputFor('useful_grounded_guide');
+  input.acceptanceProfile = 'grounded-presented-answer-v2';
+  input.presentation = { policyVersion: 'gaming-clear-presentation/v1', boundToFinalAnswer: true };
+  delete input.audit;
+  input.stages.answer_audit = 'not_run';
+  input.usage = usageFor('model_timeout');
+  const evidence = sanitizeLivePreviewEvidence(createLivePreviewEvidence(identity, input));
+  assert.equal(evidence.schemaVersion, 2);
+  assert.deepEqual(evidence.presentation, input.presentation);
+  assert.equal(Object.hasOwn(evidence, 'audit'), false);
+  assert.equal(verifyLivePreviewEvidence(evidence, identity).status, 'PASS');
+  assert.equal(verifyLivePreviewEvidence({ ...evidence, presentation: null }, identity).status, 'FAIL');
+  assert.equal(verifyLivePreviewEvidence({ ...evidence, audit: inputFor('useful_grounded_guide').audit }, identity).status, 'FAIL');
+  assert.equal(verifyLivePreviewEvidence({ ...evidence, usage: usageFor('useful_grounded_guide') }, identity).status, 'FAIL');
+
+  const syntheticPrivateValue = 'private-answer-checklist';
+  const unsafePresentation = { ...input.presentation, rawAnswer: syntheticPrivateValue, scores: syntheticPrivateValue, contextFingerprint: syntheticPrivateValue };
+  assert.deepEqual(sanitizeLivePreviewEvidence({ ...evidence, presentation: unsafePresentation }).presentation, input.presentation);
+  assert.throws(() => sanitizeLivePreviewEvidence({ ...evidence, presentation: { ...unsafePresentation, policyVersion: syntheticPrivateValue } }),
+    { message: 'LIVE_PREVIEW_EVIDENCE_INVALID' });
+
+  const historical = LIVE_PREVIEW_CASE_MANIFEST.map(entry => makeEvidence(entry.caseId));
+  assert.equal(verifyLivePreviewSuite(historical, identity).status, 'PASS');
+  historical[0] = evidence;
+  assert.equal(verifyLivePreviewSuite(historical, identity).status, 'FAIL');
+});

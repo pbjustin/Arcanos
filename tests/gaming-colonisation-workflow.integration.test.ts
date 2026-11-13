@@ -6,7 +6,8 @@ import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
-import { GAMING_CLEAR_DIMENSIONS } from '../src/shared/gaming/gamingClearPolicy.js';
+import { GAMING_CLEAR_PRESENTATION_POLICY_VERSION } from '../src/shared/gaming/gamingPromptCore.js';
+import { inspectGamingFinalRequest } from './testUtils/gamingPresentationFixtures.js';
 import type { GamingHybridResponse } from '../src/shared/gaming/gamingHybridContract.js';
 
 const http = jest.fn();
@@ -14,7 +15,7 @@ const provider = jest.fn();
 const forbiddenWrite = jest.fn(async () => { throw new Error('Transient guides cannot persist data.'); });
 const forbiddenDatabase = jest.fn(async () => { throw new Error('Database access is forbidden in this fixture.'); });
 const stages: string[] = [];
-const audits: any[] = [];
+const finalRequests: ReturnType<typeof inspectGamingFinalRequest>[] = [];
 let html = '';
 let httpStatus = 200;
 let clock = Date.parse('2026-10-30T03:00:00Z');
@@ -81,7 +82,7 @@ function providerText(payload: any): string {
 }
 
 beforeEach(() => {
-  jest.clearAllMocks(); stages.length = 0; audits.length = 0; httpStatus = 200;
+  jest.clearAllMocks(); stages.length = 0; finalRequests.length = 0; httpStatus = 200;
   resetSafetyRuntimeStateForTests(); resetTrinitySelfHealingStateForTests();
   previousEnvironment = Object.fromEntries(Object.keys(environment).map(key => [key, process.env[key]]));
   Object.assign(process.env, environment);
@@ -110,24 +111,15 @@ beforeEach(() => {
       text = JSON.stringify({ reasoning_steps: [], assumptions: [], constraints: [], tradeoffs: [], alternatives_considered: [],
         chosen_path_justification: '', response_mode: 'answer', achievable_subtasks: ['explain the acquired colonisation guidance'],
         blocked_subtasks: [], user_visible_caveats: [], claim_tags: [], final_answer: answer });
-    } else if (payload.text?.format?.type === 'json_object') {
-      stages.push('answer_audit');
-      const data = payload.input.flatMap((message: any) => message.content ?? []).map((part: any) => part.text)
-        .find((value: unknown) => typeof value === 'string' && value.startsWith('{"answer":'));
-      const audited = JSON.parse(data); audits.push(audited);
-      expect(audited.question).toBe(question);
-      for (const sentence of sentences) {
-        expect(audited.answer).toContain(sentence);
-        expect(audited.evidence.some((chunk: any) => chunk.text.includes(sentence))).toBe(true);
-      }
-      text = JSON.stringify({ dimensions: Object.fromEntries(GAMING_CLEAR_DIMENSIONS.map(name => [name, {
-        status: 'evaluated', score: 4.5, reasonCodes: ['SUPPORTED_SYNTHETIC_PASSAGE'],
-        evidenceRefs: audited.evidence.map((chunk: any) => chunk.chunkId).slice(0, 8), unresolvedFacts: []
-      }])), findings: [] });
     } else if (stages.length === 0) {
       stages.push('intake'); expect(input).toContain(question);
       text = 'Task: explain system colonisation using Source 1 and retain source qualifications.';
     } else {
+      const finalRequest = inspectGamingFinalRequest(payload, GAMING_CLEAR_PRESENTATION_POLICY_VERSION);
+      finalRequests.push(finalRequest);
+      for (const sentence of sentences) {
+        expect(finalRequest.evidence.some(chunk => chunk.text.includes(sentence))).toBe(true);
+      }
       stages.push('final'); expect(input).toContain(question);
       for (const sentence of sentences) expect(input).toContain(sentence);
       text = answer;
@@ -229,9 +221,8 @@ describe('synthetic system colonisation through acquired evidence and real Trini
       expect(final.selectedEvidenceIds!.length).toBeGreaterThan(0);
       expect(final.answer!.sources).toEqual([expect.objectContaining({ url: sourceUrl, sourceId: final.selectedCandidateIds![0] })]);
       expect(final.answer!.response).toBe(`${sentences.join(' ')} [Source 1]`);
-      expect(stages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
-      expect(audits[0].evidence.every((chunk: any) => final.selectedCandidateIds!.includes(chunk.sourceId)
-        && final.selectedEvidenceIds!.includes(chunk.chunkId))).toBe(true);
+      expect(stages).toEqual(['intake', 'reasoning', 'final']);
+      expect(finalRequests[0].evidence.every(chunk => final.answer!.sources.some(source => source.url === chunk.url))).toBe(true);
       const evaluation = (logger.info as jest.Mock).mock.calls.find(call => call[0] === 'gaming.source.evaluation')![1];
       expect(evaluation).toMatchObject({ outcome: 'selected', stages: {
         acquisition: { status: 'passed' }, extraction: { status: 'passed' }, identity: { status: 'passed' },
@@ -246,7 +237,7 @@ describe('synthetic system colonisation through acquired evidence and real Trini
       expect(write.isError).toBe(true);
       expect(write.content).toEqual([{ type: 'text', text: 'GAMING_PERMISSION_DENIED' }]);
       expect(methods).toEqual(expect.arrayContaining(['initialize', 'notifications/initialized', 'tools/list', 'tools/call']));
-      expect(http).toHaveBeenCalledTimes(1); expect(provider).toHaveBeenCalledTimes(4);
+      expect(http).toHaveBeenCalledTimes(1); expect(provider).toHaveBeenCalledTimes(3);
     } finally {
       try { await client.close(); }
       finally {
@@ -272,12 +263,11 @@ describe('synthetic system colonisation through acquired evidence and real Trini
     expect(result.body.answer!.sources).toEqual([expect.objectContaining({ url: sourceUrl, sourceId: result.body.selectedCandidateIds![0] })]);
     expect(result.body.answer!.response).toContain('[Source 1]');
     for (const sentence of sentences) expect(result.body.answer!.response).toContain(sentence);
-    expect(stages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
-    expect(audits[0].evidence.every((chunk: any) => result.body.selectedCandidateIds!.includes(chunk.sourceId)
-      && result.body.selectedEvidenceIds!.includes(chunk.chunkId))).toBe(true);
-    expect(http).toHaveBeenCalledTimes(1); expect(provider).toHaveBeenCalledTimes(4);
+    expect(stages).toEqual(['intake', 'reasoning', 'final']);
+    expect(finalRequests[0].evidence.every(chunk => result.body.answer!.sources.some(source => source.url === chunk.url))).toBe(true);
+    expect(http).toHaveBeenCalledTimes(1); expect(provider).toHaveBeenCalledTimes(3);
     expect(await run.submit(initial.body)).toEqual(result);
-    expect(http).toHaveBeenCalledTimes(1); expect(provider).toHaveBeenCalledTimes(4);
+    expect(http).toHaveBeenCalledTimes(1); expect(provider).toHaveBeenCalledTimes(3);
   });
 
   it.each([

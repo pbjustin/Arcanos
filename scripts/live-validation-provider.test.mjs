@@ -49,6 +49,25 @@ test('SDK-compatible transport binds the credential only to fixed public routes 
   for (const secret of [API_KEY, body.input, 'must-not-reach-provider', 'sdk-placeholder']) assert.equal(artifact.includes(secret), false);
 });
 
+test('presentation profile completes generation and denies audit requests before reserving spend', async context => {
+  const success = fixture(context, { generationOnly: true });
+  success.provider.beginWorkflow('gaming-guide-positive');
+  await invoke(success.provider);
+  success.provider.endWorkflow();
+  assert.equal(success.provider.snapshot().usage.auditCalls, 0);
+  assert.equal(success.provider.snapshot().closed, false);
+
+  const unexpected = fixture(context, { generationOnly: true });
+  unexpected.provider.beginWorkflow('gaming-guide-positive');
+  await invoke(unexpected.provider);
+  unexpected.observation.stage = 'answer_audit';
+  await assert.rejects(invoke(unexpected.provider), code('LIVE_VALIDATION_AUDIT_FORBIDDEN'));
+  assert.equal(unexpected.calls.length, 1);
+  assert.equal(unexpected.provider.snapshot().usage.requests, 1);
+  assert.equal(unexpected.provider.snapshot().usage.auditCalls, 0);
+  assert.equal(unexpected.provider.snapshot().closed, true);
+});
+
 test('a reserved audit transport can complete with an incomplete Responses result', async context => {
   let requests = 0;
   const f = fixture(context, { fetchImplementation: async () => {

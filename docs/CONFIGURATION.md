@@ -467,7 +467,7 @@ boundaries. Values in `.env.example` are examples, not deployed Railway values.
 | Structured reasoning | `gpt-6.1-sol` | `getTrinityReasoningModel()`, compatibility `getGPT5Model()` |
 | Normal authoritative final | Configured service fine-tune; `gpt-6.1-sol` in explicitly enabled migration mode | `getTrinityFinalModel()`, `getDefaultModel()` |
 | Escalated/recovery authoritative final | Same executing-service authority | `getTrinityFinalEscalationModel()`, `getComplexModel()`, `getFallbackModel()` |
-| Routine CLEAR/Gaming CLEAR and evaluation audits | `gpt-6-luna` | `getClearAuditModel()` |
+| Routine CLEAR and evaluation audits | `gpt-6-luna` | `getClearAuditModel()` |
 | Explicit internal audit escalation | `gpt-6.1-sol` | `getClearAuditEscalationModel()` |
 
 Legacy `TRINITY_*_MODEL`, `CLEAR_AUDIT*_MODEL`, `GPT5_MODEL`, `GPT51_MODEL`
@@ -489,18 +489,11 @@ service's selected final authority.
 
 Both audit functions default to the routine lane. Their optional trusted internal
 `modelLane='escalation'` selects the escalation model for the same single call.
-No public request field or environment switch enables automatic escalation, and
-no retry, recursion or repair loop is added. Gaming retains at most one audit,
-no tools, a 1,536-token routine output ceiling and a 1,024-token explicit
-escalation ceiling, aggregate runtime budget, strict result
-validation, citation/evidence binding and fail-closed unavailable outcomes.
-Its mandatory answer audit defaults to a bounded 12,000 ms maximum. A positive
-`TRINITY_CLEAR_AUDIT_TIMEOUT_MS` is honored below that maximum and clamped above
-it. The effective timeout is the floor of the minimum of configured timeout,
-12,000 ms, safe remaining pipeline time minus 1,000 ms terminal headroom, and
-remaining request time. Runtime safety and parent cancellation remain active;
-zero usable time stops dispatch. This increases no pipeline or request deadline.
-General CLEAR retains its zero-score unavailable result and timeout behavior.
+No public request field or environment switch enables automatic escalation.
+General CLEAR retains its existing timeout and unavailable-result behavior.
+Gaming applies its server-owned presentation policy during Trinity generation.
+It uses no separate answer scoring or audit dispatch. Source and evidence
+admission continue to use their deterministic policies.
 GPT-6 audit requests explicitly use Luna none or Sol low reasoning within the
 existing output caps.
 
@@ -2319,7 +2312,7 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 | `ARCANOS_GAMING_GUIDE_PIPELINE_TIMEOUT_MS` | `50000` (commented) | Guide pipeline cap overriding the generic value. `ARCANOS_GAMING_BUILD_PIPELINE_TIMEOUT_MS` and `ARCANOS_GAMING_META_PIPELINE_TIMEOUT_MS` follow the same precedence and parent bounds. |
 | `ARCANOS_GAMING_STAGE_TIMEOUT_MS` | unset (`12000` commented override example) | Explicit generic Gaming model-stage cap. When unset, intake retains its 12s build/meta or 24s guide cap; reasoning/final budgets adapt to remaining time and downstream reserves. |
 | `ARCANOS_GAMING_GUIDE_STAGE_TIMEOUT_MS` | unset (`24000` commented override example) | Explicit guide model-stage cap, taking precedence over the generic stage override. Every explicit cap remains authoritative within the safe remaining deadline. |
-| `TRINITY_CLEAR_AUDIT_TIMEOUT_MS` | unset (`12000` commented example) | Mandatory Gaming answer audit defaults/caps at 12s, honors smaller positive configured values, and clamps to safe pipeline time minus 1s terminal headroom and remaining request time. No usable budget fails closed. General Trinity ledger CLEAR retains its existing 3s unset default. |
+| `TRINITY_CLEAR_AUDIT_TIMEOUT_MS` | unset (`12000` commented example) | General Trinity ledger CLEAR retains its existing 3s unset default. Gaming presentation does not dispatch a separate answer audit. |
 | `ARCANOS_GAMING_WEB_CONTEXT_CHARS` | `5000` (commented) | Per-guide snippet size used by Gaming guide URL enrichment. |
 | `ARCANOS_GAMING_WEB_CONTEXT_MAX_URLS` | `15` (commented) | Maximum user-provided guide URLs fetched concurrently for Gaming guide enrichment. |
 | `RESEARCH_WORKFLOW_TIMEOUT_MS` | `60000` (commented) | Service-owned aggregate Research deadline in milliseconds. Missing, blank, nonnumeric, or sub-1 values use the 60,000 ms default; values above 300,000 are capped. One effective deadline and cancellation signal cover DNS/fetch, every Trinity/model stage, and persistence; a shorter caller deadline caps this value. |

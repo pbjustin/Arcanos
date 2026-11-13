@@ -38,7 +38,7 @@ their named gameplay topic. Unrelated actions, named objects, quantities and
 independent requested facts still need their own support. Original player,
 edition, platform, patch and spoiler restrictions remain in force. Intact partial
 extraction may supply evidence; complete question coverage and the final answer
-audit still gate hybrid-v2 delivery. Qualified partial answer delivery is not
+integrity checks still gate hybrid-v2 delivery. Qualified partial answer delivery is not
 enabled by this matching behavior.
 
 Structured prerequisite/start support also needs an acquired relationship in the
@@ -69,7 +69,7 @@ Now the public validator checks bounded optional flat fields, the intent and
 backend mapping retain the validated player claims, and the backend validates
 again before retrieval. Live and stored lexical retrieval use the same bounded
 request/context distinction. Selected evidence enters the Gaming prompt within
-its untrusted-data boundary. The ordinary Trinity intake, reasoning, CLEAR, and
+its untrusted-data boundary. The ordinary Trinity intake, reasoning, Gaming CLEAR presentation, and
 final stages retain the original request/evidence, then Gaming projects compact
 source-number citations and applies lightweight response composition.
 
@@ -231,26 +231,16 @@ remaining time, safe runtime remaining time, remaining Trinity watchdog time and
 explicit operator limits. The
 minimum of these enclosing deadlines wins. The request keeps its 1,000 ms
 headroom and the runtime keeps its 500 ms safety buffer. Reasoning additionally
-reserves 5,000 ms for final generation, 3,000 ms for CLEAR's answer audit and
-1,000 ms for postprocessing, transport serialization and abort cleanup. Final
-generation retains the audit and terminal reserves. Intake retains its bounded
+reserves 5,000 ms for final generation and 1,000 ms for postprocessing,
+transport serialization and abort cleanup. Final generation retains the
+terminal reserve. Intake retains its bounded
 mode default while preserving downstream reserves. Critical Trinity requests
 also reserve their configured, bounded reflection window before intake and
 reasoning, so reflection cannot consume the final-generation allowance.
 Admission uses the model stage Trinity actually selects: direct-answer requests
-retain audit and terminal reserves without reserving an unused final stage.
+retain the terminal reserve without reserving an unused final stage.
 Insufficient usable budget stops model dispatch; it never disables a timeout or
 extends a parent deadline.
-
-The 3,000 ms answer-audit reservation is a minimum downstream allowance, not
-the audit's ceiling. Mandatory final-answer CLEAR now defaults/caps at 12,000 ms
-and honors a smaller positive `TRINITY_CLEAR_AUDIT_TIMEOUT_MS`. Its effective
-timeout is the floor of the minimum of configured timeout, 12,000 ms, safe
-remaining runtime/pipeline/watchdog time minus 1,000 ms terminal headroom, and remaining
-request time. Exhausted budget, timeout and rejection remain fail closed. One
-audit call, zero retries and zero repairs remain enforced. Sanitized dispatch and
-completion telemetry records configured/effective/hard timeouts, pipeline,
-watchdog and request budgets, terminal reserve, elapsed time, result and reason codes.
 
 `resolveGamingExecutionBudget` owns the enclosing MCP/module/pipeline relationship;
 `resolveGamingGenerationBudget` owns the dynamic stage allocation. The invariants
@@ -261,10 +251,9 @@ An operator override cannot expand a parent or remove required reserves.
 
 With a 60,000 ms caller and 50,000 ms pipeline, a deterministic sequence of
 500 ms model validation, 4,000 ms intake and 17,317 ms reasoning leaves a
-23,683 ms final-model allocation while retaining the 3,000 ms answer audit,
-1,000 ms terminal headroom and 500 ms runtime safety buffer. A 12,000 ms final
-completion and 3,000 ms accepted audit finish at 36,817 ms, crossing the previous
-8,515 ms final boundary safely. A 30,000 ms caller instead supplies a 20,000 ms
+26,683 ms final-model allocation while retaining 1,000 ms terminal headroom
+and the existing safety buffer. A 12,000 ms final completion finishes at
+33,817 ms. A 30,000 ms caller instead supplies a 20,000 ms
 pipeline; the same slow reasoning then times out cleanly within its smaller
 allocation. These are fake-time regression results, not live provider evidence.
 The overall request, Gaming pipeline,
@@ -479,7 +468,7 @@ The sealed guide request also runs
 [the generation budget fixture](../src/shared/gaming/gamingGenerationBudgetPreviewFixture.ts)
 against the same pure allocator used by the normal Gaming pipeline. Its fixed
 cases check 24-second guide versus 12-second build/meta intake, 20.5-second
-reasoning after five seconds of intake, final/audit/terminal reserves, explicit
+reasoning after five seconds of intake, final and terminal reserves, explicit
 operator caps, parent/runtime deadline exhaustion, short direct answers, and
 bounded critical reflection. It also checks the production timeout reason and
 safe recovery text with and without selected evidence; known catalog sources
@@ -757,7 +746,7 @@ evidence, game mismatch, unsupported relationships, acquisition/integrity failur
 and unavailable required supplied guides still block generation. A required guide
 must actually be acquired and validated; snippets, catalog entries and unrelated
 sources cannot satisfy that grounding requirement. Authentication, authorization,
-provider generation and audit failures retain their existing unavailable/failure
+provider generation and integrity failures retain their existing unavailable/failure
 states. Advisory answers do not add discovery rounds, candidate slots, storage
 permissions or durable writes.
 
@@ -820,8 +809,8 @@ compliance; no deployment or production Gaming call is part of this PR.
 
 The canonical executable rubric is
 [`gamingClearPolicy.ts`](../src/shared/gaming/gamingClearPolicy.ts). Its five
-names preserve general CLEAR. Source, evidence and answer are audit subjects,
-not alternative expansions of the acronym. The definitions below are checked
+names preserve general CLEAR. Gaming uses the scored policy for source and
+evidence admission. The answer profile remains readable for historical assessments. The definitions below are checked
 against that code by the policy tests.
 
 | Dimension | Gaming judgment |
@@ -867,14 +856,13 @@ probabilities or accuracy percentages.
 | Transient source use | 3.25 | 3 | 3.5 | 3 |
 | Durable source quality | 4 | 3.5 | 4 | 3.5 |
 | Evidence sufficiency | 3.5 | 3 | 4 | 3 |
-| Final answer acceptance | 4 | 3.5 | 4 | 3.5 |
 
 Required currentness raises the R floor to at least 3.5. An aggregate never
 compensates for a failed floor or a material blocking finding. Identity,
 compatibility, adequate claim support, provenance and acquisition security must
 be verified. Freshness can be not applicable for stable claims or for a source
 contributing only patch authority/currentness/corroboration; the assembled
-evidence and answer must satisfy the semantic disposition above. An advisory
+evidence must satisfy the freshness disposition above. An advisory
 recommendation may pass with unverified/stale freshness only when its gameplay
 support independently passes and its uncertainty is explicit. A current-state
 answer still requires verified freshness.
@@ -887,8 +875,6 @@ reserved and rejected, preventing removal of an inconvenient dimension.
 | Explicit security/game/edition/patch/provenance/support conflict | Reject, regardless of aggregate. |
 | Source with only required freshness unresolved | Partial transient contribution pending evidence-level applicability; no durable quality eligibility. |
 | Missing required identity, applicability, coverage, or dimension judgment | Clarify or recover; no invented match or optimistic score. |
-| Timeout, unavailable provider, incomplete or malformed audit | `unavailable`, null dimension scores and overall; never a completed zero or pass. |
-| Fixed clarification without gameplay claims | No model audit required. |
 
 Results bind rubric/policy, profile/role, subject/content hash, request context
 fingerprint, method/status, bounded scores, codes and existing evidence IDs.
@@ -1015,100 +1001,42 @@ retrieval. Complementary guides, patch authorities and currentness indexes can
 contribute different claims, but individually good sources do not establish a
 consistent or sufficient set.
 
-Gaming answer validation evaluates the actual composed substantive response,
-with the bounded evidence and player constraints available. It replaces the
-Gaming reasoning-ledger CLEAR call; general CLEAR and non-Gaming Trinity retain
-their existing behavior. A ledger score is never represented as a final-answer
-audit. Citation IDs and claim support, version/currentness, player constraints,
-spoilers, depth, useful steps and honest fallback status are part of that answer
-judgment. Returned substantive text must match the audited subject hash; changes
-to claims or citations cannot carry forward an obsolete pass. Simple-tier low
-score retention cannot bypass this Gaming gate.
+### Gaming CLEAR Presentation (`gaming-clear-presentation/v1`)
 
-No repair attempt is added in v1. Material defects, insufficient evidence and
-unavailable audits use honest recovery rather than recursively requesting new
-answers. This keeps the one-round/three-candidate discovery bounds. Source and
-evidence assessments are deterministic and add zero model calls or network
-requests. Gaming uses at most one final-answer audit in place of its prior ledger
-audit; the shared backend routine-audit role selects `gpt-6-luna` through the
-existing provider adapter,
-with no tools or browsing, transport retries fixed to zero and the existing audit deadline
-capped by the remaining aggregate request/runtime budget. The trusted internal `modelLane` seam can select the shared `gpt-6.1-sol` audit-escalation role
-for the same single call; automatic escalation is disabled. This code change
-does not modify deployed Railway variables or deployment state. Legacy
-`CLEAR_AUDIT*_MODEL` and GPT5/GPT51 values cannot replace these roles. Gaming's
-authoritative final and recovery composition retain the executing service's
-configured fine-tune authority; missing or non-fine-tuned authority fails safely
-and conflicting explicit model choices reject before transport. Embeddings keep
-their separate model selection, and Gaming plugin auth/scope boundaries remain
-unchanged. PR1517 deployment remains held pending the separate rollout gates.
+The backend applies a server-owned instruction to Trinity's final or direct
+generation for authorized Gaming guide, build, meta and hybrid requests. The
+same model attempt drafts, reviews and improves the player-facing response and
+returns only that response. The trusted instruction stays outside the untrusted
+player and acquired-source content.
 
-The final audit permits only server-owned `STYLE_CONCISION`, `STYLE_REPETITION`
-and `STYLE_PRESENTATION` warning codes to remain nonblocking. Every other answer
-finding is blocking even if the model labels it a warning. Mandatory server
-findings override colliding model warnings. Material unresolved answer facts
-also block high scores. All model explanation fields are bounded reason codes;
-free-text reasoning is rejected by runtime validation, not merely discouraged
-by the prompt.
+| Dimension | Generation instruction |
+| --- | --- |
+| Clarity | Make prerequisites and actions easy to understand. Use readable steps and precise terms. |
+| Leverage | Answer the immediate question first and prioritize practical next actions. |
+| Efficiency | Match the requested depth and remove repetition and filler. |
+| Alignment | Preserve the game, progression, platform, edition, difficulty, spoiler limits and requested format. |
+| Resilience | Keep material qualifications and citations visible. State uncertainty or ask a relevant clarification when needed. |
 
-The internal `gaming-claim-support/v1` audit distinguishes evidence that
-supports an assertion, evidence that leaves it unverified, and evidence that
-affirmatively contradicts it. Contradiction findings require a selected passage
-reference. The audit model judges what that passage establishes. An
-unrecognized finding remains blocking. Quality scores, material completeness,
-and applicability can independently prevent delivery even when the stated
-claims are supported. The five CLEAR v7 dimensions and delivery floors still apply.
+Trinity is responsible for generating guidance grounded in the admitted
+evidence. Presentation preserves gameplay claims, quantities, action order,
+qualifications and source references. Gaming delivery uses no separate semantic
+answer audit, quality score, audit repair, or audit retry. The historical answer
+assessment schema and sealed policy fixtures remain available for prior policy
+versions. Booker, Tutor and general Trinity CLEAR retain their existing behavior.
 
-The answer payload contains the actual answer, passages, source/revision/chunk
-IDs, applicable game/edition/patch/build/season and verification/effective-time
-metadata, and partial-extraction diagnostics. Direct context clipping retains
-complete fitting sentences within the existing context cap. When a selected guide
-was partially extracted, the server adds a scope notice to the exact answer it
-audits and delivers. The audit still checks that each material claim is supported
-by the intact passages and that missing facts are handled honestly. When Trinity
-removes the entire provider draft, the resulting fallback is withheld before
-the Gaming audit. Freshness and context are checked immediately before auditing
-and again before delivery. Hybrid cached substantive answers also expire at the
-earliest actual proof deadline (including live status update age), even when the
-workflow itself has time remaining. Expired proof yields
-`EVIDENCE_REVALIDATION_REQUIRED` without replaying the answer, issuing additional
-model calls or resetting the discovery round.
+Before publication, the backend checks provider completion, substantive output,
+required source qualifications, structural citation association and selected
+source membership. An internal server attestation binds the exact response to
+the selected evidence and request context. Hybrid delivery rechecks current
+authority, applicability and freshness, and rejects any mismatched binding.
+Expiring evidence still triggers `EVIDENCE_REVALIDATION_REQUIRED`. Citation
+structure and presentation establish provenance and formatting, while the
+generated claims remain model-authored.
 
-The one audit call has **1,536 maximum output tokens** on the routine lane
-and **1,024** on explicit escalation. The prompt requests minified JSON while
-retaining every distinct material finding, unresolved fact and supporting
-reference. The call also has **32,000 maximum data
-characters**, **38,000 maximum total prompt characters** including trusted rubric,
-**12,000 maximum answer characters**, and a **12,000 ms ceiling** clamped to existing
-configuration and remaining runtime/watchdog/request time while retaining terminal
-headroom. Over-budget input is unavailable rather than silently truncated or
-approved. The historical main Trinity invocation budget counts intake/reasoning,
-not all auxiliary calls; Gaming uses a separate
-explicit single-call audit slot and records its tokens in aggregate totals.
-Full Gaming guide generation replaces its old ledger audit with this call.
-Paths that previously omitted an audit, including direct/hybrid paths, add at most
-one call. There is no additional concurrency fan-out, retrieval round, repair
-or provider fallback expansion. The bounded answer-audit timeout allocation is
-described above; pipeline and request deadlines remain unchanged.
-
-`GAMING_ANSWER_AUDIT_UNAVAILABLE` and `GAMING_ANSWER_REJECTED` are additive bounded
-fallback reason values; genuine provider failures retain their existing reasons.
-Recovery is not reported as grounded generation. Scores remain internal; no
-new public score fields or model reasoning are exposed. Existing general CLEAR
-continues to audit ledgers using its prior result/fallback semantics. The only
-shared provider change is an optional per-call zero-retry setting whose absent
-case retains existing behavior. Three existing pure Gaming fixture digests are
-updated for reviewed code changes; the sealed preview import boundary is retained
-without importing the Gaming scoring engine or adding effects. The sealed CLEAR
-proof tests missing region against an explicit region-dependent question and
-separately admits ordinary advice with acquired regional metadata. All original
-identity, patch, currentness, extraction, security, structural and answer-binding
-mutation checks remain active.
-
-All Gaming guide/build/meta generation uses the existing audit-content redaction
-and optional-side-effect suppression flags. This keeps reasoning-ledger content
-out of optional pattern/feedback persistence and redacts audit summaries; other
-modules retain their previous defaults.
+Gaming retains its existing audit-content redaction and optional-side-effect
+suppression. The Gaming live validation contract and separately authorized
+isolated acceptance procedure are documented in
+[Live validation](LIVE_VALIDATION.md).
 
 ### Calibration and evidence limits
 
