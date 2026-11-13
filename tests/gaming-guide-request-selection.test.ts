@@ -1,7 +1,8 @@
 import { describe, expect, it } from '@jest/globals';
 import { selectGamingHybridEvidence } from '../src/services/gamingHybridCandidates.js';
 import { assessGamingClearEvidence, assessGamingRequestCoverage } from '../src/shared/gaming/gamingClearEvidence.js';
-import { buildGamingRequestRequirements, buildGamingRetrievalTerms } from '../src/shared/gaming/gamingRetrievalPolicy.js';
+import { buildGamingRequestRequirements, buildGamingRetrievalTerms, selectGamingStartingExcerpt } from '../src/shared/gaming/gamingRetrievalPolicy.js';
+import { formatStoredGamingEvidence, projectStoredGamingEvidenceCandidates } from '../src/shared/gaming/gamingStoredEvidenceCore.js';
 import type { GamingStoredKnowledgeContext, GamingStoredKnowledgeInput } from '../src/shared/gaming/gamingStoredEvidenceCore.js';
 import { extractGamingHtmlEvidence } from '../src/services/gamingHtmlEvidence.js';
 
@@ -9,7 +10,7 @@ import { extractGamingHtmlEvidence } from '../src/services/gamingHtmlEvidence.js
 // capture. These are not publisher quotations or proof of live gameplay/provider use.
 const input: GamingStoredKnowledgeInput = { game: 'Elite Dangerous', mode: 'guide',
   prompt: 'Find a detailed guide explaining system colonisation in Elite Dangerous and how to get started, including prerequisites and the first concrete steps. Cite the guide sources.' };
-const starting = 'To begin system colonisation, access the System Colonisation Contact in station services. Select an unpopulated star system in the available range and choose an initial starport.';
+const starting = 'To begin system colonisation, access the System Colonisation Contact in station services. Next, select an unpopulated star system for system colonisation.';
 const requirement = 'Registering a star system for colonisation requires credits; the cost depends on the selected initial station. The system colonisation claim expires after its registration window.';
 const continuation = 'Travel to the selected system and deploy the System Colonisation Beacon using the System Colonisation Suite. Supply the mined or purchased commodities requested by the colony construction project.';
 /** Bind authored passages to one accepted source for pure selection checks. */
@@ -38,6 +39,60 @@ function extractedRow(fields: Array<[string, string]>, caption = '', heading = '
 }
 
 describe('guide request interpretation and accepted passage delivery', () => {
+  it('withholds a plural first-steps request when only one starting action is supported', () => {
+    const oneAction = 'To begin system colonisation, access the System Colonisation Contact in station services.';
+    const data = knowledge([oneAction, requirement]);
+    const selected = selectGamingHybridEvidence(input, data);
+    expect(selected.coverageSatisfied).toBe(false);
+    expect(selected.missingCoverage).toHaveLength(1);
+    expect(assessGamingClearEvidence(input, selected.knowledge, { requireRequestCoverage: true, identityVerified: true })
+      .gates.claimSupport).not.toBe('verified');
+    expect(assessGamingRequestCoverage({ ...input, prompt: 'How do I begin system colonisation?' }, data)
+      .coverageSatisfied).toBe(true);
+  });
+
+  it('retains a source-bound interface handoff without spending the excerpt on earlier prose', () => {
+    const request = { ...input, game: 'Ivory Clockwork', prompt: 'Explain the first concrete steps for garden restoration.' };
+    const [steps] = buildGamingRequestRequirements(request);
+    const anchor = 'To start garden restoration, access the garden restoration panel.';
+    const handoff = 'You will then be presented with a plot map to select an unused garden (within the village walls) and register it.';
+    const next = 'After selecting the garden, you must then select the planter you would like to place in the garden.';
+    const route = `${anchor} ${handoff} ${next}`;
+    const prefix = 'Garden restoration has an overview for returning players. '.repeat(12);
+    const excerpt = selectGamingStartingExcerpt(prefix + route, steps, 350);
+    expect(steps.minimumActions).toBe(2);
+    expect(excerpt).toBe(route);
+    expect(assessGamingRequestCoverage(request, knowledge([excerpt])).coverageSatisfied).toBe(true);
+    for (const unrelated of [
+      `${anchor} This glossary lists common terms. ${handoff}`,
+      `${anchor}\n\n${handoff}`,
+      `${handoff} ${anchor}`,
+      `${anchor} ${handoff.replace('an unused garden', 'no garden')}`,
+      `${anchor} ${handoff.replace('garden (within the village walls)', 'garden for trading')}`,
+      `${anchor} ${handoff.replace('and register it', 'and read the index')}`
+    ]) {
+      expect(selectGamingStartingExcerpt(unrelated, steps, 350)).toBe('');
+      expect(assessGamingRequestCoverage(request, knowledge([unrelated])).coverageSatisfied).toBe(false);
+    }
+    const limits = { chunkChars: 350, maxChunks: 2, maxSources: 1, maxContextChars: 1_200, structuredEvidenceChars: 800 };
+    const project = (text: string, requireRequestCoverage: boolean) => formatStoredGamingEvidence(
+      projectStoredGamingEvidenceCandidates([{
+        sourceId: 'fixture', revisionId: 'fixture-revision', recordId: 'fixture-record', recordType: 'guide',
+        sourceType: 'supplied', gameName: request.game, title: null, searchText: text, normalized: { text },
+        publicUrl: 'https://guides.example.org/ivory-garden', fetchedAt: new Date('2026-11-09T12:00:00Z'),
+        publishedAt: null, provenance: {}, relevance: 1
+      }], { ...request, requireRequestCoverage }, limits), request, limits);
+    const projectedRoute = project(prefix + route, true);
+    expect(projectedRoute.evidence?.map(chunk => chunk.text)).toEqual([route]);
+    expect(assessGamingRequestCoverage(request, projectedRoute).coverageSatisfied).toBe(true);
+    for (const requireRequestCoverage of [true, false]) {
+      for (const gap of [' ', ' This guide provides a glossary. ', '\n\n', '\n\nThe weather changes.\n\n']) {
+        const selected = project(anchor + gap + handoff, requireRequestCoverage);
+        expect(assessGamingRequestCoverage(request, selected).coverageSatisfied).toBe(gap === ' ');
+      }
+    }
+  });
+
   it('covers the exact Elite request with complementary supported requirements and starting instructions', () => {
     const original = knowledge([starting, requirement, continuation]);
     const selected = selectGamingHybridEvidence(input, original);

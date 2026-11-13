@@ -7,10 +7,13 @@ import { gamingRegistryLiteralPattern, resolveGamingRegistryGame } from './gamin
 export const GAMING_RETRIEVAL_POLICY_VERSION = 'gaming-player-retrieval/v1';
 const STOP_WORDS = new Set('a an and are as at be by can do does for from how i in is it me my of on or should that the this to was what when where which who why with you about after before finishing completing completed finished defeated get go help please tell use using want would guide next now then need proceed continue current objective checkpoint step steps walkthrough explain detailed detail concise briefly spoiler spoilers spoilerfree beat defeat boss strategy game look up newly released beginner route supplied source opening simple summary summarize overview linked guides direct answer both am im m supposed stuck has have user major first'.split(' '));
 const GENERIC_RELATIONSHIP_HEADS = String.raw`effects?|mechanics?|benefits?|locations?|stats?|attributes?|strengths?|weakness(?:es)?|resistances?|requirements?|costs?|propert(?:y|ies)`;
-const GAMEPLAY_ACTIONS = new Set('activate access align allocate attack avoid block buy choose collect compare complete confirm craft cross defeat deploy dodge enter equip exit explore find finish focus follow gather heal improve inspect insert jump keep leave move open place plan plant practice prepare preserve press prioritize raise reach read reduce register remove repair restore return rotate save select spend take trade travel turn unlock upgrade use visit wait'.split(' '));
+const GAMEPLAY_ACTIONS = new Set('activate access align allocate attack avoid block buy choose collect compare complete confirm craft cross defeat deploy dodge enter equip exit explore find finish focus follow gather heal improve inspect insert jump keep leave move open place plan plant practice prepare preserve press prioritize purchase raise reach read reduce register remove repair restore return rotate save select spend take trade travel turn unlock upgrade use visit wait'.split(' '));
 const ACTION_COUNTS: Readonly<Record<string, number>> = { zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
 const FIRST_ACTIONS = /\bfirst\s+(zero|one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+(?:(?:concrete|ordered)\s+)?actions?\b/iu;
+const FIRST_STEPS = /\bfirst\s+(?:concrete\s+|ordered\s+)?steps(?=\s*[.!?,;]|\s*$|\s+(?:and|for|to|with)\b)/iu;
 const ORDERED_ACTION_CONTINUATION = /^(?:(?:next|then)\b|[2-8][.)]\s+)/iu;
+const SELECTION_HANDOFF = /^you\s+will\s+then\s+be\s+presented\s+with\s+[^.!?;,]{1,100}\b(?:map|menu|interface|panel|screen)\s+to\s+(select\s+[^.!?;,]{1,120}?)\s+and\s+register\s+(?:it|your\s+desire\s+to\s+claim\s+it)\.?$/iu;
+const AFTER_SELECTION = /^after\s+selecting\s+the\s+([^,.!?;]{1,80}?)(?:\s+you\s+wish\s+to\s+claim)?,\s+you\s+(?:must|should|will)\s+then\s+(select\s+[^,.!?;]{1,120}?)\s+you\s+would\s+like\s+to\s+\p{L}+\s+in\s+the\s+([^,.!?;]{1,60})\.?$/iu;
 const NUMBERED_ACTION_PREFIX = /^([1-8])[.)]\s+/u;
 const PERIOD_ORDINAL = /^(?:to\s+(?:begin|start)\s+[^.!?;\n,:]{1,180}[,:]\s*)?[1-8]\.$/iu;
 const CONTINUITY_FILLER = new Set('your our their its his her these those them player players commander commanders'.split(' '));
@@ -339,8 +342,9 @@ export function gamingAttributableClaimText(text: string, game?: string, metadat
       && !referenceObject.test(clause)) return claimText;
     return !referenceObject.test(clause) && [...clause.matchAll(location)].some(match => attributed(match.index)) ? claimText : '';
   });
-  // Dropping metadata must not make an orphan ordinal adjacent to a start.
-  return claims.map((claim, index) => claim && claims[index - 1] === '' && NUMBERED_ACTION_PREFIX.test(claim)
+  // Dropping metadata must not make a dependent action adjacent to a start.
+  return claims.map((claim, index) => claim && claims[index - 1] === '' && (NUMBERED_ACTION_PREFIX.test(claim)
+    || SELECTION_HANDOFF.test(claim) || AFTER_SELECTION.test(claim))
     ? '\n' + claim : claim).filter(Boolean).join('\n').trim();
 }
 
@@ -432,8 +436,8 @@ export interface GamingRequestRequirement {
 function gamingProcedureRequest(clause: string): GamingRequestRequirement['procedure'] {
   if (gamingAcquisitionObjectRequest(clause)) return undefined;
   if (/\b(?:prerequisites?|requirements?)(?=\s*[.!?,;]|\s*$|\s+(?:and|plus|as well as|for|to)\b)|\bwhat\s+do\s+(?:i|we)\s+need\s+first\b/iu.test(clause)) return 'prerequisite';
-  if (FIRST_ACTIONS.test(clause)) return 'start';
-  if (/\b(?:how\s+(?:do|can|should)\s+(?:i|we)\s+|how\s+to\s+)(?:get\s+started|begin|start)\b|\bfirst\s+(?:concrete\s+|ordered\s+)?steps(?=\s*[.!?,;]|\s*$|\s+(?:and|for|to|with)\b)/iu.test(clause)) return 'start';
+  if (FIRST_ACTIONS.test(clause) || FIRST_STEPS.test(clause)) return 'start';
+  if (/\b(?:how\s+(?:do|can|should)\s+(?:i|we)\s+|how\s+to\s+)(?:get\s+started|begin|start)\b/iu.test(clause)) return 'start';
   return undefined;
 }
 
@@ -491,6 +495,8 @@ function gamingStartingActions(text: string, terms: readonly string[]): number {
     const actions = new Set<string>();
     const routeObjects = new Set<string>();
     let active = false;
+    let openedTopicInterface = false;
+    let handoffObject: string | undefined;
     let nextOrdinal = 2;
     for (const sentence of splitGamingProse(paragraph, /\n+|(?<=[.!?])\s+|;\s*/u)) {
       if (sentence.includes('?')) { active = false; actions.clear(); continue; }
@@ -514,9 +520,42 @@ function gamingStartingActions(text: string, terms: readonly string[]): number {
         // not contribute actions to one another's requested count.
         actions.clear();
         routeObjects.clear();
+        openedTopicInterface = false;
+        handoffObject = undefined;
         nextOrdinal = 2;
         active = Boolean(tail);
         if (!active) break;
+      }
+      // A passive interface handoff can order a selection when the immediately
+      // preceding start opened an interface for this exact gameplay topic.
+      const handoff = !anchor && active && openedTopicInterface && actions.size === 1 ? SELECTION_HANDOFF.exec(sentence.trim()) : null;
+      openedTopicInterface = false;
+      const afterSelection = !anchor && active && handoffObject ? AFTER_SELECTION.exec(sentence.trim()) : null;
+      const dependency = afterSelection ? gamingLexicalTokens(afterSelection[1]).join(' ') : '';
+      const priorSelection = handoffObject;
+      handoffObject = undefined;
+      const selection = handoff ? gamingActionInstruction(handoff[1].replace(/\s*\(within\s+[^()]{1,60}\)$/iu, '')) : undefined;
+      if (selection) {
+        const object = gamingActionObject(selection);
+        if (!terms.includes(object.terms.at(-1) ?? '') || object.suffix
+          || /\b(?:no|not|never|except|unless|unlike|without)\b/iu.test(sentence)) { active = false; continue; }
+        handoffObject = object.terms.join(' ');
+        actions.add(selection);
+        nextOrdinal = actions.size + 1;
+        best = Math.max(best, actions.size);
+        if (best >= 8) return 8;
+        continue;
+      }
+      if (afterSelection && dependency && (priorSelection === dependency || priorSelection?.endsWith(` ${dependency}`))) {
+        const action = gamingActionInstruction(afterSelection[2]);
+        const location = gamingLexicalTokens(afterSelection[3]).join(' ');
+        if (!action || !location || !terms.includes(location) || !(dependency === location || dependency.endsWith(` ${location}`))
+          || /\b(?:no|not|never|except|unless|unlike|without)\b/iu.test(sentence)) { active = false; continue; }
+        actions.add(action);
+        nextOrdinal = actions.size + 1;
+        best = Math.max(best, actions.size);
+        if (best >= 8) return 8;
+        continue;
       }
       const ordinal = NUMBERED_ACTION_PREFIX.exec(sentence.trim());
       if (!anchor && (!ORDERED_ACTION_CONTINUATION.test(sentence.trim()) || ordinal && Number(ordinal[1]) !== nextOrdinal)) {
@@ -537,6 +576,8 @@ function gamingStartingActions(text: string, terms: readonly string[]): number {
         const action = gamingActionInstruction(fragment, !avoiding);
         if (action) {
           const { terms: objectTerms, definite, suffix } = gamingActionObject(action);
+          if (anchor && terms.length && /^(?:access|open)\s/u.test(action)
+            && terms.every(term => objectTerms.includes(term))) openedTopicInterface = true;
           const object = objectTerms.join(' ');
           const knownObjects = definite && object ? [...routeObjects].filter(known => known === object || known.endsWith(` ${object}`)) : [];
           const linkedObject = knownObjects.length === 1 ? knownObjects[0]
@@ -564,6 +605,38 @@ function gamingStartingActions(text: string, terms: readonly string[]): number {
     }
   }
   return best;
+}
+
+/** Prefer consecutive original source sentences when lexical clipping loses a counted start. */
+export function selectGamingStartingExcerpt(text: string, requirement: GamingRequestRequirement, maxChars: number): string {
+  if (text.length > 8_000 || !requirement.minimumActions || requirement.minimumActions < 2) return '';
+  for (const paragraph of text.split(/\n\s*\n/u)) {
+    const units = splitGamingProse(paragraph, /(?<=[.!?])\s+/u);
+    for (const [index, unit] of units.entries()) {
+      let excerpt = unit.trim();
+      if (!excerpt || excerpt.length > maxChars || !gamingStartingActions(excerpt, requirement.terms)) continue;
+      let count = gamingStartingActions(excerpt, requirement.terms);
+      for (const next of units.slice(index + 1, index + 8)) {
+        const combined = excerpt + ' ' + next.trim();
+        if (combined.length > maxChars) break;
+        const extended = gamingStartingActions(combined, requirement.terms);
+        if (extended <= count) break;
+        excerpt = combined;
+        count = extended;
+      }
+      if (count >= requirement.minimumActions && filterGamingDocumentInstructions(excerpt) === excerpt) return excerpt;
+    }
+  }
+  return '';
+}
+
+/** Scoping can omit sentences. A dependent handoff still needs original adjacency. */
+export function preserveGamingSelectionAdjacency(excerpt: string, source: string): string {
+  const units = splitGamingProse(excerpt, /(?<=[.!?])\s+/u);
+  const handoff = units.findIndex(unit => SELECTION_HANDOFF.test(unit.trim()) || AFTER_SELECTION.test(unit.trim()));
+  if (handoff < 0 || source.split(/\n\s*\n/u)
+    .some(paragraph => paragraph.normalize('NFKC').replace(/\s+/gu, ' ').includes(excerpt))) return excerpt;
+  return units.slice(0, handoff).join(' ').trim();
 }
 
 /** Keep registration costs tied to their stated object and gameplay purpose. */
@@ -754,8 +827,9 @@ export function buildGamingRequestRequirements(input: GamingRetrievalPolicyInput
     // Relational question framing describes the requested facts; it is not a
     // word that an independently acquired passage must repeat verbatim.
     const topicalClause = clause.replace(new RegExp(`\\b(?:${GENERIC_RELATIONSHIP_HEADS})\\s+of\\s+`, 'giu'), '');
-    const minimumActions = gamingRequestedActionCount(clause);
-    const procedure = minimumActions !== undefined ? 'start' as const : gamingProcedureRequest(clause);
+    const explicitActions = gamingRequestedActionCount(clause);
+    const procedure = explicitActions !== undefined ? 'start' as const : gamingProcedureRequest(clause);
+    const minimumActions = explicitActions ?? (procedure === 'start' && FIRST_STEPS.test(clause) ? 2 : undefined);
     const relation = /^where\s+(?:can|do)\s+(?:i|we)\s+(?:find|obtain|buy|collect)\s+materials\s+for\b/iu.test(topicalClause.trim()) ? 'acquisition' as const
       : /\bwhat\s+materials\s+do\s+(?:i|we)\s+need\s+for\b|\b(?:identify|list|describe)\s+(?:the\s+)?required\s+materials\b/iu.test(topicalClause) ? 'materials' as const : undefined;
     const atomic = gamingLiteralAcquisitionTitle(clause);
