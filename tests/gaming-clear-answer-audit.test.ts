@@ -573,6 +573,31 @@ describe('Gaming final-answer CLEAR assessment', () => {
     expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
   });
 
+  it('binds URL-only citations to the correct selected passages in the semantic audit payload', async () => {
+    const guide = input.knowledge.sources[0];
+    const otherGuide = { ...guide, sourceId: 'source-2', url: 'https://example.com/storehouse' };
+    const otherChunk = { ...input.knowledge.evidence[0], sourceId: otherGuide.sourceId, revisionId: 'revision-2',
+      recordId: 'chunk-2', publicUrl: otherGuide.url, text: 'Ring the east bell to access the storehouse.' };
+    const knowledge = { ...input.knowledge, sources: [guide, otherGuide], evidence: [otherChunk, ...input.knowledge.evidence] };
+    const prompt = input.prompt + ' Cite the guide sources.';
+    for (const [source, expected] of [[guide, 'accept'], [otherGuide, 'reject']] as const) {
+      const answer = `Turn the west valve. [Guide](${source.url})`;
+      createSingleChatCompletion.mockImplementationOnce((_client, options) => {
+        const { messages } = options as { messages: Array<{ content: string }> };
+        const payload = JSON.parse(messages[1].content);
+        const binding = payload.applicability.find((item: { url?: string }) => item.url === source.url);
+        const citedPassage = payload.evidence.find((item: { sourceId: string; sourceIndex: number }) =>
+          item.sourceId === binding?.sourceId && item.sourceIndex === binding?.sourceIndex);
+        return Promise.resolve(completion({ dimensions: dimensions(), findings: citedPassage?.text === text ? [] : [
+          { code: 'CITATION_DOES_NOT_SUPPORT_CLAIM', severity: 'blocking', evidenceRefs: [] }
+        ] }));
+      });
+      const result = await run({ knowledge, prompt, answer });
+      expect(result.assessment).toMatchObject({ assessmentMethod: 'mixed', decision: expected });
+    }
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(2);
+  });
+
   it('keeps the existing semantic audit for uncited answers without a citation request', async () => {
     const result = await run({ answer: 'Turn the west valve.' });
     expect(result.assessment.decision).toBe('accept');

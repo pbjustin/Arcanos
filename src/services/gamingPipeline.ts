@@ -62,6 +62,7 @@ import { formatStoredGamingEvidence } from "@services/gamingStoredKnowledge.js";
 import { pickGamingPlayerContext, resolveGamingPlayerContext, type GamingPlayerContext } from "@shared/gaming/gamingPlayerContext.js";
 import { resolveGamingAnswerPolicy } from "@shared/gaming/gamingAnswerPolicy.js";
 import { GAMING_HYBRID_INTAKE } from '@shared/gaming/gamingGuideIntakeCore.js';
+import { readGamingMarkdownCitationDestination } from '@shared/gaming/gamingHybridPolicyCore.js';
 import { assessGamingClearEvidence } from '@shared/gaming/gamingClearEvidence.js';
 import { type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
 import { gamingClearAnswerLogReasonCodes, gamingClearAnswerMatches, isGamingAuditSourcePartiallyExtracted, runGamingClearAnswerAudit } from '@services/gamingClearAnswerAudit.js';
@@ -300,6 +301,21 @@ function isPureGamingProviderCapabilityRefusal(value: string): boolean {
     && namesUnavailableCapability
     && !continuesWithAnswer
     && !hasAdditionalSentence;
+}
+
+/** Remove complete citation links for the substance check without modifying the candidate. */
+function stripNumberedMarkdownCitations(answer: string): string {
+  let remaining = "";
+  let cursor = 0;
+  for (const match of answer.matchAll(/\[\s*(?:sources?\s+)?\d+(?:\s*,\s*\d+)*\s*\]\(/giu)) {
+    if (match.index < cursor) continue;
+    const start = match.index + match[0].length;
+    const destination = readGamingMarkdownCitationDestination(answer.slice(start));
+    if (!destination) continue;
+    remaining += answer.slice(cursor, match.index) + " ";
+    cursor = start + destination.end;
+  }
+  return remaining + answer.slice(cursor);
 }
 
 function classifyGamingProviderFallbackReason(timeoutPhase?: string): GamingFallbackReason {
@@ -1131,9 +1147,17 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
   ].filter(Boolean);
   // Use the same trusted qualifiers before audit and delivery, without turning
   // an empty provider answer into a substantive candidate.
-  const qualifyAnswer = (answer: string): string => answer.trim()
-    ? [...answerQualifications.filter(qualification => !answer.includes(qualification)), answer].join('\n\n')
-    : answer;
+  const qualifyAnswer = (answer: string): string => {
+    if (!answer.trim() || !answerQualifications.length) return answer;
+    // Only leading, standalone qualification paragraphs can serve as the trusted notice.
+    // An exact quote inside generated prose, a blockquote or a code sample does not.
+    const present = new Set<string>();
+    for (const paragraph of answer.split(/\r?\n[ \t]*\r?\n/u, answerQualifications.length)) {
+      if (!answerQualifications.includes(paragraph)) break;
+      present.add(paragraph);
+    }
+    return [...answerQualifications.filter(qualification => !present.has(qualification)), answer].join('\n\n');
+  };
   if (freshnessSensitive && !currentEvidenceAvailable && !allowAdvisoryFreshness) {
     const currentEvidenceFallbackReason: GamingFallbackReason = "CURRENT_EVIDENCE_UNAVAILABLE";
     logger.warn("gaming.fallback.used", {
@@ -1335,7 +1359,9 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
                 // Use a separate view so audit and delivery retain exact text.
                 const withoutQualifications = answerQualifications.reduce(
                   (text, qualification) => text.replaceAll(qualification, " "), answer);
-                const substantiveCandidate = normalizeGamingInlineSourceReferences(withoutQualifications, 0).response;
+                const substantiveCandidate = normalizeGamingInlineSourceReferences(
+                  stripNumberedMarkdownCitations(withoutQualifications), 0
+                ).response;
                 if (isPureGamingProviderCapabilityRefusal(substantiveCandidate)
                   || (substantiveCandidate !== answer && !hasVisibleContent(substantiveCandidate))) {
                   throw Object.assign(new Error("Gaming provider did not produce substantive gameplay guidance."), {

@@ -121,6 +121,7 @@ const capabilityRefusal = "I can't browse the web.";
 const partialExtractionWarning = 'Some selected source material was only partially extracted. This answer is limited to the intact passages available for review.';
 const rainwheelCondition = 'The Amber Locks rainwheel procedure works only while the village gate is open.';
 let finalCapabilityRefusal: 'none' | 'only' | 'with_guidance' | 'echoed_warning' | 'warning_only' = 'none';
+let finalQualificationPresentation = '';
 let permissiveAudit = false;
 let citeFallback = false;
 let omitRequestedDetail = false;
@@ -180,6 +181,7 @@ beforeEach(() => {
   scenario = scenarios[0]; poison = 'none'; auditInterruption = 'none'; sourceSuffix = ''; searchUnavailable = false;
   useNumberedLink = false;
   finalCapabilityRefusal = 'none'; sourceTextLimit = undefined; permissiveAudit = false; citeFallback = false; omitRequestedDetail = false;
+  finalQualificationPresentation = '';
   omitFinalCitations = false;
   stages.length = 0; searches.length = 0; acquired.length = 0; audits.length = 0; documents.length = 0; evaluations.length = 0;
   acquisitionDurations.length = 0; generationStarted = 0; generationFinished = 0;
@@ -290,7 +292,8 @@ beforeEach(() => {
           output = omitRequestedDetail ? 'At the Amber Locks, close the east sluice. [1]' : draft(payload);
           if (finalCapabilityRefusal === 'with_guidance') output = `${capabilityRefusal}\n\n${output}`;
       }
-      if (citeFallback) output += ' [1]';
+      if (citeFallback) output += useNumberedLink ? ` [1](${scenario.pages[0].url})` : ' [1]';
+      if (finalQualificationPresentation) output = `${finalQualificationPresentation}\n\n${output}`;
       if (omitFinalCitations) output = output.replace(/ \[\d+\]/gu, '');
     }
     generationFinished = performance.now();
@@ -472,6 +475,23 @@ it.each([
   }
 );
 
+it.each(['echoed_warning', 'warning_only'] as const)(
+  'withholds %s even when followed by a numbered Markdown citation', async finalMode => {
+    scenario = scenarios[4];
+    finalCapabilityRefusal = finalMode;
+    permissiveAudit = true;
+    citeFallback = true;
+    useNumberedLink = true;
+    sourceTextLimit = 900;
+    sourceSuffix = `<p>${'The station scenery includes nearby landmarks. '.repeat(25)}</p>`;
+    const result = await harness(false).complete();
+    expect(result.result).toMatchObject({ coverageSatisfied: true, reason: 'GENERATION_UNAVAILABLE' });
+    expect(result.result.answer).toBeUndefined();
+    expect(stages).toEqual(['intake', 'reasoning', 'final']);
+    expect(audits).toHaveLength(0);
+  }
+);
+
 it('audits and binds substantive cited guidance that follows a capability limitation', async () => {
   scenario = scenarios[4];
   finalCapabilityRefusal = 'with_guidance';
@@ -486,6 +506,24 @@ it('audits and binds substantive cited guidance that follows a capability limita
   expect(result.result.answer?.response).toBe(audits[0].answer);
   expect(result.result.answer?.response).toMatch(scenario.claims[0].answerProbe);
 });
+
+it.each([
+  ['an inline quotation', `The guide note quotes “${partialExtractionWarning}”`, true],
+  ['a Markdown quote', `> ${partialExtractionWarning}`, true],
+  ['a fenced quotation', `\`\`\`text\n\n${partialExtractionWarning}\n\n\`\`\``, true],
+  ['a leading standalone paragraph', partialExtractionWarning, false]
+] as const)('requires a standalone server qualification when the final draft contains %s', async (_label, presentation, needsPrefix) => {
+    scenario = scenarios[4];
+    finalQualificationPresentation = presentation;
+    sourceTextLimit = 900;
+    sourceSuffix = `<p>${'The station scenery includes nearby landmarks. '.repeat(25)}</p>`;
+    const result = await harness(false).complete();
+    expect(result.result.state).toBe('answer_ready');
+    expect(audits).toHaveLength(1);
+    const prefix = needsPrefix ? `${partialExtractionWarning}\n\n${presentation}` : presentation;
+    expect(audits[0].answer.startsWith(`${prefix}\n\nAt the Amber Locks`)).toBe(true);
+    expect(result.result.answer?.response).toBe(audits[0].answer);
+  });
 
 it('withholds a refusal followed by invented advice after a complete negative audit', async () => {
   finalCapabilityRefusal = 'with_guidance';
