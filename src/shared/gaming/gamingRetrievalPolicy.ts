@@ -10,6 +10,7 @@ const GENERIC_RELATIONSHIP_HEADS = String.raw`effects?|mechanics?|benefits?|loca
 const GAMEPLAY_ACTIONS = new Set('activate access align allocate attack avoid block buy choose collect compare complete confirm craft cross defeat deploy dodge enter equip exit explore find finish focus follow gather heal improve inspect insert jump keep leave move open place plan plant practice prepare preserve press prioritize purchase raise reach read reduce register remove repair restore return rotate save select spend take trade travel turn unlock upgrade use visit wait'.split(' '));
 const ACTION_COUNTS: Readonly<Record<string, number>> = { zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
 const FIRST_ACTIONS = /\bfirst\s+(zero|one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+(?:(?:concrete|ordered)\s+)?actions?\b/iu;
+const ACTION_COUNT_ACQUISITION_TITLE = /\bfirst\s+(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+actions?\s+(?:book|manual|handbook|tome)\b/iu;
 const FIRST_STEPS = /\bfirst\s+(?:concrete\s+|ordered\s+)?steps(?=\s*[.!?,;]|\s*$|\s+(?:and|for|to|with)\b)/iu;
 const ORDERED_ACTION_CONTINUATION = /^(?:(?:next|then)\b|[2-8][.)]\s+)/iu;
 const SELECTION_HANDOFF = /^you\s+will\s+then\s+be\s+presented\s+with\s+[^.!?;,]{1,100}\b(?:map|menu|interface|panel|screen)\s+to\s+(select\s+[^.!?;,]{1,120}?)\s+and\s+register\s+(?:it|your\s+desire\s+to\s+claim\s+it)\.?$/iu;
@@ -19,17 +20,17 @@ const PERIOD_ORDINAL = /^(?:to\s+(?:begin|start)\s+[^.!?;\n,:]{1,180}[,:]\s*)?[1
 const CONTINUITY_FILLER = new Set('your our their its his her these those them player players commander commanders'.split(' '));
 const AVOIDING_ACTION = /^avoid(?:ing)?\s+/iu;
 
-/** Quoted acquisition titles are named objects, not requests for that number of actions. */
+/** Acquisition titles preserve their literal topic terms. */
 function gamingLiteralAcquisitionTitle(prompt: string): boolean {
   return gamingAcquisitionObjectRequest(prompt) && (/["“][^"”\n]{1,160}["”]|\b\p{Lu}[\p{L}'’-]+\s+(?:for|of)\s+\p{Lu}[\p{L}'’-]+/u.test(prompt)
-    || /\bfirst\s+(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+actions?\s+book\b/iu.test(prompt));
+    || ACTION_COUNT_ACQUISITION_TITLE.test(prompt));
 }
 
 /** Keep action counts outside bounded quoted titles while preserving invalid counts for clarification. */
 function gamingRequestedActionCount(prompt: string): number | undefined {
   const unquoted = prompt.replace(/"[^"\n]{1,160}"|“[^”\n]{1,160}”/gu, ' ');
   const scoped = gamingAcquisitionObjectRequest(prompt)
-    ? unquoted.replace(/\bfirst\s+(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+actions?\s+book\b/giu, ' ') : unquoted;
+    ? unquoted.replace(ACTION_COUNT_ACQUISITION_TITLE, ' ') : unquoted;
   const match = FIRST_ACTIONS.exec(scoped);
   return match ? ACTION_COUNTS[match[1].toLowerCase()] ?? Number(match[1]) : undefined;
 }
@@ -540,7 +541,8 @@ function gamingStartingActions(text: string, terms: readonly string[]): number {
         if (!terms.includes(object.terms.at(-1) ?? '') || object.suffix
           || /\b(?:no|not|never|except|unless|unlike|without)\b/iu.test(sentence)) { active = false; continue; }
         handoffObject = object.terms.join(' ');
-        actions.add(selection);
+        routeObjects.add(handoffObject);
+        actions.add(`select ${handoffObject}`);
         nextOrdinal = actions.size + 1;
         best = Math.max(best, actions.size);
         if (best >= 8) return 8;
@@ -548,10 +550,13 @@ function gamingStartingActions(text: string, terms: readonly string[]): number {
       }
       if (afterSelection && dependency && (priorSelection === dependency || priorSelection?.endsWith(` ${dependency}`))) {
         const action = gamingActionInstruction(afterSelection[2]);
+        const object = action && gamingActionObject(action);
         const location = gamingLexicalTokens(afterSelection[3]).join(' ');
-        if (!action || !location || !terms.includes(location) || !(dependency === location || dependency.endsWith(` ${location}`))
+        if (!object || !object.terms.length || !location || !terms.includes(location) || !(dependency === location || dependency.endsWith(` ${location}`))
           || /\b(?:no|not|never|except|unless|unlike|without)\b/iu.test(sentence)) { active = false; continue; }
-        actions.add(action);
+        const selectedObject = object.terms.join(' ');
+        routeObjects.add(selectedObject);
+        actions.add(['select', selectedObject, object.suffix].filter(Boolean).join(' '));
         nextOrdinal = actions.size + 1;
         best = Math.max(best, actions.size);
         if (best >= 8) return 8;
@@ -801,9 +806,11 @@ function gamingRequestClauses(input: GamingRetrievalPolicyInput): { clauses: str
 
 /** Overflow asks for a narrower scope; it never silently omits requested facts. */
 export function gamingRequestRequirementLimitExceeded(input: GamingRetrievalPolicyInput): boolean {
-  const count = gamingRequestedActionCount(input.prompt);
-  return gamingRequestClauses(input).clauses.length > 8
-    || count !== undefined && (count < 1 || count > 8);
+  const { clauses } = gamingRequestClauses(input);
+  return clauses.length > 8 || clauses.some(clause => {
+    const count = gamingRequestedActionCount(clause);
+    return count !== undefined && (count < 1 || count > 8);
+  });
 }
 
 /** Missing gameplay scope or unresolved references cannot be supplied by retrieved text. */

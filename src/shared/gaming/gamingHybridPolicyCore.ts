@@ -105,13 +105,56 @@ export function gamingHybridRequiredGuideUrls(question: string): string[] {
     .map(value => value.replace(/[),.;!?]+$/gu, '')).map(normalizeGamingHybridCandidateUrl))].slice(0, 7);
 }
 
+const MARKDOWN_HTTP_START = /^\s*(<)?(https?:\/\/)/iu;
+const MARKDOWN_LINK_END = /^(?:\s+(?:"[^"\r\n]*"|'[^'\r\n]*'|\([^()\r\n]*\)))?\s*\)/u;
+
+/** Read the HTTP destination and closing delimiter after a Markdown link's opening parenthesis. */
+export function readGamingMarkdownCitationDestination(value: string): { url: string; end: number } | undefined {
+  const start = MARKDOWN_HTTP_START.exec(value);
+  if (!start) return undefined;
+  const bracketed = start[1] !== undefined;
+  let index = start[0].length;
+  let depth = 0;
+  for (; index < value.length; index++) {
+    const character = value[index];
+    if (/[\s<>]/u.test(character)) break;
+    if (!bracketed && character === ')') {
+      if (depth === 0) break;
+      depth--;
+    } else if (!bracketed && character === '(') {
+      depth++;
+    }
+  }
+  if (index === start[0].length || depth !== 0 || (bracketed && value[index] !== '>')) return undefined;
+  const url = value.slice(start[0].length - start[2].length, index);
+  const tailStart = index + (bracketed ? 1 : 0);
+  const end = MARKDOWN_LINK_END.exec(value.slice(tailStart));
+  return end ? { url, end: tailStart + end[0].length } : undefined;
+}
+
 /** Parse targets without rewriting approved source URLs or swallowing sentence punctuation. */
 export function gamingHybridCitationTargets(answer: string): string[] {
   const targets: string[] = [];
-  const withoutLinks = answer.replace(/\[[^\]]*\]\((https?:\/\/[^\s)]+)(?:\s+[^)]*)?\)/gu, (_match, target: string) => {
-    targets.push(target); return '';
-  });
-  for (const value of withoutLinks.match(/https?:\/\/[^\s<>]+/gu) ?? []) targets.push(value.replace(/[),.;!?]+$/gu, ''));
+  const link = /\[[^\[\]\r\n]*\]\(/gu;
+  let offset = 0;
+  const bareText: string[] = [];
+  for (const match of answer.matchAll(link)) {
+    if (match.index < offset) continue;
+    const start = match.index + match[0].length;
+    const destination = readGamingMarkdownCitationDestination(answer.slice(start));
+    if (!destination) continue;
+    targets.push(destination.url);
+    bareText.push(answer.slice(offset, match.index));
+    offset = start + destination.end;
+  }
+  bareText.push(answer.slice(offset));
+  for (const value of bareText.join(' ').match(/https?:\/\/[^\s<>]+/gu) ?? []) {
+    const url = value.replace(/[,.;!?]+$/gu, '');
+    const excessClosers = (url.match(/\)/gu)?.length ?? 0) - (url.match(/\(/gu)?.length ?? 0);
+    const trailingClosers = url.match(/\)+$/u)?.[0].length ?? 0;
+    const end = url.length - Math.min(trailingClosers, Math.max(0, excessClosers));
+    targets.push(url.slice(0, end).replace(/[,.;!?]+$/gu, ''));
+  }
   return [...new Set(targets)];
 }
 

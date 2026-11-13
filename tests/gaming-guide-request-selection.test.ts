@@ -51,6 +51,22 @@ describe('guide request interpretation and accepted passage delivery', () => {
       .coverageSatisfied).toBe(true);
   });
 
+  it.each([
+    ['three', 'Then inspect the garden.', 'Then inspect the orchard.'],
+    ['four',
+      'After selecting the garden, you must then select the planter you would like to place in the garden. Then inspect the planter.',
+      'After selecting the garden, you must then select the planter you would like to place in the garden. Then select the planter.']
+  ])('retains the selected object for the first %s actions without counting a wrong or duplicate continuation', (count, next, unrelated) => {
+    const request = { ...input, game: 'Ivory Clockwork', prompt: `Explain the first ${count} actions for garden restoration.` };
+    const [steps] = buildGamingRequestRequirements(request);
+    const prefix = 'To start garden restoration, access the garden restoration panel. '
+      + 'You will then be presented with a plot map to select an unused garden and register it. ';
+    const route = prefix + next;
+    expect(selectGamingStartingExcerpt(route, steps, 400)).toBe(route);
+    expect(assessGamingRequestCoverage(request, knowledge([route])).coverageSatisfied).toBe(true);
+    expect(assessGamingRequestCoverage(request, knowledge([prefix + unrelated])).coverageSatisfied).toBe(false);
+  });
+
   it('retains a source-bound interface handoff without spending the excerpt on earlier prose', () => {
     const request = { ...input, game: 'Ivory Clockwork', prompt: 'Explain the first concrete steps for garden restoration.' };
     const [steps] = buildGamingRequestRequirements(request);

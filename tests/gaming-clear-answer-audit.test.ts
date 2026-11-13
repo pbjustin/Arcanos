@@ -580,6 +580,29 @@ describe('Gaming final-answer CLEAR assessment', () => {
   });
 
   it.each([
+    ['https://example.com/Item_(Sword)', 'https://example.com/Item_(Sword)'],
+    ['https://example.com/Item_(Sword_(Rare))', 'https://example.com/Item_(Sword_(Rare)) "Guide title"'],
+    ['https://example.com/Item_(Sword)', '<https://example.com/Item_(Sword)> (Guide title)']
+  ])('audits a numbered citation with balanced parentheses in %s', async (url, destination) => {
+    const knowledge = { ...input.knowledge, sources: [{ ...input.knowledge.sources[0], url }],
+      evidence: [{ ...input.knowledge.evidence[0], publicUrl: url }] };
+    const answer = `Turn the west valve. [1](${destination})`;
+    const { assessment } = await run({ knowledge, answer });
+    expect(gamingClearAnswerMatches(assessment, answer)).toBe(true);
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['https://example.com/Item_(Other))', 'https://example.com/Item_(Sword)'])(
+    'rejects a mismatched or unclosed numbered link %s before the model', async destination => {
+      const url = 'https://example.com/Item_(Sword)';
+      const knowledge = { ...input.knowledge, sources: [{ ...input.knowledge.sources[0], url }],
+        evidence: [{ ...input.knowledge.evidence[0], publicUrl: url }] };
+      const { assessment } = await run({ knowledge, answer: `Turn the west valve. [1](${destination}` });
+      expect(assessment.blockingFindings).toContainEqual(expect.objectContaining({ code: 'CITATION_DOES_NOT_SUPPORT_CLAIM' }));
+      expect(createSingleChatCompletion).not.toHaveBeenCalled();
+    });
+
+  it.each([
     'What is the quest named “The Archivist, Cite the Sources!”?',
     'How do I start "The Archivist, Cite the Sources!"?',
     "What's the best way to open the return route? Don't cite the sources."
@@ -738,6 +761,7 @@ describe('Gaming final-answer CLEAR assessment', () => {
   it.each([
     'The guide does not establish whether these steps work on patch 2.0.',
     'The guide does not confirm whether these steps work on patch 2.0.',
+    'The guide does not confirm compatibility for patch 2.0.',
     'The guide documents this route on patch 1.0. This guide does not establish whether the route works on patch 2.0.'
   ])('preserves source-limited uncertainty for the semantic audit: %s', async statement => {
     const knowledge = { ...input.knowledge, sources: [{ ...input.knowledge.sources[0], verifiedPatchVersion: '1.0' }] };
@@ -753,7 +777,9 @@ describe('Gaming final-answer CLEAR assessment', () => {
     'The guide does not establish whether these steps work on patch 2.0, but the route works on patch 3.0.',
     'The guide does not establish whether these steps work on patch 2.0. The route works on patch 3.0.',
     'The guide does not establish whether these steps work on patch 2.0. The route works on\npatch 3.0.',
-    'The guide does not confirm whether these steps work on patch 2.0. The route works on patch 3.0.'
+    'The guide does not confirm whether these steps work on patch 2.0. The route works on patch 3.0.',
+    'The guide does not confirm compatibility for patch 2.0. The route works on patch 3.0.',
+    'The guide does not confirm compatibility for patch 2.0, but the route works on patch 3.0.'
   ])('rejects an unsupported patch assertion alongside another patch reference: %s', async statement => {
     const knowledge = { ...input.knowledge, sources: [{ ...input.knowledge.sources[0], verifiedPatchVersion: '1.0' }] };
     const result = await run({ knowledge, answer: `${input.answer} ${statement}` });

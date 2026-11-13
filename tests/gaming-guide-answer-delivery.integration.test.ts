@@ -113,6 +113,7 @@ const scenarios: Scenario[] = [
 
 let scenario = scenarios[0];
 let poison: 'none' | 'unsupported' | 'wrong_citation' | 'invented_prerequisite' | 'wrong_order' = 'none';
+let useNumberedLink = false;
 let auditInterruption: 'none' | 'truncation' | 'refusal' | 'tool_output' = 'none';
 let sourceSuffix = '';
 let sourceTextLimit: number | undefined;
@@ -168,7 +169,7 @@ function draft(payload: any): string {
     const claimDraft = poison === 'wrong_order' && index === 0
       ? '1. Deploy the colonisation ship. 2. Select an uninhabited system and obtain the required colonisation claim. 3. Deliver the requested construction commodities before the deadline.'
       : claim.draft;
-    return `${claimDraft} [${source}]`;
+    return useNumberedLink ? `${claimDraft} [${source}](${claim.url})` : `${claimDraft} [${source}]`;
   }).join('\n\n');
   if (poison === 'unsupported') return `${response}\n\nThe Deku Shield costs 9999 Rupees. [1]`;
   if (poison === 'invented_prerequisite') return `${response}\n\nYou must earn a Founder's Permit before purchasing a colonisation claim. [${numberFor(frontierGuideUrl)}]`;
@@ -177,6 +178,7 @@ function draft(payload: any): string {
 beforeEach(() => {
   jest.clearAllMocks(); resetSafetyRuntimeStateForTests(); clearGamingDiscoveryCache();
   scenario = scenarios[0]; poison = 'none'; auditInterruption = 'none'; sourceSuffix = ''; searchUnavailable = false;
+  useNumberedLink = false;
   finalCapabilityRefusal = 'none'; sourceTextLimit = undefined; permissiveAudit = false; citeFallback = false; omitRequestedDetail = false;
   omitFinalCitations = false;
   stages.length = 0; searches.length = 0; acquired.length = 0; audits.length = 0; documents.length = 0; evaluations.length = 0;
@@ -552,6 +554,18 @@ it('rejects a claim attached to the wrong independently accepted source', async 
   expect(result.result.answer).toBeUndefined();
   expect(stages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
   expect(audits).toHaveLength(1);
+});
+
+it('delivers an audited guide with a numbered Markdown citation to a URL containing parentheses', async () => {
+  const url = 'https://heldout-guides.example/oot/Deku_Shield_(Item)';
+  const original = scenarios[0];
+  scenario = { ...original, pages: original.pages.map(page => ({ ...page, url })),
+    claims: original.claims.map(claim => ({ ...claim, url })) };
+  useNumberedLink = true;
+  const result = await harness(false).complete();
+  expect(result.result.state).toBe('answer_ready');
+  expect(result.result.answer?.response).toContain(`[1](${url})`);
+  expect(stages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
 });
 
 it('withholds a complete Elite Dangerous guide missing its explicitly requested citations before semantic audit', async () => {

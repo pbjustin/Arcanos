@@ -307,4 +307,13 @@ describe('v2 actor-bound recovery lifecycle', () => {
     expect(gamingHybridCitationTargets('Read [the guide](https://fixture.example/guide). Also https://fixture.example/second, then proceed.'))
       .toEqual(['https://fixture.example/guide', 'https://fixture.example/second']);
   });
+
+  it('preserves balanced parentheses in Markdown and bare citation URLs', () => {
+    expect(gamingHybridCitationTargets(
+      'Read [1](https://fixture.example/Item_(Sword_(Rare)) "Guide"). '
+      + 'See [Guide](<https://fixture.example/Item_(Shield)> (Guide title)). '
+      + 'Also (https://fixture.example/Item_(Bow)).'
+    )).toEqual(['https://fixture.example/Item_(Sword_(Rare))', 'https://fixture.example/Item_(Shield)',
+      'https://fixture.example/Item_(Bow)']);
+  });
 });

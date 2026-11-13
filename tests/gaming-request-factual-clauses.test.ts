@@ -159,6 +159,36 @@ describe('factual request clauses retain subject, relation and requested count',
     expect(assessGamingRequestCoverage(input, knowledge(['The book is sold at the orbital depot.'])).coverageSatisfied).toBe(false);
   });
 
+  it.each(['Three', 'Nine'])('keeps the unquoted First %s Actions manual as an acquisition target', count => {
+    const input = request(`Where can I obtain the First ${count} Actions manual?`);
+    const passage = `The First ${count} Actions manual is sold at the village shop.`;
+    expect(buildGamingRequestRequirements(input)).toEqual([
+      { requirement: 'requested topic 1', terms: [count.toLowerCase(), 'actions', 'manual', 'first'] }
+    ]);
+    expect(assessGamingRequestCoverage(input, knowledge([passage])).coverageSatisfied).toBe(true);
+    expect(assessGamingRequestCoverage(input, knowledge(['The manual is sold at the village shop.'])).coverageSatisfied).toBe(false);
+  });
+
+  it('retains an out-of-range procedure count after an acquisition clause', () => {
+    const input = request('Where can I obtain the First Three Actions manual and what are the first nine actions for fishing?');
+    const passage = 'The First Three Actions manual is sold at the village shop.';
+    expect(assessGamingRequestCoverage(input, knowledge([passage])).gapAssessmentStatus).toBe('not_assessed');
+  });
+
+  it('preserves acquisition titles in existing longer book questions', () => {
+    const input = request('Where can I obtain the First Three Actions book near the docks?');
+    expect(buildGamingRequestRequirements(input)).toEqual([
+      { requirement: 'requested topic 1', terms: ['three', 'actions', 'book', 'near', 'docks', 'first'] }
+    ]);
+  });
+
+  it('still requires an explicit count in a procedure request with an acquisition verb', () => {
+    const input = request('How do I find the first three actions for fishing?');
+    expect(buildGamingRequestRequirements(input)).toEqual([
+      expect.objectContaining({ procedure: 'start', minimumActions: 3 })
+    ]);
+  });
+
   it.each([
     'Cargo plates, one of the system colonisation materials, are sold at orbital depots.',
     'System colonisation materials except beacon coils are sold at orbital depots.',

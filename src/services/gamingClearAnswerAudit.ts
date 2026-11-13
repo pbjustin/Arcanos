@@ -18,7 +18,7 @@ import {
 } from '@shared/gaming/gamingClearPolicy.js';
 import type { GamingPlayerContext } from '@shared/gaming/gamingPlayerContext.js';
 import type { LiveValidationAuditProviderDiagnostic } from '@shared/gaming/liveValidationObservation.js';
-import { gamingHybridCitationTargets } from '@shared/gaming/gamingHybridPolicyCore.js';
+import { gamingHybridCitationTargets, readGamingMarkdownCitationDestination } from '@shared/gaming/gamingHybridPolicyCore.js';
 import type { GamingStoredKnowledgeContext } from '@shared/gaming/gamingStoredEvidenceCore.js';
 import { GAMING_STALE_GUIDE_WARNING, GAMING_UNVERIFIED_GUIDE_WARNING, gamingAnswerClaimsVerifiedCurrentness,
   resolveGamingFreshnessDisposition } from '@shared/gaming/gamingFreshnessDisposition.js';
@@ -69,10 +69,9 @@ const AUDIT_LOG_REASON_CODES = new Set([
 const MAX_AUDIT_RESPONSE_CHARS = 16_000;
 const NUMERIC_CITATION = new RegExp(citationSyntax.numericReferencePattern, 'giu');
 const NUMBERED_CITATION_LINK = /\[\s*(?:sources?\s+)?(\d+(?:\s*,\s*\d+)*)\s*\]\(/giu;
-const CITATION_LINK_DESTINATION = /^\s*(?:<(https?:\/\/[^\s<>]+)>|(https?:\/\/[^\s)<>]+))(?:\s+(?:"[^"\r\n]*"|'[^'\r\n]*'|\([^()\r\n]*\)))?\s*\)/iu;
 const EXPLICIT_CITATION_REQUEST = /(?:^|[.!?,;\n]|\band\b)\s*(?:please\s+)?(?:cite\s+(?:(?:your|the|these|guide)\s+){0,2}sources?|(?:include|provide)\s+(?:source\s+)?citations?)(?=\s*[.!?,;]|\s*$)/iu;
 const ANSWER_PATCH_REFERENCE = /\b(?:for|on|in)\s+(?:current\s+)?patch\s+(\d+(?:\.\d+){1,2})\b/giu;
-const GUIDE_PATCH_UNCERTAINTY = /(?:^|[.!?](?:\s*\[(?:sources?\s+)?\d+(?:\s*,\s*\d+)*\])?\s+|\r?\n)\s*(?:the|this)\s+guide\s+does\s+not\s+(?:establish|confirm)\s+whether\s+(?:these\s+steps\s+work|(?:the|this)\s+(?:route|strategy|build)\s+works)\s+on\s+patch\s+\d+(?:\.\d+){1,2}\.(?=\s|$)/giu;
+const GUIDE_PATCH_UNCERTAINTY = /(?:^|[.!?](?:\s*\[(?:sources?\s+)?\d+(?:\s*,\s*\d+)*\])?\s+|\r?\n)\s*(?:the|this)\s+guide\s+does\s+not\s+(?:establish|confirm)\s+(?:whether\s+(?:these\s+steps\s+work|(?:the|this)\s+(?:route|strategy|build)\s+works)\s+on|compatibility\s+(?:for|with|on))\s+patch\s+\d+(?:\.\d+){1,2}\.(?=\s|$)/giu;
 
 interface AuditProviderFields {
   providerStatus?: unknown;
@@ -316,9 +315,9 @@ export async function runGamingClearAnswerAudit(client: OpenAI, input: GamingCle
   if (invalidCitation) return rejectCitation('CITATION_NOT_FOUND');
   // A numbered Markdown link and its URL must identify the same selected source.
   const mismatchedCitationLink = [...input.answer.matchAll(NUMBERED_CITATION_LINK)].some(match => {
-    const destination = CITATION_LINK_DESTINATION.exec(input.answer.slice(match.index + match[0].length));
+    const destination = readGamingMarkdownCitationDestination(input.answer.slice(match.index + match[0].length));
     return !destination || match[1].split(',').some(index =>
-      input.knowledge.sources[Number(index.trim()) - 1]?.url !== (destination[1] ?? destination[2]));
+      input.knowledge.sources[Number(index.trim()) - 1]?.url !== destination.url);
   });
   if (mismatchedCitationLink) return rejectCitation('CITATION_DOES_NOT_SUPPORT_CLAIM');
   if (input.evidenceAssessment.decision !== 'accept') return finish(unavailable('EVIDENCE_NOT_SUFFICIENT'));
