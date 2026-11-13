@@ -3,8 +3,8 @@ import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js
 import { assessGamingClearSourceIdentity } from '../src/shared/gaming/gamingClearSource.js';
 import { assessGamingSourcePolicy, extractGamingFreshnessMetadata, evaluateGamingFreshness } from '../src/shared/gaming/gamingFreshnessCore.js';
 import { assessGamingClearEvidence } from '../src/shared/gaming/gamingClearEvidence.js';
-import { createGamingClearAssessment, gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
-import { GAMING_CLEAR_APPROVED_ANSWER } from '../src/shared/gaming/gamingClearAnswerBinding.js';
+import { gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
+import { GAMING_PRESENTED_ANSWER } from '../src/shared/gaming/gamingPresentedAnswerBinding.js';
 import { resolveGamingRequestEdition } from '../src/shared/gaming/gamingGameIdentity.js';
 import type { ResolvedGamingDocument } from '../src/services/gamingDocumentResolution.js';
 
@@ -39,17 +39,12 @@ function approvedGeneration(includeQualification = true) {
   return jest.fn(async (request: any, prepared: any) => {
       const response = `${includeQualification ? `${prepared.qualification}\n\n` : ''}Use four wooden planks in the crafting grid to craft a crafting table. [1]`;
       const evidence = assessGamingClearEvidence(request, prepared.knowledge, { actorScopeHash: prepared.actorScopeHash, requireRequestCoverage: true });
-      const refs = prepared.knowledge.evidence.flatMap((chunk: any) => [chunk.sourceId, chunk.revisionId, chunk.recordId]);
-      const assessment = createGamingClearAssessment({ profile: 'answer', questionProfile: 'walkthrough',
-        subjectId: 'minecraft-approved-answer', subjectHash: gamingClearHash(response), contextFingerprint: evidence.contextFingerprint,
-        gates: evidence.gates, evidenceRefs: refs,
-        dimensions: Object.fromEntries(['clarity', 'leverage', 'efficiency', 'alignment', 'resilience'].map(name => [name,
-          { status: 'evaluated', score: 4.5, reasonCodes: ['SUPPORTED'], evidenceRefs: refs, unresolvedFacts: [] }
-        ])) as Parameters<typeof createGamingClearAssessment>[0]['dimensions'] });
+      const binding = { policyVersion: 'gaming-clear-presentation/v1', subjectHash: gamingClearHash(response),
+        contextFingerprint: evidence.contextFingerprint, evidenceSubjectHash: evidence.subjectHash };
       const data = { response, sources: prepared.knowledge.sources,
         grounding: { groundingStatus: 'grounded' as const, requestedSourceCount: 0, fetchedSourceCount: 1, fetchedSuppliedSourceCount: 0,
           usableSourceCount: 1, citableSourceCount: 1, selectedChunkCount: 1, suppliedEvidenceSourceCount: 0, groundedInSuppliedEvidence: false } };
-      Object.defineProperty(data, GAMING_CLEAR_APPROVED_ANSWER, { value: assessment, enumerable: false });
+      Object.defineProperty(data, GAMING_PRESENTED_ANSWER, { value: binding, enumerable: false });
       return { ok: true as const, route: 'gaming' as const, mode: 'guide' as const, data };
     });
 }

@@ -8,7 +8,8 @@ import { validateLiveValidationTarget } from './live-validation-target.mjs';
 import { createLiveValidationSourceGuard } from './live-validation-egress.mjs';
 import { createLiveValidationProvider } from './live-validation-provider.mjs';
 import { LIVE_VALIDATION_TOKEN_LIMITS } from './live-validation-budget.mjs';
-import { createLivePreviewEvidence, LIVE_PREVIEW_MODE, verifyLivePreviewEvidence } from './live-pr-preview-verifier.mjs';
+import { createLivePreviewEvidence, LIVE_PREVIEW_MODE, LIVE_PREVIEW_PRESENTATION_PROFILE, sanitizeLivePreviewPresentation,
+  verifyLivePreviewEvidence } from './live-pr-preview-verifier.mjs';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 export const LIVE_VALIDATION_ACCEPTANCE_WORK_TIMEOUT_MS = 300_000;
@@ -26,20 +27,20 @@ export function resolveLiveValidationModels(models, constants) {
   return authorities[0];
 }
 
-/** Profile assertions extend the existing audited-answer evidence contract. */
+/** Profile assertions require evidence admission and a bound presentation output. */
 export function validationProfilePassed(profile, moduleResult, observation, providerDelta) {
-  if (!observation || observation.outcome !== profile.expected.outcome
-    || observation.semanticGap !== profile.expected.semanticGap) return false;
+  if (observation?.schemaVersion !== 2 || observation.outcome !== profile.expected.outcome
+    || observation.semanticGap !== profile.expected.semanticGap || providerDelta.auditCalls !== 0) return false;
   if (profile.id === 'gaming-guide-positive') return moduleResult.accepted === true
-    && moduleResult.audit?.assessmentStatus === 'completed' && moduleResult.audit.decision === 'accept'
-    && moduleResult.audit.boundToFinalAnswer === true && observation.coverage.satisfied
-    && observation.selectedEvidenceCount > 0 && providerDelta.generationCalls > 0 && providerDelta.auditCalls > 0
+    && sanitizeLivePreviewPresentation(moduleResult.presentation) !== null
+    && sanitizeLivePreviewPresentation(observation.presentation) !== null && observation.coverage.satisfied
+    && observation.selectedEvidenceCount > 0 && providerDelta.generationCalls > 0
     && (!profile.expected.qualifiedUnknownPatch || observation.qualification.visible
       && !observation.qualification.claimsVerifiedCurrentness);
-  return profile.id === 'gaming-guide-negative' && moduleResult.accepted === false
+  return profile.id === 'gaming-guide-negative' && moduleResult.accepted === false && observation.presentation === null
     && observation.candidates.some(candidate => candidate.decision === 'rejected'
       && candidate.reasonCodes.some(code => /(?:MISMATCH|CONFLICT)/u.test(code)))
-    && providerDelta.generationCalls === 0 && providerDelta.auditCalls === 0 && providerDelta.providerCalls === 0;
+    && providerDelta.generationCalls === 0 && providerDelta.providerCalls === 0;
 }
 
 /** Authenticated readiness precedes one bounded paid run; no request can reset its budget. */
@@ -48,6 +49,8 @@ export function createValidationRuntimeApplication({ target, identity, profiles,
   resolveResponseModelIdentity = async () => (await import('../dist/shared/gpt/generativeModelPolicyCore.js')).assertGenerativeModelResponseIdentity,
   runRequest = async (_options, work) => work(), getRemainingMs = () => null, now = Date.now }) {
   requireValidation(TOKEN.test(testToken ?? ''), 'LIVE_VALIDATION_TEST_TOKEN_REQUIRED');
+  requireValidation(profiles?.version === 2 && profiles.acceptanceProfile === LIVE_PREVIEW_PRESENTATION_PROFILE,
+    'LIVE_VALIDATION_PROFILE_INVALID');
   const profileHash = validationHash(profiles);
   let readinessObserved = false; let runClaimed = false; let admitting = false; let active = false; let admitted;
   const completed = new Set();
@@ -99,10 +102,10 @@ export function createValidationRuntimeApplication({ target, identity, profiles,
         const responseModelIdentity = await resolveResponseModelIdentity();
         requireValidation(body.expiresAtMs > now(), 'LIVE_VALIDATION_RUN_EXPIRED');
         const provider = createProvider({ target, identity, apiKey, now, expiresAtMs: body.expiresAtMs,
-          observation: () => observation, getRemainingMs, responseModelIdentity });
+          observation: () => observation, getRemainingMs, responseModelIdentity, generationOnly: true });
         admitted = { ...body, provider, observation };
         try {
-          admitted.adapter = await createAdapter({ target, identity, provider, observation: () => observation });
+          admitted.adapter = await createAdapter({ target, identity, provider });
           requireValidation(body.expiresAtMs > now(), 'LIVE_VALIDATION_RUN_EXPIRED');
         } catch (error) { provider.close(); throw error; }
         return validationJson(response, { admitted: true, runId: body.runId, expiresAtMs: body.expiresAtMs, identity });
@@ -134,7 +137,7 @@ export function createValidationRuntimeApplication({ target, identity, profiles,
       admitted.provider.beginWorkflow(profile.id);
       const before = admitted.provider.snapshot();
       const stages = { source_acquisition: 'not_run', source_validation: 'not_run' };
-      let moduleResult = { accepted: false }; let failed = false; let auditStarted = false;
+      let moduleResult = { accepted: false }; let failed = false;
       controller = new AbortController(); response.once?.('close', disconnect);
       try {
         moduleResult = await runRequest({ timeoutMs: acceptanceDeadline - now(), parentSignal: controller.signal,
@@ -143,8 +146,7 @@ export function createValidationRuntimeApplication({ target, identity, profiles,
           const execution = Promise.resolve().then(() => admitted.adapter.execute(parsed.input, {
             onSourceAcquisition: status => { stages.source_acquisition = status; },
             onSourceValidation: status => { stages.source_validation = status; },
-            onAnswerAuditStart: () => { auditStarted = true; admitted.observation.stage = 'answer_audit'; },
-            onAudit: () => {}, onFailure: () => {},
+            onFailure: () => {},
           }));
           const settle = () => { executionSettled = true; releaseExecution(); };
           void execution.then(settle, settle); return execution;
@@ -155,26 +157,26 @@ export function createValidationRuntimeApplication({ target, identity, profiles,
       const delta = Object.fromEntries(['providerCalls', 'generationCalls', 'auditCalls'].map(key => [key, after.usage[key] - before.usage[key]]));
       const observation = admitted.adapter.getLastObservation(); const constructionStarted = now();
       const failureCode = admitted.observation.budgetExhausted ? 'BUDGET_EXHAUSTED'
-        : admitted.observation.timeoutStage === 'answer_audit' ? 'AUDIT_TIMEOUT'
-          : admitted.observation.timeoutStage === 'generation' ? 'MODEL_TIMEOUT' : moduleResult.failureCode;
+        : admitted.observation.timeoutStage === 'generation' ? 'MODEL_TIMEOUT' : moduleResult.failureCode;
       const semanticPass = !failed && !after.closed && validationProfilePassed(profile, moduleResult, observation, delta);
       // Evidence is a closed projection: raw provider bodies, source passages and answers never enter it.
       const evidence = createLivePreviewEvidence({ sourceCommit: identity.sourceCommit,
         approvedSourceCommit: identity.sourceCommit, deploymentId: identity.deploymentId, moduleId: 'gaming', mode: LIVE_PREVIEW_MODE }, {
-        caseId: profile.caseId, result: moduleResult.result, audit: moduleResult.audit, failureCode,
+        caseId: profile.caseId, result: moduleResult.result, presentation: moduleResult.presentation, failureCode,
+        acceptanceProfile: profiles.acceptanceProfile,
         usage: { ...after.usage, ...delta, limits: after.limits }, stages: {
           authorization: 'passed', budget: admitted.observation.budgetExhausted ? 'exhausted' : 'passed', ...stages,
           generation: failureCode === 'MODEL_TIMEOUT' ? 'timed_out'
-            : auditStarted || observation?.stages.generation.status === 'passed' ? 'passed' : delta.generationCalls > 0 ? 'failed' : 'not_run',
-          answer_audit: observation?.stages.answer_audit.status === 'passed' ? 'passed'
-            : failureCode === 'AUDIT_TIMEOUT' || observation?.stages.answer_audit.status === 'timed_out' ? 'timed_out'
-              : delta.auditCalls > 0 ? 'failed' : 'not_run', delivery: semanticPass && moduleResult.accepted ? 'passed' : 'rejected' } });
+            : observation?.stages.generation.status === 'passed' ? 'passed' : delta.generationCalls > 0 ? 'failed' : 'not_run',
+          answer_audit: 'not_run', delivery: semanticPass && moduleResult.accepted ? 'passed' : 'rejected' } });
       const verification = verifyLivePreviewEvidence(evidence, { sourceCommit: identity.sourceCommit,
         approvedSourceCommit: identity.sourceCommit, deploymentId: identity.deploymentId, moduleId: 'gaming', mode: LIVE_PREVIEW_MODE });
       if (observation) observation.stages.response = { status: 'passed', elapsedMs: Math.max(0, now() - constructionStarted) };
       const value = { identity, caseId: profile.id, evidence, observation, verification,
         profilePassed: semanticPass && verification.status === 'PASS', providerDelta: delta,
-        durableWrites: 0, playerPersistence: 0, productionChanged: false };
+        durableWrites: 0, playerPersistence: 0, productionChanged: false,
+        ...(semanticPass && verification.status === 'PASS' && moduleResult.privateAnswer
+          ? { privateAnswer: moduleResult.privateAnswer } : {}) };
       const serialized = JSON.stringify(value);
       requireValidation(!serialized.includes(testToken) && (!apiKey || !serialized.includes(apiKey)), 'LIVE_VALIDATION_SECRET_IN_EVIDENCE');
       return validationJson(response, value);
@@ -195,7 +197,7 @@ export function configureLiveValidationModelRuntime(authority, writeRuntimeEnv) 
   writeRuntimeEnv('TRINITY_REASONING_MAX_OUTPUT_TOKENS', String(LIVE_VALIDATION_TOKEN_LIMITS.maxOutputTokensPerRequest));
 }
 
-async function realGamingAdapter({ target, provider, observation }) {
+async function realGamingAdapter({ target, provider }) {
   const { APPLICATION_CONSTANTS } = await import('../dist/shared/constants.js');
   const authority = resolveLiveValidationModels(target.models, APPLICATION_CONSTANTS);
   const { writeRuntimeEnv } = await import('../dist/platform/runtime/env.js');
@@ -211,9 +213,7 @@ async function realGamingAdapter({ target, provider, observation }) {
   const sourceGuard = createLiveValidationSourceGuard({ forbiddenOrigins: [target.publicOrigin],
     forbiddenHostnames: ['acranos-production.up.railway.app', 'arcanos-worker-production.up.railway.app'] });
   return createLiveValidationGamingAdapter((input, prepared, hooks) => runGameplayPipeline(input, prepared,
-    { client, skipStoredRetrieval: true, ...hooks, onAnswerAuditStart: () => {
-      observation().stage = 'answer_audit'; hooks.onAnswerAuditStart?.();
-    } }), { sourceGuard });
+    { client, skipStoredRetrieval: true, ...hooks }), { sourceGuard });
 }
 
 export async function startValidationRuntime(environment = process.env) {

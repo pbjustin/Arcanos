@@ -229,8 +229,8 @@ export interface TrinityResult {
     resilience: number;
     overall: number;
   };
-  /** Gaming final-answer assessment. Never a reasoning-ledger score or probability. */
-  gamingClearAudit?: import('@shared/gaming/gamingClearPolicy.js').GamingClearAssessment;
+  /** Server-owned policy applied to the complete Gaming generation attempt. */
+  gamingPresentationPolicy?: typeof import('@shared/gaming/gamingPromptCore.js').GAMING_CLEAR_PRESENTATION_POLICY_VERSION;
   judgedFeedback?: {
     enabled: boolean;
     attempted: boolean;
@@ -269,15 +269,8 @@ export interface TrinityRunOptions {
   finalOutputContract?: TrinityStructuredOutputContract;
   /** Optional diagnostic observer for the intake, reasoning and final stages. */
   onStage?: (event: Readonly<TrinityStageObservation>) => void;
-  /** Server-owned Gaming audit of the composed final text; never read from request JSON. */
-  gamingClearAnswerAudit?: (
-    text: string,
-    runtimeBudget: import('@platform/resilience/runtimeBudget.js').RuntimeBudget,
-    remainingWatchdogMs?: number
-  ) => Promise<{
-    assessment: import('@shared/gaming/gamingClearPolicy.js').GamingClearAssessment;
-    usage?: TrinityMetaTokens;
-  }>;
+  /** Server-owned Gaming presentation policy; never read from request JSON. */
+  gamingPresentationPolicy?: typeof import('@shared/gaming/gamingPromptCore.js').GAMING_CLEAR_PRESENTATION_POLICY_VERSION;
   /** Server-owned Gaming guide task-card policy; the writing facade verifies the module and route. */
   gamingGuideIntakePolicy?: 'compact-v1';
   dryRun?: boolean;

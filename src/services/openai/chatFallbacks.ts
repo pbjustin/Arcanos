@@ -1,4 +1,5 @@
 import type OpenAI from 'openai';
+import { normalizeOpenAIResponseSemantics } from '@arcanos/openai';
 import type { ResponseCreateParamsNonStreaming } from 'openai/resources/responses/responses';
 import {
   assertValidResponsesCreateParams,
@@ -17,6 +18,7 @@ import {
   recordOpenAICancellationBeforeAdmission,
 } from './resilience.js';
 import { getTokenParameter } from "@shared/tokenParameterHelper.js";
+import { isRecord } from '@shared/typeGuards.js';
 import { formatErrorMessage } from "@core/lib/errors/reusable.js";
 import { aiLogger } from "@platform/logging/structuredLogging.js";
 import { buildResponsesRequest, convertResponseToLegacyChatCompletion } from './requestBuilders/index.js';
@@ -41,6 +43,7 @@ import {
 
 const DEFAULT_CHAT_COMPLETION_TIMEOUT_MS = 8_000;
 const PRESERVED_AGGREGATE_ABORT_REASON = Symbol('preservedAggregateAbortReason');
+const RESPONSES_TOOL_RESULT_TYPES = new Set(['mcp_list_tools', 'shell_call_output', 'apply_patch_call_output']);
 
 type ChatCompletionParams = Omit<OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming, 'model'> & {
   model?: string;
@@ -49,6 +52,8 @@ type ChatCompletionParams = Omit<OpenAI.Chat.Completions.ChatCompletionCreatePar
   timeoutMs?: number;
   preserveAggregateAbortContext?: boolean;
   redactErrorDetails?: boolean;
+  /** Require final text without refusal or tool output in a completed response. */
+  requireCompletedTextOutput?: boolean;
   /** Optional per-request transport retry cap; omitted preserves existing SDK behavior. */
   maxRetries?: 0;
 };
@@ -159,6 +164,9 @@ function awaitResponsesWithAbortProvenance<T>(
 }
 
 type ChatCompletionResponse = OpenAI.Chat.Completions.ChatCompletion;
+type ChatCompletionOutputIssue = { reason: 'refusal' | 'tool_output' | 'commentary_only' }
+  | { reason: 'nonterminal_message'; messageStatus: 'in_progress' | 'incomplete' };
+type ChatCompletionAttempt = { response: ChatCompletionResponse; outputIssue?: ChatCompletionOutputIssue };
 
 interface ChatCompletionWithFallback extends ChatCompletionResponse {
   activeModel: string;
@@ -280,8 +288,8 @@ function createIncompleteProviderOutputError(model: string, metadata: Completion
   return error;
 }
 
-function throwIfCompletionIncomplete(model: string, response: ChatCompletionResponse): void {
-  const metadata = readCompletionMetadata(response);
+function assertUsableCompletion(model: string, attempt: ChatCompletionAttempt): void {
+  const metadata = readCompletionMetadata(attempt.response);
   if (
     metadata.incomplete ||
     metadata.truncated ||
@@ -291,6 +299,13 @@ function throwIfCompletionIncomplete(model: string, response: ChatCompletionResp
     metadata.finishReason === 'content_filter'
   ) {
     throw createIncompleteProviderOutputError(model, metadata);
+  }
+  if (attempt.outputIssue) {
+    throw Object.assign(new Error('OpenAI completion did not contain usable final text.'), {
+      code: 'OPENAI_COMPLETION_UNUSABLE_OUTPUT',
+      providerStatus: 'completed',
+      ...attempt.outputIssue
+    });
   }
 }
 
@@ -326,10 +341,53 @@ function extractPromptFromParams(params: ChatCompletionParams): string {
   return 'Fallback request context.';
 }
 
+function findCompletionOutputIssue(
+  providerResponse: Parameters<typeof convertResponseToLegacyChatCompletion>[0]
+): ChatCompletionOutputIssue | undefined {
+  // Compatibility conversion can omit hosted tools and message status or normalize an empty refusal away.
+  const semantics = normalizeOpenAIResponseSemantics(providerResponse);
+  if (semantics.refusal) return { reason: 'refusal' };
+  if (
+    semantics.toolCalls.length || semantics.unsupportedToolCallTypes.length
+    || semantics.outputItemTypes.some(type => RESPONSES_TOOL_RESULT_TYPES.has(type))
+  ) return { reason: 'tool_output' };
+
+  const output = Array.isArray(providerResponse.output) ? providerResponse.output : [];
+  let hasCommentary = false;
+  let hasFinalText = false;
+  for (const item of output) {
+    if (!isRecord(item) || item.type !== 'message') continue;
+    if (Array.isArray(item.content) && item.content.some(part => isRecord(part) && part.type === 'refusal')) {
+      return { reason: 'refusal' };
+    }
+    if (item.status === 'in_progress' || item.status === 'incomplete') {
+      return { reason: 'nonterminal_message', messageStatus: item.status };
+    }
+    if (item.phase === 'commentary') hasCommentary = true;
+    else if (Array.isArray(item.content) && item.content.some(part =>
+      isRecord(part) && part.type === 'output_text' && typeof part.text === 'string' && part.text.trim())) {
+      hasFinalText = true;
+    }
+  }
+  return hasCommentary && !hasFinalText ? { reason: 'commentary_only' } : undefined;
+}
+
+function convertChatCompletionAttempt(
+  providerResponse: Parameters<typeof convertResponseToLegacyChatCompletion>[0],
+  params: ChatCompletionParams & { model: string }
+): ChatCompletionAttempt {
+  ensureModelMatchesExpectation(providerResponse, params.model);
+  const response = convertResponseToLegacyChatCompletion(providerResponse, params.model);
+  if (!params.requireCompletedTextOutput || response.incomplete) return { response };
+
+  const outputIssue = findCompletionOutputIssue(providerResponse);
+  return { response, ...(outputIssue ? { outputIssue } : {}) };
+}
+
 const executeChatCompletionRequest = async (
   clientOrAdapter: OpenAI | OpenAIAdapter,
   payload: ChatCompletionParams & { model: string },
-): Promise<ChatCompletionResponse> => {
+): Promise<ChatCompletionAttempt> => {
   const requestSignal = payload.signal ?? getRequestAbortSignal();
   if (payload.preserveAggregateAbortContext && requestSignal?.aborted) {
     throw resolveChatAbortReason(requestSignal);
@@ -388,8 +446,7 @@ const executeChatCompletionRequest = async (
         ),
       requestSignal
     );
-    ensureModelMatchesExpectation(response, payload.model);
-    return convertResponseToLegacyChatCompletion(response, payload.model);
+    return convertChatCompletionAttempt(response, payload);
   }
 
   const requestScope = createLinkedAbortController({
@@ -408,8 +465,7 @@ const executeChatCompletionRequest = async (
       requestScope.signal,
     );
 
-    ensureModelMatchesExpectation(response, payload.model);
-    return convertResponseToLegacyChatCompletion(response, payload.model);
+    return convertChatCompletionAttempt(response, payload);
   } finally {
     requestScope.cleanup();
   }
@@ -428,7 +484,7 @@ async function attemptModelCall(
     throw resolveChatAbortReason(aggregateSignal);
   }
   aiLogger.info(`${logPrefix} Attempting with model: ${model}`);
-  const response = await executeWithResilience(
+  const attempt = await executeWithResilience(
     () => executeChatCompletionRequest(clientOrAdapter, {
       ...params,
       model,
@@ -438,11 +494,13 @@ async function attemptModelCall(
       redactErrorDetails: params.redactErrorDetails,
     }
   );
+  const { response } = attempt;
   const logContext = buildCompletionLogContext(model, startedAt, response);
   try {
-    throwIfCompletionIncomplete(model, response);
+    assertUsableCompletion(model, attempt);
   } catch (error) {
-    aiLogger.warn(`${logPrefix} Incomplete response from ${model}`, logContext);
+    const outcome = attempt.outputIssue ? 'Unusable response' : 'Incomplete response';
+    aiLogger.warn(`${logPrefix} ${outcome} from ${model}`, logContext);
     throw error;
   }
   aiLogger.info(`${logPrefix} Success with ${model}`, logContext);
@@ -469,18 +527,20 @@ async function attemptGPT5Call(
     throw resolveChatAbortReason(aggregateSignal);
   }
 
-  const response = await executeWithResilience(
+  const attempt = await executeWithResilience(
     () => executeChatCompletionRequest(clientOrAdapter, gpt5Payload),
     {
       shouldCountFailure: error => shouldCountCompletionFailure(error, aggregateSignal),
       redactErrorDetails: gpt5Payload.redactErrorDetails,
     }
   );
+  const { response } = attempt;
   const logContext = buildCompletionLogContext(gpt5Model, startedAt, response);
   try {
-    throwIfCompletionIncomplete(gpt5Model, response);
+    assertUsableCompletion(gpt5Model, attempt);
   } catch (error) {
-    aiLogger.warn(`${CHAT_FALLBACK_LOG_PREFIXES.gpt5} Incomplete response from ${gpt5Model}`, logContext);
+    const outcome = attempt.outputIssue ? 'Unusable response' : 'Incomplete response';
+    aiLogger.warn(`${CHAT_FALLBACK_LOG_PREFIXES.gpt5} ${outcome} from ${gpt5Model}`, logContext);
     throw error;
   }
   aiLogger.info(buildGpt5SuccessLog(gpt5Model), logContext);

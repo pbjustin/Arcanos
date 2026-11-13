@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { getRequestAbortSignal, getRequestRemainingMs } from '@arcanos/runtime';
+import { getRequestAbortSignal } from '@arcanos/runtime';
 import { createGamingHybridWorkflow, type GamingHybridResult } from './services/gamingHybridKnowledge.js';
 import { evaluateGamingHybridCandidates } from './services/gamingHybridCandidates.js';
 import { resolveGamingDocument } from './services/gamingDocumentResolution.js';
@@ -7,26 +7,25 @@ import type { GamingPipelineInput, GamingPipelineRuntime, GamingPreparedEvidence
 import type { GamingSuccessEnvelope } from './services/gamingModes.js';
 import { gamingHybridQuerySchema, type GamingHybridQuery } from './shared/gaming/gamingHybridContract.js';
 import { validateGamingPlayerContextInput } from './shared/gaming/gamingPlayerContext.js';
-import { hasBoundGamingClearAnswer } from './shared/gaming/gamingClearAnswerBinding.js';
-import { gamingClearHash, type GamingClearAssessment } from './shared/gaming/gamingClearPolicy.js';
+import { GAMING_PRESENTED_ANSWER, hasBoundGamingPresentedAnswer, type GamingPresentedAnswerCarrier } from './shared/gaming/gamingPresentedAnswerBinding.js';
+import type { GamingClearAssessment } from './shared/gaming/gamingClearPolicy.js';
 import { createLiveValidationObservation, emptyLiveValidationStages, liveValidationDuration,
   type LiveValidationObservation, type LiveValidationStageEvent, type LiveValidationClarification } from './shared/gaming/liveValidationObservation.js';
-import type { LivePreviewEvidenceInput } from '../scripts/live-pr-preview-verifier.mjs';
-import type { LivePreviewFailureCode } from '../scripts/live-pr-preview-verifier.mjs';
+import type { LivePreviewPresentation, LivePreviewFailureCode } from '../scripts/live-pr-preview-verifier.mjs';
 
-export type LivePrPreviewAudit = NonNullable<LivePreviewEvidenceInput['audit']>;
 export interface LivePrPreviewModuleObserver {
   onSourceAcquisition(status: 'passed' | 'failed'): void;
   onSourceValidation(status: 'passed' | 'rejected'): void;
-  onAnswerAuditStart(): void;
-  onAudit(audit: LivePrPreviewAudit): void;
   onFailure(code: LivePreviewFailureCode): void;
 }
 export interface LivePrPreviewModuleResult {
   result?: unknown;
   accepted: boolean;
-  audit?: LivePrPreviewAudit;
+  presentation?: LivePreviewPresentation;
   failureCode?: LivePreviewFailureCode;
+  /** Authenticated operator artifact only; excluded from public evidence and observation. */
+  privateAnswer?: { version: 2; policyVersion: LivePreviewPresentation['policyVersion']; response: string; subjectHash: string; contextFingerprint: string;
+    sources: Array<{ index: number; url: string }> };
 }
 export interface LivePrPreviewModuleAdapter {
   moduleId: string;
@@ -43,7 +42,7 @@ export interface LiveValidationGamingInput {
   clarificationReplies?: LiveValidationGamingClarificationReply[];
 }
 export type LiveValidationGamingHooks = Pick<GamingPipelineRuntime,
-  'onEvidenceAssessment' | 'onAnswerAuditStart' | 'onAnswerAudit'> & { onStage: (event: LiveValidationStageEvent) => void };
+  'onEvidenceAssessment'> & { onStage: (event: LiveValidationStageEvent) => void };
 export type LiveValidationGamingExecutor = (input: GamingPipelineInput, prepared: GamingPreparedEvidence,
   hooks: LiveValidationGamingHooks) => Promise<GamingSuccessEnvelope>;
 export interface LiveValidationGamingAdapter extends LivePrPreviewModuleAdapter {
@@ -98,16 +97,11 @@ export function createLiveValidationGamingAdapter(execute: LiveValidationGamingE
       const input = value as LiveValidationGamingInput;
       lastObservation = undefined;
       const stages = emptyLiveValidationStages();
-      const auditStartBudget: LiveValidationObservation['auditStartBudget'] = { runtimeRemainingMs: null, requestRemainingMs: null };
       const started = new Map<string, number>();
       const onStage = (event: LiveValidationStageEvent) => {
         if (!Object.hasOwn(stages, event.stage)) return;
         if (event.phase === 'started') {
           started.set(event.stage, now()); stages[event.stage] = { status: 'started', elapsedMs: null };
-          if (event.stage === 'answer_audit') {
-            auditStartBudget.runtimeRemainingMs = liveValidationDuration(event.remainingBudgetMs);
-            auditStartBudget.requestRemainingMs = liveValidationDuration(event.requestRemainingMs);
-          }
         } else {
           stages[event.stage] = { status: event.phase === 'completed' ? 'passed' : event.timedOut ? 'timed_out' : 'failed',
             elapsedMs: liveValidationDuration(event.elapsedMs) ?? (started.has(event.stage) ? Math.max(0, now() - started.get(event.stage)!) : null) };
@@ -119,7 +113,6 @@ export function createLiveValidationGamingAdapter(execute: LiveValidationGamingE
       };
       let result: GamingSuccessEnvelope | undefined;
       let evidenceAssessment: GamingClearAssessment | undefined;
-      let answerAssessment: GamingClearAssessment | undefined;
       let final: GamingHybridResult | undefined;
       let failureCode: LivePreviewFailureCode | undefined;
       let acquired = false;
@@ -168,27 +161,12 @@ export function createLiveValidationGamingAdapter(execute: LiveValidationGamingE
           onStage({ stage: 'generation', phase: 'started' });
           try {
             result = await execute(params, prepared, {
-            onStage,
-            onEvidenceAssessment: assessment => {
-              evidenceAssessment = structuredClone(assessment);
-              observer.onSourceValidation(assessment.decision === 'accept' ? 'passed' : 'rejected');
-              if (assessment.decision !== 'accept') fail('INSUFFICIENT_EVIDENCE');
-            },
-            onAnswerAuditStart: () => {
-              onStage({ stage: 'generation', phase: 'completed' });
-              // More precise runtime-budget metadata, when supplied, comes from onStage.
-              if (!started.has('answer_audit')) onStage({ stage: 'answer_audit', phase: 'started', requestRemainingMs: getRequestRemainingMs() });
-              observer.onAnswerAuditStart();
-            },
-            onAnswerAudit: value => {
-              answerAssessment = structuredClone(value.assessment);
-              observer.onAudit({ assessmentStatus: value.assessment.assessmentStatus, decision: value.assessment.decision, boundToFinalAnswer: false });
-              const timedOut = value.assessment.findings.some(finding => finding.code === 'AUDIT_TIMEOUT');
-              if (stages.answer_audit.status === 'started' || stages.answer_audit.status === 'not_run') {
-                onStage({ stage: 'answer_audit', phase: value.assessment.assessmentStatus === 'completed' ? 'completed' : 'failed', timedOut });
+              onStage,
+              onEvidenceAssessment: assessment => {
+                evidenceAssessment = structuredClone(assessment);
+                observer.onSourceValidation(assessment.decision === 'accept' ? 'passed' : 'rejected');
+                if (assessment.decision !== 'accept') fail('INSUFFICIENT_EVIDENCE');
               }
-              if (timedOut) fail('AUDIT_TIMEOUT');
-            }
             });
           } catch (error) {
             if (stages.generation.status === 'started') onStage({ stage: 'generation', phase: 'failed' });
@@ -245,22 +223,25 @@ export function createLiveValidationGamingAdapter(execute: LiveValidationGamingE
       clarification.revisionsAdvanced = clarification.completedCount > 0 && revisionsAdvanced;
       clarification.retainedEvidence = clarification.postAcquisitionCount > 0 && retainedEvidence;
       clarification.budgetsPreserved = clarification.postAcquisitionCount > 0 && budgetsPreserved;
+      const binding = (result?.data as GamingPresentedAnswerCarrier | undefined)?.[GAMING_PRESENTED_ANSWER];
       const accepted = Boolean(acquired && result && !failureCode && !result.data.fallbackReason
         && clarification.submittedCount === (input.clarificationReplies?.length ?? 0)
         && clarification.completedCount === clarification.submittedCount
         && (!clarification.submittedCount || clarification.sameWorkflow && clarification.revisionsAdvanced)
         && (!clarification.postAcquisitionCount || clarification.retainedEvidence && clarification.budgetsPreserved)
-        && evidenceAssessment?.decision === 'accept' && hasBoundGamingClearAnswer(result.data)
-        && answerAssessment?.profile === 'answer' && answerAssessment.assessmentStatus === 'completed' && answerAssessment.decision === 'accept'
-        && answerAssessment?.subjectHash === gamingClearHash(result.data.response)
-        && answerAssessment.contextFingerprint === evidenceAssessment.contextFingerprint
+        && evidenceAssessment?.decision === 'accept' && hasBoundGamingPresentedAnswer(result.data)
+        && binding?.contextFingerprint === evidenceAssessment.contextFingerprint
+        && binding?.evidenceSubjectHash === evidenceAssessment.subjectHash
         && final?.status === 200 && final.body.state === 'answer_ready' && final.body.nextAction === 'answer'
         && final.body.answer?.response === result.data.response);
-      const audit: LivePrPreviewAudit | undefined = answerAssessment ? { assessmentStatus: answerAssessment.assessmentStatus,
-        decision: answerAssessment.decision, boundToFinalAnswer: accepted } : undefined;
-      lastObservation = createLiveValidationObservation({ body: final?.body, accepted, audit, stages, auditStartBudget,
+      const presentation: LivePreviewPresentation | undefined = accepted && binding
+        ? { policyVersion: binding.policyVersion, boundToFinalAnswer: true } : undefined;
+      lastObservation = createLiveValidationObservation({ body: final?.body, accepted, presentation, stages,
         ...(input.clarificationReplies?.length ? { clarification } : {}) });
-      return { result, accepted, audit, failureCode };
+      return { result, accepted, presentation, failureCode,
+        ...(accepted && result && binding ? { privateAnswer: { version: 2 as const, policyVersion: binding.policyVersion,
+          response: result.data.response, subjectHash: binding.subjectHash, contextFingerprint: binding.contextFingerprint,
+          sources: result.data.sources.map((source, index) => ({ index: index + 1, url: source.url })) } } : {}) };
     }
   };
 }

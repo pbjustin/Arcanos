@@ -31,6 +31,67 @@ const input = {
   evidence: [{ sourceId: refs[0], revisionId: refs[1], recordId: refs[2], publicUrl: 'https://example.com/guide', recordType: 'guide' as const,
     text, lexicalScore: 1, combinedScore: 1, provenance: { fetchedAt: '2026-09-09T12:00:00.000Z' } }] }
 };
+
+// Authored excerpts exercise answer binding and the audit contract without publisher or model access.
+const answerAuditFixtures = [
+  {
+    game: 'Elite Dangerous',
+    prompt: 'What are the prerequisites and first steps for system colonisation?',
+    passage: 'After obtaining a claim, locate the colonisation ship to review the required construction supplies.',
+    answer: 'Obtain a claim first, then locate the colonisation ship to review its supplies. [1]',
+    unsupportedAnswer: 'Obtain a claim, then deliver exactly 500 units of each supply. [1]',
+    findingCode: 'UNSUPPORTED_QUANTITY'
+  },
+  {
+    game: 'The Legend of Zelda: Ocarina of Time',
+    prompt: 'How do I get below the Forest Temple?',
+    passage: 'Restore the four flames in the Forest Temple to activate the elevator.',
+    answer: 'Restore the four flames to activate the elevator. [1]',
+    unsupportedAnswer: 'Use the Grappling Hook from The Wind Waker to get to the elevator. [1]',
+    findingCode: 'WRONG_GAME_MECHANIC'
+  },
+  {
+    game: 'Elden Ring',
+    prompt: 'What starting equipment does the Samurai have?',
+    passage: 'The Samurai starts with an Uchigatana that has the Unsheathe skill.',
+    answer: 'The Samurai starts with an Uchigatana equipped with Unsheathe. [1]',
+    unsupportedAnswer: 'The Samurai starts with an Uchigatana and this is the best weapon on the current patch. [1]',
+    findingCode: 'UNSUPPORTED_CURRENTNESS_CLAIM'
+  },
+  {
+    game: 'Xenoblade Chronicles 2',
+    prompt: 'How do I start a Blade Combo?',
+    passage: 'Start a Blade Combo with a Blade Special, then follow the available elements in the combo chart.',
+    answer: 'Use a Blade Special, then follow the combo chart for the next element. [1]',
+    unsupportedAnswer: 'Choose a Xenoblade Chronicles 3 class to unlock the first Blade Combo stage. [1]',
+    findingCode: 'WRONG_EDITION_MECHANIC'
+  },
+  {
+    game: 'Harbor of Bells',
+    prompt: 'How do I open the east sluice without spoilers?',
+    passage: 'Ring the brass bell twice to open the east sluice.',
+    answer: 'Ring the brass bell twice to open the east sluice. [1]',
+    unsupportedAnswer: 'Ring the brass bell twice, then fight the hidden final boss behind the sluice. [1]',
+    findingCode: 'UNSUPPORTED_SPOILER'
+  }
+];
+
+function answerAuditFixtureInput(fixture: typeof answerAuditFixtures[number]) {
+  const { game, prompt, passage, answer } = fixture;
+  const source = { ...input.knowledge.sources[0], game, snippet: passage };
+  return {
+    game, prompt, mode: 'guide' as const, spoilerMode: 'none' as const, answer,
+    evidenceAssessment: createGamingClearAssessment({
+      ...evidenceAssessment,
+      questionProfile: 'walkthrough',
+      dimensions: dimensions(),
+      evidenceRefs: refs,
+      subjectHash: gamingClearHash(passage),
+      contextFingerprint: gamingClearContextFingerprint({ game, prompt, passage })
+    }),
+    knowledge: { context: passage, sources: [source], evidence: [{ ...input.knowledge.evidence[0], text: passage }] }
+  };
+}
 const completion = (body: unknown = { dimensions: dimensions(), findings: [] }) => ({
   choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(body) } }],
   usage: { prompt_tokens: 900, completion_tokens: 200, total_tokens: 1_100 }
@@ -95,6 +156,31 @@ describe('Gaming final-answer CLEAR assessment', () => {
 
   it('retains a finite hard ceiling and one model call with no repairs', () => {
     expect(GAMING_CLEAR_ANSWER_BUDGET).toMatchObject({ maxTimeoutMs: 12_000, maxCalls: 1, maxRepairs: 0 });
+  });
+
+  it('logs bounded audit diagnostics without unreviewed model codes or raw evidence references', async () => {
+    const scores = dimensions();
+    scores.clarity.reasonCodes = ['SYNTHETIC_PRIVATE_REASON'];
+    scores.alignment.score = 3.75;
+    scores.resilience.unresolvedFacts = ['SYNTHETIC_PRIVATE_UNRESOLVED'];
+    createSingleChatCompletion.mockResolvedValue(completion({ dimensions: scores, findings: [
+      { code: 'SYNTHETIC_PRIVATE_FINDING', severity: 'warning', evidenceRefs: [refs[2]] }
+    ] }));
+
+    const { assessment } = await run();
+
+    expect(assessment).toMatchObject({ decision: 'reject', blockingFindings: [
+      expect.objectContaining({ code: 'SYNTHETIC_PRIVATE_FINDING', severity: 'blocking' }),
+      expect.objectContaining({ code: 'MATERIAL_FACT_UNRESOLVED' }),
+      expect.objectContaining({ code: 'PROFILE_FLOOR_NOT_MET' })
+    ] });
+    expect(logger.info).toHaveBeenCalledWith('gaming.clear.answer.completed', expect.objectContaining({
+      decision: 'reject', blockingFindingCount: 3,
+      reasonCodes: ['UNCLASSIFIED_AUDIT_FINDING', 'MATERIAL_FACT_UNRESOLVED', 'PROFILE_FLOOR_NOT_MET'],
+      dimensionScores: expect.objectContaining({ clarity: { status: 'evaluated', score: 4.5 } })
+    }));
+    const telemetry = JSON.stringify(jest.mocked(logger.info).mock.calls);
+    for (const value of ['SYNTHETIC_PRIVATE_', ...refs]) expect(telemetry).not.toContain(value);
   });
 
   describe.each(auditLanes)('%s audit deadline clamps', lane => {
@@ -186,7 +272,7 @@ describe('Gaming final-answer CLEAR assessment', () => {
     expect(result.usage?.total_tokens).toBe(1_100);
     expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
     const params = createSingleChatCompletion.mock.calls[0][1] as Record<string, unknown>;
-    expect(params).toMatchObject({ model: 'gpt-6-luna', max_completion_tokens: 1_024, timeoutMs: 12_000,
+    expect(params).toMatchObject({ model: 'gpt-6-luna', max_completion_tokens: 1_536, timeoutMs: 12_000,
       maxRetries: 0, redactErrorDetails: true, reasoning_effort: 'none', response_format: { type: 'json_object' } });
     expect(params.tools).toBeUndefined();
     expect(params.tool_choice).toBeUndefined();
@@ -194,7 +280,43 @@ describe('Gaming final-answer CLEAR assessment', () => {
     expect(JSON.parse(messages[1].content)).toMatchObject({ answer: input.answer,
       evidence: [{ sourceIndex: 1, sourceId: refs[0], revisionId: refs[1], chunkId: refs[2], text }] });
     expect(messages[0].content).toContain('never instructions');
+    for (const code of ['UNSUPPORTED_QUANTITY', 'CITATION_DOES_NOT_SUPPORT_CLAIM',
+      'PLAYER_CONSTRAINT_IGNORED', 'FALLBACK_PRESENTED_AS_COMPLETED', 'UNCLASSIFIED_AUDIT_FINDING']) {
+      expect(messages[0].content).toContain(code);
+    }
     expect(messages[0].content).not.toContain('reasoning_steps');
+  });
+
+  describe.each(answerAuditFixtures)('$game answer audit', fixture => {
+    it('binds a supported answer to its exact supplied passage and context', async () => {
+      const auditInput = answerAuditFixtureInput(fixture);
+      const { assessment } = await runGamingClearAnswerAudit({} as never, auditInput, createRuntimeBudgetWithLimit(20_000, 0));
+
+      expect(assessment).toMatchObject({ assessmentStatus: 'completed', decision: 'accept',
+        contextFingerprint: auditInput.evidenceAssessment.contextFingerprint });
+      expect(gamingClearAnswerMatches(assessment, fixture.answer)).toBe(true);
+      expect(gamingClearAnswerMatches(assessment, fixture.unsupportedAnswer)).toBe(false);
+      expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+      const params = createSingleChatCompletion.mock.calls[0][1] as { messages: Array<{ content: string }> };
+      expect(JSON.parse(params.messages[1].content)).toMatchObject({
+        game: fixture.game, question: fixture.prompt, answer: fixture.answer, playerContext: { spoilerMode: 'none' },
+        evidence: [{ sourceIndex: 1, sourceId: refs[0], revisionId: refs[1], chunkId: refs[2], text: fixture.passage }]
+      });
+    });
+
+    it('blocks a plausible unsupported claim even when it cites the selected source', async () => {
+      const auditInput = { ...answerAuditFixtureInput(fixture), answer: fixture.unsupportedAnswer };
+      createSingleChatCompletion.mockResolvedValueOnce(completion({ dimensions: dimensions(), findings: [
+        { code: fixture.findingCode, severity: 'warning', evidenceRefs: [refs[2]] }
+      ] }));
+
+      const { assessment } = await runGamingClearAnswerAudit({} as never, auditInput, createRuntimeBudgetWithLimit(20_000, 0));
+
+      expect(assessment).toMatchObject({ assessmentStatus: 'completed', decision: 'reject', overall: 4.5,
+        blockingFindings: [{ code: fixture.findingCode, severity: 'blocking', evidenceRefs: [refs[2]] }] });
+      expect(gamingClearAnswerMatches(assessment, fixture.unsupportedAnswer)).toBe(false);
+      expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('retains unknown freshness on a qualified advisory answer and preserves parseable assessment policy', async () => {
@@ -306,11 +428,213 @@ describe('Gaming final-answer CLEAR assessment', () => {
       expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
     });
 
-  it.each(['[99]', '[1, 99]', '(Source 99)', '[Source 99]'])('rejects missing citation %s without a model call', async citation => {
+  it('rejects an invented prerequisite even when the main steps and citation are valid', async () => {
+    const fixture = answerAuditFixtures[0];
+    const auditInput = { ...answerAuditFixtureInput(fixture),
+      answer: 'Obtain a claim, locate the colonisation ship, and purchase a special expansion permit. [1]' };
+    createSingleChatCompletion.mockResolvedValueOnce(completion({ dimensions: dimensions(), findings: [
+      { code: 'UNSUPPORTED_PREREQUISITE', severity: 'warning', evidenceRefs: [refs[2]] }
+    ] }));
+
+    const { assessment } = await runGamingClearAnswerAudit({} as never, auditInput, createRuntimeBudgetWithLimit(20_000, 0));
+
+    expect(assessment).toMatchObject({ decision: 'reject',
+      blockingFindings: [expect.objectContaining({ code: 'UNSUPPORTED_PREREQUISITE' })] });
+    expect(gamingClearAnswerMatches(assessment, auditInput.answer)).toBe(false);
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects an answer that omits a material patch limitation from its cited source', async () => {
+    const passage = 'In patch 1.0, turn the west valve to open the return route. Later patches are outside this guide.';
+    const auditInput = {
+      ...input, prompt: 'How did the return route work in patch 1.0?', requestedVersion: '1.0',
+      answer: 'Turn the west valve to open the return route on every patch. [1]',
+      evidenceAssessment: createGamingClearAssessment({ ...evidenceAssessment, questionProfile: 'patch_change',
+        dimensions: dimensions(), evidenceRefs: refs, subjectHash: gamingClearHash(passage),
+        contextFingerprint: gamingClearContextFingerprint({ passage, patch: '1.0' }),
+        gates: { ...evidenceAssessment.gates, freshness: 'verified' } }),
+      knowledge: {
+        context: passage, sources: [{ ...input.knowledge.sources[0], snippet: passage, verifiedPatchVersion: '1.0' }],
+        evidence: [{ ...input.knowledge.evidence[0], text: passage }]
+      }
+    };
+    createSingleChatCompletion.mockResolvedValueOnce(completion({ dimensions: dimensions(), findings: [
+      { code: 'OMITTED_PATCH_LIMIT', severity: 'warning', evidenceRefs: [refs[2]] }
+    ] }));
+
+    const { assessment } = await runGamingClearAnswerAudit({} as never, auditInput, createRuntimeBudgetWithLimit(20_000, 0));
+
+    expect(assessment).toMatchObject({ decision: 'reject',
+      blockingFindings: [expect.objectContaining({ code: 'OMITTED_PATCH_LIMIT' })] });
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+    const params = createSingleChatCompletion.mock.calls[0][1] as { messages: Array<{ content: string }> };
+    expect(JSON.parse(params.messages[1].content)).toMatchObject({
+      requestedVersion: '1.0', applicability: [{ verifiedPatchVersion: '1.0' }], evidence: [{ text: passage }]
+    });
+  });
+
+  it('keeps a wrong existing citation distinct from an out-of-range citation', async () => {
+    const otherPassage = 'Ring the east bell to access the storehouse.';
+    const otherSource = { ...input.knowledge.sources[0], sourceId: 'source-2', url: 'https://example.com/storehouse', snippet: otherPassage };
+    const otherChunk = { ...input.knowledge.evidence[0], sourceId: otherSource.sourceId, revisionId: 'revision-2',
+      recordId: 'chunk-2', publicUrl: otherSource.url, text: otherPassage };
+    const knowledge = { context: [text, otherPassage].join('\n'), sources: [...input.knowledge.sources, otherSource],
+      evidence: [...input.knowledge.evidence, otherChunk] };
+    createSingleChatCompletion.mockResolvedValueOnce(completion({ dimensions: dimensions(), findings: [
+      { code: 'CITATION_DOES_NOT_SUPPORT_CLAIM', severity: 'warning', evidenceRefs: [otherChunk.recordId] }
+    ] }));
+
+    const wrongCitation = await run({ knowledge, answer: 'Turn the west valve to open the return route. [2]' });
+    const outOfRange = await run({ knowledge, answer: 'Turn the west valve to open the return route. [3]' });
+
+    expect(wrongCitation.assessment).toMatchObject({ assessmentMethod: 'mixed', decision: 'reject',
+      blockingFindings: [expect.objectContaining({ code: 'CITATION_DOES_NOT_SUPPORT_CLAIM' })] });
+    expect(outOfRange.assessment).toMatchObject({ assessmentMethod: 'deterministic', decision: 'reject',
+      blockingFindings: expect.arrayContaining([expect.objectContaining({ code: 'CITATION_NOT_FOUND' })]) });
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+    const params = createSingleChatCompletion.mock.calls[0][1] as { messages: Array<{ content: string }> };
+    expect(JSON.parse(params.messages[1].content)).toMatchObject({
+      evidence: [{ sourceIndex: 1, text }, { sourceIndex: 2, text: otherPassage }]
+    });
+  });
+
+  it.each(['20 Rupees guide', 'Source 2 engine notes', 'Engine notes [Source 2]'])(
+    'sends descriptive Markdown link label %s to the semantic audit', async label => {
+    const answer = `Turn the west valve. [1] See the [${label}](https://example.com/guide).`;
+    const result = await run({ answer });
+
+    expect(result.assessment).toMatchObject({ assessmentStatus: 'completed', decision: 'accept' });
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+    const request = createSingleChatCompletion.mock.calls[0][1] as { messages: Array<{ content: string }> };
+    expect(JSON.parse(request.messages[1].content).answer).toBe(answer);
+  });
+
+  it.each(['//other.example/guide', '/guide', '#guide', 'mailto:guide@example.com',
+    '<//other.example/guide>', '', 'https://example.com/guide unexpected'])(
+    'rejects numbered links with unsupported destinations before audit: %s', async destination => {
+      const result = await run({ answer: `Turn the west valve. [1](${destination})` });
+      expect(result.assessment).toMatchObject({ assessmentMethod: 'deterministic', decision: 'reject',
+        blockingFindings: expect.arrayContaining([expect.objectContaining({ code: 'CITATION_DOES_NOT_SUPPORT_CLAIM' })]) });
+      expect(createSingleChatCompletion).not.toHaveBeenCalled();
+    });
+
+  it.each([
+    ['[1](https://example.com/storehouse)', '[1](https://example.com/guide)'],
+    ['[Source 1](<https://example.com/storehouse>)', '[Source 1](<https://example.com/guide>)'],
+    ['[1](https://example.com/storehouse "Guide")', '[1](https://example.com/guide "Guide")'],
+  ])('rejects a numbered link whose URL points at a different selected source: %s', async (wrongLink, correctLink) => {
+    const otherSource = { ...input.knowledge.sources[0], sourceId: 'source-2', url: 'https://example.com/storehouse' };
+    const otherChunk = { ...input.knowledge.evidence[0], sourceId: otherSource.sourceId, revisionId: 'revision-2',
+      recordId: 'chunk-2', publicUrl: otherSource.url, text: 'Ring the east bell to access the storehouse.' };
+    const knowledge = { ...input.knowledge, sources: [...input.knowledge.sources, otherSource],
+      evidence: [...input.knowledge.evidence, otherChunk] };
+
+    const wrong = await run({ knowledge, answer: `Turn the west valve. ${wrongLink}` });
+    expect(wrong.assessment).toMatchObject({ assessmentMethod: 'deterministic', decision: 'reject',
+      blockingFindings: expect.arrayContaining([expect.objectContaining({ code: 'CITATION_DOES_NOT_SUPPORT_CLAIM' })]) });
+    expect(createSingleChatCompletion).not.toHaveBeenCalled();
+
+    const answer = `Turn the west valve. ${correctLink}`;
+    const correct = await run({ knowledge, answer });
+    expect(correct.assessment.decision).toBe('accept');
+    expect(gamingClearAnswerMatches(correct.assessment, answer)).toBe(true);
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['[99]', '[1, 99]', '(Source 99)', '[Source 99]', 'Source 99', 'Sources 1, 99', 'Sources 1, 0',
+    '[99](https://example.com/guide)'])('rejects missing citation %s without a model call', async citation => {
     const result = await run({ answer: `Turn the west valve. ${citation}` });
     expect(result.assessment.decision).toBe('reject');
     expect(result.assessment.findings.map(finding => finding.code)).toContain('CITATION_NOT_FOUND');
     expect(createSingleChatCompletion).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'Turn the west valve.',
+    'Turn the west valve. See [Source 1 guide notes](https://example.com/other).',
+    'Turn the west valve. See [Source 1 guide notes].',
+    'Turn the west valve. See [the guide](https://example.com/guide-copy).'
+  ])('withholds an explicitly requested answer without a selected citation: %s', async answer => {
+    const result = await run({ prompt: input.prompt + ' Cite the guide sources.', answer });
+    expect(result.assessment).toMatchObject({ assessmentStatus: 'completed', decision: 'reject',
+      blockingFindings: expect.arrayContaining([expect.objectContaining({ code: 'CITATION_NOT_FOUND' })]) });
+    expect(createSingleChatCompletion).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'Turn the west valve. [1]',
+    'Turn the west valve. [Source 1]',
+    'Turn the west valve. [Source 2 guide notes](https://example.com/guide)',
+    'Turn the west valve. See https://example.com/guide.'
+  ])('allows a selected citation through to semantic audit: %s', async answer => {
+    const result = await run({ prompt: input.prompt + ' Cite the guide sources.', answer });
+    expect(result.assessment.decision).toBe('accept');
+    expect(gamingClearAnswerMatches(result.assessment, answer)).toBe(true);
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it('binds URL-only citations to the correct selected passages in the semantic audit payload', async () => {
+    const guide = input.knowledge.sources[0];
+    const otherGuide = { ...guide, sourceId: 'source-2', url: 'https://example.com/storehouse' };
+    const otherChunk = { ...input.knowledge.evidence[0], sourceId: otherGuide.sourceId, revisionId: 'revision-2',
+      recordId: 'chunk-2', publicUrl: otherGuide.url, text: 'Ring the east bell to access the storehouse.' };
+    const knowledge = { ...input.knowledge, sources: [guide, otherGuide], evidence: [otherChunk, ...input.knowledge.evidence] };
+    const prompt = input.prompt + ' Cite the guide sources.';
+    for (const [source, expected] of [[guide, 'accept'], [otherGuide, 'reject']] as const) {
+      const answer = `Turn the west valve. [Guide](${source.url})`;
+      createSingleChatCompletion.mockImplementationOnce((_client, options) => {
+        const { messages } = options as { messages: Array<{ content: string }> };
+        const payload = JSON.parse(messages[1].content);
+        const binding = payload.applicability.find((item: { url?: string }) => item.url === source.url);
+        const citedPassage = payload.evidence.find((item: { sourceId: string; sourceIndex: number }) =>
+          item.sourceId === binding?.sourceId && item.sourceIndex === binding?.sourceIndex);
+        return Promise.resolve(completion({ dimensions: dimensions(), findings: citedPassage?.text === text ? [] : [
+          { code: 'CITATION_DOES_NOT_SUPPORT_CLAIM', severity: 'blocking', evidenceRefs: [] }
+        ] }));
+      });
+      const result = await run({ knowledge, prompt, answer });
+      expect(result.assessment).toMatchObject({ assessmentMethod: 'mixed', decision: expected });
+    }
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the existing semantic audit for uncited answers without a citation request', async () => {
+    const result = await run({ answer: 'Turn the west valve.' });
+    expect(result.assessment.decision).toBe('accept');
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['https://example.com/Item_(Sword)', 'https://example.com/Item_(Sword)'],
+    ['https://example.com/Item_(Sword_(Rare))', 'https://example.com/Item_(Sword_(Rare)) "Guide title"'],
+    ['https://example.com/Item_(Sword)', '<https://example.com/Item_(Sword)> (Guide title)']
+  ])('audits a numbered citation with balanced parentheses in %s', async (url, destination) => {
+    const knowledge = { ...input.knowledge, sources: [{ ...input.knowledge.sources[0], url }],
+      evidence: [{ ...input.knowledge.evidence[0], publicUrl: url }] };
+    const answer = `Turn the west valve. [1](${destination})`;
+    const { assessment } = await run({ knowledge, answer });
+    expect(gamingClearAnswerMatches(assessment, answer)).toBe(true);
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['https://example.com/Item_(Other))', 'https://example.com/Item_(Sword)'])(
+    'rejects a mismatched or unclosed numbered link %s before the model', async destination => {
+      const url = 'https://example.com/Item_(Sword)';
+      const knowledge = { ...input.knowledge, sources: [{ ...input.knowledge.sources[0], url }],
+        evidence: [{ ...input.knowledge.evidence[0], publicUrl: url }] };
+      const { assessment } = await run({ knowledge, answer: `Turn the west valve. [1](${destination}` });
+      expect(assessment.blockingFindings).toContainEqual(expect.objectContaining({ code: 'CITATION_DOES_NOT_SUPPORT_CLAIM' }));
+      expect(createSingleChatCompletion).not.toHaveBeenCalled();
+    });
+
+  it.each([
+    'What is the quest named “The Archivist, Cite the Sources!”?',
+    'How do I start "The Archivist, Cite the Sources!"?',
+    "What's the best way to open the return route? Don't cite the sources."
+  ])('does not treat quoted quest titles or negated wording as citation directives: %s', async prompt => {
+    const result = await run({ prompt, answer: 'Turn the west valve.' });
+    expect(result.assessment.decision).toBe('accept');
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -325,6 +649,19 @@ describe('Gaming final-answer CLEAR assessment', () => {
     expect(Object.values(result.assessment.dimensionScores).every(dimension => dimension.score === null)).toBe(true);
   });
 
+  it('keeps a completed non-JSON provider response unavailable without repair', async () => {
+    createSingleChatCompletion.mockResolvedValueOnce({
+      ...completion(), choices: [{ finish_reason: 'stop', message: { content: '{"dimensions":' } }]
+    });
+
+    const { assessment } = await run();
+
+    expect(assessment).toMatchObject({ assessmentStatus: 'unavailable', decision: 'unavailable', overall: null,
+      findings: [expect.objectContaining({ code: 'AUDIT_MALFORMED' })] });
+    expect(gamingClearAnswerMatches(assessment, input.answer)).toBe(false);
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     ['AbortError', undefined, 'AUDIT_TIMEOUT'],
     ['Error', 'OPENAI_COMPLETION_INCOMPLETE', 'AUDIT_PROVIDER_INCOMPLETE'],
@@ -334,6 +671,74 @@ describe('Gaming final-answer CLEAR assessment', () => {
     const result = await run();
     expect(result.assessment).toMatchObject({ assessmentStatus: 'unavailable', decision: 'unavailable', overall: null });
     expect(result.assessment.findings.map(finding => finding.code)).toContain(expectedCode);
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [{ provider_metadata: { status: 'incomplete' } }, 'provider_incomplete', 'bounded'],
+    [{ truncated: true }, 'provider_incomplete', 'bounded'],
+    [{ content_filtered: true }, 'provider_incomplete', 'bounded'],
+    [{ provider_metadata: { finish_reason: 'synthetic private finish' } }, 'unexpected_finish', 'bounded'],
+    [{ choices: [{ finish_reason: 'stop', message: { content: null } }] }, 'missing_content', 'missing'],
+    [{ choices: [{ finish_reason: 'stop', message: { content: '  ' } }] }, 'missing_content', 'empty'],
+    [{ choices: [{ finish_reason: 'stop', message: { content: 'x'.repeat(16_001) } }] }, 'oversized_content', 'oversized']
+  ])('fails closed and classifies a nonusable audit completion: %#', async (override, resultClass, contentLengthClass) => {
+    createSingleChatCompletion.mockResolvedValueOnce({ ...completion(), ...override });
+    const result = await run();
+    expect(result.assessment).toMatchObject({ assessmentStatus: 'unavailable', decision: 'unavailable', overall: null,
+      findings: [expect.objectContaining({ code: 'AUDIT_PROVIDER_INCOMPLETE' })] });
+    expect(result.providerDiagnostic).toMatchObject({ resultClass, contentLengthClass });
+    expect(JSON.stringify(result.providerDiagnostic)).not.toContain('synthetic private finish');
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['malformed_json', '{"dimensions":'],
+    ['invalid_schema', '{"dimensions":{},"findings":[]}']
+  ])('distinguishes %s from the other AUDIT_MALFORMED subtype', async (resultClass, content) => {
+    createSingleChatCompletion.mockResolvedValueOnce({ ...completion(), provider_metadata: { status: 'completed' },
+      choices: [{ finish_reason: 'stop', message: { content } }] });
+    const result = await run();
+    expect(result.assessment).toMatchObject({ assessmentStatus: 'unavailable', decision: 'unavailable', overall: null,
+      findings: [expect.objectContaining({ code: 'AUDIT_MALFORMED' })] });
+    expect(result.providerDiagnostic).toMatchObject({ resultClass, providerStatus: 'completed',
+      finishReason: 'stop', contentLengthClass: 'bounded' });
+    expect(JSON.stringify(result.providerDiagnostic)).not.toContain('dimensions');
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { refusal: 'synthetic private refusal' },
+    { refusal: '' },
+    { tool_calls: [{ function: { name: 'synthetic private tool', arguments: '{}' } }] },
+    { function_call: { name: 'synthetic private tool', arguments: '{}' } }
+  ])('rejects mixed non-text audit output even with a stop finish and valid JSON: %#', async extra => {
+    const candidate = completion();
+    createSingleChatCompletion.mockResolvedValueOnce({ ...candidate, choices: [{ ...candidate.choices[0],
+      message: { ...candidate.choices[0].message, ...extra } }] });
+    const result = await run();
+    expect(result.assessment).toMatchObject({ assessmentStatus: 'unavailable', decision: 'unavailable', overall: null,
+      findings: [expect.objectContaining({ code: 'AUDIT_PROVIDER_INCOMPLETE' })] });
+    expect(result.providerDiagnostic).toMatchObject({ resultClass: 'unsupported_output', contentLengthClass: 'bounded',
+      outputKind: 'refusal' in extra ? 'refusal' : 'tool_output' });
+    expect(JSON.stringify(result.providerDiagnostic)).not.toContain('synthetic private');
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts the exact decimal floor after a bounded provider audit', async () => {
+    const evaluated = dimensions();
+    evaluated.clarity.score = 4.1;
+    evaluated.leverage.score = 2.3;
+    evaluated.efficiency.score = 5;
+    evaluated.alignment.score = 4.6;
+    evaluated.resilience.score = 5;
+    createSingleChatCompletion.mockResolvedValueOnce(completion({ dimensions: evaluated, findings: [] }));
+
+    const { assessment } = await run();
+
+    expect(assessment).toMatchObject({ decision: 'accept', overall: 3.9999999999999996, findings: [] });
+    expect(gamingClearAnswerMatches(assessment, input.answer)).toBe(true);
+    expect(parseGamingClearAssessment(assessment)).toEqual(assessment);
     expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
   });
 
@@ -371,10 +776,43 @@ describe('Gaming final-answer CLEAR assessment', () => {
     const params = createSingleChatCompletion.mock.calls[0][1] as { messages: Array<{ content: string }> };
     expect(JSON.parse(params.messages[1].content).applicability[0]).toMatchObject({ partialExtraction: true, patch: '1.0',
       sourceAssessmentStatus: 'not_run' });
-    expect(params.messages[0].content).toContain('missing prerequisites and unseen guide sections remain unknown');
+    expect(params.messages[0].content).toContain('Record unresolvedFacts only for unknown facts needed to answer the actual question');
     createSingleChatCompletion.mockClear();
     const rejected = await run({ knowledge, answer: 'For patch 2.0, turn the west valve. [1]' });
     expect(rejected.assessment.decision).toBe('reject');
+    expect(createSingleChatCompletion).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'The guide does not establish whether these steps work on patch 2.0.',
+    'The guide does not confirm whether these steps work on patch 2.0.',
+    'The guide does not confirm compatibility for patch 2.0.',
+    'The guide documents this route on patch 1.0. This guide does not establish whether the route works on patch 2.0.'
+  ])('preserves source-limited uncertainty for the semantic audit: %s', async statement => {
+    const knowledge = { ...input.knowledge, sources: [{ ...input.knowledge.sources[0], verifiedPatchVersion: '1.0' }] };
+    const answer = `${input.answer} ${statement}`;
+    const { assessment } = await run({ knowledge, answer });
+    expect(assessment).toMatchObject({ assessmentMethod: 'mixed', decision: 'accept' });
+    expect(gamingClearAnswerMatches(assessment, answer)).toBe(true);
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    'The guide covers this route on patch 1.0, but these steps also work on patch 2.0.',
+    'The guide does not establish whether these steps work on patch 2.0, but the route works on patch 3.0.',
+    'The guide does not establish whether these steps work on patch 2.0. The route works on patch 3.0.',
+    'The guide does not establish whether these steps work on patch 2.0. The route works on\npatch 3.0.',
+    'The guide does not confirm whether these steps work on patch 2.0. The route works on patch 3.0.',
+    'The guide does not confirm compatibility for patch 2.0. The route works on patch 3.0.',
+    'The guide does not confirm compatibility for patch 2.0, but the route works on patch 3.0.'
+  ])('rejects an unsupported patch assertion alongside another patch reference: %s', async statement => {
+    const knowledge = { ...input.knowledge, sources: [{ ...input.knowledge.sources[0], verifiedPatchVersion: '1.0' }] };
+    const result = await run({ knowledge, answer: `${input.answer} ${statement}` });
+    const { assessment } = result;
+    expect(assessment).toMatchObject({ assessmentMethod: 'deterministic', decision: 'reject',
+      gates: { compatibility: 'verified' },
+      blockingFindings: expect.arrayContaining([expect.objectContaining({ code: 'UNSUPPORTED_CURRENTNESS_CLAIM' })]) });
+    expect(result).toMatchObject({ factualSupport: 'UNVERIFIED' });
     expect(createSingleChatCompletion).not.toHaveBeenCalled();
   });
 });

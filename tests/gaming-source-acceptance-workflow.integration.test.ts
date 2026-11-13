@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
 import { gamingSourceAcceptanceCases, gamingSourceAcceptanceHtml } from './fixtures/gaming-source-acceptance.js';
-import { GAMING_CLEAR_DIMENSIONS } from '../src/shared/gaming/gamingClearPolicy.js';
+import { GAMING_CLEAR_PRESENTATION_POLICY_VERSION } from '../src/shared/gaming/gamingPromptCore.js';
+import { inspectGamingFinalRequest } from './testUtils/gamingPresentationFixtures.js';
 import type { GamingHybridResponse } from '../src/shared/gaming/gamingHybridContract.js';
 
 const mockHttp = jest.fn();
@@ -10,7 +11,7 @@ const forbiddenWrite = jest.fn(async () => { throw new Error('Durable writes are
 const forbiddenDatabase = jest.fn(async () => { throw new Error('Database access is forbidden in this fixture.'); });
 const mockMemory = jest.fn(() => ({ relevantEntries: [], contextSummary: '', accessLog: [] }));
 const stages: string[] = [];
-const auditInputs: any[] = [];
+const finalRequests: ReturnType<typeof inspectGamingFinalRequest>[] = [];
 let answerSentences: string[] = [];
 let expectedQuestion = '';
 let currentHtml = '';
@@ -18,7 +19,7 @@ let clock = Date.parse('2026-10-13T12:00:00.000Z');
 
 // Only external acquisition/provider transports and forbidden persistence sinks
 // are replaced. Candidate validation, selection, Trinity intake/reasoning/final,
-// model-response/schema checks, and the bound CLEAR answer audit remain real.
+// model-response/schema checks, presentation policy, and structural citation validation remain real.
 jest.unstable_mockModule('axios', () => ({ default: gamingAcquisitionAxios(mockHttp) }));
 jest.unstable_mockModule('node:dns/promises', () => ({ Resolver: class {
   async resolve4() { return ['93.184.216.34']; }
@@ -62,7 +63,7 @@ function providerInputText(payload: any): string {
 }
 
 beforeEach(() => {
-  jest.clearAllMocks(); stages.length = 0; auditInputs.length = 0;
+  jest.clearAllMocks(); stages.length = 0; finalRequests.length = 0;
   resetSafetyRuntimeStateForTests(); resetTrinitySelfHealingStateForTests();
   previousEnv = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]));
   Object.assign(process.env, env);
@@ -94,27 +95,16 @@ beforeEach(() => {
         alternatives_considered: [], chosen_path_justification: '', response_mode: 'answer',
         achievable_subtasks: ['answer using the acquired guide'], blocked_subtasks: [], user_visible_caveats: [],
         claim_tags: [], final_answer: answer });
-    } else if (payload.text?.format?.type === 'json_object') {
-      stages.push('answer_audit');
-      const data = payload.input.flatMap((message: any) => message.content ?? [])
-        .map((part: any) => part.text).find((value: unknown) => typeof value === 'string' && value.startsWith('{"answer":'));
-      const audited = JSON.parse(data);
-      auditInputs.push(audited);
-      expect(audited.question).toBe(expectedQuestion);
-      expect(audited.evidence.length).toBeGreaterThan(0);
-      for (const sentence of answerSentences) {
-        expect(audited.answer).toContain(sentence);
-        expect(audited.evidence.some((chunk: any) => chunk.text.includes(sentence))).toBe(true);
-      }
-      const refs = audited.evidence.map((chunk: any) => chunk.chunkId);
-      text = JSON.stringify({ dimensions: Object.fromEntries(GAMING_CLEAR_DIMENSIONS.map(name => [name, {
-        status: 'evaluated', score: 4.5, reasonCodes: ['SUPPORTED_SYNTHETIC_PASSAGE'], evidenceRefs: refs.slice(0, 8), unresolvedFacts: []
-      }])), findings: [] });
     } else if (stages.length === 0) {
       stages.push('intake');
       expect(input).toContain(expectedQuestion);
       text = 'Task: give beginner guidance from Source 1 while retaining player progression constraints and source qualifications.';
     } else {
+      const finalRequest = inspectGamingFinalRequest(payload, GAMING_CLEAR_PRESENTATION_POLICY_VERSION);
+      finalRequests.push(finalRequest);
+      for (const sentence of answerSentences) {
+        expect(finalRequest.evidence.some(chunk => chunk.text.includes(sentence))).toBe(true);
+      }
       stages.push('final');
       expect(input).toContain(expectedQuestion);
       for (const sentence of answerSentences) expect(input).toContain(sentence);
@@ -191,12 +181,11 @@ describe('source acceptance through the actual hybrid-v2 and Trinity pipeline', 
     expect(final.body.answer!.response).toContain('[Source 1]');
     expect(final.body.answer!.response).toMatch(/current.?patch compatibility.*(?:not|unverified|could not)/iu);
     for (const sentence of fixture.sentences) expect(final.body.answer!.response).toContain(sentence);
-    expect(stages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
+    expect(stages).toEqual(['intake', 'reasoning', 'final']);
     expect(mockHttp).toHaveBeenCalledTimes(1);
-    expect(mockProvider).toHaveBeenCalledTimes(4);
-    expect(auditInputs[0].evidence.every((chunk: any) => final.body.selectedCandidateIds!.includes(chunk.sourceId)
-      && final.body.selectedEvidenceIds!.includes(chunk.chunkId))).toBe(true);
-    expect(JSON.stringify(auditInputs[0].evidence)).not.toContain(fixture.unrelatedGame);
+    expect(mockProvider).toHaveBeenCalledTimes(3);
+    expect(finalRequests[0].evidence.every(chunk => final.body.answer!.sources.some(source => source.url === chunk.url))).toBe(true);
+    expect(JSON.stringify(finalRequests[0].evidence)).not.toContain(fixture.unrelatedGame);
     const sourceEvaluation = (logger.info as jest.Mock).mock.calls.find(call => call[0] === 'gaming.source.evaluation')![1] as any;
     expect(sourceEvaluation).toMatchObject({ outcome: 'selected', stages: {
       acquisition: { status: 'passed', reasonCode: 'SOURCE_ACQUIRED' },
@@ -207,7 +196,7 @@ describe('source acceptance through the actual hybrid-v2 and Trinity pipeline', 
     } });
     expect(JSON.stringify(sourceEvaluation)).not.toContain(fixture.prose);
     expect(await run.submit(initial.body)).toEqual(final);
-    expect(mockHttp).toHaveBeenCalledTimes(1); expect(mockProvider).toHaveBeenCalledTimes(4);
+    expect(mockHttp).toHaveBeenCalledTimes(1); expect(mockProvider).toHaveBeenCalledTimes(3);
   });
 
   it.each(fixtures)('stops $name with accepted but insufficient evidence after its bounded recovery', async fixture => {

@@ -1,6 +1,7 @@
+import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -10,14 +11,17 @@ import { parseLiveValidationControllerArguments, runLiveValidationController, va
   LIVE_VALIDATION_OPERATOR_GATE_IDS, resolveLiveValidationSelection, createLiveValidationServiceClient } from './live-validation-controller.mjs';
 import { LIVE_VALIDATION_PROJECT_ID, LIVE_VALIDATION_HARD_LIMITS, LIVE_VALIDATION_PRODUCTION_ENVIRONMENT_ID } from './live-validation-target.mjs';
 import { canonicalLiveValidationJson, validationHash } from './live-validation-bootstrap.mjs';
-import { createLivePreviewEvidence, LIVE_PREVIEW_CASE_MANIFEST } from './live-pr-preview-verifier.mjs';
+import { createLivePreviewEvidence, LIVE_PREVIEW_CASE_MANIFEST,
+  sanitizeLiveValidationAuditRejection } from './live-pr-preview-verifier.mjs';
 import { createLiveValidationProvider } from './live-validation-provider.mjs';
+import * as privateAnswerController from './live-validation-controller.mjs';
 
-const ROOT = path.resolve(new URL('../', import.meta.url).pathname);
+const ROOT = path.resolve(fileURLToPath(new URL('../', import.meta.url)));
 const sha = 'a'.repeat(40); const trustedSha = 'b'.repeat(40); const treeSha = 'c'.repeat(40); const compiledSha256 = 'd'.repeat(64);
 const envId = '11111111-1111-4111-8111-111111111111'; const runtimeId = '22222222-2222-4222-8222-222222222222';
 const runtimeDeploymentId = '55555555-5555-4555-8555-555555555555';
 const hash = value => createHash('sha256').update(value).digest('hex');
+const ANSWER_TEXT = 'Use the supplied documented blade path [1].';
 const profiles = JSON.parse(readFileSync(path.join(ROOT, 'examples/live-validation/profiles.json'), 'utf8'));
 function profileFixture() {
   const value = structuredClone(profiles);
@@ -103,33 +107,47 @@ function identity(target) {
   return { role: 'runtime', sourceCommit: sha, projectId: target.projectId, environmentId: target.environmentId, serviceId: target.runtimeServiceId,
     deploymentId: runtimeDeploymentId, buildManifestSha256: validationHash(buildManifest), buildManifest };
 }
-function evidenceFor(entry) {
+const PRESENTATION = { policyVersion: 'gaming-clear-presentation/v1', boundToFinalAnswer: true };
+function evidenceFor(entry, legacy = true) {
   const positive = entry.id.endsWith('positive'); const spec = LIVE_PREVIEW_CASE_MANIFEST.find(item => item.caseId === entry.caseId);
   const limits = { maxRequests: 32, maxInputTokensPerRequest: 1_000, maxOutputTokensPerRequest: 300,
     maxTotalTokens: 20_000, durationMs: 600_000, maxSpendMicroUsd: 2_000_000, maxConcurrency: 1, maxRetries: 0 };
   return createLivePreviewEvidence({ sourceCommit: sha, approvedSourceCommit: sha, deploymentId: runtimeDeploymentId, moduleId: 'gaming', mode: 'live-backend-v1' }, {
-    caseId: entry.caseId, failureCode: spec.failureCode, stages: spec.stages,
-    result: positive ? { ok: true, route: 'gaming', mode: 'guide', data: { response: 'Use the supplied documented blade path [1].',
+    caseId: entry.caseId, failureCode: spec.failureCode,
+    stages: legacy ? spec.stages : { ...spec.stages, answer_audit: 'not_run' },
+    ...(!legacy ? { acceptanceProfile: profiles.acceptanceProfile, presentation: positive ? PRESENTATION : null } : {}),
+    result: positive ? { ok: true, route: 'gaming', mode: 'guide', data: { response: ANSWER_TEXT,
       sources: [{ url: entry.input.candidateUrls[0], snippet: 'Grounded preparation and blade guidance.' }],
       grounding: { groundingStatus: 'grounded', groundedInSuppliedEvidence: true, fetchedSuppliedSourceCount: 1,
         usableSourceCount: 1, citableSourceCount: 1, selectedChunkCount: 1, suppliedEvidenceSourceCount: 1 } } } : undefined,
     audit: positive ? { assessmentStatus: 'completed', decision: 'accept', boundToFinalAnswer: true }
       : { assessmentStatus: 'not_run', decision: 'unavailable', boundToFinalAnswer: false },
-    usage: { requests: positive ? 2 : 0, providerCalls: positive ? 2 : 0, generationCalls: positive ? 1 : 0, auditCalls: positive ? 1 : 0,
-      reservedInputTokens: positive ? 1_800 : 0, reservedOutputTokens: positive ? 400 : 0, reservedTotalTokens: positive ? 2_200 : 0,
+    usage: { requests: positive ? (legacy ? 2 : 1) : 0, providerCalls: positive ? (legacy ? 2 : 1) : 0,
+      generationCalls: positive ? 1 : 0, auditCalls: positive && legacy ? 1 : 0,
+      reservedInputTokens: positive ? 900 : 0, reservedOutputTokens: positive ? 200 : 0, reservedTotalTokens: positive ? 1_100 : 0,
       reservedSpendMicroUsd: positive ? 10_000 : 0, observedInputTokens: positive ? 600 : 0, observedOutputTokens: positive ? 100 : 0,
       observedSpendMicroUsd: positive ? 4_000 : 0, elapsedMs: 100, limits } });
 }
-function observation(positive) {
-  return { schemaVersion: 1, contractVersion: 'gaming-hybrid-v2', outcome: positive ? 'accepted' : 'need_new_source',
-    reason: positive ? null : 'GAME_MISMATCH', semanticGap: positive ? 'NONCRITICAL_GAP' : 'CONFLICT',
+/** Accepted synthetic answer data stays separate from closed public evidence. */
+function privateAnswerFor(entry, response = ANSWER_TEXT, legacy = true) {
+  return { ...(legacy ? { version: 1 } : { version: 2, policyVersion: PRESENTATION.policyVersion }), response, subjectHash: validationHash(response),
+    contextFingerprint: validationHash({ scope: 'offline-private-answer' }),
+    sources: [{ index: 1, url: entry.input.candidateUrls[0] }] };
+}
+/** Call through the module namespace so the before-feature suite can still load. */
+const validatePrivateAnswer = (...args) => privateAnswerController.validateLiveValidationPrivateAnswer(...args);
+function observation(positive, legacy = true) {
+  return { schemaVersion: legacy ? 1 : 2, contractVersion: 'gaming-hybrid-v2', outcome: positive ? 'accepted' : 'need_new_source',
+    reason: positive ? null : 'GAME_MISMATCH',
+    semanticGap: positive ? profiles.profiles.find(entry => entry.id === 'gaming-guide-positive').expected.semanticGap : 'CONFLICT',
     coverage: { satisfied: positive, assessmentStatus: 'assessed', missingCount: positive ? 0 : 1 },
     selectedCandidateCount: positive ? 1 : 0, selectedEvidenceCount: positive ? 1 : 0,
     candidates: positive ? [] : [{ decision: 'rejected', reasonCodes: ['GAME_MISMATCH'] }],
-    qualification: { visible: positive, patchCompatibility: 'unverified', claimsVerifiedCurrentness: false },
-    audit: positive ? { assessmentStatus: 'completed', decision: 'accept', boundToFinalAnswer: true } : null,
-    auditStartBudget: { runtimeRemainingMs: 120000, requestRemainingMs: 120000 },
-    stages: Object.fromEntries(['acquisition', 'selection', 'generation', 'intake', 'reasoning', 'final', 'answer_audit', 'response']
+    qualification: { visible: positive && profiles.profiles.find(entry => entry.id === 'gaming-guide-positive').expected.qualifiedUnknownPatch === true,
+      patchCompatibility: 'unverified', claimsVerifiedCurrentness: false },
+    ...(legacy ? { audit: positive ? { assessmentStatus: 'completed', decision: 'accept', boundToFinalAnswer: true } : null,
+      auditStartBudget: { runtimeRemainingMs: 120000, requestRemainingMs: 120000 } } : { presentation: positive ? PRESENTATION : null }),
+    stages: Object.fromEntries(['acquisition', 'selection', 'generation', 'intake', 'reasoning', 'final', ...(legacy ? ['answer_audit'] : []), 'response']
       .map(stage => [stage, { status: positive || ['acquisition', 'selection', 'response'].includes(stage) ? 'passed' : 'not_run', elapsedMs: positive ? 10 : null }])) };
 }
 function executionFixture(f, options = {}) {
@@ -137,7 +155,7 @@ function executionFixture(f, options = {}) {
   let active = false; let stopped = false; let bound = false; let admitted = false; let workflows = 0; let clock = 1000000;
   const seen = []; let token;
   const usage = plan => ({ ...plan, status: 'active', counts: { workflows }, limits: { ...f.target.limits, maxConcurrency: 1, maxRetries: 0 },
-    usage: { requests: workflows ? 2 : 0, metadataRequests: 0, providerCalls: workflows ? 2 : 0, generationCalls: workflows ? 1 : 0, auditCalls: workflows ? 1 : 0,
+    usage: { requests: workflows ? 1 : 0, metadataRequests: 0, providerCalls: workflows ? 1 : 0, generationCalls: workflows ? 1 : 0, auditCalls: 0,
       reservedInputTokens: 1800, reservedOutputTokens: 400, reservedTotalTokens: 2200, reservedSpendMicroUsd: 10000,
       observedInputTokens: 600, observedOutputTokens: 100, observedTotalTokens: 700, observedSpendMicroUsd: 4000 } });
   let plan;
@@ -161,12 +179,18 @@ function executionFixture(f, options = {}) {
     if (route === '/stop') return { status: 200, body: { stopped: true, runId: plan.runId } };
     if (route === '/acceptance') {
       workflows++; const entry = executionProfiles.profiles.find(value => value.id === request.body.caseId); const positive = entry.id.endsWith('positive');
-      const evidence = evidenceFor(entry); if (options.unboundAudit && positive) evidence.audit.boundToFinalAnswer = false;
-      const projected = observation(positive); if (options.lostConflict && !positive) projected.candidates = [];
+      const evidence = evidenceFor(entry, options.legacyEvidence === true);
+      if (options.unboundPresentation && positive) evidence.presentation = null;
+      const projected = observation(positive, false); if (options.lostConflict && !positive) projected.candidates = [];
       if (positive) options.mutateObservation?.(projected);
       if (options.leakToken && positive) evidence.result.sources[0].url = 'https://' + token + '.example.org';
+      options.mutateEvidence?.(evidence, positive);
+      let privateAnswer = positive && !options.omitPrivateAnswer ? privateAnswerFor(entry, undefined, false) : undefined;
+      if (privateAnswer) options.mutatePrivateAnswer?.(privateAnswer, { token, evidence, observation: projected });
+      if (!positive && options.negativePrivateAnswer) privateAnswer = privateAnswerFor(entry, 'Unexpected negative answer [1].', false);
+      options.beforeAcceptanceReturn?.({ positive });
       return { status: 200, body: { identity: identity(f.target), caseId: entry.id, evidence, observation: projected,
-        profilePassed: true, durableWrites: 0, productionChanged: false } };
+        profilePassed: true, durableWrites: 0, productionChanged: false, ...(privateAnswer ? { privateAnswer } : {}) } };
     }
     throw new Error('Unexpected service route');
   } };
@@ -177,6 +201,20 @@ function executionFixture(f, options = {}) {
   return { dependencies, seen, railway, service, admitted: () => admitted, stopped: () => stopped, plan: () => plan };
 }
 const execute = (f, e) => runLiveValidationController([...f.argv, '--execute', '--allow-paid-provider'], e.dependencies);
+
+test('controller leaves a competing one-shot claim intact before runtime mutation', async t => {
+  const f = fixture(t); const e = executionFixture(f);
+  const stateFile = path.join(f.directory, 'evidence', 'controller-state.private.json');
+  const winningClaim = '{"claim":"concurrent-controller-fixture"}\n';
+  e.dependencies.createRailwayApi = () => {
+    // Model a second controller publishing its claim just after the initial file check.
+    writeFileSync(stateFile, winningClaim, { mode: 0o600, flag: 'wx' });
+    return e.railway;
+  };
+  await assert.rejects(execute(f, e), { code: 'LIVE_VALIDATION_RUN_REPLAY_FORBIDDEN' });
+  assert.equal(readFileSync(stateFile, 'utf8'), winningClaim);
+  assert.deepEqual(e.seen, []);
+});
 
 test('CLI accepts PR, exact SHA or both, and requires paired paid flags with hard ceilings', t => {
   const f = fixture(t);
@@ -281,6 +319,133 @@ test('one-service mocked flow binds ephemeral token before exact deploy, proves 
   assert.deepEqual(e.seen.slice(0, 3), ['bind', 'deploy', '/ready']); assert.equal(e.stopped(), true);
   assert.equal(result.cases[1].observation.candidates[0].reasonCodes[0], 'GAME_MISMATCH');
   assert.equal(JSON.stringify(result).includes(Buffer.alloc(32, 17).toString('hex')), false);
+  const answerFile = path.join(f.directory, 'evidence', 'accepted-answer.private.json');
+  const retained = JSON.parse(readFileSync(answerFile, 'utf8'));
+  const positive = profileFixture().profiles.find(entry => entry.id === 'gaming-guide-positive');
+  assert.equal(lstatSync(answerFile).mode & 0o077, 0);
+  assert.equal(lstatSync(path.dirname(answerFile)).mode & 0o077, 0);
+  if (typeof process.getuid === 'function') assert.equal(lstatSync(answerFile).uid, process.getuid());
+  assert.equal(retained.response, ANSWER_TEXT); assert.equal(retained.subjectHash, validationHash(ANSWER_TEXT));
+  assert.equal(retained.caseId, positive.id); assert.equal(retained.sourceCommit, sha);
+  assert.equal(retained.runId, result.runId); assert.equal(retained.profileHash, e.plan().profileHash);
+  assert.deepEqual(retained.sources, privateAnswerFor(positive, undefined, false).sources);
+  assert.deepEqual(retained.runtimeIdentity, result.runtimeIdentity);
+  assert.equal(result.cases[0].answerArtifactSha256, validationHash(privateAnswerFor(positive, undefined, false)));
+  assert.equal(Object.hasOwn(result.cases[1], 'answerArtifactSha256'), false);
+  for (const publicValue of [result, JSON.parse(readFileSync(path.join(f.directory, 'evidence', 'acceptance-summary.json'), 'utf8'))]) {
+    const serialized = JSON.stringify(publicValue);
+    assert.equal(serialized.includes(ANSWER_TEXT), false);
+    assert.equal(serialized.includes(positive.input.candidateUrls[0]), false);
+    assert.equal(serialized.includes('privateAnswer'), false);
+    assert.equal(serialized.includes('contextFingerprint'), false);
+  }
+});
+
+test('private answer validation accepts exact bound content while cloning it away from caller mutation', () => {
+  const entry = profileFixture().profiles.find(value => value.id === 'gaming-guide-positive');
+  const input = privateAnswerFor(entry);
+  const validated = validatePrivateAnswer(input, { evidence: evidenceFor(entry), observation: observation(true) });
+  assert.deepEqual(validated, input); assert.notEqual(validated, input); assert.notEqual(validated.sources, input.sources);
+  input.sources[0].url = 'https://different.example.org/changed';
+  assert.equal(validated.sources[0].url, entry.input.candidateUrls[0]);
+});
+
+test('private answer validation counts numeric citations separately from descriptive Markdown labels', () => {
+  const entry = profileFixture().profiles.find(value => value.id === 'gaming-guide-positive');
+  const answer = `Follow the documented preparation [1]. See the [Source 2 engine notes](${entry.input.candidateUrls[0]}).`;
+  const input = privateAnswerFor(entry, answer);
+  assert.deepEqual(validatePrivateAnswer(input, { evidence: evidenceFor(entry), observation: observation(true) }), input);
+});
+
+test('private answer validation rejects invalid shapes, unbound content, citations, sources and audit state', async t => {
+  const entry = profileFixture().profiles.find(value => value.id === 'gaming-guide-positive');
+  const mutations = [
+    ['unknown field', value => { value.rawSource = 'private acquired source'; }],
+    ['missing field', value => { delete value.contextFingerprint; }],
+    ['wrong version', value => { value.version = 2; }],
+    ['empty answer', value => { value.response = ' '; value.subjectHash = validationHash(value.response); }],
+    ['oversized answer', value => { value.response = 'x'.repeat(65_537); value.subjectHash = validationHash(value.response); }],
+    ['changed answer hash', value => { value.response += ' altered'; }],
+    ['invalid context fingerprint', value => { value.contextFingerprint = 'not-a-hash'; }],
+    ['source ordinal', value => { value.sources[0].index = 2; }],
+    ['unknown source field', value => { value.sources[0].body = 'private source'; }],
+    ['wrong source URL', value => { value.sources[0].url = 'https://different.example.org/guide'; }],
+    ['plain HTTP', value => { value.sources[0].url = value.sources[0].url.replace('https:', 'http:'); }],
+    ['credential-bearing URL', value => { const url = new URL(value.sources[0].url); url.username = 'fixture'; value.sources[0].url = url.toString(); }],
+    ['no sources', value => { value.sources = []; }],
+    ['duplicate source', value => { value.sources.push({ ...value.sources[0] }); }],
+    ['missing citation', value => { value.response = 'An answer without a citation.'; value.subjectHash = validationHash(value.response); }],
+    ['out of range citation', value => { value.response = 'A claimed answer [2].'; value.subjectHash = validationHash(value.response); }],
+    ['unusable source', (_value, evidence) => { evidence.result.sources[0].usable = false; }],
+    ['source hash mismatch', (_value, evidence) => { evidence.result.sources[0].documentUrlSha256 = 'e'.repeat(64); }],
+    ['citation proof mismatch', (_value, evidence) => { evidence.result.citationIndices = []; }],
+    ['not accepted', (_value, evidence) => { evidence.result.acceptedAnswer = false; }],
+    ['unresolved citations', (_value, evidence) => { evidence.result.citationsResolved = false; }],
+    ['unbound audit', (_value, evidence) => { evidence.audit.boundToFinalAnswer = false; }],
+    ['rejected audit', (_value, evidence) => { evidence.audit.decision = 'reject'; }],
+    ['unfinished audit', (_value, evidence) => { evidence.audit.assessmentStatus = 'unavailable'; }],
+    ['missing coverage', (_value, _evidence, observed) => { observed.coverage.satisfied = false; }],
+    ['unbound observation', (_value, _evidence, observed) => { observed.audit.boundToFinalAnswer = false; }],
+    ['rejected observation audit', (_value, _evidence, observed) => { observed.audit.decision = 'reject'; }],
+    ['unfinished observation audit', (_value, _evidence, observed) => { observed.audit.assessmentStatus = 'unavailable'; }]
+  ];
+  for (const [label, mutate] of mutations) await t.test(label, () => {
+    const value = privateAnswerFor(entry); const evidence = evidenceFor(entry); const observed = observation(true);
+    mutate(value, evidence, observed);
+    assert.throws(() => validatePrivateAnswer(value, { evidence, observation: observed }), { code: 'LIVE_VALIDATION_PRIVATE_ANSWER_INVALID' });
+  });
+});
+
+test('private answer validation rejects a known secret without exposing it in the error', () => {
+  const entry = profileFixture().profiles.find(value => value.id === 'gaming-guide-positive');
+  const secret = 'test-private-secret-value';
+  const value = privateAnswerFor(entry, `This private answer contains ${secret}. [1]`);
+  assert.throws(() => validatePrivateAnswer(value, { evidence: evidenceFor(entry), observation: observation(true), secrets: [secret] }),
+    error => error.code === 'LIVE_VALIDATION_PRIVATE_ANSWER_INVALID' && !String(error).includes(secret));
+});
+
+test('failed positive proof never retains the private payload or returns it in the summary', async t => {
+  for (const [label, options] of [
+    ['missing private payload', { omitPrivateAnswer: true }],
+    ['changed private answer', { mutatePrivateAnswer: value => { value.response += ' unbound'; } }],
+    ['unbound presentation', { unboundPresentation: true }],
+    ['legacy scored audit proof', { legacyEvidence: true }],
+    ['fallback result', { mutateEvidence: (evidence, positive) => { if (positive) evidence.result.acceptedAnswer = false; } }],
+    ['runtime token in answer', { mutatePrivateAnswer: (value, { token }) => {
+      value.response = `Private ${token} [1]`; value.subjectHash = validationHash(value.response);
+    } }]
+  ]) await t.test(label, async child => {
+    const f = fixture(child); const e = executionFixture(f, options); const result = await execute(f, e);
+    assert.notEqual(result.status, 'PASS'); assert.equal(e.stopped(), true);
+    assert.equal(existsSync(path.join(f.directory, 'evidence', 'accepted-answer.private.json')), false);
+    const publicJson = JSON.stringify(result);
+    assert.equal(publicJson.includes(ANSWER_TEXT), false);
+    assert.equal(publicJson.includes('unbound'), false);
+    assert.equal(publicJson.includes(Buffer.alloc(32, 17).toString('hex')), false);
+    assert.equal(publicJson.includes('privateAnswer'), false);
+  });
+});
+
+test('a negative profile cannot replace the accepted positive private artifact', async t => {
+  const f = fixture(t); const e = executionFixture(f, { negativePrivateAnswer: true });
+  const result = await execute(f, e);
+  assert.equal(result.status, 'FAILED'); assert.equal(result.code, 'LIVE_VALIDATION_PRIVATE_ANSWER_INVALID');
+  const retained = JSON.parse(readFileSync(path.join(f.directory, 'evidence', 'accepted-answer.private.json'), 'utf8'));
+  assert.equal(retained.response, ANSWER_TEXT); assert.notEqual(retained.response, 'Unexpected negative answer [1].');
+  assert.equal(JSON.stringify(result).includes('Unexpected negative answer'), false);
+  assert.equal(Object.hasOwn(result.observedCases[1], 'answerArtifactSha256'), false);
+});
+
+test('private answer retention refuses a symlink destination without overwriting its target', async t => {
+  const f = fixture(t); const target = path.join(f.directory, 'keep-existing.txt');
+  writeFileSync(target, 'keep-existing-content', { mode: 0o600 });
+  const e = executionFixture(f, { beforeAcceptanceReturn: ({ positive }) => {
+    if (positive) symlinkSync(target, path.join(f.directory, 'evidence', 'accepted-answer.private.json'));
+  } });
+  const result = await execute(f, e);
+  assert.equal(result.status, 'FAILED'); assert.equal(result.code, 'LIVE_VALIDATION_STATE_UNSAFE');
+  assert.equal(readFileSync(target, 'utf8'), 'keep-existing-content'); assert.equal(e.stopped(), true);
+  assert.equal(JSON.stringify(result).includes(ANSWER_TEXT), false);
 });
 test('accepted deployment with a lost response preserves intent and blocks cleanup without provider admission or guessed stop', async t => {
   const f = fixture(t); let persistedBeforeDeploy;
@@ -350,8 +515,8 @@ test('failed GitHub checks or workflow reruns reject before token binding/deploy
   const f = fixture(t); const e = executionFixture(f, { checkFailure: true }); await assert.rejects(execute(f, e)); assert.deepEqual(e.seen, []);
   f.environment.WORKFLOW_RUN_ATTEMPT = '2'; await assert.rejects(execute(f, e)); assert.deepEqual(e.seen, []);
 });
-test('forged PASS cannot replace mandatory bound audit or preserve a missing negative semantic conflict reason', async t => {
-  for (const options of [{ unboundAudit: true }, { lostConflict: true }, { leakToken: true }]) await t.test(JSON.stringify(options), async child => {
+test('forged PASS cannot replace bound presentation or preserve a missing negative semantic conflict reason', async t => {
+  for (const options of [{ unboundPresentation: true }, { lostConflict: true }, { leakToken: true }]) await t.test(JSON.stringify(options), async child => {
     const f = fixture(child); const e = executionFixture(f, options); const result = await execute(f, e);
     assert.equal(result.status, 'FAILED'); assert.equal(e.stopped(), true);
     assert.equal(JSON.stringify(result).includes(Buffer.alloc(32, 17).toString('hex')), false);
@@ -361,6 +526,189 @@ test('observations retain bounded semantic codes and timings while dropping arbi
   const value = observation(false); value.candidates.push({ decision: 'secret text', reasonCodes: ['private prompt', 'CONFLICT'], source: 'private URL' });
   const sanitized = sanitizeLiveValidationObservation(value); assert.equal(sanitized.reason, 'GAME_MISMATCH');
   assert.deepEqual(sanitized.candidates[1], { decision: 'unobserved', reasonCodes: ['CONFLICT'] }); assert.doesNotMatch(JSON.stringify(sanitized), /private/);
+});
+test('answer audit receipt preserves only bounded audit diagnostics', () => {
+  const value = observation(true);
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, value.audit);
+  const audit = { assessmentStatus: 'unavailable', decision: 'unavailable', boundToFinalAnswer: false };
+  for (const reasonCode of ['AUDIT_INPUT_UNAVAILABLE', 'AUDIT_BUDGET_EXHAUSTED', 'AUDIT_PROVIDER_INCOMPLETE',
+    'AUDIT_MALFORMED', 'AUDIT_TIMEOUT', 'AUDIT_PROVIDER_ERROR']) {
+    value.audit = { ...audit, reasonCode, effectiveTimeoutMs: 12_000,
+      rawBody: 'private upstream response', model: 'private model', sourceId: 'private evidence' };
+    assert.deepEqual(sanitizeLiveValidationObservation(value).audit, { ...audit, reasonCode, effectiveTimeoutMs: 12_000 });
+  }
+  value.audit = { ...audit, reasonCode: 'AUDIT_PRIVATE_PAYLOAD', effectiveTimeoutMs: 0 };
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, { ...audit, effectiveTimeoutMs: 0 });
+  for (const effectiveTimeoutMs of [-1, 1.5, 12_001, null, 'private timeout']) {
+    value.audit = { ...audit, effectiveTimeoutMs };
+    assert.deepEqual(sanitizeLiveValidationObservation(value).audit, audit);
+  }
+  value.audit = { assessmentStatus: 'completed', decision: 'accept', boundToFinalAnswer: true,
+    reasonCode: 'AUDIT_TIMEOUT', effectiveTimeoutMs: 9000 };
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit,
+    { assessmentStatus: 'completed', decision: 'accept', boundToFinalAnswer: true, effectiveTimeoutMs: 9000 });
+});
+test('answer audit provider result diagnostics project only bounded metadata', () => {
+  const value = observation(true);
+  const audit = { assessmentStatus: 'unavailable', decision: 'unavailable', boundToFinalAnswer: false,
+    reasonCode: 'AUDIT_PROVIDER_INCOMPLETE' };
+  const diagnostic = { resultClass: 'provider_incomplete', providerStatus: 'incomplete', finishReason: 'length',
+    incompleteReason: 'max_output_tokens', truncated: true, contentFiltered: false, contentLengthClass: 'bounded',
+    messageStatus: 'in_progress' };
+  value.audit = { ...audit, providerDiagnostic: { ...diagnostic, rawText: 'private output', modelId: 'private model',
+    requestId: 'private request', sourceUrl: 'private source', contentLength: 123, outputKind: 'tool_output' } };
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, { ...audit, providerDiagnostic: diagnostic });
+
+  value.audit.providerDiagnostic = { resultClass: 'malformed_json', providerStatus: 'private provider status',
+    finishReason: 'unknown', incompleteReason: 'private reason', truncated: 'true', contentFiltered: 1,
+    contentLengthClass: 123, error: { message: 'private error' } };
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, {
+    ...audit, providerDiagnostic: { resultClass: 'malformed_json', finishReason: 'unknown' }
+  });
+
+  for (const invalid of [undefined, null, [], { finishReason: 'stop' }, { resultClass: 'private class' }]) {
+    value.audit.providerDiagnostic = invalid;
+    assert.deepEqual(sanitizeLiveValidationObservation(value).audit, audit);
+  }
+
+  for (const outputKind of ['refusal', 'tool_output']) {
+    value.audit.providerDiagnostic = { resultClass: 'unsupported_output', outputKind, messageStatus: 'incomplete' };
+    assert.deepEqual(sanitizeLiveValidationObservation(value).audit, {
+      ...audit, providerDiagnostic: { resultClass: 'unsupported_output', outputKind }
+    });
+  }
+  value.audit.providerDiagnostic = { resultClass: 'unsupported_output', outputKind: 'private kind' };
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, {
+    ...audit, providerDiagnostic: { resultClass: 'unsupported_output' }
+  });
+
+  value.audit.providerDiagnostic = { resultClass: 'provider_incomplete', messageStatus: 'private status' };
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, {
+    ...audit, providerDiagnostic: { resultClass: 'provider_incomplete' }
+  });
+
+  for (const resultClass of ['unexpected_finish', 'commentary_only', 'missing_content', 'oversized_content', 'invalid_schema']) {
+    const status = { ...audit, reasonCode: resultClass === 'invalid_schema' ? 'AUDIT_MALFORMED' : 'AUDIT_PROVIDER_INCOMPLETE' };
+    value.audit = { ...status, providerDiagnostic: { resultClass, rawText: 'private audit text' } };
+    assert.deepEqual(sanitizeLiveValidationObservation(value).audit, { ...status, providerDiagnostic: { resultClass } });
+  }
+
+  const completed = { assessmentStatus: 'completed', decision: 'accept', boundToFinalAnswer: true };
+  value.audit = { ...completed, providerDiagnostic: { resultClass: 'complete', contentLengthClass: 'bounded' } };
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, value.audit);
+  value.audit = { ...completed, providerDiagnostic: diagnostic };
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, completed);
+  value.audit = { ...audit, providerDiagnostic: { resultClass: 'complete' } };
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, audit);
+  const notRun = { assessmentStatus: 'not_run', decision: 'unavailable', boundToFinalAnswer: false };
+  value.audit = { ...notRun, providerDiagnostic: diagnostic };
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, notRun);
+});
+
+test('completed rejected audit receipts retain only safe findings and a bounded blocking count', () => {
+  const value = observation(true);
+  const audit = { assessmentStatus: 'completed', decision: 'reject', boundToFinalAnswer: false, effectiveTimeoutMs: 12_000 };
+  value.audit = { ...audit, findingCodes: ['PROFILE_FLOOR_NOT_MET', 'PRIVATE_PROVIDER_CODE',
+    'MATERIAL_FACT_UNRESOLVED', 'PROFILE_FLOOR_NOT_MET'], blockingFindingCount: 4,
+    rawBody: 'private audit body', evidenceRefs: ['private evidence reference'], dimensionScores: { clarity: 1 } };
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, { ...audit,
+    findingCodes: ['MATERIAL_FACT_UNRESOLVED', 'PROFILE_FLOOR_NOT_MET', 'UNCLASSIFIED_AUDIT_FINDING'],
+    blockingFindingCount: 4,
+    findingCounts: { MATERIAL_FACT_UNRESOLVED: 1, PROFILE_FLOOR_NOT_MET: 2, UNCLASSIFIED_AUDIT_FINDING: 1 } });
+  for (const malformed of [{ blockingFindingCount: 0 }, { blockingFindingCount: 33 }, { blockingFindingCount: 1.5 },
+    { findingCodes: ['MATERIAL_FACT_UNRESOLVED', { code: 'private' }] },
+    { findingCodes: ['MATERIAL_FACT_UNRESOLVED', 'PROFILE_FLOOR_NOT_MET'], blockingFindingCount: 1 },
+    { findingCodes: Array(33).fill('MATERIAL_FACT_UNRESOLVED') }]) {
+    value.audit = { ...audit, findingCodes: ['MATERIAL_FACT_UNRESOLVED'], blockingFindingCount: 1, ...malformed };
+    assert.deepEqual(sanitizeLiveValidationObservation(value).audit, audit);
+  }
+  value.audit = audit;
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, audit);
+  for (const [assessmentStatus, decision] of [['completed', 'accept'], ['completed', 'partial'], ['unavailable', 'unavailable']]) {
+    const otherAudit = { ...audit, assessmentStatus, decision };
+    value.audit = { ...otherAudit, findingCodes: ['MATERIAL_FACT_UNRESOLVED'], blockingFindingCount: 1 };
+    assert.deepEqual(sanitizeLiveValidationObservation(value).audit, otherAudit);
+  }
+});
+test('rejection counts retain repeated and reviewed findings through adapter and controller projection', () => {
+  const value = observation(true);
+  const audit = { assessmentStatus: 'completed', decision: 'reject', boundToFinalAnswer: false };
+  const adapterProjection = sanitizeLiveValidationAuditRejection({ blockingFindingCount: 7,
+    findingCodes: ['FALLBACK_PRESENTED_AS_COMPLETED', 'PLAYER_CONSTRAINT_IGNORED', 'PLAYER_CONSTRAINT_IGNORED',
+      'PRIVATE_PROVIDER_CODE', 'PRIVATE_OTHER_CODE', 'MATERIAL_FACT_UNRESOLVED', 'MATERIAL_FACT_UNRESOLVED'] });
+  value.audit = { ...audit, ...adapterProjection };
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, {
+    ...audit, blockingFindingCount: 7,
+    findingCodes: ['FALLBACK_PRESENTED_AS_COMPLETED', 'MATERIAL_FACT_UNRESOLVED', 'PLAYER_CONSTRAINT_IGNORED',
+      'UNCLASSIFIED_AUDIT_FINDING'],
+    findingCounts: { FALLBACK_PRESENTED_AS_COMPLETED: 1, MATERIAL_FACT_UNRESOLVED: 2, PLAYER_CONSTRAINT_IGNORED: 2,
+      UNCLASSIFIED_AUDIT_FINDING: 2 }
+  });
+});
+test('rejection receipts distinguish explicit unclassified findings from unmapped codes', () => {
+  const value = observation(true);
+  const audit = { assessmentStatus: 'completed', decision: 'reject', boundToFinalAnswer: false };
+  const unclassified = 'UNCLASSIFIED_AUDIT_FINDING';
+  const privateCode = 'MODEL_SUPPLIED_PRIVATE_IDENTIFIER';
+  for (const [codes, unmappedFindingCount] of [
+    [[unclassified, unclassified], 0],
+    [[unclassified, privateCode], 1],
+    [[privateCode, privateCode], 2]
+  ]) {
+    value.audit = { ...audit, ...sanitizeLiveValidationAuditRejection({
+      blockingFindingCount: 3, findingCodes: ['MATERIAL_FACT_UNRESOLVED', ...codes]
+    }, 'assessment') };
+    const projection = sanitizeLiveValidationObservation(value).audit;
+    assert.deepEqual(projection, { ...audit, findingCodes: ['MATERIAL_FACT_UNRESOLVED', unclassified],
+      blockingFindingCount: 3, findingCounts: { MATERIAL_FACT_UNRESOLVED: 1, [unclassified]: 2 },
+      unmappedFindingCount });
+    assert.equal(JSON.stringify(projection).includes(privateCode), false);
+  }
+});
+
+test('rejection receipts retain unmapped counts only with a consistent allowlisted aggregate', () => {
+  const value = observation(true);
+  const audit = { assessmentStatus: 'completed', decision: 'reject', boundToFinalAnswer: false };
+  const previous = { ...audit, findingCodes: ['UNCLASSIFIED_AUDIT_FINDING'], blockingFindingCount: 1,
+    findingCounts: { UNCLASSIFIED_AUDIT_FINDING: 1 } };
+  value.audit = previous;
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, previous);
+  for (const unmappedFindingCount of [-1, 2, 0.5, 'MODEL_SUPPLIED_PRIVATE_IDENTIFIER', null, { private: 'hidden' }]) {
+    value.audit = { ...previous, unmappedFindingCount };
+    assert.deepEqual(sanitizeLiveValidationObservation(value).audit, previous);
+  }
+  const { findingCounts: _counts, ...withoutCounts } = previous;
+  value.audit = { ...withoutCounts, unmappedFindingCount: 1 };
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, previous);
+  const classified = { ...audit, findingCodes: ['MATERIAL_FACT_UNRESOLVED'], blockingFindingCount: 1,
+    findingCounts: { MATERIAL_FACT_UNRESOLVED: 1 } };
+  value.audit = { ...classified, unmappedFindingCount: 0 };
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, classified);
+});
+
+test('historical rejections and invalid count maps retain the original sanitized receipt fields', () => {
+  const value = observation(true);
+  const historicalAudit = { assessmentStatus: 'completed', decision: 'reject', boundToFinalAnswer: false,
+    findingCodes: ['MATERIAL_FACT_UNRESOLVED', 'PROFILE_FLOOR_NOT_MET', 'UNCLASSIFIED_AUDIT_FINDING'],
+    blockingFindingCount: 8 };
+  value.audit = historicalAudit;
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, historicalAudit);
+  for (const findingCounts of [
+    { MATERIAL_FACT_UNRESOLVED: 1, PROFILE_FLOOR_NOT_MET: 1, UNCLASSIFIED_AUDIT_FINDING: 5 },
+    { MATERIAL_FACT_UNRESOLVED: 1.5, PROFILE_FLOOR_NOT_MET: 1.5, UNCLASSIFIED_AUDIT_FINDING: 5 },
+    { MATERIAL_FACT_UNRESOLVED: 0, PROFILE_FLOOR_NOT_MET: 1, UNCLASSIFIED_AUDIT_FINDING: 7 },
+    { MATERIAL_FACT_UNRESOLVED: 2, PROFILE_FLOOR_NOT_MET: 2, UNCLASSIFIED_AUDIT_FINDING: 3, UNSUPPORTED_CLAIM: 1 },
+    { MATERIAL_FACT_UNRESOLVED: 2, PROFILE_FLOOR_NOT_MET: 2, UNCLASSIFIED_AUDIT_FINDING: 3, PRIVATE_PROVIDER_CODE: 1 },
+    JSON.parse('{"MATERIAL_FACT_UNRESOLVED":2,"PROFILE_FLOOR_NOT_MET":2,"UNCLASSIFIED_AUDIT_FINDING":3,"__proto__":1}'),
+    { MATERIAL_FACT_UNRESOLVED: 4, PROFILE_FLOOR_NOT_MET: 4 },
+    ['private value']
+  ]) {
+    value.audit = { ...historicalAudit, findingCounts };
+    assert.deepEqual(sanitizeLiveValidationObservation(value).audit, historicalAudit);
+  }
+  const completeCodes = { ...historicalAudit, blockingFindingCount: historicalAudit.findingCodes.length };
+  value.audit = { ...completeCodes, findingCounts: { PRIVATE_PROVIDER_CODE: 3 } };
+  assert.deepEqual(sanitizeLiveValidationObservation(value).audit, completeCodes);
 });
 test('optional clarification observations expose only bounded counts and invariants', () => {
   const value = observation(true);
@@ -431,7 +779,7 @@ test('positive proof rejects failed or unobserved model execution despite aggreg
     } });
     const result = await execute(f, e);
     assert.equal(result.status, 'FAILED'); assert.equal(result.code, 'LIVE_VALIDATION_PROFILE_STAGE_FAILED');
-    assert.equal(result.actualUsage.generationCalls, 1); assert.equal(result.actualUsage.auditCalls, 1);
+    assert.equal(result.actualUsage.generationCalls, 1); assert.equal(result.actualUsage.auditCalls, 0);
     assert.equal(e.stopped(), true);
   });
 });
@@ -443,8 +791,8 @@ test('profiles can require all measured model stages without requiring clarifica
   assert.equal(result.status, 'PASS');
   assert.equal(Object.hasOwn(result.cases[0].observation, 'clarification'), false);
 });
-test('required model stages and positive acquisition/audit/response stages must complete with timing evidence', async t => {
-  for (const stage of ['acquisition', 'selection', 'generation', 'intake', 'reasoning', 'final', 'answer_audit', 'response']) {
+test('required model stages and positive acquisition/response stages must complete with timing evidence', async t => {
+  for (const stage of ['acquisition', 'selection', 'generation', 'intake', 'reasoning', 'final', 'response']) {
     for (const status of ['not_run', 'failed', 'timed_out', 'passed']) await t.test(`${stage} ${status}`, async child => {
       const requiredProfiles = profileFixture();
       requiredProfiles.profiles[0].expected.requiredModelStages = ['intake', 'reasoning', 'final'];
@@ -630,8 +978,112 @@ test('controller sanitizes the actual direct-provider snapshot including workflo
   const actual = usage();
   assert.equal(actual.status, 'active'); assert.equal(actual.workflows, 2);
   assert.equal(actual.requests, 3); assert.equal(actual.metadataRequests, 1);
+  assert.deepEqual(actual.modelValidation, [{ stage: 'metadata', outcome: 'completed',
+    elapsedMs: provider.snapshot().stages[0].elapsedMs, reserved: true }]);
+  assert.deepEqual(actual.answerAuditProvider, [{ outcome: 'completed',
+    elapsedMs: provider.snapshot().stages[2].elapsedMs }]);
   assert.equal(actual.providerCalls, 2); assert.equal(actual.generationCalls, 1); assert.equal(actual.auditCalls, 1);
   assert.equal(actual.observedInputTokens, 20); assert.equal(actual.observedOutputTokens, 10);
   assert.equal(actual.observedTotalTokens, 30);
   assert.ok(actual.reservedSpendMicroUsd >= actual.observedSpendMicroUsd);
+});
+
+test('controller retains a reserved audit failure when the run expires during settlement', async t => {
+  const { target } = fixture(t);
+  const plan = { runId: 'a'.repeat(32), commitSha: sha, prNumber: 1528, runtimeDeploymentId, profileHash: 'b'.repeat(64) };
+  const model = target.models[0].id;
+  const observation = { moduleId: 'gaming', stage: 'generation' };
+  const expiresAtMs = 10_000;
+  let nowMs = 0;
+  const provider = createLiveValidationProvider({ target,
+    identity: { sourceCommit: sha, deploymentId: runtimeDeploymentId },
+    apiKey: 'sk-unit-test-fixture-' + 'x'.repeat(40), observation: () => observation,
+    now: () => nowMs, expiresAtMs,
+    fetchImplementation: async () => {
+      if (observation.stage === 'answer_audit') nowMs = expiresAtMs;
+      return Response.json({ id: 'response', object: 'response', model, output: [],
+        usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 } });
+    } });
+  t.after(() => provider.close());
+  provider.beginWorkflow('gaming-guide-positive');
+  const invoke = () => provider.fetch('https://api.openai.com/v1/responses', { method: 'POST',
+    body: JSON.stringify({ model, input: 'Use acquired source evidence.', max_output_tokens: 100 }) });
+  await invoke();
+  observation.stage = 'answer_audit';
+  await assert.rejects(invoke(), { code: 'LIVE_VALIDATION_BUDGET_EXPIRED' });
+  const snapshot = provider.snapshot();
+  assert.equal(snapshot.closed, true);
+  assert.equal(snapshot.usage.auditCalls, 1);
+  assert.equal(snapshot.stages[1].code, 'LIVE_VALIDATION_BUDGET_EXPIRED');
+  const actual = sanitizeLiveValidationUsage({ ...plan, ...snapshot, status: 'stopped' }, { plan, target });
+  assert.deepEqual(actual.answerAuditProvider, [
+    { outcome: 'failed', elapsedMs: expiresAtMs, code: 'LIVE_VALIDATION_BUDGET_EXPIRED' }
+  ]);
+});
+
+test('answer audit provider receipt keeps only bounded reserved-call diagnostics', t => {
+  const { target } = fixture(t);
+  const plan = { runId: 'a'.repeat(32), commitSha: sha, prNumber: 1528, runtimeDeploymentId, profileHash: 'b'.repeat(64) };
+  const provider = createLiveValidationProvider({ target, identity: { sourceCommit: sha, deploymentId: runtimeDeploymentId },
+    apiKey: 'sk-unit-test-fixture-' + 'x'.repeat(40), fetchImplementation: () => assert.fail('unexpected transport') });
+  t.after(() => provider.close());
+  const snapshot = provider.snapshot();
+  const summarize = (stages, auditCalls = 1) => sanitizeLiveValidationUsage({ ...plan, ...snapshot, stages,
+    usage: { ...snapshot.usage, requests: auditCalls, providerCalls: auditCalls, auditCalls } }, { plan, target });
+  const stage = { stage: 'answer_audit', outcome: 'failed', elapsedMs: 34 };
+  const codes = ['LIVE_VALIDATION_PROVIDER_TIMEOUT', 'LIVE_VALIDATION_PROVIDER_CANCELLED', 'LIVE_VALIDATION_RUN_CLOSED',
+    'LIVE_VALIDATION_PROVIDER_MODEL_MISMATCH', 'LIVE_VALIDATION_PROVIDER_FAILED', 'LIVE_VALIDATION_PROVIDER_RESPONSE_INVALID',
+    'LIVE_VALIDATION_PROVIDER_RESPONSE_LIMIT', 'LIVE_VALIDATION_USAGE_INVALID'];
+  assert.equal(summarize(undefined).answerAuditProvider, undefined);
+  assert.deepEqual(summarize([stage]).answerAuditProvider, [{ outcome: 'failed', elapsedMs: 34 }]);
+  for (const code of codes) {
+    const usage = summarize([{ ...stage, code, model: 'private model', actualModel: 'private provider model',
+      caseId: 'private case', requestId: 'private request', rawBody: 'private response' }]);
+    assert.deepEqual(usage.answerAuditProvider, [{ outcome: 'failed', elapsedMs: 34, code }]);
+    assert.doesNotMatch(JSON.stringify(usage), /private/);
+  }
+  assert.equal(summarize([stage], 0).answerAuditProvider, undefined);
+  for (const stages of [[stage, stage], Array(target.limits.maxRequests + 2).fill({ stage: 'generation' }),
+    [{ ...stage, outcome: 'private outcome' }], [{ ...stage, code: 'LIVE_VALIDATION_PRIVATE_PAYLOAD' }],
+    [{ ...stage, elapsedMs: -1 }], [{ ...stage, elapsedMs: target.limits.durationMs + 1 }],
+    [{ ...stage, outcome: 'completed', code: codes[0] }]]) {
+    const usage = summarize(stages);
+    assert.equal(usage.answerAuditProvider, undefined);
+    assert.equal(usage.auditCalls, 1);
+  }
+});
+
+test('model validation receipt preserves bounded outcomes and drops raw or inconsistent diagnostics', t => {
+  const { target } = fixture(t);
+  const plan = { runId: 'a'.repeat(32), commitSha: sha, prNumber: 1528, runtimeDeploymentId, profileHash: 'b'.repeat(64) };
+  const provider = createLiveValidationProvider({ target, identity: { sourceCommit: sha, deploymentId: runtimeDeploymentId },
+    apiKey: 'sk-unit-test-fixture-' + 'x'.repeat(40), fetchImplementation: () => assert.fail('unexpected transport') });
+  t.after(() => provider.close());
+  const snapshot = provider.snapshot();
+  const summarize = (stages, metadataRequests = 1) => sanitizeLiveValidationUsage({ ...plan, ...snapshot, stages,
+    usage: { ...snapshot.usage, requests: metadataRequests, metadataRequests } }, { plan, target });
+  const stage = { stage: 'metadata', outcome: 'failed', code: 'LIVE_VALIDATION_METADATA_NOT_FOUND',
+    elapsedMs: 12, reserved: true };
+  const legacy = { ...stage, code: 'LIVE_VALIDATION_MODEL_VALIDATION_FAILED' };
+  delete legacy.reserved;
+  const rejected = { ...stage, code: 'LIVE_VALIDATION_BUDGET_EXHAUSTED', elapsedMs: 0, reserved: false };
+  assert.equal(summarize(undefined).modelValidation, undefined);
+  assert.deepEqual(summarize([legacy]).modelValidation, [{ ...legacy, reserved: true }]);
+  for (const code of ['LIVE_VALIDATION_METADATA_UNAUTHORIZED', 'LIVE_VALIDATION_METADATA_FORBIDDEN',
+    'LIVE_VALIDATION_METADATA_RATE_LIMITED', 'LIVE_VALIDATION_METADATA_ACCESS_DENIED']) {
+    const classified = { ...stage, code };
+    assert.deepEqual(summarize([{ ...classified, rawBody: 'private upstream error' }]).modelValidation, [classified]);
+    assert.equal(summarize([{ ...classified, reserved: false }], 0).modelValidation, undefined);
+  }
+  assert.deepEqual(summarize([{ ...stage, model: 'private model label', message: 'private provider message' },
+    rejected, { stage: 'generation', outcome: 'failed', code: 'private content error' }]).modelValidation, [stage, rejected]);
+  assert.deepEqual(summarize([rejected], 0).modelValidation, [rejected]);
+  assert.equal(summarize([{ ...stage, reserved: false }], 0).modelValidation, undefined);
+  for (const stages of [[{ ...stage, code: 'LIVE_VALIDATION_PRIVATE_PAYLOAD' }], [{ ...stage, elapsedMs: -1 }],
+    [{ ...stage, reserved: 'private reservation marker' }], [{ ...stage, elapsedMs: target.limits.durationMs + 1 }],
+    [stage, stage], [rejected, rejected], Array(target.limits.maxRequests + 2).fill(stage)]) {
+    const usage = summarize(stages);
+    assert.equal(usage.modelValidation, undefined);
+    assert.equal(usage.metadataRequests, 1);
+  }
 });

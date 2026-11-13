@@ -111,16 +111,12 @@ describe('Trinity model lanes at the actual bounded provider boundary', () => {
     // Advance past the production validation-cache TTL without waiting or changing model policy.
     jest.useFakeTimers({ now: Date.now() + 11 * 60_000 });
     retrieveModel.mockRejectedValue(new Error('Synthetic intake model unavailable'));
-    const gamingAudit = jest.fn(async () => {
-      throw new Error('Gaming audit must not admit unavailable intake.');
-    });
     await expect(run(simplePrompt, gaming ? {
       sourceEndpoint: 'arcanos-gaming.guide', gamingGuideIntakePolicy: 'compact-v1',
-      gamingClearAnswerAudit: gamingAudit,
+      gamingPresentationPolicy: 'gaming-clear-presentation/v1',
     } : {})).rejects.toThrow('Synthetic intake model unavailable');
     expect(retrieveModel).toHaveBeenCalledWith('gpt-6-luna', expect.anything());
     expect(responsesCreate).not.toHaveBeenCalled();
-    expect(gamingAudit).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -178,7 +174,7 @@ describe('Trinity model lanes at the actual bounded provider boundary', () => {
     expect(result.activeModel).toBe(authorityModel);
   });
 
-  it('aborts Gaming final-authority timeout without retrying or admitting the answer audit', async () => {
+  it('aborts Gaming final-authority timeout without retrying or adding a presentation call', async () => {
     let authorityCalls = 0;
     responsesCreate.mockImplementation(async (payload: ResponseCreateParamsNonStreaming) => {
       if (payload.model === authorityModel && authorityCalls++ === 0) {
@@ -186,19 +182,15 @@ describe('Trinity model lanes at the actual bounded provider boundary', () => {
       }
       return syntheticResponse(payload);
     });
-    const gamingAudit = jest.fn(async () => {
-      throw new Error('Gaming audit must not admit timed-out generation.');
-    });
     await expect(run(simplePrompt, {
       sourceEndpoint: 'arcanos-gaming.guide', gamingGuideIntakePolicy: 'compact-v1',
-      gamingClearAnswerAudit: gamingAudit,
+      gamingPresentationPolicy: 'gaming-clear-presentation/v1',
     })).rejects.toMatchObject({ name: 'AbortError', message: 'Synthetic final timeout', timeoutPhase: 'final' });
     expect(requests().map(payload => payload.model)).toEqual([
       'gpt-6-luna', 'gpt-6.1-sol', authorityModel,
     ]);
     expect(requests().at(-1)).not.toHaveProperty('reasoning');
     expect(authorityCalls).toBe(1);
-    expect(gamingAudit).not.toHaveBeenCalled();
   });
 
   it('accepts a direct-answer override only when it confirms configured authority', async () => {

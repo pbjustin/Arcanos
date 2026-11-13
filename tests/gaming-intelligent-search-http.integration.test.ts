@@ -5,7 +5,8 @@ import express from 'express';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
 import { gamingArchiveGuideUrl, gamingArchiveStorageHost, gamingArchiveDerivativePath, gamingArchiveMetadata } from './testUtils/gamingArchiveFixtures.js';
-import { GAMING_CLEAR_DIMENSIONS } from '../src/shared/gaming/gamingClearPolicy.js';
+import { GAMING_CLEAR_PRESENTATION_POLICY_VERSION } from '../src/shared/gaming/gamingPromptCore.js';
+import { inspectGamingFinalRequest } from './testUtils/gamingPresentationFixtures.js';
 import type { GamingHybridResponse } from '../src/shared/gaming/gamingHybridContract.js';
 
 const acquire = jest.fn();
@@ -17,7 +18,7 @@ const memoryWrite = jest.fn();
 const authority = 'ft:gpt-4.1:synthetic:gaming-http-authority';
 
 // Isolate external effects. The served MCP contract, protected acquisition loop,
-// extraction, identity, selection, CLEAR, Trinity stages and citation audit stay real.
+// extraction, identity, selection, CLEAR source admission, Trinity stages and citation integrity stay real.
 jest.unstable_mockModule('axios', () => ({ default: gamingAcquisitionAxios(acquire) }));
 jest.unstable_mockModule('node:dns/promises', () => ({ Resolver: class {
   async resolve4() { return ['93.184.216.34']; }
@@ -133,22 +134,14 @@ beforeEach(() => {
       text = JSON.stringify({ reasoning_steps: [], assumptions: [], constraints: [], tradeoffs: [], alternatives_considered: [],
         chosen_path_justification: '', response_mode: 'answer', achievable_subtasks: ['answer using the acquired gameplay guide'],
         blocked_subtasks: [], user_visible_caveats: [], claim_tags: [], final_answer: answer });
-    } else if (serialized.includes('Audit the actual Gaming player-facing ANSWER')) {
-      providerStages.push('answer_audit');
-      const user = payload.input.find((message: any) => message.role === 'user');
-      const data = JSON.parse(user.content.map((part: any) => part.text ?? '').join(''));
-      expect(data.question).toBe(active.question);
-      expect(data.answer).toBe(answer);
-      expect(data.evidence.some((chunk: any) => chunk.text.includes(active.passage))).toBe(true);
-      const evidenceRefs = data.evidence.map((chunk: any) => chunk.chunkId);
-      text = JSON.stringify({ dimensions: Object.fromEntries(GAMING_CLEAR_DIMENSIONS.map(name => [name,
-        { status: 'evaluated', score: 4.5, reasonCodes: ['SUPPORTED_FIXTURE'], evidenceRefs, unresolvedFacts: [] }])), findings: [] });
     } else if (serialized.includes('Gaming guide intake policy: compact-v1')) {
       providerStages.push('intake');
       text = 'Answer the gameplay question using acquired source [1], preserving player context and spoiler restrictions.';
     } else {
       providerStages.push('final');
-      expect(serialized).toContain(active.passage);
+      const { original, evidence } = inspectGamingFinalRequest(payload, GAMING_CLEAR_PRESENTATION_POLICY_VERSION);
+      expect(original).toContain(active.question);
+      expect(evidence.some(chunk => chunk.text.includes(active.passage))).toBe(true);
       text = answer;
     }
     return { id: `synthetic-sdk-${providerStages.length}`, model: payload.model, status: 'completed', output: [], output_text: text,
@@ -254,8 +247,8 @@ describe('Intelligent discovery through authenticated loopback Gaming MCP and re
     };
     const sdk = responsesCreate.getMockImplementation()!;
     const durations: Record<string, number> = timeoutMs === 60_000
-      ? { intake: 20_000, reasoning: 10_000, final: 4_000, answer_audit: 3_000 }
-      : { intake: 8_000, reasoning: 4_000, final: 2_000, answer_audit: 1_000 };
+      ? { intake: 20_000, reasoning: 10_000, final: 4_000 }
+      : { intake: 8_000, reasoning: 4_000, final: 2_000 };
     responsesCreate.mockImplementation(async (...args: any[]) => {
       const result = await sdk(...args);
       clock += durations[providerStages.at(-1)!];
@@ -274,9 +267,9 @@ describe('Intelligent discovery through authenticated loopback Gaming MCP and re
     expect(answered).toMatchObject({ statusCode: 200, result: { state: 'answer_ready', coverageSatisfied: true,
       answer: { response: active.answer, provenance: 'arcanos-trinity' } } });
     expect(answered.result.answer?.sources.map(source => source.url)).toEqual([active.url]);
-    expect(providerStages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
-    if (timeoutMs === 60_000) expect(acquisitionAllowance).toBe(500);
-    expect(acquire).toHaveBeenCalledTimes(1); expect(responsesCreate).toHaveBeenCalledTimes(4);
+    expect(providerStages).toEqual(['intake', 'reasoning', 'final']);
+    if (timeoutMs === 60_000) expect(acquisitionAllowance).toBe(3_500);
+    expect(acquire).toHaveBeenCalledTimes(1); expect(responsesCreate).toHaveBeenCalledTimes(3);
     expect(ingest).not.toHaveBeenCalled(); expect(memoryWrite).not.toHaveBeenCalled();
   });
 
@@ -284,7 +277,7 @@ describe('Intelligent discovery through authenticated loopback Gaming MCP and re
     url: 'https://community.example.org/lantern/copper-gate',
     passage: 'To open the copper gate, turn the copper wheel twice and pull the copper gate lever. The copper gate opens after the wheel turns twice.',
     answer: 'Turn the copper wheel twice, then pull the copper gate lever. [1]' }])(
-    'automatically discovers and answers $game through protected acquisition, CLEAR, Trinity and final audit', async fixture => {
+    'automatically discovers and answers $game through protected acquisition, CLEAR, Trinity and presentation policy', async fixture => {
       active = fixture;
       process.env.ARCANOS_GAMING_DISCOVERY_ENABLED = 'true';
       process.env.ARCANOS_GAMING_HYBRID_BACKEND_DISCOVERY_ENABLED = 'true';
@@ -310,9 +303,9 @@ describe('Intelligent discovery through authenticated loopback Gaming MCP and re
       expect(answered).toMatchObject({ statusCode: 200, result: { revision: 1, state: 'answer_ready', coverageSatisfied: true,
         answer: { response: active.answer, provenance: 'arcanos-trinity' } } });
       expect(answered.result.answer?.sources.map(source => source.url)).toEqual([active.url]);
-      expect(providerStages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
+      expect(providerStages).toEqual(['intake', 'reasoning', 'final']);
       expect(searches).toHaveLength(2); expect(new Set(searches).size).toBe(2);
-      expect(acquire).toHaveBeenCalledTimes(1); expect(responsesCreate).toHaveBeenCalledTimes(4);
+      expect(acquire).toHaveBeenCalledTimes(1); expect(responsesCreate).toHaveBeenCalledTimes(3);
       expect((await query()).result.answer).toEqual(answered.result.answer);
       expect(searches).toHaveLength(2); expect(acquire).toHaveBeenCalledTimes(1);
       expect(ingest).not.toHaveBeenCalled(); expect(memoryWrite).not.toHaveBeenCalled();
@@ -351,7 +344,7 @@ describe('Intelligent discovery through authenticated loopback Gaming MCP and re
     expect(result.result).toMatchObject({ revision: 2, state: 'answer_ready', coverageSatisfied: true });
     expect(result.result.answer?.sources.map(source => source.url)).toEqual([replacement]);
     expect(acquired).toEqual([active.url, denied, replacement]);
-    expect(searches).toBe(4); expect(providerStages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
+    expect(searches).toBe(4); expect(providerStages).toEqual(['intake', 'reasoning', 'final']);
     expect(result.result.candidates).toEqual([expect.objectContaining({ decision: 'rejected', reasonCodes: ['SOURCE_INACCESSIBLE'] }),
       expect.objectContaining({ decision: 'eligible_for_ingestion' })]);
     expect(ingest).not.toHaveBeenCalled();
@@ -395,7 +388,7 @@ describe('Intelligent discovery through authenticated loopback Gaming MCP and re
       expect.objectContaining({ decision: 'rejected', reasonCodes: ['SOURCE_INACCESSIBLE'] }),
       expect.objectContaining({ decision: 'rejected', reasonCodes: ['URL_BLOCKED'] }),
       expect.objectContaining({ decision: 'eligible_for_ingestion' })]);
-    expect(searches).toBe(4); expect(providerStages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
+    expect(searches).toBe(4); expect(providerStages).toEqual(['intake', 'reasoning', 'final']);
     expect(ingest).not.toHaveBeenCalled(); expect(memoryWrite).not.toHaveBeenCalled();
   });
 
@@ -503,13 +496,13 @@ describe('Intelligent discovery through authenticated loopback Gaming MCP and re
       expect(answered.result.answer?.sources.map(source => source.url)).toEqual([
         resource === 'admitted same-origin redirect' ? `${active.url}/current` : active.url
       ]);
-      expect(providerStages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
-      expect(acquire).toHaveBeenCalledTimes(2); expect(responsesCreate).toHaveBeenCalledTimes(4);
+      expect(providerStages).toEqual(['intake', 'reasoning', 'final']);
+      expect(acquire).toHaveBeenCalledTimes(2); expect(responsesCreate).toHaveBeenCalledTimes(3);
       expect(ingest).not.toHaveBeenCalled(); expect(memoryWrite).not.toHaveBeenCalled();
       const replay = await submit(started.result, discovered.candidates.map(candidate => candidate.url));
       expect(replay.result.answer).toEqual(answered.result.answer);
       expect(searchFetch).toHaveBeenCalledTimes(1); expect(acquire).toHaveBeenCalledTimes(2);
-      expect(responsesCreate).toHaveBeenCalledTimes(4); expect(ingest).not.toHaveBeenCalled();
+      expect(responsesCreate).toHaveBeenCalledTimes(3); expect(ingest).not.toHaveBeenCalled();
     });
 
   it.each(fixtures)('delivers source-grounded $game evidence through every real stage with one generation', async fixture => {
@@ -528,16 +521,16 @@ describe('Intelligent discovery through authenticated loopback Gaming MCP and re
     expect(answered.result.answer?.sources.map(source => source.url)).toEqual([active.url]);
     expect(answered.result.selectedEvidenceIds?.length).toBeGreaterThan(0);
     expect(answered.result.candidates).toEqual([expect.objectContaining({ url: active.url, decision: 'eligible_for_ingestion' })]);
-    expect(providerStages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
+    expect(providerStages).toEqual(['intake', 'reasoning', 'final']);
     expect(acquire).toHaveBeenCalledTimes(1);
-    expect(responsesCreate).toHaveBeenCalledTimes(4);
+    expect(responsesCreate).toHaveBeenCalledTimes(3);
     expect(ingest).not.toHaveBeenCalled(); expect(memoryWrite).not.toHaveBeenCalled();
     const replay = await submit(started.result);
     expect(replay.result.answer).toEqual(answered.result.answer);
-    expect(acquire).toHaveBeenCalledTimes(1); expect(responsesCreate).toHaveBeenCalledTimes(4);
+    expect(acquire).toHaveBeenCalledTimes(1); expect(responsesCreate).toHaveBeenCalledTimes(3);
     const closed = await submit(answered.result, ['https://third.example.org/unnecessary-guide'], 'intelligent-http-after-answer');
     expect(closed).toMatchObject({ statusCode: 409, result: { reason: 'WORKFLOW_CLOSED' } });
-    expect(responsesCreate).toHaveBeenCalledTimes(4);
+    expect(responsesCreate).toHaveBeenCalledTimes(3);
   });
 
   it.each(fixtures.flatMap(fixture => [
@@ -560,8 +553,8 @@ describe('Intelligent discovery through authenticated loopback Gaming MCP and re
       expect(evaluated?.knowledge.evidence?.some(chunk => chunk.text.includes(comparison))).toBe(false);
       expect(JSON.stringify(responsesCreate.mock.calls)).not.toContain(comparison);
     }
-    expect(providerStages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
-    expect(acquire).toHaveBeenCalledTimes(1); expect(responsesCreate).toHaveBeenCalledTimes(4);
+    expect(providerStages).toEqual(['intake', 'reasoning', 'final']);
+    expect(acquire).toHaveBeenCalledTimes(1); expect(responsesCreate).toHaveBeenCalledTimes(3);
     expect(ingest).not.toHaveBeenCalled(); expect(memoryWrite).not.toHaveBeenCalled();
   });
 
@@ -643,8 +636,8 @@ describe('Intelligent discovery through authenticated loopback Gaming MCP and re
     expect(answered).toMatchObject({ statusCode: 200, result: { state: 'answer_ready', nextAction: 'answer',
       evidenceSelected: true, coverageSatisfied: true, answer: { response: active.answer, provenance: 'arcanos-trinity' } } });
     expect(answered.result.answer?.sources.map(source => source.url)).toEqual([active.url]);
-    expect(providerStages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
-    expect(acquire).toHaveBeenCalledTimes(1); expect(responsesCreate).toHaveBeenCalledTimes(4);
+    expect(providerStages).toEqual(['intake', 'reasoning', 'final']);
+    expect(acquire).toHaveBeenCalledTimes(1); expect(responsesCreate).toHaveBeenCalledTimes(3);
     expect(ingest).not.toHaveBeenCalled(); expect(memoryWrite).not.toHaveBeenCalled();
   });
 
@@ -660,8 +653,8 @@ describe('Intelligent discovery through authenticated loopback Gaming MCP and re
       evidenceSelected: true, coverageSatisfied: true, answer: { response: active.answer, provenance: 'arcanos-trinity' } } });
     expect(evaluated?.knowledge.evidence?.some(chunk => chunk.text.includes(active.passage))).toBe(true);
     expect(answered.result.answer?.sources.map(source => source.url)).toEqual([active.url]);
-    expect(providerStages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
-    expect(acquire).toHaveBeenCalledTimes(1); expect(responsesCreate).toHaveBeenCalledTimes(4);
+    expect(providerStages).toEqual(['intake', 'reasoning', 'final']);
+    expect(acquire).toHaveBeenCalledTimes(1); expect(responsesCreate).toHaveBeenCalledTimes(3);
     expect(ingest).not.toHaveBeenCalled(); expect(memoryWrite).not.toHaveBeenCalled();
   });
 
@@ -673,8 +666,8 @@ describe('Intelligent discovery through authenticated loopback Gaming MCP and re
     sourceHtml = classBasedSource(`<p>In the game ${active.game}, players follow these acquired gameplay instructions.</p><p>${passage}</p>`);
     await serve(); const started = await query(); const answered = await submit(started.result);
     expect(answered.result).toMatchObject({ state: 'answer_ready', coverageSatisfied: true, answer: { response: active.answer } });
-    expect(providerStages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
-    expect(acquire).toHaveBeenCalledTimes(1); expect(responsesCreate).toHaveBeenCalledTimes(4);
+    expect(providerStages).toEqual(['intake', 'reasoning', 'final']);
+    expect(acquire).toHaveBeenCalledTimes(1); expect(responsesCreate).toHaveBeenCalledTimes(3);
     expect(ingest).not.toHaveBeenCalled(); expect(memoryWrite).not.toHaveBeenCalled();
   });
 
@@ -743,7 +736,7 @@ describe('Intelligent discovery through authenticated loopback Gaming MCP and re
     } else {
       expect(outcome.result.candidates).toEqual([expect.objectContaining({ decision: 'accepted_transient' })]);
       expect(evaluated?.knowledge.evidence).toEqual(expect.arrayContaining([expect.objectContaining({ text: expect.stringContaining(active.passage) })]));
-      expect(providerStages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
+      expect(providerStages).toEqual(['intake', 'reasoning', 'final']);
       expect(outcome.result).toMatchObject({ state: 'answer_ready', coverageSatisfied: true, answer: { response: active.answer } });
       expect(outcome.result.answer?.sources.map(source => source.url)).toEqual([active.url]);
     }
@@ -759,7 +752,7 @@ describe('Intelligent discovery through authenticated loopback Gaming MCP and re
       + `<article><div class="page-content"><h2>Elden Ring first boss guide</h2><p>${active.passage}</p></div></article></main></body></html>`;
     await serve(); const started = await query(); const answered = await submit(started.result);
     expect(answered.result).toMatchObject({ state: 'answer_ready', coverageSatisfied: true, answer: { response: active.answer } });
-    expect(providerStages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
+    expect(providerStages).toEqual(['intake', 'reasoning', 'final']);
     expect(answered.result.answer?.sources.map(source => source.url)).toEqual([active.url]);
     expect(ingest).not.toHaveBeenCalled(); expect(memoryWrite).not.toHaveBeenCalled();
   });
@@ -784,8 +777,8 @@ describe('Intelligent discovery through authenticated loopback Gaming MCP and re
       ['gaming.clear.source.completed', expect.objectContaining({ assessmentStatus: 'completed', decision: 'accept' })]
     ]));
     expect(JSON.stringify(responsesCreate.mock.calls)).not.toContain('SIDEBAR_ONLY_FAKE_REWARD');
-    expect(providerStages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
-    expect(acquire).toHaveBeenCalledTimes(1); expect(responsesCreate).toHaveBeenCalledTimes(4);
+    expect(providerStages).toEqual(['intake', 'reasoning', 'final']);
+    expect(acquire).toHaveBeenCalledTimes(1); expect(responsesCreate).toHaveBeenCalledTimes(3);
     expect(ingest).not.toHaveBeenCalled(); expect(memoryWrite).not.toHaveBeenCalled();
   });
 
@@ -864,7 +857,7 @@ describe('Intelligent discovery through authenticated loopback Gaming MCP and re
     const recovered = await submit(blocked.result, [alternative], 'intelligent-http-recovery');
     expect(recovered.result).toMatchObject({ state: 'answer_ready', answer: { response: active.answer } });
     expect(recovered.result.answer?.sources[0].url).toBe(alternative);
-    expect(acquire).toHaveBeenCalledTimes(2); expect(responsesCreate).toHaveBeenCalledTimes(4);
+    expect(acquire).toHaveBeenCalledTimes(2); expect(responsesCreate).toHaveBeenCalledTimes(3);
     expect(ingest).not.toHaveBeenCalled(); expect(memoryWrite).not.toHaveBeenCalled();
   });
 
@@ -888,7 +881,7 @@ describe('Intelligent discovery through authenticated loopback Gaming MCP and re
     const invalid = await submit(started.result);
     expect(invalid.result.answer).toBeUndefined(); expect(invalid.result.nextAction).toBe('stop');
     expect(invalid.statusCode).toBe(503);
-    expect(providerStages).toEqual(['intake', 'reasoning', 'final']); // Citation validation stops before semantic audit.
+    expect(providerStages).toEqual(['intake', 'reasoning', 'final']);
     expect(responsesCreate).toHaveBeenCalledTimes(3); expect(ingest).not.toHaveBeenCalled();
   });
 

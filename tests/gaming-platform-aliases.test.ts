@@ -69,8 +69,7 @@ beforeEach(() => {
   });
   trinity.mockImplementation(async (request: any) => {
     const result = `${prose} [Source 1]`;
-    const { assessment } = await request.context.runOptions.gamingClearAnswerAudit(result, {});
-    return { result, gamingClearAudit: assessment, meta: { provider: { finishReason: 'stop' } } };
+    return { result, gamingPresentationPolicy: request.context.runOptions.gamingPresentationPolicy, meta: { provider: { finishReason: 'stop' } } };
   });
 });
 afterEach(() => {
@@ -109,7 +108,7 @@ describe('question platform aliases preserve acquired applicability', () => {
     expect(result.accepted[0].freshness.platforms).toEqual(['PS5']);
   });
 
-  it('reaches audited v2 generation after acquiring a guide with the same platform alias', async () => {
+  it('reaches presented v2 generation after acquiring a guide with the same platform alias', async () => {
     serve();
     const ingest = jest.fn<any>();
     const workflow = createGamingHybridWorkflow({ retrieve: async () => ({ context: '', sources: [], evidence: [], sourceKnown: false }), ingest });
@@ -122,7 +121,7 @@ describe('question platform aliases preserve acquired applicability', () => {
     expect(answer.body.answer!.response).toContain(prose);
     expect(answer.body.answer!.sources.map(source => source.url)).toEqual([url]);
     expect(trinity).toHaveBeenCalledTimes(1);
-    expect(audit).toHaveBeenCalledTimes(1);
+    expect(audit).not.toHaveBeenCalled();
     expect(ingest).not.toHaveBeenCalled();
   });
 

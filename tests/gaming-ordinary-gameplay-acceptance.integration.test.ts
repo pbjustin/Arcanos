@@ -1,6 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { readFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import { createServer, request as requestPublisher, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { gzipSync } from 'node:zlib';
@@ -8,7 +7,6 @@ import express from 'express';
 import request from 'supertest';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
-import { GAMING_CLEAR_DIMENSIONS } from '../src/shared/gaming/gamingClearPolicy.js';
 import type { GamingHybridResponse } from '../src/shared/gaming/gamingHybridContract.js';
 
 const question = "I'm at the beginning of Elden Ring. I'm a Samurai. I just got out of the tutorial area. I want a Samurai blade build.";
@@ -143,15 +141,6 @@ beforeEach(() => {
   mockBackendSearch.mockImplementation((input: any) => discovery.discoverGamingSources({ ...input,
     provider: { id: 'synthetic-acceptance-search', version: 'v1', isConfigured: () => true, search: mockSearchProvider as never }
   }) as never);
-  mockAuditCompletion.mockImplementation(async (_client: unknown, params: any) => {
-    const data = JSON.parse(params.messages[1].content);
-    const refs = data.evidence.map((chunk: any) => chunk.chunkId);
-    return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
-      dimensions: Object.fromEntries(GAMING_CLEAR_DIMENSIONS.map(name => [name, {
-        status: 'evaluated', score: 4.5, reasonCodes: ['SUPPORTED_FIXTURE'], evidenceRefs: refs.slice(0, 8), unresolvedFacts: []
-      }])), findings: []
-    }) } }], usage: { prompt_tokens: 400, completion_tokens: 150, total_tokens: 550 } };
-  });
   mockTrinity.mockImplementation(async (providerRequest: any) => {
     const blocks = String(providerRequest.input.prompt).split(/(?=^\[Source \d+\])/mu);
     const result = blocks.flatMap(block => {
@@ -160,8 +149,7 @@ beforeEach(() => {
       const answer = url && pages.get(url)?.answer;
       return answer && number ? [`${answer} [Source ${number}]`] : [];
     }).join('\n\n');
-    const { assessment } = await providerRequest.context.runOptions.gamingClearAnswerAudit(result, {});
-    return { result, gamingClearAudit: assessment, meta: { provider: { finishReason: 'stop' } } };
+    return { result, gamingPresentationPolicy: providerRequest.context.runOptions.gamingPresentationPolicy, meta: { provider: { finishReason: 'stop' } } };
   });
 });
 afterEach(() => {
@@ -258,27 +246,15 @@ function assertGroundedHandoff(answer: { response: string; sources: Array<{
   expect(citedNumbers.every(index => index > 0 && index <= citedSources.length)).toBe(true);
   citedNumbers.forEach(index => expect(expected.map(fixture => fixture.url)).toContain(answer.sources[index - 1].url));
   expect(mockTrinity).toHaveBeenCalledTimes(1);
-  expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+  expect(mockAuditCompletion).not.toHaveBeenCalled();
   const provider = mockTrinity.mock.calls[0][0] as any;
   expect(provider.input.prompt).toContain(questionText);
   answer.sources.filter(source => source.error).forEach(source => expect(provider.input.prompt).not.toContain(source.url));
   expect(provider.context.runOptions).toMatchObject({ disableOptionalSideEffects: true, redactAuditContent: true });
-  const audited = JSON.parse((mockAuditCompletion.mock.calls[0][1] as any).messages[1].content);
-  expect(audited.evidence.length).toBeGreaterThan(0);
-  expect(audited.question).toBe(questionText);
-  expect(audited.verifiedEvidenceGates).toEqual({ identity: 'verified', compatibility: 'verified',
-    claimSupport: 'verified', freshness: 'not_applicable', provenance: 'verified', security: 'verified' });
-  for (const chunk of audited.evidence) {
-    expect(expected.map(fixture => fixture.url)).toContain(answer.sources[chunk.sourceIndex - 1].url);
-    const source = answer.sources[chunk.sourceIndex - 1];
-    if (source.sourceId) expect(source.sourceId).toBe(chunk.sourceId);
-    else expect(chunk.sourceId).toBe(`live:${createHash('sha256')
-      .update(source.url.toLowerCase().replace(/\s+/gu, ' ')).digest('hex')}`);
-    expect(chunk.revisionId).toMatch(/^(?:live:)?[a-f0-9]{64}$/u);
-    if (selectedIds) expect(selectedIds).toContain(chunk.sourceId);
-    if (selectedEvidenceIds) expect(selectedEvidenceIds).toContain(chunk.chunkId);
-    expect(provider.input.prompt).toContain(chunk.text);
-  }
+  expect(provider.context.runOptions.gamingPresentationPolicy).toBe('gaming-clear-presentation/v1');
+  if (selectedIds) expect(selectedIds.sort()).toEqual(citedSources.map(source => source.sourceId).sort());
+  if (selectedEvidenceIds) expect(selectedEvidenceIds.length).toBeGreaterThan(0);
+  for (const source of citedSources) expect(provider.input.prompt).toContain(source.url);
   const sourceLogs = (logger.info as jest.Mock).mock.calls.filter(call => call[0] === 'gaming.clear.source.completed');
   if (answer.sources.every(source => source.sourceId)) {
     const finalSourceLogs = sourceLogs.slice(-expected.length);
@@ -287,7 +263,7 @@ function assertGroundedHandoff(answer: { response: string; sources: Array<{
       expect(details.extraction).toMatchObject({ rawChars: expect.any(Number), acceptedBytes: expect.any(Number),
         receivedBytes: expect.any(Number) });
       expect(details.extraction.acceptedBytes).toBeGreaterThan(200);
-      expect(audited.evidence.map((chunk: any) => chunk.revisionId)).toContain(details.subjectHash);
+      expect(details.subjectHash).toMatch(/^[a-f0-9]{64}$/u);
       expect(details.identity.ruleId).toMatch(/^gaming\.identity\./u);
       expect(details.blockingFindingCount).toBe(0);
     }

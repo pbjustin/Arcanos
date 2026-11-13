@@ -46,7 +46,7 @@ describe('sealed Gaming generation budget production-policy proof', () => {
       pipelineElapsedMs: 21_817, requestRemainingMs: 38_183, runtimeRemainingMs: 27_683 }));
     expect(allocate).toHaveBeenCalledWith(expect.objectContaining({ mode: 'guide', stage: 'intake' }));
     expect(allocate).toHaveBeenCalledWith(expect.objectContaining({ mode: 'meta', stage: 'reasoning', pipelineElapsedMs: 5_000 }));
-    expect(allocate).toHaveBeenCalledWith(expect.objectContaining({ stage: 'direct-answer', pipelineTimeoutMs: 9_000 }));
+    expect(allocate).toHaveBeenCalledWith(expect.objectContaining({ stage: 'direct-answer', pipelineTimeoutMs: 6_000 }));
     expect(allocate).toHaveBeenCalledWith(expect.objectContaining({ stage: 'reasoning', additionalDownstreamReserveMs: 7_000 }));
     expect(classifyFailure).toHaveBeenCalledWith({ fallbackReason: 'INTAKE_UPSTREAM_TIMEOUT', evidenceSelected: true });
     expect(classifyFailure).toHaveBeenCalledWith({ fallbackReason: 'PROVIDER_COMPLETION_INCOMPLETE', evidenceSelected: true });
@@ -142,7 +142,7 @@ describe('sealed Gaming generation budget production-policy proof', () => {
     expect(assertGamingGenerationBudgetPreviewFixture).toThrow(FAILURE);
   });
 
-  it('withholds proof when final generation omits answer-audit and terminal reserves', () => {
+  it('withholds proof when final generation omits the terminal reserve', () => {
     allocate.mockImplementation(input => {
       const result = budget.resolveGamingGenerationBudget(input);
       return input.stage === 'final' ? { ...result, effectiveStageTimeoutMs: result.generationRemainingMs, downstreamReserveMs: 0 } : result;

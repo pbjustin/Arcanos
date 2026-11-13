@@ -10,7 +10,7 @@ import {
 } from "@services/gamingModes.js";
 import { isRecord } from "@shared/typeGuards.js";
 import { composeGroundedGamingGuideResponse } from "@shared/gaming/gamingGuideResponseCore.js";
-import { hasBoundGamingClearAnswer } from '@shared/gaming/gamingClearAnswerBinding.js';
+import { hasBoundGamingPresentedAnswer } from '@shared/gaming/gamingPresentedAnswerBinding.js';
 import { buildGamingRecoveryResponse } from "@shared/gaming/gamingRecoveryResponse.js";
 import { extractTextPrompt, normalizeStringList } from "@transport/http/payloadNormalization.js";
 import { GAMING_PLAYER_CONTEXT, pickGamingPlayerContext, resolveGamingPlayerContext, type GamingContextCarrier, type GamingPlayerContext, type GamingSpoilerTolerance } from "@shared/gaming/gamingPlayerContext.js";
@@ -671,7 +671,7 @@ export const ResponseComposerAgent = {
   }): GamingSuccessEnvelope {
     const { intent, backendEnvelope } = params;
     // The reviewed prose and citation mappings must survive final composition.
-    if (hasBoundGamingClearAnswer(backendEnvelope.data)) return backendEnvelope;
+    if (hasBoundGamingPresentedAnswer(backendEnvelope.data)) return backendEnvelope;
     // Recovery text is already a complete player-facing response. Keep diagnostic
     // fields on the envelope instead of wrapping it in internal support labels.
     if (backendEnvelope.data.fallbackReason) {

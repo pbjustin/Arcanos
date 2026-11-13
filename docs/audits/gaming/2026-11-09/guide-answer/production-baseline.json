@@ -1,0 +1,131 @@
+{
+  "schemaVersion": 1,
+  "evidenceKind": "authorized-production-baseline-not-repair-acceptance",
+  "deployedCommit": "2df6e6a0fb409aaa42e1b5f687ea2622c8dde560",
+  "deploymentId": "eee27425-83fc-4ba4-ab25-abda493ba032",
+  "workflowId": "8327d5cf-ff4c-4fda-a438-e399d34f79e7",
+  "requestId": "req_1794285574148_6xsakf",
+  "authorization": "User explicitly authorized one production Gaming call and read-only log inspection.",
+  "frontendDiscovery": "Actual web search discovered a public reference linking the Frontier URL. Web reader returned 403; independent backend acquisition succeeded. No access-control bypass.",
+  "submittedUrl": "https://www.elitedangerous.com/news/system-colonisation-guide",
+  "workflowQueryCalls": 1,
+  "candidateSubmissionCalls": 1,
+  "recoverySubmissionCalls": 0,
+  "durableStorage": false,
+  "answerReceived": false,
+  "trinityReached": false,
+  "modelUsage": "No generation reached; exact billed usage unavailable.",
+  "events": [
+    {
+      "timestamp": "2026-11-10T04:39:23.166997573Z",
+      "event": "gaming.hybrid.validation_outcome",
+      "requestId": "req_1794285555075_f59uln",
+      "workflowId": "8327d5cf-ff4c-4fda-a438-e399d34f79e7",
+      "generationReady": false,
+      "reasonCode": "QUESTION_COVERAGE_INSUFFICIENT",
+      "selectedEvidenceCount": 0
+    },
+    {
+      "timestamp": "2026-11-10T04:39:23.168577985Z",
+      "event": "gaming.hybrid.handoff",
+      "requestId": "req_1794285555075_f59uln",
+      "workflowId": "8327d5cf-ff4c-4fda-a438-e399d34f79e7",
+      "candidateCount": 0,
+      "reason": "QUESTION_COVERAGE_INSUFFICIENT",
+      "coverageSatisfied": false,
+      "evidenceSelected": false,
+      "selectedEvidenceCount": 0,
+      "elapsedMs": 68
+    },
+    {
+      "timestamp": "2026-11-10T04:39:43.197810603Z",
+      "event": "gaming.clear.source.completed",
+      "requestId": "req_1794285574148_6xsakf",
+      "workflowId": "8327d5cf-ff4c-4fda-a438-e399d34f79e7",
+      "profile": "source",
+      "policyProfile": "gaming-clear-policy/v7:walkthrough:source",
+      "rubricVersion": "gaming-clear/v1",
+      "decision": "accept",
+      "overall": 4.1,
+      "assessmentStatus": "completed",
+      "sourceRole": "gameplay_guide",
+      "extraction": {
+        "policyVersion": "gaming-evidence-units/v1",
+        "strategies": [
+          "prose",
+          "html_table",
+          "html_list",
+          "html_definition",
+          "application_json",
+          "json_ld"
+        ],
+        "contentType": "text/html",
+        "receivedBytes": 419572,
+        "acceptedBytes": 2839634,
+        "rawChars": 2838916,
+        "extractedChars": 5488,
+        "unitKinds": [],
+        "selectedUnits": 0,
+        "completeUnits": 0,
+        "partialUnits": 0,
+        "ambiguousUnits": 0,
+        "truncationStages": [
+          "extraction",
+          "raw_preview"
+        ],
+        "subreasons": [
+          "no_supported_structured_records",
+          "extraction_budget_exhausted"
+        ],
+        "elapsedMs": 1180,
+        "budgetOutcome": "exhausted"
+      },
+      "identity": {
+        "ruleId": "gaming.identity.acquired_anchors_verified",
+        "evidenceCategory": "acquired_anchors",
+        "subjectKind": "game_identity",
+        "scope": "source_global",
+        "determination": "corroborated"
+      },
+      "elapsedMs": 1917,
+      "budgetOutcome": "within_existing_acquisition_budget"
+    },
+    {
+      "timestamp": "2026-11-10T04:39:43.199072972Z",
+      "event": "gaming.hybrid.candidates_evaluated",
+      "requestId": "req_1794285574148_6xsakf",
+      "acceptedCount": 1,
+      "rejectedCount": 0,
+      "candidateCount": 1,
+      "selectedChunkCount": 0,
+      "selectedContextChars": 0
+    },
+    {
+      "timestamp": "2026-11-10T04:39:43.199080606Z",
+      "event": "gaming.source.evaluation",
+      "requestId": "req_1794285574148_6xsakf",
+      "workflowId": "8327d5cf-ff4c-4fda-a438-e399d34f79e7"
+    },
+    {
+      "timestamp": "2026-11-10T04:39:43.204701609Z",
+      "event": "gaming.hybrid.validation_outcome",
+      "requestId": "req_1794285574148_6xsakf",
+      "workflowId": "8327d5cf-ff4c-4fda-a438-e399d34f79e7",
+      "generationReady": false,
+      "reasonCode": "QUESTION_COVERAGE_INSUFFICIENT",
+      "selectedEvidenceCount": 0
+    },
+    {
+      "timestamp": "2026-11-10T04:39:43.204712952Z",
+      "event": "gaming.hybrid.handoff",
+      "requestId": "req_1794285574148_6xsakf",
+      "workflowId": "8327d5cf-ff4c-4fda-a438-e399d34f79e7",
+      "candidateCount": 1,
+      "reason": "QUESTION_COVERAGE_INSUFFICIENT",
+      "coverageSatisfied": false,
+      "evidenceSelected": false,
+      "selectedEvidenceCount": 0,
+      "elapsedMs": 21054
+    }
+  ]
+}

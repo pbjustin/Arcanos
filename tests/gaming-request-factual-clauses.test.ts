@@ -1,0 +1,506 @@
+import { describe, expect, it } from '@jest/globals';
+import { filterGamingDocumentInstructions } from '../src/services/gamingDocumentExtraction.js';
+import { selectGamingHybridEvidence } from '../src/services/gamingHybridCandidates.js';
+import { assessGamingClearEvidence, assessGamingRequestCoverage } from '../src/shared/gaming/gamingClearEvidence.js';
+import { buildGamingRequestRequirements, gamingAttributableClaimText, gamingRequestScopeUnresolved, gamingRequirementSupported, scopeGamingEvidenceParagraphs } from '../src/shared/gaming/gamingRetrievalPolicy.js';
+import type { GamingStoredKnowledgeContext, GamingStoredKnowledgeInput } from '../src/shared/gaming/gamingStoredEvidenceCore.js';
+
+// Independently authored grammar/control fixtures, not publisher quotations or
+// real Elite Dangerous mechanics. No provider, network or durable storage runs.
+const firstThree = 'To start system colonisation, visit the colonisation contact. '
+  + 'Next, select an uninhabited system on the colonisation map. '
+  + 'Then register the system colonisation claim using credits.';
+const firstTwo = 'To start system colonisation, visit the colonisation contact. '
+  + 'Next, select an uninhabited system on the colonisation map.';
+const prerequisites = 'Before starting system colonisation, you must obtain a survey permit.';
+const materials = 'The materials required for system colonisation are cargo plates and beacon coils.';
+const locations = 'The system colonisation materials, cargo plates and beacon coils, are sold at orbital depots.';
+const actionQuestion = 'Explain the first three actions needed for system colonisation.';
+const materialQuestion = 'What materials do I need for system colonisation and where can I find them?';
+
+/** Keep the factual question intact while allowing scoped negative controls. */
+function request(prompt: string, overrides: Partial<GamingStoredKnowledgeInput> = {}): GamingStoredKnowledgeInput {
+  return { game: 'Elite Dangerous', mode: 'guide', prompt, ...overrides };
+}
+
+/** Bind authored passages to one already accepted source with exact citations. */
+function knowledge(texts: string[], game = 'Elite Dangerous'): GamingStoredKnowledgeContext {
+  const fetchedAt = '2026-11-10T12:00:00.000Z';
+  const source = { sourceId: 'accepted-factual-guide', game, url: 'https://guides.example.org/authored-factual-clauses',
+    sourceType: 'supplied', origin: 'live' as const, fetchedAt, snippet: texts[0] ?? '' };
+  return { context: '', sources: [source], evidence: texts.map((text, index) => ({
+    sourceId: source.sourceId, revisionId: 'factual-revision', recordId: `factual-passage-${index}`, recordType: 'guide',
+    publicUrl: source.url, text, lexicalScore: 1, combinedScore: 1, provenance: { fetchedAt }
+  })) };
+}
+
+describe('factual request clauses retain subject, relation and requested count', () => {
+  it('covers the first three acquired actions without demanding literal first/three/needed wording', () => {
+    const input = request(actionQuestion);
+    expect(buildGamingRequestRequirements(input).length).toBeGreaterThan(0);
+    const original = knowledge([firstThree]);
+    const selected = selectGamingHybridEvidence(input, original);
+    expect(selected.coverageSatisfied).toBe(true);
+    expect(selected.selectedEvidenceIds).toEqual(['factual-passage-0']);
+    expect(selected.knowledge.evidence![0]).toEqual(original.evidence![0]);
+    expect(selected.knowledge.sources[0].url).toBe(original.sources[0].url);
+  });
+
+  it.each([
+    ['only two actions', firstTwo],
+    ['one action with three objects', 'To start system colonisation, inspect the contact, map and claim.'],
+    ['three numerical topic mentions', 'System colonisation has 3 categories, 3 map markers and 3 icons.'],
+    ['three nominal labels', 'First three actions needed for system colonisation: contact, map, claim.'],
+    ['one duplicated action', 'To start system colonisation, visit the colonisation contact. '
+      + 'To start system colonisation, visit the colonisation contact. To start system colonisation, visit the colonisation contact.'],
+    ['unrelated additional procedures', 'To start system colonisation, visit the colonisation contact. '
+      + 'To start trading, open the trading panel. Then buy a trading permit.']
+  ])('does not satisfy three factual actions using %s', (_label, text) => {
+    expect(assessGamingRequestCoverage(request(actionQuestion), knowledge([text])).coverageSatisfied).toBe(false);
+  });
+
+  it('preserves a separate prerequisite and its three ordered starting actions', () => {
+    const input = request('Explain system colonisation prerequisites and its first three actions.');
+    expect(assessGamingRequestCoverage(input, knowledge([prerequisites, firstThree])).coverageSatisfied).toBe(true);
+    expect(assessGamingRequestCoverage(input, knowledge([firstThree])).coverageSatisfied).toBe(false);
+    expect(assessGamingRequestCoverage(input, knowledge([prerequisites, firstTwo])).coverageSatisfied).toBe(false);
+  });
+
+  it('binds same-sentence them to the materials requirement and requires their acquisition location', () => {
+    const input = request(materialQuestion);
+    expect(buildGamingRequestRequirements(input)).toHaveLength(2);
+    const original = knowledge([`${materials} ${locations}`]);
+    const selected = selectGamingHybridEvidence(input, original);
+    expect(selected.coverageSatisfied).toBe(true);
+    expect(selected.requirementSupport).toHaveLength(2);
+    expect(selected.requirementSupport.every(item => item.evidenceIds.includes('factual-passage-0'))).toBe(true);
+    expect(selected.knowledge.evidence![0]).toEqual(original.evidence![0]);
+  });
+
+  it.each([
+    ['an unquantified location', 'Buy cargo plates at orbital depots.', true],
+    ['the same explicit quantity', 'Buy 10 cargo plates at orbital depots.', true],
+    ['a conflicting quantity', 'Buy 5 cargo plates at orbital depots.', false],
+    ['a conflict alongside an unquantified location', 'Buy cargo plates at orbital depots. Buy 5 cargo plates at the outpost.', false],
+    ['a different material', 'Buy 10 beacon coils at orbital depots.', false]
+  ])('matches quantified material requirements against %s', (_label, location, supported) => {
+    const input = request(materialQuestion);
+    const passage = `The materials required for system colonisation are 10 cargo plates. ${location}`;
+    const selected = selectGamingHybridEvidence(input, knowledge([passage]));
+    expect(selected.coverageSatisfied).toBe(supported);
+    if (supported) expect(selected.knowledge.evidence?.[0].text).toBe(passage);
+  });
+
+  it.each([
+    ['no location', materials],
+    ['another object location', `${materials} The copper key is sold at the orbital depot.`],
+    ['another activity materials', `${materials} The materials for trading are sold at the orbital depot.`],
+    ['no material requirement', locations],
+    ['metadata without gameplay', 'System colonisation materials and locations guide. This guide lists materials and where to find them.']
+  ])('does not fabricate the materials/acquisition relationship from %s', (_label, text) => {
+    expect(assessGamingRequestCoverage(request(materialQuestion), knowledge([text])).coverageSatisfied).toBe(false);
+  });
+
+  it('keeps required materials independent of starting actions', () => {
+    const input = request('Explain how to start system colonisation and identify required materials.');
+    expect(assessGamingRequestCoverage(input, knowledge([firstThree, materials])).coverageSatisfied).toBe(true);
+    expect(assessGamingRequestCoverage(input, knowledge([firstThree])).coverageSatisfied).toBe(false);
+    expect(assessGamingRequestCoverage(input, knowledge([firstThree, 'The materials required for trading are cargo plates.'])).coverageSatisfied).toBe(false);
+  });
+
+  it('retains the existing single starting-procedure question', () => {
+    expect(assessGamingRequestCoverage(request('How do I start system colonisation?'), knowledge([firstThree])).coverageSatisfied).toBe(true);
+    expect(assessGamingRequestCoverage(request('How do I start system colonisation?'), knowledge(['System colonisation is optional.'])).coverageSatisfied).toBe(false);
+  });
+
+  it.each([
+    'List the prerequisites.',
+    'Where can I find them?',
+    'Find a guide, explain the mechanics and cite your sources.'
+  ])('keeps missing factual scope unresolved: %s', prompt => {
+    const assessment = assessGamingRequestCoverage(request(prompt), knowledge([
+      'System colonisation mechanics require a survey permit. List the prerequisites before visiting a contact.'
+    ]));
+    expect(assessment.coverageSatisfied).toBe(false);
+    expect(['unknown', 'not_assessed']).toContain(assessment.gapAssessmentStatus);
+  });
+
+  it('does not invent a material referent across request sentences', () => {
+    const input = request('What materials do I need for system colonisation? Where can I find them?');
+    expect(assessGamingRequestCoverage(input, knowledge([`${materials} ${locations}`])).coverageSatisfied).toBe(false);
+  });
+
+  it('preserves the named Requirements for Victory acquisition object', () => {
+    const input = request('Where do I obtain the Requirements for Victory book?');
+    expect(assessGamingRequestCoverage(input, knowledge(['The Requirements for Victory book is sold at the orbital depot.'])).coverageSatisfied).toBe(true);
+    expect(assessGamingRequestCoverage(input, knowledge(['The Victory book is sold at the orbital depot.'])).coverageSatisfied).toBe(false);
+  });
+
+  it('rejects wrong-game evidence despite the same action vocabulary', () => {
+    expect(selectGamingHybridEvidence(request(actionQuestion), knowledge([firstThree], 'Elite Dangerous II')).coverageSatisfied).toBe(false);
+  });
+
+  it('does not clip away the requested factual count when the context budget is insufficient', () => {
+    const input = request(actionQuestion, { maxContextChars: 80 });
+    const selected = selectGamingHybridEvidence(input, knowledge([firstThree]));
+    expect(selected.coverageSatisfied).toBe(false);
+    expect(selected.knowledge.context.length).toBeLessThanOrEqual(80);
+  });
+
+  it.each([0, 9])('keeps a first-%s action request outside the supported positive count bound unresolved', count => {
+    const assessment = assessGamingRequestCoverage(request(`Explain the first ${count} actions needed for system colonisation.`), knowledge([firstThree]));
+    expect(assessment.coverageSatisfied).toBe(false);
+    expect(assessment.gapAssessmentStatus).toBe('not_assessed');
+  });
+
+  it('does not erase an action count from a quoted acquisition title', () => {
+    const input = request('Where do I obtain the "First Three Actions" book?');
+    expect(assessGamingRequestCoverage(input, knowledge(['The First Three Actions book is sold at the orbital depot.'])).coverageSatisfied).toBe(true);
+    expect(assessGamingRequestCoverage(input, knowledge(['The book is sold at the orbital depot.'])).coverageSatisfied).toBe(false);
+  });
+
+  it.each(['Three', 'Nine'])('keeps the unquoted First %s Actions manual as an acquisition target', count => {
+    const input = request(`Where can I obtain the First ${count} Actions manual?`);
+    const passage = `The First ${count} Actions manual is sold at the village shop.`;
+    expect(buildGamingRequestRequirements(input)).toEqual([
+      { requirement: 'requested topic 1', terms: [count.toLowerCase(), 'actions', 'manual', 'first'] }
+    ]);
+    expect(assessGamingRequestCoverage(input, knowledge([passage])).coverageSatisfied).toBe(true);
+    expect(assessGamingRequestCoverage(input, knowledge(['The manual is sold at the village shop.'])).coverageSatisfied).toBe(false);
+  });
+
+  it('retains an out-of-range procedure count after an acquisition clause', () => {
+    const input = request('Where can I obtain the First Three Actions manual and what are the first nine actions for fishing?');
+    const passage = 'The First Three Actions manual is sold at the village shop.';
+    expect(assessGamingRequestCoverage(input, knowledge([passage])).gapAssessmentStatus).toBe('not_assessed');
+  });
+
+  it('preserves acquisition titles in existing longer book questions', () => {
+    const input = request('Where can I obtain the First Three Actions book near the docks?');
+    expect(buildGamingRequestRequirements(input)).toEqual([
+      { requirement: 'requested topic 1', terms: ['three', 'actions', 'book', 'near', 'docks', 'first'] }
+    ]);
+  });
+
+  it('still requires an explicit count in a procedure request with an acquisition verb', () => {
+    const input = request('How do I find the first three actions for fishing?');
+    expect(buildGamingRequestRequirements(input)).toEqual([
+      expect.objectContaining({ procedure: 'start', minimumActions: 3 })
+    ]);
+  });
+
+  it.each([
+    'Cargo plates, one of the system colonisation materials, are sold at orbital depots.',
+    'System colonisation materials except beacon coils are sold at orbital depots.',
+    'System colonisation materials excluding beacon coils are sold at orbital depots.'
+  ])('does not treat a qualified material subset as the location of all required materials: %s', location => {
+    const partial = `${materials} ${location}`;
+    expect(assessGamingRequestCoverage(request(materialQuestion), knowledge([partial])).coverageSatisfied).toBe(false);
+  });
+
+  it('does not borrow an incidental topic from another activity material requirement or location', () => {
+    const unrelated = 'The materials required for trading beside the system colonisation terminal are cargo plates and beacon coils. '
+      + 'These trading materials beside the system colonisation terminal are sold at orbital depots.';
+    expect(assessGamingRequestCoverage(request(materialQuestion), knowledge([unrelated])).coverageSatisfied).toBe(false);
+  });
+
+  it('does not combine alternative one-action and two-action starting routes into a three-action procedure', () => {
+    const alternatives = 'To begin system colonisation, visit the northern contact. '
+      + 'Alternatively, to begin system colonisation, visit the southern contact and select a different starting system.';
+    expect(assessGamingRequestCoverage(request(actionQuestion), knowledge([alternatives])).coverageSatisfied).toBe(false);
+    expect(assessGamingRequestCoverage(request(actionQuestion), knowledge([firstThree])).coverageSatisfied).toBe(true);
+  });
+
+  it('does not count unbound same-paragraph imperatives as ordered actions', () => {
+    const input = request('Explain the first three actions needed for fishing.');
+    const passage = 'To start fishing, equip a rod. Buy a helmet for arena combat. Register for a sword tournament.';
+    const data = knowledge([passage]);
+    expect(gamingRequirementSupported(passage, buildGamingRequestRequirements(input)[0])).toBe(false);
+    expect(assessGamingRequestCoverage(input, data).coverageSatisfied).toBe(false);
+    const selected = selectGamingHybridEvidence(input, data);
+    expect(selected.coverageSatisfied).toBe(false);
+    expect(selected.selectedEvidenceIds).toEqual([]);
+    expect(assessGamingClearEvidence(input, data, { requireRequestCoverage: true }).gates.claimSupport).not.toBe('verified');
+  });
+
+  it.each([6, 7, 8])('retains the first %i requested actions through excerpt selection', count => {
+    const input = request(`Explain the first ${count} actions needed for fishing.`);
+    const steps = [
+      'To start fishing, equip a fishing rod.',
+      '2) Inspect the fishing rod.',
+      '3) Repair the fishing rod.',
+      '4) Upgrade the fishing rod.',
+      '5) Prepare the fishing rod.',
+      '6) Align the fishing rod.',
+      '7) Raise the fishing rod.',
+      '8) Use the fishing rod.'
+    ];
+    const passage = steps.join(' ');
+    const requirement = buildGamingRequestRequirements(input)[0];
+    expect(requirement.minimumActions).toBe(count);
+    expect(gamingRequirementSupported(passage, requirement)).toBe(true);
+    const scoped = filterGamingDocumentInstructions(scopeGamingEvidenceParagraphs(passage, input));
+    expect(scoped).toBe(steps.slice(0, count).join(' '));
+    expect(assessGamingRequestCoverage(input, knowledge([scoped])).coverageSatisfied).toBe(true);
+  });
+
+  it.each([
+    'To start fishing, equip a rod. Then equip an arena helmet. Next, open the tournament gate.',
+    'To start fishing, equip a rod. Then use the rod and open the tournament gate.',
+    'To start fishing, equip a rod. Then buy an arena helmet near the fishing pond. Next, use the rod.'
+  ])('rejects unbound Then or Next actions even when they share a paragraph: %s', passage => {
+    const input = request('Explain the first two actions needed for fishing.');
+    expect(gamingRequirementSupported(passage, buildGamingRequestRequirements(input)[0])).toBe(false);
+    expect(assessGamingRequestCoverage(input, knowledge([passage])).coverageSatisfied).toBe(false);
+    expect(scopeGamingEvidenceParagraphs(passage, input)).toBe('To start fishing, equip a rod.');
+  });
+
+  it.each(['Then', 'Next'])('keeps an explicit requested start after %s without keeping an orphan action', marker => {
+    const input = request('Explain the first two actions needed for fishing.');
+    const start = `${marker} to start fishing, equip a fishing rod.`;
+    const continuation = 'Next, use the rod.';
+    const passage = `To start mining, equip a pickaxe. Then use the fishing boat. ${start} ${continuation}`;
+    const scoped = filterGamingDocumentInstructions(scopeGamingEvidenceParagraphs(passage, input));
+    expect(scoped).toBe(`${start} ${continuation}`);
+    expect(assessGamingRequestCoverage(input, knowledge([scoped])).coverageSatisfied).toBe(true);
+  });
+
+  it.each([
+    'while reading a colonisation poster',
+    'near the colonisation exhibit',
+    'before visiting the colonisation office',
+    'in the colonisation poster'
+  ])('does not complete a multiword topic using an incidental modifier: %s', modifier => {
+    const input = request('Explain the first two actions needed for system colonisation.');
+    const anchor = 'To start system colonisation, visit the colonisation contact.';
+    const passage = `${anchor} Next, select an uninhabited system ${modifier}.`;
+    expect(gamingRequirementSupported(passage, buildGamingRequestRequirements(input)[0])).toBe(false);
+    expect(assessGamingRequestCoverage(input, knowledge([passage])).coverageSatisfied).toBe(false);
+    expect(scopeGamingEvidenceParagraphs(passage, input)).toBe(anchor);
+  });
+
+  it.each(['on the colonisation map', 'for system colonisation'])('accepts a continuation with an explicit topic relationship: %s', relationship => {
+    const input = request('Explain the first two actions needed for system colonisation.');
+    const passage = `To start system colonisation, visit the colonisation contact. Next, select an uninhabited system ${relationship}.`;
+    expect(assessGamingRequestCoverage(input, knowledge([passage])).coverageSatisfied).toBe(true);
+    expect(filterGamingDocumentInstructions(scopeGamingEvidenceParagraphs(passage, input))).toBe(passage);
+  });
+
+  it.each(['2)', 'Then,', 'Next,'])('binds a definite short object to the one previously named route object after %s', marker => {
+    const input = request('Explain the first three actions needed for fishing.');
+    const last = marker === '2)' ? '3)' : 'Then,';
+    const passage = `To start fishing, equip a fishing rod. ${marker} Inspect the rod. ${last} Use the rod.`;
+    expect(gamingRequirementSupported(passage, buildGamingRequestRequirements(input)[0])).toBe(true);
+    expect(assessGamingRequestCoverage(input, knowledge([passage])).coverageSatisfied).toBe(true);
+    const scoped = filterGamingDocumentInstructions(scopeGamingEvidenceParagraphs(passage, input));
+    expect(scoped).toBe(passage);
+  });
+
+  it.each([
+    ['a differently qualified object', 'To start fishing, equip a fishing rod. 2) Use the arena rod.', 2],
+    ['an indefinite short object', 'To start fishing, equip a fishing rod. 2) Use a rod.', 2],
+    ['two possible antecedents', 'To start fishing, equip a fishing rod and inspect an arena rod. 2) Use the rod.', 3],
+    ['an aliased repeat of the first action', 'To start fishing, equip a fishing rod. 2) Equip the rod.', 2]
+  ])('does not count %s as another action', (_label, passage, count) => {
+    const input = request(`Explain the first ${count} actions needed for fishing.`);
+    expect(gamingRequirementSupported(passage, buildGamingRequestRequirements(input)[0])).toBe(false);
+    expect(assessGamingRequestCoverage(input, knowledge([passage])).coverageSatisfied).toBe(false);
+  });
+
+  it('keeps a period-numbered continuation attached to its action', () => {
+    const input = request('Explain the first two actions needed for fishing.');
+    const passage = 'To start fishing, equip a rod. 2. Use the rod.';
+    expect(gamingRequirementSupported(passage, buildGamingRequestRequirements(input)[0])).toBe(true);
+    expect(gamingAttributableClaimText(passage, input.game)).toContain('2. Use the rod.');
+    const scoped = filterGamingDocumentInstructions(scopeGamingEvidenceParagraphs(passage, input));
+    expect(assessGamingRequestCoverage(input, knowledge([scoped])).coverageSatisfied).toBe(true);
+  });
+
+  it('retains a period-numbered first action under an explicit start anchor', () => {
+    const input = request('Explain the first three actions needed for fishing.');
+    const passage = 'To start fishing: 1. Equip a rod. 2. Inspect the rod. 3. Use the rod.';
+    expect(gamingRequirementSupported(passage, buildGamingRequestRequirements(input)[0])).toBe(true);
+    expect(assessGamingRequestCoverage(input, knowledge([passage])).coverageSatisfied).toBe(true);
+  });
+
+  it('keeps an explicitly anchored first ordinal when scoping later numbered actions', () => {
+    const input = request('Explain the first two actions needed for fishing.');
+    const passage = '1) To start fishing, equip a rod. 2) Inspect the rod at the pond.';
+    expect(assessGamingRequestCoverage(input, knowledge([passage])).coverageSatisfied).toBe(true);
+    const scoped = filterGamingDocumentInstructions(scopeGamingEvidenceParagraphs(passage, input));
+    expect(scoped).toBe(passage);
+    expect(assessGamingRequestCoverage(input, knowledge([scoped])).coverageSatisfied).toBe(true);
+  });
+
+  it.each([
+    'To start fishing, equip a rod. 2) Equip an arena helmet. 3) Open the tournament gate.',
+    'To start fishing, equip a rod. 2) Inspect the arena helmet. 3) Use the rod.',
+    'To start fishing, equip a rod. 2) Use the rod and open the tournament gate.',
+    'To start fishing, equip a large rod. 2) Open the large gate. 3) Use the large rod.',
+    'To start fishing, equip a rod. 2) Equip the arena rod. 3) Use the rod.',
+    'To start fishing, equip a rod. 2) Inspect the boss rod. 3) Use the boss rod.',
+    'To start fishing, equip the rod mk 1. 2) Equip the rod mk 2. 3) Inspect the rod mk 2.',
+    'To start fishing, equip a rod. 2) Open the gate while carrying the rod. 3) Use the rod.',
+    'To start fishing, equip a rod. 2) Inspect the rod. 4) Use the rod.'
+  ])('does not treat unbound or nonconsecutive ordinals as a complete fishing sequence: %s', passage => {
+    const input = request('Explain the first three actions needed for fishing.');
+    const data = knowledge([passage]);
+    expect(gamingRequirementSupported(passage, buildGamingRequestRequirements(input)[0])).toBe(false);
+    expect(assessGamingRequestCoverage(input, data).coverageSatisfied).toBe(false);
+    expect(selectGamingHybridEvidence(input, data).selectedEvidenceIds).toEqual([]);
+    expect(assessGamingClearEvidence(input, data, { requireRequestCoverage: true }).gates.claimSupport).not.toBe('verified');
+  });
+
+  it('does not partially count or retain an ordinal that coordinates an unrelated action', () => {
+    const input = request('Explain the first two actions needed for fishing.');
+    const passage = 'To start fishing, equip a rod. 2) Use the rod and open the tournament gate.';
+    expect(gamingRequirementSupported(passage, buildGamingRequestRequirements(input)[0])).toBe(false);
+    expect(assessGamingRequestCoverage(input, knowledge([passage])).coverageSatisfied).toBe(false);
+    expect(scopeGamingEvidenceParagraphs(passage, input)).toBe('To start fishing, equip a rod.');
+  });
+
+  it('preserves the original numbered claim text and covers explicitly connected actions in selected evidence', () => {
+    const input = request('Explain the first three actions needed for fishing.');
+    const unrelated = 'To start fishing, equip a rod. 2) Inspect the pond. 3) Use the rod.';
+    expect(gamingAttributableClaimText(unrelated, input.game)).toContain('2) Inspect the pond.');
+    // The ordinal preserves source order, but it cannot establish why an otherwise unbound action belongs.
+    expect(assessGamingRequestCoverage(input, knowledge([unrelated])).coverageSatisfied).toBe(false);
+    const passage = 'To start fishing, equip a rod. 2) Inspect the rod. 3) Use the rod.';
+    const data = knowledge([passage]);
+    expect(gamingRequirementSupported(passage, buildGamingRequestRequirements(input)[0])).toBe(true);
+    expect(assessGamingRequestCoverage(input, data).coverageSatisfied).toBe(true);
+    const selected = selectGamingHybridEvidence(input, data);
+    expect(selected.coverageSatisfied).toBe(true);
+    expect(selected.selectedEvidenceIds).toEqual(['factual-passage-0']);
+    expect(selected.knowledge.evidence![0]).toEqual(data.evidence![0]);
+    expect(assessGamingClearEvidence(input, selected.knowledge, { requireRequestCoverage: true }).gates.claimSupport).toBe('verified');
+  });
+
+  it.each(['This guide provides a glossary.', '\n\n'])('does not attach an orphan ordinal across a removed clause or paragraph: %s', gap => {
+    const input = request('Explain the first two actions needed for fishing.');
+    const passage = 'To start fishing, equip a rod. ' + gap + ' 2) Use the rod for fishing.';
+    const scoped = filterGamingDocumentInstructions(scopeGamingEvidenceParagraphs(passage, input));
+    expect(assessGamingRequestCoverage(input, knowledge([passage])).coverageSatisfied).toBe(false);
+    expect(assessGamingRequestCoverage(input, knowledge([scoped])).coverageSatisfied).toBe(false);
+  });
+
+  it.each([
+    'Selling fishing gear requires a trade licence.',
+    'Fishing gear sales require a trade licence.'
+  ])('does not borrow the prerequisite of an incidental activity: %s', passage => {
+    const input = request('Explain fishing prerequisites and the first concrete steps.');
+    const start = 'To start fishing, equip a rod and use it at the pond.';
+    const data = knowledge([passage, start]);
+    const requirement = buildGamingRequestRequirements(input).find(item => item.procedure === 'prerequisite')!;
+    expect(gamingRequirementSupported(passage, requirement)).toBe(false);
+    expect(assessGamingRequestCoverage(input, data).coverageSatisfied).toBe(false);
+    const selected = selectGamingHybridEvidence(input, data);
+    expect(selected.coverageSatisfied).toBe(false);
+    expect(selected.selectedEvidenceIds).toEqual(['factual-passage-1']);
+    expect(assessGamingClearEvidence(input, data, { requireRequestCoverage: true }).gates.claimSupport).not.toBe('verified');
+    expect(assessGamingRequestCoverage(input, knowledge(['Fishing requires a rod.', start])).coverageSatisfied).toBe(true);
+  });
+
+  it('binds a registration cost to the registered object and its stated purpose', () => {
+    const input = request('Explain prism tuning prerequisites.', { game: 'Lantern Vale' });
+    const passage = 'The cost to register an amber prism for tuning requires spending two silver tokens.';
+    const data = knowledge([passage], input.game);
+    const requirement = buildGamingRequestRequirements(input)[0];
+    expect(gamingRequirementSupported(passage, requirement)).toBe(true);
+    expect(gamingRequirementSupported('Registering an amber prism near the tuning station for trading requires two tokens.', requirement)).toBe(false);
+    const selected = selectGamingHybridEvidence(input, data);
+    expect(selected.coverageSatisfied).toBe(true);
+    expect(selected.selectedEvidenceIds).toEqual(['factual-passage-0']);
+    expect(assessGamingClearEvidence({ ...input, game: input.game! }, selected.knowledge,
+      { requireRequestCoverage: true }).gates.claimSupport).toBe('verified');
+  });
+
+  it.each([
+    ['What is the boss weakness during its first phase?',
+      'The boss weakness during its first phase is frost damage. Equip a frost weapon while the boss remains in this first phase.'],
+    ['How do I damage the Guardian in its first form?',
+      'The Guardian in its first form takes additional frost damage. Attack the Guardian with a frost weapon in its first form.']
+  ])('preserves ordinary first-phase/form scope instead of treating it as an unresolved procedure: %s', (prompt, passage) => {
+    const input = request(prompt);
+    const data = knowledge([passage]);
+    expect(gamingRequestScopeUnresolved(input)).toBe(false);
+    expect(assessGamingRequestCoverage(input, data).coverageSatisfied).toBe(true);
+    const selected = selectGamingHybridEvidence(input, data);
+    expect(selected.coverageSatisfied).toBe(true);
+    expect(selected.knowledge.evidence![0]).toEqual(data.evidence![0]);
+    expect(assessGamingClearEvidence(input, selected.knowledge, { requireRequestCoverage: true }).gates.claimSupport).toBe('verified');
+  });
+
+  it.each([
+    'Explain its first three actions.',
+    'Explain its first 3 actions.',
+    'Explain its first three ordered actions.',
+    'Explain its first 3 concrete actions.',
+    'Explain its first concrete steps.',
+    'Explain its first ordered steps.',
+    'Where can I find them?'
+  ])('retains the unresolved procedural/material referent guard: %s', prompt => {
+    const input = request(prompt);
+    expect(gamingRequestScopeUnresolved(input)).toBe(true);
+    expect(assessGamingRequestCoverage(input, knowledge([firstThree])).coverageSatisfied).toBe(false);
+  });
+
+  it.each([
+    'Does system colonisation require a permit?',
+    'Does system colonisation need a permit?',
+    'Does system colonisation require a permit',
+    'System colonisation requires a permit?',
+    'System colonisation has no prerequisites?'
+  ])('does not promote an unanswered prerequisite question into acquired support: %s', passage => {
+    const input = request('Explain system colonisation prerequisites.');
+    const requirement = buildGamingRequestRequirements(input)[0];
+    const data = knowledge([passage]);
+    expect(requirement).toMatchObject({ procedure: 'prerequisite', terms: ['system', 'colonisation'] });
+    expect(gamingRequirementSupported(passage, requirement)).toBe(false);
+    expect(assessGamingRequestCoverage(input, data).coverageSatisfied).toBe(false);
+    const selected = selectGamingHybridEvidence(input, data);
+    expect(selected.coverageSatisfied).toBe(false);
+    expect(selected.selectedEvidenceIds).toEqual([]);
+    expect(assessGamingClearEvidence(input, data, { requireRequestCoverage: true }).gates.claimSupport).not.toBe('verified');
+    expect(assessGamingClearEvidence(input, selected.knowledge, { requireRequestCoverage: true }).gates.claimSupport).not.toBe('verified');
+  });
+
+  it.each([
+    'System colonisation requires a permit.',
+    'System colonisation has no prerequisites.',
+    'Do system colonisation only if you have a permit.'
+  ])('preserves explicit prerequisite and absence-of-prerequisite assertions: %s', passage => {
+    const input = request('Explain system colonisation prerequisites.');
+    const requirement = buildGamingRequestRequirements(input)[0];
+    const data = knowledge([passage]);
+    expect(gamingAttributableClaimText(passage, input.game)).toBe(passage);
+    expect(gamingRequirementSupported(passage, requirement)).toBe(true);
+    const selected = selectGamingHybridEvidence(input, data);
+    expect(selected.coverageSatisfied).toBe(true);
+    expect(selected.selectedEvidenceIds).toEqual(['factual-passage-0']);
+    expect(selected.knowledge.evidence![0].publicUrl).toBe(data.evidence![0].publicUrl);
+    expect(assessGamingClearEvidence(input, selected.knowledge, { requireRequestCoverage: true }).gates.claimSupport).toBe('verified');
+  });
+
+  it('uses an independent prerequisite assertion after an unanswered question', () => {
+    const input = request('Explain system colonisation prerequisites.');
+    const passage = 'Does system colonisation require a permit? System colonisation requires a survey permit.';
+    const data = knowledge([passage]);
+    expect(gamingRequirementSupported(passage, buildGamingRequestRequirements(input)[0])).toBe(true);
+    const selected = selectGamingHybridEvidence(input, data);
+    expect(selected.coverageSatisfied).toBe(true);
+    expect(selected.selectedEvidenceIds).toEqual(['factual-passage-0']);
+    expect(assessGamingClearEvidence(input, selected.knowledge, { requireRequestCoverage: true }).gates.claimSupport).toBe('verified');
+  });
+
+  it('retains negative gameplay advice without treating one excluded permit as complete prerequisite proof', () => {
+    const input = request('Explain system colonisation prerequisites.');
+    const passage = 'System colonisation does not require a permit.';
+    expect(gamingAttributableClaimText(passage, input.game)).toBe(passage);
+    expect(gamingRequirementSupported(passage, buildGamingRequestRequirements(input)[0])).toBe(false);
+    const data = knowledge([passage]);
+    expect(assessGamingRequestCoverage(input, data).coverageSatisfied).toBe(false);
+    expect(selectGamingHybridEvidence(input, data).coverageSatisfied).toBe(false);
+    expect(assessGamingClearEvidence(input, data, { requireRequestCoverage: true }).gates.claimSupport).not.toBe('verified');
+  });
+});

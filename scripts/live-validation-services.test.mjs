@@ -5,7 +5,7 @@ import test from 'node:test';
 import OpenAI from 'openai';
 import { getRequestRemainingMs, runWithRequestAbortTimeout } from '@arcanos/runtime';
 import { createValidationRuntimeApplication, resolveLiveValidationModels,
-  LIVE_VALIDATION_ACCEPTANCE_WORK_TIMEOUT_MS } from './start-live-validation-runtime.mjs';
+  LIVE_VALIDATION_ACCEPTANCE_WORK_TIMEOUT_MS, validationProfilePassed } from './start-live-validation-runtime.mjs';
 import { createLiveValidationProvider } from './live-validation-provider.mjs';
 import { validationHash } from './live-validation-bootstrap.mjs';
 import { sanitizeLiveValidationUsage } from './live-validation-controller.mjs';
@@ -19,6 +19,7 @@ const PRIVATE_PROVIDER = 'private-provider-body-do-not-project';
 const PRIVATE_ANSWER = 'private-module-answer-do-not-project [1]';
 const CREDENTIAL = 'sk-unit-test-fixture-' + 'x'.repeat(40);
 const TOKEN = 'arcanos-live-validation-test-' + 'f'.repeat(64);
+const PRESENTATION = { policyVersion: 'gaming-clear-presentation/v1', boundToFinalAnswer: true };
 const POSITIVE = 'gaming-guide-positive'; const NEGATIVE = 'gaming-guide-negative';
 
 async function request(application, method, url, body, headers = {}, rawHeaders) {
@@ -60,14 +61,14 @@ function fixture(t, overrides = {}) {
       const positive = input.query.idempotencyKey === profiles.profiles.find(value => value.id === POSITIVE).input.query.idempotencyKey;
       if (!positive) {
         observer.onSourceValidation('rejected');
-        lastObservation = { schemaVersion: 1, contractVersion: 'gaming-hybrid-v2', outcome: 'need_new_source', semanticGap: 'CONFLICT',
+        lastObservation = { schemaVersion: 2, contractVersion: 'gaming-hybrid-v2', outcome: 'need_new_source', semanticGap: 'CONFLICT',
           reason: 'GAME_MISMATCH', coverage: { satisfied: false, assessmentStatus: 'assessed', missingCount: 1 },
           selectedCandidateCount: 0, selectedEvidenceCount: 0, qualification: { visible: false, patchCompatibility: 'unverified', claimsVerifiedCurrentness: false },
-          audit: null, auditStartBudget: { runtimeRemainingMs: null, requestRemainingMs: null },
+          presentation: null,
           candidates: [{ decision: 'rejected', reasonCodes: ['GAME_MISMATCH'] }], stages: {
             ...Object.fromEntries(['acquisition', 'selection', 'intake', 'reasoning', 'final', 'response'].map(stage => [stage,
               { status: stage === 'acquisition' ? 'passed' : 'not_run', elapsedMs: stage === 'acquisition' ? 1 : null }])),
-            generation: { status: 'not_run', elapsedMs: null }, answer_audit: { status: 'not_run', elapsedMs: null } } };
+            generation: { status: 'not_run', elapsedMs: null } } };
         return { accepted: false, failureCode: 'INCOMPATIBLE_SOURCE' };
       }
       observer.onSourceValidation('passed');
@@ -75,20 +76,23 @@ function fixture(t, overrides = {}) {
         fetch: context.provider.fetch });
       await client.models.retrieve(MODEL);
       await client.responses.create({ model: MODEL, input: PRIVATE_PROMPT, max_output_tokens: 100 });
-      observer.onAnswerAuditStart();
-      await client.responses.create({ model: 'gpt-6-luna', input: PRIVATE_PROMPT, max_output_tokens: 100 });
-      lastObservation = { schemaVersion: 1, contractVersion: 'gaming-hybrid-v2', outcome: 'accepted', semanticGap: 'NONCRITICAL_GAP', reason: null,
+      lastObservation = { schemaVersion: 2, contractVersion: 'gaming-hybrid-v2', outcome: 'accepted',
+        semanticGap: profiles.profiles.find(value => value.id === POSITIVE).expected.semanticGap, reason: null,
         coverage: { satisfied: true, assessmentStatus: 'assessed', missingCount: 0 }, selectedCandidateCount: 1,
-        audit: { assessmentStatus: 'completed', decision: 'accept', boundToFinalAnswer: !overrides.unbound },
-        auditStartBudget: { runtimeRemainingMs: 120_000, requestRemainingMs: 120_000 },
-        selectedEvidenceCount: 1, qualification: { visible: true, patchCompatibility: 'unverified', claimsVerifiedCurrentness: false }, candidates: [], stages: {
+        presentation: overrides.unbound ? null : PRESENTATION,
+        selectedEvidenceCount: 1, qualification: { visible: profiles.profiles.find(value => value.id === POSITIVE).expected.qualifiedUnknownPatch === true,
+          patchCompatibility: 'unverified', claimsVerifiedCurrentness: false }, candidates: [], stages: {
           ...Object.fromEntries(['acquisition', 'selection', 'intake', 'reasoning', 'final', 'response'].map(stage => [stage, { status: 'passed', elapsedMs: 1 }])),
-          generation: { status: 'passed', elapsedMs: 1 }, answer_audit: { status: 'passed', elapsedMs: 1 } } };
-      return { accepted: true, audit: { assessmentStatus: 'completed', decision: 'accept', boundToFinalAnswer: !overrides.unbound },
+          generation: { status: 'passed', elapsedMs: 1 } } };
+      const result = { accepted: true, presentation: overrides.unbound ? null : PRESENTATION,
         result: { ok: true, data: { response: PRIVATE_ANSWER,
           sources: [{ url: input.candidateUrls[0], snippet: 'private-source-passage' }],
           grounding: { groundingStatus: 'grounded', groundedInSuppliedEvidence: true, fetchedSuppliedSourceCount: 1,
-            usableSourceCount: 1, citableSourceCount: 1, selectedChunkCount: 1, suppliedEvidenceSourceCount: 1 } } } };
+            usableSourceCount: 1, citableSourceCount: 1, selectedChunkCount: 1, suppliedEvidenceSourceCount: 1 } } },
+        privateAnswer: { version: 2, policyVersion: PRESENTATION.policyVersion, response: PRIVATE_ANSWER, subjectHash: validationHash(PRIVATE_ANSWER),
+          contextFingerprint: validationHash({ scope: 'offline-private-answer' }), sources: [{ index: 1, url: input.candidateUrls[0] }] } };
+      overrides.mutateModuleResult?.(result);
+      return result;
     }, getLastObservation: () => lastObservation ? structuredClone(lastObservation) : undefined
   };
   const runtime = createValidationRuntimeApplication({ target, identity, profiles, buildManifest, now, testToken,
@@ -176,16 +180,21 @@ test('positive and wrong-game negative profiles share one direct metered SDK lan
   const f = fixture(t); await f.admit();
   const positive = await f.acceptance(POSITIVE); assert.equal(positive.status, 200);
   assert.equal(positive.body.profilePassed, true); assert.equal(positive.body.verification.status, 'PASS');
-  assert.deepEqual(positive.body.providerDelta, { providerCalls: 2, generationCalls: 1, auditCalls: 1 });
+  assert.deepEqual(positive.body.providerDelta, { providerCalls: 1, generationCalls: 1, auditCalls: 0 });
   assert.equal(positive.body.observation.stages.response.status, 'passed');
-  for (const secret of [PRIVATE_PROMPT, PRIVATE_PROVIDER, PRIVATE_ANSWER, CREDENTIAL, TOKEN, 'private-source-passage', '/private/path'])
+  assert.deepEqual(positive.body.privateAnswer, { version: 2, policyVersion: PRESENTATION.policyVersion, response: PRIVATE_ANSWER, subjectHash: validationHash(PRIVATE_ANSWER),
+    contextFingerprint: validationHash({ scope: 'offline-private-answer' }), sources: [{ index: 1, url: f.profile(POSITIVE).input.candidateUrls[0] }] });
+  const { privateAnswer: _answer, ...publicValue } = positive.body;
+  assert.equal(JSON.stringify(publicValue).includes(PRIVATE_ANSWER), false);
+  for (const secret of [PRIVATE_PROMPT, PRIVATE_PROVIDER, CREDENTIAL, TOKEN, 'private-source-passage', '/private/path'])
     assert.ok(!positive.text.includes(secret));
   assert.equal(positive.body.durableWrites, 0); assert.equal(positive.body.playerPersistence, 0);
   assert.equal(positive.body.productionChanged, false);
   const negative = await f.acceptance(NEGATIVE); assert.equal(negative.status, 200);
   assert.equal(negative.body.profilePassed, true); assert.equal(negative.body.observation.semanticGap, 'CONFLICT');
+  assert.equal(Object.hasOwn(negative.body, 'privateAnswer'), false);
   assert.deepEqual(negative.body.providerDelta, { providerCalls: 0, generationCalls: 0, auditCalls: 0 });
-  assert.equal(f.counts().providerCalls, 3); // One real SDK model lookup, generation and mandatory audit.
+  assert.equal(f.counts().providerCalls, 2); // One real SDK model lookup and one generation fixture.
   assert.ok(f.seen.every(value => value.url.startsWith('https://api.openai.com/v1/')));
   assert.equal((await f.acceptance(POSITIVE)).status, 403);
   assert.equal((await request(f.runtime, 'POST', '/runs', f.plan, f.headers())).status, 403);
@@ -199,12 +208,37 @@ test('changed input, unknown profiles and expired runs cannot consume a workflow
   assert.equal(f.counts().adapterExecutes, 0); assert.equal(f.counts().providerCalls, 0);
 });
 
-test('unbound mandatory audit cannot pass despite successful real SDK transports', async t => {
+test('unbound presentation output cannot pass despite successful real SDK transports', async t => {
   const f = fixture(t, { unbound: true }); await f.admit();
   const result = await f.acceptance(POSITIVE); assert.equal(result.status, 200);
   assert.equal(result.body.profilePassed, false); assert.equal(result.body.verification.status, 'FAIL');
   assert.equal(result.body.evidence.stages.delivery, 'rejected');
+  assert.equal(Object.hasOwn(result.body, 'privateAnswer'), false);
+  assert.equal(result.text.includes(PRIVATE_ANSWER), false);
 });
+
+test('failed or fallback verification withholds the adapter private answer', async t => {
+  const f = fixture(t, { mutateModuleResult: result => { result.result.ok = false; } }); await f.admit();
+  const response = await f.acceptance(POSITIVE);
+  assert.equal(response.status, 200); assert.equal(response.body.profilePassed, false);
+  assert.equal(response.body.verification.status, 'FAIL');
+  assert.equal(Object.hasOwn(response.body, 'privateAnswer'), false);
+  assert.equal(response.text.includes(PRIVATE_ANSWER), false);
+});
+
+for (const [label, secret] of [['model credential', CREDENTIAL], ['temporary runtime token', TOKEN]])
+  test(`private answer retention does not return the ${label}`, async t => {
+    const f = fixture(t, { mutateModuleResult: result => {
+      result.privateAnswer.response = `Fixture output ${secret} [1]`;
+      result.privateAnswer.subjectHash = validationHash(result.privateAnswer.response);
+    } }); await f.admit();
+    const response = await f.acceptance(POSITIVE);
+    assert.equal(response.status, 403);
+    assert.equal(response.body.error.code, 'LIVE_VALIDATION_SECRET_IN_EVIDENCE');
+    assert.equal(Object.hasOwn(response.body, 'privateAnswer'), false);
+    assert.equal(response.text.includes(secret), false);
+    assert.equal(response.text.includes('Fixture output'), false);
+  });
 
 test('overlap and replay are denied while an underlying execution is still active', async t => {
   let release; let entered; const wait = new Promise(resolve => { release = resolve; });
@@ -253,20 +287,37 @@ test('model policy retains exact fine-tune authority and normal helper roles', (
   assert.equal(LIVE_VALIDATION_ACCEPTANCE_WORK_TIMEOUT_MS, 300_000);
 });
 
+test('an advisory Elden Ring profile requires visible patch uncertainty while the stable profile does not invent it', () => {
+  const advisory = { id: POSITIVE, input: { query: { game: 'Elden Ring', mode: 'build',
+    question: 'Recommend an early Samurai build on the current patch.' } },
+  expected: { outcome: 'accepted', semanticGap: 'NONCRITICAL_GAP', qualifiedUnknownPatch: true } };
+  const moduleResult = { accepted: true, presentation: PRESENTATION };
+  const observed = { schemaVersion: 2, presentation: PRESENTATION, outcome: 'accepted', semanticGap: 'NONCRITICAL_GAP', coverage: { satisfied: true }, selectedEvidenceCount: 1,
+    qualification: { visible: true, claimsVerifiedCurrentness: false } };
+  const delta = { generationCalls: 1, auditCalls: 0 };
+  assert.equal(validationProfilePassed(advisory, moduleResult, observed, delta), true);
+  assert.equal(validationProfilePassed(advisory, moduleResult, { ...observed, qualification: { visible: false, claimsVerifiedCurrentness: false } }, delta), false);
+  assert.equal(validationProfilePassed(advisory, moduleResult, { ...observed, qualification: { visible: true, claimsVerifiedCurrentness: true } }, delta), false);
+  const stable = { ...advisory, input: { query: { game: 'Elite Dangerous', mode: 'guide', question: 'How do I start system colonisation?' } },
+    expected: { outcome: 'accepted', semanticGap: 'NONE' } };
+  assert.equal(validationProfilePassed(stable, moduleResult, { ...observed, semanticGap: 'NONE', qualification: {
+    visible: false, claimsVerifiedCurrentness: false } }, delta), true);
+});
 
-for (const auditTimeout of [false, true]) test(`real direct guard distinguishes ${auditTimeout ? 'mandatory answer audit' : 'generation'} timeout without retry`, async t => {
+
+test('real direct guard reports generation timeout without retry', async t => {
   const f = fixture(t, { providerTimeoutMs: 20, fetchImplementation: async (_url, init) => {
-    if (init.method === 'POST' && JSON.parse(init.body).model === (auditTimeout ? 'gpt-6-luna' : MODEL))
+    if (init.method === 'POST' && JSON.parse(init.body).model === MODEL)
       return new Promise(() => {});
   } });
   await f.admit(); const result = await f.acceptance(POSITIVE);
   assert.equal(result.status, 200); assert.equal(result.body.profilePassed, false);
-  assert.equal(result.body.evidence.failureCode, auditTimeout ? 'AUDIT_TIMEOUT' : 'MODEL_TIMEOUT');
-  assert.equal(result.body.evidence.stages.generation, auditTimeout ? 'passed' : 'timed_out');
-  assert.equal(result.body.evidence.stages.answer_audit, auditTimeout ? 'timed_out' : 'not_run');
+  assert.equal(result.body.evidence.failureCode, 'MODEL_TIMEOUT');
+  assert.equal(result.body.evidence.stages.generation, 'timed_out');
+  assert.equal(result.body.evidence.stages.answer_audit, 'not_run');
   assert.equal(result.body.providerDelta.generationCalls, 1);
-  assert.equal(result.body.providerDelta.auditCalls, auditTimeout ? 1 : 0);
-  assert.equal(f.counts().providerCalls, auditTimeout ? 3 : 2);
+  assert.equal(result.body.providerDelta.auditCalls, 0);
+  assert.equal(f.counts().providerCalls, 2);
   assert.equal((await request(f.runtime, 'GET', '/usage', undefined, f.headers())).body.closed, true);
 });
 
@@ -284,15 +335,15 @@ test('the controller verifies actual runtime usage identity, metadata accounting
   assert.equal(before.sanitized.metadataRequests, 0); assert.equal(before.sanitized.workflows, 0);
   assert.equal((await f.acceptance(POSITIVE)).body.profilePassed, true);
   const after = await read();
-  assert.equal(after.sanitized.requests, 3); assert.equal(after.sanitized.metadataRequests, 1);
-  assert.equal(after.sanitized.providerCalls, 2); assert.equal(after.sanitized.generationCalls, 1);
-  assert.equal(after.sanitized.auditCalls, 1); assert.equal(after.sanitized.workflows, 1);
-  assert.equal(after.sanitized.observedTotalTokens, 6); assert.equal(after.raw.counts.pendingRequests, 0);
+  assert.equal(after.sanitized.requests, 2); assert.equal(after.sanitized.metadataRequests, 1);
+  assert.equal(after.sanitized.providerCalls, 1); assert.equal(after.sanitized.generationCalls, 1);
+  assert.equal(after.sanitized.auditCalls, 0); assert.equal(after.sanitized.workflows, 1);
+  assert.equal(after.sanitized.observedTotalTokens, 3); assert.equal(after.raw.counts.pendingRequests, 0);
   assert.equal((await f.acceptance(NEGATIVE)).body.profilePassed, true);
   assert.equal((await read()).sanitized.workflows, 2);
   await request(f.runtime, 'POST', '/stop', undefined, f.headers());
   const stopped = await read(); assert.equal(stopped.sanitized.status, 'stopped');
-  assert.equal(stopped.sanitized.requests, 3); assert.equal(stopped.sanitized.reservedSpendMicroUsd, after.sanitized.reservedSpendMicroUsd);
+  assert.equal(stopped.sanitized.requests, 2); assert.equal(stopped.sanitized.reservedSpendMicroUsd, after.sanitized.reservedSpendMicroUsd);
   for (const changed of [{ commitSha: 'b'.repeat(40) }, { runtimeDeploymentId: id(9) }, { profileHash: '0'.repeat(64) }]) {
     assert.throws(() => sanitizeLiveValidationUsage({ ...stopped.raw, ...changed }, { plan: f.plan, target: f.target }),
       /LIVE_VALIDATION_USAGE_IDENTITY_MISMATCH/u);

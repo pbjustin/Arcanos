@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-09T09:43:33.718Z",
+  "generatedAt": "2026-11-13T18:49:28.731Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -1928,6 +1928,9 @@
           "relativePath": "src/services/gamingAgents.ts"
         },
         {
+          "relativePath": "src/services/gamingAnswerIntegrity.ts"
+        },
+        {
           "relativePath": "src/services/gamingArchiveResources.ts"
         },
         {
@@ -2919,6 +2922,9 @@
         },
         {
           "relativePath": "src/shared/gaming/gamingPreferenceData.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingPresentedAnswerBinding.ts"
         },
         {
           "relativePath": "src/shared/gaming/gamingProgressionPolicy.ts"
@@ -4657,6 +4663,9 @@
           "relativePath": "tests/gaming-established-game-adjuncts.test.ts"
         },
         {
+          "relativePath": "tests/gaming-evidence-first-corpus.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-evidence-identity-reliability.test.ts"
         },
         {
@@ -4729,6 +4738,9 @@
           "relativePath": "tests/gaming-grounding-response.test.ts"
         },
         {
+          "relativePath": "tests/gaming-guide-answer-delivery.integration.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-guide-applicability.test.ts"
         },
         {
@@ -4742,6 +4754,9 @@
         },
         {
           "relativePath": "tests/gaming-guide-outcomes.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-guide-request-selection.test.ts"
         },
         {
           "relativePath": "tests/gaming-guide-response-preview-failure.test.ts"
@@ -4942,6 +4957,9 @@
           "relativePath": "tests/gaming-primary-selector-layout.test.ts"
         },
         {
+          "relativePath": "tests/gaming-procedure-grammar.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-progress-recovery-preview-failure.test.ts"
         },
         {
@@ -4976,6 +4994,9 @@
         },
         {
           "relativePath": "tests/gaming-rag-local-fetch.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-request-factual-clauses.test.ts"
         },
         {
           "relativePath": "tests/gaming-request-scope-necessity.test.ts"
@@ -6358,6 +6379,9 @@
           "relativePath": "tests/testUtils/gamingLifecycleDrain.ts"
         },
         {
+          "relativePath": "tests/testUtils/gamingPresentationFixtures.ts"
+        },
+        {
           "relativePath": "tests/testUtils/gamingResolvedSourceHarness.ts"
         },
         {
@@ -6407,6 +6431,9 @@
         },
         {
           "relativePath": "tests/trinity-model-policy.e2e.test.ts"
+        },
+        {
+          "relativePath": "tests/trinity-model-validation.test.ts"
         },
         {
           "relativePath": "tests/trinity-persistence-claim-classification.test.ts"

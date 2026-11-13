@@ -166,6 +166,24 @@ export interface GamingClearAssessmentInput {
   evaluatedAt?: string;
 }
 
+/** Compare the canonical decimal scores with the policy's whole-percent weights. */
+function exactAnswerOverallMeetsFloor(dimensions: GamingClearDimensions,
+  weights: Readonly<Record<GamingClearDimension, number>>, floor: number): boolean {
+  const decimal = (value: number) => {
+    const [mantissa, exponent = '0'] = value.toString().split('e');
+    const [whole, fraction = ''] = mantissa.split('.');
+    return { coefficient: BigInt(whole + fraction), scale: fraction.length - Number(exponent) };
+  };
+  const scores = GAMING_CLEAR_DIMENSIONS.map(name => ({
+    ...decimal(dimensions[name].score!), weight: BigInt(Math.round(weights[name] * 100))
+  }));
+  const threshold = decimal(floor);
+  const commonScale = Math.max(threshold.scale, ...scores.map(score => score.scale));
+  const scaled = ({ coefficient, scale }: ReturnType<typeof decimal>) => coefficient * 10n ** BigInt(commonScale - scale);
+  const total = scores.reduce((sum, score) => sum + scaled(score) * score.weight, 0n);
+  return total >= scaled(threshold) * 100n;
+}
+
 export function createGamingClearAssessment(input: GamingClearAssessmentInput): GamingClearAssessment {
   // Advisory disposition authorizes transient answers only. Source quality and
   // durable-write eligibility always retain their existing freshness policy.
@@ -205,9 +223,15 @@ export function createGamingClearAssessment(input: GamingClearAssessmentInput): 
     status: 'unknown', score: null, reasonCodes: [status === 'not_run' ? 'AUDIT_NOT_RUN' : 'AUDIT_UNAVAILABLE'], evidenceRefs: [], unresolvedFacts: []
   }])) as unknown as GamingClearDimensions;
   const allEvaluated = Object.values(dimensionScores).every(dimension => dimension.status === 'evaluated');
-  const overall = allEvaluated ? GAMING_CLEAR_DIMENSIONS.reduce((sum, name) => sum + dimensionScores[name].score! * (GAMING_CLEAR_WEIGHTS[input.questionProfile][name] * 100), 0) / 100 : null;
+  const weights = GAMING_CLEAR_WEIGHTS[input.questionProfile];
+  const overall = allEvaluated ? GAMING_CLEAR_DIMENSIONS.reduce((sum, name) => sum + dimensionScores[name].score! * (weights[name] * 100), 0) / 100 : null;
   const threshold = GAMING_CLEAR_THRESHOLDS[input.profile === 'source' ? 'transient' : input.profile];
-  const meets = (floors: typeof threshold) => overall !== null && overall >= floors.overall
+  // Keep the reported score and other profiles unchanged. The band only selects
+  // exact arithmetic, so a mathematically subthreshold score still fails.
+  const exactAnswerFloorMet = input.profile === 'answer' && overall !== null
+    && Math.abs(overall - threshold.overall) <= Number.EPSILON * threshold.overall * GAMING_CLEAR_DIMENSIONS.length * 2
+    ? exactAnswerOverallMeetsFloor(dimensionScores, weights, threshold.overall) : undefined;
+  const meets = (floors: typeof threshold) => overall !== null && (exactAnswerFloorMet ?? overall >= floors.overall)
     && dimensionScores.clarity.score! >= floors.clarity && dimensionScores.alignment.score! >= floors.alignment
     && dimensionScores.resilience.score! >= Math.max(floors.resilience, currentReliabilityRequired ? 3.5 : 0);
   if (status === 'completed' && !allEvaluated) append('DIMENSION_UNEVALUATED');

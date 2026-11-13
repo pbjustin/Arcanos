@@ -1,0 +1,256 @@
+{
+  "observedAt": "2026-11-10T07:59:23.116Z",
+  "classification": "DETERMINISTIC_REPLAY_OF_RETAINED_REAL_ACQUIRED_RECORDS",
+  "sourceUrl": "https://www.elitedangerous.com/news/system-colonisation-guide",
+  "extractedChars": 5488,
+  "textSha256": "7b650756e8a6f76016102e13a350d0c4b1ef5cdfe3a75f0977e7b8d5d5963367",
+  "semanticDigests": {
+    "gamingRetrievalPolicy": "a918c449c560c79d6c8204bebd1b6c795f0c17ee8b557e95e5d4aed48700dc09",
+    "gamingClearEvidence": "4f09281c9dfde0e51df902bc6c106dcabb27a10d77b71d67f7dff0af03002689"
+  },
+  "selectionLimits": {
+    "chunkChars": 900,
+    "maxChunks": 6,
+    "maxSources": 3,
+    "maxContextChars": 5000,
+    "structuredEvidenceChars": 8000
+  },
+  "newAcquisition": false,
+  "newAuthorityEstablished": false,
+  "workflowTtlRenewed": false,
+  "provider": "NOT_EXECUTED",
+  "sourceAdmission": "HISTORICAL_NOT_REEXECUTED",
+  "observations": [
+    {
+      "id": "complete-original",
+      "requirements": [
+        {
+          "requirement": "requested topic 1",
+          "terms": [
+            "system",
+            "colonisation"
+          ],
+          "procedure": "prerequisite",
+          "wholeRetainedDocumentSupports": true
+        },
+        {
+          "requirement": "requested topic 2",
+          "terms": [
+            "system",
+            "colonisation"
+          ],
+          "procedure": "start",
+          "wholeRetainedDocumentSupports": true
+        }
+      ],
+      "coverageSatisfied": true,
+      "missingCoverage": [],
+      "selectedCount": 2,
+      "contextChars": 1886,
+      "citationBindingStatus": "PASSAGE_SPANS_BOUND",
+      "bound": [
+        {
+          "recordOrdinal": 1,
+          "revisionId": "ce892e17f789dc26a687f3886710ca852a8d67f618dee1a8f8538a0ce694f085",
+          "sourceUrl": "https://www.elitedangerous.com/news/system-colonisation-guide",
+          "chars": 709,
+          "textSha256": "7d98698dee994f4a7c99d92d8216d44030a70bdbe070d31311dc377257ba0470",
+          "spans": [
+            {
+              "start": 1485,
+              "end": 1670,
+              "sha256": "44140b3fd6901d4e1db6c50c55e9064e3ec670f794a123f34a7f0246677c253e"
+            },
+            {
+              "start": 1671,
+              "end": 1827,
+              "sha256": "c16dc285f37b385b051c4879d804cde2f76a1d4e59ab940834e346349e982a78"
+            },
+            {
+              "start": 1831,
+              "end": 1979,
+              "sha256": "ed28bdd7304fa9863dcd6dad8f43ce0c3f988f233da5fadea9fc4e1ce703e5d8"
+            },
+            {
+              "start": 1980,
+              "end": 2197,
+              "sha256": "fe3d7af34306fffd9413c5bd31d23639196fb13bb46107754e6ab032b2072d53"
+            }
+          ]
+        },
+        {
+          "recordOrdinal": 0,
+          "revisionId": "ce892e17f789dc26a687f3886710ca852a8d67f618dee1a8f8538a0ce694f085",
+          "sourceUrl": "https://www.elitedangerous.com/news/system-colonisation-guide",
+          "chars": 807,
+          "textSha256": "580ca096596104668e1e2de702f8078dd0998f7df3d1de6d7456a15ca83f6d11",
+          "spans": [
+            {
+              "start": 0,
+              "end": 291,
+              "sha256": "23a20cc1eb0bd0ec225e57119c1bffed153157a58313be542150bc7980730599"
+            },
+            {
+              "start": 292,
+              "end": 446,
+              "sha256": "9c7465fe3c4f45d59da509c8b36983bbef9f2b9f5f0248f23be33b2a0a1974be"
+            },
+            {
+              "start": 447,
+              "end": 460,
+              "sha256": "aff534b9dd3af53156be1e13be19f8551aa0eb9da68c230d20b485287a1c9273"
+            },
+            {
+              "start": 461,
+              "end": 647,
+              "sha256": "bf9a91c393a604eb8ab0feb22fdc50b79b2c8116c21006ffd0d1550c1c2ac84f"
+            },
+            {
+              "start": 648,
+              "end": 807,
+              "sha256": "02367c795d2aad6c62df7e1f4f4794634017b25740658dbf8f91f60b074dd248"
+            }
+          ]
+        }
+      ],
+      "selectionReplay": {
+        "samples": 31,
+        "warmups": 3,
+        "p50Ms": 11.257,
+        "p95Ms": 12.638,
+        "maxMs": 13.177
+      }
+    },
+    {
+      "id": "short-start",
+      "requirements": [
+        {
+          "requirement": "requested topic 1",
+          "terms": [
+            "system",
+            "colonisation"
+          ],
+          "procedure": "start",
+          "wholeRetainedDocumentSupports": true
+        }
+      ],
+      "coverageSatisfied": true,
+      "missingCoverage": [],
+      "selectedCount": 1,
+      "contextChars": 991,
+      "citationBindingStatus": "PASSAGE_SPANS_BOUND",
+      "bound": [
+        {
+          "recordOrdinal": 0,
+          "revisionId": "ce892e17f789dc26a687f3886710ca852a8d67f618dee1a8f8538a0ce694f085",
+          "sourceUrl": "https://www.elitedangerous.com/news/system-colonisation-guide",
+          "chars": 807,
+          "textSha256": "580ca096596104668e1e2de702f8078dd0998f7df3d1de6d7456a15ca83f6d11",
+          "spans": [
+            {
+              "start": 0,
+              "end": 291,
+              "sha256": "23a20cc1eb0bd0ec225e57119c1bffed153157a58313be542150bc7980730599"
+            },
+            {
+              "start": 292,
+              "end": 446,
+              "sha256": "9c7465fe3c4f45d59da509c8b36983bbef9f2b9f5f0248f23be33b2a0a1974be"
+            },
+            {
+              "start": 447,
+              "end": 460,
+              "sha256": "aff534b9dd3af53156be1e13be19f8551aa0eb9da68c230d20b485287a1c9273"
+            },
+            {
+              "start": 461,
+              "end": 647,
+              "sha256": "bf9a91c393a604eb8ab0feb22fdc50b79b2c8116c21006ffd0d1550c1c2ac84f"
+            },
+            {
+              "start": 648,
+              "end": 807,
+              "sha256": "02367c795d2aad6c62df7e1f4f4794634017b25740658dbf8f91f60b074dd248"
+            }
+          ]
+        }
+      ],
+      "selectionReplay": {
+        "samples": 31,
+        "warmups": 3,
+        "p50Ms": 5.9,
+        "p95Ms": 6.345,
+        "maxMs": 6.823
+      }
+    },
+    {
+      "id": "explicit-first-three",
+      "requirements": [
+        {
+          "requirement": "requested topic 1",
+          "terms": [
+            "system",
+            "colonisation"
+          ],
+          "procedure": "prerequisite",
+          "wholeRetainedDocumentSupports": true
+        },
+        {
+          "requirement": "requested topic 2",
+          "terms": [
+            "system",
+            "colonisation"
+          ],
+          "procedure": "start",
+          "minimumActions": 3,
+          "wholeRetainedDocumentSupports": false
+        }
+      ],
+      "coverageSatisfied": false,
+      "missingCoverage": [
+        "requested topic 2"
+      ],
+      "selectedCount": 1,
+      "contextChars": 893,
+      "citationBindingStatus": "PASSAGE_SPANS_BOUND",
+      "bound": [
+        {
+          "recordOrdinal": 1,
+          "revisionId": "ce892e17f789dc26a687f3886710ca852a8d67f618dee1a8f8538a0ce694f085",
+          "sourceUrl": "https://www.elitedangerous.com/news/system-colonisation-guide",
+          "chars": 709,
+          "textSha256": "7d98698dee994f4a7c99d92d8216d44030a70bdbe070d31311dc377257ba0470",
+          "spans": [
+            {
+              "start": 1485,
+              "end": 1670,
+              "sha256": "44140b3fd6901d4e1db6c50c55e9064e3ec670f794a123f34a7f0246677c253e"
+            },
+            {
+              "start": 1671,
+              "end": 1827,
+              "sha256": "c16dc285f37b385b051c4879d804cde2f76a1d4e59ab940834e346349e982a78"
+            },
+            {
+              "start": 1831,
+              "end": 1979,
+              "sha256": "ed28bdd7304fa9863dcd6dad8f43ce0c3f988f233da5fadea9fc4e1ce703e5d8"
+            },
+            {
+              "start": 1980,
+              "end": 2197,
+              "sha256": "fe3d7af34306fffd9413c5bd31d23639196fb13bb46107754e6ab032b2072d53"
+            }
+          ]
+        }
+      ],
+      "selectionReplay": {
+        "samples": 31,
+        "warmups": 3,
+        "p50Ms": 5.894,
+        "p95Ms": 7.317,
+        "maxMs": 7.63
+      }
+    }
+  ]
+}

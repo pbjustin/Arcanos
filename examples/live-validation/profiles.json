@@ -1,58 +1,29 @@
 {
-  "version": 1,
+  "version": 2,
+  "acceptanceProfile": "grounded-presented-answer-v2",
   "sourceReachability": "unverified",
   "profiles": [
     {
       "id": "gaming-guide-positive",
-      "scenarioId": "elden-ring-early-samurai",
+      "scenarioId": "elite-dangerous-system-colonisation-official-guide",
       "caseId": "useful_grounded_guide",
       "moduleId": "gaming",
       "input": {
         "query": {
           "contractVersion": "gaming-hybrid-v2",
-          "game": "Elden Ring",
-          "mode": "build",
-          "class": "Samurai",
-          "progressPoint": "just left the tutorial",
-          "question": "I'm at the beginning of Elden Ring. I'm a Samurai. I just got out of the tutorial area. I want a Samurai blade build using the starting Uchigatana and a normal early blade path. Include controls. I'm undecided between bleed and pure Dexterity. I'm undecided between single katana and dual wield. I'm undecided between aggressive and defensive. Guide: https://raw.githubusercontent.com/pbjustin/Arcanos/62fe94af217e375cd6a5a77d834f4dffd7c49675/tests/fixtures/gaming-samurai-pc-clarification-guide.html",
-          "idempotencyKey": "live-validation-samurai-positive",
+          "game": "Elite Dangerous",
+          "mode": "guide",
+          "question": "Find a detailed guide explaining system colonisation in Elite Dangerous and how to get started, including prerequisites and the first concrete steps. Cite the guide sources. Guide: https://www.elitedangerous.com/news/system-colonisation-guide",
+          "idempotencyKey": "live-validation-elite-colonisation-positive",
           "storagePolicy": "transient_only"
         },
         "candidateUrls": [
-          "https://raw.githubusercontent.com/pbjustin/Arcanos/62fe94af217e375cd6a5a77d834f4dffd7c49675/tests/fixtures/gaming-samurai-pc-clarification-guide.html"
-        ],
-        "clarificationReplies": [
-          {
-            "platform": "PC"
-          },
-          {
-            "constraints": [
-              "pure Dexterity"
-            ]
-          },
-          {
-            "constraints": [
-              "pure Dexterity",
-              "single katana"
-            ]
-          },
-          {
-            "constraints": [
-              "pure Dexterity",
-              "single katana",
-              "defensive"
-            ]
-          }
+          "https://www.elitedangerous.com/news/system-colonisation-guide"
         ]
       },
       "expected": {
         "outcome": "accepted",
-        "semanticGap": "NONCRITICAL_GAP",
-        "qualifiedUnknownPatch": true,
-        "clarification": {
-          "completedCount": 4,
-          "postAcquisitionCount": 3
-        },
+        "semanticGap": "NONE",
         "requiredModelStages": [
           "intake",
           "reasoning",
@@ -62,18 +33,16 @@
     },
     {
       "id": "gaming-guide-negative",
-      "scenarioId": "elden-ring-wrong-game-source",
+      "scenarioId": "elite-dangerous-wrong-game-authored-source-control",
       "caseId": "incompatible_source",
       "moduleId": "gaming",
       "input": {
         "query": {
           "contractVersion": "gaming-hybrid-v2",
-          "game": "Elden Ring",
-          "mode": "build",
-          "class": "Samurai",
-          "progressPoint": "just left the tutorial",
-          "question": "I'm at the beginning of Elden Ring. I'm a Samurai. I just got out of the tutorial area. I want a Samurai blade build using the starting Uchigatana and a normal early blade path. Guide: https://raw.githubusercontent.com/pbjustin/Arcanos/62fe94af217e375cd6a5a77d834f4dffd7c49675/tests/fixtures/gaming-sekiro-conflict-guide.html",
-          "idempotencyKey": "live-validation-samurai-wrong-game",
+          "game": "Elite Dangerous",
+          "mode": "guide",
+          "question": "How do I get started with system colonisation in Elite Dangerous? Use the supplied guide.",
+          "idempotencyKey": "live-validation-elite-wrong-game",
           "storagePolicy": "transient_only"
         },
         "candidateUrls": [

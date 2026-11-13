@@ -99,15 +99,23 @@ export function createLiveValidationProviderTransport({ approvedModels, fetchImp
     validateLiveValidationProviderRequest({ url, method, body }, { approvedModels: models });
     const requestHeaders = providerHeaders(headers, method);
     requireEgress(!signal?.aborted, 'LIVE_VALIDATION_PROVIDER_CANCELLED');
-    let abortHandler; let iterator; let complete = false;
+    let abortHandler; let result; let iterator; let complete = false;
     const interrupted = new Promise((_, reject) => {
       abortHandler = () => reject(new LiveValidationEgressError('LIVE_VALIDATION_PROVIDER_CANCELLED'));
       signal?.addEventListener('abort', abortHandler, { once: true });
     });
     try {
       // The paid guard's deadline also bounds transports and body readers that ignore AbortSignal.
-      const result = await Promise.race([fetchImplementation(url, { method, headers: requestHeaders,
+      result = await Promise.race([fetchImplementation(url, { method, headers: requestHeaders,
         ...(method === 'POST' ? { body: JSON.stringify(body) } : {}), signal, redirect: 'error' }), interrupted]);
+      if (method === 'GET' && !result?.redirected) {
+        switch (result?.status) {
+          case 401: throw new LiveValidationEgressError('LIVE_VALIDATION_METADATA_UNAUTHORIZED');
+          case 403: throw new LiveValidationEgressError('LIVE_VALIDATION_METADATA_FORBIDDEN');
+          case 404: throw new LiveValidationEgressError('LIVE_VALIDATION_METADATA_NOT_FOUND');
+          case 429: throw new LiveValidationEgressError('LIVE_VALIDATION_METADATA_RATE_LIMITED');
+        }
+      }
       requireEgress(result && !result.redirected && result.status >= 200 && result.status < 300,
         'LIVE_VALIDATION_PROVIDER_FAILED');
       requireEgress(result.body && typeof result.body[Symbol.asyncIterator] === 'function',
@@ -126,11 +134,19 @@ export function createLiveValidationProviderTransport({ approvedModels, fetchImp
       try { parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
       catch { throw new LiveValidationEgressError('LIVE_VALIDATION_PROVIDER_RESPONSE_INVALID'); }
       return { status: result.status, body: parsed };
+    } catch (error) {
+      if (method === 'GET' && !(error instanceof LiveValidationEgressError)) {
+        throw new LiveValidationEgressError('LIVE_VALIDATION_METADATA_TRANSPORT_FAILED');
+      }
+      throw error;
     } finally {
       signal?.removeEventListener('abort', abortHandler);
       // A reader ignoring cancellation must not delay the paid guard's timeout result.
       if (!complete && typeof iterator?.return === 'function') {
         try { Promise.resolve(iterator.return()).catch(() => {}); } catch { /* Best-effort stream cancellation. */ }
+      } else if (!complete && !iterator && method === 'GET') {
+        // HTTP errors are classified by status without reading the metadata response body.
+        try { Promise.resolve(result?.body?.cancel?.()).catch(() => {}); } catch { /* Best-effort stream cancellation. */ }
       }
     }
   };

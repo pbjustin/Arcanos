@@ -1,9 +1,9 @@
 import type { GamingHybridResponse } from './gamingHybridContract.js';
-import type { GamingClearAssessment } from './gamingClearPolicy.js';
+import type { GAMING_CLEAR_PRESENTATION_POLICY_VERSION } from './gamingPromptCore.js';
 import { GAMING_STALE_GUIDE_WARNING, GAMING_UNVERIFIED_GUIDE_WARNING,
   gamingAnswerClaimsVerifiedCurrentness } from './gamingFreshnessDisposition.js';
 
-export const LIVE_VALIDATION_STAGES = ['acquisition', 'selection', 'generation', 'intake', 'reasoning', 'final', 'answer_audit', 'response'] as const;
+export const LIVE_VALIDATION_STAGES = ['acquisition', 'selection', 'generation', 'intake', 'reasoning', 'final', 'response'] as const;
 export type LiveValidationStage = typeof LIVE_VALIDATION_STAGES[number];
 /** Server-owned events contain timing metadata only, never model content. */
 export interface LiveValidationStageEvent {
@@ -18,10 +18,22 @@ export interface LiveValidationStageTiming {
   status: 'not_run' | 'started' | 'passed' | 'failed' | 'timed_out';
   elapsedMs: number | null;
 }
-export interface LiveValidationAudit {
-  assessmentStatus: GamingClearAssessment['assessmentStatus'];
-  decision: GamingClearAssessment['decision'];
-  boundToFinalAnswer: boolean;
+export interface LiveValidationAuditProviderDiagnostic {
+  resultClass: 'complete' | 'provider_incomplete' | 'unexpected_finish' | 'commentary_only' | 'unsupported_output'
+    | 'missing_content' | 'oversized_content' | 'malformed_json' | 'invalid_schema';
+  providerStatus?: 'completed' | 'incomplete' | 'failed' | 'cancelled' | 'queued' | 'in_progress' | 'unknown';
+  finishReason?: 'stop' | 'length' | 'tool_calls' | 'content_filter' | 'function_call' | 'unknown';
+  incompleteReason?: 'max_output_tokens' | 'content_filter' | 'none' | 'unknown';
+  truncated?: boolean;
+  contentFiltered?: boolean;
+  contentLengthClass?: 'missing' | 'empty' | 'bounded' | 'oversized';
+  outputKind?: 'refusal' | 'tool_output';
+  messageStatus?: 'in_progress' | 'incomplete';
+}
+
+interface LiveValidationPresentation {
+  policyVersion: typeof GAMING_CLEAR_PRESENTATION_POLICY_VERSION;
+  boundToFinalAnswer: true;
 }
 /** Counts and invariants only; workflow IDs, context replies and evidence text stay private. */
 export interface LiveValidationClarification {
@@ -36,7 +48,7 @@ export interface LiveValidationClarification {
   acquisitionCount: number;
 }
 export interface LiveValidationObservation {
-  schemaVersion: 1;
+  schemaVersion: 2;
   contractVersion: 'gaming-hybrid-v2';
   outcome: 'accepted' | 'clarification_required' | 'need_new_source' | 'unavailable';
   reason: string | null;
@@ -47,10 +59,9 @@ export interface LiveValidationObservation {
   candidates: Array<{ decision: string; reasonCodes: string[] }>;
   qualification: { patchCompatibility: 'unverified' | 'stale' | 'not_required' | 'verified' | 'unobserved';
     visible: boolean; claimsVerifiedCurrentness: boolean };
-  audit: LiveValidationAudit | null;
+  presentation: LiveValidationPresentation | null;
   clarification?: LiveValidationClarification;
   stages: Record<LiveValidationStage, LiveValidationStageTiming>;
-  auditStartBudget: { runtimeRemainingMs: number | null; requestRemainingMs: number | null };
 }
 const reasonCode = (value: unknown): string | null => typeof value === 'string' && /^[A-Z][A-Z0-9_]{0,79}$/u.test(value) ? value : null;
 export const liveValidationDuration = (value: unknown): number | null => typeof value === 'number'
@@ -75,10 +86,9 @@ function clarificationProjection(value: LiveValidationClarification | undefined)
 export function createLiveValidationObservation(input: {
   body?: GamingHybridResponse;
   accepted: boolean;
-  audit?: LiveValidationAudit;
+  presentation?: LiveValidationPresentation;
   clarification?: LiveValidationClarification;
   stages: LiveValidationObservation['stages'];
-  auditStartBudget: LiveValidationObservation['auditStartBudget'];
 }): LiveValidationObservation {
   const { body, accepted } = input;
   const response = body?.answer?.response ?? '';
@@ -102,11 +112,11 @@ export function createLiveValidationObservation(input: {
     : accepted && qualification.visible && ['unverified', 'stale'].includes(qualification.patchCompatibility) ? 'NONCRITICAL_GAP'
       : accepted ? 'NONE' : outcome === 'need_new_source' ? 'EVIDENCE_GAP' : 'UNOBSERVED';
   const clarification = clarificationProjection(input.clarification);
-  return { schemaVersion: 1, contractVersion: 'gaming-hybrid-v2', outcome, reason, semanticGap,
+  return { schemaVersion: 2, contractVersion: 'gaming-hybrid-v2', outcome, reason, semanticGap,
     coverage: { satisfied: body?.coverageSatisfied === true,
       assessmentStatus: body?.gapAssessmentStatus ?? 'not_assessed', missingCount: Math.min(body?.missingCoverage?.length ?? 0, 64) },
     selectedCandidateCount: body?.selectedCandidateIds?.length ?? 0, selectedEvidenceCount: body?.selectedEvidenceIds?.length ?? 0,
-    candidates, qualification, audit: input.audit ? { ...input.audit } : null,
+    candidates, qualification, presentation: input.presentation ? { ...input.presentation } : null,
     ...(clarification ? { clarification } : {}),
-    stages: structuredClone(input.stages), auditStartBudget: { ...input.auditStartBudget } };
+    stages: structuredClone(input.stages) };
 }

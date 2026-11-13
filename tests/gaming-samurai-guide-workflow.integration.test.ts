@@ -7,7 +7,6 @@ import express from 'express';
 import request from 'supertest';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
-import { GAMING_CLEAR_DIMENSIONS } from '../src/shared/gaming/gamingClearPolicy.js';
 import { normalizeGamingEditionIdentity } from '../src/shared/gaming/gamingGameIdentity.js';
 import type { GamingHybridResponse } from '../src/shared/gaming/gamingHybridContract.js';
 
@@ -134,15 +133,6 @@ beforeEach(() => {
       outgoing.end();
     });
   });
-  mockAuditCompletion.mockImplementation(async (_client: unknown, params: any) => {
-    const data = JSON.parse(params.messages[1].content);
-    const refs = data.evidence.map((chunk: any) => chunk.chunkId);
-    return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
-      dimensions: Object.fromEntries(GAMING_CLEAR_DIMENSIONS.map(name => [name, {
-        status: 'evaluated', score: 4.5, reasonCodes: ['SUPPORTED_FIXTURE'], evidenceRefs: refs.slice(0, 8), unresolvedFacts: []
-      }])), findings: []
-    }) } }], usage: { prompt_tokens: 400, completion_tokens: 150, total_tokens: 550 } };
-  });
   mockTrinity.mockImplementation(async (providerRequest: any) => {
     const blocks = String(providerRequest.input.prompt).split(/(?=^\[Source \d+\])/mu);
     const result = blocks.flatMap(block => {
@@ -151,8 +141,7 @@ beforeEach(() => {
       const answer = url && pages.get(url)?.answer;
       return answer && number ? [`${answer} [Source ${number}]`] : [];
     }).join('\n\n');
-    const { assessment } = await providerRequest.context.runOptions.gamingClearAnswerAudit(result, {});
-    return { result, gamingClearAudit: assessment, meta: { provider: { finishReason: 'stop' } } };
+    return { result, gamingPresentationPolicy: providerRequest.context.runOptions.gamingPresentationPolicy, meta: { provider: { finishReason: 'stop' } } };
   });
 });
 afterEach(() => {
@@ -261,7 +250,7 @@ describe('ordinary gameplay requests through the served Gaming workflow', () => 
     expect(final.result.selectedCandidateIds).toHaveLength(1);
     expect(mockHttp).toHaveBeenCalledTimes(1);
     expect(mockTrinity).toHaveBeenCalledTimes(1);
-    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
   });
 });
 
@@ -282,15 +271,14 @@ describe('October 4 early-game Samurai request through the served Gaming workflo
     expect(final.result.answer!.response).toMatch(/current.?patch compatibility.*(?:not|unverified|could not)/iu);
     expect(final.result.answer!.response).toContain('[Source 1]');
     expect(mockHttp).toHaveBeenCalledTimes(1); expect(mockTrinity).toHaveBeenCalledTimes(1);
-    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
     const provider = mockTrinity.mock.calls[0][0] as any;
     expect(provider.input.body).toMatchObject({ game: 'Elden Ring', class: 'Samurai', progressPoint: 'just left the tutorial' });
     expect(normalizeGamingEditionIdentity(provider.input.body.edition)).toBe('base-game');
     expect(provider.context.runOptions).toMatchObject({ disableOptionalSideEffects: true, redactAuditContent: true });
-    const audited = JSON.parse((mockAuditCompletion.mock.calls[0][1] as any).messages[1].content);
-    expect(audited.evidence.length).toBeGreaterThan(0);
-    expect(audited.evidence.every((chunk: any) => final.result.selectedCandidateIds!.includes(chunk.sourceId))).toBe(true);
-    expect(JSON.stringify(audited.evidence)).toContain('Uchigatana');
+    expect(final.result.selectedEvidenceIds!.length).toBeGreaterThan(0);
+    expect(provider.context.runOptions.gamingPresentationPolicy).toBe('gaming-clear-presentation/v1');
+    expect(provider.input.prompt).toContain('Uchigatana');
   });
 
   it('acquires a permitted large publisher shell and grounds the small article within the existing generation budget', async () => {
@@ -308,10 +296,6 @@ describe('October 4 early-game Samurai request through the served Gaming workflo
     expect(final.result.answer!.response).toContain('Uchigatana');
     expect(final.result.answer!.response).toContain('[Source 1]');
     expect(final.result.answer!.response).toMatch(/current.?patch compatibility.*(?:not|unverified|could not)/iu);
-    const audited = JSON.parse((mockAuditCompletion.mock.calls[0][1] as any).messages[1].content);
-    expect(audited.evidence.length).toBeGreaterThan(0);
-    expect(audited.evidence.length).toBeLessThanOrEqual(6);
-    expect(audited.evidence.reduce((characters: number, chunk: any) => characters + chunk.text.length, 0)).toBeLessThanOrEqual(12_000);
     const provider = mockTrinity.mock.calls[0][0] as any;
     expect(provider.input.prompt).toContain('Uchigatana');
     expect(provider.input.prompt).not.toContain('inert-shell-sentinel');
@@ -323,7 +307,7 @@ describe('October 4 early-game Samurai request through the served Gaming workflo
       acceptedBytes: Buffer.byteLength(largeHtml), rawChars: largeHtml.length });
     expect(publisherRequests).toEqual([{ path: '/elden-ring/early-samurai', host: 'guides.example.org', method: 'GET' }]);
     expect(mockTrinity).toHaveBeenCalledTimes(1);
-    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
   }, 30_000);
 
   // Build this shared publisher document outside either timed assertion group.
@@ -413,15 +397,14 @@ describe('October 4 early-game Samurai request through the served Gaming workflo
     const acquisition = (logger.info as jest.Mock).mock.calls.find(call => call[0] === 'gaming.clear.source.completed')?.[1] as any;
     expect(acquisition.extraction).toMatchObject({ receivedBytes: Buffer.byteLength(html),
       acceptedBytes: Buffer.byteLength(html), rawChars: html.length });
-    const audited = JSON.parse((mockAuditCompletion.mock.calls[0][1] as any).messages[1].content);
-    expect(audited.evidence.every((chunk: any) => final.result.selectedCandidateIds!.includes(chunk.sourceId))).toBe(true);
-    expect(JSON.stringify(audited.evidence)).toContain(stats);
-    expect(JSON.stringify(audited.evidence)).toContain(upgrades);
+    const generationPrompt = String((mockTrinity.mock.calls[0][0] as any).input.prompt);
+    expect(generationPrompt).toContain(stats);
+    expect(generationPrompt).toContain(upgrades);
     expect(publisherRequests).toEqual([{ path: '/elden-ring/early-samurai',
       host: 'guides.example.org', method: 'GET' }]);
     expect(mockHttp).toHaveBeenCalledTimes(1);
     expect(mockTrinity).toHaveBeenCalledTimes(1);
-    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -481,7 +464,7 @@ describe('October 4 early-game Samurai request through the served Gaming workflo
       expect(final.result.answer!.response).toContain('Uchigatana');
       expect(final.result.answer!.response).toContain('[Source 1]');
       expect(mockTrinity).toHaveBeenCalledTimes(1);
-      expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+      expect(mockAuditCompletion).not.toHaveBeenCalled();
     } else {
       expect(final.result.nextAction).toBe('verify_currentness');
       expect(final.result.answer).toBeUndefined();
@@ -543,7 +526,7 @@ describe('October 4 early-game Samurai request through the served Gaming workflo
     expect(final.result.answer!.response).toContain('[Source 1]');
     expect(publisherRequests).toEqual([{ path: '/elden-ring/early-samurai', host: 'guides.example.org', method: 'GET' }]);
     expect(mockTrinity).toHaveBeenCalledTimes(1);
-    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
   });
 
   it.each(['Vigor', 'Blood'])('keeps the real named game %s through authenticated Gaming HTTP orchestration', async game => {
@@ -563,7 +546,7 @@ describe('October 4 early-game Samurai request through the served Gaming workflo
     expect(final.result.answer!.response).toContain('[Source 1]');
     expect(publisherRequests).toEqual([{ path: `/${game.toLowerCase()}/beginner`, host: 'guides.example.org', method: 'GET' }]);
     expect(mockTrinity).toHaveBeenCalledTimes(1);
-    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
   });
 
   const primaryQualifiedRecords = [
@@ -609,7 +592,7 @@ describe('October 4 early-game Samurai request through the served Gaming workflo
         expect(final.result.answer!.sources).toEqual([expect.objectContaining({ url: guideUrl,
           sourceId: final.result.candidates![0].candidateId })]);
         expect(mockTrinity).toHaveBeenCalledTimes(1);
-        expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+        expect(mockAuditCompletion).not.toHaveBeenCalled();
       }
     });
 

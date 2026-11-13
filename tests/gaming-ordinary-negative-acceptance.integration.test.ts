@@ -7,7 +7,6 @@ import express from 'express';
 import request from 'supertest';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
-import { GAMING_CLEAR_DIMENSIONS } from '../src/shared/gaming/gamingClearPolicy.js';
 import type { GamingHybridResponse } from '../src/shared/gaming/gamingHybridContract.js';
 
 const guideUrl = 'https://guides.example.org/elden-ring/equipment-load';
@@ -133,15 +132,6 @@ beforeEach(() => {
       outgoing.end();
     });
   });
-  mockAuditCompletion.mockImplementation(async (_client: unknown, params: any) => {
-    const data = JSON.parse(params.messages[1].content);
-    const refs = data.evidence.map((chunk: any) => chunk.chunkId);
-    return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
-      dimensions: Object.fromEntries(GAMING_CLEAR_DIMENSIONS.map(name => [name, {
-        status: 'evaluated', score: 4.5, reasonCodes: ['SUPPORTED_FIXTURE'], evidenceRefs: refs.slice(0, 8), unresolvedFacts: []
-      }])), findings: []
-    }) } }], usage: { prompt_tokens: 400, completion_tokens: 150, total_tokens: 550 } };
-  });
   mockTrinity.mockImplementation(async (providerRequest: any) => {
     const blocks = String(providerRequest.input.prompt).split(/(?=^\[Source \d+\])/mu);
     const result = blocks.flatMap(block => {
@@ -150,8 +140,7 @@ beforeEach(() => {
       const answer = url && pages.get(url)?.answer;
       return answer && number ? [`${answer} [Source ${number}]`] : [];
     }).join('\n\n');
-    const { assessment } = await providerRequest.context.runOptions.gamingClearAnswerAudit(result, {});
-    return { result, gamingClearAudit: assessment, meta: { provider: { finishReason: 'stop' } } };
+    return { result, gamingPresentationPolicy: providerRequest.context.runOptions.gamingPresentationPolicy, meta: { provider: { finishReason: 'stop' } } };
   });
 });
 afterEach(() => {
@@ -217,19 +206,6 @@ function assertNoAnswer(state: GamingHybridResponse) {
   expect(state.state).not.toBe('answer_ready');
   expect(state.answer).toBeUndefined();
 }
-function providerFindings(code: string, invalidRefs = false) {
-  mockAuditCompletion.mockImplementation(async (_client: unknown, params: any) => {
-    const data = JSON.parse(params.messages[1].content);
-    const refs = data.evidence.map((chunk: any) => chunk.chunkId);
-    return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
-      dimensions: Object.fromEntries(GAMING_CLEAR_DIMENSIONS.map(name => [name, {
-        status: 'evaluated', score: 4.5, reasonCodes: ['SUPPORTED_FIXTURE'],
-        evidenceRefs: invalidRefs ? ['nonexistent-evidence-id'] : refs.slice(0, 8), unresolvedFacts: []
-      }])), findings: code ? [{ code, severity: 'blocking', evidenceRefs: refs.slice(0, 1) }] : []
-    }) } }], usage: { prompt_tokens: 400, completion_tokens: 150, total_tokens: 550 } };
-  });
-}
-
 describe('ordinary Gaming negative controls through authenticated served MCP', () => {
   it.each(['gaming-hybrid-v1', v2].flatMap(protocol => [
     { protocol, name: 'wrong-game', reason: 'GAME_MISMATCH' },
@@ -464,21 +440,21 @@ describe('ordinary Gaming negative controls through authenticated served MCP', (
     expect(mockHttp).not.toHaveBeenCalled(); expect(mockTrinity).not.toHaveBeenCalled();
   });
 
-  it.each(['invalid citation', 'unknown evidence IDs', 'spoiler violation'] as const)
+  it.each(['invalid citation', 'missing presentation binding', 'standalone refusal'] as const)
   ('withholds generated text after %s rather than repairing or returning it', async kind => {
     equipmentPage();
-    if (kind === 'invalid citation') {
-      mockTrinity.mockImplementation(async (providerRequest: any) => {
-        const result = 'Keep equipment load below 70 percent. [Source 99]';
-        const { assessment } = await providerRequest.context.runOptions.gamingClearAnswerAudit(result, {});
-        return { result, gamingClearAudit: assessment, meta: { provider: { finishReason: 'stop' } } };
-      });
-    } else providerFindings(kind === 'spoiler violation' ? 'SPOILER_VIOLATION' : '', kind === 'unknown evidence IDs');
+    mockTrinity.mockImplementation(async (providerRequest: any) => ({
+      result: kind === 'invalid citation' ? 'Keep equipment load below 70 percent. [Source 99]'
+        : kind === 'standalone refusal' ? 'I cannot provide that information.' : 'Rest at the Site of Grace. [Source 1]',
+      gamingPresentationPolicy: kind === 'missing presentation binding'
+        ? undefined : providerRequest.context.runOptions.gamingPresentationPolicy,
+      meta: { provider: { finishReason: 'stop' } }
+    }));
     const run = harness(); const initial = await run.query({ spoilerTolerance: 'none' });
     const final = await run.submit(initial.result, guideUrl);
     assertNoAnswer(final.result); expect(final.result.nextAction).toBe('stop');
     expect(mockTrinity).toHaveBeenCalledTimes(1);
-    expect(mockAuditCompletion).toHaveBeenCalledTimes(kind === 'invalid citation' ? 0 : 1);
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
   });
 
   it('does not expose durable ingestion authority to a query-only MCP principal', async () => {

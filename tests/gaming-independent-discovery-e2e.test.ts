@@ -3,13 +3,12 @@ import express from 'express';
 import request from 'supertest';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
-import { GAMING_CLEAR_DIMENSIONS } from '../src/shared/gaming/gamingClearPolicy.js';
 import type { GamingHybridResponse } from '../src/shared/gaming/gamingHybridContract.js';
 
 // Held-out, authored SYNTHETIC material. These fixtures make no claim that the
 // fabricated publisher pages exist or that model/gameplay quality was measured.
 // OAuth, MCP schemas, discovery/ranking, protected acquisition, extraction,
-// source/evidence CLEAR, Trinity orchestration and final answer binding are real.
+// source/evidence admission, Trinity orchestration and final answer binding are real.
 // External search/HTTPS/DNS/SDK, empty durable lookup and ingress admission are
 // controlled seams. No application service, provider or production data is used.
 const publisher = jest.fn();
@@ -51,7 +50,6 @@ interface Claim {
   draft: string;
   answerProbe: RegExp;
   support: RegExp[];
-  uncertainty?: boolean;
 }
 interface Scenario {
   id: string;
@@ -85,7 +83,7 @@ const scenarios: Scenario[] = [
       support: [/uninhabited/iu, /colonisation claim/iu, /colonisation ship/iu, /construction commodities/iu, /deadline/iu] },
     { url: 'https://heldout-guides.example/elite/colonisation-first-system',
       draft: 'The selected excerpts do not establish platform or edition compatibility, or which patch is active.',
-      answerProbe: /do not establish platform.*edition.*patch/iu, uncertainty: true, support: [] }] },
+      answerProbe: /do not establish platform.*edition.*patch/iu, support: [] }] },
   { id: 'D', game: 'Xenoblade Chronicles 2', question: 'Find a Chapter 2 guide for Rex as DPS and Nia as healer. Avoid later-story spoilers.', advisory: true,
     pages: [{ url: 'https://heldout-guides.example/xc2/chapter-two-rex', title: 'Xenoblade Chronicles 2 Chapter 2 Rex DPS guide',
       body: '<p>In the game Xenoblade Chronicles 2, this Chapter 2 guide uses Rex as DPS. Rex should keep his starting attacker Blade, maintain auto-attacks long enough to recharge Arts, and cancel an auto-attack into an Art when the timing ring appears. Position Rex to use the damage bonus stated on the equipped Art. This Chapter 2 Rex DPS advice uses only the party equipment available at this checkpoint.</p>' },
@@ -109,17 +107,17 @@ const scenarios: Scenario[] = [
 ];
 
 let scenario = scenarios[0];
-let poison: 'none' | 'unsupported' | 'wrong_citation' = 'none';
+let adversarialFinal: 'none' | 'unsupported_quantity' | 'wrong_citation_url' = 'none';
 let sourceSuffix = '';
 let searchUnavailable = false;
 const stages: string[] = [];
 const searches: string[] = [];
 const acquired: string[] = [];
-const audits: Array<{ answer: string; playerContext: { spoilerMode: string };
-  evidence: Array<{ sourceIndex: number; sourceId: string; revisionId: string; text: string; chunkId: string }> }> = [];
+let finalText = '';
+let finalInput = '';
+let finalEvidence: Array<{ sourceIndex: number; url: string; text: string }> = [];
 const documents: Awaited<ReturnType<typeof resolveGamingDocument>>[] = [];
 const evaluations: Awaited<ReturnType<typeof evaluateGamingHybridCandidates>>[] = [];
-const auditSourceUrl = (sourceId: string) => evaluations.flatMap(value => value.accepted).find(candidate => candidate.candidateId === sourceId)?.publicUrl;
 const environment = { FINETUNED_MODEL_ID: 'ft:gpt-4.1:synthetic:heldout-gaming',
   ARCANOS_GAMING_RAG_ENABLED: 'false', ARCANOS_GAMING_DISCOVERY_ENABLED: 'true',
   ARCANOS_GAMING_HYBRID_BACKEND_DISCOVERY_ENABLED: 'false', BRAVE_SEARCH_API_KEY: 'heldout-synthetic-search-only',
@@ -138,22 +136,27 @@ beforeAll(async () => {
 });
 const messageText = (payload: any): string => typeof payload.input === 'string' ? payload.input : payload.input.map((message: any) => typeof message.content === 'string'
   ? message.content : message.content.map((part: any) => part.text ?? '').join('')).join('\n');
-function draft(payload: any): string {
+function draft(payload: any, final = false): string {
   const text = messageText(payload);
   const numbered = [...text.matchAll(/\[Source (\d+)\][\s\S]*?URL: (https:\/\/[^\s"\\]+)/gu)];
   const numberFor = (url: string) => Number(numbered.find(match => match[2].trim() === url)?.[1]);
   const response = scenario.claims.map((claim, index) => {
     expect(claim.support.filter(probe => !probe.test(text)).map(probe => probe.source)).toEqual([]);
-    const source = poison === 'wrong_citation' && index === 0 ? numberFor(scenario.pages[1].url) : numberFor(claim.url);
+    const source = numberFor(claim.url);
     expect(source).toBeGreaterThan(0);
-    return `${claim.draft} [${source}]`;
+    if (final && adversarialFinal === 'wrong_citation_url' && index === 0)
+      return claim.draft + ' [' + source + '](' + scenario.pages[1].url + ')';
+    return claim.draft + ' [' + source + ']';
   }).join('\n\n');
-  return poison === 'unsupported' ? `${response}\n\nThe Deku Shield costs 9999 Rupees. [1]` : response;
+  // Exercise the declared boundary: the backend verifies citation structure;
+  // a syntactically valid citation is not an independent factual verdict.
+  return final && adversarialFinal === 'unsupported_quantity' ? response + '\n\nThe Deku Shield costs 9999 Rupees. [1]' : response;
 }
 beforeEach(() => {
   jest.clearAllMocks(); resetSafetyRuntimeStateForTests(); clearGamingDiscoveryCache();
-  scenario = scenarios[0]; poison = 'none'; sourceSuffix = ''; searchUnavailable = false;
-  stages.length = 0; searches.length = 0; acquired.length = 0; audits.length = 0; documents.length = 0; evaluations.length = 0;
+  scenario = scenarios[0]; adversarialFinal = 'none'; sourceSuffix = ''; searchUnavailable = false;
+  stages.length = 0; searches.length = 0; acquired.length = 0; documents.length = 0; evaluations.length = 0;
+  finalText = ''; finalInput = ''; finalEvidence = [];
   saved = Object.fromEntries(Object.keys(environment).map(name => [name, process.env[name]]));
   Object.assign(process.env, environment);
   for (const log of [logger, aiLogger]) for (const level of ['info', 'warn', 'error', 'debug'] as const)
@@ -186,31 +189,25 @@ beforeEach(() => {
     let output: string;
     if (input.includes('Audit the actual Gaming player-facing ANSWER')) {
       stages.push('answer_audit');
-      const data = JSON.parse(payload.input.find((message: any) => message.role === 'user').content.map((part: any) => part.text ?? '').join(''));
-      expect(data.question).toBe(scenario.question);
-      audits.push(data);
-      // This synthetic semantic judge independently checks the actual answer's
-      // claim-to-source links, not equality with the model stub's planned draft.
-      const supported = scenario.claims.every(claim => {
-        const line = data.answer.split('\n').find((value: string) => claim.answerProbe.test(value));
-        const citation = /\[(\d+)\]/u.exec(line ?? '');
-        return citation && data.evidence.some((chunk: any) => chunk.sourceIndex === Number(citation[1])
-          && auditSourceUrl(chunk.sourceId) === claim.url && claim.support.every(probe => probe.test(chunk.text)))
-          && (!claim.uncertainty || data.applicability.every((scope: any) => !scope.edition && !scope.platforms?.length
-            && !scope.currentPatch && !scope.currentBuild));
-      }) && !/9999|SPOILER_SENTINEL/iu.test(data.answer);
-      const refs = data.evidence.map((chunk: any) => chunk.chunkId);
-      output = JSON.stringify({ dimensions: Object.fromEntries(GAMING_CLEAR_DIMENSIONS.map(name => [name,
-        { status: 'evaluated', score: supported ? 4.5 : 1, reasonCodes: [supported ? 'SUPPORTED_FIXTURE' : 'UNSUPPORTED_CLAIM'], evidenceRefs: refs, unresolvedFacts: [] }])),
-        findings: supported ? [] : [{ code: 'UNSUPPORTED_CLAIM', severity: 'blocking', evidenceRefs: refs }] });
-    } else if (payload.text?.format?.name?.startsWith('trinity_structured_reasoning')) {
+      throw new Error('The retired independent answer audit was dispatched.');
+    }
+    if (payload.text?.format?.name?.startsWith('trinity_structured_reasoning')) {
       stages.push('reasoning');
       output = JSON.stringify({ reasoning_steps: [], assumptions: [], constraints: [], tradeoffs: [], alternatives_considered: [],
         chosen_path_justification: '', response_mode: 'answer', achievable_subtasks: ['answer only acquired gameplay claims'],
         blocked_subtasks: [], user_visible_caveats: [], claim_tags: [], final_answer: draft(payload) });
     } else if (input.includes('Gaming guide intake policy: compact-v1')) {
       stages.push('intake'); output = 'Use the acquired guide passages, preserve qualifications and spoiler limits, and cite each factual recommendation.';
-    } else { stages.push('final'); output = draft(payload); }
+    } else {
+      stages.push('final');
+      const trusted = messageText({ input: payload.input.filter((message: any) => message.role === 'system' || message.role === 'developer') });
+      expect(trusted).toContain('Gaming CLEAR Presentation policy: gaming-clear-presentation/v1');
+      finalInput = input;
+      finalEvidence = [...input.matchAll(/\[Source (\d+)\]\s*\nOrigin:[^\n]*\nURL: (https:\/\/[^\s"\\]+)([\s\S]*?)(?=\[Source \d+\]|\[END UNTRUSTED WEB EVIDENCE\]|$)/gu)]
+        .map(match => ({ sourceIndex: Number(match[1]), url: match[2], text: match[3] }));
+      finalText = draft(payload, true);
+      output = finalText;
+    }
     return { id: `heldout-sdk-${stages.length}`, model: payload.model, status: 'completed', output: [], output_text: output,
       usage: { input_tokens: 90, output_tokens: 45, total_tokens: 135 } };
   });
@@ -270,11 +267,11 @@ function harness(backend: boolean) {
 }
 
 describe.each([false, true])('held-out SYNTHETIC full-path acceptance, backend discovery %s', backend => {
-  it.each(scenarios)('answers exact question $id with verified claim-source links and the real final audit', async fixture => {
+  it.each(scenarios)('answers exact question $id with presented guidance and independently checked fixture citations', async fixture => {
     scenario = fixture;
     const app = harness(backend);
     const result = await app.complete();
-    expect(result.statusCode === 200 ? undefined : { reason: result.result.reason, stages, audits,
+    expect(result.statusCode === 200 ? undefined : { reason: result.result.reason, stages,
       warnings: jest.mocked(logger.warn).mock.calls }).toBeUndefined();
     expect(result).toMatchObject({ statusCode: 200, result: { state: 'answer_ready', nextAction: 'answer', revision: 1,
       evidenceSelected: true, coverageSatisfied: true, answer: { provenance: 'arcanos-trinity' } } });
@@ -284,7 +281,7 @@ describe.each([false, true])('held-out SYNTHETIC full-path acceptance, backend d
       const line = answer.response.split('\n').find(value => claim.answerProbe.test(value))!;
       const index = Number(/\[(\d+)\]/u.exec(line)?.[1]);
       expect(answer.sources[index - 1]?.url).toBe(claim.url);
-      expect(audits[0].evidence.some(chunk => chunk.sourceIndex === index && auditSourceUrl(chunk.sourceId) === claim.url
+      expect(finalEvidence.some(chunk => chunk.sourceIndex === index && chunk.url === claim.url
         && claim.support.every(probe => probe.test(chunk.text)))).toBe(true);
     }
     expect(answer.response).not.toMatch(/9999|SPOILER_SENTINEL|currently optimal|verified current/iu);
@@ -299,19 +296,24 @@ describe.each([false, true])('held-out SYNTHETIC full-path acceptance, backend d
       // The draft therefore withholds positive platform/edition/patch claims.
       expect(documents[0].text).toContain('PC Live 4.0');
       expect(documents[0].text).toContain('19.02');
-      expect(audits[0].evidence.every(chunk => !chunk.text.includes('PC Live 4.0'))).toBe(true);
+      expect(finalEvidence.every(chunk => !chunk.text.includes('PC Live 4.0'))).toBe(true);
       expect(answer.response).not.toMatch(/19\.02|PC Live 4\.0/u);
     }
     expect(result.result.selectedEvidenceIds!.length).toBeGreaterThan(0);
-    for (const chunk of audits[0].evidence) {
-      const candidate = evaluations.flatMap(value => value.accepted).find(value => value.candidateId === chunk.sourceId);
-      expect(chunk.revisionId).toBe(candidate?.contentHash);
-      expect(result.result.selectedEvidenceIds).toContain(chunk.chunkId);
+    for (const recordId of result.result.selectedEvidenceIds!) {
+      const candidate = evaluations.flatMap(value => value.accepted).find(value => recordId.startsWith(value.candidateId + ':'));
+      const record = candidate?.evidenceRecords?.find(value => value.recordId === recordId);
+      expect(record?.revisionId).toBe(candidate?.contentHash);
+      expect(record?.revisionId).toBeDefined();
+      const ordinal = Number(recordId.split(':').at(-1));
+      expect(finalEvidence.some(chunk => chunk.url === candidate?.publicUrl
+        && chunk.text.split('\n').includes('Passage: ' + (ordinal + 1)))).toBe(true);
     }
-    if (fixture.id === 'B' || fixture.id === 'D') expect(audits[0].playerContext.spoilerMode).toBe('none');
+    expect(answer.response).toContain(finalText);
+    if (fixture.id === 'B' || fixture.id === 'D') expect(finalInput).toContain('Spoilers: none');
     expect(result.result.requirementSupport!.length).toBeGreaterThan(0);
     expect(result.result.requirementSupport!.every(link => link.evidenceIds.every(id => result.result.selectedEvidenceIds!.includes(id)))).toBe(true);
-    expect(stages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
+    expect(stages).toEqual(['intake', 'reasoning', 'final']);
     expect(searches).toHaveLength(2); expect(new Set(searches).size).toBe(2);
     expect(acquired.sort()).toEqual(fixture.pages.map(page => page.url).sort());
     const callCount = sdk.mock.calls.length;
@@ -319,15 +321,28 @@ describe.each([false, true])('held-out SYNTHETIC full-path acceptance, backend d
     expect(sdk).toHaveBeenCalledTimes(callCount); expect(searches).toHaveLength(2);
   });
 
-  it('withholds an unsupported numerical claim after real Trinity and independent synthetic semantic audit', async () => {
-    poison = 'unsupported';
+  it('leaves factual generation responsibility with Trinity even when an unsupported quantity has a structurally valid citation', async () => {
+    adversarialFinal = 'unsupported_quantity';
     const result = await harness(backend).complete();
-    expect(result.result.answer).toBeUndefined();
-    expect(result.result.state).not.toBe('answer_ready');
-    expect(stages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
-    expect(audits[0].answer).toContain('9999');
-    expect(audits[0].evidence.every(chunk => !chunk.text.includes('9999'))).toBe(true);
+    expect(result.result.state).toBe('answer_ready');
+    expect(result.result.answer?.response).toContain('The Deku Shield costs 9999 Rupees. [1]');
+    expect(finalEvidence).not.toHaveLength(0);
+    expect(finalEvidence.every(chunk => !chunk.text.includes('9999'))).toBe(true);
+    expect(stages).toEqual(['intake', 'reasoning', 'final']);
+    expect(sdk).toHaveBeenCalledTimes(3);
   });
+
+  it('rejects a numbered citation linking to another independently accepted source', async () => {
+    scenario = scenarios[3];
+    adversarialFinal = 'wrong_citation_url';
+    const result = await harness(backend).complete();
+    expect(result.result).toMatchObject({ coverageSatisfied: true, reason: 'GENERATION_UNAVAILABLE' });
+    expect(result.result.answer).toBeUndefined();
+    expect(finalText).toContain('](' + scenario.pages[1].url + ')');
+    expect(stages).toEqual(['intake', 'reasoning', 'final']);
+    expect(sdk).toHaveBeenCalledTimes(3);
+  });
+
   it('withholds sources prohibiting automated use before any model work', async () => {
     sourceSuffix = '<footer>No automated use.</footer>';
     const result = await harness(backend).complete();
@@ -355,12 +370,4 @@ it('does not turn an unavailable search provider into invented discovery or miss
   expect(result.result).toMatchObject({ revision: 0, nextAction: 'search', reason: 'DISCOVERY_PROVIDER_ERROR',
     discovery: { continuationRequired: true, remainingCandidateUrls: 6, remainingTotalAcquisitionMs: 24000 } });
   expect(acquired).toEqual([]); expect(sdk).not.toHaveBeenCalled();
-});
-
-it('rejects a claim attached to the wrong independently accepted source', async () => {
-  scenario = scenarios[3]; poison = 'wrong_citation';
-  const result = await harness(true).complete();
-  expect(result.result.answer).toBeUndefined();
-  expect(stages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
-  expect(audits).toHaveLength(1);
 });

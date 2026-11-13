@@ -45,6 +45,8 @@ export interface TrinityReasoningHonesty {
 
 export interface FinalClaimBlockResult {
   text: string;
+  /** No provider answer text survived before server-authored fallback or caveats. */
+  fallbackOnly: boolean;
   blocked: boolean;
   blockedCategories: Array<'live_verification' | 'current_external_state' | 'backend_action'>;
   /** Internal classification metadata only; never publish candidate text or reasoning. */

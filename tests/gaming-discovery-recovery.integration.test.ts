@@ -5,7 +5,6 @@ import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { Readable } from 'node:stream';
 import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
 import { createGamingAcquisitionStages } from './testUtils/gamingAcquisitionStages.js';
-import { GAMING_CLEAR_DIMENSIONS } from '../src/shared/gaming/gamingClearPolicy.js';
 import { resolveGamingFreshnessDisposition } from '../src/shared/gaming/gamingFreshnessDisposition.js';
 import type { GamingHybridResponse } from '../src/shared/gaming/gamingHybridContract.js';
 import type { GamingHybridDependencies } from '../src/services/gamingHybridKnowledge.js';
@@ -93,17 +92,6 @@ beforeEach(async () => {
     data.on('error', () => undefined);
     return { status: page.status ?? 200, headers: { 'content-type': contentType }, data };
   });
-  // The semantic provider is a fixture. Its structured judgment still passes
-  // through real evidence binding, citation, warning and final-answer checks.
-  mockAuditCompletion.mockImplementation(async (_client: unknown, params: any) => {
-    const data = JSON.parse(params.messages[1].content);
-    const refs = data.evidence.map((chunk: any) => chunk.chunkId);
-    return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
-      dimensions: Object.fromEntries(GAMING_CLEAR_DIMENSIONS.map(name => [name, {
-        status: 'evaluated', score: 4.5, reasonCodes: ['SUPPORTED_FIXTURE'], evidenceRefs: refs.slice(0, 8), unresolvedFacts: []
-      }])), findings: []
-    }) } }], usage: { prompt_tokens: 400, completion_tokens: 150, total_tokens: 550 } };
-  });
   mockTrinity.mockImplementation(async (providerRequest: any) => {
     const blocks = String(providerRequest.input.prompt).split(/(?=^\[Source \d+\])/mu);
     const result = blocks.flatMap(block => {
@@ -112,8 +100,7 @@ beforeEach(async () => {
       const answer = url && pages.get(url)?.answer;
       return answer && number ? [`${answer} [Source ${number}]`] : [];
     }).join('\n\n');
-    const { assessment } = await providerRequest.context.runOptions.gamingClearAnswerAudit(result, {});
-    return { result, gamingClearAudit: assessment, meta: { provider: { finishReason: 'stop' } } };
+    return { result, gamingPresentationPolicy: providerRequest.context.runOptions.gamingPresentationPolicy, meta: { provider: { finishReason: 'stop' } } };
   });
 });
 afterEach(async () => {
@@ -197,7 +184,7 @@ describe('backend-authoritative Gaming discovery recovery through served MCP', (
     expect(answer.result.selectedCandidateIds).toHaveLength(1);
     expect(answer.result.answer!.sources.map(source => source.url)).toEqual([completeUrl]);
     expect(mockHttp).toHaveBeenCalledTimes(1); expect(mockTrinity).toHaveBeenCalledTimes(1);
-    expect(mockAuditCompletion).toHaveBeenCalledTimes(1); expect(mockIngest).not.toHaveBeenCalled();
+    expect(mockAuditCompletion).not.toHaveBeenCalled(); expect(mockIngest).not.toHaveBeenCalled();
   });
 
   it('answers from late complete evidence in a long acquired guide through served MCP without storing it', async () => {
@@ -215,10 +202,10 @@ describe('backend-authoritative Gaming discovery recovery through served MCP', (
     expect(answer.result.selectedEvidenceIds!.some(id => Number(id.split(':').at(-1)) > 20)).toBe(true);
     expect(answer.result.answer!.sources.map(source => source.url)).toEqual([url]);
     expect(answer.result.answer!.response).toContain('[Source 1]');
-    const audited = JSON.parse((mockAuditCompletion.mock.calls[0][1] as any).messages[1].content);
-    expect(audited.evidence).toHaveLength(1);
-    expect(audited.evidence[0].text).toContain(gateText);
-    expect(audited.evidence[0].text).toContain(bridgeText);
+    expect(answer.result.selectedEvidenceIds).toHaveLength(1);
+    const generationPrompt = String((mockTrinity.mock.calls[0][0] as any).input.prompt);
+    expect(generationPrompt).toContain(gateText);
+    expect(generationPrompt).toContain(bridgeText);
     expect(String((mockTrinity.mock.calls[0][0] as any).input.prompt).length).toBeLessThan(16_000);
     expect(mockHttp).toHaveBeenCalledTimes(1); expect(mockTrinity).toHaveBeenCalledTimes(1);
     expect(mockIngest).not.toHaveBeenCalled();
@@ -260,8 +247,6 @@ describe('backend-authoritative Gaming discovery recovery through served MCP', (
     expect(answer.result.requirementSupport).toHaveLength(2);
     expect(answer.result.requirementSupport!.every(requirement => requirement.evidenceIds.length > 0)).toBe(true);
     expect(answer.result.answer!.sources.map(source => source.url).sort()).toEqual([gateUrl, bridgeUrl].sort());
-    const audited = JSON.parse((mockAuditCompletion.mock.calls[0][1] as any).messages[1].content);
-    expect(audited.evidence.map((chunk: any) => chunk.sourceId).sort()).toEqual(answer.result.selectedCandidateIds!.sort());
     expect(mockTrinity).toHaveBeenCalledTimes(1);
   });
 
@@ -278,11 +263,8 @@ describe('backend-authoritative Gaming discovery recovery through served MCP', (
     expect(answer.result.answer!.sources.map(source => source.url).sort()).toEqual([copper, silver].sort());
     expect(answer.result.answer!.response).toContain("Copperblade's base weight as 10 points");
     expect(answer.result.answer!.response).toContain("Silverblade's base weight as 11 points");
-    const audited = JSON.parse((mockAuditCompletion.mock.calls[0][1] as any).messages[1].content);
-    expect(audited.verifiedEvidenceGates.claimSupport).toBe('verified');
-    expect(audited.evidence.map((chunk: any) => chunk.sourceId).sort()).toEqual(answer.result.selectedCandidateIds!.sort());
     expect(mockHttp).toHaveBeenCalledTimes(2); expect(mockTrinity).toHaveBeenCalledTimes(1);
-    expect(mockAuditCompletion).toHaveBeenCalledTimes(1); expect(mockIngest).not.toHaveBeenCalled();
+    expect(mockAuditCompletion).not.toHaveBeenCalled(); expect(mockIngest).not.toHaveBeenCalled();
   });
 
   it('answers four compact independent clauses after one recovery without expanding the generation budget', async () => {
@@ -301,11 +283,9 @@ describe('backend-authoritative Gaming discovery recovery through served MCP', (
     expect(answer.result.selectedCandidateIds).toHaveLength(4);
     expect(answer.result.answer!.sources.map(source => source.url).sort()).toEqual(urls.sort());
     expect(answer.result.requirementSupport!.every(item => item.evidenceIds.length > 0)).toBe(true);
-    const audit = JSON.parse((mockAuditCompletion.mock.calls[0][1] as any).messages[1].content);
-    expect(audit.evidence.length).toBeLessThanOrEqual(8);
-    expect(audit.evidence.map((chunk: any) => chunk.sourceId).sort()).toEqual(answer.result.selectedCandidateIds!.sort());
+    expect(answer.result.selectedEvidenceIds!.length).toBeLessThanOrEqual(8);
     expect(mockHttp).toHaveBeenCalledTimes(4); expect(mockTrinity).toHaveBeenCalledTimes(1);
-    expect(mockAuditCompletion).toHaveBeenCalledTimes(1); expect(mockIngest).not.toHaveBeenCalled();
+    expect(mockAuditCompletion).not.toHaveBeenCalled(); expect(mockIngest).not.toHaveBeenCalled();
   });
 
   it('withholds structured generation when one independent requested clause is missing', async () => {
@@ -432,7 +412,7 @@ describe('backend-authoritative Gaming discovery recovery through served MCP', (
     expect(answer.result.answer!.sources.map(source => source.url).sort()).toEqual([gateUrl, bridgeUrl].sort());
     expect(answer.result.selectedCandidateIds).toContain(partial.result.selectedCandidateIds![0]);
     expect(webSearch).toHaveBeenCalledTimes(2); expect(mockHttp).toHaveBeenCalledTimes(3);
-    expect(mockTrinity).toHaveBeenCalledTimes(1); expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+    expect(mockTrinity).toHaveBeenCalledTimes(1); expect(mockAuditCompletion).not.toHaveBeenCalled();
     expect(run.trace.map(step => step.name)).toEqual(['arcanos_gaming_hybrid_query', 'arcanos_gaming_submit_candidates', 'arcanos_gaming_submit_candidates']);
     expect(mockIngest).not.toHaveBeenCalled();
   });
@@ -615,24 +595,22 @@ describe('backend-authoritative Gaming discovery recovery through served MCP', (
   it('blocks citation claims outside the selected evidence and never returns the invalid generated answer', async () => {
     sources(); mockTrinity.mockImplementation(async (providerRequest: any) => {
       const result = `${gateText} [Source 99]`;
-      const { assessment } = await providerRequest.context.runOptions.gamingClearAnswerAudit(result, {});
-      return { result, gamingClearAudit: assessment, meta: { provider: { finishReason: 'stop' } } };
+      return { result, gamingPresentationPolicy: providerRequest.context.runOptions.gamingPresentationPolicy, meta: { provider: { finishReason: 'stop' } } };
     });
     const run = harness(); const initial = await run.query(); const invalid = await run.submit(initial.result, [completeUrl]);
     expect(invalid.result.state).not.toBe('answer_ready'); expect(invalid.result.answer).toBeUndefined();
     expect(mockTrinity).toHaveBeenCalledTimes(1); expect(mockAuditCompletion).not.toHaveBeenCalled();
   });
 
-  it('rejects a citation URL outside the selected source set even when the provider fixture approves its text', async () => {
+  it('rejects a citation URL outside the selected source set after a completed generation', async () => {
     sources(); mockTrinity.mockImplementation(async (providerRequest: any) => {
       const result = `${gateText} ${bridgeText} [Source 1] [Different guide](https://unselected.example.org/other).`;
-      const { assessment } = await providerRequest.context.runOptions.gamingClearAnswerAudit(result, {});
-      return { result, gamingClearAudit: assessment, meta: { provider: { finishReason: 'stop' } } };
+      return { result, gamingPresentationPolicy: providerRequest.context.runOptions.gamingPresentationPolicy, meta: { provider: { finishReason: 'stop' } } };
     });
     const run = harness(); const initial = await run.query(); const invalid = await run.submit(initial.result, [completeUrl]);
-    expect(invalid.result).toMatchObject({ reason: 'INVALID_GENERATED_CITATIONS', nextAction: 'stop' });
+    expect(invalid.result).toMatchObject({ reason: 'GENERATION_UNAVAILABLE', nextAction: 'stop' });
     expect(invalid.result.answer).toBeUndefined(); expect(mockTrinity).toHaveBeenCalledTimes(1);
-    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
   });
 
   it.each(['actor', 'workflow'] as const)('rechecks acquired evidence %s membership before generation', async binding => {
@@ -688,13 +666,11 @@ describe('backend-authoritative Gaming discovery recovery through served MCP', (
     expect(gameplay.result.answer!.response).toContain('Current patch compatibility could not be verified');
     expect(gameplay.result.answer!.response).toContain('may be outdated');
     expect(gameplay.result.answer!.sources.map(source => source.url)).toEqual([guide]);
-    const audited = JSON.parse((mockAuditCompletion.mock.calls[0][1] as any).messages[1].content);
-    expect(audited.answer).toContain('may be outdated'); expect(audited.verifiedEvidenceGates.freshness).toBe('unknown');
     expect(await run.submit(initial.result, [guide])).toEqual(gameplay);
     const closed = await run.submit(gameplay.result, [official], 'unnecessary-official-operation', { discoveryType: 'currentness_verification' });
     expect(closed).toMatchObject({ statusCode: 409, result: { reason: 'WORKFLOW_CLOSED' } });
     expect(mockHttp).toHaveBeenCalledTimes(1); expect(mockTrinity).toHaveBeenCalledTimes(1);
-    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
     expect(jest.mocked(logger.info).mock.calls.some(([event]) => event === 'gaming.currentness.operation_started')).toBe(false);
     expect(mockIngest).not.toHaveBeenCalled();
   });
@@ -726,7 +702,7 @@ describe('backend-authoritative Gaming discovery recovery through served MCP', (
     expect(final.result.selectedCandidateIds).toHaveLength(2);
     expect(final.result.answer!.response).not.toContain('may be outdated');
     expect(mockHttp).toHaveBeenCalledTimes(3); expect(mockTrinity).toHaveBeenCalledTimes(1);
-    expect(mockAuditCompletion).toHaveBeenCalledTimes(1); expect(mockIngest).not.toHaveBeenCalled();
+    expect(mockAuditCompletion).not.toHaveBeenCalled(); expect(mockIngest).not.toHaveBeenCalled();
   });
 
   it('keeps strict current-state requests blocked when official extraction fails', async () => {
@@ -798,7 +774,7 @@ describe('backend-authoritative Gaming discovery recovery through served MCP', (
       expect(answer.result.selectedEvidenceIds!.length).toBeLessThanOrEqual(2);
       expect(answer.result.discovery?.replacementAllowed).not.toBe(true);
       expect(mockHttp).toHaveBeenCalledTimes(3); expect(mockTrinity).toHaveBeenCalledTimes(1);
-      expect(mockAuditCompletion).toHaveBeenCalledTimes(1); expect(mockIngest).not.toHaveBeenCalled();
+      expect(mockAuditCompletion).not.toHaveBeenCalled(); expect(mockIngest).not.toHaveBeenCalled();
     } finally {
       if (previous === undefined) delete process.env[key]; else process.env[key] = previous;
     }

@@ -20,6 +20,11 @@ import { generateRequestId } from "@shared/idGenerator.js";
 import { countWords } from '@shared/text/countWords.js';
 import { markFinalizedPublicAnswer } from '@shared/http/clientResponseCommon.js';
 import { resolveGamingGuideIntakeEndpointPolicy } from '@shared/gaming/gamingGuideIntakeCore.js';
+import {
+  buildGamingClearPresentationPolicy,
+  GAMING_CLEAR_PRESENTATION_POLICY_VERSION,
+  resolveGamingPresentationPolicy,
+} from '@shared/gaming/gamingPromptCore.js';
 import { getTrinityMessages } from "@platform/runtime/prompts.js";
 import { MidLayerTranslator } from "@services/midLayerTranslator.js";
 import {
@@ -769,6 +774,33 @@ function buildExactLiteralTrinityResult(params: {
   };
 }
 
+/** Fail closed on explicit echoes of the internal presentation review. */
+function assertGamingPresentationOutputIsPublic(text: string): void {
+  const internalHeading = /^[\s#*_>-]*Gaming CLEAR(?: Presentation)? (?:draft|checklist|review|scores?)(?:\s*[:*_#]|[ \t]*$)/iu;
+  if (text.includes(GAMING_CLEAR_PRESENTATION_POLICY_VERSION)
+    || text.split(/\r\n?|[\n\v\f\x1c-\x1e\x85\u2028\u2029]/u).some(line => internalHeading.test(line))) {
+    throw new TrinityStructuredOutputError('private_output');
+  }
+}
+
+/**
+ * Preserve exact-output integrity while allowing a capability limitation inserted
+ * by server-owned honesty enforcement. A provider-supplied fallback splice is still invalid.
+ */
+function validateGamingPresentationIntegrity(
+  input: Parameters<typeof validateTrinityAnswerIntegrity>[0],
+  providerText: string,
+  honestyBlockedClaim: boolean
+): ReturnType<typeof validateTrinityAnswerIntegrity> {
+  const integrity = validateTrinityAnswerIntegrity(input);
+  if (!honestyBlockedClaim || !integrity.issues.includes('fallback_spliced_mid_answer')
+    || validateTrinityAnswerIntegrity({ ...input, text: providerText }).issues.includes('fallback_spliced_mid_answer')) {
+    return integrity;
+  }
+  const issues = integrity.issues.filter(issue => issue !== 'fallback_spliced_mid_answer');
+  return { valid: issues.length === 0, issues };
+}
+
 /**
  * Universal Trinity pipeline - Core AI processing workflow for ARCANOS
  *
@@ -804,12 +836,11 @@ export async function runThroughBrain(
   const gamingGuideIntakePolicy = resolveGamingGuideIntakeEndpointPolicy(
     options.gamingGuideIntakePolicy, options.sourceEndpoint
   );
-  const gamingAnswerAudit = /^arcanos-gaming\.(?:guide|build|meta|hybrid-build|hybrid-meta)$/u.test(options.sourceEndpoint ?? '')
-    ? options.gamingClearAnswerAudit : undefined;
-  // The historical ledger audit is an auxiliary slot (like final generation,
-  // it was never part of the intake/reasoning InvocationBudget). Keep one slot,
-  // never grant it again through escalation or repair, and include its token use.
-  const gamingAuxiliaryAuditBudget = new InvocationBudget(1);
+  const gamingPresentationPolicy = resolveGamingPresentationPolicy(options.gamingPresentationPolicy, options.sourceEndpoint);
+  const gamingPresentationSystemPrompt = gamingPresentationPolicy ? buildGamingClearPresentationPolicy() : undefined;
+  const directAnswerSystemPolicyPrompt = gamingPresentationSystemPrompt
+    ? [options.directAnswerSystemPolicyPrompt, gamingPresentationSystemPrompt].filter(Boolean).join('\n\n')
+    : options.directAnswerSystemPolicyPrompt;
   const trustedPolicyPrompt =
     typeof options.trustedPolicyPrompt === 'string'
     && options.trustedPolicyPrompt.trim().length > 0
@@ -874,7 +905,7 @@ export async function runThroughBrain(
     && /^(?:continue|go\s+on|keep\s+going)[.!?]*$/iu.test(trustedPolicyPrompt.trim());
   const preserveBookerDirectPresentation = options.sourceEndpoint === 'backstage-booker.generateBooking'
     && options.directAnswerPreservePresentation === true;
-  const preserveDirectAnswerPresentation = preserveBookerDirectPresentation
+  const preserveDirectAnswerPresentation = Boolean(gamingPresentationPolicy) || preserveBookerDirectPresentation
     || (directAnswerOutputContract === null
       && EXPLICIT_CODE_PRESENTATION_REQUEST.test(directAnswerUserIntentPrompt))
     || preserveContinuationPresentation;
@@ -918,7 +949,7 @@ export async function runThroughBrain(
     );
   }
 
-  const exactLiteralShortcut = tryExtractExactLiteralPromptShortcut(trustedPolicyPrompt);
+  const exactLiteralShortcut = gamingPresentationPolicy ? undefined : tryExtractExactLiteralPromptShortcut(trustedPolicyPrompt);
   //audit Assumption: explicit exact-literal prompts should bypass generative model stages to preserve strict caller-visible output contracts; failure risk: queued and direct `/ask` responses add explanatory text or formatting around required literals; expected invariant: recognized exact-literal prompts return the extracted literal verbatim and skip model invocation; handling strategy: short-circuit before concurrency, OpenAI calls, and translation layers.
   if (exactLiteralShortcut) {
     validateStructuredOutput?.(exactLiteralShortcut.literal, createDefaultTrinityReasoningHonesty());
@@ -1177,9 +1208,10 @@ export async function runThroughBrain(
               options.directAnswerTokenCapOverride,
               options.redactAuditContent,
               trustedPolicyPrompt,
-              options.directAnswerSystemPolicyPrompt,
+              directAnswerSystemPolicyPrompt,
               options.directAnswerUntrustedContextPrompt,
-              options.cooperativeModelStageTimeout
+              options.cooperativeModelStageTimeout,
+              Boolean(gamingPresentationPolicy)
             )
         });
       } catch (error) {
@@ -1198,6 +1230,7 @@ export async function runThroughBrain(
       );
       const prepareDirectAnswerCandidate = (candidateText: string) => {
         if (!validateStructuredOutput) assertTrinityFinalOutputIsPublic(candidateText, trustedPolicyPrompt);
+        if (gamingPresentationPolicy) assertGamingPresentationOutputIsPublic(candidateText);
         if (validateStructuredOutput) {
           const providerBlocker = classifyTrinityProviderIntegrityBlocker(directAnswerOutput.provider);
           if (providerBlocker) throw new TrinityStructuredOutputError(providerBlocker);
@@ -1209,7 +1242,7 @@ export async function runThroughBrain(
           const text = validateStructuredOutput(candidateText, reasoningHonesty, directAnswerUserIntentPrompt);
           return {
             directAnswerReasoningHonesty: reasoningHonesty,
-            honestyFilteredFinal: { text, blocked: false, blockedCategories: [], ruleIds: ['NO_HONESTY_REWRITE' as const] },
+            honestyFilteredFinal: { text, fallbackOnly: false, blocked: false, blockedCategories: [], ruleIds: ['NO_HONESTY_REWRITE' as const] },
             enforcedFinalOutput: { text, removedMetaSections: [], blockedOrRewrittenClaims: [] },
             finalText: text,
             integrity: { valid: true, issues: [] },
@@ -1233,7 +1266,7 @@ export async function runThroughBrain(
           preservePresentation: preserveDirectCandidatePresentation,
         };
         let enforcedOutput = enforceFinalStageHonestyAndMinimalism(directOutputEnforcement);
-        const preserveDirectOutputPresentation = preserveBookerDirectPresentation
+        const preserveDirectOutputPresentation = Boolean(gamingPresentationPolicy) || preserveBookerDirectPresentation
           || (preserveDirectCandidatePresentation
             && (effectiveWordLimit === null || countWords(enforcedOutput.text) <= effectiveWordLimit));
         if (preserveDirectCandidatePresentation && !preserveDirectOutputPresentation) {
@@ -1250,18 +1283,21 @@ export async function runThroughBrain(
           ? enforcedOutput.text
           : applyTrinityDirectAnswerOutputContract(enforcedOutput.text, trustedPolicyPrompt);
         assertTrinityFinalOutputIsPublic(text, trustedPolicyPrompt);
+        if (gamingPresentationPolicy && text !== candidateText) assertGamingPresentationOutputIsPublic(text);
+        const integrityInput = {
+          text,
+          reasoningHonesty,
+          expectedNumberedItemCount: options.directAnswerIntegrityRepair?.expectedNumberedItemCount,
+          rejectEmptyMarkdownTail: options.directAnswerRejectEmptyMarkdownTail,
+        };
         return {
           directAnswerReasoningHonesty: reasoningHonesty,
           honestyFilteredFinal: honestyFiltered,
           enforcedFinalOutput: enforcedOutput,
           finalText: text,
-          integrity: validateTrinityAnswerIntegrity({
-            text,
-            reasoningHonesty,
-            expectedNumberedItemCount:
-              options.directAnswerIntegrityRepair?.expectedNumberedItemCount,
-            rejectEmptyMarkdownTail: options.directAnswerRejectEmptyMarkdownTail,
-          })
+          integrity: gamingPresentationPolicy
+            ? validateGamingPresentationIntegrity(integrityInput, candidateText, honestyFiltered.blocked)
+            : validateTrinityAnswerIntegrity(integrityInput)
         };
       };
 
@@ -1356,7 +1392,7 @@ export async function runThroughBrain(
           + (options.directAnswerUntrustedContextPrompt?.length ?? 0)
           + preparedDirectAnswer.finalText.length;
         const repairDecision = resolveTrinityIntegrityRepairDecision({
-          options: directAnswerOptions.recovery
+          options: directAnswerOptions.recovery || gamingPresentationPolicy
             ? undefined
             : options.directAnswerIntegrityRepair,
           integrity: preparedDirectAnswer.integrity,
@@ -1591,17 +1627,7 @@ export async function runThroughBrain(
         enforcedFinalOutput,
         finalText,
       } = preparedDirectAnswer;
-      let gamingDirectAudit: Awaited<ReturnType<NonNullable<TrinityRunOptions['gamingClearAnswerAudit']>>> | undefined;
-      if (gamingAnswerAudit && !directAnswerOutput.fallbackUsed && !directAnswerOutput.provider?.incomplete
-        && !directAnswerOutput.provider?.truncated && !directAnswerOutput.provider?.contentFiltered) {
-        checkWatchdog();
-        gamingAuxiliaryAuditBudget.increment();
-        gamingDirectAudit = await gamingAnswerAudit(finalText, runtimeBudget,
-          Math.max(0, effectiveLimit - watchdog.elapsed()));
-        if (gamingDirectAudit.assessment.assessmentStatus !== 'completed' || gamingDirectAudit.assessment.decision !== 'accept') {
-          auditFlags.push('GAMING_FINAL_ANSWER_NOT_ACCEPTED');
-        }
-      }
+      const gamingDirectFallbackOnly = Boolean(gamingPresentationPolicy && honestyFilteredFinal.fallbackOnly);
 
       if (honestyFilteredFinal.blocked) {
         auditFlags.push('FINAL_UNSUPPORTED_CLAIM_BLOCKED');
@@ -1654,7 +1680,7 @@ export async function runThroughBrain(
       );
       logAITaskLineage(auditLogEntry);
 
-      const totalTokens = (directAnswerOutput.usage?.total_tokens ?? 0) + (gamingDirectAudit?.usage?.total_tokens ?? 0);
+      const totalTokens = directAnswerOutput.usage?.total_tokens ?? 0;
       if (effectiveTokenAuditSessionId) {
         recordSessionTokens(effectiveTokenAuditSessionId, totalTokens);
       }
@@ -1675,10 +1701,12 @@ export async function runThroughBrain(
       const directAnswerFallbackSummary = {
         intakeFallbackUsed: false,
         gpt5FallbackUsed: false,
-        finalFallbackUsed: directAnswerOutput.fallbackUsed,
+        finalFallbackUsed: directAnswerOutput.fallbackUsed || gamingDirectFallbackOnly
+          || Boolean(gamingPresentationPolicy && directAnswerOptions.recovery),
         fallbackReasons: [
           ...(directAnswerOptions.recovery ? [`Recovered after reasoning failure: ${selectionReason}`] : []),
-          ...(directAnswerOutput.fallbackUsed ? ['Direct-answer fallback used'] : [])
+          ...(directAnswerOutput.fallbackUsed ? ['Direct-answer fallback used'] : []),
+          ...(gamingDirectFallbackOnly ? ['No substantive Gaming candidate survived honesty filtering'] : [])
         ]
       };
 
@@ -1706,7 +1734,9 @@ export async function runThroughBrain(
       if (directAnswerOutput.provider) {
         result.meta.provider = directAnswerOutput.provider;
       }
-      if (gamingDirectAudit) result.gamingClearAudit = gamingDirectAudit.assessment;
+      if (gamingPresentationPolicy && !result.fallbackFlag && finalProcessedSafely && finalText.trim()) {
+        result.gamingPresentationPolicy = gamingPresentationPolicy;
+      }
       if (integrityRecoveryMeta) {
         result.meta.integrityRecovery = integrityRecoveryMeta;
       }
@@ -1839,7 +1869,7 @@ export async function runThroughBrain(
       });
     } catch (error) {
       throwIfRequestAborted();
-      if (!gamingAnswerAudit && !gamingGuideIntakePolicy && tier === 'simple' && isAbortError(error)) {
+      if (!gamingPresentationPolicy && !gamingGuideIntakePolicy && tier === 'simple' && isAbortError(error)) {
         intakeRecoveryAction = await recordAuthorizedTrinityStageFailure({
           stage: 'intake',
           error: resolveErrorMessage(error),
@@ -1913,7 +1943,7 @@ export async function runThroughBrain(
       });
     } catch (error) {
       throwIfRequestAborted();
-      if (!gamingAnswerAudit && !gamingGuideIntakePolicy && tier === 'simple' && isAbortError(error)) {
+      if (!gamingPresentationPolicy && !gamingGuideIntakePolicy && tier === 'simple' && isAbortError(error)) {
         reasoningRecoveryAction = await recordAuthorizedTrinityStageFailure({
           stage: 'reasoning',
           error: resolveErrorMessage(error),
@@ -1952,7 +1982,7 @@ export async function runThroughBrain(
 
     // --- CLEAR Audit & Escalation Logic ---
     let clearAudit: ClearAuditResult | undefined = undefined;
-    if (reasoningLedger && !selfHealingMitigation.bypassFinalStage && !gamingAnswerAudit) {
+    if (reasoningLedger && !selfHealingMitigation.bypassFinalStage && !gamingPresentationPolicy) {
       checkWatchdog();
       try {
         clearAudit = await runLoggedStage({
@@ -2100,9 +2130,10 @@ export async function runThroughBrain(
           options.directAnswerTokenCapOverride,
           options.redactAuditContent,
           trustedPolicyPrompt,
-          options.directAnswerSystemPolicyPrompt,
+          directAnswerSystemPolicyPrompt,
           options.directAnswerUntrustedContextPrompt,
-          options.cooperativeModelStageTimeout
+          options.cooperativeModelStageTimeout,
+          Boolean(gamingPresentationPolicy)
         )
       }), 'final', finalRecoveryAction, finalRecoveryMitigationId);
       // Recovery remains fallback output and cannot admit a completed Gaming answer.
@@ -2144,12 +2175,13 @@ export async function runThroughBrain(
               runtimeBudget,
               finalTimeoutMs,
               tier !== 'simple' || intakeOutput.fallbackUsed || reasoningOutput.fallbackUsed
-                ? 'escalation' : 'routine'
+                ? 'escalation' : 'routine',
+              gamingPresentationSystemPrompt
             )
         });
       } catch (error) {
         throwIfRequestAborted();
-        if (!gamingAnswerAudit && !gamingGuideIntakePolicy && tier === 'simple' && isAbortError(error)) {
+        if (!gamingPresentationPolicy && !gamingGuideIntakePolicy && tier === 'simple' && isAbortError(error)) {
           finalRecoveryAction = await recordAuthorizedTrinityStageFailure({
             stage: 'final',
             error: resolveErrorMessage(error),
@@ -2180,17 +2212,18 @@ export async function runThroughBrain(
     const providerBlocker = classifyTrinityProviderIntegrityBlocker(finalOutput.provider);
     if (providerBlocker) throw new TrinityStructuredOutputError(providerBlocker);
     if (!validateStructuredOutput) assertTrinityFinalOutputIsPublic(finalOutput.output, trustedPolicyPrompt);
-    const preserveFinalPresentation = Boolean(gamingGuideIntakePolicy)
+    if (gamingPresentationPolicy) assertGamingPresentationOutputIsPublic(finalOutput.output);
+    const preserveFinalPresentation = Boolean(gamingGuideIntakePolicy || gamingPresentationPolicy)
       || EXPLICIT_CODE_PRESENTATION_REQUEST.test(trustedPolicyPrompt)
       || CODE_PRESENTATION_OUTPUT.test(finalOutput.output)
       || preserveContinuationPresentation;
     const presentationIntent = preserveFinalPresentation ? 'code' : userIntent === 'code' ? 'default' : userIntent;
-    const translatedFinalText = validateStructuredOutput ? finalOutput.output : gamingGuideIntakePolicy
+    const translatedFinalText = validateStructuredOutput ? finalOutput.output : gamingGuideIntakePolicy || gamingPresentationPolicy
       ? finalOutput.output.trim()
       : MidLayerTranslator.translate({ raw: finalOutput.output }, presentationIntent);
     const honestyFilteredFinal = validateStructuredOutput
       ? { text: validateStructuredOutput(translatedFinalText, reasoningHonesty),
-          blocked: false, blockedCategories: [], ruleIds: ['NO_HONESTY_REWRITE' as const] }
+          fallbackOnly: false, blocked: false, blockedCategories: [], ruleIds: ['NO_HONESTY_REWRITE' as const] }
       : enforceFinalStageHonesty(
       translatedFinalText,
       reasoningHonesty,
@@ -2211,7 +2244,7 @@ export async function runThroughBrain(
     let enforcedFinalOutput = validateStructuredOutput
       ? { text: honestyFilteredFinal.text, removedMetaSections: [], blockedOrRewrittenClaims: [] }
       : enforceFinalStageHonestyAndMinimalism(finalOutputEnforcement);
-    if (!validateStructuredOutput && !gamingGuideIntakePolicy && preserveFinalPresentation
+    if (!validateStructuredOutput && !gamingGuideIntakePolicy && !gamingPresentationPolicy && preserveFinalPresentation
       && effectiveWordLimit !== null && countWords(enforcedFinalOutput.text) > effectiveWordLimit) {
       const limitedOutput = enforceFinalStageHonestyAndMinimalism({
         ...finalOutputEnforcement, text: enforcedFinalOutput.text, preservePresentation: false,
@@ -2224,18 +2257,18 @@ export async function runThroughBrain(
     }
     const finalText = enforcedFinalOutput.text;
     if (!validateStructuredOutput) assertTrinityFinalOutputIsPublic(finalText, trustedPolicyPrompt);
-    // Gaming replaces the legacy ledger audit with one audit of the actual final
-    // candidate. Its callback owns strict validation and cannot trigger escalation.
-    let gamingAuditResult: Awaited<ReturnType<NonNullable<TrinityRunOptions['gamingClearAnswerAudit']>>> | undefined;
-    if (gamingAnswerAudit && !intakeOutput.fallbackUsed && !reasoningOutput.fallbackUsed && !finalOutput.fallbackUsed
-      && !finalOutput.provider?.incomplete && !finalOutput.provider?.truncated && !finalOutput.provider?.contentFiltered) {
-      checkWatchdog();
-      gamingAuxiliaryAuditBudget.increment();
-      gamingAuditResult = await gamingAnswerAudit(finalText, runtimeBudget,
-        Math.max(0, effectiveLimit - watchdog.elapsed()));
-      if (gamingAuditResult.assessment.assessmentStatus !== 'completed'
-        || gamingAuditResult.assessment.decision !== 'accept') {
-        auditFlags.push('GAMING_FINAL_ANSWER_NOT_ACCEPTED');
+    if (gamingPresentationPolicy && finalText !== finalOutput.output) assertGamingPresentationOutputIsPublic(finalText);
+    const gamingFinalFallbackOnly = Boolean(gamingPresentationPolicy && honestyFilteredFinal.fallbackOnly);
+    if (gamingPresentationPolicy && !gamingFinalFallbackOnly && finalText.trim()) {
+      const integrity = validateGamingPresentationIntegrity(
+        { text: finalText, reasoningHonesty }, translatedFinalText, honestyFilteredFinal.blocked
+      );
+      if (!integrity.valid) {
+        throw Object.assign(new Error('Trinity Gaming final output failed integrity validation.'), {
+          code: 'TRINITY_OUTPUT_INTEGRITY_FAILED',
+          integrityIssues: integrity.issues.slice(0, MAX_TRINITY_INTEGRITY_ISSUES),
+          trinityStage: 'final',
+        });
       }
     }
 
@@ -2302,8 +2335,7 @@ export async function runThroughBrain(
     // --- Post-execution guards ---
     const totalTokens = (finalOutput.usage?.total_tokens ?? 0)
       + (intakeOutput.usage?.total_tokens ?? 0)
-      + (reasoningOutput.usage?.total_tokens ?? 0)
-      + (gamingAuditResult?.usage?.total_tokens ?? 0);
+      + (reasoningOutput.usage?.total_tokens ?? 0);
     //audit Assumption: DAG and worker flows may need a shared memory session but isolated token-audit buckets; failure risk: large multi-node runs exhaust one conversational token ceiling despite independent node work; expected invariant: memory continuity and token auditing can use different session identifiers when explicitly provided; handling strategy: audit against the optional token session id while preserving the original memory session for context lookup and storage.
     if (effectiveTokenAuditSessionId) {
       // recordSessionTokens mutates before enforcing the ceiling, so mark the reasoning
@@ -2334,11 +2366,12 @@ export async function runThroughBrain(
     const fallbackSummary = {
       intakeFallbackUsed: intakeOutput.fallbackUsed,
       gpt5FallbackUsed: reasoningOutput.fallbackUsed,
-      finalFallbackUsed: finalOutput.fallbackUsed,
+      finalFallbackUsed: finalOutput.fallbackUsed || gamingFinalFallbackOnly,
       fallbackReasons: [
         ...(intakeOutput.fallbackUsed ? ['Intake fallback used'] : []),
         ...(reasoningOutput.fallbackUsed ? ['GPT-5 reasoning fallback used'] : []),
-        ...(finalOutput.fallbackUsed ? ['Final fallback used'] : [])
+        ...(finalOutput.fallbackUsed ? ['Final fallback used'] : []),
+        ...(gamingFinalFallbackOnly ? ['No substantive Gaming candidate survived honesty filtering'] : [])
       ]
     };
 
@@ -2368,7 +2401,9 @@ export async function runThroughBrain(
     if (finalOutput.provider) {
       result.meta.provider = finalOutput.provider;
     }
-    if (gamingAuditResult) result.gamingClearAudit = gamingAuditResult.assessment;
+    if (gamingPresentationPolicy && !result.fallbackFlag && finalProcessedSafely && finalText.trim()) {
+      result.gamingPresentationPolicy = gamingPresentationPolicy;
+    }
 
     result.tierInfo = {
       tier,

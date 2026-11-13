@@ -51,8 +51,7 @@ beforeEach(() => {
   });
   mockTrinity.mockImplementation(async (request: any) => {
     const result = 'Keep the Samurai starting Uchigatana katana with Unsheathe. Prioritize Vigor toward 20 and Dexterity later. Upgrade with ordinary Smithing Stones in Limgrave. [Source 1]';
-    const { assessment } = await request.context.runOptions.gamingClearAnswerAudit(result, request.context.runtimeBudget);
-    return { result, gamingClearAudit: assessment, meta: { provider: { finishReason: 'stop' } } };
+    return { result, gamingPresentationPolicy: request.context.runOptions.gamingPresentationPolicy, meta: { provider: { finishReason: 'stop' } } };
   });
 });
 afterEach(() => {
@@ -107,7 +106,7 @@ describe('Gaming user decisions retain the acquired evidence workflow', () => {
       requirementSupport: clarified.body.requirementSupport, candidates: clarified.body.candidates });
     expect(resumed.body.answer!.sources.map(source => source.url)).toEqual([guideUrl]);
     expect(resumed.body.answer!.response).toMatch(/current.?patch compatibility.*(?:not|unverified|could not)/iu);
-    expect(mockTrinity).toHaveBeenCalledTimes(1); expect(mockAudit).toHaveBeenCalledTimes(1);
+    expect(mockTrinity).toHaveBeenCalledTimes(1); expect(mockAudit).not.toHaveBeenCalled();
     expect(run.retrieve).toHaveBeenCalledTimes(1); expect(run.evaluateCandidates).toHaveBeenCalledTimes(1); expect(mockHttp).toHaveBeenCalledTimes(1);
     expect(await run.workflow.query(continuation, actor)).toEqual(resumed);
     expect(mockTrinity).toHaveBeenCalledTimes(1);
@@ -145,7 +144,7 @@ describe('Gaming user decisions retain the acquired evidence workflow', () => {
     const final = await run.workflow.query({ ...request, workflowId: first.body.workflowId, expectedRevision: 2,
       idempotencyKey: 'clarification-second-choice', constraints: ['pure Dexterity', 'single katana'] }, actor);
     expect(final.body).toMatchObject({ workflowId: first.body.workflowId, revision: 3, frontendOutcome: 'answer_ready' });
-    expect(mockTrinity).toHaveBeenCalledTimes(1); expect(mockAudit).toHaveBeenCalledTimes(1);
+    expect(mockTrinity).toHaveBeenCalledTimes(1); expect(mockAudit).not.toHaveBeenCalled();
     expect(mockHttp).toHaveBeenCalledTimes(1); expect(run.retrieve).toHaveBeenCalledTimes(1);
   });
 
@@ -168,7 +167,7 @@ describe('Gaming user decisions retain the acquired evidence workflow', () => {
     expect(result.body).toMatchObject({ frontendOutcome: 'answer_ready', evidenceSelected: true, coverageSatisfied: true });
     expect(result.body.clarification).toBeUndefined();
     expect(result.body.answer!.response).toMatch(/current.?patch compatibility.*(?:not|unverified|could not)/iu);
-    expect(mockTrinity).toHaveBeenCalledTimes(1); expect(mockAudit).toHaveBeenCalledTimes(1);
+    expect(mockTrinity).toHaveBeenCalledTimes(1); expect(mockAudit).not.toHaveBeenCalled();
   });
 
   it('requires missing material patch evidence before asking an unresolved player preference', async () => {

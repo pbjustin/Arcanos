@@ -9,6 +9,7 @@ import {
 } from '@platform/runtime/writingPlaneContract.js';
 import { generateRequestId } from '@shared/idGenerator.js';
 import { resolveGamingGuideIntakePolicy } from '@shared/gaming/gamingGuideIntakeCore.js';
+import { resolveGamingPresentationPolicy } from '@shared/gaming/gamingPromptCore.js';
 
 import { runThroughBrain, type TrinityResult, type TrinityRunOptions } from './trinity.js';
 import { readIntentMode, resolveIntentMode } from './trinityHonesty.js';
@@ -310,10 +311,10 @@ export async function runTrinityGenerationFacade(
   const policyPrompt = resolveClassificationPrompt(params);
   const intentMode = resolveIntentMode(policyPrompt, params.context.runOptions ?? {});
   const runOptions = { ...(params.context.runOptions ?? {}) };
-  // Neither public request data nor another module can select Gaming audit policy.
+  // Neither public request data nor another module can select Gaming presentation policy.
   if (params.input.moduleId !== 'ARCANOS:GAMING'
-    || !/^arcanos-gaming\.(?:guide|build|meta|hybrid-build|hybrid-meta)$/u.test(sourceEndpoint)) {
-    delete runOptions.gamingClearAnswerAudit;
+    || !resolveGamingPresentationPolicy(runOptions.gamingPresentationPolicy, sourceEndpoint)) {
+    delete runOptions.gamingPresentationPolicy;
   }
   // The policy is internal configuration, never a field read from public request data.
   if (!resolveGamingGuideIntakePolicy({

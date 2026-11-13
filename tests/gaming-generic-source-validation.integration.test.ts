@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
-import { GAMING_CLEAR_DIMENSIONS } from '../src/shared/gaming/gamingClearPolicy.js';
+import { GAMING_CLEAR_PRESENTATION_POLICY_VERSION } from '../src/shared/gaming/gamingPromptCore.js';
+import { inspectGamingFinalRequest } from './testUtils/gamingPresentationFixtures.js';
 import type { GamingHybridResponse } from '../src/shared/gaming/gamingHybridContract.js';
 
 interface Fixture {
@@ -19,14 +20,14 @@ const forbiddenWrite = jest.fn(async () => { throw new Error('Durable writes are
 const forbiddenDatabase = jest.fn(async () => { throw new Error('Database access is forbidden in this fixture.'); });
 const pages = new Map<string, { fixture: Fixture; html: string; status: number }>();
 const stages: string[] = [];
-const auditInputs: any[] = [];
+const finalRequests: ReturnType<typeof inspectGamingFinalRequest>[] = [];
 let expectedQuestion = '';
 let expectedAnswers: string[] = [];
 let clock = Date.parse('2026-10-18T12:00:00.000Z');
 
 // Only external HTTP/DNS/provider transports and persistence sinks are mocked.
-// Extraction, source CLEAR, selection, all Trinity stages, final schema validation
-// and the source-bound CLEAR answer assessment execute their real implementations.
+// Extraction, source CLEAR, selection, all Trinity stages, presentation policy
+// and structural citation validation execute their real implementations.
 jest.unstable_mockModule('axios', () => ({ default: gamingAcquisitionAxios(mockHttp) }));
 jest.unstable_mockModule('node:dns/promises', () => ({ Resolver: class {
   async resolve4() { return ['93.184.216.34']; }
@@ -78,7 +79,7 @@ function answerFromEvidence(input: string): string {
   }).join('\n\n');
 }
 beforeEach(() => {
-  jest.clearAllMocks(); pages.clear(); stages.length = 0; auditInputs.length = 0; expectedAnswers = [];
+  jest.clearAllMocks(); pages.clear(); stages.length = 0; finalRequests.length = 0; expectedAnswers = [];
   resetSafetyRuntimeStateForTests(); resetTrinitySelfHealingStateForTests();
   previousEnv = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]));
   Object.assign(process.env, env);
@@ -110,24 +111,15 @@ beforeEach(() => {
         alternatives_considered: [], chosen_path_justification: '', response_mode: 'answer',
         achievable_subtasks: ['answer using acquired community guidance'], blocked_subtasks: [], user_visible_caveats: [],
         claim_tags: [], final_answer: answerFromEvidence(input) });
-    } else if (payload.text?.format?.type === 'json_object') {
-      stages.push('answer_audit');
-      const data = payload.input.flatMap((message: any) => message.content ?? [])
-        .map((part: any) => part.text).find((value: unknown) => typeof value === 'string' && value.startsWith('{"answer":'));
-      const audited = JSON.parse(data); auditInputs.push(audited);
-      expect(audited.question).toBe(expectedQuestion);
-      for (const sentence of expectedAnswers) {
-        expect(audited.answer).toContain(sentence);
-        expect(audited.evidence.some((chunk: any) => chunk.text.includes(sentence))).toBe(true);
-      }
-      const refs = audited.evidence.map((chunk: any) => chunk.chunkId);
-      text = JSON.stringify({ dimensions: Object.fromEntries(GAMING_CLEAR_DIMENSIONS.map(name => [name, {
-        status: 'evaluated', score: 4.5, reasonCodes: ['SUPPORTED_SYNTHETIC_PASSAGE'], evidenceRefs: refs.slice(0, 8), unresolvedFacts: []
-      }])), findings: [] });
     } else if (stages.length === 0) {
       stages.push('intake'); expect(input).toContain(expectedQuestion);
       text = 'Task: answer the original beginner question using acquired source evidence and retain its qualifications.';
     } else {
+      const finalRequest = inspectGamingFinalRequest(payload, GAMING_CLEAR_PRESENTATION_POLICY_VERSION);
+      finalRequests.push(finalRequest);
+      for (const sentence of expectedAnswers) {
+        expect(finalRequest.evidence.some(chunk => chunk.text.includes(sentence))).toBe(true);
+      }
       stages.push('final'); expect(input).toContain(expectedQuestion); text = answerFromEvidence(input);
     }
     return { id: `synthetic-${stages.at(-1)}`, model: payload.model, status: 'completed',
@@ -164,12 +156,11 @@ function assertGrounded(result: GamingHybridResponse, expected: Fixture[]) {
     expect(result.answer!.response).toContain(`${fixture.answer} [Source ${index}]`);
   }
   expect(result.answer!.response).toContain('[Source 1]');
-  expect(stages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
-  expect(mockProvider).toHaveBeenCalledTimes(4);
-  expect(auditInputs[0].evidence.every((chunk: any) => result.selectedCandidateIds!.includes(chunk.sourceId)
-    && result.selectedEvidenceIds!.includes(chunk.chunkId))).toBe(true);
+  expect(stages).toEqual(['intake', 'reasoning', 'final']);
+  expect(mockProvider).toHaveBeenCalledTimes(3);
+  expect(finalRequests[0].evidence.every(chunk => result.answer!.sources.some(source => source.url === chunk.url))).toBe(true);
 }
-describe('generic community source validation through extraction, hybrid-v2, Trinity and final CLEAR', () => {
+describe('generic community source validation through extraction, hybrid-v2, Trinity and presentation policy', () => {
   it('uses authored multi-game fixtures without captured publisher articles or official-publisher claims', () => {
     expect(manifest.provenance).toBe('synthetic'); expect(manifest.capturedPublicResponses).toBe(false);
     expect(new Set(fixtures.map(fixture => fixture.game)).size).toBe(8);
@@ -190,7 +181,7 @@ describe('generic community source validation through extraction, hybrid-v2, Tri
     } });
     expect(JSON.stringify(evaluated)).not.toContain(fixture.answer);
     expect(await run.submit(initial.body)).toEqual(final);
-    expect(mockHttp).toHaveBeenCalledTimes(1); expect(mockProvider).toHaveBeenCalledTimes(4);
+    expect(mockHttp).toHaveBeenCalledTimes(1); expect(mockProvider).toHaveBeenCalledTimes(3);
   });
   it.each([
     ['witcher-location', 'Witcher 3'],

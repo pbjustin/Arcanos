@@ -2,7 +2,7 @@ import { truncateTextByCharacters } from '@shared/http/clientResponseCommon.js';
 import { selectGamingDocumentExcerpt } from '@services/gamingDocumentChunks.js';
 import { filterGamingDocumentInstructions } from '@services/gamingDocumentExtraction.js';
 import type { GamingPlayerContext } from './gamingPlayerContext.js';
-import { buildGamingRetrievalTerms, hasGamingRelevantGuideContribution, buildGamingRequestRequirements, gamingTermCoverage, safeGamingEvidenceMetadata, scopeGamingEvidenceParagraphs } from './gamingRetrievalPolicy.js';
+import { buildGamingRetrievalTerms, hasGamingRelevantGuideContribution, buildGamingRequestRequirements, gamingRequirementSupported, gamingTermCoverage, preserveGamingSelectionAdjacency, safeGamingEvidenceMetadata, scopeGamingEvidenceParagraphs, selectGamingStartingExcerpt } from './gamingRetrievalPolicy.js';
 import { gamingEditionEvidenceMatchesRequest, normalizeGamingEvidenceGameIdentity, resolveGamingGuideIdentity, resolveGamingRequestEdition } from './gamingGameIdentity.js';
 import type { GamingClearAssessment } from './gamingClearPolicy.js';
 import type { GamingClaimCorroborationSummary } from './gamingClaimCorroboration.js';
@@ -282,8 +282,22 @@ function projectCandidate<RecordType extends GamingStoredEvidenceRecord>(record:
   if (structuralText && filterGamingDocumentInstructions(structuralText) !== structuralText.normalize('NFKC').replace(/\s+/gu, ' ').trim()) return null;
   const safeText = structuralText || filterGamingDocumentInstructions(scopeGamingEvidenceParagraphs(body, input));
   const query = terms.join(' ');
-  const text = (structuralText ? structuralText.length <= Math.min(2_000, limits.chunkChars) ? structuralText : ''
-    : selectGamingDocumentExcerpt(safeText, query, Math.min(1_200, limits.chunkChars)))
+  const excerptLimit = Math.min(1_200, limits.chunkChars);
+  let prose = structuralText ? '' : selectGamingDocumentExcerpt(safeText, query, excerptLimit);
+  if (!structuralText && input.mode === 'guide') prose = preserveGamingSelectionAdjacency(prose, body);
+  if (!structuralText && input.mode === 'guide' && input.requireRequestCoverage) {
+    const requirements = buildGamingRequestRequirements(input);
+    for (const requirement of requirements) {
+      if ((requirement.minimumActions ?? 0) < 2 || gamingRequirementSupported(prose, requirement)) continue;
+      const excerpt = selectGamingStartingExcerpt(body, requirement, excerptLimit);
+      if (excerpt && requirements.every(item => !gamingRequirementSupported(prose, item)
+        || gamingRequirementSupported(excerpt, item))) {
+        prose = excerpt;
+        break;
+      }
+    }
+  }
+  const text = (structuralText ? structuralText.length <= Math.min(2_000, limits.chunkChars) ? structuralText : '' : prose)
     .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/gu, '');
   const contentTokens = new Set(tokens(text));
   const coverage = terms.filter(term => contentTokens.has(term)).length / Math.max(1, terms.length);

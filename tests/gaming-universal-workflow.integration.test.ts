@@ -3,7 +3,8 @@ import { Readable } from 'node:stream';
 import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
 import { gamingUniversalIdentityFixtures, gamingUniversalIdentityHtml } from './fixtures/gaming-universal-identity.js';
 import { gamingIndependentWorkflowFixtures } from './fixtures/gaming-independent-workflow.js';
-import { GAMING_CLEAR_DIMENSIONS } from '../src/shared/gaming/gamingClearPolicy.js';
+import { GAMING_CLEAR_PRESENTATION_POLICY_VERSION } from '../src/shared/gaming/gamingPromptCore.js';
+import { inspectGamingFinalRequest } from './testUtils/gamingPresentationFixtures.js';
 import { resolveGamingRegistryGame } from '../src/shared/gaming/gamingGameRegistry.js';
 import type { GamingHybridResponse } from '../src/shared/gaming/gamingHybridContract.js';
 
@@ -13,17 +14,17 @@ const forbiddenWrite = jest.fn(async () => { throw new Error('Persistent writes 
 const forbiddenDatabase = jest.fn(async () => { throw new Error('Database access is forbidden in this synthetic fixture.'); });
 const mockMemory = jest.fn(() => ({ relevantEntries: [], contextSummary: '', accessLog: [] }));
 const stages: string[] = [];
-const auditInputs: any[] = [];
+const finalRequests: ReturnType<typeof inspectGamingFinalRequest>[] = [];
 let answerSentences: readonly string[] = [];
 let expectedQuestion = '';
 let currentHtml = '';
-let auditRejects = false;
+let invalidCitation = false;
 let clock = Date.parse('2026-10-14T12:00:00.000Z');
 
 // These are synthetic acquisition/provider transports and empty corpus/memory
 // reads. Real resolver attestation, extraction, identity/applicability, CLEAR,
 // coverage, selection, hybrid revision/recovery, Trinity stages and answer
-// binding run. Semantic provider judgment is deliberately a labeled fixture.
+// binding run. Provider drafts and final responses are synthetic fixtures.
 jest.unstable_mockModule('axios', () => ({ default: gamingAcquisitionAxios(mockHttp) }));
 jest.unstable_mockModule('node:dns/promises', () => ({ Resolver: class {
   async resolve4() { return ['93.184.216.34']; }
@@ -74,7 +75,7 @@ function providerInputText(payload: any): string {
 }
 
 beforeEach(() => {
-  jest.clearAllMocks(); stages.length = 0; auditInputs.length = 0; auditRejects = false;
+  jest.clearAllMocks(); stages.length = 0; finalRequests.length = 0; invalidCitation = false;
   mockHttp.mockReset(); mockProvider.mockReset();
   resetSafetyRuntimeStateForTests(); resetTrinitySelfHealingStateForTests();
   previousEnv = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]));
@@ -107,31 +108,20 @@ beforeEach(() => {
         alternatives_considered: [], chosen_path_justification: '', response_mode: 'answer',
         achievable_subtasks: ['answer using acquired synthetic passages'], blocked_subtasks: [], user_visible_caveats: [],
         claim_tags: [], final_answer: answer });
-    } else if (payload.text?.format?.type === 'json_object') {
-      stages.push('answer_audit');
-      const data = payload.input.flatMap((message: any) => message.content ?? [])
-        .map((part: any) => part.text).find((value: unknown) => typeof value === 'string' && value.startsWith('{"answer":'));
-      const audited = JSON.parse(data);
-      auditInputs.push(audited);
-      expect(audited.question).toBe(expectedQuestion);
-      expect(audited.evidence.length).toBeGreaterThan(0);
-      for (const sentence of answerSentences) {
-        expect(audited.answer).toContain(sentence);
-        expect(audited.evidence.some((chunk: any) => chunk.text.includes(sentence))).toBe(true);
-      }
-      const refs = audited.evidence.map((chunk: any) => chunk.chunkId);
-      text = JSON.stringify({ dimensions: Object.fromEntries(GAMING_CLEAR_DIMENSIONS.map(name => [name, {
-        status: 'evaluated', score: 4.5, reasonCodes: ['SUPPORTED_SYNTHETIC_PASSAGE'], evidenceRefs: refs.slice(0, 8), unresolvedFacts: []
-      }])), findings: auditRejects ? [{ code: 'SYNTHETIC_UNSUPPORTED_CLAIM', severity: 'blocking', evidenceRefs: refs.slice(0, 1) }] : [] });
     } else if (stages.length === 0) {
       stages.push('intake');
       expect(input).toContain(expectedQuestion);
       text = 'Task: answer the requested mechanic using Source 1 and retain its scope and qualifications.';
     } else {
+      const finalRequest = inspectGamingFinalRequest(payload, GAMING_CLEAR_PRESENTATION_POLICY_VERSION);
+      finalRequests.push(finalRequest);
+      for (const sentence of answerSentences) {
+        expect(finalRequest.evidence.some(chunk => chunk.text.includes(sentence))).toBe(true);
+      }
       stages.push('final');
       expect(input).toContain(expectedQuestion);
       for (const sentence of answerSentences) expect(input).toContain(sentence);
-      text = answer;
+      text = invalidCitation ? answer.replace('[Source 1]', '[Source 99]') : answer;
     }
     return { id: `synthetic-universal-${stages.at(-1)}`, model: payload.model, status: 'completed',
       output_text: text, output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text, annotations: [] }] }],
@@ -183,23 +173,22 @@ describe('universal acquired evidence through actual hybrid-v2 and Trinity stage
     expect(final.body.answer!.response).toContain('[Source 1]');
     for (const sentence of answerSentences) expect(final.body.answer!.response).toContain(sentence);
     expect(final.body.answer!.sources).toEqual([expect.objectContaining({ url, sourceId: final.body.selectedCandidateIds![0] })]);
-    expect(stages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
-    expect(auditInputs[0].game).toBe(fixture.game);
-    expect(auditInputs[0].playerContext.class).toBeUndefined();
-    expect(auditInputs[0].playerContext.role).toBeUndefined();
-    expect(auditInputs[0].evidence.every((chunk: any) => final.body.selectedCandidateIds!.includes(chunk.sourceId)
-      && final.body.selectedEvidenceIds!.includes(chunk.chunkId))).toBe(true);
-    expect(JSON.stringify(auditInputs[0].evidence)).not.toMatch(/FURNITURE_ONLY/u);
-    expect(JSON.stringify(auditInputs[0].evidence)).not.toContain(`In the game ${fixture.unrelatedGame},`);
+    expect(stages).toEqual(['intake', 'reasoning', 'final']);
+    expect(finalRequests[0].original).toContain(fixture.game);
+    expect(finalRequests[0].original).not.toContain('"class":');
+    expect(finalRequests[0].original).not.toContain('"role":');
+    expect(finalRequests[0].evidence.every(chunk => final.body.answer!.sources.some(source => source.url === chunk.url))).toBe(true);
+    expect(JSON.stringify(finalRequests[0].evidence)).not.toMatch(/FURNITURE_ONLY/u);
+    expect(JSON.stringify(finalRequests[0].evidence)).not.toContain(`In the game ${fixture.unrelatedGame},`);
     expect(final.body.answer!.response).not.toContain('UNRELATED_ARTICLE_SECTION');
-    if (fixture.mode === 'guide') expect(JSON.stringify(auditInputs[0].evidence)).not.toContain('UNRELATED_ARTICLE_SECTION');
+    if (fixture.mode === 'guide') expect(JSON.stringify(finalRequests[0].evidence)).not.toContain('UNRELATED_ARTICLE_SECTION');
     expect(mockHttp).toHaveBeenCalledTimes(1);
-    expect(mockProvider).toHaveBeenCalledTimes(4);
+    expect(mockProvider).toHaveBeenCalledTimes(3);
     expect(await run.submit(initial.body)).toEqual(final);
     expect((await run.submit(initial.body, 'new-operation-after-answer')).body.reason).toBe('WORKFLOW_CLOSED');
     expect((await run.submit(initial.body, 'universal-submit-001', `${url}-changed`)).body.reason).toBe('IDEMPOTENCY_CONFLICT');
     expect((await run.submit(final.body, 'other-actor', url, { actorKey: 'different-universal-actor' })).body.reason).toBe('WORKFLOW_UNAVAILABLE');
-    expect(mockHttp).toHaveBeenCalledTimes(1); expect(mockProvider).toHaveBeenCalledTimes(4);
+    expect(mockHttp).toHaveBeenCalledTimes(1); expect(mockProvider).toHaveBeenCalledTimes(3);
   });
 
   it.each(gamingUniversalIdentityFixtures.flatMap(fixture => ['missing', 'comparison'].map(scope => ({ fixture, scope }))))
@@ -262,18 +251,18 @@ describe('universal acquired evidence through actual hybrid-v2 and Trinity stage
   });
 
   it.each(gamingUniversalIdentityFixtures.filter(fixture => ['farm-layout', 'unknown-resonance'].includes(fixture.id)))
-  ('withholds the $game answer when the synthetic semantic auditor rejects it', async fixture => {
+  ('withholds the $game answer when the final completion cites a nonexistent source', async fixture => {
     currentHtml = gamingUniversalIdentityHtml(fixture);
-    answerSentences = fixture.sentences; expectedQuestion = fixture.question; auditRejects = true;
+    answerSentences = fixture.sentences; expectedQuestion = fixture.question; invalidCitation = true;
     const run = harness({ game: fixture.game, question: fixture.question, mode: fixture.mode });
     const initial = await run.start();
     const final = await run.submit(initial.body);
-    expect(stages).toEqual(['intake', 'reasoning', 'final', 'answer_audit']);
+    expect(stages).toEqual(['intake', 'reasoning', 'final']);
     expect(final.body.state).not.toBe('answer_ready');
     expect(final.body.answer).toBeUndefined();
-    expect(mockProvider).toHaveBeenCalledTimes(4);
+    expect(mockProvider).toHaveBeenCalledTimes(3);
     expect(await run.submit(initial.body)).toEqual(final);
-    expect(mockProvider).toHaveBeenCalledTimes(4);
+    expect(mockProvider).toHaveBeenCalledTimes(3);
   });
 
   it.each([
@@ -360,9 +349,9 @@ describe('universal acquired evidence through actual hybrid-v2 and Trinity stage
     expect(final.body.candidates![1]).toMatchObject({ decision: 'rejected', reasonCodes: ['GAME_MISMATCH'] });
     expect(final.body.selectedCandidateIds).toEqual([final.body.candidates![0].candidateId]);
     expect(final.body.answer!.sources).toEqual([expect.objectContaining({ url })]);
-    expect(JSON.stringify(auditInputs[0].evidence)).not.toContain(fixture.unrelatedGame);
-    expect(auditInputs[0].evidence.every((chunk: any) => chunk.sourceId === final.body.candidates![0].candidateId)).toBe(true);
-    expect(mockHttp).toHaveBeenCalledTimes(2); expect(mockProvider).toHaveBeenCalledTimes(4);
+    expect(JSON.stringify(finalRequests[0].evidence)).not.toContain(fixture.unrelatedGame);
+    expect(finalRequests[0].evidence.every(chunk => chunk.url === url)).toBe(true);
+    expect(mockHttp).toHaveBeenCalledTimes(2); expect(mockProvider).toHaveBeenCalledTimes(3);
   });
 
   it('withholds mixed acquired identities despite misleading URL and frontend claims', async () => {

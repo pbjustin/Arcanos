@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, jest } from '@je
 import type { TrinityWritingPipelineRequest } from '../src/core/logic/trinityWritingPipeline.js';
 import type { GamingPipelineRuntime } from '../src/services/gamingPipeline.js';
 import { GAMING_CLEAR_APPROVED_ANSWER } from '../src/shared/gaming/gamingClearAnswerBinding.js';
+import { GAMING_PRESENTED_ANSWER, hasBoundGamingPresentedAnswer } from '../src/shared/gaming/gamingPresentedAnswerBinding.js';
 import { gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
 
 const runTrinityWritingPipeline = jest.fn();
@@ -46,12 +47,11 @@ const originalCreateConnection = HttpsAgent.prototype.createConnection;
 let baseUrl = '';
 let acquisitionRequests = 0;
 let candidateAnswer = answer;
-let tamper = false;
-let auditEvents: string[] = [];
 const onEvidenceAssessment = jest.fn<NonNullable<GamingPipelineRuntime['onEvidenceAssessment']>>();
-const onAnswerAudit = jest.fn<NonNullable<GamingPipelineRuntime['onAnswerAudit']>>();
+const onStage = jest.fn<NonNullable<GamingPipelineRuntime['onStage']>>();
+const presentationPolicy = 'gaming-clear-presentation/v1' as const;
 const runtime = (): GamingPipelineRuntime => ({ client: scopedClient, skipStoredRetrieval: true,
-  onEvidenceAssessment, onAnswerAuditStart: () => auditEvents.push('audit-start'), onAnswerAudit });
+  onEvidenceAssessment, onStage });
 const run = (path = '/guide', overrides = {}) => runGameplayPipeline(
   { ...input, guideUrl: baseUrl + path, ...overrides }, undefined, runtime());
 
@@ -115,31 +115,23 @@ describe('Gaming isolated transient runtime', () => {
     }
   });
   beforeEach(() => {
-    jest.clearAllMocks(); clearGamingRagCache(); acquisitionRequests = 0; candidateAnswer = answer; tamper = false; auditEvents = [];
+    jest.clearAllMocks(); clearGamingRagCache(); acquisitionRequests = 0; candidateAnswer = answer;
     jest.spyOn(HttpsAgent.prototype, 'createConnection').mockImplementation(function (options, callback) {
       return originalCreateConnection.call(this, { ...options, host: '127.0.0.1', hostname: '127.0.0.1', port,
         ca: certificate.cert, lookup: () => { throw new Error('Unexpected unpinned hostname lookup'); }
       }, callback);
     });
     buildStoredGamingKnowledgeContext.mockImplementation(async () => ({ context: '', sources: [] }));
-    createSingleChatCompletion.mockImplementation(async (_client, params: { messages: Array<{ content: string }> }) => {
-      auditEvents.push('audit-transport');
-      const data = JSON.parse(params.messages[1].content) as { evidence: Array<{ chunkId: string }> };
-      const evidenceRefs = [data.evidence[0].chunkId];
-      const dimensions = Object.fromEntries(['clarity', 'leverage', 'efficiency', 'alignment', 'resilience']
-        .map(name => [name, { status: 'evaluated', score: 4.5, reasonCodes: ['SUPPORTED'], evidenceRefs, unresolvedFacts: [] }]));
-      return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ dimensions, findings: [] }) } }],
-        usage: { prompt_tokens: 500, completion_tokens: 150, total_tokens: 650 } };
-    });
-    runTrinityWritingPipeline.mockImplementation(async (request: TrinityWritingPipelineRequest) => {
-      const audit = await request.context.runOptions!.gamingClearAnswerAudit!(candidateAnswer, request.context.runtimeBudget!);
-      return { result: tamper ? `${candidateAnswer}\nInvented mechanic.` : candidateAnswer, gamingClearAudit: audit.assessment,
+    createSingleChatCompletion.mockImplementation(() => { throw new Error('The retired Gaming answer audit was dispatched.'); });
+    runTrinityWritingPipeline.mockImplementation((request: TrinityWritingPipelineRequest) => {
+      request.context.runOptions?.onStage?.({ stage: 'final', phase: 'completed' });
+      return { result: candidateAnswer, gamingPresentationPolicy: presentationPolicy,
         fallbackFlag: false, dryRun: false, activeModel: 'synthetic',
         meta: { provider: { finishReason: 'stop', responseStatus: 'completed' } } };
     });
   });
 
-  it('keeps real document acquisition and mandatory audit while isolating SQL, client and memory', async () => {
+  it('keeps real document acquisition and binds presented output while isolating SQL, client and memory', async () => {
     const result = await run();
     expect(acquisitionRequests).toBe(1);
     expect(result.data.response).toBe(answer);
@@ -149,16 +141,19 @@ describe('Gaming isolated transient runtime', () => {
     expect(getOpenAIClientOrAdapter).not.toHaveBeenCalled();
     const request = runTrinityWritingPipeline.mock.calls[0][0] as TrinityWritingPipelineRequest;
     expect(request.context.client).toBe(scopedClient);
-    expect(request.context.runOptions).toMatchObject({ disableMemoryAccess: true, disableOptionalSideEffects: true, redactAuditContent: true });
+    expect(request.context.runOptions).toMatchObject({ disableMemoryAccess: true, disableOptionalSideEffects: true,
+      redactAuditContent: true, gamingPresentationPolicy: presentationPolicy });
     expect(request.input.prompt).toContain('west valve');
-    expect(createSingleChatCompletion.mock.calls[0][0]).toBe(scopedClient);
-    expect(auditEvents).toEqual(['audit-start', 'audit-transport']);
+    expect(createSingleChatCompletion).not.toHaveBeenCalled();
+    expect(onStage).toHaveBeenCalledWith(expect.objectContaining({ stage: 'final', phase: 'completed' }));
     expect(onEvidenceAssessment).toHaveBeenCalledWith(expect.objectContaining({ profile: 'evidence', decision: 'accept' }));
-    expect(onAnswerAudit).toHaveBeenCalledWith(expect.objectContaining({ assessment: expect.objectContaining({
-      profile: 'answer', decision: 'accept', assessmentStatus: 'completed', subjectHash: gamingClearHash(answer)
-    }), usage: { prompt_tokens: 500, completion_tokens: 150, total_tokens: 650 } }));
-    expect(Object.getOwnPropertyDescriptor(result.data, GAMING_CLEAR_APPROVED_ANSWER)?.value)
-      .toEqual(onAnswerAudit.mock.calls[0][0].assessment);
+    const [evidence] = onEvidenceAssessment.mock.calls[0];
+    expect(Object.getOwnPropertyDescriptor(result.data, GAMING_PRESENTED_ANSWER)).toMatchObject({
+      enumerable: false, value: { policyVersion: presentationPolicy, subjectHash: gamingClearHash(answer),
+        evidenceSubjectHash: evidence.subjectHash, contextFingerprint: evidence.contextFingerprint }
+    });
+    expect(Object.getOwnPropertyDescriptor(result.data, GAMING_CLEAR_APPROVED_ANSWER)).toBeUndefined();
+    expect(JSON.stringify(result.data)).not.toContain(presentationPolicy);
   });
 
   it('preserves default durable retrieval and default provider lookup without injected runtime', async () => {
@@ -171,52 +166,43 @@ describe('Gaming isolated transient runtime', () => {
     expect(request.context.runOptions?.disableMemoryAccess).toBeUndefined();
   });
 
-  it.each(['/incompatible', '/insufficient', '/unavailable'])('rejects %s evidence before generation or answer audit', async path => {
+  it.each(['/incompatible', '/insufficient', '/unavailable'])('rejects %s evidence before generation', async path => {
     await expect(run(path)).rejects.toMatchObject({ name: 'GamingSourceEvidenceError' });
     expect(acquisitionRequests).toBe(1);
     expect(runTrinityWritingPipeline).not.toHaveBeenCalled();
     expect(createSingleChatCompletion).not.toHaveBeenCalled();
     expect(buildStoredGamingKnowledgeContext).not.toHaveBeenCalled();
     expect(getOpenAIClientOrAdapter).not.toHaveBeenCalled();
-    expect(onAnswerAudit).not.toHaveBeenCalled();
   });
 
-  it('observes audit timeout without granting answer acceptance', async () => {
-    createSingleChatCompletion.mockRejectedValue(Object.assign(new Error('synthetic audit timeout'), { name: 'AbortError' }));
+  it('withholds a completed answer that cites a source outside the selected evidence', async () => {
+    candidateAnswer = answer.replace('[Source 1]', '[Source 9]');
     const result = await run();
-    expect(result.data.fallbackReason).toBe('GAMING_ANSWER_AUDIT_UNAVAILABLE');
-    expect(result.data.grounding?.groundedInSuppliedEvidence).toBe(false);
-    expect(Object.getOwnPropertyDescriptor(result.data, GAMING_CLEAR_APPROVED_ANSWER)).toBeUndefined();
-    expect(onAnswerAudit).toHaveBeenCalledWith(expect.objectContaining({ assessment: expect.objectContaining({
-      assessmentStatus: 'unavailable', decision: 'unavailable', findings: expect.arrayContaining([expect.objectContaining({ code: 'AUDIT_TIMEOUT' })])
-    }) }));
+    expect(result.data.fallbackReason).toBeDefined();
+    expect(result.data.response).not.toContain(candidateAnswer);
+    expect(hasBoundGamingPresentedAnswer(result.data)).toBe(false);
+    expect(createSingleChatCompletion).not.toHaveBeenCalled();
   });
 
-  it('withholds acceptance after a post-audit answer mutation', async () => {
-    tamper = true;
-    const result = await run();
-    expect(onAnswerAudit.mock.calls[0][0].assessment.decision).toBe('accept');
-    expect(result.data.fallbackReason).toBe('GAMING_ANSWER_REJECTED');
-    expect(result.data.response).not.toContain('Invented mechanic');
-    expect(Object.getOwnPropertyDescriptor(result.data, GAMING_CLEAR_APPROVED_ANSWER)).toBeUndefined();
-  });
-
-  it('keeps observer snapshots separate from the source admission and final audit decisions', async () => {
-    onEvidenceAssessment.mockImplementationOnce(assessment => { assessment.decision = 'reject'; });
-    onAnswerAudit.mockImplementationOnce(result => { result.assessment.subjectHash = gamingClearHash('Different answer'); });
+  it('keeps observer snapshots separate from source admission and final presentation binding', async () => {
+    onEvidenceAssessment.mockImplementationOnce(assessment => {
+      assessment.decision = 'reject';
+      assessment.subjectHash = gamingClearHash('Different evidence');
+    });
     const result = await run();
     expect(result.data.response).toBe(answer);
     expect(result.data.fallbackReason).toBeUndefined();
-    expect(Object.getOwnPropertyDescriptor(result.data, GAMING_CLEAR_APPROVED_ANSWER)?.value.subjectHash)
-      .toBe(gamingClearHash(answer));
+    expect(hasBoundGamingPresentedAnswer(result.data)).toBe(true);
+    expect(Object.getOwnPropertyDescriptor(result.data, GAMING_PRESENTED_ANSWER)?.value.evidenceSubjectHash)
+      .not.toBe(gamingClearHash('Different evidence'));
   });
 
-  it('keeps generation timeout separate from the answer audit', async () => {
+  it('does not attest a provider timeout as completed presentation', async () => {
     runTrinityWritingPipeline.mockRejectedValue(Object.assign(new Error('synthetic model timeout'), { name: 'AbortError', timeoutPhase: 'provider' }));
     const result = await run();
     expect(result.data.fallbackReason).toBe('INTAKE_UPSTREAM_TIMEOUT');
     expect(createSingleChatCompletion).not.toHaveBeenCalled();
-    expect(onAnswerAudit).not.toHaveBeenCalled();
-    expect(auditEvents).toEqual([]);
+    expect(hasBoundGamingPresentedAnswer(result.data)).toBe(false);
+    expect(onStage).not.toHaveBeenCalledWith(expect.objectContaining({ stage: 'final', phase: 'completed' }));
   });
 });

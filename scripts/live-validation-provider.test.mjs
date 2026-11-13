@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
 import { test } from 'node:test';
+import OpenAI from 'openai';
 import { createLiveValidationProvider, LiveValidationProviderError } from './live-validation-provider.mjs';
 import { LIVE_VALIDATION_BUDGET_CAPS } from './live-validation-budget.mjs';
 import { LIVE_VALIDATION_MODEL_URL_PREFIX, LIVE_VALIDATION_RESPONSES_URL } from './live-validation-egress.mjs';
@@ -18,6 +19,7 @@ const code = expected => error => error instanceof LiveValidationProviderError &
 const invoke = (provider, override = {}, init = {}) => provider.fetch(LIVE_VALIDATION_RESPONSES_URL, {
   method: 'POST', headers: { authorization: 'Bearer sdk-placeholder', 'x-stainless-timeout': '120',
     'x-stainless-retry-count': '0', 'x-stainless-lang': 'js' }, body: JSON.stringify({ ...body, ...override }), ...init });
+const lookup = (provider, init = {}) => provider.fetch(LIVE_VALIDATION_MODEL_URL_PREFIX + MODEL, { method: 'GET', ...init });
 function fixture(context, options = {}) {
   const calls = []; const observation = { moduleId: 'gaming', stage: 'generation' };
   const provider = createLiveValidationProvider({ target, identity, apiKey: API_KEY, observation: () => observation,
@@ -47,12 +49,160 @@ test('SDK-compatible transport binds the credential only to fixed public routes 
   for (const secret of [API_KEY, body.input, 'must-not-reach-provider', 'sdk-placeholder']) assert.equal(artifact.includes(secret), false);
 });
 
+test('presentation profile completes generation and denies audit requests before reserving spend', async context => {
+  const success = fixture(context, { generationOnly: true });
+  success.provider.beginWorkflow('gaming-guide-positive');
+  await invoke(success.provider);
+  success.provider.endWorkflow();
+  assert.equal(success.provider.snapshot().usage.auditCalls, 0);
+  assert.equal(success.provider.snapshot().closed, false);
+
+  const unexpected = fixture(context, { generationOnly: true });
+  unexpected.provider.beginWorkflow('gaming-guide-positive');
+  await invoke(unexpected.provider);
+  unexpected.observation.stage = 'answer_audit';
+  await assert.rejects(invoke(unexpected.provider), code('LIVE_VALIDATION_AUDIT_FORBIDDEN'));
+  assert.equal(unexpected.calls.length, 1);
+  assert.equal(unexpected.provider.snapshot().usage.requests, 1);
+  assert.equal(unexpected.provider.snapshot().usage.auditCalls, 0);
+  assert.equal(unexpected.provider.snapshot().closed, true);
+});
+
+test('a reserved audit transport can complete with an incomplete Responses result', async context => {
+  let requests = 0;
+  const f = fixture(context, { fetchImplementation: async () => {
+    requests++;
+    return Response.json(requests === 1 ? { ...responseBody, status: 'completed' } : {
+      ...responseBody, status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' },
+      output: [{ type: 'message', role: 'assistant', status: 'incomplete',
+        content: [{ type: 'output_text', text: 'SYNTHETIC_PARTIAL_AUDIT', annotations: [] }] }]
+    });
+  } });
+  const sdk = new OpenAI({ apiKey: API_KEY, baseURL: 'https://api.openai.com/v1', fetch: f.provider.fetch, maxRetries: 0 });
+  f.provider.beginWorkflow('gaming-guide-positive');
+  await sdk.responses.create(body);
+  f.observation.stage = 'answer_audit';
+  const response = await sdk.responses.create(body);
+  assert.equal(response.status, 'incomplete');
+  assert.equal(response.incomplete_details.reason, 'max_output_tokens');
+  const snapshot = f.provider.snapshot();
+  assert.equal(requests, 2);
+  assert.equal(snapshot.usage.generationCalls, 1);
+  assert.equal(snapshot.usage.auditCalls, 1);
+  assert.equal(snapshot.usage.observedOutputTokens, 10);
+  assert.equal(snapshot.stages[1].outcome, 'completed');
+  assert.doesNotMatch(JSON.stringify(snapshot), /SYNTHETIC_PARTIAL_AUDIT/);
+  f.provider.endWorkflow();
+});
+
 test('canonical model metadata can run before a workflow, counts requests, and hides unused metadata', async context => {
+  assert.throws(() => createLiveValidationProvider({ target, identity,
+    fetchImplementation: () => assert.fail('missing credential must never reach egress') }),
+  code('LIVE_VALIDATION_CREDENTIAL_INVALID'));
   const f = fixture(context);
-  const result = await f.provider.fetch(LIVE_VALIDATION_MODEL_URL_PREFIX + MODEL, { method: 'GET' });
+  const result = await f.provider.fetch(LIVE_VALIDATION_MODEL_URL_PREFIX + MODEL, { method: 'GET', headers: {
+    authorization: 'Bearer sdk-placeholder', 'openai-project': 'untrusted-project', 'openai-organization': 'untrusted-organization'
+  } });
   assert.equal(f.calls[0].url, LIVE_VALIDATION_MODEL_URL_PREFIX + encodeURIComponent(MODEL));
+  assert.deepEqual(f.calls[0].init.headers, { authorization: 'Bearer ' + API_KEY, accept: 'application/json' });
   assert.deepEqual(await result.json(), { id: MODEL, object: 'model' });
   assert.equal(f.provider.snapshot().usage.requests, 1); assert.equal(f.provider.snapshot().usage.providerCalls, 0);
+  assert.deepEqual(f.provider.snapshot().stages.map(({ elapsedMs, ...stage }) => stage), [
+    { caseId: null, stage: 'metadata', model: MODEL, actualModel: MODEL, outcome: 'completed', reserved: true }
+  ]);
+});
+
+test('metadata failures retain a bounded classification without reading denied bodies or leaking transport messages', async context => {
+  const fixtures = [
+    ['HTTP 401', 401, 'LIVE_VALIDATION_METADATA_UNAUTHORIZED'],
+    ['HTTP 403', 403, 'LIVE_VALIDATION_METADATA_FORBIDDEN'],
+    ['HTTP 404', 404, 'LIVE_VALIDATION_METADATA_NOT_FOUND'],
+    ['HTTP 429', 429, 'LIVE_VALIDATION_METADATA_RATE_LIMITED'],
+    ['other HTTP failure', 500, 'LIVE_VALIDATION_PROVIDER_FAILED'],
+    ['fetch rejection', () => { throw new Error(API_KEY); }, 'LIVE_VALIDATION_METADATA_TRANSPORT_FAILED'],
+    ['body read rejection', () => ({ status: 200, body: { [Symbol.asyncIterator]: () => ({
+      next: async () => { throw new Error(API_KEY); }
+    }) } }), 'LIVE_VALIDATION_METADATA_TRANSPORT_FAILED'],
+    ['malformed JSON', () => new Response('unparsed-private-body'), 'LIVE_VALIDATION_PROVIDER_RESPONSE_INVALID'],
+    ['invalid JSON shape', () => Response.json(null), 'LIVE_VALIDATION_PROVIDER_RESPONSE_INVALID'],
+    ['wrong model identity', () => Response.json({ id: 'another-model', object: 'model' }), 'LIVE_VALIDATION_MODEL_VALIDATION_FAILED'],
+    ['wrong object', () => Response.json({ id: MODEL, object: 'not-model' }), 'LIVE_VALIDATION_MODEL_VALIDATION_FAILED']
+  ];
+  for (const [label, outcome, expected] of fixtures) await context.test(label, async child => {
+    let calls = 0;
+    let deniedBodyRead = false; let deniedBodyCancelled = false;
+    const f = fixture(child, { fetchImplementation: async () => {
+      calls++;
+      if (typeof outcome !== 'number') return outcome();
+      return { status: outcome, body: {
+        [Symbol.asyncIterator]() { deniedBodyRead = true; throw new Error(API_KEY); },
+        cancel() { deniedBodyCancelled = true; }
+      } };
+    } });
+    f.provider.beginWorkflow('gaming-guide-positive');
+    await assert.rejects(lookup(f.provider), error => code(expected)(error) && error.message === expected);
+    const snapshot = f.provider.snapshot();
+    assert.equal(calls, 1); assert.equal(deniedBodyRead, false);
+    assert.equal(deniedBodyCancelled, typeof outcome === 'number');
+    assert.equal(snapshot.closed, true); assert.equal(snapshot.usage.metadataRequests, 1);
+    assert.equal(snapshot.usage.generationCalls, 0); assert.equal(snapshot.usage.auditCalls, 0);
+    assert.equal(snapshot.usage.reservedSpendMicroUsd, 0);
+    assert.deepEqual(snapshot.stages.map(({ elapsedMs, ...stage }) => stage), [
+      { caseId: 'gaming-guide-positive', stage: 'metadata', model: MODEL, outcome: 'failed', code: expected, reserved: true }
+    ]);
+    for (const secret of [API_KEY, 'unparsed-private-body', 'another-model']) assert.equal(JSON.stringify(snapshot).includes(secret), false);
+  });
+});
+
+test('metadata quota and cancellation denials preserve reservation counts and add only one terminal record', async context => {
+  for (const [label, expected] of [['request quota', 'LIVE_VALIDATION_BUDGET_EXHAUSTED'],
+    ['pre-aborted', 'LIVE_VALIDATION_PROVIDER_CANCELLED'], ['deadline', 'LIVE_VALIDATION_DURATION_LIMIT']]) {
+    await context.test(label, async child => {
+      const atQuota = label === 'request quota';
+      const f = fixture(child, { target: { ...target, limits: { ...target.limits, maxRequests: 1 } },
+        ...(label === 'deadline' ? { getRemainingMs: () => 0 } : {}) });
+      f.provider.beginWorkflow('gaming-guide-positive');
+      if (atQuota) await lookup(f.provider);
+      await assert.rejects(lookup(f.provider, label === 'pre-aborted' ? { signal: AbortSignal.abort() } : {}), code(expected));
+      const snapshot = f.provider.snapshot();
+      const requests = atQuota ? 1 : 0;
+      assert.equal(f.calls.length, requests); assert.equal(snapshot.usage.metadataRequests, requests);
+      assert.equal(snapshot.stages.length, requests + 1);
+      const { elapsedMs, ...terminal } = snapshot.stages.at(-1);
+      assert.deepEqual(terminal, { caseId: 'gaming-guide-positive', stage: 'metadata', model: MODEL,
+        outcome: 'failed', code: expected, reserved: false });
+      await assert.rejects(lookup(f.provider), code('LIVE_VALIDATION_RUN_CLOSED'));
+      assert.deepEqual(f.provider.snapshot().stages, snapshot.stages);
+    });
+  }
+});
+
+test('metadata timeout and in-flight cancellation retain the consumed reservation without a content timeout', async context => {
+  for (const [label, expected] of [['timeout', 'LIVE_VALIDATION_PROVIDER_TIMEOUT'],
+    ['request deadline abort', 'LIVE_VALIDATION_PROVIDER_TIMEOUT'], ['cancellation', 'LIVE_VALIDATION_PROVIDER_CANCELLED']]) {
+    await context.test(label, async child => {
+      const controller = new AbortController();
+      let calls = 0; let now = Date.now();
+      const f = fixture(child, { now: () => now, getRemainingMs: () => label === 'timeout' ? 20 : 1000,
+        fetchImplementation: () => { calls++; return new Promise(() => {}); } });
+      f.provider.beginWorkflow('gaming-guide-positive');
+      const pending = lookup(f.provider, { signal: controller.signal });
+      if (label !== 'timeout') {
+        await new Promise(resolve => setImmediate(resolve));
+        // The SDK's forwarded abort can arrive before the guard's own timer and without a timeout reason.
+        if (label === 'request deadline abort') now += 1000;
+        controller.abort();
+      }
+      await assert.rejects(pending, code(expected));
+      const snapshot = f.provider.snapshot();
+      assert.equal(calls, 1); assert.equal(snapshot.usage.metadataRequests, 1);
+      assert.equal(snapshot.counts.pendingRequests, 1); assert.equal(snapshot.closed, true);
+      assert.equal(f.observation.timeoutStage, undefined);
+      assert.deepEqual(snapshot.stages.map(({ elapsedMs, ...stage }) => stage), [
+        { caseId: 'gaming-guide-positive', stage: 'metadata', model: MODEL, outcome: 'failed', code: expected, reserved: true }
+      ]);
+    });
+  }
 });
 
 test('negative workflow denies content and metadata with zero provider requests', async context => {
@@ -62,6 +212,10 @@ test('negative workflow denies content and metadata with zero provider requests'
       : f.provider.fetch(LIVE_VALIDATION_MODEL_URL_PREFIX + encodeURIComponent(MODEL), { method }),
     code('LIVE_VALIDATION_NEGATIVE_PROVIDER_FORBIDDEN'));
     assert.equal(f.calls.length, 0); assert.equal(f.provider.snapshot().usage.requests, 0);
+    assert.deepEqual(f.provider.snapshot().stages.map(({ elapsedMs, ...stage }) => stage), method === 'GET' ? [
+      { caseId: 'gaming-guide-negative', stage: 'metadata', model: MODEL, outcome: 'failed',
+        code: 'LIVE_VALIDATION_NEGATIVE_PROVIDER_FORBIDDEN', reserved: false }
+    ] : []);
   }
   const f = fixture(context); f.provider.beginWorkflow('gaming-guide-negative'); f.provider.endWorkflow();
   assert.equal(f.provider.snapshot().closed, false);
@@ -77,6 +231,41 @@ test('mandatory successful answer audit follows generation and is the final cont
   await assert.rejects(invoke(repeated.provider), code('LIVE_VALIDATION_REGENERATION_FORBIDDEN')); assert.equal(repeated.calls.length, 2);
 });
 
+test('a 1536-token routine audit reserves and reconciles one call under existing run limits', async context => {
+  const model = { id: 'gpt-6-luna', inputMicroUsdPerToken: 0.275, outputMicroUsdPerToken: 1.1 };
+  const limits = { ...LIVE_VALIDATION_BUDGET_CAPS, maxRequests: 31 };
+  const requestedCaps = [];
+  const f = fixture(context, { target: { limits, models: [model] }, fetchImplementation: async (_url, init) => {
+    const { max_output_tokens } = JSON.parse(init.body);
+    requestedCaps.push(max_output_tokens);
+    const output = max_output_tokens === 1_536 ? 1_372 : 5;
+    return Response.json({ ...responseBody, model: model.id, status: 'completed',
+      usage: { input_tokens: 10, output_tokens: output, total_tokens: 10 + output } });
+  } });
+  f.provider.beginWorkflow('gaming-guide-positive');
+  await invoke(f.provider, { model: model.id });
+  const beforeAudit = f.provider.snapshot();
+  f.observation.stage = 'answer_audit';
+  await invoke(f.provider, { model: model.id, max_output_tokens: 1_536 });
+  f.provider.endWorkflow();
+  const afterAudit = f.provider.snapshot();
+  assert.equal(afterAudit.usage.reservedOutputTokens - beforeAudit.usage.reservedOutputTokens, 1_536);
+  assert.equal(afterAudit.usage.observedOutputTokens - beforeAudit.usage.observedOutputTokens, 1_372);
+  const reservedInput = afterAudit.usage.reservedInputTokens - beforeAudit.usage.reservedInputTokens;
+  assert.equal(afterAudit.usage.reservedSpendMicroUsd - beforeAudit.usage.reservedSpendMicroUsd,
+    Math.ceil(reservedInput * model.inputMicroUsdPerToken + 1_536 * model.outputMicroUsdPerToken));
+
+  f.provider.beginWorkflow('gaming-guide-negative');
+  await assert.rejects(invoke(f.provider, { model: model.id }), code('LIVE_VALIDATION_NEGATIVE_PROVIDER_FORBIDDEN'));
+  const final = f.provider.snapshot();
+  assert.deepEqual(requestedCaps, [100, 1_536]);
+  assert.equal(final.usage.requests, 2);
+  assert.equal(final.usage.auditCalls, 1);
+  assert.equal(final.counts.workflows, 2);
+  assert.equal(final.usage.reservedSpendMicroUsd, afterAudit.usage.reservedSpendMicroUsd);
+  assert.deepEqual(final.limits, beforeAudit.limits);
+});
+
 test('forbidden routes, tools/media, storage, retry headers, output/input bounds and preabort cause zero paid calls', async context => {
   const invalid = [
     provider => provider.fetch('https://evil.example/v1/responses', { method: 'POST', body: JSON.stringify(body) }),
@@ -84,6 +273,10 @@ test('forbidden routes, tools/media, storage, retry headers, output/input bounds
     provider => invoke(provider, { input: [{ role: 'user', content: [{ type: 'input_image', image_url: 'https://example.com' }] }] }),
     provider => invoke(provider, { max_output_tokens: 4_097 }), provider => invoke(provider, { input: 'x'.repeat(128_001) }),
     provider => invoke(provider, {}, { headers: { 'x-stainless-retry-count': '1' } }),
+    provider => invoke(provider, {}, { headers: { 'x-stainless-timeout': '0', 'x-stainless-lang': 'js' } }),
+    provider => invoke(provider, {}, { headers: { 'x-stainless-timeout': '0' }, signal: new AbortController().signal }),
+    provider => invoke(provider, {}, { headers: { 'x-stainless-timeout': 'invalid', 'x-stainless-lang': 'js' },
+      signal: new AbortController().signal }),
     provider => invoke(provider, {}, { signal: AbortSignal.abort() })
   ];
   for (const run of invalid) {
@@ -120,7 +313,7 @@ test('max cost and request quota reject before an additional fetch', async conte
 });
 
 test('model identity and usage reconciliation reject mismatches without refund', async context => {
-  for (const override of [{ model: 'different-model' }, { usage: { input_tokens: 10, output_tokens: 5, total_tokens: 16 } },
+  for (const override of [{ model: 'different-model' }, { usage: undefined }, { usage: { input_tokens: 10, output_tokens: 5, total_tokens: 16 } },
     { usage: { input_tokens: 1_000_000, output_tokens: 5, total_tokens: 1_000_005 } },
     { usage: { input_tokens: 10, output_tokens: 101, total_tokens: 111 } }]) {
     const f = fixture(context, { fetchImplementation: async () => Response.json({ ...responseBody, ...override }) });
@@ -172,6 +365,108 @@ test('audit timeout preserves its stage and consumed reservation when fetch or r
   }
 });
 
+test('the SDK whole-second timeout header leaves subsecond requests and their remaining fraction usable', async context => {
+  for (const [timeoutMs, responseDelayMs, header] of [[900, 0, '0'], [1_500, 1_100, '1']]) {
+    await context.test(String(timeoutMs) + ' ms', async child => {
+      let calls = 0;
+      let actualHeader;
+      const f = fixture(child, { fetchImplementation: async () => {
+        calls++;
+        if (responseDelayMs) await new Promise(resolve => setTimeout(resolve, responseDelayMs));
+        return Response.json(responseBody);
+      } });
+      const client = new OpenAI({ apiKey: 'sdk-placeholder', baseURL: 'https://api.openai.com/v1', maxRetries: 0, fetch: (input, init) => {
+        actualHeader = new Headers(init.headers).get('x-stainless-timeout');
+        return f.provider.fetch(input, init);
+      } });
+      f.provider.beginWorkflow('gaming-guide-positive');
+
+      const result = await client.responses.create(body, { timeout: timeoutMs });
+
+      assert.equal(actualHeader, header);
+      assert.equal(result.id, responseBody.id);
+      assert.equal(calls, 1);
+      assert.equal(f.provider.snapshot().usage.requests, 1);
+      assert.equal(f.provider.snapshot().closed, false);
+    });
+  }
+});
+
+test('a rounded SDK timeout still obeys the exact SDK and outer deadlines and caller cancellation', async context => {
+  for (const [label, timeoutMs, outerRemainingMs, expected] of [
+    ['earlier outer deadline', 900, 20, 'LIVE_VALIDATION_PROVIDER_TIMEOUT'],
+    // The guard cannot distinguish the exact SDK timer from another abort inside its rounding interval.
+    ['exact SDK deadline', 20, 10_000, 'LIVE_VALIDATION_PROVIDER_CANCELLED'],
+    ['caller cancellation', 900, 10_000, 'LIVE_VALIDATION_PROVIDER_CANCELLED']
+  ]) {
+    await context.test(label, async child => {
+      const caller = new AbortController();
+      const { promise: dispatched, resolve: markDispatched } = Promise.withResolvers();
+      const f = fixture(child, { getRemainingMs: () => outerRemainingMs, fetchImplementation: () => {
+        markDispatched();
+        return new Promise(() => {});
+      } });
+      const client = new OpenAI({ apiKey: 'sdk-placeholder', baseURL: 'https://api.openai.com/v1', maxRetries: 0, fetch: f.provider.fetch });
+      f.provider.beginWorkflow('gaming-guide-positive');
+      const pending = client.responses.create(body, { timeout: timeoutMs, signal: caller.signal });
+      if (label === 'caller cancellation') {
+        await Promise.race([dispatched, pending]);
+        caller.abort();
+      }
+
+      await assert.rejects(pending);
+      const snapshot = f.provider.snapshot();
+      assert.equal(snapshot.closed, true);
+      assert.equal(snapshot.usage.requests, 1);
+      assert.equal(snapshot.counts.pendingRequests, 1);
+      assert.equal(snapshot.stages.at(-1).code, expected);
+    });
+  }
+});
+
+test('content abort at the known deadline is a timeout, while earlier cancellation stays distinct', async context => {
+  const scenarios = [
+    ['an exact transport deadline', '1', 5_000, 1_000, 'LIVE_VALIDATION_PROVIDER_TIMEOUT'],
+    ['an exact decimal deadline', '0.020', 5_000, 20, 'LIVE_VALIDATION_PROVIDER_TIMEOUT'],
+    ['an earlier request deadline', '5', 1_000, 1_000, 'LIVE_VALIDATION_PROVIDER_TIMEOUT'],
+    ['pre-deadline cancellation', '1', 5_000, 999, 'LIVE_VALIDATION_PROVIDER_CANCELLED']
+  ];
+  for (const stage of ['generation', 'answer_audit']) {
+    for (const [label, nativeTimeout, requestRemainingMs, elapsedMs, expected] of scenarios) {
+      await context.test(stage + ' with ' + label, async child => {
+        let now = Date.now();
+        let hold = stage === 'generation';
+        const caller = new AbortController();
+        const { promise: dispatched, resolve: markDispatched } = Promise.withResolvers();
+        const f = fixture(child, { now: () => now, getRemainingMs: () => requestRemainingMs,
+          fetchImplementation: () => {
+            if (!hold) return Promise.resolve(Response.json(responseBody));
+            markDispatched();
+            return new Promise(() => {});
+          } });
+        f.provider.beginWorkflow('gaming-guide-positive');
+        if (stage === 'answer_audit') await invoke(f.provider);
+        f.observation.stage = stage;
+        hold = true;
+        const pending = invoke(f.provider, {}, { headers: { 'x-stainless-timeout': nativeTimeout }, signal: caller.signal });
+        await dispatched;
+        now += elapsedMs;
+        caller.abort();
+
+        await assert.rejects(pending, code(expected));
+        const snapshot = f.provider.snapshot();
+        assert.equal(snapshot.closed, true);
+        assert.equal(snapshot.usage.requests, stage === 'answer_audit' ? 2 : 1);
+        assert.equal(snapshot.usage.auditCalls, stage === 'answer_audit' ? 1 : 0);
+        assert.equal(snapshot.counts.pendingRequests, 1);
+        assert.equal(f.observation.timeoutStage, expected === 'LIVE_VALIDATION_PROVIDER_TIMEOUT' ? stage : undefined);
+        assert.deepEqual(snapshot.stages.at(-1), { caseId: 'gaming-guide-positive', stage, model: MODEL,
+          outcome: 'failed', elapsedMs, code: expected });
+      });
+    }
+  }
+});
+
 test('SDK cancellation and process close abort requests that ignore AbortSignal', async context => {
   for (const cancellation of ['signal', 'close']) {
     const controller = new AbortController();
@@ -192,6 +487,25 @@ test('simultaneous SDK requests cannot create a second provider request', async 
   await assert.rejects(invoke(f.provider), code('LIVE_VALIDATION_CONCURRENCY_LIMIT'));
   await assert.rejects(first, code('LIVE_VALIDATION_RUN_CLOSED'));
   assert.equal(calls, 1); assert.equal(f.provider.snapshot().usage.requests, 1);
+});
+
+test('concurrent metadata rejection keeps the in-flight reservation and cannot expand replay diagnostics', async context => {
+  let calls = 0;
+  const f = fixture(context, { fetchImplementation: () => { calls++; return new Promise(() => {}); } });
+  f.provider.beginWorkflow('gaming-guide-positive');
+  const pending = lookup(f.provider);
+  await new Promise(resolve => setImmediate(resolve));
+  await assert.rejects(lookup(f.provider), code('LIVE_VALIDATION_CONCURRENCY_LIMIT'));
+  await assert.rejects(pending, code('LIVE_VALIDATION_RUN_CLOSED'));
+  const snapshot = f.provider.snapshot();
+  assert.equal(calls, 1); assert.equal(snapshot.usage.metadataRequests, 1);
+  assert.equal(snapshot.counts.pendingRequests, 1);
+  assert.deepEqual(snapshot.stages.map(({ elapsedMs, ...stage }) => stage), [
+    { caseId: 'gaming-guide-positive', stage: 'metadata', model: MODEL, outcome: 'failed',
+      code: 'LIVE_VALIDATION_RUN_CLOSED', reserved: true }
+  ]);
+  await assert.rejects(lookup(f.provider), code('LIVE_VALIDATION_RUN_CLOSED'));
+  assert.deepEqual(f.provider.snapshot().stages, snapshot.stages);
 });
 
 test('provider rejects redirects and oversized bodies and never includes response secrets in failures', async context => {

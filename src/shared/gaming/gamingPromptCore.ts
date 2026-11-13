@@ -16,6 +16,31 @@ export type GamingPromptResources = {
   auditSystem: string;
 };
 
+export const GAMING_CLEAR_PRESENTATION_POLICY_VERSION = 'gaming-clear-presentation/v1' as const;
+
+/** Fixed guidance for the server-owned final generation system message. */
+export function buildGamingClearPresentationPolicy(): string {
+  return [
+    `Gaming CLEAR Presentation policy: ${GAMING_CLEAR_PRESENTATION_POLICY_VERSION}`,
+    'C - Clarity: explain actions, locations, prerequisites, and mechanics in readable language and order.',
+    'L - Leverage: answer the immediate question before adding useful secondary details.',
+    'E - Efficiency: remove repetition, filler, and excessive disclaimers while respecting the requested depth.',
+    'A - Alignment: honor the game, progression, platform, edition, difficulty, spoilers, and requested format.',
+    'R - Resilience: state material limitations clearly and offer relevant alternatives or a concise clarification when needed.',
+    'Within this generation attempt, silently draft, review all five dimensions, and improve wording, ordering, and readability before responding.',
+    'Preserve gameplay facts, mandatory action order, qualifications, and the citation attached to each claim. Never add a factual requirement or cite a source merely to improve presentation.',
+    'Return only the final player-facing answer. Keep drafts, checklists, scores, and reasoning private. Exact output and source-authority constraints still apply.'
+  ].join('\n');
+}
+
+export function resolveGamingPresentationPolicy(
+  configuredPolicy: string | undefined, sourceEndpoint: string | undefined
+): typeof GAMING_CLEAR_PRESENTATION_POLICY_VERSION | undefined {
+  return configuredPolicy === GAMING_CLEAR_PRESENTATION_POLICY_VERSION
+    && /^arcanos-gaming\.(?:guide|build|meta|hybrid-build|hybrid-meta)$/u.test(sourceEndpoint ?? '')
+    ? GAMING_CLEAR_PRESENTATION_POLICY_VERSION : undefined;
+}
+
 const modeInstructions: Record<GamingMode, string> = {
   guide: "Return a practical guide with concrete steps, checkpoints, and missing-info notes instead of simulation.",
   build: "Return a build recommendation with priorities, tradeoffs, and setup guidance. When structured build evidence is present, distinguish extracted facts, inferred role or synergy, recommendations, and unknown fields. Do not invent missing items, skills, stats, modules, or patch details.",

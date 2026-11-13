@@ -79,91 +79,90 @@ function requireVirtualExecutionTrace(): void {
   const intakeMs = 4_000;
   const reasoningMs = 17_317;
   const finalMs = 12_000;
-  const auditMs = 3_000;
   const reasoningStartedMs = validationMs + intakeMs;
   const finalStartedMs = reasoningStartedMs + reasoningMs;
   for (const mode of ['guide', 'build', 'meta'] as const) {
     requireAllocation({ mode, stage: 'reasoning', pipelineTimeoutMs: execution.pipelineTimeoutMs,
       pipelineElapsedMs: reasoningStartedMs, requestRemainingMs: execution.requestRemainingMs - reasoningStartedMs,
-      runtimeRemainingMs: 45_000 }, 36_000, 45_000, 9_000);
+      runtimeRemainingMs: 45_000 }, 39_000, 45_000, 6_000);
     requireAllocation({ mode, stage: 'final', pipelineTimeoutMs: execution.pipelineTimeoutMs,
       pipelineElapsedMs: finalStartedMs, requestRemainingMs: execution.requestRemainingMs - finalStartedMs,
-      runtimeRemainingMs: 27_683 }, 23_683, 27_683, 4_000);
-    requireProof(reasoningMs < 36_000 && finalMs < 23_683);
-    const completionMs = finalStartedMs + finalMs + auditMs;
-    requireProof(completionMs === 36_817);
+      runtimeRemainingMs: 27_683 }, 26_683, 27_683, 1_000);
+    requireProof(reasoningMs < 39_000 && finalMs < 26_683);
+    const completionMs = finalStartedMs + finalMs;
+    requireProof(completionMs === 33_817);
     requireProof(completionMs < execution.pipelineTimeoutMs - execution.terminalReserveMs);
     requireProof(completionMs + execution.outerHeadroomMs < execution.mcpOperationTimeoutMs);
     // Allocation-only overrun: timers/cancellation and public failure mapping are tested outside the sealed graph.
-    requireProof(25_000 > 23_683);
+    requireProof(28_000 > 26_683);
     requireAllocation({ mode, stage: 'final', pipelineTimeoutMs: execution.pipelineTimeoutMs,
-      pipelineElapsedMs: finalStartedMs + 23_683, requestRemainingMs: 14_500,
-      runtimeRemainingMs: 4_000 }, 0, 4_000, 4_000);
+      pipelineElapsedMs: finalStartedMs + 26_683, requestRemainingMs: 11_500,
+      runtimeRemainingMs: 1_000 }, 0, 1_000, 1_000);
   }
   const shortExecution = requireExecutionBudget({ requestRemainingMs: 30_000 }, 30_000, 20_000, 30_000);
   requireAllocation({ mode: 'build', stage: 'reasoning', pipelineTimeoutMs: shortExecution.pipelineTimeoutMs,
     pipelineElapsedMs: reasoningStartedMs, requestRemainingMs: shortExecution.requestRemainingMs - reasoningStartedMs,
-    runtimeRemainingMs: 15_000 }, 6_000, 15_000, 9_000);
-  requireProof(reasoningMs > 6_000 && reasoningStartedMs + 6_000 < shortExecution.requestRemainingMs);
+    runtimeRemainingMs: 15_000 }, 9_000, 15_000, 6_000);
+  requireProof(reasoningMs > 9_000 && reasoningStartedMs + 9_000 < shortExecution.requestRemainingMs);
 }
 
 function requireAdaptiveStages(): void {
   for (const mode of ['guide', 'build', 'meta'] as const) {
     for (const stage of ['model-validation', 'intake'] as const) {
-      requireAllocation({ mode, stage, pipelineTimeoutMs: 35_000 }, mode === 'guide' ? 24_000 : 12_000, 34_500, 9_000);
+      requireAllocation({ mode, stage, pipelineTimeoutMs: 35_000 }, mode === 'guide' ? 24_000 : 12_000, 34_500, 6_000);
     }
     // Five seconds of intake leave more than the former 12-second reasoning default.
     requireAllocation({ mode, stage: 'reasoning', pipelineTimeoutMs: 35_000,
-      pipelineElapsedMs: 5_000, runtimeRemainingMs: 29_500 }, 20_500, 29_500, 9_000);
+      pipelineElapsedMs: 5_000, runtimeRemainingMs: 29_500 }, 23_500, 29_500, 6_000);
     requireAllocation({ mode, stage: 'final', pipelineTimeoutMs: 35_000,
-      pipelineElapsedMs: 25_500 }, 5_000, 9_000, 4_000);
+      pipelineElapsedMs: 25_500 }, 8_000, 9_000, 1_000);
   }
 }
 
 function requireDeadlineCaps(): void {
   requireAllocation({ mode: 'build', stage: 'reasoning', pipelineTimeoutMs: 35_000,
-    pipelineElapsedMs: 5_000, configuredStageTimeoutMs: 2_000 }, 2_000, 29_500, 9_000);
+    pipelineElapsedMs: 5_000, configuredStageTimeoutMs: 2_000 }, 2_000, 29_500, 6_000);
   requireAllocation({ mode: 'build', stage: 'reasoning', pipelineTimeoutMs: 35_000,
-    requestRemainingMs: 12_000, configuredStageTimeoutMs: 50_000 }, 2_000, 11_000, 9_000);
+    requestRemainingMs: 12_000, configuredStageTimeoutMs: 50_000 }, 5_000, 11_000, 6_000);
   requireAllocation({ mode: 'guide', stage: 'final', pipelineTimeoutMs: 35_000,
-    runtimeRemainingMs: 7_000 }, 3_000, 7_000, 4_000);
+    runtimeRemainingMs: 7_000 }, 6_000, 7_000, 1_000);
   requireAllocation({ mode: 'build', stage: 'reasoning', pipelineTimeoutMs: 35_000,
-    requestRemainingMs: 9_000 }, 0, 8_000, 9_000);
+    requestRemainingMs: 7_000 }, 0, 6_000, 6_000);
   requireAllocation({ mode: 'build', stage: 'reasoning', pipelineTimeoutMs: 35_000,
-    pipelineElapsedMs: 35_000 }, 0, 0, 9_000);
+    pipelineElapsedMs: 35_000 }, 0, 0, 6_000);
   requireAllocation({ mode: 'build', stage: 'reasoning', pipelineTimeoutMs: 35_000,
-    requestRemainingMs: null, runtimeRemainingMs: 0 }, 0, 0, 9_000);
+    requestRemainingMs: null, runtimeRemainingMs: 0 }, 0, 0, 6_000);
   requireAllocation({ mode: 'build', stage: 'reasoning', pipelineTimeoutMs: 35_000,
-    configuredStageTimeoutMs: 2_000.9 }, 2_000, 34_500, 9_000);
+    configuredStageTimeoutMs: 2_000.9 }, 2_000, 34_500, 6_000);
   for (const invalid of [Number.POSITIVE_INFINITY, Number.NaN, 0, -1]) {
-    requireAllocation({ mode: 'build', stage: 'reasoning', pipelineTimeoutMs: invalid }, 0, 0, 9_000);
+    requireAllocation({ mode: 'build', stage: 'reasoning', pipelineTimeoutMs: invalid }, 0, 0, 6_000);
     requireAllocation({ mode: 'build', stage: 'reasoning', pipelineTimeoutMs: 35_000,
-      configuredStageTimeoutMs: invalid }, 0, 34_500, 9_000);
+      configuredStageTimeoutMs: invalid }, 0, 34_500, 6_000);
   }
 }
 
 function requireShortDirectAnswer(): void {
-  requireAllocation({ mode: 'build', stage: 'intake', pipelineTimeoutMs: 9_000,
-    runtimeRemainingMs: 8_500 }, 0, 8_500, 9_000);
-  requireAllocation({ mode: 'build', stage: 'direct-answer', pipelineTimeoutMs: 9_000,
-    runtimeRemainingMs: 8_500 }, 4_500, 8_500, 4_000);
+  requireAllocation({ mode: 'build', stage: 'intake', pipelineTimeoutMs: 6_000,
+    runtimeRemainingMs: 5_500 }, 0, 5_500, 6_000);
+  requireAllocation({ mode: 'build', stage: 'direct-answer', pipelineTimeoutMs: 6_000,
+    runtimeRemainingMs: 5_500 }, 4_500, 5_500, 1_000);
 }
 
 function requireCriticalReflectionReserves(): void {
   for (const stage of ['model-validation', 'intake', 'reasoning'] as const) {
     requireAllocation({ mode: 'build', stage, pipelineTimeoutMs: 35_000,
       pipelineElapsedMs: 5_000, runtimeRemainingMs: 29_500, additionalDownstreamReserveMs: 3_000 },
-    stage === 'reasoning' ? 17_500 : 12_000, 29_500, 12_000);
+    stage === 'reasoning' ? 20_500 : 12_000, 29_500, 9_000);
     requireAllocation({ mode: 'build', stage, pipelineTimeoutMs: 35_000,
       pipelineElapsedMs: 5_000, runtimeRemainingMs: 25_000, additionalDownstreamReserveMs: 7_000 },
-    9_000, 25_000, 16_000);
+    12_000, 25_000, 13_000);
   }
-  // After 5s intake, 17s reasoning and 3s reflection, final still has audit/cleanup time.
+  // After 5s intake, 17s reasoning and 3s reflection, final still has cleanup time.
   requireAllocation({ mode: 'build', stage: 'final', pipelineTimeoutMs: 35_000,
-    pipelineElapsedMs: 25_000, runtimeRemainingMs: 9_500 }, 5_500, 9_500, 4_000);
+    pipelineElapsedMs: 25_000, runtimeRemainingMs: 9_500 }, 8_500, 9_500, 1_000);
   // A shorter watchdog after 5s intake, 8s reasoning and 7s reflection stays authoritative.
   requireAllocation({ mode: 'build', stage: 'final', pipelineTimeoutMs: 35_000,
-    pipelineElapsedMs: 20_000, runtimeRemainingMs: 10_000 }, 6_000, 10_000, 4_000);
+    pipelineElapsedMs: 20_000, runtimeRemainingMs: 10_000 }, 9_000, 10_000, 1_000);
 }
 
 function requireHonestTimeoutRecovery(): void {

@@ -1,0 +1,47 @@
+{
+  "evidenceKind": "real disposable PostgreSQL; authored source/authority grants; synthetic publisher and model transports",
+  "baselineSha": "2df6e6a0fb409aaa42e1b5f687ea2622c8dde560",
+  "toolchain": {
+    "node": "24.18.1",
+    "postgres": "18.6",
+    "npm": "11.16.0"
+  },
+  "target": {
+    "applicationDatabaseUsed": false,
+    "newOwnedCluster": true,
+    "database": "arcanos_audit_pg18_20260727",
+    "port": 54002,
+    "loopback": true
+  },
+  "result": {
+    "failedTests": 0,
+    "passedSuites": 7,
+    "openHandles": 0,
+    "success": true,
+    "passedTests": 167,
+    "skippedTests": 0,
+    "failedSuites": 0
+  },
+  "falseAuthorityAcceptance": {
+    "numerator": 0,
+    "population": "existing held-out SQL foreign-game/edition/platform/old-patch/unverified/reference/revoked/missing-grant/bad-binding controls",
+    "denominator": 9
+  },
+  "compiledHttp": {
+    "transports": "synthetic loopback publisher/search/provider; real SDK/adapter/Trinity",
+    "realProvider": false,
+    "schemaCleanupFailureControlPassed": true,
+    "realSql": true,
+    "authenticatedMcp": true,
+    "ownerAdmissionWindowWait": "intentional existing approximately 60s rate-limit wait, not guide retrieval latency",
+    "freshBuild": true
+  },
+  "cleanup": {
+    "ownedServerStopped": true,
+    "ignoredClusterFilesPreserved": true,
+    "remainingGamingSchemas": 0
+  },
+  "productionChanges": "NONE",
+  "paidProviderCalls": 0,
+  "scope": "reviewed uncommitted source files matching repaired worktree before publication; source hashes bound in delivery-fixture-metrics.json"
+}

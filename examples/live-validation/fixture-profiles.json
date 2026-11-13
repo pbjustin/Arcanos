@@ -1,5 +1,6 @@
 {
-  "version": 1,
+  "version": 2,
+  "acceptanceProfile": "grounded-presented-answer-v2",
   "fixtureOrigin": "https://live-validation.example.org",
   "profiles": [
     {

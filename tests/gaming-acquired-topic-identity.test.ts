@@ -51,8 +51,7 @@ beforeEach(() => {
   });
   trinity.mockImplementation(async (request: any) => {
     const result = `${prose} [Source 1]`;
-    const { assessment } = await request.context.runOptions.gamingClearAnswerAudit(result, {});
-    return { result, gamingClearAudit: assessment, meta: { provider: { finishReason: 'stop' } } };
+    return { result, gamingPresentationPolicy: request.context.runOptions.gamingPresentationPolicy, meta: { provider: { finishReason: 'stop' } } };
   });
 });
 afterEach(() => {
@@ -73,7 +72,7 @@ describe('acquired generic Samurai topic identity', () => {
     expect(result.accepted[0].freshness.game).toBe(input.game);
     expect(result.accepted[0].publicUrl).toBe(url);
   });
-  it.each([namedTitle, genericTitle])('reaches audited v2 generation with bound citations for acquired title %s', async title => {
+  it.each([namedTitle, genericTitle])('reaches presented v2 generation with bound citations for acquired title %s', async title => {
     serve(title);
     const ingest = jest.fn<any>();
     const workflow = createGamingHybridWorkflow({ retrieve: async () => ({ context: '', sources: [], evidence: [], sourceKnown: false }), ingest });
@@ -86,8 +85,7 @@ describe('acquired generic Samurai topic identity', () => {
     expect(answer.body.answer!.response).toContain('Current patch compatibility could not be verified.');
     expect(answer.body.answer!.response).toContain(prose);
     expect(answer.body.answer!.sources.map(source => source.url)).toEqual([url]);
-    expect(trinity).toHaveBeenCalledTimes(1); expect(audit).toHaveBeenCalledTimes(1);
-    expect(JSON.parse((audit.mock.calls[0][1] as any).messages[1].content).answer).toBe(answer.body.answer!.response);
+    expect(trinity).toHaveBeenCalledTimes(1); expect(audit).not.toHaveBeenCalled();
     expect(ingest).not.toHaveBeenCalled();
   });
   it.each(['Samurai Blade Build Guide', 'Katana Build Guide', 'Early Game Samurai Blade Guide'])('requires acquired game scope for the closed topic title %s', title => {

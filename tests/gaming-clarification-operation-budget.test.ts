@@ -53,8 +53,7 @@ beforeEach(() => {
   });
   mockTrinity.mockImplementation(async (request: any) => {
     const result = 'Keep the Samurai starting Uchigatana katana with Unsheathe. Prioritize Vigor toward 20 and Dexterity later. Upgrade with ordinary Smithing Stones in Limgrave. [Source 1]';
-    const { assessment } = await request.context.runOptions.gamingClearAnswerAudit(result, request.context.runtimeBudget);
-    return { result, gamingClearAudit: assessment, meta: { provider: { finishReason: 'stop' } } };
+    return { result, gamingPresentationPolicy: request.context.runOptions.gamingPresentationPolicy, meta: { provider: { finishReason: 'stop' } } };
   });
 });
 afterEach(() => {
@@ -127,7 +126,7 @@ describe('Gaming clarification operations preserve acquisition and storage allow
       candidates: [expect.objectContaining({ candidateId: retained.selectedCandidateIds![0] })] });
     expect(ingest.mock.calls[0][1]).toMatchObject({ canStore: true });
     expect(run.retrieve).toHaveBeenCalledTimes(1); expect(run.evaluateCandidates).toHaveBeenCalledTimes(2);
-    expect(mockHttp).toHaveBeenCalledTimes(2); expect(mockTrinity).toHaveBeenCalledTimes(1); expect(mockAudit).toHaveBeenCalledTimes(1);
+    expect(mockHttp).toHaveBeenCalledTimes(2); expect(mockTrinity).toHaveBeenCalledTimes(1); expect(mockAudit).not.toHaveBeenCalled();
     expect((await run.submit(stored.body, 'after-storage')).body.reason).toBe('WORKFLOW_CLOSED');
   });
 
