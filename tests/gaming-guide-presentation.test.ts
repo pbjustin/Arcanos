@@ -43,6 +43,18 @@ describe('Gaming guide delivery formatting', () => {
     expect(present(answer)).toBe('To start the floodgate:\n\n1. Open the valve.\n2. Enter the tunnel. [1]\n\nThe upper gate opens. [2]');
   });
 
+  it.each([
+    'This reserves the slot for 24 hours.',
+    'This activates the safety interlock.',
+    'This queues the request.',
+    'That prevents the lock from resetting.'
+  ])('numbers clear actions before a follow-on sentence (%s)', mechanics => {
+    const answer = `To start the floodgate, open the valve, and then enter the tunnel. ${mechanics} [1]`;
+    expect(present(answer)).toBe(
+      `To start the floodgate:\n\n1. Open the valve.\n2. Enter the tunnel.\n\n${mechanics} [1]`
+    );
+  });
+
   it.each(['Journal, use the right-hand tab', 'Journal (Navigation, Stations), use the right-hand tab'])(
     'keeps parenthetical UI text intact when numbering actions (%s)', uiText => {
       const answer = `To start the floodgate, open the map (${uiText}), select a site, and then pay the fee. [1]`;
@@ -84,6 +96,8 @@ describe('Gaming guide delivery formatting', () => {
     ['a model name containing an abbreviation', 'To start the floodgate, open the map, then select the Atlas Mk. II. [1]'],
     ['an initial in an item name', 'To start the floodgate, open the map, then collect the A. James Log. [1]'],
     ['an abbreviated commander title', 'To start the floodgate, open the map, then visit Cmdr. Jameson at the station. [1]'],
+    ['an abbreviated title before a later mechanics sentence', 'To start the floodgate, open the map, then visit Cmdr. Jameson at the station. This reserves a slot. [1]'],
+    ['capitalized words after an abbreviated title', 'To start the floodgate, open the map, then select Ch. This Is the Way. [1]'],
     ['an abbreviated honorific', 'To start the floodgate, open the map, then visit Rev. Swanson at the station. [1]'],
     ['a punctuated waypoint name', 'To start the floodgate, open the map, then select Waypoint 2.5. [1]'],
     ['simultaneous actions', 'To start the floodgate, open the control panel, press the red switch, and press the blue switch simultaneously. [1]'],

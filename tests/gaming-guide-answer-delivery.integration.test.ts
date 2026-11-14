@@ -6,7 +6,7 @@ import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
 import {
   colonisationReasoningTasks, colonisationRequest, installedColonisationAnswer, isolatedColonisationAnswer,
-  malformedColonisationCapabilityParagraph, numberedLiveColonisationAnswer
+  latestLiveColonisationAnswer, malformedColonisationCapabilityParagraph, numberedLiveColonisationAnswer
 } from './testUtils/gamingPresentationRegressionFixture.js';
 import type { GamingHybridResponse } from '../src/shared/gaming/gamingHybridContract.js';
 
@@ -679,6 +679,30 @@ it('delivers the exact isolated colonisation replay with three numbered starting
     liveLimit
   ].join('\n\n'));
   expect(stages).toEqual(['intake', 'reasoning', 'final']);
+});
+
+it('numbers the latest exact live replay before its claim reservation sentence', async () => {
+  scenario = frontierStartingFixture;
+  replayColonisationAnswer = latestLiveColonisationAnswer;
+  const result = await harness(false).complete();
+  const [notice, guide, ...tail] = latestLiveColonisationAnswer.split('\n\n');
+  expect(finalOutputs).toEqual([latestLiveColonisationAnswer]);
+  expect(result.result).toMatchObject({
+    state: 'answer_ready', coverageSatisfied: true,
+    answer: {
+      sources: [{ url: frontierGuideUrl }],
+      response: [
+        notice,
+        'To start system colonisation in **Elite Dangerous**:',
+        '1. Use the **System Colonisation Contact** at a starport to select an unpopulated system within **15 ly**.\n'
+          + '2. Choose your initial starport or orbital outpost.\n3. Pay the registration cost.',
+        guide.slice(guide.indexOf('This reserves')),
+        ...tail
+      ].join('\n\n')
+    }
+  });
+  expect(stages).toEqual(['intake', 'reasoning', 'final']);
+  expect(sdk).toHaveBeenCalledTimes(3);
 });
 
 it('retains the exact numbered live replay with one live-game verification caveat', async () => {

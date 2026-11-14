@@ -12,7 +12,9 @@ const PROSE_REQUEST = /\b(?:(?:in|as) (?:prose|(?:a |one |a single )paragraph|pa
 const PROCEDURE = /^(To (?:start|begin|get started with) [^,.()\n]{1,140}), ([^.\n]{1,1400})\.(?= |$)/iu;
 const ADJACENT_CITATIONS = /^(?:[ \t]+\[\d+(?:,[ \t]*\d+)*\])+(?=[ \t]|$)/u;
 const POSSIBLE_ABBREVIATION = /(?:^|\s)(?:\p{L}|st|mt|ft|mk|no|dr|mr|mrs|ms|prof|capt|lt|sgt|gen|sr|jr|vs|etc)$/iu;
-const MECHANICS_SENTENCE_START = /^\s*(?:This (?:gives|makes|opens|starts)|Your claim (?:lasts|expires)|The (?:[a-z-]+ ){1,4}(?:opens|closes|unlocks))\b/u;
+// A complete "This" or "That" consequence with a lowercase predicate can
+// confirm the boundary without enumerating gameplay verbs.
+const MECHANICS_SENTENCE_START = /^\s*(?:(?:This|That) [a-z]{1,24}s(?: [^.!?\n]{1,240})?[.!?](?= |$)|(?:Your claim (?:lasts|expires)|The (?:[a-z-]+ ){1,4}(?:opens|closes|unlocks))\b)/u;
 const INLINE_SOURCE_LIMIT = / (The (?:supplied|selected|available) excerpts (?:explain|cover) [^.!?\n[\]]{1,220}, but do not establish [^.!?\n[\],;:]{1,220}\. (\[1\]))$/u;
 const STANDALONE_SOURCE_LIMIT = /^[A-Z][^.!?\n[\];:]{1,300} are not established here\.$/u;
 const SINGLE_SOURCE = /^\*\*Source:\*\* \[1\] [^\n[\]]*\[[^\n[\]]+\]\(https:\/\/[^\s)]+\)\.$/u;
