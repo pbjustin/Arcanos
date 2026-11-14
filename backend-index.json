@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-14T02:04:29.366Z",
+  "generatedAt": "2026-11-14T17:52:53.899Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -1965,6 +1965,9 @@
         },
         {
           "relativePath": "src/services/gamingGameDetection.ts"
+        },
+        {
+          "relativePath": "src/services/gamingGuidePresentation.ts"
         },
         {
           "relativePath": "src/services/gamingHtmlEvidence.ts"
@@ -4754,6 +4757,9 @@
         },
         {
           "relativePath": "tests/gaming-guide-outcomes.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-guide-presentation.test.ts"
         },
         {
           "relativePath": "tests/gaming-guide-request-selection.test.ts"

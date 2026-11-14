@@ -4,7 +4,9 @@ import { performance } from 'node:perf_hooks';
 import request from 'supertest';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
-import { colonisationReasoningTasks, colonisationRequest, malformedColonisationCapabilityParagraph } from './testUtils/gamingPresentationRegressionFixture.js';
+import {
+  colonisationReasoningTasks, colonisationRequest, installedColonisationAnswer, malformedColonisationCapabilityParagraph
+} from './testUtils/gamingPresentationRegressionFixture.js';
 import type { GamingHybridResponse } from '../src/shared/gaming/gamingHybridContract.js';
 
 // Guide-delivery, authored SYNTHETIC material. These fixtures make no claim that the
@@ -152,6 +154,7 @@ const finalOutputs: string[] = [];
 const finalEvidence: Array<{ sourceIndex: number; url: string; text: string }> = [];
 let presentSteps = false;
 let replayColonisationTasks: 'none' | 'observed' | 'structured' = 'none';
+let replayInstalledColonisation = false;
 let partialRefusalWithSourceGap = false;
 let awkwardAnswer = false;
 const fixtureMeasurements: Array<Record<string, unknown>> = [];
@@ -222,6 +225,7 @@ beforeEach(() => {
   finalCapabilityRefusal = 'none'; finalRefusalText = capabilityRefusal; sourceTextLimit = undefined; citeFallback = false; presentSteps = false; awkwardAnswer = false;
   finalQualificationPresentation = '';
   replayColonisationTasks = 'none';
+  replayInstalledColonisation = false;
   partialRefusalWithSourceGap = false;
   omitFinalCitations = false;
   stages.length = 0; searches.length = 0; acquired.length = 0; finalOutputs.length = 0; finalEvidence.length = 0; documents.length = 0; evaluations.length = 0;
@@ -289,7 +293,7 @@ beforeEach(() => {
         case 'warning_only': output = partialExtractionWarning; break;
         case 'echoed_warning': output = `${partialExtractionWarning}\n\n${capabilityRefusal}`; break;
         default:
-          output = draft(payload, true);
+          output = replayInstalledColonisation ? installedColonisationAnswer : draft(payload, true);
           if (finalCapabilityRefusal === 'with_guidance') output = `${finalRefusalText}\n\n${output}`;
       }
       if (citeFallback) output += useNumberedLink ? ` [1](${scenario.pages[0].url})` : ' [1]';
@@ -598,6 +602,56 @@ it.each(['observed', 'structured'] as const)('delivers the original colonisation
     expect(answer.split('\n\n')[0]).toBe(steps.join('\n') + ' [1]');
   }
   expect(answer).toMatch(/current patch compatibility could not be verified/iu);
+  expect(stages).toEqual(['intake', 'reasoning', 'final']);
+  expect(sdk).toHaveBeenCalledTimes(3);
+});
+
+it('structures the reconnected installed colonisation answer while preserving its gameplay facts and limits', async () => {
+  scenario = frontierStartingFixture;
+  replayInstalledColonisation = true;
+  const result = await harness(false).complete();
+
+  expect(result.result.state === 'answer_ready' ? undefined : {
+    reason: result.result.reason, accepted: evaluations.flatMap(value => value.accepted).length,
+    missing: result.result.missingCoverage, stages
+  }).toBeUndefined();
+  expect(finalOutputs).toEqual([installedColonisationAnswer]);
+  expect(result.result).toMatchObject({
+    state: 'answer_ready', coverageSatisfied: true, answer: { sources: [{ url: frontierGuideUrl }] }
+  });
+  expect(result.result.selectedEvidenceIds).toHaveLength(2);
+  expect(finalEvidence.some(evidence => evidence.sourceIndex === 1 && evidence.url === frontierGuideUrl)).toBe(true);
+  const answer = result.result.answer!.response;
+  expect(answer.startsWith(partialExtractionWarning + '\n\n')).toBe(true);
+  expect(answer.split(partialExtractionWarning)).toHaveLength(2);
+
+  const limitationsHeading = /^(?:#{1,6}\s+|\*\*)?(?:Important )?Limitations:?\*{0,2}\s*$/gimu;
+  const headings = [...answer.matchAll(limitationsHeading)];
+  expect(headings).toHaveLength(1);
+  const content = answer.slice(0, headings[0].index);
+  const steps = [...content.matchAll(/^(\d+)\. +(.+)$/gmu)];
+  expect(steps.map(step => step[1])).toEqual(['1', '2', '3', '4', '5']);
+  expect(steps.map(step => step[2])).toEqual([
+    expect.stringMatching(/open the \*\*System Colonisation Contact\*\* at a starport/iu),
+    expect.stringMatching(/select an unpopulated system within 15 ly/iu),
+    expect.stringMatching(/choose the initial station or outpost/iu),
+    expect.stringMatching(/pay the registration cost/iu),
+    expect.stringMatching(/launch the claim using your ship’s \*\*System Colonisation Suite\*\*/iu)
+  ]);
+  expect(content).toContain('This makes you the System Architect and starts a countdown to the arrival of the colonisation ship, which acts as the temporary construction hub.');
+  const limitations = answer.slice(headings[0].index);
+  expect(limitations).toContain('deadlines beyond the initial claim window. [1]');
+  expect(answer.split('[1]')).toHaveLength(3);
+  expect(limitations).toMatch(/excerpts explain registration and launching a claim/iu);
+  expect(limitations.match(/(?:do not establish|not established)/giu)).toHaveLength(1);
+  for (const scope of [/every prerequisite/iu, /later construction procedure/iu, /exact prices/iu,
+    /eligibility restrictions/iu, /construction materials/iu, /deadlines beyond the initial claim window/iu,
+    /can(?:not|'t) verify live game state/iu]) {
+    expect([...limitations.matchAll(new RegExp(scope.source, 'giu'))]).toHaveLength(1);
+    expect(content).not.toMatch(scope);
+  }
+  expect(answer).toContain(`**Source:** [1] Frontier Developments, [System Colonisation Guide](${frontierGuideUrl}).`);
+  expect(answer).not.toMatch(/I can help with Explain|but I can't Establish|\b24 hours\b|\d+ credits|construction commodities/iu);
   expect(stages).toEqual(['intake', 'reasoning', 'final']);
   expect(sdk).toHaveBeenCalledTimes(3);
 });

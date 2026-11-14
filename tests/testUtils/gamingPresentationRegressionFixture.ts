@@ -17,3 +17,12 @@ export const colonisationReasoningTasks = {
     'Verify current live mechanics or platform availability.'
   ]
 } as const;
+
+// Exact player-facing text from the reconnected installed-plugin response.
+export const installedColonisationAnswer = [
+  "Some selected source material was only partially extracted. This answer is limited to the intact passages available for review.",
+  "To start system colonisation in **Elite Dangerous**, open the **System Colonisation Contact** at a starport, select an unpopulated system within 15 ly, choose the initial station or outpost, pay the registration cost, and then launch the claim using your ship\u2019s **System Colonisation Suite**. This makes you the System Architect and starts a countdown to the arrival of the colonisation ship, which acts as the temporary construction hub. The supplied excerpts explain registration and launching a claim, but do not establish every prerequisite or the later construction procedure. [1]",
+  "**Source:** [1] Frontier Developments, [System Colonisation Guide](https://www.elitedangerous.com/news/system-colonisation-guide).",
+  "Exact prices, eligibility restrictions, construction materials, and deadlines beyond the initial claim window are not established here.",
+  "I can't verify live game state here.",
+].join('\n\n');
