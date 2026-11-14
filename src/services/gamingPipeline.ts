@@ -66,7 +66,7 @@ import { readGamingMarkdownCitationDestination } from '@shared/gaming/gamingHybr
 import { assessGamingClearEvidence } from '@shared/gaming/gamingClearEvidence.js';
 import { gamingClearHash, type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
 import { checkGamingAnswerIntegrity, isGamingSourcePartiallyExtracted } from '@services/gamingAnswerIntegrity.js';
-import { GAMING_PRESENTED_ANSWER, type GamingPresentedAnswer } from '@shared/gaming/gamingPresentedAnswerBinding.js';
+import { GAMING_PRE_LIMITATION_CANDIDATE, GAMING_PRESENTED_ANSWER, type GamingPresentedAnswer } from '@shared/gaming/gamingPresentedAnswerBinding.js';
 import { GAMING_CLEAR_PRESENTATION_POLICY_VERSION } from '@shared/gaming/gamingPromptCore.js';
 import { resolveGamingFreshnessDisposition } from '@shared/gaming/gamingFreshnessDisposition.js';
 
@@ -1150,11 +1150,17 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
     // Only leading, standalone qualification paragraphs can serve as the trusted notice.
     // An exact quote inside generated prose, a blockquote or a code sample does not.
     const present = new Set<string>();
-    for (const paragraph of answer.split(/\r?\n[ \t]*\r?\n/u, answerQualifications.length)) {
-      if (!answerQualifications.includes(paragraph)) break;
+    const paragraphs = answer.split(/(\r?\n(?:[ \t]*\r?\n)+)/u);
+    let endOfNotices = 0;
+    let leadingNotices = '';
+    while (endOfNotices < paragraphs.length && answerQualifications.includes(paragraphs[endOfNotices])) {
+      const paragraph = paragraphs[endOfNotices];
+      if (!present.has(paragraph)) leadingNotices += paragraph + (paragraphs[endOfNotices + 1] ?? '');
       present.add(paragraph);
+      endOfNotices += 2;
     }
-    return [...answerQualifications.filter(qualification => !present.has(qualification)), answer].join('\n\n');
+    return [...answerQualifications.filter(qualification => !present.has(qualification)),
+      leadingNotices + paragraphs.slice(endOfNotices).join('')].join('\n\n');
   };
   if (freshnessSensitive && !currentEvidenceAvailable && !allowAdvisoryFreshness) {
     const currentEvidenceFallbackReason: GamingFallbackReason = "CURRENT_EVIDENCE_UNAVAILABLE";
@@ -1391,8 +1397,11 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
         code: "GAMING_PROVIDER_EMPTY_RESPONSE"
       });
     }
+    // Limitations inserted by Trinity cannot turn a refusal or empty candidate into guidance.
+    const gameplayCandidate = trinityResult[GAMING_PRE_LIMITATION_CANDIDATE] ?? trinityResult.result;
+    delete trinityResult[GAMING_PRE_LIMITATION_CANDIDATE];
     const withoutQualifications = answerQualifications.reduce(
-      (text, qualification) => text.replaceAll(qualification, " "), trinityResult.result);
+      (text, qualification) => text.replaceAll(qualification, " "), gameplayCandidate);
     const substantiveCandidate = normalizeGamingInlineSourceReferences(
       stripNumberedMarkdownCitations(withoutQualifications), 0
     ).response;

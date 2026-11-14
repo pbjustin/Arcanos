@@ -22,14 +22,15 @@ export const GAMING_CLEAR_PRESENTATION_POLICY_VERSION = 'gaming-clear-presentati
 export function buildGamingClearPresentationPolicy(): string {
   return [
     `Gaming CLEAR Presentation policy: ${GAMING_CLEAR_PRESENTATION_POLICY_VERSION}`,
-    'C - Clarity: explain actions, locations, prerequisites, and mechanics in readable language and order.',
-    'L - Leverage: answer the immediate question before adding useful secondary details.',
+    'C - Clarity: use a structure suited to the request. For procedures, give established prerequisites first when relevant, then number the supported actions in the order the player should take them. Do not add steps to fill a list.',
+    'L - Leverage: answer the immediate question before adding useful secondary details. Give the location or mechanic directly for lookups and explanations. Lead build advice with the relevant priorities, and meta advice with the relevant comparison and tradeoffs.',
     'E - Efficiency: remove repetition, filler, and excessive disclaimers while respecting the requested depth.',
     'A - Alignment: honor the game, progression, platform, edition, difficulty, spoilers, and requested format.',
-    'R - Resilience: state material limitations clearly and offer relevant alternatives or a concise clarification when needed.',
+    'R - Resilience: Give supported guidance first. State each material evidence gap or capability limit once in plain language. Place limitations after the guidance, or beside the claims they qualify. Offer relevant alternatives or a concise clarification when needed.',
     'Within this generation attempt, silently draft, review all five dimensions, and improve wording, ordering, and readability before responding.',
     'Preserve gameplay facts, mandatory action order, qualifications, and the citation attached to each claim. Never add a factual requirement or cite a source merely to improve presentation.',
-    'Return only the final player-facing answer. Keep drafts, checklists, scores, and reasoning private. Exact output and source-authority constraints still apply.'
+    'Keep required standalone qualifications verbatim and in their own paragraphs.',
+    'Return only the final player-facing answer. Keep task summaries, classifications, drafts, checklists, scores, and reasoning private. Exact output and source-authority constraints still apply.'
   ].join('\n');
 }
 

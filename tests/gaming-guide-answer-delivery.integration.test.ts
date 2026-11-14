@@ -4,6 +4,7 @@ import { performance } from 'node:perf_hooks';
 import request from 'supertest';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
+import { colonisationReasoningTasks, colonisationRequest, malformedColonisationCapabilityParagraph } from './testUtils/gamingPresentationRegressionFixture.js';
 import type { GamingHybridResponse } from '../src/shared/gaming/gamingHybridContract.js';
 
 // Guide-delivery, authored SYNTHETIC material. These fixtures make no claim that the
@@ -75,7 +76,7 @@ const scenarios: Scenario[] = [
       draft: 'For a spoiler-light base-game Samurai start, retain the Uchigatana and Unsheathe, prioritize Vigor, meet Dexterity requirements, and keep a medium equipment load. Current patch compatibility could not be verified from these excerpts.',
       answerProbe: /Uchigatana.*Unsheathe.*Vigor.*Dexterity.*medium/iu,
       support: [/Uchigatana/iu, /Unsheathe/iu, /Vigor/iu, /Dexterity/iu, /medium/iu] }] },
-  { id: 'C', game: 'Elite Dangerous', question: 'Find a detailed guide explaining system colonisation in Elite Dangerous and how to get started, including prerequisites and the first concrete steps. Cite the guide sources.',
+  { id: 'C', game: 'Elite Dangerous', question: colonisationRequest,
     // Both discovery and HTTP are mocked. The public URL identifies the scenario and the bytes are authored.
     pages: [{ url: frontierGuideUrl, title: 'Elite Dangerous system colonisation getting started guide',
       body: '<p>In the game Elite Dangerous, system colonisation begins by selecting an uninhabited candidate system and purchasing a colonisation claim. Travel to the selected system with the claim, deploy the system colonisation ship, and deliver the construction commodities requested by the project. Complete the requested deliveries before the project deadline. Establish a colony in Elite Dangerous’ outer systems.</p><p>Check the project requirements before committing the claim because commodity quantities depend on the selected project. This authored walkthrough does not verify current-patch compatibility.</p>'
@@ -109,6 +110,24 @@ const scenarios: Scenario[] = [
       support: [/Amber Locks/iu, /east sluice/iu, /pearl spindle/iu, /twice/iu, /blue water indicator/iu] }] }
 ];
 
+// Paraphrases of starting facts recorded in the retained Frontier acquisition diagnosis.
+// Mocked bytes and SDK output do not reproduce the full installed answer or selected excerpts.
+const frontierStartingFixture: Scenario = {
+  ...scenarios[2],
+  pages: [{
+    url: frontierGuideUrl,
+    title: 'Elite Dangerous system colonisation getting started guide',
+    body: '<p>In the game Elite Dangerous, system colonisation begins by opening the colonisation contact through station services, then selecting an unpopulated destination system within 15 light-years on the galaxy map and choosing the starting structure. The colonisation claim reserves the system for 24 hours. Travel to the system and deploy the beacon at its assigned position through the colonisation suite.</p>'
+      + '<table><tr><th>Mechanic</th><th>Value</th></tr><tr><td>System colonisation</td><td>requires an unpopulated destination within 15 light-years. Registration costs credits based on the structure chosen.</td></tr></table>'
+  }],
+  claims: [{
+    url: frontierGuideUrl,
+    draft: '1. Open the colonisation contact through station services. 2. Use its galaxy map to select the system and choose the starting structure. 3. Travel to the system and use the colonisation suite to deploy the beacon at its assigned position.',
+    answerProbe: /station services.*galaxy map.*starting structure.*deploy the beacon/iu,
+    support: [/station services/iu, /galaxy map/iu, /starting structure/iu, /deploy the beacon/iu]
+  }, scenarios[2].claims[1]]
+};
+
 let scenario = scenarios[0];
 let wrongCitation: 'none' | 'out_of_range' | 'mismatched_url' | 'unknown_url' = 'none';
 let useNumberedLink = false;
@@ -117,6 +136,7 @@ let sourceSuffix = '';
 let sourceTextLimit: number | undefined;
 const capabilityRefusal = "I can't browse the web.";
 const partialExtractionWarning = 'Some selected source material was only partially extracted. This answer is limited to the intact passages available for review.';
+const colonisationSourceLimit = 'The available guide covers initial registration, but does not establish the complete prerequisite list, exact fees, or later construction requirements.';
 const rainwheelCondition = 'The Amber Locks rainwheel procedure works only while the village gate is open.';
 let finalCapabilityRefusal: 'none' | 'only' | 'with_guidance' | 'echoed_warning' | 'warning_only' = 'none';
 let finalRefusalText = capabilityRefusal;
@@ -131,6 +151,8 @@ const presentationVersion = 'gaming-clear-presentation/v1';
 const finalOutputs: string[] = [];
 const finalEvidence: Array<{ sourceIndex: number; url: string; text: string }> = [];
 let presentSteps = false;
+let replayColonisationTasks: 'none' | 'observed' | 'structured' = 'none';
+let partialRefusalWithSourceGap = false;
 let awkwardAnswer = false;
 const fixtureMeasurements: Array<Record<string, unknown>> = [];
 const adversarialMeasurements: Array<Record<string, unknown>> = [];
@@ -179,7 +201,18 @@ function draft(payload: any, forDelivery = false): string {
     if (forDelivery && wrongCitation === 'out_of_range') return claimDraft + ' [99]';
     const url = forDelivery && wrongCitation === 'mismatched_url' && index === 0 ? scenario.pages[1].url
       : forDelivery && wrongCitation === 'unknown_url' ? 'https://not-selected.example/guide' : claim.url;
-    return useNumberedLink || url !== claim.url ? claimDraft + ' [' + source + '](' + url + ')' : claimDraft + ' [' + source + ']';
+    const citation = useNumberedLink || url !== claim.url ? ' [' + source + '](' + url + ')' : ' [' + source + ']';
+    if (replayColonisationTasks === 'structured' && forDelivery) {
+      return index === 0
+        ? [
+          '## Getting started with system colonisation',
+          '### Prerequisites\nThe destination must be unpopulated and within 15 light-years. Registration costs credits based on the structure you choose.' + citation,
+          '### First steps\n' + claimDraft.split('\n').map(step => step + citation).join('\n'),
+          'The colonisation claim reserves the system for 24 hours.' + citation
+        ].join('\n\n')
+        : '### Important limitations\n' + colonisationSourceLimit + '\n\n' + claimDraft + citation;
+    }
+    return claimDraft + citation;
   }).join('\n\n');
 }
 beforeEach(() => {
@@ -188,6 +221,8 @@ beforeEach(() => {
   useNumberedLink = false;
   finalCapabilityRefusal = 'none'; finalRefusalText = capabilityRefusal; sourceTextLimit = undefined; citeFallback = false; presentSteps = false; awkwardAnswer = false;
   finalQualificationPresentation = '';
+  replayColonisationTasks = 'none';
+  partialRefusalWithSourceGap = false;
   omitFinalCitations = false;
   stages.length = 0; searches.length = 0; acquired.length = 0; finalOutputs.length = 0; finalEvidence.length = 0; documents.length = 0; evaluations.length = 0;
   acquisitionDurations.length = 0; generationStarted = 0; generationFinished = 0;
@@ -230,7 +265,15 @@ beforeEach(() => {
       stages.push('reasoning');
       output = JSON.stringify({ reasoning_steps: [], assumptions: [], constraints: [], tradeoffs: [], alternatives_considered: [],
         chosen_path_justification: '', response_mode: 'answer', achievable_subtasks: ['answer only acquired gameplay claims'],
-        blocked_subtasks: [], user_visible_caveats: [], claim_tags: [], final_answer: draft(payload) });
+        blocked_subtasks: [], user_visible_caveats: [], claim_tags: [],
+        ...(partialRefusalWithSourceGap ? {
+          response_mode: 'partial_refusal',
+          blocked_subtasks: ['Establish how to repair a damaged spindle.'],
+          user_visible_caveats: ['The selected passage does not establish how to repair a damaged spindle.']
+        } : {}),
+        ...(replayColonisationTasks !== 'none' ? colonisationReasoningTasks : {}),
+        ...(replayColonisationTasks === 'structured' ? { user_visible_caveats: [colonisationSourceLimit] } : {}),
+        final_answer: draft(payload) });
     } else if (input.includes('Gaming guide intake policy: compact-v1')) {
       stages.push('intake'); output = 'Use the acquired guide passages, preserve qualifications and spoiler limits, and cite each factual recommendation.';
     } else {
@@ -454,6 +497,22 @@ it.each(['echoed_warning', 'warning_only'] as const)(
   }
 );
 
+it.each(['only', 'warning_only', 'echoed_warning'] as const)(
+  'withholds %s even when partial-refusal task metadata could add caveats', async finalMode => {
+    scenario = scenarios[4];
+    partialRefusalWithSourceGap = true;
+    finalCapabilityRefusal = finalMode;
+    citeFallback = true;
+    sourceTextLimit = 900;
+    sourceSuffix = '<p>' + 'The station scenery includes nearby landmarks. '.repeat(25) + '</p>';
+    const result = await harness(false).complete();
+    expect(result.result).toMatchObject({ coverageSatisfied: true, reason: 'GENERATION_UNAVAILABLE' });
+    expect(result.result.answer).toBeUndefined();
+    expect(stages).toEqual(['intake', 'reasoning', 'final']);
+    expect(sdk).toHaveBeenCalledTimes(3);
+  }
+);
+
 it.each([capabilityRefusal, 'I cannot answer this question in full.'])(
   'delivers substantive cited guidance with its capability and extraction qualifications (%s)', async limitation => {
     scenario = scenarios[4];
@@ -486,6 +545,18 @@ it.each([
     expect(result.result.answer?.response).toContain(finalOutputs[0]);
   });
 
+it.each(['\n\n', '\n\n\n'] as const)('retains one leading extraction notice across separator %j', async separator => {
+  scenario = scenarios[4];
+  sourceTextLimit = 900;
+  sourceSuffix = '<p>' + 'The station scenery includes nearby landmarks. '.repeat(25) + '</p>';
+  const distinctLimitation = 'The selected passage does not establish how to repair a damaged spindle.';
+  finalQualificationPresentation = [partialExtractionWarning, partialExtractionWarning, distinctLimitation].join(separator);
+  const result = await harness(false).complete();
+  expect(result.result).toMatchObject({ state: 'answer_ready', answer: { sources: [{ url: scenario.pages[0].url }] } });
+  expect(result.result.answer?.response).toBe(finalOutputs[0].slice(partialExtractionWarning.length + separator.length));
+  expect(sdk).toHaveBeenCalledTimes(3);
+});
+
 it('models an ordered presentation rewrite in the final call without changing the authored facts', async () => {
   scenario = scenarios[2];
   presentSteps = true;
@@ -499,6 +570,36 @@ it('models an ordered presentation rewrite in the final call without changing th
   expect(finalOutputs[0].match(/obtain the required colonisation claim/gu)).toHaveLength(1);
   expect(finalOutputs[0].split(/\n\n/u)[0].replace(/ \[\d+\]$/u, '')).toBe(steps.join('\n'));
   expect(stages).toEqual(['intake', 'reasoning', 'final']);
+});
+
+it.each(['observed', 'structured'] as const)('delivers the original colonisation request with %s task metadata', async replay => {
+  scenario = replay === 'structured' ? frontierStartingFixture : scenarios[2];
+  replayColonisationTasks = replay;
+  presentSteps = true;
+  const result = await harness(false).complete();
+  expect(result.result.state === 'answer_ready' ? undefined : { reason: result.result.reason,
+    accepted: evaluations.flatMap(value => value.accepted).length, missing: result.result.missingCoverage,
+    stages }).toBeUndefined();
+  expect(result.result).toMatchObject({ state: 'answer_ready', coverageSatisfied: true,
+    answer: { sources: [{ url: frontierGuideUrl }] } });
+  expect(result.result.selectedEvidenceIds).toHaveLength(2);
+  const answer = result.result.answer!.response;
+  expect(answer).not.toContain(malformedColonisationCapabilityParagraph);
+  expect(answer).not.toMatch(/I can help with Explain|but I can't Establish|Cite source \[1\] and distinguish/u);
+  expect(answer.startsWith(finalOutputs[0])).toBe(true);
+  const steps = scenario.claims[0].draft.split(/ (?=[23]\. )/gu);
+  if (replay === 'structured') {
+    expect(answer.split('\n').filter(line => /^\d\. /u.test(line))).toEqual(steps.map(step => step + ' [1]'));
+    expect(answer.split(colonisationSourceLimit)).toHaveLength(2);
+    expect(answer).toContain('within 15 light-years.');
+    expect(answer).toContain('reserves the system for 24 hours. [1]');
+    expect(answer).not.toMatch(/construction commodities|exact fees of|\d+ credits/u);
+  } else {
+    expect(answer.split('\n\n')[0]).toBe(steps.join('\n') + ' [1]');
+  }
+  expect(answer).toMatch(/current patch compatibility could not be verified/iu);
+  expect(stages).toEqual(['intake', 'reasoning', 'final']);
+  expect(sdk).toHaveBeenCalledTimes(3);
 });
 
 it('retains a material source prerequisite in the presented answer', async () => {

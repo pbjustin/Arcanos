@@ -497,6 +497,7 @@ function rewriteUnsupportedCurrentExternalStateSections(params: {
   text: string;
   userPrompt: string;
   reasoningHonesty: TrinityReasoningHonesty;
+  gamingClaimNotices?: Set<string>;
 }): { text: string; blockedOrRewrittenClaims: string[] } {
   if (!requestTargetsCurrentExternalState(params.userPrompt)) {
     return {
@@ -528,12 +529,14 @@ function rewriteUnsupportedCurrentExternalStateSections(params: {
     if (isLikelyCurrentExternalStateSectionHeading(line, params.userPrompt)) {
       blockedOrRewrittenClaims.push(line);
       if (!liveLimitationAdded) {
-        keptLines.push(ensureSingleSentence(buildLimitationSentence({
+        const notice = ensureSingleSentence(buildLimitationSentence({
           fallbackText: LIVE_EXTERNAL_STATE_LIMITATION_FALLBACK,
           existingCaveats: params.reasoningHonesty.userVisibleCaveats,
           blockedSubtasks: params.reasoningHonesty.blockedSubtasks,
           matcher: /\b(live|browse|current|latest|verify|external|competitor|market|news)\b/i
-        })));
+        }));
+        if (params.gamingClaimNotices) params.gamingClaimNotices.add(notice);
+        else keptLines.push(notice);
         liveLimitationAdded = true;
       }
       inUnsupportedExternalStateSection = true;
@@ -1356,7 +1359,13 @@ function rewriteUnsupportedClaims(params: {
   capabilityFlags: TrinityCapabilityFlags;
   reasoningHonesty: TrinityReasoningHonesty;
   instructionalVerificationPolicy?: TrinityOutputControls['instructionalVerificationPolicy'];
+  gamingClaimNotices?: Set<string>;
 }): { text: string; blockedOrRewrittenClaims: string[] } {
+  const renderNotice = (notice: string): string | null => {
+    if (!params.gamingClaimNotices) return notice;
+    params.gamingClaimNotices.add(notice);
+    return null;
+  };
   const blockedOrRewrittenClaims: string[] = [];
   let liveLimitationAdded = false;
   let backendLimitationAdded = false;
@@ -1373,7 +1382,8 @@ function rewriteUnsupportedClaims(params: {
     ? rewriteUnsupportedCurrentExternalStateSections({
         text: params.text,
         userPrompt: params.userPrompt,
-        reasoningHonesty: params.reasoningHonesty
+        reasoningHonesty: params.reasoningHonesty,
+        gamingClaimNotices: params.gamingClaimNotices
       })
     : { text: params.text, blockedOrRewrittenClaims: [] };
   if (sectionRewrite.blockedOrRewrittenClaims.length > 0) {
@@ -1424,12 +1434,13 @@ function rewriteUnsupportedClaims(params: {
       inUnsupportedExternalStateSection = externalStateSectionHeading || inUnsupportedExternalStateSection || isListItem(segment);
       if (!liveLimitationAdded) {
         liveLimitationAdded = true;
-        return ensureSingleSentence(buildLimitationSentence({
-          fallbackText: "I can't confirm current external state here without live access",
-          existingCaveats: params.reasoningHonesty.userVisibleCaveats,
-          blockedSubtasks: params.reasoningHonesty.blockedSubtasks,
-          matcher: /\b(live|browse|current|latest|verify|external|competitor)\b/i
-        }));
+        return renderNotice(params.gamingClaimNotices ? LIVE_EXTERNAL_STATE_LIMITATION_FALLBACK + '.'
+          : ensureSingleSentence(buildLimitationSentence({
+              fallbackText: "I can't confirm current external state here without live access",
+              existingCaveats: params.reasoningHonesty.userVisibleCaveats,
+              blockedSubtasks: params.reasoningHonesty.blockedSubtasks,
+              matcher: /\b(live|browse|current|latest|verify|external|competitor)\b/i
+            })));
       }
       return null;
     }
@@ -1439,7 +1450,7 @@ function rewriteUnsupportedClaims(params: {
       blockedOrRewrittenClaims.push(segment);
       if (!backendLimitationAdded) {
         backendLimitationAdded = true;
-        return `${BACKEND_STATE_LIMITATION_FALLBACK}.`;
+        return renderNotice(BACKEND_STATE_LIMITATION_FALLBACK + '.');
       }
       return null;
     }
@@ -1448,7 +1459,7 @@ function rewriteUnsupportedClaims(params: {
       blockedOrRewrittenClaims.push(segment);
       if (!persistenceLimitationAdded) {
         persistenceLimitationAdded = true;
-        return `${PERSISTENCE_ACTION_LIMITATION_FALLBACK}.`;
+        return renderNotice(PERSISTENCE_ACTION_LIMITATION_FALLBACK + '.');
       }
       return null;
     }
@@ -1485,6 +1496,62 @@ function ensureRequiredLimitation(text: string, reasoningHonesty: TrinityReasoni
     );
   }
   return text;
+}
+
+/** Gaming keeps task summaries private and renders player-facing caveats after the guidance. */
+function applyGamingLimitations(
+  text: string, reasoningHonesty: TrinityReasoningHonesty, caveats: string[]
+): string {
+  if (caveats.length === 0 && reasoningHonesty.blockedSubtasks.length === 0) return text.trim();
+
+  const capabilityLimitations = [
+    { task: /^browse\b/i, caveat: "I can't browse for additional sources here." },
+    { task: /^(?:verify|confirm|check)\b.*\b(?:live|current|external)\b.*\bplatform availability\b/i,
+      caveat: "I can't verify live game state or platform availability here." },
+    { task: /^(?:verify|confirm|check)\b.*\b(?:live|current|external)\b/i, caveat: "I can't verify live game state here." },
+    { task: /^(?:run|execute|perform|call|deploy)\s+(?:the\s+)?(?:backend|commands?|scripts?|tools?|actions?)\b/i,
+      caveat: "I can't execute actions here." },
+    { task: /^(?:save|persist|store)\s+(?:the\s+|your\s+)?(?:information|data|preferences|progress|notes?|details|this)\b/i,
+      caveat: "I can't save information here." }
+  ];
+  const normalizeCaveat = (value: string) => normalizeWhitespace(value).replace(/\s+/gu, ' ').toLowerCase()
+    .replace(/\u2019/gu, "'").replace(/\.$/u, '').replace(/^(?:i|we) can(?:not|'t) /u, "i can't ");
+  const capabilityScope = (value: string) => normalizeCaveat(value)
+    .replace(/^i can't /u, '').replace(/ here(?: without live access)?$/u, '');
+  let fence: string | undefined;
+  const prose = text.split(/\r?\n/u).map(line => {
+    const marker = /^ {0,3}(\x60{3,}|~{3,})/u.exec(line)?.[1];
+    if (marker && (!fence || (marker.startsWith(fence) && line.trim() === marker))) {
+      fence = fence ? undefined : marker;
+      return '';
+    }
+    return fence || /^(?: {4}|\t| {0,3}>)/u.test(line) ? '' : line;
+  }).join('\n');
+  const existing = new Set(prose.split(/\n[ \t]*\n/u).flatMap(paragraph =>
+    [paragraph, ...splitIntoSegments(paragraph)]).map(normalizeCaveat));
+  const statedCapabilities = new Set([...existing, ...caveats.map(normalizeCaveat)]
+    .filter(value => value.startsWith("i can't ")).map(capabilityScope));
+  let hasOtherBlockedTask = false;
+  for (const task of reasoningHonesty.blockedSubtasks) {
+    const scope = capabilityScope(task);
+    const limitation = capabilityLimitations.find(entry => entry.task.test(scope));
+    if (!limitation) {
+      hasOtherBlockedTask ||= Boolean(scope);
+    } else if (!statedCapabilities.has(scope)) {
+      caveats.push(limitation.caveat);
+    }
+  }
+
+  if (hasOtherBlockedTask && !caveats.some(caveat =>
+    !capabilityLimitations.some(entry => entry.task.test(capabilityScope(caveat))))) {
+    caveats.push('The available evidence does not establish every requested detail.');
+  }
+
+  // Preserve the provider's exact Markdown and citations. Compare complete
+  // caveats, since different facts can have limitations of the same category.
+  const missing = new Map(caveats.filter(caveat => !existing.has(normalizeCaveat(caveat)))
+    .map(caveat => [normalizeCaveat(caveat), caveat]));
+  return [text.trim(), ...missing.values()].filter(Boolean).join('\n\n');
 }
 
 function isOpeningPaddingSegment(segment: string): boolean {
@@ -2135,6 +2202,7 @@ export function prepareTrinityDirectAnswerHonesty(params: {
   capabilityFlags: TrinityCapabilityFlags;
   outputControls: TrinityOutputControls;
   preservePresentation?: boolean;
+  gamingPresentation?: boolean;
 }): { honestyFiltered: FinalClaimBlockResult; reasoningHonesty: TrinityReasoningHonesty; ruleIds: TrinityHonestyRuleId[] } {
   const { capabilityFlags, outputControls } = params;
   const needsCurrentStateLimitation =
@@ -2150,7 +2218,7 @@ export function prepareTrinityDirectAnswerHonesty(params: {
   const reasoningHonesty = createDefaultTrinityReasoningHonesty();
   const honestyFiltered = enforceFinalStageHonesty(params.candidateText, reasoningHonesty, capabilityFlags,
     readIntentMode(outputControls), params.preservePresentation, outputControls.instructionalVerificationPolicy,
-    params.userPrompt);
+    params.userPrompt, params.gamingPresentation);
   const ruleIds = [...honestyFiltered.ruleIds];
   if (needsCurrentStateLimitation && !suppliedCanonScope) ruleIds.push('CURRENT_EXTERNAL_USER_REQUEST');
   if (honestyFiltered.blocked || needsCurrentStateLimitation) {
@@ -2193,7 +2261,8 @@ export function enforceFinalStageHonesty(
   requestIntent: TrinityIntentMode = 'EXECUTE_TASK',
   preservePresentation = false,
   instructionalVerificationPolicy?: TrinityOutputControls['instructionalVerificationPolicy'],
-  literalRequestPrompt = ''
+  literalRequestPrompt = '',
+  gamingPresentation = false
 ): FinalClaimBlockResult {
   const promptGeneration = requestIntent === 'PROMPT_GENERATION';
   const supportsLiveVerification =
@@ -2266,24 +2335,26 @@ export function enforceFinalStageHonesty(
   let text = normalizeOutputSpacing(keptLines);
   const fallbackOnly = text.length === 0;
   const leadingDisclaimers: string[] = [];
-  const partialRefusalLead = buildPartialRefusalLead(reasoningHonesty);
+  const partialRefusalLead = gamingPresentation ? null : buildPartialRefusalLead(reasoningHonesty);
 
   if (partialRefusalLead && !hasExplicitLimitationLanguage(text, reasoningHonesty)) {
     leadingDisclaimers.push(partialRefusalLead);
   }
-  if ((blockedCategories.has('live_verification') || blockedCategories.has('current_external_state')) && !/live or current external information/i.test(text)) {
+  if (!gamingPresentation
+    && (blockedCategories.has('live_verification') || blockedCategories.has('current_external_state'))
+    && !/live or current external information/i.test(text)) {
     const unsubstantiatedTutorClaim = instructionalVerificationPolicy === 'tutor-math-v1'
       && !ruleIds.has('LIVE_VERIFICATION_MODEL_CLAIM') && !ruleIds.has('CURRENT_EXTERNAL_MODEL_CLAIM');
     leadingDisclaimers.push(unsubstantiatedTutorClaim
       ? UNSUBSTANTIATED_VERIFICATION_LIMITATION : GENERIC_LIVE_EXTERNAL_INFORMATION_FALLBACK);
   }
-  if (blockedCategories.has('backend_action') && !/backend or persistence action/i.test(text)) {
+  if (!gamingPresentation && blockedCategories.has('backend_action') && !/backend or persistence action/i.test(text)) {
     leadingDisclaimers.push(GENERIC_BACKEND_ACTION_FALLBACK);
   }
   if (leadingDisclaimers.length > 0) {
     text = `${dedupePreservingOrder(leadingDisclaimers).join(' ')}${text ? `\n\n${text}` : ''}`.trim();
   }
-  if (!text) {
+  if (!text && !gamingPresentation) {
     text = buildFallbackHonestyText(reasoningHonesty);
   }
 
@@ -2479,20 +2550,48 @@ export function enforceFinalStageHonestyAndMinimalism(params: {
   reasoningHonesty: TrinityReasoningHonesty;
   /** Internal Gaming guide scope: retain Markdown and leave soft answer depth to generation. */
   preservePresentation?: boolean;
-}): { text: string; removedMetaSections: string[]; blockedOrRewrittenClaims: string[] } {
+  /** Categories from the first claim pass, present only for resolved Gaming policy. */
+  gamingClaimBlocks?: FinalClaimBlockResult['blockedCategories'];
+}): { text: string; removedMetaSections: string[]; blockedOrRewrittenClaims: string[]; preLimitationCandidate?: string } {
   const withoutMetaSections = removeUnrequestedMetaSections(params.text, params.outputControls);
   if (params.preservePresentation) {
-    const rewrittenClaims = rewriteUnsupportedClaims({
-      text: withoutMetaSections.text,
+    const gamingPresentation = params.gamingClaimBlocks !== undefined;
+    const claimReview = {
       userPrompt: params.userPrompt,
       capabilityFlags: params.capabilityFlags,
-      reasoningHonesty: params.reasoningHonesty,
+      reasoningHonesty: gamingPresentation
+        ? { ...params.reasoningHonesty, blockedSubtasks: [], userVisibleCaveats: [] } : params.reasoningHonesty,
       instructionalVerificationPolicy: params.outputControls.instructionalVerificationPolicy
-    });
+    };
+    const gamingClaimNotices = gamingPresentation ? new Set<string>() : undefined;
+    const rewrittenClaims = rewriteUnsupportedClaims({ ...claimReview, text: withoutMetaSections.text, gamingClaimNotices });
     const safeText = rewrittenClaims.blockedOrRewrittenClaims.length > 0
       ? rewrittenClaims.text : withoutMetaSections.text;
+    const hasReasoningLimitation = params.reasoningHonesty.responseMode !== 'answer'
+      || params.reasoningHonesty.blockedSubtasks.length > 0;
+    const safeCaveats = gamingPresentation && hasReasoningLimitation
+      ? dedupePreservingOrder(params.reasoningHonesty.userVisibleCaveats)
+      .map(caveat => /[.!?]$/u.test(caveat) ? caveat : caveat + '.')
+      .filter(caveat => {
+        const firstPass = enforceFinalStageHonesty(caveat, claimReview.reasoningHonesty, params.capabilityFlags,
+          'EXECUTE_TASK', true, undefined, '', true);
+        return !firstPass.blocked && rewriteUnsupportedClaims({ ...claimReview, text: caveat }).blockedOrRewrittenClaims.length === 0;
+      }) : [];
+    // Append trusted notices from both claim passes after the surviving text.
+    // They cannot satisfy gameplay admission or hide a partial answer.
+    if (params.gamingClaimBlocks?.some(category => category === 'live_verification' || category === 'current_external_state')) {
+      safeCaveats.push(LIVE_EXTERNAL_STATE_LIMITATION_FALLBACK + '.');
+    }
+    if (params.gamingClaimBlocks?.includes('backend_action')) {
+      safeCaveats.push(BACKEND_STATE_LIMITATION_FALLBACK + '.');
+    }
+    if (gamingClaimNotices) safeCaveats.push(...gamingClaimNotices);
+    const text = gamingPresentation ? applyGamingLimitations(safeText, params.reasoningHonesty, safeCaveats)
+      : ensureRequiredLimitation(safeText, params.reasoningHonesty).trim();
+    const preLimitationCandidate = safeText.trim();
     return {
-      text: ensureRequiredLimitation(safeText, params.reasoningHonesty).trim(),
+      text,
+      ...(gamingPresentation && text !== preLimitationCandidate ? { preLimitationCandidate } : {}),
       removedMetaSections: withoutMetaSections.removedMetaSections,
       blockedOrRewrittenClaims: rewrittenClaims.blockedOrRewrittenClaims
     };

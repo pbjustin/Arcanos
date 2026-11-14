@@ -1011,9 +1011,9 @@ player and acquired-source content.
 
 | Dimension | Generation instruction |
 | --- | --- |
-| Clarity | Make prerequisites and actions easy to understand. Use readable steps and precise terms. |
+| Clarity | For procedures, give established prerequisites and number the supported steps in gameplay order. Use compact answers for locations and mechanics, and prioritize relevant build choices and meta tradeoffs. |
 | Leverage | Answer the immediate question first and prioritize practical next actions. |
-| Efficiency | Match the requested depth and remove repetition and filler. |
+| Efficiency | Match the requested depth. State each material limitation once in player-facing language and keep internal task summaries private. |
 | Alignment | Preserve the game, progression, platform, edition, difficulty, spoiler limits and requested format. |
 | Resilience | Keep material qualifications and citations visible. State uncertainty or ask a relevant clarification when needed. |
 
@@ -1032,6 +1032,10 @@ authority, applicability and freshness, and rejects any mismatched binding.
 Expiring evidence still triggers `EVIDENCE_REVALIDATION_REQUIRED`. Citation
 structure and presentation establish provenance and formatting, while the
 generated claims remain model-authored.
+
+When the selected source was partially extracted, delivery retains the exact
+standalone notice. Repeated copies in the leading notice block are collapsed,
+while distinct qualifications and quoted source text are preserved.
 
 Gaming retains its existing audit-content redaction and optional-side-effect
 suppression. The Gaming live validation contract and separately authorized

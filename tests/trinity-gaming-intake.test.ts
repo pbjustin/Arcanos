@@ -2,6 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 import { buildGamingGuideIntakeContract, GAMING_HYBRID_INTAKE } from '../src/shared/gaming/gamingGuideIntakeCore.js';
 import { GAMING_CLEAR_PRESENTATION_POLICY_VERSION } from '../src/shared/gaming/gamingPromptCore.js';
 import type { TrinityRunOptions, TrinityStageObservation } from '../src/core/logic/trinityTypes.js';
+import {
+  colonisationReasoningTasks,
+  colonisationRequest,
+  malformedColonisationCapabilityParagraph
+} from './testUtils/gamingPresentationRegressionFixture.js';
 
 const responsesCreate = jest.fn();
 const runStructuredReasoning = jest.fn();
@@ -123,6 +128,99 @@ describe('Gaming compact Trinity intake through the real Responses adapter', () 
     expect(responsesCreate).toHaveBeenCalledTimes(2);
   });
 
+  it('keeps task summaries out of the observed Elite Dangerous partial-refusal answer', async () => {
+    const guide = '## Getting started with system colonisation\n\nThe official guide explains the initial registration process. [1]';
+    runStructuredReasoning.mockResolvedValueOnce({
+      reasoning_steps: [], assumptions: [], constraints: [], tradeoffs: [],
+      alternatives_considered: [], chosen_path_justification: '',
+      ...colonisationReasoningTasks,
+      user_visible_caveats: [],
+      claim_tags: [], final_answer: guide
+    });
+    responsesCreate.mockResolvedValueOnce(response('Question: how to start system colonisation. Evidence [1].'))
+      .mockResolvedValueOnce(response(guide, false, authorityModel));
+    const result = await runTrinityWritingPipeline(request(colonisationRequest));
+
+    expect(result.result).not.toContain(malformedColonisationCapabilityParagraph);
+    expect(result.result).toBe(guide + "\n\nI can't verify live game state or platform availability here.\n\nThe available evidence does not establish every requested detail.");
+    expect(result.gamingPresentationPolicy).toBe(GAMING_CLEAR_PRESENTATION_POLICY_VERSION);
+    expect(createGPT5Reasoning).not.toHaveBeenCalled();
+    expect(responsesCreate).toHaveBeenCalledTimes(2);
+  });
+
+  it('retains genuine capability limits alongside a separate source gap', async () => {
+    const sourceGap = 'The guide does not establish registration fees. Later construction is outside its scope.';
+    const guide = 'The official guide explains registration. [1]';
+    runStructuredReasoning.mockResolvedValueOnce({
+      reasoning_steps: [], assumptions: [], constraints: [], tradeoffs: [],
+      alternatives_considered: [], chosen_path_justification: '',
+      response_mode: 'partial_refusal', achievable_subtasks: ['Explain registration.'],
+      blocked_subtasks: [
+        'Establish the fees and construction requirements.',
+        'Browse for additional sources.',
+        'Verify current live mechanics or platform availability.',
+        'Run the backend action.',
+        'Save your preferences.'
+      ],
+      user_visible_caveats: [
+        sourceGap, sourceGap, 'I verified the current live patch.', 'I saved your preferences.'
+      ],
+      claim_tags: [], final_answer: guide
+    });
+    const candidate = guide + '\n\n' + sourceGap;
+    responsesCreate.mockResolvedValueOnce(response('Question: how to start system colonisation. Evidence [1].'))
+      .mockResolvedValueOnce(response(candidate, false, authorityModel));
+    const result = await runTrinityWritingPipeline(request(colonisationRequest));
+
+    expect(result.result).toBe([
+      candidate,
+      "I can't browse for additional sources here.",
+      "I can't verify live game state or platform availability here.",
+      "I can't execute actions here.",
+      "I can't save information here."
+    ].join('\n\n'));
+    expect(result.gamingPresentationPolicy).toBe(GAMING_CLEAR_PRESENTATION_POLICY_VERSION);
+    expect(JSON.stringify(result)).not.toContain('gaming-pre-limitation-candidate');
+    expect(createGPT5Reasoning).not.toHaveBeenCalled();
+  });
+
+  it('rejects abrupt gameplay text even when an appended caveat has a complete ending', async () => {
+    const incompleteGuide = 'The west valve is in Tide Hall. [1] Next, use the';
+    runStructuredReasoning.mockResolvedValueOnce({
+      reasoning_steps: [], assumptions: [], constraints: [], tradeoffs: [],
+      alternatives_considered: [], chosen_path_justification: '',
+      response_mode: 'partial_refusal', achievable_subtasks: ['Explain the location.'],
+      blocked_subtasks: ['Establish the registration fees.'],
+      user_visible_caveats: ['The guide does not establish the registration fees.'],
+      claim_tags: [], final_answer: incompleteGuide
+    });
+    responsesCreate.mockResolvedValueOnce(response('Question: next step. Evidence [1].'))
+      .mockResolvedValueOnce(response(incompleteGuide, false, authorityModel));
+
+    await expect(runTrinityWritingPipeline(request())).rejects.toMatchObject({
+      code: 'TRINITY_OUTPUT_INTEGRITY_FAILED', integrityIssues: ['abrupt_mid_sentence_ending']
+    });
+    expect(responsesCreate).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a direct Gaming answer before a required current-state limitation', async () => {
+    const prompt = 'Where is the west valve, and can you verify the current release pricing?';
+    const candidate = 'The west valve is in Tide Hall. [1]';
+    const input = request(prompt);
+    const options = input.context.runOptions as TrinityRunOptions;
+    delete options.gamingGuideIntakePolicy;
+    options.answerMode = 'direct';
+    options.maxWords = 120;
+    responsesCreate.mockResolvedValueOnce(response(candidate, false, authorityModel));
+
+    const result = await runTrinityWritingPipeline(input);
+    expect(result.result).toBe(candidate + "\n\nI can't verify current external state here without live access.");
+    expect(result.gamingPresentationPolicy).toBe(GAMING_CLEAR_PRESENTATION_POLICY_VERSION);
+    expect(responsesCreate).toHaveBeenCalledTimes(1);
+    expect(runStructuredReasoning).not.toHaveBeenCalled();
+    expect(createGPT5Reasoning).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['compact', '## Gaming CLEAR checklist\n- Clarity: reviewed.'],
     ['direct', '**Gaming CLEAR Presentation scores:**\nClarity 4.'],
@@ -192,6 +290,69 @@ describe('Gaming compact Trinity intake through the real Responses adapter', () 
     expect(result.fallbackFlag).toBe(!keepGuide);
     expect(result.gamingPresentationPolicy).toBe(keepGuide ? GAMING_CLEAR_PRESENTATION_POLICY_VERSION : undefined);
     if (keepGuide) expect(result.result).toContain('Turn the west valve. [1]');
+  });
+
+  it.each(['compact', 'direct'] as const)('puts %s claim-blocking notices once after the surviving guide', async path => {
+    const guide = 'Turn the west valve to open the return route [1].';
+    const liveLimit = "I can't verify current external state here without live access.";
+    const actionLimit = "I can't confirm backend state or run backend actions here.";
+    const persistenceLimit = "I haven't saved or persisted anything here.";
+    const sourceLimit = 'The guide does not establish the construction requirements.';
+    const candidate = [
+      'I verified the current patch live in-game.',
+      'I called the backend API.',
+      'I saved your preferences.',
+      guide,
+      sourceLimit
+    ].join('\n\n');
+    const input = request();
+    const options = input.context.runOptions as TrinityRunOptions;
+    if (path === 'compact') {
+      runStructuredReasoning.mockResolvedValueOnce({
+        reasoning_steps: [], assumptions: [], constraints: [], tradeoffs: [],
+        alternatives_considered: [], chosen_path_justification: '',
+        response_mode: 'partial_refusal', achievable_subtasks: ['Explain the next step.'],
+        blocked_subtasks: ['Verify current external state.', 'Confirm backend state or run backend actions.'],
+        user_visible_caveats: [sourceLimit, liveLimit, actionLimit],
+        claim_tags: [], final_answer: candidate
+      });
+      responsesCreate.mockResolvedValueOnce(response('Question: next step. Evidence [1].'));
+    } else {
+      delete options.gamingGuideIntakePolicy;
+      options.answerMode = 'direct';
+      options.requestedVerbosity = 'normal';
+      options.maxWords = 120;
+    }
+    responsesCreate.mockResolvedValueOnce(response(candidate, false, authorityModel));
+
+    const result = await runTrinityWritingPipeline(input);
+    expect(result.result).toBe([guide, sourceLimit, liveLimit, actionLimit, persistenceLimit].join('\n\n'));
+    expect(result.fallbackFlag).toBe(false);
+    expect(result.gamingPresentationPolicy).toBe(GAMING_CLEAR_PRESENTATION_POLICY_VERSION);
+    expect(responsesCreate).toHaveBeenCalledTimes(path === 'compact' ? 2 : 1);
+    expect(createGPT5Reasoning).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['compact', false], ['compact', true], ['direct', false], ['direct', true]
+  ] as const)('does not count a %s second-pass persistence notice as guidance (guide survives=%s)', async (path, keepGuide) => {
+    const guide = 'Turn the west valve to open the return route [1].';
+    const claim = 'I saved your preferences.';
+    const notice = "I haven't saved or persisted anything here.";
+    const input = request();
+    if (path === 'compact') {
+      responsesCreate.mockResolvedValueOnce(response('Question: next step. Evidence [1].'));
+    } else {
+      delete (input.context.runOptions as TrinityRunOptions).gamingGuideIntakePolicy;
+      input.context.runOptions.answerMode = 'direct';
+    }
+    responsesCreate.mockResolvedValueOnce(response(keepGuide ? claim + '\n\n' + guide : claim, false, authorityModel));
+
+    const result = await runTrinityWritingPipeline(input);
+    expect(result.result).toBe(keepGuide ? guide + '\n\n' + notice : notice);
+    expect(result.fallbackFlag).toBe(!keepGuide);
+    expect(result.gamingPresentationPolicy).toBe(keepGuide ? GAMING_CLEAR_PRESENTATION_POLICY_VERSION : undefined);
+    expect(responsesCreate).toHaveBeenCalledTimes(path === 'compact' ? 2 : 1);
   });
 
   it('rejects an abrupt hybrid build after one final attempt without an audit or continuation', async () => {
