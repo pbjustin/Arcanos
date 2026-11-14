@@ -1487,6 +1487,62 @@ function ensureRequiredLimitation(text: string, reasoningHonesty: TrinityReasoni
   return text;
 }
 
+/** Gaming keeps task summaries private and renders player-facing caveats after the guidance. */
+function applyGamingLimitations(
+  text: string, reasoningHonesty: TrinityReasoningHonesty, caveats: string[]
+): string {
+  if (reasoningHonesty.responseMode === 'answer' && reasoningHonesty.blockedSubtasks.length === 0) return text.trim();
+
+  const capabilityLimitations = [
+    { task: /^browse\b/i, caveat: "I can't browse for additional sources here." },
+    { task: /^(?:verify|confirm|check)\b.*\b(?:live|current|external)\b.*\bplatform availability\b/i,
+      caveat: "I can't verify live game state or platform availability here." },
+    { task: /^(?:verify|confirm|check)\b.*\b(?:live|current|external)\b/i, caveat: "I can't verify live game state here." },
+    { task: /^(?:run|execute|perform|call|deploy)\s+(?:the\s+)?(?:backend|commands?|scripts?|tools?|actions?)\b/i,
+      caveat: "I can't execute actions here." },
+    { task: /^(?:save|persist|store)\s+(?:the\s+|your\s+)?(?:information|data|preferences|progress|notes?|details|this)\b/i,
+      caveat: "I can't save information here." }
+  ];
+  const normalizeCaveat = (value: string) => normalizeWhitespace(value).replace(/\s+/gu, ' ').toLowerCase()
+    .replace(/\u2019/gu, "'").replace(/\.$/u, '').replace(/^(?:i|we) can(?:not|'t) /u, "i can't ");
+  const capabilityScope = (value: string) => normalizeCaveat(value)
+    .replace(/^i can't /u, '').replace(/ here(?: without live access)?$/u, '');
+  let fence: string | undefined;
+  const prose = text.split(/\r?\n/u).map(line => {
+    const marker = /^ {0,3}(\x60{3,}|~{3,})/u.exec(line)?.[1];
+    if (marker && (!fence || (marker.startsWith(fence) && line.trim() === marker))) {
+      fence = fence ? undefined : marker;
+      return '';
+    }
+    return fence || /^(?: {4}|\t| {0,3}>)/u.test(line) ? '' : line;
+  }).join('\n');
+  const existing = new Set(prose.split(/\n[ \t]*\n/u).flatMap(paragraph =>
+    [paragraph, ...splitIntoSegments(paragraph)]).map(normalizeCaveat));
+  const statedCapabilities = new Set([...existing, ...caveats.map(normalizeCaveat)]
+    .filter(value => value.startsWith("i can't ")).map(capabilityScope));
+  let hasOtherBlockedTask = false;
+  for (const task of reasoningHonesty.blockedSubtasks) {
+    const scope = capabilityScope(task);
+    const limitation = capabilityLimitations.find(entry => entry.task.test(scope));
+    if (!limitation) {
+      hasOtherBlockedTask ||= Boolean(scope);
+    } else if (!statedCapabilities.has(scope)) {
+      caveats.push(limitation.caveat);
+    }
+  }
+
+  if (hasOtherBlockedTask && !caveats.some(caveat =>
+    !capabilityLimitations.some(entry => entry.task.test(capabilityScope(caveat))))) {
+    caveats.push('The available evidence does not establish every requested detail.');
+  }
+
+  // Preserve the provider's exact Markdown and citations. Compare complete
+  // caveats, since different facts can have limitations of the same category.
+  const missing = new Map(caveats.filter(caveat => !existing.has(normalizeCaveat(caveat)))
+    .map(caveat => [normalizeCaveat(caveat), caveat]));
+  return [text.trim(), ...missing.values()].filter(Boolean).join('\n\n');
+}
+
 function isOpeningPaddingSegment(segment: string): boolean {
   return OPENING_PADDING_SEGMENT_PATTERNS.some(pattern => pattern.test(segment)) && !LIMITATION_LANGUAGE_PATTERN.test(segment);
 }
@@ -2193,7 +2249,8 @@ export function enforceFinalStageHonesty(
   requestIntent: TrinityIntentMode = 'EXECUTE_TASK',
   preservePresentation = false,
   instructionalVerificationPolicy?: TrinityOutputControls['instructionalVerificationPolicy'],
-  literalRequestPrompt = ''
+  literalRequestPrompt = '',
+  gamingPresentation = false
 ): FinalClaimBlockResult {
   const promptGeneration = requestIntent === 'PROMPT_GENERATION';
   const supportsLiveVerification =
@@ -2266,7 +2323,7 @@ export function enforceFinalStageHonesty(
   let text = normalizeOutputSpacing(keptLines);
   const fallbackOnly = text.length === 0;
   const leadingDisclaimers: string[] = [];
-  const partialRefusalLead = buildPartialRefusalLead(reasoningHonesty);
+  const partialRefusalLead = gamingPresentation ? null : buildPartialRefusalLead(reasoningHonesty);
 
   if (partialRefusalLead && !hasExplicitLimitationLanguage(text, reasoningHonesty)) {
     leadingDisclaimers.push(partialRefusalLead);
@@ -2284,7 +2341,8 @@ export function enforceFinalStageHonesty(
     text = `${dedupePreservingOrder(leadingDisclaimers).join(' ')}${text ? `\n\n${text}` : ''}`.trim();
   }
   if (!text) {
-    text = buildFallbackHonestyText(reasoningHonesty);
+    text = buildFallbackHonestyText(gamingPresentation
+      ? { ...reasoningHonesty, achievableSubtasks: [], blockedSubtasks: [], userVisibleCaveats: [] } : reasoningHonesty);
   }
 
   return {
@@ -2479,20 +2537,32 @@ export function enforceFinalStageHonestyAndMinimalism(params: {
   reasoningHonesty: TrinityReasoningHonesty;
   /** Internal Gaming guide scope: retain Markdown and leave soft answer depth to generation. */
   preservePresentation?: boolean;
-}): { text: string; removedMetaSections: string[]; blockedOrRewrittenClaims: string[] } {
+  gamingPresentation?: boolean;
+}): { text: string; removedMetaSections: string[]; blockedOrRewrittenClaims: string[]; preLimitationCandidate?: string } {
   const withoutMetaSections = removeUnrequestedMetaSections(params.text, params.outputControls);
   if (params.preservePresentation) {
-    const rewrittenClaims = rewriteUnsupportedClaims({
-      text: withoutMetaSections.text,
+    const claimReview = {
       userPrompt: params.userPrompt,
       capabilityFlags: params.capabilityFlags,
-      reasoningHonesty: params.reasoningHonesty,
+      reasoningHonesty: params.gamingPresentation
+        ? { ...params.reasoningHonesty, blockedSubtasks: [], userVisibleCaveats: [] } : params.reasoningHonesty,
       instructionalVerificationPolicy: params.outputControls.instructionalVerificationPolicy
-    });
+    };
+    const rewrittenClaims = rewriteUnsupportedClaims({ ...claimReview, text: withoutMetaSections.text });
     const safeText = rewrittenClaims.blockedOrRewrittenClaims.length > 0
       ? rewrittenClaims.text : withoutMetaSections.text;
+    const safeCaveats = params.gamingPresentation ? dedupePreservingOrder(params.reasoningHonesty.userVisibleCaveats)
+      .map(caveat => /[.!?]$/u.test(caveat) ? caveat : caveat + '.')
+      .filter(caveat => {
+        const firstPass = enforceFinalStageHonesty(caveat, claimReview.reasoningHonesty, params.capabilityFlags,
+          'EXECUTE_TASK', true, undefined, '', true);
+        return !firstPass.blocked && rewriteUnsupportedClaims({ ...claimReview, text: caveat }).blockedOrRewrittenClaims.length === 0;
+      }) : [];
+    const text = params.gamingPresentation ? applyGamingLimitations(safeText, params.reasoningHonesty, safeCaveats)
+      : ensureRequiredLimitation(safeText, params.reasoningHonesty).trim();
     return {
-      text: ensureRequiredLimitation(safeText, params.reasoningHonesty).trim(),
+      text,
+      ...(params.gamingPresentation && text !== safeText.trim() ? { preLimitationCandidate: safeText.trim() } : {}),
       removedMetaSections: withoutMetaSections.removedMetaSections,
       blockedOrRewrittenClaims: rewrittenClaims.blockedOrRewrittenClaims
     };

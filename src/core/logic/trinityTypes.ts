@@ -4,6 +4,7 @@
  */
 
 import type { PreviewAskChaosHook } from '@shared/ask/previewChaos.js';
+import type { GAMING_PRE_LIMITATION_CANDIDATE } from '@shared/gaming/gamingPresentedAnswerBinding.js';
 import type { IntentMode } from '@shared/text/intentModeClassifier.js';
 import type {
   TrinityCapabilityFlags,
@@ -142,6 +143,8 @@ export interface ReasoningLedger {
 }
 
 export interface TrinityResult {
+  /** Internal Gaming admission input, omitted from public serialization. */
+  [GAMING_PRE_LIMITATION_CANDIDATE]?: string;
   result: string;
   module: string;
   meta: {

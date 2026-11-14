@@ -1,6 +1,9 @@
 import { gamingClearHash } from './gamingClearPolicy.js';
 import { GAMING_CLEAR_PRESENTATION_POLICY_VERSION } from './gamingPromptCore.js';
 
+/** Server-only candidate for substance checks before appended caveats. */
+export const GAMING_PRE_LIMITATION_CANDIDATE = Symbol('gaming-pre-limitation-candidate');
+
 /** Server-only proof of output integrity and evidence binding after presentation generation. */
 export const GAMING_PRESENTED_ANSWER = Symbol('gaming.presented-answer/v1');
 export interface GamingPresentedAnswer {

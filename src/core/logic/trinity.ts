@@ -39,6 +39,7 @@ import { getMemoryContext, storePattern } from "@services/memoryAware.js";
 import { getTrinityIntakeModel, getTrinityFinalModel, getTrinityFinalEscalationModel, getTrinityReasoningModel, resolveGenerativeModel } from "@services/openai/credentialProvider.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { getAiExecutionContext } from '@services/openai/aiExecutionContext.js';
+import { GAMING_PRE_LIMITATION_CANDIDATE } from '@shared/gaming/gamingPresentedAnswerBinding.js';
 import type {
   TrinityResult,
   TrinityRunOptions,
@@ -790,15 +791,20 @@ function assertGamingPresentationOutputIsPublic(text: string): void {
 function validateGamingPresentationIntegrity(
   input: Parameters<typeof validateTrinityAnswerIntegrity>[0],
   providerText: string,
-  honestyBlockedClaim: boolean
+  honestyBlockedClaim: boolean,
+  preLimitationCandidate?: string
 ): ReturnType<typeof validateTrinityAnswerIntegrity> {
-  const integrity = validateTrinityAnswerIntegrity(input);
-  if (!honestyBlockedClaim || !integrity.issues.includes('fallback_spliced_mid_answer')
-    || validateTrinityAnswerIntegrity({ ...input, text: providerText }).issues.includes('fallback_spliced_mid_answer')) {
-    return integrity;
+  const issues = new Set(validateTrinityAnswerIntegrity(input).issues);
+  if (preLimitationCandidate !== undefined) {
+    for (const issue of validateTrinityAnswerIntegrity({ ...input, text: preLimitationCandidate }).issues) {
+      issues.add(issue);
+    }
   }
-  const issues = integrity.issues.filter(issue => issue !== 'fallback_spliced_mid_answer');
-  return { valid: issues.length === 0, issues };
+  if (honestyBlockedClaim && issues.has('fallback_spliced_mid_answer')
+    && !validateTrinityAnswerIntegrity({ ...input, text: providerText }).issues.includes('fallback_spliced_mid_answer')) {
+    issues.delete('fallback_spliced_mid_answer');
+  }
+  return { valid: issues.size === 0, issues: [...issues] };
 }
 
 /**
@@ -1243,7 +1249,7 @@ export async function runThroughBrain(
           return {
             directAnswerReasoningHonesty: reasoningHonesty,
             honestyFilteredFinal: { text, fallbackOnly: false, blocked: false, blockedCategories: [], ruleIds: ['NO_HONESTY_REWRITE' as const] },
-            enforcedFinalOutput: { text, removedMetaSections: [], blockedOrRewrittenClaims: [] },
+            enforcedFinalOutput: { text, removedMetaSections: [], blockedOrRewrittenClaims: [], preLimitationCandidate: undefined },
             finalText: text,
             integrity: { valid: true, issues: [] },
           };
@@ -1264,6 +1270,7 @@ export async function runThroughBrain(
           outputControls,
           reasoningHonesty,
           preservePresentation: preserveDirectCandidatePresentation,
+          gamingPresentation: Boolean(gamingPresentationPolicy),
         };
         let enforcedOutput = enforceFinalStageHonestyAndMinimalism(directOutputEnforcement);
         const preserveDirectOutputPresentation = Boolean(gamingPresentationPolicy) || preserveBookerDirectPresentation
@@ -1296,7 +1303,9 @@ export async function runThroughBrain(
           enforcedFinalOutput: enforcedOutput,
           finalText: text,
           integrity: gamingPresentationPolicy
-            ? validateGamingPresentationIntegrity(integrityInput, candidateText, honestyFiltered.blocked)
+            ? validateGamingPresentationIntegrity(
+                integrityInput, candidateText, honestyFiltered.blocked, enforcedOutput.preLimitationCandidate
+              )
             : validateTrinityAnswerIntegrity(integrityInput)
         };
       };
@@ -1736,6 +1745,9 @@ export async function runThroughBrain(
       }
       if (gamingPresentationPolicy && !result.fallbackFlag && finalProcessedSafely && finalText.trim()) {
         result.gamingPresentationPolicy = gamingPresentationPolicy;
+        if (enforcedFinalOutput.preLimitationCandidate !== undefined) {
+          result[GAMING_PRE_LIMITATION_CANDIDATE] = enforcedFinalOutput.preLimitationCandidate;
+        }
       }
       if (integrityRecoveryMeta) {
         result.meta.integrityRecovery = integrityRecoveryMeta;
@@ -2231,7 +2243,8 @@ export async function runThroughBrain(
       readIntentMode(outputControls),
       preserveFinalPresentation,
       outputControls.instructionalVerificationPolicy,
-      trustedPolicyPrompt
+      trustedPolicyPrompt,
+      Boolean(gamingPresentationPolicy)
     );
     const finalOutputEnforcement = {
       text: honestyFilteredFinal.text,
@@ -2239,10 +2252,11 @@ export async function runThroughBrain(
       capabilityFlags,
       outputControls,
       reasoningHonesty,
-      preservePresentation: preserveFinalPresentation
+      preservePresentation: preserveFinalPresentation,
+      gamingPresentation: Boolean(gamingPresentationPolicy)
     };
     let enforcedFinalOutput = validateStructuredOutput
-      ? { text: honestyFilteredFinal.text, removedMetaSections: [], blockedOrRewrittenClaims: [] }
+      ? { text: honestyFilteredFinal.text, removedMetaSections: [], blockedOrRewrittenClaims: [], preLimitationCandidate: undefined }
       : enforceFinalStageHonestyAndMinimalism(finalOutputEnforcement);
     if (!validateStructuredOutput && !gamingGuideIntakePolicy && !gamingPresentationPolicy && preserveFinalPresentation
       && effectiveWordLimit !== null && countWords(enforcedFinalOutput.text) > effectiveWordLimit) {
@@ -2261,7 +2275,8 @@ export async function runThroughBrain(
     const gamingFinalFallbackOnly = Boolean(gamingPresentationPolicy && honestyFilteredFinal.fallbackOnly);
     if (gamingPresentationPolicy && !gamingFinalFallbackOnly && finalText.trim()) {
       const integrity = validateGamingPresentationIntegrity(
-        { text: finalText, reasoningHonesty }, translatedFinalText, honestyFilteredFinal.blocked
+        { text: finalText, reasoningHonesty }, translatedFinalText, honestyFilteredFinal.blocked,
+        enforcedFinalOutput.preLimitationCandidate
       );
       if (!integrity.valid) {
         throw Object.assign(new Error('Trinity Gaming final output failed integrity validation.'), {
@@ -2403,6 +2418,9 @@ export async function runThroughBrain(
     }
     if (gamingPresentationPolicy && !result.fallbackFlag && finalProcessedSafely && finalText.trim()) {
       result.gamingPresentationPolicy = gamingPresentationPolicy;
+      if (enforcedFinalOutput.preLimitationCandidate !== undefined) {
+        result[GAMING_PRE_LIMITATION_CANDIDATE] = enforcedFinalOutput.preLimitationCandidate;
+      }
     }
 
     result.tierInfo = {

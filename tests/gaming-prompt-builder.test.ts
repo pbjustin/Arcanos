@@ -1,4 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
+import { buildGamingClearPresentationPolicy } from '../src/shared/gaming/gamingPromptCore.js';
 
 jest.unstable_mockModule('@platform/runtime/prompts.js', () => ({
   getPrompt: jest.fn((_category: string, key: string) => {
@@ -197,5 +198,29 @@ describe('grounded gaming guide response guidance', () => {
       expect(otherPrompt).toContain('Use accepted source evidence for source-backed claims.');
       expect(otherPrompt).not.toContain("Answer the user's actual gameplay question first");
     }
+  });
+});
+
+describe('Gaming CLEAR final presentation', () => {
+  const policy = buildGamingClearPresentationPolicy();
+
+  it('leads a procedure with supported prerequisites and numbers supported actions in order', () => {
+    expect(policy).toContain('For procedures, give established prerequisites first when relevant, then number the supported actions in the order the player should take them.');
+    expect(policy).toContain('Do not add steps to fill a list.');
+    expect(policy).toContain('the citation attached to each claim');
+  });
+
+  it('uses a direct answer for lookups and mechanics and prioritizes practical build and meta advice', () => {
+    expect(policy).toContain('Give the location or mechanic directly for lookups and explanations.');
+    expect(policy).toContain('Lead build advice with the relevant priorities, and meta advice with the relevant comparison and tradeoffs.');
+    expect(policy).toContain('respecting the requested depth');
+    expect(policy).toContain('honor the game, progression, platform, edition, difficulty, spoilers, and requested format');
+  });
+
+  it('keeps material limits concise and distinct from internal task summaries', () => {
+    expect(policy).toContain('Give supported guidance first. State each material evidence gap or capability limit once in plain language.');
+    expect(policy).toContain('Place limitations after the guidance, or beside the claims they qualify.');
+    expect(policy).toContain('Keep required standalone qualifications verbatim and in their own paragraphs.');
+    expect(policy).toContain('Keep task summaries, classifications, drafts, checklists, scores, and reasoning private.');
   });
 });
