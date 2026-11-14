@@ -10,6 +10,7 @@ const LIST_PROHIBITION = /\b(?:no|without(?: (?:a|any))?|(?:do not|don['’]t) u
 const PROSE_REQUEST = /\b(?:in (?:prose|(?:a |one |a single )paragraph)|(?:do not|don['’]t) (?:number (?:lists?|numbered steps|the steps|bullets)|use the steps))\b/iu;
 const PROCEDURE = /^(To (?:start|begin|get started with) [^,.()\n]{1,140}), ([^.\n]{1,1400})\.(?= |$)/iu;
 const ADJACENT_CITATIONS = /^(?:[ \t]+\[\d+(?:,[ \t]*\d+)*\])+(?=[ \t]|$)/u;
+const POSSIBLE_ABBREVIATION = /(?:^|\s)(?:\p{L}|st|mt|ft|mk|no|dr|mr|mrs|ms|prof|capt|lt|sgt|gen|sr|jr|vs|etc)$/iu;
 const INLINE_SOURCE_LIMIT = / (The (?:supplied|selected|available) excerpts) (explain|cover) ([^.!?\n[\]]{1,220}), but do not establish ([^.!?\n[\],;:]{1,220})\. (\[1\])$/u;
 const STANDALONE_SOURCE_LIMIT = /^([A-Z][^.!?\n[\];:]{1,300}) are not established here\.$/u;
 const SINGLE_SOURCE = /^\*\*Source:\*\* \[1\] [^\n[\]]*\[[^\n[\]]+\]\(https:\/\/[^\s)]+\)\.$/u;
@@ -98,6 +99,8 @@ export function formatGamingGuidePresentation(input: {
   const adjacentCitations = ADJACENT_CITATIONS.exec(continuation)?.[0] ?? '';
   const remainingProse = continuation.slice(adjacentCitations.length);
   if ((!singleSource && !adjacentCitations) || /^\s*[[(]/u.test(remainingProse)) return answer;
+  // The first period may be part of a name or title that continues after it.
+  if (!adjacentCitations && remainingProse.trim() && POSSIBLE_ABBREVIATION.test(procedure[2])) return answer;
   const clauses = splitActionClauses(procedure[2]);
   if (!clauses) return answer;
   const hasThen = clauses.slice(1).some(clause => /^(?:and )?then\s+\S/iu.test(clause));

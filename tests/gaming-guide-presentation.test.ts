@@ -78,7 +78,10 @@ describe('Gaming guide delivery formatting', () => {
     ['an ordering cue inside parentheses', 'To start the floodgate, open the map (Journal, then use the right-hand tab), pay the fee. [1]'],
     ['an optional action inside parentheses', 'To start the floodgate, open the map (Journal, optionally use the right-hand tab), select a site, and then pay the fee. [1]'],
     ['a link inside parentheses', 'To start the floodgate, open the map ([Journal](https://example.com/guide)), select a site, and then pay the fee. [1]'],
-    ['mixed plain and linked citations', 'To start the floodgate, open the valve, and then enter the tunnel. [1] [2](https://example.com/guide)']
+    ['mixed plain and linked citations', 'To start the floodgate, open the valve, and then enter the tunnel. [1] [2](https://example.com/guide)'],
+    ['a station name containing an abbreviation', 'To start the floodgate, open the map, then visit St. James Station and pay the fee. [1]'],
+    ['a model name containing an abbreviation', 'To start the floodgate, open the map, then select the Atlas Mk. II. [1]'],
+    ['an initial in an item name', 'To start the floodgate, open the map, then collect the A. James Log. [1]']
   ])('keeps the original text with %s', (_label, answer) => {
     expect(present(answer)).toBe(answer);
   });
