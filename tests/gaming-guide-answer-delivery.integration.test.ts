@@ -644,9 +644,10 @@ it('structures the reconnected installed colonisation answer while preserving it
   ]);
   expect(content).toContain('This makes you the System Architect and starts a countdown to the arrival of the colonisation ship, which acts as the temporary construction hub. [1]');
   const limitations = answer.slice(headings[0].index);
-  expect(limitations).toContain('deadlines beyond the initial claim window. [1]');
-  expect(limitations).toMatch(/excerpts explain registration and launching a claim/iu);
-  expect(limitations.match(/(?:do not establish|not established)/giu)).toHaveLength(1);
+  expect(limitations).toContain(
+    'The supplied excerpts explain registration and launching a claim, but do not establish every prerequisite or the later construction procedure. [1]\n\n'
+    + 'Exact prices, eligibility restrictions, construction materials, and deadlines beyond the initial claim window are not established here.'
+  );
   for (const scope of [/every prerequisite/iu, /later construction procedure/iu, /exact prices/iu,
     /eligibility restrictions/iu, /construction materials/iu, /deadlines beyond the initial claim window/iu,
     /can(?:not|'t) verify live game state/iu]) {

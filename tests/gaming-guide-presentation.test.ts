@@ -59,6 +59,7 @@ describe('Gaming guide delivery formatting', () => {
 
   it.each([
     ['comma inside a UI name', 'To start the floodgate, open the **Trial, Turn the Tide** journal entry, and then select any slot. [1]'],
+    ['comma inside an unmarked UI name', 'To start the floodgate, open the Trial, Turn the Tide journal entry, and then select any slot. [1]'],
     ['comma inside a double-quoted UI name', 'To start the floodgate, open the "Trial, Turn the Tide" journal entry, and then select any slot. [1]'],
     ['comma inside a curly-quoted UI name', 'To start the floodgate, open the “Trial, Turn the Tide” journal entry, and then select any slot. [1]'],
     ['comma inside a single-quoted UI name', "To start the floodgate, open the 'Trial, Turn the Tide' journal entry, and then select any slot. [1]"],
@@ -81,7 +82,17 @@ describe('Gaming guide delivery formatting', () => {
     ['mixed plain and linked citations', 'To start the floodgate, open the valve, and then enter the tunnel. [1] [2](https://example.com/guide)'],
     ['a station name containing an abbreviation', 'To start the floodgate, open the map, then visit St. James Station and pay the fee. [1]'],
     ['a model name containing an abbreviation', 'To start the floodgate, open the map, then select the Atlas Mk. II. [1]'],
-    ['an initial in an item name', 'To start the floodgate, open the map, then collect the A. James Log. [1]']
+    ['an initial in an item name', 'To start the floodgate, open the map, then collect the A. James Log. [1]'],
+    ['an abbreviated commander title', 'To start the floodgate, open the map, then visit Cmdr. Jameson at the station. [1]'],
+    ['an abbreviated honorific', 'To start the floodgate, open the map, then visit Rev. Swanson at the station. [1]'],
+    ['a punctuated waypoint name', 'To start the floodgate, open the map, then select Waypoint 2.5. [1]'],
+    ['simultaneous actions', 'To start the floodgate, open the control panel, press the red switch, and press the blue switch simultaneously. [1]'],
+    ['actions in any order', 'To start the floodgate, open the control panel, press the red switch, and press the blue switch in any order. [1]'],
+    ['actions that must happen at once', 'To start the floodgate, open the control panel, press the red switch, and press the blue switch at once. [1]'],
+    ['an any-order qualification after the actions', 'To start the floodgate, open the control panel, press the red switch, and press the blue switch. This opens the gate. You can press the switches in any order. [1]'],
+    ['a negated action', 'To start the floodgate, open the valve, and then do not enter the tunnel. [1]'],
+    ['a code span containing a comma', 'To start the floodgate, open the `Trial, Turn the Tide` item, and then enter the tunnel. [1]'],
+    ['an unsupported citation boundary', 'To start the floodgate, open the valve, and then enter the tunnel. [1,]']
   ])('keeps the original text with %s', (_label, answer) => {
     expect(present(answer)).toBe(answer);
   });
@@ -93,22 +104,44 @@ describe('Gaming guide delivery formatting', () => {
     'Walk me through starting the floodgate. Do not use numbered lists.',
     'Walk me through starting the floodgate, without a numbered list.',
     'Walk me through starting the floodgate. No numbered steps.',
-    'Walk me through starting the floodgate. Don’t use numbered bullets.'
+    'Walk me through starting the floodgate. Don’t use numbered bullets.',
+    'Walk me through starting the floodgate. Answer as a single paragraph.',
+    'Walk me through starting the floodgate. Use prose only.',
+    'Walk me through starting the floodgate. Prose only.',
+    'Walk me through starting the floodgate. Please use one paragraph.',
+    'Walk me through starting the floodgate. Avoid numbered lists.',
+    'Walk me through starting the floodgate without using lists.'
   ])('keeps prose when the request does not call for numbered instructions (%s)', prompt => {
     const answer = 'To start the floodgate, open the valve, and then enter the tunnel. [1]';
     expect(present(answer, { prompt })).toBe(answer);
   });
 
-  it('collapses an identical source gap while retaining distinct gaps and the citation', () => {
+  it('keeps overlapping source and answer gaps in their original scope', () => {
+    const citedGap = 'The supplied excerpts cover the gate, but do not establish exact prices or the later procedure. [1]';
+    const answerGap = 'Exact prices, additional materials, and later deadlines are not established here.';
     const answer = [
-      'To start the floodgate, open the valve, and then enter the tunnel. The supplied excerpts cover the gate, but do not establish exact prices or the later procedure. [1]',
+      'To start the floodgate, open the valve, and then enter the tunnel. ' + citedGap,
       source,
-      'Exact prices, additional materials, and later deadlines are not established here.'
+      answerGap
     ].join('\n\n');
     const formatted = present(answer);
-    expect(formatted).toContain('1. Open the valve.\n2. Enter the tunnel. [1]\n\n**Limitations**');
-    expect(formatted).toContain('The supplied excerpts cover the gate, but do not establish exact prices, the later procedure, additional materials, or later deadlines. [1]');
+    expect(formatted).toBe([
+      'To start the floodgate:', '1. Open the valve.\n2. Enter the tunnel. [1]',
+      '**Limitations**', citedGap, answerGap, source
+    ].join('\n\n'));
     expect(present(formatted)).toBe(formatted);
+  });
+
+  it('collapses an exact repetition of the same cited limitation', () => {
+    const citedGap = 'The supplied excerpts cover the gate, but do not establish exact prices. [1]';
+    const answer = [
+      'To start the floodgate, open the valve, and then enter the tunnel. [1] ' + citedGap,
+      source, citedGap
+    ].join('\n\n');
+    expect(present(answer)).toBe([
+      'To start the floodgate:', '1. Open the valve.\n2. Enter the tunnel. [1]',
+      '**Limitations**', citedGap, source
+    ].join('\n\n'));
   });
 
   it('does not repeat a reference already attached to the instructions during consolidation', () => {
@@ -140,17 +173,16 @@ describe('Gaming guide delivery formatting', () => {
     ].join('\n\n'));
   });
 
-  it('preserves composite gap phrases rather than extracting new claims from them', () => {
-    const guide = 'To start the floodgate, open the valve, and then enter the tunnel. The supplied excerpts cover the gate, but do not establish the requirements for a station or outpost. [1]';
-    const limit = 'Exact prices, additional materials, and later deadlines are not established here.';
-    const answer = present([guide, source, limit].join('\n\n'));
-    expect(answer).toContain('the requirements for a station or outpost. [1]');
-    expect(answer).toContain(limit);
-  });
-
-  it('retains commas inside a quantity', () => {
-    const guide = 'To start the floodgate, open the valve, and then enter the tunnel. The supplied excerpts cover the gate, but do not establish every prerequisite or the later procedure. [1]';
-    const limit = 'Exact prices above 20,000 credits, additional materials, and later deadlines are not established here.';
-    expect(present([guide, source, limit].join('\n\n'))).toContain('exact prices above 20,000 credits');
+  it.each([
+    ['the prerequisites for the station or the outpost', 'Current patch support, platform eligibility, and live event schedules are not established here.'],
+    ['the requirements for a station or outpost', 'Exact prices, additional materials, and later deadlines are not established here.'],
+    ['every prerequisite or the later procedure', 'Exact prices (20,000 credits on PC, 25,000 on console), additional materials, and later deadlines are not established here.']
+  ])('keeps the complete source qualification and the separate answer qualification (%s)', (gap, answerGap) => {
+    const citedGap = `The supplied excerpts cover registration, but do not establish ${gap}. [1]`;
+    const guide = 'To start the floodgate, open the valve, and then enter the tunnel. ' + citedGap;
+    expect(present([guide, source, answerGap].join('\n\n'))).toBe([
+      'To start the floodgate:', '1. Open the valve.\n2. Enter the tunnel. [1]',
+      '**Limitations**', citedGap, answerGap, source
+    ].join('\n\n'));
   });
 });
