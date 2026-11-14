@@ -29,6 +29,10 @@ describe('Gaming guide delivery formatting', () => {
 
   it.each([
     ['comma inside a UI name', 'To start the floodgate, open the **Trial, Turn the Tide** journal entry, and then select any slot. [1]'],
+    ['comma inside a double-quoted UI name', 'To start the floodgate, open the "Trial, Turn the Tide" journal entry, and then select any slot. [1]'],
+    ['comma inside a curly-quoted UI name', 'To start the floodgate, open the “Trial, Turn the Tide” journal entry, and then select any slot. [1]'],
+    ['comma inside a single-quoted UI name', "To start the floodgate, open the 'Trial, Turn the Tide' journal entry, and then select any slot. [1]"],
+    ['comma inside a curly single-quoted UI name', 'To start the floodgate, open the ‘Trial, Turn the Tide’ journal entry, and then select any slot. [1]'],
     ['condition with a comma', 'To start the floodgate, open the valve if the light is green, and then enter the tunnel. [1]'],
     ['an alternative action', 'To start the floodgate, open the valve or use the bypass, and then enter the tunnel. [1]'],
     ['citation inside an action', 'To start the floodgate, open the valve [1], and then enter the tunnel. [2]'],
@@ -42,7 +46,11 @@ describe('Gaming guide delivery formatting', () => {
   it.each([
     'Where is the valve?',
     'How do I get started with the floodgate? Answer in prose.',
-    'Give the first concrete steps as a single paragraph, no bullets.'
+    'Give the first concrete steps as a single paragraph, no bullets.',
+    'Walk me through starting the floodgate. Do not use numbered lists.',
+    'Walk me through starting the floodgate, without a numbered list.',
+    'Walk me through starting the floodgate. No numbered steps.',
+    'Walk me through starting the floodgate. Don’t use numbered bullets.'
   ])('keeps prose when the request does not call for numbered instructions (%s)', prompt => {
     const answer = 'To start the floodgate, open the valve, and then enter the tunnel. [1]';
     expect(present(answer, { prompt })).toBe(answer);

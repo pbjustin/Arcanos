@@ -5,6 +5,9 @@ const ACTION_VERBS = 'activate|buy|choose|collect|confirm|deploy|enter|equip|fol
 const ACTION = new RegExp('^(?:' + ACTION_VERBS + ')\\s+\\S', 'iu');
 const ALTERNATIVE_ACTION = new RegExp('\\bor\\s+(?:' + ACTION_VERBS + ')\\b', 'iu');
 const AMBIGUOUS_ACTION = /[\x60[\]<>\\_:;?!*]|\b(?:if|unless|until|when|whenever|before|after|while|otherwise|instead|either|optionally|could|should|must|or else)\b/iu;
+const QUOTE_DELIMITER = /["“”‘]|(?<![\p{L}\p{N}])['’]|['’](?![\p{L}\p{N}])/u;
+const LIST_PROHIBITION = /\b(?:no|without(?: (?:a|any))?|(?:do not|don['’]t) use(?: (?:a|any))?) (?:numbering|(?:numbered )?(?:lists?|bullets)|numbered steps?)\b/iu;
+const PROSE_REQUEST = /\b(?:in (?:prose|(?:a |one |a single )paragraph)|(?:do not|don['’]t) (?:number (?:lists?|numbered steps|the steps|bullets)|use the steps))\b/iu;
 const PROCEDURE = /^(To (?:start|begin|get started with) [^,.\n]{1,140}), ([^.\n]{1,1400})\.(?= |$)/iu;
 const INLINE_SOURCE_LIMIT = / (The (?:supplied|selected|available) excerpts) (explain|cover) ([^.!?\n[\]]{1,220}), but do not establish ([^.!?\n[\],;:]{1,220})\. (\[1\])$/u;
 const STANDALONE_SOURCE_LIMIT = /^([A-Z][^.!?\n[\];:]{1,300}) are not established here\.$/u;
@@ -48,7 +51,7 @@ export function formatGamingGuidePresentation(input: {
   leadingQualifications: readonly string[];
 }): string {
   const { answer, prompt, game, singleSource, leadingQualifications } = input;
-  if (/\b(?:in (?:prose|(?:a |one |a single )paragraph)|no (?:lists?|numbering|bullets)|without (?:numbering|(?:a )?(?:lists?|bullets))|(?:do not|don['’]t) (?:use|number) (?:lists?|numbered steps|the steps|bullets))\b/iu.test(prompt)) return answer;
+  if (LIST_PROHIBITION.test(prompt) || PROSE_REQUEST.test(prompt)) return answer;
   if (resolveGamingAnswerPolicy({ prompt }).task !== 'walkthrough'
     && !buildGamingRequestRequirements({ prompt, game }).some(requirement => requirement.procedure === 'start')) return answer;
 
@@ -57,6 +60,9 @@ export function formatGamingGuidePresentation(input: {
   if (procedureIndex < 0) return answer;
   const procedure = PROCEDURE.exec(paragraphs[procedureIndex]);
   if (!procedure || !/,\s+(?:and\s+)?then\s+\S/iu.test(procedure[2])) return answer;
+  // Quoted labels can contain action-like commas. Keep the sentence intact.
+  // Apostrophes inside words, such as “ship’s”, do not delimit a label.
+  if (QUOTE_DELIMITER.test(procedure[2])) return answer;
 
   const continuation = paragraphs[procedureIndex].slice(procedure[0].length);
   // A marker immediately after that sentence stays with the list. Leave
