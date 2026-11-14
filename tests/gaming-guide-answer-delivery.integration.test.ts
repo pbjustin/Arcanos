@@ -5,7 +5,8 @@ import request from 'supertest';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
 import {
-  colonisationReasoningTasks, colonisationRequest, installedColonisationAnswer, malformedColonisationCapabilityParagraph
+  colonisationReasoningTasks, colonisationRequest, installedColonisationAnswer, isolatedColonisationAnswer,
+  malformedColonisationCapabilityParagraph
 } from './testUtils/gamingPresentationRegressionFixture.js';
 import type { GamingHybridResponse } from '../src/shared/gaming/gamingHybridContract.js';
 
@@ -154,7 +155,7 @@ const finalOutputs: string[] = [];
 const finalEvidence: Array<{ sourceIndex: number; url: string; text: string }> = [];
 let presentSteps = false;
 let replayColonisationTasks: 'none' | 'observed' | 'structured' = 'none';
-let replayInstalledColonisation = false;
+let replayColonisationAnswer: string | undefined;
 let partialRefusalWithSourceGap = false;
 let awkwardAnswer = false;
 const fixtureMeasurements: Array<Record<string, unknown>> = [];
@@ -225,7 +226,7 @@ beforeEach(() => {
   finalCapabilityRefusal = 'none'; finalRefusalText = capabilityRefusal; sourceTextLimit = undefined; citeFallback = false; presentSteps = false; awkwardAnswer = false;
   finalQualificationPresentation = '';
   replayColonisationTasks = 'none';
-  replayInstalledColonisation = false;
+  replayColonisationAnswer = undefined;
   partialRefusalWithSourceGap = false;
   omitFinalCitations = false;
   stages.length = 0; searches.length = 0; acquired.length = 0; finalOutputs.length = 0; finalEvidence.length = 0; documents.length = 0; evaluations.length = 0;
@@ -293,7 +294,7 @@ beforeEach(() => {
         case 'warning_only': output = partialExtractionWarning; break;
         case 'echoed_warning': output = `${partialExtractionWarning}\n\n${capabilityRefusal}`; break;
         default:
-          output = replayInstalledColonisation ? installedColonisationAnswer : draft(payload, true);
+          output = replayColonisationAnswer ?? draft(payload, true);
           if (finalCapabilityRefusal === 'with_guidance') output = `${finalRefusalText}\n\n${output}`;
       }
       if (citeFallback) output += useNumberedLink ? ` [1](${scenario.pages[0].url})` : ' [1]';
@@ -608,7 +609,7 @@ it.each(['observed', 'structured'] as const)('delivers the original colonisation
 
 it('structures the reconnected installed colonisation answer while preserving its gameplay facts and limits', async () => {
   scenario = frontierStartingFixture;
-  replayInstalledColonisation = true;
+  replayColonisationAnswer = installedColonisationAnswer;
   const result = await harness(false).complete();
 
   expect(result.result.state === 'answer_ready' ? undefined : {
@@ -654,6 +655,27 @@ it('structures the reconnected installed colonisation answer while preserving it
   expect(answer).not.toMatch(/I can help with Explain|but I can't Establish|\b24 hours\b|\d+ credits|construction commodities/iu);
   expect(stages).toEqual(['intake', 'reasoning', 'final']);
   expect(sdk).toHaveBeenCalledTimes(3);
+});
+
+it('delivers the exact isolated colonisation replay with three numbered starting actions', async () => {
+  scenario = frontierStartingFixture;
+  replayColonisationAnswer = isolatedColonisationAnswer;
+  const result = await harness(false).complete();
+  expect(finalOutputs).toEqual([isolatedColonisationAnswer]);
+  expect(result.result).toMatchObject({
+    state: 'answer_ready', coverageSatisfied: true, answer: { sources: [{ url: frontierGuideUrl }] }
+  });
+  const [, guide, source, liveLimit] = isolatedColonisationAnswer.split('\n\n');
+  const mechanicsAndScope = guide.slice(guide.indexOf('Your claim'));
+  expect(result.result.answer?.response).toBe([
+    partialExtractionWarning,
+    'To start system colonisation in **Elite Dangerous**:',
+    '1. Use the **System Colonisation Contact** at a starport to select an unpopulated system within 15 light-years.\n2. Choose your initial starport or outpost.\n3. Pay the registration fee.',
+    mechanicsAndScope,
+    source,
+    liveLimit
+  ].join('\n\n'));
+  expect(stages).toEqual(['intake', 'reasoning', 'final']);
 });
 
 it('retains a material source prerequisite in the presented answer', async () => {

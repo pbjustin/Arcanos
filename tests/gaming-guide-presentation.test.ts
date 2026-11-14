@@ -1,6 +1,8 @@
 import { describe, expect, it } from '@jest/globals';
 import { formatGamingGuidePresentation } from '../src/services/gamingGuidePresentation.js';
-import { colonisationRequest, installedColonisationAnswer } from './testUtils/gamingPresentationRegressionFixture.js';
+import {
+  colonisationRequest, installedColonisationAnswer, isolatedColonisationAnswer
+} from './testUtils/gamingPresentationRegressionFixture.js';
 
 const warning = installedColonisationAnswer.split('\n\n')[0];
 const source = '**Source:** [1] Valve guide, [Valve guide](https://example.com/guide).';
@@ -13,6 +15,20 @@ function present(answer: string, options: { prompt?: string; singleSource?: bool
 }
 
 describe('Gaming guide delivery formatting', () => {
+  it('numbers the exact isolated colonisation answer and preserves all remaining text', () => {
+    const expected = [
+      warning,
+      'To start system colonisation in **Elite Dangerous**:',
+      '1. Use the **System Colonisation Contact** at a starport to select an unpopulated system within 15 light-years.\n2. Choose your initial starport or outpost.\n3. Pay the registration fee.',
+      'Your claim lasts 24 hours and is launched through the **System Colonisation Suite** in your ship, making you the System Architect and starting a countdown to the arrival of a System Colonisation Ship that acts as a temporary construction hub. The supplied excerpts cover registration and launch, not the full construction process or every prerequisite. [1]',
+      '**Source:** [Frontier Developments, System Colonisation Guide](https://www.elitedangerous.com/news/system-colonisation-guide) [1]',
+      "I can't verify live game state here."
+    ].join('\n\n');
+    const options = { prompt: colonisationRequest };
+    expect(present(isolatedColonisationAnswer, options)).toBe(expected);
+    expect(present(expected, options)).toBe(expected);
+  });
+
   it('numbers another clearly ordered procedure and preserves its scope and citations', () => {
     const answer = 'To start the floodgate, open the **Valve Log**, select the spare slot, and then turn the handle twice. The upper gate opens. [1]';
     const presented = present(warning + '\n\n' + answer + '\n\n' + source);
@@ -38,7 +54,11 @@ describe('Gaming guide delivery formatting', () => {
     ['citation inside an action', 'To start the floodgate, open the valve [1], and then enter the tunnel. [2]'],
     ['a linked citation after the procedure', 'To start the floodgate, open the valve, and then enter the tunnel. [1](https://example.com/guide)'],
     ['a quoted example', '> To start the floodgate, open the valve, and then enter the tunnel. [1]'],
-    ['an existing list', 'To start the floodgate:\n\n1. Open the valve.\n2. Enter the tunnel. [1]']
+    ['an existing list', 'To start the floodgate:\n\n1. Open the valve.\n2. Enter the tunnel. [1]'],
+    ['two actions without an ordering cue', 'To start the floodgate, open the valve, and enter the tunnel. [1]'],
+    ['a nonterminal coordinating conjunction', 'To start the floodgate, open the valve, and enter the tunnel, turn the handle. [1]'],
+    ['a descriptive clause in an action list', 'To start the floodgate, open the valve, the light turns blue, and enter the tunnel. [1]'],
+    ['a quoted action-like comma in an action list', 'To start the floodgate, open the “Trial, Turn the Tide” journal entry, select a slot, and enter the tunnel. [1]']
   ])('keeps the original text with %s', (_label, answer) => {
     expect(present(answer)).toBe(answer);
   });

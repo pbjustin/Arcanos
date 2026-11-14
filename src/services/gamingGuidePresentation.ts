@@ -59,7 +59,7 @@ export function formatGamingGuidePresentation(input: {
   const procedureIndex = paragraphs.findIndex(paragraph => !leadingQualifications.includes(paragraph));
   if (procedureIndex < 0) return answer;
   const procedure = PROCEDURE.exec(paragraphs[procedureIndex]);
-  if (!procedure || !/,\s+(?:and\s+)?then\s+\S/iu.test(procedure[2])) return answer;
+  if (!procedure) return answer;
   // Quoted labels can contain action-like commas. Keep the sentence intact.
   // Apostrophes inside words, such as “ship’s”, do not delimit a label.
   if (QUOTE_DELIMITER.test(procedure[2])) return answer;
@@ -69,7 +69,16 @@ export function formatGamingGuidePresentation(input: {
   // more complex citation syntax alone rather than splitting its target.
   const adjacentCitation = /^ (\[\d+(?:,\s*\d+)*\])(?= |$)/u.exec(continuation);
   if (continuation.trimStart().startsWith('[') && !adjacentCitation) return answer;
-  const actions = procedure[2].split(', ').map(clause => clause.replace(/^(?:and )?then\s+/iu, ''));
+  const clauses = procedure[2].split(', ');
+  const hasThen = /,\s+(?:and\s+)?then\s+\S/iu.test(procedure[2]);
+  // The starting instruction can also introduce a complete series of three or
+  // more actions with a final “and” and no “then”.
+  if (!hasThen) {
+    const lastIndex = clauses.length - 1;
+    if (clauses.length < 3 || !/^and\s+\S/iu.test(clauses[lastIndex])) return answer;
+    clauses[lastIndex] = clauses[lastIndex].replace(/^and\s+/iu, '');
+  }
+  const actions = clauses.map(clause => clause.replace(/^(?:and )?then\s+/iu, ''));
   if (actions.length < 2 || actions.length > 8
     || actions.some(action => !ACTION.test(action) || ALTERNATIVE_ACTION.test(action)
       || AMBIGUOUS_ACTION.test(action.replace(/\*\*([^*\n]+)\*\*/gu, '$1')))) return answer;
