@@ -1504,11 +1504,12 @@ function applyGamingLimitations(
 ): string {
   if (caveats.length === 0 && reasoningHonesty.blockedSubtasks.length === 0) return text.trim();
 
+  const genericLiveStateCaveat = "I can't verify live game state here.";
   const capabilityLimitations = [
     { task: /^browse\b/i, caveat: "I can't browse for additional sources here." },
     { task: /^(?:verify|confirm|check)\b.*\b(?:live|current|external)\b.*\bplatform availability\b/i,
       caveat: "I can't verify live game state or platform availability here." },
-    { task: /^(?:verify|confirm|check)\b.*\b(?:live|current|external)\b/i, caveat: "I can't verify live game state here." },
+    { task: /^(?:verify|confirm|check)\b.*\b(?:live|current|external)\b/i, caveat: genericLiveStateCaveat },
     { task: /^(?:run|execute|perform|call|deploy)\s+(?:the\s+)?(?:backend|commands?|scripts?|tools?|actions?)\b/i,
       caveat: "I can't execute actions here." },
     { task: /^(?:save|persist|store)\s+(?:the\s+|your\s+)?(?:information|data|preferences|progress|notes?|details|this)\b/i,
@@ -1519,7 +1520,7 @@ function applyGamingLimitations(
   const capabilityScope = (value: string) => normalizeCaveat(value)
     .replace(/^i can't /u, '').replace(/ here(?: without live access)?$/u, '');
   let fence: string | undefined;
-  const prose = text.split(/\r?\n/u).map(line => {
+  const prose = text.trimEnd().split(/\r?\n/u).map(line => {
     const marker = /^ {0,3}(\x60{3,}|~{3,})/u.exec(line)?.[1];
     if (marker && (!fence || (marker.startsWith(fence) && line.trim() === marker))) {
       fence = fence ? undefined : marker;
@@ -1547,11 +1548,18 @@ function applyGamingLimitations(
     caveats.push('The available evidence does not establish every requested detail.');
   }
 
-  // Preserve the provider's exact Markdown and citations. Compare complete
-  // caveats, since different facts can have limitations of the same category.
   const missing = new Map(caveats.filter(caveat => !existing.has(normalizeCaveat(caveat)))
     .map(caveat => [normalizeCaveat(caveat), caveat]));
-  return [text.trim(), ...missing.values()].filter(Boolean).join('\n\n');
+  let answer = text.trim();
+  // A standalone, plain-prose disclaimer at the end can share the explicit
+  // live-state caveat. Preserve its source attribution and all other limits.
+  const liveDisclaimer = /(?:^|\r?\n[ \t]*\r?\n)((?:(This guidance follows the supplied official guide excerpts); )?current live[- ]game changes have not been (?:checked|verified|confirmed)\.)$/iu.exec(answer);
+  if (liveDisclaimer && liveDisclaimer[1] === prose.split('\n').at(-1)
+    && missing.delete(normalizeCaveat(genericLiveStateCaveat))) {
+    const attribution = liveDisclaimer[2] ? liveDisclaimer[2] + '. ' : '';
+    answer = answer.slice(0, -liveDisclaimer[1].length) + attribution + genericLiveStateCaveat;
+  }
+  return [answer, ...missing.values()].filter(Boolean).join('\n\n');
 }
 
 function isOpeningPaddingSegment(segment: string): boolean {

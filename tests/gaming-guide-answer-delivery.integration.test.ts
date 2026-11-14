@@ -6,7 +6,7 @@ import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
 import {
   colonisationReasoningTasks, colonisationRequest, installedColonisationAnswer, isolatedColonisationAnswer,
-  malformedColonisationCapabilityParagraph
+  malformedColonisationCapabilityParagraph, numberedLiveColonisationAnswer
 } from './testUtils/gamingPresentationRegressionFixture.js';
 import type { GamingHybridResponse } from '../src/shared/gaming/gamingHybridContract.js';
 
@@ -154,7 +154,7 @@ const presentationVersion = 'gaming-clear-presentation/v1';
 const finalOutputs: string[] = [];
 const finalEvidence: Array<{ sourceIndex: number; url: string; text: string }> = [];
 let presentSteps = false;
-let replayColonisationTasks: 'none' | 'observed' | 'structured' = 'none';
+let replayColonisationTasks: 'none' | 'observed' | 'structured' | 'live-verification' = 'none';
 let replayColonisationAnswer: string | undefined;
 let partialRefusalWithSourceGap = false;
 let awkwardAnswer = false;
@@ -276,7 +276,10 @@ beforeEach(() => {
           blocked_subtasks: ['Establish how to repair a damaged spindle.'],
           user_visible_caveats: ['The selected passage does not establish how to repair a damaged spindle.']
         } : {}),
-        ...(replayColonisationTasks !== 'none' ? colonisationReasoningTasks : {}),
+        ...(replayColonisationTasks === 'observed' || replayColonisationTasks === 'structured' ? colonisationReasoningTasks : {}),
+        ...(replayColonisationTasks === 'live-verification' ? {
+          response_mode: 'partial_refusal', blocked_subtasks: ['Verify current live game state.']
+        } : {}),
         ...(replayColonisationTasks === 'structured' ? { user_visible_caveats: [colonisationSourceLimit] } : {}),
         final_answer: draft(payload) });
     } else if (input.includes('Gaming guide intake policy: compact-v1')) {
@@ -675,6 +678,22 @@ it('delivers the exact isolated colonisation replay with three numbered starting
     liveLimit
   ].join('\n\n'));
   expect(stages).toEqual(['intake', 'reasoning', 'final']);
+});
+
+it('retains the exact numbered live replay with one live-game verification caveat', async () => {
+  scenario = frontierStartingFixture;
+  replayColonisationTasks = 'live-verification';
+  replayColonisationAnswer = numberedLiveColonisationAnswer.slice(0, -"\n\nI can't verify live game state here.".length);
+  const expected = numberedLiveColonisationAnswer.replace(
+    '; current live-game changes have not been checked.\n\n', '. ');
+  const result = await harness(false).complete();
+  expect(finalOutputs).toEqual([replayColonisationAnswer]);
+  expect(result.result).toMatchObject({
+    state: 'answer_ready', coverageSatisfied: true,
+    answer: { response: expected, sources: [{ url: frontierGuideUrl }] }
+  });
+  expect(stages).toEqual(['intake', 'reasoning', 'final']);
+  expect(sdk).toHaveBeenCalledTimes(3);
 });
 
 it('retains a material source prerequisite in the presented answer', async () => {

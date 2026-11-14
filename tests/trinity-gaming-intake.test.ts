@@ -184,6 +184,25 @@ describe('Gaming compact Trinity intake through the real Responses adapter', () 
     expect(createGPT5Reasoning).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['a plain equivalent caveat', 'Current live game changes have not been verified.', 'Verify current live game state.', "I can't verify live game state here."],
+    ['a quoted caveat', '> Current live-game changes have not been checked.', 'Verify current live game state.', "> Current live-game changes have not been checked.\n\nI can't verify live game state here."],
+    ['a patch-specific caveat', 'The supplied excerpts do not establish compatibility with patch 2.0.', 'Verify current live game state.', "The supplied excerpts do not establish compatibility with patch 2.0.\n\nI can't verify live game state here."],
+    ['a separate platform limitation', 'Current live-game changes have not been checked.', 'Verify current live mechanics or platform availability.', "Current live-game changes have not been checked.\n\nI can't verify live game state or platform availability here."]
+  ])('preserves the required scope with %s', async (_label, disclaimer, blockedTask, required) => {
+    const candidate = 'The official guide explains registration. [1]\n\n' + disclaimer;
+    runStructuredReasoning.mockResolvedValueOnce({
+      reasoning_steps: [], assumptions: [], constraints: [], tradeoffs: [], alternatives_considered: [],
+      chosen_path_justification: '', response_mode: 'partial_refusal', achievable_subtasks: ['Explain registration.'],
+      blocked_subtasks: [blockedTask], user_visible_caveats: [], claim_tags: [], final_answer: candidate
+    });
+    responsesCreate.mockResolvedValueOnce(response('Question: how to start system colonisation. Evidence [1].'))
+      .mockResolvedValueOnce(response(candidate, false, authorityModel));
+    const result = await runTrinityWritingPipeline(request(colonisationRequest));
+    expect(result.result).toBe('The official guide explains registration. [1]\n\n' + required);
+    expect(responsesCreate).toHaveBeenCalledTimes(2);
+  });
+
   it('rejects abrupt gameplay text even when an appended caveat has a complete ending', async () => {
     const incompleteGuide = 'The west valve is in Tide Hall. [1] Next, use the';
     runStructuredReasoning.mockResolvedValueOnce({
